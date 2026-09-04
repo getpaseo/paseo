@@ -125,6 +125,7 @@ import {
   truncateForDiagnostic,
 } from "./diagnostic-utils.js";
 import { withTimeout } from "../../../utils/promise-timeout.js";
+import type { ProcessEnvRecord } from "../../paseo-env.js";
 
 const ACP_AUTO_ACCEPT_FEATURE_ID = "auto_accept";
 
@@ -468,7 +469,7 @@ interface ACPAgentSessionOptions {
   extensionCommandsParser?: ACPExtensionCommandsParser;
   handle?: AgentPersistenceHandle;
   agentId?: string;
-  launchEnv?: Record<string, string>;
+  launchEnv?: ProcessEnvRecord;
   waitForInitialCommands?: boolean;
   initialCommandsWaitTimeoutMs?: number;
   terminateProcess?: ProcessTerminator;
@@ -1103,7 +1104,7 @@ export class ACPAgentClient implements AgentClient {
   }
 
   protected async spawnProcess(
-    launchEnv?: Record<string, string>,
+    launchEnv?: ProcessEnvRecord,
     options?: {
       initializeTimeoutMs?: number;
       onSpawned?: (probe: UninitializedACPProcess) => void;
@@ -1130,7 +1131,7 @@ export class ACPAgentClient implements AgentClient {
     }
   }
 
-  protected async spawnTransport(launchEnv?: Record<string, string>): Promise<ACPProcessTransport> {
+  protected async spawnTransport(launchEnv?: ProcessEnvRecord): Promise<ACPProcessTransport> {
     const { command, args } = await this.resolveLaunchCommand();
     const child = spawnProcess(command, args, {
       cwd: process.cwd(),
@@ -1424,7 +1425,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     thinkingOptionId: string,
   ) => Promise<void>;
   private readonly agentId?: string;
-  private readonly launchEnv?: Record<string, string>;
+  private readonly launchEnv?: ProcessEnvRecord;
   private readonly subscribers = new Set<(event: AgentStreamEvent) => void>();
   private readonly pendingPermissions = new Map<string, PendingPermission>();
   private pendingUserMessage: PendingUserMessage | null = null;

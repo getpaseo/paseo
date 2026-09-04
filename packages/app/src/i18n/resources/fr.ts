@@ -2434,6 +2434,42 @@ export const fr: TranslationResources = {
       workspaces: {
         unavailable: "Connect to this host to manage workspaces",
       },
+      agentEnvironment: {
+        sectionTitle: "Environnement de l'agent",
+        sectionDescription:
+          "Les commandes s'exécutent dans le répertoire d'un agent avant son démarrage. Leur sortie devient l'environnement de l'agent.",
+        add: "Ajouter une configuration d'environnement",
+        addCustom: "Commande personnalisée…",
+        addCustomTitle: "Ajouter une commande d'environnement",
+        editCommand: "Modifier la commande",
+        editCommandTitle: "Modifier la commande d'environnement",
+        remove: "Supprimer",
+        removeConfirmTitle: "Supprimer la configuration d'environnement ?",
+        removeConfirmMessage: "Supprimer « {{name}} » ?",
+        moveUp: "Déplacer vers le haut",
+        moveDown: "Déplacer vers le bas",
+        emptyState:
+          "Rien ne s'exécute avant le démarrage d'un agent. Ajoutez direnv ou une commande personnalisée.",
+        unknownPreset: "Cet hôte ne reconnaît pas ce préréglage",
+        rowFormat: "Lit la sortie {{format}}",
+        commandLabel: "Commande",
+        commandHint: "Séparée par des espaces. Lancez un shell explicitement si nécessaire.",
+        commandPlaceholder: "direnv export json",
+        commandRequired: "La commande est requise",
+        formatLabel: "Format de sortie",
+        formatJson: "Diff JSON",
+        formatEnv0: "env -0",
+        formatJsonHint: "Un objet de « CLÉ » : « valeur », où null supprime la variable.",
+        formatEnv0Hint:
+          "Enregistrements CLÉ=VALEUR séparés par NUL. Tout ce qui est omis est supprimé.",
+        timeoutLabel: "Délai d'attente",
+        timeoutHint:
+          "Millisecondes avant d'abandonner la commande. Laissez vide pour utiliser la valeur par défaut de l'hôte.",
+        timeoutPlaceholder: "30000",
+        timeoutInvalid: "Le délai doit être un entier positif",
+        saving: "Enregistrement...",
+        save: "Enregistrer",
+      },
       terminalProfiles: {
         unavailable: "Connect to this host to manage terminal profiles",
         sectionTitle: "Terminal profiles",

@@ -8,11 +8,12 @@ import type {
   PiSessionStats,
 } from "./rpc-types.js";
 import type { ProviderRuntimeSettings } from "../../provider-launch-config.js";
+import type { ProcessEnvRecord } from "../../../paseo-env.js";
 
 export interface PiRuntimeLaunch {
   cwd: string;
   argv: string[];
-  env?: Record<string, string>;
+  env?: ProcessEnvRecord;
   protocolMode?: "rpc" | "rpc-ui";
   model?: string;
   thinkingOptionId?: string;
@@ -27,7 +28,7 @@ export interface PiRuntimeLaunch {
 export interface PiStartSessionInput {
   cwd: string;
   signal?: AbortSignal;
-  env?: Record<string, string>;
+  env?: ProcessEnvRecord;
   protocolMode?: "rpc" | "rpc-ui";
   model?: string;
   thinkingOptionId?: string;

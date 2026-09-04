@@ -87,6 +87,7 @@ import {
   type PiToolResult,
   type PiTrackedToolCall,
 } from "./tool-call-mapper.js";
+import type { ProcessEnvRecord } from "../../../paseo-env.js";
 
 const PI_PROVIDER = "pi";
 const DEFAULT_PI_THINKING_LEVEL: PiThinkingLevel = "medium";
@@ -258,7 +259,7 @@ interface PiResumeConfig {
 interface PiMcpServerConfig {
   command?: string;
   args?: string[];
-  env?: Record<string, string>;
+  env?: ProcessEnvRecord;
   url?: string;
   headers?: Record<string, string>;
   auth?: false;
@@ -545,7 +546,7 @@ function toPiMcpConfig(config: McpServerConfig): PiMcpServerConfig {
   };
 }
 
-function resolvePiAgentDir(env: Record<string, string> | undefined): string {
+function resolvePiAgentDir(env: ProcessEnvRecord | undefined): string {
   const configured = env?.PI_CODING_AGENT_DIR?.trim() || process.env.PI_CODING_AGENT_DIR?.trim();
   if (!configured) {
     return join(homedir(), ".pi", "agent");
@@ -559,7 +560,7 @@ function resolvePiAgentDir(env: Record<string, string> | undefined): string {
   return resolvePath(configured);
 }
 
-function readPiGlobalMcpConfig(env: Record<string, string> | undefined): Record<string, unknown> {
+function readPiGlobalMcpConfig(env: ProcessEnvRecord | undefined): Record<string, unknown> {
   const globalConfigPath = join(resolvePiAgentDir(env), "mcp.json");
   if (!existsSync(globalConfigPath)) {
     return {};
@@ -583,7 +584,7 @@ function readPiGlobalMcpConfig(env: Record<string, string> | undefined): Record<
 function createPiMcpConfigFile(
   servers: Record<string, McpServerConfig>,
   options?: {
-    piGlobalConfigEnv?: Record<string, string>;
+    piGlobalConfigEnv?: ProcessEnvRecord;
   },
 ): PiMcpConfigFile {
   const globalConfig = options?.piGlobalConfigEnv
@@ -2743,7 +2744,7 @@ export class PiRpcAgentClient implements AgentClient {
   private async prepareMcpConfig(
     cwd: string,
     servers: Record<string, McpServerConfig> | undefined,
-    env: Record<string, string> | undefined,
+    env: ProcessEnvRecord | undefined,
   ): Promise<PiMcpConfigFile | null> {
     if (!servers || Object.keys(servers).length === 0) {
       return null;
@@ -2754,7 +2755,7 @@ export class PiRpcAgentClient implements AgentClient {
     return createPiMcpConfigFile(servers, { piGlobalConfigEnv: env });
   }
 
-  private async detectMcpAdapter(cwd: string, env?: Record<string, string>): Promise<boolean> {
+  private async detectMcpAdapter(cwd: string, env?: ProcessEnvRecord): Promise<boolean> {
     const runtimeSession = await this.runtime.startSession({ cwd, env }).catch((error) => {
       this.logger.debug({ err: error, cwd }, "Pi MCP adapter probe failed to start");
       return null;

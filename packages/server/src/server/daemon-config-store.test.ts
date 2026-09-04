@@ -682,6 +682,68 @@ describe("DaemonConfigStore", () => {
     expect(persisted.daemon?.appendSystemPrompt).toBe("Prefer terse replies.");
   });
 
+  test("patch persists agent environment entries into config.json", () => {
+    const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-daemon-config-store-"));
+    tempDirs.push(paseoHome);
+
+    const store = new DaemonConfigStore(
+      paseoHome,
+      {
+        mcp: { injectIntoAgents: false },
+        browserTools: { enabled: false },
+        providers: {},
+        metadataGeneration: { providers: [] },
+        autoArchiveAfterMerge: false,
+        enableTerminalAgentHooks: false,
+        appendSystemPrompt: "",
+        agentEnvironment: { entries: [{ kind: "preset", id: "direnv", preset: "direnv" }] },
+      },
+      undefined,
+    );
+
+    store.patch({
+      agentEnvironment: {
+        entries: [
+          { kind: "preset", id: "direnv", preset: "direnv" },
+          { kind: "command", id: "e2", command: ["bash", "-lc", "env -0"], format: "env0" },
+        ],
+      },
+    });
+
+    const persisted = loadPersistedConfig(paseoHome);
+    expect(persisted.agents?.environment?.entries).toEqual([
+      { kind: "preset", id: "direnv", preset: "direnv" },
+      { kind: "command", id: "e2", command: ["bash", "-lc", "env -0"], format: "env0" },
+    ]);
+  });
+
+  test("removing every agent environment entry persists an empty list", () => {
+    const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-daemon-config-store-"));
+    tempDirs.push(paseoHome);
+
+    const store = new DaemonConfigStore(
+      paseoHome,
+      {
+        mcp: { injectIntoAgents: false },
+        browserTools: { enabled: false },
+        providers: {},
+        metadataGeneration: { providers: [] },
+        autoArchiveAfterMerge: false,
+        enableTerminalAgentHooks: false,
+        appendSystemPrompt: "",
+        agentEnvironment: { entries: [{ kind: "preset", id: "direnv", preset: "direnv" }] },
+      },
+      undefined,
+    );
+
+    store.patch({ agentEnvironment: { entries: [] } });
+
+    // An empty list must round-trip as [] rather than absent, or the daemon
+    // would re-seed the direnv preset on the next start.
+    const persisted = loadPersistedConfig(paseoHome);
+    expect(persisted.agents?.environment?.entries).toEqual([]);
+  });
+
   test("patch persists browser tools opt-in into config.json", () => {
     const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-daemon-config-store-"));
     tempDirs.push(paseoHome);

@@ -1,5 +1,9 @@
 import { z } from "zod";
 import { TerminalActivitySchema } from "./terminal-activity.js";
+import {
+  MutableAgentEnvironmentConfigPatchSchema,
+  MutableAgentEnvironmentConfigSchema,
+} from "./agent-environment.js";
 import { CLIENT_CAPS } from "./client-capabilities.js";
 import { AGENT_LIFECYCLE_STATUSES } from "./agent-lifecycle.js";
 import { MAX_EXPLICIT_AGENT_TITLE_CHARS } from "./agent-title-limits.js";
@@ -248,6 +252,9 @@ export const MutableDaemonConfigSchema = z
     skills: z.object({ selection: AgentSkillSelectionSchema.optional() }).strict().optional(),
     pluginsEnabled: z.boolean().optional(),
     plugins: z.record(PluginIdSchema, PluginSourceSchema).optional(),
+    // COMPAT(agentEnvironment): added in v0.3.1, optional so an older daemon's
+    // config still parses. Remove the optional when the floor is >= v0.3.1.
+    agentEnvironment: MutableAgentEnvironmentConfigSchema.optional(),
   })
   .passthrough();
 
@@ -268,6 +275,7 @@ export const MutableDaemonConfigPatchSchema = z
     agentProfiles: z.array(AgentProfileSchema).optional(),
     pluginsEnabled: z.boolean().optional(),
     plugins: z.record(PluginIdSchema, PluginSourceSchema).optional(),
+    agentEnvironment: MutableAgentEnvironmentConfigPatchSchema.optional(),
   })
   .partial()
   .passthrough();

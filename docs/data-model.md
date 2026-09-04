@@ -236,6 +236,11 @@ snapshot so a mixed edit can apply its live subset and still name the paths that
     providers: Record<providerId, ProviderOverride>,
     metadataGeneration: {
       providers: [{ provider, model?, thinkingOptionId? }]
+    },
+    environment: {          // what runs in an agent's directory before it starts
+      entries: [{ kind: "preset", id: string, preset: string, timeoutMs?: number }
+              | { kind: "command", id: string, command: string[], format?: "json" | "env0", timeoutMs?: number }],
+      timeoutMs?: number
     }
   },
   pluginsEnabled: boolean,
@@ -347,6 +352,77 @@ Environment variables override `config.json`:
 `PASEO_GIT_MAX_PROCESS_CONCURRENCY` wins when it and the legacy alias are both set. Run `paseo reload`
 after changing `config.json`. Environment changes require a daemon restart; the launch environment
 remains authoritative during reload.
+
+### Agent environment setup
+
+Agent processes are spawned by the daemon, not by a shell, so nothing runs the per-directory setup
+an interactive terminal gets. `agents.environment.entries` closes that gap: each entry runs in the
+agent's working directory at launch, prints the environment it wants, and the daemon applies the
+result to the agent process, the MCP servers it spawns, and any provider sidecar (the OpenCode
+server, the Codex app server) started for it. Entries run in order and each sees what the previous
+one produced. Terminals are unaffected — they run your shell, so its own setup already applies.
+
+Edit the list under **Settings ▸ Host ▸ Agents ▸ Agent environment**. It is mutable daemon config:
+an edit applies to the next agent launch, with no restart. Everything below is the same list seen
+from `config.json`.
+
+#### Entries
+
+A **preset** entry names a tool Paseo already knows how to drive:
+
+```json
+{ "kind": "preset", "id": "direnv", "preset": "direnv" }
+```
+
+A preset runs only where it applies — its binary on the daemon's PATH _and_ one of its marker files
+at the agent's directory or above. A preset that does not apply is skipped silently, which is what
+makes shipping one enabled by default safe. `packages/protocol/src/agent-environment.ts` holds the
+catalog; adding a tool is one entry there.
+
+| Preset   | Runs                 | Applies when                                               |
+| -------- | -------------------- | ---------------------------------------------------------- |
+| `direnv` | `direnv export json` | `direnv` on PATH and an `.envrc` at or above the directory |
+
+A **command** entry is anything else:
+
+```json
+{ "kind": "command", "id": "e2", "command": ["bash", "-lc", "env -0"], "format": "env0" }
+```
+
+Command entries have no detection gate — they run wherever an agent starts. `command` is argv, not a
+shell line, so run a shell explicitly when you need one.
+
+#### Output formats
+
+`format` applies to command entries; a preset carries its own.
+
+| `format`         | Output                                      | Meaning                                                                           |
+| ---------------- | ------------------------------------------- | --------------------------------------------------------------------------------- |
+| `json` (default) | `{"KEY": "value", "REMOVED": null}`         | A diff. A string sets, `null` unsets, anything unmentioned is left alone.         |
+| `env0`           | NUL-separated `KEY=VALUE`, as from `env -0` | A complete environment. Anything the daemon started with and this omits is unset. |
+
+Newline-separated `env` output has no format because a value containing a newline is
+indistinguishable from a record boundary. Use `env -0`.
+
+#### Defaults and failures
+
+A daemon that has never been configured seeds one entry: the `direnv` preset. That is a seed, not a
+special case — remove it and the empty list persists, rather than being re-seeded on the next start.
+
+An entry that is missing, exits non-zero, exceeds its timeout, or prints something other than its
+declared format is skipped with a warning in `daemon.log`; the remaining entries still run and the
+agent still starts. `timeoutMs` (default 30000, overridable per entry) is what bounds a cold
+`use flake` that would otherwise stall every launch in that directory.
+
+For direnv specifically, the `.envrc` must already be allowed. The daemon never runs `direnv allow`,
+so an unapproved directory launches with the plain daemon environment and logs direnv's error.
+
+#### Precedence
+
+Lowest to highest: daemon environment, provider `env` overrides, entry output, env supplied with the
+create-agent request, `PASEO_AGENT_ID`/`PASEO_AGENT_CWD`. Entry output sitting above provider `env`
+is the one sharp edge: a directory that exports `ANTHROPIC_BASE_URL` or `OPENAI_BASE_URL` will
+redirect a custom provider entry that sets the same variable under `agents.providers`.
 
 `agents.metadataGeneration.providers` controls the preferred structured-generation fallback order for daemon-side metadata tasks such as commit messages, PR text, branch names, and generated agent titles. Entries are tried first in the configured order, then Paseo falls through to dynamically discovered defaults and finally the current selection when available.
 

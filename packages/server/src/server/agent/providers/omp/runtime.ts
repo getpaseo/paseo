@@ -13,11 +13,12 @@ import type {
   OmpThinkingLevel,
 } from "./rpc-types.js";
 import type { ProviderRuntimeSettings } from "../../provider-launch-config.js";
+import type { ProcessEnvRecord } from "../../../paseo-env.js";
 
 export interface OmpRuntimeLaunch {
   cwd: string;
   argv: string[];
-  env?: Record<string, string>;
+  env?: ProcessEnvRecord;
   protocolMode?: "rpc" | "rpc-ui";
   model?: string;
   thinkingOptionId?: string;
@@ -31,7 +32,7 @@ export interface OmpRuntimeLaunch {
 export interface OmpStartSessionInput {
   cwd: string;
   signal?: AbortSignal;
-  env?: Record<string, string>;
+  env?: ProcessEnvRecord;
   protocolMode?: "rpc" | "rpc-ui";
   model?: string;
   thinkingOptionId?: string;

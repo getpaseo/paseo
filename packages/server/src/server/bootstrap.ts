@@ -184,6 +184,12 @@ import type {
   ProviderOverride,
 } from "./agent/provider-launch-config.js";
 import { loadPersistedConfig, type PersistedConfig } from "./persisted-config.js";
+import {
+  createAgentEnvironmentResolver,
+  DEFAULT_AGENT_ENVIRONMENT_TIMEOUT_MS,
+  type AgentEnvironmentConfig,
+} from "./agent-environment.js";
+import { DEFAULT_AGENT_ENVIRONMENT_ENTRIES } from "@getpaseo/protocol/agent-environment";
 import { createServiceProxySubsystem, type ServiceProxySubsystem } from "./service-proxy.js";
 import { releaseWorkspaceServicePortPlan } from "./workspace-service-port-registry.js";
 import { ScriptHealthMonitor } from "./script-health-monitor.js";
@@ -437,6 +443,7 @@ export interface PaseoDaemonConfig {
   downloadTokenTtlMs?: number;
   agentProviderSettings?: AgentProviderRuntimeSettingsMap;
   providerCatalogRefreshTimeoutMs?: number;
+  agentEnvironment?: AgentEnvironmentConfig;
   metadataGeneration?: {
     providers?: Array<{
       provider: string;
@@ -551,6 +558,12 @@ function createInitialMutableDaemonConfig(config: PaseoDaemonConfig): MutableDae
     pluginsEnabled: config.pluginsEnabled ?? false,
     plugins: config.plugins ?? {},
     skills: { selection: config.skillSelection },
+    agentEnvironment: {
+      entries: [...(config.agentEnvironment?.entries ?? DEFAULT_AGENT_ENVIRONMENT_ENTRIES)],
+      ...(config.agentEnvironment?.timeoutMs !== undefined
+        ? { timeoutMs: config.agentEnvironment.timeoutMs }
+        : {}),
+    },
   };
 
   if (config.terminalProfiles !== undefined) {
@@ -914,6 +927,18 @@ export async function createPaseoDaemon(
     providerDefinitions: initialAgentManagerState.providerDefinitions,
     registry: agentStorage,
     appendSystemPrompt: config.appendSystemPrompt,
+    resolveLaunchEnv: createAgentEnvironmentResolver({
+      // Read through the store so a Settings edit applies to the next agent
+      // launch instead of waiting for a daemon restart.
+      getConfig: () => {
+        const mutable = daemonConfigStore.get().agentEnvironment;
+        return {
+          entries: mutable?.entries ?? [],
+          timeoutMs: mutable?.timeoutMs ?? DEFAULT_AGENT_ENVIRONMENT_TIMEOUT_MS,
+        };
+      },
+      logger,
+    }),
     onWorkspaceStateMayHaveChanged: ({ cwd }) => {
       workspaceGitService.onWorkspaceStateMayHaveChanged(cwd);
     },
