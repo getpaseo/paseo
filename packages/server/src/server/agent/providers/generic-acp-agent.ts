@@ -32,6 +32,7 @@ export const GenericACPProviderParamsSchema = z
         terminal: z.boolean().optional(),
       })
       .optional(),
+    activeTurnSteering: z.enum(["concurrent_prompt", "none"]).optional(),
   })
   .passthrough();
 
@@ -76,6 +77,10 @@ export class GenericACPAgentClient extends ACPAgentClient {
       configFeatureOptions: options.configFeatureOptions,
       extensionCommandsParser: options.extensionCommandsParser,
       catalogModelResolver: options.catalogModelResolver,
+      activeTurnSteering:
+        providerParams.activeTurnSteering === "concurrent_prompt"
+          ? providerParams.activeTurnSteering
+          : undefined,
     });
 
     this.command = options.command;

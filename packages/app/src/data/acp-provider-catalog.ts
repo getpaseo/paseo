@@ -237,6 +237,7 @@ const CATALOG_DATA = [
     iconId: null,
     installLink: "https://hermes-agent.nousresearch.com/docs/user-guide/features/acp",
     command: ["hermes", "acp"],
+    params: { activeTurnSteering: "concurrent_prompt" },
   },
   {
     id: "junie",

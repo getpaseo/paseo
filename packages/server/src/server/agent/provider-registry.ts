@@ -39,6 +39,7 @@ import { CodexAppServerAgentClient } from "./providers/codex-app-server-agent.js
 import { CopilotACPAgentClient } from "./providers/copilot-acp-agent.js";
 import { CursorACPAgentClient } from "./providers/cursor-acp-agent.js";
 import { GenericACPAgentClient } from "./providers/generic-acp-agent.js";
+import { HermesACPAgentClient } from "./providers/hermes-acp-agent.js";
 import { KimiACPAgentClient } from "./providers/kimi-acp-agent.js";
 import { KiroACPAgentClient } from "./providers/kiro-acp-agent.js";
 import { OpenCodeAgentClient } from "./providers/opencode-agent.js";
@@ -463,6 +464,7 @@ export function wrapSessionProvider(provider: AgentProvider, inner: AgentSession
     describePersistence: () => mapPersistenceHandle(provider, inner.describePersistence()),
     interrupt: () => inner.interrupt(),
     close: () => inner.close(),
+    steerActiveTurn: inner.steerActiveTurn?.bind(inner),
     listCommands: inner.listCommands?.bind(inner),
     setModel: inner.setModel?.bind(inner),
     setThinkingOption: inner.setThinkingOption?.bind(inner),
@@ -766,6 +768,7 @@ function addDerivedProviders(
       }
       // Capture command in const for closure - TypeScript can't track type refinement inside closures
       const command = override.command;
+      const providerParams = override.params;
 
       resolvedProviders.set(providerId, {
         definition: createDerivedDefinition(
@@ -785,7 +788,7 @@ function addDerivedProviders(
         profileModelsAreAdditive: false,
         enabled: override.enabled !== false,
         derivedFromProviderId: null,
-        providerParams: override.params,
+        providerParams,
         createBaseClient: (logger) => {
           const acpOptions = {
             logger,
@@ -793,7 +796,7 @@ function addDerivedProviders(
             env: override.env,
             providerId,
             label: override.label ?? providerId,
-            providerParams: override.params,
+            providerParams,
           };
           if (providerId === "cursor") {
             return new CursorACPAgentClient(acpOptions);
@@ -806,6 +809,9 @@ function addDerivedProviders(
           }
           if (providerId === "traecli") {
             return new TraeACPAgentClient(acpOptions);
+          }
+          if (providerId === "hermes") {
+            return new HermesACPAgentClient(acpOptions);
           }
           return new GenericACPAgentClient(acpOptions);
         },

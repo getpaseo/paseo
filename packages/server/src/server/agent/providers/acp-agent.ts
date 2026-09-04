@@ -94,6 +94,8 @@ import {
   type ProviderCatalog,
   type ResolveAgentCreateConfigInput,
   type ResolveAgentCreateConfigResult,
+  type SteerActiveTurnOptions,
+  type SteerResult,
   type ToolCallDetail,
   type ToolCallTimelineItem,
 } from "../agent-sdk-types.js";
@@ -383,6 +385,8 @@ export type ACPExtensionCommandsParser = (
   params: Record<string, unknown>,
 ) => AgentSlashCommand[] | null;
 
+export type ACPActiveTurnSteering = "concurrent_prompt";
+
 /**
  * Context handed to an {@link ACPCatalogModelResolver} during `fetchCatalog`. It exposes
  * the already-derived models plus the live probe session so a resolver can refine them
@@ -436,6 +440,7 @@ interface ACPAgentClientOptions {
   ) => Promise<void>;
   capabilities?: AgentCapabilityFlags;
   extensionCommandsParser?: ACPExtensionCommandsParser;
+  activeTurnSteering?: ACPActiveTurnSteering;
   waitForInitialCommands?: boolean;
   initialCommandsWaitTimeoutMs?: number;
   terminateProcess?: ProcessTerminator;
@@ -466,6 +471,7 @@ interface ACPAgentSessionOptions {
   ) => Promise<void>;
   capabilities: AgentCapabilityFlags;
   extensionCommandsParser?: ACPExtensionCommandsParser;
+  activeTurnSteering?: ACPActiveTurnSteering;
   handle?: AgentPersistenceHandle;
   agentId?: string;
   launchEnv?: Record<string, string>;
@@ -826,6 +832,7 @@ export class ACPAgentClient implements AgentClient {
   private readonly waitForInitialCommands: boolean;
   private readonly initialCommandsWaitTimeoutMs: number;
   private readonly extensionCommandsParser?: ACPExtensionCommandsParser;
+  private readonly activeTurnSteering?: ACPActiveTurnSteering;
   protected readonly terminateProcess: ProcessTerminator;
 
   constructor(options: ACPAgentClientOptions) {
@@ -854,6 +861,7 @@ export class ACPAgentClient implements AgentClient {
     this.waitForInitialCommands = options.waitForInitialCommands ?? false;
     this.initialCommandsWaitTimeoutMs = options.initialCommandsWaitTimeoutMs ?? 1500;
     this.extensionCommandsParser = options.extensionCommandsParser;
+    this.activeTurnSteering = options.activeTurnSteering;
   }
 
   async createSession(
@@ -884,6 +892,7 @@ export class ACPAgentClient implements AgentClient {
         agentId: launchContext?.agentId,
         launchEnv: launchContext?.env,
         extensionCommandsParser: this.extensionCommandsParser,
+        activeTurnSteering: this.activeTurnSteering,
         waitForInitialCommands: this.waitForInitialCommands,
         initialCommandsWaitTimeoutMs: this.initialCommandsWaitTimeoutMs,
       },
@@ -935,6 +944,7 @@ export class ACPAgentClient implements AgentClient {
       agentId: launchContext?.agentId,
       launchEnv: launchContext?.env,
       extensionCommandsParser: this.extensionCommandsParser,
+      activeTurnSteering: this.activeTurnSteering,
       waitForInitialCommands: this.waitForInitialCommands,
       initialCommandsWaitTimeoutMs: this.initialCommandsWaitTimeoutMs,
     });
@@ -1453,8 +1463,15 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   private waitForInitialCommands: boolean;
   private initialCommandsWaitTimeoutMs: number;
   private readonly extensionCommandsParser?: ACPExtensionCommandsParser;
+  private readonly activeTurnSteering?: ACPActiveTurnSteering;
   private currentTurnUsage: AgentUsage | undefined;
   private activeForegroundTurnId: string | null = null;
+  private readonly echoedMessageIds = new Set<string>();
+  private concurrentSteerGeneration = 0;
+  private concurrentSteerAdmissionCount = 0;
+  private deferredForegroundSettlement:
+    | Extract<AgentStreamEvent, { type: "turn_completed" | "turn_failed" | "turn_canceled" }>
+    | undefined;
   private fallbackAssistantMessageId: string | null = null;
   private closed = false;
   private historyPending = false;
@@ -1493,6 +1510,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     this.waitForInitialCommands = options.waitForInitialCommands ?? false;
     this.initialCommandsWaitTimeoutMs = options.initialCommandsWaitTimeoutMs ?? 1500;
     this.extensionCommandsParser = options.extensionCommandsParser;
+    this.activeTurnSteering = options.activeTurnSteering;
   }
 
   get id(): string | null {
@@ -1622,6 +1640,8 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     const turnId = randomUUID();
     const messageId = options?.clientMessageId ?? randomUUID();
     this.activeForegroundTurnId = turnId;
+    this.echoedMessageIds.clear();
+    this.echoedMessageIds.add(messageId);
     this.fallbackAssistantMessageId = null;
     this.submittedUserMessageTurnId = null;
     this.emitBootstrapThreadEvent();
@@ -1640,17 +1660,83 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       })
       .catch((error) => {
         const summary = summarizeACPRequestError(error);
-        this.finishTurn({
+        const failure = {
           type: "turn_failed",
           provider: this.provider,
           error: summary.message,
           code: summary.code,
           diagnostic: this.collectDiagnostic(summary.diagnostic ?? summary.message),
           turnId,
-        });
+        } as const;
+        this.settleForegroundTurn(failure);
       });
 
     return { turnId };
+  }
+
+  async steerActiveTurn(
+    prompt: AgentPromptInput,
+    options: SteerActiveTurnOptions,
+  ): Promise<SteerResult> {
+    if (this.activeTurnSteering !== "concurrent_prompt") {
+      return { status: "unavailable" };
+    }
+    this.assertConcurrentSteerAdmission(options.expectedTurnId);
+    assertConcurrentSteerPrompt(prompt);
+    if (options.clearPendingPermissions) {
+      await this.clearPendingPermissionsForSteer();
+    }
+    const target = this.assertConcurrentSteerAdmission(options.expectedTurnId);
+
+    const messageId = options.clientMessageId ?? randomUUID();
+    this.echoedMessageIds.add(messageId);
+    this.concurrentSteerAdmissionCount += 1;
+    const generation = this.concurrentSteerGeneration;
+    // ACP session/prompt resolves only when the turn ends. Accepted means the request was written;
+    // later rejection is logged without triggering AgentManager fallback replacement.
+    void target.connection
+      .prompt({
+        sessionId: target.sessionId,
+        messageId,
+        prompt: toACPContentBlocks(prompt),
+      })
+      .catch((error) => {
+        this.logger.warn(
+          { err: error, messageId },
+          "Concurrent ACP steer request failed after dispatch",
+        );
+      })
+      .finally(() => {
+        if (generation !== this.concurrentSteerGeneration) return;
+        this.concurrentSteerAdmissionCount -= 1;
+        this.flushDeferredForegroundSettlement();
+      });
+    return { status: "accepted" };
+  }
+
+  private assertConcurrentSteerAdmission(expectedTurnId: string): {
+    connection: ClientSideConnection;
+    sessionId: string;
+  } {
+    if (!this.connection)
+      throw new Error("Configured ACP concurrent steering session is not connected");
+    if (!this.sessionId)
+      throw new Error("Configured ACP concurrent steering session has no session id");
+    if (this.activeForegroundTurnId !== expectedTurnId) {
+      throw new Error("Configured ACP concurrent steering foreground turn changed");
+    }
+    return { connection: this.connection, sessionId: this.sessionId };
+  }
+
+  private async clearPendingPermissionsForSteer(): Promise<void> {
+    const requestIds = Array.from(this.pendingPermissions.keys());
+    for (const requestId of requestIds) {
+      if (!this.pendingPermissions.has(requestId)) continue;
+      await this.respondToPermission(requestId, {
+        behavior: "deny",
+        message: "The user answered with a message instead of approving. Their message follows.",
+      });
+    }
   }
 
   subscribe(callback: (event: AgentStreamEvent) => void): () => void {
@@ -2166,6 +2252,9 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   }
 
   async interrupt(): Promise<void> {
+    this.concurrentSteerGeneration += 1;
+    this.concurrentSteerAdmissionCount = 0;
+    this.deferredForegroundSettlement = undefined;
     if (!this.connection || !this.sessionId) {
       return;
     }
@@ -2185,6 +2274,9 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       return;
     }
     this.closed = true;
+    this.concurrentSteerGeneration += 1;
+    this.concurrentSteerAdmissionCount = 0;
+    this.deferredForegroundSettlement = undefined;
 
     this.deliverTranslatedEvents(this.flushPendingUserMessage());
     this.settleCommandsReady();
@@ -2700,7 +2792,19 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     update: Extract<SessionUpdate, { sessionUpdate: "user_message_chunk" }>,
   ): AgentStreamEvent[] {
     this.fallbackAssistantMessageId = null;
+    const messageId = update.messageId ?? undefined;
+    if (messageId && this.echoedMessageIds.has(messageId)) {
+      return [];
+    }
     if (
+      this.activeTurnSteering !== "concurrent_prompt" &&
+      this.activeForegroundTurnId &&
+      this.submittedUserMessageTurnId === this.activeForegroundTurnId
+    ) {
+      return [];
+    }
+    if (
+      !messageId &&
       this.activeForegroundTurnId &&
       this.submittedUserMessageTurnId === this.activeForegroundTurnId
     ) {
@@ -2712,7 +2816,6 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       return [];
     }
 
-    const messageId = update.messageId ?? undefined;
     const pending = this.pendingUserMessage;
     const startsNewMessage = Boolean(
       pending?.messageId && messageId && pending.messageId !== messageId,
@@ -2846,30 +2949,58 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   }
 
   private handlePromptResponse(response: PromptResponse, turnId: string): void {
+    if (this.activeForegroundTurnId !== turnId) {
+      return;
+    }
     this.currentTurnUsage = mapACPUsage(response.usage) ?? this.currentTurnUsage;
 
+    this.settleForegroundTurn(this.promptResponseEvent(response, turnId));
+  }
+
+  private settleForegroundTurn(
+    event: Extract<AgentStreamEvent, { type: "turn_completed" | "turn_failed" | "turn_canceled" }>,
+  ): void {
+    if (this.activeForegroundTurnId !== event.turnId) return;
+    if (this.concurrentSteerAdmissionCount > 0) {
+      this.deferredForegroundSettlement = event;
+      return;
+    }
+    this.finishTurn(event);
+  }
+
+  private flushDeferredForegroundSettlement(): void {
+    if (this.concurrentSteerAdmissionCount > 0 || !this.deferredForegroundSettlement) {
+      return;
+    }
+    const deferred = this.deferredForegroundSettlement;
+    this.deferredForegroundSettlement = undefined;
+    this.settleForegroundTurn(deferred);
+  }
+
+  private promptResponseEvent(
+    response: PromptResponse,
+    turnId: string,
+  ): Extract<AgentStreamEvent, { type: "turn_completed" | "turn_canceled" }> {
     switch (response.stopReason) {
       case "cancelled":
         this.synthesizeCanceledToolCalls();
-        this.finishTurn({
+        return {
           type: "turn_canceled",
           provider: this.provider,
           reason: "Interrupted",
           turnId,
-        });
-        break;
+        };
       case "end_turn":
       case "max_tokens":
       case "max_turn_requests":
       case "refusal":
       default:
-        this.finishTurn({
+        return {
           type: "turn_completed",
           provider: this.provider,
           usage: this.currentTurnUsage,
           turnId,
-        });
-        break;
+        };
     }
   }
 
@@ -3192,6 +3323,26 @@ function toACPContentBlocks(prompt: AgentPromptInput): ContentBlock[] {
     }
   }
   return contentBlocks;
+}
+
+function assertConcurrentSteerPrompt(prompt: AgentPromptInput): asserts prompt is string {
+  if (
+    typeof prompt !== "string" ||
+    prompt.trimStart().startsWith("/") ||
+    containsDisallowedControlCharacter(prompt)
+  ) {
+    throw new Error("Configured ACP concurrent steering only supports plain non-command text");
+  }
+}
+
+function containsDisallowedControlCharacter(text: string): boolean {
+  for (const char of text) {
+    const code = char.charCodeAt(0);
+    if ((code < 32 && code !== 9 && code !== 10 && code !== 13) || code === 127) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function extractPromptText(prompt: AgentPromptInput): string {

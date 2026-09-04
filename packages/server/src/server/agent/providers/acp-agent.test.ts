@@ -11,6 +11,7 @@ import {
   PermissionOption,
   PromptResponse,
   RequestPermissionRequest,
+  RequestPermissionResponse,
   SessionConfigOption,
   SessionUpdate,
 } from "@agentclientprotocol/sdk";
@@ -44,7 +45,7 @@ import {
 import { GenericACPAgentClient } from "./generic-acp-agent.js";
 import { parseKiroExtensionCommands } from "./kiro-acp-agent.js";
 import { transformPiModels } from "./pi/agent.js";
-import type { AgentStreamEvent } from "../agent-sdk-types.js";
+import type { AgentPromptInput, AgentStreamEvent } from "../agent-sdk-types.js";
 import type { AgentCapabilityFlags, AgentPersistenceHandle } from "../agent-sdk-types.js";
 import { createTestLogger } from "../../../test-utils/test-logger.js";
 import { buildStringCommandShellInvocation } from "../../../utils/string-command-shell.js";
@@ -91,6 +92,53 @@ interface ACPSessionInternals {
   configOptions: SessionConfigOption[];
   translateSessionUpdate(update: SessionUpdate): AgentStreamEvent[];
   acpMcpServers(): unknown[];
+}
+
+interface ACPConcurrentSteerInternals {
+  sessionId: string | null;
+  connection: Pick<ClientSideConnection, "prompt" | "cancel"> | null;
+  activeForegroundTurnId: string | null;
+  activeTurnSteering: "concurrent_prompt" | "none" | undefined;
+}
+
+const END_TURN_RESPONSE: PromptResponse = { stopReason: "end_turn" };
+
+function agentMessageUpdate(
+  messageId: string,
+  text: string,
+): Extract<SessionUpdate, { sessionUpdate: "agent_message_chunk" }> {
+  return {
+    sessionUpdate: "agent_message_chunk",
+    messageId,
+    content: { type: "text", text },
+  };
+}
+
+function userMessageUpdate(
+  messageId: string,
+  text: string,
+): Extract<SessionUpdate, { sessionUpdate: "user_message_chunk" }> {
+  return {
+    sessionUpdate: "user_message_chunk",
+    messageId,
+    content: { type: "text", text },
+  };
+}
+
+function requestPendingPermission(session: ACPAgentSession): Promise<RequestPermissionResponse> {
+  return session.requestPermission({
+    sessionId: "session-1",
+    toolCall: {
+      toolCallId: "tool-1",
+      title: "Run command",
+      kind: "execute",
+      status: "pending",
+    },
+    options: [
+      { optionId: "allow-once", name: "Allow", kind: "allow_once" },
+      { optionId: "reject-once", name: "Reject", kind: "reject_once" },
+    ],
+  });
 }
 
 interface ACPModelSelectionInternals {
@@ -147,6 +195,374 @@ function createSession(terminateProcess?: ProcessTerminator): ACPAgentSession {
     },
   );
 }
+
+describe("ACPAgentSession.steerActiveTurn", () => {
+  function primeConcurrentSteer(
+    session: ACPAgentSession,
+    overrides: Partial<ACPConcurrentSteerInternals> = {},
+  ): {
+    internals: ACPConcurrentSteerInternals;
+    prompt: ReturnType<typeof vi.fn>;
+    cancel: ReturnType<typeof vi.fn>;
+  } {
+    const prompt = vi.fn(
+      async (_input: Parameters<ClientSideConnection["prompt"]>[0]) => END_TURN_RESPONSE,
+    );
+    const cancel = vi.fn(async () => undefined);
+    const internals = asInternals<ACPConcurrentSteerInternals>(session);
+    internals.sessionId = "session-1";
+    internals.connection = { prompt, cancel };
+    internals.activeTurnSteering = "concurrent_prompt";
+    internals.activeForegroundTurnId = "turn-1";
+    Object.assign(internals, overrides);
+    return { internals, prompt, cancel };
+  }
+
+  test("leaves unsupported ACP sessions unavailable", async () => {
+    const session = createSession();
+    const { prompt } = primeConcurrentSteer(session, { activeTurnSteering: undefined });
+
+    await expect(
+      session.steerActiveTurn("redirect this", { expectedTurnId: "turn-1" }),
+    ).resolves.toEqual({
+      status: "unavailable",
+    });
+    expect(prompt).not.toHaveBeenCalled();
+  });
+
+  test("fails visibly when the foreground turn races after concurrent steering is configured", async () => {
+    const session = createSession();
+    const { prompt, cancel } = primeConcurrentSteer(session, { activeForegroundTurnId: "turn-2" });
+
+    await expect(
+      session.steerActiveTurn("redirect this", { expectedTurnId: "turn-1" }),
+    ).rejects.toThrow("foreground turn changed");
+    expect(prompt).not.toHaveBeenCalled();
+    expect(cancel).not.toHaveBeenCalled();
+  });
+
+  test.each([
+    ["connection", { connection: null }, "is not connected"],
+    ["session id", { sessionId: null }, "has no session id"],
+  ])(
+    "fails visibly when configured concurrent steering has no %s",
+    async (_label, overrides, error) => {
+      const session = createSession();
+      const { prompt, cancel } = primeConcurrentSteer(session, overrides);
+
+      await expect(
+        session.steerActiveTurn("redirect this", { expectedTurnId: "turn-1" }),
+      ).rejects.toThrow(error);
+      expect(prompt).not.toHaveBeenCalled();
+      expect(cancel).not.toHaveBeenCalled();
+    },
+  );
+
+  test("redirects plain text through a second ACP prompt without cancelling or replacing the foreground turn", async () => {
+    const session = createSession();
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+    const { internals, prompt, cancel } = primeConcurrentSteer(session);
+
+    await expect(
+      session.steerActiveTurn("redirect this", { expectedTurnId: "turn-1" }),
+    ).resolves.toEqual({ status: "accepted" });
+
+    expect(prompt).toHaveBeenCalledWith({
+      sessionId: "session-1",
+      messageId: expect.any(String),
+      prompt: [{ type: "text", text: "redirect this" }],
+    });
+    expect(cancel).not.toHaveBeenCalled();
+    expect(internals.activeForegroundTurnId).toBe("turn-1");
+    expect(events.filter((event) => event.type === "turn_started")).toEqual([]);
+  });
+
+  test("preserves foreground updates received while the concurrent prompt is pending", async () => {
+    const session = createSession();
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+    const { internals } = primeConcurrentSteer(session);
+    const prompt = vi.fn(async (_input: Parameters<ClientSideConnection["prompt"]>[0]) => {
+      await session.sessionUpdate({
+        sessionId: "session-1",
+        update: agentMessageUpdate("steer-response", "foreground output"),
+      });
+      return END_TURN_RESPONSE;
+    });
+    internals.connection = { prompt, cancel: vi.fn(async () => undefined) };
+
+    await expect(
+      session.steerActiveTurn("redirect this", { expectedTurnId: "turn-1" }),
+    ).resolves.toEqual({
+      status: "accepted",
+    });
+
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "timeline",
+        item: expect.objectContaining({ text: "foreground output" }),
+      }),
+    );
+    expect(events.filter((event) => event.type === "turn_completed")).toEqual([]);
+    expect(internals.activeForegroundTurnId).toBe("turn-1");
+  });
+
+  const unsupportedSteerInputs: Array<[string, AgentPromptInput]> = [
+    ["an image", [{ type: "image", data: "AA==", mimeType: "image/png" }]],
+    [
+      "a resource",
+      [
+        {
+          type: "review",
+          mimeType: "application/paseo-review",
+          cwd: "/tmp/paseo-acp-test",
+          mode: "uncommitted",
+          comments: [],
+        },
+      ],
+    ],
+    ["a slash command", "/compact"],
+    ["a control input", "\u0003"],
+  ];
+
+  test.each(unsupportedSteerInputs)("fails visibly before sending %s", async (_label, input) => {
+    const session = createSession();
+    const { prompt, cancel } = primeConcurrentSteer(session);
+
+    await expect(session.steerActiveTurn(input, { expectedTurnId: "turn-1" })).rejects.toThrow(
+      "plain non-command text",
+    );
+    expect(prompt).not.toHaveBeenCalled();
+    expect(cancel).not.toHaveBeenCalled();
+  });
+
+  test("accepts dispatch when a concurrent prompt fails after sending", async () => {
+    const session = createSession();
+    const { internals, cancel } = primeConcurrentSteer(session);
+    const prompt = vi.fn(async (_input: Parameters<ClientSideConnection["prompt"]>[0]) => {
+      throw new Error("redirect failed");
+    });
+    internals.connection = { prompt, cancel };
+
+    await expect(
+      session.steerActiveTurn("redirect this", { expectedTurnId: "turn-1" }),
+    ).resolves.toEqual({
+      status: "accepted",
+    });
+    expect(prompt).toHaveBeenCalledTimes(1);
+    expect(cancel).not.toHaveBeenCalled();
+    expect(internals.activeForegroundTurnId).toBe("turn-1");
+  });
+
+  test("keeps the foreground turn open when its response arrives before an admitted steer settles", async () => {
+    const session = createSession();
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+    const { internals } = primeConcurrentSteer(session);
+    let resolveSteer!: (response: PromptResponse) => void;
+    internals.connection = {
+      cancel: vi.fn(async () => undefined),
+      prompt: vi.fn(
+        () =>
+          new Promise<PromptResponse>((resolve) => {
+            resolveSteer = resolve;
+          }),
+      ),
+    };
+
+    const steer = session.steerActiveTurn("redirect this", { expectedTurnId: "turn-1" });
+    asInternals<{ handlePromptResponse(response: PromptResponse, turnId: string): void }>(
+      session,
+    ).handlePromptResponse(END_TURN_RESPONSE, "turn-1");
+    expect(events.filter((event) => event.type === "turn_completed")).toEqual([]);
+    expect(internals.activeForegroundTurnId).toBe("turn-1");
+
+    resolveSteer(END_TURN_RESPONSE);
+    await expect(steer).resolves.toEqual({ status: "accepted" });
+    expect(events.filter((event) => event.type === "turn_completed")).toHaveLength(1);
+  });
+
+  test("ignores a stale steer completion after interrupt and a new foreground turn", async () => {
+    const session = createSession();
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+    const { internals } = primeConcurrentSteer(session);
+    let resolveStaleSteer!: (response: PromptResponse) => void;
+    let resolveTurnBSteer!: (response: PromptResponse) => void;
+    const prompt = vi
+      .fn<(input: Parameters<ClientSideConnection["prompt"]>[0]) => Promise<PromptResponse>>()
+      .mockImplementationOnce(
+        () =>
+          new Promise<PromptResponse>((resolve) => {
+            resolveStaleSteer = resolve;
+          }),
+      )
+      .mockImplementationOnce(() => new Promise<PromptResponse>(() => undefined))
+      .mockImplementationOnce(
+        () =>
+          new Promise<PromptResponse>((resolve) => {
+            resolveTurnBSteer = resolve;
+          }),
+      );
+    const cancel = vi.fn(
+      async (_input: Parameters<ClientSideConnection["cancel"]>[0]) => undefined,
+    );
+    internals.connection = { prompt, cancel };
+
+    await session.steerActiveTurn("redirect turn A", {
+      expectedTurnId: "turn-1",
+      clientMessageId: "turn-a-steer",
+    });
+    await session.interrupt();
+    asInternals<{ handlePromptResponse(response: PromptResponse, turnId: string): void }>(
+      session,
+    ).handlePromptResponse({ stopReason: "cancelled" }, "turn-1");
+
+    const turnB = await session.startTurn("turn B", { clientMessageId: "turn-b-message" });
+    await session.steerActiveTurn("redirect turn B", {
+      expectedTurnId: turnB.turnId,
+      clientMessageId: "turn-b-steer",
+    });
+    const lifecycle = asInternals<{
+      activeForegroundTurnId: string | null;
+      concurrentSteerAdmissionCount: number;
+      deferredForegroundSettlement: AgentStreamEvent | undefined;
+      handlePromptResponse(response: PromptResponse, turnId: string): void;
+    }>(session);
+    lifecycle.handlePromptResponse(END_TURN_RESPONSE, turnB.turnId);
+
+    resolveStaleSteer(END_TURN_RESPONSE);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(lifecycle.activeForegroundTurnId).toBe(turnB.turnId);
+    expect(lifecycle.concurrentSteerAdmissionCount).toBe(1);
+    expect(lifecycle.deferredForegroundSettlement).toMatchObject({ turnId: turnB.turnId });
+    expect(events.filter((event) => event.type === "turn_completed")).toEqual([]);
+
+    resolveTurnBSteer(END_TURN_RESPONSE);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(events.filter((event) => event.type === "turn_canceled")).toHaveLength(1);
+    expect(events.filter((event) => event.type === "turn_completed")).toHaveLength(1);
+    expect(lifecycle.activeForegroundTurnId).toBeNull();
+  });
+
+  test("ignores a stale cancelled prompt response before synthesizing tool cancellation", () => {
+    const session = createSession();
+    const internals = asInternals<{
+      activeForegroundTurnId: string | null;
+      synthesizeCanceledToolCalls(): void;
+      handlePromptResponse(response: PromptResponse, turnId: string): void;
+    }>(session);
+    internals.activeForegroundTurnId = "turn-b";
+    const synthesize = vi.spyOn(internals, "synthesizeCanceledToolCalls");
+
+    internals.handlePromptResponse({ stopReason: "cancelled" }, "turn-a");
+
+    expect(synthesize).not.toHaveBeenCalled();
+  });
+
+  test("uses the steer client message id and suppresses only its exact user echo", async () => {
+    const session = createSession();
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+    const { internals, prompt } = primeConcurrentSteer(session);
+
+    await session.steerActiveTurn("redirect this", {
+      expectedTurnId: "turn-1",
+      clientMessageId: "steer-client-id",
+    });
+    await session.sessionUpdate({
+      sessionId: "session-1",
+      update: userMessageUpdate("steer-client-id", "redirect this"),
+    });
+    await session.sessionUpdate({
+      sessionId: "session-1",
+      update: userMessageUpdate("other-user-id", "other user input"),
+    });
+    await session.sessionUpdate({
+      sessionId: "session-1",
+      update: agentMessageUpdate("assistant-1", "flush"),
+    });
+
+    expect(prompt).toHaveBeenCalledWith(expect.objectContaining({ messageId: "steer-client-id" }));
+    expect(events).not.toContainEqual(
+      expect.objectContaining({ item: expect.objectContaining({ text: "redirect this" }) }),
+    );
+    expect(events).toContainEqual(
+      expect.objectContaining({ item: expect.objectContaining({ text: "other user input" }) }),
+    );
+    expect(internals.activeForegroundTurnId).toBe("turn-1");
+  });
+
+  test("denies pending permission before sending a concurrent steer", async () => {
+    const session = createSession();
+    const { prompt, cancel } = primeConcurrentSteer(session);
+    const order: string[] = [];
+    prompt.mockImplementation(async (_input) => {
+      order.push("prompt");
+      return END_TURN_RESPONSE;
+    });
+    const originalRespondToPermission = session.respondToPermission.bind(session);
+    vi.spyOn(session, "respondToPermission").mockImplementation(async (...args) => {
+      order.push("deny");
+      await originalRespondToPermission(...args);
+    });
+
+    const permission = requestPendingPermission(session);
+    await Promise.resolve();
+    await session.steerActiveTurn("redirect this", {
+      expectedTurnId: "turn-1",
+      clearPendingPermissions: true,
+    });
+
+    expect(order).toEqual(["deny", "prompt"]);
+    expect(session.getPendingPermissions()).toEqual([]);
+    expect(cancel).not.toHaveBeenCalled();
+    await expect(permission).resolves.toEqual({
+      outcome: { outcome: "selected", optionId: "reject-once" },
+    });
+  });
+
+  test("does not send when clearing a pending permission fails", async () => {
+    const session = createSession();
+    const { prompt, cancel } = primeConcurrentSteer(session);
+    vi.spyOn(session, "respondToPermission").mockRejectedValue(new Error("deny failed"));
+
+    void requestPendingPermission(session);
+    await Promise.resolve();
+    await expect(
+      session.steerActiveTurn("redirect this", {
+        expectedTurnId: "turn-1",
+        clearPendingPermissions: true,
+      }),
+    ).rejects.toThrow("deny failed");
+
+    expect(prompt).not.toHaveBeenCalled();
+    expect(cancel).not.toHaveBeenCalled();
+  });
+
+  test("generates a steering message id when the caller does not provide one", async () => {
+    const session = createSession();
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+    const { prompt } = primeConcurrentSteer(session);
+
+    await session.steerActiveTurn("redirect this", { expectedTurnId: "turn-1" });
+    const messageId = prompt.mock.calls[0]?.[0].messageId;
+    expect(messageId).toEqual(expect.any(String));
+    await session.sessionUpdate({
+      sessionId: "session-1",
+      update: userMessageUpdate(messageId, "redirect this"),
+    });
+
+    expect(events).not.toContainEqual(
+      expect.objectContaining({ item: expect.objectContaining({ text: "redirect this" }) }),
+    );
+  });
+});
 
 // Typed substitute for the real tree-kill terminator. Records which child
 // processes it was asked to terminate, so tests assert on observable state

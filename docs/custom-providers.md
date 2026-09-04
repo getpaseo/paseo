@@ -585,12 +585,19 @@ Ref: [Gemini CLI ACP mode docs](https://github.com/google-gemini/gemini-cli/blob
         "extends": "acp",
         "label": "Hermes",
         "description": "Nous Research self-improving AI agent",
-        "command": ["hermes", "acp"]
+        "command": ["hermes", "acp"],
+        "params": {
+          "activeTurnSteering": "concurrent_prompt"
+        }
       }
     }
   }
 }
 ```
+
+`params.activeTurnSteering: "concurrent_prompt"` is for Hermes and agents known to redirect a
+second prompt into the active turn. It is not a generic ACP capability. Set `"none"` to disable
+it explicitly. Existing canonical Hermes ACP entries default to concurrent steering.
 
 Ref: [Hermes ACP docs](https://hermes-agent.nousresearch.com/docs/user-guide/features/acp)
 

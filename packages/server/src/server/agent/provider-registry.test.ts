@@ -716,6 +716,63 @@ test("new provider extending acp uses GenericACPAgentClient", () => {
   ]);
 });
 
+test("defaults a persisted Hermes ACP override to concurrent prompt steering", () => {
+  const registry = buildProviderRegistry(logger, {
+    providerOverrides: {
+      hermes: {
+        extends: "acp",
+        label: "Hermes",
+        command: ["hermes", "acp"],
+      },
+    },
+  });
+
+  registry.hermes.createClient(logger);
+
+  expect(mockState.constructorArgs.genericAcp.at(-1)?.providerParams).toEqual({
+    activeTurnSteering: "concurrent_prompt",
+  });
+});
+
+test.each([
+  ["none", { activeTurnSteering: "none" }],
+  ["concurrent prompt", { activeTurnSteering: "concurrent_prompt" }],
+])("preserves an explicit Hermes ACP steering setting: %s", (_label, params) => {
+  const registry = buildProviderRegistry(logger, {
+    providerOverrides: {
+      hermes: {
+        extends: "acp",
+        label: "Hermes",
+        command: ["hermes", "acp"],
+        params,
+      },
+    },
+  });
+
+  registry.hermes.createClient(logger);
+
+  expect(mockState.constructorArgs.genericAcp.at(-1)?.providerParams).toEqual(params);
+});
+
+test.each([["a lookalike provider id", "hermes-preview", ["hermes", "acp"]]])(
+  "does not enable concurrent steering for %s",
+  (_label, providerId, command) => {
+    const registry = buildProviderRegistry(logger, {
+      providerOverrides: {
+        [providerId]: {
+          extends: "acp",
+          label: providerId,
+          command,
+        },
+      },
+    });
+
+    registry[providerId].createClient(logger);
+
+    expect(mockState.constructorArgs.genericAcp.at(-1)?.providerParams).toBeUndefined();
+  },
+);
+
 test("Hub E2E ACP provider applies exact grants for its injected MCP server", () => {
   const registry = buildProviderRegistry(logger, {
     providerOverrides: {

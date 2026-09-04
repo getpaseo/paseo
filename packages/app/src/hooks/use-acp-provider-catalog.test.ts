@@ -95,4 +95,10 @@ describe("ACP provider catalog", () => {
       supportsMcpServers: false,
     });
   });
+
+  it("preserves Hermes concurrent steering in the daemon config patch", () => {
+    expect(buildAcpProviderConfigPatch(findProvider("hermes")).providers?.hermes?.params).toEqual({
+      activeTurnSteering: "concurrent_prompt",
+    });
+  });
 });
