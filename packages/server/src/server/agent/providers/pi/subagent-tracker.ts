@@ -28,6 +28,12 @@ interface PiSubagentState {
 
 type PiSubagentStatus = "running" | "completed" | "failed" | "canceled";
 
+interface PiInFlightEnd {
+  state: PiSubagentState;
+  toolCallId: string;
+  canceled: boolean;
+}
+
 /**
  * Tracks `pi-subagents` tool executions and translates them into provider
  * subagent stream events. The `subagent` tool is an extension tool, so Pi
@@ -44,6 +50,8 @@ export class PiSubagentTracker {
   /** Bumped by cancelAll(); tracked tool calls from older generations are stale. */
   private generation = 0;
   private readonly generations = new Map<string, number>();
+  /** Finalizations awaiting their child-transcript reads; cancelable mid-flight. */
+  private readonly inFlightEnds = new Map<string, PiInFlightEnd>();
 
   constructor(private readonly logger: Logger) {}
 
@@ -96,9 +104,10 @@ export class PiSubagentTracker {
    * tool_execution_end for a `subagent` call: replay child transcripts into
    * the subagent timeline and finalize the descriptor status.
    *
-   * Returns null when the tracked call is stale (canceled by a newer
-   * generation or superseded), in which case the caller must not emit events —
-   * an interrupted run stays canceled instead of resurrecting as completed.
+   * Returns null when the tracked call is stale — canceled by a newer
+   * generation, superseded, or canceled mid-flight while reading the child
+   * transcript — in which case the caller must not emit events and an
+   * interrupted run stays canceled instead of resurrecting as completed.
    */
   async end(
     toolCallId: string,
@@ -118,6 +127,34 @@ export class PiSubagentTracker {
 
     const run = readPiSubagentRunPayload(result);
     const descriptorId = piSubagentDescriptorId(toolCallId, run);
+    // Register before the first await so cancelAll() can invalidate this
+    // finalization while the child transcript is being read.
+    const inFlight: PiInFlightEnd = { state, toolCallId, canceled: false };
+    this.inFlightEnds.set(toolCallId, inFlight);
+    try {
+      return await this.streamFinalEvents(
+        toolCallId,
+        descriptorId,
+        state,
+        run,
+        result,
+        isError,
+        inFlight,
+      );
+    } finally {
+      this.inFlightEnds.delete(toolCallId);
+    }
+  }
+
+  private async streamFinalEvents(
+    toolCallId: string,
+    descriptorId: string,
+    state: PiSubagentState,
+    run: PiSubagentRunPayload | null,
+    result: unknown,
+    isError: boolean,
+    inFlight: PiInFlightEnd,
+  ): Promise<AgentStreamEvent[] | null> {
     const events: AgentStreamEvent[] = [];
     if (descriptorId !== toolCallId) {
       // The store keys descriptors by id and has no rename, so close the
@@ -139,6 +176,9 @@ export class PiSubagentTracker {
       }
       try {
         for await (const { item } of streamPiChildSessionItems(sessionFile)) {
+          if (inFlight.canceled) {
+            return null;
+          }
           if (rows >= MAX_SUBAGENT_TIMELINE_ROWS) {
             break;
           }
@@ -148,6 +188,9 @@ export class PiSubagentTracker {
       } catch (error) {
         this.logger.debug({ err: error, sessionFile }, "Failed to read Pi subagent child session");
       }
+    }
+    if (inFlight.canceled) {
+      return null;
     }
     if (rows === 0) {
       // No child transcript on disk (launch failure, async run still going, or
@@ -166,8 +209,9 @@ export class PiSubagentTracker {
 
   /**
    * Mark every running subagent canceled (turn interrupted or session
-   * closing). In-flight `end()` continuations for this generation are dropped
-   * by the generation check so a canceled run cannot reappear as completed.
+   * closing). In-flight `end()` continuations are flagged canceled so their
+   * late results are dropped, and the descriptors the store still shows as
+   * running get a canceled upsert keyed by the id the store knows.
    */
   cancelAll(): AgentStreamEvent[] {
     const events: AgentStreamEvent[] = [];
@@ -177,8 +221,15 @@ export class PiSubagentTracker {
         state.reportedStatus = "canceled";
       }
     }
+    for (const inFlight of this.inFlightEnds.values()) {
+      inFlight.canceled = true;
+      events.push(
+        this.upsertFor(inFlight.toolCallId, "canceled", inFlight.state, inFlight.toolCallId),
+      );
+    }
     this.states.clear();
     this.generations.clear();
+    this.inFlightEnds.clear();
     this.generation += 1;
     return events;
   }

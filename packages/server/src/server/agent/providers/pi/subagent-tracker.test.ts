@@ -288,6 +288,28 @@ describe("PiSubagentTracker", () => {
     expect(result).toBeNull();
   });
 
+  test("cancelAll during transcript read drops the late finalization", async () => {
+    tempDir = mkdtempSync(join(tmpdir(), "paseo-pi-subagent-"));
+    const sessionFile = join(tempDir, "session.jsonl");
+    writeFileSync(sessionFile, childSessionLines().join("\n"), "utf8");
+
+    const tracker = new PiSubagentTracker(noopLogger);
+    tracker.start(SUBAGENT_TOOL_CALL_ID, subagentArgs());
+    const endPromise = tracker.end(
+      SUBAGENT_TOOL_CALL_ID,
+      runDetails([{ agent: "explore", exitCode: 0, sessionFile }]),
+      false,
+    );
+    // Cancel while end() is awaiting the child transcript read.
+    const cancelEvents = subagentEvents(tracker.cancelAll());
+    expect(cancelEvents).toHaveLength(1);
+    expect(expectUpsert(cancelEvents[0]!).status).toBe("canceled");
+    expect(expectUpsert(cancelEvents[0]!).id).toBe(SUBAGENT_TOOL_CALL_ID);
+
+    // The in-flight end must not resurrect the run as completed.
+    expect(await endPromise).toBeNull();
+  });
+
   test("end ignores unknown tool calls", async () => {
     const tracker = new PiSubagentTracker(noopLogger);
     expect(await tracker.end(SUBAGENT_TOOL_CALL_ID, runDetails([]), false)).toBeNull();
