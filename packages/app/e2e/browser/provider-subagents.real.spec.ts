@@ -12,6 +12,7 @@ import {
 import {
   expectNestedProviderSubagentOwnership,
   launchNestedProviderSubagentOwnershipScenario,
+  reopenNestedProviderSession,
 } from "../support/helpers/provider-subagents";
 import { openSubagentsTrack } from "../support/helpers/subagents";
 
@@ -163,7 +164,9 @@ test.describe("real Claude nested subagent ownership", () => {
 
     try {
       handle = await launchNestedProviderSubagentOwnershipScenario(page, cwd);
-      await expectNestedProviderSubagentOwnership(page, testInfo);
+      await expectNestedProviderSubagentOwnership(page, testInfo, "live");
+      await reopenNestedProviderSession(handle);
+      await expectNestedProviderSubagentOwnership(page, testInfo, "reopened");
     } finally {
       await cleanupRewindFlow({ handle, cwd });
     }

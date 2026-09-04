@@ -3304,6 +3304,70 @@ describe("Codex app-server provider", () => {
     });
   });
 
+  test("keeps a nested child under its spawning parent after a root interaction", () => {
+    const session = createSession();
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    asInternals(session).handleNotification("item/completed", {
+      threadId: "test-thread",
+      item: {
+        type: "subAgentActivity",
+        id: "spawn-child-root",
+        kind: "started",
+        agentThreadId: "child-thread-root",
+        agentPath: "/root/child",
+      },
+    });
+    asInternals(session).handleNotification("item/completed", {
+      threadId: "child-thread-root",
+      item: {
+        type: "subAgentActivity",
+        id: "spawn-grandchild",
+        kind: "started",
+        agentThreadId: "grandchild-thread",
+        agentPath: "/root/child/grandchild",
+      },
+    });
+    asInternals(session).handleNotification("item/completed", {
+      threadId: "test-thread",
+      item: {
+        type: "collabAgentToolCall",
+        id: "wait-for-grandchild",
+        tool: "wait",
+        status: "completed",
+        receiverThreadIds: ["grandchild-thread"],
+        agentsStates: {
+          "grandchild-thread": { status: "running", message: null },
+        },
+      },
+    });
+    asInternals(session).handleNotification("item/agentMessage/delta", {
+      threadId: "grandchild-thread",
+      itemId: "grandchild-after-wait",
+      delta: "Still nested.",
+    });
+
+    const grandchildUpserts = events.flatMap((event) =>
+      event.type === "provider_subagent" &&
+      event.event.type === "upsert" &&
+      event.event.id === "grandchild-thread"
+        ? [event.event]
+        : [],
+    );
+    expect(grandchildUpserts.map((event) => event.parentSubagentId)).toEqual([
+      "child-thread-root",
+      "child-thread-root",
+    ]);
+    expect(events.at(-1)).toMatchObject({
+      type: "timeline",
+      item: {
+        callId: "spawn-child-root",
+        detail: { type: "sub_agent", log: expect.stringContaining("Still nested.") },
+      },
+    });
+  });
+
   test("never treats an unmapped foreign terminal as the root terminal", () => {
     const session = createSession();
     const events: AgentStreamEvent[] = [];
@@ -4103,34 +4167,44 @@ describe("Codex app-server provider", () => {
 
   test("restores nested MultiAgentV2 ownership from persisted child threads", async () => {
     const session = createSession();
-    const childrenByThreadId = new Map([
-      ["test-thread", { id: "persisted-child", path: "/root/persisted-child" }],
-      ["persisted-child", { id: "persisted-grandchild", path: "/root/persisted-child/grandchild" }],
-    ]);
     session.client = {
       request: vi.fn(async (method: string, params: unknown) => {
         if (method !== "thread/read") {
           return {};
         }
         const threadId = (params as { threadId?: string }).threadId;
-        const child = threadId ? childrenByThreadId.get(threadId) : undefined;
+        const itemsByThreadId = {
+          "test-thread": [
+            {
+              type: "subAgentActivity",
+              id: "spawn-persisted-child",
+              kind: "started",
+              agentThreadId: "persisted-child",
+              agentPath: "/root/persisted-child",
+            },
+            {
+              type: "collabAgentToolCall",
+              id: "root-wait-grandchild",
+              tool: "wait",
+              status: "completed",
+              receiverThreadIds: ["persisted-grandchild"],
+              agentsStates: { "persisted-grandchild": { status: "completed" } },
+            },
+          ],
+          "persisted-child": [
+            {
+              type: "subAgentActivity",
+              id: "spawn-persisted-grandchild",
+              kind: "started",
+              agentThreadId: "persisted-grandchild",
+              agentPath: "/root/persisted-child/grandchild",
+            },
+          ],
+        } as const;
+        const items = threadId ? itemsByThreadId[threadId as keyof typeof itemsByThreadId] : [];
         return {
           thread: {
-            turns: child
-              ? [
-                  {
-                    items: [
-                      {
-                        type: "subAgentActivity",
-                        id: `spawn-${child.id}`,
-                        kind: "started",
-                        agentThreadId: child.id,
-                        agentPath: child.path,
-                      },
-                    ],
-                  },
-                ]
-              : [],
+            turns: items ? [{ items }] : [],
           },
         };
       }),

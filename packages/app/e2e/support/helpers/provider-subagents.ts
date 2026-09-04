@@ -9,7 +9,7 @@ const NESTED_OWNERSHIP_PROMPT =
   "Claude Code's native Agent tool exactly once. Name that agent nested_owner and give it " +
   "this complete task: You are NESTED_OWNER. Use Bash exactly once to run `sleep 2; printf " +
   "'NESTED_BACKGROUND_SENTINEL\\n'` with run_in_background true. Wait for the background " +
-  "command's completion notification, then reply exactly NESTED_DONE. Wait for nested_owner " +
+  "command's completion notification. Use TaskOutput with block true to wait for the Bash task and verify exit code 0 and the sentinel output before replying exactly NESTED_DONE. Do not finish while it is running. Wait for nested_owner " +
   "to finish, then reply exactly DIRECT_DONE. Wait for direct_owner to finish, then reply " +
   "exactly ROOT_DONE.";
 
@@ -25,9 +25,9 @@ export async function launchNestedProviderSubagentOwnershipScenario(
     providerConfig: { model: "claude-sonnet-5" },
   });
   await sendMessage(handle, NESTED_OWNERSHIP_PROMPT);
-  await expect(
-    page.getByTestId("assistant-message").filter({ hasText: "ROOT_DONE" }).last(),
-  ).toBeVisible({ timeout: 120_000 });
+  await expect(page.getByText("ROOT_DONE", { exact: true }).last()).toBeVisible({
+    timeout: 120_000,
+  });
   return handle;
 }
 
@@ -37,15 +37,15 @@ async function attachScreenshot(page: Page, testInfo: TestInfo, name: string): P
   await testInfo.attach(name, { path, contentType: "image/png" });
 }
 
-async function expectOnlySubagent(page: Page, label: string): Promise<Locator> {
+async function expectOnlySubagent(page: Page, label: RegExp): Promise<Locator> {
   const rows = page.locator('[data-testid^="subagents-track-row-"]');
   await expect(rows).toHaveCount(1);
-  const row = page.getByRole("button", { name: label, exact: true });
+  const row = page.getByTestId("subagents-track-header-panel").getByRole("button", { name: label });
   await expect(row).toBeVisible();
   return row;
 }
 
-async function selectOnlyRootSubagent(page: Page, label: string): Promise<void> {
+async function selectOnlyRootSubagent(page: Page, label: RegExp): Promise<void> {
   await openSubagentsTrack(page);
   const row = await expectOnlySubagent(page, label);
   await row.click();
@@ -59,19 +59,36 @@ async function openOwnedSubagents(page: Page, ownerPanel: Locator): Promise<void
 export async function expectNestedProviderSubagentOwnership(
   page: Page,
   testInfo: TestInfo,
+  phase: string,
 ): Promise<void> {
-  await expect(page.getByText("Task notification", { exact: true })).toHaveCount(0);
-  await selectOnlyRootSubagent(page, "direct_owner");
-  const directPanel = page.getByTestId("provider-subagent-panel");
+  await expect(
+    page.getByText("Task notification", { exact: true }).filter({ visible: true }),
+  ).toHaveCount(0);
+  await selectOnlyRootSubagent(page, /^direct_owner\b/);
+  const directPanel = page.getByTestId("provider-subagent-panel").filter({ visible: true });
   await expect(directPanel).toBeVisible();
 
   await openOwnedSubagents(page, directPanel);
-  const nestedRow = await expectOnlySubagent(page, "nested_owner");
-  await attachScreenshot(page, testInfo, "nested-ownership-after-tree");
+  const nestedRow = await expectOnlySubagent(page, /^nested_owner\b/);
+  await attachScreenshot(page, testInfo, `nested-ownership-${phase}-tree`);
   await nestedRow.click();
 
   const nestedPanel = page.locator('[data-testid="provider-subagent-panel"]:visible');
-  await expect(nestedPanel.getByText("Task notification", { exact: true })).toBeVisible();
+  await expect(
+    nestedPanel
+      .getByRole("button", {
+        name: /^Task notification Background command .*completed \(exit code 0\)/,
+      })
+      .first(),
+  ).toBeVisible();
   await expect(nestedPanel).toContainText("NESTED_BACKGROUND_SENTINEL");
-  await attachScreenshot(page, testInfo, "nested-ownership-after-timeline");
+  await expect(nestedPanel).toContainText("NESTED_DONE");
+  await attachScreenshot(page, testInfo, `nested-ownership-${phase}-timeline`);
+}
+
+export async function reopenNestedProviderSession(handle: AgentHandle): Promise<void> {
+  await handle.client.refreshAgent(handle.agentId);
+  await handle.page.reload();
+  await handle.page.getByTestId(`workspace-tab-agent_${handle.agentId}`).first().click();
+  await expect(handle.page.getByText("ROOT_DONE", { exact: true }).last()).toBeVisible();
 }

@@ -318,12 +318,28 @@ function observeSubagent(
   return observations;
 }
 
+function recordReplayToolOwners(
+  owners: Map<string, string>,
+  entries: readonly ClaudeReplayEntry[],
+  subagentId: string,
+): void {
+  for (const entry of entries) {
+    if (entry.type !== "assistant" || !Array.isArray(entry.message?.content)) continue;
+    for (const block of entry.message.content) {
+      if (block?.type === "tool_use" && typeof block.id === "string") {
+        owners.set(block.id, subagentId);
+      }
+    }
+  }
+}
+
 export function observeReplaySubagents(input: {
   subagents: readonly ClaudeReplaySubagentInput[];
   parent: ClaudeReplayParentFacts;
   convertEntry: (entry: ClaudeReplayEntry) => AgentTimelineItem[];
-}): SubagentObservation[] {
+}): { observations: SubagentObservation[]; toolOwners: ReadonlyMap<string, string> } {
   const observations: SubagentObservation[] = [];
+  const toolOwners = new Map<string, string>();
   const unresolved = [...input.subagents].sort(
     (left, right) => (left.meta?.spawnDepth ?? 1) - (right.meta?.spawnDepth ?? 1),
   );
@@ -342,13 +358,15 @@ export function observeReplaySubagents(input: {
       if (!resolved) continue;
       const { ownerId, parent, link } = resolved;
 
+      // Only proven descendants may own notifications; ambient sidecars cannot claim them.
+      recordReplayToolOwners(toolOwners, subagent.entries, link.id);
       observations.push(...observeSubagent(subagent, parent, input.convertEntry, ownerId));
       if (subagent.parentFacts) resolvedParents.set(link.id, subagent.parentFacts);
       unresolved.splice(index, 1);
       madeProgress = true;
     }
   }
-  return observations;
+  return { observations, toolOwners };
 }
 
 function resolveReplayOwner(
