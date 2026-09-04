@@ -1,7 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { setImmediate as waitForImmediate } from "node:timers/promises";
 
-import type { PaseoToolCatalog } from "../../tools/types.js";
 import type { OmpNoTurnScheduler, OmpProviderIdleScheduler } from "./agent.js";
 import type { OmpUsagePollScheduler } from "./usage-poller.js";
 import { resolveOmpProviderParams } from "./provider-config.js";
@@ -101,27 +100,10 @@ class ManualUsagePollScheduler implements OmpUsagePollScheduler {
   }
 }
 
-function createToolCatalog(): PaseoToolCatalog {
-  return {
-    tools: new Map([
-      [
-        "create_agent",
-        {
-          name: "create_agent",
-          description: "Create a Paseo agent.",
-          handler: async () => ({ content: [] }),
-        },
-      ],
-    ]),
-    getTool: () => undefined,
-    executeTool: async () => ({ content: [] }),
-  };
-}
-
 describe("OMP agent client and session", () => {
-  test("owns launch configuration and registers native host tools", async () => {
+  test("owns launch configuration and declares native host-tool support", async () => {
     const omp = new OmpHarness();
-    await omp.start({ modeId: "ask" }, createToolCatalog());
+    await omp.start({ modeId: "ask" });
 
     expect(omp.launchConfiguration()).toEqual({
       cwd: "/tmp/paseo-omp-agent-test",
@@ -129,9 +111,7 @@ describe("OMP agent client and session", () => {
       modeId: "ask",
       argv: ["omp", "--mode", "rpc-ui", "--approval-mode", "always-ask"],
     });
-    expect(omp.registeredHostTools()).toEqual([
-      [expect.objectContaining({ name: "create_agent" })],
-    ]);
+    expect(omp.registeredHostTools()).toEqual([]);
     expect(omp.capabilities()).toMatchObject({
       supportsMcpServers: false,
       supportsNativePaseoTools: true,
@@ -159,7 +139,7 @@ describe("OMP agent client and session", () => {
 
   test("passes --thinking when a thinking option is provided", async () => {
     const omp = new OmpHarness();
-    await omp.start({ modeId: "ask", thinkingOptionId: "xhigh" }, createToolCatalog());
+    await omp.start({ modeId: "ask", thinkingOptionId: "xhigh" });
 
     expect(omp.launchConfiguration().argv).toEqual([
       "omp",

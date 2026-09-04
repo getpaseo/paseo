@@ -21,6 +21,8 @@ import type {
   AgentSession,
   AgentStreamEvent,
 } from "./agent-sdk-types.js";
+import { registerNativeProvider } from "./providers/native/provider.js";
+import { ProviderRuntime } from "./provider-connection-runtime.js";
 
 interface CapturedLogger {
   logger: Logger;
@@ -113,13 +115,13 @@ function createFinishNotificationScenario(
     steerAttemptCount += 1;
     return { status: "inactive" };
   });
-  Reflect.set(agentManager, "streamAgent", (_agentId: string, prompt: string) => {
+  Reflect.set(agentManager, "startAgentTurn", async (_agentId: string, prompt: string) => {
     parentPrompted = true;
     parentPrompts.push(prompt);
     resolveParentPrompt?.(prompt);
-    return (async function* noop() {})();
+    return { turnId: "parent-turn" };
   });
-  Reflect.set(agentManager, "replaceAgentRun", async (_agentId: string, prompt: string) => {
+  Reflect.set(agentManager, "replaceAgentTurn", async (_agentId: string, prompt: string) => {
     resolveParentPrompt?.(prompt);
     throw options?.parentPromptError;
   });
@@ -673,8 +675,14 @@ async function createRunStartScenario(startDelayMs: number | null): Promise<{
 }> {
   const workdir = mkdtempSync(join(tmpdir(), "agent-run-start-budget-"));
   const client = new SlowStartAgentClient(startDelayMs);
+  const registration = registerNativeProvider({
+    id: "codex",
+    label: "Codex",
+    createClient: () => client,
+  });
   const agentManager = new AgentManager({
-    clients: { codex: client },
+    providers: { codex: new ProviderRuntime(registration) },
+    providerDefinitions: { codex: { enabled: true } },
     logger: createTestLogger(),
   });
   const snapshot = await agentManager.createAgent({ provider: "codex", cwd: workdir }, undefined, {

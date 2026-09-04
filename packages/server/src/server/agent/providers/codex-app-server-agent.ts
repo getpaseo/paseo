@@ -103,6 +103,7 @@ import {
   MODE_APPLIES_NEXT_TURN_NOTICE,
   THINKING_APPLIES_NEXT_TURN_NOTICE,
 } from "../provider-notices.js";
+import { validateProviderOptions } from "../provider-options.js";
 import type { WorkspaceGitService } from "../../workspace-git-service.js";
 import {
   applyCodexToolPolicy,
@@ -210,10 +211,14 @@ function formatOutOfBandStatusMessage(text: string): string {
 }
 
 const CODEX_APP_SERVER_CAPABILITIES: AgentCapabilityFlags = {
+  supportsImages: true,
+  supportsOutputSchema: true,
+  supportsSubsessions: true,
   supportsStreaming: true,
   supportsSessionPersistence: true,
   supportsSessionListing: true,
   supportsDynamicModes: false,
+  supportsSessionConfigure: true,
   supportsMcpServers: true,
   supportsReasoningStream: true,
   supportsToolInvocations: true,
@@ -3391,7 +3396,11 @@ export class CodexAppServerAgentSession implements AgentSession {
     }
     this.hasWorkflowModeOverride = config.modeId !== undefined;
     this.currentMode = config.modeId ?? DEFAULT_CODEX_MODE_ID;
-    this.providerOptions = CodexProviderOptionsSchema.parse(config.providerOptions ?? {});
+    this.providerOptions = validateProviderOptions(
+      config.provider,
+      CodexProviderOptionsSchema,
+      config.providerOptions ?? {},
+    );
     this.config = config;
     this.config.thinkingOptionId = normalizeCodexThinkingOptionId(this.config.thinkingOptionId);
     if (this.config.featureValues?.fast_mode && codexModelSupportsFastMode(this.config.model)) {

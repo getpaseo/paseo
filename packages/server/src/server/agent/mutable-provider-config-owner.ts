@@ -1,4 +1,5 @@
 import equal from "fast-deep-equal";
+import type { ProviderRegistration } from "@getpaseo/plugin/provider";
 
 import type { DaemonConfigStore } from "../daemon-config-store.js";
 import type {
@@ -6,10 +7,16 @@ import type {
   ProviderSnapshotManager,
 } from "./provider-snapshot-manager.js";
 
+export interface PluginProviderRegistrationSource {
+  getProviderRegistrations(): readonly ProviderRegistration[];
+  subscribeProviderRegistrations(listener: () => void): () => void;
+}
+
 export function attachMutableProviderConfigOwner(options: {
   store: DaemonConfigStore;
   providerSnapshotManager: ProviderSnapshotManager;
   updateProviderRegistry: (state: AgentManagerProviderState) => void;
+  pluginProviders?: PluginProviderRegistrationSource;
 }): () => void {
   let publishPendingProviderChange: (() => void) | null = null;
 
@@ -21,6 +28,7 @@ export function attachMutableProviderConfigOwner(options: {
     const staged = options.providerSnapshotManager.stageMutableProviderConfig(config.providers, {
       removeProviders: details.removedProviders,
       replace: true,
+      providerRegistrations: options.pluginProviders?.getProviderRegistrations(),
     });
     try {
       options.updateProviderRegistry(staged.agentManagerState);
@@ -41,9 +49,29 @@ export function attachMutableProviderConfigOwner(options: {
     publishPendingProviderChange = null;
     publish?.();
   });
+  const unsubscribePluginProviders = options.pluginProviders?.subscribeProviderRegistrations(() => {
+    const previousAgentManagerState =
+      options.providerSnapshotManager.getAgentManagerProviderState();
+    const staged = options.providerSnapshotManager.stageMutableProviderConfig(
+      options.store.get().providers,
+      {
+        replace: true,
+        providerRegistrations: options.pluginProviders?.getProviderRegistrations(),
+      },
+    );
+    try {
+      options.updateProviderRegistry(staged.agentManagerState);
+      staged.publish();
+    } catch (error) {
+      staged.rollback();
+      options.updateProviderRegistry(previousAgentManagerState);
+      throw error;
+    }
+  });
 
   return () => {
     unsubscribeApply();
     unsubscribeChange();
+    unsubscribePluginProviders?.();
   };
 }

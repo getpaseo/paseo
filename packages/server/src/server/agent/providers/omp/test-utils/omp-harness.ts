@@ -11,7 +11,6 @@ import type {
   AgentStreamEvent,
   AgentTimelineItem,
 } from "../../../agent-sdk-types.js";
-import type { PaseoToolCatalog } from "../../../tools/types.js";
 import {
   OmpAgentClient,
   OmpAgentSession,
@@ -90,14 +89,8 @@ export class OmpHarness {
     this.omp.failNextSubagentSubscription("events", error);
   }
 
-  async start(
-    config: Partial<AgentSessionConfig> = {},
-    paseoTools?: PaseoToolCatalog,
-  ): Promise<void> {
-    const session = await this.client.createSession(
-      { provider: "omp", cwd: CWD, ...config },
-      paseoTools ? { paseoTools } : undefined,
-    );
+  async start(config: Partial<AgentSessionConfig> = {}): Promise<void> {
+    const session = await this.client.createSession({ provider: "omp", cwd: CWD, ...config });
     if (!(session instanceof OmpAgentSession)) {
       throw new Error("OMP client returned a non-OMP session");
     }

@@ -52,6 +52,8 @@ $PASEO_HOME/
 ├── agents/
 │   └── {sanitized-cwd}/
 │       └── {agentId}.json               # One file per agent
+├── timelines/
+│   └── {agentId}.json                   # Canonical timeline rows and private provider metadata
 ├── schedules/
 │   └── {scheduleId}.json                # One file per schedule
 ├── projects/

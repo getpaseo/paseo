@@ -201,12 +201,7 @@ function buildRunOutput(params: {
 
 type ScheduleAgentManager = Pick<
   AgentRunController,
-  | "getAgent"
-  | "tryRunOutOfBand"
-  | "hasInFlightRun"
-  | "replaceAgentRun"
-  | "steerOrReplaceActiveTurn"
-  | "streamAgent"
+  "getAgent" | "hasInFlightRun" | "replaceAgentTurn" | "startAgentTurn" | "steerOrReplaceActiveTurn"
 > &
   Pick<
     AgentManager,

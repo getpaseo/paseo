@@ -155,6 +155,32 @@ function createPluginSelectivePausedRuntime(pausedPluginId: string) {
 }
 
 describe("PluginService", () => {
+  it("publishes provider registrations only while their plugin is running", async () => {
+    const home = await mkdtemp(path.join(tmpdir(), "paseo-plugin-home-"));
+    roots.push(home);
+    const directory = await createPlugin(
+      "provider-lifecycle",
+      `export default function contribute(server) {
+  server.registerProvider({
+    id: "plugin-agent",
+    label: "Plugin agent",
+    async connect() { throw new Error("not opened by this test"); },
+  });
+  return () => {};
+}`,
+    );
+    const service = createService(home);
+
+    await service.start();
+    await service.installDirectory({ path: directory });
+    expect(service.getProviderRegistrations()).toMatchObject([
+      { id: "plugin-agent", label: "Plugin agent" },
+    ]);
+
+    await service.disablePlugin("provider-lifecycle");
+    expect(service.getProviderRegistrations()).toEqual([]);
+  });
+
   it("retains logs when disabled and clears them only when removed", async () => {
     const home = await mkdtemp(path.join(tmpdir(), "paseo-plugin-home-"));
     roots.push(home);

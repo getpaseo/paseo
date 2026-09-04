@@ -36,7 +36,6 @@ import {
   type ProviderRefreshContext,
   type ToolCallDetail,
 } from "../../agent-sdk-types.js";
-import type { PaseoToolCatalog } from "../../tools/types.js";
 import { importSessionFromPersistence } from "../../provider-session-import.js";
 import { runProviderRefreshActivity } from "../../provider-refresh-deadline.js";
 import { runProviderTurn } from "../provider-runner.js";
@@ -97,8 +96,10 @@ import { mapOmpRuntimeEventToTimelineItem } from "./event-mapper.js";
 import { mapOmpAdvisorMessageToToolCall } from "./advisor-message.js";
 import {
   clearOmpHostToolState,
+  connectOmpPaseoMcpTools,
   handleOmpHostToolRuntimeEvent,
   setOmpHostTools,
+  type OmpHostToolSource,
 } from "./host-tools.js";
 import { OmpSubagentIndex } from "./subagent-index.js";
 import { mapOmpToolDetail } from "./tool-call-mapper.js";
@@ -116,6 +117,8 @@ const OMP_ASK_USER_FREEFORM_SENTINEL = "✏️ Type custom response...";
 const COMBINED_ASK_USER_METADATA = "ask_user_select_optional_comment";
 
 const OMP_CORE_CAPABILITIES: AgentCapabilityFlags = {
+  supportsImages: true,
+  supportsSubsessions: true,
   supportsStreaming: true,
   supportsSessionPersistence: true,
   supportsSessionListing: true,
@@ -185,7 +188,7 @@ interface OmpAgentSessionOptions {
   providerIdleScheduler?: OmpProviderIdleScheduler;
   noTurnScheduler?: OmpNoTurnScheduler;
   usagePollScheduler?: OmpUsagePollScheduler;
-  paseoTools?: PaseoToolCatalog;
+  hostTools?: OmpHostToolSource;
   /**
    * When false (resumed sessions), replayed session events are dropped until
    * the first prompt or agent_start so history is not re-emitted as live
@@ -884,7 +887,7 @@ export class OmpAgentSession implements AgentSession {
     this.state = options.initialState;
     this.currentModeId = options.currentModeId ?? null;
     this.logger = options.logger;
-    this.paseoTools = options.paseoTools;
+    this.hostTools = options.hostTools;
     this.live = options.live ?? true;
     this.providerIdleScheduler = options.providerIdleScheduler ?? createOmpProviderIdleScheduler();
     this.noTurnScheduler = options.noTurnScheduler ?? createOmpNoTurnScheduler();
@@ -932,7 +935,7 @@ export class OmpAgentSession implements AgentSession {
   private readonly runtimeSession: OmpRuntimeSession;
   private readonly config: AgentSessionConfig;
   private readonly logger: Logger;
-  private readonly paseoTools?: PaseoToolCatalog;
+  private readonly hostTools?: OmpHostToolSource;
 
   get id(): string | null {
     return this.state.sessionId;
@@ -1166,6 +1169,7 @@ export class OmpAgentSession implements AgentSession {
       await this.runtimeSession.close();
     } finally {
       this.clearOmpSessionState();
+      await this.hostTools?.close().catch(() => undefined);
     }
   }
 
@@ -1628,7 +1632,7 @@ export class OmpAgentSession implements AgentSession {
     if (
       handleOmpHostToolRuntimeEvent(event, {
         runtimeSession: this.runtimeSession,
-        paseoTools: this.paseoTools,
+        hostTools: this.hostTools,
         logger: this.logger,
       })
     ) {
@@ -2194,6 +2198,7 @@ export class OmpAgentClient implements AgentClient {
   private readonly noTurnScheduler?: OmpNoTurnScheduler;
   private readonly usagePollScheduler?: OmpUsagePollScheduler;
   private readonly runtime: OmpRuntime;
+  private readonly hasInjectedRuntime: boolean;
 
   constructor(options: OmpAgentClientOptions) {
     const { runtimeProviderParams, modelRoleParams } = resolveOmpProviderParams(
@@ -2216,18 +2221,9 @@ export class OmpAgentClient implements AgentClient {
     this.providerIdleScheduler = options.providerIdleScheduler;
     this.noTurnScheduler = options.noTurnScheduler;
     this.usagePollScheduler = options.usagePollScheduler;
+    this.hasInjectedRuntime = options.runtime !== undefined;
     this.runtime =
       options.runtime ?? createRuntime(options.logger, runtimeSettings, this.providerParams);
-  }
-
-  private async configureNativePaseoTools(
-    runtimeSession: OmpRuntimeSession,
-    catalog: PaseoToolCatalog | undefined,
-  ): Promise<void> {
-    if (!catalog) {
-      return;
-    }
-    await setOmpHostTools(runtimeSession, catalog);
   }
 
   async createSession(
@@ -2235,19 +2231,24 @@ export class OmpAgentClient implements AgentClient {
     launchContext?: AgentLaunchContext,
   ): Promise<AgentSession> {
     const launchMode = this.resolveLaunchMode(config.modeId);
-    const runtimeSession = await this.runtime.startSession({
-      cwd: config.cwd,
-      protocolMode: "rpc-ui",
-      model: config.model,
-      thinkingOptionId: normalizeOmpThinkingOption(config.thinkingOptionId) ?? undefined,
-      noSession: config.internal === true,
-      modeId: launchMode.modeId,
-      extraArgs: launchMode.extraArgs,
-      systemPrompt: composeSystemPromptParts(config.systemPrompt, config.daemonAppendSystemPrompt),
-      env: launchContext?.env,
-    });
+    const hostTools = await connectOmpPaseoMcpTools(config.mcpServers?.paseo);
+    let runtimeSession: OmpRuntimeSession | undefined;
     try {
-      await this.configureNativePaseoTools(runtimeSession, launchContext?.paseoTools);
+      runtimeSession = await this.runtime.startSession({
+        cwd: config.cwd,
+        protocolMode: "rpc-ui",
+        model: config.model,
+        thinkingOptionId: normalizeOmpThinkingOption(config.thinkingOptionId) ?? undefined,
+        noSession: config.internal === true,
+        modeId: launchMode.modeId,
+        extraArgs: launchMode.extraArgs,
+        systemPrompt: composeSystemPromptParts(
+          config.systemPrompt,
+          config.daemonAppendSystemPrompt,
+        ),
+        env: launchContext?.env,
+      });
+      if (hostTools) await setOmpHostTools(runtimeSession, hostTools);
       return new OmpAgentSession({
         runtimeSession,
         config,
@@ -2258,10 +2259,11 @@ export class OmpAgentClient implements AgentClient {
         providerIdleScheduler: this.providerIdleScheduler,
         noTurnScheduler: this.noTurnScheduler,
         usagePollScheduler: this.usagePollScheduler,
-        paseoTools: launchContext?.paseoTools,
+        hostTools,
       });
     } catch (error) {
-      await runtimeSession.close().catch(() => undefined);
+      await runtimeSession?.close().catch(() => undefined);
+      await hostTools?.close().catch(() => undefined);
       throw error;
     }
   }
@@ -2280,16 +2282,18 @@ export class OmpAgentClient implements AgentClient {
     const resumeConfig = buildResumeConfig(persistenceMetadata, overrides, this.provider);
 
     const launchMode = this.resolveLaunchMode(resumeConfig.modeId);
-    const runtimeSession = await this.runtime.startSession(
-      buildResumeStartInput({
-        resumeConfig,
-        sessionFile,
-        launchContext,
-        launchMode,
-      }),
-    );
+    const hostTools = await connectOmpPaseoMcpTools(resumeConfig.config.mcpServers?.paseo);
+    let runtimeSession: OmpRuntimeSession | undefined;
     try {
-      await this.configureNativePaseoTools(runtimeSession, launchContext?.paseoTools);
+      runtimeSession = await this.runtime.startSession(
+        buildResumeStartInput({
+          resumeConfig,
+          sessionFile,
+          launchContext,
+          launchMode,
+        }),
+      );
+      if (hostTools) await setOmpHostTools(runtimeSession, hostTools);
       return new OmpAgentSession({
         runtimeSession,
         config: resumeConfig.config,
@@ -2300,11 +2304,12 @@ export class OmpAgentClient implements AgentClient {
         providerIdleScheduler: this.providerIdleScheduler,
         noTurnScheduler: this.noTurnScheduler,
         usagePollScheduler: this.usagePollScheduler,
-        paseoTools: launchContext?.paseoTools,
+        hostTools,
         live: false,
       });
     } catch (error) {
-      await runtimeSession.close().catch(() => undefined);
+      await runtimeSession?.close().catch(() => undefined);
+      await hostTools?.close().catch(() => undefined);
       throw error;
     }
   }
@@ -2376,6 +2381,7 @@ export class OmpAgentClient implements AgentClient {
   }
 
   async isAvailable(): Promise<boolean> {
+    if (this.hasInjectedRuntime) return true;
     try {
       const launch = await this.resolveOmpLaunch();
       const availability = await checkProviderLaunchAvailable(launch);

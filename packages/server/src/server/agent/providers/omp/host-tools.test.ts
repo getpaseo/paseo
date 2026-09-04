@@ -5,6 +5,7 @@ import { z } from "zod";
 import type { PaseoToolCatalog, PaseoToolDefinition, PaseoToolResult } from "../../tools/types.js";
 import {
   clearOmpHostToolState,
+  createOmpHostToolSource,
   handleOmpHostToolRuntimeEvent,
   serializeOmpHostTools,
   waitForOmpHostToolsIdle,
@@ -123,7 +124,11 @@ class OmpHostToolHarness {
   }
 
   private routerInput() {
-    return { runtimeSession: this.runtimeSession, paseoTools: this.catalog, logger: this.logger };
+    return {
+      runtimeSession: this.runtimeSession,
+      hostTools: createOmpHostToolSource(this.catalog),
+      logger: this.logger,
+    };
   }
 }
 

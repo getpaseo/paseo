@@ -114,15 +114,40 @@ function mergeToolCallItems(
 }
 
 function makeCanonicalEntries(rows: readonly AgentTimelineRow[]): WorkingEntry[] {
-  return rows.map((row) => ({
-    item: row.item,
-    ...(row.turnId ? { turnId: row.turnId } : {}),
-    timestamp: row.timestamp,
-    seqStart: row.seq,
-    seqEnd: row.seq,
-    sourceSeqRanges: [{ startSeq: row.seq, endSeq: row.seq }],
-    collapsed: [],
-  }));
+  const entries: WorkingEntry[] = [];
+  const indexByProviderId = new Map<string, number>();
+  for (const row of rows) {
+    const entry: WorkingEntry = {
+      item: row.item,
+      ...(row.turnId ? { turnId: row.turnId } : {}),
+      timestamp: row.timestamp,
+      seqStart: row.seq,
+      seqEnd: row.seq,
+      sourceSeqRanges: [{ startSeq: row.seq, endSeq: row.seq }],
+      collapsed: [],
+    };
+    const providerId = row.providerTimelineItemId;
+    if (!providerId) {
+      entries.push(entry);
+      continue;
+    }
+    const existingIndex = indexByProviderId.get(providerId);
+    if (existingIndex === undefined) {
+      indexByProviderId.set(providerId, entries.length);
+      entries.push(entry);
+      continue;
+    }
+    const existing = entries[existingIndex]!;
+    entries[existingIndex] = {
+      ...entry,
+      seqStart: existing.seqStart,
+      sourceSeqRanges: mergeSeqRanges(existing.sourceSeqRanges, entry.sourceSeqRanges),
+      collapsed: existing.collapsed.includes("identity")
+        ? existing.collapsed
+        : [...existing.collapsed, "identity"],
+    };
+  }
+  return entries;
 }
 
 function mergeIdentityMetadata(
