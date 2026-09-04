@@ -759,6 +759,21 @@ type NewWorkspaceComposerState = NonNullable<
   ReturnType<typeof useAgentInputDraft>["composerState"]
 >;
 
+// Reconcile the composer's selected mode against the modes actually discovered
+// for the target provider before submitting. A provider with no modes (many ACP
+// agents, e.g. traecli) must submit no mode at all — a stale cross-provider
+// default like "auto" makes the daemon reject creation with
+// "Invalid mode 'auto'. Available modes: (none)".
+function resolveComposerSubmitModeId(composerState: NewWorkspaceComposerState): string | null {
+  const modeOptionIds = composerState.modeOptions.map((mode) => mode.id);
+  if (modeOptionIds.length === 0) {
+    return null;
+  }
+  const selectedMode = composerState.selectedMode;
+  const reconciled = modeOptionIds.includes(selectedMode) ? selectedMode : (modeOptionIds[0] ?? "");
+  return reconciled || null;
+}
+
 interface WorkspaceDraftSubmissionConfig {
   cwd: string;
   provider: AgentProvider;
@@ -871,7 +886,7 @@ function buildWorkspaceDraftSetupFromComposer(input: {
   return {
     provider: input.provider,
     cwd: input.cwd,
-    modeId: input.composerState.selectedMode || null,
+    modeId: resolveComposerSubmitModeId(input.composerState),
     model: input.composerState.effectiveModelId || null,
     thinkingOptionId: input.composerState.effectiveThinkingOptionId || null,
     featureValues: input.composerState.featureValues ?? {},
@@ -1014,7 +1029,7 @@ function resolveWorkspaceDraftSubmissionConfig(input: {
   return {
     cwd: workspaceDirectory,
     provider,
-    modeId: composerState.selectedMode || null,
+    modeId: resolveComposerSubmitModeId(composerState),
     model: composerState.effectiveModelId || null,
     thinkingOptionId: composerState.effectiveThinkingOptionId || null,
     featureValues: composerState.featureValues,

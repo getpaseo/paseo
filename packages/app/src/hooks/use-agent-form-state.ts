@@ -179,20 +179,28 @@ async function persistProviderPreferences(input: {
   provider: AgentProvider;
   formState: FormState;
   availableModels: AgentModelDefinition[] | null;
+  providerModes: AgentMode[];
   updatePreferences: (
     updates: Partial<FormPreferences> | ((current: FormPreferences) => FormPreferences),
   ) => Promise<FormPreferences>;
 }): Promise<void> {
-  const { provider, formState, availableModels, updatePreferences } = input;
+  const { provider, formState, availableModels, providerModes, updatePreferences } = input;
   const resolvedModel = resolveEffectiveModel(availableModels, formState.model);
   const modelId = resolvedModel?.id ?? formState.model;
+  // Only persist a mode the target provider actually offers. A provider with no
+  // modes (many ACP agents, e.g. traecli) must never store a stale
+  // cross-provider mode — reloading it would recreate the "Invalid mode" error.
+  const modeId =
+    formState.modeId && providerModes.some((mode) => mode.id === formState.modeId)
+      ? formState.modeId
+      : undefined;
   await updatePreferences((current) =>
     mergeProviderPreferences({
       preferences: current,
       provider,
       updates: {
         model: modelId || undefined,
-        mode: formState.modeId || undefined,
+        mode: modeId,
         ...(modelId && formState.thinkingOptionId
           ? { thinkingByModel: { [modelId]: formState.thinkingOptionId } }
           : {}),
@@ -610,9 +618,10 @@ export function useAgentFormState(options: UseAgentFormStateOptions = {}): UseAg
       provider: formState.provider,
       formState,
       availableModels,
+      providerModes: modeOptions,
       updatePreferences: updateCurrentPreferences,
     });
-  }, [availableModels, formState, updateCurrentPreferences]);
+  }, [availableModels, formState, modeOptions, updateCurrentPreferences]);
 
   const agentDefinition = formState.provider
     ? providerDefinitionMap.get(formState.provider)

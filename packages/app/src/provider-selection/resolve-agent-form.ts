@@ -190,6 +190,9 @@ function resolvePreferredModeId(input: {
 }): string {
   // Saved modes are user intent. Provider create config validates unknown modes
   // at submission time, so background form resolution should not erase them.
+  // An empty modes list is ambiguous here (a provider still loading its modes
+  // looks the same as one that genuinely has none), so reconciliation against
+  // the real mode list happens at submit and persist time, not here.
   const initialModeId = normalizeSelectedModeId(input.initialModeId);
   if (initialModeId) return initialModeId;
 
