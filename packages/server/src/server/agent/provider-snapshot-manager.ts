@@ -1,6 +1,7 @@
 import { EventEmitter } from "node:events";
 import { homedir } from "node:os";
 import { resolve } from "node:path";
+import { isDeepStrictEqual } from "node:util";
 
 import type { Logger } from "pino";
 
@@ -546,28 +547,38 @@ export class ProviderSnapshotManager {
       );
       // The mutable config is the complete provider source after startup. Keeping
       // startup-derived runtime settings here would retain removed command/env fields.
-      if (options.replace) this.runtimeSettings = undefined;
-      this.providerRegistry = this.buildRegistry();
-      this.providerClients = {
-        ...this.extraClients,
-        ...this.pluginProviders.clients(),
-      } as Record<AgentProvider, AgentClient>;
+      const nextRegistry = this.buildRegistry();
+      const changedProviders = this.findChangedProviders(previous, nextRegistry);
 
-      for (const cwd of this.snapshots.keys()) {
-        this.providerLoads.delete(cwd);
-        this.snapshots.set(cwd, this.reconcileSnapshotForRegistry(cwd));
+      this.providerRegistry = nextRegistry;
+      this.providerClients = { ...previous.providerClients };
+      for (const provider of changedProviders) delete this.providerClients[provider];
+      for (const provider of Object.keys(nextRegistry)) {
+        if (!changedProviders.has(provider)) {
+          nextRegistry[provider] = previous.providerRegistry[provider]!;
+        }
+      }
+      Object.assign(this.providerClients, this.extraClients, this.pluginProviders.clients());
+      const providersToRefresh = [...changedProviders].filter((provider) => nextRegistry[provider]);
+
+      for (const cwd of snapshotCwds) {
+        const loads = new Map(this.providerLoads.get(cwd));
+        for (const provider of changedProviders) loads.delete(provider);
+        this.providerLoads.set(cwd, loads);
+        this.snapshots.set(cwd, this.reconcileSnapshotForRegistry(cwd, changedProviders));
       }
 
       return {
         agentManagerState: this.getAgentManagerProviderState(),
         publish: () => {
+          if (changedProviders.size === 0) return;
           for (const cwd of snapshotCwds) {
             this.emitChange(cwd);
             const target =
               cwd === GLOBAL_PROVIDER_SNAPSHOT_KEY
                 ? createGlobalSnapshotTarget()
                 : createWorkspaceSnapshotTarget(cwd);
-            const providers = this.resolveProvidersToWarm(cwd);
+            const providers = this.resolveProvidersToWarm(cwd, providersToRefresh);
             if (providers.length > 0) void this.warmUp(target, providers);
           }
         },
@@ -577,6 +588,25 @@ export class ProviderSnapshotManager {
       this.restoreMutableProviderState(previous);
       throw error;
     }
+  }
+
+  private findChangedProviders(
+    previous: MutableProviderState,
+    nextRegistry: Record<AgentProvider, ProviderDefinition>,
+  ): Set<AgentProvider> {
+    const providers = new Set([
+      ...Object.keys(previous.providerRegistry),
+      ...Object.keys(nextRegistry),
+    ]);
+    const changed = new Set<AgentProvider>();
+    for (const provider of providers) {
+      const before = previous.providerRegistry[provider];
+      const after = nextRegistry[provider];
+      if (!before || !after || !isDeepStrictEqual(before.configuration, after.configuration)) {
+        changed.add(provider);
+      }
+    }
+    return changed;
   }
 
   private captureMutableProviderState(): MutableProviderState {
@@ -779,7 +809,7 @@ export class ProviderSnapshotManager {
       const definition = this.providerRegistry[provider];
       entries.set(provider, {
         provider,
-        status: "loading",
+        status: definition?.enabled === false ? "unavailable" : "loading",
         enabled: definition?.enabled ?? true,
         source: this.getProviderSource(provider),
         label: definition?.label,
@@ -791,13 +821,20 @@ export class ProviderSnapshotManager {
     return entries;
   }
 
-  private reconcileSnapshotForRegistry(cwd: string): Map<AgentProvider, ProviderSnapshotEntry> {
+  private reconcileSnapshotForRegistry(
+    cwd: string,
+    changedProviders?: ReadonlySet<AgentProvider>,
+  ): Map<AgentProvider, ProviderSnapshotEntry> {
     const existing = this.snapshots.get(cwd);
     const entries = new Map<AgentProvider, ProviderSnapshotEntry>();
 
     for (const provider of this.getProviderIds()) {
       const definition = this.providerRegistry[provider];
       const current = existing?.get(provider);
+      if (current && changedProviders && !changedProviders.has(provider)) {
+        entries.set(provider, current);
+        continue;
+      }
       const metadata = {
         provider,
         enabled: definition?.enabled ?? true,
@@ -967,7 +1004,6 @@ export class ProviderSnapshotManager {
     force: boolean;
   }): Promise<void> {
     const { snapshotCwd, catalogScope, provider, definition, load, force } = options;
-    const snapshot = this.getOrCreateSnapshot(snapshotCwd);
     const base = {
       provider,
       source: this.getProviderSource(provider),
@@ -980,7 +1016,8 @@ export class ProviderSnapshotManager {
       if (!this.isCurrentProviderLoad(snapshotCwd, provider, load)) {
         return false;
       }
-      snapshot.set(provider, entry);
+      // A config transaction may replace the map while this unchanged provider is loading.
+      this.getOrCreateSnapshot(snapshotCwd).set(provider, entry);
       this.emitChange(snapshotCwd);
       return true;
     };
