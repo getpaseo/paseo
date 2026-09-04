@@ -37,6 +37,7 @@ export function createDirectExampleProvider(): ProviderRegistration {
     id: "direct-example",
     label: "Direct provider example",
     description: "A complete provider implemented directly against Paseo's provider boundary",
+    icon: "icon.svg",
     async connect(request) {
       if (!request.versions.includes(1)) throw new Error("Provider protocol version 1 is required");
       return createConnection(negotiateProviderCapabilities(request.capabilities, CAPABILITIES));

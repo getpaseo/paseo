@@ -166,6 +166,13 @@ session config.
 Use `runAcpProvider()` from `@getpaseo/plugin/acp` to adapt a command-backed ACP. Add transformer
 hooks only for a vendor's discovery, configuration, notification, or tool-call differences.
 
+`ProviderRegistration.icon` is a file path relative to the plugin directory, such as `icon.svg`.
+It must resolve inside that directory to a regular SVG file no larger than 64 KiB. The SVG must be
+self-contained: scripts, styles, `foreignObject`, event-handler attributes, JavaScript URLs, and
+external `href` or `xlink:href` references are rejected. Fragment references such as `#mark` are
+allowed. Paseo reads and sanitizes the file when the plugin starts; the string is never an inline
+SVG or URL.
+
 ## Entry point and cleanup
 
 Each present entry default-exports one contribution function and returns cleanup. Client entries

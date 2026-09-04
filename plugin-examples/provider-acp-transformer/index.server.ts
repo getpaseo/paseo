@@ -8,6 +8,7 @@ export default function contribute(server: PluginServerContext) {
       id: "example-acp",
       label: "Example ACP",
       description: "An ACP command adapted to Paseo's provider boundary",
+      icon: "icon.svg",
       command: ["example-acp", "--stdio"],
       transformers: [vendorEditTransformer],
     }),

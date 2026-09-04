@@ -102,7 +102,7 @@ function providerMetadata(provider: ProviderRegistration) {
     id: provider.id,
     label: provider.label,
     description: provider.description,
-    icon: provider.icon,
+    iconPath: provider.icon,
   };
 }
 

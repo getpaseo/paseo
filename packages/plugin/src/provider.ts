@@ -31,6 +31,7 @@ export interface ProviderRegistration {
   id: string;
   label: string;
   description?: string;
+  /** Plugin-directory-relative path to a self-contained SVG file. */
   icon?: string;
   connect(request: ProviderConnectRequest): Promise<ProviderConnection>;
 }

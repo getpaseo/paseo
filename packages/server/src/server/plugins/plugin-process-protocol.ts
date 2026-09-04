@@ -10,7 +10,7 @@ export interface PluginProviderMetadata {
   id: string;
   label: string;
   description?: string;
-  icon?: string;
+  iconPath?: string;
 }
 
 export type PluginProcessRequest =
@@ -62,7 +62,7 @@ const providerMetadataSchema = z
     id: z.string().min(1),
     label: z.string().min(1),
     description: z.string().optional(),
-    icon: z.string().optional(),
+    iconPath: z.string().optional(),
   })
   .strict();
 const providerConnectRequestSchema = z

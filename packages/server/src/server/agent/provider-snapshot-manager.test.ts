@@ -106,6 +106,29 @@ async function runTestCatalogActivities(
 }
 
 describe("ProviderSnapshotManager public surface", () => {
+  test("carries a plugin provider icon in snapshot metadata", () => {
+    const iconSvg = '<svg viewBox="0 0 24 24"><path d="M4 4h16v16H4z" /></svg>';
+    const registration: ProviderRegistration = {
+      id: "icon-provider",
+      label: "Icon Provider",
+      icon: iconSvg,
+      async connect() {
+        throw new Error("not opened by this test");
+      },
+    };
+    const manager = new ProviderSnapshotManager({ logger: createTestLogger() });
+
+    try {
+      manager.replacePluginProviders([registration]);
+
+      expect(manager.getSnapshot("/tmp/project")).toContainEqual(
+        expect.objectContaining({ provider: "icon-provider", iconSvg }),
+      );
+    } finally {
+      manager.destroy();
+    }
+  });
+
   test("validates complete Hub agent configurations through the current provider contract", async () => {
     const manager = new ProviderSnapshotManager({
       logger: createTestLogger(),

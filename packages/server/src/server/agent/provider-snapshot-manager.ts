@@ -735,6 +735,7 @@ export class ProviderSnapshotManager {
         source: this.getProviderSource(provider),
         label: definition.label,
         description: definition.description,
+        iconSvg: definition.iconSvg,
         defaultModeId: definition.defaultModeId,
         error: toErrorMessage(error),
       };
@@ -783,6 +784,7 @@ export class ProviderSnapshotManager {
         source: this.getProviderSource(provider),
         label: definition?.label,
         description: definition?.description,
+        iconSvg: definition?.iconSvg,
         defaultModeId: definition?.defaultModeId ?? null,
       });
     }
@@ -802,6 +804,7 @@ export class ProviderSnapshotManager {
         source: this.getProviderSource(provider),
         label: definition?.label,
         description: definition?.description,
+        iconSvg: definition?.iconSvg,
         defaultModeId: definition?.defaultModeId ?? null,
       };
 
@@ -970,6 +973,7 @@ export class ProviderSnapshotManager {
       source: this.getProviderSource(provider),
       label: definition.label,
       description: definition.description,
+      iconSvg: definition.iconSvg,
       defaultModeId: definition.defaultModeId,
     };
     const setEntry = (entry: ProviderSnapshotEntry) => {

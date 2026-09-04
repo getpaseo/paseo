@@ -282,6 +282,13 @@ For an ACP command, register `runAcpProvider({ id, label, command })` from
 whole provider event stream. The direct and ACP examples live in `plugin-examples/provider-direct`
 and `plugin-examples/provider-acp-transformer`.
 
+`ProviderRegistration.icon` is a file path relative to the plugin directory, such as `icon.svg`.
+It must resolve inside that directory to a regular SVG file no larger than 64 KiB. The SVG must be
+self-contained: scripts, styles, `foreignObject`, event-handler attributes, JavaScript URLs, and
+external `href` or `xlink:href` references are rejected. Fragment references such as `#mark` are
+allowed. Paseo reads and sanitizes the file when the plugin starts; the string is never an inline
+SVG or URL.
+
 ## Contribute composer pills
 
 Add and remove targeted pills from the client entry lifecycle. `index.client.tsx` runs once per

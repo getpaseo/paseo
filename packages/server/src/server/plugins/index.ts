@@ -18,6 +18,7 @@ import { readPluginManifest } from "./manifest.js";
 import { runPluginBuild } from "./preparation.js";
 import { PluginRuntime } from "./runtime.js";
 import type { PluginProviderMetadata } from "./plugin-process-protocol.js";
+import { readPluginProviderIcon } from "./provider-icon.js";
 
 const BUILTIN_PROVIDER_ID_SET: ReadonlySet<string> = new Set(BUILTIN_PROVIDER_IDS);
 
@@ -388,7 +389,7 @@ export class PluginService {
   private async startPlugin(pluginId: string, sourcePath: string): Promise<void> {
     await this.runtime.startPlugin(pluginId, sourcePath, () => this.canPublish(pluginId));
     try {
-      this.publishProviderRegistrations(pluginId);
+      await this.publishProviderRegistrations(pluginId, sourcePath);
     } catch (error) {
       try {
         this.removeProviderRegistrations(pluginId);
@@ -411,7 +412,10 @@ export class PluginService {
     await this.runtime.stopAll();
   }
 
-  private publishProviderRegistrations(pluginId: string): void {
+  private async publishProviderRegistrations(
+    pluginId: string,
+    pluginDirectory: string,
+  ): Promise<void> {
     const metadata = this.runtime.getProviderRegistrations?.(pluginId) ?? [];
     const configuredIds = new Set(Object.keys(this.configStore.get().providers));
     for (const provider of metadata) {
@@ -427,11 +431,23 @@ export class PluginService {
         throw new Error(`Plugin ${pluginId} cannot register provider ID "${provider.id}" twice`);
       }
     }
-    const ids = metadata.map((provider) => provider.id);
-    for (const provider of metadata) {
+    const registrations = await Promise.all(
+      metadata.map(
+        async (provider): Promise<ProviderRegistration> => ({
+          id: provider.id,
+          label: provider.label,
+          description: provider.description,
+          icon: provider.iconPath
+            ? await readPluginProviderIcon(pluginDirectory, provider.iconPath)
+            : undefined,
+          connect: (request) => this.runtime.connectProvider(pluginId, provider.id, request),
+        }),
+      ),
+    );
+    const ids = registrations.map((provider) => provider.id);
+    for (const provider of registrations) {
       this.providers.set(provider.id, {
         ...provider,
-        connect: (request) => this.runtime.connectProvider(pluginId, provider.id, request),
       });
     }
     if (ids.length > 0) {

@@ -258,6 +258,7 @@ import type { ProviderEvent, ProviderRegistration } from "@getpaseo/plugin/provi
 const provider: ProviderRegistration = {
   id: "direct-example",
   label: "Direct example",
+  icon: "icon.svg",
   async connect(request) {
     const listeners = new Set<(event: ProviderEvent) => void>();
     const emit = (event: ProviderEvent) => {
@@ -359,7 +360,11 @@ export default function contribute(server: PluginServerContext) {
     await runtime.startPlugin("provider-round-trip", directory);
 
     const [registration] = runtime.getProviderRegistrations("provider-round-trip");
-    expect(registration).toMatchObject({ id: "direct-example", label: "Direct example" });
+    expect(registration).toMatchObject({
+      id: "direct-example",
+      label: "Direct example",
+      iconPath: "icon.svg",
+    });
     const connection = await runtime.connectProvider("provider-round-trip", "direct-example", {
       versions: [1],
       capabilities: [

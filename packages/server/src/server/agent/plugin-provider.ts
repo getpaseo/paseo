@@ -807,6 +807,7 @@ function createPluginProviderDefinition(
     id: registration.id,
     label: registration.label,
     description: registration.description ?? `Plugin provider ${registration.label}`,
+    iconSvg: registration.icon,
     defaultModeId: null,
     modes: [],
     enabled: true,
