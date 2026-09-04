@@ -70,8 +70,8 @@ function getSnapshotProviderIcon(provider: string, svg: string): ProviderIconCom
   return component;
 }
 
-export function getProviderIcon(provider: string): ProviderIconComponent {
-  const name = resolveProviderIconName(provider);
+export function getProviderIcon(provider: string, serverId?: string | null): ProviderIconComponent {
+  const name = resolveProviderIconName(provider, serverId);
   if (name.kind === "builtin") {
     return BUILTIN_PROVIDER_ICONS[name.id];
   }
@@ -79,7 +79,7 @@ export function getProviderIcon(provider: string): ProviderIconComponent {
     return getCatalogProviderIcon(name.id);
   }
   if (name.kind === "svg") {
-    return getSnapshotProviderIcon(provider, name.svg);
+    return getSnapshotProviderIcon(`${serverId}:${provider}`, name.svg);
   }
   return Bot;
 }

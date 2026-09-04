@@ -122,7 +122,10 @@ describe("fetchProvidersSnapshot", () => {
 
     await fetchProvidersSnapshot({ client, serverId, cwd: null, cache: createCache() });
 
-    expect(resolveProviderIconName("snapshot-icon-provider")).toEqual({ kind: "svg", svg });
+    expect(resolveProviderIconName("snapshot-icon-provider", serverId)).toEqual({
+      kind: "svg",
+      svg,
+    });
   });
 
   it("sends no cwd for the home scope", async () => {

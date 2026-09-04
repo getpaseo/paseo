@@ -59,6 +59,7 @@ export interface ScheduleRowActions {
 }
 
 interface ScheduleRowProps extends ScheduleRowActions {
+  serverId: string;
   schedule: ScheduleSummary;
   /** Client-derived target line (agent title / project / shortened path). */
   targetLabel: string;
@@ -120,11 +121,17 @@ function buildMeta(
 
 /** Small provider glyph. Reads the icon color off a StyleSheet object so the
  * dynamic component (getProviderIcon) stays compliant without useUnistyles. */
-function ProviderGlyph({ provider }: { provider: string | null }): ReactElement | null {
+function ProviderGlyph({
+  provider,
+  serverId,
+}: {
+  provider: string | null;
+  serverId: string;
+}): ReactElement | null {
   if (!provider) {
     return null;
   }
-  const Icon = getProviderIcon(provider);
+  const Icon = getProviderIcon(provider, serverId);
   return <Icon size={PROVIDER_ICON_SIZE} color={styles.providerIcon.color} />;
 }
 
@@ -138,6 +145,7 @@ function ProviderGlyph({ provider }: { provider: string | null }): ReactElement 
  * highlights without reflow.
  */
 export function ScheduleRow({
+  serverId,
   schedule,
   targetLabel,
   provider,
@@ -189,7 +197,7 @@ export function ScheduleRow({
       >
         <View style={styles.main}>
           <View style={styles.leading}>
-            <ProviderGlyph provider={provider} />
+            <ProviderGlyph provider={provider} serverId={serverId} />
           </View>
           <View style={styles.textGroup}>
             <Text style={settingsStyles.rowTitle} numberOfLines={1}>

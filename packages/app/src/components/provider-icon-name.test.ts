@@ -5,7 +5,7 @@ import {
   TERMINAL_PROFILE_ICON_NAMES,
 } from "@getpaseo/protocol/provider-icon-names";
 import { ACP_PROVIDER_CATALOG } from "@/data/acp-provider-catalog";
-import { registerProviderSnapshotIcons, resolveProviderIconName } from "./provider-icon-name";
+import { replaceProviderSnapshotIcons, resolveProviderIconName } from "./provider-icon-name";
 
 describe("resolveProviderIconName", () => {
   it("returns the built-in identifier for known provider ids", () => {
@@ -29,21 +29,43 @@ describe("resolveProviderIconName", () => {
   it("resolves a snapshot SVG for a custom provider", () => {
     const svg = '<svg viewBox="0 0 24 24"><path d="M4 4h16v16H4z" /></svg>';
 
-    registerProviderSnapshotIcons([{ provider: "snapshot-provider", iconSvg: svg }]);
+    replaceProviderSnapshotIcons("server-1", [{ provider: "snapshot-provider", iconSvg: svg }]);
 
-    expect(resolveProviderIconName("snapshot-provider")).toEqual({ kind: "svg", svg });
+    expect(resolveProviderIconName("snapshot-provider", "server-1")).toEqual({ kind: "svg", svg });
   });
 
-  it("clears stale snapshot SVG registrations and preserves built-in icons", () => {
-    registerProviderSnapshotIcons([
+  it("replaces each host snapshot without leaking icons across hosts", () => {
+    const secondSvg = "<svg id='second' />";
+    replaceProviderSnapshotIcons("server-1", [
+      { provider: "removed-provider", iconSvg: "<svg />" },
       { provider: "snapshot-provider", iconSvg: "<svg />" },
       { provider: "claude", iconSvg: "<svg />" },
     ]);
-    expect(resolveProviderIconName("claude")).toEqual({ kind: "builtin", id: "claude" });
+    replaceProviderSnapshotIcons("server-2", [
+      { provider: "snapshot-provider", iconSvg: secondSvg },
+    ]);
 
-    registerProviderSnapshotIcons([{ provider: "snapshot-provider" }]);
+    expect(resolveProviderIconName("snapshot-provider", "server-1")).toEqual({
+      kind: "svg",
+      svg: "<svg />",
+    });
+    expect(resolveProviderIconName("snapshot-provider", "server-2")).toEqual({
+      kind: "svg",
+      svg: secondSvg,
+    });
+    expect(resolveProviderIconName("claude", "server-1")).toEqual({
+      kind: "builtin",
+      id: "claude",
+    });
 
-    expect(resolveProviderIconName("snapshot-provider")).toEqual({ kind: "bot" });
+    replaceProviderSnapshotIcons("server-1", [{ provider: "snapshot-provider" }]);
+
+    expect(resolveProviderIconName("removed-provider", "server-1")).toEqual({ kind: "bot" });
+    expect(resolveProviderIconName("snapshot-provider", "server-1")).toEqual({ kind: "bot" });
+    expect(resolveProviderIconName("snapshot-provider", "server-2")).toEqual({
+      kind: "svg",
+      svg: secondSvg,
+    });
   });
 });
 

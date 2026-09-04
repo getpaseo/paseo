@@ -21,7 +21,7 @@ import {
   providersSnapshotQueryRoot,
   providersSnapshotRequestOptions,
 } from "@/data/providers-snapshot";
-import { registerProviderSnapshotIcons } from "@/components/provider-icon-name";
+import { replaceProviderSnapshotIcons } from "@/components/provider-icon-name";
 
 type GetProvidersSnapshotResult = Awaited<ReturnType<DaemonClient["getProvidersSnapshot"]>>;
 type RefreshProvidersSnapshotResult = Awaited<ReturnType<DaemonClient["refreshProvidersSnapshot"]>>;
@@ -48,10 +48,10 @@ export async function fetchProvidersSnapshot(input: {
     if (!cached) {
       throw new ProviderSnapshotCacheMissError();
     }
-    registerProviderSnapshotIcons(cached.entries);
+    replaceProviderSnapshotIcons(input.serverId, cached.entries);
     return { ...snapshot, entries: cached.entries };
   }
-  registerProviderSnapshotIcons(snapshot.entries);
+  replaceProviderSnapshotIcons(input.serverId, snapshot.entries);
   if (snapshot.compactSnapshot && snapshot.snapshotHash) {
     await cache.write({
       serverId: input.serverId,

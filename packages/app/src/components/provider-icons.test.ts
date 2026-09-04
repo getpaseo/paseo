@@ -1,7 +1,7 @@
 import { Bot } from "lucide-react-native";
 import { SvgXml } from "react-native-svg";
 import { describe, expect, it } from "vitest";
-import { registerProviderSnapshotIcons } from "./provider-icon-name";
+import { replaceProviderSnapshotIcons } from "./provider-icon-name";
 import { getProviderIcon, type ProviderIconComponent } from "./provider-icons";
 
 function renderIcon(Component: ProviderIconComponent) {
@@ -15,9 +15,9 @@ function renderIcon(Component: ProviderIconComponent) {
 describe("getProviderIcon", () => {
   it("renders registered snapshot SVG metadata with the requested size and color", () => {
     const svg = '<svg viewBox="0 0 24 24"><path d="M4 4h16v16H4z" /></svg>';
-    registerProviderSnapshotIcons([{ provider: "rendered-provider", iconSvg: svg }]);
+    replaceProviderSnapshotIcons("server-1", [{ provider: "rendered-provider", iconSvg: svg }]);
 
-    const rendered = renderIcon(getProviderIcon("rendered-provider"));
+    const rendered = renderIcon(getProviderIcon("rendered-provider", "server-1"));
 
     expect(rendered).toMatchObject({
       type: SvgXml,
@@ -26,8 +26,8 @@ describe("getProviderIcon", () => {
   });
 
   it("uses the normal Bot fallback without snapshot SVG metadata", () => {
-    registerProviderSnapshotIcons([{ provider: "plain-provider" }]);
+    replaceProviderSnapshotIcons("server-1", [{ provider: "plain-provider" }]);
 
-    expect(getProviderIcon("plain-provider")).toBe(Bot);
+    expect(getProviderIcon("plain-provider", "server-1")).toBe(Bot);
   });
 });
