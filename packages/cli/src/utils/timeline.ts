@@ -73,6 +73,7 @@ export async function fetchProjectedTimelineItems(
   const maxPageRequests = input.matches
     ? Number.POSITIVE_INFINITY
     : MAX_UNFILTERED_TAIL_TIMELINE_PAGE_REQUESTS;
+  const requestedStartCursors = new Set<string>();
   for (
     let requestCount = 1;
     page.hasOlder &&
@@ -81,6 +82,11 @@ export async function fetchProjectedTimelineItems(
     matchingItemCount < tailCount;
     requestCount += 1
   ) {
+    const cursorKey = `${page.startCursor.epoch}\0${page.startCursor.seq}`;
+    if (requestedStartCursors.has(cursorKey)) {
+      break;
+    }
+    requestedStartCursors.add(cursorKey);
     page = await input.client.fetchAgentTimeline(input.agentId, {
       direction: "before",
       cursor: page.startCursor,

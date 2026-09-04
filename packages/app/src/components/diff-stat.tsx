@@ -1,19 +1,11 @@
 import { View, Text } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
+import { formatDiffCount } from "@/git/file-header-presentation";
 
 interface DiffStatProps {
   additions: number;
   deletions: number;
   testID?: string;
-}
-
-const compactFormatter = new Intl.NumberFormat("en-US", {
-  notation: "compact",
-  maximumFractionDigits: 1,
-});
-
-export function formatDiffCount(value: number): string {
-  return compactFormatter.format(value).toLowerCase();
 }
 
 export function DiffStat({ additions, deletions, testID }: DiffStatProps) {
@@ -34,12 +26,12 @@ const styles = StyleSheet.create((theme) => ({
     flexShrink: 0,
   },
   additions: {
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
     fontWeight: theme.fontWeight.normal,
     color: theme.colors.statusSuccess,
   },
   deletions: {
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
     fontWeight: theme.fontWeight.normal,
     color: theme.colors.statusDanger,
   },

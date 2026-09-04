@@ -50,6 +50,15 @@ describe("ACP provider catalog", () => {
     expect(findProvider("traecli").command).toEqual(["traecli", "acp", "serve"]);
   });
 
+  it("offers MiniMax Code through its pinned public ACP package", () => {
+    expect(findProvider("minimax-code")).toMatchObject({
+      title: "MiniMax Code",
+      version: "0.1.2",
+      command: ["npx", "-y", "@minimax-ai/code@0.1.2", "acp"],
+    });
+    expect(findProvider("minimax-code").iconSvg).toContain("<svg");
+  });
+
   it("maps a catalog entry to the daemon provider config patch", () => {
     expect(buildAcpProviderConfigPatch(findProvider("amp-acp"))).toEqual({
       providers: {
@@ -70,6 +79,13 @@ describe("ACP provider catalog", () => {
     expect(patch.providers?.auggie?.env).toEqual({
       AUGMENT_DISABLE_AUTO_UPDATE: "1",
     });
+  });
+
+  it("registers Gajae Code with its ACP command and permission-prompt env", () => {
+    const patch = buildAcpProviderConfigPatch(findProvider("gjc"));
+
+    expect(patch.providers?.gjc?.command).toEqual(["gjc", "acp"]);
+    expect(patch.providers?.gjc?.env).toEqual({ GJC_ACP_PERMISSION_MODE: "prompt" });
   });
 
   it("preserves provider params in the daemon config patch", () => {

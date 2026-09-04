@@ -51,10 +51,14 @@ const entries = [
 // Files read at runtime via fs APIs rather than `require`. nft only
 // traces the module graph; data files have to be listed explicitly.
 const additionalInputs = [
+  // Agent orchestration skill catalog loaded through filesystem paths
+  "packages/server/dist/server/skills/**",
   // Shell integration scripts loaded by the terminal manager
   "packages/server/dist/server/terminal/shell-integration/**",
   // Silero VAD ONNX model (sherpa speech provider)
   "packages/server/dist/server/server/speech/providers/local/sherpa/assets/silero_vad.onnx",
+  // OpenCode loads this plugin from a content-addressed runtime copy.
+  "packages/server/dist/server/server/agent/providers/opencode/bridge-plugin.bundle.mjs",
   // Server runtime config files (read by path, not require)
   "packages/server/.env.example",
   // CLI shebang script wrapping dist/index.js

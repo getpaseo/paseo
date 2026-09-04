@@ -43,7 +43,9 @@ test("sidebar shortcuts exit focus mode and execute their action", async ({
   await pressRightSidebarShortcut(page);
 
   await expect(exitFocusModeButton(page)).toHaveCount(0);
-  await expect(page.getByText("Changes", { exact: true })).toBeVisible();
+  await expect(
+    page.getByText("Changes", { exact: true }).filter({ visible: true }).first(),
+  ).toBeVisible();
 });
 
 test("sidebar shortcuts outside a workspace preserve its focus mode", async ({

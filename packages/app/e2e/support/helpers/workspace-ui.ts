@@ -112,14 +112,6 @@ export async function expectReconnectingToastGone(
   });
 }
 
-export async function expectReconnectingToastDebounced(
-  page: Page,
-  options?: { durationMs?: number },
-): Promise<void> {
-  await page.waitForTimeout(options?.durationMs ?? 750);
-  await expect(page.getByTestId("agent-reconnecting-toast")).toHaveCount(0, { timeout: 100 });
-}
-
 export async function expectHostConnectingOrOffline(
   page: Page,
   options?: { timeout?: number },

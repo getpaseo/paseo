@@ -12,7 +12,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { ProfileIcon } from "@/workspace-pins/launch";
+import { TerminalProfileIcon } from "@/components/terminal-profile-icon";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { ICON_SIZE } from "@/styles/theme";
 import {
@@ -54,7 +54,7 @@ function LaunchProfileMenuItem({
 }): ReactElement {
   const handleSelect = useCallback(() => onSelect(profile.id), [onSelect, profile.id]);
   const leading = useMemo(
-    () => <ProfileIcon iconKey={getTerminalProfileIcon(profile)} />,
+    () => <TerminalProfileIcon iconKey={getTerminalProfileIcon(profile)} />,
     [profile],
   );
   // What the profile runs before any prompt is typed, so the row says what it
@@ -102,7 +102,7 @@ function TriggerIcon({
     return <ThemedMessageCircle size={ICON_SIZE.sm} uniProps={mutedColorMapping} />;
   }
   if (profile) {
-    return <ProfileIcon iconKey={getTerminalProfileIcon(profile)} />;
+    return <TerminalProfileIcon iconKey={getTerminalProfileIcon(profile)} />;
   }
   return <ThemedSquareTerminal size={ICON_SIZE.sm} uniProps={mutedColorMapping} />;
 }
@@ -241,21 +241,21 @@ const styles = StyleSheet.create((theme) => ({
   },
   label: {
     minWidth: 0,
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
     color: theme.colors.foregroundMuted,
     flexShrink: 1,
   },
   tooltipText: {
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
     color: theme.colors.popoverForeground,
   },
   profileName: {
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
     color: theme.colors.foregroundExtraMuted,
   },
   command: {
     fontFamily: theme.fontFamily.mono,
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
     color: theme.colors.foregroundMuted,
   },
 }));

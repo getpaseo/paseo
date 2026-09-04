@@ -276,6 +276,11 @@ export async function navigateToWorkspaceViaSidebar(
   });
 }
 
+export async function leaveWorkspaceViaHistory(page: Page): Promise<void> {
+  await page.getByRole("button", { name: "History", exact: true }).click();
+  await expect(page).toHaveURL(/\/sessions$/, { timeout: 30_000 });
+}
+
 export async function openWorkspaceScriptsMenu(page: Page): Promise<void> {
   await page.getByTestId("workspace-scripts-button").click();
   await expect(page.getByTestId("workspace-scripts-menu")).toBeVisible({ timeout: 10_000 });

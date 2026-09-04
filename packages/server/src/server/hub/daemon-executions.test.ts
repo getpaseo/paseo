@@ -187,7 +187,7 @@ test("reserved Paseo MCP input does not invalidate replay of an owned execution"
     type: "hub.execution.agent.create.response",
     payload: { success: true, executionId: "replayed-execution" },
   });
-  const providerCreations = hub.providerCreations();
+  const executionProviderCreations = hub.executionProviderCreations();
 
   hub.beginOwnedCreate("replay-create", "replayed-execution", {
     mcpServers: {
@@ -204,7 +204,7 @@ test("reserved Paseo MCP input does not invalidate replay of an owned execution"
       agentId: original.payload.agentId,
     },
   });
-  expect(hub.providerCreations()).toBe(providerCreations);
+  expect(hub.executionProviderCreations()).toBe(executionProviderCreations);
   expect(await hub.durableOwnedAgentIds()).toEqual([original.payload.agentId]);
 });
 

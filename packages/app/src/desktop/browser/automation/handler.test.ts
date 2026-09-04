@@ -4,6 +4,7 @@ import { createJSONStorage, type StateStorage } from "zustand/middleware";
 import { mountBrowserAutomationHandler } from "./handler";
 import type { DesktopHostBridge } from "@/desktop/host";
 import { useBrowserStore } from "@/desktop/browser/store";
+import { findPaneById } from "@/stores/workspace-layout-actions";
 import { useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
 import { buildWorkspaceTabPersistenceKey } from "@/workspace-tabs/model";
 
@@ -290,9 +291,11 @@ describe("mountBrowserAutomationHandler", () => {
     if (!workspaceKey) {
       throw new Error("Expected workspace key");
     }
-    const previousFocusedTabId = useWorkspaceLayoutStore
-      .getState()
-      .openTabFocused(workspaceKey, { kind: "draft", draftId: "human-draft" });
+    const previousFocusedTabId = useWorkspaceLayoutStore.getState().openTab({
+      workspaceKey: workspaceKey,
+      target: { kind: "draft", draftId: "human-draft" },
+      intent: "reveal",
+    });
     browser.mount({ serverId: "server-1" });
 
     browser.receive(browserNewTabRequest());
@@ -306,11 +309,15 @@ describe("mountBrowserAutomationHandler", () => {
         target: { kind: "browser", browserId: result.browserId },
       }),
     ]);
-    expect(layout?.root).toEqual(
-      expect.objectContaining({
-        kind: "pane",
-        pane: expect.objectContaining({ focusedTabId: previousFocusedTabId }),
-      }),
+    // Workspaces keep a stable hidden explorer companion pane at the root
+    // (see "retain workspace explorer pane"), so the root is a group and the
+    // draft/browser tabs land in the "main" pane, not at the root directly.
+    if (!layout) {
+      throw new Error("Expected workspace layout");
+    }
+    expect(layout.root.kind).toBe("group");
+    expect(findPaneById(layout.root, "main")).toEqual(
+      expect.objectContaining({ focusedTabId: previousFocusedTabId }),
     );
     expect(openedTabs[0]?.tabId).not.toBe(previousFocusedTabId);
     expect(browser.browser.activeWorkspaceBrowsers).toEqual([]);

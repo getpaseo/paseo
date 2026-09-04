@@ -1087,7 +1087,7 @@ describe.skipIf(isPlatform("win32"))("worktree-core POSIX-only", () => {
       expect(dedupedRemoteBranch.status).toBe(1);
     });
 
-    test("derives a deduped PR lookup target from git config when metadata has no target", async () => {
+    test("derives the tracked PR lookup target when managed metadata has no target", async () => {
       const { tempDir, repoDir, remoteDir, paseoHome } = createSameRepoGitHubPrRemoteRepo();
       cleanupPaths.push(tempDir);
       execFileSync("git", ["remote", "set-url", "origin", `file://${remoteDir}`], {
@@ -1139,13 +1139,20 @@ describe.skipIf(isPlatform("win32"))("worktree-core POSIX-only", () => {
         "utf8",
       );
 
+      const currentHead = execFileSync("git", ["rev-parse", "HEAD"], {
+        cwd: second.worktree.worktreePath,
+        encoding: "utf8",
+      }).trim();
       const facts = await getCheckoutSnapshotFacts(second.worktree.worktreePath, { paseoHome });
 
       expect(second.worktree.branchName).toBe("daemon-shutdown-diagnostics-1");
       expect(facts).toMatchObject({
         isGit: true,
         currentBranch: "daemon-shutdown-diagnostics-1",
-        pullRequestLookupTarget: { headRef: "daemon-shutdown-diagnostics" },
+        pullRequestLookupTarget: {
+          headRef: "daemon-shutdown-diagnostics",
+          headSha: currentHead,
+        },
       });
     });
 
@@ -1230,6 +1237,7 @@ describe.skipIf(isPlatform("win32"))("worktree-core POSIX-only", () => {
         forge: "github",
         changeRequestNumber: 526,
         headRef: "main",
+        headRepository: "therainisme/therainisme",
         headRepositoryOwner: "therainisme",
         baseRefName: "main",
         checkoutRefs: [{ remoteName: "origin", remoteRef: "refs/pull/526/head" }],

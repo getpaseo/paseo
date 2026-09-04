@@ -66,6 +66,7 @@ function createBaseInput(): AgentScreenMachineInput {
     isHistorySyncing: false,
     needsAuthoritativeSync: false,
     visibilityCatchUpStatus: "ready",
+    visibilityCatchUpError: null,
     hasHydratedHistoryBefore: false,
   };
 }
@@ -248,6 +249,24 @@ describe("deriveAgentScreenViewState", () => {
     expectSyncErrorSync(ready);
   });
 
+  it("shows the owner error when the first timeline load fails", () => {
+    const result = deriveAgentScreenViewState({
+      input: {
+        ...createBaseInput(),
+        agent: createAgent("agent-1"),
+        visibilityCatchUpStatus: "error",
+        visibilityCatchUpError: "already has an active writer",
+      },
+      memory: createBaseMemory(),
+    });
+
+    expect(result.state).toEqual({
+      tag: "error",
+      message: "already has an active writer",
+    });
+    expect(result.memory.hadInitialSyncFailure).toBe(true);
+  });
+
   it("keeps sync errors non-blocking once the screen was ready", () => {
     const memory = createBaseMemory({
       hasRenderedReady: true,
@@ -315,6 +334,22 @@ describe("deriveAgentScreenViewState", () => {
 
     expect(ready.source).toBe("stale");
     expect(ready.agent.id).toBe("agent-1");
+  });
+
+  it("marks the sync error as retrying while a user-requested retry is in flight", () => {
+    const memory = createBaseMemory({
+      hasRenderedReady: true,
+      lastReadyAgent: createAgent("agent-1"),
+    });
+    const input: AgentScreenMachineInput = {
+      ...createBaseInput(),
+      visibilityCatchUpStatus: "retrying",
+    };
+
+    const result = deriveAgentScreenViewState({ input, memory });
+    const ready = expectReadyState(result.state);
+
+    expect(ready.sync).toEqual({ status: "sync_error", isRetrying: true });
   });
 
   it("returns blocking error before first paint when refresh fails", () => {

@@ -3,6 +3,8 @@ import { createAgentCommand } from "./commands/agent/index.js";
 import { createDaemonCommand } from "./commands/daemon/index.js";
 import { createPermitCommand } from "./commands/permit/index.js";
 import { createProviderCommand } from "./commands/provider/index.js";
+import { createPluginCommand } from "./commands/plugin/index.js";
+import { createProjectCommand } from "./commands/project/index.js";
 import { createScheduleCommand } from "./commands/schedule/index.js";
 import { createSpeechCommand } from "./commands/speech/index.js";
 import { createScriptCommand } from "./commands/script/index.js";
@@ -15,6 +17,7 @@ import { createHooksCommand } from "./commands/hooks.js";
 import { startCommand as daemonStartCommand } from "./commands/daemon/start.js";
 import { runStatusCommand as runDaemonStatusCommand } from "./commands/daemon/status.js";
 import { runRestartCommand as runDaemonRestartCommand } from "./commands/daemon/restart.js";
+import { runDaemonReloadCommand } from "./commands/daemon/reload.js";
 import { addLsOptions, runLsCommand } from "./commands/agent/ls.js";
 import { addRunOptions, runRunCommand } from "./commands/agent/run.js";
 import { addLogsOptions, runLogsCommand } from "./commands/agent/logs.js";
@@ -33,6 +36,7 @@ import {
   addDaemonHostOption,
   addJsonAndDaemonHostOptions,
   addJsonOption,
+  withGlobalOptions,
 } from "./utils/command-options.js";
 import { resolveCliVersion } from "./version.js";
 
@@ -57,6 +61,7 @@ export function createCli(): Command {
     .option("-q, --quiet", "minimal output (IDs only)")
     .option("--no-headers", "omit table headers")
     .option("--no-color", "disable colored output");
+  addDaemonHostOption(program);
 
   // Primary agent commands (top-level)
   addJsonAndDaemonHostOptions(addLsOptions(program.command("ls"))).action(withOutput(runLsCommand));
@@ -83,9 +88,13 @@ export function createCli(): Command {
     )
     .action(withOutput(runCloneCommand));
 
-  addDaemonHostOption(addAttachOptions(program.command("attach"))).action(runAttachCommand);
+  addDaemonHostOption(addAttachOptions(program.command("attach"))).action(
+    withGlobalOptions(runAttachCommand),
+  );
 
-  addDaemonHostOption(addLogsOptions(program.command("logs"))).action(runLogsCommand);
+  addDaemonHostOption(addLogsOptions(program.command("logs"))).action(
+    withGlobalOptions(runLogsCommand),
+  );
 
   addJsonAndDaemonHostOptions(addStopOptions(program.command("stop"))).action(
     withOutput(runStopCommand),
@@ -123,6 +132,10 @@ export function createCli(): Command {
   )
     .option("--home <path>", "Paseo home directory (default: ~/.paseo)")
     .action(withOutput(runDaemonStatusCommand));
+
+  addJsonAndDaemonHostOptions(
+    program.command("reload").description('Reload daemon config (alias for "paseo daemon reload")'),
+  ).action(withOutput(runDaemonReloadCommand));
 
   addJsonOption(
     program
@@ -182,11 +195,13 @@ export function createCli(): Command {
 
   // Provider commands
   program.addCommand(createProviderCommand());
+  program.addCommand(createPluginCommand());
 
   // Speech model commands
   program.addCommand(createSpeechCommand());
 
   // Workspace commands
+  program.addCommand(createProjectCommand());
   program.addCommand(createWorkspaceCommand());
   // COMPAT(worktreeCli): legacy command alias added before workspace was the product unit.
   // Added in v0.2.0; remove after 2027-01-17.

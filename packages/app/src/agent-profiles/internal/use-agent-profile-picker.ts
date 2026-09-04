@@ -29,6 +29,8 @@ export type AgentProfileApplyTarget =
 export interface AgentProfilePickerRow {
   id: string;
   provider: string;
+  /** Empty when the profile names no model. */
+  modelId: string;
   /** Icon registry key and identity colour; either may be empty for the default glyph. */
   icon: string;
   color: string;
@@ -95,6 +97,7 @@ export function useAgentProfilePicker(
       applicableProfiles.map((profile) => ({
         id: profile.id,
         provider: profile.provider,
+        modelId: profile.model?.trim() ?? "",
         icon: profile.icon ?? "",
         color: profile.color ?? "",
         name: profile.name,

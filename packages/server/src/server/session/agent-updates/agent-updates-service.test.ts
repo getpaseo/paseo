@@ -617,6 +617,21 @@ describe("bootstrap buffering", () => {
 });
 
 describe("subscription lifecycle", () => {
+  test("attention eligibility follows the active directory subscription filter", async () => {
+    const h = buildHarness();
+    h.register(makeAgentPayload({ id: "matching", workspaceId: "ws-1", labels: { team: "a" } }));
+    h.register(makeAgentPayload({ id: "excluded", workspaceId: "ws-2", labels: { team: "b" } }));
+
+    expect(await h.service.includesLiveAgent(h.managed("matching"))).toBe(false);
+
+    h.service.beginSubscription({ subscriptionId: "sub", filter: { labels: { team: "a" } } });
+    expect(await h.service.includesLiveAgent(h.managed("matching"))).toBe(true);
+    expect(await h.service.includesLiveAgent(h.managed("excluded"))).toBe(false);
+
+    h.service.clearSubscription("sub");
+    expect(await h.service.includesLiveAgent(h.managed("matching"))).toBe(false);
+  });
+
   test("flushBootstrapped is a no-op for a stale subscription id", async () => {
     const h = buildHarness();
     h.service.beginSubscription({ subscriptionId: "sub", filter: {} });

@@ -224,9 +224,24 @@ describe("useAgentInputDraft live contract", () => {
       thinkingOptionId: "high",
     });
 
+    const hydratedTextReplacement = getLatest().textReplacement;
+
     await act(async () => {
-      getLatest().setText("hello world");
+      getLatest().editText("hello world");
       getLatest().setAttachments([{ kind: "image", metadata: image }]);
+    });
+
+    expect(getLatest().textReplacement).toBe(hydratedTextReplacement);
+
+    await act(async () => {
+      getLatest().replaceText("replacement text");
+    });
+
+    expect(getLatest().textReplacement).not.toBe(hydratedTextReplacement);
+    expect(getLatest().textReplacement.text).toBe("replacement text");
+
+    await act(async () => {
+      getLatest().editText("hello world");
     });
 
     await act(async () => {
@@ -418,7 +433,7 @@ describe("useAgentInputDraft live contract", () => {
     });
 
     await act(async () => {
-      getLatest().setText("with attachment");
+      getLatest().editText("with attachment");
       getLatest().setAttachments([{ kind: "image", metadata: image }]);
     });
 
@@ -500,7 +515,7 @@ describe("useAgentInputDraft live contract", () => {
     });
 
     await act(async () => {
-      getLatest().setText("queued message");
+      getLatest().editText("queued message");
       getLatest().setAttachments([{ kind: "image", metadata: image }]);
     });
 
@@ -554,7 +569,7 @@ describe("useAgentInputDraft live contract", () => {
     });
 
     await act(async () => {
-      getLatest().setText("queued message");
+      getLatest().editText("queued message");
       getLatest().setAttachments([{ kind: "image", metadata: sentImage }]);
     });
 
@@ -570,7 +585,7 @@ describe("useAgentInputDraft live contract", () => {
     });
 
     await act(async () => {
-      getLatest().setText("draft again");
+      getLatest().editText("draft again");
     });
 
     await act(async () => {

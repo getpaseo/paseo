@@ -27,8 +27,91 @@ export interface DaemonHydrationGate {
   release(): void;
 }
 
+export interface RewindCompletionGate {
+  clearTimelineStreamCount(): void;
+  release(): void;
+  timelineStreamCount(): number;
+  waitForDelayedResponse(): Promise<void>;
+}
+
 export interface PromptJumpRequestTracker {
   requests(): Array<{ cursorSeq: number | null; limit: number | null; mergeWindow: boolean }>;
+}
+
+export interface TimelineRequestTracker {
+  nextRequest(): Promise<{
+    direction: string | null;
+    cursor: { epoch: string; seq: number } | null;
+  }>;
+  requests(): Array<{
+    direction: string | null;
+    cursor: { epoch: string; seq: number } | null;
+  }>;
+  waitForResponse(): Promise<void>;
+}
+
+export async function trackAgentTimelineRequests(
+  page: Page,
+  agentId: string,
+): Promise<TimelineRequestTracker> {
+  type Request = ReturnType<TimelineRequestTracker["requests"]>[number];
+  const seen: Request[] = [];
+  const waiters: Array<(request: Request) => void> = [];
+  let responseSeen = false;
+  let resolveResponse: (() => void) | null = null;
+  const response = new Promise<void>((resolve) => {
+    resolveResponse = resolve;
+  });
+  await page.routeWebSocket(daemonWsRoutePattern(), (ws) => {
+    const server = ws.connectToServer();
+    ws.onMessage((message) => {
+      const sessionMessage = getSessionMessage(message);
+      if (
+        sessionMessage?.type === "fetch_agent_timeline_request" &&
+        sessionMessage.agentId === agentId
+      ) {
+        const rawCursor = sessionMessage.cursor;
+        const cursor =
+          rawCursor &&
+          typeof rawCursor === "object" &&
+          typeof (rawCursor as { epoch?: unknown }).epoch === "string" &&
+          typeof (rawCursor as { seq?: unknown }).seq === "number"
+            ? {
+                epoch: (rawCursor as { epoch: string }).epoch,
+                seq: (rawCursor as { seq: number }).seq,
+              }
+            : null;
+        const request = {
+          direction: typeof sessionMessage.direction === "string" ? sessionMessage.direction : null,
+          cursor,
+        };
+        seen.push(request);
+        waiters.shift()?.(request);
+      }
+      server.send(message);
+    });
+    server.onMessage((message) => {
+      const sessionMessage = getSessionMessage(message);
+      const payload = sessionMessage ? getPayload(sessionMessage) : null;
+      if (
+        sessionMessage?.type === "fetch_agent_timeline_response" &&
+        payload?.agentId === agentId
+      ) {
+        responseSeen = true;
+        resolveResponse?.();
+      }
+      ws.send(message);
+    });
+  });
+  return {
+    nextRequest() {
+      const request = seen[0];
+      if (request) return Promise.resolve(request);
+      return new Promise((resolve) => waiters.push(resolve));
+    },
+    requests: () => [...seen],
+    waitForResponse: () => (responseSeen ? Promise.resolve() : response),
+  };
 }
 
 export async function trackPromptJumpRequests(
@@ -176,6 +259,62 @@ export async function holdDaemonHydration(page: Page): Promise<DaemonHydrationGa
         forward();
       }
     },
+  };
+}
+
+export async function holdRewindCompletion(
+  page: Page,
+  agentId: string,
+): Promise<RewindCompletionGate> {
+  let released = false;
+  let timelineStreamCount = 0;
+  const delayedForwards: Array<() => void> = [];
+  let resolveDelayedResponse: (() => void) | null = null;
+  const delayedResponse = new Promise<void>((resolve) => {
+    resolveDelayedResponse = resolve;
+  });
+
+  await page.routeWebSocket(daemonWsRoutePattern(), (ws) => {
+    const server = ws.connectToServer();
+    ws.onMessage((message) => server.send(message));
+    server.onMessage((message) => {
+      const sessionMessage = getSessionMessage(message);
+      const payload = sessionMessage ? getPayload(sessionMessage) : null;
+      const streamEvent = payload?.event;
+      if (
+        sessionMessage?.type === "agent_stream" &&
+        payload?.agentId === agentId &&
+        streamEvent &&
+        typeof streamEvent === "object" &&
+        (streamEvent as { type?: unknown }).type === "timeline"
+      ) {
+        timelineStreamCount += 1;
+      }
+      if (
+        !released &&
+        sessionMessage?.type === "agent.rewind.response" &&
+        payload?.agentId === agentId
+      ) {
+        delayedForwards.push(() => ws.send(message));
+        resolveDelayedResponse?.();
+        return;
+      }
+      ws.send(message);
+    });
+  });
+
+  return {
+    clearTimelineStreamCount() {
+      timelineStreamCount = 0;
+    },
+    release() {
+      released = true;
+      for (const forward of delayedForwards.splice(0)) {
+        forward();
+      }
+    },
+    timelineStreamCount: () => timelineStreamCount,
+    waitForDelayedResponse: () => delayedResponse,
   };
 }
 

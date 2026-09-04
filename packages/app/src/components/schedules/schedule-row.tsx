@@ -400,7 +400,7 @@ const styles = StyleSheet.create((theme) => ({
   target: {
     marginTop: theme.spacing[1],
     color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
   },
   trailing: {
     flexDirection: "row",

@@ -1,3 +1,4 @@
+import { useRef } from "react";
 import { collectAllPanes, type WorkspaceLayout } from "@/stores/workspace-layout-store";
 import type { WorkspaceTab } from "@/workspace-tabs/model";
 import { deriveWorkspacePaneState } from "./workspace-pane-state";
@@ -24,4 +25,21 @@ export function selectVisibleAgentIds(input: {
       }),
     ),
   ].sort();
+}
+
+export function useVisibleAgentIds(input: {
+  layout: WorkspaceLayout | null;
+  tabs: WorkspaceTab[];
+  routeFocused: boolean;
+  focusedPaneOnly: boolean;
+}): string[] {
+  const nextAgentIds = selectVisibleAgentIds(input);
+  const stableAgentIds = useRef<string[]>([]);
+  if (
+    stableAgentIds.current.length !== nextAgentIds.length ||
+    stableAgentIds.current.some((agentId, index) => agentId !== nextAgentIds[index])
+  ) {
+    stableAgentIds.current = nextAgentIds;
+  }
+  return stableAgentIds.current;
 }

@@ -217,6 +217,78 @@ PASEO_PROFILE_IDLE_WAIT_MS=3000             # idle baseline before switching
 PASEO_PROFILE_DUMP_COMMITS=1                # include per-commit profiler samples
 ```
 
+For warm workspace switching, point the benchmark at an app backed by seeded
+daemon state:
+
+```bash
+PASEO_PROFILE_APP_URL=http://localhost:19010 \
+  npm run profile:workspace-switching --workspace=@getpaseo/app
+```
+
+The benchmark first warms `Cmd+1` through `Cmd+7`, then records a rapid seven-workspace
+burst. It separately warms the three-entry workspace deck LRU and records `Cmd+1` through
+`Cmd+3` without waits between keys. Both scenarios report keydown-to-activation latency and
+React commits on the same browser clock. Set `PASEO_PROFILE_WORKSPACE_DIGITS`,
+`PASEO_PROFILE_WORKSPACE_LRU_SIZE`, or `PASEO_PROFILE_WARM_QUIET_MS` to change the shape. Set
+`PASEO_PROFILE_DUMP_COMMITS=1` to include the nested component breakdown for every commit.
+Set `PASEO_PROFILE_RETAINED_REPEATS=5` to repeat the retained-LRU burst for a less noisy sample.
+Set `PASEO_PROFILE_CPU_PATH=/tmp/workspace-switch.cpuprofile` to run a separate retained-LRU
+capture after the latency scenarios and write a raw CDP CPU profile without contaminating their
+timings.
+Set `PASEO_PROFILE_TRACE_PATH=/tmp/workspace-switch.trace.json` to run another separate retained-LRU
+capture and write a Chromium Performance trace with User Timing marks and screenshots. Open the
+trace in the Chrome DevTools Performance panel. Set `PASEO_PROFILE_TRACE_INVALIDATIONS=1` only for a
+focused invalidation capture; React Native's generated stacks make that mode highly intrusive.
+Set `PASEO_PROFILE_TRACE_FOCUS=1` to include focus targets, durations, and JavaScript call stacks in
+the scenario report. This mode wraps `HTMLElement.focus`, so use it only for diagnosis.
+
+For the desktop Explorer sidebar toggle, run the app against the root checkout's daemon and use:
+
+```bash
+npm run profile:explorer-toggle --workspace=@getpaseo/app
+```
+
+The harness verifies port `6768`, opens the Paseo workspace, creates and warms the Explorer pane,
+records an idle control, then measures settled and 50 ms burst Cmd+E toggles. It reports
+input-to-DOM and input-to-paint latency, React commits, mounts, unmounts, and DOM mutations. Set
+`PASEO_PROFILE_TRACE_PATH=/tmp/explorer-toggle.trace.json` or
+`PASEO_PROFILE_CPU_PATH=/tmp/explorer-toggle.cpuprofile` for separate Chromium captures. Override
+the app URL, daemon port, workspace, or server with the corresponding `PASEO_PROFILE_*` variables.
+
+For sustained composer typing, run the paired composer-versus-textarea benchmark against a seeded
+daemon:
+
+```bash
+PASEO_PROFILE_APP_URL=http://localhost:19010 \
+  npm run profile:composer-typing --workspace=@getpaseo/app
+```
+
+The benchmark opens the first workspace, preserves its existing draft, and dispatches 300 printable
+keys at a fixed 16 ms cadence without waiting for each key to paint. It measures renderer
+`keydown` to the next paint opportunity, verifies that every character survived, alternates the
+composer and plain-textarea control across three runs, then restores the original draft. The report
+includes percentiles, frame coalescing, input processing, React work, long tasks, slow samples, and
+Playwright dispatch lateness. Set `PASEO_PROFILE_TYPING_KEYS`, `PASEO_PROFILE_TYPING_CADENCE_MS`,
+`PASEO_PROFILE_TYPING_REPEATS`, or `PASEO_PROFILE_WORKSPACE_DIGIT` to change the scenario. Optional
+`PASEO_PROFILE_CPU_PATH` and `PASEO_PROFILE_TRACE_PATH` captures run separately after the latency
+measurements so profiling overhead does not contaminate them.
+
+Set `PASEO_PROFILE_TYPING_SCENARIO=height-growth` to alternate `Shift+Enter` and printable input.
+That report includes input and composer height changes plus React work grouped into composer,
+stream, and ancestor/root scopes. Ancestor/root timings include descendant work because the Profiler
+boundaries are nested. A printable key after an empty newline should not change either height.
+
+### Preview Windows and Linux window controls on macOS
+
+Desktop development can replace native macOS traffic lights with Paseo's custom controls:
+
+```bash
+PASEO_DESKTOP_WINDOW_CONTROLS=windows npm run dev:desktop
+PASEO_DESKTOP_WINDOW_CONTROLS=linux npm run dev:desktop
+```
+
+The override is rejected in packaged builds. Restart the desktop process when changing it.
+
 ### Desktop macOS compositor watchdog
 
 macOS display sleep can leave Chromium's GPU-process display link — the vsync
@@ -266,8 +338,8 @@ the daemon-global Git process limits in `$PASEO_HOME/config.json`:
 }
 ```
 
-Restart the daemon with `paseo daemon restart`. If Paseo Desktop manages the daemon, fully quit and
-reopen the desktop app. Lower values reduce machine pressure but make Git-backed workspace state and
+Reload the daemon with `paseo reload`. Environment-variable overrides still require a restart because
+the launch environment remains authoritative. Lower values reduce machine pressure but make Git-backed workspace state and
 Git RPCs wait longer. See [Git process limits](data-model.md#git-process-limits) for defaults,
 semantics, and environment-variable overrides.
 
@@ -441,6 +513,16 @@ For tighter loops, you can rebuild a single workspace:
 - Changed `packages/server/src/*`, `packages/cli/src/*`, `packages/relay/src/*`, or `packages/highlight/src/*`: `npm run build:server`.
 - Changed app build dependencies: `npm run build:app-deps`.
 
+## Dependency patches
+
+`patches/*.patch` are applied by `scripts/postinstall-patches.mjs` on every install. A patch only
+runs when its package is actually present, so add the package to that script's `patchedPackages`
+list when you introduce a new patch — otherwise the file sits in `patches/` and never applies.
+Regenerate a patch with `npx patch-package <package>` after editing `node_modules/<package>`, and
+patch every build the consumers use: Metro resolves the `react-native` field of a package
+(`src/*.ts` for `react-native-svg`), while Node and Vitest resolve `main`/`module`
+(`lib/commonjs`, `lib/module`). Patching only `lib/` leaves the app bundle unfixed.
+
 ## ACP provider catalog versions
 
 The in-app ACP provider catalog pins package-runner entries (`npx`, `npm exec`,
@@ -462,7 +544,7 @@ install.
 
 Use `npm run cli` to run the in-repo CLI from source (`npx tsx packages/cli/src/index.ts`). The script wraps the CLI with `scripts/dev-home.sh`, so it automatically uses this checkout's `.dev/paseo-home` and dev daemon endpoint unless you pass an explicit override. The globally installed `paseo` binary on macOS is a symlink into the installed Paseo desktop app, not this checkout — use it to drive the desktop's built-in daemon, but use `npm run cli` when you want to talk to the CLI you are editing.
 
-Canonical automation uses `paseo workspace create/ls/rename/archive`, `paseo heartbeat create/update/delete`, and the full `paseo schedule` group. MCP heartbeat automation is intentionally smaller: create and delete only. Detach remains an explicit user lifecycle action rather than an agent tool. `paseo run --new-workspace local|worktree` composes workspace creation with agent creation. The old `paseo worktree` and `paseo run --worktree` forms are hidden compatibility aliases.
+Canonical automation uses `paseo project create/ls/rename/delete`, `paseo workspace create/ls/rename/archive`, `paseo heartbeat create/update/delete`, and the full `paseo schedule` group. MCP heartbeat automation is intentionally smaller: create and delete only. Detach remains an explicit user lifecycle action rather than an agent tool. `paseo run --new-workspace local|worktree` composes workspace creation with agent creation. The old `paseo worktree` and `paseo run --worktree` forms are hidden compatibility aliases.
 
 ```bash
 npm run cli -- ls -a -g              # List all agents globally
@@ -474,11 +556,17 @@ npm run cli -- daemon status         # Check daemon status
 npm run cli -- clone owner/repo --dir ~/workspace # Clone GitHub repo and register project
 ```
 
-Use `--host <host:port>` to point the CLI at a different daemon:
+Use the global `--host` option to point the CLI at a different daemon:
 
 ```bash
 npm run cli -- --host localhost:7777 ls -a
+npm run cli -- --host ssh://user@host ls -a
 ```
+
+Set `PASEO_HOST` to use the same target across invocations. An explicit
+`--host` overrides the environment variable.
+
+In an SSH URI, the URL port is the SSH server port. The remote daemon defaults to `127.0.0.1:6767`; use `?daemonPort=7777` to override it. The transport runs non-interactively through the local OpenSSH client and never installs, starts, or configures the remote daemon. User-facing setup and troubleshooting live in [public-docs/connectivity.md](../public-docs/connectivity.md#ssh).
 
 Desktop integrations can focus an existing agent without creating one or
 sending a message. Use `paseo://h/<server-id>/agent/<agent-id>`, or run

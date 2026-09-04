@@ -178,11 +178,6 @@ buildNpmPackage {
         exit 1
       fi
 
-      # Skills directory referenced at runtime by some agents
-      if [ -d skills ]; then
-        cp -a skills $out/share/paseo-desktop/
-      fi
-
       # Hicolor icon for desktop environments
       install -Dm644 packages/desktop/assets/icon.png \
         $out/share/icons/hicolor/512x512/apps/paseo-desktop.png

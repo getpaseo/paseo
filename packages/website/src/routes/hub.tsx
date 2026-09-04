@@ -1,4 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { Check, CircleHelp } from "lucide-react";
 import type { ReactNode } from "react";
 import {
   ClaudeCodeIcon,
@@ -11,40 +12,207 @@ import { DiscordIcon, GitHubIcon, SlackIcon } from "~/components/brand-icons";
 import { AGENT_PAGES } from "~/data/agent-pages";
 import { FAQItem } from "~/components/faq-item";
 import { SiteShell } from "~/components/site-shell";
+import { getHostedOffer, type HubHostedOffer } from "~/hub-plans";
 import { pageMeta } from "~/meta";
 
 export const Route = createFileRoute("/hub")({
   head: () =>
     pageMeta(
       "Paseo Hub - GitHub, Slack, and Discord triggers",
-      "An optional service above your Paseo daemons. Mention a bot in a GitHub issue and an agent runs on your own machine and opens a PR. Self-hosted first, private beta.",
+      "Run Paseo Hub yourself and start agents on your own machines from GitHub, Slack, and Discord.",
       "/hub",
     ),
+  loader: async () => {
+    try {
+      return { hosted: await getHostedOffer() };
+    } catch {
+      return { hosted: null };
+    }
+  },
   component: Hub,
 });
 
-const DISCORD_INVITE_URL = "https://discord.gg/jz8T2uahpH";
+const HOSTED_HUB_URL = "https://hub.paseo.sh";
 
 const LINK_CLASS = "underline hover:text-white/80";
 
 function Hub() {
+  const { hosted } = Route.useLoaderData();
   return (
     <SiteShell width="default">
       <h1 className="text-3xl font-medium tracking-tight mb-4">Paseo Hub</h1>
       <p className="text-lg text-white/70 leading-relaxed max-w-2xl">
         An optional service that sits above your daemons and gives them extra capabilities.
       </p>
-      <p className="text-white/40 text-sm mt-3">Private beta. Self-hosted first.</p>
+      <p className="text-white/40 text-sm mt-3">Run it yourself or use the hosted service.</p>
 
       <div className="space-y-20 mt-16">
         <Triggers />
         <Agents />
         <Shape />
-        <Access />
+        <Pricing hosted={hosted} />
         <FaqSection />
       </div>
     </SiteShell>
   );
+}
+
+interface PlanFeature {
+  key: string;
+  label: string;
+  tooltip: string | null;
+}
+
+const SELF_HOSTED_FEATURES: readonly PlanFeature[] = [
+  {
+    key: "operate-hub",
+    label: "You operate Hub",
+    tooltip: null,
+  },
+  {
+    key: "own-apps",
+    label: "Provider apps you create and control",
+    tooltip: null,
+  },
+  {
+    key: "open-source",
+    label: "Open source",
+    tooltip: null,
+  },
+];
+function Pricing({ hosted }: { hosted: HubHostedOffer | null }) {
+  if (hosted === null) {
+    return (
+      <section className="space-y-6" aria-labelledby="pricing-heading">
+        <div className="space-y-2">
+          <h2 id="pricing-heading" className="text-xl font-medium">
+            Choose how to run Hub
+          </h2>
+          <p className="max-w-2xl leading-relaxed text-white/70">
+            The plan comparison is temporarily unavailable.
+          </p>
+        </div>
+        <a
+          href="/docs/hub/quickstart"
+          className="inline-block rounded-md border border-white/15 px-4 py-2 text-sm font-medium text-white/80 transition-colors hover:border-white/25 hover:text-white"
+        >
+          Self-host Hub
+        </a>
+      </section>
+    );
+  }
+
+  return (
+    <section className="space-y-6" aria-labelledby="pricing-heading">
+      <div className="space-y-2">
+        <h2 id="pricing-heading" className="text-xl font-medium">
+          Choose how to run Hub
+        </h2>
+        <p className="max-w-2xl leading-relaxed text-white/70">
+          Both options use Paseo daemons to run agents on your machines.
+        </p>
+      </div>
+      <div className="grid gap-4 md:grid-cols-2">
+        <PlanCard
+          name="Self-hosted"
+          price="Free"
+          priceQualifier="/ open source"
+          priceTooltip={null}
+          features={SELF_HOSTED_FEATURES}
+          actionHref="/docs/hub/quickstart"
+          actionLabel="Self-host Hub"
+        />
+        <PlanCard
+          name={hosted.name}
+          price={formatPrice(hosted.price)}
+          priceQualifier={`per ${hosted.billing.unit.label} / ${formatBillingPeriod(hosted.price)}`}
+          priceTooltip={hosted.price.tooltip}
+          features={hosted.features}
+          actionHref={HOSTED_HUB_URL}
+          actionLabel="Start free trial"
+          featured
+        />
+      </div>
+    </section>
+  );
+}
+
+function PlanCard({
+  name,
+  price,
+  priceQualifier,
+  priceTooltip,
+  features,
+  actionHref,
+  actionLabel,
+  featured = false,
+}: {
+  name: string;
+  price: string;
+  priceQualifier: string;
+  priceTooltip: string | null;
+  features: readonly PlanFeature[];
+  actionHref: string;
+  actionLabel: string;
+  featured?: boolean;
+}) {
+  return (
+    <article
+      className={`flex flex-col rounded-2xl border p-6 ${featured ? "border-white/25 bg-white/[0.06]" : "border-white/10 bg-white/[0.02]"}`}
+    >
+      <h3 className="text-xl font-medium">{name}</h3>
+      <div className="mt-6 flex items-end gap-2">
+        <span className="text-4xl font-medium tracking-tight">{price}</span>
+        <span className="mb-1 inline-flex items-center gap-1 text-sm text-white/45">
+          {priceQualifier}
+          {priceTooltip !== null && <InfoTip text={priceTooltip} />}
+        </span>
+      </div>
+      {features.length > 0 && (
+        <ul className="mt-6 grid flex-1 content-start gap-3 text-sm text-white/70">
+          {features.map((feature) => (
+            <li key={feature.key} className="flex items-start gap-2.5">
+              <Check aria-hidden="true" className="mt-0.5 size-4 shrink-0 text-emerald-300" />
+              <span>{feature.label}</span>
+              {feature.tooltip !== null && <InfoTip text={feature.tooltip} />}
+            </li>
+          ))}
+        </ul>
+      )}
+      <a
+        href={actionHref}
+        className={`mt-8 rounded-md px-4 py-2 text-center text-sm font-medium transition-colors ${featured ? "bg-white text-black hover:bg-white/90" : "border border-white/15 text-white/80 hover:border-white/25 hover:text-white"}`}
+      >
+        {actionLabel}
+      </a>
+    </article>
+  );
+}
+
+function InfoTip({ text }: { text: string }) {
+  return (
+    <span className="group relative inline-flex shrink-0" tabIndex={0}>
+      <CircleHelp aria-label={text} className="size-3.5 text-white/35" />
+      <span
+        role="tooltip"
+        className="pointer-events-none absolute bottom-full left-1/2 z-10 mb-2 hidden w-56 -translate-x-1/2 rounded-md border border-white/10 bg-[#17201f] px-3 py-2 text-xs leading-relaxed text-white/75 shadow-xl group-hover:block group-focus:block"
+      >
+        {text}
+      </span>
+    </span>
+  );
+}
+
+function formatPrice(price: HubHostedOffer["price"]): string {
+  return new Intl.NumberFormat("en", {
+    style: "currency",
+    currency: price.currency.toUpperCase(),
+    minimumFractionDigits: 0,
+  }).format(price.unitAmount / 100);
+}
+
+function formatBillingPeriod(price: HubHostedOffer["price"]): string {
+  return price.intervalCount === 1 ? "month" : `${price.intervalCount} months`;
 }
 
 const TRIGGER_SURFACES = [
@@ -266,7 +434,7 @@ function Shape() {
 
           <div className="w-full max-w-xs rounded-xl border border-white/20 bg-white/[0.06] px-6 py-5 text-center">
             <p className="font-medium">Hub</p>
-            <p className="text-xs text-muted-foreground mt-1">Self-hosted, one per team</p>
+            <p className="text-xs text-muted-foreground mt-1">Self-hosted or managed</p>
           </div>
 
           <Connector label="the same RPCs the app and CLI use" />
@@ -354,28 +522,6 @@ function MachineIcon() {
   );
 }
 
-function Access() {
-  return (
-    <section className="space-y-6">
-      <h2 className="text-xl font-medium">Getting access</h2>
-      <p className="text-white/70 leading-relaxed max-w-2xl">
-        Join the Paseo Discord and DM me. I&apos;m looking for design partners who are comfortable
-        self-hosting.
-      </p>
-      <div className="flex items-center gap-4 pt-2">
-        <a
-          href={DISCORD_INVITE_URL}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="rounded-md bg-white text-black px-4 py-2 text-sm font-medium hover:bg-white/90 transition-colors"
-        >
-          Join the Discord
-        </a>
-      </div>
-    </section>
-  );
-}
-
 function FaqSection() {
   return (
     <section className="space-y-6">
@@ -396,20 +542,24 @@ function FaqSection() {
             a team, and run multi-tenant. None of that belongs in a single machine daemon.
           </p>
         </FAQItem>
-        <FAQItem question="Why self-hosted first?">
-          The Hub can trigger executions on the daemons connected to it, so it has to be trusted. I
-          am not comfortable having people connect their daemons to my infrastructure until the
-          daemon has stronger authorization primitives and sandboxing. That work is on the roadmap,
-          and it applies to every Paseo user.
+        <FAQItem question="Can I run it myself?">
+          Yes. Run <code>npx @getpaseo/hub</code> and complete setup in the browser. The source is
+          available on{" "}
+          <a href="https://github.com/getpaseo/hub" className={LINK_CLASS}>
+            GitHub
+          </a>
+          , and the{" "}
+          <a href="/docs/hub/self-hosting" className={LINK_CLASS}>
+            self-hosting guide
+          </a>{" "}
+          covers more involved deployments.
         </FAQItem>
         <FAQItem question="What do I need to run it?">
-          A single Node.js application and a Postgres database. You also bring your own GitHub App,
-          Slack app, and Discord bot credentials, which is the tedious part.
+          Node.js and a running Paseo daemon. Hub guides you through connecting the provider apps
+          you want.
         </FAQItem>
-        <FAQItem question="Will there be a hosted version?">
-          Planned, once the daemon has stronger authorization primitives and sandboxing. I already
-          run a Hub for my own repos, and I can walk you through a trial on it if you want to skip
-          the self-hosted setup. No SLA.
+        <FAQItem question="Is there a hosted version?">
+          Yes. The hosted service runs the same Hub software you can self-host.
         </FAQItem>
         <FAQItem question="What else is planned?">
           <p>Not built yet, listed so you know where this is going.</p>
@@ -432,16 +582,11 @@ function FaqSection() {
           triggers, and it&apos;s why access to the beta stays small and trusted.
         </FAQItem>
         <FAQItem question="How do I get access?">
-          Join the{" "}
-          <a
-            href={DISCORD_INVITE_URL}
-            target="_blank"
-            rel="noopener noreferrer"
-            className={LINK_CLASS}
-          >
-            Paseo Discord
+          You can self-host today or{" "}
+          <a href={HOSTED_HUB_URL} className={LINK_CLASS}>
+            sign in to Hosted Hub
           </a>{" "}
-          and DM @moboudra for an invite to the private Hub channel.
+          to start a free trial.
         </FAQItem>
       </div>
     </section>

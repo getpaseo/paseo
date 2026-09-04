@@ -1,18 +1,12 @@
 export {
   buildReviewAttachmentSnapshot,
   buildReviewDraftKey,
-  buildReviewDraftScopeKey,
-  expireStaleDiffModeOverrides,
   getReviewDraftComments,
   resetReviewDraftStore,
   useClearReviewDraft,
   useReviewAttachmentSnapshot,
-  useResolvedDiffMode,
-  useSetDiffModeOverride,
   addReviewDraftComment,
   type BuildReviewDraftKeyInput,
-  type BuildReviewDraftScopeKeyInput,
-  type DiffModeOverride,
   type ReviewDraftCommentInput,
   type ReviewDraftComment,
   type ReviewDraftMode,
@@ -21,15 +15,19 @@ export {
 
 export {
   getInlineReviewThreadState,
-  getInlineReviewThreadViewportStyle,
   getSplitInlineReviewThreadState,
+  isInlineReviewEditorForTarget,
+  type InlineReviewActions,
+  type InlineReviewEditorState,
+} from "./geometry";
+
+export {
+  getInlineReviewThreadViewportStyle,
   groupInlineReviewCommentsByTarget,
+  InlineReviewAddButton,
   InlineReviewEditor,
   InlineReviewGutterCell,
   InlineReviewThread,
-  isInlineReviewEditorForTarget,
   SMALL_ACTION_HIT_SLOP,
   useInlineReviewController,
-  type InlineReviewActions,
-  type InlineReviewEditorState,
 } from "./surface";

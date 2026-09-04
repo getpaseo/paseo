@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { AgentStreamEventPayload } from "@getpaseo/protocol/messages";
+import type { AgentTimelineItem, ToolCallDetail } from "@getpaseo/protocol/agent-types";
 import {
   createUserMessage,
   hydrateStreamState,
@@ -22,17 +23,23 @@ import {
 // Test helpers
 // ---------------------------------------------------------------------------
 
+type TimelineResponseEntry = ProcessTimelineResponseInput["payload"]["entries"][number];
+
 function makeTimelineEntry(
   seq: number,
   text: string,
-  type: string = "assistant_message",
+  type: "assistant_message" | "user_message" | "reasoning" = "assistant_message",
   seqEnd = seq,
-) {
+): TimelineResponseEntry {
+  let item: AgentTimelineItem;
+  if (type === "assistant_message") item = { type, text };
+  else if (type === "user_message") item = { type, text };
+  else item = { type, text };
   return {
     seqStart: seq,
     seqEnd,
     provider: "claude",
-    item: { type, text },
+    item,
     timestamp: new Date(1000 + seq).toISOString(),
   };
 }
@@ -41,8 +48,8 @@ function makeToolCallTimelineEntry(
   seq: number,
   callId: string,
   status: "running" | "completed",
-  detail: Record<string, unknown>,
-) {
+  detail: ToolCallDetail,
+): TimelineResponseEntry {
   return {
     seqStart: seq,
     seqEnd: seq,
@@ -54,6 +61,23 @@ function makeToolCallTimelineEntry(
       status,
       detail,
       error: null,
+    },
+    timestamp: new Date(1000 + seq).toISOString(),
+  };
+}
+
+function makePluginTimelineEntry(seq: number, status: string): TimelineResponseEntry {
+  return {
+    seqStart: seq,
+    seqEnd: seq,
+    provider: "claude",
+    item: {
+      type: "plugin" as const,
+      id: "review-1",
+      pluginId: "review",
+      kind: "review",
+      version: 1,
+      data: { status },
     },
     timestamp: new Date(1000 + seq).toISOString(),
   };
@@ -197,6 +221,32 @@ describe("deriveAgentStreamTurnLiveness", () => {
   });
 });
 
+describe("timeline turn membership compatibility", () => {
+  it("hydrates tagged rows while retaining legacy rows without a turn ID", () => {
+    const hydrated = hydrateStreamState([
+      {
+        event: {
+          type: "timeline",
+          provider: "claude",
+          turnId: "turn-1",
+          item: { type: "user_message", text: "prompt", clientMessageId: "prompt-id" },
+        },
+        timestamp: new Date(1000),
+      },
+      {
+        event: {
+          type: "timeline",
+          provider: "claude",
+          item: { type: "assistant_message", text: "legacy" },
+        },
+        timestamp: new Date(2000),
+      },
+    ]);
+
+    expect(hydrated.map((item) => item.turnId)).toEqual(["turn-1", undefined]);
+  });
+});
+
 describe("detached timeline windows", () => {
   it("does not apply or catch up live events while viewing an older window", () => {
     const currentTail = [makeAssistantItem("older window")];
@@ -285,8 +335,17 @@ describe("processTimelineResponse", () => {
       text: "local prompt",
       timestamp: new Date(1000),
       timelineCursor: { epoch: "epoch-1", seq: 1 },
+      turnId: "turn-1",
     });
-    const currentTail = [canonical, makeAssistantItem("existing tail", "existing-tail")];
+    const hello = createUserMessage({
+      id: "hello",
+      clientMessageId: "hello-client",
+      text: "hello",
+      timestamp: new Date(1500),
+      timelineCursor: { epoch: "epoch-1", seq: 2 },
+      turnId: "turn-1",
+    });
+    const currentTail = [canonical, makeAssistantItem("existing tail", "existing-tail"), hello];
     const currentHead = [makeAssistantItem("existing head", "existing-head")];
 
     const result = processTimelineResponse({
@@ -314,6 +373,7 @@ describe("processTimelineResponse", () => {
         ],
       },
     });
+    expect(result.tail.find((item) => item.id === "hello")?.turnId).toBe("turn-1");
 
     expect(result.commit).toBe("discard");
     expect(result.tail).toBe(currentTail);
@@ -3195,6 +3255,43 @@ describe("processTimelineResponse", () => {
         detailType: "read",
       },
     ]);
+  });
+
+  it("keeps the newest plugin row across the older-page prepend boundary", () => {
+    const currentTail = hydrateStreamState(
+      [
+        {
+          event: {
+            type: "timeline",
+            provider: "claude",
+            item: makePluginTimelineEntry(3, "complete").item,
+          },
+          timestamp: new Date(3000),
+        },
+      ],
+      { source: "canonical" },
+    );
+
+    const result = processTimelineResponse({
+      ...baseTimelineInput,
+      currentTail,
+      currentCursor: { epoch: "epoch-1", startSeq: 3, endSeq: 5 },
+      payload: {
+        ...baseTimelineInput.payload,
+        direction: "before",
+        epoch: "epoch-1",
+        startCursor: { seq: 1 },
+        endCursor: { seq: 2 },
+        entries: [makePluginTimelineEntry(1, "running")],
+      },
+    });
+
+    expect(result.tail).toHaveLength(1);
+    expect(result.tail[0]).toMatchObject({
+      kind: "plugin",
+      id: "review/review-1",
+      data: { status: "complete" },
+    });
   });
 
   it("removes a reconciled submitted prompt before coalescing a tool call at the pagination seam", () => {

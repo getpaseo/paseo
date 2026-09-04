@@ -40,12 +40,20 @@ export function rememberTimelineRequestCounts(gate: DaemonWebSocketGate): Timeli
   };
 }
 
-export function expectOneTailCheckWithoutCatchUpPages(
+export function expectOneResumeCheckWithoutTail(
   gate: DaemonWebSocketGate,
   before: TimelineRequestCounts,
 ): void {
+  expect(gate.getTimelineRequestCount("after") - before.after).toBe(1);
+  expect(gate.getTimelineRequestCount("tail") - before.tail).toBe(0);
+}
+
+export function expectResumeOverflowFallsBackToOneTail(
+  gate: DaemonWebSocketGate,
+  before: TimelineRequestCounts,
+): void {
+  expect(gate.getTimelineRequestCount("after") - before.after).toBe(1);
   expect(gate.getTimelineRequestCount("tail") - before.tail).toBe(1);
-  expect(gate.getTimelineRequestCount("after") - before.after).toBe(0);
 }
 
 export async function disconnectViewedTimeline(
@@ -56,7 +64,7 @@ export async function disconnectViewedTimeline(
   await expectReconnectingToastVisible(page);
 }
 
-export async function restoreViewedTimelineWithHeldTail(
+export async function restoreViewedTimelineWithHeldResponse(
   page: Page,
   gate: DaemonWebSocketGate,
 ): Promise<void> {

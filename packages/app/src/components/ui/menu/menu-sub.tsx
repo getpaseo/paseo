@@ -131,7 +131,7 @@ const styles = StyleSheet.create((theme) => ({
     gap: theme.spacing[1.5],
   },
   valueText: {
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
     color: theme.colors.foregroundMuted,
     flexShrink: 1,
   },

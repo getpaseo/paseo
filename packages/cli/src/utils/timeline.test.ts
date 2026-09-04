@@ -224,3 +224,28 @@ test("returns a short filtered tail only after reaching history start", async ()
   expect(items).toEqual([timelineItem("match")]);
   expect(requests).toHaveLength(2);
 });
+
+test("stops a filtered tail when history pagination repeats its start cursor", async () => {
+  const requests: unknown[] = [];
+  const repeatedCursor = { epoch: "epoch-1", seq: 10 };
+  const client: TimelineFetchClient = {
+    async fetchAgentTimeline(_agentId, options) {
+      requests.push(options);
+      return {
+        entries: [{ item: timelineItem(options.direction === "tail" ? "skip" : "match") }],
+        startCursor: repeatedCursor,
+        hasOlder: true,
+      };
+    },
+  };
+
+  const items = await fetchProjectedTimelineItems({
+    client,
+    agentId: "agent-1",
+    tailCount: 2,
+    matches: (item) => item.type === "assistant_message" && item.text === "match",
+  });
+
+  expect(items).toEqual([timelineItem("match")]);
+  expect(requests).toHaveLength(2);
+});

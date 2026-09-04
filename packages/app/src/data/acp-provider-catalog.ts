@@ -188,6 +188,19 @@ const CATALOG_DATA = [
     command: ["npx", "-y", "@google/gemini-cli@0.52.0", "--acp"],
   },
   {
+    id: "gjc",
+    title: "Gajae Code",
+    description:
+      "Runs on the Claude/Codex/Gemini subscription you already pay for. Plan-before-mutation workflows, evidence-gated execution, and approval prompts for shell and destructive edits.",
+    version: "manual",
+    iconId: "gjc",
+    installLink: "https://gajae-code.com",
+    command: ["gjc", "acp"],
+    env: {
+      GJC_ACP_PERMISSION_MODE: "prompt",
+    },
+  },
+  {
     id: "glm-acp-agent",
     title: "GLM Agent",
     description:
@@ -260,6 +273,15 @@ const CATALOG_DATA = [
     iconId: "kimi",
     installLink: "https://github.com/MoonshotAI/kimi-code",
     command: ["kimi", "acp"],
+  },
+  {
+    id: "minimax-code",
+    title: "MiniMax Code",
+    description: "MiniMax's coding agent for the terminal",
+    version: "0.1.2",
+    iconId: "minimax-code",
+    installLink: "https://agent.minimax.io",
+    command: ["npx", "-y", "@minimax-ai/code@0.1.2", "acp"],
   },
   {
     id: "minion-code",

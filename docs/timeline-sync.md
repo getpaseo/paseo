@@ -5,6 +5,9 @@ Agent chat delivery has two paths:
 1. **Live stream** — `agent_stream` WebSocket messages for immediacy. These may be delta-shaped lifecycle updates.
 2. **Authoritative history** — `fetch_agent_timeline_request` for correctness. This always returns full projected timeline items, never lifecycle deltas.
 
+The daemon keeps canonical rows only for its runtime. Provider history is the durable transcript
+authority and repopulates those rows when an agent resumes.
+
 The invariants are:
 
 > A continuously subscribed client applies every committed row in order. Opening or resuming an
@@ -12,7 +15,7 @@ The invariants are:
 > through backward pagination.
 
 Tool output is bounded before it enters either delivery path. Canonical shell tool output is sliced
-to 64 KiB, and the same bounded item is used for durable timeline rows and live stream events.
+to 64 KiB, and the same bounded item is used for runtime timeline rows and live stream events.
 Provider history hydration applies the same rule so reopening an agent cannot restore an oversized
 tool payload.
 
@@ -46,6 +49,16 @@ upstream API has no byte limit, so one unusually large turn can still make a pag
 A bounded tail is not proof that the provider transcript is complete: pageable providers retain
 their native continuation privately and read another bounded page only for upward navigation or an
 operation that explicitly requires complete coverage.
+
+A failed catch-up or subscription reconcile retries on its own, doubling from 1s to a 30s ceiling.
+A fixed 1s retry turned a persistent daemon-side refusal — a Codex thread that already has an active
+writer, say — into a request and a log line every second on an idle app. The delay resets on success,
+reconnect, delivery-mode change, and visibility change, so recovery is still immediate once the
+condition clears. Republishing the same visibility set is a no-op and never bypasses backoff.
+
+Background retries are silent. The retry the user presses in the sync-error callout is a fallible
+user action and owns its pending state: `retrying` is a status the sync model publishes, not a React
+boolean, so the button reports in-flight and the callout returns to `error` when the attempt fails.
 
 Reaching the history-start threshold loads one older page and preserves the visible content anchor.
 Cursor progress does not trigger another page. The user must leave and return to the threshold unless
@@ -82,24 +95,32 @@ history start; a response requested from a pre-replacement range is stale and is
 
 ## Client replica lifetime
 
-The host runtime owns each session replica for as long as the host remains registered. React
-providers attach message handlers and UI integrations to that replica, but mounting or unmounting a
-provider must not create or clear it. A provider can remount during Fast Refresh or ordinary UI
-recomposition while the runtime still owns the same directory snapshot and timeline cursors.
+The session projection remains host-scoped for as long as the host is registered. The viewed-timeline
+owner wraps cached preparation, network catch-up, accepted timeline application, and persistence
+behind one interface. React supplies transport and projection operations without selecting a cache
+path or issuing a separate persistence notification.
 
 Removing the host from the registry is the destructive boundary: it stops the runtime and clears the
 session and host-scoped setup state together.
 
-The durable replica cache is a display cache, not a synchronization checkpoint. Its timeline record
-contains only the focused `agentId` and a truncated item tail. It never persists a cursor, epoch,
-older-history availability, authority status, or sync generation because those facts would describe
-the complete source dataset rather than the truncated display dataset.
+The timeline owner asks durable replica storage for an agent when that agent becomes visible. An
+accepted row paints immediately before subscription acknowledgement or timeline fetch. The stored
+range describes those exact items: `startSeq` drives older pagination and `endSeq` drives forward
+catch-up. The owner requests `after endSeq`, and requests `before startSeq` when the user loads older
+history. Code outside the owner does not distinguish cached and network timelines.
 
-Restoring that cache produces a painted timeline: the items may render immediately, but the first
-daemon timeline request is still `tail`. A successful tail response atomically establishes canonical
-items, range, and older-history availability. Live rows received between cache paint and that tail
-response stay in the separate live head, do not advance a cursor or trigger gap recovery, and are
-reconciled with the authoritative tail and subsequent catch-up.
+The first resume request is bounded. If it reports more newer history, fetch one latest bounded tail
+instead of replaying every missed page. Live gap recovery still pages forward until current.
+
+If the canonical window exceeds the cache item limit, contains a discontiguous retained range, has a
+live head, or includes presentation data the cache cannot encode losslessly, persistence drops the
+range and keeps a display-only tail. Never slice items while retaining the pre-slice range; that
+falsely certifies discarded source rows. A display-only row paints without granting synchronization
+authority, so the owner uses the ordinary bounded `tail` bootstrap.
+
+Live rows received between cache paint and catch-up stay in the separate live head and reconcile with
+the authoritative range through the existing forward-page path. The cache does not persist sync
+generation or unreconciled local submissions.
 
 Every daemon-derived live item carries its timeline epoch and sequence position. Bootstrap
 replacement keeps only positioned rows newer than the page it installs, while unresolved local
@@ -171,6 +192,11 @@ both user-started foreground turns and autonomous provider turns;
 foreground control ownership remains a separate daemon concern. Cancellation request identity is stored
 with that record rather than in a React component, so an old request cannot clear a newer one. Submissions
 remain a separate pre-turn registry and retire on canonical acknowledgement.
+
+Canonical turns and visible responses are different boundaries. System-injected prompts are absent from
+the Paseo timeline, so one visible response can span several canonical turns without a user message
+between them. Layout and copy group that response together; lifecycle, timing, tool sequences, and exact
+fork positions retain the canonical `turnId` boundaries.
 
 The compatibility boundary for older daemons is snapshot normalization: running/idle status becomes an
 anonymous active turn or idle state once, and downstream code consumes the same activity shape. The app

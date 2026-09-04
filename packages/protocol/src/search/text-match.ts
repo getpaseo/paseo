@@ -17,6 +17,14 @@ export interface MatchScore {
 export interface MatchOptions {
   /** Omit or pass null to match exactly. `fuzzyPolicyForToken` picks a policy. */
   fuzzy?: FuzzyPolicy | null;
+  /**
+   * Match characters that appear in order but not adjacently, so `pasbab` finds
+   * `paseo-babysit`. Defaults to on. Turn it off where a near miss has to read as
+   * no match at all: it widens far enough that most typos hit something, and a
+   * list that preselects its first row would then act on that row when the user
+   * presses Enter expecting nothing to happen.
+   */
+  subsequence?: boolean;
 }
 
 /** Exact tiers, best to worst. The fuzzy tier always sorts after all of them. */
@@ -194,11 +202,45 @@ export function scoreMatch(
   const t = text.toLowerCase();
   if (t === q) return { tier: TIER_EXACT, offset: 0 };
 
-  const exact = scoreSubstringMatch(q, t) ?? scoreSubsequenceMatch(q, t);
+  const substring = scoreSubstringMatch(q, t);
+  const exact = substring ?? (options.subsequence === false ? null : scoreSubsequenceMatch(q, t));
   if (exact) return exact;
 
   const fuzzy = options.fuzzy;
   return fuzzy ? scoreFuzzyMatch(q, t, fuzzy) : null;
+}
+
+interface CompactText {
+  value: string;
+  offsets: number[];
+}
+
+function compactText(value: string): CompactText {
+  let compact = "";
+  const offsets: number[] = [];
+  for (let index = 0; index < value.length; index += 1) {
+    if (!/[a-z0-9]/i.test(value[index])) continue;
+    compact += value[index].toLowerCase();
+    offsets.push(index);
+  }
+  return { value: compact, offsets };
+}
+
+/** Match a query against a complete displayed path, including its separators. */
+export function scorePathMatch(query: string, path: string): MatchScore | null {
+  const direct = scoreMatch(query, path);
+  if (direct) return direct;
+
+  const compactQuery = compactText(query);
+  const compactPath = compactText(path);
+  if (!compactQuery.value || !compactPath.value) return null;
+
+  const compactScore = scoreMatch(compactQuery.value, compactPath.value);
+  if (!compactScore) return null;
+  return {
+    ...compactScore,
+    offset: compactPath.offsets[compactScore.offset] ?? compactScore.offset,
+  };
 }
 
 export interface MatchRange {
@@ -274,6 +316,12 @@ export interface TextFieldsOptions {
    * query mixes long words that can absorb an edit with short ones that cannot.
    */
   typoTolerant?: boolean;
+  /**
+   * See `MatchOptions.subsequence`. Applied per token, so turning it off means
+   * every token has to appear as a run of adjacent characters in some field —
+   * `lab des` still matches "Label as Design", `labdes` no longer does.
+   */
+  subsequence?: boolean;
 }
 
 export function scoreTextFields(
@@ -289,7 +337,7 @@ export function scoreTextFields(
     const fuzzy = options.typoTolerant ? fuzzyPolicyForToken(token) : null;
     let best: MatchScore | null = null;
     for (const field of fields) {
-      const score = scoreMatch(token, field, { fuzzy });
+      const score = scoreMatch(token, field, { fuzzy, subsequence: options.subsequence });
       if (score && (!best || compareMatchScores(score, best) < 0)) {
         best = score;
       }

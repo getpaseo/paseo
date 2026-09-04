@@ -20,7 +20,50 @@ env:
   SOURCE_TAG: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref_name }}
 
 jobs:
+  ensure-release:
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: scripts
+          ref: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref }}
+
+      - name: Resolve release tag
+        shell: bash
+        run: node scripts/emit-release-env.mjs --source-tag "$SOURCE_TAG" >> "$GITHUB_ENV"
+
+      - name: Ensure GitHub release exists
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if node scripts/github-release.mjs --repo "${{ github.repository }}" --tag "$RELEASE_TAG" >/dev/null 2>&1; then
+            exit 0
+          fi
+
+          release_args=(
+            release create "$RELEASE_TAG"
+            --repo "${{ github.repository }}"
+            --title "Paseo $RELEASE_TAG"
+            --notes ""
+            --draft
+          )
+
+          if [[ "$IS_PRERELEASE" == "true" ]]; then
+            release_args+=(--prerelease)
+          fi
+
+          if ! gh "${release_args[@]}"; then
+            echo "Release creation raced with another workflow; continuing."
+            node scripts/github-release.mjs --repo "${{ github.repository }}" --tag "$RELEASE_TAG" >/dev/null
+          fi
+
   publish-android-apk:
+    needs: [ensure-release]
     permissions:
       contents: write
       packages: read
@@ -35,32 +78,6 @@ jobs:
       - name: Resolve release tag
         shell: bash
         run: node scripts/emit-release-env.mjs --source-tag "$SOURCE_TAG" >> "$GITHUB_ENV"
-
-      - name: Ensure GitHub release exists
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          if gh release view "$RELEASE_TAG" --repo "${{ github.repository }}" >/dev/null 2>&1; then
-            exit 0
-          fi
-
-          release_args=(
-            release create "$RELEASE_TAG"
-            --repo "${{ github.repository }}"
-            --title "Paseo $RELEASE_TAG"
-            --notes ""
-          )
-
-          if [[ "$IS_PRERELEASE" == "true" ]]; then
-            release_args+=(--prerelease)
-          fi
-
-          if ! gh "${release_args[@]}"; then
-            echo "Release creation raced with another workflow; continuing."
-          fi
 
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -129,4 +146,5 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release upload "$RELEASE_TAG" "${{ steps.artifact.outputs.asset_path }}" --clobber --repo "${{ github.repository }}"
+          release_lookup="$(node scripts/github-release.mjs --repo "${{ github.repository }}" --tag "$RELEASE_TAG")"
+          gh release upload "$release_lookup" "${{ steps.artifact.outputs.asset_path }}" --clobber --repo "${{ github.repository }}"

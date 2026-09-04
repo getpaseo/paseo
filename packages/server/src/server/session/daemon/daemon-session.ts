@@ -11,6 +11,7 @@ import { DaemonSelfUpdateSessionController } from "./daemon-self-update-session-
 import type { ManagedAgent } from "../../agent/agent-manager.js";
 import type { PersistedProjectRecord, PersistedWorkspaceRecord } from "../../workspace-registry.js";
 import type { HubRelationshipManagement } from "../../hub/relationship-controller.js";
+import type { DaemonConfigReloadResult } from "../../daemon-config-store.js";
 
 export interface DaemonRuntimeConfig {
   listen: string | null;
@@ -50,6 +51,7 @@ export interface DaemonSessionOptions {
   getWebSocketRuntimeMetrics?: () => DaemonWebSocketRuntimeDiagnosticSnapshot | null;
   logger: pino.Logger;
   hubRelationships?: HubRelationshipManagement;
+  reloadConfig: () => DaemonConfigReloadResult;
 }
 
 /**
@@ -74,6 +76,7 @@ export class DaemonSession {
   private readonly logger: pino.Logger;
   private readonly selfUpdate: DaemonSelfUpdateSessionController;
   private readonly hubRelationships: HubRelationshipManagement | null;
+  private readonly reloadConfig: () => DaemonConfigReloadResult;
 
   constructor(options: DaemonSessionOptions) {
     this.host = options.host;
@@ -89,6 +92,7 @@ export class DaemonSession {
     this.getWebSocketRuntimeMetrics = options.getWebSocketRuntimeMetrics ?? (() => null);
     this.logger = options.logger;
     this.hubRelationships = options.hubRelationships ?? null;
+    this.reloadConfig = options.reloadConfig;
     this.selfUpdate = new DaemonSelfUpdateSessionController({
       clientId: this.clientId,
       daemonVersion: this.daemonVersion ?? null,
@@ -106,7 +110,8 @@ export class DaemonSession {
         type:
           | "hub.management.daemon.connect.request"
           | "hub.management.daemon.get_status.request"
-          | "hub.management.daemon.disconnect.request";
+          | "hub.management.daemon.disconnect.request"
+          | "hub.management.daemon.permissions.update.request";
       }
     >,
   ): Promise<void> {
@@ -116,9 +121,21 @@ export class DaemonSession {
         const status = await this.hubRelationships.connect({
           hubUrl: msg.hubUrl,
           token: msg.token,
+          permissions: msg.permissions,
         });
         this.host.emit({
           type: "hub.management.daemon.connect.response",
+          payload: { requestId: msg.requestId, status },
+        });
+        return;
+      }
+      if (msg.type === "hub.management.daemon.permissions.update.request") {
+        const status = await this.hubRelationships.updatePermissions({
+          grant: msg.grant,
+          revoke: msg.revoke,
+        });
+        this.host.emit({
+          type: "hub.management.daemon.permissions.update.response",
           payload: { requestId: msg.requestId, status },
         });
         return;
@@ -225,6 +242,28 @@ export class DaemonSession {
           requestId: msg.requestId,
           requestType: "daemon.get_pairing_offer.request",
           error: error instanceof Error ? error.message : String(error),
+        },
+      });
+    }
+  }
+
+  handleConfigReloadRequest(
+    msg: Extract<SessionInboundMessage, { type: "daemon.config.reload.request" }>,
+  ): void {
+    try {
+      this.host.emit({
+        type: "daemon.config.reload.response",
+        payload: { requestId: msg.requestId, ...this.reloadConfig() },
+      });
+    } catch (error) {
+      this.logger.error({ err: error }, "Failed to reload daemon config");
+      this.host.emit({
+        type: "rpc_error",
+        payload: {
+          requestId: msg.requestId,
+          requestType: msg.type,
+          error: error instanceof Error ? error.message : String(error),
+          code: "handler_error",
         },
       });
     }

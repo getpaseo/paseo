@@ -95,7 +95,7 @@ export function useOpenAgentListGesture(enabled: boolean) {
           }
         })
         .onStart(() => {
-          startedRevision.value = beginGesture({ origin: "agent", preview: "agent-list" });
+          startedRevision.value = beginGesture({ origin: "agent" });
         })
         .onUpdate((event) => {
           updateGesture(startedRevision.value, -event.translationX / windowWidth);
@@ -188,7 +188,6 @@ export function useCloseAgentListGesture() {
         .onStart(() => {
           startedRevision.value = beginGesture({
             origin: "agent-list",
-            preview: "agent-list",
           });
         })
         .onUpdate((event) => {
@@ -290,7 +289,6 @@ export function useOpenFileExplorerGesture({ enabled, onOpen }: OpenFileExplorer
         .onStart(() => {
           startedRevision.value = beginGesture({
             origin: "agent",
-            preview: "file-explorer",
           });
         })
         .onUpdate((event) => {
@@ -337,6 +335,7 @@ export function useCloseFileExplorerGesture() {
     windowWidth,
   } = useMobilePanelsRuntime();
   const { startedRevision, touchStartX, touchStartY } = useGestureState();
+  const horizontalScroll = useHorizontalScrollOptional();
   const showMobileAgent = usePanelStore((state) => state.showMobileAgent);
   const commit = useRevisionCommit(showMobileAgent);
 
@@ -372,6 +371,7 @@ export function useCloseFileExplorerGesture() {
           });
           if (
             !canBeginMobilePanelGesture(motionState.value, "file-explorer", position.value) ||
+            horizontalScroll?.activeGestureStartedScrolled.value ||
             panIntent === "fail"
           ) {
             stateManager.fail();
@@ -384,7 +384,6 @@ export function useCloseFileExplorerGesture() {
         .onStart(() => {
           startedRevision.value = beginGesture({
             origin: "file-explorer",
-            preview: "file-explorer",
           });
         })
         .onUpdate((event) => {
@@ -405,6 +404,7 @@ export function useCloseFileExplorerGesture() {
       beginGesture,
       commit,
       finishGesture,
+      horizontalScroll?.activeGestureStartedScrolled,
       motionState,
       position,
       rightCloseGestureRef,

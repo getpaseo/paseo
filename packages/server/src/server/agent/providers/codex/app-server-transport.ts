@@ -19,7 +19,7 @@ interface JsonRpcRequest {
 interface JsonRpcResponse {
   id: number;
   result?: unknown;
-  error?: { message?: string };
+  error?: { message?: string; code?: string | number; data?: unknown };
 }
 
 interface JsonRpcNotification {
@@ -33,12 +33,24 @@ interface PendingRequest {
   timer: NodeJS.Timeout;
 }
 
+export class CodexAppServerRpcError extends Error {
+  constructor(
+    message: string,
+    readonly code: string | number | undefined,
+    readonly data: unknown,
+  ) {
+    super(message);
+    this.name = "CodexAppServerRpcError";
+  }
+}
+
 type RequestHandler = (params: unknown, requestId: number) => unknown;
 type NotificationHandler = (method: string, params: unknown) => void;
 type UnexpectedTerminationHandler = (error: Error) => void;
 
 export interface CodexThreadForkParams {
   threadId: string;
+  beforeTurnId?: string | null;
   path?: string | null;
   model?: string | null;
   modelProvider?: string | null;
@@ -249,6 +261,7 @@ export class CodexAppServerClient {
     this.disposed = true;
     this.unexpectedTerminationHandler = null;
     this.rl.close();
+    this.rejectPending(new Error("Codex app-server client is closed"));
     try {
       this.child.stdin.end();
     } catch {
@@ -278,11 +291,7 @@ export class CodexAppServerClient {
     }
     this.disposed = true;
     this.rl.close();
-    for (const pending of this.pending.values()) {
-      clearTimeout(pending.timer);
-      pending.reject(error);
-    }
-    this.pending.clear();
+    this.rejectPending(error);
     const handler = this.unexpectedTerminationHandler;
     this.unexpectedTerminationHandler = null;
     if (!handler) {
@@ -293,6 +302,14 @@ export class CodexAppServerClient {
     } catch (handlerError) {
       this.logger.warn({ err: handlerError }, "Codex app-server termination handler threw");
     }
+  }
+
+  private rejectPending(error: Error): void {
+    for (const pending of this.pending.values()) {
+      clearTimeout(pending.timer);
+      pending.reject(error);
+    }
+    this.pending.clear();
   }
 
   private writeJsonRpcResponse(response: JsonRpcResponse): void {
@@ -329,7 +346,13 @@ export class CodexAppServerClient {
         clearTimeout(pending.timer);
         this.pending.delete(id);
         if (raw.error) {
-          pending.reject(new Error(raw.error.message ?? "Unknown error"));
+          pending.reject(
+            new CodexAppServerRpcError(
+              raw.error.message ?? "Unknown error",
+              raw.error.code,
+              raw.error.data,
+            ),
+          );
         } else {
           pending.resolve(raw.result);
         }

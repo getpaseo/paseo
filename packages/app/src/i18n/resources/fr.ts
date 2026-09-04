@@ -1,4 +1,5 @@
-import type { TranslationResources } from "./en";
+import { en, type TranslationResources } from "./en";
+import { pluginSettings } from "./plugin-settings";
 
 export const fr: TranslationResources = {
   common: {
@@ -9,10 +10,12 @@ export const fr: TranslationResources = {
       cancel: "Annuler",
       close: "Fermer",
       copy: "Copie",
+      copyLine: "Copier la ligne",
       dismiss: "Rejeter",
       retry: "Réessayer",
       search: "Recherche",
       select: "Sélectionner",
+      selectAll: "Tout sélectionner",
     },
     placeholders: {
       search: "Recherche...",
@@ -32,6 +35,7 @@ export const fr: TranslationResources = {
     errors: {
       error: "Erreur",
       unableToSave: "Impossible d'enregistrer",
+      unableToCopy: "Impossible de copier",
       nameRequired: "Le nom est requis",
       daemonUnavailable: "Daemonindisponible",
       daemonClientUnavailable: "ClientDaemonindisponible",
@@ -64,6 +68,9 @@ export const fr: TranslationResources = {
       workspaces: "Espaces de travail",
       agents: "Agents",
       newAgent: "Nouvel agent",
+      open: "Ouvrir {{name}}",
+      openInSidePane: "Ouvrir {{name}} dans le panneau latéral",
+      openInFocusedPane: "Ouvrir {{name}} dans le volet actif",
       addProject: "Ajouter un projet",
       home: "Maison",
       groupByProject: "Grouper par projet",
@@ -98,6 +105,7 @@ export const fr: TranslationResources = {
       interruptAgent: "Agent d'interruption",
       queueMessage: "Message de file d'attente",
       sendAndInterrupt: "Envoyer et interrompre",
+      sendAndSteer: "Envoyer et guider",
       sendMessage: "Envoyer un message",
       queue: "File d'attente",
       send: "Envoyer",
@@ -200,6 +208,7 @@ export const fr: TranslationResources = {
     empty: "Commencez à discuter avec cet agent...",
     scrollToBottom: "Faire défiler vers le bas",
     historyLoadFailed: "Impossible de charger l’historique de l’agent",
+    messageCapped: "Ce message a été tronqué ({{bytes}} octets).",
     permission: {
       plan: "Plan",
       required: "Autorisation requise",
@@ -215,7 +224,8 @@ export const fr: TranslationResources = {
       notFound: "Agentintrouvable",
       failedToLoad: "Échec du chargement de l'agent",
       reconnecting: "Reconnexion",
-      timelineSyncFailed: "Impossible d’actualiser l’historique de l’agent. Nouvelle tentative…",
+      timelineSyncFailed: "Impossible d’actualiser l’historique de l’agent.",
+      timelineSyncRetrying: "Nouvelle tentative…",
       archivingTitle: "Agent d'archivage...",
       archivingSubtitle: "Veuillez patienter pendant que nous archivons cet agent.",
     },
@@ -283,6 +293,7 @@ export const fr: TranslationResources = {
       zoomIn: "Zoomer",
       zoomOut: "Dézoomer",
       resetZoom: "Réinitialiser la vue",
+      fullscreen: "Plein écran",
       viewSource: "Afficher la source",
       viewDiagram: "Afficher le diagramme",
     },
@@ -338,13 +349,11 @@ export const fr: TranslationResources = {
       title: "Tâches",
       empty: "Aucune tâche pour l'instant.",
       tasksProgress: "{{completed}}/{{total}} tâches",
-      tasksProgressCurrent: "{{completed}}/{{total}} tâches · {{task}}",
       activity: {
         created: "{{count}} tâches créées",
         added: "Ajoutée",
         started: "Commencée",
         completed: "Terminée",
-        reopened: "Rouverte",
       },
     },
     compaction: {
@@ -356,7 +365,13 @@ export const fr: TranslationResources = {
     },
   },
   importSession: {
+    chooseHostTitle: en.importSession.chooseHostTitle,
     title: "Session d'importation",
+    searchPlaceholder: "Rechercher des sessions...",
+    scope: {
+      host: "Sessions sur {{host}}",
+      workspace: "Cet espace de travail",
+    },
     filters: {
       all: "Tous",
     },
@@ -365,12 +380,13 @@ export const fr: TranslationResources = {
       updateHost: "Mettez à jour l'hôte pour importer des sessions.",
       noProviders: "Aucun fournisseur importable n'est activé.",
       loading: "Chargement des sessions récentes...",
-      failedAll: "Impossible de charger les sessions récentes.",
-      failedProviders: "Impossible de charger les sessions pour{{providers}}.",
+      failedProvider: "Impossible de charger les sessions {{provider}}",
       failedImport: "Impossible d'importer la session sélectionnée.",
     },
     actions: {
       refresh: "Sessions de rafraîchissement",
+      showAll: "Tout afficher",
+      loadMore: "Charger plus",
     },
     preview: {
       untitledSession: "Séance sans titre",
@@ -378,6 +394,7 @@ export const fr: TranslationResources = {
     },
     empty: {
       noRecent: "Aucune session récente à importer.",
+      noMatches: "Aucune session ne correspond à votre recherche.",
       alreadyImported: "Toutes les sessions récentes sont déjà importées.",
       noProviderSessions: "Aucune session{{provider}}trouvée.",
     },
@@ -415,6 +432,8 @@ export const fr: TranslationResources = {
     },
     fileActions: {
       openFile: "Ouvrir le fichier",
+      openIn: "Ouvrir dans {{target}}",
+      openToSide: "Ouvrir sur le côté",
       copyPath: "Copier le chemin",
       copyRelativePath: "Copier le chemin relatif",
       revealIn: "Afficher dans {{target}}",
@@ -488,14 +507,23 @@ export const fr: TranslationResources = {
         completed: "Configuration terminée",
         failed: "Échec de l'installation",
         workspace: "ConfigurationWorkspace",
+        blocked: "Configuration bloquée",
       },
       status: {
         running: "En cours d'exécution",
         completed: "Complété",
         failed: "Échoué",
         waiting: "En attente de la sortie de configuration",
+        blocked: "Bloqué",
       },
       waiting: "Configuration de l'espace de travail...",
+      blocked: {
+        title: "La configuration n’a pas été exécutée",
+        description:
+          "Cette PR provient de {{repository}}, un dépôt différent. Sa configuration et ses scripts pourraient exécuter du code que vous n’avez pas examiné.",
+        run: "Exécuter la configuration",
+        runFailed: "Échec de la configuration de l’espace de travail",
+      },
       empty: {
         noCommands: "Aucune commande de configuration n'a été exécutée pour cet espace de travail.",
       },
@@ -527,6 +555,8 @@ export const fr: TranslationResources = {
         screenshotCopied: "Capture d'écran copiée dans le presse-papiers",
         elementCopied: "Élément copié dans le presse-papiers",
         screenshotFailed: "Impossible de copier la capture",
+        selectorLoading: "Attendez la fin du chargement de la page",
+        selectorFailed: "Impossible de démarrer le sélecteur d’élément",
       },
       annotate: {
         title: "Annoter l'élément",
@@ -553,7 +583,6 @@ export const fr: TranslationResources = {
       loading: "Chargement...",
       modified: "Modifications non enregistrées",
       loadingAgentTitle: "Titre d'agent de chargement",
-      emptyPane: "Aucun onglet dans ce volet.",
       fallback: {
         newAgent: "Nouvel agent",
         setup: "Installation",
@@ -580,6 +609,7 @@ export const fr: TranslationResources = {
         closeLeft: "Près de la gauche",
         closeRight: "Près de la droite",
         closeOthers: "Fermer les autres onglets",
+        moveToMain: "Déplacer vers le panneau principal",
         reloadAgent: "Agent de rechargement",
         reloadAgentTooltip:
           "Rechargez l'agent pour mettre à jour les compétences, les MCP ou le statut de connexion.",
@@ -588,23 +618,28 @@ export const fr: TranslationResources = {
         renameAgent: "Renommer l'agent",
       },
       actions: {
+        newTab: "Nouvel onglet",
         newAgent: "Nouvel agent",
         newTerminal: "Nouveau terminal",
         preparingTerminal: "Préparation de l'onglet du terminal",
         preparingTerminalTooltip: "Préparation du terminal...",
         newBrowser: "Nouveau navigateur",
+        maximizePane: "Agrandir le volet",
+        restorePane: "Restaurer le volet",
+        closePane: "Fermer le volet",
         exitFocusMode: "Quitter le mode concentration",
         splitRight: "Volet divisé à droite",
         splitDown: "Diviser le volet vers le bas",
+        changes: "Modifications",
+        files: "Fichiers",
+        pullRequest: "Demande de fusion",
         terminalProfilesMenu: "Terminal profiles",
-        editTerminalProfiles: "Edit profiles…",
-        pinTarget: "Épingler",
-        unpinTarget: "Détacher",
+        editTerminalProfiles: "Edit profiles",
       },
-      explorer: {
-        open: "Ouvrir l'explorateur",
-        close: "Fermer l'explorateur",
-        toggle: "Basculer l'explorateur",
+      explorerSidebar: {
+        open: "Ouvrir le panneau latéral",
+        close: "Fermer le panneau latéral",
+        toggle: "Basculer le panneau latéral",
         changes: "Changements",
         files: "Fichiers",
       },
@@ -707,6 +742,10 @@ export const fr: TranslationResources = {
         startFailed: "Échec du démarrage de{{scriptName}}",
         stopFailed: "Échec de l'arrêt de{{scriptName}}",
       },
+    },
+    tree: {
+      showFolderTree: "Afficher l'arborescence des dossiers",
+      hideFolderTree: "Masquer l'arborescence des dossiers",
     },
     git: {
       actions: {
@@ -868,6 +907,7 @@ export const fr: TranslationResources = {
       },
       diff: {
         openChangesTab: "Ouvrir l'onglet Modifications",
+        openDiffTab: "Ouvrir l'onglet Diff",
         closeChangesTab: "Fermer l'onglet Modifications",
         binaryFile: "Fichier binaire",
         tooLarge: "Diff trop grand pour être affiché",
@@ -877,23 +917,24 @@ export const fr: TranslationResources = {
         split: "Différent côte à côte",
         switchToUnified: "Passer au diff unifié",
         switchToSplit: "Passer au diff côte à côte",
-        showTreeView: "Afficher l'arborescence des dossiers",
-        showFlatView: "Afficher la liste de fichiers à plat",
         options: "Options du diff",
+        inlineDiff: "Diff intégré",
         hideWhitespace: "Masquer les espaces",
         showWhitespace: "Afficher les espaces",
         scrollLongLines: "Faire défiler les longues lignes",
         wrapLongLines: "Enroulez les longues lignes",
-        collapseAll: "Réduire tous les fichiers",
-        expandAll: "Développer tous les fichiers",
         collapseAllFolders: "Réduire tous les dossiers",
         expandAllFolders: "Développer tous les dossiers",
+        collapseAllFiles: "Réduire tous les fichiers",
+        expandAllFiles: "Développer tous les fichiers",
         refreshing: "Rafraîchissant",
         refresh: "Rafraîchir",
         refreshState: "Actualiser l'état de git et de {{brand}}",
         failedRefresh: "Échec de l'actualisation de l'état git.",
         emptyHiddenWhitespace: "Aucun changement visible après avoir masqué les espaces",
         emptyUncommitted: "Aucune modification non validée",
+        seeUncommittedChanges: "Voir les modifications non validées",
+        seeCommittedChanges: "Voir les modifications validées",
         emptyAgainstBase: "Aucun changement par rapport à{{baseRef}}",
         checkingRepository: "Vérification du référentiel...",
         notRepository: "Pas un dépôt git",
@@ -904,6 +945,7 @@ export const fr: TranslationResources = {
         base: "base",
         newFile: "Nouveau",
         deletedFile: "Supprimé",
+        modifiedFile: "Modifié",
         commits: {
           title: "Commits",
           countLabel: "{{count}} commits de l’espace de travail",
@@ -950,6 +992,16 @@ export const fr: TranslationResources = {
         accessibility: {
           pullRequest: "Demande de tirage #{{number}}",
           pullRequest_mr: "Demande de fusion !{{number}}",
+          checkStatus: {
+            passed: "Réussi",
+            failed: "Échec",
+            warning: "Avertissement",
+            actionRequired: "Action requise",
+            manual: "Manuel",
+            pending: "En attente",
+            skipped: "Ignoré",
+            cancelled: "Annulé",
+          },
         },
         states: {
           draft: "Brouillon",
@@ -981,6 +1033,51 @@ export const fr: TranslationResources = {
       },
     },
   },
+  workspaceLabels: {
+    title: "Étiquettes",
+    unlabelled: "Sans étiquette",
+    create: "Créer une étiquette",
+    createConfirm: "Créer",
+    creating: "Création…",
+    name: "Nom de l’étiquette",
+    updateHostUse: "Mettez à jour cet hôte pour utiliser les étiquettes.",
+    errors: {
+      update: "Impossible de mettre à jour l’étiquette",
+      load: "Impossible de charger les étiquettes",
+    },
+    colors: {
+      violet: "Violet",
+      sky: "Ciel",
+      emerald: "Émeraude",
+      orange: "Orange",
+      pink: "Rose",
+      indigo: "Indigo",
+      teal: "Sarcelle",
+      red: "Rouge",
+      amber: "Ambre",
+      blue: "Bleu",
+    },
+    filter: {
+      clear: "Effacer le filtre",
+    },
+    manage: {
+      open: "Gérer les étiquettes…",
+      title: "Gérer les étiquettes",
+      search: "Rechercher des étiquettes",
+      empty: "Aucune étiquette sur cet hôte.",
+      edit: "Modifier l’étiquette",
+      editLabel: "Modifier {{name}}",
+      name: "Nom",
+      color: "Couleur",
+      save: "Enregistrer",
+      delete: "Supprimer",
+      deleteTitle: "Supprimer {{name}} ?",
+      deleteMessage_one: "Cela retire l’étiquette de {{count}} espace de travail sur cet hôte.",
+      deleteMessage_other: "Cela retire l’étiquette de {{count}} espaces de travail sur cet hôte.",
+      offline: "Cet hôte est hors ligne.",
+      updateHost: "Mettez à jour cet hôte pour gérer les étiquettes.",
+    },
+  },
   sidebar: {
     display: {
       trigger: "Préférences d'affichage",
@@ -989,6 +1086,7 @@ export const fr: TranslationResources = {
         label: "Regroupement",
         project: "Projet",
         status: "Statut",
+        labels: "Libellés",
       },
       titleSource: {
         label: "Titre",
@@ -997,10 +1095,13 @@ export const fr: TranslationResources = {
       },
       show: {
         label: "Afficher",
+        branch: "Branche",
+        project: "Projet",
         host: "Hôte",
         changeRequest: "Pull request",
         checks: "Vérifications",
         services: "Services",
+        labels: "Libellés",
         diff: "Statistiques de diff",
         timestamp: "Dernière activité",
       },
@@ -1013,6 +1114,16 @@ export const fr: TranslationResources = {
         label: "Hôte",
         all: "Tous les hôtes",
       },
+      projectFilter: {
+        label: "Projet",
+        all: "Tous les projets",
+      },
+    },
+    filterEmpty: {
+      title: "Aucun espace de travail ne correspond",
+      description:
+        "Modifiez ou effacez les filtres de la barre latérale pour afficher les espaces de travail.",
+      clear: "Effacer les filtres",
     },
     pinned: {
       title: "Épinglés",
@@ -1026,7 +1137,6 @@ export const fr: TranslationResources = {
       addProject: "Ajouter un projet",
       newWorkspace: "Nouvel espace de travail",
       hosts: "Hôtes",
-      home: "Maison",
       settings: "Paramètres",
       closeSidebar: "Fermer la barre latérale",
     },
@@ -1043,6 +1153,7 @@ export const fr: TranslationResources = {
     },
     sections: {
       sessions: "Historique",
+      search: "Rechercher",
       schedules: "Planifications",
     },
     worktreeSetup: {
@@ -1084,6 +1195,14 @@ export const fr: TranslationResources = {
         serviceRunning: "Service {{name}} en cours",
         serviceUnhealthy: "Service {{name}} en échec",
         creating: "Création...",
+      },
+      checks: {
+        passed: "Réussis : {{count}}",
+        failed: "Échecs : {{count}}",
+        warning: "Avertissements : {{count}}",
+        actionRequired: "Action requise : {{count}}",
+        manual: "Manuels : {{count}}",
+        pending: "En attente : {{count}}",
       },
       actions: {
         menu: "ActionsWorkspace",
@@ -1170,6 +1289,12 @@ export const fr: TranslationResources = {
     },
   },
   desktop: {
+    windowControls: {
+      minimize: "Réduire la fenêtre",
+      maximize: "Agrandir la fenêtre",
+      restore: "Restaurer la fenêtre",
+      close: "Fermer la fenêtre",
+    },
     quitting: {
       title: "QuitterPaseo...",
       detail: "Arrêt du démon local.",
@@ -1330,14 +1455,6 @@ export const fr: TranslationResources = {
         statusFailed: "Impossible de vérifier l'état de l'installation deCLI.",
         installFailed: "Impossible d'installer lePaseoCLI.",
       },
-      skills: {
-        statusFailed: "Impossible de vérifier l'état des compétences d'orchestration.",
-        installFailed: "Impossible d'installer les compétences d'orchestration.",
-        updateFailed: "Impossible de mettre à jour les compétences d'orchestration.",
-        uninstallFailed: "Impossible de désinstaller les compétences d'orchestration.",
-        saveSelectionFailed:
-          "Impossible d'enregistrer la sélection des compétences d'orchestration.",
-      },
     },
   },
   rootError: {
@@ -1388,6 +1505,7 @@ export const fr: TranslationResources = {
     openPath: "Ouvrir le chemin",
   },
   branchSwitcher: {
+    triggerTooltip: "Changer la branche de l’espace de travail",
     currentBranch: "Branche actuelle:{{branchName}}. Appuyez pour changer de branche.",
     placeholder: "Changer de branche...",
     searchPlaceholder: "Filtrer les branches...",
@@ -1453,9 +1571,13 @@ export const fr: TranslationResources = {
     defaultModel: "Défaut",
     profiles: "Profils",
     providers: "Fournisseurs",
+    model: "Modèle",
     editProfiles: "Modifier",
     editProfilesLabel: "Modifier les profils d'agent",
     createProfile: "Créer un profil",
+    createProfileFromModel: "Créer un profil à partir de ce modèle",
+    editProfileLabel: "Modifier {{name}}",
+    editProfilesCount: "Modifier les profils ({{count}})",
     modelCount: "{{count}} modèle",
     modelCountPlural: "{{count}} modèles",
     retry: "Réessayer",
@@ -1504,6 +1626,10 @@ export const fr: TranslationResources = {
       direct: {
         title: "Connexion directe",
         description: "Réseau local ou VPN.",
+      },
+      remoteSsh: {
+        title: "SSH distant",
+        description: "Connectez-vous avec le client SSH de bureau.",
       },
       scanQr: {
         title: "Scanner le codeQR",
@@ -1557,6 +1683,23 @@ export const fr: TranslationResources = {
         details: "Détails:{{detail}}",
       },
     },
+    remoteSsh: {
+      title: "SSH distant",
+      helper: "Connectez-vous à un daemon Paseo sur l’hôte distant.",
+      fields: {
+        target: "Hôte SSH",
+      },
+      actions: {
+        cancel: "Annuler",
+        connect: "Connecter",
+        connecting: "Connexion...",
+      },
+      errors: {
+        targetRequired: "L’hôte SSH est requis",
+        invalidTarget: "Saisissez un hôte ssh:// valide",
+        failedToConnect: "Connexion SSH impossible. {{detail}}",
+      },
+    },
     link: {
       title: "Coller le lien d'association",
       helper: "Collez le lien d'appairage depuis votre serveur.",
@@ -1608,6 +1751,8 @@ export const fr: TranslationResources = {
       updateRequired: "Mettez à jour l’hôte pour activer le relais depuis Paseo Desktop.",
       unavailable: "Offre de jumelage indisponible.",
       hint: "Scannez ce codeQRavecPaseosur votre téléphone ou copiez le lien ci-dessous.",
+      securityWarning:
+        "Traitez ce lien d’association comme un mot de passe. Toute personne qui le possède peut accéder à ce daemon.",
       qrUnavailable: "CodeQRindisponible.",
       qrAccessibility: "Code QR de couplage",
       retry: "Réessayer",
@@ -1656,12 +1801,20 @@ export const fr: TranslationResources = {
     backdrop: "Toile de fond du menu",
   },
   subagents: {
+    title: "Sous-agents",
+    pillLabelOne: "1 sous-agent",
+    pillLabelMany: "{{count}} sous-agents",
+    pillLabelWorking: "{{count}} en cours",
+    pillLabelFailed: "{{count}} en échec",
+    pillLabelNeedsInputOne: "1 attend une réponse",
+    pillLabelNeedsInputMany: "{{count}} attendent une réponse",
+    pillLabelReadyToReview: "{{count}} à relire",
     detachAction: "Detacher {{label}}",
     detachTooltip: "Detacher le sous-agent",
     archiveAction: "Archiver{{label}}",
     archiveTooltip: "Sous-agent d'archivage",
     archiveFinishedAction: "Archiver les sous-agents terminés",
-    archiveFinishedTooltip: "Archiver les terminés",
+    archiveFinishedRetry: "Réessayer ({{failed}}/{{total}})",
   },
   panels: {
     draft: {
@@ -1673,6 +1826,7 @@ export const fr: TranslationResources = {
       loading: "Chargement du fichier...",
       noPreview: "Aucun aperçu disponible",
       binaryPreviewUnavailable: "Aperçu binaire indisponible",
+      tooLargeToDisplay: "Ce fichier est trop volumineux pour être affiché",
       failedToLoad: "Échec du chargement du fichier",
       failedToLoadPreview: "Échec du chargement de l'aperçu du fichier",
       editor: {
@@ -1697,8 +1851,22 @@ export const fr: TranslationResources = {
         reloadMessage: "Vos modifications locales seront perdues.",
       },
     },
+    files: {
+      label: "Fichiers",
+      subtitle: "Fichiers de l’espace de travail",
+      tooltip: "Parcourir les fichiers de l’espace de travail",
+      chooseFile: "Choisissez un fichier",
+    },
+    pullRequest: {
+      label: "Demande de fusion",
+      subtitle: "Détails de la demande de fusion",
+      emptyTitle: "Aucune demande de fusion pour le moment",
+      emptyDescription:
+        "Créez une demande de fusion pour cette copie de travail afin d’afficher ses détails ici.",
+    },
     diff: {
       changesLabel: "Modifications",
+      diffLabel: "Diff",
       changesSubtitle: "Différences de l'arbre de travail",
       commitSubtitle: "Différences du commit",
       uncommittedSubtitle: "Modifications non validées",
@@ -1793,6 +1961,7 @@ export const fr: TranslationResources = {
     sections: {
       general: "Général",
       appearance: "Apparence",
+      layout: en.settings.sections.layout,
       editor: "Éditeur",
       shortcuts: "Raccourcis",
       integrations: "Intégrations",
@@ -1801,6 +1970,7 @@ export const fr: TranslationResources = {
       diagnostics: "Diagnostic",
       about: "À propos",
     },
+    layout: en.settings.layout,
     editor: {
       title: "Éditeur",
       vimKeybindings: "Raccourcis Vim",
@@ -1830,8 +2000,10 @@ export const fr: TranslationResources = {
       providers: "Fournisseurs",
       usage: "Utilisation",
       terminals: "Terminals",
+      plugins: "Plugins",
       host: "Aperçu",
     },
+    plugins: pluginSettings.fr,
     metadataGeneration: {
       title: "Génération de métadonnées",
       description:
@@ -1865,11 +2037,14 @@ export const fr: TranslationResources = {
         descriptions: {
           interrupt:
             "Lorsque l'agent est en cours d'exécution, Entrée interrompt. Commande/Ctrl+Entrée met en file d'attente.",
+          steer:
+            "Lorsque l’agent est en cours d’exécution, Entrée oriente le tour actif. Commande/Ctrl+Entrée met en file d’attente.",
           queue:
             "Lorsque l'agent est en cours d'exécution, Entrée met en file d'attente. Commande/Ctrl+Entrée envoie.",
         },
         options: {
           interrupt: "Interrompre",
+          steer: "Orienter",
           queue: "File d'attente",
         },
       },
@@ -1996,6 +2171,12 @@ export const fr: TranslationResources = {
         title: "Plan de la discussion",
         description: "Afficher un plan pour passer d’une requête à l’autre",
       },
+      sidebar: {
+        title: "Barre latérale",
+        description: "Choisissez les éléments affichés en haut de la barre latérale et leur ordre",
+        moveUp: "Déplacer vers le haut",
+        moveDown: "Déplacer vers le bas",
+      },
       fonts: {
         title: "Polices",
         systemDefault: "Valeur par défaut du système",
@@ -2004,12 +2185,17 @@ export const fr: TranslationResources = {
           "Utilisé dans toute l'application. Laisser vide pour la valeur par défaut du système",
         interfaceFontAccessibility: "Famille de polices d'interface",
         interfaceSize: "Taille de l'interface",
-        interfaceSizeAccessibility: "Taille de la police de l'interface",
+        interfaceSizeHint: "Utilisée pour la navigation, les contrôles et les libellés",
+        interfaceSizeAccessibility: "Taille de police de l'interface",
+        contentSize: "Taille du contenu",
+        contentSizeHint: "Utilisée pour le texte du chat et le Markdown rendu",
+        contentSizeAccessibility: "Taille de police du contenu",
         codeFont: "Police de code",
         codeFontHint:
           "Utilisé dans le code, les différences et la sortie du terminal. Laisser vide pour la valeur par défaut du système",
         codeFontAccessibility: "Famille de polices de code",
         codeSize: "Taille du code",
+        codeSizeHint: "Utilisée pour le code, les diffs et la sortie du terminal",
         codeSizeAccessibility: "Taille de la police du code",
       },
       syntax: {
@@ -2017,7 +2203,9 @@ export const fr: TranslationResources = {
         highlightTheme: "Thème de surbrillance",
         highlightThemeHint: "Couleurs du code, indépendamment du thème de l'application",
         highlightThemeAccessibility: "Thème phare:{{value}}",
-        previewAccessibility: "Aperçu en direct du thème de syntaxe et de la police de code",
+        previewAccessibility:
+          "Aperçu en direct de la typographie du contenu, du thème de syntaxe et de la police de code",
+        previewContent: "Aperçu du contenu et du code",
       },
     },
     shortcuts: {
@@ -2072,7 +2260,7 @@ export const fr: TranslationResources = {
         toggleCommandCenter: "Basculer le centre de commande",
         showKeyboardShortcuts: "Afficher les raccourcis clavier",
         toggleLeftSidebar: "Basculer la barre latérale gauche",
-        toggleRightSidebar: "Basculer la barre latérale droite",
+        toggleRightSidebar: "Basculer le panneau latéral",
         toggleBothSidebars: "Basculer les deux barres latérales",
         toggleSettings: "Basculer les paramètres",
         toggleFocusMode: "Basculer le mode de mise au point",
@@ -2096,49 +2284,16 @@ export const fr: TranslationResources = {
       title: "Intégrations",
       docs: {
         cli: "DocumentsCLI",
-        skills: "Documents de compétences",
         openCli: "Ouvrir la documentationCLI",
-        openSkills: "Documentation des compétences ouvertes",
       },
       commandLine: {
         title: "Ligne de commande",
         description: "Agents de contrôle et de script depuis votre terminal",
       },
-      skills: {
-        title: "Compétences en orchestration",
-        description: "Apprenez à vos agents à orchestrer via leCLI",
-        updateAvailable: "Mise à jour disponible",
-        updateTitle: "Mettre à jour les compétencesPaseo?",
-        updateFallback: "Synchronisez les compétences regroupées sur votre machine.",
-        uninstallTitle: "Désinstaller les compétencesPaseo?",
-        uninstallMessage:
-          "Supprime toutes les compétences d'orchestrationPaseode ~/.agents, ~/.claude, ~/.codex.",
-        choose: "Choisir les compétences",
-        chooseAll: "Toutes les compétences",
-        chooseAllHint:
-          "Gardez installées toutes les compétences fournies, y compris celles ajoutées plus tard.",
-        chooseList: "Compétences fournies",
-        chooseEmpty: "Cette version ne fournit aucune compétence.",
-        removeTitle: "Supprimer les compétences décochées ?",
-        removeMessage:
-          "{{skills}} seront supprimées de ~/.agents, ~/.claude et ~/.codex. Tout ce que vous avez ajouté dans ces dossiers de compétences est également supprimé.",
-        saveFailed: "Impossible d'enregistrer votre sélection de compétences.",
-      },
       actions: {
         install: "Installer",
         installing: "Installation...",
         installed: "Installé",
-        update: "Mise à jour",
-        working: "Fonctionnement...",
-        remove: "Supprimer",
-        uninstall: "Désinstaller",
-        save: "Enregistrer",
-        saving: "Enregistrement...",
-      },
-      operations: {
-        add: "Ajouter une compétence",
-        update: "Mettre à jour la compétence",
-        delete: "Supprimer la compétence",
       },
     },
     permissions: {
@@ -2193,6 +2348,7 @@ export const fr: TranslationResources = {
       badges: {
         relay: "Relais",
         local: "Locale",
+        remoteSsh: "SSH distant",
       },
       connections: {
         title: "Relations",
@@ -2207,6 +2363,50 @@ export const fr: TranslationResources = {
         title: "Associer des appareils",
         rowTitle: "Associer un appareil",
         rowHint: "Scannez un codeQRou copiez un lien pour connecter votre téléphone à cet hôte",
+      },
+      skills: {
+        ...en.settings.host.skills,
+        sectionTitle: "Compétences en orchestration",
+        title: "Compétences en orchestration",
+        description: "Apprenez à vos agents à orchestrer via leCLI",
+        updateAvailable: "Mise à jour disponible",
+        updateTitle: "Mettre à jour les compétencesPaseo?",
+        updateFallback: "Synchronisez les compétences regroupées sur votre machine.",
+        uninstallTitle: "Désinstaller les compétencesPaseo?",
+        uninstallMessage:
+          "Supprime toutes les compétences d'orchestrationPaseode ~/.agents, ~/.claude, ~/.codex.",
+        choose: "Choisir les compétences",
+        chooseAll: "Toutes les compétences",
+        chooseAllHint:
+          "Gardez installées toutes les compétences fournies, y compris celles ajoutées plus tard.",
+        chooseList: "Compétences fournies",
+        chooseEmpty: "Cette version ne fournit aucune compétence.",
+        removeTitle: "Supprimer les compétences décochées ?",
+        removeMessage:
+          "{{skills}} seront supprimées de ~/.agents, ~/.claude et ~/.codex. Tout ce que vous avez ajouté dans ces dossiers de compétences est également supprimé.",
+        saveFailed: "Impossible d'enregistrer votre sélection de compétences.",
+        statusFailed: "Impossible de vérifier l'état des compétences d'orchestration.",
+        updateFailed: "Impossible de mettre à jour les compétences d'orchestration.",
+        uninstallFailed: "Impossible de désinstaller les compétences d'orchestration.",
+        saveSelectionFailed:
+          "Impossible d'enregistrer la sélection des compétences d'orchestration.",
+        actions: {
+          install: "Installer",
+          installing: "Installation...",
+          installed: "Installé",
+          update: "Mise à jour",
+          working: "Fonctionnement...",
+          remove: "Supprimer",
+          uninstall: "Désinstaller",
+          save: "Enregistrer",
+          saving: "Enregistrement...",
+          cancel: "Annuler",
+        },
+        operations: {
+          add: "Ajouter une compétence",
+          update: "Mettre à jour la compétence",
+          delete: "Supprimer la compétence",
+        },
       },
       orchestration: {
         title: "Orchestration",
@@ -2285,11 +2485,10 @@ export const fr: TranslationResources = {
         featuresLabel: "Caractéristiques",
         featureCount: "{{count}} caractéristiques",
         featureCountOne: "{{count}} caractéristique",
-        notesLabel: "Notes pour les agents",
+        notesLabel: "Quand l’utiliser",
         notesPlaceholder:
           "À utiliser pour le travail sur l'UI — composants, mise en page et tokens de design.",
-        notesHint:
-          "Renvoyé par l'outil MCP « list_profiles ». Rédigez-le comme une instruction destinée à un autre agent.",
+        notesHint: "Aide les agents à choisir ce profil lorsqu’ils démarrent un autre agent.",
         save: "Enregistrer",
         saving: "Enregistrement...",
         remove: "Supprimer",

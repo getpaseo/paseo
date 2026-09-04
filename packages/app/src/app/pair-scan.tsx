@@ -90,7 +90,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   permissionTitle: {
     color: theme.colors.foreground,
-    fontSize: theme.fontSize.lg,
+    fontSize: theme.fontSize.base,
     fontWeight: theme.fontWeight.semibold,
   },
   permissionBody: {

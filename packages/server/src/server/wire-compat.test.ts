@@ -11,6 +11,7 @@ import {
   type SessionOutboundMessage,
 } from "@getpaseo/protocol/messages";
 import { Session, type SessionOptions } from "./session.js";
+import { OWNER_PERMISSIONS } from "./authorization/index.js";
 import { DirectorySyncService } from "./directory-sync/index.js";
 import { createProviderSnapshotManagerStub } from "./test-utils/session-stubs.js";
 import type { AgentHistoryCoverageIntent, AgentTimelineRow } from "./agent/agent-manager.js";
@@ -221,7 +222,7 @@ function createSessionForWireCompatTest(options?: {
 
   const session = new Session({
     clientId: "wire-compat-client",
-    scopes: ["*"],
+    permissions: OWNER_PERMISSIONS,
     clientCapabilities: options?.clientCapabilities ?? null,
     onMessage: (message) => messages.push(message),
     logger: pino({ level: "silent" }),
@@ -490,6 +491,32 @@ describe("wire compatibility", () => {
       { agentId: "agent-1", intent: "tail" },
       { agentId: "agent-1", intent: "older" },
     ]);
+  });
+
+  test("carries canonical turn IDs to new clients while legacy schemas ignore them", async () => {
+    const response = await emitTimelineResponse({
+      rows: [
+        {
+          seq: 1,
+          timestamp: "2026-05-02T00:00:00.000Z",
+          turnId: "turn-1",
+          item: { type: "user_message", text: "prompt", clientMessageId: "message-1" },
+        },
+        {
+          seq: 2,
+          timestamp: "2026-05-02T00:00:01.000Z",
+          turnId: "turn-1",
+          item: { type: "assistant_message", text: "done" },
+        },
+      ],
+    });
+
+    expect(FetchAgentTimelineResponseMessageSchema.parse(response).payload.entries).toEqual(
+      expect.arrayContaining([expect.objectContaining({ turnId: "turn-1" })]),
+    );
+    expect(LegacyFetchAgentTimelineResponseMessageSchema.parse(response).payload.entries).toEqual(
+      expect.arrayContaining([expect.not.objectContaining({ turnId: expect.anything() })]),
+    );
   });
 
   test("legacy worktree request shape normalizes to the same internal input as the new shape", async () => {

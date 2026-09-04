@@ -25,6 +25,24 @@ function createHarness(windowMs?: number) {
   return { coalescer, flushes };
 }
 
+// Consume the leading-edge flush for an agent and clear it from the record, so a
+// test can assert trailing-window batching on its own. Leaves the coalescer
+// inside the window, which is where the trailing timer governs.
+function primeLeadingEdge(
+  coalescer: AgentStreamCoalescer,
+  flushes: AgentStreamCoalescerFlush[],
+  agentId = "agent-1",
+): void {
+  coalescer.handle(agentId, assistant("prime"));
+  const index = flushes.findIndex(
+    (flush) => flush.agentId === agentId && flush.item.type === "assistant_message",
+  );
+  if (index === -1) {
+    throw new Error(`expected a leading-edge flush for ${agentId}`);
+  }
+  flushes.splice(index, 1);
+}
+
 function timeline(
   item: Extract<AgentStreamEvent, { type: "timeline" }>["item"],
   options?: {
@@ -107,8 +125,22 @@ describe("AgentStreamCoalescer", () => {
     vi.useRealTimers();
   });
 
-  test("coalesces same-tick assistant chunks after the configured window", async () => {
+  test("flushes the first chunk of a burst on the leading edge", () => {
     const { coalescer, flushes } = createHarness();
+
+    expect(coalescer.handle("agent-1", assistant("hel"))).toBe(true);
+    expect(flushes).toEqual([
+      {
+        agentId: "agent-1",
+        item: { type: "assistant_message", text: "hel" },
+        provider: "codex",
+      },
+    ]);
+  });
+
+  test("coalesces the rest of a burst until the configured window elapses", async () => {
+    const { coalescer, flushes } = createHarness();
+    primeLeadingEdge(coalescer, flushes);
 
     expect(coalescer.handle("agent-1", assistant("hel"))).toBe(true);
     expect(coalescer.handle("agent-1", assistant("lo"))).toBe(true);
@@ -151,10 +183,26 @@ describe("AgentStreamCoalescer", () => {
     ]);
   });
 
+  test("leads again after an idle window", async () => {
+    const { coalescer, flushes } = createHarness();
+
+    coalescer.handle("agent-1", assistant("first"));
+    expect(flushes).toHaveLength(1);
+
+    await vi.advanceTimersByTimeAsync(60);
+    coalescer.handle("agent-1", assistant("second"));
+
+    expect(flushes.map((flush) => flush.item)).toEqual([
+      { type: "assistant_message", text: "first" },
+      { type: "assistant_message", text: "second" },
+    ]);
+  });
+
   test("uses constructor windowMs instead of a hard-coded value", async () => {
     const { coalescer, flushes } = createHarness(10);
 
     expect(AGENT_STREAM_COALESCE_DEFAULT_WINDOW_MS).toBe(60);
+    primeLeadingEdge(coalescer, flushes);
     expect(coalescer.handle("agent-1", assistant("fast"))).toBe(true);
 
     await vi.advanceTimersByTimeAsync(9);
@@ -348,6 +396,7 @@ describe("AgentStreamCoalescer", () => {
 
   test("preserves whitespace byte-exactly", async () => {
     const { coalescer, flushes } = createHarness();
+    primeLeadingEdge(coalescer, flushes);
 
     coalescer.handle("agent-1", assistant(" "));
     coalescer.handle("agent-1", assistant("\n"));
@@ -369,6 +418,7 @@ describe("AgentStreamCoalescer", () => {
 
   test("reconstructs bytes exactly for fragmented text", async () => {
     const { coalescer, flushes } = createHarness();
+    primeLeadingEdge(coalescer, flushes);
     const text = "Hello, 世界.\nPunctuation: ,.!?;: — but JS strings stay intact.\n";
     const chunks = [
       "Hello",
@@ -396,6 +446,8 @@ describe("AgentStreamCoalescer", () => {
 
   test("isolates buffers per agent", async () => {
     const { coalescer, flushes } = createHarness();
+    primeLeadingEdge(coalescer, flushes, "agent-1");
+    primeLeadingEdge(coalescer, flushes, "agent-2");
 
     coalescer.handle("agent-1", assistant("a"));
     coalescer.handle("agent-2", assistant("x"));
@@ -472,6 +524,7 @@ describe("AgentStreamCoalescer", () => {
       },
     });
 
+    primeLeadingEdge(coalescer, flushes);
     coalescer.handle("agent-1", assistant("first"));
     coalescer.flushFor("agent-1");
 
@@ -549,6 +602,7 @@ describe("AgentStreamCoalescer", () => {
       },
     });
 
+    primeLeadingEdge(coalescer, flushes);
     coalescer.handle("agent-1", assistant("old"));
     const oldTimerCallback = scheduled[0];
     coalescer.flushAndDiscard("agent-1");
@@ -573,6 +627,7 @@ describe("AgentStreamCoalescer", () => {
 
   test("preserves first chunk item shape and replaces only text on collapse", async () => {
     const { coalescer, flushes } = createHarness();
+    primeLeadingEdge(coalescer, flushes);
     const firstItem = {
       type: "assistant_message" as const,
       text: "he",
@@ -598,6 +653,7 @@ describe("AgentStreamCoalescer", () => {
 
   test("coalesces tool call updates by callId with latest snapshot winning", async () => {
     const { coalescer, flushes } = createHarness();
+    primeLeadingEdge(coalescer, flushes);
 
     expect(coalescer.handle("agent-1", toolCall({ output: "first" }))).toBe(true);
     expect(coalescer.handle("agent-1", toolCall({ output: "second" }))).toBe(true);
@@ -627,6 +683,7 @@ describe("AgentStreamCoalescer", () => {
 
   test("coalesces interleaved tool call updates independently by callId", async () => {
     const { coalescer, flushes } = createHarness();
+    primeLeadingEdge(coalescer, flushes);
 
     coalescer.handle("agent-1", toolCall({ callId: "tool-1", output: "one-a" }));
     coalescer.handle("agent-1", toolCall({ callId: "tool-2", output: "two-a" }));
@@ -667,6 +724,7 @@ describe("AgentStreamCoalescer", () => {
 
   test("terminal tool call statuses flush immediately", () => {
     const { coalescer, flushes } = createHarness();
+    primeLeadingEdge(coalescer, flushes);
 
     coalescer.handle("agent-1", toolCall({ output: "running" }));
     expect(flushes).toEqual([]);
@@ -694,6 +752,7 @@ describe("AgentStreamCoalescer", () => {
 
   test("preserves mixed text and tool call arrival order within a flush", async () => {
     const { coalescer, flushes } = createHarness();
+    primeLeadingEdge(coalescer, flushes);
 
     coalescer.handle("agent-1", assistant("a"));
     coalescer.handle("agent-1", toolCall({ output: "running" }));
