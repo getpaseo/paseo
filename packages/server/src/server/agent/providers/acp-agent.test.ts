@@ -3227,6 +3227,64 @@ describe("ACPAgentSession", () => {
     expect(secondTurnId).not.toBe(firstTurnId);
   });
 
+  test("a late cancelled response does not cancel the replacement turn's running tools", async () => {
+    const session = createSession();
+    const events: AgentStreamEvent[] = [];
+    let resolveFirstPrompt!: (value: PromptResponse) => void;
+    const prompt = vi
+      .fn()
+      .mockImplementationOnce(
+        () =>
+          new Promise<PromptResponse>((resolve) => {
+            resolveFirstPrompt = resolve;
+          }),
+      )
+      .mockImplementationOnce(() => new Promise<PromptResponse>(() => {}));
+    const cancel = vi.fn(async () => {});
+
+    asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+    asInternals<ACPSessionInternals>(session).connection = { prompt, cancel };
+
+    session.subscribe((event) => events.push(event));
+
+    const { turnId: firstTurnId } = await session.startTurn("hello");
+    await session.interrupt();
+    const { turnId: secondTurnId } = await session.startTurn("second");
+
+    // The replacement turn starts a tool call that is still running.
+    await session.sessionUpdate({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "tool_call",
+        toolCallId: "tool-replacement",
+        status: "in_progress",
+        title: "grep",
+      } as SessionUpdate,
+    });
+
+    events.length = 0;
+
+    // The interrupted prompt settles as cancelled after the replacement began.
+    resolveFirstPrompt({ stopReason: "cancelled" });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    // No synthesized cancellation leaks onto the replacement turn, and the
+    // replacement turn is neither completed nor cleared.
+    expect(
+      events.filter((event) => event.type === "turn_completed" || event.type === "turn_canceled"),
+    ).toEqual([]);
+    const canceledToolEvents = events.filter(
+      (event) =>
+        event.type === "timeline" &&
+        event.item.type === "tool_call" &&
+        event.item.status === "canceled",
+    );
+    expect(canceledToolEvents).toEqual([]);
+    expect(asInternals<ACPSessionInternals>(session).activeForegroundTurnId).toBe(secondTurnId);
+    expect(secondTurnId).not.toBe(firstTurnId);
+  });
+
   test("flushes an image-only provider echo before a rejected turn finishes", async () => {
     const session = createSession();
     const events: AgentStreamEvent[] = [];

@@ -2866,6 +2866,14 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   }
 
   private handlePromptResponse(response: PromptResponse, turnId: string): void {
+    // A prompt() can settle after its turn was already ended by interrupt() or
+    // the child-exit handler, possibly after a replacement turn has started.
+    // Drop the stale response before any side effects: synthesizeCanceledToolCalls()
+    // stamps events with the currently active turn, so a late "cancelled" would
+    // otherwise mark the replacement turn's running tools as canceled.
+    if (this.activeForegroundTurnId !== turnId) {
+      return;
+    }
     this.currentTurnUsage = mapACPUsage(response.usage) ?? this.currentTurnUsage;
 
     switch (response.stopReason) {
