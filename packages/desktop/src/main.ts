@@ -42,6 +42,7 @@ import {
   buildStandardContextMenuItems,
 } from "./window/window-manager.js";
 import { setupDarwinCompositorWatchdog } from "./window/compositor-watchdog/index.js";
+import { LINUX_READY_TO_SHOW_FALLBACK_MS, showWindowWhenReady } from "./window/show-when-ready.js";
 import { resolveDesktopWindowChromeMode, windowChromeModeArgument } from "./window/chrome.js";
 import { registerDialogHandlers } from "./features/dialogs.js";
 import {
@@ -750,8 +751,8 @@ async function createWindow(
     registerBrowserWebviewNavigationGuards(contents);
   });
 
-  mainWindow.once("ready-to-show", () => {
-    mainWindow.show();
+  showWindowWhenReady(mainWindow, {
+    fallbackMs: process.platform === "linux" ? LINUX_READY_TO_SHOW_FALLBACK_MS : null,
   });
 
   if (!app.isPackaged) {
