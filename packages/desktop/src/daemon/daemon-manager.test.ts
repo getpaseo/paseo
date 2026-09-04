@@ -1,5 +1,6 @@
 import { EventEmitter } from "node:events";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { DEFAULT_DESKTOP_SETTINGS } from "../settings/desktop-settings";
@@ -23,7 +24,9 @@ const mocks = vi.hoisted(() => ({
     env: {},
   })),
   spawnProcess: vi.fn(),
+  loadPersistedConfig: vi.fn(),
   logInfo: vi.fn(),
+  logWarn: vi.fn(),
   logError: vi.fn(),
   appLogPath: "/tmp/paseo-desktop-daemon-manager-test-main.log",
   getElectronLogFile: vi.fn(),
@@ -42,6 +45,7 @@ vi.mock("electron", () => ({
 vi.mock("electron-log/main", () => ({
   default: {
     info: mocks.logInfo,
+    warn: mocks.logWarn,
     error: mocks.logError,
     transports: {
       file: {
@@ -51,10 +55,19 @@ vi.mock("electron-log/main", () => ({
   },
 }));
 
-vi.mock("@getpaseo/server", () => ({
-  resolvePaseoHome: vi.fn(() => mocks.paseoHome),
-  spawnProcess: mocks.spawnProcess,
-}));
+// The log-path resolver is pure, so the mock re-exports the real one instead of a
+// stub — the point of these tests is that the desktop honours the configured path.
+vi.mock("@getpaseo/server", async () => {
+  const { DEFAULT_DAEMON_LOG_FILENAME, resolveDaemonLogPath } =
+    await import("@server/server/daemon-log-path.js");
+  return {
+    DEFAULT_DAEMON_LOG_FILENAME,
+    resolveDaemonLogPath,
+    loadPersistedConfig: mocks.loadPersistedConfig,
+    resolvePaseoHome: vi.fn(() => mocks.paseoHome),
+    spawnProcess: mocks.spawnProcess,
+  };
+});
 
 vi.mock("../settings/desktop-settings-electron.js", () => ({
   getDesktopSettingsStore: () => ({
@@ -117,7 +130,10 @@ describe("daemon-manager commands", () => {
     mocks.createNodeEntrypointInvocation.mockReset();
     mocks.createNodeEntrypointInvocation.mockReturnValue({ command: "node", args: [], env: {} });
     mocks.spawnProcess.mockReset();
+    mocks.loadPersistedConfig.mockReset();
+    mocks.loadPersistedConfig.mockReturnValue({});
     mocks.logInfo.mockReset();
+    mocks.logWarn.mockReset();
     mocks.logError.mockReset();
     mocks.getElectronLogFile.mockReset();
     mocks.getElectronLogFile.mockReturnValue({ path: mocks.appLogPath });
@@ -499,6 +515,33 @@ describe("daemon-manager commands", () => {
     expect(mocks.createNodeEntrypointInvocation).toHaveBeenCalledWith(
       expect.objectContaining({ args: [] }),
     );
+  });
+
+  it("reads the daemon log from the configured log.file.path", () => {
+    mocks.loadPersistedConfig.mockReturnValue({ log: { file: { path: "logs/custom.log" } } });
+    const configuredLogPath = path.resolve(mocks.paseoHome, "logs", "custom.log");
+    mkdirSync(path.dirname(configuredLogPath), { recursive: true });
+    writeFileSync(configuredLogPath, "configured log line\n");
+    writeFileSync(path.join(mocks.paseoHome, "daemon.log"), "default log line\n");
+
+    expect(createDaemonCommandHandlers().desktop_daemon_logs()).toEqual({
+      logPath: configuredLogPath,
+      contents: "configured log line",
+    });
+  });
+
+  it("falls back to the default daemon log when the config cannot be read", () => {
+    mocks.loadPersistedConfig.mockImplementation(() => {
+      throw new Error("invalid config");
+    });
+    mkdirSync(mocks.paseoHome, { recursive: true });
+    writeFileSync(path.join(mocks.paseoHome, "daemon.log"), "default log line\n");
+
+    expect(createDaemonCommandHandlers().desktop_daemon_logs()).toEqual({
+      logPath: path.join(mocks.paseoHome, "daemon.log"),
+      contents: "default log line",
+    });
+    expect(mocks.logWarn).toHaveBeenCalled();
   });
 
   it("returns the Electron main-process log tail from electron-log", () => {

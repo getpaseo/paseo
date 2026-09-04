@@ -1,8 +1,6 @@
-import path from "node:path";
-
+import { resolveDaemonLogPath } from "../src/server/daemon-log-path.js";
 import type { loadPersistedConfig } from "../src/server/persisted-config.js";
 
-const DEFAULT_DAEMON_LOG_FILENAME = "daemon.log";
 const DEFAULT_LOG_ROTATE_SIZE = "10m";
 const DEFAULT_LOG_ROTATE_MAX_FILES = 3;
 
@@ -12,18 +10,11 @@ export function resolveSupervisorLogFile(
   env: NodeJS.ProcessEnv = process.env,
 ) {
   const configuredFile = persistedConfig.log?.file;
-  const configuredPath = configuredFile?.path;
   const envRotateSize = env.PASEO_LOG_ROTATE_SIZE?.trim();
   const envRotateMaxFiles = parseOptionalPositiveInteger(env.PASEO_LOG_ROTATE_COUNT);
-  let logPath = path.join(paseoHome, DEFAULT_DAEMON_LOG_FILENAME);
-  if (configuredPath) {
-    logPath = path.isAbsolute(configuredPath)
-      ? configuredPath
-      : path.resolve(paseoHome, configuredPath);
-  }
 
   return {
-    path: logPath,
+    path: resolveDaemonLogPath(paseoHome, persistedConfig),
     rotate: {
       maxSize: configuredFile?.rotate?.maxSize ?? envRotateSize ?? DEFAULT_LOG_ROTATE_SIZE,
       maxFiles:

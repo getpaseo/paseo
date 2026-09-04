@@ -3,7 +3,13 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { app, ipcMain, powerMonitor } from "electron";
 import log from "electron-log/main";
-import { resolvePaseoHome, spawnProcess } from "@getpaseo/server";
+import {
+  DEFAULT_DAEMON_LOG_FILENAME,
+  loadPersistedConfig,
+  resolveDaemonLogPath,
+  resolvePaseoHome,
+  spawnProcess,
+} from "@getpaseo/server";
 import {
   copyAttachmentFileToManagedStorage,
   deleteManagedAttachmentFile,
@@ -44,7 +50,6 @@ import {
 } from "../integrations/legacy-skill-selection.js";
 import { tailFile } from "../diagnostics/tail-file.js";
 
-const DAEMON_LOG_FILENAME = "daemon.log";
 const STARTUP_POLL_INTERVAL_MS = 200;
 const STARTUP_POLL_MAX_ATTEMPTS = 150;
 const DETACHED_STARTUP_GRACE_MS = 1200;
@@ -117,8 +122,16 @@ function getPaseoHome(): string {
   return resolvePaseoHome(process.env);
 }
 
+// The daemon writes wherever `log.file.path` points, so read the config instead of
+// assuming the default. A config we cannot read is not worth failing a log tail over.
 function logFilePath(): string {
-  return path.join(getPaseoHome(), DAEMON_LOG_FILENAME);
+  const paseoHome = getPaseoHome();
+  try {
+    return resolveDaemonLogPath(paseoHome, loadPersistedConfig(paseoHome));
+  } catch (err) {
+    log.warn("[desktop daemon]", "Failed to read config for log path; using default", { err });
+    return path.join(paseoHome, DEFAULT_DAEMON_LOG_FILENAME);
+  }
 }
 
 export function isDesktopManagedDaemonRunningSync(): boolean {

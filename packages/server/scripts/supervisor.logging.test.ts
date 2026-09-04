@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -28,6 +28,7 @@ async function runSupervisorFixture(options: {
   signal: NodeJS.Signals | null;
   elapsedMs: number;
   log: string;
+  logPath: string;
   stdout: string;
   stderr: string;
 }> {
@@ -96,7 +97,7 @@ async function runSupervisorFixture(options: {
   });
 
   const log = await readFile(logPath, "utf8");
-  return { code, signal, elapsedMs: Date.now() - startedAt, log, stdout, stderr };
+  return { code, signal, elapsedMs: Date.now() - startedAt, log, logPath, stdout, stderr };
 }
 
 describe("supervisor durable logging", () => {
@@ -166,6 +167,18 @@ describe("supervisor durable logging", () => {
     expect(result.log).toContain('"worker-json-stderr"');
     expect(result.stdout).toContain('"worker-json-stdout"');
     expect(result.stderr).toContain('"worker-json-stderr"');
+  });
+
+  // POSIX-only: Windows does not honour POSIX file modes.
+  test.skipIf(isPlatform("win32"))("creates the log file owner-only", async () => {
+    const result = await runSupervisorFixture({
+      workerSource: `
+        process.stdout.write('mode check\\n');
+        process.exit(0);
+      `,
+    });
+
+    expect((await stat(result.logPath)).mode & 0o777).toBe(0o600);
   });
 
   test("preserves raw non-JSON stdout and stderr lines", async () => {

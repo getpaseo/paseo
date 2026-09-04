@@ -4,6 +4,7 @@ import { writeFileSync } from "node:fs";
 import path from "node:path";
 import { loadPersistedConfig, type PersistedConfig } from "@getpaseo/server";
 import {
+  resolveLocalDaemonLogPath,
   resolveLocalPaseoHome,
   resolveLocalDaemonState,
   resolveTcpHostFromListen,
@@ -264,7 +265,7 @@ async function waitForDaemonReady(args: {
 }
 
 function printNextSteps(pairingUrl: string | null, paseoHome: string, richUi: boolean): void {
-  const daemonLogPath = path.join(paseoHome, "daemon.log");
+  const daemonLogPath = resolveLocalDaemonLogPath(paseoHome);
   const nextStepsLines = [
     pairingUrl
       ? "1. Open Paseo and scan the QR code above, or paste the pairing link."

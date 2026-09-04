@@ -18,6 +18,9 @@ export interface DaemonRuntimeConfig {
   worktreesRoot?: string;
   appBaseUrl?: string;
   desktopManaged?: boolean;
+  // Resolved from `log.file.path` at bootstrap. Diagnostics tails the default when
+  // it is absent, which is what a caller that never configured logging would get.
+  logPath?: string;
   getRelayConfig(): {
     enabled: boolean;
     endpoint: string;

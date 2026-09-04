@@ -1,6 +1,5 @@
 import { open, statfs } from "node:fs/promises";
 import { cpus, freemem, loadavg, platform, release, totalmem, type } from "node:os";
-import path from "node:path";
 
 import type pino from "pino";
 
@@ -8,6 +7,7 @@ import type { ManagedAgent, ProviderAvailability } from "../../agent/agent-manag
 import type { WebSocketRuntimeDiagnosticSnapshot } from "../../websocket/runtime-metrics.js";
 import type { PersistedProjectRecord, PersistedWorkspaceRecord } from "../../workspace-registry.js";
 import { execCommand } from "../../../utils/spawn.js";
+import { resolveDaemonLogPath } from "../../daemon-log-path.js";
 import type { DaemonRuntimeConfig } from "./daemon-session.js";
 
 interface DiagnosticEntry {
@@ -413,7 +413,7 @@ async function checkTool(command: string, args: string[]): Promise<string> {
 }
 
 async function safeLogTailSection(options: DaemonDiagnosticsOptions): Promise<string> {
-  const logPath = path.join(options.paseoHome, "daemon.log");
+  const logPath = options.daemonRuntimeConfig?.logPath ?? resolveDaemonLogPath(options.paseoHome);
   try {
     const tail = await tailFile(logPath, LOG_TAIL_LINES, LOG_TAIL_MAX_BYTES);
     return ["Daemon log tail", `  Path: ${logPath}`, tail ? tail : "  No log lines found"].join(

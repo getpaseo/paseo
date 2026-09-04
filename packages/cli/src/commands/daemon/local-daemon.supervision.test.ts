@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import {
   type DaemonLaunchRuntime,
   type DetachedDaemonProcess,
+  resolveLocalDaemonLogPath,
   resolveLocalDaemonState,
   startLocalDaemonDetached,
   startLocalDaemonForeground,
@@ -45,8 +46,14 @@ class FakeDaemonRuntime implements DaemonLaunchRuntime {
     return this.runnerEntry;
   }
 
+  logPathsByHome = new Map<string, string>();
+
   resolveHome(env: NodeJS.ProcessEnv): string {
     return env.PASEO_HOME ?? "/tmp/paseo";
+  }
+
+  resolveLogPath(paseoHome: string): string {
+    return this.logPathsByHome.get(paseoHome) ?? path.join(paseoHome, "daemon.log");
   }
 
   spawnDetached(
@@ -210,5 +217,24 @@ describe("local daemon launch supervision", () => {
     expect(state.relayEndpoint).toBe("paseo.example.com");
     expect(state.relayUseTls).toBe(false);
     expect(state.relayPublicUseTls).toBe(true);
+  });
+
+  test("local daemon log path follows log.file.path", async () => {
+    const home = await createPaseoHome({
+      version: 1,
+      log: { file: { path: "logs/custom.log" } },
+    });
+    const expected = path.join(home, "logs", "custom.log");
+
+    expect(resolveLocalDaemonState({ home }).logPath).toBe(expected);
+    expect(resolveLocalDaemonLogPath(home)).toBe(expected);
+  });
+
+  test("local daemon log path defaults to daemon.log", async () => {
+    const home = await createPaseoHome({ version: 1 });
+    const expected = path.join(home, "daemon.log");
+
+    expect(resolveLocalDaemonState({ home }).logPath).toBe(expected);
+    expect(resolveLocalDaemonLogPath(home)).toBe(expected);
   });
 });

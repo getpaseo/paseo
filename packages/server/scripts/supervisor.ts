@@ -2,6 +2,7 @@ import { fork, spawn, type ChildProcess } from "child_process";
 import { mkdirSync } from "node:fs";
 import path from "node:path";
 import { createStream as createRotatingFileStream } from "rotating-file-stream";
+import { ensurePrivateFile, PRIVATE_FILE_MODE } from "../src/server/private-files.js";
 import { signalProcessTree } from "../src/utils/tree-kill.js";
 
 const WORKER_HEARTBEAT_INTERVAL_MS = 1_000;
@@ -111,10 +112,15 @@ function createSupervisorLogStream(options: SupervisorLogFileOptions | undefined
   }
 
   mkdirSync(path.dirname(options.path), { recursive: true });
+  // The log carries verbatim agent stdout/stderr, so it stays owner-only. `mode`
+  // covers the current file and every rotated file, but only at creation time —
+  // chmod the existing log so upgrades tighten one an older release left behind.
+  ensurePrivateFile(options.path);
   return createRotatingFileStream(path.basename(options.path), {
     path: path.dirname(options.path),
     size: toRotatingFileStreamSize(options.rotate.maxSize),
     maxFiles: options.rotate.maxFiles,
+    mode: PRIVATE_FILE_MODE,
   });
 }
 

@@ -2,7 +2,14 @@ import { spawnSync, type ChildProcess } from "node:child_process";
 import { existsSync, readFileSync, unlinkSync } from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
-import { loadConfig, resolvePaseoHome, spawnProcess } from "@getpaseo/server";
+import {
+  DEFAULT_DAEMON_LOG_FILENAME,
+  loadConfig,
+  loadPersistedConfig,
+  resolveDaemonLogPath,
+  resolvePaseoHome,
+  spawnProcess,
+} from "@getpaseo/server";
 import treeKill from "tree-kill";
 import { tryConnectToDaemon } from "../../utils/client.js";
 
@@ -82,6 +89,7 @@ export interface ForegroundDaemonProcessResult {
 export interface DaemonLaunchRuntime {
   resolveRunnerEntry(): string;
   resolveHome(env: NodeJS.ProcessEnv): string;
+  resolveLogPath(paseoHome: string): string;
   spawnDetached(
     command: string,
     args: string[],
@@ -96,7 +104,6 @@ export interface DaemonLaunchRuntime {
 
 const DETACHED_STARTUP_GRACE_MS = 1200;
 const PID_POLL_INTERVAL_MS = 100;
-const DAEMON_LOG_FILENAME = "daemon.log";
 const DAEMON_PID_FILENAME = "paseo.pid";
 
 export const DEFAULT_STOP_TIMEOUT_MS = 15_000;
@@ -107,9 +114,24 @@ const require = createRequire(import.meta.url);
 const defaultDaemonLaunchRuntime: DaemonLaunchRuntime = {
   resolveRunnerEntry: resolveDaemonRunnerEntry,
   resolveHome: resolvePaseoHome,
+  resolveLogPath: daemonLogPathForHome,
   spawnDetached: spawnProcess,
   spawnForeground: spawnSync,
 };
+
+// The daemon writes wherever `log.file.path` points, so read the config rather than
+// assuming the default. A config we cannot read is not worth failing a log tail over.
+function daemonLogPathForHome(paseoHome: string): string {
+  try {
+    return resolveDaemonLogPath(paseoHome, loadPersistedConfig(paseoHome));
+  } catch {
+    return path.join(paseoHome, DEFAULT_DAEMON_LOG_FILENAME);
+  }
+}
+
+export function resolveLocalDaemonLogPath(home?: string): string {
+  return daemonLogPathForHome(resolveLocalPaseoHome(home));
+}
 
 const startupReady = (): DetachedStartupResult => ({ exitedEarly: false });
 
@@ -551,7 +573,7 @@ export function resolveLocalDaemonState(options: { home?: string } = {}): LocalD
   const home = resolvePaseoHome(env);
   const config = loadConfig(home, { env });
   const pidPath = pidFilePath(home);
-  const logPath = path.join(home, DAEMON_LOG_FILENAME);
+  const logPath = resolveDaemonLogPath(home, { log: config.log });
   const pidInfo = existsSync(pidPath) ? readPidFile(pidPath) : null;
   const running = pidInfo ? isProcessRunning(pidInfo.pid) : false;
   const listen = pidInfo?.listen ?? config.listen;
@@ -572,8 +594,7 @@ export function resolveLocalDaemonState(options: { home?: string } = {}): LocalD
 }
 
 export function tailDaemonLog(home?: string, lines = 30): string | null {
-  const logPath = path.join(resolveLocalPaseoHome(home), DAEMON_LOG_FILENAME);
-  return tailFile(logPath, lines);
+  return tailFile(resolveLocalDaemonLogPath(home), lines);
 }
 
 export async function startLocalDaemonDetached(
@@ -588,7 +609,7 @@ export async function startLocalDaemonDetached(
   const childEnv = buildChildEnv(options);
 
   const paseoHome = runtime.resolveHome(childEnv);
-  const logPath = path.join(paseoHome, DAEMON_LOG_FILENAME);
+  const logPath = runtime.resolveLogPath(paseoHome);
   const child = runtime.spawnDetached(
     process.execPath,
     [...process.execArgv, daemonRunnerEntry, ...buildRunnerArgs(options)],
