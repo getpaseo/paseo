@@ -120,11 +120,14 @@ Then list, use, rename, or archive it:
 
 ```bash
 paseo workspace ls
+paseo workspace ls --label blocked            # Only workspaces carrying that label (repeat for several)
 paseo run --workspace <workspace-id> "implement authentication"
 paseo workspace rename <workspace-id> "Auth rework"
 paseo workspace rename <workspace-id> --reset   # back to the branch or directory name
 paseo workspace archive <workspace-id>
 ```
+
+The list shows each workspace's labels and pull request. Label filters match by name, ignoring case, and a workspace must carry every label you pass. `--json` also includes the branch and the pull request's URL, title, checks, and review decision.
 
 Add `--forge <name>` to PR checkout when Paseo cannot infer the forge from the source checkout. See [Git worktrees](/docs/worktrees) for setup hooks and services.
 
@@ -196,7 +199,8 @@ behavior.
 paseo ls                    # Running agents in current directory
 paseo ls -a                 # Include completed/stopped agents
 paseo ls -g                 # All directories
-paseo ls -a -g --json       # Full list as JSON
+paseo ls --label team=api   # Only agents carrying that label (repeat for several)
+paseo ls -a -g --json       # Full list as JSON, including each agent's labels
 ```
 
 ## Streaming output

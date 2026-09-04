@@ -73,6 +73,13 @@ describe("canonical CLI surface", () => {
     expect(open?.helpInformation()).toContain("--server <server-id>");
   });
 
+  it("filters workspace listings by label", () => {
+    const workspace = createCli().commands.find((command) => command.name() === "workspace");
+    const ls = workspace?.commands.find((command) => command.name() === "ls");
+
+    expect(ls?.helpInformation()).toContain("--label <name>");
+  });
+
   it("offers the complete local plugin lifecycle", () => {
     const plugin = createCli().commands.find((command) => command.name() === "plugin");
 

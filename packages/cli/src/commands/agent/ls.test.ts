@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { buildAgentLsFetchOptions } from "./ls.js";
+import { renderTable } from "../../output/table.js";
+import { agentLsSchema, buildAgentLsFetchOptions, toAgentListItem } from "./ls.js";
 
 describe("buildAgentLsFetchOptions", () => {
   it("fetches active agents by default", () => {
@@ -57,5 +58,41 @@ describe("buildAgentLsFetchOptions", () => {
         thinkingOptionId: "medium",
       },
     });
+  });
+});
+
+describe("toAgentListItem", () => {
+  const agent = {
+    id: "agent-1234567890",
+    title: "Fix login",
+    provider: "claude",
+    model: "claude-opus-5",
+    effectiveThinkingOptionId: "high",
+    status: "idle" as const,
+    cwd: "/tmp/project",
+    createdAt: new Date().toISOString(),
+    labels: { team: "platform", "paseo.worktree": "feature-auth" },
+  };
+
+  it("carries labels into structured output", () => {
+    expect(toAgentListItem(agent)).toMatchObject({
+      id: "agent-1234567890",
+      shortId: "agent-1",
+      name: "Fix login",
+      provider: "claude/claude-opus-5",
+      thinking: "high",
+      status: "idle",
+      cwd: "/tmp/project",
+      labels: { team: "platform", "paseo.worktree": "feature-auth" },
+    });
+  });
+
+  it("keeps labels out of the table", () => {
+    const line = renderTable(
+      { type: "list", data: [toAgentListItem(agent)], schema: agentLsSchema },
+      { format: "table", quiet: false, noHeaders: true, noColor: true },
+    );
+    expect(line).toContain("Fix login");
+    expect(line).not.toContain("platform");
   });
 });
