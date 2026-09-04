@@ -39,6 +39,7 @@ describe("desktop updater diagnostics", () => {
 
     expect(diagnostics.currentVersion).toBe("0.7.0");
     expect(diagnostics.targetVersion).toBe("0.7.2");
+    expect(diagnostics.targetVersionError).toBeNull();
     expect(diagnostics.shipItDirectory).toBe(shipItDirectory);
     expect(diagnostics.state).toMatchObject({ exists: true });
     expect(diagnostics.stdout).toMatchObject({
@@ -50,6 +51,47 @@ describe("desktop updater diagnostics", () => {
       contents: "stderr evidence",
     });
     expect(diagnostics.state?.modifiedAt).not.toBeNull();
+  });
+
+  it("reports malformed ShipIt state without hiding other evidence", () => {
+    testDirectory = mkdtempSync(path.join(tmpdir(), "paseo-updater-diagnostics-"));
+    const shipItDirectory = path.join(testDirectory, "sh.paseo.desktop.ShipIt");
+    mkdirSync(shipItDirectory, { recursive: true });
+    writeFileSync(path.join(shipItDirectory, "ShipItState.plist"), "not JSON");
+    writeFileSync(path.join(shipItDirectory, "ShipIt_stderr.log"), "installer evidence\n");
+
+    const diagnostics = collectDesktopUpdaterDiagnostics({
+      platform: "darwin",
+      currentVersion: "0.7.0",
+      cachePath: testDirectory,
+      readBundleVersion: () => "unused",
+    });
+
+    expect(diagnostics.targetVersion).toBeNull();
+    expect(diagnostics.targetVersionError).toMatch(/JSON|Unexpected token/);
+    expect(diagnostics.stderr?.contents).toBe("installer evidence");
+  });
+
+  it("reports bundle version lookup failures", () => {
+    testDirectory = mkdtempSync(path.join(tmpdir(), "paseo-updater-diagnostics-"));
+    const shipItDirectory = path.join(testDirectory, "sh.paseo.desktop.ShipIt");
+    mkdirSync(shipItDirectory, { recursive: true });
+    writeFileSync(
+      path.join(shipItDirectory, "ShipItState.plist"),
+      JSON.stringify({ updateBundleURL: pathToFileURL(path.join(shipItDirectory, "Paseo.app")) }),
+    );
+
+    const diagnostics = collectDesktopUpdaterDiagnostics({
+      platform: "darwin",
+      currentVersion: "0.7.0",
+      cachePath: testDirectory,
+      readBundleVersion: () => {
+        throw new Error("plutil failed");
+      },
+    });
+
+    expect(diagnostics.targetVersion).toBeNull();
+    expect(diagnostics.targetVersionError).toBe("plutil failed");
   });
 
   it("keeps readable ShipIt evidence when another file cannot be read", () => {
@@ -89,6 +131,7 @@ describe("desktop updater diagnostics", () => {
       platform: "linux",
       currentVersion: "0.7.2",
       targetVersion: null,
+      targetVersionError: null,
       shipItDirectory: null,
       state: null,
       stdout: null,

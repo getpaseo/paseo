@@ -86,14 +86,16 @@ export async function collectDesktopDiagnosticSections(
 }
 
 function formatDesktopUpdaterSections(diagnostics: DesktopUpdaterDiagnostics): string[] {
-  const sections = [
-    formatDiagnosticSection("Desktop updater", [
-      { label: "Platform", value: diagnostics.platform },
-      { label: "Current version", value: diagnostics.currentVersion },
-      { label: "Target version", value: diagnostics.targetVersion ?? "unknown" },
-      { label: "ShipIt directory", value: diagnostics.shipItDirectory ?? "not applicable" },
-    ]),
+  const updaterDetails = [
+    { label: "Platform", value: diagnostics.platform },
+    { label: "Current version", value: diagnostics.currentVersion },
+    { label: "Target version", value: diagnostics.targetVersion ?? "unknown" },
+    { label: "ShipIt directory", value: diagnostics.shipItDirectory ?? "not applicable" },
   ];
+  if (diagnostics.targetVersionError) {
+    updaterDetails.push({ label: "Target version error", value: diagnostics.targetVersionError });
+  }
+  const sections = [formatDiagnosticSection("Desktop updater", updaterDetails)];
 
   if (diagnostics.platform !== "darwin") return sections;
 

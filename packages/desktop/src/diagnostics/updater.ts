@@ -20,6 +20,7 @@ export interface DesktopUpdaterDiagnostics {
   platform: NodeJS.Platform;
   currentVersion: string;
   targetVersion: string | null;
+  targetVersionError: string | null;
   shipItDirectory: string | null;
   state: DesktopUpdaterDiagnosticFile | null;
   stdout: DesktopUpdaterDiagnosticFile | null;
@@ -42,6 +43,7 @@ export function collectDesktopUpdaterDiagnostics(
       platform,
       currentVersion,
       targetVersion: null,
+      targetVersionError: null,
       shipItDirectory: null,
       state: null,
       stdout: null,
@@ -51,10 +53,11 @@ export function collectDesktopUpdaterDiagnostics(
 
   const shipItDirectory = path.join(cachePath, SHIPIT_DIRECTORY_NAME);
   const state = readDiagnosticFile(path.join(shipItDirectory, "ShipItState.plist"));
+  const targetVersion = diagnoseTargetVersion(state.contents, readBundleVersion);
   return {
     platform,
     currentVersion,
-    targetVersion: readTargetVersion(state.contents, readBundleVersion),
+    ...targetVersion,
     shipItDirectory,
     state,
     stdout: readDiagnosticFile(path.join(shipItDirectory, "ShipIt_stdout.log"), true),
@@ -95,36 +98,45 @@ function readDiagnosticFile(filePath: string, tail = false): DesktopUpdaterDiagn
   }
 }
 
+function diagnoseTargetVersion(
+  stateContents: string,
+  readBundleVersion: (bundlePath: string) => string | null,
+): Pick<DesktopUpdaterDiagnostics, "targetVersion" | "targetVersionError"> {
+  try {
+    return {
+      targetVersion: readTargetVersion(stateContents, readBundleVersion),
+      targetVersionError: null,
+    };
+  } catch (error) {
+    return {
+      targetVersion: null,
+      targetVersionError: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
 function readTargetVersion(
   stateContents: string,
   readBundleVersion: (bundlePath: string) => string | null,
 ): string | null {
   if (!stateContents) return null;
 
-  try {
-    const state = JSON.parse(stateContents) as unknown;
-    if (!isRecord(state) || typeof state.updateBundleURL !== "string") return null;
-    return readBundleVersion(fileURLToPath(state.updateBundleURL));
-  } catch {
-    return null;
-  }
+  const state = JSON.parse(stateContents) as unknown;
+  if (!isRecord(state) || typeof state.updateBundleURL !== "string") return null;
+  return readBundleVersion(fileURLToPath(state.updateBundleURL));
 }
 
 function readMacBundleVersion(bundlePath: string): string | null {
-  try {
-    return execFileSync(
-      "/usr/bin/plutil",
-      [
-        "-extract",
-        "CFBundleShortVersionString",
-        "raw",
-        path.join(bundlePath, "Contents", "Info.plist"),
-      ],
-      { encoding: "utf8" },
-    ).trim();
-  } catch {
-    return null;
-  }
+  return execFileSync(
+    "/usr/bin/plutil",
+    [
+      "-extract",
+      "CFBundleShortVersionString",
+      "raw",
+      path.join(bundlePath, "Contents", "Info.plist"),
+    ],
+    { encoding: "utf8" },
+  ).trim();
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

@@ -46,6 +46,7 @@ export interface DesktopUpdaterDiagnostics {
   platform: string;
   currentVersion: string;
   targetVersion: string | null;
+  targetVersionError: string | null;
   shipItDirectory: string | null;
   state: DesktopUpdaterDiagnosticFile | null;
   stdout: DesktopUpdaterDiagnosticFile | null;
@@ -163,6 +164,7 @@ function parseDesktopUpdaterDiagnostics(raw: unknown): DesktopUpdaterDiagnostics
     platform: toStringOrNull(raw.platform) ?? "unknown",
     currentVersion: toStringOrNull(raw.currentVersion) ?? "unknown",
     targetVersion: toStringOrNull(raw.targetVersion),
+    targetVersionError: toStringOrNull(raw.targetVersionError),
     shipItDirectory: toStringOrNull(raw.shipItDirectory),
     state: parseDesktopUpdaterDiagnosticFile(raw.state),
     stdout: parseDesktopUpdaterDiagnosticFile(raw.stdout),

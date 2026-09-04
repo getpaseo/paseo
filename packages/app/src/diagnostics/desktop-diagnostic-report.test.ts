@@ -29,6 +29,7 @@ function makeSources(): DesktopDiagnosticSources {
       platform: "darwin",
       currentVersion: "0.7.0",
       targetVersion: "0.7.2",
+      targetVersionError: null,
       shipItDirectory: "/cache/sh.paseo.desktop.ShipIt",
       state: {
         path: "/cache/sh.paseo.desktop.ShipIt/ShipItState.plist",
@@ -88,6 +89,20 @@ describe("desktop diagnostic report", () => {
     expect(calls).toEqual(["status", "daemonLogs", "appLogs", "updater"]);
     releaseAppLogs();
     await expect(resultPromise).resolves.toMatchObject({ status: "done" });
+  });
+
+  test("includes target version lookup errors", async () => {
+    const sources: DesktopDiagnosticSources = {
+      ...makeSources(),
+      getUpdaterDiagnostics: async () => ({
+        ...(await makeSources().getUpdaterDiagnostics()),
+        targetVersion: null,
+        targetVersionError: "plutil failed",
+      }),
+    };
+
+    const result = await collectDesktopDiagnosticSections(sources);
+    expect(result.sections.join("\n\n")).toContain("Target version error: plutil failed");
   });
 
   test("includes the Electron main-process log after the daemon log", async () => {
