@@ -45,11 +45,12 @@ test("attributes a nested Claude child and its background notification to their 
       .filter((event) => event.type === "provider_subagent" && event.event.type === "upsert")
       .map((event) => event.event)
       .filter((event) => event.type === "upsert" && event.description);
-    const nested = descriptors.find((event) => event.parentSubagentId);
-    const direct = descriptors.find((event) => event.id === nested?.parentSubagentId);
+    const direct = descriptors.find((event) => event.description === "direct_owner");
+    const nested = descriptors.find((event) => event.description === "nested_owner");
 
-    expect(direct).toBeDefined();
-    expect(nested).toMatchObject({ parentSubagentId: direct?.id });
+    expect(direct).toMatchObject({ description: "direct_owner" });
+    expect(nested).toMatchObject({ description: "nested_owner" });
+    expect(nested?.parentSubagentId).toBe(direct?.id);
     expect(
       events.filter(
         (event) =>

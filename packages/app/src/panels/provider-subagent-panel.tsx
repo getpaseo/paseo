@@ -43,9 +43,11 @@ function resolveChildTrackClearance(childCount: number, isCompact: boolean) {
 }
 
 function ProviderSubagentChildTrack({
+  serverId,
   rows,
   onOpenProviderSubagent,
 }: {
+  serverId: string;
   rows: ReturnType<typeof useSubagentsForParent>;
   onOpenProviderSubagent: (parentAgentId: string, subagentId: string) => void;
 }) {
@@ -53,6 +55,7 @@ function ProviderSubagentChildTrack({
   return (
     <ComposerTrackBar>
       <SubagentsTrack
+        serverId={serverId}
         rows={rows}
         onOpenSubagent={NOOP_SUBAGENT}
         onOpenProviderSubagent={onOpenProviderSubagent}
@@ -260,7 +263,11 @@ function ProviderSubagentPanel() {
         bottomOverlayTailClearance={childTrackClearance.tail}
         bottomOverlayControlClearance={childTrackClearance.controls}
       />
-      <ProviderSubagentChildTrack rows={childRows} onOpenProviderSubagent={openProviderChild} />
+      <ProviderSubagentChildTrack
+        serverId={serverId}
+        rows={childRows}
+        onOpenProviderSubagent={openProviderChild}
+      />
     </View>
   );
 }
