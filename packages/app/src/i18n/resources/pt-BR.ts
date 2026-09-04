@@ -1175,6 +1175,8 @@ export const ptBR: TranslationResources = {
         moveUp: "Mover para cima",
         moveDown: "Mover para baixo",
         createConfirm: "Criar grupo",
+        addToGroupConfirm: "Adicionar ao grupo",
+        groupedMembers: "Em outros grupos",
         creating: "Criando...",
         name: "Nome do grupo",
         rename: "Renomear grupo",

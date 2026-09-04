@@ -1162,6 +1162,8 @@ export const ja: TranslationResources = {
         moveUp: "上へ移動",
         moveDown: "下へ移動",
         createConfirm: "グループを作成",
+        addToGroupConfirm: "グループに追加",
+        groupedMembers: "他のグループ内",
         creating: "作成中...",
         name: "グループ名",
         rename: "グループの名前を変更",

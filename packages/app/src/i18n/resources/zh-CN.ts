@@ -1141,6 +1141,8 @@ export const zhCN: TranslationResources = {
         moveUp: "上移",
         moveDown: "下移",
         createConfirm: "创建分组",
+        addToGroupConfirm: "添加到分组",
+        groupedMembers: "在其他分组中",
         creating: "正在创建...",
         name: "分组名称",
         rename: "重命名分组",

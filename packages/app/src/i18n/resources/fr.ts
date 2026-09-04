@@ -1184,6 +1184,8 @@ export const fr: TranslationResources = {
         moveUp: "Monter",
         moveDown: "Descendre",
         createConfirm: "Créer un groupe",
+        addToGroupConfirm: "Ajouter au groupe",
+        groupedMembers: "Dans d'autres groupes",
         creating: "Création...",
         name: "Nom du groupe",
         rename: "Renommer le groupe",
