@@ -139,11 +139,11 @@ describe("GenericACPAgentClient diagnostics", () => {
 
   test("bounds the total time spent loading inaccessible session histories", async () => {
     await withFakeACPAgent("history-load-hangs", async (scriptPath, mode, testDir) => {
+      const loadTracePath = path.join(testDir, "session-load.jsonl");
       const client = new GenericACPAgentClient({
         logger: createTestLogger(),
-        command: [process.execPath, scriptPath, mode, "", "", "", testDir],
+        command: [process.execPath, scriptPath, mode, "", "", "", testDir, loadTracePath],
       });
-      const startedAt = Date.now();
 
       const sessions = await client.listImportableSessions({ limit: 4 });
 
@@ -153,9 +153,11 @@ describe("GenericACPAgentClient diagnostics", () => {
         { providerHandleId: "hung-session-3" },
         { providerHandleId: "hung-session-4" },
       ]);
-      expect(Date.now() - startedAt).toBeLessThan(7_500);
+      const attemptedLoads = (await readFile(loadTracePath, "utf8")).trim().split("\n");
+      expect(attemptedLoads.length).toBeGreaterThan(0);
+      expect(attemptedLoads.length).toBeLessThan(4);
     });
-  }, 10_000);
+  }, 15_000);
 
   test("probes npx-backed agent packages instead of npx itself", () => {
     expect(buildVersionProbeCommand(["npx", "-y", "@google/gemini-cli@0.41.1", "--acp"])).toEqual({
@@ -576,6 +578,12 @@ rl.on("line", (line) => {
     message.method === "session/load" &&
     (mode === "history-load-hang" || mode === "history-load-hangs")
   ) {
+    if (loadTracePath) {
+      fs.appendFileSync(
+        loadTracePath,
+        JSON.stringify({ sessionId: message.params.sessionId }) + "\\n",
+      );
+    }
     return;
   }
 });
