@@ -19,6 +19,13 @@ import {
   estimateStreamItemHeight,
   shouldAdjustScrollForVirtualRowResize,
 } from "./web-virtualization";
+import {
+  acquireSessionFindHighlightOwner,
+  applySessionFindHighlights,
+  clearSessionFindHighlights,
+  releaseSessionFindHighlightOwner,
+  type SessionFindHighlightOwner,
+} from "./find-highlight";
 import type { StreamRenderInput, StreamStrategy, StreamViewportHandle } from "./strategy";
 import { useRevisedHistoryRows } from "./history-row-revision";
 import { createStreamStrategy } from "./strategy";
@@ -86,11 +93,23 @@ const historyStartSlotStyle: CSSProperties = {
   flexShrink: 0,
 };
 
-const streamRowStyle: CSSProperties = {
+// Per-item anchor for find-in-session scroll targeting and match highlighting.
+// Mirrors the virtualized row wrapper layout so `alignSelf`-centered stream
+// item wrappers keep behaving as flex children.
+const rowAnchorStyle: CSSProperties = {
   display: "flex",
   flexDirection: "column",
   width: "100%",
 };
+
+// CSS.escape is missing in some test DOMs; inside a double-quoted attribute
+// selector only quotes and backslashes need escaping.
+function escapeItemIdForSelector(itemId: string): string {
+  if (typeof CSS !== "undefined" && typeof CSS.escape === "function") {
+    return CSS.escape(itemId);
+  }
+  return itemId.replace(/["\\]/g, "\\$&");
+}
 
 function isScrollContainerNearBottom(
   scrollContainer: Pick<HTMLElement, "scrollTop" | "clientHeight" | "scrollHeight">,
@@ -295,6 +314,7 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     isLoadingOlderHistory,
     hasOlderHistory,
     olderHistoryProgressKey,
+    sessionFind = null,
     scrollEnabled,
     isMobileBreakpoint,
   } = props;
@@ -311,6 +331,16 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
   const isActiveRef = useRef(isActive);
   const scrollContainerRef = useRef<HTMLElement | null>(null);
   const contentRef = useRef<HTMLElement | null>(null);
+  // Declared before the highlight effect so the slot exists by the time it runs.
+  const highlightOwnerRef = useRef<SessionFindHighlightOwner | null>(null);
+  useEffect(() => {
+    const owner = acquireSessionFindHighlightOwner();
+    highlightOwnerRef.current = owner;
+    return () => {
+      highlightOwnerRef.current = null;
+      releaseSessionFindHighlightOwner(owner);
+    };
+  }, []);
   const handleScrollContainerRef = useCallback((node: HTMLElement | null) => {
     scrollContainerRef.current = node;
   }, []);
@@ -1109,6 +1139,41 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     rearmHistoryStartFromUserIntent,
   ]);
 
+  const scrollRowIntoView = useCallback((itemId: string): boolean => {
+    const scrollContainer = scrollContainerRef.current;
+    if (!scrollContainer) {
+      return false;
+    }
+    const row = scrollContainer.querySelector(
+      `[data-stream-item-id="${escapeItemIdForSelector(itemId)}"]`,
+    );
+    if (!row) {
+      return false;
+    }
+    row.scrollIntoView({ block: "center" });
+    return true;
+  }, []);
+
+  const scrollToItem = useStableEvent((itemId: string) => {
+    cancelPendingStickToBottom();
+    setFollowOutput(false);
+    if (scrollRowIntoView(itemId)) {
+      return;
+    }
+    const virtualIndex = segments.historyVirtualized.findIndex((item) => item.id === itemId);
+    if (virtualIndex < 0) {
+      return;
+    }
+    rowVirtualizer.scrollToIndex(virtualIndex, { align: "center" });
+    // Dynamic row heights make the virtualizer jump approximate; re-center on
+    // the real element once it mounts and measures.
+    window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => {
+        scrollRowIntoView(itemId);
+      });
+    });
+  });
+
   useEffect(() => {
     const handle: StreamViewportHandle = {
       scrollToBottom: () => {
@@ -1122,6 +1187,7 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
         }
         scheduleStickToBottom();
       },
+      scrollToItem,
       scrollToMessage,
     };
     viewportRef.current = handle;
@@ -1136,7 +1202,52 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     forceStickToBottom,
     scheduleStickToBottom,
     scrollToMessage,
+    scrollToItem,
     viewportRef,
+  ]);
+
+  useEffect(() => {
+    const scrollContainer = scrollContainerRef.current;
+    const owner = highlightOwnerRef.current;
+    if (!sessionFind || !scrollContainer || !owner) {
+      // Only this viewport's slot is cleared, so panes without an open find bar
+      // (including background tabs re-running this on every stream flush) cannot
+      // wipe the highlights of the pane the user is searching in.
+      if (owner) {
+        clearSessionFindHighlights(owner);
+      }
+      return;
+    }
+    let pendingFrame: number | null = null;
+    const apply = () => {
+      pendingFrame = null;
+      const container = scrollContainerRef.current;
+      if (container) {
+        applySessionFindHighlights({ owner, container, find: sessionFind });
+      }
+    };
+    // Rows mount and unmount as the virtualizer window moves, so re-scan on
+    // scroll in addition to content changes (covered by the effect deps).
+    const scheduleApply = () => {
+      if (pendingFrame === null) {
+        pendingFrame = window.requestAnimationFrame(apply);
+      }
+    };
+    apply();
+    scrollContainer.addEventListener("scroll", scheduleApply, { passive: true });
+    return () => {
+      scrollContainer.removeEventListener("scroll", scheduleApply);
+      if (pendingFrame !== null) {
+        window.cancelAnimationFrame(pendingFrame);
+      }
+      clearSessionFindHighlights(owner);
+    };
+  }, [
+    sessionFind,
+    segments.historyMounted,
+    segments.historyVirtualized,
+    segments.liveHead,
+    virtualTotalSize,
   ]);
 
   const contentContainerStyle = useMemo((): CSSProperties => {
@@ -1192,7 +1303,12 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
   );
   const mountedHistoryRows = useMemo(() => {
     return segments.historyMounted.map((item, index) => (
-      <div key={item.id} data-history-row-id={item.id} style={streamRowStyle}>
+      <div
+        key={item.id}
+        data-history-row-id={item.id}
+        data-stream-item-id={item.id}
+        style={rowAnchorStyle}
+      >
         {renderHistoryMountedRow(item, index, segments.historyMounted)}
       </div>
     ));
@@ -1200,7 +1316,12 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
   const liveHeadRows = useMemo(() => {
     void liveHeadRowRevision;
     return segments.liveHead.map((item, index) => (
-      <div key={item.id} data-history-row-id={item.id} style={streamRowStyle}>
+      <div
+        key={item.id}
+        data-history-row-id={item.id}
+        data-stream-item-id={item.id}
+        style={rowAnchorStyle}
+      >
         {renderLiveHeadRow(item, index, segments.liveHead)}
       </div>
     ));
@@ -1253,6 +1374,7 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
                     key={virtualRow.key}
                     data-index={virtualRow.index}
                     data-history-row-id={item.id}
+                    data-stream-item-id={item.id}
                     ref={measureVirtualizedRowElement}
                     style={renderVirtualRowStyle(virtualRow.start)}
                   >

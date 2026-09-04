@@ -206,6 +206,13 @@ export const ar: TranslationResources = {
     empty: "ابدأ الدردشة مع هذا الوكيل...",
     scrollToBottom: "قم بالتمرير إلى الأسفل",
     historyLoadFailed: "تعذر تحميل سجل الوكيل",
+    find: {
+      placeholder: "البحث في المحادثة",
+      matchCount: "{{current}}/{{total}}",
+      previous: "التطابق السابق",
+      next: "التطابق التالي",
+      close: "إغلاق البحث",
+    },
     messageCapped: "تم اقتطاع هذه الرسالة ({{bytes}} بايت).",
     permission: {
       plan: "يخطط",
@@ -2219,6 +2226,7 @@ export const ar: TranslationResources = {
         queueMessage: "رسالة قائمة الانتظار",
         muteUnmuteVoiceMode: "كتم وضع الصوت /unmute",
         switchProject: "تبديل المشروع",
+        findInConversation: "البحث في المحادثة",
       },
       helpNotes: {
         showKeyboardShortcuts: "متاح عندما لا يكون التركيز في حقل نص أو محطة طرفية.",

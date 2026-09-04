@@ -2,6 +2,7 @@ import type { ComponentType, ReactElement, ReactNode, RefObject } from "react";
 import type { StyleProp, ViewStyle } from "react-native";
 import type { StreamItem } from "@/types/stream";
 import { continuesResponse } from "./turn-membership";
+import type { SessionFindState } from "./find-in-session";
 import type { StreamHistoryBoundary, StreamRenderSegments } from "./model";
 import type {
   BottomAnchorLocalRequest,
@@ -44,6 +45,12 @@ export interface StreamViewportHandle {
   scrollToBottom: (reason?: BottomAnchorLocalRequest["reason"]) => void;
   prepareForViewportChange: () => void;
   scrollToMessage?: (itemId: string) => void;
+  /**
+   * Scrolls the stream item with the given id into view (centered) and stops
+   * following live output. Only the web strategy implements this; it backs
+   * find-in-session navigation, which is keyboard-driven and web-only.
+   */
+  scrollToItem?: (itemId: string) => void;
 }
 
 export interface StreamSegmentRenderers {
@@ -78,6 +85,8 @@ export interface StreamRenderInput {
   isLoadingOlderHistory: boolean;
   hasOlderHistory: boolean;
   olderHistoryProgressKey: string | null;
+  /** Active find-in-session state, or null when the find bar is closed. */
+  sessionFind?: SessionFindState | null;
   scrollEnabled: boolean;
   listStyle: StyleProp<ViewStyle>;
   baseListContentContainerStyle: StyleProp<ViewStyle>;

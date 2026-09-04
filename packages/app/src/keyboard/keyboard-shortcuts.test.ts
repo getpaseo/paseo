@@ -388,6 +388,18 @@ describe("keyboard-shortcuts", () => {
       context: { isMac: true, isDesktop: false },
       action: "workspace.tab.close.current",
     },
+    {
+      name: "matches Cmd+F to find in conversation on mac",
+      event: { key: "f", code: "KeyF", metaKey: true },
+      context: { isMac: true, commandCenterOpen: false },
+      action: "agent.find",
+    },
+    {
+      name: "matches Ctrl+F to find in conversation on non-mac",
+      event: { key: "f", code: "KeyF", ctrlKey: true },
+      context: { isMac: false, commandCenterOpen: false, focusScope: "other" },
+      action: "agent.find",
+    },
   ];
 
   it.each(matchingCases)(
@@ -439,6 +451,11 @@ describe("keyboard-shortcuts", () => {
     {
       name: "does not switch project with Ctrl+P on non-mac while terminal is focused",
       event: { key: "p", code: "KeyP", ctrlKey: true },
+      context: { isMac: false, focusScope: "terminal" },
+    },
+    {
+      name: "does not open find with Ctrl+F on non-mac while terminal is focused",
+      event: { key: "f", code: "KeyF", ctrlKey: true },
       context: { isMac: false, focusScope: "terminal" },
     },
     {

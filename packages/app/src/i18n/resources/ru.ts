@@ -206,6 +206,13 @@ export const ru: TranslationResources = {
     empty: "Начните общаться с этим агентом...",
     scrollToBottom: "Прокрутить вниз",
     historyLoadFailed: "Не удалось загрузить историю агента",
+    find: {
+      placeholder: "Поиск по беседе",
+      matchCount: "{{current}}/{{total}}",
+      previous: "Предыдущее совпадение",
+      next: "Следующее совпадение",
+      close: "Закрыть поиск",
+    },
     messageCapped: "Это сообщение было обрезано ({{bytes}} байт).",
     permission: {
       plan: "План",
@@ -2257,6 +2264,7 @@ export const ru: TranslationResources = {
         queueMessage: "Поставить сообщение в очередь",
         muteUnmuteVoiceMode: "Выключить/включить звук в голосовом режиме",
         switchProject: "Сменить проект",
+        findInConversation: "Поиск по беседе",
       },
       helpNotes: {
         showKeyboardShortcuts: "Доступно, когда фокус находится не в текстовом поле или терминале.",

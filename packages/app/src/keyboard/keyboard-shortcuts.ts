@@ -195,6 +195,7 @@ export const SHORTCUT_HELP_ROW_ORDER: Record<ShortcutSectionId, readonly string[
   layout: ["toggle-left-sidebar", "toggle-right-sidebar", "toggle-both-sidebars", "toggle-focus"],
   "agent-input": [
     "focus-message-input",
+    "find-in-conversation",
     "cycle-agent-mode",
     "voice-toggle",
     "dictation-toggle",
@@ -246,6 +247,7 @@ const SHORTCUT_HELP_LABEL_KEYS: Record<string, string> = {
   "voice-toggle": "settings.shortcuts.help.toggleVoiceMode",
   "dictation-toggle": "settings.shortcuts.help.startStopDictation",
   "agent-interrupt": "settings.shortcuts.help.interruptAgent",
+  "find-in-conversation": "settings.shortcuts.help.findInConversation",
   "voice-mute-toggle": "settings.shortcuts.help.muteUnmuteVoiceMode",
 };
 
@@ -1133,6 +1135,29 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
       id: "dictation-toggle",
       section: "agent-input",
       label: "Start/stop dictation",
+    },
+  },
+  // --- Find in conversation ---
+  {
+    id: "agent-find-cmd-f-mac",
+    action: "agent.find",
+    combo: "Cmd+F",
+    when: { mac: true, commandCenter: false },
+    help: {
+      id: "find-in-conversation",
+      section: "agent-input",
+      label: "Find in conversation",
+    },
+  },
+  {
+    id: "agent-find-ctrl-f-non-mac",
+    action: "agent.find",
+    combo: "Ctrl+F",
+    when: { mac: false, commandCenter: false, terminal: false },
+    help: {
+      id: "find-in-conversation",
+      section: "agent-input",
+      label: "Find in conversation",
     },
   },
   {

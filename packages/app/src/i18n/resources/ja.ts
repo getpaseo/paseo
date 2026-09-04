@@ -206,6 +206,13 @@ export const ja: TranslationResources = {
     empty: "このエージェントとチャットを始めましょう...",
     scrollToBottom: "下にスクロール",
     historyLoadFailed: "エージェントの履歴を読み込めませんでした",
+    find: {
+      placeholder: "会話内を検索",
+      matchCount: "{{current}}/{{total}}",
+      previous: "前の一致",
+      next: "次の一致",
+      close: "検索を閉じる",
+    },
     messageCapped: "このメッセージは上限で切り詰められました（{{bytes}}バイト）。",
     permission: {
       plan: "プラン",
@@ -2237,6 +2244,7 @@ export const ja: TranslationResources = {
         queueMessage: "メッセージをキューに追加",
         muteUnmuteVoiceMode: "音声モードのミュートを切り替え",
         switchProject: "プロジェクトを切り替え",
+        findInConversation: "会話内を検索",
       },
       helpNotes: {
         showKeyboardShortcuts:

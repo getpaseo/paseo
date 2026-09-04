@@ -28,6 +28,7 @@ function makeCtx(overrides: Partial<ShortcutRoutingContext> = {}): ShortcutRouti
 describe("routeKeyboardShortcut — dispatch passthroughs", () => {
   it.each([
     ["agent.interrupt", { id: "agent.interrupt", scope: "global" }],
+    ["agent.find", { id: "agent.find", scope: "workspace" }],
     ["workspace.tab.menu.open", { id: "workspace.tab.menu.open", scope: "workspace" }],
     ["workspace.tab.target.agent", { id: "workspace.tab.target.agent", scope: "workspace" }],
     ["workspace.tab.target.browser", { id: "workspace.tab.target.browser", scope: "workspace" }],

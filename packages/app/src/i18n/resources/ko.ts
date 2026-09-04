@@ -206,6 +206,13 @@ export const ko: TranslationResources = {
     empty: "이 에이전트와 대화를 시작하세요...",
     scrollToBottom: "맨 아래로 스크롤",
     historyLoadFailed: "에이전트 기록을 로드할 수 없습니다.",
+    find: {
+      placeholder: "대화에서 찾기",
+      matchCount: "{{current}}/{{total}}",
+      previous: "이전 일치",
+      next: "다음 일치",
+      close: "찾기 닫기",
+    },
     messageCapped: "이 메시지는 길이 제한으로 잘렸습니다({{bytes}}바이트).",
     permission: {
       plan: "계획",
@@ -2229,6 +2236,7 @@ export const ko: TranslationResources = {
         queueMessage: "메시지 대기열에 추가",
         muteUnmuteVoiceMode: "음성 모드 음소거/해제",
         switchProject: "프로젝트 전환",
+        findInConversation: "대화에서 찾기",
       },
       helpNotes: {
         showKeyboardShortcuts: "포커스가 텍스트 필드나 터미널에 있지 않을 때 사용할 수 있습니다.",
