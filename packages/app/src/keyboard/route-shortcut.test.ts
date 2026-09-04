@@ -356,6 +356,18 @@ describe("routeKeyboardShortcut — settings.toggle", () => {
   });
 });
 
+describe("routeKeyboardShortcut — route history", () => {
+  it.each([
+    ["navigation.history.back", "back"],
+    ["navigation.history.forward", "forward"],
+  ] as const)("routes %s toward %s", (action, direction) => {
+    expect(routeKeyboardShortcut({ action, payload: null }, makeCtx())).toEqual<ShortcutAction>({
+      kind: "route-history",
+      direction,
+    });
+  });
+});
+
 describe("routeKeyboardShortcut — callbacks and pickers", () => {
   it.each([
     ["sidebar.toggle.left", "toggle-agent-list"],

@@ -2237,6 +2237,8 @@ export const ru: TranslationResources = {
         closePane: "Закрыть панель",
         newTerminal: "Новый терминал",
         searchFiles: "Поиск файлов",
+        historyBack: "Назад по истории",
+        historyForward: "Вперёд по истории",
         toggleCommandCenter: "Переключить командный центр",
         showKeyboardShortcuts: "Показать сочетания клавиш",
         toggleLeftSidebar: "Переключить левую боковую панель",

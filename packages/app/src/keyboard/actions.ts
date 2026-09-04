@@ -44,6 +44,8 @@ export type KeyboardActionId =
   | "sidebar.toggle.right"
   | "sidebar.toggle.both"
   | "settings.toggle"
+  | "navigation.history.back"
+  | "navigation.history.forward"
   | "command-center.toggle"
   | "command-center.files"
   | "shortcuts.dialog.toggle"

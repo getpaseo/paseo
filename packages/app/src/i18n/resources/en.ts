@@ -2303,6 +2303,8 @@ export const en = {
         closePane: "Close pane",
         newTerminal: "New terminal",
         searchFiles: "Search files",
+        historyBack: "History back",
+        historyForward: "History forward",
         toggleCommandCenter: "Toggle command center",
         showKeyboardShortcuts: "Show keyboard shortcuts",
         toggleLeftSidebar: "Toggle left sidebar",
