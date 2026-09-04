@@ -215,10 +215,20 @@ jobs:
   publish-linux:
     needs: [create-release]
     if: ${{ always() && (needs.create-release.result == 'success' || needs.create-release.result == 'skipped') && ((github.event_name == 'workflow_dispatch' && (github.event.inputs.platform == 'all' || github.event.inputs.platform == 'linux')) || (github.event_name == 'push' && (startsWith(github.ref_name, 'v') || startsWith(github.ref_name, 'desktop-v') || startsWith(github.ref_name, 'desktop-linux-v')))) }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-22.04
+            electron_arch: x64
+            manifest: linux
+          - runner: ubuntu-22.04-arm
+            electron_arch: arm64
+            manifest: linux-arm64
     permissions:
       contents: write
       packages: read
-    runs-on: ubuntu-22.04
+    runs-on: ${{ matrix.runner }}
 
     steps:
       - uses: actions/checkout@v4
@@ -272,7 +282,7 @@ jobs:
           PASEO_DESKTOP_SMOKE_ARTIFACT_DIR: ${{ runner.temp }}/desktop-smoke
         run: |
           set -euo pipefail
-          build_args=(-- --publish never --linux --x64)
+          build_args=(-- --publish never --linux --${{ matrix.electron_arch }})
           build_args+=("-c.publish.releaseType=$RELEASE_TYPE")
           build_args+=("-c.publish.channel=$RELEASE_CHANNEL")
           npm run build:desktop "${build_args[@]}"
@@ -281,7 +291,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: desktop-smoke-linux-x64
+          name: desktop-smoke-linux-${{ matrix.electron_arch }}
           path: ${{ runner.temp }}/desktop-smoke
           if-no-files-found: ignore
           retention-days: 7
@@ -309,7 +319,7 @@ jobs:
         if: env.SHOULD_PUBLISH != 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: desktop-linux
+          name: desktop-linux-${{ matrix.electron_arch }}
           path: ${{ env.DESKTOP_PACKAGE_PATH }}/release/*
           retention-days: 7
 
@@ -317,8 +327,8 @@ jobs:
         if: env.SHOULD_PUBLISH == 'true' && env.IS_SMOKE_TAG != 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: linux-manifest
-          path: ${{ env.DESKTOP_PACKAGE_PATH }}/release/${{ env.RELEASE_CHANNEL }}-linux.yml
+          name: linux-manifest-${{ matrix.electron_arch }}
+          path: ${{ env.DESKTOP_PACKAGE_PATH }}/release/${{ env.RELEASE_CHANNEL }}-${{ matrix.manifest }}.yml
           retention-days: 1
 
   publish-windows:
@@ -471,12 +481,12 @@ jobs:
           pattern: mac-manifest-*
           path: release-manifests
 
-      - name: Download Linux manifest artifact
+      - name: Download Linux manifest artifacts
         if: env.IS_SMOKE_TAG != 'true' && needs.publish-linux.result == 'success'
         uses: actions/download-artifact@v4
         with:
-          name: linux-manifest
-          path: release-manifests/linux-manifest
+          pattern: linux-manifest-*
+          path: release-manifests
 
       - name: Download Windows manifest artifact
         if: env.IS_SMOKE_TAG != 'true' && needs.publish-windows.result == 'success'
@@ -532,7 +542,8 @@ jobs:
           fi
 
           if [[ "${{ needs.publish-linux.result }}" == "success" ]]; then
-            cp "linux-manifest/${RELEASE_CHANNEL}-linux.yml" "$manifests_dir/"
+            # x64 publishes <channel>-linux.yml, arm64 <channel>-linux-arm64.yml; no merge needed.
+            cp linux-manifest-*/"${RELEASE_CHANNEL}"-linux*.yml "$manifests_dir/"
           fi
 
           if [[ "${{ needs.publish-windows.result }}" == "success" ]]; then
