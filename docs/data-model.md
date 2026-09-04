@@ -199,6 +199,7 @@ snapshot so a mixed edit can apply its live subset and still name the paths that
     hostnames: true | string[],   // legacy alias `allowedHosts` is migrated on load
     trustedProxies: true | string[], // defaults to ["loopback"]; Express proxy names/CIDRs
     mcp: { enabled: boolean, injectIntoAgents: boolean },
+    providerUsage: { hiddenProviders: string[] }, // host-scoped provider cards hidden from Usage
     git: { maxProcessesPerSecond: number, maxProcessConcurrency: number },
     appendSystemPrompt: string,    // appended to supported provider system/developer prompts
     terminalProfiles: TerminalProfile[],  // named shell commands; omitted means DEFAULT_TERMINAL_PROFILES
@@ -313,6 +314,10 @@ session is created, resumed, imported, or reloaded, so configuration changes aff
 session rather than an already-running one.
 
 `agents.metadataGeneration.providers` controls the preferred structured-generation fallback order for daemon-side metadata tasks such as commit messages, PR text, branch names, and generated agent titles. Entries are tried first in the configured order, then Paseo falls through to dynamically discovered defaults and finally the current selection when available.
+
+`daemon.providerUsage.hiddenProviders` stores provider IDs hidden from that host's Usage page. An
+empty or missing list shows every provider. This preference does not hide the active provider from
+the context-window tooltip.
 
 ### Git process limits
 

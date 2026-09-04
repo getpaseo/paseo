@@ -157,16 +157,36 @@ describe("browser automation protocol integration", () => {
   });
 
   test("mutable daemon config defaults browser tools off and accepts opt-in patches", () => {
-    expect(
-      MutableDaemonConfigSchema.parse({
-        mcp: { injectIntoAgents: false },
-      }).browserTools,
-    ).toEqual({ enabled: false });
+    const config = MutableDaemonConfigSchema.parse({
+      mcp: { injectIntoAgents: false },
+    });
+    expect(config.browserTools).toEqual({ enabled: false });
+    expect(config.providerUsage).toBeUndefined();
 
     expect(
       MutableDaemonConfigPatchSchema.parse({
         browserTools: { enabled: true },
       }).browserTools,
     ).toEqual({ enabled: true });
+
+    expect(
+      MutableDaemonConfigPatchSchema.parse({
+        providerUsage: { hiddenProviders: ["copilot", "minimax"] },
+      }).providerUsage,
+    ).toEqual({ hiddenProviders: ["copilot", "minimax"] });
+
+    // Visibility deltas are merged server-side against the authoritative set so concurrent
+    // clients don't clobber each other; the wire schema keeps them permissive.
+    expect(
+      MutableDaemonConfigPatchSchema.parse({
+        providerUsage: { hideProviders: ["copilot"] },
+      }).providerUsage,
+    ).toEqual({ hideProviders: ["copilot"] });
+
+    expect(
+      MutableDaemonConfigPatchSchema.parse({
+        providerUsage: { showProviders: ["copilot"] },
+      }).providerUsage,
+    ).toEqual({ showProviders: ["copilot"] });
   });
 });

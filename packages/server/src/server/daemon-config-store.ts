@@ -29,6 +29,11 @@ interface SupportedMutableConfigPatch {
   terminalProfiles?: MutableDaemonConfig["terminalProfiles"];
   agentProfiles?: MutableDaemonConfig["agentProfiles"];
   skills?: MutableDaemonConfig["skills"];
+  providerUsage?: {
+    hiddenProviders?: string[];
+    hideProviders?: string[];
+    showProviders?: string[];
+  };
   pluginsEnabled?: boolean;
   plugins?: MutableDaemonConfig["plugins"];
 }
@@ -96,6 +101,37 @@ function deepMerge<T extends Record<string, unknown>>(
   }
 
   return next as T;
+}
+
+// Resolve provider-usage visibility patches against the authoritative hidden-provider set.
+// `hiddenProviders` alone is a full-array replace kept for back-compat; `hideProviders` /
+// `showProviders` are deltas merged on top. Resolution runs inside the synchronous
+// DaemonConfigStore.patch read-modify-write (and again against the persisted daemon while
+// persisting), so sequential patches from concurrent clients each observe the prior patch's
+// result — two clients toggling different providers can no longer silently undo each other
+// (lost update). Returns the authoritative full array, or undefined when the patch carries
+// nothing to apply.
+function resolveHiddenProviders(
+  currentHiddenProviders: readonly string[],
+  providerUsage: SupportedMutableConfigPatch["providerUsage"],
+): string[] | undefined {
+  if (!providerUsage) {
+    return undefined;
+  }
+  const { hiddenProviders, hideProviders, showProviders } = providerUsage;
+  if (hiddenProviders === undefined && !hideProviders?.length && !showProviders?.length) {
+    return undefined;
+  }
+
+  const next = new Set(hiddenProviders ?? currentHiddenProviders);
+  for (const providerId of hideProviders ?? []) {
+    next.add(providerId);
+  }
+  for (const providerId of showProviders ?? []) {
+    next.delete(providerId);
+  }
+
+  return Array.from(next).sort();
 }
 
 function omitProvidersFromConfig<T extends { providers?: Record<string, unknown> }>(
@@ -183,6 +219,7 @@ const RELOADABLE_PATHS = [
   "daemon.appendSystemPrompt",
   "daemon.terminalProfiles",
   "daemon.agentProfiles",
+  "daemon.providerUsage.hiddenProviders",
   "app.baseUrl",
   "agents.providers",
   "agents.catalogRefreshTimeoutMs",
@@ -206,6 +243,7 @@ const PERSISTED_TO_MUTABLE_PATH = new Map<string, string>([
   ["daemon.appendSystemPrompt", "appendSystemPrompt"],
   ["daemon.terminalProfiles", "terminalProfiles"],
   ["daemon.agentProfiles", "agentProfiles"],
+  ["daemon.providerUsage.hiddenProviders", "providerUsage.hiddenProviders"],
   ["app.baseUrl", "app.baseUrl"],
   ["agents.providers", "providers"],
   ["agents.catalogRefreshTimeoutMs", "catalogRefreshTimeoutMs"],
@@ -249,6 +287,23 @@ function compactOwnedPaths(paths: readonly string[], owners: readonly string[]):
   return Array.from(compacted).sort();
 }
 
+// Whitelist the provider-usage visibility patch forms the store understands: the
+// authoritative `hiddenProviders` full-array replace plus the `hideProviders` / `showProviders`
+// deltas that the server resolves against its current set.
+function pickSupportedProviderUsagePatch(
+  providerUsage: MutableDaemonConfigPatch["providerUsage"],
+): SupportedMutableConfigPatch["providerUsage"] {
+  const { hiddenProviders, hideProviders, showProviders } = providerUsage ?? {};
+  if (hiddenProviders === undefined && hideProviders === undefined && showProviders === undefined) {
+    return undefined;
+  }
+  return {
+    ...(hiddenProviders !== undefined ? { hiddenProviders } : {}),
+    ...(hideProviders !== undefined ? { hideProviders } : {}),
+    ...(showProviders !== undefined ? { showProviders } : {}),
+  };
+}
+
 function pickSupportedPatchFields(patch: MutableDaemonConfigPatch): SupportedMutableConfigPatch {
   return {
     ...(patch.relay?.enabled !== undefined ? { relay: { enabled: patch.relay.enabled } } : {}),
@@ -274,6 +329,9 @@ function pickSupportedPatchFields(patch: MutableDaemonConfigPatch): SupportedMut
       : {}),
     ...(patch.terminalProfiles !== undefined ? { terminalProfiles: patch.terminalProfiles } : {}),
     ...(patch.agentProfiles !== undefined ? { agentProfiles: patch.agentProfiles } : {}),
+    ...(patch.providerUsage !== undefined
+      ? { providerUsage: pickSupportedProviderUsagePatch(patch.providerUsage) }
+      : {}),
     ...(patch.pluginsEnabled !== undefined ? { pluginsEnabled: patch.pluginsEnabled } : {}),
     ...(patch.plugins !== undefined ? { plugins: patch.plugins } : {}),
   };
@@ -363,7 +421,16 @@ export class DaemonConfigStore {
     }
     const { removeProviders = [], ...configPatch } = parsedPatch;
     const removedProviders = Array.from(new Set(removeProviders));
-    const merged = deepMerge(this.current, configPatch);
+    const resolvedHiddenProviders = resolveHiddenProviders(
+      this.current.providerUsage?.hiddenProviders ?? [],
+      configPatch.providerUsage,
+    );
+    const merged = deepMerge(this.current, {
+      ...configPatch,
+      ...(resolvedHiddenProviders !== undefined
+        ? { providerUsage: { hiddenProviders: resolvedHiddenProviders } }
+        : {}),
+    });
     if (parsedPatch.skills?.selection !== undefined) {
       merged.skills = { selection: parsedPatch.skills.selection };
     }
@@ -661,5 +728,22 @@ function mergeMutableDaemonPatch(
   if (patch.appendSystemPrompt !== undefined) next.appendSystemPrompt = patch.appendSystemPrompt;
   if (patch.terminalProfiles !== undefined) next.terminalProfiles = patch.terminalProfiles;
   if (patch.agentProfiles !== undefined) next.agentProfiles = patch.agentProfiles;
+  if (patch.providerUsage !== undefined) {
+    // COMPAT(providerUsageVisibility): write `daemon.providerUsage` only when at least one
+    // provider is hidden, and strip the block when the list becomes empty, so config.json stays
+    // readable by older daemons whose strict daemon schema does not yet know the key — a
+    // rollback after a no-op upgrade must not break config loading.
+    const resolved = resolveHiddenProviders(
+      next.providerUsage?.hiddenProviders ?? [],
+      patch.providerUsage,
+    );
+    if (resolved !== undefined) {
+      if (resolved.length > 0) {
+        next.providerUsage = { hiddenProviders: resolved };
+      } else {
+        delete next.providerUsage;
+      }
+    }
+  }
   return Object.keys(next).length > 0 ? next : undefined;
 }

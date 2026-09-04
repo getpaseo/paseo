@@ -58,6 +58,18 @@ describe("PersistedConfigSchema daemon browser tools config", () => {
   });
 });
 
+describe("PersistedConfigSchema provider usage config", () => {
+  test("accepts host-scoped hidden provider ids", () => {
+    const parsed = PersistedConfigSchema.parse({
+      daemon: {
+        providerUsage: { hiddenProviders: ["copilot", "minimax"] },
+      },
+    });
+
+    expect(parsed.daemon?.providerUsage?.hiddenProviders).toEqual(["copilot", "minimax"]);
+  });
+});
+
 describe("PersistedConfigSchema daemon relay config", () => {
   test("accepts optional relay TLS setting", () => {
     const parsed = PersistedConfigSchema.parse({

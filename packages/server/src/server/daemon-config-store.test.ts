@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
@@ -694,6 +694,7 @@ describe("DaemonConfigStore", () => {
         providers: {},
         metadataGeneration: { providers: [] },
         autoArchiveAfterMerge: false,
+        enableTerminalAgentHooks: false,
         appendSystemPrompt: "",
       },
       undefined,
@@ -703,6 +704,133 @@ describe("DaemonConfigStore", () => {
 
     const persisted = loadPersistedConfig(paseoHome);
     expect(persisted.daemon?.browserTools).toEqual({ enabled: true });
+  });
+
+  test("patch persists hidden provider usage ids into config.json", () => {
+    const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-daemon-config-store-"));
+    tempDirs.push(paseoHome);
+
+    const store = new DaemonConfigStore(
+      paseoHome,
+      {
+        mcp: { injectIntoAgents: false },
+        browserTools: { enabled: false },
+        providers: {},
+        metadataGeneration: { providers: [] },
+        autoArchiveAfterMerge: false,
+        enableTerminalAgentHooks: false,
+        appendSystemPrompt: "",
+      },
+      undefined,
+    );
+
+    store.patch({ providerUsage: { hiddenProviders: ["copilot", "minimax"] } });
+
+    expect(store.get().providerUsage?.hiddenProviders).toEqual(["copilot", "minimax"]);
+    expect(loadPersistedConfig(paseoHome).daemon?.providerUsage?.hiddenProviders).toEqual([
+      "copilot",
+      "minimax",
+    ]);
+  });
+
+  test("does not persist providerUsage when no providers are hidden", () => {
+    const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-daemon-config-store-"));
+    tempDirs.push(paseoHome);
+
+    const store = new DaemonConfigStore(paseoHome, {
+      relay: { enabled: false },
+      mcp: { injectIntoAgents: false },
+      browserTools: { enabled: false },
+      providers: {},
+      metadataGeneration: { providers: [] },
+      autoArchiveAfterMerge: false,
+      enableTerminalAgentHooks: false,
+      appendSystemPrompt: "",
+    });
+
+    // An unrelated patch (no hidden providers) must not pollute config.json with a
+    // `providerUsage` key — otherwise an older daemon whose strict daemon schema does
+    // not know that key would reject the file on rollback.
+    store.patch({ browserTools: { enabled: true } });
+
+    const rawConfigPath = path.join(paseoHome, "config.json");
+    const rawDaemon = JSON.parse(readFileSync(rawConfigPath, "utf-8")).daemon;
+    expect(rawDaemon.providerUsage).toBeUndefined();
+    expect(loadPersistedConfig(paseoHome).daemon?.providerUsage).toBeUndefined();
+  });
+
+  test("drops providerUsage from config.json when every provider is unhidden", () => {
+    const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-daemon-config-store-"));
+    tempDirs.push(paseoHome);
+
+    const configPath = path.join(paseoHome, "config.json");
+    writeFileSync(
+      configPath,
+      `${JSON.stringify(
+        {
+          version: 1,
+          daemon: { providerUsage: { hiddenProviders: ["copilot"] } },
+        },
+        null,
+        2,
+      )}\n`,
+    );
+
+    const store = new DaemonConfigStore(
+      paseoHome,
+      {
+        relay: { enabled: false },
+        mcp: { injectIntoAgents: false },
+        browserTools: { enabled: false },
+        providers: {},
+        metadataGeneration: { providers: [] },
+        autoArchiveAfterMerge: false,
+        enableTerminalAgentHooks: false,
+        appendSystemPrompt: "",
+      },
+      undefined,
+    );
+
+    const next = store.patch({ providerUsage: { showProviders: ["copilot"] } });
+
+    expect(next.providerUsage?.hiddenProviders).toEqual([]);
+    // The persisted daemon held nothing but the stripped block, so the patch-based store drops
+    // the now-empty `daemon` object entirely instead of writing `{}`.
+    const rawDaemon = JSON.parse(readFileSync(configPath, "utf-8")).daemon;
+    expect(rawDaemon?.providerUsage).toBeUndefined();
+    expect(loadPersistedConfig(paseoHome).daemon?.providerUsage).toBeUndefined();
+  });
+
+  test("merges concurrent visibility deltas without losing providers", () => {
+    const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-daemon-config-store-"));
+    tempDirs.push(paseoHome);
+
+    const store = new DaemonConfigStore(
+      paseoHome,
+      {
+        relay: { enabled: false },
+        mcp: { injectIntoAgents: false },
+        browserTools: { enabled: false },
+        providers: {},
+        metadataGeneration: { providers: [] },
+        autoArchiveAfterMerge: false,
+        enableTerminalAgentHooks: false,
+        appendSystemPrompt: "",
+      },
+      undefined,
+    );
+
+    // Two clients toggling different providers from an empty snapshot: a full-array patch
+    // would let the second clobber the first. Deltas are merged server-side against the
+    // authoritative set, so both toggles survive.
+    store.patch({ providerUsage: { hideProviders: ["copilot"] } });
+    const afterSecond = store.patch({ providerUsage: { hideProviders: ["minimax"] } });
+
+    expect(afterSecond.providerUsage?.hiddenProviders).toEqual(["copilot", "minimax"]);
+
+    // Unhiding one provider removes only that id; the other toggle persists.
+    const afterShow = store.patch({ providerUsage: { showProviders: ["copilot"] } });
+    expect(afterShow.providerUsage?.hiddenProviders).toEqual(["minimax"]);
   });
 
   test("patch persists provider additional models into config.json", () => {
@@ -781,6 +909,7 @@ describe("DaemonConfigStore", () => {
       paseoHome,
       {
         mcp: { injectIntoAgents: false },
+        browserTools: { enabled: false },
         providers: {},
         metadataGeneration: { providers: [] },
         autoArchiveAfterMerge: false,

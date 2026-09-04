@@ -395,6 +395,7 @@ export interface PaseoDaemonConfig {
   mcpEnabled?: boolean;
   mcpInjectIntoAgents?: boolean;
   browserToolsEnabled?: boolean;
+  providerUsageHiddenProviders?: string[];
   git?: {
     maxProcessesPerSecond: number;
     maxProcessConcurrency: number;
@@ -523,6 +524,10 @@ function resolveExpressTrustProxySetting(config: PaseoDaemonConfig): true | stri
   return config.trustedProxies ?? ["loopback"];
 }
 
+function providerUsageConfig(config: PaseoDaemonConfig): MutableDaemonConfig["providerUsage"] {
+  return { hiddenProviders: config.providerUsageHiddenProviders ?? [] };
+}
+
 function createInitialMutableDaemonConfig(config: PaseoDaemonConfig): MutableDaemonConfig {
   const providers = config.providerOverrides ?? {};
 
@@ -541,6 +546,7 @@ function createInitialMutableDaemonConfig(config: PaseoDaemonConfig): MutableDae
       ? { catalogRefreshTimeoutMs: config.providerCatalogRefreshTimeoutMs }
       : {}),
     browserTools: { enabled: config.browserToolsEnabled ?? false },
+    providerUsage: providerUsageConfig(config),
     providers,
     metadataGeneration: {
       providers: config.metadataGeneration?.providers ?? [],

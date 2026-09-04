@@ -69,6 +69,7 @@ function withProviderUsageFeature(message: WebSocketMessage): string | null {
             ? payload.features
             : {}),
           providerUsageList: true,
+          providerUsageVisibility: true,
         },
       },
     },

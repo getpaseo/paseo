@@ -1,8 +1,18 @@
 import { expect, test } from "../support/fixtures";
 import { gotoAppShell, openSettings } from "../support/helpers/app";
 import { installProviderUsageFixture } from "../support/helpers/provider-usage";
+import { connectDaemonClient } from "../support/helpers/daemon-client-loader";
 import { getServerId } from "../support/helpers/server-id";
 import { openSettingsHostSection } from "../support/helpers/settings";
+
+interface ProviderUsageConfigClient {
+  connect(): Promise<void>;
+  close(): Promise<void>;
+  getDaemonConfig(): Promise<{
+    config: { providerUsage: { hiddenProviders: string[] } };
+  }>;
+  patchDaemonConfig(config: { providerUsage: { hiddenProviders: string[] } }): Promise<unknown>;
+}
 
 test.describe("provider usage settings", () => {
   test("renders every provider returned by the daemon usage RPC", async ({ page }) => {
@@ -110,6 +120,69 @@ test.describe("provider usage settings", () => {
 
     expect(usageFixture.requestCount()).toBe(2);
     await expect(page.getByText("64%")).toBeVisible();
+  });
+
+  test("hides and restores provider cards from the shown-provider switches", async ({ page }) => {
+    test.setTimeout(120_000);
+    const serverId = getServerId();
+    const client = await connectDaemonClient<ProviderUsageConfigClient>({
+      clientIdPrefix: "provider-usage-visibility-e2e",
+    });
+    const previousConfig = await client.getDaemonConfig();
+    await client.patchDaemonConfig({ providerUsage: { hiddenProviders: [] } });
+    await installProviderUsageFixture(page, [
+      {
+        fetchedAt: "2026-06-19T00:00:00.000Z",
+        providers: [
+          {
+            providerId: "claude",
+            displayName: "Claude",
+            status: "available",
+            planLabel: "Max 20x",
+            windows: [{ id: "session", label: "Session", usedPct: 7 }],
+          },
+          {
+            providerId: "copilot",
+            displayName: "GitHub Copilot",
+            status: "available",
+            planLabel: "Pro",
+            windows: [{ id: "monthly", label: "Monthly", usedPct: 20 }],
+          },
+        ],
+      },
+    ]);
+
+    try {
+      await gotoAppShell(page);
+      await openSettings(page);
+      await openSettingsHostSection(page, serverId, "usage");
+
+      const usageCard = page.getByTestId("provider-usage-card");
+      const visibilityCard = page.getByTestId("provider-usage-visibility-card");
+      await expect(usageCard.getByText("GitHub Copilot", { exact: true })).toBeVisible();
+      await expect(visibilityCard).toBeVisible();
+
+      const copilotSwitch = page.getByRole("switch", { name: "Show GitHub Copilot" });
+      await expect(copilotSwitch).toBeChecked();
+      await copilotSwitch.click();
+
+      await expect(usageCard.getByText("GitHub Copilot", { exact: true })).toHaveCount(0);
+      await expect(copilotSwitch).not.toBeChecked();
+      await expect
+        .poll(async () => (await client.getDaemonConfig()).config.providerUsage.hiddenProviders)
+        .toEqual(["copilot"]);
+
+      await copilotSwitch.click();
+      await expect(usageCard.getByText("GitHub Copilot", { exact: true })).toBeVisible();
+      await expect(copilotSwitch).toBeChecked();
+    } finally {
+      await client
+        .patchDaemonConfig({
+          providerUsage: previousConfig.config.providerUsage,
+        })
+        .catch(() => undefined);
+      await client.close().catch(() => undefined);
+    }
   });
 
   test("one provider error does not collapse the usage list", async ({ page }) => {

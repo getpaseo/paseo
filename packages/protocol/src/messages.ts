@@ -211,6 +211,22 @@ export const AgentSkillSelectionSchema = z.discriminatedUnion("mode", [
 ]);
 export type AgentSkillSelection = z.infer<typeof AgentSkillSelectionSchema>;
 
+const MutableProviderUsageConfigSchema = z
+  .object({
+    hiddenProviders: z.array(z.string().min(1)).default([]),
+  })
+  .passthrough();
+// Patch form for provider-usage visibility. `hiddenProviders` is the authoritative
+// full-array replace (kept permissive for back-compat). `hideProviders` / `showProviders`
+// are single-pass deltas that the server merges against its current set, so two clients
+// toggling different providers concurrently can't clobber each other (lost-update fix).
+const MutableProviderUsageConfigPatchSchema = z
+  .object({
+    hiddenProviders: z.array(z.string().min(1)).optional(),
+    hideProviders: z.array(z.string().min(1)).optional(),
+    showProviders: z.array(z.string().min(1)).optional(),
+  })
+  .passthrough();
 export const MutableDaemonConfigSchema = z
   .object({
     // COMPAT(relayConfig): added in v0.2.6, remove after 2027-01-31 when old daemons are unsupported.
@@ -238,6 +254,8 @@ export const MutableDaemonConfigSchema = z
     app: z.object({ baseUrl: z.string() }).optional(),
     catalogRefreshTimeoutMs: z.number().int().positive().optional(),
     browserTools: MutableBrowserToolsConfigSchema.default({ enabled: false }),
+    // COMPAT(providerUsageVisibility): added in v0.2.5; old daemons omit this object.
+    providerUsage: MutableProviderUsageConfigSchema.optional(),
     providers: z.record(z.string(), MutableDaemonProviderConfigSchema).default({}),
     metadataGeneration: MutableMetadataGenerationConfigSchema.default({ providers: [] }),
     autoArchiveAfterMerge: z.boolean().default(false),
@@ -256,6 +274,7 @@ export const MutableDaemonConfigPatchSchema = z
     relay: MutableRelayConfigSchema.partial().optional(),
     mcp: z.object({ injectIntoAgents: z.boolean().optional() }).passthrough().optional(),
     browserTools: MutableBrowserToolsConfigSchema.partial().optional(),
+    providerUsage: MutableProviderUsageConfigPatchSchema.optional(),
     providers: z
       .record(z.string(), MutableDaemonProviderConfigSchema.partial().passthrough())
       .optional(),
@@ -3479,6 +3498,8 @@ export const ServerInfoStatusPayloadSchema = z
         workspaceFileEditing: z.boolean().optional(),
         // COMPAT(providerUsageList): added in v0.1.98, drop the gate when daemon floor >= v0.1.98.
         providerUsageList: z.boolean().optional(),
+        // COMPAT(providerUsageVisibility): added in v0.2.5, remove after 2027-02-04.
+        providerUsageVisibility: z.boolean().optional(),
         // COMPAT(agentDetach): added in v0.1.98, remove gate after 2026-12-19 once daemon floor >= v0.1.98.
         agentDetach: z.boolean().optional(),
         // COMPAT(agentThinkingUpdate): added in v0.2.4, remove gate after 2027-01-28.

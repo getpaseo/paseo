@@ -519,6 +519,12 @@ function resolveProfileLists(persisted: ReturnType<typeof loadPersistedConfig>) 
   };
 }
 
+function resolveProviderUsageHiddenProviders(
+  persisted: ReturnType<typeof loadPersistedConfig>,
+): string[] {
+  return persisted.daemon?.providerUsage?.hiddenProviders ?? [];
+}
+
 function resolveStaticLoadConfigSettings(
   env: NodeJS.ProcessEnv,
   cli: CliConfigOverrides | undefined,
@@ -529,6 +535,7 @@ function resolveStaticLoadConfigSettings(
     mcpInjectIntoAgents:
       cli?.mcpInjectIntoAgents ?? persisted.daemon?.mcp?.injectIntoAgents ?? false,
     browserToolsEnabled: resolveBrowserToolsEnabled(persisted),
+    providerUsageHiddenProviders: resolveProviderUsageHiddenProviders(persisted),
     autoArchiveAfterMerge: persisted.daemon?.autoArchiveAfterMerge ?? false,
     appendSystemPrompt: resolveAppendSystemPrompt(persisted),
     ...resolveProfileLists(persisted),
@@ -564,6 +571,7 @@ export function resolveConfigFromPersisted(
     mcpEnabled,
     mcpInjectIntoAgents,
     browserToolsEnabled,
+    providerUsageHiddenProviders,
     autoArchiveAfterMerge,
     appendSystemPrompt,
     terminalProfiles,
@@ -607,6 +615,7 @@ export function resolveConfigFromPersisted(
     mcpEnabled,
     mcpInjectIntoAgents,
     browserToolsEnabled,
+    providerUsageHiddenProviders,
     git: resolveGitProcessConfig(env, persisted),
     autoArchiveAfterMerge,
     enableTerminalAgentHooks: persisted.daemon?.enableTerminalAgentHooks ?? false,
