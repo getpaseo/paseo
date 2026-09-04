@@ -73,6 +73,12 @@ describe("desktop packaging", () => {
     expect(electronMajor).toBeGreaterThanOrEqual(44);
   });
 
+  it("requires macOS 13 or newer in the packaged application", () => {
+    const config = readFileSync(join(packageRoot, "electron-builder.yml"), "utf8");
+
+    expect(config).toContain('minimumSystemVersion: "13.0.0"');
+  });
+
   it("unpacks server zsh shell integration files for external shells", () => {
     const config = readFileSync(join(packageRoot, "electron-builder.yml"), "utf8");
 
