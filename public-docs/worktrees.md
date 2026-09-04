@@ -168,9 +168,10 @@ Add quick links for pages you open often:
 }
 ```
 
-The Scripts menu always includes the service root `/`. Add a `/` entry to rename that root link.
-Every path opens under the route selected for the service, so paths must start with one `/`; they
-cannot be absolute URLs.
+Without `links`, the Scripts menu keeps its existing action for opening the service root. Adding
+`links` replaces that action with the configured list, so include a `/` entry when you want the root
+to remain available. Every path opens under the route selected for the service, so paths must start
+with one `/`; they cannot be absolute URLs.
 
 ### Dynamic port allocation
 

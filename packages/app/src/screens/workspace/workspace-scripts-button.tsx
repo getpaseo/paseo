@@ -42,7 +42,7 @@ import { useWorkspaceServiceRoutePreferencesStore } from "@/workspace-service-ro
 import { buttonControlHeight, HEADER_CONTROL_HEIGHT } from "@/components/ui/control-geometry";
 import { extraMutedIconColorMapping } from "@/components/ui/icon-color";
 
-type RowActionIcon = "copy" | "restart" | "start" | "stop" | "terminal";
+type RowActionIcon = "copy" | "open" | "restart" | "start" | "stop" | "terminal";
 
 interface WorkspaceScriptsButtonProps {
   serverId: string;
@@ -114,6 +114,8 @@ function RowActionIconElement({
   switch (icon) {
     case "copy":
       return <ThemedCopy size={11} uniProps={colorMapping} />;
+    case "open":
+      return <ThemedEye size={12} uniProps={colorMapping} />;
     case "restart":
       return <ThemedRotateCw size={11} uniProps={colorMapping} />;
     case "start":
@@ -446,7 +448,6 @@ function ScriptRow({
   const quickLinks = selectedLink
     ? resolveWorkspaceScriptQuickLinks({
         baseUrl: selectedLink.url,
-        defaultLabel: t("workspace.scripts.actions.openService"),
         links: script.links,
       })
     : [];
@@ -456,6 +457,13 @@ function ScriptRow({
   const iconColorMapping = resolveScriptIconColorMapping({ script, isService, isRunning });
   const ScriptIcon = isService ? ThemedGlobe : ThemedSquareTerminal;
   const showExitBadge = !isRunning && exitCode !== null;
+  const closeMenu = useDropdownMenuClose();
+
+  const handleOpenService = useCallback(() => {
+    if (!selectedLink) return;
+    closeMenu();
+    void openServiceUrl(selectedLink.url, { openInApp: onOpenUrlInBrowserTab });
+  }, [selectedLink, closeMenu, onOpenUrlInBrowserTab]);
 
   const handleOpenServiceLink = useCallback(
     (url: string) => {
@@ -498,6 +506,19 @@ function ScriptRow({
       />
     ) : null;
 
+  const openServiceAction =
+    selectedLink && quickLinks.length === 0 ? (
+      <ScriptRowActionButton
+        accessibilityLabel={t("workspace.scripts.accessibility.openService", {
+          scriptName: script.scriptName,
+        })}
+        testID={`workspace-scripts-open-${script.scriptName}`}
+        icon="open"
+        onPress={handleOpenService}
+        tooltipLabel={t("workspace.scripts.actions.openService")}
+      />
+    ) : null;
+
   const lifecycleAction = isRunning ? (
     <ScriptRowActionButton
       accessibilityLabel={t("workspace.scripts.accessibility.stopScript", {
@@ -536,6 +557,7 @@ function ScriptRow({
         </Text>
         {showExitBadge ? <ExitCodeBadge code={exitCode} /> : null}
         <View style={styles.spacer} />
+        {openServiceAction}
         {viewAction}
         {isRunning ? (
           <ScriptRowActionButton
@@ -564,7 +586,7 @@ function ScriptRow({
           </View>
           {quickLinks.map((link, index) => (
             <ServiceQuickLinkRow
-              key={link.path}
+              key={`${link.label}:${link.path}`}
               index={index}
               link={link}
               scriptName={script.scriptName}

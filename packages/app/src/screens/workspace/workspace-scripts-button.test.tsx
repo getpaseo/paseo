@@ -510,7 +510,26 @@ describe("WorkspaceScriptsButton", () => {
     expect(requireRow("dev").textContent).toContain("dev--proj--repo.services.example.com");
   });
 
-  it("lists the root service URL before configured quick links", () => {
+  it("keeps the legacy root action when no quick links are configured", () => {
+    current = renderScripts([
+      script({
+        scriptName: "dev",
+        type: "service",
+        lifecycle: "running",
+        port: 57483,
+        proxyUrl: "http://dev--proj--repo.localhost:6767",
+        terminalId: "terminal-script-1",
+      }),
+    ]);
+
+    const row = requireRow("dev");
+    const openAction = row.querySelector('[data-testid="workspace-scripts-open-dev"]');
+    expect(openAction).not.toBeNull();
+    expect(openAction?.querySelector('[data-icon="Eye"]')).not.toBeNull();
+    expect(row.querySelector('[data-testid="workspace-scripts-link-dev-0"]')).toBeNull();
+  });
+
+  it("replaces the legacy root action with configured quick links", () => {
     current = renderScripts([
       script({
         scriptName: "dev",
@@ -529,15 +548,13 @@ describe("WorkspaceScriptsButton", () => {
     const row = requireRow("dev");
     expect(row.querySelector('[data-testid="workspace-scripts-open-dev"]')).toBeNull();
     expect(row.querySelector('[data-testid="workspace-scripts-link-dev-0"]')?.textContent).toBe(
-      "View service /",
-    );
-    expect(row.querySelector('[data-testid="workspace-scripts-link-dev-1"]')?.textContent).toBe(
       "Admin /admin",
     );
-    expect(row.querySelector('[data-testid="workspace-scripts-link-dev-2"]')?.textContent).toBe(
+    expect(row.querySelector('[data-testid="workspace-scripts-link-dev-1"]')?.textContent).toBe(
       "GraphQL /api/graphql",
     );
-    for (let index = 0; index < 3; index += 1) {
+    expect(row.querySelector('[data-testid="workspace-scripts-link-dev-2"]')).toBeNull();
+    for (let index = 0; index < 2; index += 1) {
       const link = row.querySelector(`[data-testid="workspace-scripts-link-dev-${index}"]`);
       expect(link?.querySelector('[data-icon="Eye"]')).not.toBeNull();
       expect(link?.querySelector('[data-icon="ExternalLink"]')).not.toBeNull();

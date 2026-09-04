@@ -97,16 +97,9 @@ export function resolveWorkspaceScriptLink(input: {
 
 export function resolveWorkspaceScriptQuickLinks(input: {
   baseUrl: string;
-  defaultLabel: string;
   links: WorkspaceScriptPayload["links"];
 }): WorkspaceScriptQuickLinkTarget[] {
-  const configuredRoot = input.links?.find((link) => link.path === "/");
-  const root = configuredRoot ?? { label: input.defaultLabel, path: "/" };
-  const linksByPath = new Map<string, PaseoServiceLink>([[root.path, root]]);
-  for (const link of input.links ?? []) {
-    if (!linksByPath.has(link.path)) linksByPath.set(link.path, link);
-  }
-  return Array.from(linksByPath.values(), (link) => ({
+  return (input.links ?? []).map((link) => ({
     label: link.label,
     path: link.path,
     url: new URL(link.path, input.baseUrl).toString(),

@@ -207,38 +207,25 @@ describe("resolveWorkspaceScriptLink", () => {
 });
 
 describe("resolveWorkspaceScriptQuickLinks", () => {
-  it("keeps the root service URL when no links are configured", () => {
+  it("returns no quick links when none are configured", () => {
     expect(
       resolveWorkspaceScriptQuickLinks({
         baseUrl: "http://web--feature--paseo.localhost:6767",
-        defaultLabel: "View service",
         links: undefined,
       }),
-    ).toEqual([
-      {
-        label: "View service",
-        path: "/",
-        url: "http://web--feature--paseo.localhost:6767/",
-      },
-    ]);
+    ).toEqual([]);
   });
 
-  it("adds configured paths after the root URL", () => {
+  it("uses configured paths instead of the root fallback", () => {
     expect(
       resolveWorkspaceScriptQuickLinks({
         baseUrl: "https://web--feature--paseo.services.example.com",
-        defaultLabel: "View service",
         links: [
           { label: "Admin", path: "/admin" },
           { label: "GraphQL", path: "/api/graphql?studio=1" },
         ],
       }),
     ).toEqual([
-      {
-        label: "View service",
-        path: "/",
-        url: "https://web--feature--paseo.services.example.com/",
-      },
       {
         label: "Admin",
         path: "/admin",
@@ -252,19 +239,18 @@ describe("resolveWorkspaceScriptQuickLinks", () => {
     ]);
   });
 
-  it("uses a configured root label without duplicating the root URL", () => {
+  it("keeps an explicitly configured root in configured order", () => {
     expect(
       resolveWorkspaceScriptQuickLinks({
         baseUrl: "http://localhost:3000",
-        defaultLabel: "View service",
         links: [
           { label: "Admin", path: "/admin" },
           { label: "Site", path: "/" },
         ],
       }),
     ).toEqual([
-      { label: "Site", path: "/", url: "http://localhost:3000/" },
       { label: "Admin", path: "/admin", url: "http://localhost:3000/admin" },
+      { label: "Site", path: "/", url: "http://localhost:3000/" },
     ]);
   });
 });

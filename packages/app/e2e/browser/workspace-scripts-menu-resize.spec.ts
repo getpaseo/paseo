@@ -25,6 +25,7 @@ test("scripts menu resizes and shows quick links after a service launches", asyn
           command:
             "node -e \"const http = require('http'); const s = http.createServer((q,r) => r.end('ok')); s.listen(process.env.PASEO_PORT, () => console.log('listening on ' + s.address().port))\"",
           links: [
+            { label: "Website", path: "/" },
             { label: "Admin", path: "/admin" },
             { label: "GraphQL", path: "/api/graphql" },
           ],
@@ -61,7 +62,7 @@ test("scripts menu resizes and shows quick links after a service launches", asyn
 
     await startWorkspaceScriptFromMenu(page, "web");
     await expect(menu).toContainText("localhost:", { timeout: 15_000 });
-    await expect(page.getByTestId("workspace-scripts-link-web-0")).toContainText("View service");
+    await expect(page.getByTestId("workspace-scripts-link-web-0")).toContainText("Website");
     await expect(page.getByTestId("workspace-scripts-link-web-0")).toContainText("/");
     await expect(page.getByTestId("workspace-scripts-link-web-1")).toContainText("Admin");
     await expect(page.getByTestId("workspace-scripts-link-web-1")).toContainText("/admin");
