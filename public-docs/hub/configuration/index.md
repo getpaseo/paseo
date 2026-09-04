@@ -2,7 +2,7 @@
 title: Hub configuration
 description: Configuration bundles, GitHub sync, CLI deployment, and revisions.
 nav: Configuration
-order: 70
+order: 71
 category: Hub
 ---
 

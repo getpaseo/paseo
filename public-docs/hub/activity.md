@@ -2,7 +2,7 @@
 title: Hub activity
 description: Read what Hub did with an event, tell a filtered event from an unrouted one, and debug a trigger that did nothing.
 nav: Activity
-order: 72
+order: 73
 category: Hub
 ---
 
@@ -23,14 +23,14 @@ Every event Hub accepts is recorded, whether or not it ran anything. That record
 | `trigger_filters_rejected`  | A trigger handles the source, but its filters rejected it    |
 | `configuration_unavailable` | A relevant configuration or connection could not be resolved |
 
-## Nothing happened when I mentioned the bot
+## Nothing happened when I triggered a workflow
 
 Work down this list.
 
 1. **Is the event in the project's Activity?** If not, check **Connections → Known unrouted events** and use its reason to distinguish routing, source, filter, and configuration failures.
-2. **Is the event anywhere at all?** If not, the event never reached Hub. Check the provider's own delivery log: GitHub's App → Advanced → Recent Deliveries, or Slack's Event Subscriptions page. Then check that the app is subscribed to that event type.
-3. **Is your user in `from_users`?** This is the most common cause. GitHub uses your login; Slack and Discord use the user ID, not the display name. See [find your Slack IDs](/docs/hub/triggers/slack#find-your-slack-ids) and [find your Discord IDs](/docs/hub/triggers/discord#find-your-discord-ids).
-4. **Did the invocation match?** On GitHub, `contains` must appear in the comment body. On Slack and Discord the bot must be mentioned, and `pattern` or its legacy `contains` alias must prefix the text after the mention.
+2. **Is the event anywhere at all?** If not, the event never reached Hub. Check the provider's own delivery log: GitHub's App → Advanced → Recent Deliveries, Linear's application webhook, or Slack's Event Subscriptions page. Then check that the app is subscribed to that event type.
+3. **Is your user in `from_users`?** This is the most common cause for reactive triggers. GitHub uses your login; Linear, Slack, and Discord use the user ID, not the display name. The autonomous Linear project-scope trigger uses project scope instead. See [Linear filters](/docs/hub/triggers/linear#filter-linear-events), [find your Slack IDs](/docs/hub/triggers/slack#find-your-slack-ids), and [find your Discord IDs](/docs/hub/triggers/discord#find-your-discord-ids).
+4. **Did the invocation match?** On GitHub and Linear comments, `contains` must occur in the original comment and `pattern` must match its start. On Slack and Discord the bot must be mentioned, and `pattern` or its legacy `contains` alias must prefix the text after the mention.
 5. **Is the configuration you think is active actually active?** The Configuration tab shows the active revision and the last sync attempt. A failed push leaves the old revision serving.
 6. **Is the daemon connected?** An offline daemon fails dispatch with `daemon_not_connected`.
 7. **Did it run and stop early?** Compare the execution with the step's authored `idle_timeout` and `max_runtime`, and the workflow's `max_runtime`. All three limits are explicit in the workflow.

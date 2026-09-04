@@ -11,21 +11,21 @@ category: Hub
 Hub connects the places where requests arrive to the machines where your agents run.
 
 ```text
-GitHub / Slack / Discord / manual request
-                    ↓
-                  Hub
-        matches a project trigger
-                    ↓
-                workflow
-          runs ordered agent steps
-                    ↓
-             Paseo daemon
-             starts the agent
+GitHub / Linear / Slack / Discord / manual request
+                       ↓
+                     Hub
+           matches a project trigger
+                       ↓
+                   workflow
+             runs ordered agent steps
+                       ↓
+                Paseo daemon
+                starts the agent
 ```
 
 ## The pieces
 
-- A **connection** lets Hub receive events from GitHub, Slack, or Discord.
+- A **connection** lets Hub receive events from GitHub, Linear, Slack, or Discord.
 - A **daemon** is a registered machine running the Paseo daemon.
 - A **project** groups one configuration with the connections and daemons it uses.
 - An **environment** names where a workflow step runs: a daemon, its working directory, and an optional worktree.
@@ -37,9 +37,9 @@ The configuration lives in `.paseo/hub.yml` plus convention-discovered `.paseo/w
 
 ## From event to agent
 
-1. A provider sends an event to Hub. GitHub and Slack use webhooks; Discord uses its gateway connection; manual runs use the Hub API.
-2. Hub verifies the provider event and identifies its project resource, such as a repository, workspace, or guild.
-3. Hub evaluates triggers and their filters, including the required `from_users` allowlist.
+1. A provider sends an event to Hub. GitHub, Linear, and Slack Webhooks use HTTPS callbacks; Discord uses its gateway connection; Slack Socket Mode connects out from Hub; manual runs use the Hub API.
+2. Hub verifies the provider event and identifies its project resource, such as a repository, Linear project, workspace, or guild.
+3. Hub evaluates triggers and their filters. Reactive external events require `from_users`; the autonomous `linear.issue_entered_scope` event instead requires a project or team scope.
 4. A matching trigger creates a workflow run from the active configuration revision.
 5. The workflow evaluates its next step. A false `if` condition skips that step; a true condition starts it on the configured daemon.
 6. The daemon starts the agent and Hub records its replies, structured output, status, and completion.
@@ -51,7 +51,7 @@ Complete configurations are in [Workflows](/docs/hub/workflows).
 
 When Hub syncs the bundle, it validates every source file and resolves its references:
 
-- `filters.repo`, `filters.workspace`, and `filters.guild` must name resources available through the organization's connections.
+- `filters.repo`, `filters.project`, `filters.workspace`, and `filters.guild` must name resources available through the organization's connections.
 - `environment.daemon` must match a registered daemon's friendly slug.
 - Step ids, expressions, input filters, output schemas, and durations must be valid.
 - Every finite environment or named-agent result must exist and validate.
@@ -61,7 +61,10 @@ If activation fails, Hub keeps the previous active revision. The Configuration t
 
 ## Security boundaries
 
-Triggers require a non-empty `from_users` allowlist for externally sourced events. Protect the configuration repository because anyone who can change the active configuration can choose which connections, daemons, and agent capabilities a project uses.
+Reactive external triggers require a non-empty `from_users` allowlist. The autonomous Linear
+project-scope trigger has no actor allowlist, so its project, state, label, and assignee scope is the
+policy boundary. Protect the configuration repository because anyone who can change the active
+configuration can choose which connections, daemons, and agent capabilities a project uses.
 
 These controls do not sandbox the agent or make input safe. See [Hub security](/docs/hub/security) for the host boundary, provider-native policy, and defense-in-depth guidance.
 

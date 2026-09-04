@@ -39,7 +39,7 @@ steps:
       - { type: slack.reply, max: 1, required: true }
 ```
 
-Hub removes the mention and declared input headers before exposing the remaining text as `${{ paseo.prompt }}`. The reply capability is explicit beside the Slack trigger. Discord uses `discord.reply`; GitHub uses a step-scoped [`github` block](/docs/hub/github), not `hub.reply`.
+Hub removes the mention and declared input headers before exposing the remaining text as `${{ paseo.prompt }}`. The reply capability is explicit beside the Slack trigger. Discord uses `discord.reply`; Linear uses `linear.reply`; GitHub uses a step-scoped [`github` block](/docs/hub/github), not `hub.reply`.
 
 ## Choose where a step runs
 
@@ -240,7 +240,7 @@ allow_outputs:
     required: true
 ```
 
-`max` defaults to `1`. `required: true` prevents successful completion until the capability has been emitted. Keep Slack and Discord reply types in their own provider workflow files.
+`max` defaults to `1`. `required: true` prevents successful completion until the capability has been emitted. Keep Linear, Slack, and Discord reply types in their own provider workflow files.
 
 ## Deadlines
 

@@ -2,7 +2,7 @@
 title: Hub public API
 description: Use organization credentials to list projects, validate or install configuration, dispatch runs, and enroll daemons.
 nav: Public API
-order: 79
+order: 81
 category: Hub
 ---
 
