@@ -5,7 +5,7 @@ import type {
   AgentPromptInput,
   AgentRunOptions,
 } from "./agent-sdk-types.js";
-import type { AgentManager, ManagedAgent } from "./agent-manager.js";
+import type { AgentManager, AgentManagerRunOptions, ManagedAgent } from "./agent-manager.js";
 import type { AgentStorage } from "./agent-storage.js";
 import { ensureAgentLoaded } from "./agent-loading.js";
 import { getParentAgentIdFromLabels } from "@getpaseo/protocol/agent-labels";
@@ -26,7 +26,7 @@ export type AgentRunController = Pick<
 export interface StartAgentRunOptions {
   replaceRunning?: boolean;
   activeTurnBehavior?: ActiveTurnBehavior;
-  runOptions?: AgentRunOptions;
+  runOptions?: AgentManagerRunOptions;
   /** Ask the provider to deny permissions blocking this steer. */
   clearPendingPermissions?: boolean;
 }
@@ -187,6 +187,8 @@ export interface SendPromptToAgentParams {
   agentId: string;
   /** Prompt to dispatch to the provider (may include image blocks or wrapped text). */
   prompt: AgentPromptInput;
+  /** Optional user-visible form when prompt contains internal control context. */
+  timelinePrompt?: AgentPromptInput;
   messageId?: string;
   activeTurnBehavior?: ActiveTurnBehavior;
   runOptions?: AgentRunOptions;
@@ -283,9 +285,15 @@ export async function sendPromptToAgent(
     await params.agentManager.setAgentMode(params.agentId, params.sessionMode);
   }
 
-  const runOptions = params.messageId
-    ? { ...params.runOptions, clientMessageId: params.messageId }
-    : params.runOptions;
+  const hasTimelinePrompt = params.timelinePrompt !== undefined;
+  const runOptions: AgentManagerRunOptions | undefined =
+    params.messageId || hasTimelinePrompt
+      ? {
+          ...params.runOptions,
+          ...(params.messageId ? { clientMessageId: params.messageId } : {}),
+          ...(hasTimelinePrompt ? { timelinePrompt: params.timelinePrompt } : {}),
+        }
+      : params.runOptions;
 
   return await startAgentRun(params.agentManager, params.agentId, params.prompt, params.logger, {
     replaceRunning: true,

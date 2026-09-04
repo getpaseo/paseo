@@ -113,6 +113,8 @@ export function extractTimestamps(record: StoredAgentRecord): {
   labels?: Record<string, string>;
   workspaceId?: string;
   owner?: StoredAgentRecord["owner"];
+  submittedPromptTextByClientMessageId: Record<string, string>;
+  submittedClientMessageIdByProviderMessageId: Record<string, string>;
 } {
   return {
     createdAt: new Date(record.createdAt),
@@ -121,6 +123,8 @@ export function extractTimestamps(record: StoredAgentRecord): {
     labels: record.labels,
     workspaceId: record.workspaceId,
     owner: record.owner,
+    submittedPromptTextByClientMessageId: record.submittedPromptTextByClientMessageId,
+    submittedClientMessageIdByProviderMessageId: record.submittedClientMessageIdByProviderMessageId,
   };
 }
 

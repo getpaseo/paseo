@@ -112,6 +112,34 @@ function submittedPromptText(prompt: AgentPromptInput): string {
     .trim();
 }
 
+export interface AgentManagerRunOptions extends AgentRunOptions {
+  /** User-visible prompt when the provider prompt contains internal control context. */
+  timelinePrompt?: AgentPromptInput;
+}
+
+export interface AgentManagerSteerOptions extends AgentSteerOptions {
+  timelinePrompt?: AgentPromptInput;
+}
+
+function timelinePrompt(
+  prompt: AgentPromptInput,
+  options?: AgentManagerRunOptions,
+): AgentPromptInput {
+  return options?.timelinePrompt ?? prompt;
+}
+
+function providerRunOptions(options?: AgentManagerRunOptions): AgentRunOptions | undefined {
+  if (!options) return undefined;
+  const { timelinePrompt: _, ...providerOptions } = options;
+  return providerOptions;
+}
+
+function providerSteerOptions(options?: AgentManagerSteerOptions): AgentSteerOptions | undefined {
+  if (!options) return undefined;
+  const { timelinePrompt: _, ...providerOptions } = options;
+  return providerOptions;
+}
+
 export class AgentManagerShuttingDownError extends Error {
   constructor() {
     super("Agent manager is shutting down");
@@ -313,7 +341,7 @@ export type ActiveTurnSteerDispatchResult =
   | { status: "inactive" | "steered" }
   | { status: "replaced"; iterator: AsyncGenerator<AgentStreamEvent> };
 
-function stripSteerOptions(options?: AgentSteerOptions): AgentRunOptions | undefined {
+function stripSteerOptions(options?: AgentManagerSteerOptions): AgentManagerRunOptions | undefined {
   if (!options) return undefined;
   const { clearPendingPermissions: _, ...runOptions } = options;
   return runOptions;
@@ -391,6 +419,9 @@ interface ManagedAgentBase {
   inFlightPermissionResponses: Set<string>;
   pendingReplacement: boolean;
   persistence: AgentPersistenceHandle | null;
+  /** Canonical user-visible text for trusted submitted prompts, keyed by provider-round-tripped ID. */
+  submittedPromptTextByClientMessageId: Record<string, string>;
+  submittedClientMessageIdByProviderMessageId: Record<string, string>;
   historyPrimed: boolean;
   lastUserMessageAt: Date | null;
   activeTurnId: string | null;
@@ -1241,6 +1272,8 @@ export class AgentManager {
       labels?: Record<string, string>;
       workspaceId?: string;
       owner?: AgentOwner;
+      submittedPromptTextByClientMessageId?: Record<string, string>;
+      submittedClientMessageIdByProviderMessageId?: Record<string, string>;
     },
     resumeOptions?: AgentResumeSessionOptions,
   ): Promise<ManagedAgent> {
@@ -1260,6 +1293,8 @@ export class AgentManager {
       labels?: Record<string, string>;
       workspaceId?: string;
       owner?: AgentOwner;
+      submittedPromptTextByClientMessageId?: Record<string, string>;
+      submittedClientMessageIdByProviderMessageId?: Record<string, string>;
     },
     resumeOptions?: AgentResumeSessionOptions,
   ): Promise<ManagedAgent> {
@@ -1452,6 +1487,11 @@ export class AgentManager {
 
       this.assertAcceptingAgentRegistrations();
 
+      // Provider callbacks are queued asynchronously. Drain them while the old
+      // agent is still registered so submitted-message identity learned from a
+      // final echo is included in the snapshot preserved across reload.
+      await this.drainSessionEvents(agentId);
+      existing = this.requireSessionAgent(agentId);
       this.cancelRunningProviderSubagents(agentId);
       const closedExisting = this.prepareAgentForClosure(existing, "agent reloaded");
       replacedExisting = true;
@@ -1483,6 +1523,9 @@ export class AgentManager {
         lastUsage: preservedLastUsage,
         lastError: preservedLastError,
         attention: preservedAttention,
+        submittedPromptTextByClientMessageId: existing.submittedPromptTextByClientMessageId,
+        submittedClientMessageIdByProviderMessageId:
+          existing.submittedClientMessageIdByProviderMessageId,
       });
     } finally {
       if (!replacedExisting) {
@@ -1767,6 +1810,9 @@ export class AgentManager {
         finalizedForegroundTurnIds: new Set(),
         unsubscribeSession: null,
         persistence: record.persistence ?? null,
+        submittedPromptTextByClientMessageId: record.submittedPromptTextByClientMessageId,
+        submittedClientMessageIdByProviderMessageId:
+          record.submittedClientMessageIdByProviderMessageId,
         historyPrimed: true,
         lastUserMessageAt: record.lastUserMessageAt ? new Date(record.lastUserMessageAt) : null,
         lastUsage: undefined,
@@ -2110,7 +2156,7 @@ export class AgentManager {
   async runAgent(
     agentId: string,
     prompt: AgentPromptInput,
-    options?: AgentRunOptions,
+    options?: AgentManagerRunOptions,
   ): Promise<AgentRunResult> {
     const events = this.streamAgent(agentId, prompt, options);
     const timeline: AgentTimelineItem[] = [];
@@ -2153,14 +2199,19 @@ export class AgentManager {
    * emitted by the handler flow through dispatchStream so they persist and
    * broadcast like normal timeline events.
    */
-  tryRunOutOfBand(agentId: string, prompt: AgentPromptInput, options?: AgentRunOptions): boolean {
+  tryRunOutOfBand(
+    agentId: string,
+    prompt: AgentPromptInput,
+    options?: AgentManagerRunOptions,
+  ): boolean {
     const agent = this.requireSessionAgent(agentId);
     const handler = agent.session.tryHandleOutOfBand?.(prompt);
     if (!handler) {
       return false;
     }
     if (options?.clientMessageId) {
-      this.recordSubmittedPrompt(agent, prompt, options.clientMessageId);
+      this.rememberSubmittedTimelinePrompt(agent, options);
+      this.recordSubmittedPrompt(agent, timelinePrompt(prompt, options), options.clientMessageId);
       this.emitState(agent);
     }
     const dispatch = (event: AgentStreamEvent): void => {
@@ -2233,11 +2284,14 @@ export class AgentManager {
     agentId: string;
     pendingRun: PendingForegroundRun;
     prompt: AgentPromptInput;
-    options?: AgentRunOptions;
+    options?: AgentManagerRunOptions;
   }): Promise<string> {
     const { agent, agentId, pendingRun, prompt, options } = params;
     try {
-      const result = await agent.session.startTurn(prompt, options);
+      if (this.rememberSubmittedTimelinePrompt(agent, options)) {
+        await this.persistSnapshot(agent);
+      }
+      const result = await agent.session.startTurn(prompt, providerRunOptions(options));
       if (pendingRun.settled) {
         throw new Error(`Agent ${agentId} run was canceled before its turn started`);
       }
@@ -2263,7 +2317,7 @@ export class AgentManager {
   streamAgent(
     agentId: string,
     prompt: AgentPromptInput,
-    options?: AgentRunOptions,
+    options?: AgentManagerRunOptions,
   ): AsyncGenerator<AgentStreamEvent> {
     const existingAgent = this.requireSessionAgent(agentId);
     this.logger.trace(
@@ -2338,14 +2392,19 @@ export class AgentManager {
           )
         : undefined;
       if (options?.clientMessageId) {
-        this.recordSubmittedPrompt(agent, prompt, options.clientMessageId, {
-          messageId: options.clientMessageId,
-          turnId,
-          providerMessageId:
-            stagedSubmittedPromptEcho?.item.type === "user_message"
-              ? stagedSubmittedPromptEcho.item.messageId
-              : undefined,
-        });
+        this.recordSubmittedPrompt(
+          agent,
+          timelinePrompt(prompt, options),
+          options.clientMessageId,
+          {
+            messageId: options.clientMessageId,
+            turnId,
+            providerMessageId:
+              stagedSubmittedPromptEcho?.item.type === "user_message"
+                ? stagedSubmittedPromptEcho.item.messageId
+                : undefined,
+          },
+        );
       }
       for (const stagedEvent of pendingRun.stagedEvents.splice(0)) {
         const isAcceptedTurnStart =
@@ -2460,7 +2519,7 @@ export class AgentManager {
   async replaceAgentRun(
     agentId: string,
     prompt: AgentPromptInput,
-    options?: AgentRunOptions,
+    options?: AgentManagerRunOptions,
   ): Promise<AsyncGenerator<AgentStreamEvent>> {
     const snapshot = this.requireAgent(agentId);
     if (
@@ -2492,7 +2551,7 @@ export class AgentManager {
   async steerAgentRun(
     agentId: string,
     prompt: AgentPromptInput,
-    options?: AgentSteerOptions,
+    options?: AgentManagerSteerOptions,
   ): Promise<SteerResult> {
     const agent = this.requireSessionAgent(agentId);
     const expectedTurnId = agent.activeForegroundTurnId ?? agent.activeTurnId;
@@ -2500,12 +2559,15 @@ export class AgentManager {
       return { status: "unavailable" };
     }
     const result = await this.runSteerAdmission(agent, expectedTurnId, async () => {
+      if (this.rememberSubmittedTimelinePrompt(agent, options)) {
+        await this.persistSnapshot(agent);
+      }
       const admission = await agent.session.steerActiveTurn!(prompt, {
-        ...options,
+        ...providerSteerOptions(options),
         expectedTurnId,
       });
       if (admission.status === "accepted") {
-        await this.recordAcceptedSteer(agent, prompt, options?.clientMessageId, expectedTurnId);
+        await this.recordAcceptedSteer(agent, prompt, options, expectedTurnId);
       }
       return admission;
     });
@@ -2520,7 +2582,7 @@ export class AgentManager {
   async steerOrReplaceActiveTurn(
     agentId: string,
     prompt: AgentPromptInput,
-    options?: AgentSteerOptions,
+    options?: AgentManagerSteerOptions,
   ): Promise<ActiveTurnSteerDispatchResult> {
     const agent = this.requireSessionAgent(agentId);
     const expectedTurnId = agent.activeForegroundTurnId ?? agent.activeTurnId;
@@ -2530,12 +2592,15 @@ export class AgentManager {
 
     const result = agent.session.steerActiveTurn
       ? await this.runSteerAdmission(agent, expectedTurnId, async () => {
+          if (this.rememberSubmittedTimelinePrompt(agent, options)) {
+            await this.persistSnapshot(agent);
+          }
           const admission = await agent.session.steerActiveTurn!(prompt, {
-            ...options,
+            ...providerSteerOptions(options),
             expectedTurnId,
           });
           if (admission.status === "accepted") {
-            await this.recordAcceptedSteer(agent, prompt, options?.clientMessageId, expectedTurnId);
+            await this.recordAcceptedSteer(agent, prompt, options, expectedTurnId);
           }
           return admission;
         })
@@ -2615,7 +2680,7 @@ export class AgentManager {
     agent: ActiveManagedAgent,
     expectedTurnId: string,
     prompt: AgentPromptInput,
-    options?: AgentRunOptions,
+    options?: AgentManagerRunOptions,
   ): Promise<AsyncGenerator<AgentStreamEvent>> {
     this.assertSteerAdmissionOwnsTurn(agent, expectedTurnId);
     agent.pendingReplacement = true;
@@ -2638,14 +2703,14 @@ export class AgentManager {
   private async recordAcceptedSteer(
     agent: ActiveManagedAgent,
     prompt: AgentPromptInput,
-    clientMessageId: string | undefined,
+    options: AgentManagerSteerOptions | undefined,
     expectedTurnId: string,
   ): Promise<void> {
-    if (!clientMessageId) {
+    if (!options?.clientMessageId) {
       return;
     }
-    this.recordSubmittedPrompt(agent, prompt, clientMessageId, {
-      messageId: clientMessageId,
+    this.recordSubmittedPrompt(agent, timelinePrompt(prompt, options), options.clientMessageId, {
+      messageId: options.clientMessageId,
       turnId: expectedTurnId,
     });
     this.emitState(agent);
@@ -3241,6 +3306,8 @@ export class AgentManager {
       publishWhenReady?: boolean;
       workspaceId?: string;
       owner?: AgentOwner;
+      submittedPromptTextByClientMessageId?: Record<string, string>;
+      submittedClientMessageIdByProviderMessageId?: Record<string, string>;
     },
   ): Promise<ManagedAgent> {
     let registered = false;
@@ -3392,23 +3459,26 @@ export class AgentManager {
           persistence?: AgentPersistenceHandle;
           workspaceId?: string;
           owner?: AgentOwner;
+          submittedPromptTextByClientMessageId?: Record<string, string>;
+          submittedClientMessageIdByProviderMessageId?: Record<string, string>;
         }
       | undefined;
   }): ActiveManagedAgent {
     const { resolvedAgentId, session, config, now, durableTimelineHasRows, options } = params;
+    const registration = options ?? {};
     return {
       id: resolvedAgentId,
       provider: config.provider,
       cwd: config.cwd,
-      workspaceId: options?.workspaceId,
-      owner: options?.owner,
+      workspaceId: registration.workspaceId,
+      owner: registration.owner,
       session,
       capabilities: session.capabilities,
       config,
       runtimeInfo: undefined,
       lifecycle: "initializing",
-      createdAt: options?.createdAt ?? now,
-      updatedAt: options?.updatedAt ?? now,
+      createdAt: registration.createdAt ?? now,
+      updatedAt: registration.updatedAt ?? now,
       availableModes: [],
       currentModeId: null,
       pendingPermissions: new Map<string, AgentPermissionRequest>(),
@@ -3422,16 +3492,22 @@ export class AgentManager {
       finalizedForegroundTurnIds: new Set<string>(),
       unsubscribeSession: null,
       persistence: attachPersistenceCwd(
-        options?.persistence ?? session.describePersistence(),
+        registration.persistence ?? session.describePersistence(),
         config.cwd,
       ),
-      historyPrimed: options?.historyPrimed ?? durableTimelineHasRows,
-      lastUserMessageAt: options?.lastUserMessageAt ?? null,
-      lastUsage: options?.lastUsage,
-      lastError: options?.lastError,
-      attention: resolveInitialAttention(options?.attention),
+      submittedPromptTextByClientMessageId: {
+        ...registration.submittedPromptTextByClientMessageId,
+      },
+      submittedClientMessageIdByProviderMessageId: {
+        ...registration.submittedClientMessageIdByProviderMessageId,
+      },
+      historyPrimed: registration.historyPrimed ?? durableTimelineHasRows,
+      lastUserMessageAt: registration.lastUserMessageAt ?? null,
+      lastUsage: registration.lastUsage,
+      lastError: registration.lastError,
+      attention: resolveInitialAttention(registration.attention),
       internal: config.internal ?? false,
-      labels: options?.labels ?? {},
+      labels: registration.labels ?? {},
     } as ActiveManagedAgent;
   }
 
@@ -3758,7 +3834,10 @@ export class AgentManager {
         if (event.item.type === "user_message" && isSystemInjectedEnvelope(event.item.text)) {
           continue;
         }
-        historyEvents.push(event);
+        historyEvents.push({
+          ...event,
+          item: this.canonicalizeProviderHistoryItem(agent, event.item),
+        });
       } else if (event.type === "provider_subagent") {
         providerSubagentEvents.push(event);
       }
@@ -3829,15 +3908,19 @@ export class AgentManager {
         if (event.item.type === "user_message" && isSystemInjectedEnvelope(event.item.text)) {
           continue;
         }
+        const canonicalEvent = {
+          ...event,
+          item: this.canonicalizeProviderHistoryItem(agent, event.item),
+        };
         const row = this.recordTimeline(
           agent.id,
-          event.item,
-          event.timestamp ? { timestamp: event.timestamp } : undefined,
+          canonicalEvent.item,
+          canonicalEvent.timestamp ? { timestamp: canonicalEvent.timestamp } : undefined,
         );
         if (deferredBroadcast) {
-          timelineEvents.push({ event, row });
+          timelineEvents.push({ event: canonicalEvent, row });
         } else if (broadcast) {
-          this.dispatchStream(agent.id, event, {
+          this.dispatchStream(agent.id, canonicalEvent, {
             seq: row.seq,
             epoch: this.timelineStore.getEpoch(agent.id),
             timestamp: row.timestamp,
@@ -4133,7 +4216,13 @@ export class AgentManager {
     options: { fromHistory?: boolean } | undefined;
     flags: StreamEventFlags;
   }): Promise<void> {
-    const { agent, event, options, flags } = params;
+    const { agent, options, flags } = params;
+    const event = options?.fromHistory
+      ? {
+          ...params.event,
+          item: this.canonicalizeProviderHistoryItem(agent, params.event.item),
+        }
+      : params.event;
 
     if (event.item.type === "user_message" && isSystemInjectedEnvelope(event.item.text)) {
       flags.shouldDispatchEvent = false;
@@ -4405,6 +4494,60 @@ export class AgentManager {
     return event;
   }
 
+  private rememberSubmittedTimelinePrompt(
+    agent: ActiveManagedAgent,
+    options?: AgentManagerRunOptions,
+  ): boolean {
+    if (!options?.clientMessageId || options.timelinePrompt === undefined) {
+      return false;
+    }
+    const text = submittedPromptText(options.timelinePrompt);
+    if (agent.submittedPromptTextByClientMessageId[options.clientMessageId] === text) {
+      return false;
+    }
+    agent.submittedPromptTextByClientMessageId = {
+      ...agent.submittedPromptTextByClientMessageId,
+      [options.clientMessageId]: text,
+    };
+    return true;
+  }
+
+  private rememberSubmittedProviderMessage(
+    agent: ActiveManagedAgent,
+    clientMessageId: string,
+    providerMessageId: string,
+  ): void {
+    if (
+      agent.submittedPromptTextByClientMessageId[clientMessageId] === undefined ||
+      agent.submittedClientMessageIdByProviderMessageId[providerMessageId] === clientMessageId
+    ) {
+      return;
+    }
+    agent.submittedClientMessageIdByProviderMessageId = {
+      ...agent.submittedClientMessageIdByProviderMessageId,
+      [providerMessageId]: clientMessageId,
+    };
+    this.enqueueBackgroundPersist(agent);
+  }
+
+  private canonicalizeProviderHistoryItem(
+    agent: ActiveManagedAgent,
+    item: AgentTimelineItem,
+  ): AgentTimelineItem {
+    if (item.type !== "user_message") {
+      return item;
+    }
+    const clientMessageId =
+      item.clientMessageId ??
+      (item.messageId
+        ? agent.submittedClientMessageIdByProviderMessageId[item.messageId]
+        : undefined);
+    const text = clientMessageId
+      ? agent.submittedPromptTextByClientMessageId[clientMessageId]
+      : undefined;
+    return text === undefined ? item : { ...item, text };
+  }
+
   private recordSubmittedPrompt(
     agent: ActiveManagedAgent,
     prompt: AgentPromptInput,
@@ -4443,6 +4586,7 @@ export class AgentManager {
     }
     if (!existing || existing.item.type !== "user_message") return null;
     if (messageId) {
+      this.rememberSubmittedProviderMessage(agent, clientMessageId, messageId);
       const enriched = this.timelineStore.enrichSubmittedUserMessage(
         agent.id,
         clientMessageId,

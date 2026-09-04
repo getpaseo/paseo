@@ -4,7 +4,17 @@ import {
   buildVoiceAgentMcpServerConfig,
   buildVoiceModeSystemPrompt,
   stripVoiceModeSystemPrompt,
+  wrapSpokenInput,
 } from "./voice-config.js";
+
+describe("spoken input prompts", () => {
+  test("keeps voice instructions in the agent prompt", () => {
+    const prompt = wrapSpokenInput("Please check the build");
+
+    expect(prompt).toContain("<spoken-input>\nPlease check the build\n</spoken-input>");
+    expect(prompt).toContain("Respond using the speak tool only");
+  });
+});
 
 describe("voice MCP stdio config", () => {
   test("builds stdio MCP config for voice agent", () => {

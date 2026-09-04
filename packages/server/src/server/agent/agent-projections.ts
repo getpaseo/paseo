@@ -92,6 +92,12 @@ export function toStoredAgentRecord(
     attentionTimestamp: agent.attention.requiresAttention
       ? agent.attention.attentionTimestamp.toISOString()
       : null,
+    submittedPromptTextByClientMessageId: {
+      ...agent.submittedPromptTextByClientMessageId,
+    },
+    submittedClientMessageIdByProviderMessageId: {
+      ...agent.submittedClientMessageIdByProviderMessageId,
+    },
     internal: options?.internal,
     owner: agent.owner,
   } satisfies StoredAgentRecord;

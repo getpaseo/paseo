@@ -11,6 +11,7 @@ import {
   AgentManagerShuttingDownError,
   commandMayHaveChangedExternalState,
   type AgentManagerEvent,
+  type AgentManagerRunOptions,
   type ManagedAgent,
 } from "./agent-manager.js";
 import { AgentStorage } from "./agent-storage.js";
@@ -48,6 +49,7 @@ import type {
 } from "./agent-sdk-types.js";
 import type { PaseoToolCatalog } from "./tools/types.js";
 import type { ProviderDefinition } from "./provider-registry.js";
+import { wrapSpokenInput } from "@server/server/voice-config.js";
 
 const DESKTOP_OPEN_AGENT_TAB_LABEL = getOpenAgentTabLabel("desktop-client");
 const MOBILE_OPEN_AGENT_TAB_LABEL = getOpenAgentTabLabel("mobile-client");
@@ -3962,6 +3964,139 @@ test("reloadAgentSession preserves timeline and does not force history replay", 
   await manager.hydrateTimelineFromProvider(snapshot.id);
   const afterHydrate = manager.getTimeline(snapshot.id);
   expect(afterHydrate).toEqual(beforeReload);
+});
+
+test("reloadAgentSession drains queued provider echoes before preserving prompt provenance", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-reload-prompt-provenance-"));
+  const transcript = "重新加载后仍显示听写。";
+  const wrappedPrompt = wrapSpokenInput(transcript);
+  const clientMessageId = "00000000-0000-4000-8000-000000000302";
+  const providerMessageId = "provider-voice-before-reload";
+  const historyReadStarted = deferred<void>();
+  const allowHistoryRead = deferred<void>();
+  const closedPersistStarted = deferred<void>();
+  const allowClosedPersist = deferred<void>();
+  let blockHistoryRead = false;
+  let blockClosedPersist = false;
+  let closedPersistDidStart = false;
+  let activeSession: TestAgentSession | null = null;
+
+  class BlockingTimelineStore extends RecordingTimelineStore {
+    override async getLastItem(agentId: string): Promise<AgentTimelineItem | null> {
+      if (blockHistoryRead) {
+        blockHistoryRead = false;
+        historyReadStarted.resolve(undefined);
+        await allowHistoryRead.promise;
+      }
+      return await super.getLastItem(agentId);
+    }
+  }
+
+  class BlockingAgentStorage extends AgentStorage {
+    override async applySnapshot(
+      agent: ManagedAgent,
+      options?: { title?: string | null; internal?: boolean },
+    ): Promise<void> {
+      if (blockClosedPersist && agent.lifecycle === "closed") {
+        closedPersistDidStart = true;
+        closedPersistStarted.resolve(undefined);
+        await allowClosedPersist.promise;
+      }
+      await super.applySnapshot(agent, options);
+    }
+  }
+
+  class ReloadHistorySession extends TestAgentSession {
+    override async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
+      yield {
+        type: "timeline",
+        provider: this.provider,
+        item: {
+          type: "user_message",
+          text: wrappedPrompt,
+          messageId: providerMessageId,
+        },
+      };
+    }
+  }
+
+  class ReloadHistoryClient extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      activeSession = new TestAgentSession(config);
+      return activeSession;
+    }
+
+    override async resumeSession(
+      _handle: AgentPersistenceHandle,
+      config: AgentSessionConfig,
+    ): Promise<AgentSession> {
+      return new ReloadHistorySession(config);
+    }
+  }
+
+  const storage = new BlockingAgentStorage(join(workdir, "agents"), logger);
+  const manager = new AgentManager({
+    clients: { codex: new ReloadHistoryClient() },
+    registry: storage,
+    durableTimelineStore: new BlockingTimelineStore(),
+    logger,
+  });
+  const snapshot = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+
+  try {
+    await manager.runAgent(snapshot.id, wrappedPrompt, {
+      clientMessageId,
+      timelinePrompt: transcript,
+    });
+    // Empty the live timeline while retaining the persisted provenance so the
+    // first queued event can be held inside its asynchronous history lookup.
+    await manager.hydrateTimelineFromProvider(snapshot.id, { force: true });
+
+    blockHistoryRead = true;
+    blockClosedPersist = true;
+    activeSession?.pushEvent({
+      type: "turn_failed",
+      provider: "codex",
+      error: "hold the event queue",
+    });
+    activeSession?.pushEvent({
+      type: "timeline",
+      provider: "codex",
+      item: {
+        type: "user_message",
+        text: wrappedPrompt,
+        messageId: providerMessageId,
+        clientMessageId,
+      },
+    });
+    await historyReadStarted.promise;
+
+    const reload = manager.reloadAgentSession(snapshot.id);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(closedPersistDidStart).toBe(false);
+
+    allowHistoryRead.resolve(undefined);
+    await closedPersistStarted.promise;
+    allowClosedPersist.resolve(undefined);
+    await reload;
+
+    await manager.hydrateTimelineFromProvider(snapshot.id, { force: true });
+    expect(manager.getTimeline(snapshot.id)).toEqual([
+      {
+        type: "user_message",
+        text: transcript,
+        messageId: providerMessageId,
+      },
+    ]);
+  } finally {
+    allowHistoryRead.resolve(undefined);
+    allowClosedPersist.resolve(undefined);
+    await manager.closeAgent(snapshot.id).catch(() => undefined);
+    await storage.flush().catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
 });
 
 test("reloadAgentSession clears provider children before rehydrating from disk", async () => {
@@ -9464,6 +9599,135 @@ test("provider close failure still persists and emits a resumable closed agent",
   }
 });
 
+test("hydrateTimeline restores persisted canonical text only for trusted submitted prompts", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-history-canonical-prompt-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const clientMessageId = "00000000-0000-4000-8000-000000000301";
+  const transcript = "用语音回答测试成功。";
+  const wrappedPrompt = wrapSpokenInput(transcript);
+  let agentId: string | null = null;
+  let firstManager: AgentManager | null = null;
+  let secondManager: AgentManager | null = null;
+
+  class LiveVoiceSession extends TestAgentSession {
+    override async startTurn(
+      prompt: AgentPromptInput,
+      options?: AgentRunOptions,
+    ): Promise<{ turnId: string }> {
+      const turnId = "voice-turn";
+      setTimeout(() => {
+        this.pushEvent({ type: "turn_started", provider: this.provider, turnId });
+        this.pushEvent({
+          type: "timeline",
+          provider: this.provider,
+          turnId,
+          item: {
+            type: "user_message",
+            text: typeof prompt === "string" ? prompt : "structured",
+            messageId: "provider-voice-message",
+            clientMessageId: options?.clientMessageId,
+          },
+        });
+        this.pushEvent({ type: "turn_completed", provider: this.provider, turnId });
+      }, 0);
+      return { turnId };
+    }
+  }
+
+  class LiveVoiceClient extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      return new LiveVoiceSession(config);
+    }
+  }
+
+  class VoiceHistorySession extends TestAgentSession {
+    override async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
+      yield {
+        type: "timeline",
+        provider: this.provider,
+        item: {
+          type: "user_message",
+          text: wrappedPrompt,
+          messageId: "provider-voice-message",
+        },
+      };
+      yield {
+        type: "timeline",
+        provider: this.provider,
+        item: {
+          type: "user_message",
+          text: wrappedPrompt,
+          messageId: "provider-ordinary-message",
+        },
+      };
+    }
+  }
+
+  class VoiceHistoryClient extends TestAgentClient {
+    override async resumeSession(
+      _handle: AgentPersistenceHandle,
+      config: AgentSessionConfig,
+    ): Promise<AgentSession> {
+      return new VoiceHistorySession(config);
+    }
+  }
+
+  try {
+    firstManager = new AgentManager({
+      clients: { codex: new LiveVoiceClient() },
+      registry: storage,
+      logger,
+    });
+    const created = await firstManager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    agentId = created.id;
+    await firstManager.runAgent(agentId, wrappedPrompt, {
+      clientMessageId,
+      timelinePrompt: transcript,
+    });
+    await firstManager.closeAgent(agentId);
+
+    expect(await storage.get(agentId)).toMatchObject({
+      submittedPromptTextByClientMessageId: { [clientMessageId]: transcript },
+      submittedClientMessageIdByProviderMessageId: {
+        "provider-voice-message": clientMessageId,
+      },
+    });
+
+    secondManager = new AgentManager({
+      clients: { codex: new VoiceHistoryClient() },
+      registry: storage,
+      logger,
+    });
+    await ensureAgentLoaded(agentId, {
+      agentManager: secondManager,
+      agentStorage: storage,
+      logger,
+    });
+
+    expect(secondManager.getTimeline(agentId)).toEqual([
+      {
+        type: "user_message",
+        text: transcript,
+        messageId: "provider-voice-message",
+      },
+      {
+        type: "user_message",
+        text: wrappedPrompt,
+        messageId: "provider-ordinary-message",
+      },
+    ]);
+  } finally {
+    if (agentId) {
+      await firstManager?.closeAgent(agentId).catch(() => undefined);
+      await secondManager?.closeAgent(agentId).catch(() => undefined);
+    }
+    await storage.flush().catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
 test("hydrateTimeline keeps provider user_message items when no canonical user history exists", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-history-keep-user-"));
   const storagePath = join(workdir, "agents");
@@ -9668,7 +9932,7 @@ test("provider user_message is recorded from the live stream", async () => {
   expect(userMessages[0].text).toBe("continuation prompt");
 });
 
-test("canonical submitted prompt keeps wire identity while rewind resolves provider identity", async () => {
+test("canonical submitted prompt can differ from the provider prompt while keeping wire identity", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-submitted-prompt-"));
   const storagePath = join(workdir, "agents");
   const storage = new AgentStorage(storagePath, logger);
@@ -9680,12 +9944,14 @@ test("canonical submitted prompt keeps wire identity while rewind resolves provi
       supportsRewindFiles: true,
     };
     readonly rewindMessageIds: string[] = [];
+    readonly receivedTurns: Array<{ prompt: AgentPromptInput; options?: AgentRunOptions }> = [];
     interruptCount = 0;
 
     override async startTurn(
       prompt: AgentPromptInput,
       options?: AgentRunOptions,
     ): Promise<{ turnId: string }> {
+      this.receivedTurns.push({ prompt, options });
       const turnId = "turn-submitted-user-message";
       const text = typeof prompt === "string" ? prompt : "";
       setTimeout(async () => {
@@ -9770,10 +10036,25 @@ test("canonical submitted prompt keeps wire identity while rewind resolves provi
       workspaceId: undefined,
     });
 
-    const run = manager.runAgent(snapshot.id, "hello from composer", {
+    const providerPrompt = [
+      "<spoken-input>",
+      "hello from voice mode",
+      "</spoken-input>",
+      "<instruction>Respond using the speak tool only.</instruction>",
+    ].join("\n");
+    const runOptions: AgentManagerRunOptions = {
       clientMessageId: "msg-client-1",
-    });
+      timelinePrompt: "hello from voice mode",
+    };
+    const run = manager.runAgent(snapshot.id, providerPrompt, runOptions);
     await manager.waitForAgentRunStart(snapshot.id);
+
+    expect(client.session?.receivedTurns).toEqual([
+      {
+        prompt: providerPrompt,
+        options: { clientMessageId: "msg-client-1" },
+      },
+    ]);
 
     await expect(manager.rewind(snapshot.id, "msg-client-1", "files")).rejects.toThrow(
       "Cannot rewind before the provider acknowledges the submitted prompt",
@@ -9788,7 +10069,7 @@ test("canonical submitted prompt keeps wire identity while rewind resolves provi
       {
         type: "user_message",
         seq: 1,
-        text: "hello from composer",
+        text: "hello from voice mode",
         clientMessageId: "msg-client-1",
         messageId: "msg-client-1",
       },
@@ -9805,7 +10086,7 @@ test("canonical submitted prompt keeps wire identity while rewind resolves provi
         turnId: "turn-submitted-user-message",
         item: {
           type: "user_message",
-          text: "hello from composer",
+          text: "hello from voice mode",
           messageId: "msg-client-1",
           clientMessageId: "msg-client-1",
         },
