@@ -661,6 +661,79 @@ describe("WorkspaceLaunchManager", () => {
     }
   });
 
+  it("bounds TCP and HTTP probes across large concurrent workspace scans", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "paseo-launch-probe-limit-"));
+    tempDirs.push(directory);
+    writeFileSync(
+      join(directory, "paseo.json"),
+      JSON.stringify({
+        worktree: { servicePorts: { range: "30000-31999", blockSize: 1000 } },
+        launches: { dev: { command: "./bin/dev" } },
+      }),
+    );
+    const allowTcp = createDeferred();
+    const allowHttp = createDeferred();
+    let active = 0;
+    let peak = 0;
+    const probeTcp = vi.fn(async () => {
+      active += 1;
+      peak = Math.max(peak, active);
+      await allowTcp.promise;
+      active -= 1;
+      return true;
+    });
+    const probeHttp = vi.fn(async () => {
+      active += 1;
+      peak = Math.max(peak, active);
+      await allowHttp.promise;
+      active -= 1;
+      return false;
+    });
+    const manager = new WorkspaceLaunchManager({
+      terminalManager: createTerminalManager().manager,
+      serviceProxy: createServiceProxySubsystem({ logger: pino({ level: "silent" }) }),
+      workspaceRuntimeEnvironment: new WorkspaceRuntimeEnvironmentService({
+        random: () => 0,
+        checkPortAvailable: async () => true,
+      }),
+      getDaemonTcpPort: () => 6767,
+      serviceProxyPublicBaseUrl: null,
+      resolveScriptHealth: null,
+      endpointProbe: { probeTcp, probeHttp },
+      logger: pino({ level: "silent" }),
+    });
+    const first = {
+      workspaceId: "probe-limit-1",
+      workspaceDirectory: directory,
+      projectSlug: "app",
+      branchName: "one",
+    };
+    const second = { ...first, workspaceId: "probe-limit-2", branchName: "two" };
+    try {
+      await Promise.all([manager.start(first, "dev"), manager.start(second, "dev")]);
+      await flushAsyncWork();
+      expect(probeTcp).toHaveBeenCalledTimes(16);
+      expect(peak).toBe(16);
+      allowTcp.resolve();
+      await flushAsyncWork();
+      expect(probeTcp).toHaveBeenCalledTimes(2000);
+      expect(probeHttp).toHaveBeenCalledTimes(16);
+      expect(peak).toBe(16);
+      allowHttp.resolve();
+      await flushAsyncWork();
+      expect(probeHttp).toHaveBeenCalledTimes(2000);
+      expect(peak).toBe(16);
+      expect(active).toBe(0);
+      expect(manager.buildSnapshot(first)[0]?.endpoints).toHaveLength(1000);
+      expect(manager.buildSnapshot(second)[0]?.endpoints).toHaveLength(1000);
+    } finally {
+      allowTcp.resolve();
+      allowHttp.resolve();
+      await manager.disposeWorkspace(first.workspaceId);
+      await manager.disposeWorkspace(second.workspaceId);
+    }
+  });
+
   it("backs off HTTP retries, discovers slow servers, and resets after disappearance", async () => {
     const directory = mkdtempSync(join(tmpdir(), "paseo-launch-probe-"));
     tempDirs.push(directory);

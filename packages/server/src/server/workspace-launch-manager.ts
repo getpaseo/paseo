@@ -1,5 +1,6 @@
 import http from "node:http";
 import net from "node:net";
+import pLimit from "p-limit";
 import type { Logger } from "pino";
 import type { TerminalManager } from "../terminal/terminal-manager.js";
 import type {
@@ -27,6 +28,7 @@ import type {
 } from "./workspace-runtime-environment.js";
 
 const LAUNCH_ENDPOINT_SCAN_INTERVAL_MS = 2_000;
+const LAUNCH_ENDPOINT_PROBE_CONCURRENCY = 16;
 const LAUNCH_ENDPOINT_PROBE_TIMEOUT_MS = 300;
 const HTTP_RETRY_INITIAL_MS = 5_000;
 const HTTP_RETRY_MAX_MS = 60_000;
@@ -95,6 +97,7 @@ export class WorkspaceLaunchManager {
   private readonly activeLaunches = new Map<string, string>();
   private readonly operationChains = new Map<string, Promise<unknown>>();
   private readonly endpointProbe: WorkspaceLaunchEndpointProbe;
+  private readonly endpointProbeLimit = pLimit(LAUNCH_ENDPOINT_PROBE_CONCURRENCY);
 
   constructor(private readonly deps: WorkspaceLaunchManagerDependencies) {
     this.endpointProbe = deps.endpointProbe ?? { probeTcp, probeHttp };
@@ -343,7 +346,7 @@ export class WorkspaceLaunchManager {
         (_, offset) => runtime.environment.portBase + offset,
       );
       const listeningPortCandidates = await Promise.all(
-        ports.map(async (port) => ((await this.endpointProbe.probeTcp(port)) ? port : null)),
+        ports.map((port) => this.probeEndpoint(runtime, port, "tcp")),
       );
       const listeningPorts = new Set(
         listeningPortCandidates.filter((port): port is number => port !== null),
@@ -351,9 +354,7 @@ export class WorkspaceLaunchManager {
       const httpPorts = new Set(
         (
           await Promise.all(
-            Array.from(listeningPorts, async (port) =>
-              (await this.probeHttpEndpoint(runtime, port)) ? port : null,
-            ),
+            Array.from(listeningPorts, (port) => this.probeEndpoint(runtime, port, "http")),
           )
         ).filter((port): port is number => port !== null),
       );
@@ -439,6 +440,22 @@ export class WorkspaceLaunchManager {
     } finally {
       runtime.scanInFlight = false;
     }
+  }
+
+  private probeEndpoint(
+    runtime: WorkspaceLaunchRuntime,
+    port: number,
+    protocol: "tcp" | "http",
+  ): Promise<number | null> {
+    // Share the descriptor budget across every workspace and both probe stages.
+    return this.endpointProbeLimit(async () => {
+      if (!this.isCurrentRunningRuntime(runtime)) return null;
+      const reachable =
+        protocol === "tcp"
+          ? await this.endpointProbe.probeTcp(port)
+          : await this.probeHttpEndpoint(runtime, port);
+      return reachable ? port : null;
+    });
   }
 
   private async probeHttpEndpoint(runtime: WorkspaceLaunchRuntime, port: number): Promise<boolean> {
@@ -636,6 +653,7 @@ async function probeHttp(port: number): Promise<boolean> {
     const finish = (result: boolean) => {
       if (settled) return;
       settled = true;
+      request.destroy();
       resolve(result);
     };
     const request = http.request(
