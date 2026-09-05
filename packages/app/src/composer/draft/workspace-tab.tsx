@@ -1,10 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Keyboard, ScrollView, StyleSheet as RNStyleSheet, Text, View } from "react-native";
 import { useTranslation } from "react-i18next";
-import ReanimatedAnimated from "react-native-reanimated";
 import { StyleSheet } from "react-native-unistyles";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useKeyboardShiftStyle } from "@/hooks/use-keyboard-shift-style";
+import { KeyboardTranslateView } from "@/components/keyboard-translate-view";
 import { useContainerWidthBelow } from "@/hooks/use-container-width";
 import invariant from "tiny-invariant";
 import { Composer } from "@/composer";
@@ -663,17 +662,9 @@ export function WorkspaceDraftAgentTab({
     focusInputRef.current = focus;
   }, []);
 
-  const { style: composerKeyboardStyle } = useKeyboardShiftStyle({
-    mode: "translate",
-  });
-
   const inputAreaWrapperStyle = useMemo(
-    () => [
-      animatedStaticStyles.inputAreaWrapper,
-      { paddingBottom: insets.bottom },
-      composerKeyboardStyle,
-    ],
-    [insets.bottom, composerKeyboardStyle],
+    () => [animatedStaticStyles.inputAreaWrapper, { paddingBottom: insets.bottom }],
+    [insets.bottom],
   );
 
   const handleDropdownCloseFocus = useCallback(() => {
@@ -722,7 +713,7 @@ export function WorkspaceDraftAgentTab({
         )}
       </View>
 
-      <ReanimatedAnimated.View style={inputAreaWrapperStyle} onLayout={onInputAreaLayout}>
+      <KeyboardTranslateView style={inputAreaWrapperStyle} onLayout={onInputAreaLayout}>
         {draftContextPills}
         <Composer
           agentId={tabId}
@@ -750,7 +741,7 @@ export function WorkspaceDraftAgentTab({
           onOpenAgentContextPicker={handleOpenAgentContextPicker}
           isCompactLayout={isCompactComposerLayout}
         />
-      </ReanimatedAnimated.View>
+      </KeyboardTranslateView>
       <AgentContextPicker
         visible={isAgentContextPickerOpen}
         serverId={serverId}

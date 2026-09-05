@@ -84,7 +84,7 @@ export type StreamItem =
   | ThoughtItem
   | ToolCallItem
   | TodoListItem
-  | ActivityLogItem
+  | NotificationItem
   | CompactionItem
   | PluginTimelineStreamItem;
 
@@ -449,7 +449,11 @@ function mergeRetainedLifecycleItem(tail: StreamItem[], retained: StreamItem): S
     return null;
   }
   if (isAgentToolCallItem(retained)) {
-    const tailIndex = findExistingTimelineIdentityIndex(tail, retained.payload.data.callId);
+    const identity = agentToolCallIdentity({
+      callId: retained.payload.data.callId,
+      turnId: retained.turnId,
+    });
+    const tailIndex = findExistingTimelineIdentityIndex(tail, identity);
     const existing = tail[tailIndex];
     if (tailIndex < 0 || !existing || !isAgentToolCallItem(existing)) {
       return null;
@@ -771,17 +775,17 @@ export function isAgentToolCallItem(item: StreamItem): item is AgentToolCallItem
   return item.kind === "tool_call" && item.payload.source === "agent";
 }
 
-type ActivityLogType = "system" | "info" | "success" | "error";
+type NotificationLevel = "info" | "warning" | "error";
 
-export interface ActivityLogItem {
-  kind: "activity_log";
+export interface NotificationItem {
+  kind: "notification";
+  sourceType: "error" | "notification";
   id: string;
   timelineCursor?: TimelinePosition;
   turnId?: string;
   timestamp: Date;
-  activityType: ActivityLogType;
+  level: NotificationLevel;
   message: string;
-  metadata?: Record<string, unknown>;
 }
 
 export interface CompactionItem {
@@ -1022,9 +1026,24 @@ function finalizeActiveThoughts(state: StreamItem[]): StreamItem[] {
 }
 
 export function streamTimelineItemIdentity(item: StreamItem): string | null {
-  if (isAgentToolCallItem(item)) return item.payload.data.callId;
+  if (isAgentToolCallItem(item)) {
+    return agentToolCallIdentity({
+      callId: item.payload.data.callId,
+      turnId: item.turnId,
+    });
+  }
   if (item.kind === "plugin") return `${item.pluginId}/${item.pluginItemId}`;
   return null;
+}
+
+interface AgentToolCallIdentityInput {
+  callId: string;
+  turnId?: string;
+}
+
+function agentToolCallIdentity(input: AgentToolCallIdentityInput): string {
+  if (!input.turnId) return input.callId;
+  return `turn:${encodeURIComponent(input.turnId)}/${encodeURIComponent(input.callId)}`;
 }
 
 function findExistingTimelineIdentityIndex(state: StreamItem[], identity: string): number {
@@ -1165,13 +1184,18 @@ export function mergeAgentToolCallItem(
   };
 }
 
-function appendAgentToolCall(
-  state: StreamItem[],
-  data: AgentToolCallData,
-  timestamp: Date,
-  timelineCursor?: TimelinePosition,
-): StreamItem[] {
-  const existingIndex = findExistingTimelineIdentityIndex(state, data.callId);
+interface AppendAgentToolCallInput {
+  state: StreamItem[];
+  data: AgentToolCallData;
+  timestamp: Date;
+  turnId?: string;
+  timelineCursor?: TimelinePosition;
+}
+
+function appendAgentToolCall(input: AppendAgentToolCallInput): StreamItem[] {
+  const { state, data, timestamp, turnId, timelineCursor } = input;
+  const identity = agentToolCallIdentity({ callId: data.callId, turnId });
+  const existingIndex = findExistingTimelineIdentityIndex(state, identity);
 
   if (existingIndex >= 0) {
     const existing = state[existingIndex];
@@ -1200,8 +1224,9 @@ function appendAgentToolCall(
 
   const item: ToolCallItem = {
     kind: "tool_call",
-    id: `agent_tool_${data.callId}`,
+    id: `agent_tool_${identity}`,
     ...(timelineCursor ? { timelineCursor } : {}),
+    ...(turnId ? { turnId } : {}),
     timestamp,
     payload: {
       source: "agent",
@@ -1213,6 +1238,16 @@ function appendAgentToolCall(
   };
 
   return [...state, item];
+}
+
+function appendNotification(state: StreamItem[], entry: NotificationItem): StreamItem[] {
+  const index = state.findIndex((existing) => existing.id === entry.id);
+  if (index >= 0) {
+    const next = [...state];
+    next[index] = entry;
+    return next;
+  }
+  return [...state, entry];
 }
 
 function appendPluginTimelineItem(
@@ -1241,16 +1276,6 @@ function appendPluginTimelineItem(
   const next = [...state];
   next[existingIndex] = { ...nextItem, id: existing.id };
   return next;
-}
-
-function appendActivityLog(state: StreamItem[], entry: ActivityLogItem): StreamItem[] {
-  const index = state.findIndex((existing) => existing.id === entry.id);
-  if (index >= 0) {
-    const next = [...state];
-    next[index] = entry;
-    return next;
-  }
-  return [...state, entry];
 }
 
 function appendTodoList(
@@ -1415,9 +1440,9 @@ function reduceTimelineToolCall(
     );
   }
 
-  return appendAgentToolCall(
+  return appendAgentToolCall({
     state,
-    {
+    data: {
       provider: event.provider,
       callId: item.callId,
       name: item.name,
@@ -1428,7 +1453,8 @@ function reduceTimelineToolCall(
     },
     timestamp,
     timelineCursor,
-  );
+    turnId: event.turnId,
+  });
 }
 
 function reduceTimelineCompaction(
@@ -1459,7 +1485,7 @@ function reduceTimelineCompaction(
   }
   const compaction: CompactionItem = {
     kind: "compaction",
-    id: createTimelineId("compaction", item.status, timestamp),
+    id: createUniqueTimelineId(state, "compaction", item.status, timestamp),
     ...(timelineCursor ? { timelineCursor } : {}),
     timestamp,
     status: item.status,
@@ -1523,15 +1549,28 @@ function reduceTimelineEvent(
       );
     }
     case "error": {
-      const activity: ActivityLogItem = {
-        kind: "activity_log",
-        id: createTimelineId("error", item.message ?? "", timestamp),
+      const notification: NotificationItem = {
+        kind: "notification",
+        sourceType: "error",
+        id: createUniqueTimelineId(state, "error", item.message ?? "", timestamp),
         ...(timelineCursor ? { timelineCursor } : {}),
         timestamp,
-        activityType: "error",
+        level: "error",
         message: item.message ?? "Unknown error",
       };
-      return finalizeActiveThoughts(appendActivityLog(state, activity));
+      return finalizeActiveThoughts(appendNotification(state, notification));
+    }
+    case "notification": {
+      const notification: NotificationItem = {
+        kind: "notification",
+        sourceType: "notification",
+        id: createUniqueTimelineId(state, "notification", item.message, timestamp),
+        ...(timelineCursor ? { timelineCursor } : {}),
+        timestamp,
+        level: item.level,
+        message: item.message,
+      };
+      return finalizeActiveThoughts(appendNotification(state, notification));
     }
     case "compaction":
       return finalizeActiveThoughts(
@@ -1693,7 +1732,8 @@ function getEventItemKind(event: AgentStreamEventPayload): StreamItem["kind"] | 
     case "todo":
       return "todo_list";
     case "error":
-      return "activity_log";
+    case "notification":
+      return "notification";
     case "plugin":
       return "plugin";
     default:

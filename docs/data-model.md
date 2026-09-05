@@ -275,6 +275,45 @@ rather than storing something it cannot describe. That is why the client gates t
 UI on `server_info.features.agentProfiles` instead of letting a save appear to succeed against an
 older daemon.
 
+### Agent provider Paseo tools
+
+`agents.providers` is keyed by the exact provider ID used to launch the agent. The built-in IDs are
+`claude`, `codex`, `copilot`, `opencode`, `pi`, and `omp`. Custom provider IDs are their literal
+configuration keys, such as `my-claude` or `zai`, not the provider named by `extends`.
+
+Each entry may include a Paseo-tool policy:
+
+```json
+{
+  "agents": {
+    "providers": {
+      "my-claude": {
+        "extends": "claude",
+        "label": "My Claude",
+        "paseoTools": {
+          "enabled": true,
+          "disabledTools": ["browser_evaluate"]
+        }
+      }
+    }
+  }
+}
+```
+
+Absent `paseoTools`, or absent fields within it, means Paseo tools are enabled and all tools are
+allowed. `enabled: false` disables the provider's Paseo catalog; `disabledTools` lists exact tool
+IDs to omit. The policy covers the core and browser catalog, not the voice-only `speak` tool.
+Browser tools also require `daemon.browserTools.enabled` and a connected browser host.
+This policy controls the catalog presented to an agent. It is not an authorization boundary for
+agents that can access the host through a shell.
+
+`daemon.mcp.injectIntoAgents` is the global override. When it is `false`, no provider receives
+Paseo tools; otherwise the provider policy applies. Provider and global policy are resolved when a
+session is created, resumed, imported, or reloaded, so configuration changes affect the next
+session rather than an already-running one.
+
+`agents.metadataGeneration.providers` controls the preferred structured-generation fallback order for daemon-side metadata tasks such as commit messages, PR text, branch names, and generated agent titles. Entries are tried first in the configured order, then Paseo falls through to dynamically discovered defaults and finally the current selection when available.
+
 ### Git process limits
 
 Git process limits are global to one daemon. The start-rate limit defaults to `64` processes per

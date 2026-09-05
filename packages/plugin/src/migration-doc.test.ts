@@ -9,7 +9,7 @@ describe("plugin runtime-entry migration guide", () => {
     if (!context) throw new Error("PluginClientContext was not found");
     const methods = [...context.matchAll(/^\s+(add[A-Z]\w*)\(/gm)].map((match) => match[1]);
     const migration = await readFile(
-      fileURLToPath(new URL("../../../public-docs/plugins/migration.md", import.meta.url)),
+      fileURLToPath(new URL("../../../public-docs/plugins/v0.8/migration.md", import.meta.url)),
       "utf8",
     );
     const table = migration.slice(

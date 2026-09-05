@@ -30,10 +30,10 @@ Ask the daemon to inspect the provider environment it actually uses:
 ```bash
 paseo provider diagnostic claude
 paseo provider diagnostic codex --json
-paseo provider diagnostic opencode --host devbox:6767
+paseo --host devbox:6767 provider diagnostic opencode
 ```
 
-The diagnostic includes the configured command, daemon `PATH` and shell, matching binaries, resolved path, version, model count, and provider status. Use `--host` for a remote daemon. This is the same diagnostic shown under **Settings → your host → Providers → provider → Diagnostic**.
+The diagnostic includes the configured command, daemon `PATH` and shell, matching binaries, resolved path, version, model count, and provider status. Use the global `--host` option for a remote daemon. This is the same diagnostic shown under **Settings → your host → Providers → provider → Diagnostic**.
 
 ## Running agents
 
@@ -79,10 +79,10 @@ paseo project delete <project-id>
 
 `--reset` restores the name derived from the project directory. Deleting a project archives its active workspaces and removes the project from Paseo. It does not delete the project directory.
 
-For a local daemon, `paseo project create [path]` defaults to the current directory and resolves relative paths on the CLI machine. When you use `--host` or `PASEO_HOST`, provide a path that the target daemon can access:
+For a local daemon, `paseo project create [path]` defaults to the current directory and resolves relative paths on the CLI machine. When you use the global `--host` option or `PASEO_HOST`, provide a path that the target daemon can access:
 
 ```bash
-paseo project create /srv/repos/api --host devbox:6767
+paseo --host devbox:6767 project create /srv/repos/api
 ```
 
 The remote daemon interprets that path on its own machine. See [Workspaces](/docs/workspaces) for how projects group working directories and sessions.
@@ -138,13 +138,13 @@ paseo script start web
 paseo script stop web
 ```
 
-By default, Paseo selects the workspace whose directory is the current directory. Pass `--cwd <path>` to select a different directory, or `--workspace <workspace-id>` when a directory has multiple workspaces. These commands also accept `--host` and the standard output options such as `--json`.
+By default, Paseo selects the workspace whose directory is the current directory. Pass `--cwd <path>` to select a different directory, or `--workspace <workspace-id>` when a directory has multiple workspaces. Use the global `--host` option to target another daemon. These commands also accept standard output options such as `--json`.
 
 The output includes each script's lifecycle and supervised terminal ID. Services also include their assigned port, proxy URL, and health. See [Git worktrees](/docs/worktrees#scripts-and-services) for `paseo.json` configuration.
 
 ## Plugins
 
-> **Trust every plugin you add.** `paseo plugin add` and `paseo plugin install` mean “I trust this codebase.” Plugin server code and Git preparation commands run unsandboxed with the daemon user's access on the daemon host; client contributions run inside Paseo. Dependencies and future updates are part of that decision. With `--host`, commands run on the remote daemon host.
+> **Trust every plugin you add.** `paseo plugin add` and `paseo plugin install` mean “I trust this codebase.” Plugin server code and Git preparation commands run unsandboxed with the daemon user's access on the daemon host; client contributions run inside Paseo. Dependencies and future updates are part of that decision. With the global `--host` option, commands run on the remote daemon host.
 
 Create and manage trusted plugins on a daemon:
 
@@ -154,10 +154,9 @@ paseo plugin install /absolute/path/to/plugin
 paseo plugin add owner/repository
 paseo plugin add https://gitlab.com/group/repository.git --ref main
 paseo plugin add owner/monorepo:plugins/review
-paseo plugin status
+paseo plugin ls [id]
 paseo plugin update my-plugin
 paseo plugin update --all
-paseo plugin ls
 paseo plugin reload my-plugin
 paseo plugin logs my-plugin
 paseo plugin disable my-plugin
@@ -166,9 +165,10 @@ paseo plugin remove my-plugin
 ```
 
 GitHub shorthand checks an existing host directory first. Append `:<directory>` for a plugin in a
-monorepo. `paseo plugin logs <id>` returns the plugin's recent daemon-side stdout and stderr. Add `--json` for
-structured entries or `--host <target>` for another daemon. See the
-[Plugin reference](/docs/plugins/reference) for installation, trust, lifecycle, and log-retention
+monorepo. `paseo plugin ls [id]` does not contact the remote. `paseo plugin logs <id>` returns the
+plugin's recent daemon-side stdout and stderr. Add `--json` for structured entries, or run
+`paseo --host <target> plugin logs <id>` for another daemon. See the
+[Plugin reference](/docs/plugins/v0.7/reference) for installation, trust, lifecycle, and log-retention
 behavior.
 
 ## Listing agents
@@ -264,7 +264,7 @@ paseo daemon reload             # Reload config.json
 paseo daemon stop              # Stop the daemon
 ```
 
-Reload validates the whole file, applies runtime-safe changes, and reports `appliedPaths`, `restartRequiredPaths`, and `overrideControlledPaths`. Human output prints `paseo daemon restart` only when a changed setting needs it. Use `--json` or `--format yaml` for the structured result, and `--host` to reload a remote daemon's own configuration file. An older host that does not support reload returns an update-host error.
+Reload validates the whole file, applies runtime-safe changes, and reports `appliedPaths`, `restartRequiredPaths`, and `overrideControlledPaths`. Human output prints `paseo daemon restart` only when a changed setting needs it. Use `--json` or `--format yaml` for the structured result. Run `paseo --host <target> reload` to reload a remote daemon's own configuration file. An older host that does not support reload returns an update-host error.
 
 Use `PASEO_HOME` to run multiple isolated daemon instances.
 
@@ -302,7 +302,7 @@ See [Daemons in Hub](/docs/hub/daemons), [Hub configuration](/docs/hub/configura
 
 ## Connecting to a remote daemon
 
-`--host` accepts either a local target (`host:port`, a unix socket, or a Windows pipe) or a pairing offer URL, the same `https://app.paseo.sh/#offer=...` link the mobile app uses for QR pairing. With an offer URL the CLI connects through the Paseo relay with end-to-end encryption, so you can drive a daemon on another machine without exposing it to the network.
+The global `--host` option accepts either a local target (`host:port`, a unix socket, or a Windows pipe) or a pairing offer URL, the same `https://app.paseo.sh/#offer=...` link the mobile app uses for QR pairing. With an offer URL the CLI connects through the Paseo relay with end-to-end encryption, so you can drive a daemon on another machine without exposing it to the network.
 
 Get an offer URL from the daemon you want to control:
 
@@ -317,11 +317,11 @@ Relay is off for new installations. In non-interactive or JSON mode, a disabled 
 Use it from anywhere:
 
 ```bash
-paseo ls --host 'https://app.paseo.sh/#offer=eyJ2IjoyLC...'
-paseo run --host "$OFFER_URL" "fix the failing tests"
+paseo --host 'https://app.paseo.sh/#offer=eyJ2IjoyLC...' ls
+paseo --host "$OFFER_URL" run "fix the failing tests"
 ```
 
-You can also set it once via `PASEO_HOST` instead of passing `--host` on every command.
+You can also set it once via `PASEO_HOST` instead of passing `--host` on every command. An explicit flag overrides the environment variable.
 
 ## Multi-agent workflows
 

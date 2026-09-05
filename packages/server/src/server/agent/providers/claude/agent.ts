@@ -287,6 +287,11 @@ interface AsyncMessageInput<T> {
   iterable: AsyncIterable<T>;
 }
 
+interface ClaudeReplayOwnership {
+  restoredIds: ReadonlySet<string>;
+  toolOwners: ReadonlyMap<string, string>;
+}
+
 interface PersistedTimelineEntry {
   item: AgentTimelineItem;
   timestamp?: string;
@@ -4162,6 +4167,9 @@ class ClaudeAgentSession implements AgentSession {
   private buildSubagentToolCallCard(
     declaration: Extract<SubagentObservation, { kind: "declared" }>,
   ): AgentStreamEvent | null {
+    // The launching sidechain already owns and renders this tool call. Mirroring it into the
+    // managed parent's transcript would flatten both the card and the child relationship.
+    if (declaration.parentSubagentId) return null;
     const toolCall = mapClaudeRunningToolCall({
       name: "Task",
       callId: declaration.id,
@@ -4283,11 +4291,6 @@ class ClaudeAgentSession implements AgentSession {
     message: Extract<SDKMessage, { type: "system"; subtype: "task_notification" }>,
     events: AgentStreamEvent[],
   ): void {
-    // TODO: subagent timelines are best-effort. Subagent task_notifications
-    // arrive without parent_tool_use_id but with tool_use_id pointing at the
-    // the parent's subagent tool call, so they slip past the sidechain router and pollute
-    // the parent timeline. Drop them here; eventually thread them into the
-    // parent tool call's sub_agent log instead.
     const taskUseId = message.tool_use_id;
     const cachedTool = taskUseId ? this.toolUseCache.get(taskUseId) : undefined;
     // The task protocol owns provider-subagent identity. Workflow launch results arrive before
@@ -4300,6 +4303,15 @@ class ClaudeAgentSession implements AgentSession {
       return;
     }
     const taskNotificationItem = mapTaskNotificationSystemRecordToToolCall(message);
+    const ownerSubagentId = this.taskProtocolSource.resolveTaskOwner(message.task_id, taskUseId);
+    if (taskNotificationItem && ownerSubagentId) {
+      events.push({
+        type: "provider_subagent",
+        provider: "claude",
+        event: { type: "timeline", id: ownerSubagentId, item: taskNotificationItem },
+      });
+      return;
+    }
     if (taskNotificationItem) {
       events.push({
         type: "timeline",
@@ -4333,11 +4345,7 @@ class ClaudeAgentSession implements AgentSession {
       messageId,
     });
     if (taskNotificationItem) {
-      events.push({
-        type: "timeline",
-        item: taskNotificationItem,
-        provider: "claude",
-      });
+      this.appendUserTaskNotificationEvent(taskNotificationItem, events);
       return;
     }
     if (typeof content === "string" && content.length > 0) {
@@ -4357,6 +4365,28 @@ class ClaudeAgentSession implements AgentSession {
     if (Array.isArray(content)) {
       this.appendUserContentArrayEvents(content, messageId, events);
     }
+  }
+
+  private appendUserTaskNotificationEvent(
+    item: Extract<AgentTimelineItem, { type: "tool_call" }>,
+    events: AgentStreamEvent[],
+  ): void {
+    const taskId = typeof item.metadata?.taskId === "string" ? item.metadata.taskId : undefined;
+    const toolUseId =
+      typeof item.metadata?.toolUseId === "string" ? item.metadata.toolUseId : undefined;
+    if (taskId && this.taskProtocolSource.isDeclaredTask(taskId)) return;
+    const ownerSubagentId = taskId
+      ? this.taskProtocolSource.resolveTaskOwner(taskId, toolUseId)
+      : undefined;
+    if (ownerSubagentId) {
+      events.push({
+        type: "provider_subagent",
+        provider: "claude",
+        event: { type: "timeline", id: ownerSubagentId, item },
+      });
+      return;
+    }
+    events.push({ type: "timeline", item, provider: "claude" });
   }
 
   private appendUserContentArrayEvents(
@@ -4807,27 +4837,24 @@ class ClaudeAgentSession implements AgentSession {
         return;
       }
       const content = fs.readFileSync(historyPath, "utf8");
-      const restoredProviderSubagentIds = this.ingestPersistedSidechains(
+      const replay = this.ingestPersistedSidechains(
         content,
         readClaudeSidechainHistory(historyPath),
       );
-      this.ingestPersistedHistory(content, restoredProviderSubagentIds);
+      this.ingestPersistedHistory(content, replay);
     } catch {
       // ignore history load failures
     }
   }
 
-  private ingestPersistedHistory(
-    content: string,
-    restoredProviderSubagentIds: ReadonlySet<string>,
-  ): void {
+  private ingestPersistedHistory(content: string, replay: ClaudeReplayOwnership): void {
     if (!content) {
       return;
     }
 
     const timeline: PersistedTimelineEntry[] = [];
     for (const line of content.split(/\r?\n/)) {
-      this.ingestPersistedHistoryLine(line, timeline, restoredProviderSubagentIds);
+      this.ingestPersistedHistoryLine(line, timeline, replay);
     }
 
     if (timeline.length > 0) {
@@ -4839,7 +4866,7 @@ class ClaudeAgentSession implements AgentSession {
   private ingestPersistedSidechains(
     parentContent: string,
     sidechains: ClaudeSidechainHistory,
-  ): Set<string> {
+  ): ClaudeReplayOwnership {
     const parentEntries = parseClaudeHistoryRecords(parentContent).filter(
       (entry) => entry.isSidechain !== true,
     );
@@ -4849,16 +4876,18 @@ class ClaudeAgentSession implements AgentSession {
 
     // Replay produces the same observations the live task protocol produces, then folds them
     // with the same function, so identity and status are derived once for both paths.
+    const subagentReplay = observeReplaySubagents({
+      subagents: [...groupClaudeSidechainEntries(sidechainEntries)].map(([agentId, entries]) => ({
+        agentId,
+        meta: sidechains.metaByAgentId.get(agentId) ?? null,
+        entries,
+        parentFacts: readClaudeReplayParentFacts(entries as ClaudeHistoryEntry[]),
+      })),
+      parent: readClaudeReplayParentFacts(parentEntries),
+      convertEntry: (entry) => this.convertHistoryEntry(entry as ClaudeHistoryEntry),
+    });
     const observations = [
-      ...observeReplaySubagents({
-        subagents: [...groupClaudeSidechainEntries(sidechainEntries)].map(([agentId, entries]) => ({
-          agentId,
-          meta: sidechains.metaByAgentId.get(agentId) ?? null,
-          entries,
-        })),
-        parent: readClaudeReplayParentFacts(parentEntries),
-        convertEntry: (entry) => this.convertHistoryEntry(entry as ClaudeHistoryEntry),
-      }),
+      ...subagentReplay.observations,
       ...observeReplayWorkflows({
         workflows: sidechains.workflowContents
           .map(parseClaudeWorkflowRun)
@@ -4880,7 +4909,11 @@ class ClaudeAgentSession implements AgentSession {
         .filter((observation) => observation.kind === "declared")
         .map((observation) => observation.id),
     );
-    if (observations.length === 0) return restoredProviderSubagentIds;
+    const replay = {
+      restoredIds: restoredProviderSubagentIds,
+      toolOwners: subagentReplay.toolOwners,
+    };
+    if (observations.length === 0) return replay;
 
     this.persistedProviderSubagentEvents.push(
       ...foldSubagentObservations(observations).map(
@@ -4892,13 +4925,13 @@ class ClaudeAgentSession implements AgentSession {
       ),
     );
     this.historyPending = true;
-    return restoredProviderSubagentIds;
+    return replay;
   }
 
   private ingestPersistedHistoryLine(
     line: string,
     timeline: PersistedTimelineEntry[],
-    restoredProviderSubagentIds: ReadonlySet<string>,
+    replay: ClaudeReplayOwnership,
   ): void {
     const trimmed = line.trim();
     if (!trimmed) {
@@ -4921,11 +4954,29 @@ class ClaudeAgentSession implements AgentSession {
       return;
     }
     const notificationToolUseId = readTaskNotificationToolUseIdFromHistoryRecord(entry);
-    if (notificationToolUseId && restoredProviderSubagentIds.has(notificationToolUseId)) {
+    if (notificationToolUseId && replay.restoredIds.has(notificationToolUseId)) {
       return;
     }
 
     const historyTimestamp = normalizeProviderReplayTimestamp(entry.timestamp);
+    const notificationOwner = notificationToolUseId
+      ? replay.toolOwners.get(notificationToolUseId)
+      : undefined;
+    if (notificationOwner) {
+      for (const item of this.convertHistoryEntry(entry)) {
+        this.persistedProviderSubagentEvents.push({
+          type: "provider_subagent",
+          provider: "claude",
+          event: {
+            type: "timeline",
+            id: notificationOwner,
+            item,
+            timestamp: historyTimestamp ?? undefined,
+          },
+        });
+      }
+      return;
+    }
     const taskSnapshot = this.taskState.observe(entry);
     const items = [...(taskSnapshot ? [taskSnapshot] : []), ...this.convertHistoryEntry(entry)];
     const isVisibleUserEntry =
