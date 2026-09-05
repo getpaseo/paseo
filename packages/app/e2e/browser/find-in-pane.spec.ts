@@ -1,20 +1,35 @@
-import { writeFile } from "node:fs/promises";
-import path from "node:path";
-import { expect, test, type Page } from "../support/fixtures";
+import { test } from "../support/fixtures";
 import {
-  openFileExplorer,
-  openFileFromExplorer,
-  expectFileTabOpen,
-} from "../support/helpers/file-explorer";
-import { openAgentRoute, seedMockAgentWorkspace } from "../support/helpers/mock-agent";
+  closeFind,
+  closeFindWithButton,
+  expectActiveSourceLine,
+  expectFindClosed,
+  expectFindCount,
+  expectFindQuery,
+  expectHighlightedMatches,
+  expectRowInsideTimelineViewport,
+  expectSourceMarks,
+  expectTerminalFindMarks,
+  expectTerminalFocused,
+  findFor,
+  goToNextMatch,
+  goToNextMatchWithShortcut,
+  goToPreviousMatch,
+  goToPreviousMatchWithShortcut,
+  openFind,
+  openTimelineWithPromptVirtualized,
+  openTranscript,
+  openWorkspaceRenderedFile,
+  openWorkspaceSourceFile,
+  readMatchTotalOfAtLeast,
+  runInTerminal,
+  seedFindTranscript,
+  showFilePreview,
+  showFileSource,
+} from "../support/helpers/find-in-pane";
 import { TerminalE2EHarness, withTerminalInApp } from "../support/helpers/terminal-dsl";
-import { waitForTerminalContent } from "../support/helpers/terminal-perf";
 import {
-  expectTimelinePromptNotMounted,
   expectTimelinePromptVisible,
-  openAgentTimeline,
-  scrollTimelineToNewestLoadedEdge,
-  scrollTimelineUntilOlderHistoryIsReachable,
   seedLongMockAgentTimeline,
 } from "../support/helpers/timeline-pagination";
 
@@ -36,169 +51,70 @@ const TRANSCRIPT_MARKDOWN = [
 
 const TRANSCRIPT_MATCH_COUNT = 4;
 
-const SOURCE_FILE = "find-target.ts";
-const SOURCE_CONTENT = [
-  'const alpha = "needle one";',
-  "const beta = 2;",
-  'const gamma = "needle two";',
-  "const delta = 4;",
-  'const epsilon = "needle three";',
-  "",
-].join("\n");
+const SOURCE_FILE = {
+  prefix: "find-file-source-",
+  file: "find-target.ts",
+  content: [
+    'const alpha = "needle one";',
+    "const beta = 2;",
+    'const gamma = "needle two";',
+    "const delta = 4;",
+    'const epsilon = "needle three";',
+    "",
+  ].join("\n"),
+};
 
-const MARKDOWN_FILE = "find-notes.md";
-const MARKDOWN_CONTENT = [
-  "# Beacon notes",
-  "",
-  "The beacon repeats: beacon.",
-  "",
-  "- beacon item",
-  "",
-].join("\n");
+const MARKDOWN_FILE = {
+  prefix: "find-file-markdown-",
+  file: "find-notes.md",
+  content: ["# Beacon notes", "", "The beacon repeats: beacon.", "", "- beacon item", ""].join(
+    "\n",
+  ),
+};
+
+/** HTML renders into a sandboxed frame the pane cannot search, so Preview has no engine. */
+const HTML_FILE = {
+  prefix: "find-file-html-",
+  file: "find-plan.html",
+  content: [
+    "<!doctype html>",
+    "<html>",
+    "  <body>",
+    "    <p>The signal repeats: signal.</p>",
+    "  </body>",
+    "</html>",
+    "",
+  ].join("\n"),
+};
 
 /** The terminal token never appears in the command line that produces it. */
 const TERMINAL_TOKEN = "zeb-";
 const TERMINAL_COMMAND = `tok=zeb; printf '%s\\n' "$tok-1" "$tok-2" "$tok-3"\n`;
 
-function findBar(page: Page) {
-  return page.getByTestId("find-bar").filter({ visible: true }).first();
-}
-
-function findInput(page: Page) {
-  return page.getByTestId("find-bar-input").filter({ visible: true }).first();
-}
-
-function findCount(page: Page) {
-  return page.getByTestId("find-bar-count").filter({ visible: true }).first();
-}
-
-async function openFindBar(page: Page): Promise<void> {
-  await page.keyboard.press("ControlOrMeta+f");
-  await expect(findBar(page)).toBeVisible();
-  // The bar focuses its input from an effect, so typing before this settles would be
-  // overwritten by the prefill that same effect applies.
-  await expect(findInput(page)).toBeFocused();
-}
-
-async function typeFindQuery(page: Page, query: string): Promise<void> {
-  await findInput(page).fill(query);
-}
-
-async function closeFindBar(page: Page): Promise<void> {
-  await page.keyboard.press("Escape");
-  await expect(page.getByTestId("find-bar")).toHaveCount(0);
-}
-
-/** The document-level CSS Custom Highlight registry the DOM engines paint through. */
-async function highlightSize(page: Page, name: string): Promise<number> {
-  return page.evaluate((highlightName) => CSS.highlights.get(highlightName)?.size ?? 0, name);
-}
-
-async function activeElementClassName(page: Page): Promise<string> {
-  return page.evaluate(() => document.activeElement?.className ?? "");
-}
-
-/** Closing the bar hands focus back to the element it took it from — xterm's textarea. */
-async function expectTerminalTextareaFocused(page: Page): Promise<void> {
-  await expect.poll(() => activeElementClassName(page)).toContain("xterm-helper-textarea");
-}
-
-function hasLastTerminalLine(text: string): boolean {
-  return text.includes("zeb-3");
-}
-
-async function readMatchTotal(page: Page): Promise<number> {
-  const label = await findCount(page).innerText();
-  const total = Number(label.split(" of ")[1]);
-  expect(Number.isFinite(total)).toBe(true);
-  return total;
-}
-
-function sourceEditor(page: Page) {
-  return page.getByTestId("file-source-editor").filter({ visible: true }).first();
-}
-
-async function selectFileView(page: Page, view: "Preview" | "Source"): Promise<void> {
-  const option = page
-    .getByTestId("file-panel-bar")
-    .getByRole("button", { name: view, exact: true });
-  await option.click();
-  await expect(option).toHaveAttribute("aria-selected", "true");
-}
-
-/** Places the caret at the document start so the first match is deterministic. */
-async function focusEditorAtStart(page: Page): Promise<void> {
-  const content = sourceEditor(page).locator(".cm-content");
-  await content.click();
-  await content.press("ControlOrMeta+Home");
-  await expect(page.getByLabel("Line 1, column 1")).toBeVisible();
-}
-
-async function activeMatchLineText(page: Page): Promise<string | null> {
-  return page.evaluate(
-    () =>
-      document.querySelector(".cm-paseoFindMatchActive")?.closest(".cm-line")?.textContent ?? null,
-  );
-}
-
-async function expectPromptInsideTimelineViewport(page: Page, prompt: string): Promise<void> {
-  const timeline = page.locator('[data-testid="agent-chat-scroll"]:visible').first();
-  const row = timeline.locator("[data-history-row-id]").filter({ hasText: prompt }).first();
-  await expect
-    .poll(async () => {
-      const [timelineBox, rowBox] = await Promise.all([timeline.boundingBox(), row.boundingBox()]);
-      if (!timelineBox || !rowBox) return false;
-      return (
-        rowBox.y >= timelineBox.y - 1 &&
-        rowBox.y + rowBox.height <= timelineBox.y + timelineBox.height + 1
-      );
-    })
-    .toBe(true);
-}
-
 test.describe("find in pane", () => {
   test("searches the rendered transcript and steps through its matches", async ({ page }) => {
-    const agent = await seedMockAgentWorkspace({
-      repoPrefix: "find-transcript-",
-      title: "Find in transcript",
-      initialPrompt: "Render the find fixture.",
-      featureValues: { mockAssistantResponse: TRANSCRIPT_MARKDOWN },
-    });
+    const agent = await seedFindTranscript(TRANSCRIPT_MARKDOWN);
 
     try {
-      await agent.client.waitForAgentUpsert(
-        agent.agentId,
-        (snapshot) => snapshot.status === "idle",
-        30_000,
-      );
-      await openAgentRoute(page, agent);
-      await expect(
-        page.getByTestId("assistant-message").filter({ hasText: "stays bold" }),
-      ).toBeVisible({ timeout: 30_000 });
+      await openTranscript(page, agent, "stays bold");
 
-      await openFindBar(page);
-      await typeFindQuery(page, "lantern");
-      await expect(findCount(page)).toHaveText(`1 of ${TRANSCRIPT_MATCH_COUNT}`);
+      await findFor(page, "lantern");
+      await expectFindCount(page, `1 of ${TRANSCRIPT_MATCH_COUNT}`);
 
-      await page.keyboard.press("Enter");
-      await expect(findCount(page)).toHaveText(`2 of ${TRANSCRIPT_MATCH_COUNT}`);
-      await page.keyboard.press("Shift+Enter");
-      await expect(findCount(page)).toHaveText(`1 of ${TRANSCRIPT_MATCH_COUNT}`);
+      await goToNextMatch(page);
+      await expectFindCount(page, `2 of ${TRANSCRIPT_MATCH_COUNT}`);
+      await goToPreviousMatch(page);
+      await expectFindCount(page, `1 of ${TRANSCRIPT_MATCH_COUNT}`);
 
-      await page.keyboard.press("ControlOrMeta+g");
-      await expect(findCount(page)).toHaveText(`2 of ${TRANSCRIPT_MATCH_COUNT}`);
-      await page.keyboard.press("ControlOrMeta+Shift+g");
-      await expect(findCount(page)).toHaveText(`1 of ${TRANSCRIPT_MATCH_COUNT}`);
+      await goToNextMatchWithShortcut(page);
+      await expectFindCount(page, `2 of ${TRANSCRIPT_MATCH_COUNT}`);
+      await goToPreviousMatchWithShortcut(page);
+      await expectFindCount(page, `1 of ${TRANSCRIPT_MATCH_COUNT}`);
 
-      // The active range is painted by the second highlight, so it is excluded from
-      // the plain-match one rather than stacked under it.
-      await expect
-        .poll(() => highlightSize(page, "paseo-find-match"))
-        .toBe(TRANSCRIPT_MATCH_COUNT - 1);
-      await expect.poll(() => highlightSize(page, "paseo-find-match-active")).toBe(1);
+      await expectHighlightedMatches(page, { plain: TRANSCRIPT_MATCH_COUNT - 1, active: 1 });
 
-      await closeFindBar(page);
-      await expect.poll(() => highlightSize(page, "paseo-find-match")).toBe(0);
+      await closeFind(page);
+      await expectHighlightedMatches(page, { plain: 0, active: 0 });
     } finally {
       await agent.cleanup();
     }
@@ -207,28 +123,18 @@ test.describe("find in pane", () => {
   test("reveals a virtualized transcript row that holds the only match", async ({ page }) => {
     test.setTimeout(180_000);
     const agent = await seedLongMockAgentTimeline({ turns: 60 });
+    const target = agent.prompts[3];
 
     try {
-      await openAgentTimeline(page, agent);
-      await expectTimelinePromptVisible(page, agent.newestPrompt);
+      await openTimelineWithPromptVirtualized(page, agent, target);
 
-      // Load every turn, then return to the newest edge so the old prompt is inside
-      // the loaded window but virtualized out of the DOM.
-      await scrollTimelineUntilOlderHistoryIsReachable(page, agent.oldestPrompt);
-      await scrollTimelineToNewestLoadedEdge(page);
-      await expectTimelinePromptVisible(page, agent.newestPrompt);
-
-      const target = agent.prompts[3];
-      await expectTimelinePromptNotMounted(page, target);
-
-      await openFindBar(page);
-      await typeFindQuery(page, "timeline-pagination-turn-3:");
-      await expect(findCount(page)).toHaveText("1 of 1", { timeout: 30_000 });
+      await findFor(page, "timeline-pagination-turn-3:");
+      await expectFindCount(page, "1 of 1", { timeout: 30_000 });
 
       await expectTimelinePromptVisible(page, target);
-      await expectPromptInsideTimelineViewport(page, target);
+      await expectRowInsideTimelineViewport(page, target);
 
-      await closeFindBar(page);
+      await closeFind(page);
     } finally {
       await agent.cleanup();
     }
@@ -240,27 +146,20 @@ test.describe("find in pane", () => {
 
     try {
       await withTerminalInApp(page, harness, { name: "find-terminal" }, async () => {
-        await harness.setupPrompt(page);
+        await runInTerminal(page, harness, {
+          command: TERMINAL_COMMAND,
+          settledText: "zeb-3",
+        });
 
-        const terminal = harness.terminalSurface(page).first();
-        await terminal.pressSequentially(TERMINAL_COMMAND, { delay: 0 });
-        await waitForTerminalContent(page, hasLastTerminalLine, 15_000);
+        await findFor(page, TERMINAL_TOKEN);
+        const total = await readMatchTotalOfAtLeast(page, 2);
+        await expectTerminalFindMarks(page);
 
-        await openFindBar(page);
-        await typeFindQuery(page, TERMINAL_TOKEN);
-        await expect(findCount(page)).toHaveText(/^1 of \d+$/);
+        await goToNextMatch(page);
+        await expectFindCount(page, `2 of ${total}`);
 
-        const total = await readMatchTotal(page);
-        expect(total).toBeGreaterThanOrEqual(2);
-        await expect(
-          page.locator('[data-testid="terminal-surface"] .xterm-find-result-decoration'),
-        ).not.toHaveCount(0);
-
-        await page.keyboard.press("Enter");
-        await expect(findCount(page)).toHaveText(`2 of ${total}`);
-
-        await closeFindBar(page);
-        await expectTerminalTextareaFocused(page);
+        await closeFind(page);
+        await expectTerminalFocused(page);
       });
     } finally {
       await harness.cleanup();
@@ -272,30 +171,19 @@ test.describe("find in pane", () => {
     withWorkspace,
   }) => {
     test.setTimeout(120_000);
-    const workspace = await withWorkspace({ prefix: "find-file-source-" });
-    await writeFile(path.join(workspace.repoPath, SOURCE_FILE), SOURCE_CONTENT, "utf8");
-    await workspace.navigateTo();
+    await openWorkspaceSourceFile(page, withWorkspace, SOURCE_FILE);
 
-    await openFileExplorer(page);
-    await openFileFromExplorer(page, SOURCE_FILE);
-    await expectFileTabOpen(page, SOURCE_FILE);
-    await focusEditorAtStart(page);
+    await findFor(page, "needle");
+    await expectFindCount(page, "1 of 3");
+    await expectSourceMarks(page, { plain: 2, active: 1 });
+    await expectActiveSourceLine(page, 'const alpha = "needle one";');
 
-    await openFindBar(page);
-    await typeFindQuery(page, "needle");
-    await expect(findCount(page)).toHaveText("1 of 3");
-    // The active match carries its own class, so the plain marks are the other two.
-    await expect(sourceEditor(page).locator(".cm-paseoFindMatch")).toHaveCount(2);
-    await expect(sourceEditor(page).locator(".cm-paseoFindMatchActive")).toHaveCount(1);
-    expect(await activeMatchLineText(page)).toBe('const alpha = "needle one";');
+    await goToNextMatch(page);
+    await expectFindCount(page, "2 of 3");
+    await expectActiveSourceLine(page, 'const gamma = "needle two";');
 
-    await page.keyboard.press("Enter");
-    await expect(findCount(page)).toHaveText("2 of 3");
-    await expect.poll(() => activeMatchLineText(page)).toBe('const gamma = "needle two";');
-
-    await closeFindBar(page);
-    await expect(sourceEditor(page).locator(".cm-paseoFindMatch")).toHaveCount(0);
-    await expect(sourceEditor(page).locator(".cm-paseoFindMatchActive")).toHaveCount(0);
+    await closeFind(page);
+    await expectSourceMarks(page, { plain: 0, active: 0 });
   });
 
   test("carries a Markdown file's query from source into the preview", async ({
@@ -303,29 +191,40 @@ test.describe("find in pane", () => {
     withWorkspace,
   }) => {
     test.setTimeout(120_000);
-    const workspace = await withWorkspace({ prefix: "find-file-markdown-" });
-    await writeFile(path.join(workspace.repoPath, MARKDOWN_FILE), MARKDOWN_CONTENT, "utf8");
-    await workspace.navigateTo();
+    await openWorkspaceRenderedFile(page, withWorkspace, MARKDOWN_FILE);
+    await showFileSource(page);
 
-    await openFileExplorer(page);
-    await openFileFromExplorer(page, MARKDOWN_FILE);
-    await expectFileTabOpen(page, MARKDOWN_FILE);
-    await selectFileView(page, "Source");
-    await focusEditorAtStart(page);
-
-    await openFindBar(page);
-    await typeFindQuery(page, "beacon");
-    await expect(findCount(page)).toHaveText("1 of 4");
+    await findFor(page, "beacon");
+    await expectFindCount(page, "1 of 4");
 
     // The mode switch swaps CodeMirror's engine for the rendered preview's DOM engine;
     // the typed query has to survive that.
-    await selectFileView(page, "Preview");
-    await expect(findBar(page)).toBeVisible();
-    await expect(findInput(page)).toHaveValue("beacon");
-    await expect(findCount(page)).toHaveText(/ of 4$/);
-    await expect.poll(() => highlightSize(page, "paseo-find-match")).toBe(3);
+    await showFilePreview(page);
+    await expectFindQuery(page, "beacon");
+    await expectFindCount(page, / of 4$/);
+    await expectHighlightedMatches(page, { plain: 3, active: 1 });
 
-    await page.getByTestId("find-bar-close").filter({ visible: true }).first().click();
-    await expect(page.getByTestId("find-bar")).toHaveCount(0);
+    await closeFindWithButton(page);
+  });
+
+  test("closes the find bar when a file mode stops being searchable", async ({
+    page,
+    withWorkspace,
+  }) => {
+    test.setTimeout(120_000);
+    await openWorkspaceRenderedFile(page, withWorkspace, HTML_FILE);
+    await showFileSource(page);
+
+    await findFor(page, "signal");
+    await expectFindCount(page, "1 of 2");
+
+    // Nothing in the HTML preview is searchable, so a bar left open over it would
+    // answer neither Enter nor Cmd+G.
+    await showFilePreview(page);
+    await expectFindClosed(page);
+
+    await showFileSource(page);
+    await openFind(page);
+    await expectFindCount(page, "1 of 2");
   });
 });

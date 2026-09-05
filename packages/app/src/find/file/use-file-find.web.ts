@@ -25,9 +25,9 @@ export type UseFileFindResult = UseFindSurfaceResult | null;
  * Each mode brings its own text store, so the engine is swapped rather than adapted:
  * CodeMirror owns the source and editor modes, the shared DOM engine owns the rendered
  * Markdown preview, and HTML previews, images and binaries have no engine at all — in
- * those modes the surface stays unregistered and Cmd+F falls through to the browser.
- * The typed query survives a mode switch because `useFindSurface` re-applies it to
- * whatever engine appears next.
+ * those modes the surface stays unregistered, an open bar closes, and Cmd+F falls
+ * through to the browser. The typed query survives a mode switch because
+ * `useFindSurface` re-applies it to whatever engine appears next.
  */
 export function useFileFind({
   enabled,
@@ -50,12 +50,24 @@ export function useFileFind({
     };
   }, [editorView, enabled, previewScrollElement]);
 
-  return useFindSurface({
+  const surface = useFindSurface({
     name: "file",
     engine,
     enabled: enabled && searchable,
     getRoot,
   });
+
+  // Switching into an unsearchable mode with the bar open would leave a bar that answers
+  // nothing: there is no engine behind Enter, and Cmd+G routes through the surface
+  // registry, which this pane just dropped out of.
+  const { isOpen, close } = surface;
+  useEffect(() => {
+    if (isOpen && !searchable) {
+      close();
+    }
+  }, [close, isOpen, searchable]);
+
+  return surface;
 }
 
 function createEngine(input: {

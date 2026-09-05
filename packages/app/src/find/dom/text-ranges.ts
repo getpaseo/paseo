@@ -7,16 +7,20 @@ export interface FindTextRangesInput {
   query: string;
 }
 
-interface TextSegment {
-  node: Text;
-  /** Where this node's text starts and ends inside the root's flattened text. */
-  start: number;
-  end: number;
-}
-
-interface TextPosition {
-  node: Text;
-  offset: number;
+/**
+ * A root's folded text plus, for every folded code unit, the text node and the bounds
+ * of the source character it came from.
+ *
+ * Folding is per code point and can change length (see `foldFindText`), so a match
+ * index in `folded` says nothing about an offset in the DOM without this map. A match
+ * that starts or ends inside an expanded fold pins the whole source character, which is
+ * the only thing a Range can express.
+ */
+interface FoldedText {
+  folded: string;
+  nodes: Text[];
+  starts: number[];
+  ends: number[];
 }
 
 /**
@@ -35,27 +39,25 @@ export function findTextRanges({ roots, query }: FindTextRangesInput): Range[] {
 }
 
 function rangesInRoot(root: Element, needle: string): Range[] {
-  const segments = collectTextSegments(root);
-  const haystack = segments.map((segment) => foldFindText(segment.node.data)).join("");
+  const text = foldTextNodes(collectTextNodes(root));
 
   const ranges: Range[] = [];
-  let index = haystack.indexOf(needle);
+  let index = text.folded.indexOf(needle);
   while (index !== -1) {
-    const start = locateStart(segments, index);
-    const end = locateEnd(segments, index + needle.length);
+    const last = index + needle.length - 1;
     const range = root.ownerDocument.createRange();
-    range.setStart(start.node, start.offset);
-    range.setEnd(end.node, end.offset);
+    range.setStart(text.nodes[index], text.starts[index]);
+    range.setEnd(text.nodes[last], text.ends[last]);
     ranges.push(range);
     // Non-overlapping, the way a browser's own find behaves.
-    index = haystack.indexOf(needle, index + needle.length);
+    index = text.folded.indexOf(needle, index + needle.length);
   }
   return ranges;
 }
 
 const SKIPPED_TAGS = new Set(["SCRIPT", "STYLE"]);
 
-function collectTextSegments(root: Element): TextSegment[] {
+function collectTextNodes(root: Element): Text[] {
   const walker = root.ownerDocument.createTreeWalker(
     root,
     NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT,
@@ -73,70 +75,57 @@ function collectTextSegments(root: Element): TextSegment[] {
     },
   );
 
-  const segments: TextSegment[] = [];
-  let length = 0;
+  const nodes: Text[] = [];
   for (let node = walker.nextNode(); node; node = walker.nextNode()) {
-    if (!(node instanceof Text) || node.data === "") {
-      continue;
+    if (node instanceof Text && node.data !== "") {
+      nodes.push(node);
     }
-    segments.push({ node, start: length, end: length + node.data.length });
-    length = length + node.data.length;
   }
-  return segments;
+  return nodes;
 }
 
 /**
- * The start boundary belongs to the node the character at `index` lives in; the end
- * boundary belongs to the node the last matched character lives in. Splitting the two
- * keeps a range that ends on a node boundary from starting in the node before it, which
- * is why the two predicates differ on the `end == index` case.
- */
-function locateStart(segments: readonly TextSegment[], index: number): TextPosition {
-  const segment = firstSegment(segments, (candidate) => index < candidate.end);
-  if (!segment) {
-    throw new Error("Find match starts past the searched text");
-  }
-  return { node: segment.node, offset: index - segment.start };
-}
-
-function locateEnd(segments: readonly TextSegment[], index: number): TextPosition {
-  const segment = firstSegment(segments, (candidate) => index <= candidate.end);
-  if (!segment) {
-    throw new Error("Find match ends past the searched text");
-  }
-  return { node: segment.node, offset: index - segment.start };
-}
-
-/**
- * The first segment the predicate accepts, found by halving rather than scanning.
+ * Builds the haystack and its offset map in one pass, character by character.
  *
- * `segments` is ordered by `end`, so both locate predicates are false for a prefix of
- * the list and true for the rest. Scanning from the front instead cost O(matches x text
- * nodes) per recompute, and the Markdown preview hands the engine one root holding the
- * whole document: a one-character query in a large README ran that on every keystroke.
+ * The Markdown preview hands the engine one root holding the whole document and this
+ * reruns on every keystroke, so it stays linear in the text: no scan or binary search
+ * over nodes per match, one map entry per folded code unit.
  */
-function firstSegment(
-  segments: readonly TextSegment[],
-  accepts: (segment: TextSegment) => boolean,
-): TextSegment | undefined {
-  let low = 0;
-  let high = segments.length;
-  while (low < high) {
-    const middle = (low + high) >> 1;
-    if (accepts(segments[middle])) {
-      high = middle;
-    } else {
-      low = middle + 1;
+function foldTextNodes(nodes: readonly Text[]): FoldedText {
+  let folded = "";
+  const sources: Text[] = [];
+  const starts: number[] = [];
+  const ends: number[] = [];
+  for (const node of nodes) {
+    let offset = 0;
+    for (const char of node.data) {
+      const end = offset + char.length;
+      const lower = char.toLowerCase();
+      folded += lower;
+      for (let unit = 0; unit < lower.length; unit += 1) {
+        sources.push(node);
+        starts.push(offset);
+        ends.push(end);
+      }
+      offset = end;
     }
   }
-  return segments[low];
+  return { folded, nodes: sources, starts, ends };
 }
 
 /**
- * Case folding that never changes a string's length, so a match index maps straight
- * back onto text-node offsets. The few characters whose lowercase form is longer
- * (Turkish dotted capital I, for one) keep their original form and simply do not
- * match their lowercase spelling.
+ * Case folding, one code point at a time.
+ *
+ * Lowercasing a whole string applies context-sensitive rules — a final Greek sigma
+ * folds differently from a medial one — and the DOM walk sees text split across
+ * arbitrary node boundaries, so only a per-code-point fold gives the same answer as
+ * folding the transcript's projection of the same text. The price is that a query
+ * typed with a final sigma does not match a medial one, and vice versa.
+ *
+ * The fold can change length: Turkish dotted capital İ becomes "i" plus a combining
+ * dot, so "İstanbul" is found by that spelling and not by a plain "istanbul". Callers
+ * that need DOM offsets back must carry a map (see `FoldedText`); the transcript index
+ * only counts, so the folded string is all it needs.
  *
  * Exported because the transcript counts matches against a text projection of the
  * loaded stream items rather than the DOM; the two only agree if they fold alike.
@@ -144,8 +133,7 @@ function firstSegment(
 export function foldFindText(text: string): string {
   let folded = "";
   for (const char of text) {
-    const lower = char.toLowerCase();
-    folded += lower.length === char.length ? lower : char;
+    folded += char.toLowerCase();
   }
   return folded;
 }

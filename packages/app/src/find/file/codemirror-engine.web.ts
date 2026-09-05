@@ -1,6 +1,7 @@
 import { SearchQuery, getSearchQuery, setSearchQuery } from "@codemirror/search";
 import {
   EditorSelection,
+  Facet,
   RangeSetBuilder,
   StateEffect,
   StateField,
@@ -15,9 +16,15 @@ import { stepActiveIndex } from "@/find/model";
  * Counting walks the whole document, so a one-letter query in a large file would
  * otherwise collect millions of matches on every keystroke. A count this high already
  * means "more than anyone will step through"; matches past it are neither counted nor
- * reachable.
+ * reachable, and the result says so through `countIsCapped` so the bar names a floor
+ * rather than a total it would be wrong about.
  */
-const MATCH_COUNT_LIMIT = 10_000;
+const DEFAULT_MATCH_COUNT_LIMIT = 10_000;
+
+/** Only the first engine on a view can lower this; see `configureFindView`. */
+const matchCountLimit = Facet.define<number, number>({
+  combine: (values) => values[0] ?? DEFAULT_MATCH_COUNT_LIMIT,
+});
 
 interface Match {
   from: number;
@@ -28,9 +35,11 @@ interface FindMatchState {
   /** Every counted match, in document order and never overlapping. */
   matches: readonly Match[];
   activeIndex: number | null;
+  /** Counting stopped at the limit, so `matches` is only a prefix of the real set. */
+  capped: boolean;
 }
 
-const EMPTY_MATCH_STATE: FindMatchState = { matches: [], activeIndex: null };
+const EMPTY_MATCH_STATE: FindMatchState = { matches: [], activeIndex: null, capped: false };
 
 const MATCH_MARK = Decoration.mark({ class: "cm-paseoFindMatch" });
 const ACTIVE_MATCH_MARK = Decoration.mark({ class: "cm-paseoFindMatchActive" });
@@ -55,9 +64,10 @@ const findMatchesField = StateField.define<FindMatchState>({
   update(state, transaction) {
     const queryChanged = transaction.effects.some((effect) => effect.is(setSearchQuery));
     let matches = state.matches;
+    let capped = state.capped;
     let activeIndex = state.activeIndex;
     if (queryChanged || transaction.docChanged) {
-      matches = collectMatches(transaction.state);
+      ({ matches, capped } = collectMatches(transaction.state));
       activeIndex = queryChanged ? null : relocateActive(state, transaction, matches);
     }
     for (const effect of transaction.effects) {
@@ -68,26 +78,29 @@ const findMatchesField = StateField.define<FindMatchState>({
     if (matches === state.matches && activeIndex === state.activeIndex) {
       return state;
     }
-    return { matches, activeIndex };
+    return { matches, activeIndex, capped };
   },
   provide: (field) => EditorView.decorations.from(field, buildMatchDecorations),
 });
 
-function collectMatches(state: EditorState): readonly Match[] {
+function collectMatches(state: EditorState): Pick<FindMatchState, "matches" | "capped"> {
   const query = getSearchQuery(state);
   if (!query.valid) {
-    return [];
+    return { matches: [], capped: false };
   }
+  const limit = state.facet(matchCountLimit);
   const found: Match[] = [];
   // `SearchQuery.getCursor` is typed as an Iterator, not an Iterable, so no for..of.
   const cursor: Iterator<Match> = query.getCursor(state);
   for (let step = cursor.next(); !step.done; step = cursor.next()) {
     found.push({ from: step.value.from, to: step.value.to });
-    if (found.length >= MATCH_COUNT_LIMIT) {
-      break;
+    if (found.length >= limit) {
+      // One more step separates a document that ends exactly on the limit, whose count
+      // is exact, from one that was truncated.
+      return { matches: found, capped: cursor.next().done !== true };
     }
   }
-  return found;
+  return { matches: found, capped: false };
 }
 
 /**
@@ -116,12 +129,28 @@ function indexAtOrAfter(matches: readonly Match[], position: number): number | n
   return index === -1 ? null : index;
 }
 
+/** Absent rather than false when the count is exact, as the terminal engine reports it. */
+function toFindResult({ matches, activeIndex, capped }: FindMatchState): FindResult {
+  return capped
+    ? { count: matches.length, activeIndex, countIsCapped: true }
+    : { count: matches.length, activeIndex };
+}
+
 function buildMatchDecorations({ matches, activeIndex }: FindMatchState): DecorationSet {
   const builder = new RangeSetBuilder<Decoration>();
   for (const [index, match] of matches.entries()) {
     builder.add(match.from, match.to, index === activeIndex ? ACTIVE_MATCH_MARK : MATCH_MARK);
   }
   return builder.finish();
+}
+
+export interface CodeMirrorFindEngineOptions {
+  /**
+   * Lowers the match count cap. A test seam: the capped behaviour is otherwise only
+   * reachable through a document larger than anything a test should build. Only the
+   * engine that configures a view first can set it.
+   */
+  matchCountLimit?: number;
 }
 
 /**
@@ -137,9 +166,12 @@ function buildMatchDecorations({ matches, activeIndex }: FindMatchState): Decora
  * The active match is also the editor selection; closing the bar collapses it to a
  * caret at the match, so the user keeps their place without a lingering selection.
  */
-export function createCodeMirrorFindEngine(view: EditorView): FindEngine {
+export function createCodeMirrorFindEngine(
+  view: EditorView,
+  options: CodeMirrorFindEngineOptions = {},
+): FindEngine {
   const listeners = new Set<(result: FindResult) => void>();
-  const slot = configureFindView(view);
+  const slot = configureFindView(view, options.matchCountLimit);
 
   /**
    * Where a re-run of the query starts looking: the active match's START, not the end of
@@ -153,8 +185,7 @@ export function createCodeMirrorFindEngine(view: EditorView): FindEngine {
   }
 
   function emit(): void {
-    const { matches, activeIndex } = matchState();
-    const result: FindResult = { count: matches.length, activeIndex };
+    const result = toFindResult(matchState());
     for (const listener of listeners) {
       listener(result);
     }
@@ -194,6 +225,26 @@ export function createCodeMirrorFindEngine(view: EditorView): FindEngine {
     activate(stepActiveIndex({ activeIndex, count: matches.length, delta }));
   }
 
+  /**
+   * Drops the query, the selection the engine made and the anchor, so the next query
+   * starts from where the user is now.
+   */
+  function clearFind(): void {
+    const { matches, activeIndex } = matchState();
+    const active = activeIndex === null ? null : matches[activeIndex];
+    const selection = view.state.selection.main;
+    // The active match doubles as the editor selection. Left in place after the bar
+    // closes it becomes a live document selection once focus returns to the editor,
+    // and react-native-web's responder treats the next press anywhere as a
+    // selection gesture and swallows it. A collapsed caret at the match keeps the
+    // user's place without that side effect.
+    if (active && selection.from === active.from && selection.to === active.to) {
+      view.dispatch({ selection: EditorSelection.cursor(active.from) });
+    }
+    anchor = null;
+    applyQuery("");
+  }
+
   function applyQuery(search: string): void {
     view.dispatch({
       effects: setSearchQuery.of(new SearchQuery({ search, caseSensitive: false, literal: true })),
@@ -202,6 +253,13 @@ export function createCodeMirrorFindEngine(view: EditorView): FindEngine {
 
   return {
     setQuery(query) {
+      if (query === "") {
+        // Emptying the box is a reset, not a query that happens to match nothing: keeping
+        // the anchor would drag the next query back to the old match instead of starting
+        // at the viewport, and the old match would stay selected in the meantime.
+        clearFind();
+        return;
+      }
       applyQuery(query);
       const { matches } = matchState();
       if (matches.length === 0) {
@@ -220,26 +278,11 @@ export function createCodeMirrorFindEngine(view: EditorView): FindEngine {
       step(-1);
     },
 
-    clear() {
-      const { matches, activeIndex } = matchState();
-      const active = activeIndex === null ? null : matches[activeIndex];
-      const selection = view.state.selection.main;
-      // The active match doubles as the editor selection. Left in place after the bar
-      // closes it becomes a live document selection once focus returns to the editor,
-      // and react-native-web's responder treats the next press anywhere as a
-      // selection gesture and swallows it. A collapsed caret at the match keeps the
-      // user's place without that side effect.
-      if (active && selection.from === active.from && selection.to === active.to) {
-        view.dispatch({ selection: EditorSelection.cursor(active.from) });
-      }
-      anchor = null;
-      applyQuery("");
-    },
+    clear: clearFind,
 
     subscribe(listener) {
       listeners.add(listener);
-      const { matches, activeIndex } = matchState();
-      listener({ count: matches.length, activeIndex });
+      listener(toFindResult(matchState()));
       return () => {
         listeners.delete(listener);
       };
@@ -267,7 +310,7 @@ interface FindViewSlot {
  */
 const configuredViews = new WeakMap<EditorView, FindViewSlot>();
 
-function configureFindView(view: EditorView): FindViewSlot {
+function configureFindView(view: EditorView, limit: number | undefined): FindViewSlot {
   const existing = configuredViews.get(view);
   if (existing) {
     return existing;
@@ -277,6 +320,7 @@ function configureFindView(view: EditorView): FindViewSlot {
   view.dispatch({
     effects: StateEffect.appendConfig.of([
       findMatchesField,
+      ...(limit === undefined ? [] : [matchCountLimit.of(limit)]),
       EditorView.updateListener.of((update) => {
         // `false` because the field does not exist yet in the state this very
         // transaction is appending it to.

@@ -1801,6 +1801,7 @@ export const ptBR: TranslationResources = {
   find: {
     placeholder: "Localizar",
     matchPosition: "{{current}} de {{count}}",
+    matchPositionCapped: "{{current}} de mais de {{count}}",
     noResults: "Nenhum resultado",
     cappedCount: "Mais de {{count}} ocorrências",
     previous: "Ocorrência anterior",

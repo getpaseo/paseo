@@ -1779,6 +1779,7 @@ export const ko: TranslationResources = {
   find: {
     placeholder: "찾기",
     matchPosition: "{{count}}개 중 {{current}}번째",
+    matchPositionCapped: "{{count}}개 이상 중 {{current}}번째",
     noResults: "결과 없음",
     cappedCount: "{{count}}개 이상",
     previous: "이전 일치 항목",

@@ -1786,6 +1786,7 @@ export const ja: TranslationResources = {
   find: {
     placeholder: "検索",
     matchPosition: "{{count}} 件中 {{current}} 件目",
+    matchPositionCapped: "{{count}} 件以上中 {{current}} 件目",
     noResults: "結果がありません",
     cappedCount: "{{count}} 件以上",
     previous: "前の一致",

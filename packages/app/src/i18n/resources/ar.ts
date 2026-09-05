@@ -1769,6 +1769,7 @@ export const ar: TranslationResources = {
   find: {
     placeholder: "بحث",
     matchPosition: "{{current}} من {{count}}",
+    matchPositionCapped: "{{current}} من أكثر من {{count}}",
     noResults: "لا توجد نتائج",
     cappedCount: "أكثر من {{count}} نتيجة",
     previous: "النتيجة السابقة",

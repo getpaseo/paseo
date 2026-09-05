@@ -63,6 +63,15 @@ describe("buildTranscriptFindIndex", () => {
     expect(index.total).toBe(2);
   });
 
+  // The DOM walk folds Turkish dotted capital I (\u0130) to "i" plus a combining dot;
+  // the index has to agree, or the counter and the marks disagree on a row.
+  it("counts a fold that changes length the way the DOM walk does", () => {
+    const items = loaded(userMessage("u1", "\u0130stanbul and \u0130STANBUL"));
+
+    expect(buildTranscriptFindIndex(items, "i\u0307stanbul").total).toBe(2);
+    expect(buildTranscriptFindIndex(items, "istanbul").total).toBe(0);
+  });
+
   it("counts nothing for an empty query", () => {
     const index = buildTranscriptFindIndex(loaded(userMessage("u1", "needle")), "");
     expect(index.total).toBe(0);

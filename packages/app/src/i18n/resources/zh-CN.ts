@@ -1748,6 +1748,7 @@ export const zhCN: TranslationResources = {
   find: {
     placeholder: "查找",
     matchPosition: "第 {{current}} 个，共 {{count}} 个",
+    matchPositionCapped: "第 {{current}} 个，共超过 {{count}} 个",
     noResults: "无结果",
     cappedCount: "超过 {{count}} 个匹配项",
     previous: "上一个匹配项",
