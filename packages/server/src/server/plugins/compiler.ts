@@ -372,16 +372,76 @@ function analyzeRegistrations(
     for (const statement of statements) visit(statement, scope, null, null);
   };
 
+  const visitPatternInitializers = (pattern: unknown, scope: AstScope): void => {
+    if (!isAstNode(pattern)) return;
+    const type = Reflect.get(pattern, "type");
+    if (type === "AssignmentPattern") {
+      visit(Reflect.get(pattern, "right"), scope, pattern, null);
+      visitPatternInitializers(Reflect.get(pattern, "left"), scope);
+      return;
+    }
+    if (type === "ObjectPattern") {
+      const properties = Reflect.get(pattern, "properties");
+      if (!Array.isArray(properties)) return;
+      for (const property of properties) {
+        if (!isAstNode(property)) continue;
+        if (Reflect.get(property, "type") === "ObjectProperty") {
+          if (Reflect.get(property, "computed") === true) {
+            visit(Reflect.get(property, "key"), scope, property, null);
+          }
+          visitPatternInitializers(Reflect.get(property, "value"), scope);
+        } else if (Reflect.get(property, "type") === "RestElement") {
+          visitPatternInitializers(Reflect.get(property, "argument"), scope);
+        }
+      }
+      return;
+    }
+    if (type === "ArrayPattern") {
+      const elements = Reflect.get(pattern, "elements");
+      if (Array.isArray(elements)) {
+        for (const element of elements) visitPatternInitializers(element, scope);
+      }
+      return;
+    }
+    if (type === "RestElement" || type === "TSParameterProperty") {
+      visitPatternInitializers(Reflect.get(pattern, "argument"), scope);
+    }
+  };
+
   const visitFunction = (node: object, parentScope: AstScope): void => {
     const nextScope = createScope(parentScope, undefined);
     const params = Reflect.get(node, "params");
-    if (Array.isArray(params)) for (const parameter of params) declarePattern(parameter, nextScope);
+    if (Array.isArray(params)) {
+      for (const parameter of params) declarePattern(parameter, nextScope);
+      for (const parameter of params) visitPatternInitializers(parameter, nextScope);
+    }
     const functionBody = Reflect.get(node, "body");
     if (isAstNode(functionBody) && Reflect.get(functionBody, "type") === "BlockStatement") {
       const statements = Reflect.get(functionBody, "body");
       if (Array.isArray(statements)) visitStatements(statements, nextScope);
     } else {
       visit(functionBody, nextScope, node, null);
+    }
+  };
+
+  const visitMethod = (node: object, parentScope: AstScope): void => {
+    const nextScope = createScope(parentScope, undefined);
+    const params = Reflect.get(node, "params");
+    if (Array.isArray(params)) {
+      for (const parameter of params) declarePattern(parameter, nextScope);
+    }
+    if (Reflect.get(node, "computed") === true) {
+      visit(Reflect.get(node, "key"), parentScope, node, null);
+    }
+    if (Array.isArray(params)) {
+      for (const parameter of params) visitPatternInitializers(parameter, nextScope);
+    }
+    const methodBody = Reflect.get(node, "body");
+    if (isAstNode(methodBody) && Reflect.get(methodBody, "type") === "BlockStatement") {
+      const statements = Reflect.get(methodBody, "body");
+      if (Array.isArray(statements)) visitStatements(statements, nextScope);
+    } else {
+      visit(methodBody, nextScope, node, null);
     }
   };
 
@@ -400,6 +460,15 @@ function analyzeRegistrations(
       type === "ArrowFunctionExpression"
     ) {
       visitFunction(current, scope);
+      return;
+    }
+    if (
+      type === "ObjectMethod" ||
+      type === "ClassMethod" ||
+      type === "ObjectPrivateMethod" ||
+      type === "ClassPrivateMethod"
+    ) {
+      visitMethod(current, scope);
       return;
     }
     if (type === "BlockStatement") {

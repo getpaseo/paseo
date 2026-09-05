@@ -139,6 +139,65 @@ describe("plugin contribution targets", () => {
     await expect(compilePlugin(entryPath)).resolves.toBeDefined();
   });
 
+  it.each([
+    ["an object method", "const object = { register() { plugin.addTool({}); } };"],
+    ["a class method", "class Example { register() { plugin.addTool({}); } }"],
+    ["a class private method", "class Example { #register() { plugin.addTool({}); } }"],
+  ])("rejects a registration nested in %s", async (_description, declaration) => {
+    const directory = await mkdtemp(path.join(tmpdir(), "paseo-plugin-compiler-"));
+    temporaryDirectories.push(directory);
+    const entryPath = path.join(directory, "index.ts");
+    await writeFile(
+      entryPath,
+      `export default function contribute(plugin) {
+  ${declaration}
+  return () => undefined;
+}
+`,
+    );
+
+    await expect(compilePlugin(entryPath)).rejects.toThrow(/helper|default context/i);
+  });
+
+  it.each([
+    ["an object method", "const object = { register(plugin) { plugin.addTool({}); } };"],
+    ["a class method", "class Example { register(plugin) { plugin.addTool({}); } }"],
+    ["a class private method", "class Example { #register(plugin) { plugin.addTool({}); } }"],
+  ])("accepts a shadowed method parameter in %s", async (_description, declaration) => {
+    const directory = await mkdtemp(path.join(tmpdir(), "paseo-plugin-compiler-"));
+    temporaryDirectories.push(directory);
+    const entryPath = path.join(directory, "index.ts");
+    await writeFile(
+      entryPath,
+      `export default function contribute(plugin) {
+  ${declaration}
+  return () => undefined;
+}
+`,
+    );
+
+    await expect(compilePlugin(entryPath)).resolves.toBeDefined();
+  });
+
+  it.each([
+    ["a default initializer", "const object = { register(value = plugin) {} };"],
+    ["a destructuring default", "const object = { register({ value = plugin }) {} };"],
+  ])("rejects a default context escape from %s", async (_description, declaration) => {
+    const directory = await mkdtemp(path.join(tmpdir(), "paseo-plugin-compiler-"));
+    temporaryDirectories.push(directory);
+    const entryPath = path.join(directory, "index.ts");
+    await writeFile(
+      entryPath,
+      `export default function contribute(plugin) {
+  ${declaration}
+  return () => undefined;
+}
+`,
+    );
+
+    await expect(compilePlugin(entryPath)).rejects.toThrow(/default context|direct.*context/i);
+  });
+
   it("does not reject unrelated local member helpers", async () => {
     const directory = await mkdtemp(path.join(tmpdir(), "paseo-plugin-compiler-"));
     temporaryDirectories.push(directory);
