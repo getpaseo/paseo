@@ -56,3 +56,17 @@ export function seedSessionHosts(serverIds: readonly string[]): void {
     })),
   );
 }
+
+export function seedRuntimeWorkspaces(
+  serverId: string,
+  workspaces: Map<string, WorkspaceDescriptor>,
+): void {
+  const runtime = getHostRuntimeStore();
+  for (const id of useSessionStore.getState().sessions[serverId]?.workspaces.keys() ?? []) {
+    if (!workspaces.has(id)) runtime.removeWorkspaceSnapshot(serverId, id);
+  }
+  for (const workspace of workspaces.values()) {
+    runtime.acceptProjectSnapshot(serverId, projectFromWorkspace(workspace));
+  }
+  runtime.acceptWorkspaceSnapshots(serverId, [...workspaces.values()]);
+}
