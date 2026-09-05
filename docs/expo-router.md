@@ -78,10 +78,16 @@ hidden workspace can overwrite the remembered workspace before Settings or
 History returns.
 
 The keyboard History back/forward actions use session-local application history.
-Observe routes and focused tabs in `navigation/route-history.web.ts`; do not
+Observe routes and focused tabs in `navigation/route-history-shared.ts`; do not
 change route call sites to push browser entries. Replay workspace visits through
 the existing workspace helper with an explicit tab target. Closed tabs are skipped;
 history does not reopen resources. Reloading starts a new history.
+
+Native history reads the focused route's params instead of a browser URL. iOS
+exposes History back/forward bindings in Settings through the local hardware
+keyboard module; changes to that bridge require rebuilding the native app.
+Keep native shortcut registration limited to implemented actions. The browser
+dispatcher and its DOM event listeners must stay disabled on native.
 
 Settings detail routes are separate siblings on purpose. Keep
 `settings/[section]`, the host routes, the projects index, and project detail as

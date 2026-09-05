@@ -6,15 +6,21 @@ export interface RouteHistoryEntry {
 }
 
 export function normalizeRouteHistoryHref(href: string, segments: readonly string[]): string {
-  const url = new URL(href, "http://paseo.local");
+  const hashIndex = href.indexOf("#");
+  const hash = hashIndex < 0 ? "" : href.slice(hashIndex);
+  const route = hashIndex < 0 ? href : href.slice(0, hashIndex);
+  const searchIndex = route.indexOf("?");
+  const pathname = searchIndex < 0 ? route : route.slice(0, searchIndex);
+  const params = new URLSearchParams(searchIndex < 0 ? "" : route.slice(searchIndex + 1));
   // Revisiting a nested route can echo its path params into the query string.
   for (const segment of segments) {
     if (!segment.startsWith("[")) continue;
     const param = segment.replace(/^\[+(?:\.\.\.)?|\]+$/g, "");
-    url.searchParams.delete(param);
+    params.delete(param);
   }
-  url.searchParams.sort();
-  return `${url.pathname}${url.search}${url.hash}`;
+  params.sort();
+  const search = params.toString();
+  return `${pathname}${search ? `?${search}` : ""}${hash}`;
 }
 
 function sameEntry(a: RouteHistoryEntry | undefined, b: RouteHistoryEntry): boolean {

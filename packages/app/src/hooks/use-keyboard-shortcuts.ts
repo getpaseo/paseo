@@ -41,6 +41,7 @@ import {
 } from "@/stores/navigation-active-workspace-store";
 import { dispatchTopWebOverlayKeyDown } from "@/lib/overlay-root";
 import { useRouteHistory } from "@/navigation/route-history";
+import { useNativeHistoryShortcuts } from "@/hooks/use-native-history-shortcuts";
 
 export function useKeyboardShortcuts({
   enabled,
@@ -63,6 +64,7 @@ export function useKeyboardShortcuts({
   const pathname = usePathname();
   const router = useRouter();
   const navigateRouteHistory = useRouteHistory();
+  useNativeHistoryShortcuts(enabled, navigateRouteHistory);
   const resetModifiers = useKeyboardShortcutsStore((s) => s.resetModifiers);
   const { overrides } = useKeyboardShortcutOverrides();
   const bindings = useMemo(() => buildEffectiveBindings(overrides), [overrides]);
