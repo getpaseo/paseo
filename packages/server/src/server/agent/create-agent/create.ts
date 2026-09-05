@@ -268,8 +268,8 @@ async function resolveSessionCreateAgent(
   });
   const sessionConfig: AgentSessionConfig = {
     ...builtSessionConfig,
-    modeId: resolvedCreateConfig.modeId,
-    featureValues: resolvedCreateConfig.featureValues,
+    modeId: resolvedCreateConfig.modeId ?? builtSessionConfig.modeId,
+    featureValues: resolvedCreateConfig.featureValues ?? builtSessionConfig.featureValues,
   };
   const prompt = buildAgentPrompt(trimmedPrompt ?? "", input.images, input.attachments);
   const hasPromptContent = Array.isArray(prompt) ? prompt.length > 0 : prompt.length > 0;

@@ -130,7 +130,7 @@ describe("plugin contribution targets", () => {
   function nested(plugin) {
     plugin.addTool({});
   }
-  nested(plugin);
+  nested({});
   return () => undefined;
 }
 `,
@@ -164,6 +164,7 @@ describe("plugin contribution targets", () => {
     "const { addTool } = plugin;\naddTool({});",
     "const { addTool: register } = plugin;\nregister({});",
     'plugin["addTool"]({});',
+    'const method = "addTool";\nplugin[method]({});',
   ])(
     "rejects indirect registration calls that could cross bundle boundaries",
     async (registration) => {
@@ -182,6 +183,50 @@ describe("plugin contribution targets", () => {
       await expect(compilePlugin(entryPath)).rejects.toThrow(/direct.*context|default context/i);
     },
   );
+
+  it.each([
+    "helper(plugin);",
+    "const stored = plugin;",
+    "return plugin;",
+    "const stored = { context: plugin };",
+    "const stored = { ...plugin };",
+  ])("rejects default context escape: %s", async (registration) => {
+    const directory = await mkdtemp(path.join(tmpdir(), "paseo-plugin-compiler-"));
+    temporaryDirectories.push(directory);
+    const entryPath = path.join(directory, "index.ts");
+    await writeFile(
+      entryPath,
+      `export default function contribute(plugin) {
+  ${registration}
+  return () => undefined;
+}
+`,
+    );
+
+    await expect(compilePlugin(entryPath)).rejects.toThrow(/default context|direct.*context/i);
+  });
+
+  it("rejects passing the default context to an imported helper", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "paseo-plugin-compiler-"));
+    temporaryDirectories.push(directory);
+    await writeFile(
+      path.join(directory, "helper.ts"),
+      "export function forward(value) { return value; }\n",
+    );
+    const entryPath = path.join(directory, "index.ts");
+    await writeFile(
+      entryPath,
+      `import { forward } from "./helper";
+
+export default function contribute(plugin) {
+  forward(plugin);
+  return () => undefined;
+}
+`,
+    );
+
+    await expect(compilePlugin(entryPath)).rejects.toThrow(/default context|direct.*context/i);
+  });
 
   it("rejects a helper that closes over the default context", async () => {
     const directory = await mkdtemp(path.join(tmpdir(), "paseo-plugin-compiler-"));

@@ -234,6 +234,39 @@ test("acknowledgement only transitions accepted deliveries", async () => {
   await expect(ledger.acknowledge("owner", "accepted-delivery")).resolves.toEqual(acknowledged);
 });
 
+test("atomically abandons a recorded delivery with a durable diagnostic", async () => {
+  const { home, ledger } = await createLedger();
+  await ledger.send("owner", {
+    deliveryId: "abandoned-delivery",
+    targetAgentId: "agent-test",
+    payload: "cancelled",
+  });
+
+  const abandoned = await ledger.abandonBeforeDispatch(
+    "owner",
+    "abandoned-delivery",
+    "Plugin host request cancelled before native dispatch",
+  );
+  expect(abandoned).toMatchObject({
+    deliveryId: "abandoned-delivery",
+    status: "failed",
+    error: "Plugin host request cancelled before native dispatch",
+    failedAt: expect.any(String),
+  });
+
+  const recovered = new DeliveryLedger(home);
+  await expect(
+    recovered.get("owner", { deliveryId: "abandoned-delivery", includeAcknowledged: true }),
+  ).resolves.toMatchObject({ delivery: abandoned });
+  await expect(
+    recovered.send("owner", {
+      deliveryId: "abandoned-delivery",
+      targetAgentId: "agent-test",
+      payload: "cancelled",
+    }),
+  ).resolves.toMatchObject({ created: false, delivery: { status: "failed" } });
+});
+
 test("an acknowledgement racing dispatch cannot skip native dispatch", async () => {
   const { ledger } = await createLedger();
   await ledger.send("owner", {

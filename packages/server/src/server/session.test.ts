@@ -101,6 +101,7 @@ interface SessionHandlerInternals {
   createPaseoWorktreeWorkflow(params: unknown): Promise<unknown>;
   buildPluginWorkspaceSnapshot(workspace: unknown, agent: unknown): Promise<unknown>;
   archivePluginManagedWorktree(worktree: unknown): Promise<unknown>;
+  persistPluginManagedWorktrees(signal?: AbortSignal): Promise<void>;
   agentUpdates: { forwardLiveAgent(agent: unknown): Promise<void> };
   handleStartWorkspaceScriptRequest(params: unknown): Promise<unknown>;
 }
@@ -568,6 +569,15 @@ function createLivePluginCaller(): Record<string, unknown> {
       cwd: "/repo",
       model: "caller-model",
       thinkingOptionId: "caller-thinking",
+      modeId: "default",
+      providerOptions: {
+        sandbox_mode: "read-only",
+        network_access: false,
+        approval_policy: "never",
+      },
+      toolPolicy: {
+        preapproved: [{ kind: "mcp", server: "review", tool: "read" }],
+      },
     },
     runtimeInfo: undefined,
     createdAt: new Date("2026-01-01T00:00:00.000Z"),
@@ -676,7 +686,7 @@ test("plugin host fixes child authority to the live caller and fails closed on u
       installationId: "installation-one",
       capabilityNonce: "nonce-one",
       operation: "child.create",
-      input: { options: { toolPolicy: "none", title: "Child" } },
+      input: { options: { title: "Child" } },
       signal: new AbortController().signal,
     });
 
@@ -686,7 +696,15 @@ test("plugin host fixes child authority to the live caller and fails closed on u
         cwd: "/repo",
         model: "caller-model",
         thinkingOptionId: "caller-thinking",
-        toolPolicy: { preapproved: [] },
+        modeId: "default",
+        providerOptions: {
+          sandbox_mode: "read-only",
+          network_access: false,
+          approval_policy: "never",
+        },
+        toolPolicy: {
+          preapproved: [{ kind: "mcp", server: "review", tool: "read" }],
+        },
       }),
       undefined,
       expect.objectContaining({
@@ -701,6 +719,30 @@ test("plugin host fixes child authority to the live caller and fails closed on u
       cwd: "/repo",
     });
 
+    await session.invokePluginHost({
+      pluginId: "portable-provider",
+      caller,
+      invocationId: "invocation-narrow",
+      generation: 1,
+      installationId: "installation-one",
+      capabilityNonce: "nonce-narrow",
+      operation: "child.create",
+      input: { options: { toolPolicy: "none" } },
+      signal: new AbortController().signal,
+    });
+    expect(createAgent).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        providerOptions: {
+          sandbox_mode: "read-only",
+          network_access: false,
+          approval_policy: "never",
+        },
+        toolPolicy: { preapproved: [] },
+      }),
+      undefined,
+      expect.objectContaining({ workspaceId: "source-workspace" }),
+    );
+
     await expect(
       session.invokePluginHost({
         pluginId: "portable-provider",
@@ -714,7 +756,22 @@ test("plugin host fixes child authority to the live caller and fails closed on u
         signal: new AbortController().signal,
       }),
     ).rejects.toThrow("security request exceeds");
-    expect(createAgent).toHaveBeenCalledTimes(1);
+    expect(createAgent).toHaveBeenCalledTimes(2);
+
+    await expect(
+      session.invokePluginHost({
+        pluginId: "portable-provider",
+        caller,
+        invocationId: "invocation-three",
+        generation: 1,
+        installationId: "installation-one",
+        capabilityNonce: "nonce-three",
+        operation: "child.create",
+        input: { options: { security: { network: "unrestricted" } } },
+        signal: new AbortController().signal,
+      }),
+    ).rejects.toThrow("security request exceeds");
+    expect(createAgent).toHaveBeenCalledTimes(2);
   } finally {
     await session.cleanup();
   }
@@ -1020,6 +1077,303 @@ test("preserves managed worktree ids across a plugin session reconnect", async (
     expect(archiveWorktree).toHaveBeenCalledWith(
       expect.objectContaining({ id: created.id, worktreePath: "/managed-worktree" }),
     );
+  } finally {
+    await first.cleanup();
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("commits plugin worktree removal after physical deletion despite cancellation", async () => {
+  const home = mkdtempSync(join(tmpdir(), "paseo-plugin-worktree-remove-cancel-"));
+  const caller = createPluginCallerAuthority();
+  const liveCaller = createLivePluginCaller();
+  const workflowResult = {
+    workspace: { workspaceId: "managed-workspace", cwd: "/managed-worktree" },
+    worktree: { worktreePath: "/managed-worktree" },
+    repoRoot: "/repo",
+  };
+  const session = createSessionForTest({
+    paseoHome: home,
+    pluginIdentity: { pluginId: "portable-provider", installationId: "installation-one" },
+    agentManager: { getAgent: vi.fn(() => liveCaller) },
+    workspaceRegistry: {
+      get: vi.fn(async () => ({
+        workspaceId: "source-workspace",
+        projectId: "source-project",
+        cwd: "/repo",
+        archivedAt: null,
+      })),
+      list: vi.fn().mockResolvedValue([]),
+    },
+    projectRegistry: {
+      get: vi.fn(async () => ({ projectId: "source-project", archivedAt: null })),
+    },
+  });
+  const internals = asSessionInternals(session);
+  internals.createPaseoWorktreeWorkflow = vi.fn(async () => workflowResult);
+  internals.buildPluginWorkspaceSnapshot = vi.fn(async () => ({
+    ...caller.workspace,
+    id: "managed-workspace",
+    directory: "/managed-worktree",
+  }));
+  const removeController = new AbortController();
+  const archiveWorktree = vi.fn(async () => {
+    return { ok: true as const, message: "", removedDirectory: true };
+  });
+  internals.archivePluginManagedWorktree = archiveWorktree;
+
+  try {
+    const created = (await session.invokePluginHost({
+      pluginId: "portable-provider",
+      caller,
+      invocationId: "remove-cancel-create",
+      generation: 1,
+      installationId: "installation-one",
+      capabilityNonce: "remove-cancel-create-nonce",
+      operation: "worktree.create",
+      input: {},
+      signal: new AbortController().signal,
+    })) as { id: string };
+    const persistPluginManagedWorktrees = internals.persistPluginManagedWorktrees.bind(session);
+    internals.persistPluginManagedWorktrees = async () => {
+      await persistPluginManagedWorktrees();
+      removeController.abort(new Error("cancelled after ownership commit"));
+    };
+
+    await expect(
+      session.invokePluginHost({
+        pluginId: "portable-provider",
+        caller,
+        invocationId: "remove-cancel",
+        generation: 1,
+        installationId: "installation-one",
+        capabilityNonce: "remove-cancel-nonce",
+        operation: "worktree.remove",
+        input: { id: created.id },
+        signal: removeController.signal,
+      }),
+    ).resolves.toBeUndefined();
+
+    expect(JSON.parse(readFileSync(join(home, "plugin-managed-worktrees.json"), "utf8"))).toEqual({
+      version: 1,
+      records: [],
+    });
+    expect(archiveWorktree).toHaveBeenCalledOnce();
+  } finally {
+    await session.cleanup();
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("retains cancelled plugin worktree removal for a restart before physical deletion", async () => {
+  const home = mkdtempSync(join(tmpdir(), "paseo-plugin-worktree-remove-restart-"));
+  const caller = createPluginCallerAuthority();
+  const liveCaller = createLivePluginCaller();
+  const workflowResult = {
+    workspace: { workspaceId: "managed-workspace", cwd: "/managed-worktree" },
+    worktree: { worktreePath: "/managed-worktree" },
+    repoRoot: "/repo",
+  };
+  const common = {
+    paseoHome: home,
+    pluginIdentity: { pluginId: "portable-provider", installationId: "installation-one" },
+    agentManager: { getAgent: vi.fn(() => liveCaller) },
+    workspaceRegistry: {
+      get: vi.fn(async () => ({
+        workspaceId: "source-workspace",
+        projectId: "source-project",
+        cwd: "/repo",
+        archivedAt: null,
+      })),
+      list: vi.fn().mockResolvedValue([]),
+    },
+    projectRegistry: {
+      get: vi.fn(async () => ({ projectId: "source-project", archivedAt: null })),
+    },
+  };
+  const first = createSessionForTest(common);
+  const firstInternals = asSessionInternals(first);
+  firstInternals.createPaseoWorktreeWorkflow = vi.fn(async () => workflowResult);
+  firstInternals.buildPluginWorkspaceSnapshot = vi.fn(async () => ({
+    ...caller.workspace,
+    id: "managed-workspace",
+    directory: "/managed-worktree",
+  }));
+  const cancelled = new AbortController();
+  cancelled.abort(new Error("cancelled before physical deletion"));
+  const firstArchive = vi.fn(async () => ({
+    ok: true as const,
+    message: "",
+    removedDirectory: true,
+  }));
+  firstInternals.archivePluginManagedWorktree = firstArchive;
+
+  try {
+    const created = (await first.invokePluginHost({
+      pluginId: "portable-provider",
+      caller,
+      invocationId: "remove-restart-create",
+      generation: 1,
+      installationId: "installation-one",
+      capabilityNonce: "remove-restart-create-nonce",
+      operation: "worktree.create",
+      input: {},
+      signal: new AbortController().signal,
+    })) as { id: string };
+
+    await expect(
+      first.invokePluginHost({
+        pluginId: "portable-provider",
+        caller,
+        invocationId: "remove-restart-cancel",
+        generation: 1,
+        installationId: "installation-one",
+        capabilityNonce: "remove-restart-cancel-nonce",
+        operation: "worktree.remove",
+        input: { id: created.id },
+        signal: cancelled.signal,
+      }),
+    ).rejects.toThrow("cancelled before physical deletion");
+    expect(firstArchive).not.toHaveBeenCalled();
+    await first.cleanup();
+
+    const second = createSessionForTest(common);
+    const secondInternals = asSessionInternals(second);
+    const secondArchive = vi.fn(async () => ({
+      ok: true as const,
+      message: "",
+      removedDirectory: true,
+    }));
+    secondInternals.archivePluginManagedWorktree = secondArchive;
+    try {
+      await second.invokePluginHost({
+        pluginId: "portable-provider",
+        caller,
+        invocationId: "remove-restart-success",
+        generation: 1,
+        installationId: "installation-one",
+        capabilityNonce: "remove-restart-success-nonce",
+        operation: "worktree.remove",
+        input: { id: created.id },
+        signal: new AbortController().signal,
+      });
+      expect(secondArchive).toHaveBeenCalledOnce();
+      expect(JSON.parse(readFileSync(join(home, "plugin-managed-worktrees.json"), "utf8"))).toEqual(
+        {
+          version: 1,
+          records: [],
+        },
+      );
+    } finally {
+      await second.cleanup();
+    }
+  } finally {
+    await first.cleanup();
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("does not restore only memory when plugin worktree ownership persistence fails", async () => {
+  const home = mkdtempSync(join(tmpdir(), "paseo-plugin-worktree-remove-persist-"));
+  const caller = createPluginCallerAuthority();
+  const liveCaller = createLivePluginCaller();
+  const workflowResult = {
+    workspace: { workspaceId: "managed-workspace", cwd: "/managed-worktree" },
+    worktree: { worktreePath: "/managed-worktree" },
+    repoRoot: "/repo",
+  };
+  const common = {
+    paseoHome: home,
+    pluginIdentity: { pluginId: "portable-provider", installationId: "installation-one" },
+    agentManager: { getAgent: vi.fn(() => liveCaller) },
+    workspaceRegistry: {
+      get: vi.fn(async () => ({
+        workspaceId: "source-workspace",
+        projectId: "source-project",
+        cwd: "/repo",
+        archivedAt: null,
+      })),
+      list: vi.fn().mockResolvedValue([]),
+    },
+    projectRegistry: {
+      get: vi.fn(async () => ({ projectId: "source-project", archivedAt: null })),
+    },
+  };
+  const first = createSessionForTest(common);
+  const firstInternals = asSessionInternals(first);
+  firstInternals.createPaseoWorktreeWorkflow = vi.fn(async () => workflowResult);
+  firstInternals.buildPluginWorkspaceSnapshot = vi.fn(async () => ({
+    ...caller.workspace,
+    id: "managed-workspace",
+    directory: "/managed-worktree",
+  }));
+  firstInternals.archivePluginManagedWorktree = vi.fn(async () => ({
+    ok: true as const,
+    message: "",
+    removedDirectory: true,
+  }));
+
+  try {
+    const created = (await first.invokePluginHost({
+      pluginId: "portable-provider",
+      caller,
+      invocationId: "remove-persist-create",
+      generation: 1,
+      installationId: "installation-one",
+      capabilityNonce: "remove-persist-create-nonce",
+      operation: "worktree.create",
+      input: {},
+      signal: new AbortController().signal,
+    })) as { id: string };
+    firstInternals.persistPluginManagedWorktrees = vi.fn(async () => {
+      throw new Error("ownership persistence failed");
+    });
+
+    await expect(
+      first.invokePluginHost({
+        pluginId: "portable-provider",
+        caller,
+        invocationId: "remove-persist-failure",
+        generation: 1,
+        installationId: "installation-one",
+        capabilityNonce: "remove-persist-failure-nonce",
+        operation: "worktree.remove",
+        input: { id: created.id },
+        signal: new AbortController().signal,
+      }),
+    ).rejects.toThrow("ownership persistence failed");
+    await first.cleanup();
+
+    const second = createSessionForTest(common);
+    const secondInternals = asSessionInternals(second);
+    const secondArchive = vi.fn(async () => ({
+      ok: true as const,
+      message: "",
+      removedDirectory: true,
+    }));
+    secondInternals.archivePluginManagedWorktree = secondArchive;
+    try {
+      await second.invokePluginHost({
+        pluginId: "portable-provider",
+        caller,
+        invocationId: "remove-persist-restart",
+        generation: 1,
+        installationId: "installation-one",
+        capabilityNonce: "remove-persist-restart-nonce",
+        operation: "worktree.remove",
+        input: { id: created.id },
+        signal: new AbortController().signal,
+      });
+      expect(secondArchive).toHaveBeenCalledOnce();
+      expect(JSON.parse(readFileSync(join(home, "plugin-managed-worktrees.json"), "utf8"))).toEqual(
+        {
+          version: 1,
+          records: [],
+        },
+      );
+    } finally {
+      await second.cleanup();
+    }
   } finally {
     await first.cleanup();
     rmSync(home, { recursive: true, force: true });
@@ -1353,6 +1707,93 @@ test("dispatches a targeted delivery through the injected native agent seam", as
         created: true,
       },
     });
+  } finally {
+    await session.cleanup();
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("compensates a plugin delivery cancelled before native dispatch and fences its retry", async () => {
+  const home = mkdtempSync(join(tmpdir(), "paseo-cancelled-plugin-delivery-"));
+  const caller = createPluginCallerAuthority();
+  const controller = new AbortController();
+  const dispatched = vi.fn(async () => ({ outcome: "accepted" as const }));
+  const deliveryDispatchCoordinator = {
+    run: vi.fn(async (_key: string, operation: () => Promise<unknown>) => {
+      controller.abort(new Error("plugin delivery cancelled"));
+      return operation();
+    }),
+  } as unknown as SessionOptions["deliveryDispatchCoordinator"];
+  const ledger = new DeliveryLedger(home);
+  const session = createSessionForTest({
+    paseoHome: home,
+    principalId: "plugin:calendar:installation",
+    pluginIdentity: { pluginId: "calendar", installationId: "installation" },
+    deliveryLedger: ledger,
+    deliveryDispatchCoordinator,
+    deliveryAgentDispatcher: dispatched,
+    agentManager: { getAgent: vi.fn(() => createLivePluginCaller()) },
+    workspaceRegistry: {
+      get: vi.fn(async () => ({
+        workspaceId: "source-workspace",
+        projectId: "source-project",
+        cwd: "/repo",
+        archivedAt: null,
+      })),
+      list: vi.fn().mockResolvedValue([]),
+    },
+    projectRegistry: {
+      get: vi.fn(async () => ({ projectId: "source-project", archivedAt: null })),
+    },
+  });
+
+  try {
+    await expect(
+      session.invokePluginHost({
+        pluginId: "calendar",
+        caller,
+        invocationId: "cancelled-delivery",
+        generation: 1,
+        installationId: "installation",
+        capabilityNonce: "cancelled-nonce",
+        operation: "delivery.send",
+        input: {
+          payload: { event: "cancelled" },
+          options: { deliveryId: "cancelled-delivery" },
+        },
+        signal: controller.signal,
+      }),
+    ).rejects.toThrow("plugin delivery cancelled");
+
+    await expect(
+      ledger.get("plugin:calendar:installation", {
+        deliveryId: "cancelled-delivery",
+        includeAcknowledged: true,
+      }),
+    ).resolves.toMatchObject({
+      delivery: {
+        status: "failed",
+        error: "Plugin host request cancelled",
+      },
+    });
+
+    await expect(
+      session.invokePluginHost({
+        pluginId: "calendar",
+        caller,
+        invocationId: "cancelled-delivery-retry",
+        generation: 1,
+        installationId: "installation",
+        capabilityNonce: "cancelled-retry-nonce",
+        operation: "delivery.send",
+        input: {
+          payload: { event: "cancelled" },
+          options: { deliveryId: "cancelled-delivery" },
+        },
+        signal: new AbortController().signal,
+      }),
+    ).resolves.toMatchObject({ status: "failed" });
+    expect(dispatched).not.toHaveBeenCalled();
   } finally {
     await session.cleanup();
     rmSync(home, { recursive: true, force: true });

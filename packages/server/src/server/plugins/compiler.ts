@@ -91,6 +91,11 @@ const REGISTRATIONS_REMOVED_BY_TARGET: Record<PluginBuildTarget, ReadonlySet<str
   ]),
 };
 
+const ALL_PLUGIN_REGISTRATION_METHODS = new Set([
+  ...REGISTRATIONS_REMOVED_BY_TARGET.client,
+  ...REGISTRATIONS_REMOVED_BY_TARGET.server,
+]);
+
 function defaultPluginFunction(programBody: unknown[]): { body: object; contextName: string } {
   const defaultExports = programBody.filter(
     (statement) =>
@@ -391,6 +396,12 @@ function analyzeRegistrations(
     if (type === "VariableDeclarator") {
       markVariableBinding(current, scope, removedNames);
     }
+    if (type === "Identifier") {
+      const binding = lookupBinding(scope, String(Reflect.get(current, "name")));
+      if (binding?.contextAlias) {
+        throw new Error("Plugin default context cannot escape its direct registration call");
+      }
+    }
     if (type === "AssignmentExpression") {
       const left = Reflect.get(current, "left");
       const right = Reflect.get(current, "right");
@@ -429,7 +440,14 @@ function analyzeRegistrations(
         grandparent &&
         isAstNode(grandparent) &&
         Reflect.get(grandparent, "type") === "ExpressionStatement";
-      if (source === contextBinding && method && removedNames.has(method)) {
+      if (source === contextBinding) {
+        if (
+          Reflect.get(current, "computed") === true ||
+          !method ||
+          !ALL_PLUGIN_REGISTRATION_METHODS.has(method)
+        ) {
+          throw new Error("Plugin registration must use a direct default context method");
+        }
         if (scope.functionScope !== functionScope) {
           throw new Error(
             `Plugin ${method} registration must use the default context directly; helper registrations are not supported`,
@@ -440,6 +458,7 @@ function analyzeRegistrations(
             `Plugin ${method} registration must be a direct context call in an expression statement`,
           );
         }
+        if (!removedNames.has(method)) return;
         const start = Reflect.get(grandparent, "start");
         const end = Reflect.get(grandparent, "end");
         if (typeof start !== "number" || typeof end !== "number") {

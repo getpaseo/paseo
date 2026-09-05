@@ -199,6 +199,14 @@ export default function contribute(plugin: PluginContext) {
     directories.push(parent);
     const directory = path.join(parent, "external-plugin");
     await scaffoldPluginDirectory(directory);
+    const generatedPackage = JSON.parse(
+      await readFile(path.join(directory, "package.json"), "utf8"),
+    ) as { devDependencies: Record<string, string> };
+    expect(generatedPackage.devDependencies).toMatchObject({
+      "@getpaseo/client": "0.8.0-beta.1",
+      "@getpaseo/plugin": "0.8.0-beta.1",
+      "@getpaseo/protocol": "0.8.0-beta.1",
+    });
     await execFileAsync(
       "npm",
       ["pack", "--workspace=@getpaseo/protocol", `--pack-destination=${parent}`],
@@ -211,14 +219,20 @@ export default function contribute(plugin: PluginContext) {
     );
     await execFileAsync(
       "npm",
+      ["pack", "--workspace=@getpaseo/plugin", `--pack-destination=${parent}`],
+      { cwd: process.cwd(), timeout: 120_000 },
+    );
+    await execFileAsync(
+      "npm",
       ["pack", "--workspace=@getpaseo/relay", `--pack-destination=${parent}`],
       { cwd: process.cwd(), timeout: 120_000 },
     );
     const tarballs = await readdir(parent);
     const protocolTarball = tarballs.find((entry) => entry.startsWith("getpaseo-protocol-"));
     const clientTarball = tarballs.find((entry) => entry.startsWith("getpaseo-client-"));
+    const pluginTarball = tarballs.find((entry) => entry.startsWith("getpaseo-plugin-"));
     const relayTarball = tarballs.find((entry) => entry.startsWith("getpaseo-relay-"));
-    if (!protocolTarball || !clientTarball || !relayTarball) {
+    if (!protocolTarball || !clientTarball || !pluginTarball || !relayTarball) {
       throw new Error("Local SDK tarballs were not created");
     }
     const packagePath = path.join(directory, "package.json");
@@ -228,6 +242,8 @@ export default function contribute(plugin: PluginContext) {
     };
     packageJson.devDependencies["@getpaseo/client"] =
       `file:${path.relative(directory, path.join(parent, clientTarball))}`;
+    packageJson.devDependencies["@getpaseo/plugin"] =
+      `file:${path.relative(directory, path.join(parent, pluginTarball))}`;
     packageJson.devDependencies["@getpaseo/protocol"] =
       `file:${path.relative(directory, path.join(parent, protocolTarball))}`;
     packageJson.devDependencies["@getpaseo/relay"] =

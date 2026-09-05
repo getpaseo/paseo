@@ -377,6 +377,31 @@ describe("evaluatePluginClientBundle", () => {
     expect(element).toMatchObject({ props: { size: 18, color: "#123456" } });
   });
 
+  it("provides the host client runtime through the legacy @paseo/plugin alias", () => {
+    const plugin = evaluatePluginClientBundle(
+      "example",
+      `(function(require) {
+        const { defineRpc } = require("@paseo/plugin");
+        const module = { exports: {} };
+        module.exports.default = function(plugin) {
+          const contract = defineRpc({ name: "legacy", input: {}, output: {} });
+          plugin.addAttachmentSource({
+            id: "legacy",
+            title: "Legacy",
+            icon: "Settings",
+            pickerTitle: "Legacy",
+            searchPlaceholder: "Search",
+            search: contract,
+          });
+          return function() {};
+        };
+        return module.exports;
+      })`,
+    );
+
+    expect(plugin.attachmentSources[0]?.search.name).toBe("legacy");
+  });
+
   it("provides Paseo UI through @getpaseo/plugin/react-native", () => {
     const plugin = evaluatePluginClientBundle(
       "example",
@@ -397,11 +422,13 @@ describe("evaluatePluginClientBundle", () => {
     expect(plugin.surfaces.map((surface) => surface.id)).toEqual(["main"]);
   });
 
-  it("resolves @getpaseo/plugin/server for shared RPC contracts", () => {
-    const plugin = evaluatePluginClientBundle(
-      "example",
-      `(function(require) {
-        const { defineRpc, defineAttachmentSource } = require("@getpaseo/plugin/server");
+  it.each(["@getpaseo/plugin/server", "@paseo/plugin/server"])(
+    "resolves %s for shared RPC contracts",
+    (specifier) => {
+      const plugin = evaluatePluginClientBundle(
+        "example",
+        `(function(require) {
+        const { defineRpc, defineAttachmentSource } = require(${JSON.stringify(specifier)});
         const search = defineRpc({ name: "issues.search", input: {}, output: {} });
         const module = { exports: {} };
         module.exports.default = function(plugin) {
@@ -417,10 +444,13 @@ describe("evaluatePluginClientBundle", () => {
         };
         return module.exports;
       })`,
-    );
+      );
 
-    expect(plugin.attachmentSources.map((source) => source.search.name)).toEqual(["issues.search"]);
-  });
+      expect(plugin.attachmentSources.map((source) => source.search.name)).toEqual([
+        "issues.search",
+      ]);
+    },
+  );
 
   it("rejects modules that are not part of the client runtime", () => {
     expect(() =>

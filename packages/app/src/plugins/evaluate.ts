@@ -249,26 +249,28 @@ export function evaluatePluginClientBundle(id: string, bundle: string): Evaluate
       collector.timelineRenderers.push({ ...contribution, kind });
     },
   });
+  const pluginClientRuntime = {
+    defineAttachmentSource,
+    defineRpc,
+    Icon,
+    usePaseo,
+    useAgent,
+    useWorkspace,
+    useRpc,
+  };
+  const pluginServerRuntime = { defineAttachmentSource, defineRpc };
   const runtimeRequire = (name: string): unknown => {
     if (name === "react") return React;
     if (name === "react/jsx-runtime") return ReactJsxRuntime;
     if (name === "react-native") return ReactNative;
-    if (name === "@getpaseo/plugin") {
-      return {
-        defineAttachmentSource,
-        defineRpc,
-        Icon,
-        usePaseo,
-        useAgent,
-        useWorkspace,
-        useRpc,
-      };
+    if (name === "@getpaseo/plugin" || name === "@paseo/plugin") {
+      return pluginClientRuntime;
     }
     if (name === "@getpaseo/plugin/react-native" || name === "@paseo/plugin/react-native") {
       return pluginReactNativeRuntime;
     }
-    if (name === "@getpaseo/plugin/server") {
-      return { defineAttachmentSource, defineRpc };
+    if (name === "@getpaseo/plugin/server" || name === "@paseo/plugin/server") {
+      return pluginServerRuntime;
     }
     if (name === "@tanstack/react-query") return ReactQuery;
     if (name === "zod") return Zod;

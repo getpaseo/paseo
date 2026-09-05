@@ -2327,8 +2327,12 @@ export class Session {
             this.throwIfPluginHostCancelled(input.signal);
             await this.resolveLivePluginCallerAuthority(input.caller.callerAgentId);
             this.throwIfPluginHostCancelled(input.signal);
-            nativeDispatchStarted = true;
-            return this.dispatchStoredDelivery(delivery);
+            return this.dispatchStoredDelivery(delivery, {
+              signal: input.signal,
+              onNativeDispatchStart: () => {
+                nativeDispatchStarted = true;
+              },
+            });
           },
           this.principalId,
         );
@@ -2336,9 +2340,9 @@ export class Session {
       this.throwIfPluginHostCancelled(input.signal);
       return delivery;
     } catch (error) {
-      if (result?.created && result.delivery.status === "recorded" && !nativeDispatchStarted) {
+      if (result?.created && !nativeDispatchStarted) {
         await this.deliveryLedger
-          .markFailed(
+          .abandonBeforeDispatch(
             this.principalId,
             result.delivery.deliveryId,
             input.signal.aborted
@@ -2457,9 +2461,15 @@ export class Session {
         input.caller.callerAgentId,
       );
       this.throwIfPluginHostCancelled(input.signal);
+      const dispatchParent = this.agentManager.getAgent(input.caller.callerAgentId);
+      if (!dispatchParent || dispatchParent.lifecycle === "closed") {
+        throw new Error(`Caller agent is no longer active: ${input.caller.callerAgentId}`);
+      }
       if (
         dispatchCaller.agent.workspaceId !== input.caller.agent.workspaceId ||
-        dispatchCaller.workspace?.projectId !== input.caller.workspace?.projectId
+        dispatchCaller.workspace?.projectId !== input.caller.workspace?.projectId ||
+        dispatchParent.cwd !== dispatchCaller.agent.cwd ||
+        dispatchParent.workspaceId !== dispatchCaller.agent.workspaceId
       ) {
         throw new Error("Caller workspace authority changed during child creation");
       }
@@ -2501,13 +2511,12 @@ export class Session {
         throw new Error("Child runtime option is outside the caller authority");
       }
       const dispatchConfig: AgentSessionConfig = {
-        provider: dispatchCaller.effective.provider.known
-          ? dispatchCaller.effective.provider.value
-          : dispatchCaller.agent.provider,
+        ...dispatchParent.config,
+        provider: dispatchParent.config.provider,
         cwd: options.worktreeId ? dispatchManagedWorktree!.cwd : dispatchCaller.agent.cwd,
         ...(dispatchModel ? { model: dispatchModel } : {}),
         ...(dispatchThinking ? { thinkingOptionId: dispatchThinking } : {}),
-        modeId: dispatchCaller.agent.currentModeId ?? undefined,
+        modeId: dispatchCaller.agent.currentModeId ?? dispatchParent.config.modeId,
         ...(options.toolPolicy === "none" ? { toolPolicy: { preapproved: [] } } : {}),
       };
       const result = await createAgentCommand(
@@ -2649,12 +2658,10 @@ export class Session {
           );
         }
         this.pluginManagedWorktrees.delete(id);
-        try {
-          await this.persistPluginManagedWorktrees();
-        } catch (persistenceError) {
-          this.pluginManagedWorktrees.set(id, createdWorktree);
-          throw persistenceError;
-        }
+        // The physical rollback has committed. Do not resurrect an ownership
+        // record in memory if this persistence attempt fails; that would make
+        // the resource appear owned only until this session restarts.
+        await this.persistPluginManagedWorktrees();
       } catch (cleanupError) {
         throw new Error(
           `Plugin worktree creation failed and rollback failed: ${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}${ownershipRecorded ? "; durable ownership was retained for recovery" : ""}`,
@@ -2693,13 +2700,11 @@ export class Session {
       throw new Error("Managed worktree physical removal was not confirmed");
     }
     this.pluginManagedWorktrees.delete(id);
-    try {
-      await this.persistPluginManagedWorktrees(input.signal);
-      this.throwIfPluginHostCancelled(input.signal);
-    } catch (error) {
-      this.pluginManagedWorktrees.set(id, managed);
-      throw error;
-    }
+    // Physical deletion is the irreversible boundary. Persist the ownership
+    // removal without the invocation signal and treat the atomic rename as
+    // the operation's commit point. A cancellation observed after that point
+    // must not turn a successful removal into a reported failure.
+    await this.persistPluginManagedWorktrees();
   }
 
   private async readPersistedPluginManagedWorktrees(): Promise<PluginManagedWorktreeRecord[]> {
@@ -3071,7 +3076,14 @@ export class Session {
     }
   }
 
-  private async dispatchStoredDelivery(record: DeliveryRecord): Promise<DeliveryRecord> {
+  private async dispatchStoredDelivery(
+    record: DeliveryRecord,
+    options: {
+      signal?: AbortSignal;
+      onNativeDispatchStart?: () => void;
+    } = {},
+  ): Promise<DeliveryRecord> {
+    this.throwIfPluginHostCancelled(options.signal);
     const currentResult = await this.deliveryLedger.get(this.principalId, {
       deliveryId: record.deliveryId,
       includeAcknowledged: true,
@@ -3084,12 +3096,14 @@ export class Session {
       );
     }
     if (current.status !== "recorded" || !current.targetAgentId) return current;
+    this.throwIfPluginHostCancelled(options.signal);
 
     const dispatching = await this.deliveryLedger.markDispatching(
       this.principalId,
       current.deliveryId,
     );
     if (dispatching.status !== "dispatching") return dispatching;
+    this.throwIfPluginHostCancelled(options.signal);
     try {
       if (current.payload === undefined) {
         throw new DeliveryLedgerError(
@@ -3097,6 +3111,7 @@ export class Session {
           `Delivery ${current.deliveryId} has no dispatchable payload`,
         );
       }
+      options.onNativeDispatchStart?.();
       const outcome = await this.deliveryAgentDispatcher({
         targetAgentId: current.targetAgentId,
         messageId: current.messageId ?? current.deliveryId,

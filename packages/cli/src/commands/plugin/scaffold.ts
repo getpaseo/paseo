@@ -611,8 +611,9 @@ export async function scaffoldPluginDirectory(
     version: "0.0.0",
     scripts: { typecheck: "tsc --noEmit" },
     devDependencies: {
-      "@getpaseo/client": ">=0.8.0-beta.1",
-      "@getpaseo/protocol": ">=0.8.0-beta.1",
+      "@getpaseo/client": "0.8.0-beta.1",
+      "@getpaseo/plugin": "0.8.0-beta.1",
+      "@getpaseo/protocol": "0.8.0-beta.1",
       "@tanstack/react-query": "^5.90.11",
       "@types/react": "~19.2.0",
       react: "19.1.0",

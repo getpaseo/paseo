@@ -906,6 +906,40 @@ export class DeliveryLedger {
     return this.transition(ownerId, deliveryId, "dispatching");
   }
 
+  /**
+   * Permanently finish a recorded targeted delivery when cancellation wins
+   * before the native dispatcher is entered. This is intentionally one
+   * durable mutation so a retry with the same id cannot dispatch the row.
+   */
+  async abandonBeforeDispatch(
+    ownerId: string,
+    deliveryId: string,
+    error: string,
+  ): Promise<DeliveryRecord> {
+    const normalizedOwnerId = validateOwnerId(ownerId);
+    const normalizedId = DeliveryIdSchema.parse(deliveryId);
+    return this.enqueue(normalizedOwnerId, async (state) => {
+      const existing = state.records.get(normalizedId);
+      if (!existing) {
+        throw new DeliveryLedgerError(
+          "delivery_not_found",
+          `Delivery ${normalizedId} was not found`,
+        );
+      }
+      const currentStatus = statusOf(existing);
+      if (currentStatus !== "recorded" && currentStatus !== "dispatching") {
+        return cloneDelivery(existing);
+      }
+      const nextRecord = this.buildTransitionRecord(existing, "failed", error);
+      const nextRecords = new Map(state.records);
+      nextRecords.set(normalizedId, nextRecord);
+      this.assertWithinQuota(nextRecords);
+      await this.persist(normalizedOwnerId, nextRecords, state.nextSequence);
+      state.records = nextRecords;
+      return cloneDelivery(nextRecord);
+    });
+  }
+
   async markAccepted(ownerId: string, deliveryId: string): Promise<DeliveryRecord> {
     return this.transition(ownerId, deliveryId, "accepted");
   }
