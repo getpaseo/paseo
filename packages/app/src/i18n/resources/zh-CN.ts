@@ -712,7 +712,7 @@ export const zhCN: TranslationResources = {
         view: "查看终端",
       },
       accessibility: {
-        trigger: "Workspace scripts",
+        trigger: "运行工作区命令",
         openService: "查看 {{scriptName}} 服务",
         viewTerminal: "查看 {{scriptName}} Terminal",
         runScript: "运行 {{scriptName}} script",
@@ -735,8 +735,15 @@ export const zhCN: TranslationResources = {
     },
     launches: {
       title: "启动配置",
-      actions: { start: "启动", stop: "停止", view: "查看终端", openService: "查看服务" },
+      actions: {
+        switch: "切换",
+        start: "启动",
+        stop: "停止",
+        view: "输出",
+        openService: "查看服务",
+      },
       accessibility: {
+        switchLaunch: "停止 {{activeLaunchName}} 并启动 {{launchName}}",
         trigger: "工作区启动配置",
         launch: "{{launchName}} 启动配置",
         startLaunch: "启动 {{launchName}}",
@@ -745,6 +752,10 @@ export const zhCN: TranslationResources = {
         openService: "查看 {{hostname}} 服务",
       },
       states: {
+        running: "运行中",
+        stopped: "已停止",
+        stopping: "正在停止…",
+        noListeners: "尚未检测到监听端口",
         startFailed: "无法启动 {{launchName}}",
         stopFailed: "无法停止 {{launchName}}",
         portRange: "端口 {{base}}–{{end}}",

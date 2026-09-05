@@ -866,7 +866,7 @@ export function WorkspaceScriptsButton({
                 {...triggerPlayProps}
               />
               {!hideLabels && (
-                <Text style={styles.splitButtonText}>{t("workspace.scripts.title")}</Text>
+                <Text style={styles.splitButtonText}>{t("workspace.scripts.actions.run")}</Text>
               )}
               {presentation === "split" ? (
                 <ThemedChevronDown size={16} uniProps={extraMutedIconColorMapping} />
