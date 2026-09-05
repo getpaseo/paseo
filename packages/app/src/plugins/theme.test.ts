@@ -1,8 +1,12 @@
 import { QueryClient } from "@tanstack/react-query";
-import type { PluginThemeContribution } from "@getpaseo/plugin";
+import type { PluginThemeColorOverrides, PluginThemeContribution } from "@getpaseo/plugin";
 import { describe, expect, it } from "vitest";
 import { darkTheme, lightTheme } from "@/styles/theme";
-import { collectPluginThemes, rememberPluginThemeHost } from "./themes";
+import {
+  collectPluginThemes,
+  parsePluginThemeContribution,
+  rememberPluginThemeHost,
+} from "./themes";
 import { toPluginTheme } from "./theme";
 import type { InstalledPlugin } from "./types";
 
@@ -40,6 +44,57 @@ const LATTE: PluginThemeContribution = {
     accent: "#8839ef",
     mutedForeground: "#6c6f85",
     ring: "#9ca0b0",
+  },
+};
+
+const ALL_OVERRIDES: PluginThemeColorOverrides = {
+  surface3: "#010101",
+  surface4: "#020202",
+  surfaceDiffEmpty: "#030303",
+  surfaceSidebar: "#040404",
+  surfaceSidebarHover: "#050505",
+  surfaceSidebarSelected: "#060606",
+  surfaceWorkspace: "#070707",
+  interactionHighlight: "#080808cc",
+  foregroundExtraMuted: "#090909",
+  borderAccent: "#0a0a0a",
+  accentBright: "#0b0b0b",
+  accentForeground: "#0c0c0c",
+  destructive: "#0d0d0d",
+  destructiveForeground: "#0e0e0e",
+  diffAddition: "#0f0f0f",
+  diffDeletion: "#101010",
+  statusSuccess: "#111111",
+  statusDanger: "#121212",
+  statusWarning: "#131313",
+  statusMerged: "#141414",
+  statusDotSuccess: "#151515",
+  statusDotDanger: "#161616",
+  statusDotWarning: "#171717",
+  statusDotRunning: "#181818",
+  terminal: {
+    background: "#190101",
+    foreground: "#190102",
+    cursor: "#190103",
+    cursorAccent: "#190104",
+    selectionBackground: "#190105cc",
+    selectionForeground: "#190106",
+    black: "#190107",
+    red: "#190108",
+    green: "#190109",
+    yellow: "#19010a",
+    blue: "#19010b",
+    magenta: "#19010c",
+    cyan: "#19010d",
+    white: "#19010e",
+    brightBlack: "#19010f",
+    brightRed: "#190110",
+    brightGreen: "#190111",
+    brightYellow: "#190112",
+    brightBlue: "#190113",
+    brightMagenta: "#190114",
+    brightCyan: "#190115",
+    brightWhite: "#190116",
   },
 };
 
@@ -84,33 +139,83 @@ describe("toPluginTheme", () => {
 });
 
 describe("plugin theme palettes", () => {
-  it("expands a contributed palette onto the semantic and terminal tokens", () => {
-    const option = collectPluginThemes([installed("host-a", [MOCHA])], new Set(["host-a"]))[0];
-    const theme = option.theme;
+  it.each([
+    ["dark", MOCHA, darkTheme],
+    ["light", LATTE, lightTheme],
+  ] as const)(
+    "applies every explicit %s semantic override",
+    (_appearance, contribution, family) => {
+      const overridden = {
+        ...contribution,
+        colors: { ...contribution.colors, overrides: ALL_OVERRIDES },
+      };
+      const theme = collectPluginThemes([installed("host-a", [overridden])], new Set(["host-a"]))[0]
+        .theme;
+      const { terminal, ...semanticOverrides } = ALL_OVERRIDES;
 
-    expect(theme.colorScheme).toBe("dark");
-    expect(theme.colors).toMatchObject({
-      surface0: "#1e1e2e",
-      surface1: "#313244",
-      surface2: "#45475a",
-      surfaceSidebar: "#1e1e2e",
-      foreground: "#cdd6f4",
-      foregroundMuted: "#a6adc8",
-      border: "#45475a",
-      accent: "#cba6f7",
-      accentBright: "#cba6f7",
-      accentForeground: "#1e1e2e",
-      ring: "#6c7086",
-      terminal: {
-        background: "#1e1e2e",
-        foreground: "#cdd6f4",
-        cursor: "#cdd6f4",
-        cursorAccent: "#1e1e2e",
-        black: "#45475a",
-        brightBlack: "#6c7086",
-      },
-    });
-  });
+      expect(theme.colors).toMatchObject(semanticOverrides);
+      expect(theme.colors.terminal).toMatchObject(terminal ?? {});
+      expect(theme.colors.accentBorder).toBe(ALL_OVERRIDES.borderAccent);
+      expect(theme.colors.success).toBe(ALL_OVERRIDES.statusSuccess);
+      expect(theme.colors.syntax).toEqual(family.colors.syntax);
+    },
+  );
+
+  it.each([
+    ["dark", MOCHA, darkTheme],
+    ["light", LATTE, lightTheme],
+  ] as const)(
+    "retains every legacy %s fallback when overrides are omitted",
+    (_appearance, contribution, family) => {
+      const theme = collectPluginThemes(
+        [installed("host-a", [contribution])],
+        new Set(["host-a"]),
+      )[0].theme;
+      const colors = contribution.colors;
+      const isLight = contribution.appearance === "light";
+      const accent = colors.accent ?? colors.foreground;
+
+      expect(theme.colors).toMatchObject({
+        surface3: colors.border,
+        surface4: colors.ring,
+        surfaceDiffEmpty: colors.raised,
+        surfaceSidebar: isLight ? colors.control : colors.background,
+        surfaceSidebarHover: colors.raised,
+        surfaceSidebarSelected: isLight ? colors.border : colors.control,
+        surfaceWorkspace: isLight ? colors.background : colors.raised,
+        interactionHighlight: family.colors.interactionHighlight,
+        foregroundExtraMuted: colors.ring,
+        borderAccent: colors.border,
+        accentBright: accent,
+        accentForeground: colors.background,
+        destructive: family.colors.destructive,
+        destructiveForeground: isLight ? colors.background : family.colors.destructiveForeground,
+        diffAddition: family.colors.diffAddition,
+        diffDeletion: family.colors.diffDeletion,
+        statusSuccess: family.colors.statusSuccess,
+        statusDanger: family.colors.statusDanger,
+        statusWarning: family.colors.statusWarning,
+        statusMerged: family.colors.statusMerged,
+        statusDotSuccess: family.colors.statusDotSuccess,
+        statusDotDanger: family.colors.statusDotDanger,
+        statusDotWarning: family.colors.statusDotWarning,
+        statusDotRunning: family.colors.statusDotRunning,
+        terminal: {
+          ...family.colors.terminal,
+          background: colors.background,
+          foreground: colors.foreground,
+          cursor: colors.foreground,
+          cursorAccent: colors.background,
+          selectionForeground: colors.foreground,
+          black: isLight ? colors.foreground : colors.control,
+          brightBlack: colors.ring,
+        },
+      });
+      expect(theme.colors.accentBorder).toBe(colors.border);
+      expect(theme.colors.success).toBe(accent);
+      expect(theme.colors.syntax).toEqual(family.colors.syntax);
+    },
+  );
 
   it("carries the accent on the foreground when no accent is given", () => {
     const { accent: _accent, ...colors } = MOCHA.colors;
@@ -121,35 +226,52 @@ describe("plugin theme palettes", () => {
     expect(theme.colors.accent).toBe("#cdd6f4");
     expect(theme.colors.accentBright).toBe("#cdd6f4");
   });
+});
 
-  it("keeps the status and syntax tokens the built-in dark themes use", () => {
-    const theme = collectPluginThemes([installed("host-a", [MOCHA])], new Set(["host-a"]))[0].theme;
-
-    expect(theme.colors.statusDanger).toBe(darkTheme.colors.statusDanger);
-    expect(theme.colors.syntax).toEqual(darkTheme.colors.syntax);
+describe("plugin theme validation", () => {
+  it("accepts the original eight-color contribution unchanged", () => {
+    expect(parsePluginThemeContribution(MOCHA)).toEqual(MOCHA);
   });
 
-  it("derives a complete light theme from the same palette contract", () => {
-    const theme = collectPluginThemes([installed("host-a", [LATTE])], new Set(["host-a"]))[0].theme;
+  it("accepts every supported override", () => {
+    const contribution = {
+      ...MOCHA,
+      colors: { ...MOCHA.colors, overrides: ALL_OVERRIDES },
+    };
 
-    expect(theme.colorScheme).toBe("light");
-    expect(theme.colors).toMatchObject({
-      surface0: "#eff1f5",
-      surface1: "#e6e9ef",
-      surface2: "#dce0e8",
-      surfaceSidebar: "#dce0e8",
-      foreground: "#4c4f69",
-      border: "#ccd0da",
-      accent: "#8839ef",
-      ring: "#9ca0b0",
-      terminal: {
-        background: "#eff1f5",
-        foreground: "#4c4f69",
-        black: "#4c4f69",
+    expect(parsePluginThemeContribution(contribution)).toEqual(contribution);
+  });
+
+  it("treats undefined optional overrides as omitted", () => {
+    const contribution = parsePluginThemeContribution({
+      ...MOCHA,
+      colors: {
+        ...MOCHA.colors,
+        overrides: { surface3: undefined, terminal: { black: undefined } },
       },
     });
-    expect(theme.colors.statusDanger).toBe(lightTheme.colors.statusDanger);
-    expect(theme.colors.syntax).toEqual(lightTheme.colors.syntax);
+    const baseline = collectPluginThemes([installed("host-a", [MOCHA])], new Set(["host-a"]))[0]
+      .theme;
+    const theme = collectPluginThemes([installed("host-a", [contribution])], new Set(["host-a"]))[0]
+      .theme;
+
+    expect(theme).toEqual(baseline);
+  });
+
+  it("rejects invalid override colors", () => {
+    expect(() =>
+      parsePluginThemeContribution({
+        ...MOCHA,
+        colors: { ...MOCHA.colors, overrides: { surface3: "rebeccapurple" } },
+      }),
+    ).toThrow("Must be a hex color");
+  });
+
+  it.each([
+    { ...MOCHA.colors, overrides: { unknownRole: "#ffffff" } },
+    { ...MOCHA.colors, overrides: { terminal: { unknownRole: "#ffffff" } } },
+  ])("rejects unknown override keys", (colors) => {
+    expect(() => parsePluginThemeContribution({ ...MOCHA, colors })).toThrow("Unrecognized key");
   });
 });
 

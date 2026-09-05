@@ -177,6 +177,59 @@ export interface PluginSidebarContribution {
   surface: string;
 }
 
+export interface PluginThemeTerminalColorOverrides {
+  background?: string;
+  foreground?: string;
+  cursor?: string;
+  cursorAccent?: string;
+  selectionBackground?: string;
+  selectionForeground?: string;
+  black?: string;
+  red?: string;
+  green?: string;
+  yellow?: string;
+  blue?: string;
+  magenta?: string;
+  cyan?: string;
+  white?: string;
+  brightBlack?: string;
+  brightRed?: string;
+  brightGreen?: string;
+  brightYellow?: string;
+  brightBlue?: string;
+  brightMagenta?: string;
+  brightCyan?: string;
+  brightWhite?: string;
+}
+
+export interface PluginThemeColorOverrides {
+  surface3?: string;
+  surface4?: string;
+  surfaceDiffEmpty?: string;
+  surfaceSidebar?: string;
+  surfaceSidebarHover?: string;
+  surfaceSidebarSelected?: string;
+  surfaceWorkspace?: string;
+  interactionHighlight?: string;
+  foregroundExtraMuted?: string;
+  borderAccent?: string;
+  accentBright?: string;
+  accentForeground?: string;
+  destructive?: string;
+  destructiveForeground?: string;
+  diffAddition?: string;
+  diffDeletion?: string;
+  statusSuccess?: string;
+  statusDanger?: string;
+  statusWarning?: string;
+  statusMerged?: string;
+  statusDotSuccess?: string;
+  statusDotDanger?: string;
+  statusDotWarning?: string;
+  statusDotRunning?: string;
+  terminal?: PluginThemeTerminalColorOverrides;
+}
+
 export interface PluginThemeColors {
   background: string;
   foreground: string;
@@ -186,6 +239,7 @@ export interface PluginThemeColors {
   accent?: string;
   mutedForeground: string;
   ring: string;
+  overrides?: PluginThemeColorOverrides;
 }
 
 export interface PluginThemeContribution {

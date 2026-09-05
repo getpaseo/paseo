@@ -455,9 +455,11 @@ reload path: that path disposes the plugin and would destroy open drafts after e
 
 ## Contribute a theme
 
-`addTheme` takes a small light or dark palette and a display name. Paseo expands it through the
-same semantic builders as the built-in themes, so plugins do not depend on the complete app token
-contract. Unistyles needs every theme name at `StyleSheet.configure` time, so
+`addTheme` takes a required eight-color light or dark seed plus optional canonical semantic
+overrides. Expansion resolves explicit override, then seed-derived fallback, then the built-in
+appearance family. Internal compatibility aliases are not public override keys. Syntax colors stay
+owned by the user's independent highlight-theme setting. Unistyles needs every theme name at
+`StyleSheet.configure` time, so
 `packages/app/src/styles/theme.ts` reserves one light and one dark plugin slot. The appearance
 provider rewrites the matching slot when the selection changes. See [unistyles.md](unistyles.md)
 for the runtime-patching rules the appearance settings share.

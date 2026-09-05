@@ -577,29 +577,58 @@ export default function contribute(client: PluginClientContext) {
       accent: "#cba6f7",
       mutedForeground: "#a6adc8",
       ring: "#6c7086",
+      overrides: {
+        surface3: "#585b70",
+        foregroundExtraMuted: "#7f849c",
+        accentBright: "#f5c2e7",
+        statusSuccess: "#a6e3a1",
+        statusDanger: "#f38ba8",
+        terminal: {
+          black: "#45475a",
+          brightBlack: "#585b70",
+        },
+      },
     },
   });
   return () => {};
 }
 ```
 
-Every color is a hex string; anything else fails to load. Paseo expands the palette into the full
-token set the built-in dark themes use, so a contributed theme covers panels, menus, diffs, status
-colors, and the terminal without listing them.
+Every color must use `#RGB`, `#RRGGBB`, or `#RRGGBBAA`; other values and unknown keys fail the
+plugin load. The eight seed fields remain the compatibility baseline. `accent` is optional and falls
+back to `foreground`; the other seven are required.
 
-| Color             | Becomes                                                           |
-| ----------------- | ----------------------------------------------------------------- |
-| `background`      | App, workspace, and terminal background                           |
-| `foreground`      | Primary text, terminal foreground and cursor                      |
-| `raised`          | Cards, popovers, and hovered rows                                 |
-| `control`         | Inputs, secondary fills, and the light-theme sidebar              |
-| `border`          | Borders and the highest raised-surface tint                       |
-| `accent`          | Buttons, selection, and focus. Optional; `foreground` if omitted. |
-| `mutedForeground` | Secondary text                                                    |
-| `ring`            | Focus rings, scrollbars, and terminal bright black                |
+| Seed              | Default roles                                                         |
+| ----------------- | --------------------------------------------------------------------- |
+| `background`      | Base app, workspace, and terminal backgrounds                         |
+| `foreground`      | Primary text, terminal foreground and cursor                          |
+| `raised`          | First raised surface, hovered sidebar rows, and empty diff surface    |
+| `control`         | Control surface, dark selected rows, and the light sidebar            |
+| `border`          | Borders and third raised surface                                      |
+| `accent`          | Primary actions; `foreground` when omitted                            |
+| `mutedForeground` | Secondary text                                                        |
+| `ring`            | Focus ring, fourth raised surface, extra-muted text, and bright black |
 
-`appearance` is `"light"` or `"dark"`. Paseo uses it to select the matching surface, status,
-diff, syntax, terminal, and shadow derivation.
+Use `colors.overrides` when one of those derived roles needs its own color. Resolution is exact:
+an explicit override wins, otherwise Paseo uses the seed-derived value, otherwise it uses the
+built-in family for the selected `appearance`.
+
+| Override group          | Optional keys                                                                                                                                                                                                                                                                                                               |
+| ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Surfaces                | `surface3`, `surface4`, `surfaceDiffEmpty`, `surfaceSidebar`, `surfaceSidebarHover`, `surfaceSidebarSelected`, `surfaceWorkspace`, `interactionHighlight`                                                                                                                                                                   |
+| Foregrounds and borders | `foregroundExtraMuted`, `borderAccent`                                                                                                                                                                                                                                                                                      |
+| Actions                 | `accentBright`, `accentForeground`, `destructive`, `destructiveForeground`                                                                                                                                                                                                                                                  |
+| Diffs                   | `diffAddition`, `diffDeletion`                                                                                                                                                                                                                                                                                              |
+| Status                  | `statusSuccess`, `statusDanger`, `statusWarning`, `statusMerged`, `statusDotSuccess`, `statusDotDanger`, `statusDotWarning`, `statusDotRunning`                                                                                                                                                                             |
+| Terminal                | `background`, `foreground`, `cursor`, `cursorAccent`, `selectionBackground`, `selectionForeground`, `black`, `red`, `green`, `yellow`, `blue`, `magenta`, `cyan`, `white`, `brightBlack`, `brightRed`, `brightGreen`, `brightYellow`, `brightBlue`, `brightMagenta`, `brightCyan`, `brightWhite` under `overrides.terminal` |
+
+`appearance` is `"light"` or `"dark"`. It selects the built-in fallback family for interaction,
+destructive, diff, status, terminal, and shadow values. Internal compatibility aliases such as
+`primary`, `secondary`, `muted`, `input`, and `accentBorder` are derived from canonical roles and are
+not override keys.
+
+Syntax highlighting remains a user setting. A contributed theme cannot replace the selected
+highlight theme; Paseo applies the user's syntax palette after resolving the app theme.
 
 Only one contributed theme is active at a time. Selecting one persists the choice; if the plugin is
 later disabled or removed, Paseo falls back to the default theme rather than leaving the app
