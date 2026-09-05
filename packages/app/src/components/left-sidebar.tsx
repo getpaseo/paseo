@@ -927,6 +927,7 @@ const foregroundMutedColorMapping = (theme: Theme) => ({ color: theme.colors.for
 
 function SidebarGroupingToggle() {
   const { t } = useTranslation();
+  const shortcutKeys = useShortcutKeys("cycle-sidebar-grouping");
   const groupMode = useSidebarViewStore((state) => state.groupMode);
   const setGroupMode = useSidebarViewStore((state) => state.setGroupMode);
   const targetMode = nextSidebarGroupMode(groupMode);
@@ -945,6 +946,7 @@ function SidebarGroupingToggle() {
       onPress={handlePress}
       testID="sidebar-grouping-toggle"
       iconTestID={`sidebar-grouping-toggle-icon-${targetMode}`}
+      shortcutKeys={shortcutKeys}
     />
   );
 }

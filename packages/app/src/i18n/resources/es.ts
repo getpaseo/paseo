@@ -2230,6 +2230,7 @@ export const es: TranslationResources = {
         jumpToTab: "Saltar a la pestaña",
         previousWorkspace: "Espacio de trabajo anterior",
         nextWorkspace: "Siguiente espacio de trabajo",
+        cycleSidebarGrouping: "Cambiar agrupación",
         previousTab: "Pestaña anterior",
         nextTab: "Pestaña siguiente",
         splitPaneRight: "Panel dividido a la derecha",

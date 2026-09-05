@@ -23,6 +23,32 @@ async function runGroupingEntry(page: Page, label: string, absent: string): Prom
 test.describe("Command center sidebar grouping", () => {
   test.describe.configure({ timeout: 120_000 });
 
+  test("cycles sidebar grouping with Cmd/Ctrl+G", async ({ page }) => {
+    const seeded = await seedWorkspace({ repoPrefix: "keyboard-grouping-" });
+
+    try {
+      await gotoAppShell(page);
+      const projectList = page.getByTestId("sidebar-project-workspace-list-scroll");
+      const statusList = page.getByTestId("sidebar-status-list-scroll");
+      const toggle = page.getByTestId("sidebar-grouping-toggle");
+
+      await expect(projectList).toBeVisible({ timeout: 30_000 });
+      await expect(toggle).toHaveAttribute("aria-label", GROUP_BY_STATUS);
+
+      await page.keyboard.press("ControlOrMeta+G");
+      await expect(statusList).toBeVisible({ timeout: 30_000 });
+      await expect(projectList).toHaveCount(0);
+      await expect(toggle).toHaveAttribute("aria-label", GROUP_BY_PROJECT);
+
+      await page.keyboard.press("ControlOrMeta+G");
+      await expect(projectList).toBeVisible({ timeout: 30_000 });
+      await expect(statusList).toHaveCount(0);
+      await expect(toggle).toHaveAttribute("aria-label", GROUP_BY_STATUS);
+    } finally {
+      await seeded.cleanup().catch(() => undefined);
+    }
+  });
+
   test("flips sidebar grouping and persists the choice across a reload", async ({ page }) => {
     const seeded = await seedWorkspace({ repoPrefix: "command-center-grouping-" });
 
