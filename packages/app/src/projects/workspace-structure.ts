@@ -62,6 +62,7 @@ export function buildWorkspaceStructureProjects(input: {
   sessions: WorkspaceStructureSession[];
   workspaceSort?: WorkspaceSort;
   localProjectLinks?: Iterable<LocalProjectLink>;
+  unhydratedProjectLinkServerIds?: Iterable<string>;
 }): WorkspaceStructureProject[] {
   // Selectors may pass one-shot Map iterators. Materialize once because local-link verification
   // reads the same project/workspace facts that the structural projection consumes below.
@@ -100,6 +101,7 @@ export function buildWorkspaceStructureProjects(input: {
       })),
     }),
     links: localProjectLinks,
+    unhydratedServerIds: input.unhydratedProjectLinkServerIds,
   });
   const localLinkViewKeys = allocateLocalLinkViewKeys({
     overrides: projectLinkOverrides,
