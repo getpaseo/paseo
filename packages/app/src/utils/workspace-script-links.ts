@@ -129,6 +129,8 @@ export function resolveWorkspaceLaunchEndpointLink(input: {
     return { primary: null, targets: [] };
   }
 
+  const requiresPublicRoute =
+    activeConnection?.type === "relay" || activeConnection?.type === "remoteSsh";
   const targets = resolveServiceLinkTargets({
     ...endpoint,
     activeConnection,
@@ -136,5 +138,10 @@ export function resolveWorkspaceLaunchEndpointLink(input: {
     // connection to another host, offer only routes reachable from the client device.
     includeLocalProxy: !isRemoteDirectTcpConnection(activeConnection),
   });
-  return { primary: targets[0] ?? null, targets };
+  // Relay and SSH transport the daemon API, not arbitrary service ports. Until a
+  // service tunnel exists, only an explicitly reachable public URL can be opened.
+  const reachableTargets = requiresPublicRoute
+    ? targets.filter((target) => target.kind === "public" && !isLocalOnlyUrl(target.url))
+    : targets;
+  return { primary: reachableTargets[0] ?? null, targets: reachableTargets };
 }

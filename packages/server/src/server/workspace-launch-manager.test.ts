@@ -6,7 +6,10 @@ import { join } from "node:path";
 import pino from "pino";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { TerminalSession } from "../terminal/terminal.js";
-import type { TerminalManager } from "../terminal/terminal-manager.js";
+import {
+  createTerminalManager as createRealTerminalManager,
+  type TerminalManager,
+} from "../terminal/terminal-manager.js";
 import { createServiceProxySubsystem } from "./service-proxy.js";
 import { WorkspaceLaunchManager } from "./workspace-launch-manager.js";
 import { WorkspaceScriptRuntimeStore } from "./workspace-script-runtime-store.js";
@@ -506,6 +509,56 @@ describe("WorkspaceLaunchManager", () => {
     }
   });
 
+  it.each([0, 17])(
+    "observes real command exit %i without interactive shell integration",
+    async (exitCode) => {
+      const directory = mkdtempSync(join(tmpdir(), "paseo-launch-process-exit-"));
+      tempDirs.push(directory);
+      writeFileSync(
+        join(directory, "paseo.json"),
+        JSON.stringify({
+          worktree: { servicePorts: { blockSize: 1 } },
+          launches: { dev: { command: `echo launch-output; exit ${exitCode}` } },
+        }),
+      );
+      const terminalManager = createRealTerminalManager();
+      const manager = new WorkspaceLaunchManager({
+        terminalManager,
+        serviceProxy: createServiceProxySubsystem({ logger: pino({ level: "silent" }) }),
+        workspaceRuntimeEnvironment: new WorkspaceRuntimeEnvironmentService(),
+        getDaemonTcpPort: () => 6767,
+        serviceProxyPublicBaseUrl: null,
+        resolveScriptHealth: null,
+        logger: pino({ level: "silent" }),
+      });
+      const context = {
+        workspaceId: "real-exit",
+        workspaceDirectory: directory,
+        projectSlug: "app",
+        branchName: null,
+      };
+      try {
+        await manager.start(context, "dev");
+        await vi.waitFor(
+          () => {
+            expect(manager.buildSnapshot(context)).toEqual([
+              expect.objectContaining({
+                lifecycle: "stopped",
+                active: false,
+                exitCode,
+                endpoints: [],
+              }),
+            ]);
+          },
+          { timeout: 10_000 },
+        );
+      } finally {
+        await manager.disposeWorkspace(context.workspaceId);
+        terminalManager.killAll();
+      }
+    },
+  );
+
   it("marks a launch stopped when its foreground command finishes", async () => {
     const directory = mkdtempSync(join(tmpdir(), "paseo-workspace-launch-command-finished-"));
     tempDirs.push(directory);
@@ -538,7 +591,7 @@ describe("WorkspaceLaunchManager", () => {
 
     try {
       await manager.start(context, "dev");
-      terminalManager.created[0]?.triggerCommandFinished(17);
+      terminalManager.created[0]?.triggerExit(17);
 
       expect(manager.buildSnapshot(context)).toEqual([
         expect.objectContaining({
@@ -737,14 +790,14 @@ function createTerminalManager(): {
   manager: TerminalManager;
   created: Array<{
     env: Record<string, string> | undefined;
-    triggerCommandFinished: (exitCode: number | null) => void;
+    triggerExit: (exitCode: number | null) => void;
   }>;
   killed: string[];
 } {
   const sessions = new Map<string, TerminalSession>();
   const created: Array<{
     env: Record<string, string> | undefined;
-    triggerCommandFinished: (exitCode: number | null) => void;
+    triggerExit: (exitCode: number | null) => void;
   }> = [];
   const killed: string[] = [];
   let nextId = 0;
@@ -752,7 +805,6 @@ function createTerminalManager(): {
     createTerminal: async (options: { env?: Record<string, string> }) => {
       const id = `terminal-${++nextId}`;
       let exitListener: ((info: { exitCode: number | null }) => void) | null = null;
-      let commandFinishedListener: ((info: { exitCode: number | null }) => void) | null = null;
       const terminal = {
         id,
         name: id,
@@ -766,20 +818,12 @@ function createTerminalManager(): {
             exitListener = null;
           };
         },
-        onCommandFinished: (listener: (info: { exitCode: number | null }) => void) => {
-          commandFinishedListener = listener;
-          return () => {
-            if (commandFinishedListener === listener) {
-              commandFinishedListener = null;
-            }
-          };
-        },
         send: vi.fn(),
       } as unknown as TerminalSession;
       sessions.set(id, terminal);
       created.push({
         env: options.env,
-        triggerCommandFinished: (exitCode) => commandFinishedListener?.({ exitCode }),
+        triggerExit: (exitCode) => exitListener?.({ exitCode }),
       });
       // Keep the exit callback with the fake terminal rather than exposing an
       // implementation-only method through the production interface.
