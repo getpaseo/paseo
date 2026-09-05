@@ -6,8 +6,8 @@ import { useHostFeatureAvailabilityMap } from "@/runtime/host-features";
 import { projectIconCache } from "@/projects/icon-cache";
 import type { ProjectIconTarget } from "@/projects/icon-target";
 import {
-  getHostClient,
-  useHostRuntimeConnectionStatuses,
+  getHostRuntimeStore,
+  isHostRuntimeConnected,
   useHostRuntimeClient,
   useHostRuntimeIsConnected,
 } from "@/runtime/host-runtime";
@@ -80,7 +80,6 @@ export function useProjectIcons(input: {
     [input.projects],
   );
   const supportsCustomIcons = useHostFeatureAvailabilityMap(serverIds, "projectCustomIcon");
-  const connectionStatuses = useHostRuntimeConnectionStatuses(serverIds);
   const requests = useMemo(() => {
     const unique = new Map<string, ProjectIconTarget>();
     for (const project of input.projects) {
@@ -96,8 +95,8 @@ export function useProjectIcons(input: {
         ...projectIconCache.query(
           request,
           supportsCustomIcons.get(request.serverId) ?? null,
-          () => getHostClient(request.serverId),
-          connectionStatuses.get(request.serverId) === "online",
+          () => getHostRuntimeStore().getClient(request.serverId),
+          isHostRuntimeConnected(getHostRuntimeStore().getSnapshot(request.serverId)),
         ),
         select: iconDataUri,
       };

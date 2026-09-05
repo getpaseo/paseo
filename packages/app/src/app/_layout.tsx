@@ -68,7 +68,7 @@ import {
   resolveStartupBlocker,
   resolveStartupNavigationReady,
   shouldRunStartupGiveUpTimer,
-  startDefaultHostRuntimeBootstrap,
+  startHostRuntimeBootstrap,
   type StartupBlocker,
 } from "@/navigation/host-runtime-bootstrap";
 import { registerWorkspaceRouteNavigationRef } from "@/navigation/workspace-route-navigation";
@@ -105,20 +105,19 @@ import { polyfillCrypto } from "@/polyfills/crypto";
 import { polyfillNavigator } from "@/polyfills/navigator";
 import { queryClient } from "@/data/query-client";
 import {
+  getHostRuntimeStore,
   hasConfiguredLocalDaemonOverride,
-  setAppVisible,
-  useEarliestOnlineHostServerId as useRuntimeEarliestOnlineHostServerId,
   useHostRegistryLoaded,
   useHostMutations,
   useHostRuntimeClient,
   useHostRuntimeIsConnected,
   useHosts,
 } from "@/runtime/host-runtime";
-import { getManagedDaemonStartService } from "@/runtime/daemon-start-service";
+import { getDaemonStartService } from "@/runtime/daemon-start-service";
 import { usePanelStore } from "@/stores/panel-store";
 import { flushDraftPersistStorage } from "@/stores/draft-store";
 import { getNextThemePreference } from "@/styles/theme";
-import { useConnection } from "@/stores/session-store-hooks";
+import { useSessionStore } from "@/stores/session-store";
 import { installWebScrollbarStyles } from "@/styles/install-web-scrollbar-styles";
 import type { HostProfile } from "@/types/host-connection";
 import {
@@ -290,7 +289,7 @@ function LegacyFavoriteProfileMigrationBootstrap({
   serverId: string;
   client: NonNullable<ReturnType<typeof useHostRuntimeClient>>;
 }) {
-  const serverInfo = useConnection(serverId, (connection) => connection.serverInfo);
+  const serverInfo = useSessionStore((state) => state.sessions[serverId]?.serverInfo ?? null);
   const isConnected = useHostRuntimeIsConnected(serverId);
 
   useEffect(() => {
@@ -322,11 +321,27 @@ function HostSessionManager() {
 }
 
 export function useEarliestOnlineHostServerId(): string | null {
-  return useRuntimeEarliestOnlineHostServerId();
+  const store = getHostRuntimeStore();
+  const subscribe = useCallback(
+    (listener: () => void) => {
+      const unsubscribeAll = store.subscribeAll(listener);
+      const unsubscribeHostList = store.subscribeHostList(listener);
+      return () => {
+        unsubscribeAll();
+        unsubscribeHostList();
+      };
+    },
+    [store],
+  );
+  return useSyncExternalStore(
+    subscribe,
+    () => store.getEarliestOnlineHostServerId(),
+    () => store.getEarliestOnlineHostServerId(),
+  );
 }
 
 function useDaemonStartLastError(): string | null {
-  const service = getManagedDaemonStartService();
+  const service = getDaemonStartService({ store: getHostRuntimeStore() });
   return useSyncExternalStore(
     (listener) => service.subscribe(listener),
     () => service.getLastError(),
@@ -335,7 +350,7 @@ function useDaemonStartLastError(): string | null {
 }
 
 function useDaemonStartIsRunning(): boolean {
-  const service = getManagedDaemonStartService();
+  const service = getDaemonStartService({ store: getHostRuntimeStore() });
   return useSyncExternalStore(
     (listener) => service.subscribe(listener),
     () => service.isRunning(),
@@ -357,19 +372,23 @@ async function shouldStartBuiltInDaemon(): Promise<boolean> {
 }
 
 function HostRuntimeBootstrapProvider({ children }: { children: ReactNode }) {
-  const pathname = usePathname();
-  const routeServerId = useMemo(() => parseServerIdFromPathname(pathname), [pathname]);
-
   useEffect(() => {
-    startDefaultHostRuntimeBootstrap(shouldStartBuiltInDaemon);
+    const store = getHostRuntimeStore();
+    const subscription = AppState.addEventListener("change", (nextState) => {
+      store.setAppVisible(nextState === "active");
+    });
+    return () => subscription.remove();
   }, []);
 
   useEffect(() => {
-    const subscription = AppState.addEventListener("change", (nextState) => {
-      setAppVisible(nextState === "active", routeServerId);
+    const store = getHostRuntimeStore();
+    const daemonStartService = getDaemonStartService({ store });
+    startHostRuntimeBootstrap({
+      store,
+      daemonStartService,
+      shouldStartDaemon: shouldStartBuiltInDaemon,
     });
-    return () => subscription.remove();
-  }, [routeServerId]);
+  }, []);
 
   const anyOnlineHostServerId = useEarliestOnlineHostServerId();
   const daemonStartError = useDaemonStartLastError();
@@ -405,7 +424,7 @@ function HostRuntimeBootstrapProvider({ children }: { children: ReactNode }) {
   }, [shouldRunGiveUpTimer]);
 
   const retry = useCallback(() => {
-    const daemonStartService = getManagedDaemonStartService();
+    const daemonStartService = getDaemonStartService({ store: getHostRuntimeStore() });
     void daemonStartService.startIfEnabled({ shouldStart: shouldStartBuiltInDaemon });
   }, []);
 

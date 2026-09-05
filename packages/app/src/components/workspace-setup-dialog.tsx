@@ -1,3 +1,4 @@
+import { getHostRuntimeStore } from "@/runtime/host-runtime";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Text, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
@@ -13,11 +14,10 @@ import { useAgentInputDraft } from "@/composer/draft/input-draft";
 import { useProjectIcon } from "@/projects/icons";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import {
-  acceptAgentSnapshot,
-  acceptWorkspaceSnapshots as mergeWorkspaces,
-  publishWorkspaceHydration as setHasHydratedWorkspaces,
-} from "@/runtime/session-data";
-import { normalizeWorkspaceDescriptor, useServerFeature } from "@/stores/session-store-hooks";
+  normalizeWorkspaceDescriptor,
+  useSessionStore,
+  type WorkspaceDescriptor,
+} from "@/stores/session-store";
 import { useWorkspaceSetupStore } from "@/stores/workspace-setup-store";
 import { normalizeAgentSnapshot } from "@/utils/agent-snapshots";
 import { applyLegacyDaemonWorkspaceOwnership } from "@/workspace/legacy-daemon-workspaces";
@@ -169,6 +169,13 @@ export function WorkspaceSetupDialog() {
   const toast = useToast();
   const pendingWorkspaceSetup = useWorkspaceSetupStore((state) => state.pendingWorkspaceSetup);
   const clearWorkspaceSetup = useWorkspaceSetupStore((state) => state.clearWorkspaceSetup);
+  const mergeWorkspaces = useCallback(
+    (targetServerId: string, workspaces: Iterable<WorkspaceDescriptor>) => {
+      getHostRuntimeStore().acceptWorkspaceSnapshots(targetServerId, Array.from(workspaces));
+    },
+    [],
+  );
+  const setHasHydratedWorkspaces = useSessionStore((state) => state.setHasHydratedWorkspaces);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [createdWorkspace, setCreatedWorkspace] = useState<ReturnType<
     typeof normalizeWorkspaceDescriptor
@@ -176,7 +183,9 @@ export function WorkspaceSetupDialog() {
   const [pendingAction, setPendingAction] = useState<"chat" | null>(null);
 
   const serverId = pendingWorkspaceSetup?.serverId ?? "";
-  const supportsForgeSearch = useServerFeature(serverId, "forgeSearch");
+  const supportsForgeSearch = useSessionStore(
+    (state) => state.sessions[serverId]?.serverInfo?.features?.forgeSearch === true,
+  );
   const sourceDirectory = pendingWorkspaceSetup?.sourceDirectory ?? "";
   const displayName = pendingWorkspaceSetup?.displayName?.trim() ?? "";
   const workspace = createdWorkspace;
@@ -278,7 +287,14 @@ export function WorkspaceSetupDialog() {
       setCreatedWorkspace(normalizedWorkspace);
       return normalizedWorkspace;
     },
-    [createdWorkspace, pendingWorkspaceSetup, t, withConnectedClient],
+    [
+      createdWorkspace,
+      mergeWorkspaces,
+      pendingWorkspaceSetup,
+      setHasHydratedWorkspaces,
+      t,
+      withConnectedClient,
+    ],
   );
 
   const getIsStillActive = useCallback(() => {
@@ -334,7 +350,7 @@ export function WorkspaceSetupDialog() {
           return;
         }
 
-        acceptAgentSnapshot(
+        getHostRuntimeStore().acceptAgentSnapshot(
           serverId,
           applyLegacyDaemonWorkspaceOwnership({
             serverId,

@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useMemo, useState, type ReactElement } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  useSyncExternalStore,
+  type ReactElement,
+} from "react";
 import { ScrollView, Text, View } from "react-native";
 import { useIsFocused } from "@react-navigation/native";
 import { CalendarClock, Plus } from "lucide-react-native";
@@ -20,7 +27,7 @@ import {
   type AggregatedSchedule,
   type ScheduleHostError,
 } from "@/hooks/use-schedules";
-import { readHostRuntimeSnapshot, useHostRuntimeVersion, useHosts } from "@/runtime/host-runtime";
+import { getHostRuntimeStore, useHosts } from "@/runtime/host-runtime";
 import {
   resolveSchedule,
   type ScheduleBucket,
@@ -61,7 +68,12 @@ function SchedulesScreenContent(): ReactElement {
   const { agents } = useAggregatedAgents({ includeArchived: true });
   const { projects } = useProjects();
   const hosts = useHosts();
-  const runtimeVersion = useHostRuntimeVersion();
+  const runtime = getHostRuntimeStore();
+  const runtimeVersion = useSyncExternalStore(
+    (onStoreChange) => runtime.subscribeAll(onStoreChange),
+    () => runtime.getVersion(),
+    () => runtime.getVersion(),
+  );
 
   // Per-host agent-directory readiness from the runtime, not the aggregate agent
   // flag: the aggregate `isInitialLoad` flips false as soon as *any* host has
@@ -72,12 +84,12 @@ function SchedulesScreenContent(): ReactElement {
     void runtimeVersion;
     const ready = new Set<string>();
     for (const host of hosts) {
-      if (readHostRuntimeSnapshot(host.serverId)?.hasEverLoadedAgentDirectory) {
+      if (runtime.getSnapshot(host.serverId)?.hasEverLoadedAgentDirectory) {
         ready.add(host.serverId);
       }
     }
     return ready;
-  }, [hosts, runtimeVersion]);
+  }, [hosts, runtime, runtimeVersion]);
 
   const [form, setForm] = useState<FormState>({ mode: "closed" });
   const [selectedHost, setSelectedHost] = useState(ALL_HOSTS_OPTION_ID);

@@ -14,8 +14,8 @@ function agentBelongsToWorkspace(agent: Agent, workspaceId: string): boolean {
 }
 
 export function deriveWorkspaceAgentVisibility(input: {
-  sessionAgents: ReadonlyMap<string, Agent> | undefined;
-  agentDetails?: ReadonlyMap<string, Agent> | undefined;
+  sessionAgents: Map<string, Agent> | undefined;
+  agentDetails?: Map<string, Agent> | undefined;
   workspaceId: string | null | undefined;
 }): WorkspaceAgentVisibility {
   const { sessionAgents, agentDetails } = input;

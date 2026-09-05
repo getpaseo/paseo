@@ -50,8 +50,7 @@ import {
 import { resolveTerminalRestoreOptions } from "@/terminal/runtime/terminal-restore-options";
 import { usePanelStore } from "@/stores/panel-store";
 import { useBlockMobilePanelOpenGestures } from "@/mobile-panels/provider";
-import { useServerFeature } from "@/stores/session-store-hooks";
-import { publishFocusedTerminal as setFocusedTerminalId } from "@/runtime/session-data";
+import { useSessionStore } from "@/stores/session-store";
 import { toXtermTheme } from "@/utils/to-xterm-theme";
 import TerminalEmulator, { type TerminalEmulatorHandle } from "./terminal-emulator";
 import { TerminalFloatingCopyAction, TerminalPasteAction } from "./terminal-copy-paste-actions";
@@ -234,9 +233,17 @@ export function TerminalPane({
   const client = useHostRuntimeClient(serverId);
   const isConnected = useHostRuntimeIsConnected(serverId);
   const isTerminalPresented = retainedPanelActive && isWorkspaceFocused;
-  const supportsTerminalRestoreModes = useServerFeature(serverId, "terminal-restore-modes");
-  const supportsTerminalInputModeReplay = useServerFeature(serverId, "terminal-input-mode-replay");
-  const supportsTerminalSizeOwnership = useServerFeature(serverId, "terminal-size-ownership");
+  const supportsTerminalRestoreModes = useSessionStore(
+    (state) => state.sessions[serverId]?.serverInfo?.features?.["terminal-restore-modes"] === true,
+  );
+  const supportsTerminalInputModeReplay = useSessionStore(
+    (state) =>
+      state.sessions[serverId]?.serverInfo?.features?.["terminal-input-mode-replay"] === true,
+  );
+  const supportsTerminalSizeOwnership = useSessionStore(
+    (state) => state.sessions[serverId]?.serverInfo?.features?.["terminal-size-ownership"] === true,
+  );
+  const setFocusedTerminalId = useSessionStore((state) => state.setFocusedTerminalId);
 
   const scopeKey = useMemo(() => terminalScopeKey({ serverId, cwd }), [serverId, cwd]);
   const terminalStreamKey = useMemo(() => `${scopeKey}:${terminalId}`, [scopeKey, terminalId]);
@@ -386,7 +393,14 @@ export function TerminalPane({
     lastSentTerminalSizeRef.current = null;
     requestTerminalReflow();
     emulatorRef.current?.claimSize();
-  }, [isPaneFocused, isWorkspaceFocused, requestTerminalReflow, serverId, terminalId]);
+  }, [
+    isPaneFocused,
+    isWorkspaceFocused,
+    requestTerminalReflow,
+    serverId,
+    setFocusedTerminalId,
+    terminalId,
+  ]);
 
   const clearKeyboardRefitTimeouts = useCallback(() => {
     if (keyboardRefitTimeoutsRef.current.length === 0) {

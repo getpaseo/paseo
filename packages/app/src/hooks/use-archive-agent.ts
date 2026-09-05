@@ -1,3 +1,4 @@
+import { getHostRuntimeStore } from "@/runtime/host-runtime";
 import { useCallback, useMemo } from "react";
 import {
   useMutation,
@@ -7,12 +8,7 @@ import {
   type QueryKey,
 } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { getActiveAgentSnapshot } from "@/runtime/session-data";
-import {
-  archiveAgentSnapshot,
-  restoreAgentSnapshot as restoreStoredAgent,
-} from "@/runtime/session-data";
-import { getHostClient } from "@/runtime/host-runtime";
+import { useSessionStore } from "@/stores/session-store";
 import { agentHistoryQueryKey, allAgentHistoryQueryRootKey } from "./agent-history-query-key";
 
 export const ARCHIVE_AGENT_PENDING_QUERY_KEY = ["archive-agent-pending"] as const;
@@ -246,13 +242,13 @@ interface ArchiveAgentMutationContext {
 }
 
 function getStoredAgentSnapshot(input: ArchiveAgentInput) {
-  return getActiveAgentSnapshot(input.serverId, input.agentId) ?? undefined;
+  return useSessionStore.getState().sessions[input.serverId]?.agents.get(input.agentId);
 }
 
 function restoreAgentSnapshot(
   input: ArchiveAgentInput & { agent: ReturnType<typeof getStoredAgentSnapshot> },
 ): void {
-  restoreStoredAgent(input.serverId, input.agentId, input.agent);
+  getHostRuntimeStore().restoreAgentSnapshot(input.serverId, input.agentId, input.agent);
 }
 
 function getArchivedAgentListCacheSnapshot(
@@ -309,7 +305,11 @@ function markAgentArchivedInStore(input: ArchiveAgentInput & { archivedAt: strin
     return;
   }
 
-  archiveAgentSnapshot(input.serverId, input.agentId, archivedAt.toISOString());
+  getHostRuntimeStore().archiveAgentSnapshot(
+    input.serverId,
+    input.agentId,
+    archivedAt.toISOString(),
+  );
 }
 
 interface ApplyArchivedAgentCloseResultsInput {
@@ -383,7 +383,7 @@ export function useArchiveAgent() {
 
   const archiveMutation = useMutation({
     mutationFn: async (input: ArchiveAgentInput): Promise<{ archivedAt: string }> => {
-      const client = getHostClient(input.serverId);
+      const client = useSessionStore.getState().sessions[input.serverId]?.client ?? null;
       if (!client) {
         throw new Error(t("common.errors.daemonClientUnavailable"));
       }

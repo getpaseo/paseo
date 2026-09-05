@@ -1,13 +1,5 @@
 import type { MessageSubmissionWriter } from "@/composer/actions";
-import {
-  acceptMessageSubmission,
-  beginMessageSubmission,
-  handoffCreatedAgentSubmission,
-  getAgentStreamSnapshot,
-  hostSupports,
-  publishAgentStreamState,
-  rejectMessageSubmission,
-} from "@/runtime/session-data";
+import { useSessionStore } from "@/stores/session-store";
 import {
   appendSubmittedUserMessage,
   removeSubmittedUserMessage,
@@ -15,8 +7,13 @@ import {
 } from "@/types/stream";
 
 function appendUntrackedSubmission(serverId: string, agentId: string, message: UserMessageItem) {
-  const { tail, head } = getAgentStreamSnapshot(serverId, agentId);
-  publishAgentStreamState(serverId, agentId, appendSubmittedUserMessage({ tail, head, message }));
+  const session = useSessionStore.getState().sessions[serverId];
+  if (!session) return;
+  const tail = session.agentStreamTail.get(agentId) ?? [];
+  const head = session.agentStreamHead.get(agentId) ?? [];
+  useSessionStore
+    .getState()
+    .setAgentStreamState(serverId, agentId, appendSubmittedUserMessage({ tail, head, message }));
 }
 
 function removeUntrackedSubmission(
@@ -24,12 +21,17 @@ function removeUntrackedSubmission(
   agentId: string,
   clientMessageId: string,
 ): void {
-  const { tail, head } = getAgentStreamSnapshot(serverId, agentId);
-  publishAgentStreamState(
-    serverId,
-    agentId,
-    removeSubmittedUserMessage({ tail, head, clientMessageId }),
-  );
+  const session = useSessionStore.getState().sessions[serverId];
+  if (!session) return;
+  const tail = session.agentStreamTail.get(agentId) ?? [];
+  const head = session.agentStreamHead.get(agentId) ?? [];
+  useSessionStore
+    .getState()
+    .setAgentStreamState(
+      serverId,
+      agentId,
+      removeSubmittedUserMessage({ tail, head, clientMessageId }),
+    );
 }
 
 function createUntrackedMessageSubmissionWriter(serverId: string): MessageSubmissionWriter {
@@ -44,17 +46,20 @@ function createUntrackedMessageSubmissionWriter(serverId: string): MessageSubmis
 }
 
 export function createMessageSubmissionWriter(serverId: string): MessageSubmissionWriter {
-  const supportsTrackedMessageSubmissions = hostSupports(serverId, "canonicalSubmittedPrompts");
+  const supportsTrackedMessageSubmissions =
+    useSessionStore.getState().sessions[serverId]?.serverInfo?.features
+      ?.canonicalSubmittedPrompts === true;
   if (!supportsTrackedMessageSubmissions) {
     // COMPAT(canonicalSubmittedPrompts): added in v0.2.6; remove the gate after 2027-01-31 once daemon floor >= v0.2.6.
     return createUntrackedMessageSubmissionWriter(serverId);
   }
   return {
-    begin: (agentId, message) => beginMessageSubmission(serverId, agentId, message),
+    begin: (agentId, message) =>
+      useSessionStore.getState().beginAgentMessageSubmission(serverId, agentId, message),
     accept: (agentId, clientMessageId) =>
-      acceptMessageSubmission(serverId, agentId, clientMessageId),
+      useSessionStore.getState().acceptAgentMessageSubmission(serverId, agentId, clientMessageId),
     reject: (agentId, clientMessageId) =>
-      rejectMessageSubmission(serverId, agentId, clientMessageId),
+      useSessionStore.getState().rejectAgentMessageSubmission(serverId, agentId, clientMessageId),
   };
 }
 
@@ -63,5 +68,5 @@ export function handoffCreatedAgentMessageSubmission(
   agentId: string,
   message: UserMessageItem,
 ): boolean {
-  return handoffCreatedAgentSubmission(serverId, agentId, message);
+  return useSessionStore.getState().handoffCreatedAgentUserMessage(serverId, agentId, message);
 }

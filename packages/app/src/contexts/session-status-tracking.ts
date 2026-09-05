@@ -1,5 +1,5 @@
 import type { AgentLifecycleStatus } from "@getpaseo/protocol/agent-lifecycle";
-import type { Agent } from "@/stores/session-store-hooks";
+import type { Agent } from "@/stores/session-store";
 
 export function reconcilePreviousAgentStatuses(
   previousStatuses: Map<string, AgentLifecycleStatus>,

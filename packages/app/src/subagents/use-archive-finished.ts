@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useSyncExternalStore } from "react";
 import { useArchiveAgent } from "@/hooks/use-archive-agent";
-import { getAgentSnapshot } from "@/runtime/session-data";
+import { useSessionStore } from "@/stores/session-store";
 import {
   createArchiveFinishedSubagents,
   type ArchiveFinishedOutcome,
@@ -32,7 +32,7 @@ export function useArchiveFinishedSubagents({
     () =>
       createArchiveFinishedSubagents([], {
         parentAgentId,
-        getManagedSubagent: (id) => getAgentSnapshot(serverId, id) ?? undefined,
+        getManagedSubagent: (id) => useSessionStore.getState().sessions[serverId]?.agents.get(id),
         archiveManagedSubagent: (id) => archiveAgent({ serverId, agentId: id }),
         dismissProviderSubagents: (ids) => {
           useProviderSubagentStore.getState().hideFromTrack(serverId, parentAgentId, ids);

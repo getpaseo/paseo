@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { useTranslation } from "react-i18next";
 import { Pressable, Text, View, ScrollView } from "react-native";
 import { useRouter } from "expo-router";
@@ -13,12 +13,7 @@ import {
 } from "lucide-react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import type { HostProfile } from "@/types/host-connection";
-import {
-  isHostRuntimeConnected,
-  readHostRuntimeSnapshot,
-  useHostRuntimeVersion,
-  useHosts,
-} from "@/runtime/host-runtime";
+import { getHostRuntimeStore, isHostRuntimeConnected, useHosts } from "@/runtime/host-runtime";
 import { AddHostModal } from "./add-host-modal";
 import { AddRemoteSshHostModal } from "./add-remote-ssh-host-modal";
 import { PairLinkModal } from "./pair-link-modal";
@@ -129,24 +124,42 @@ const styles = StyleSheet.create((theme) => ({
 }));
 
 function useAnyHostOnline(serverIds: string[]): string | null {
-  const runtimeVersion = useHostRuntimeVersion();
-  return useMemo(() => {
-    void runtimeVersion;
-    let firstOnlineServerId: string | null = null;
-    let firstOnlineAt: string | null = null;
-    for (const serverId of serverIds) {
-      const snapshot = readHostRuntimeSnapshot(serverId);
-      const lastOnlineAt = snapshot?.lastOnlineAt ?? null;
-      if (!isHostRuntimeConnected(snapshot) || !lastOnlineAt) {
-        continue;
+  const runtime = getHostRuntimeStore();
+  return useSyncExternalStore(
+    (onStoreChange) => runtime.subscribeAll(onStoreChange),
+    () => {
+      let firstOnlineServerId: string | null = null;
+      let firstOnlineAt: string | null = null;
+      for (const serverId of serverIds) {
+        const snapshot = runtime.getSnapshot(serverId);
+        const lastOnlineAt = snapshot?.lastOnlineAt ?? null;
+        if (!isHostRuntimeConnected(snapshot) || !lastOnlineAt) {
+          continue;
+        }
+        if (!firstOnlineAt || lastOnlineAt < firstOnlineAt) {
+          firstOnlineAt = lastOnlineAt;
+          firstOnlineServerId = serverId;
+        }
       }
-      if (!firstOnlineAt || lastOnlineAt < firstOnlineAt) {
-        firstOnlineAt = lastOnlineAt;
-        firstOnlineServerId = serverId;
+      return firstOnlineServerId;
+    },
+    () => {
+      let firstOnlineServerId: string | null = null;
+      let firstOnlineAt: string | null = null;
+      for (const serverId of serverIds) {
+        const snapshot = runtime.getSnapshot(serverId);
+        const lastOnlineAt = snapshot?.lastOnlineAt ?? null;
+        if (!isHostRuntimeConnected(snapshot) || !lastOnlineAt) {
+          continue;
+        }
+        if (!firstOnlineAt || lastOnlineAt < firstOnlineAt) {
+          firstOnlineAt = lastOnlineAt;
+          firstOnlineServerId = serverId;
+        }
       }
-    }
-    return firstOnlineServerId;
-  }, [runtimeVersion, serverIds]);
+      return firstOnlineServerId;
+    },
+  );
 }
 
 export interface WelcomeScreenProps {

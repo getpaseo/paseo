@@ -1,7 +1,7 @@
 import { useMemo } from "react";
 import { useFetchQuery } from "@/data/query";
 import {
-  scheduleRuntime,
+  getHostRuntimeStore,
   useHostRuntimeConnectionStatuses,
   useHosts,
 } from "@/runtime/host-runtime";
@@ -35,6 +35,7 @@ export interface UseSchedulesResult {
 
 export function useSchedules(): UseSchedulesResult {
   const hosts = useHosts();
+  const runtime = getHostRuntimeStore();
   const hostInputs = useMemo<ScheduleHostInput[]>(
     () => hosts.map((host) => ({ serverId: host.serverId, serverName: host.label })),
     [hosts],
@@ -48,7 +49,7 @@ export function useSchedules(): UseSchedulesResult {
 
   const query = useFetchQuery({
     queryKey: [...schedulesQueryKey(serverIds), connectionStatusKey],
-    queryFn: () => fetchAggregatedSchedules({ hosts: hostInputs, runtime: scheduleRuntime }),
+    queryFn: () => fetchAggregatedSchedules({ hosts: hostInputs, runtime }),
     dataShape: "list",
     staleTimeMs: 5_000,
   });

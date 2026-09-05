@@ -5,8 +5,8 @@ import {
   deleteLegacySkillSelection,
   readLegacySkillSelection,
 } from "@/desktop/daemon/desktop-daemon";
-import { useConnectedDesktopManagedHostIds } from "@/stores/session-store-hooks";
-import { importLegacyAgentSkillsSelection } from "./legacy-migration-service";
+import { getHostRuntimeStore } from "@/runtime/host-runtime";
+import { useSessionStore } from "@/stores/session-store";
 
 interface LegacySelectionClient {
   importLegacyAgentSkillsSelection(selection: AgentSkillSelection): Promise<unknown>;
@@ -26,16 +26,21 @@ export async function migrateLegacyAgentSkillsSelection(
 
 // COMPAT(desktopSkillSelectionMigration): added in v0.4.0; remove after 2027-02-16.
 export function LegacyAgentSkillsMigration() {
-  const connectedManagedHosts = useConnectedDesktopManagedHostIds().join(",");
+  const connectedManagedHosts = useSessionStore((state) =>
+    Object.entries(state.sessions)
+      .filter(([, session]) => session.serverInfo?.desktopManaged === true)
+      .map(([serverId]) => serverId)
+      .sort()
+      .join(","),
+  );
   useEffect(() => {
     if (!shouldUseDesktopDaemon() || !connectedManagedHosts) return;
     async function migrate(): Promise<void> {
       const status = await getDesktopDaemonStatus();
       if (status.status !== "running" || !status.desktopManaged) return;
-      const selection = await readLegacySkillSelection();
-      if (!selection) return;
-      const imported = await importLegacyAgentSkillsSelection(status.serverId, selection);
-      if (imported) await deleteLegacySkillSelection();
+      const client = getHostRuntimeStore().getSnapshot(status.serverId)?.client;
+      if (!client) return;
+      await migrateLegacyAgentSkillsSelection(client);
     }
     void migrate().catch((error) => {
       console.error("[Agent skills] Legacy selection migration failed; will retry", error);

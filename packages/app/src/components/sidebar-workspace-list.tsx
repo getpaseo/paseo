@@ -40,7 +40,7 @@ import { ExternalLink, Settings, MoreVertical, Plus, Trash2 } from "lucide-react
 import { NestableScrollContainer } from "react-native-draggable-flatlist";
 import { DraggableList, type DraggableRenderItemInfo } from "./draggable-list";
 import type { DraggableListDragHandleProps } from "./draggable-list.types";
-import { getHostClient, useHosts } from "@/runtime/host-runtime";
+import { getHostRuntimeStore, useHosts } from "@/runtime/host-runtime";
 import type { PinnedSidebarGroups } from "@/hooks/use-sidebar-pins";
 import {
   useSidebarWorkspacePinController,
@@ -1703,7 +1703,7 @@ function ProjectBlock({
 
       void removeProjectFromHosts({
         targets: readiness.targets,
-        getClient: (serverId) => getHostClient(serverId),
+        getClient: (serverId) => getHostRuntimeStore().getClient(serverId),
       })
         .then((outcome) => {
           if (outcome.kind === "host_disconnected") {

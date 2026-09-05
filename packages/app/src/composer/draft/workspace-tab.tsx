@@ -20,7 +20,7 @@ import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-
 import { buildWorkspaceDraftAgentConfig } from "@/screens/workspace/workspace-draft-agent-config";
 import { buildDraftStoreKey } from "@/stores/draft-keys";
 import { useCreateFlowStore } from "@/stores/create-flow-store";
-import type { Agent } from "@/stores/session-store-hooks";
+import type { Agent } from "@/stores/session-store";
 import { useWorkspaceFields } from "@/stores/session-store-hooks";
 import { useWorkspaceDraftSubmissionStore } from "@/stores/workspace-draft-submission-store";
 import { useAgentControlCommandCenterActions } from "@/command-center/agent-control-registration";
@@ -248,12 +248,7 @@ function buildDraftAgentSnapshot(input: {
     id: tabId,
     provider,
     status: "running",
-    turn: {
-      phase: "open",
-      turnId: null,
-      startedAt: now,
-      cancellationRequestId: null,
-    },
+    turn: { phase: "idle", cancellationRequestId: null },
     createdAt: now,
     updatedAt: now,
     lastUserMessageAt: now,
@@ -347,9 +342,9 @@ export function WorkspaceDraftAgentTab({
   const insets = useSafeAreaInsets();
   const client = useHostRuntimeClient(serverId);
   const isConnected = useHostRuntimeIsConnected(serverId);
-  const workspaceFields = useWorkspaceFields(serverId, workspaceId, (workspace) => ({
-    id: workspace.id,
-    workspaceDirectory: workspace.workspaceDirectory,
+  const workspaceFields = useWorkspaceFields(serverId, workspaceId, (w) => ({
+    workspaceDirectory: w.workspaceDirectory,
+    id: w.id,
   }));
   const workspaceDirectory = workspaceFields?.workspaceDirectory || null;
   const draftSetup = initialSetup ?? null;

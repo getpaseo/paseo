@@ -54,8 +54,8 @@ import type {
   AgentFileExplorerState,
   ExplorerDirectory,
   ExplorerEntry,
-} from "@/stores/session-store-hooks";
-import { useFileExplorer, useServerFeature } from "@/stores/session-store-hooks";
+} from "@/stores/session-store";
+import { useSessionStore } from "@/stores/session-store";
 import { FileActionsContextMenuContent } from "@/components/file-actions-menu";
 import { ContextMenu, ContextMenuTrigger, useContextMenu } from "@/components/ui/context-menu";
 import { useFileDownload } from "@/hooks/use-file-download";
@@ -426,7 +426,11 @@ export function FileExplorerPane({
     [normalizedWorkspaceRoot, workspaceId],
   );
   const hasWorkspaceScope = Boolean(workspaceStateKey && normalizedWorkspaceRoot);
-  const explorerState = useFileExplorer(serverId, workspaceStateKey);
+  const explorerState = useSessionStore((state) =>
+    workspaceStateKey && state.sessions[serverId]
+      ? state.sessions[serverId]?.fileExplorer.get(workspaceStateKey)
+      : undefined,
+  );
 
   const {
     requestDirectoryListing,
@@ -451,9 +455,13 @@ export function FileExplorerPane({
     workspaceDirectory: normalizedWorkspaceRoot,
   });
   // COMPAT(fsEntryOps): added in v0.3.0, remove gate after 2027-02-08.
-  const fsEntryOpsEnabled = useServerFeature(serverId, "fsEntryOps");
+  const fsEntryOpsEnabled = useSessionStore(
+    (state) => state.sessions[serverId]?.serverInfo?.features?.fsEntryOps === true,
+  );
   // COMPAT(fsEntryDuplicate): added in v0.3.0, remove gate after 2027-02-09.
-  const fsEntryDuplicateEnabled = useServerFeature(serverId, "fsEntryDuplicate");
+  const fsEntryDuplicateEnabled = useSessionStore(
+    (state) => state.sessions[serverId]?.serverInfo?.features?.fsEntryDuplicate === true,
+  );
   const [pendingEdit, setPendingEdit] = useState<ExplorerPendingEdit | null>(null);
   const downloadFile = useFileDownload({
     serverId,

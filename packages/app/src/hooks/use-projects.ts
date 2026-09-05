@@ -1,20 +1,17 @@
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef, useSyncExternalStore } from "react";
 import equal from "fast-deep-equal";
+import { useStoreWithEqualityFn } from "zustand/traditional";
 import {
-  acquireDirectoryDemand,
+  getHostRuntimeStore,
   isHostRuntimeDirectoryLoading,
-  readHostRuntimeSnapshot,
-  refreshHostDirectories,
-  useHostRuntimeVersion,
   useHosts,
   type HostRuntimeSnapshot,
 } from "@/runtime/host-runtime";
 import {
-  useWorkspaceDirectories,
-  type WorkspaceDirectoryView,
+  useSessionStore,
   type ProjectDescriptor,
   type WorkspaceDescriptor,
-} from "@/stores/session-store-hooks";
+} from "@/stores/session-store";
 import { buildProjects, type ProjectHost, type ProjectSummary } from "@/utils/projects";
 
 export interface ProjectHostError {
@@ -76,41 +73,23 @@ function toProjectHostRuntimeState(
   };
 }
 
-function createProjectHostReplicasSelector(
+function selectProjectHostReplicas(
   hosts: readonly { serverId: string; label: string }[],
   enabled: boolean,
-): (directories: ReadonlyMap<string, WorkspaceDirectoryView>) => ProjectHostReplica[] {
-  let previousInputs: Array<{
-    workspaces: WorkspaceDirectoryView["workspaces"] | undefined;
-    projects: WorkspaceDirectoryView["projects"] | undefined;
-  }> | null = null;
-  let previousResult = EMPTY_PROJECT_HOST_REPLICAS;
-  return (directories) => {
-    if (!enabled) return EMPTY_PROJECT_HOST_REPLICAS;
-    const inputs = hosts.map((host) => {
-      const directory = directories.get(host.serverId);
-      return { workspaces: directory?.workspaces, projects: directory?.projects };
+): (state: ReturnType<typeof useSessionStore.getState>) => ProjectHostReplica[] {
+  if (!enabled) {
+    return () => EMPTY_PROJECT_HOST_REPLICAS;
+  }
+  return (state) =>
+    hosts.map((host) => {
+      const session = state.sessions[host.serverId];
+      return {
+        serverId: host.serverId,
+        serverName: host.label,
+        workspaces: Array.from(session?.workspaces.values() ?? []),
+        projects: Array.from(session?.projects.values() ?? []),
+      };
     });
-    const priorInputs = previousInputs;
-    if (
-      priorInputs &&
-      inputs.every(
-        (input, index) =>
-          input.workspaces === priorInputs[index]?.workspaces &&
-          input.projects === priorInputs[index]?.projects,
-      )
-    ) {
-      return previousResult;
-    }
-    previousInputs = inputs;
-    previousResult = hosts.map((host, index) => ({
-      serverId: host.serverId,
-      serverName: host.label,
-      workspaces: Array.from(inputs[index]?.workspaces?.values() ?? []),
-      projects: Array.from(inputs[index]?.projects?.values() ?? []),
-    }));
-    return previousResult;
-  };
 }
 
 export function deriveProjectsFromReplica(input: {
@@ -155,8 +134,15 @@ function useProjectHostRuntimeStates(
   serverIds: readonly string[],
   enabled: boolean,
 ): ProjectHostRuntimeState[] {
+  const runtime = getHostRuntimeStore();
   const previousStatesRef = useRef<ProjectHostRuntimeState[]>([]);
-  const runtimeSnapshotTick = useHostRuntimeVersion();
+  const subscribe = useCallback(
+    (onStoreChange: () => void) =>
+      enabled ? runtime.subscribeAll(onStoreChange) : () => undefined,
+    [enabled, runtime],
+  );
+  const getSnapshot = useCallback(() => (enabled ? runtime.getVersion() : 0), [enabled, runtime]);
+  const runtimeSnapshotTick = useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
   return useMemo(() => {
     if (!enabled) {
       previousStatesRef.current = EMPTY_PROJECT_HOST_RUNTIME_STATES;
@@ -164,32 +150,33 @@ function useProjectHostRuntimeStates(
     }
     void runtimeSnapshotTick;
     const nextStates = serverIds.map((serverId) =>
-      toProjectHostRuntimeState(serverId, readHostRuntimeSnapshot(serverId)),
+      toProjectHostRuntimeState(serverId, runtime.getSnapshot(serverId)),
     );
     if (equal(previousStatesRef.current, nextStates)) {
       return previousStatesRef.current;
     }
     previousStatesRef.current = nextStates;
     return nextStates;
-  }, [enabled, runtimeSnapshotTick, serverIds]);
+  }, [enabled, runtime, runtimeSnapshotTick, serverIds]);
 }
 
 export function useProjects(options: UseProjectsOptions = {}): UseProjectsResult {
   const enabled = options.enabled ?? true;
   const hosts = useHosts();
+  const runtime = getHostRuntimeStore();
   const serverIds = useMemo(
     () => (enabled ? hosts.map((host) => host.serverId) : []),
     [enabled, hosts],
   );
   useEffect(() => {
-    const releases = serverIds.map(acquireDirectoryDemand);
+    const releases = serverIds.map((serverId) => runtime.acquireDirectoryDemand(serverId));
     return () => releases.forEach((release) => release());
-  }, [serverIds]);
-  const selectReplicas = useMemo(
-    () => createProjectHostReplicasSelector(hosts, enabled),
+  }, [runtime, serverIds]);
+  const replicaSelector = useMemo(
+    () => selectProjectHostReplicas(hosts, enabled),
     [enabled, hosts],
   );
-  const replicas = useWorkspaceDirectories(serverIds, selectReplicas);
+  const replicas = useStoreWithEqualityFn(useSessionStore, replicaSelector, equal);
   const runtimeStates = useProjectHostRuntimeStates(serverIds, enabled);
   const derived = useMemo(
     () => deriveProjectsFromReplica({ replicas, runtimeStates }),
@@ -197,8 +184,8 @@ export function useProjects(options: UseProjectsOptions = {}): UseProjectsResult
   );
   const refetch = useCallback(() => {
     if (!enabled) return;
-    for (const serverId of serverIds) void refreshHostDirectories(serverId);
-  }, [enabled, serverIds]);
+    for (const serverId of serverIds) void runtime.refreshDirectories(serverId);
+  }, [enabled, runtime, serverIds]);
 
   return {
     ...derived,

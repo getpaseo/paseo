@@ -3,7 +3,7 @@ import type { ConfirmDialogInput } from "@/utils/confirm-dialog";
 
 export interface ResolveArchiveSubagentDialogInput {
   title: Agent["title"] | null | undefined;
-  turn: Agent["turn"] | null | undefined;
+  status: Agent["status"] | null | undefined;
 }
 
 function resolveSubagentLabel(title: Agent["title"] | null | undefined): string | null {
@@ -24,7 +24,7 @@ export function resolveArchiveSubagentDialog(
   input: ResolveArchiveSubagentDialogInput,
 ): ConfirmDialogInput {
   const subagentLabel = resolveSubagentLabel(input.title) ?? "this subagent";
-  const isRunning = input.turn?.phase === "open";
+  const isRunning = input.status === "running";
 
   return {
     title: isRunning ? "Archive running subagent?" : "Archive subagent?",
@@ -57,7 +57,7 @@ export async function requestArchiveSubagent(
   const confirmed = await deps.confirm(
     resolveArchiveSubagentDialog({
       title: subagent?.title,
-      turn: subagent?.turn,
+      status: subagent?.status,
     }),
   );
   if (!confirmed) {

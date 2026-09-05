@@ -4,8 +4,10 @@ import { useCommandCenterActions } from "@/command-center/provider";
 import { useToast } from "@/contexts/toast-context";
 import { useHostRuntimeClient } from "@/runtime/host-runtime";
 import { useActiveWorkspaceSelection } from "@/stores/navigation-active-workspace-store";
-import { useAgentBelongsToWorkspace, useWorkspaceExists } from "@/stores/session-store-hooks";
+import { useSessionStore } from "@/stores/session-store";
+import { useWorkspaceExists } from "@/stores/session-store-hooks";
 import { useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
+import { normalizeWorkspaceOpaqueId } from "@/utils/workspace-identity";
 import { createPluginClientStateSource } from "../client-state/source";
 import { hostIdFromPathname } from "../routes";
 import { useInstalledPlugins } from "../registry";
@@ -25,7 +27,17 @@ export function PluginCommandCenterActions() {
     workspaceKey ? (state.layoutByWorkspace[workspaceKey] ?? null) : null,
   );
   const focusedAgentId = getFocusedAgentId(layout);
-  const agentExists = useAgentBelongsToWorkspace(serverId, focusedAgentId, workspaceId);
+  const agentExists = useSessionStore((state) => {
+    if (!serverId || !focusedAgentId) return null;
+    const session = state.sessions[serverId];
+    const agent =
+      session?.agents.get(focusedAgentId) ?? session?.agentDetails.get(focusedAgentId) ?? null;
+    return (
+      Boolean(agent) &&
+      Boolean(workspaceId) &&
+      normalizeWorkspaceOpaqueId(agent?.workspaceId) === normalizeWorkspaceOpaqueId(workspaceId)
+    );
+  });
   const client = useHostRuntimeClient(serverId ?? "");
   const installed = useInstalledPlugins();
   const plugins = useMemo(

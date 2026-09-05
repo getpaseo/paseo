@@ -5,9 +5,9 @@ import { useToast } from "@/contexts/toast-context";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import type { RewindMode } from "./use-rewind-capabilities";
 import { useRewindComposerRestore } from "./composer-restore";
-import { getAgentTimelineLoadSnapshot } from "@/runtime/session-data";
+import { useSessionStore } from "@/stores/session-store";
 import { shouldRestoreComposerForRewindMode } from "./rewind-mode";
-import { fetchAgentTimeline } from "@/runtime/host-runtime";
+import { getHostRuntimeStore } from "@/runtime/host-runtime";
 
 interface UseRewindAgentMutationInput {
   serverId?: string;
@@ -35,12 +35,13 @@ export function useRewindAgentMutation(input: UseRewindAgentMutationInput): {
       }
       await input.client.rewindAgent(input.agentId, input.messageId, mode);
       if (mode !== "files") {
-        const timeline = input.serverId
-          ? getAgentTimelineLoadSnapshot(input.serverId, input.agentId).timeline
-          : null;
-        const cursor = timeline?.status === "synced" ? timeline.range : undefined;
+        const cursor = input.serverId
+          ? useSessionStore
+              .getState()
+              .sessions[input.serverId]?.agentTimelineCursor.get(input.agentId)
+          : undefined;
         if (!input.serverId) throw new Error(t("common.errors.daemonClientUnavailable"));
-        await fetchAgentTimeline(input.serverId, input.agentId, {
+        await getHostRuntimeStore().fetchAgentTimeline(input.serverId, input.agentId, {
           direction: "tail",
           projection: "projected",
           ...(cursor ? { cursor: { epoch: cursor.epoch, seq: cursor.endSeq } } : {}),

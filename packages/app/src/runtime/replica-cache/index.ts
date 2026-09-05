@@ -10,6 +10,7 @@ import {
   normalizeProjectDescriptor,
   normalizeWorkspaceDescriptor,
   type Agent,
+  type AgentTimelineCursorState,
   type ProjectDescriptor,
   type WorkspaceDescriptor,
 } from "@/stores/session-store";
@@ -18,13 +19,6 @@ import {
   type AgentToolCallData,
   type StreamItem,
 } from "@/types/stream";
-import type {
-  CachedDirectory,
-  CachedTimeline,
-  CachedWorkspace,
-  DirectoryCheckpoint,
-  DirectoryReplicaMutation,
-} from "@/runtime/client-replica";
 import { normalizeAgentSnapshot } from "@/utils/agent-snapshots";
 import { clearLegacyReplicaCache } from "./legacy-cleanup";
 import {
@@ -35,6 +29,44 @@ import {
   type ReplicaRowKind,
   type ReplicaRowStore,
 } from "./row-store";
+
+export type DirectoryReplicaMutation =
+  | { kind: "agent"; type: "upsert"; id: string; value: Agent }
+  | { kind: "agent"; type: "delete"; id: string }
+  | { kind: "workspace"; type: "upsert"; id: string; value: WorkspaceDescriptor }
+  | { kind: "workspace"; type: "delete"; id: string }
+  | { kind: "project"; type: "upsert"; id: string; value: ProjectDescriptor }
+  | { kind: "project"; type: "delete"; id: string };
+
+export interface CachedDirectory {
+  agents: Map<string, Agent>;
+  workspaces: Map<string, WorkspaceDescriptor>;
+  projects: Map<string, ProjectDescriptor>;
+  checkpoint?: DirectoryCheckpoint;
+}
+
+export interface CachedWorkspace {
+  workspace: WorkspaceDescriptor;
+  project?: ProjectDescriptor;
+}
+
+export interface DirectoryCursor {
+  generation: string;
+  afterSeq: number;
+}
+
+export interface DirectoryCheckpoint {
+  projects?: DirectoryCursor;
+  workspaces?: DirectoryCursor;
+  agents?: DirectoryCursor;
+}
+
+export interface CachedTimeline {
+  agentId: string;
+  items: StreamItem[];
+  range: AgentTimelineCursorState | null;
+  hasOlder: boolean;
+}
 
 const PERSIST_DELAY_MS = 1_000;
 const MAX_TIMELINE_ITEMS = 50;
@@ -1071,7 +1103,13 @@ export class ReplicaCache {
   replaceDirectoryBaseline(serverId: string, directory: CachedDirectory): void {
     if (!this.activeServerIds.has(serverId)) return;
     this.advanceHostRevision(serverId);
-    this.dropPendingHostChanges(serverId);
+    // Replacing the directory must not discard independently accepted timeline changes.
+    for (const [key, row] of this.pendingUpserts) {
+      if (row.serverId === serverId && row.kind !== "timeline") this.pendingUpserts.delete(key);
+    }
+    for (const [key, row] of this.pendingDeletes) {
+      if (row.serverId === serverId && row.kind !== "timeline") this.pendingDeletes.delete(key);
+    }
     this.pendingBaselines.add(serverId);
     for (const [id, value] of directory.agents) {
       this.queueUpsert({ serverId, kind: "agent", id, value });

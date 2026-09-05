@@ -1,7 +1,8 @@
 import { useCallback } from "react";
 import type { AgentProfile } from "@getpaseo/protocol/messages";
 import { useDaemonConfig } from "@/hooks/use-daemon-config";
-import { useServerFeature } from "@/stores/session-store-hooks";
+import { useSessionStore } from "@/stores/session-store";
+import { supportsAgentProfiles } from "./capabilities";
 
 export interface UseAgentProfilesResult {
   /** `null` until the daemon config has arrived. */
@@ -14,9 +15,9 @@ export interface UseAgentProfilesResult {
 
 export function useAgentProfiles(serverId: string | null): UseAgentProfilesResult {
   const { config, patchConfig } = useDaemonConfig(serverId);
-  const supportsProfiles = useServerFeature(serverId, "agentProfiles");
-  const supportsApply = useServerFeature(serverId, "agentConfigApply");
-  const isSupported = supportsProfiles && supportsApply;
+  const isSupported = useSessionStore((state) => {
+    return supportsAgentProfiles(state.sessions[serverId ?? ""]?.serverInfo?.features);
+  });
 
   const saveProfiles = useCallback(
     async (next: AgentProfile[]) => {

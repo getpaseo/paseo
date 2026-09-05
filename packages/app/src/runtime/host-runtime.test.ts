@@ -21,8 +21,7 @@ import {
   type HostRuntimeControllerDeps,
   type HostRuntimeStorage,
 } from "./host-runtime";
-import type { ClientReplica } from "./client-replica";
-import { drainQueuedAgentMessage } from "./session-data";
+import type { ReplicaRow, ReplicaRowStore } from "./replica-cache/row-store";
 
 class FakeDaemonClient {
   private state: ConnectionState = { status: "idle" };
@@ -458,6 +457,50 @@ function createMemoryHostRuntimeStorage(entries: Record<string, string> = {}): H
     removeItem: async (key) => {
       values.delete(key);
     },
+  };
+}
+
+function createMemoryReplicaRowStore(): ReplicaRowStore {
+  const rows = new Map<string, ReplicaRow>();
+  const keyOf = (row: Pick<ReplicaRow, "serverId" | "kind" | "id">) =>
+    `${row.serverId}:${row.kind}:${row.id}`;
+  return {
+    open: async () => undefined,
+    read: async (serverId, kinds, ids) => {
+      const acceptedKinds = new Set(kinds);
+      const acceptedIds = ids ? new Set(ids) : null;
+      return [...rows.values()].filter(
+        (row) =>
+          row.serverId === serverId &&
+          acceptedKinds.has(row.kind) &&
+          (!acceptedIds || acceptedIds.has(row.id)),
+      );
+    },
+    readAll: async () => {
+      const hosts = new Map<string, ReplicaRow[]>();
+      for (const row of rows.values()) {
+        const hostRows = hosts.get(row.serverId) ?? [];
+        hostRows.push(row);
+        hosts.set(row.serverId, hostRows);
+      }
+      return [...hosts].map(([serverId, hostRows]) => ({ serverId, rows: hostRows }));
+    },
+    apply: async (changes) => {
+      for (const key of changes.deletes) rows.delete(keyOf(key));
+      for (const row of changes.upserts) rows.set(keyOf(row), row);
+    },
+    deleteHost: async (serverId) => {
+      for (const [key, row] of rows) if (row.serverId === serverId) rows.delete(key);
+    },
+    renameHost: async (oldServerId, newServerId) => {
+      for (const [key, row] of rows) {
+        if (row.serverId !== oldServerId) continue;
+        rows.delete(key);
+        const renamed = { ...row, serverId: newServerId };
+        rows.set(keyOf(renamed), renamed);
+      }
+    },
+    clear: async () => rows.clear(),
   };
 }
 
@@ -1493,13 +1536,13 @@ describe("HostRuntimeStore", () => {
     });
     await waitForHostOnline(store, hostA.serverId);
     await waitForHostOnline(store, hostB.serverId);
-    store.setAppVisible(false, null);
+    store.setAppVisible(false);
     expect(clientA.reconnectEnabledChanges.at(-1)).toBe(false);
     expect(clientB.reconnectEnabledChanges.at(-1)).toBe(false);
     clientA.setConnectionState({ status: "disconnected", reason: "backgrounded" });
     clientB.setConnectionState({ status: "disconnected", reason: "backgrounded" });
 
-    store.setAppVisible(true, hostA.serverId);
+    store.setAppVisible(true);
     expect(clientA.reconnectEnabledChanges.at(-1)).toBe(true);
     expect(clientB.reconnectEnabledChanges.at(-1)).toBe(true);
     expect(clientA.ensureConnectedCalls).toBe(1);
@@ -1560,25 +1603,12 @@ describe("HostRuntimeStore", () => {
     const host = makeHost();
     const storage = createMemoryHostRuntimeStorage();
     let fullScans = 0;
-    const clientReplica: ClientReplica = {
-      hostLifecycle: {
-        setHosts: () => undefined,
-        reconcileServerId: () => undefined,
-        flush: async () => undefined,
-      },
-      directory: {
-        readAgent: async () => undefined,
-        readWorkspace: async () => undefined,
-        readDirectory: async () => {
-          fullScans += 1;
-          return { agents: new Map(), workspaces: new Map(), projects: new Map() };
-        },
-        commitDirectoryMutations: () => undefined,
-        replaceDirectoryBaseline: () => undefined,
-      },
-      timeline: {
-        readTimeline: async () => undefined,
-        commitTimeline: () => undefined,
+    const backingStore = createMemoryReplicaRowStore();
+    const replicaRowStore: ReplicaRowStore = {
+      ...backingStore,
+      read: async (...args) => {
+        fullScans += 1;
+        return backingStore.read(...args);
       },
     };
     await storage.setItem("@paseo:daemon-registry", JSON.stringify([host]));
@@ -1587,7 +1617,7 @@ describe("HostRuntimeStore", () => {
 
     const store = new HostRuntimeStore({
       storage,
-      clientReplica,
+      replicaRowStore,
       deps: {
         createClient: () => {
           throw new Error("createClient should not be called");
@@ -1602,7 +1632,7 @@ describe("HostRuntimeStore", () => {
     store.boot();
     await registryLoaded;
 
-    expect(fullScans).toBe(1);
+    await vi.waitFor(() => expect(fullScans).toBe(1));
     expect(useSessionStore.getState().sessions[host.serverId]).toMatchObject({
       client: null,
       hasHydratedAgents: false,
@@ -2714,7 +2744,7 @@ describe("HostRuntimeStore", () => {
     const fakeClient = new FakeDaemonClient();
     const send = new Deferred<void>();
     fakeClient.sendAgentMessageResponses.push(send.promise);
-    const _store = new HostRuntimeStore({
+    const store = new HostRuntimeStore({
       deps: {
         createClient: () => fakeClient as unknown as DaemonClient,
         connectToDaemon: async () => ({
@@ -2755,7 +2785,7 @@ describe("HostRuntimeStore", () => {
       ]),
     );
 
-    drainQueuedAgentMessage(host.serverId, "agent");
+    store.drainQueuedAgentMessage(host.serverId, "agent");
     await fakeClient.waitForSentMessages(1);
 
     // The row and the pending submission must exist while the RPC is still in flight —
@@ -2779,7 +2809,7 @@ describe("HostRuntimeStore", () => {
     const host = makeHost({ serverId: "srv_failed_queue_drain" });
     const fakeClient = new FakeDaemonClient();
     fakeClient.sendAgentMessageFailures.push(new Error("connection lost"));
-    const _store = new HostRuntimeStore({
+    const store = new HostRuntimeStore({
       deps: {
         createClient: () => fakeClient as unknown as DaemonClient,
         connectToDaemon: async () => ({
@@ -2805,7 +2835,7 @@ describe("HostRuntimeStore", () => {
       ]),
     );
 
-    drainQueuedAgentMessage(host.serverId, "agent");
+    store.drainQueuedAgentMessage(host.serverId, "agent");
 
     await vi.waitFor(() => {
       expect(fakeClient.sentAgentMessages).toHaveLength(1);
@@ -2825,7 +2855,7 @@ describe("HostRuntimeStore", () => {
     const fakeClient = new FakeDaemonClient();
     const send = new Deferred<void>();
     fakeClient.sendAgentMessageResponses.push(send.promise);
-    const _store = new HostRuntimeStore({
+    const store = new HostRuntimeStore({
       deps: {
         createClient: () => fakeClient as unknown as DaemonClient,
         connectToDaemon: async () => ({
@@ -2843,8 +2873,8 @@ describe("HostRuntimeStore", () => {
       new Map([["agent", [{ id: "first", text: "send once", attachments: [] }]]]),
     );
 
-    drainQueuedAgentMessage(host.serverId, "agent");
-    drainQueuedAgentMessage(host.serverId, "agent");
+    store.drainQueuedAgentMessage(host.serverId, "agent");
+    store.drainQueuedAgentMessage(host.serverId, "agent");
     await fakeClient.waitForSentMessages(1);
     expect(fakeClient.sentAgentMessages).toHaveLength(1);
 
@@ -2860,7 +2890,7 @@ describe("HostRuntimeStore", () => {
   it("uses legacy GitHub attachments when draining a queue for an old daemon", async () => {
     const host = makeHost({ serverId: "srv_legacy_queue_attachment" });
     const fakeClient = new FakeDaemonClient();
-    const _store = new HostRuntimeStore({
+    const store = new HostRuntimeStore({
       deps: {
         createClient: () => fakeClient as unknown as DaemonClient,
         connectToDaemon: async () => ({
@@ -2910,7 +2940,7 @@ describe("HostRuntimeStore", () => {
       ]),
     );
 
-    drainQueuedAgentMessage(host.serverId, "agent");
+    store.drainQueuedAgentMessage(host.serverId, "agent");
     await fakeClient.waitForSentMessages(1);
 
     expect(fakeClient.sentAgentMessages[0]?.[2]?.attachments).toEqual([

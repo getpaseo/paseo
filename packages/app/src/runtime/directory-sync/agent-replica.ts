@@ -7,7 +7,7 @@ import { normalizeAgentSnapshot, projectAgentSnapshot } from "@/utils/agent-snap
 import { type AgentDirectoryDelta } from "@/utils/agent-directory-sync";
 import { reconcileAgentDirectory } from "@/utils/agent-directory-reconciliation";
 import { applyLegacyDaemonWorkspaceOwnership } from "@/workspace/legacy-daemon-workspaces";
-import type { DirectoryReplicaMutation } from "@/runtime/client-replica";
+import type { DirectoryReplicaMutation } from "@/runtime/replica-cache";
 import type { TurnLivenessTransition } from "@/timeline/turn-liveness";
 import { AgentStoreProjection } from "./internal/agent-store";
 

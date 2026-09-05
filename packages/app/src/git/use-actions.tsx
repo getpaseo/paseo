@@ -21,12 +21,7 @@ import { deriveMergeCapability } from "@/git/merge-capability";
 import type { CheckoutPrMergeMethod } from "@getpaseo/protocol/messages";
 import { openExternalUrl } from "@/utils/open-external-url";
 import { useToast } from "@/contexts/toast-context";
-import {
-  useServerFeature,
-  useWorkspaceByDirectoryFields,
-  useWorkspaceFields,
-  type WorkspaceDescriptor,
-} from "@/stores/session-store-hooks";
+import { useSessionStore, type WorkspaceDescriptor } from "@/stores/session-store";
 import {
   useActiveWorkspaceSelection,
   type ActiveWorkspaceSelection,
@@ -34,6 +29,7 @@ import {
 import { redirectIfArchivingActiveWorkspace } from "@/utils/sidebar-workspace-archive-redirect";
 import { type WorktreeArchiveWarningLabels } from "@/git/worktree-archive-warning";
 import { useWorkspaceArchive } from "@/workspace/use-workspace-archive";
+import { resolveWorkspaceMapKeyByIdentity } from "@/utils/workspace-identity";
 import { readValidatedString } from "@/storage/validated-storage";
 
 export type { GitActionId, GitAction, GitActions } from "@/git/policy";
@@ -220,13 +216,33 @@ interface UseWorkspaceScreenArchiveControllerInput {
   t: (key: string, options?: Record<string, unknown>) => string;
 }
 
-type ArchiveWorkspaceProjection = Pick<
-  WorkspaceDescriptor,
-  "id" | "workspaceKind" | "name" | "diffStat" | "archivingAt" | "gitRuntime"
->;
+function resolveArchiveWorkspaceDescriptor(input: {
+  workspaces: Map<string, WorkspaceDescriptor> | undefined;
+  activeWorkspaceSelection: ActiveWorkspaceSelection | null;
+  workspaceDirectory: string | null | undefined;
+}): WorkspaceDescriptor | null {
+  const activeWorkspaceKey = input.activeWorkspaceSelection
+    ? resolveWorkspaceMapKeyByIdentity({
+        workspaces: input.workspaces,
+        workspaceId: input.activeWorkspaceSelection.workspaceId,
+      })
+    : null;
+  if (activeWorkspaceKey) {
+    return input.workspaces?.get(activeWorkspaceKey) ?? null;
+  }
+  if (!input.workspaceDirectory) {
+    return null;
+  }
+  for (const candidate of input.workspaces?.values() ?? []) {
+    if (candidate.workspaceDirectory === input.workspaceDirectory) {
+      return candidate;
+    }
+  }
+  return null;
+}
 
 function resolveWorkspaceArchiveRisk(
-  workspace: ArchiveWorkspaceProjection | null,
+  workspace: WorkspaceDescriptor | null,
   gitStatus: CheckoutStatusPayload | null,
 ): { isDirty: boolean | null | undefined; aheadOfOrigin: number | null | undefined } {
   return {
@@ -236,7 +252,7 @@ function resolveWorkspaceArchiveRisk(
 }
 
 function canArchiveWorkspace(
-  workspace: ArchiveWorkspaceProjection | null,
+  workspace: WorkspaceDescriptor | null,
   risk: ReturnType<typeof resolveWorkspaceArchiveRisk>,
 ): boolean {
   return (
@@ -254,29 +270,17 @@ function useWorkspaceScreenArchiveController({
   gitStatus,
   t,
 }: UseWorkspaceScreenArchiveControllerInput) {
+  const sessionWorkspaces = useSessionStore((state) => state.sessions[serverId]?.workspaces);
   const [isHidingWorkspace, setIsHidingWorkspace] = useState(false);
-  const projectArchiveFields = useCallback(
-    (workspace: WorkspaceDescriptor) => ({
-      id: workspace.id,
-      workspaceKind: workspace.workspaceKind,
-      name: workspace.name,
-      diffStat: workspace.diffStat,
-      archivingAt: workspace.archivingAt,
-      gitRuntime: workspace.gitRuntime,
-    }),
-    [],
+  const workspaceDescriptor = useMemo(
+    () =>
+      resolveArchiveWorkspaceDescriptor({
+        workspaces: sessionWorkspaces,
+        activeWorkspaceSelection,
+        workspaceDirectory,
+      }),
+    [activeWorkspaceSelection, sessionWorkspaces, workspaceDirectory],
   );
-  const selectedWorkspace = useWorkspaceFields(
-    serverId,
-    activeWorkspaceSelection?.workspaceId ?? null,
-    projectArchiveFields,
-  );
-  const directoryWorkspace = useWorkspaceByDirectoryFields(
-    serverId,
-    workspaceDirectory,
-    projectArchiveFields,
-  );
-  const workspaceDescriptor = selectedWorkspace ?? directoryWorkspace;
   const archiveRisk = resolveWorkspaceArchiveRisk(workspaceDescriptor, gitStatus);
 
   const controller = useWorkspaceArchive({
@@ -449,9 +453,11 @@ export function useGitActions({ serverId, cwd, icons }: UseGitActionsInput): Use
   const runDisablePrAutoMerge = useCheckoutGitActionsStore((s) => s.disablePrAutoMerge);
   const runMergeBranch = useCheckoutGitActionsStore((s) => s.mergeBranch);
   const runMergeFromBase = useCheckoutGitActionsStore((s) => s.mergeFromBase);
-  const supportsForgeAutoMerge = useServerFeature(serverId, "checkoutForgeSetAutoMerge");
-  const supportsGithubAutoMerge = useServerFeature(serverId, "checkoutGithubSetAutoMerge");
-  const githubAutoMergeActionsEnabled = supportsForgeAutoMerge || supportsGithubAutoMerge;
+  const githubAutoMergeActionsEnabled = useSessionStore(
+    (s) =>
+      s.sessions[serverId]?.serverInfo?.features?.checkoutForgeSetAutoMerge === true ||
+      s.sessions[serverId]?.serverInfo?.features?.checkoutGithubSetAutoMerge === true,
+  );
 
   const toastActionError = useCallback(
     (error: unknown, fallback: string) => {

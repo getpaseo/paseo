@@ -1,36 +1,14 @@
-import { useMemo, useCallback, useEffect, useRef } from "react";
+import { useMemo, useCallback, useEffect, useRef, useSyncExternalStore } from "react";
 import equal from "fast-deep-equal";
-import { useAgentDirectories } from "@/stores/session-store-hooks";
-import type { Agent } from "@/stores/session-store-hooks";
+import { useShallow } from "zustand/shallow";
+import { useSessionStore } from "@/stores/session-store";
 import type { AgentDirectoryEntry } from "@/types/agent-directory";
-import {
-  acquireDirectoryDemand,
-  readHostRuntimeSnapshot,
-  refreshHostDirectories,
-  useHostRuntimeVersion,
-  useHosts,
-} from "@/runtime/host-runtime";
+import type { Agent } from "@/stores/session-store";
+import { getHostRuntimeStore, useHosts } from "@/runtime/host-runtime";
 
 export interface AggregatedAgent extends AgentDirectoryEntry {
   serverId: string;
   serverLabel: string;
-}
-
-interface AgentSource {
-  serverId: string;
-  agents: ReadonlyMap<string, Agent>;
-}
-
-const EMPTY_AGENT_MAP: ReadonlyMap<string, Agent> = new Map();
-
-function agentSourcesEqual(left: AgentSource[], right: AgentSource[]): boolean {
-  return (
-    left.length === right.length &&
-    left.every(
-      (source, index) =>
-        source.serverId === right[index]?.serverId && source.agents === right[index]?.agents,
-    )
-  );
 }
 
 export interface AggregatedAgentsResult {
@@ -46,30 +24,35 @@ export function useAggregatedAgents(options?: {
   demand?: boolean;
 }): AggregatedAgentsResult {
   const daemons = useHosts();
+  const runtime = getHostRuntimeStore();
   const includeArchived = options?.includeArchived ?? false;
   const demand = options?.demand ?? true;
   const serverIds = useMemo(() => daemons.map((daemon) => daemon.serverId), [daemons]);
   useEffect(() => {
     if (!demand) return;
-    const releases = serverIds.map(acquireDirectoryDemand);
+    const releases = serverIds.map((serverId) => runtime.acquireDirectoryDemand(serverId));
     return () => releases.forEach((release) => release());
-  }, [demand, serverIds]);
-  const runtimeVersion = useHostRuntimeVersion();
+  }, [demand, runtime, serverIds]);
+  const runtimeVersion = useSyncExternalStore(
+    (onStoreChange) => runtime.subscribeAll(onStoreChange),
+    () => runtime.getVersion(),
+    () => runtime.getVersion(),
+  );
 
-  const sessionAgents = useAgentDirectories(
-    serverIds,
-    (directories) =>
-      serverIds.map((serverId) => ({
-        serverId,
-        agents: directories.get(serverId)?.agents ?? EMPTY_AGENT_MAP,
-      })),
-    agentSourcesEqual,
+  const sessionAgents = useSessionStore(
+    useShallow((state) => {
+      const result: Record<string, Map<string, Agent> | undefined> = {};
+      for (const [serverId, session] of Object.entries(state.sessions)) {
+        result[serverId] = session.agents;
+      }
+      return result;
+    }),
   );
 
   const refreshAll = useCallback(() => {
     if (!demand) return;
-    for (const serverId of serverIds) void refreshHostDirectories(serverId);
-  }, [demand, serverIds]);
+    for (const serverId of serverIds) void runtime.refreshDirectories(serverId);
+  }, [demand, runtime, serverIds]);
 
   // Keyed by "serverId:agentId" — reuse the previous AggregatedAgent object when
   // none of its fields changed, so downstream memo/shallow comparisons can bail early.
@@ -87,8 +70,8 @@ export function useAggregatedAgents(options?: {
     );
 
     // Derive agent directory from all sessions
-    for (const { serverId, agents } of sessionAgents) {
-      if (agents.size === 0) {
+    for (const [serverId, agents] of Object.entries(sessionAgents)) {
+      if (!agents || agents.size === 0) {
         continue;
       }
       const serverLabel = serverLabelById.get(serverId) ?? serverId;
@@ -162,7 +145,7 @@ export function useAggregatedAgents(options?: {
     // Align list loading with the runtime directory-sync machine.
     const isLoading = daemons.some((daemon) => {
       const status =
-        readHostRuntimeSnapshot(daemon.serverId)?.agentDirectoryStatus ?? "initial_loading";
+        runtime.getSnapshot(daemon.serverId)?.agentDirectoryStatus ?? "initial_loading";
       return status === "initial_loading" || status === "revalidating";
     });
     const isInitialLoad = isLoading && !hasAnyData;
@@ -174,7 +157,7 @@ export function useAggregatedAgents(options?: {
       isInitialLoad,
       isRevalidating,
     };
-  }, [daemons, includeArchived, runtimeVersion, sessionAgents]);
+  }, [daemons, includeArchived, runtime, runtimeVersion, sessionAgents]);
 
   return {
     ...result,

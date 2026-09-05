@@ -1,7 +1,7 @@
 import { useCallback, useMemo } from "react";
 import { i18n } from "@/i18n/i18next";
-import { getHostClient } from "@/runtime/host-runtime";
-import { useWorkspaceFields } from "@/stores/session-store-hooks";
+import { getHostRuntimeStore } from "@/runtime/host-runtime";
+import { useSessionStore } from "@/stores/session-store";
 
 export interface ClearWorkspaceAttentionController {
   hasClearableAttention: boolean;
@@ -15,18 +15,16 @@ export function useClearWorkspaceAttention({
   serverId: string;
   workspaceId: string;
 }): ClearWorkspaceAttentionController {
-  const hasClearableAttention =
-    useWorkspaceFields(
-      serverId,
-      workspaceId,
-      (workspace) => workspace.status === "attention" || workspace.status === "failed",
-    ) ?? false;
+  const hasClearableAttention = useSessionStore((state) => {
+    const workspace = state.sessions[serverId]?.workspaces.get(workspaceId);
+    return workspace?.status === "attention" || workspace?.status === "failed";
+  });
 
   const clearAttention = useCallback(async () => {
     if (!hasClearableAttention) {
       return;
     }
-    const client = getHostClient(serverId);
+    const client = getHostRuntimeStore().getClient(serverId);
     if (!client) {
       throw new Error(i18n.t("workspace.terminal.hostDisconnected"));
     }

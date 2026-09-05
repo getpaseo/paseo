@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import type { AgentStreamEventPayload } from "@getpaseo/protocol/messages";
-import type { CachedTimeline } from "@/runtime/client-replica";
+import type { CachedTimeline } from "@/runtime/replica-cache";
 import { selectAgentTimelineState, useSessionStore } from "@/stores/session-store";
 import type { StreamItem } from "@/types/stream";
 import {

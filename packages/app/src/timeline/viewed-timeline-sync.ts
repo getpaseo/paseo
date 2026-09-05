@@ -3,7 +3,7 @@ import {
   planTimelineResumeFetch,
   type ProjectedTimelineForwardFetchPlan,
 } from "./timeline-sync-plan";
-import type { CachedTimeline } from "@/runtime/client-replica";
+import type { CachedTimeline } from "@/runtime/replica-cache";
 import {
   selectAgentTimelineState,
   useSessionStore,

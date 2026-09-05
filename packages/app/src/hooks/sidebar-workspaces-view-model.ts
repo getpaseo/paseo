@@ -2,7 +2,7 @@ import type { PrHint } from "@/git/pr-hint";
 import { selectPrHintFromStatus } from "@/git/pr-hint";
 import { type HostProjectListItem } from "@/projects/host-project-model";
 import type { PendingCreateAttempt } from "@/stores/create-flow-store";
-import type { WorkspaceDescriptor } from "@/stores/session-store-hooks";
+import type { WorkspaceDescriptor } from "@/stores/session-store";
 import type {
   WorkspaceStructureHostPlacement,
   WorkspaceStructureProject,
@@ -71,13 +71,13 @@ export interface SidebarWorkspacePlacementModel {
 
 export interface SidebarWorkspaceSession {
   serverId: string;
-  workspaces: ReadonlyMap<string, WorkspaceDescriptor>;
-  workspaceAgentActivity: ReadonlyMap<string, WorkspaceAgentActivity>;
+  workspaces: Map<string, WorkspaceDescriptor>;
+  workspaceAgentActivity: Map<string, WorkspaceAgentActivity>;
 }
 
 interface SidebarWorkspaceSessionSource {
-  workspaces: ReadonlyMap<string, WorkspaceDescriptor>;
-  workspaceAgentActivity: ReadonlyMap<string, WorkspaceAgentActivity>;
+  workspaces: Map<string, WorkspaceDescriptor>;
+  workspaceAgentActivity: Map<string, WorkspaceAgentActivity>;
 }
 
 export function selectSidebarWorkspaceSessions(
@@ -232,8 +232,8 @@ function getPendingInitialAgentCreateStartedAt(input: {
 }
 
 export interface ProjectStatusSession {
-  workspaces: ReadonlyMap<string, WorkspaceDescriptor>;
-  workspaceAgentActivity: ReadonlyMap<string, WorkspaceAgentActivity>;
+  workspaces: Map<string, WorkspaceDescriptor>;
+  workspaceAgentActivity: Map<string, WorkspaceAgentActivity>;
 }
 
 /**

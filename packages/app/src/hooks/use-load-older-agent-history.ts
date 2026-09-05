@@ -2,13 +2,13 @@ import { useCallback } from "react";
 import { useTranslation } from "react-i18next";
 import type { ToastApi } from "@/components/toast-host";
 import { i18n } from "@/i18n/i18next";
-import { useAgentTimeline, type AgentTimelineCursorState } from "@/stores/session-store-hooks";
 import {
-  getAgentTimelineLoadSnapshot,
-  publishOlderTimelineFetch as setOlderFetchInFlight,
-} from "@/runtime/session-data";
+  selectAgentTimelineState,
+  useSessionStore,
+  type AgentTimelineCursorState,
+} from "@/stores/session-store";
 import { planTimelineOlderFetch } from "@/timeline/timeline-sync-plan";
-import { fetchAgentTimeline, getHostClient } from "@/runtime/host-runtime";
+import { getHostRuntimeStore } from "@/runtime/host-runtime";
 
 export interface LoadOlderAgentHistoryClient {
   fetchAgentTimeline: (
@@ -78,15 +78,22 @@ export function useLoadOlderAgentHistory({
   toast?: ToastApi | null;
 }) {
   const { t } = useTranslation();
-  const timelineState = useAgentTimeline(serverId, agentId, (timeline, meta) => {
-    const cursor = timeline.status === "synced" ? timeline.range : null;
-    return {
-      hasOlder: timeline.status === "synced" && timeline.older === "available",
-      isLoadingOlder: meta.isLoadingOlder,
-      progressKey: cursor ? `${cursor.epoch}:${cursor.startSeq}` : null,
-    };
+  const hasOlder = useSessionStore((state) => {
+    const timeline = selectAgentTimelineState(state.sessions[serverId], agentId);
+    return timeline.status === "synced" && timeline.older === "available";
   });
-  const { hasOlder, isLoadingOlder, progressKey } = timelineState;
+  const isLoadingOlder =
+    useSessionStore((state) =>
+      state.sessions[serverId]?.agentTimelineOlderFetchInFlight.get(agentId),
+    ) === true;
+  const progressKey = useSessionStore((state) => {
+    const timeline = selectAgentTimelineState(state.sessions[serverId], agentId);
+    const cursor = timeline.status === "synced" ? timeline.range : null;
+    return cursor ? `${cursor.epoch}:${cursor.startSeq}` : null;
+  });
+  const setOlderFetchInFlight = useSessionStore(
+    (state) => state.setAgentTimelineOlderFetchInFlight,
+  );
 
   const setInFlight = useCallback(
     (value: boolean) => {
@@ -99,24 +106,22 @@ export function useLoadOlderAgentHistory({
         return next;
       });
     },
-    [agentId, serverId],
+    [agentId, serverId, setOlderFetchInFlight],
   );
 
   const loadOlder = useCallback(async (): Promise<boolean> => {
-    const { timeline, isLoadingOlder: currentIsLoadingOlder } = getAgentTimelineLoadSnapshot(
-      serverId,
-      agentId,
-    );
+    const session = useSessionStore.getState().sessions[serverId];
+    const timeline = selectAgentTimelineState(session, agentId);
     return await loadOlderAgentHistory(agentId, {
-      client: getHostClient(serverId)
+      client: session?.client
         ? {
             fetchAgentTimeline: (timelineAgentId, request) =>
-              fetchAgentTimeline(serverId, timelineAgentId, request),
+              getHostRuntimeStore().fetchAgentTimeline(serverId, timelineAgentId, request),
           }
         : null,
       cursor: timeline.status === "synced" ? (timeline.range ?? undefined) : undefined,
       hasOlder: timeline.status === "synced" && timeline.older === "available",
-      isLoadingOlder: currentIsLoadingOlder,
+      isLoadingOlder: session?.agentTimelineOlderFetchInFlight.get(agentId) === true,
       setInFlight,
       toast,
       failedMessage: t("loadOlderHistory.failed"),

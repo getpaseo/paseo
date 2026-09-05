@@ -17,7 +17,7 @@ import type {
   FetchAggregatedSchedulesState,
 } from "@/schedules/aggregated-schedules";
 import { schedulesQueryBaseKey } from "@/schedules/aggregated-schedules";
-import { getHostClient } from "@/runtime/host-runtime";
+import { useSessionStore } from "@/stores/session-store";
 
 export type CreateScheduleInput = Omit<CreateScheduleOptions, "requestId">;
 export type UpdateScheduleInput = Omit<UpdateScheduleOptions, "requestId">;
@@ -52,7 +52,7 @@ export function updateAggregatedSchedulesData(
 }
 
 function requireClient(serverId: string, unavailableMessage: string): DaemonClient {
-  const client = getHostClient(serverId);
+  const client = useSessionStore.getState().sessions[serverId]?.client ?? null;
   if (!client) {
     throw new Error(unavailableMessage);
   }

@@ -72,8 +72,7 @@ import { parseGitRemoteLocation } from "@getpaseo/protocol/git-remote";
 import type { ForgeAuthState } from "@getpaseo/protocol/messages";
 import { useCheckoutGitActionsStore } from "@/git/actions-store";
 import { useToast } from "@/contexts/toast-context";
-import { useHostRuntimeClient } from "@/runtime/host-runtime";
-import { useServerFeature } from "@/stores/session-store-hooks";
+import { useSessionStore } from "@/stores/session-store";
 import { confirmDialog } from "@/utils/confirm-dialog";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { Button } from "@/components/ui/button";
@@ -144,7 +143,9 @@ function useDiscardChangesAction({
   const toast = useToast();
   const discardChanges = useCheckoutGitActionsStore((state) => state.discardChanges);
   // COMPAT(checkoutDiscardChanges): added in v0.3.0, remove gate after 2027-02-08.
-  const discardSupported = useServerFeature(serverId, "checkoutDiscardChanges");
+  const discardSupported = useSessionStore(
+    (s) => s.sessions[serverId]?.serverInfo?.features?.checkoutDiscardChanges === true,
+  );
   const discardPath = useCallback(
     async (path: string, oldPath?: string) => {
       const confirmed = await confirmDialog({
@@ -1631,10 +1632,14 @@ export function ChangesSurface({
     isMobile,
     pullRequestOpenLocation: appSettings.pullRequestOpenLocation,
   });
-  const refreshSupported = useServerFeature(serverId, "checkoutRefresh");
-  const client = useHostRuntimeClient(serverId);
+  const refreshSupported = useSessionStore(
+    (s) => s.sessions[serverId]?.serverInfo?.features?.checkoutRefresh === true,
+  );
+  const client = useSessionStore((state) => state.sessions[serverId]?.client);
   // COMPAT(fsEntryDuplicate): added in v0.3.0, remove gate after 2027-02-09.
-  const fsEntryDuplicateEnabled = useServerFeature(serverId, "fsEntryDuplicate");
+  const fsEntryDuplicateEnabled = useSessionStore(
+    (state) => state.sessions[serverId]?.serverInfo?.features?.fsEntryDuplicate === true,
+  );
   const runRefresh = useCheckoutGitActionsStore((s) => s.refresh);
   const isRefreshing =
     useCheckoutGitActionsStore((s) => s.getStatus({ serverId, cwd, actionId: "refresh" })) ===
@@ -1691,7 +1696,9 @@ export function ChangesSurface({
     cwd,
     enabled: isGit,
   });
-  const forgeProvidersSupported = useServerFeature(serverId, "forgeProviders");
+  const forgeProvidersSupported = useSessionStore(
+    (s) => s.sessions[serverId]?.serverInfo?.features?.forgeProviders === true,
+  );
   const forgeSetupAction = computeForgeSetupAction({
     forge,
     forgeProvidersSupported,

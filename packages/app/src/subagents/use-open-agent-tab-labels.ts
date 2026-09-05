@@ -1,7 +1,7 @@
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { getOpenAgentTabLabel } from "@getpaseo/protocol/agent-labels";
 import { useEffect, useRef, useState } from "react";
-import { useAgentDirectoryFields } from "@/stores/session-store-hooks";
+import { useSessionStore } from "@/stores/session-store";
 import { getOrCreateClientId } from "@/utils/client-id";
 import type { WorkspaceTab } from "@/workspace-tabs/model";
 import { getAgentTabsNeedingOpenLabel } from "./open-tab-labels";
@@ -16,10 +16,9 @@ export function useOpenAgentTabLabels(input: {
   tabs: WorkspaceTab[];
   enabled: boolean;
 }): void {
-  const activeAgents = useAgentDirectoryFields(input.serverId, ({ agents }) => agents);
-  const agentDetails = useAgentDirectoryFields(
-    input.serverId,
-    (directory) => directory.agentDetails,
+  const agents = useSessionStore((state) => state.sessions[input.serverId]?.agents ?? null);
+  const agentDetails = useSessionStore(
+    (state) => state.sessions[input.serverId]?.agentDetails ?? null,
   );
   const pendingAgentIdsRef = useRef(new Set<string>());
   const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -58,7 +57,7 @@ export function useOpenAgentTabLabels(input: {
         const label = getOpenAgentTabLabel(clientId);
         const agentIds = getAgentTabsNeedingOpenLabel({
           tabs: input.tabs,
-          getAgent: (agentId) => activeAgents.get(agentId) ?? agentDetails.get(agentId),
+          getAgent: (agentId) => agents?.get(agentId) ?? agentDetails?.get(agentId),
           label,
           pendingAgentIds: pendingAgentIdsRef.current,
         });
@@ -83,5 +82,5 @@ export function useOpenAgentTabLabels(input: {
         console.warn("[OpenAgentTabLabels] Failed to resolve client ID", { error });
       }
     })();
-  }, [activeAgents, agentDetails, input.client, input.enabled, input.tabs, retryVersion]);
+  }, [agentDetails, agents, input.client, input.enabled, input.tabs, retryVersion]);
 }

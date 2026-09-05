@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { openWorkspaceFileFromExplorer } from "@/screens/workspace/workspace-file-open-command";
 import { useActiveWorkspaceSelection } from "@/stores/navigation-active-workspace-store";
 import { usePanelStore } from "@/stores/panel-store";
-import { useHostRuntimeClient } from "@/runtime/host-runtime";
+import { useSessionStore } from "@/stores/session-store";
 import { useWorkspaceDirectory } from "@/stores/session-store-hooks";
 import { useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
 import { clearCommandCenterFocusRestoreElement } from "@/utils/command-center-focus-restore";
@@ -57,7 +57,9 @@ export function useWorkspaceFileSearch(input: { enabled: boolean; query: string 
   const serverId = selection?.serverId ?? null;
   const workspaceId = selection?.workspaceId ?? null;
   const cwd = useWorkspaceDirectory(serverId, workspaceId);
-  const client = useHostRuntimeClient(serverId ?? "");
+  const client = useSessionStore((state) =>
+    serverId ? (state.sessions[serverId]?.client ?? null) : null,
+  );
   const [state, setState] = useState<WorkspaceFileSearchState>(EMPTY_STATE);
   const sourceKey = useMemo(
     () => (serverId && workspaceId && cwd && client ? `${serverId}\0${workspaceId}\0${cwd}` : null),

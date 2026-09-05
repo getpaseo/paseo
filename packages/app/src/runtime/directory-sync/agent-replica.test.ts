@@ -3,7 +3,7 @@ import type { DaemonClient, FetchAgentsEntry } from "@getpaseo/client/internal/d
 import type { AgentSnapshotPayload } from "@getpaseo/protocol/messages";
 import { selectAgentTurnPresentation, useSessionStore } from "@/stores/session-store";
 import { normalizeAgentSnapshot } from "@/utils/agent-snapshots";
-import type { DirectoryReplicaMutation } from "@/runtime/client-replica";
+import type { DirectoryReplicaMutation } from "@/runtime/replica-cache";
 import { AgentDirectoryReplica } from "./agent-replica";
 
 function payload(title: string): AgentSnapshotPayload {

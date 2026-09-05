@@ -2,11 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } fro
 import type { AgentTimelinePromptIndexPayload } from "@getpaseo/client/internal/daemon-client";
 import { isWeb } from "@/constants/platform";
 import { useStableEvent } from "@/hooks/use-stable-event";
-import {
-  listAgentTimelinePrompts,
-  loadAgentTimelineWindow,
-  subscribeToAgentTimelinePrompts,
-} from "@/timeline/agent-timeline-service";
+import { getHostRuntimeStore } from "@/runtime/host-runtime";
 import { planTimelinePromptJump } from "@/timeline/timeline-sync-plan";
 import type { StreamItem } from "@/types/stream";
 import type { StreamViewportHandle } from "../strategy";
@@ -75,13 +71,15 @@ export function useChatOutline({
       return;
     }
     setIndex(null);
+    const client = getHostRuntimeStore().getClient(serverId);
+    if (!client) return;
     let active = true;
     const refresh = () => {
       const requestId = ++nextIndexRequestIdRef.current;
-      void listAgentTimelinePrompts(serverId, agentId)
+      void client
+        .listAgentTimelinePrompts(agentId)
         .then((payload) => {
           if (
-            payload &&
             active &&
             requestId === nextIndexRequestIdRef.current &&
             shouldAcceptPromptIndexEpoch(timelineEpoch, payload.epoch)
@@ -93,7 +91,16 @@ export function useChatOutline({
         .catch(() => undefined);
     };
     refresh();
-    const unsubscribe = subscribeToAgentTimelinePrompts(serverId, agentId, refresh);
+    const unsubscribe = client.on("agent_stream", (message) => {
+      if (
+        message.type === "agent_stream" &&
+        message.payload.agentId === agentId &&
+        message.payload.event.type === "timeline" &&
+        message.payload.event.item.type === "user_message"
+      ) {
+        refresh();
+      }
+    });
     return () => {
       active = false;
       unsubscribe();
@@ -165,11 +172,8 @@ export function useChatOutline({
       if (!index) return;
       const requestId = nextJumpRequestIdRef.current;
       setPendingJump({ requestId, seq, fetchSettled: false, hasScrolled: false });
-      void loadAgentTimelineWindow(
-        serverId,
-        agentId,
-        planTimelinePromptJump({ epoch: index.epoch, seq }),
-      )
+      void getHostRuntimeStore()
+        .fetchAgentTimeline(serverId, agentId, planTimelinePromptJump({ epoch: index.epoch, seq }))
         .catch((error: unknown) => {
           console.warn("Failed to load a Chat outline window", error);
           onJumpError();

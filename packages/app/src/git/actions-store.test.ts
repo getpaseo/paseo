@@ -7,12 +7,6 @@ import {
   useCheckoutGitActionsStore,
 } from "@/git/actions-store";
 
-const hostClients = vi.hoisted(() => new Map<string, DaemonClient>());
-
-vi.mock("@/runtime/host-runtime", () => ({
-  getHostClient: (serverId: string) => hostClients.get(serverId) ?? null,
-}));
-
 vi.mock("@react-native-async-storage/async-storage", () => ({
   default: {
     getItem: vi.fn(async () => null),
@@ -39,7 +33,6 @@ describe("checkout-git-actions-store", () => {
     vi.useFakeTimers();
     __resetCheckoutGitActionsStoreForTests();
     appQueryClient.clear();
-    hostClients.clear();
     useSessionStore.setState((state) => ({ ...state, sessions: {} }));
   });
 
@@ -47,7 +40,6 @@ describe("checkout-git-actions-store", () => {
     vi.useRealTimers();
     __resetCheckoutGitActionsStoreForTests();
     appQueryClient.clear();
-    hostClients.clear();
     useSessionStore.setState((state) => ({ ...state, sessions: {} }));
   });
 
@@ -57,7 +49,13 @@ describe("checkout-git-actions-store", () => {
       checkoutCommit: vi.fn(() => deferred.promise),
     };
 
-    hostClients.set(serverId, client as unknown as DaemonClient);
+    useSessionStore.setState((state) => ({
+      ...state,
+      sessions: {
+        ...state.sessions,
+        [serverId]: { client } as unknown as (typeof state.sessions)[string],
+      },
+    }));
 
     const store = useCheckoutGitActionsStore.getState();
 
@@ -87,7 +85,13 @@ describe("checkout-git-actions-store", () => {
         return {};
       }),
     };
-    hostClients.set(serverId, client as unknown as DaemonClient);
+    useSessionStore.setState((state) => ({
+      ...state,
+      sessions: {
+        ...state.sessions,
+        [serverId]: { client } as unknown as (typeof state.sessions)[string],
+      },
+    }));
 
     await useCheckoutGitActionsStore.getState().pullAndPush({ serverId, cwd });
 
@@ -102,7 +106,13 @@ describe("checkout-git-actions-store", () => {
       checkoutPull: vi.fn(async () => ({ error: { message: "pull conflict" } })),
       checkoutPush: vi.fn(async () => ({})),
     };
-    hostClients.set(serverId, client as unknown as DaemonClient);
+    useSessionStore.setState((state) => ({
+      ...state,
+      sessions: {
+        ...state.sessions,
+        [serverId]: { client } as unknown as (typeof state.sessions)[string],
+      },
+    }));
 
     await expect(
       useCheckoutGitActionsStore.getState().pullAndPush({ serverId, cwd }),
@@ -117,7 +127,13 @@ describe("checkout-git-actions-store", () => {
       checkoutPull: vi.fn(async () => ({})),
       checkoutPush: vi.fn(async () => ({ error: { message: "push rejected" } })),
     };
-    hostClients.set(serverId, client as unknown as DaemonClient);
+    useSessionStore.setState((state) => ({
+      ...state,
+      sessions: {
+        ...state.sessions,
+        [serverId]: { client } as unknown as (typeof state.sessions)[string],
+      },
+    }));
 
     await expect(
       useCheckoutGitActionsStore.getState().pullAndPush({ serverId, cwd }),
@@ -131,7 +147,13 @@ describe("checkout-git-actions-store", () => {
     const client = {
       checkoutRefresh: vi.fn(async () => ({ success: true, error: null })),
     };
-    hostClients.set(serverId, client as unknown as DaemonClient);
+    useSessionStore.setState((state) => ({
+      ...state,
+      sessions: {
+        ...state.sessions,
+        [serverId]: { client } as unknown as (typeof state.sessions)[string],
+      },
+    }));
 
     await useCheckoutGitActionsStore.getState().refresh({ serverId, cwd });
 
@@ -145,7 +167,13 @@ describe("checkout-git-actions-store", () => {
     const client = {
       checkoutRefresh: vi.fn(async () => ({ error: { message: "not a git repository" } })),
     };
-    hostClients.set(serverId, client as unknown as DaemonClient);
+    useSessionStore.setState((state) => ({
+      ...state,
+      sessions: {
+        ...state.sessions,
+        [serverId]: { client } as unknown as (typeof state.sessions)[string],
+      },
+    }));
 
     await expect(useCheckoutGitActionsStore.getState().refresh({ serverId, cwd })).rejects.toThrow(
       "not a git repository",
@@ -158,7 +186,13 @@ describe("checkout-git-actions-store", () => {
   it("discards selected paths through the shared checkout action workflow", async () => {
     const checkoutDiscardChanges = vi.fn(async () => ({ success: true, error: null }));
     const client = { checkoutDiscardChanges };
-    hostClients.set(serverId, client as unknown as DaemonClient);
+    useSessionStore.setState((state) => ({
+      ...state,
+      sessions: {
+        ...state.sessions,
+        [serverId]: { client } as unknown as (typeof state.sessions)[string],
+      },
+    }));
 
     await useCheckoutGitActionsStore
       .getState()
@@ -193,7 +227,6 @@ describe("checkout-git-actions-store", () => {
         error: null,
       }));
       const client = { [rpc.method]: setAutoMerge };
-      hostClients.set(serverId, client as unknown as DaemonClient);
       useSessionStore.getState().initializeSession(serverId, client as unknown as DaemonClient);
       useSessionStore.getState().updateSessionServerInfo(serverId, {
         serverId,
@@ -224,7 +257,6 @@ describe("checkout-git-actions-store", () => {
         error: null,
       }));
       const client = { [rpc.method]: setAutoMerge };
-      hostClients.set(serverId, client as unknown as DaemonClient);
       useSessionStore.getState().initializeSession(serverId, client as unknown as DaemonClient);
       useSessionStore.getState().updateSessionServerInfo(serverId, {
         serverId,
@@ -252,7 +284,6 @@ describe("checkout-git-actions-store", () => {
         error: null,
       })),
     };
-    hostClients.set(serverId, client as unknown as DaemonClient);
     useSessionStore.getState().initializeSession(serverId, client as unknown as DaemonClient);
     useSessionStore.getState().updateSessionServerInfo(serverId, {
       serverId,

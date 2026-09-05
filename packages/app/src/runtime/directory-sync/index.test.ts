@@ -8,7 +8,7 @@ import {
 } from "@/stores/session-store";
 import { normalizeAgentSnapshot } from "@/utils/agent-snapshots";
 import { selectWorkspaceDirectoryServerIds } from "@/stores/session-store-hooks/selectors";
-import type { DirectoryReplicaMutation } from "@/runtime/client-replica";
+import type { DirectoryReplicaMutation } from "@/runtime/replica-cache";
 import {
   DirectoryRefreshSupersededError,
   DirectorySync,

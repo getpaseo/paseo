@@ -1,5 +1,5 @@
 import type { HostRuntimeConnectionStatus } from "@/runtime/host-runtime";
-import type { WorkspaceDescriptor } from "@/stores/session-store-hooks";
+import type { WorkspaceDescriptor } from "@/stores/session-store";
 import type { WorkspaceRecoveryModel } from "@/workspace-recovery/model";
 
 export type WorkspaceRouteState =

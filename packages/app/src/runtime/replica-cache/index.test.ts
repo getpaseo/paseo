@@ -8,7 +8,7 @@ import {
 import type { StreamItem } from "@/types/stream";
 import { normalizeAgentSnapshot } from "@/utils/agent-snapshots";
 import { ReplicaCache } from ".";
-import type { DirectoryCheckpoint } from "@/runtime/client-replica";
+import type { DirectoryCheckpoint } from "@/runtime/replica-cache";
 import type { ReplicaHostRows, ReplicaRow, ReplicaRowChanges, ReplicaRowStore } from "./row-store";
 
 const SERVER_ID = "cached-host";
@@ -267,6 +267,37 @@ describe("ReplicaCache", () => {
     expect(restoredDirectory.projects.get("project-1")?.projectDisplayName).toBe("Paseo");
     expect(restoredDirectory.checkpoint).toEqual({ agents: { generation: "g", afterSeq: 12 } });
     expect(restoredTimeline).toEqual(timeline());
+  });
+
+  it("preserves pending timeline updates across directory baseline replacement", async () => {
+    const storage = new MemoryStorage();
+    const writer = createCache(storage);
+    writer.commitTimeline(SERVER_ID, "agent-1", timeline("Latest visible reply"));
+    writer.replaceDirectoryBaseline(SERVER_ID, directory());
+    await writer.flush();
+
+    const reader = createCache(storage);
+    expect(await reader.readTimeline(SERVER_ID, "agent-1")).toEqual(
+      timeline("Latest visible reply"),
+    );
+  });
+
+  it("preserves clearing a timeline across directory baseline replacement", async () => {
+    const storage = new MemoryStorage();
+    const writer = createCache(storage);
+    writer.commitTimeline(SERVER_ID, "agent-1", timeline());
+    await writer.flush();
+    writer.commitTimeline(SERVER_ID, "agent-1", { ...timeline(), items: [], range: null });
+    writer.replaceDirectoryBaseline(SERVER_ID, directory());
+    await writer.flush();
+
+    const reader = createCache(storage);
+    expect(await reader.readTimeline(SERVER_ID, "agent-1")).toEqual({
+      ...timeline(),
+      items: [],
+      range: null,
+      hasOlder: false,
+    });
   });
 
   it("serializes and writes only keyed directory mutations", async () => {

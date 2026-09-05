@@ -1,7 +1,7 @@
 import { useCallback } from "react";
 import { useToast } from "@/contexts/toast-context";
 import { useArchiveAgent } from "@/hooks/use-archive-agent";
-import { getAgentSnapshot } from "@/runtime/session-data";
+import { useSessionStore } from "@/stores/session-store";
 import { confirmDialog } from "@/utils/confirm-dialog";
 import { toErrorMessage } from "@/utils/error-messages";
 import { requestArchiveSubagent, type ResolveArchiveSubagentDialogInput } from "./archive-subagent";
@@ -28,7 +28,7 @@ export function useArchiveSubagent(input: UseArchiveSubagentInput): (subagentId:
         { serverId, subagentId },
         {
           getSubagent: (id): ResolveArchiveSubagentDialogInput | undefined =>
-            getAgentSnapshot(serverId, id) ?? undefined,
+            useSessionStore.getState().sessions[serverId]?.agents?.get(id),
           confirm: confirmDialog,
           archiveAgent,
           reportError: (error) => {

@@ -16,7 +16,7 @@ import {
   shouldSuppressWorkspaceForLocalArchive,
 } from "@/contexts/session-workspace-upserts";
 import { resolveWorkspaceMapKeyByIdentity } from "@/utils/workspace-identity";
-import type { DirectoryReplicaMutation } from "@/runtime/client-replica";
+import type { DirectoryReplicaMutation } from "@/runtime/replica-cache";
 
 export type WorkspaceDirectoryDelta =
   | Extract<SessionOutboundMessage, { type: "workspace_update" | "project.update" }>["payload"]

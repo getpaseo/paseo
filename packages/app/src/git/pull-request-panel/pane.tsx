@@ -31,7 +31,7 @@ import { MarkdownRenderer } from "@/components/markdown/renderer";
 import { getDefaultMarkdownClipboardEnvironment } from "@/utils/rich-clipboard-default-environment";
 import { writeMarkdownToRichClipboard } from "@/utils/rich-clipboard";
 import { useHostRuntimeClient } from "@/runtime/host-runtime";
-import { useServerFeature } from "@/stores/session-store-hooks";
+import { useSessionStore } from "@/stores/session-store";
 import { useWorkspaceAttachmentsStore } from "@/attachments/workspace-attachments-store";
 import { useToast } from "@/contexts/toast-context";
 import { useCheckoutGitActionsStore } from "@/git/actions-store";
@@ -209,9 +209,15 @@ export function PullRequestPane({
   // COMPAT(githubCheckDetailsRpc): recognize the legacy capability on daemons
   // predating checkout.forge.get_check_details.*. Remove after 2027-01-17 once
   // the supported daemon floor is >= v0.2.0.
-  const canFetchGitHubCheckDetails = useServerFeature(serverId, "githubCheckDetails");
-  const canFetchForgeCheckDetails = useServerFeature(serverId, "forgeCheckDetails");
-  const forgeProvidersEnabled = useServerFeature(serverId, "forgeProviders");
+  const canFetchGitHubCheckDetails = useSessionStore(
+    (state) => state.sessions[serverId]?.serverInfo?.features?.githubCheckDetails === true,
+  );
+  const canFetchForgeCheckDetails = useSessionStore(
+    (state) => state.sessions[serverId]?.serverInfo?.features?.forgeCheckDetails === true,
+  );
+  const forgeProvidersEnabled = useSessionStore(
+    (state) => state.sessions[serverId]?.serverInfo?.features?.forgeProviders === true,
+  );
   const addWorkspaceAttachment = useWorkspaceAttachmentsStore(
     (state) => state.addWorkspaceAttachment,
   );
@@ -224,7 +230,9 @@ export function PullRequestPane({
     void openExternalUrl(data.url);
   }, [data.url]);
 
-  const refreshSupported = useServerFeature(serverId, "checkoutRefresh");
+  const refreshSupported = useSessionStore(
+    (state) => state.sessions[serverId]?.serverInfo?.features?.checkoutRefresh === true,
+  );
   const runRefresh = useCheckoutGitActionsStore((state) => state.refresh);
   const isRefreshing =
     useCheckoutGitActionsStore((state) =>

@@ -7,12 +7,12 @@ import {
   deriveAgentStateBucket,
   getWorkspaceStateBucketPriority,
 } from "@getpaseo/protocol/agent-state-bucket";
-import type { Agent, DaemonServerInfo, WorkspaceDescriptor } from "@/stores/session-store-hooks";
 import {
-  getAgentSnapshot,
-  getWorkspaceDirectorySnapshot,
-  readServerInfo,
-} from "@/runtime/session-data";
+  useSessionStore,
+  type Agent,
+  type DaemonServerInfo,
+  type WorkspaceDescriptor,
+} from "@/stores/session-store";
 import { buildAgentDirectoryState } from "@/utils/agent-directory-sync";
 import { normalizeWorkspacePath } from "@/utils/workspace-identity";
 
@@ -116,12 +116,14 @@ export function applyLegacyDaemonWorkspaceOwnership(input: {
     return input.agent;
   }
 
-  if (!shouldBackfillLegacyDaemonWorkspaceDirectory(readServerInfo(input.serverId))) {
+  const session = useSessionStore.getState().sessions[input.serverId];
+  if (!shouldBackfillLegacyDaemonWorkspaceDirectory(session?.serverInfo)) {
     return input.agent;
   }
 
-  const existingAgent = getAgentSnapshot(input.serverId, input.agent.id);
-  const workspaces = getWorkspaceDirectorySnapshot(input.serverId).workspaces;
+  const existingAgent =
+    session?.agents.get(input.agent.id) ?? session?.agentDetails.get(input.agent.id);
+  const workspaces = session?.workspaces;
   const workspaceId =
     existingAgent?.workspaceId ??
     resolveLegacyWorkspaceIdFromAgent(input.agent, workspaces) ??

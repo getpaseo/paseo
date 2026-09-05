@@ -1,4 +1,4 @@
-import type { WorkspaceDescriptor } from "@/stores/session-store-hooks";
+import type { WorkspaceDescriptor } from "@/stores/session-store";
 
 export type WorkspaceHeaderCheckoutState =
   | { kind: "pending" }

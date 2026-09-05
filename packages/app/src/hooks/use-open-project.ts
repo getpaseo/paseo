@@ -1,10 +1,7 @@
+import { getHostRuntimeStore } from "@/runtime/host-runtime";
 import { useCallback } from "react";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
-import { useServerFeature } from "@/stores/session-store-hooks";
-import {
-  acceptProjectSnapshot as upsertProject,
-  publishWorkspaceHydration as setHasHydratedWorkspaces,
-} from "@/runtime/session-data";
+import { useSessionStore } from "@/stores/session-store";
 import {
   cloneGithubProjectDirectly,
   openProjectDirectly,
@@ -18,12 +15,22 @@ export function useOpenProject(
   const normalizedServerId = serverId?.trim() ?? "";
   const client = useHostRuntimeClient(normalizedServerId);
   const isConnected = useHostRuntimeIsConnected(normalizedServerId);
-  const supportsProjectAdd = useServerFeature(normalizedServerId, "projectAdd");
-  const supportsStableProjectIdentity = useServerFeature(
-    normalizedServerId,
-    "stableProjectIdentity",
+  const canAddProject = useSessionStore((state) =>
+    normalizedServerId
+      ? state.sessions[normalizedServerId]?.serverInfo?.features?.projectAdd === true &&
+        state.sessions[normalizedServerId]?.serverInfo?.features?.stableProjectIdentity === true
+      : false,
   );
-  const canAddProject = supportsProjectAdd && supportsStableProjectIdentity;
+  const upsertProject = useCallback(
+    (
+      targetServerId: string,
+      project: Parameters<ReturnType<typeof getHostRuntimeStore>["acceptProjectSnapshot"]>[1],
+    ) => {
+      getHostRuntimeStore().acceptProjectSnapshot(targetServerId, project);
+    },
+    [],
+  );
+  const setHasHydratedWorkspaces = useSessionStore((state) => state.setHasHydratedWorkspaces);
 
   return useCallback(
     async (path: string) => {
@@ -38,7 +45,14 @@ export function useOpenProject(
       });
       return result;
     },
-    [canAddProject, client, isConnected, normalizedServerId],
+    [
+      upsertProject,
+      canAddProject,
+      client,
+      isConnected,
+      normalizedServerId,
+      setHasHydratedWorkspaces,
+    ],
   );
 }
 
@@ -52,6 +66,16 @@ export function useCloneGithubProject(
   const normalizedServerId = serverId?.trim() ?? "";
   const client = useHostRuntimeClient(normalizedServerId);
   const isConnected = useHostRuntimeIsConnected(normalizedServerId);
+  const upsertProject = useCallback(
+    (
+      targetServerId: string,
+      project: Parameters<ReturnType<typeof getHostRuntimeStore>["acceptProjectSnapshot"]>[1],
+    ) => {
+      getHostRuntimeStore().acceptProjectSnapshot(targetServerId, project);
+    },
+    [],
+  );
+  const setHasHydratedWorkspaces = useSessionStore((state) => state.setHasHydratedWorkspaces);
 
   return useCallback(
     async (repo: string, targetDirectory: string, cloneProtocol?: ProjectGithubCloneProtocol) => {
@@ -66,6 +90,6 @@ export function useCloneGithubProject(
         setHasHydratedWorkspaces,
       });
     },
-    [client, isConnected, normalizedServerId],
+    [client, isConnected, normalizedServerId, setHasHydratedWorkspaces, upsertProject],
   );
 }

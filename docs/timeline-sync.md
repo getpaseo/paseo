@@ -152,7 +152,7 @@ remaining page through the existing stream reducer. It must not append full proj
 live prefix.
 
 Every path that sends a message to an agent — composer send, dictation accept-and-send, queued
-send-now, and the session-data owner's automatic queue drain — goes through
+send-now, and the host runtime's automatic queue drain — goes through
 `dispatchComposerAgentMessage` with a submission writer. There is no second transport for the same
 product action: calling `client.sendAgentMessage` directly skips the submitted row and the pending
 footer, and permanently drops attachments because the daemon does not echo them back.

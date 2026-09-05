@@ -37,7 +37,7 @@ import type {
   DirectoryCheckpoint,
   DirectoryCursor,
   DirectoryReplicaMutation,
-} from "@/runtime/client-replica";
+} from "@/runtime/replica-cache";
 import type { TurnLivenessTransition } from "@/timeline/turn-liveness";
 
 const PAGE_LIMIT = 200;

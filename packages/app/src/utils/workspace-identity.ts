@@ -32,7 +32,7 @@ export function resolveWorkspaceRouteId(input: {
 }
 
 export function resolveWorkspaceMapKeyByIdentity(input: {
-  workspaces: ReadonlyMap<string, WorkspaceDescriptor> | null | undefined;
+  workspaces: Map<string, WorkspaceDescriptor> | null | undefined;
   workspaceId: string | null | undefined;
 }): string | null {
   const normalizedWorkspaceId = normalizeWorkspaceOpaqueId(input.workspaceId);

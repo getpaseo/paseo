@@ -5,7 +5,7 @@ import type { AgentProvider, ProviderSnapshotEntry } from "@getpaseo/protocol/ag
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { useRetainedPanelActive } from "@/components/retained-panel";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
-import { useServerFeature } from "@/stores/session-store-hooks";
+import { useSessionStore } from "@/stores/session-store";
 import { useReplicaQuery } from "@/data/query";
 import { queryClient as singletonQueryClient } from "@/data/query-client";
 import {
@@ -138,7 +138,9 @@ export function useProvidersSnapshot(
   const enabled = (options.enabled ?? true) && retainedPanelActive;
   const isConnected = useHostRuntimeIsConnected(serverId ?? "");
   const cwd = normalizeProvidersSnapshotCwd(options.cwd);
-  const supportsSnapshot = useServerFeature(serverId, "providersSnapshot");
+  const supportsSnapshot = useSessionStore(
+    (state) => state.sessions[serverId ?? ""]?.serverInfo?.features?.providersSnapshot === true,
+  );
 
   const queryKey = useMemo(() => providersSnapshotQueryKey(serverId, cwd), [cwd, serverId]);
 

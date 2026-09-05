@@ -1,3 +1,5 @@
+import { seedSessionHosts } from "@/test/seed-session";
+import { getHostRuntimeStore } from "@/runtime/host-runtime";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
@@ -5,8 +7,6 @@ import {
   isWorkspaceArchivePending,
 } from "@/contexts/session-workspace-upserts";
 import { useSessionStore, type WorkspaceDescriptor } from "@/stores/session-store";
-import { installSessionDataTestOwner } from "@/test/seed-session";
-import type { SessionDataOwner } from "@/runtime/session-data";
 import {
   archiveWorkspaceOptimistically,
   archiveWorkspacesOptimistically,
@@ -15,7 +15,6 @@ import {
 
 const SERVER_ID = "workspace-archive-test";
 const SECOND_SERVER_ID = "workspace-archive-test-2";
-let sessionDataOwner: SessionDataOwner;
 
 type ArchiveWorkspacePayload = Awaited<ReturnType<DaemonClient["archiveWorkspace"]>>;
 
@@ -88,12 +87,12 @@ function storedWorkspace(id: string): WorkspaceDescriptor | undefined {
 }
 
 beforeEach(() => {
+  seedSessionHosts([SERVER_ID, SECOND_SERVER_ID]);
   useSessionStore.getState().initializeSession(SERVER_ID, {} as DaemonClient);
-  useSessionStore.getState().initializeSession(SECOND_SERVER_ID, {} as DaemonClient);
-  sessionDataOwner = installSessionDataTestOwner([SERVER_ID, SECOND_SERVER_ID]);
 });
 
 afterEach(() => {
+  seedSessionHosts([]);
   clearWorkspaceArchivePending({ serverId: SERVER_ID, workspaceId: "workspace-1" });
   clearWorkspaceArchivePending({ serverId: SERVER_ID, workspaceId: "workspace-2" });
   clearWorkspaceArchivePending({ serverId: SECOND_SERVER_ID, workspaceId: "workspace-1" });
@@ -104,7 +103,7 @@ afterEach(() => {
 describe("archiveWorkspaceOptimistically", () => {
   it("hides the workspace and marks the archive pending while the daemon call runs", async () => {
     const archived = workspace();
-    sessionDataOwner.acceptWorkspaces(SERVER_ID, [archived]);
+    getHostRuntimeStore().acceptWorkspaceSnapshots(SERVER_ID, [archived]);
     const releaseArchive = deferred<ArchiveWorkspacePayload>();
     const client = createClient(vi.fn(async () => releaseArchive.promise));
 
@@ -129,7 +128,7 @@ describe("archiveWorkspaceOptimistically", () => {
 
   it("restores the workspace and clears pending state when the daemon rejects the archive", async () => {
     const archived = workspace();
-    sessionDataOwner.acceptWorkspaces(SERVER_ID, [archived]);
+    getHostRuntimeStore().acceptWorkspaceSnapshots(SERVER_ID, [archived]);
     const client = createClient(
       vi.fn(async () => archivePayload({ workspaceId: archived.id, error: "nope" })),
     );
@@ -159,7 +158,7 @@ describe("archiveWorkspacesOptimistically", () => {
       workspaceDirectory: "/repo/project/workspace-2",
       name: "workspace-2",
     });
-    sessionDataOwner.acceptWorkspaces(SERVER_ID, [first, second]);
+    getHostRuntimeStore().acceptWorkspaceSnapshots(SERVER_ID, [first, second]);
     const client = createClient(
       vi.fn(async (workspaceId) =>
         archivePayload({
@@ -187,8 +186,9 @@ describe("archiveWorkspacesOptimistically", () => {
       workspaceDirectory: "/repo/project/workspace-2",
       name: "workspace-2",
     });
-    sessionDataOwner.acceptWorkspaces(SERVER_ID, [first]);
-    sessionDataOwner.acceptWorkspaces(SECOND_SERVER_ID, [second]);
+    useSessionStore.getState().initializeSession(SECOND_SERVER_ID, {} as DaemonClient);
+    getHostRuntimeStore().acceptWorkspaceSnapshots(SERVER_ID, [first]);
+    getHostRuntimeStore().acceptWorkspaceSnapshots(SECOND_SERVER_ID, [second]);
 
     const archivedByServer = new Map<string, string[]>();
     const clientFor = (serverId: string) =>

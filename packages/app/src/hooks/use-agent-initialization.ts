@@ -1,7 +1,7 @@
 import { useCallback, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
-import { getAgentTimelineSnapshot, publishAgentInitialization } from "@/runtime/session-data";
+import { selectAgentTimelineState, useSessionStore } from "@/stores/session-store";
 import {
   createInitDeferred,
   getInitDeferred,
@@ -10,7 +10,7 @@ import {
   rejectInitDeferred,
   refreshInitTimeout,
 } from "@/utils/agent-initialization";
-import { agentTimelineRuntime } from "@/runtime/host-runtime";
+import { getHostRuntimeStore, type HostRuntimeStore } from "@/runtime/host-runtime";
 import { planTimelineResumeFetch, planTimelineTailFetch } from "@/timeline/timeline-sync-plan";
 import { i18n } from "@/i18n/i18next";
 
@@ -38,7 +38,7 @@ export interface EnsureAgentIsInitializedInput {
   serverId: string;
   agentId: string;
   client: Pick<DaemonClient, "fetchAgentTimeline"> | null;
-  runtime: typeof agentTimelineRuntime;
+  runtime: Pick<HostRuntimeStore, "fetchAgentTimeline">;
   setAgentInitializing: SetAgentInitializing;
   hostDisconnectedMessage?: string;
 }
@@ -51,7 +51,7 @@ export function ensureAgentIsInitialized(input: EnsureAgentIsInitializedInput): 
     return existing.promise;
   }
 
-  const timeline = getAgentTimelineSnapshot(serverId, agentId);
+  const timeline = selectAgentTimelineState(useSessionStore.getState().sessions[serverId], agentId);
   const timelineRequest = planTimelineResumeFetch(
     timeline.status === "synced" ? timeline.range : null,
   );
@@ -82,7 +82,7 @@ export interface RefreshAgentInput {
   serverId: string;
   agentId: string;
   client: Pick<DaemonClient, "refreshAgent"> | null;
-  runtime: typeof agentTimelineRuntime;
+  runtime: Pick<HostRuntimeStore, "fetchAgentTimeline">;
   setAgentInitializing: SetAgentInitializing;
   hostDisconnectedMessage?: string;
 }
@@ -105,7 +105,7 @@ export async function refreshAgent(input: RefreshAgentInput): Promise<void> {
 
 export function createSetAgentInitializing(
   serverId: string,
-  setInitializingAgents: typeof publishAgentInitialization,
+  setInitializingAgents: ReturnType<typeof useSessionStore.getState>["setInitializingAgents"],
 ): SetAgentInitializing {
   return (agentId, initializing) => {
     setInitializingAgents(serverId, (prev) => {
@@ -127,9 +127,10 @@ export function useAgentInitialization({
   client: DaemonClient | null;
 }) {
   const { t } = useTranslation();
+  const setInitializingAgents = useSessionStore((state) => state.setInitializingAgents);
   const setAgentInitializing = useMemo(
-    () => createSetAgentInitializing(serverId, publishAgentInitialization),
-    [serverId],
+    () => createSetAgentInitializing(serverId, setInitializingAgents),
+    [serverId, setInitializingAgents],
   );
 
   const ensureAgentIsInitializedCallback = useCallback(
@@ -138,7 +139,7 @@ export function useAgentInitialization({
         serverId,
         agentId,
         client,
-        runtime: agentTimelineRuntime,
+        runtime: getHostRuntimeStore(),
         setAgentInitializing,
         hostDisconnectedMessage: t("workspace.terminal.hostDisconnected"),
       }),
@@ -151,7 +152,7 @@ export function useAgentInitialization({
         serverId,
         agentId,
         client,
-        runtime: agentTimelineRuntime,
+        runtime: getHostRuntimeStore(),
         setAgentInitializing,
         hostDisconnectedMessage: t("workspace.terminal.hostDisconnected"),
       }),

@@ -7,8 +7,7 @@ import { supportsDesktopPaneSplits, useIsCompactFormFactor } from "@/constants/l
 import { usePaneContext } from "@/panels/pane-context";
 import { useSettings } from "@/hooks/use-settings";
 import { PluginComposerPills } from "@/plugins";
-import { useServerFeature } from "@/stores/session-store-hooks";
-import { getAgentSnapshot } from "@/runtime/session-data";
+import { useSessionStore } from "@/stores/session-store";
 import {
   type ArchiveFinishedStatus,
   useArchiveSubagent,
@@ -56,12 +55,15 @@ export const AgentTracks = memo(function AgentTracks({
   const canSplit = supportsDesktopPaneSplits() && !isCompact;
   const openInSidePane = useSettings((settings) => settings.openInSidePane);
   const workspaceKey = buildWorkspaceTabPersistenceKey({ serverId, workspaceId });
-  const canDetachSubagents = useServerFeature(serverId, "agentDetach");
+  const canDetachSubagents = useSessionStore(
+    (state) => state.sessions[serverId]?.serverInfo?.features?.agentDetach === true,
+  );
   const archiveSubagent = useArchiveSubagent({ serverId });
   const detachSubagent = useDetachSubagent({ serverId });
   const handleOpenSubagent = useCallback(
     (subagentId: string) => {
-      const agent = getAgentSnapshot(serverId, subagentId);
+      const session = useSessionStore.getState().sessions[serverId];
+      const agent = session?.agents.get(subagentId) ?? session?.agentDetails.get(subagentId);
       if (agent?.workspaceId && agent.workspaceId !== workspaceId) {
         navigateToAgent({ serverId, agentId: subagentId });
         return;

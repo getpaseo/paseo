@@ -62,7 +62,7 @@ describe("resolveArchiveSubagentDialog", () => {
     expect(
       resolveArchiveSubagentDialog({
         title: "Review branch",
-        turn: { phase: "open", turnId: null, startedAt: null, cancellationRequestId: null },
+        status: "running",
       }),
     ).toEqual({
       title: "Archive running subagent?",
@@ -78,7 +78,7 @@ describe("resolveArchiveSubagentDialog", () => {
     expect(
       resolveArchiveSubagentDialog({
         title: "Starting child",
-        turn: { phase: "idle", cancellationRequestId: null },
+        status: "initializing",
       }),
     ).toEqual({
       title: "Archive subagent?",
@@ -93,7 +93,7 @@ describe("resolveArchiveSubagentDialog", () => {
     expect(
       resolveArchiveSubagentDialog({
         title: "Review branch",
-        turn: { phase: "idle", cancellationRequestId: null },
+        status: "idle",
       }),
     ).toEqual({
       title: "Archive subagent?",
@@ -108,7 +108,7 @@ describe("resolveArchiveSubagentDialog", () => {
     expect(
       resolveArchiveSubagentDialog({
         title: "New Agent",
-        turn: null,
+        status: null,
       }),
     ).toEqual({
       title: "Archive subagent?",
@@ -127,10 +127,7 @@ describe("requestArchiveSubagent", () => {
       initialSubagents: [
         {
           id: "child-agent",
-          snapshot: {
-            title: "Review branch",
-            turn: { phase: "open", turnId: null, startedAt: null, cancellationRequestId: null },
-          },
+          snapshot: { title: "Review branch", status: "running" },
         },
       ],
     });
@@ -146,10 +143,7 @@ describe("requestArchiveSubagent", () => {
       initialSubagents: [
         {
           id: "child-agent",
-          snapshot: {
-            title: "Review branch",
-            turn: { phase: "idle", cancellationRequestId: null },
-          },
+          snapshot: { title: "Review branch", status: "idle" },
         },
       ],
     });
@@ -165,10 +159,7 @@ describe("requestArchiveSubagent", () => {
       initialSubagents: [
         {
           id: "child-agent",
-          snapshot: {
-            title: "Review branch",
-            turn: { phase: "open", turnId: null, startedAt: null, cancellationRequestId: null },
-          },
+          snapshot: { title: "Review branch", status: "running" },
         },
       ],
     });
@@ -176,10 +167,7 @@ describe("requestArchiveSubagent", () => {
     await requestArchiveSubagent({ serverId: "server-1", subagentId: "child-agent" }, env.deps);
 
     expect(env.recordedConfirmInputs).toEqual([
-      resolveArchiveSubagentDialog({
-        title: "Review branch",
-        turn: { phase: "open", turnId: null, startedAt: null, cancellationRequestId: null },
-      }),
+      resolveArchiveSubagentDialog({ title: "Review branch", status: "running" }),
     ]);
   });
 
@@ -189,7 +177,7 @@ describe("requestArchiveSubagent", () => {
     await requestArchiveSubagent({ serverId: "server-1", subagentId: "missing" }, env.deps);
 
     expect(env.recordedConfirmInputs).toEqual([
-      resolveArchiveSubagentDialog({ title: undefined, turn: undefined }),
+      resolveArchiveSubagentDialog({ title: undefined, status: undefined }),
     ]);
     expect(env.recordedArchives).toEqual([]);
   });
@@ -200,10 +188,7 @@ describe("requestArchiveSubagent", () => {
       initialSubagents: [
         {
           id: "child-agent",
-          snapshot: {
-            title: "Review branch",
-            turn: { phase: "open", turnId: null, startedAt: null, cancellationRequestId: null },
-          },
+          snapshot: { title: "Review branch", status: "running" },
         },
       ],
     });
