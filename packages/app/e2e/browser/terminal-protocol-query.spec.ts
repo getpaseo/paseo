@@ -39,7 +39,14 @@ test.describe("Terminal protocol queries", () => {
   });
 
   test("does not send browser OSC 11 color-query replies back to the PTY", async ({ page }) => {
-    const terminalInstance = await harness.createTerminal({ name: "osc11-query" });
+    const terminalInstance = await harness.createTerminal({
+      name: "osc11-query",
+      defaultColors: {
+        foreground: "#18181b",
+        background: "#ffffff",
+        cursor: "#18181b",
+      },
+    });
     try {
       await harness.openTerminal(page, { terminalId: terminalInstance.id });
       await harness.setupPrompt(page);
@@ -52,8 +59,8 @@ test.describe("Terminal protocol queries", () => {
 
       const text = await getTerminalBufferText(page);
 
-      expect(text).toContain("rgb:0b0b/0b0b/0b0b");
-      expect(text).not.toContain("rgb:ffff/ffff/ffff");
+      expect(text).toContain("rgb:ffff/ffff/ffff");
+      expect(text).not.toContain("rgb:0b0b/0b0b/0b0b");
     } finally {
       await harness.killTerminal(terminalInstance.id);
     }

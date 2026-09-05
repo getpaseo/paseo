@@ -5,7 +5,7 @@ import type {
   TerminalStateSnapshot,
   TerminalStateSnapshotOptions,
 } from "./terminal.js";
-import type { TerminalState } from "@getpaseo/protocol/messages";
+import type { TerminalDefaultColors, TerminalState } from "@getpaseo/protocol/messages";
 import type { TerminalActivity, TerminalActivityState } from "@getpaseo/protocol/terminal-activity";
 import type { CaptureTerminalLinesResult } from "./terminal-capture.js";
 
@@ -25,6 +25,7 @@ export interface WorkerCreateTerminalOptions {
   name?: string;
   title?: string;
   env?: Record<string, string>;
+  defaultColors?: TerminalDefaultColors;
   command?: string;
   args?: string[];
   rows?: number;

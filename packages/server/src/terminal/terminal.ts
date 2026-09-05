@@ -9,7 +9,11 @@ import { fileURLToPath } from "node:url";
 import { createExternalProcessEnv } from "../server/paseo-env.js";
 import { writePrivateFileAtomicSync } from "../server/private-files.js";
 import { findExecutable } from "../executable-resolution/executable-resolution.js";
-import type { TerminalCell, TerminalState } from "@getpaseo/protocol/messages";
+import type {
+  TerminalCell,
+  TerminalDefaultColors,
+  TerminalState,
+} from "@getpaseo/protocol/messages";
 import { TerminalInputModeTracker } from "@getpaseo/protocol/terminal-input-mode";
 import { TerminalActivityTracker } from "./activity/terminal-activity-tracker.js";
 import type { TerminalActivity, TerminalActivityState } from "@getpaseo/protocol/terminal-activity";
@@ -21,11 +25,43 @@ let nodePtySpawnHelperChecked = false;
 const TERMINAL_TITLE_DEBOUNCE_MS = 150;
 const TERMINAL_EXIT_OUTPUT_LINE_LIMIT = 12;
 const TERMINAL_EXIT_OUTPUT_CHAR_LIMIT = 16000;
-const TERMINAL_OSC_COLOR_QUERY_RESPONSES = new Map<number, string>([
+const DEFAULT_TERMINAL_OSC_COLOR_QUERY_RESPONSES = new Map<number, string>([
   [10, "rgb:e6e6/e6e6/e6e6"],
   [11, "rgb:0b0b/0b0b/0b0b"],
   [12, "rgb:e6e6/e6e6/e6e6"],
 ]);
+
+function toOscColor(value: string | undefined, fallback: string): string {
+  const hex = value?.trim().replace(/^#/, "").toLowerCase();
+  if (!hex || ![3, 4, 6, 8].includes(hex.length) || !/^[0-9a-f]+$/.test(hex)) {
+    return fallback;
+  }
+
+  const rgb =
+    hex.length <= 4
+      ? hex.slice(0, 3).replaceAll(/./g, (channel) => channel + channel)
+      : hex.slice(0, 6);
+  return `rgb:${rgb.slice(0, 2).repeat(2)}/${rgb.slice(2, 4).repeat(2)}/${rgb.slice(4, 6).repeat(2)}`;
+}
+
+function createOscColorQueryResponses(
+  defaultColors?: TerminalDefaultColors,
+): ReadonlyMap<number, string> {
+  const foreground = toOscColor(
+    defaultColors?.foreground,
+    DEFAULT_TERMINAL_OSC_COLOR_QUERY_RESPONSES.get(10)!,
+  );
+  const background = toOscColor(
+    defaultColors?.background,
+    DEFAULT_TERMINAL_OSC_COLOR_QUERY_RESPONSES.get(11)!,
+  );
+  const cursor = toOscColor(defaultColors?.cursor ?? defaultColors?.foreground, foreground);
+  return new Map([
+    [10, foreground],
+    [11, background],
+    [12, cursor],
+  ]);
+}
 
 export interface TerminalExitInfo {
   exitCode: number | null;
@@ -119,6 +155,7 @@ export interface CreateTerminalOptions {
   id?: string;
   cwd: string;
   workspaceId: string;
+  defaultColors?: TerminalDefaultColors;
   shell?: string;
   env?: Record<string, string>;
   activityEnv?: Record<string, string>;
@@ -1041,7 +1078,7 @@ export async function createTerminal(options: CreateTerminalOptions): Promise<Te
     ptyProcess.write(`\x1b[?${buffer.cursorY + 1};${buffer.cursorX + 1}R`);
     return true;
   });
-  for (const [code, response] of TERMINAL_OSC_COLOR_QUERY_RESPONSES) {
+  for (const [code, response] of createOscColorQueryResponses(options.defaultColors)) {
     terminal.parser.registerOscHandler(code, (data) => {
       if (data.trim() !== "?") {
         return false;
