@@ -7,6 +7,7 @@ import { StyleSheet } from "react-native-unistyles";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, MoreVertical, Pencil, Plus } from "lucide-react-native";
 import { ProjectIconView } from "@/components/project-icon-view";
+import { formatPlatformLabel, ProjectCommandEditor } from "@/components/project-command-editor";
 import type {
   PaseoConfigRaw,
   PaseoConfigRevision,
@@ -42,12 +43,15 @@ import { confirmDialog } from "@/utils/confirm-dialog";
 import {
   applyDraftToConfig,
   configToDraft,
+  createEmptyCommandDraft,
+  hasCommandText,
   METADATA_PROMPT_KEYS,
-  type LifecycleOriginalKind,
   type MetadataPromptKey,
+  type CommandDraft,
   type ProjectConfigDraft,
   type ProjectScriptDraft,
 } from "@/utils/project-config-form";
+import { isPaseoPlatformCommand, PASEO_PLATFORMS } from "@getpaseo/protocol/paseo-config-schema";
 import {
   getProjectHostEntry,
   getProjectSummaryForHostProject,
@@ -545,11 +549,11 @@ function ProjectConfigForm({
   }, []);
 
   const handleSetupChange = useCallback(
-    (text: string) => updateDraft((d) => ({ ...d, setupText: text })),
+    (command: CommandDraft) => updateDraft((d) => ({ ...d, setup: command })),
     [updateDraft],
   );
   const handleTeardownChange = useCallback(
-    (text: string) => updateDraft((d) => ({ ...d, teardownText: text })),
+    (command: CommandDraft) => updateDraft((d) => ({ ...d, teardown: command })),
     [updateDraft],
   );
 
@@ -595,8 +599,7 @@ function ProjectConfigForm({
         {
           id,
           name: "",
-          commandText: "",
-          commandOriginalKind: "missing" satisfies LifecycleOriginalKind,
+          command: createEmptyCommandDraft(),
           type: "",
           portText: "",
           rawEntry: {},
@@ -625,7 +628,7 @@ function ProjectConfigForm({
       if (!entry) return d;
       const isEmpty =
         entry.name.trim().length === 0 &&
-        entry.commandText.trim().length === 0 &&
+        !hasCommandText(entry.command) &&
         entry.type.trim().length === 0 &&
         entry.portText.trim().length === 0;
       if (!isEmpty) return d;
@@ -634,9 +637,13 @@ function ProjectConfigForm({
     setEditingScriptId(null);
   }, [editingScriptId, updateDraft]);
 
-  const handleSaveEditing = useCallback(() => {
-    setEditingScriptId(null);
-  }, []);
+  const handleSaveEditing = useCallback(
+    (next: ProjectScriptDraft) => {
+      handleEditingDraftChange(next);
+      setEditingScriptId(null);
+    },
+    [handleEditingDraftChange],
+  );
 
   const editingScript = draft.scripts.find((entry) => entry.id === editingScriptId);
 
@@ -707,11 +714,14 @@ function ProjectConfigForm({
               description={t("settings.project.worktree.uncommittedDescription")}
             />
           ) : null}
-          <SettingsTextAreaCard
-            testID="worktree-setup-input"
+          <ProjectCommandEditor
+            command={draft.setup}
+            onChange={handleSetupChange}
+            variant="settings"
+            inputTestID="worktree-setup-input"
+            platformTestIDPrefix="worktree-setup"
+            formatTestID="worktree-setup-format-toggle"
             accessibilityLabel={t("settings.project.worktree.setupAccessibility")}
-            value={draft.setupText}
-            onChangeText={handleSetupChange}
             placeholder="npm install"
           />
         </SettingsSection>
@@ -722,11 +732,14 @@ function ProjectConfigForm({
           trailing={teardownDocsLink}
           flush
         >
-          <SettingsTextAreaCard
-            testID="worktree-teardown-input"
+          <ProjectCommandEditor
+            command={draft.teardown}
+            onChange={handleTeardownChange}
+            variant="settings"
+            inputTestID="worktree-teardown-input"
+            platformTestIDPrefix="worktree-teardown"
+            formatTestID="worktree-teardown-format-toggle"
             accessibilityLabel={t("settings.project.worktree.teardownAccessibility")}
-            value={draft.teardownText}
-            onChangeText={handleTeardownChange}
             placeholder="docker compose down"
           />
         </SettingsSection>
@@ -840,7 +853,6 @@ function ProjectConfigForm({
       {editingScript ? (
         <ScriptEditModal
           script={editingScript}
-          onChange={handleEditingDraftChange}
           onCancel={handleCancelEditing}
           onSave={handleSaveEditing}
         />
@@ -954,7 +966,17 @@ function scriptHint(script: ProjectScriptDraft, t: TFunction): string {
   const pieces: string[] = [];
   if (script.type) pieces.push(script.type);
   if (script.portText) pieces.push(t("settings.project.scripts.port", { port: script.portText }));
-  if (script.commandText) pieces.push(script.commandText.split("\n")[0] ?? "");
+  if (script.command.format === "single") {
+    if (script.command.text) pieces.push(script.command.text.split("\n")[0] ?? "");
+  } else {
+    const firstPlatform = PASEO_PLATFORMS.find(
+      (platform) => script.command.platforms[platform].text.trim().length > 0,
+    );
+    if (firstPlatform) {
+      const command = script.command.platforms[firstPlatform].text.split("\n")[0] ?? "";
+      pieces.push(`${formatPlatformLabel(firstPlatform)}: ${command}`);
+    }
+  }
   return pieces.join(" · ");
 }
 
@@ -967,8 +989,11 @@ interface ScriptValidation {
 function validateScript(script: ProjectScriptDraft, t: TFunction): ScriptValidation {
   const nameError =
     script.name.trim().length === 0 ? t("settings.project.scripts.nameRequired") : null;
+  const hasExistingOpaqueCommand = isOpaqueCommand(script.rawEntry.command);
   const commandError =
-    script.commandText.trim().length === 0 ? t("settings.project.scripts.commandRequired") : null;
+    !hasCommandText(script.command) && !hasExistingOpaqueCommand
+      ? t("settings.project.scripts.commandRequired")
+      : null;
   return {
     hasErrors: Boolean(nameError || commandError),
     nameError,
@@ -976,11 +1001,19 @@ function validateScript(script: ProjectScriptDraft, t: TFunction): ScriptValidat
   };
 }
 
+function isOpaqueCommand(value: unknown): boolean {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    !Array.isArray(value) &&
+    !isPaseoPlatformCommand(value)
+  );
+}
+
 interface ScriptEditModalProps {
   script: ProjectScriptDraft;
-  onChange: (next: ProjectScriptDraft) => void;
   onCancel: () => void;
-  onSave: () => void;
+  onSave: (next: ProjectScriptDraft) => void;
 }
 
 interface ScriptFieldsTouched {
@@ -991,54 +1024,56 @@ interface ScriptFieldsTouched {
 const ALL_TOUCHED: ScriptFieldsTouched = { name: true, command: true };
 const NONE_TOUCHED: ScriptFieldsTouched = { name: false, command: false };
 
-function ScriptEditModal({ script, onChange, onCancel, onSave }: ScriptEditModalProps) {
+function ScriptEditModal({ script, onCancel, onSave }: ScriptEditModalProps) {
   const { t } = useTranslation();
+  const [draft, setDraft] = useState<ProjectScriptDraft>(() => script);
   const [touched, setTouched] = useState<ScriptFieldsTouched>(NONE_TOUCHED);
 
   useEffect(() => {
+    setDraft(script);
     setTouched(NONE_TOUCHED);
-  }, [script.id]);
+  }, [script]);
 
   const markTouched = useCallback((field: keyof ScriptFieldsTouched) => {
     setTouched((prev) => (prev[field] ? prev : { ...prev, [field]: true }));
   }, []);
 
   const handleNameChange = useCallback(
-    (text: string) => onChange({ ...script, name: text }),
-    [onChange, script],
+    (text: string) => setDraft((prev) => ({ ...prev, name: text })),
+    [],
   );
   const handleCommandChange = useCallback(
-    (text: string) => onChange({ ...script, commandText: text }),
-    [onChange, script],
+    (command: CommandDraft) => setDraft((prev) => ({ ...prev, command })),
+    [],
   );
   const handleServiceToggle = useCallback(
-    (next: boolean) => onChange({ ...script, type: next ? SCRIPT_SERVICE_TYPE : "" }),
-    [onChange, script],
+    (next: boolean) => setDraft((prev) => ({ ...prev, type: next ? SCRIPT_SERVICE_TYPE : "" })),
+    [],
   );
 
   const handleNameBlur = useCallback(() => markTouched("name"), [markTouched]);
   const handleCommandBlur = useCallback(() => markTouched("command"), [markTouched]);
 
-  const validation = validateScript(script, t);
+  const validation = validateScript(draft, t);
 
   const handleSavePress = useCallback(() => {
     if (validation.hasErrors) {
       setTouched(ALL_TOUCHED);
       return;
     }
-    onSave();
-  }, [validation.hasErrors, onSave]);
+    onSave(draft);
+  }, [draft, validation.hasErrors, onSave]);
 
   const showNameError = touched.name && validation.nameError;
   const showCommandError = touched.command && validation.commandError;
-  const isService = script.type === SCRIPT_SERVICE_TYPE;
+  const isService = draft.type === SCRIPT_SERVICE_TYPE;
   const sheetHeader = useMemo<SheetHeader>(
     () => ({
-      title: script.name
-        ? t("settings.project.scripts.editScript", { name: script.name })
+      title: draft.name
+        ? t("settings.project.scripts.editScript", { name: draft.name })
         : t("settings.project.scripts.newScript"),
     }),
-    [script.name, t],
+    [draft.name, t],
   );
 
   return (
@@ -1054,7 +1089,7 @@ function ScriptEditModal({ script, onChange, onCancel, onSave }: ScriptEditModal
         <TextInput
           testID="script-edit-name"
           accessibilityLabel={t("settings.project.scripts.nameAccessibility")}
-          initialValue={script.name}
+          initialValue={draft.name}
           onChangeText={handleNameChange}
           onBlur={handleNameBlur}
           placeholder="dev"
@@ -1069,22 +1104,19 @@ function ScriptEditModal({ script, onChange, onCancel, onSave }: ScriptEditModal
       </View>
       <View style={styles.modalSection}>
         <Text style={styles.modalLabel}>{t("settings.project.scripts.command")}</Text>
-        <TextInput
-          testID="script-edit-command"
+        <ProjectCommandEditor
+          command={draft.command}
+          onChange={handleCommandChange}
+          variant="modal"
+          inputTestID="script-edit-command"
+          platformTestIDPrefix="script-edit-command"
+          formatTestID="script-edit-command-format-toggle"
           accessibilityLabel={t("settings.project.scripts.commandAccessibility")}
-          multiline
-          initialValue={script.commandText}
-          onChangeText={handleCommandChange}
-          onBlur={handleCommandBlur}
           placeholder="npm run dev"
-          placeholderTextColor={styles.placeholderColor.color}
-          style={styles.modalMultilineInput}
+          onBlur={handleCommandBlur}
+          errorMessage={showCommandError ? validation.commandError : null}
+          errorTestID="script-edit-command-error"
         />
-        {showCommandError ? (
-          <Text testID="script-edit-command-error" style={styles.fieldError}>
-            {validation.commandError}
-          </Text>
-        ) : null}
       </View>
       <View style={styles.modalSection}>
         <View style={styles.serviceToggleRow}>
@@ -1219,18 +1251,6 @@ const styles = StyleSheet.create((theme) => ({
     borderWidth: 1,
     borderColor: theme.colors.border,
     backgroundColor: theme.colors.surface2,
-  },
-  modalMultilineInput: {
-    color: theme.colors.foreground,
-    fontSize: theme.fontSize.base,
-    paddingVertical: theme.spacing[2],
-    paddingHorizontal: theme.spacing[3],
-    borderRadius: theme.borderRadius.md,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-    backgroundColor: theme.colors.surface2,
-    minHeight: 100,
-    textAlignVertical: "top",
   },
   modalFooter: {
     flexDirection: "row",

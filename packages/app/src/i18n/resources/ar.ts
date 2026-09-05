@@ -2570,6 +2570,7 @@ export const ar: TranslationResources = {
       },
     },
     project: {
+      commandFormat: { title: "تنسيق الأمر", single: "جميع المنصات", platform: "حسب المنصة" },
       noEditableTarget: "هذا المشروع غير متاح للتحرير على هذا المضيف.",
       backToProjects: "العودة إلى المشاريع",
       edit: {

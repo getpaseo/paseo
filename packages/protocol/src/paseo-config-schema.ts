@@ -2,6 +2,17 @@ import { z } from "zod";
 
 const TCP_PORT_RANGE_PATTERN = /^(\d{1,5})-(\d{1,5})$/;
 
+export const PASEO_PLATFORMS = ["linux", "darwin", "win32"] as const;
+export type PaseoPlatform = (typeof PASEO_PLATFORMS)[number];
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function hasPaseoPlatformKey(value: Record<string, unknown>): boolean {
+  return PASEO_PLATFORMS.some((platform) => Object.hasOwn(value, platform));
+}
+
 export const PaseoServicePortAllocationSchema = z
   .object({
     range: z.string().trim().regex(TCP_PORT_RANGE_PATTERN).optional(),
@@ -33,11 +44,47 @@ export function normalizeLifecycleCommands(commands: unknown): string[] {
   });
 }
 
-export const PaseoLifecycleCommandRawSchema = z.union([z.string(), z.array(z.string())]);
+export function isPaseoPlatformCommand(value: unknown): value is Record<string, unknown> {
+  return isRecord(value) && hasPaseoPlatformKey(value);
+}
+
+export function selectPaseoPlatformCommand(
+  value: Record<string, unknown>,
+  platform: PaseoPlatform,
+): unknown {
+  return value[platform];
+}
+
+const PaseoLifecycleCommandValueRawSchema = z.union([z.string(), z.array(z.string())]);
+
+export const PaseoPlatformScriptCommandRawSchema = z
+  .object({
+    linux: z.string().optional(),
+    darwin: z.string().optional(),
+    win32: z.string().optional(),
+  })
+  .passthrough()
+  .refine(hasPaseoPlatformKey, "Expected at least one platform command");
+
+export const PaseoPlatformLifecycleCommandRawSchema = z
+  .object({
+    linux: PaseoLifecycleCommandValueRawSchema.optional(),
+    darwin: PaseoLifecycleCommandValueRawSchema.optional(),
+    win32: PaseoLifecycleCommandValueRawSchema.optional(),
+  })
+  .passthrough()
+  .refine(hasPaseoPlatformKey, "Expected at least one platform command");
+
+export const PaseoLifecycleCommandRawSchema = z.union([
+  PaseoLifecycleCommandValueRawSchema,
+  PaseoPlatformLifecycleCommandRawSchema,
+]);
 
 export const PaseoScriptEntryRawSchema = z
   .object({
     type: z.unknown().optional(),
+    // Keep this open for old and future script command shapes. The runtime only
+    // interprets a platform object after it has an explicit known platform key.
     command: z.unknown().optional(),
     port: z.unknown().optional(),
   })
@@ -79,9 +126,23 @@ export const PaseoConfigRawSchema = z
   })
   .passthrough();
 
+function normalizeLifecycleConfigCommands(
+  commands: unknown,
+): string[] | PaseoPlatformLifecycleCommandRaw {
+  if (!isPaseoPlatformCommand(commands)) {
+    return normalizeLifecycleCommands(commands);
+  }
+
+  const platformCommands = PaseoPlatformLifecycleCommandRawSchema.safeParse(commands);
+  if (platformCommands.success) {
+    return platformCommands.data;
+  }
+  return normalizeLifecycleCommands(commands);
+}
+
 export const WorktreeConfigSchema = PaseoWorktreeConfigRawSchema.extend({
-  setup: z.unknown().optional().transform(normalizeLifecycleCommands),
-  teardown: z.unknown().optional().transform(normalizeLifecycleCommands),
+  setup: z.unknown().optional().transform(normalizeLifecycleConfigCommands),
+  teardown: z.unknown().optional().transform(normalizeLifecycleConfigCommands),
 })
   .passthrough()
   .catch({ setup: [], teardown: [] });
@@ -112,6 +173,11 @@ export const ProjectConfigRpcErrorSchema = z.discriminatedUnion("code", [
 ]);
 
 export type PaseoScriptEntryRaw = z.infer<typeof PaseoScriptEntryRawSchema>;
+export type PaseoPlatformScriptCommandRaw = z.infer<typeof PaseoPlatformScriptCommandRawSchema>;
+export type PaseoPlatformLifecycleCommandRaw = z.infer<
+  typeof PaseoPlatformLifecycleCommandRawSchema
+>;
+export type PaseoLifecycleCommandRaw = z.infer<typeof PaseoLifecycleCommandRawSchema>;
 export type PaseoMetadataGenerationEntry = z.infer<typeof PaseoMetadataGenerationEntrySchema>;
 export type PaseoMetadataGeneration = z.infer<typeof PaseoMetadataGenerationSchema>;
 export type PaseoServicePortAllocation = z.infer<typeof PaseoServicePortAllocationSchema>;

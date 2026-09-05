@@ -37,6 +37,12 @@ describe("shouldShowWorktreeSetupCallout", () => {
     expect(
       shouldShowWorktreeSetupCallout({ ok: true, config: { worktree: { setup: "npm i" } } }),
     ).toBe(false);
+    expect(
+      shouldShowWorktreeSetupCallout({
+        ok: true,
+        config: { worktree: { setup: { win32: ["npm.cmd ci"] } } },
+      }),
+    ).toBe(false);
     expect(shouldShowWorktreeSetupCallout({ ok: false })).toBe(false);
   });
 });

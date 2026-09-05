@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { PaseoConfigRawSchema, PaseoConfigSchema } from "@getpaseo/protocol/paseo-config-schema";
+import {
+  PaseoConfigRawSchema,
+  PaseoConfigSchema,
+  isPaseoPlatformCommand,
+} from "@getpaseo/protocol/paseo-config-schema";
 
 describe("paseo config schema", () => {
   it("parses an empty config without metadata generation", () => {
@@ -31,6 +35,47 @@ describe("paseo config schema", () => {
       },
       scripts: config.scripts,
     });
+  });
+
+  it("parses platform-specific script and lifecycle commands", () => {
+    const config = {
+      worktree: {
+        setup: {
+          linux: ["npm ci", "npm run prepare"],
+          win32: "npm.cmd ci",
+        },
+        teardown: { darwin: "npm run clean" },
+      },
+      scripts: {
+        dev: {
+          type: "service",
+          command: {
+            linux: "npm run dev",
+            win32: "npm.cmd run dev:win",
+          },
+        },
+      },
+    };
+
+    expect(PaseoConfigRawSchema.parse(config)).toEqual(config);
+    expect(PaseoConfigSchema.parse(config)).toEqual(config);
+  });
+
+  it("keeps unrelated legacy script command objects parseable without treating them as platform commands", () => {
+    const config = {
+      scripts: {
+        legacy: { command: { executable: "npm", args: ["run", "dev"] } },
+      },
+    };
+
+    expect(PaseoConfigRawSchema.parse(config)).toEqual(config);
+    expect(isPaseoPlatformCommand(config.scripts.legacy.command)).toBe(false);
+  });
+
+  it("requires a known platform key for platform lifecycle objects", () => {
+    expect(() =>
+      PaseoConfigRawSchema.parse({ worktree: { setup: { command: "npm ci" } } }),
+    ).toThrow();
   });
 
   it("parses service port allocation", () => {
