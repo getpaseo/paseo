@@ -11,7 +11,11 @@ import { ICON_SIZE } from "@/styles/theme";
 import { useToast } from "@/contexts/toast-context";
 import { useAgentInputDraft } from "@/composer/draft/input-draft";
 import { useProjectIcon } from "@/projects/icons";
-import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
+import {
+  getHostRuntimeStore,
+  useHostRuntimeClient,
+  useHostRuntimeIsConnected,
+} from "@/runtime/host-runtime";
 import { normalizeWorkspaceDescriptor, useSessionStore } from "@/stores/session-store";
 import { useWorkspaceSetupStore } from "@/stores/workspace-setup-store";
 import { normalizeAgentSnapshot } from "@/utils/agent-snapshots";
@@ -31,6 +35,7 @@ import { requireWorkspaceDirectory } from "@/utils/workspace-directory";
 import { navigateToAgent } from "@/utils/navigate-to-agent";
 import { navigateToWorkspace } from "@/stores/navigation-active-workspace-store";
 import type { MessagePayload } from "@/composer/types";
+import { prepareAgentContextAttachmentsForSubmit } from "@/attachments/agent-context-transfer";
 
 function toProjectIconDataUri(icon: { mimeType: string; data: string } | null): string | null {
   if (!icon) {
@@ -315,7 +320,16 @@ export function WorkspaceSetupDialog() {
           throw new Error(t("workspaceSetup.errors.selectModel"));
         }
 
-        const wirePayload = splitComposerAttachmentsForSubmit(attachments, {
+        const preparedAttachments = await prepareAgentContextAttachmentsForSubmit({
+          attachments,
+          destinationServerId: serverId,
+          runtime: {
+            getClient: (sourceServerId) => getHostRuntimeStore().getClient(sourceServerId),
+            getFeatures: (sourceServerId) =>
+              useSessionStore.getState().sessions[sourceServerId]?.serverInfo?.features,
+          },
+        });
+        const wirePayload = splitComposerAttachmentsForSubmit(preparedAttachments, {
           format: resolveComposerAttachmentSubmitFormat({
             supportsForgeAttachments: supportsForgeSearch,
           }),

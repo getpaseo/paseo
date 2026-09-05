@@ -129,6 +129,7 @@ export const ar: TranslationResources = {
       addImage: "أضف صورة",
       pasteImage: "لصق صورة",
       addFile: "Upload file",
+      addAgent: "إرفاق وكيل",
       addIssueOrPr: "أضف مشكلة أو PR",
       addIssueOrPr_mr: "أضف مشكلة أو MR",
       dropImagesHere: "إسقاط الصور هنا",
@@ -138,6 +139,7 @@ export const ar: TranslationResources = {
       openImage: "فتح مرفق الصورة",
       removeImage: "إزالة مرفق الصورة",
       removeFile: "Remove file attachment",
+      removeAgent: "إزالة سياق الوكيل من {{title}}",
       openGithub: "افتح {{kind}} {{number}}",
       removeGithub: "إزالة {{kind}} {{number}}",
       element: "عنصر",
@@ -319,6 +321,7 @@ export const ar: TranslationResources = {
       textAttachment: "مرفق النص",
       text: "نص",
       file: "ملف",
+      agent: "سياق الوكيل",
     },
     speak: {
       header: "تكلم",
@@ -381,6 +384,8 @@ export const ar: TranslationResources = {
     },
     actions: {
       refresh: "تحديث الجلسات",
+      resumeOriginal: "استئناف الأصل",
+      continueHere: "المتابعة هنا",
       showAll: "عرض الكل",
       loadMore: "تحميل المزيد",
     },
@@ -396,6 +401,8 @@ export const ar: TranslationResources = {
     },
     row: {
       importing: "جارٍ الاستيراد...",
+      continuing: "جارٍ المتابعة...",
+      continueHint: "ينشئ محادثة جديدة هنا. تبقى ملفات المصدر وتغييراته في شجرة العمل المصدرية.",
     },
   },
   workspace: {
@@ -1478,10 +1485,52 @@ export const ar: TranslationResources = {
   },
   agentAutocomplete: {
     searchingWorkspace: "جارٍ البحث في مساحة العمل...",
+    searchingMentions: "جارٍ البحث عن الوكلاء ومساحة العمل...",
     loadingCommands: "جارٍ تحميل الأوامر...",
     noFiles: "لم يتم العثور على ملفات أو أدلة",
+    noMentionResults: "لم يتم العثور على وكلاء أو ملفات أو أدلة",
     noCommands: "لم يتم العثور على أي أوامر",
+    agents: "الوكلاء",
+    filesAndFolders: "الملفات والمجلدات",
+    agent: "وكيل",
     failedToLoad: "فشل التحميل",
+  },
+  agentContext: {
+    title: "إرفاق وكلاء",
+    subtitle: "امنح هذا الوكيل سياقًا من أي مضيف متصل.",
+    searchPlaceholder: "ابحث عن وكلاء...",
+    groups: {
+      workspace: "مساحة العمل هذه",
+      project: "هذا المشروع",
+      other: "مشروعات أخرى",
+    },
+    status: {
+      attached: "مُرفق بالفعل",
+      secureTransfer: "نقل مشفر من طرف إلى طرف",
+      compatibilityTransfer: "نقل توافق — يمرر التطبيق سياقًا قابلاً للقراءة",
+      transferUnavailable: "حدّث المضيف المصدر لنقل هذا السياق.",
+      transferChanged: "تغيّر توافق المضيف. راجع الوكلاء المحددين وحاول مرة أخرى.",
+      updateHost: "حدّث المضيف لإرفاق سياق الوكيل.",
+      wrongHost: "لا يمكنك إرفاق وكلاء إلا من المضيف المحدد.",
+      loading: "جارٍ تحميل الوكلاء...",
+      failed: "تعذر تحميل الوكلاء.",
+      noMatches: "لا يوجد وكلاء مطابقون",
+      empty: "لا يوجد وكلاء متاحون",
+      limitReached: "يمكنك إرفاق ما يصل إلى {{count}} وكلاء.",
+    },
+    selectionCount: "تم تحديد {{count}}",
+    actions: {
+      attach: "إرفاق",
+      loadMore: "تحميل المزيد",
+    },
+    compatibility: {
+      title: "هل تريد استخدام نقل التوافق؟",
+      message:
+        "مضيف واحد أو أكثر لا يدعم النقل المشفر. سيمرر Paseo السياق الذي أعده المصدر كنص قابل للقراءة في الذاكرة أثناء هذا الإرسال. لن يُحفظ في المسودة أو قائمة الانتظار.",
+      confirm: "استخدام نقل التوافق",
+    },
+    transferNote:
+      "يستخدم السياق بين المضيفين تشفيرًا من طرف إلى طرف عندما يدعمه كلا البرنامجين الخادمين. تتطلب الإصدارات الأقدم نقل توافق صريحًا.",
   },
   loadOlderHistory: {
     failed: "تعذر تحميل السجل الأقدم",

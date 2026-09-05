@@ -9,6 +9,7 @@ import {
   formatDirectoryLabel,
   getPromptPreview,
   getSessionTitle,
+  resolveImportSessionAction,
   hasMoreSessions,
   nextPageLimit,
   PER_PROVIDER_LIMIT,
@@ -74,6 +75,29 @@ describe("resolveProvidersToFetch", () => {
       { provider: "z-ai", enabled: false },
     ]);
     expect(providers).toEqual([]);
+  });
+});
+
+describe("resolveImportSessionAction", () => {
+  it("keeps Resume original available when no destination workspace is selected", () => {
+    expect(
+      resolveImportSessionAction(entry({ canContinueHere: true, isTargetCwd: false }), false),
+    ).toBe("resume_original");
+  });
+
+  it("resumes a session already in the target cwd", () => {
+    expect(
+      resolveImportSessionAction(entry({ canContinueHere: true, isTargetCwd: true }), true),
+    ).toBe("resume_original");
+  });
+
+  it("offers Continue here only when the daemon advertises native fork support", () => {
+    expect(
+      resolveImportSessionAction(entry({ canContinueHere: true, isTargetCwd: false }), true),
+    ).toBe("continue_here");
+    expect(
+      resolveImportSessionAction(entry({ canContinueHere: false, isTargetCwd: false }), true),
+    ).toBeNull();
   });
 });
 

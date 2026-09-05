@@ -8,6 +8,8 @@ export type PermissionRequirement = DaemonPermission | readonly DaemonPermission
 const INBOUND_PERMISSION = {
   abort_request: "workspace.write",
   "agent.config.apply.request": "workspace.write",
+  "agent.context.export_transfer.request": "workspace.read",
+  "agent.context.get_transfer_recipient.request": "workspace.read",
   "agent.detach.request": "workspace.write",
   "agent.fork_context.request": "workspace.read",
   "agent.provider_subagents.list.request": "workspace.read",
@@ -140,6 +142,7 @@ const INBOUND_PERMISSION = {
   "project.remove.request": "workspace.manage",
   "project.rename.request": "workspace.manage",
   project_icon_request: "workspace.read",
+  "provider.session.continue.request": "workspace.write",
   "provider.usage.list.request": "daemon.read",
   provider_diagnostic_request: "daemon.read",
   pull_request_timeline_request: "workspace.read",
@@ -206,6 +209,8 @@ const INBOUND_PERMISSION = {
 const OUTBOUND_PERMISSION = {
   activity_log: "workspace.read",
   "agent.config.apply.response": "workspace.write",
+  "agent.context.export_transfer.response": "workspace.read",
+  "agent.context.get_transfer_recipient.response": "workspace.read",
   "agent.detach.response": "workspace.write",
   "agent.fork_context.response": "workspace.read",
   "agent.provider_subagents.list.response": "workspace.read",
@@ -352,6 +357,7 @@ const OUTBOUND_PERMISSION = {
   "project.rename.response": "workspace.manage",
   "project.update": "workspace.read",
   project_icon_response: "workspace.read",
+  "provider.session.continue.response": "workspace.write",
   "provider.usage.list.response": "daemon.read",
   provider_diagnostic_response: "daemon.read",
   providers_snapshot_update: ["daemon.read", "hub.execute"],

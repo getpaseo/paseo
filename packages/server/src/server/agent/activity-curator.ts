@@ -1,5 +1,7 @@
+import { Buffer } from "node:buffer";
 import type { AgentTimelineItem } from "./agent-sdk-types.js";
 import type { AgentAttachment } from "@getpaseo/protocol/messages";
+import { MAX_AGENT_CONTEXT_ATTACHMENT_BYTES } from "@getpaseo/protocol/agent-context-limits";
 import type { AgentTimelineRow } from "./agent-timeline-store-types.js";
 import { isLikelyExternalToolName } from "@getpaseo/protocol/tool-name-normalization";
 import { buildToolCallDisplayModel } from "@getpaseo/protocol/tool-call-display";
@@ -14,6 +16,9 @@ interface ActivityCuratorOptions {
   labelAssistantMessages?: boolean;
   includeKinds?: readonly AgentTimelineItem["type"][];
   includeExternalToolInput?: boolean;
+  includeToolSummary?: boolean;
+  includeSubAgentLog?: boolean;
+  portableToolMarkersOnly?: boolean;
 }
 
 interface ActivityEntry {
@@ -112,6 +117,13 @@ function formatToolCallEntry(
   item: Extract<AgentTimelineItem, { type: "tool_call" }>,
   options?: ActivityCuratorOptions,
 ): ActivityEntry {
+  // Agent-context attachments must expose only Paseo-owned markers. Take this
+  // path before inspecting provider details so excluded raw input, summaries,
+  // and error display data are never materialized for curation.
+  if (options?.portableToolMarkersOnly) {
+    return activityEntry(`[${getPortableToolMarker(item.detail)}]`);
+  }
+
   const inputJson = formatToolInputJson(inputFromUnknownDetail(item.detail));
   const display = buildToolCallDisplayModel({
     name: item.name,
@@ -121,7 +133,7 @@ function formatToolCallEntry(
     metadata: item.metadata,
   });
   const displayName = display.displayName;
-  const summary = formatToolSummary(display.summary);
+  const summary = options?.includeToolSummary === false ? null : formatToolSummary(display.summary);
   if (
     (options?.includeExternalToolInput ?? true) &&
     isLikelyExternalToolName(item.name) &&
@@ -130,6 +142,55 @@ function formatToolCallEntry(
     return activityEntry(`[${displayName}] ${inputJson}`);
   }
   return activityEntry(summary ? `[${displayName}] ${summary}` : `[${displayName}]`);
+}
+
+/**
+ * Agent-context attachments may cross providers and should never expose
+ * provider-owned tool names, inputs, summaries, or subagent logs. Keep their
+ * tool markers to the small Paseo-owned vocabulary below.
+ */
+function getPortableToolMarker(
+  detail: Extract<AgentTimelineItem, { type: "tool_call" }>["detail"],
+): string {
+  switch (detail.type) {
+    case "shell":
+      return "Shell";
+    case "read":
+      return "Read";
+    case "edit":
+      return "Edit";
+    case "write":
+      return "Write";
+    case "search":
+      return "Search";
+    case "fetch":
+      return "Fetch";
+    case "worktree_setup":
+      return "Worktree Setup";
+    case "sub_agent":
+      return "Task";
+    case "plan":
+      return "Plan";
+    case "plain_text":
+    case "unknown":
+      return "Tool";
+    default:
+      return "Tool";
+  }
+}
+
+function appendSubAgentLog(
+  entries: ActivityEntry[],
+  item: Extract<AgentTimelineItem, { type: "tool_call" }>,
+  options?: ActivityCuratorOptions,
+): void {
+  if (options?.includeSubAgentLog === false || item.detail.type !== "sub_agent") {
+    return;
+  }
+  const log = item.detail.log.trim();
+  if (log) {
+    entries.push(activityEntry(log));
+  }
 }
 
 function curateProjectedActivityEntries(
@@ -165,9 +226,7 @@ function curateProjectedActivityEntries(
       case "tool_call": {
         flushBuffers(entries, buffers, options);
         entries.push(formatToolCallEntry(item, options));
-        if (item.detail.type === "sub_agent" && item.detail.log.trim()) {
-          entries.push(activityEntry(item.detail.log.trim()));
-        }
+        appendSubAgentLog(entries, item, options);
         break;
       }
       case "todo":
@@ -279,6 +338,16 @@ function buildForkContextText(input: {
   agentTitle?: string | null;
   cwd?: string | null;
 }): string {
+  return buildChatHistoryContextText({
+    body: input.body,
+    header: buildChatHistoryHeader(input),
+  });
+}
+
+function buildChatHistoryHeader(input: {
+  agentTitle?: string | null;
+  cwd?: string | null;
+}): string[] {
   const header = ["Chat history from a previous Paseo agent."];
   const agentTitle = trimContextMetadata(input.agentTitle);
   const cwd = trimContextMetadata(input.cwd);
@@ -288,7 +357,11 @@ function buildForkContextText(input: {
   if (cwd) {
     header.push(`Source directory: ${cwd}`);
   }
-  return `<chat-history-summary>\n${header.join("\n")}\n\n${input.body}\n</chat-history-summary>`;
+  return header;
+}
+
+function buildChatHistoryContextText(input: { body: string; header: readonly string[] }): string {
+  return `<chat-history-summary>\n${input.header.join("\n")}\n\n${input.body}\n</chat-history-summary>`;
 }
 
 export function buildAgentForkContextAttachment(input: {
@@ -333,5 +406,219 @@ export function buildAgentForkContextAttachment(input: {
     itemCount: selected.items.length,
     boundaryCursor: selected.boundaryCursor,
     boundaryMessageId: selected.boundaryMessageId,
+  };
+}
+
+interface AgentContextEntry {
+  text: string;
+}
+
+const EMPTY_AGENT_CONTEXT_BODY = "No chat history to display.";
+
+export const AGENT_CONTEXT_ATTACHMENT_MIN_BYTES = 1024;
+export const AGENT_CONTEXT_ATTACHMENT_MAX_BYTES = MAX_AGENT_CONTEXT_ATTACHMENT_BYTES;
+
+function textByteLength(value: string): number {
+  return Buffer.byteLength(value, "utf8");
+}
+
+/**
+ * Keep the daemon's context policy authoritative even if another server caller
+ * passes a malformed or future size value.
+ */
+export function resolveAgentContextAttachmentMaxBytes(maxBytes?: number): number {
+  if (typeof maxBytes !== "number" || !Number.isFinite(maxBytes)) {
+    return AGENT_CONTEXT_ATTACHMENT_MAX_BYTES;
+  }
+  return Math.min(
+    AGENT_CONTEXT_ATTACHMENT_MAX_BYTES,
+    Math.max(AGENT_CONTEXT_ATTACHMENT_MIN_BYTES, Math.floor(maxBytes)),
+  );
+}
+
+function buildBoundedAgentContextShell(input: {
+  maxBytes: number;
+  agentTitle?: string | null;
+  cwd?: string | null;
+}): { prefix: string; suffix: string } {
+  const header = ["Chat history from a previous Paseo agent."];
+  const optionalHeaderLines = buildChatHistoryHeader(input).slice(1);
+  const suffix = "\n</chat-history-summary>";
+
+  for (const line of optionalHeaderLines) {
+    const candidateHeader = [...header, line];
+    const candidatePrefix = `<chat-history-summary>\n${candidateHeader.join("\n")}\n\n`;
+    if (
+      textByteLength(candidatePrefix) +
+        textByteLength(EMPTY_AGENT_CONTEXT_BODY) +
+        textByteLength(suffix) <=
+      input.maxBytes
+    ) {
+      header.push(line);
+    }
+  }
+
+  return {
+    prefix: `<chat-history-summary>\n${header.join("\n")}\n\n`,
+    suffix,
+  };
+}
+
+function curateAgentContextEntries(items: readonly AgentTimelineItem[]): AgentContextEntry[] {
+  return items.flatMap((item) => {
+    const entries = curateProjectedActivityEntries([item], {
+      labelAssistantMessages: true,
+      includeKinds: ["user_message", "assistant_message", "tool_call"],
+      includeExternalToolInput: false,
+      includeToolSummary: false,
+      includeSubAgentLog: false,
+      portableToolMarkersOnly: true,
+    });
+    return entries.length > 0 ? [{ text: entries.map((entry) => entry.text).join("\n") }] : [];
+  });
+}
+
+function estimateAgentContextItemBytes(item: AgentTimelineItem): number | null {
+  switch (item.type) {
+    case "user_message":
+      return textByteLength(item.text) + textByteLength("[User] \n");
+    case "assistant_message":
+      return textByteLength(item.text) + textByteLength("[Assistant] \n");
+    case "tool_call":
+      return textByteLength("[Worktree Setup]\n");
+    default:
+      return null;
+  }
+}
+
+function mergeAgentContextToolRows(
+  earlier: AgentTimelineRow,
+  latest: AgentTimelineRow,
+): AgentTimelineRow {
+  if (earlier.item.type !== "tool_call" || latest.item.type !== "tool_call") {
+    return latest;
+  }
+  const detail =
+    latest.item.detail.type === "unknown" && earlier.item.detail.type !== "unknown"
+      ? earlier.item.detail
+      : latest.item.detail;
+  return {
+    ...earlier,
+    item: {
+      ...latest.item,
+      detail,
+    },
+  };
+}
+
+/**
+ * Bound work before projection. Histories can contain tens of thousands of
+ * rows (including large reasoning/tool payloads) even though the resulting
+ * model context is small. Keep only the newest relevant suffix whose maximum
+ * rendered size can fit, preserving original sequence gaps so projection does
+ * not merge messages that excluded rows separated.
+ */
+function selectAgentContextCandidateRows(input: {
+  rows: readonly AgentTimelineRow[];
+  maxBodyBytes: number;
+}): { rows: AgentTimelineRow[]; truncated: boolean } {
+  const selectedRows: AgentTimelineRow[] = [];
+  const toolIndexByCallId = new Map<string, number>();
+  let remainingBytes = Math.max(0, input.maxBodyBytes);
+
+  for (let index = input.rows.length - 1; index >= 0; index -= 1) {
+    const row = input.rows[index];
+    if (row.item.type === "tool_call") {
+      const existingIndex = toolIndexByCallId.get(row.item.callId);
+      if (existingIndex !== undefined) {
+        const latest = selectedRows[existingIndex];
+        selectedRows[existingIndex] = mergeAgentContextToolRows(row, latest);
+        continue;
+      }
+    }
+    const estimatedBytes = estimateAgentContextItemBytes(row.item);
+    if (estimatedBytes === null) {
+      continue;
+    }
+    if (estimatedBytes > remainingBytes) {
+      return {
+        rows: selectedRows.toSorted((left, right) => left.seq - right.seq),
+        truncated: true,
+      };
+    }
+    selectedRows.push(row);
+    if (row.item.type === "tool_call") {
+      toolIndexByCallId.set(row.item.callId, selectedRows.length - 1);
+    }
+    remainingBytes -= estimatedBytes;
+  }
+
+  return {
+    rows: selectedRows.toSorted((left, right) => left.seq - right.seq),
+    truncated: false,
+  };
+}
+
+/**
+ * Resolve a local agent reference into a privacy-curated, bounded chat-history
+ * text attachment. Entries are retained as a contiguous newest suffix, so no
+ * message or marker is cut in half when a source has a long history.
+ */
+export function buildAgentContextAttachment(input: {
+  rows: readonly AgentTimelineRow[];
+  /** True when the caller intentionally supplied only a bounded recent window. */
+  hasOlderRows?: boolean;
+  maxBytes?: number;
+  agentTitle?: string | null;
+  cwd?: string | null;
+}): {
+  attachment: TextAgentAttachment;
+  includedItemCount: number;
+  byteCount: number;
+  truncated: boolean;
+} {
+  const maxBytes = resolveAgentContextAttachmentMaxBytes(input.maxBytes);
+  const shell = buildBoundedAgentContextShell({
+    maxBytes,
+    agentTitle: input.agentTitle,
+    cwd: input.cwd,
+  });
+  const availableBodyBytes = maxBytes - textByteLength(shell.prefix) - textByteLength(shell.suffix);
+  const candidates = selectAgentContextCandidateRows({
+    rows: input.rows,
+    maxBodyBytes: availableBodyBytes,
+  });
+  const selected = selectForkContextRows({ rows: candidates.rows });
+  const entries = curateAgentContextEntries(selected.items);
+  const retainedNewestFirst: AgentContextEntry[] = [];
+  let retainedBytes = 0;
+
+  for (let index = entries.length - 1; index >= 0; index -= 1) {
+    const entry = entries[index];
+    const separatorBytes = retainedNewestFirst.length > 0 ? textByteLength("\n") : 0;
+    const nextBytes = retainedBytes + separatorBytes + textByteLength(entry.text);
+    if (nextBytes > availableBodyBytes) {
+      break;
+    }
+    retainedNewestFirst.push(entry);
+    retainedBytes = nextBytes;
+  }
+  const retained = retainedNewestFirst.toReversed();
+  const body =
+    retained.length > 0 ? retained.map((entry) => entry.text).join("\n") : EMPTY_AGENT_CONTEXT_BODY;
+  const text = `${shell.prefix}${body}${shell.suffix}`;
+
+  return {
+    attachment: {
+      type: "text",
+      mimeType: "text/plain",
+      contextKind: "chat_history",
+      title: "Chat history",
+      text,
+    },
+    includedItemCount: retained.length,
+    byteCount: textByteLength(text),
+    truncated:
+      Boolean(input.hasOlderRows) || candidates.truncated || retained.length < entries.length,
   };
 }

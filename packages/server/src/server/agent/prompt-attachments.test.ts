@@ -174,6 +174,24 @@ describe("prompt attachments", () => {
     expect(buildAgentBranchNameSeed({ attachments: [] })).toBeUndefined();
   });
 
+  it("excludes unresolved and resolved chat history from naming prompts", () => {
+    expect(
+      buildAgentBranchNameSeed({
+        prompt: "Create the workspace",
+        attachments: [
+          { type: "agent_context", agentId: "source-agent" },
+          {
+            type: "text",
+            mimeType: "text/plain",
+            contextKind: "chat_history",
+            title: "Chat history",
+            text: "SOURCE_TRANSCRIPT_MUST_NOT_REACH_NAMING",
+          },
+        ],
+      }),
+    ).toBe("<user-prompt>\nCreate the workspace\n</user-prompt>");
+  });
+
   it("wraps prompt and rendered attachments as tagged naming input", () => {
     expect(
       buildAgentBranchNameSeed({

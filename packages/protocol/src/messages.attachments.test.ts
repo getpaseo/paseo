@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  AgentContextAttachmentSchema,
   AgentForkContextRequestMessageSchema,
   AgentForkContextResponseMessageSchema,
   CreateAgentRequestMessageSchema,
@@ -267,6 +268,89 @@ describe("shared messages attachments", () => {
         body: "Body",
       },
     ]);
+  });
+
+  it("keeps daemon-resolved agent context references without transcript bodies", () => {
+    const parsed = SendAgentMessageRequestSchema.parse({
+      type: "send_agent_message_request",
+      requestId: "req-agent-context",
+      agentId: "destination-agent",
+      text: "Continue this work",
+      attachments: [
+        {
+          type: "agent_context",
+          agentId: " source-agent ",
+          title: "Source agent",
+        },
+      ],
+    });
+
+    expect(parsed.attachments).toEqual([
+      {
+        type: "agent_context",
+        agentId: "source-agent",
+        title: "Source agent",
+      },
+    ]);
+  });
+
+  it("keeps an encrypted cross-host transfer without exposing transcript text", () => {
+    const parsed = SendAgentMessageRequestSchema.parse({
+      type: "send_agent_message_request",
+      requestId: "req-agent-context-transfer",
+      agentId: "destination-agent",
+      text: "Continue this work",
+      attachments: [
+        {
+          type: "agent_context",
+          agentId: "transfer:source-host:source-agent",
+          title: "Source agent",
+          transfer: {
+            version: 1,
+            destinationServerId: "destination-host",
+            sourcePublicKeyB64: "source-public-key",
+            ciphertextB64: "opaque-ciphertext",
+          },
+        },
+      ],
+    });
+
+    expect(parsed.attachments).toEqual([
+      {
+        type: "agent_context",
+        agentId: "transfer:source-host:source-agent",
+        title: "Source agent",
+        transfer: {
+          version: 1,
+          destinationServerId: "destination-host",
+          sourcePublicKeyB64: "source-public-key",
+          ciphertextB64: "opaque-ciphertext",
+        },
+      },
+    ]);
+    expect(JSON.stringify(parsed.attachments)).not.toContain("Earlier context");
+  });
+
+  it("rejects empty agent references and drops whitespace-only references after validation", () => {
+    expect(
+      AgentContextAttachmentSchema.safeParse({
+        type: "agent_context",
+        agentId: "",
+      }).success,
+    ).toBe(false);
+
+    const parsed = SendAgentMessageRequestSchema.parse({
+      type: "send_agent_message_request",
+      requestId: "req-empty-agent-context",
+      agentId: "destination-agent",
+      text: "Continue this work",
+      attachments: [
+        { type: "agent_context", agentId: "   " },
+        { type: "agent_context", agentId: "\t\n" },
+      ],
+    });
+
+    expect(parsed.attachments).toEqual([]);
   });
 
   it("keeps known text attachment context kinds and ignores future ones", () => {

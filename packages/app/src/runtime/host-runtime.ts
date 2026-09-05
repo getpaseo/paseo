@@ -59,6 +59,11 @@ import { dispatchComposerAgentMessage, sendQueuedComposerMessageNow } from "@/co
 import { createMessageSubmissionWriter } from "@/composer/submission/writer";
 import { resolveComposerAttachmentSubmitFormat } from "@/composer/attachments/submit";
 import { encodeImages } from "@/utils/encode-images";
+import { i18n } from "@/i18n/i18next";
+import {
+  hasForeignAgentContextAttachments,
+  hasLocalAgentContextAttachments,
+} from "@/attachments/types";
 import { DirectorySync, type RefreshAgentDirectoryResult } from "@/runtime/directory-sync";
 import { ReplicaCache } from "@/runtime/replica-cache";
 import type { ReplicaRowStore } from "@/runtime/replica-cache/row-store";
@@ -2185,6 +2190,18 @@ export class HostRuntimeStore {
         write: (update) => useSessionStore.getState().setQueuedMessages(serverId, update),
       },
       submitMessage: async ({ text, attachments }) => {
+        const supportsAgentContextAttachments =
+          useSessionStore.getState().sessions[serverId]?.serverInfo?.features
+            ?.agentContextAttachments === true;
+        if (
+          hasLocalAgentContextAttachments(attachments, serverId) &&
+          !supportsAgentContextAttachments
+        ) {
+          throw new Error(i18n.t("agentContext.status.updateHost"));
+        }
+        if (hasForeignAgentContextAttachments(attachments, serverId)) {
+          throw new Error(i18n.t("agentContext.status.wrongHost"));
+        }
         const supportsForgeAttachments =
           useSessionStore.getState().sessions[serverId]?.serverInfo?.features?.forgeSearch === true;
         await dispatchComposerAgentMessage({
@@ -2192,6 +2209,12 @@ export class HostRuntimeStore {
           agentId,
           text,
           attachments,
+          destinationServerId: serverId,
+          agentContextRuntime: {
+            getClient: (sourceServerId) => this.getClient(sourceServerId),
+            getFeatures: (sourceServerId) =>
+              useSessionStore.getState().sessions[sourceServerId]?.serverInfo?.features,
+          },
           attachmentSubmitFormat: resolveComposerAttachmentSubmitFormat({
             supportsForgeAttachments,
           }),

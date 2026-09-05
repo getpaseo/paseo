@@ -226,6 +226,75 @@ describe("toStoredAgentRecord", () => {
 });
 
 describe("toAgentPayload", () => {
+  it("redacts sensitive headers from live and stored status snapshots", () => {
+    const authorization = "Bearer regression-secret-must-not-escape";
+    const persistence: AgentPersistenceHandle = {
+      provider: "claude",
+      sessionId: "persist-sensitive",
+      metadata: {
+        transport: {
+          headers: {
+            Authorization: authorization,
+            "X-Non-Secret": "preserved",
+          },
+        },
+        mcpServers: {
+          paseo: {
+            type: "http",
+            url: "http://127.0.0.1:6767/mcp/agents?callerAgentId=agent-123",
+            headers: {
+              Authorization: authorization,
+              "X-Non-Secret": "preserved",
+            },
+          },
+        },
+      },
+    };
+    const agent = createManagedAgent({ persistence });
+    const livePayload = toAgentPayload(agent);
+    const storedRecord = toStoredAgentRecord(agent);
+
+    // Simulate a legacy record written before metadata redaction was introduced.
+    storedRecord.persistence = persistence;
+    const storedPayload = buildStoredAgentPayload(storedRecord, ["claude"]);
+
+    for (const payload of [livePayload, storedPayload]) {
+      const headers = payload.persistence?.metadata?.transport?.headers;
+      expect(JSON.stringify(payload)).not.toContain(authorization);
+      expect(payload.persistence?.metadata?.mcpServers).toBeUndefined();
+      expect(headers).toEqual({
+        Authorization: "[REDACTED]",
+        "X-Non-Secret": "preserved",
+      });
+    }
+  });
+
+  it("redacts sensitive headers from legacy stored runtime metadata", () => {
+    const authorization = "Bearer legacy-runtime-secret-must-not-escape";
+    const storedRecord = toStoredAgentRecord(createManagedAgent());
+
+    // Simulate a legacy record written before runtime metadata redaction was introduced.
+    storedRecord.runtimeInfo = {
+      provider: "claude",
+      sessionId: "session-123",
+      extra: {
+        headers: {
+          Authorization: authorization,
+          "X-Non-Secret": "preserved",
+        },
+      },
+    };
+
+    const payload = buildStoredAgentPayload(storedRecord, ["claude"]);
+    const headers = payload.runtimeInfo?.extra?.headers;
+
+    expect(JSON.stringify(payload)).not.toContain(authorization);
+    expect(headers).toEqual({
+      Authorization: "[REDACTED]",
+      "X-Non-Secret": "preserved",
+    });
+  });
+
   it("serializes dates, clones arrays, and hides session", () => {
     const permissionA = createPermission({ id: "perm-a" });
     const permissionB = createPermission({

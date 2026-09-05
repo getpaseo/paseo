@@ -211,6 +211,12 @@ export function buildAgentBranchNameSeed(
   }
   const renderedAttachments: string[] = [];
   for (const attachment of firstAgentContext.attachments ?? []) {
+    if (
+      attachment.type === "agent_context" ||
+      (attachment.type === "text" && attachment.contextKind === "chat_history")
+    ) {
+      continue;
+    }
     const rendered = renderPromptAttachmentAsText(attachment).trim();
     if (rendered) {
       renderedAttachments.push(rendered);

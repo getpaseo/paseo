@@ -129,6 +129,7 @@ export const es: TranslationResources = {
       addImage: "Agregar imagen",
       pasteImage: "Pegar imagen",
       addFile: "Upload file",
+      addAgent: "Adjuntar agente",
       addIssueOrPr: "Agregar problema oPR",
       addIssueOrPr_mr: "Agregar problema o MR",
       dropImagesHere: "Suelta imágenes aquí",
@@ -138,6 +139,7 @@ export const es: TranslationResources = {
       openImage: "Abrir imagen adjunta",
       removeImage: "Quitar imagen adjunta",
       removeFile: "Remove file attachment",
+      removeAgent: "Eliminar contexto del agente de {{title}}",
       openGithub: "Abrir {{kind}} {{number}}",
       removeGithub: "Quitar {{kind}} {{number}}",
       element: "Elemento",
@@ -322,6 +324,7 @@ export const es: TranslationResources = {
       textAttachment: "Adjunto de texto",
       text: "Texto",
       file: "Archivo",
+      agent: "Contexto del agente",
     },
     speak: {
       header: "Habló",
@@ -384,6 +387,8 @@ export const es: TranslationResources = {
     },
     actions: {
       refresh: "Actualizar sesiones",
+      resumeOriginal: "Reanudar original",
+      continueHere: "Continuar aquí",
       showAll: "Mostrar todo",
       loadMore: "Cargar más",
     },
@@ -399,6 +404,9 @@ export const es: TranslationResources = {
     },
     row: {
       importing: "Importador...",
+      continuing: "Continuando...",
+      continueHint:
+        "Crea una nueva conversación aquí. Los archivos y cambios de origen permanecen en el worktree de origen.",
     },
   },
   workspace: {
@@ -1522,10 +1530,53 @@ export const es: TranslationResources = {
   },
   agentAutocomplete: {
     searchingWorkspace: "Buscando espacio de trabajo...",
+    searchingMentions: "Buscando agentes y espacio de trabajo...",
     loadingCommands: "Cargando comandos...",
     noFiles: "No se encontraron archivos ni directorios",
+    noMentionResults: "No se encontraron agentes, archivos ni directorios",
     noCommands: "No se encontraron comandos",
+    agents: "Agentes",
+    filesAndFolders: "Archivos y carpetas",
+    agent: "Agente",
     failedToLoad: "No se pudo cargar",
+  },
+  agentContext: {
+    title: "Adjuntar agentes",
+    subtitle: "Da contexto de un agente en cualquier host conectado.",
+    searchPlaceholder: "Buscar agentes...",
+    groups: {
+      workspace: "Este espacio de trabajo",
+      project: "Este proyecto",
+      other: "Otros proyectos",
+    },
+    status: {
+      attached: "Ya adjunto",
+      secureTransfer: "Transferencia cifrada de extremo a extremo",
+      compatibilityTransfer: "Transferencia compatible: la app retransmite contexto legible",
+      transferUnavailable: "Actualiza el host de origen para transferir este contexto.",
+      transferChanged:
+        "Cambió la compatibilidad del host. Revisa los agentes seleccionados e inténtalo de nuevo.",
+      updateHost: "Actualiza el host para adjuntar contexto de agente.",
+      wrongHost: "Solo puedes adjuntar agentes del host seleccionado.",
+      loading: "Cargando agentes...",
+      failed: "No se pudieron cargar los agentes.",
+      noMatches: "No hay agentes coincidentes",
+      empty: "No hay agentes disponibles",
+      limitReached: "Puedes adjuntar hasta {{count}} agentes.",
+    },
+    selectionCount: "{{count}} seleccionados",
+    actions: {
+      attach: "Adjuntar",
+      loadMore: "Cargar más",
+    },
+    compatibility: {
+      title: "¿Usar transferencia compatible?",
+      message:
+        "Uno o más hosts no admiten la transferencia cifrada. Durante este envío, Paseo retransmitirá en memoria el contexto preparado por el origen como texto legible. No se guardará en el borrador ni en la cola.",
+      confirm: "Usar transferencia compatible",
+    },
+    transferNote:
+      "El contexto entre hosts usa cifrado de extremo a extremo cuando ambos daemons lo admiten. Los daemons antiguos requieren una transferencia compatible explícita.",
   },
   loadOlderHistory: {
     failed: "No se pudo cargar el historial anterior",

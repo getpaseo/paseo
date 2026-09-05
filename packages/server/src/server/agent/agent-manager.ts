@@ -227,6 +227,8 @@ export type ImportablePersistedAgentQueryOptions = ListImportableSessionsOptions
 
 export interface ManagedImportableProviderSession extends ImportableProviderSession {
   provider: AgentProvider;
+  /** Whether this provider can create a new native session from this source. */
+  canContinueHere?: boolean;
 }
 
 export interface ImportableSessionProviderError {
@@ -970,7 +972,12 @@ export class AgentManager {
           return {
             sessions: sessions
               .filter((session) => matchesImportableSessionQuery(session, options?.query))
-              .map((session) => Object.assign(session, { provider })),
+              .map((session) =>
+                Object.assign(session, {
+                  provider,
+                  canContinueHere: Boolean(client.forkImportableSession),
+                }),
+              ),
             error: null,
           };
         } catch (error) {
@@ -1141,6 +1148,21 @@ export class AgentManager {
 
   fetchTimeline(id: string, options?: AgentTimelineFetchOptions): AgentTimelineFetchResult {
     this.requireAgent(id);
+    return this.timelineStore.fetch(id, options);
+  }
+
+  /**
+   * Read history already retained by this daemon without resuming or creating
+   * a provider session. A closed agent can keep an in-memory timeline until it
+   * is discarded, which makes this safe for daemon-resolved context references.
+   */
+  fetchRetainedTimeline(
+    id: string,
+    options?: AgentTimelineFetchOptions,
+  ): AgentTimelineFetchResult | null {
+    if (!this.timelineStore.has(id)) {
+      return null;
+    }
     return this.timelineStore.fetch(id, options);
   }
 
@@ -1318,6 +1340,93 @@ export class AgentManager {
     labels?: Record<string, string>;
   }): Promise<ManagedAgent> {
     return this.trackAgentRegistrationOperation(this.importProviderSessionInternal(input));
+  }
+
+  /**
+   * Create a fresh provider-native session from an importable source session.
+   * Unlike importProviderSession(), this never adopts or mutates the source
+   * native handle.
+   */
+  continueProviderSession(input: {
+    provider: AgentProvider;
+    providerHandleId: string;
+    sourceCwd: string;
+    destinationCwd: string;
+    workspaceId: string;
+    labels?: Record<string, string>;
+  }): Promise<ManagedAgent> {
+    return this.trackAgentRegistrationOperation(this.continueProviderSessionInternal(input));
+  }
+
+  private async continueProviderSessionInternal(input: {
+    provider: AgentProvider;
+    providerHandleId: string;
+    sourceCwd: string;
+    destinationCwd: string;
+    workspaceId: string;
+    labels?: Record<string, string>;
+  }): Promise<ManagedAgent> {
+    this.assertAcceptingAgentRegistrations();
+    const resolvedAgentId = validateAgentId(this.idFactory(), "continueProviderSession");
+    this.requireEnabledProvider(input.provider);
+
+    const client = await this.requireAvailableClient({ provider: input.provider });
+    if (!client.forkImportableSession) {
+      throw new Error(`Provider '${input.provider}' does not support continuing imported sessions`);
+    }
+
+    const { storedConfig, launchConfig, paseoToolPolicy } = await this.prepareSessionConfig(
+      {
+        provider: input.provider,
+        cwd: input.destinationCwd,
+      },
+      resolvedAgentId,
+    );
+    this.paseoToolPolicies.set(resolvedAgentId, paseoToolPolicy);
+    const launchContext = await this.buildLaunchContext(
+      resolvedAgentId,
+      client,
+      storedConfig.cwd,
+      paseoToolPolicy,
+    );
+    const providerLaunchConfig = this.resolveProviderLaunchConfig(launchConfig, launchContext);
+    const imported = await client.forkImportableSession(
+      {
+        providerHandleId: input.providerHandleId,
+        sourceCwd: input.sourceCwd,
+        destinationCwd: input.destinationCwd,
+      },
+      { config: providerLaunchConfig, storedConfig, launchContext },
+    );
+    let handedToRegistration = false;
+    try {
+      const importedConfig = await this.normalizeConfig(
+        stripInternalPaseoMcpServer(imported.config),
+      );
+      const timelineRows = buildImportedTimelineRows(imported.timeline);
+      const initialTitle = resolveImportedAgentTitle(importedConfig, timelineRows);
+
+      const agent = await this.registerSession(imported.session, importedConfig, resolvedAgentId, {
+        labels: input.labels,
+        workspaceId: input.workspaceId,
+        timelineRows,
+        timelineNextSeq: timelineRows.length + 1,
+        persistence: imported.persistence,
+        historyPrimed: true,
+        initialTitle,
+        publishWhenReady: true,
+      });
+      handedToRegistration = true;
+      for (const event of imported.providerSubagentEvents ?? []) {
+        const update = this.providerSubagents.apply(agent.id, event.provider, event.event);
+        this.dispatch({ type: "provider_subagent", event: update });
+      }
+      return agent;
+    } finally {
+      if (!handedToRegistration) {
+        await this.closeUnregisteredSession(imported.session);
+      }
+    }
   }
 
   private async importProviderSessionInternal(input: {

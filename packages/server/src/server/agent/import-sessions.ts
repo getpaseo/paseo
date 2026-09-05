@@ -13,9 +13,11 @@ import { unarchiveAgentState } from "./agent-prompt.js";
 import { toRecentProviderSessionDescriptorPayload } from "./agent-projections.js";
 import type { WorkspaceProvisioningService } from "../session/workspace-provisioning/workspace-provisioning-service.js";
 import type { PersistedWorkspaceRecord } from "../workspace-registry.js";
+import type { WorkspaceGitService } from "../workspace-git-service.js";
 import type {
   FetchRecentProviderSessionsRequestMessage,
   ImportAgentRequestMessageSchema,
+  ProviderSessionContinueRequestMessage,
   RecentProviderSessionDescriptorPayload,
 } from "@getpaseo/protocol/messages";
 import { getParentAgentIdFromLabels, PARENT_AGENT_ID_LABEL } from "@getpaseo/protocol/agent-labels";
@@ -37,10 +39,12 @@ export type ImportSessionAgentManager = AgentLoaderManager &
     | "unarchiveSnapshot"
   >;
 
-const providerSessionImportMutations = new WeakMap<
-  ImportSessionAgentManager,
-  Map<string, Promise<unknown>>
->();
+export type ContinueProviderSessionAgentManager = Pick<
+  AgentManager,
+  "continueProviderSession" | "getTimeline"
+>;
+
+const providerSessionImportMutations = new WeakMap<object, Map<string, Promise<unknown>>>();
 
 export interface NormalizedImportAgentRequest {
   provider: AgentProvider;
@@ -66,6 +70,7 @@ export interface ListImportableProviderSessionsInput {
   agentManager: Pick<AgentManager, "listAgents" | "listImportableSessions">;
   agentStorage: Pick<AgentStorage, "list">;
   providerSnapshotManager: Pick<ProviderSnapshotManager, "getProviderLabel">;
+  workspaceGitService?: Pick<WorkspaceGitService, "getSnapshot">;
 }
 
 export interface ListImportableProviderSessionsResult {
@@ -86,6 +91,14 @@ export interface ImportProviderSessionResult {
   snapshot: ManagedAgent;
   timelineSize: number;
   createdWorkspace: PersistedWorkspaceRecord | null;
+}
+
+export interface ContinueProviderSessionInput {
+  request: ProviderSessionContinueRequestMessage;
+  destinationCwd: string;
+  workspaceProvisioning: Pick<WorkspaceProvisioningService, "runInImportWorkspace">;
+  workspaceGitService: Pick<WorkspaceGitService, "getSnapshot">;
+  agentManager: ContinueProviderSessionAgentManager;
 }
 
 interface ImportedProviderSession {
@@ -119,7 +132,14 @@ export function normalizeImportAgentRequest(
 export async function listImportableProviderSessions(
   input: ListImportableProviderSessionsInput,
 ): Promise<ListImportableProviderSessionsResult> {
-  const { request, agentManager, agentStorage, providerSnapshotManager } = input;
+  const { request, agentManager, agentStorage, providerSnapshotManager, workspaceGitService } =
+    input;
+  if (request.cwd && request.targetCwd) {
+    throw new ImportSessionsRequestError(
+      "conflicting_cwds",
+      "Recent provider session listing accepts either cwd or targetCwd, not both",
+    );
+  }
   const limit = request.limit ?? 20;
   const sinceTimestamp = parseRecentProviderSessionsSince(request.since);
   const providerFilter = request.providers ? new Set(request.providers) : undefined;
@@ -130,7 +150,19 @@ export async function listImportableProviderSessions(
   );
   const importedHandles = importedSessions.handles;
   const query = normalizeImportSessionQuery(request.query);
-  const listingLimit = query ? IMPORT_SESSION_SEARCH_SCAN_LIMIT : limit + importedSessions.count;
+  const targetCwd = request.targetCwd;
+  const targetRepository = targetCwd
+    ? await resolveContinueRepositoryIdentity(workspaceGitService, targetCwd)
+    : null;
+  // Continuing in another worktree needs enough source rows to filter by a
+  // local Git identity after provider discovery. Search scans the bounded
+  // provider window before applying that repository filter.
+  let listingLimit = limit + importedSessions.count;
+  if (query) {
+    listingLimit = IMPORT_SESSION_SEARCH_SCAN_LIMIT;
+  } else if (targetCwd) {
+    listingLimit = Math.min(Math.max(limit * 5, 50) + importedSessions.count, 200);
+  }
 
   const listing = await agentManager.listImportableSessions({
     limit: listingLimit,
@@ -139,27 +171,15 @@ export async function listImportableProviderSessions(
     providerFilter,
     cwd: request.cwd,
   });
-  let filteredAlreadyImportedCount = 0;
-  const candidates: ManagedImportableProviderSession[] = [];
-  const matchesRequestCwd = request.cwd ? createRealpathAwarePathMatcher(request.cwd) : null;
-  for (const session of listing.sessions) {
-    if (matchesRequestCwd && !matchesRequestCwd(session.cwd)) {
-      continue;
-    }
-    if (sinceTimestamp !== null && session.lastActivityAt.getTime() < sinceTimestamp) {
-      continue;
-    }
-    if (isMetadataGenerationSession(session)) {
-      continue;
-    }
-    if (
-      importedHandles.has(toProviderSessionHandleKey(session.provider, session.providerHandleId))
-    ) {
-      filteredAlreadyImportedCount += 1;
-      continue;
-    }
-    candidates.push(session);
-  }
+  const { candidates, filteredAlreadyImportedCount } = await filterImportableProviderSessions({
+    sessions: listing.sessions,
+    requestCwd: request.cwd,
+    targetCwd,
+    targetRepository,
+    workspaceGitService,
+    sinceTimestamp,
+    importedHandles,
+  });
 
   const entries = candidates
     .sort((a, b) => b.lastActivityAt.getTime() - a.lastActivityAt.getTime())
@@ -182,6 +202,89 @@ function normalizeImportSessionQuery(query: string | undefined): string | null {
   return normalized ? normalized : null;
 }
 
+async function filterImportableProviderSessions(input: {
+  sessions: ManagedImportableProviderSession[];
+  requestCwd: string | undefined;
+  targetCwd: string | undefined;
+  targetRepository: string | null;
+  workspaceGitService: Pick<WorkspaceGitService, "getSnapshot"> | undefined;
+  sinceTimestamp: number | null;
+  importedHandles: ReadonlySet<string>;
+}): Promise<{
+  candidates: Array<ManagedImportableProviderSession & { isTargetCwd?: boolean }>;
+  filteredAlreadyImportedCount: number;
+}> {
+  const matchesRequestCwd = input.requestCwd
+    ? createRealpathAwarePathMatcher(input.requestCwd)
+    : null;
+  const matchesTargetCwd = input.targetCwd ? createRealpathAwarePathMatcher(input.targetCwd) : null;
+  const matchesTargetRepository = input.targetRepository
+    ? createRealpathAwarePathMatcher(input.targetRepository)
+    : null;
+  const sourceRepositoryByCwd = new Map<string, Promise<string | null>>();
+  const candidates: Array<ManagedImportableProviderSession & { isTargetCwd?: boolean }> = [];
+  let filteredAlreadyImportedCount = 0;
+
+  for (const session of input.sessions) {
+    if (matchesRequestCwd && !matchesRequestCwd(session.cwd)) {
+      continue;
+    }
+    const isTargetCwd = matchesTargetCwd?.(session.cwd) ?? false;
+    if (
+      input.targetCwd &&
+      !isTargetCwd &&
+      !(await isSameTargetRepository({
+        sessionCwd: session.cwd,
+        targetCwd: input.targetCwd,
+        matchesTargetRepository,
+        workspaceGitService: input.workspaceGitService,
+        sourceRepositoryByCwd,
+      }))
+    ) {
+      continue;
+    }
+    if (
+      (input.sinceTimestamp !== null && session.lastActivityAt.getTime() < input.sinceTimestamp) ||
+      isMetadataGenerationSession(session)
+    ) {
+      continue;
+    }
+    if (
+      input.importedHandles.has(
+        toProviderSessionHandleKey(session.provider, session.providerHandleId),
+      )
+    ) {
+      filteredAlreadyImportedCount += 1;
+      continue;
+    }
+    candidates.push({ ...session, ...(input.targetCwd ? { isTargetCwd } : {}) });
+  }
+
+  return { candidates, filteredAlreadyImportedCount };
+}
+
+async function isSameTargetRepository(input: {
+  sessionCwd: string;
+  targetCwd: string | undefined;
+  matchesTargetRepository: ((cwd: string) => boolean) | null;
+  workspaceGitService: Pick<WorkspaceGitService, "getSnapshot"> | undefined;
+  sourceRepositoryByCwd: Map<string, Promise<string | null>>;
+}): Promise<boolean> {
+  if (!input.targetCwd || !input.matchesTargetRepository) {
+    return false;
+  }
+  let sourceRepository = input.sourceRepositoryByCwd.get(input.sessionCwd);
+  if (!sourceRepository) {
+    sourceRepository = resolveContinueRepositoryIdentity(
+      input.workspaceGitService,
+      input.sessionCwd,
+    );
+    input.sourceRepositoryByCwd.set(input.sessionCwd, sourceRepository);
+  }
+  const sourceRepositoryValue = await sourceRepository;
+  return sourceRepositoryValue !== null && input.matchesTargetRepository(sourceRepositoryValue);
+}
+
 export async function importProviderSession(
   input: ImportProviderSessionInput,
 ): Promise<ImportProviderSessionResult> {
@@ -194,6 +297,52 @@ export async function importProviderSession(
     const placement = await input.workspaceProvisioning.runInImportWorkspace(
       { cwd, requestedWorkspaceId: input.request.workspaceId },
       (workspace) => importProviderSessionNow(input, cwd, workspace.workspaceId),
+    );
+    return { ...placement.value, createdWorkspace: placement.createdWorkspace };
+  });
+}
+
+/**
+ * Continue an importable provider session in an existing Paseo workspace.
+ *
+ * This path has deliberately different ownership from importProviderSession:
+ * it asks the provider for a new native handle, then registers that handle in
+ * the destination workspace. It never adopts, closes, or edits the source
+ * provider session or its working tree.
+ */
+export async function continueProviderSession(
+  input: ContinueProviderSessionInput,
+): Promise<ImportProviderSessionResult> {
+  const { request, destinationCwd } = input;
+  if (createRealpathAwarePathMatcher(request.sourceCwd)(destinationCwd)) {
+    throw new ImportSessionsRequestError(
+      "same_cwd",
+      "Continue here needs a different workspace. Resume the original session instead.",
+    );
+  }
+  await assertContinueHereRepositoryMatch({
+    workspaceGitService: input.workspaceGitService,
+    sourceCwd: request.sourceCwd,
+    destinationCwd,
+  });
+
+  const key = `continue\0${toProviderSessionHandleKey(request.providerId, request.providerHandleId)}`;
+  return serializeProviderSessionImport(input.agentManager, key, async () => {
+    const placement = await input.workspaceProvisioning.runInImportWorkspace(
+      { cwd: destinationCwd, requestedWorkspaceId: request.workspaceId },
+      async (workspace) => {
+        const snapshot = await input.agentManager.continueProviderSession({
+          provider: request.providerId as AgentProvider,
+          providerHandleId: request.providerHandleId,
+          sourceCwd: request.sourceCwd,
+          destinationCwd: workspace.cwd,
+          workspaceId: workspace.workspaceId,
+        });
+        return {
+          snapshot,
+          timelineSize: input.agentManager.getTimeline(snapshot.id).length,
+        };
+      },
     );
     return { ...placement.value, createdWorkspace: placement.createdWorkspace };
   });
@@ -263,7 +412,7 @@ async function importProviderSessionNow(
 }
 
 async function serializeProviderSessionImport<T>(
-  agentManager: ImportSessionAgentManager,
+  agentManager: object,
   key: string,
   operation: () => Promise<T>,
 ): Promise<T> {
@@ -338,6 +487,50 @@ function parseRecentProviderSessionsSince(since: string | undefined): number | n
     throw new ImportSessionsRequestError("invalid_since", "Invalid recent provider sessions since");
   }
   return timestamp;
+}
+
+async function assertContinueHereRepositoryMatch(input: {
+  workspaceGitService: Pick<WorkspaceGitService, "getSnapshot">;
+  sourceCwd: string;
+  destinationCwd: string;
+}): Promise<void> {
+  const [sourceRepository, destinationRepository] = await Promise.all([
+    resolveContinueRepositoryIdentity(input.workspaceGitService, input.sourceCwd),
+    resolveContinueRepositoryIdentity(input.workspaceGitService, input.destinationCwd),
+  ]);
+  if (
+    !sourceRepository ||
+    !destinationRepository ||
+    !createRealpathAwarePathMatcher(sourceRepository)(destinationRepository)
+  ) {
+    throw new ImportSessionsRequestError(
+      "different_repository",
+      "Continue here requires source and destination workspaces from the same local Git repository.",
+    );
+  }
+}
+
+/**
+ * Git worktrees have distinct repo roots but share a common main checkout.
+ * Prefer that common root when the Git service knows it so Continue here can
+ * safely span manually-created and Paseo-created worktrees alike.
+ */
+async function resolveContinueRepositoryIdentity(
+  workspaceGitService: Pick<WorkspaceGitService, "getSnapshot"> | undefined,
+  cwd: string,
+): Promise<string | null> {
+  if (!workspaceGitService) {
+    return null;
+  }
+  try {
+    const snapshot = await workspaceGitService.getSnapshot(cwd);
+    if (!snapshot.git.isGit) {
+      return null;
+    }
+    return snapshot.git.mainRepoRoot ?? snapshot.git.repoRoot;
+  } catch {
+    return null;
+  }
 }
 
 async function collectImportedProviderSessions(

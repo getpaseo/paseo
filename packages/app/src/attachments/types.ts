@@ -1,5 +1,6 @@
 import type {
   AgentAttachment,
+  AgentContextTransferEnvelope,
   ForgeSearchItem,
   UploadedFileAttachment,
 } from "@getpaseo/protocol/messages";
@@ -103,11 +104,34 @@ export interface WorkspaceFileComposerAttachment {
   selection: WorkspaceFileSelection;
 }
 
+export interface AgentContextAttachmentSource {
+  /**
+   * Daemon that owns the reference. This stays client-side so a persisted
+   * attachment cannot accidentally be submitted after switching hosts.
+   */
+  serverId: string;
+  agentId: string;
+  title: string;
+  workspaceLabel?: string;
+  provider?: string;
+}
+
+export interface AgentContextAttachment {
+  kind: "agent_context";
+  source: AgentContextAttachmentSource;
+  crossHost?:
+    | { destinationServerId: string; mode: "secure" }
+    | { destinationServerId: string; mode: "compatibility"; userConfirmed: true };
+  /** Submit-time ciphertext. Never persisted for compatibility transfers. */
+  transfer?: AgentContextTransferEnvelope;
+}
+
 export type UserComposerAttachment =
   | { kind: "image"; metadata: AttachmentMetadata }
   | { kind: "file"; attachment: UploadedFileAttachment }
   | WorkspaceFileComposerAttachment
   | PluginResourceComposerAttachment
+  | AgentContextAttachment
   | { kind: "forge_issue"; item: ForgeSearchItem }
   | { kind: "forge_change_request"; item: ForgeSearchItem }
   // COMPAT(githubAttachmentKinds): legacy persisted attachment kinds retained
@@ -135,6 +159,57 @@ export type WorkspaceComposerAttachment =
     };
 
 export type ComposerAttachment = UserComposerAttachment | WorkspaceComposerAttachment;
+
+export function isAgentContextAttachment<T extends ComposerAttachment>(
+  attachment: T,
+): attachment is T & AgentContextAttachment {
+  return attachment.kind === "agent_context";
+}
+
+function isAgentContextAttachmentUsableOnServer(
+  attachment: AgentContextAttachment,
+  serverId: string,
+): boolean {
+  return (
+    attachment.source.serverId === serverId ||
+    attachment.crossHost?.destinationServerId === serverId
+  );
+}
+
+/** A local reference or destination-bound transfer must not follow a draft to another host. */
+export function hasForeignAgentContextAttachments(
+  attachments: readonly ComposerAttachment[],
+  serverId: string,
+): boolean {
+  return attachments.some(
+    (attachment) =>
+      isAgentContextAttachment(attachment) &&
+      !isAgentContextAttachmentUsableOnServer(attachment, serverId),
+  );
+}
+
+export function hasLocalAgentContextAttachments(
+  attachments: readonly ComposerAttachment[],
+  serverId: string,
+): boolean {
+  return attachments.some(
+    (attachment) =>
+      isAgentContextAttachment(attachment) &&
+      attachment.source.serverId === serverId &&
+      attachment.crossHost === undefined,
+  );
+}
+
+export function filterAgentContextAttachmentsForServer<T extends ComposerAttachment>(
+  attachments: readonly T[],
+  serverId: string,
+): T[] {
+  return attachments.filter(
+    (attachment) =>
+      !isAgentContextAttachment(attachment) ||
+      isAgentContextAttachmentUsableOnServer(attachment, serverId),
+  );
+}
 
 export type AttachmentDataSource =
   | { kind: "bytes"; bytes: Uint8Array }

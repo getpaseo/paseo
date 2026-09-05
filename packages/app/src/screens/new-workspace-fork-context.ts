@@ -4,14 +4,17 @@ function isLikelyWindowsPath(path: string): boolean {
   return /^[a-zA-Z]:\//.test(path);
 }
 
-function isChatHistoryTextAttachment(attachment: AgentAttachment): boolean {
-  return attachment.type === "text" && attachment.contextKind === "chat_history";
+function isChatHistoryAttachment(attachment: AgentAttachment): boolean {
+  return (
+    attachment.type === "agent_context" ||
+    (attachment.type === "text" && attachment.contextKind === "chat_history")
+  );
 }
 
 export function getWorkspaceNamingAttachments(
   attachments: readonly AgentAttachment[],
 ): AgentAttachment[] {
-  return attachments.filter((attachment) => !isChatHistoryTextAttachment(attachment));
+  return attachments.filter((attachment) => !isChatHistoryAttachment(attachment));
 }
 
 export function remapDraftCwdToWorkspace(input: {

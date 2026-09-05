@@ -126,6 +126,7 @@ export const en = {
       addImage: "Add image",
       pasteImage: "Paste image",
       addFile: "Upload file",
+      addAgent: "Attach agent",
       addIssueOrPr: "Add issue or PR",
       addIssueOrPr_mr: "Add issue or MR",
       dropImagesHere: "Drop images here",
@@ -135,6 +136,7 @@ export const en = {
       openImage: "Open image attachment",
       removeImage: "Remove image attachment",
       removeFile: "Remove file attachment",
+      removeAgent: "Remove agent context from {{title}}",
       openGithub: "Open {{kind}} {{number}}",
       removeGithub: "Remove {{kind}} {{number}}",
       element: "Element",
@@ -317,6 +319,7 @@ export const en = {
       textAttachment: "Text attachment",
       text: "Text",
       file: "File",
+      agent: "Agent context",
     },
     speak: {
       header: "Spoke",
@@ -379,6 +382,8 @@ export const en = {
     },
     actions: {
       refresh: "Refresh sessions",
+      resumeOriginal: "Resume original",
+      continueHere: "Continue here",
       showAll: "Show all",
       loadMore: "Load more",
     },
@@ -394,6 +399,9 @@ export const en = {
     },
     row: {
       importing: "Importing...",
+      continuing: "Continuing...",
+      continueHint:
+        "Creates a new conversation here. Source files and changes stay in the source worktree.",
     },
   },
   workspace: {
@@ -1488,10 +1496,52 @@ export const en = {
   },
   agentAutocomplete: {
     searchingWorkspace: "Searching workspace...",
+    searchingMentions: "Searching agents and workspace...",
     loadingCommands: "Loading commands...",
     noFiles: "No files or directories found",
+    noMentionResults: "No agents, files, or folders found",
     noCommands: "No commands found",
+    agents: "Agents",
+    filesAndFolders: "Files & folders",
+    agent: "Agent",
     failedToLoad: "Failed to load",
+  },
+  agentContext: {
+    title: "Attach agents",
+    subtitle: "Give this agent context from any connected host.",
+    searchPlaceholder: "Search agents...",
+    groups: {
+      workspace: "This workspace",
+      project: "This project",
+      other: "Other projects",
+    },
+    status: {
+      attached: "Already attached",
+      secureTransfer: "End-to-end encrypted transfer",
+      compatibilityTransfer: "Compatibility transfer — app relays readable context",
+      transferUnavailable: "Update the source host to transfer this context.",
+      transferChanged: "Host compatibility changed. Review the selected agents and try again.",
+      updateHost: "Update the host to attach agent context.",
+      wrongHost: "Attach agents from the selected host only.",
+      loading: "Loading agents...",
+      failed: "Could not load agents.",
+      noMatches: "No matching agents",
+      empty: "No agents available",
+      limitReached: "You can attach up to {{count}} agents.",
+    },
+    selectionCount: "{{count}} selected",
+    actions: {
+      attach: "Attach",
+      loadMore: "Load more",
+    },
+    compatibility: {
+      title: "Use compatibility transfer?",
+      message:
+        "One or more hosts do not support encrypted transfer. Paseo will relay source-curated context as readable text in memory during this send. It will not be saved in the draft or queue.",
+      confirm: "Use compatibility transfer",
+    },
+    transferNote:
+      "Cross-host context uses end-to-end encryption when both daemons support it. Older daemons require explicit compatibility transfer.",
   },
   loadOlderHistory: {
     failed: "Couldn't load older history",

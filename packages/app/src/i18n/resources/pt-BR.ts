@@ -129,6 +129,7 @@ export const ptBR: TranslationResources = {
       addImage: "Adicionar imagem",
       pasteImage: "Colar imagem",
       addFile: "Enviar arquivo",
+      addAgent: "Anexar agente",
       addIssueOrPr: "Adicionar issue ou PR",
       addIssueOrPr_mr: "Adicionar issue ou MR",
       dropImagesHere: "Solte imagens aqui",
@@ -138,6 +139,7 @@ export const ptBR: TranslationResources = {
       openImage: "Abrir anexo de imagem",
       removeImage: "Remover anexo de imagem",
       removeFile: "Remover anexo de arquivo",
+      removeAgent: "Remover contexto do agente de {{title}}",
       openGithub: "Abrir {{kind}} {{number}}",
       removeGithub: "Remover {{kind}} {{number}}",
       element: "Elemento",
@@ -322,6 +324,7 @@ export const ptBR: TranslationResources = {
       textAttachment: "Anexo de texto",
       text: "Texto",
       file: "Arquivo",
+      agent: "Contexto do agente",
     },
     speak: {
       header: "Falou",
@@ -384,6 +387,8 @@ export const ptBR: TranslationResources = {
     },
     actions: {
       refresh: "Atualizar sessões",
+      resumeOriginal: "Retomar original",
+      continueHere: "Continuar aqui",
       showAll: "Mostrar tudo",
       loadMore: "Carregar mais",
     },
@@ -399,6 +404,9 @@ export const ptBR: TranslationResources = {
     },
     row: {
       importing: "Importando...",
+      continuing: "Continuando...",
+      continueHint:
+        "Cria uma nova conversa aqui. Os arquivos e alterações de origem permanecem na worktree de origem.",
     },
   },
   workspace: {
@@ -1508,10 +1516,53 @@ export const ptBR: TranslationResources = {
   },
   agentAutocomplete: {
     searchingWorkspace: "Buscando workspace...",
+    searchingMentions: "Buscando agentes e workspace...",
     loadingCommands: "Carregando comandos...",
     noFiles: "Nenhum arquivo ou diretório encontrado",
+    noMentionResults: "Nenhum agente, arquivo ou diretório encontrado",
     noCommands: "Nenhum comando encontrado",
+    agents: "Agentes",
+    filesAndFolders: "Arquivos e pastas",
+    agent: "Agente",
     failedToLoad: "Falha ao carregar",
+  },
+  agentContext: {
+    title: "Anexar agentes",
+    subtitle: "Dê contexto de um agente em qualquer host conectado.",
+    searchPlaceholder: "Buscar agentes...",
+    groups: {
+      workspace: "Este workspace",
+      project: "Este projeto",
+      other: "Outros projetos",
+    },
+    status: {
+      attached: "Já anexado",
+      secureTransfer: "Transferência criptografada de ponta a ponta",
+      compatibilityTransfer: "Transferência compatível — o app retransmite contexto legível",
+      transferUnavailable: "Atualize o host de origem para transferir este contexto.",
+      transferChanged:
+        "A compatibilidade do host mudou. Revise os agentes selecionados e tente novamente.",
+      updateHost: "Atualize o host para anexar contexto de agente.",
+      wrongHost: "Você só pode anexar agentes do host selecionado.",
+      loading: "Carregando agentes...",
+      failed: "Não foi possível carregar os agentes.",
+      noMatches: "Nenhum agente correspondente",
+      empty: "Nenhum agente disponível",
+      limitReached: "Você pode anexar até {{count}} agentes.",
+    },
+    selectionCount: "{{count}} selecionados",
+    actions: {
+      attach: "Anexar",
+      loadMore: "Carregar mais",
+    },
+    compatibility: {
+      title: "Usar transferência compatível?",
+      message:
+        "Um ou mais hosts não oferecem transferência criptografada. Durante este envio, o Paseo retransmitirá em memória o contexto preparado pela origem como texto legível. Ele não será salvo no rascunho nem na fila.",
+      confirm: "Usar transferência compatível",
+    },
+    transferNote:
+      "O contexto entre hosts usa criptografia de ponta a ponta quando ambos os daemons oferecem suporte. Daemons antigos exigem transferência compatível explícita.",
   },
   loadOlderHistory: {
     failed: "Não foi possível carregar o histórico mais antigo",

@@ -46,4 +46,21 @@ describe("getWorkspaceNamingAttachments", () => {
 
     expect(getWorkspaceNamingAttachments([chatHistory, prContext])).toEqual([prContext]);
   });
+
+  it("does not resolve agent references in the separate workspace naming flow", () => {
+    const agentContext = {
+      type: "agent_context",
+      agentId: "source-agent",
+      title: "Source agent",
+    } satisfies AgentAttachment;
+    const issueContext = {
+      type: "github_issue",
+      mimeType: "application/github-issue",
+      number: 2216,
+      title: "Add agent context",
+      url: "https://github.com/getpaseo/paseo/issues/2216",
+    } satisfies AgentAttachment;
+
+    expect(getWorkspaceNamingAttachments([agentContext, issueContext])).toEqual([issueContext]);
+  });
 });

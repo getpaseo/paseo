@@ -1,5 +1,7 @@
 import {
   NEW_WORKSPACE_PICKER_ATTACHMENT_OWNER,
+  filterAgentContextAttachmentsForServer,
+  hasForeignAgentContextAttachments,
   type UserComposerAttachment,
 } from "@/attachments/types";
 import type { PickerItem } from "./new-workspace-picker-item";
@@ -94,4 +96,58 @@ export function clearPickerPrAttachmentForTargetChange(input: {
     return input.attachments;
   }
   return input.attachments.filter((attachment) => !isPrAttachment(attachment));
+}
+
+/**
+ * A host switch invalidates both target-scoped PR context and daemon-local
+ * agent references. Apply the filters together so one stale closure cannot
+ * restore attachments removed by the other.
+ */
+export function clearAttachmentsForWorkspaceHostChange(input: {
+  attachments: UserComposerAttachment[];
+  currentTargetId: string;
+  nextTargetId: string;
+  nextServerId: string;
+}): UserComposerAttachment[] {
+  const afterPickerClear = clearPickerPrAttachmentForTargetChange(input);
+  if (!hasForeignAgentContextAttachments(afterPickerClear, input.nextServerId)) {
+    return afterPickerClear;
+  }
+  return filterAgentContextAttachmentsForServer(afterPickerClear, input.nextServerId);
+}
+
+/**
+ * Draft attachment cleanup must follow the effective host, rather than only
+ * explicit picker selections. Defer it until draft hydration has completed so
+ * an automatic host change cannot overwrite an in-flight persisted draft; once
+ * hydrated, also reconcile a draft whose initial host was already selected.
+ */
+export function reconcileNewWorkspaceHostAttachments(input: {
+  attachments: UserComposerAttachment[];
+  isHydrated: boolean;
+  previousServerId: string;
+  selectedServerId: string;
+}): {
+  attachments: UserComposerAttachment[];
+  didChangeHost: boolean;
+  previousServerId: string;
+} {
+  if (!input.isHydrated) {
+    return {
+      attachments: input.attachments,
+      didChangeHost: false,
+      previousServerId: input.previousServerId,
+    };
+  }
+
+  return {
+    attachments: clearAttachmentsForWorkspaceHostChange({
+      attachments: input.attachments,
+      currentTargetId: input.previousServerId,
+      nextTargetId: input.selectedServerId,
+      nextServerId: input.selectedServerId,
+    }),
+    didChangeHost: input.previousServerId !== input.selectedServerId,
+    previousServerId: input.selectedServerId,
+  };
 }

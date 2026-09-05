@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Keyboard, ScrollView, StyleSheet as RNStyleSheet, Text, View } from "react-native";
 import { useTranslation } from "react-i18next";
 import { StyleSheet } from "react-native-unistyles";
@@ -8,19 +8,26 @@ import { useContainerWidthBelow } from "@/hooks/use-container-width";
 import invariant from "tiny-invariant";
 import { Composer } from "@/composer";
 import { FileDropZone } from "@/components/file-drop/file-drop-zone";
-import { ComposerImportPill } from "@/composer/draft/import-pill";
+import { ComposerAgentContextPill, ComposerImportPill } from "@/composer/draft/import-pill";
 import { COMPOSER_PILL_CLEARANCE } from "@/composer/pill-styles";
+import { AgentContextPicker } from "@/components/agent-context-picker";
+import { appendAgentContextAttachment } from "@/components/agent-context-picker-view-model";
 import { AgentStreamView } from "@/agent-stream/view";
 import { composerWorkspaceAttachment } from "@/composer/attachments/workspace";
 import { useAgentInputDraft } from "@/composer/draft/input-draft";
 import type { CreateAgentInitialValues } from "@/hooks/use-agent-form-state";
 import { useDraftAgentCreateFlow, type DraftCreateAttempt } from "@/composer/draft/create-flow";
 import { resolveTurnPresentation, TURN_LIVENESS_IDLE } from "@/timeline/turn-liveness";
-import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
+import {
+  getHostRuntimeStore,
+  useHostRuntimeClient,
+  useHostRuntimeIsConnected,
+} from "@/runtime/host-runtime";
+import { useHostFeature } from "@/runtime/host-features";
 import { buildWorkspaceDraftAgentConfig } from "@/screens/workspace/workspace-draft-agent-config";
 import { buildDraftStoreKey } from "@/stores/draft-keys";
 import { useCreateFlowStore } from "@/stores/create-flow-store";
-import type { Agent } from "@/stores/session-store";
+import { useSessionStore, type Agent } from "@/stores/session-store";
 import { useWorkspaceFields } from "@/stores/session-store-hooks";
 import { useWorkspaceDraftSubmissionStore } from "@/stores/workspace-draft-submission-store";
 import { useAgentControlCommandCenterActions } from "@/command-center/agent-control-registration";
@@ -34,7 +41,7 @@ import {
 import type { AgentCapabilityFlags } from "@getpaseo/protocol/agent-types";
 import type { AgentSnapshotPayload } from "@getpaseo/protocol/messages";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
-import type { WorkspaceComposerAttachment } from "@/attachments/types";
+import type { UserComposerAttachment, WorkspaceComposerAttachment } from "@/attachments/types";
 import {
   useDraftWorkspaceAttachmentScopeKey,
   useWorkspaceAttachmentScopeKey,
@@ -327,6 +334,26 @@ function resolveImportPillPress(
   return onOpenImportSheet ?? null;
 }
 
+function renderDraftContextPills(input: {
+  importPillPress: (() => void) | null;
+  onOpenAgentContextPicker: () => void;
+  isSubmitting: boolean;
+}) {
+  if (input.isSubmitting && !input.importPillPress) {
+    return null;
+  }
+  return (
+    <View style={styles.importPillRow}>
+      <View style={styles.importPillContent}>
+        {input.importPillPress ? <ComposerImportPill onPress={input.importPillPress} /> : null}
+        {!input.isSubmitting ? (
+          <ComposerAgentContextPill onPress={input.onOpenAgentContextPicker} />
+        ) : null}
+      </View>
+    </View>
+  );
+}
+
 export function WorkspaceDraftAgentTab({
   serverId,
   workspaceId,
@@ -342,9 +369,12 @@ export function WorkspaceDraftAgentTab({
   const insets = useSafeAreaInsets();
   const client = useHostRuntimeClient(serverId);
   const isConnected = useHostRuntimeIsConnected(serverId);
+  const supportsAgentContextAttachments = useHostFeature(serverId, "agentContextAttachments");
+  const [isAgentContextPickerOpen, setIsAgentContextPickerOpen] = useState(false);
   const workspaceFields = useWorkspaceFields(serverId, workspaceId, (w) => ({
     workspaceDirectory: w.workspaceDirectory,
     id: w.id,
+    projectKey: w.project?.projectKey ?? null,
   }));
   const workspaceDirectory = workspaceFields?.workspaceDirectory || null;
   const draftSetup = initialSetup ?? null;
@@ -396,6 +426,18 @@ export function WorkspaceDraftAgentTab({
   const clearDraftInput = draftInput.clear;
   const replaceDraftText = draftInput.replaceText;
   const setDraftAttachments = draftInput.setAttachments;
+  const handleOpenAgentContextPicker = useCallback(() => {
+    setIsAgentContextPickerOpen(true);
+  }, []);
+  const handleCloseAgentContextPicker = useCallback(() => {
+    setIsAgentContextPickerOpen(false);
+  }, []);
+  const handleAddAgentContext = useCallback(
+    (attachment: Extract<UserComposerAttachment, { kind: "agent_context" }>) => {
+      setDraftAttachments((current) => appendAgentContextAttachment(current, attachment));
+    },
+    [setDraftAttachments],
+  );
   const pendingAutoSubmit = useWorkspaceDraftSubmissionStore((state) => {
     const pending = state.pendingByDraftId[draftId] ?? null;
     return pending?.serverId === serverId && pending.workspaceId === workspaceId ? pending : null;
@@ -475,6 +517,11 @@ export function WorkspaceDraftAgentTab({
     getPendingServerId: () => serverId,
     initialAttempt: initialCreateAttempt,
     allowEmptyText: allowsEmptyAutoSubmit,
+    agentContextRuntime: {
+      getClient: (sourceServerId) => getHostRuntimeStore().getClient(sourceServerId),
+      getFeatures: (sourceServerId) =>
+        useSessionStore.getState().sessions[sourceServerId]?.serverInfo?.features,
+    },
     validateBeforeSubmit: ({ text, attachments }) => {
       const allowsEmptyDraftText = shouldAllowEmptyDraftText({
         allowsEmptyAutoSubmit,
@@ -632,6 +679,11 @@ export function WorkspaceDraftAgentTab({
     focusInputRef.current?.();
   }, []);
   const importPillPress = resolveImportPillPress(onOpenImportSheet, isSubmitting);
+  const draftContextPills = renderDraftContextPills({
+    importPillPress,
+    onOpenAgentContextPicker: handleOpenAgentContextPicker,
+    isSubmitting,
+  });
   const composerAgentControls = useMemo(
     () => ({
       ...composerState.agentControls,
@@ -670,13 +722,7 @@ export function WorkspaceDraftAgentTab({
       </View>
 
       <KeyboardTranslateView style={inputAreaWrapperStyle} onLayout={onInputAreaLayout}>
-        {importPillPress ? (
-          <View style={styles.importPillRow}>
-            <View style={styles.importPillContent}>
-              <ComposerImportPill onPress={importPillPress} />
-            </View>
-          </View>
-        ) : null}
+        {draftContextPills}
         <Composer
           agentId={tabId}
           serverId={serverId}
@@ -700,9 +746,21 @@ export function WorkspaceDraftAgentTab({
           onFocusInput={handleFocusInputCallback}
           commandDraftConfig={composerState.commandDraftConfig}
           agentControls={composerAgentControls}
+          onOpenAgentContextPicker={handleOpenAgentContextPicker}
           isCompactLayout={isCompactComposerLayout}
         />
       </KeyboardTranslateView>
+      <AgentContextPicker
+        visible={isAgentContextPickerOpen}
+        serverId={serverId}
+        workspaceId={workspaceId}
+        projectKey={workspaceFields?.projectKey}
+        currentAgentId={tabId}
+        attachments={draftInput.attachments}
+        supported={supportsAgentContextAttachments}
+        onClose={handleCloseAgentContextPicker}
+        onAdd={handleAddAgentContext}
+      />
     </FileDropZone>
   );
 }
@@ -753,6 +811,8 @@ const styles = StyleSheet.create((theme) => ({
     width: "100%",
     maxWidth: MAX_CONTENT_WIDTH,
     flexDirection: "row",
+    flexWrap: "wrap",
+    gap: theme.spacing[2],
   },
   errorContainer: {
     marginTop: theme.spacing[2],

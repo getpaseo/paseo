@@ -37,6 +37,25 @@ work is gone. Report that exit as a turn failure so the agent lands in `error` w
 Only the Claude provider does this today; the others still report a death only when a turn happens to
 be in flight.
 
+## Importing an existing provider session
+
+Importing an external Codex, Claude, or other provider session has two intentionally different
+lifecycles:
+
+- **Resume original** adopts the provider-native handle and runs it in the session's original
+  working directory. Paseo creates or reuses a workspace record for that directory; it does not
+  create a checkout or relocate the provider session.
+- **Continue here** creates a new provider-native fork in an already-existing destination
+  workspace. The daemon permits it only when source and destination are separate paths in the same
+  local Git working copy. The source session and its worktree—including uncommitted changes—remain
+  untouched. The destination receives a new conversation handle and uses its own files and runtime
+  configuration.
+
+`Continue here` is capability-gated per provider. It is not a Git-state transfer, is not a
+cross-repository or cross-host operation, and does not archive the source. Providers that cannot
+prove a native fork remain resume-only; users can instead create a fresh agent with transcript
+context when that feature is available.
+
 ### Cancellation
 
 Provider interruption is idempotent at the `AgentSession` boundary. It resolves when the prior

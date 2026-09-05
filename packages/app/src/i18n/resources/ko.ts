@@ -129,6 +129,7 @@ export const ko: TranslationResources = {
       addImage: "이미지 추가",
       pasteImage: "이미지 붙여넣기",
       addFile: "파일 업로드",
+      addAgent: "에이전트 첨부",
       addIssueOrPr: "이슈 또는 PR 추가",
       addIssueOrPr_mr: "이슈 또는 MR 추가",
       dropImagesHere: "여기에 이미지를 끌어다 놓으세요",
@@ -138,6 +139,7 @@ export const ko: TranslationResources = {
       openImage: "이미지 첨부 열기",
       removeImage: "이미지 첨부 제거",
       removeFile: "파일 첨부 제거",
+      removeAgent: "{{title}}에서 에이전트 컨텍스트 제거",
       openGithub: "{{kind}} {{number}} 열기",
       removeGithub: "{{kind}} {{number}} 제거",
       element: "요소",
@@ -320,6 +322,7 @@ export const ko: TranslationResources = {
       textAttachment: "텍스트 첨부",
       text: "텍스트",
       file: "파일",
+      agent: "에이전트 컨텍스트",
     },
     speak: {
       header: "말함",
@@ -382,6 +385,8 @@ export const ko: TranslationResources = {
     },
     actions: {
       refresh: "세션 새로고침",
+      resumeOriginal: "원본 재개",
+      continueHere: "여기에서 계속",
       showAll: "전체 표시",
       loadMore: "더 보기",
     },
@@ -397,6 +402,9 @@ export const ko: TranslationResources = {
     },
     row: {
       importing: "가져오는 중...",
+      continuing: "계속하는 중...",
+      continueHint:
+        "여기에 새 대화를 만듭니다. 소스 파일과 변경 사항은 원본 워크트리에 그대로 유지됩니다.",
     },
   },
   workspace: {
@@ -1488,10 +1496,53 @@ export const ko: TranslationResources = {
   },
   agentAutocomplete: {
     searchingWorkspace: "워크스페이스 검색 중...",
+    searchingMentions: "에이전트 및 워크스페이스 검색 중...",
     loadingCommands: "명령 불러오는 중...",
     noFiles: "파일 또는 디렉터리를 찾을 수 없습니다",
+    noMentionResults: "일치하는 에이전트, 파일 또는 폴더가 없습니다",
     noCommands: "명령을 찾을 수 없습니다",
+    agents: "에이전트",
+    filesAndFolders: "파일 및 폴더",
+    agent: "에이전트",
     failedToLoad: "불러오지 못했습니다",
+  },
+  agentContext: {
+    title: "에이전트 첨부",
+    subtitle: "연결된 모든 호스트의 에이전트에서 컨텍스트를 추가하세요.",
+    searchPlaceholder: "에이전트 검색...",
+    groups: {
+      workspace: "이 워크스페이스",
+      project: "이 프로젝트",
+      other: "다른 프로젝트",
+    },
+    status: {
+      attached: "이미 첨부됨",
+      secureTransfer: "종단 간 암호화 전송",
+      compatibilityTransfer: "호환 전송 — 앱이 읽을 수 있는 컨텍스트를 중계",
+      transferUnavailable: "이 컨텍스트를 전송하려면 원본 호스트를 업데이트하세요.",
+      transferChanged:
+        "호스트 호환성이 변경되었습니다. 선택한 에이전트를 검토하고 다시 시도하세요.",
+      updateHost: "에이전트 컨텍스트를 첨부하려면 호스트를 업데이트하세요.",
+      wrongHost: "선택한 호스트의 에이전트만 첨부할 수 있습니다.",
+      loading: "에이전트 불러오는 중...",
+      failed: "에이전트를 불러올 수 없습니다.",
+      noMatches: "일치하는 에이전트가 없습니다",
+      empty: "사용 가능한 에이전트가 없습니다",
+      limitReached: "최대 {{count}}개의 에이전트를 첨부할 수 있습니다.",
+    },
+    selectionCount: "{{count}}개 선택됨",
+    actions: {
+      attach: "첨부",
+      loadMore: "더 불러오기",
+    },
+    compatibility: {
+      title: "호환 전송을 사용하시겠습니까?",
+      message:
+        "하나 이상의 호스트가 암호화 전송을 지원하지 않습니다. 이 전송 중 Paseo는 원본에서 정리한 컨텍스트를 읽을 수 있는 텍스트로 메모리에서 중계합니다. 초안이나 대기열에는 저장하지 않습니다.",
+      confirm: "호환 전송 사용",
+    },
+    transferNote:
+      "두 데몬이 모두 지원하면 호스트 간 컨텍스트가 종단 간 암호화됩니다. 이전 데몬에서는 명시적인 호환 전송이 필요합니다.",
   },
   loadOlderHistory: {
     failed: "이전 기록을 불러올 수 없습니다",

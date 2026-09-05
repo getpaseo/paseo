@@ -129,6 +129,7 @@ export const ja: TranslationResources = {
       addImage: "画像を追加",
       pasteImage: "画像を貼り付け",
       addFile: "ファイルをアップロード",
+      addAgent: "エージェントを添付",
       addIssueOrPr: "イシューまたはPRを追加",
       addIssueOrPr_mr: "イシューまたはMRを追加",
       dropImagesHere: "ここに画像をドロップ",
@@ -138,6 +139,7 @@ export const ja: TranslationResources = {
       openImage: "画像添付ファイルを開く",
       removeImage: "画像添付ファイルを削除",
       removeFile: "ファイル添付ファイルを削除",
+      removeAgent: "{{title}} のエージェントコンテキストを削除",
       openGithub: "{{kind}} {{number}}を開く",
       removeGithub: "{{kind}} {{number}}を削除",
       element: "要素",
@@ -322,6 +324,7 @@ export const ja: TranslationResources = {
       textAttachment: "テキスト添付ファイル",
       text: "テキスト",
       file: "ファイル",
+      agent: "エージェントコンテキスト",
     },
     speak: {
       header: "読み上げ済み",
@@ -384,6 +387,8 @@ export const ja: TranslationResources = {
     },
     actions: {
       refresh: "セッションを更新",
+      resumeOriginal: "元のセッションを再開",
+      continueHere: "ここで続ける",
       showAll: "すべて表示",
       loadMore: "さらに読み込む",
     },
@@ -399,6 +404,9 @@ export const ja: TranslationResources = {
     },
     row: {
       importing: "インポート中...",
+      continuing: "続行中...",
+      continueHint:
+        "ここに新しい会話を作成します。ソースのファイルと変更は元の worktree に残ります。",
     },
   },
   workspace: {
@@ -1493,10 +1501,53 @@ export const ja: TranslationResources = {
   },
   agentAutocomplete: {
     searchingWorkspace: "ワークスペースを検索中...",
+    searchingMentions: "エージェントとワークスペースを検索中...",
     loadingCommands: "コマンドを読み込み中...",
     noFiles: "ファイルまたはディレクトリが見つかりません",
+    noMentionResults: "エージェント、ファイル、またはディレクトリが見つかりません",
     noCommands: "コマンドが見つかりません",
+    agents: "エージェント",
+    filesAndFolders: "ファイルとフォルダー",
+    agent: "エージェント",
     failedToLoad: "読み込みに失敗しました",
+  },
+  agentContext: {
+    title: "エージェントを添付",
+    subtitle: "接続中の任意のホストにあるエージェントからコンテキストを追加します。",
+    searchPlaceholder: "エージェントを検索...",
+    groups: {
+      workspace: "このワークスペース",
+      project: "このプロジェクト",
+      other: "ほかのプロジェクト",
+    },
+    status: {
+      attached: "すでに添付済み",
+      secureTransfer: "エンドツーエンド暗号化転送",
+      compatibilityTransfer: "互換転送 — アプリが読み取り可能なコンテキストを中継",
+      transferUnavailable: "このコンテキストを転送するには送信元ホストを更新してください。",
+      transferChanged:
+        "ホストの互換性が変更されました。選択したエージェントを確認して再試行してください。",
+      updateHost: "エージェントコンテキストを添付するにはホストを更新してください。",
+      wrongHost: "選択中のホストのエージェントのみ添付できます。",
+      loading: "エージェントを読み込み中...",
+      failed: "エージェントを読み込めませんでした。",
+      noMatches: "一致するエージェントはありません",
+      empty: "利用可能なエージェントはありません",
+      limitReached: "添付できるエージェントは最大 {{count}} 件です。",
+    },
+    selectionCount: "{{count}} 件選択中",
+    actions: {
+      attach: "添付",
+      loadMore: "さらに読み込む",
+    },
+    compatibility: {
+      title: "互換転送を使用しますか？",
+      message:
+        "暗号化転送に対応していないホストがあります。この送信中、Paseo は送信元が整理したコンテキストを読み取り可能なテキストとしてメモリ内で中継します。下書きやキューには保存しません。",
+      confirm: "互換転送を使用",
+    },
+    transferNote:
+      "両方のデーモンが対応している場合、ホスト間コンテキストはエンドツーエンドで暗号化されます。古いデーモンでは明示的な互換転送が必要です。",
   },
   loadOlderHistory: {
     failed: "古い履歴を読み込めませんでした",

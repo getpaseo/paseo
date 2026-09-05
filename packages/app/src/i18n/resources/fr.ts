@@ -131,6 +131,7 @@ export const fr: TranslationResources = {
       addImage: "Ajouter une image",
       pasteImage: "Coller une image",
       addFile: "Upload file",
+      addAgent: "Joindre un agent",
       addIssueOrPr: "Ajouter un problème ouPR",
       addIssueOrPr_mr: "Ajouter un problème ou MR",
       dropImagesHere: "Déposez des images ici",
@@ -140,6 +141,7 @@ export const fr: TranslationResources = {
       openImage: "Ouvrir la pièce jointe de l'image",
       removeImage: "Supprimer l'image jointe",
       removeFile: "Remove file attachment",
+      removeAgent: "Supprimer le contexte de l’agent depuis {{title}}",
       openGithub: "Ouvrir {{kind}} {{number}}",
       removeGithub: "Supprimer {{kind}} {{number}}",
       element: "Élément",
@@ -323,6 +325,7 @@ export const fr: TranslationResources = {
       textAttachment: "Texte en pièce jointe",
       text: "Texte",
       file: "Fichier",
+      agent: "Contexte de l’agent",
     },
     speak: {
       header: "Rayon",
@@ -385,6 +388,8 @@ export const fr: TranslationResources = {
     },
     actions: {
       refresh: "Sessions de rafraîchissement",
+      resumeOriginal: "Reprendre l'originale",
+      continueHere: "Continuer ici",
       showAll: "Tout afficher",
       loadMore: "Charger plus",
     },
@@ -400,6 +405,9 @@ export const fr: TranslationResources = {
     },
     row: {
       importing: "Importation...",
+      continuing: "Continuation...",
+      continueHint:
+        "Crée une nouvelle conversation ici. Les fichiers et modifications restent dans le worktree source.",
     },
   },
   workspace: {
@@ -1526,10 +1534,53 @@ export const fr: TranslationResources = {
   },
   agentAutocomplete: {
     searchingWorkspace: "Recherche dans l'espace de travail...",
+    searchingMentions: "Recherche d'agents et de l'espace de travail...",
     loadingCommands: "Chargement des commandes...",
     noFiles: "Aucun fichier ou répertoire trouvé",
+    noMentionResults: "Aucun agent, fichier ou répertoire trouvé",
     noCommands: "Aucune commande trouvée",
+    agents: "Agents",
+    filesAndFolders: "Fichiers et dossiers",
+    agent: "Agent",
     failedToLoad: "Échec du chargement",
+  },
+  agentContext: {
+    title: "Joindre des agents",
+    subtitle: "Donnez le contexte d’un agent sur n’importe quel hôte connecté.",
+    searchPlaceholder: "Rechercher des agents...",
+    groups: {
+      workspace: "Cet espace de travail",
+      project: "Ce projet",
+      other: "Autres projets",
+    },
+    status: {
+      attached: "Déjà joint",
+      secureTransfer: "Transfert chiffré de bout en bout",
+      compatibilityTransfer: "Transfert compatible — l’app relaie un contexte lisible",
+      transferUnavailable: "Mettez à jour l’hôte source pour transférer ce contexte.",
+      transferChanged:
+        "La compatibilité de l’hôte a changé. Vérifiez les agents sélectionnés et réessayez.",
+      updateHost: "Mettez l’hôte à jour pour joindre le contexte d’un agent.",
+      wrongHost: "Vous ne pouvez joindre que des agents de l’hôte sélectionné.",
+      loading: "Chargement des agents...",
+      failed: "Impossible de charger les agents.",
+      noMatches: "Aucun agent correspondant",
+      empty: "Aucun agent disponible",
+      limitReached: "Vous pouvez joindre jusqu’à {{count}} agents.",
+    },
+    selectionCount: "{{count}} sélectionnés",
+    actions: {
+      attach: "Joindre",
+      loadMore: "Charger plus",
+    },
+    compatibility: {
+      title: "Utiliser le transfert compatible ?",
+      message:
+        "Un ou plusieurs hôtes ne prennent pas en charge le transfert chiffré. Pendant cet envoi, Paseo relaiera en mémoire le contexte préparé par la source sous forme de texte lisible. Il ne sera pas enregistré dans le brouillon ni la file.",
+      confirm: "Utiliser le transfert compatible",
+    },
+    transferNote:
+      "Le contexte entre hôtes est chiffré de bout en bout lorsque les deux démons le permettent. Les anciens démons exigent un transfert compatible explicite.",
   },
   loadOlderHistory: {
     failed: "Impossible de charger l'ancien historique",

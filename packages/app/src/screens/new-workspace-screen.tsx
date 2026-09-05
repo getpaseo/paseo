@@ -41,6 +41,7 @@ import { resolveLaunchTarget, type LaunchTarget } from "@/new-workspace-launch/t
 import { useTerminalComposerState } from "@/new-workspace-launch/composer-state";
 import { runCreateTerminalWorkspace } from "./new-workspace-terminal";
 import {
+  getHostRuntimeStore,
   useHostRuntimeClient,
   useHostRuntimeConnectionStatuses,
   useHostRuntimeIsConnected,
@@ -87,6 +88,7 @@ import { useDraftWorkspaceAttachmentScopeKey } from "@/attachments/workspace-att
 import type { MessagePayload } from "@/composer/types";
 import type { UserComposerAttachment } from "@/attachments/types";
 import type { AgentAttachment, ForgeSearchItem } from "@getpaseo/protocol/messages";
+import { prepareAgentContextAttachmentsForSubmit } from "@/attachments/agent-context-transfer";
 import type { CreatePaseoWorktreeInput } from "@getpaseo/client/internal/daemon-client";
 import type { AgentProvider } from "@getpaseo/protocol/agent-types";
 import type { WorkspaceDraftTabSetup, WorkspaceTabTarget } from "@/workspace-tabs/model";
@@ -108,6 +110,7 @@ import {
 import {
   clearPickerPrAttachmentForTargetChange,
   initialPickerSelectionState,
+  reconcileNewWorkspaceHostAttachments,
   reducePickerSelection,
   syncPickerPrAttachment,
 } from "./new-workspace-picker-state";
@@ -935,9 +938,10 @@ async function runCreateChatAgent(input: CreateChatAgentInput): Promise<void> {
   const attachmentSubmitFormat = resolveComposerAttachmentSubmitFormat({
     supportsForgeAttachments: input.supportsForgeSearch,
   });
-  const { attachments: reviewAttachments } = splitComposerAttachmentsForSubmit(attachments, {
-    format: attachmentSubmitFormat,
-  });
+  const { attachments: reviewAttachments } = splitComposerAttachmentsForSubmit(
+    attachments.filter((attachment) => attachment.kind !== "agent_context"),
+    { format: attachmentSubmitFormat },
+  );
   const workspaceNamingAttachments = getWorkspaceNamingAttachments(reviewAttachments);
   const ensuredWorkspace = await ensureWorkspace({
     cwd,
@@ -951,7 +955,7 @@ async function runCreateChatAgent(input: CreateChatAgentInput): Promise<void> {
     provider,
     composerState,
   });
-  submitWorkspaceDraft({
+  await submitWorkspaceDraft({
     serverId,
     clearDraft,
     draftId: input.draftId,
@@ -1027,7 +1031,7 @@ function resolveWorkspaceDraftSubmissionConfig(input: {
   };
 }
 
-function submitWorkspaceDraft(input: SubmitDraftInput): void {
+async function submitWorkspaceDraft(input: SubmitDraftInput): Promise<void> {
   const {
     serverId,
     clearDraft,
@@ -1043,7 +1047,16 @@ function submitWorkspaceDraft(input: SubmitDraftInput): void {
   const draftId = draftIdInput?.trim() || generateDraftId();
   const clientMessageId = generateMessageId();
   const timestamp = Date.now();
-  const wirePayload = splitComposerAttachmentsForSubmit(attachments, {
+  const preparedAttachments = await prepareAgentContextAttachmentsForSubmit({
+    attachments,
+    destinationServerId: serverId,
+    runtime: {
+      getClient: (sourceServerId) => getHostRuntimeStore().getClient(sourceServerId),
+      getFeatures: (sourceServerId) =>
+        useSessionStore.getState().sessions[sourceServerId]?.serverInfo?.features,
+    },
+  });
+  const wirePayload = splitComposerAttachmentsForSubmit(preparedAttachments, {
     format: resolveComposerAttachmentSubmitFormat({
       supportsForgeAttachments: input.supportsForgeSearch,
     }),
@@ -1815,10 +1828,34 @@ export function NewWorkspaceScreen({
       });
       if (nextAttachments === chatDraft.attachments) return;
       chatDraft.setAttachments(nextAttachments);
-      dispatchPickerSelection({ type: "target-changed" });
+      if (currentTargetId !== nextTargetId) {
+        dispatchPickerSelection({ type: "target-changed" });
+      }
     },
     [chatDraft],
   );
+
+  const previousSelectedServerIdRef = useRef(selectedServerId);
+  const {
+    attachments: draftAttachments,
+    isHydrated: isChatDraftHydrated,
+    setAttachments: setDraftAttachments,
+  } = chatDraft;
+  useEffect(() => {
+    const nextHostAttachments = reconcileNewWorkspaceHostAttachments({
+      attachments: draftAttachments,
+      isHydrated: isChatDraftHydrated,
+      previousServerId: previousSelectedServerIdRef.current,
+      selectedServerId,
+    });
+    previousSelectedServerIdRef.current = nextHostAttachments.previousServerId;
+
+    if (nextHostAttachments.attachments !== draftAttachments) {
+      setDraftAttachments(nextHostAttachments.attachments);
+    }
+    if (!nextHostAttachments.didChangeHost) return;
+    dispatchPickerSelection({ type: "target-changed" });
+  }, [draftAttachments, isChatDraftHydrated, selectedServerId, setDraftAttachments]);
 
   const handleSelectProjectOption = useCallback(
     (id: string) => {
@@ -1835,9 +1872,8 @@ export function NewWorkspaceScreen({
   const handleSelectWorkspaceHost = useCallback(
     (id: string) => {
       handleSelectHost(id);
-      clearPickerSelectionForTargetChange(selectedServerId, id);
     },
-    [clearPickerSelectionForTargetChange, handleSelectHost, selectedServerId],
+    [handleSelectHost],
   );
 
   const handleAddProject = useCallback(() => {

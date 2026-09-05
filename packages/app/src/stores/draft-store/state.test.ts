@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { applyClearDraftRecord, pruneFinalizedDraftRecords, toDraftInputIfReady } from "./state";
+import {
+  applyClearDraftRecord,
+  isUserComposerAttachment,
+  pruneFinalizedDraftRecords,
+  toDraftInputIfReady,
+} from "./state";
 
 describe("draft-store lifecycle", () => {
   it("prunes finalized tombstones after TTL", () => {
@@ -167,5 +172,56 @@ describe("draft-store normalization", () => {
       text: "Keep this prompt",
       attachments: [pickerAttachment],
     });
+  });
+
+  it("normalizes persisted agent context metadata without retaining empty labels", () => {
+    expect(
+      toDraftInputIfReady({
+        input: {
+          text: "Use this context",
+          attachments: [
+            {
+              kind: "agent_context",
+              source: {
+                serverId: " server-a ",
+                agentId: " agent-source ",
+                title: "  Investigate auth race  ",
+                workspaceLabel: "   ",
+                provider: " codex ",
+              },
+            },
+          ],
+        },
+        lifecycle: "active",
+        updatedAt: 1,
+        version: 1,
+      }),
+    ).toEqual({
+      text: "Use this context",
+      attachments: [
+        {
+          kind: "agent_context",
+          source: {
+            serverId: "server-a",
+            agentId: "agent-source",
+            title: "Investigate auth race",
+            provider: "codex",
+          },
+        },
+      ],
+    });
+  });
+
+  it("rejects malformed persisted agent context metadata", () => {
+    expect(
+      isUserComposerAttachment({
+        kind: "agent_context",
+        source: {
+          serverId: "server-a",
+          agentId: "agent-source",
+          title: "",
+        },
+      }),
+    ).toBe(false);
   });
 });

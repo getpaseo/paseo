@@ -42,6 +42,7 @@ import type {
   AgentSlashCommand,
   AgentStreamEvent,
   AgentTimelineItem,
+  ForkImportableProviderSessionInput,
   ImportProviderSessionInput,
   ImportProviderSessionContext,
   ResolveAgentDefaultModeInput,
@@ -3974,6 +3975,81 @@ test("importProviderSession imports the selected session without listing and pub
   expect((await storage.get(imported.id))?.title).toBe("Trace provider imports");
 });
 
+test("continueProviderSession registers a fork in the destination workspace without importing the source", async () => {
+  const sourceCwd = mkdtempSync(join(tmpdir(), "agent-manager-continue-source-"));
+  const destinationCwd = mkdtempSync(join(tmpdir(), "agent-manager-continue-destination-"));
+  const storage = new AgentStorage(join(destinationCwd, "agents"), logger);
+  const forkedSession = new TestAgentSession({ provider: "codex", cwd: destinationCwd });
+
+  class ForkClient extends TestAgentClient {
+    forkInput: ForkImportableProviderSessionInput | null = null;
+    importCalls = 0;
+
+    override async importSession() {
+      this.importCalls += 1;
+      throw new Error("Continue here must not import the source native handle");
+    }
+
+    override async forkImportableSession(
+      input: ForkImportableProviderSessionInput,
+      _context: ImportProviderSessionContext,
+    ) {
+      this.forkInput = input;
+      return {
+        session: forkedSession,
+        config: { provider: "codex" as const, cwd: destinationCwd },
+        persistence: {
+          provider: "codex" as const,
+          sessionId: "forked-thread",
+          nativeHandle: "forked-thread",
+          metadata: {
+            provider: "codex",
+            cwd: destinationCwd,
+            continuationSource: {
+              providerHandleId: input.providerHandleId,
+              cwd: input.sourceCwd,
+            },
+          },
+        },
+        timeline: [{ item: { type: "assistant_message" as const, text: "Forked context" } }],
+      };
+    }
+  }
+
+  const client = new ForkClient();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: storage,
+    logger,
+  });
+
+  const continued = await manager.continueProviderSession({
+    provider: "codex",
+    providerHandleId: "desktop-thread",
+    sourceCwd,
+    destinationCwd,
+    workspaceId: "ws-destination",
+  });
+
+  expect(client.importCalls).toBe(0);
+  expect(client.forkInput).toEqual({
+    providerHandleId: "desktop-thread",
+    sourceCwd,
+    destinationCwd,
+  });
+  expect(continued.cwd).toBe(destinationCwd);
+  expect(continued.workspaceId).toBe("ws-destination");
+  expect(continued.persistence).toMatchObject({
+    sessionId: "forked-thread",
+    metadata: {
+      continuationSource: { providerHandleId: "desktop-thread", cwd: sourceCwd },
+    },
+  });
+  expect(manager.getTimeline(continued.id)).toEqual([
+    { type: "assistant_message", text: "Forked context" },
+  ]);
+});
+
 test("reloadAgentSession passes daemon launch env through the provider launch context", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-reload-context-"));
   const storagePath = join(workdir, "agents");
@@ -5203,6 +5279,38 @@ test("getTimelineRows falls back to the in-memory timeline when no durable store
       },
     },
   ]);
+});
+
+test("fetchRetainedTimeline reads a closed agent without reopening or mutating it", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-retained-context-"));
+  try {
+    const storage = new AgentStorage(join(workdir, "agents"), logger);
+    const manager = new AgentManager({
+      clients: { codex: new TestAgentClient() },
+      registry: storage,
+      logger,
+      idFactory: () => "00000000-0000-4000-8000-000000000141",
+    });
+    const snapshot = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    await manager.appendTimelineItem(snapshot.id, {
+      type: "assistant_message",
+      text: "retained after close",
+    });
+    await manager.closeAgent(snapshot.id);
+    const storedAfterClose = await storage.get(snapshot.id);
+
+    const timeline = manager.fetchRetainedTimeline(snapshot.id, { direction: "tail", limit: 10 });
+
+    expect(timeline?.rows.map((row) => row.item)).toEqual([
+      { type: "assistant_message", text: "retained after close" },
+    ]);
+    expect(manager.getAgent(snapshot.id)).toBeNull();
+    await expect(storage.get(snapshot.id)).resolves.toEqual(storedAfterClose);
+  } finally {
+    rmSync(workdir, { recursive: true, force: true });
+  }
 });
 
 test("getAgent does not expose committed history internals once manager owns the seam", async () => {
@@ -10349,6 +10457,7 @@ test("listImportableSessions returns healthy rows alongside thrown and timed-out
           lastActivityAt: new Date("2026-01-01T00:00:00Z"),
           firstPromptPreview: null,
           lastPromptPreview: null,
+          canContinueHere: false,
         },
       ],
       providerErrors: [

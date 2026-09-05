@@ -129,6 +129,7 @@ export const ru: TranslationResources = {
       addImage: "Добавить изображение",
       pasteImage: "Вставить изображение",
       addFile: "Загрузить файл",
+      addAgent: "Прикрепить агента",
       addIssueOrPr: "Добавить проблему или PR",
       addIssueOrPr_mr: "Добавить проблему или MR",
       dropImagesHere: "Скиньте изображения сюда",
@@ -138,6 +139,7 @@ export const ru: TranslationResources = {
       openImage: "Открыть прикрепленное изображение",
       removeImage: "Удалить прикрепленное изображение",
       removeFile: "Удалить прикрепленный файл",
+      removeAgent: "Удалить контекст агента из {{title}}",
       openGithub: "Открыть {{kind}} {{number}}",
       removeGithub: "Удалить {{kind}} {{number}}",
       element: "Элемент",
@@ -321,6 +323,7 @@ export const ru: TranslationResources = {
       textAttachment: "Текстовое вложение",
       text: "Текст",
       file: "Файл",
+      agent: "Контекст агента",
     },
     speak: {
       header: "Сказал",
@@ -383,6 +386,8 @@ export const ru: TranslationResources = {
     },
     actions: {
       refresh: "Обновить список сессий",
+      resumeOriginal: "Возобновить исходный",
+      continueHere: "Продолжить здесь",
       showAll: "Показать все",
       loadMore: "Загрузить ещё",
     },
@@ -398,6 +403,9 @@ export const ru: TranslationResources = {
     },
     row: {
       importing: "Импортируется...",
+      continuing: "Продолжение...",
+      continueHint:
+        "Здесь будет создан новый разговор. Исходные файлы и изменения останутся в исходном worktree.",
     },
   },
   workspace: {
@@ -1505,10 +1513,53 @@ export const ru: TranslationResources = {
   },
   agentAutocomplete: {
     searchingWorkspace: "Поиск в рабочем пространстве...",
+    searchingMentions: "Поиск агентов и рабочего пространства...",
     loadingCommands: "Загрузка команд...",
     noFiles: "Файлы и каталоги не найдены",
+    noMentionResults: "Агенты, файлы или каталоги не найдены",
     noCommands: "Команды не найдены",
+    agents: "Агенты",
+    filesAndFolders: "Файлы и папки",
+    agent: "Агент",
     failedToLoad: "Не удалось загрузить",
+  },
+  agentContext: {
+    title: "Прикрепить агентов",
+    subtitle: "Дайте агенту контекст с любого подключённого хоста.",
+    searchPlaceholder: "Поиск агентов...",
+    groups: {
+      workspace: "Это рабочее пространство",
+      project: "Этот проект",
+      other: "Другие проекты",
+    },
+    status: {
+      attached: "Уже прикреплено",
+      secureTransfer: "Сквозное шифрование передачи",
+      compatibilityTransfer: "Совместимая передача — приложение пересылает читаемый контекст",
+      transferUnavailable: "Обновите исходный хост для передачи этого контекста.",
+      transferChanged:
+        "Совместимость хоста изменилась. Проверьте выбранных агентов и повторите попытку.",
+      updateHost: "Обновите хост, чтобы прикрепить контекст агента.",
+      wrongHost: "Можно прикреплять только агентов с выбранного хоста.",
+      loading: "Загрузка агентов...",
+      failed: "Не удалось загрузить агентов.",
+      noMatches: "Нет подходящих агентов",
+      empty: "Нет доступных агентов",
+      limitReached: "Можно прикрепить не более {{count}} агентов.",
+    },
+    selectionCount: "Выбрано: {{count}}",
+    actions: {
+      attach: "Прикрепить",
+      loadMore: "Загрузить ещё",
+    },
+    compatibility: {
+      title: "Использовать совместимую передачу?",
+      message:
+        "Один или несколько хостов не поддерживают зашифрованную передачу. Во время этой отправки Paseo передаст подготовленный источником контекст как читаемый текст в памяти. Он не будет сохранён в черновике или очереди.",
+      confirm: "Использовать совместимую передачу",
+    },
+    transferNote:
+      "Контекст между хостами защищён сквозным шифрованием, если его поддерживают оба демона. Для старых демонов требуется явная совместимая передача.",
   },
   loadOlderHistory: {
     failed: "Не удалось загрузить старую историю.",

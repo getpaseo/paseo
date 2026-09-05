@@ -66,8 +66,10 @@ export function toStoredAgentRecord(
 ): StoredAgentRecord {
   const createdAt = options?.createdAt ?? agent.createdAt.toISOString();
   const config = buildSerializableConfig(agent.config);
-  const persistence = sanitizePersistenceHandle(agent.persistence);
-  const runtimeInfo = sanitizeRuntimeInfo(agent.runtimeInfo);
+  // Stored records are private resume state. Public status projections apply
+  // redaction separately without removing credentials required for resumption.
+  const persistence = sanitizePersistenceHandle(agent.persistence, false);
+  const runtimeInfo = sanitizeRuntimeInfo(agent.runtimeInfo, false);
 
   return {
     id: agent.id,
@@ -175,8 +177,9 @@ function buildStoredRuntimeInfo(record: StoredAgentRecord): AgentRuntimeInfo | u
   if (Object.prototype.hasOwnProperty.call(ri, "modeId")) {
     runtimeInfo.modeId = ri.modeId ?? null;
   }
-  if (ri.extra) {
-    runtimeInfo.extra = ri.extra;
+  const extra = sanitizeMetadata(ri.extra);
+  if (extra !== undefined) {
+    runtimeInfo.extra = extra;
   }
   return runtimeInfo;
 }
@@ -188,7 +191,7 @@ function buildStoredPersistenceHandle(
   if (!isStoredAgentProviderAvailable(record, validProviders)) {
     return null;
   }
-  return toAgentPersistenceHandle(validProviders, record.persistence);
+  return sanitizePersistenceHandle(toAgentPersistenceHandle(validProviders, record.persistence));
 }
 
 export function buildStoredAgentPayload(
@@ -272,7 +275,11 @@ export function toAgentListItemPayload(agent: AgentSnapshotPayload): AgentListIt
 }
 
 export function toRecentProviderSessionDescriptorPayload(
-  session: ImportableProviderSession & { provider: string },
+  session: ImportableProviderSession & {
+    provider: string;
+    canContinueHere?: boolean;
+    isTargetCwd?: boolean;
+  },
   options: RecentProviderSessionProjectionOptions,
 ): RecentProviderSessionDescriptorPayload {
   return {
@@ -284,6 +291,8 @@ export function toRecentProviderSessionDescriptorPayload(
     firstPromptPreview: session.firstPromptPreview,
     lastPromptPreview: session.lastPromptPreview,
     lastActivityAt: session.lastActivityAt.toISOString(),
+    ...(session.canContinueHere !== undefined ? { canContinueHere: session.canContinueHere } : {}),
+    ...(session.isTargetCwd !== undefined ? { isTargetCwd: session.isTargetCwd } : {}),
   };
 }
 
@@ -316,13 +325,13 @@ function buildSerializableConfig(config: AgentSessionConfig): SerializableAgentC
     serializable.thinkingOptionId = config.thinkingOptionId;
   }
   if (Object.prototype.hasOwnProperty.call(config, "featureValues")) {
-    const featureValues = sanitizeMetadata(config.featureValues);
+    const featureValues = sanitizeMetadata(config.featureValues, false);
     if (featureValues !== undefined) {
       serializable.featureValues = featureValues;
     }
   }
   if (config.providerOptions !== undefined) {
-    const providerOptions = sanitizeOptionalJson(config.providerOptions);
+    const providerOptions = sanitizeOptionalJson(config.providerOptions, undefined, false);
     if (providerOptions && isJsonObject(providerOptions)) {
       serializable.providerOptions = providerOptions;
     }
@@ -356,6 +365,7 @@ function sanitizePendingPermissions(
 
 function sanitizePersistenceHandle(
   handle: AgentPersistenceHandle | null,
+  redactSensitive = true,
 ): AgentPersistenceHandle | null {
   if (!handle) {
     return null;
@@ -367,7 +377,7 @@ function sanitizePersistenceHandle(
   if (handle.nativeHandle !== undefined) {
     sanitized.nativeHandle = handle.nativeHandle;
   }
-  const metadata = sanitizeMetadata(handle.metadata);
+  const metadata = sanitizeMetadata(handle.metadata, redactSensitive);
   if (metadata !== undefined) {
     sanitized.metadata = metadata;
   }
@@ -400,7 +410,22 @@ function normalizeFeatures(features: AgentFeature[] | null | undefined): AgentFe
   return Array.isArray(features) ? features.map((feature) => ({ ...feature })) : [];
 }
 
-function sanitizeOptionalJson(value: unknown): JsonValue | undefined {
+const SENSITIVE_METADATA_KEYS = new Set([
+  "authorization",
+  "proxy-authorization",
+  "cookie",
+  "set-cookie",
+  "x-api-key",
+]);
+
+function sanitizeOptionalJson(
+  value: unknown,
+  key?: string,
+  redactSensitive = true,
+): JsonValue | undefined {
+  if (redactSensitive && key && SENSITIVE_METADATA_KEYS.has(key.toLowerCase())) {
+    return "[REDACTED]";
+  }
   if (value === undefined) {
     return undefined;
   }
@@ -409,7 +434,7 @@ function sanitizeOptionalJson(value: unknown): JsonValue | undefined {
   }
   if (Array.isArray(value)) {
     const sanitized = value
-      .map((item) => sanitizeOptionalJson(item))
+      .map((item) => sanitizeOptionalJson(item, undefined, redactSensitive))
       .filter((item) => item !== undefined);
     return sanitized;
   }
@@ -418,10 +443,10 @@ function sanitizeOptionalJson(value: unknown): JsonValue | undefined {
   }
   if (typeof value === "object") {
     const result: { [key: string]: JsonValue } = {};
-    for (const [key, val] of Object.entries(value)) {
-      const sanitized = sanitizeOptionalJson(val);
+    for (const [entryKey, val] of Object.entries(value)) {
+      const sanitized = sanitizeOptionalJson(val, entryKey, redactSensitive);
       if (sanitized !== undefined) {
-        result[key] = sanitized;
+        result[entryKey] = sanitized;
       }
     }
     return Object.keys(result).length ? result : undefined;
@@ -436,8 +461,8 @@ function isJsonObject(value: JsonValue): value is { [key: string]: JsonValue } {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function sanitizeMetadata(value: unknown): AgentMetadata | undefined {
-  const sanitized = sanitizeOptionalJson(value);
+function sanitizeMetadata(value: unknown, redactSensitive = true): AgentMetadata | undefined {
+  const sanitized = sanitizeOptionalJson(value, undefined, redactSensitive);
   if (!sanitized || !isJsonObject(sanitized)) {
     return undefined;
   }
@@ -493,6 +518,7 @@ function sanitizeUsage(value: unknown): AgentUsage | undefined {
 
 function sanitizeRuntimeInfo(
   runtimeInfo: AgentRuntimeInfo | undefined,
+  redactSensitive = true,
 ): AgentRuntimeInfo | undefined {
   if (!runtimeInfo) {
     return undefined;
@@ -510,7 +536,7 @@ function sanitizeRuntimeInfo(
   if (runtimeInfo.modeId !== undefined) {
     sanitized.modeId = runtimeInfo.modeId;
   }
-  const extra = sanitizeMetadata(runtimeInfo.extra);
+  const extra = sanitizeMetadata(runtimeInfo.extra, redactSensitive);
   if (extra !== undefined) {
     sanitized.extra = extra;
   }

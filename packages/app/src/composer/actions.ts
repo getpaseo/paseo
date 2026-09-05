@@ -17,6 +17,10 @@ import { createUserMessage, generateMessageId, type UserMessageItem } from "@/ty
 import type { MessageSubmissionRejectionOutcome } from "@/composer/submission/model";
 import type { PickedImageAttachmentInput } from "@/hooks/image-attachment-picker";
 import { i18n } from "@/i18n/i18next";
+import {
+  prepareAgentContextAttachmentsForSubmit,
+  type AgentContextSubmitRuntime,
+} from "@/attachments/agent-context-transfer";
 
 export interface QueuedComposerMessage {
   id: string;
@@ -174,6 +178,8 @@ export interface DispatchComposerAgentMessageInput {
   text: string;
   attachments: ComposerAttachment[];
   attachmentSubmitFormat?: ComposerAttachmentSubmitFormat;
+  destinationServerId?: string;
+  agentContextRuntime?: AgentContextSubmitRuntime;
   encodeImages: (
     images: AttachmentMetadata[],
   ) => Promise<Array<{ data: string; mimeType: string }> | undefined>;
@@ -185,7 +191,14 @@ export interface DispatchComposerAgentMessageInput {
 export async function dispatchComposerAgentMessage(
   input: DispatchComposerAgentMessageInput,
 ): Promise<void> {
-  const wirePayload = splitComposerAttachmentsForSubmit(input.attachments, {
+  const preparedAttachments = input.destinationServerId
+    ? await prepareAgentContextAttachmentsForSubmit({
+        attachments: input.attachments,
+        destinationServerId: input.destinationServerId,
+        runtime: input.agentContextRuntime,
+      })
+    : input.attachments;
+  const wirePayload = splitComposerAttachmentsForSubmit(preparedAttachments, {
     format: input.attachmentSubmitFormat,
   });
   const clientMessageId = generateMessageId();
@@ -332,6 +345,9 @@ export function openComposerAttachment(input: OpenComposerAttachmentInput): void
     return;
   }
   if (input.attachment.kind === "file" || input.attachment.kind === "workspace_file") {
+    return;
+  }
+  if (input.attachment.kind === "agent_context") {
     return;
   }
   if (isWorkspaceAttachment(input.attachment)) {

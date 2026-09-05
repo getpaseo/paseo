@@ -129,6 +129,7 @@ export const zhCN: TranslationResources = {
       addImage: "添加图片",
       pasteImage: "粘贴图片",
       addFile: "Upload file",
+      addAgent: "附加 Agent",
       addIssueOrPr: "添加 issue 或 PR",
       addIssueOrPr_mr: "添加 issue 或 MR",
       dropImagesHere: "将图片拖放到这里",
@@ -138,6 +139,7 @@ export const zhCN: TranslationResources = {
       openImage: "打开图片附件",
       removeImage: "移除图片附件",
       removeFile: "Remove file attachment",
+      removeAgent: "移除来自 {{title}} 的 Agent 上下文",
       openGithub: "打开 {{kind}} {{number}}",
       removeGithub: "移除 {{kind}} {{number}}",
       element: "元素",
@@ -319,6 +321,7 @@ export const zhCN: TranslationResources = {
       textAttachment: "文本附件",
       text: "文本",
       file: "文件",
+      agent: "Agent 上下文",
     },
     speak: {
       header: "已朗读",
@@ -381,6 +384,8 @@ export const zhCN: TranslationResources = {
     },
     actions: {
       refresh: "刷新会话",
+      resumeOriginal: "恢复原会话",
+      continueHere: "在此继续",
       showAll: "显示全部",
       loadMore: "加载更多",
     },
@@ -396,6 +401,8 @@ export const zhCN: TranslationResources = {
     },
     row: {
       importing: "正在导入...",
+      continuing: "正在继续...",
+      continueHint: "将在此创建新的对话。源文件和更改会保留在源 worktree 中。",
     },
   },
   workspace: {
@@ -1461,10 +1468,52 @@ export const zhCN: TranslationResources = {
   },
   agentAutocomplete: {
     searchingWorkspace: "正在搜索 workspace...",
+    searchingMentions: "正在搜索智能体和 workspace...",
     loadingCommands: "正在加载 commands...",
     noFiles: "没有找到文件或目录",
+    noMentionResults: "没有找到智能体、文件或目录",
     noCommands: "没有找到 commands",
+    agents: "智能体",
+    filesAndFolders: "文件和文件夹",
+    agent: "智能体",
     failedToLoad: "加载失败",
+  },
+  agentContext: {
+    title: "附加 Agent",
+    subtitle: "为此 Agent 添加任意已连接主机上的 Agent 上下文。",
+    searchPlaceholder: "搜索 Agent...",
+    groups: {
+      workspace: "此工作区",
+      project: "此项目",
+      other: "其他项目",
+    },
+    status: {
+      attached: "已附加",
+      secureTransfer: "端到端加密传输",
+      compatibilityTransfer: "兼容传输 — 应用会中继可读上下文",
+      transferUnavailable: "请更新源主机以传输此上下文。",
+      transferChanged: "主机兼容性已更改。请检查所选 Agent 后重试。",
+      updateHost: "请更新主机以附加 Agent 上下文。",
+      wrongHost: "只能附加所选主机上的 Agent。",
+      loading: "正在加载 Agent...",
+      failed: "无法加载 Agent。",
+      noMatches: "没有匹配的 Agent",
+      empty: "没有可用的 Agent",
+      limitReached: "最多可以附加 {{count}} 个 Agent。",
+    },
+    selectionCount: "已选择 {{count}} 个",
+    actions: {
+      attach: "附加",
+      loadMore: "加载更多",
+    },
+    compatibility: {
+      title: "使用兼容传输？",
+      message:
+        "一个或多个主机不支持加密传输。本次发送期间，Paseo 会在内存中将源端整理的上下文作为可读文本中继。它不会保存到草稿或队列中。",
+      confirm: "使用兼容传输",
+    },
+    transferNote:
+      "当两个守护进程都支持时，跨主机上下文使用端到端加密。旧版守护进程需要明确选择兼容传输。",
   },
   loadOlderHistory: {
     failed: "无法加载更早历史",

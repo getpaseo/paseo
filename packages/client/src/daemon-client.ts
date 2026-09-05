@@ -15,6 +15,7 @@ import {
   DaemonUpdateResponseSchema,
   SessionInboundMessageSchema,
   type ActiveTurnBehavior,
+  type AgentContextTransferEnvelope,
   type ServerInfoStatusPayload,
 } from "@getpaseo/protocol/messages";
 import { validateWSOutboundMessage } from "@getpaseo/protocol/validation/ws-outbound";
@@ -195,6 +196,13 @@ export type ImportAgentInput =
       provider: AgentProvider;
       sessionId: string;
     });
+
+export interface ContinueProviderSessionInput {
+  providerId: string;
+  providerHandleId: string;
+  sourceCwd: string;
+  workspaceId: string;
+}
 
 function normalizePassword(value: string | undefined): string | null {
   if (typeof value !== "string") {
@@ -616,6 +624,17 @@ function normalizeListCommandsOptions(
 export interface AgentForkContextOptions {
   boundaryCursor?: FetchAgentTimelineCursor;
   boundaryMessageId?: string;
+  requestId?: string;
+}
+
+export interface AgentContextTransferRecipient {
+  serverId: string;
+  publicKeyB64: string;
+}
+
+export interface ExportAgentContextTransferInput {
+  agentId: string;
+  destination: AgentContextTransferRecipient;
   requestId?: string;
 }
 
@@ -2093,6 +2112,7 @@ export class DaemonClient {
       type: "fetch_recent_provider_sessions_request",
       requestId: resolvedRequestId,
       ...(options?.cwd ? { cwd: options.cwd } : {}),
+      ...(options?.targetCwd ? { targetCwd: options.targetCwd } : {}),
       ...(options?.providers ? { providers: options.providers } : {}),
       ...(options?.since ? { since: options.since } : {}),
       ...(options?.limit ? { limit: options.limit } : {}),
@@ -2831,6 +2851,29 @@ export class DaemonClient {
     return status.agent;
   }
 
+  async continueProviderSession(
+    input: ContinueProviderSessionInput,
+  ): Promise<AgentSnapshotPayload> {
+    const requestId = this.createRequestId();
+    const message = SessionInboundMessageSchema.parse({
+      type: "provider.session.continue.request",
+      requestId,
+      ...input,
+    });
+    const payload = await this.sendRequest({
+      requestId,
+      message,
+      options: { skipQueue: true },
+      select: (msg) => {
+        if (msg.type !== "provider.session.continue.response") {
+          return null;
+        }
+        return msg.payload.requestId === requestId ? msg.payload : null;
+      },
+    });
+    return payload.agent;
+  }
+
   async refreshAgent(agentId: string, requestId?: string): Promise<AgentRefreshedStatusPayload> {
     const resolvedRequestId = this.createRequestId(requestId);
     const message = SessionInboundMessageSchema.parse({
@@ -3056,6 +3099,41 @@ export class DaemonClient {
     }
 
     return payload;
+  }
+
+  async getAgentContextTransferRecipient(
+    requestId?: string,
+  ): Promise<AgentContextTransferRecipient> {
+    const payload =
+      await this.sendNamespacedCorrelatedSessionRequest<"agent.context.get_transfer_recipient.response">(
+        {
+          ...(requestId ? { requestId } : {}),
+          message: { type: "agent.context.get_transfer_recipient.request" },
+        },
+      );
+    if (payload.error || !payload.recipient) {
+      throw new Error(payload.error ?? "Host cannot receive cross-host agent context.");
+    }
+    return payload.recipient;
+  }
+
+  async exportAgentContextTransfer(
+    input: ExportAgentContextTransferInput,
+  ): Promise<AgentContextTransferEnvelope> {
+    const payload =
+      await this.sendNamespacedCorrelatedSessionRequest<"agent.context.export_transfer.response">({
+        ...(input.requestId ? { requestId: input.requestId } : {}),
+        message: {
+          type: "agent.context.export_transfer.request",
+          agentId: input.agentId,
+          destinationServerId: input.destination.serverId,
+          destinationPublicKeyB64: input.destination.publicKeyB64,
+        },
+      });
+    if (payload.error || !payload.transfer) {
+      throw new Error(payload.error ?? "Host could not export cross-host agent context.");
+    }
+    return payload.transfer;
   }
 
   // ============================================================================
