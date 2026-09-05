@@ -1147,6 +1147,17 @@ export const zhCN: TranslationResources = {
       },
     },
     workspace: {
+      selection: {
+        title: "工作区",
+        manage: "管理工作区",
+        selected: "已选择 {{count}} 个",
+        done: "完成",
+        selectAll: "全选",
+        deselectAll: "取消全选",
+        archive: "归档（{{count}}）",
+        archiving: "正在归档...",
+        archiveFailed: "部分工作区无法归档",
+      },
       status: {
         serviceRunning: "服务 {{name}} 运行中",
         serviceUnhealthy: "服务 {{name}} 异常",

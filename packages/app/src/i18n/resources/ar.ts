@@ -1157,6 +1157,17 @@ export const ar: TranslationResources = {
       },
     },
     workspace: {
+      selection: {
+        title: "مساحات العمل",
+        manage: "إدارة مساحات العمل",
+        selected: "تم تحديد {{count}}",
+        done: "تم",
+        selectAll: "تحديد الكل",
+        deselectAll: "إلغاء تحديد الكل",
+        archive: "أرشفة ({{count}})",
+        archiving: "جارٍ الأرشفة...",
+        archiveFailed: "تعذرت أرشفة بعض مساحات العمل",
+      },
       status: {
         serviceRunning: "الخدمة {{name}} قيد التشغيل",
         serviceUnhealthy: "الخدمة {{name}} غير سليمة",

@@ -1,5 +1,14 @@
 import { router } from "expo-router";
-import { FolderPlus, GitBranch, Import, Server, Settings, X } from "lucide-react-native";
+import {
+  Archive,
+  FolderPlus,
+  GitBranch,
+  Import,
+  ListChecks,
+  Server,
+  Settings,
+  X,
+} from "lucide-react-native";
 import { useTranslation } from "react-i18next";
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import {
@@ -27,6 +36,7 @@ import { SidebarNavRows } from "@/components/sidebar/sidebar-nav-rows";
 import { SidebarHelpMenu } from "@/components/sidebar/sidebar-help-menu";
 import { SidebarResizeHandle } from "@/components/sidebar-resize-handle";
 import { Shortcut } from "@/components/ui/shortcut";
+import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { HEADER_INNER_HEIGHT, useIsCompactFormFactor } from "@/constants/layout";
 import { useOpenAddProject } from "@/hooks/use-open-add-project";
@@ -52,6 +62,10 @@ import { openHostOverview } from "@/navigation/settings-navigation";
 import { SidebarAgentListSkeleton } from "./sidebar-agent-list-skeleton";
 import { SidebarCalloutSlot } from "./sidebar-callout-slot";
 import { SidebarWorkspaceList } from "./sidebar-workspace-list";
+import {
+  SidebarWorkspaceSelectionProvider,
+  useSidebarWorkspaceSelection,
+} from "@/components/sidebar/sidebar-workspace-selection";
 
 type SidebarTheme = ReturnType<typeof useUnistyles>["theme"];
 
@@ -104,6 +118,15 @@ interface DesktopSidebarProps extends SidebarSharedProps {
 }
 
 export const LeftSidebar = memo(function LeftSidebar({ active }: { active: boolean }) {
+  const { workspaceEntriesByKey } = useSidebarModel();
+  return (
+    <SidebarWorkspaceSelectionProvider workspaceEntriesByKey={workspaceEntriesByKey}>
+      <LeftSidebarContent active={active} />
+    </SidebarWorkspaceSelectionProvider>
+  );
+});
+
+const LeftSidebarContent = memo(function LeftSidebarContent({ active }: { active: boolean }) {
   const { theme } = useUnistyles();
   const { t } = useTranslation();
   const insets = useSafeAreaInsets();
@@ -466,6 +489,41 @@ function SidebarFooter({
 }) {
   const newAgentKeys = useShortcutKeys("new-agent");
   const settingsKeys = useShortcutKeys("toggle-settings");
+  const selection = useSidebarWorkspaceSelection();
+  const { t } = useTranslation();
+
+  if (selection.isManaging) {
+    return (
+      <View style={styles.workspaceSelectionFooter} testID="sidebar-workspace-selection-footer">
+        <Button
+          variant="outline"
+          size="sm"
+          style={styles.workspaceSelectionButton}
+          disabled={selection.isArchiving || selection.availableCount === 0}
+          onPress={selection.toggleSelectAll}
+          testID="sidebar-workspace-select-all"
+        >
+          {selection.allSelected
+            ? t("sidebar.workspace.selection.deselectAll")
+            : t("sidebar.workspace.selection.selectAll")}
+        </Button>
+        <Button
+          variant="destructive"
+          size="sm"
+          style={styles.workspaceSelectionArchiveButton}
+          leftIcon={Archive}
+          loading={selection.isArchiving}
+          disabled={selection.selectedCount === 0}
+          onPress={selection.archiveSelected}
+          testID="sidebar-workspace-archive-selected"
+        >
+          {selection.isArchiving
+            ? t("sidebar.workspace.selection.archiving")
+            : t("sidebar.workspace.selection.archive", { count: selection.selectedCount })}
+        </Button>
+      </View>
+    );
+  }
 
   return (
     <View style={styles.sidebarFooter}>
@@ -801,20 +859,73 @@ function DesktopSidebar({
 }
 
 function WorkspacesSectionHeader() {
+  const { theme } = useUnistyles();
+  const { t } = useTranslation();
+  const selection = useSidebarWorkspaceSelection();
+  const manageButtonStyle = useCallback(
+    ({ hovered = false, pressed }: PressableStateCallbackType & { hovered?: boolean }) => [
+      styles.workspacesHeaderIconButton,
+      (hovered || pressed) && styles.workspacesHeaderIconButtonHovered,
+    ],
+    [],
+  );
+
   return (
     <View style={styles.workspacesSectionHeader}>
-      <Text style={styles.workspacesSectionTitle}>Workspaces</Text>
+      <Text style={styles.workspacesSectionTitle}>
+        {selection.isManaging
+          ? t("sidebar.workspace.selection.selected", { count: selection.selectedCount })
+          : t("sidebar.workspace.selection.title")}
+      </Text>
       <View style={styles.workspacesSectionActions}>
-        <Tooltip delayDuration={300}>
-          <TooltipTrigger asChild>
-            <View>
-              <SidebarDisplayPreferencesMenu />
-            </View>
-          </TooltipTrigger>
-          <TooltipContent side="bottom" align="center" offset={8}>
-            <IconTooltipContent label="Display preferences" />
-          </TooltipContent>
-        </Tooltip>
+        {selection.isManaging ? (
+          <Button
+            variant="ghost"
+            size="xs"
+            disabled={selection.isArchiving}
+            onPress={selection.finishManaging}
+            testID="sidebar-workspace-manage-done"
+          >
+            {t("sidebar.workspace.selection.done")}
+          </Button>
+        ) : null}
+        {!selection.isManaging && selection.availableCount > 0 ? (
+          <Tooltip delayDuration={300}>
+            <TooltipTrigger asChild>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={t("sidebar.workspace.selection.manage")}
+                testID="sidebar-workspace-manage"
+                style={manageButtonStyle}
+                onPress={selection.beginManaging}
+              >
+                {({ hovered, pressed }) => (
+                  <ListChecks
+                    size={14}
+                    color={
+                      hovered || pressed ? theme.colors.foreground : theme.colors.foregroundMuted
+                    }
+                  />
+                )}
+              </Pressable>
+            </TooltipTrigger>
+            <TooltipContent side="bottom" align="center" offset={8}>
+              <IconTooltipContent label={t("sidebar.workspace.selection.manage")} />
+            </TooltipContent>
+          </Tooltip>
+        ) : null}
+        {!selection.isManaging ? (
+          <Tooltip delayDuration={300}>
+            <TooltipTrigger asChild>
+              <View>
+                <SidebarDisplayPreferencesMenu />
+              </View>
+            </TooltipTrigger>
+            <TooltipContent side="bottom" align="center" offset={8}>
+              <IconTooltipContent label="Display preferences" />
+            </TooltipContent>
+          </Tooltip>
+        ) : null}
       </View>
     </View>
   );
@@ -869,6 +980,16 @@ const styles = StyleSheet.create((theme) => ({
     flexDirection: "row",
     alignItems: "center",
     gap: theme.spacing[1],
+  },
+  workspacesHeaderIconButton: {
+    width: 28,
+    height: 28,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: theme.borderRadius.md,
+  },
+  workspacesHeaderIconButtonHovered: {
+    backgroundColor: theme.colors.surfaceSidebarHover,
   },
   sidebarContent: {
     flex: 1,
@@ -937,6 +1058,21 @@ const styles = StyleSheet.create((theme) => ({
     paddingVertical: theme.spacing[3],
     borderTopWidth: 1,
     borderTopColor: theme.colors.border,
+  },
+  workspaceSelectionFooter: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
+    paddingHorizontal: theme.spacing[2],
+    paddingVertical: theme.spacing[3],
+    borderTopWidth: 1,
+    borderTopColor: theme.colors.border,
+  },
+  workspaceSelectionButton: {
+    flex: 1,
+  },
+  workspaceSelectionArchiveButton: {
+    flex: 1.35,
   },
   footerIconRow: {
     flexDirection: "row",

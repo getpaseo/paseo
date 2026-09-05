@@ -1169,6 +1169,17 @@ export const ja: TranslationResources = {
       },
     },
     workspace: {
+      selection: {
+        title: "ワークスペース",
+        manage: "ワークスペースを管理",
+        selected: "{{count}}件選択中",
+        done: "完了",
+        selectAll: "すべて選択",
+        deselectAll: "すべて選択解除",
+        archive: "アーカイブ（{{count}}）",
+        archiving: "アーカイブ中...",
+        archiveFailed: "一部のワークスペースをアーカイブできませんでした",
+      },
       status: {
         serviceRunning: "サービス {{name}} 実行中",
         serviceUnhealthy: "サービス {{name}} 異常",

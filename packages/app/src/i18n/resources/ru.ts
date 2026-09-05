@@ -1173,6 +1173,17 @@ export const ru: TranslationResources = {
       },
     },
     workspace: {
+      selection: {
+        title: "Рабочие пространства",
+        manage: "Управление рабочими пространствами",
+        selected: "Выбрано: {{count}}",
+        done: "Готово",
+        selectAll: "Выбрать все",
+        deselectAll: "Снять выделение",
+        archive: "Архивировать ({{count}})",
+        archiving: "Архивация...",
+        archiveFailed: "Не удалось архивировать некоторые рабочие пространства",
+      },
       status: {
         serviceRunning: "Сервис {{name}} запущен",
         serviceUnhealthy: "Сервис {{name}} работает некорректно",

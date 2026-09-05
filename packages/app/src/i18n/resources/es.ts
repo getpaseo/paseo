@@ -1191,6 +1191,17 @@ export const es: TranslationResources = {
       },
     },
     workspace: {
+      selection: {
+        title: "Espacios de trabajo",
+        manage: "Gestionar espacios de trabajo",
+        selected: "{{count}} seleccionados",
+        done: "Listo",
+        selectAll: "Seleccionar todo",
+        deselectAll: "Deseleccionar todo",
+        archive: "Archivar ({{count}})",
+        archiving: "Archivando...",
+        archiveFailed: "No se pudieron archivar algunos espacios de trabajo",
+      },
       status: {
         serviceRunning: "Servicio {{name}} en ejecución",
         serviceUnhealthy: "Servicio {{name}} con fallos",

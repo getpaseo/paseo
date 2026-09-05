@@ -1164,6 +1164,17 @@ export const ko: TranslationResources = {
       },
     },
     workspace: {
+      selection: {
+        title: "워크스페이스",
+        manage: "워크스페이스 관리",
+        selected: "{{count}}개 선택됨",
+        done: "완료",
+        selectAll: "모두 선택",
+        deselectAll: "모두 선택 해제",
+        archive: "보관 ({{count}})",
+        archiving: "보관 중...",
+        archiveFailed: "일부 워크스페이스를 보관하지 못했습니다",
+      },
       status: {
         serviceRunning: "서비스 {{name}} 실행 중",
         serviceUnhealthy: "서비스 {{name}} 비정상",

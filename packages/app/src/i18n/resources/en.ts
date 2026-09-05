@@ -1166,6 +1166,17 @@ export const en = {
       },
     },
     workspace: {
+      selection: {
+        title: "Workspaces",
+        manage: "Manage workspaces",
+        selected: "{{count}} selected",
+        done: "Done",
+        selectAll: "Select all",
+        deselectAll: "Deselect all",
+        archive: "Archive ({{count}})",
+        archiving: "Archiving...",
+        archiveFailed: "Some workspaces could not be archived",
+      },
       status: {
         serviceRunning: "Service {{name}} running",
         serviceUnhealthy: "Service {{name}} unhealthy",

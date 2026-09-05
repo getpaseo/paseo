@@ -79,6 +79,7 @@ import type { ToggleSidebarWorkspacePin } from "@/hooks/use-sidebar-workspace-pi
 import { DraggableList, type DraggableRenderItemInfo } from "@/components/draggable-list";
 import type { DraggableListDragHandleProps } from "@/components/draggable-list.types";
 import { useLongPressDragInteraction } from "@/components/sidebar/use-long-press-drag-interaction";
+import { useSidebarWorkspaceSelection } from "@/components/sidebar/sidebar-workspace-selection";
 
 // Themed icon wrappers
 const foregroundMutedColorMapping = (theme: Theme) => ({
@@ -524,15 +525,27 @@ const StatusWorkspaceRow = memo(function StatusWorkspaceRow({
   dragHandleProps?: DraggableListDragHandleProps;
 }) {
   const activeWorkspaceSelection = useActiveWorkspaceSelection();
-  const selected =
+  const selection = useSidebarWorkspaceSelection();
+  const routeSelected =
     activeWorkspaceSelection?.serverId === workspace.serverId &&
     activeWorkspaceSelection?.workspaceId === workspace.workspaceId;
+  const selectionChecked = selection.isWorkspaceSelected(workspace.workspaceKey);
 
   const handlePress = useCallback(() => {
+    if (selection.isManaging) {
+      selection.toggleWorkspace(workspace.workspaceKey);
+      return;
+    }
     if (!workspace.serverId) return;
     onWorkspacePress?.();
     navigateToWorkspace({ serverId: workspace.serverId, workspaceId: workspace.workspaceId });
-  }, [onWorkspacePress, workspace.serverId, workspace.workspaceId]);
+  }, [
+    onWorkspacePress,
+    selection,
+    workspace.serverId,
+    workspace.workspaceId,
+    workspace.workspaceKey,
+  ]);
 
   return (
     <StatusWorkspaceRowWithMenu
@@ -540,7 +553,9 @@ const StatusWorkspaceRow = memo(function StatusWorkspaceRow({
       hostBadge={hostBadge}
       projectName={projectName}
       projectIconDataUri={projectIconDataUri}
-      selected={selected}
+      selected={selection.isManaging ? selectionChecked : routeSelected}
+      selectionMode={selection.isManaging}
+      selectionChecked={selectionChecked}
       shortcutNumber={shortcutNumber}
       showShortcutBadge={showShortcutBadge}
       canPin={canPin}
@@ -548,9 +563,9 @@ const StatusWorkspaceRow = memo(function StatusWorkspaceRow({
       reserveIdleStatusIndicatorSpace={reserveIdleStatusIndicatorSpace}
       inStatusGroup={inStatusGroup}
       onPress={handlePress}
-      drag={drag}
+      drag={selection.isManaging ? undefined : drag}
       isDragging={isDragging}
-      dragHandleProps={dragHandleProps}
+      dragHandleProps={selection.isManaging ? undefined : dragHandleProps}
     />
   );
 });
@@ -561,6 +576,8 @@ function StatusWorkspaceRowWithMenu({
   projectName,
   projectIconDataUri,
   selected,
+  selectionMode,
+  selectionChecked,
   shortcutNumber,
   showShortcutBadge,
   canPin,
@@ -577,6 +594,8 @@ function StatusWorkspaceRowWithMenu({
   projectName: string;
   projectIconDataUri: string | null;
   selected: boolean;
+  selectionMode: boolean;
+  selectionChecked: boolean;
   shortcutNumber: number | null;
   showShortcutBadge: boolean;
   canPin: boolean;
@@ -654,7 +673,7 @@ function StatusWorkspaceRowWithMenu({
   useKeyboardActionHandler({
     handlerId: `workspace-archive-${workspace.workspaceKey}`,
     actions: ["workspace.archive"],
-    enabled: selected && !isArchiving,
+    enabled: !selectionMode && selected && !isArchiving,
     priority: 0,
     handle: () => {
       handleArchive();
@@ -670,6 +689,8 @@ function StatusWorkspaceRowWithMenu({
         projectName={projectName}
         projectIconDataUri={projectIconDataUri}
         selected={selected}
+        selectionMode={selectionMode}
+        selectionChecked={selectionChecked}
         shortcutNumber={shortcutNumber}
         showShortcutBadge={showShortcutBadge}
         onPress={onPress}
@@ -707,6 +728,8 @@ interface StatusWorkspaceRowInnerProps {
   projectName: string;
   projectIconDataUri: string | null;
   selected: boolean;
+  selectionMode: boolean;
+  selectionChecked: boolean;
   shortcutNumber: number | null;
   showShortcutBadge: boolean;
   onPress: () => void;
@@ -753,6 +776,8 @@ function StatusWorkspaceRowInnerContent({
   projectName,
   projectIconDataUri,
   selected,
+  selectionMode,
+  selectionChecked,
   shortcutNumber,
   showShortcutBadge,
   onPress,
@@ -790,7 +815,10 @@ function StatusWorkspaceRowInnerContent({
   const isDesktop = !isTouchPlatform;
   const serviceSummary = isDesktop ? selectWorkspaceServiceSummary(workspace.scripts) : null;
 
-  const accessibilityState = useMemo(() => ({ selected }), [selected]);
+  const accessibilityState = useMemo(
+    () => (selectionMode ? { checked: selectionChecked } : { selected }),
+    [selected, selectionChecked, selectionMode],
+  );
   const didLongPressRef = dragInteraction?.didLongPressRef;
   const startDragPress = dragInteraction?.handlePressIn;
   const moveDragPress = dragInteraction?.handleTouchMove;
@@ -815,7 +843,11 @@ function StatusWorkspaceRowInnerContent({
   }, [endDragPress]);
 
   return (
-    <SidebarWorkspaceRowFrame workspace={workspace} isDragging={isDragging}>
+    <SidebarWorkspaceRowFrame
+      workspace={workspace}
+      isDragging={isDragging}
+      disableHoverCard={selectionMode}
+    >
       {({ isHovered, contextMenuOpen, onContextMenuOpenChange, hoverHandlers }) => {
         const showShortcut = showShortcutBadge && shortcutNumber !== null;
         const {
@@ -856,20 +888,22 @@ function StatusWorkspaceRowInnerContent({
               hostBadgeLabel={hostBadge?.label}
               serviceSummary={serviceSummary}
               workspaceKey={workspace.workspaceKey}
-              onCopyPath={onCopyPath}
-              onCopyBranchName={onCopyBranchName}
-              onRename={onRename}
-              onMarkAsRead={onMarkAsRead}
-              onArchive={onArchive}
+              onCopyPath={selectionMode ? undefined : onCopyPath}
+              onCopyBranchName={selectionMode ? undefined : onCopyBranchName}
+              onRename={selectionMode ? undefined : onRename}
+              onMarkAsRead={selectionMode ? undefined : onMarkAsRead}
+              onArchive={selectionMode ? undefined : onArchive}
               archiveLabel={archiveLabel}
               archiveStatus={archiveStatus}
               archivePendingLabel={archivePendingLabel}
               archiveShortcutKeys={archiveShortcutKeys}
               isPinned={isPinned}
-              onTogglePin={onTogglePin}
+              onTogglePin={selectionMode ? undefined : onTogglePin}
               openInFileManagerPath={workspace.workspaceDirectory}
+              enabled={!selectionMode}
               disabled={isArchiving}
-              accessibilityRole="button"
+              aria-checked={selectionMode ? selectionChecked : undefined}
+              accessibilityRole={selectionMode ? "checkbox" : "button"}
               accessibilityState={accessibilityState}
               style={workspaceRowStyle}
               highlightStyle={styles.workspaceRowPressed}
@@ -889,10 +923,11 @@ function StatusWorkspaceRowInnerContent({
                 isHovered={isHovered}
                 isLoading={isArchiving}
                 shortcutNumber={shortcutNumber}
-                showShortcutBadge={showShortcutBadge}
+                showShortcutBadge={!selectionMode && showShortcutBadge}
                 reserveIdleStatusIndicatorSpace={reserveIdleStatusIndicatorSpace}
+                selectionChecked={selectionMode ? selectionChecked : undefined}
               >
-                {renderSlot ? (
+                {!selectionMode && renderSlot ? (
                   <StatusWorkspaceActionSlot
                     workspace={workspace}
                     backdrop={backdrop}

@@ -1,7 +1,14 @@
 import { memo, useMemo, useCallback, useState, type ReactNode } from "react";
 import { Text, View, type ViewStyle } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
-import { CircleAlert, Folder, FolderGit2, Monitor } from "lucide-react-native";
+import {
+  CircleAlert,
+  Folder,
+  FolderGit2,
+  Monitor,
+  Square,
+  SquareCheckBig,
+} from "lucide-react-native";
 import { ProjectStatusIndicator } from "@/components/sidebar/project-leading-visual";
 import type { SidebarSurfaceBackdrop } from "@/styles/surface-backdrop";
 import {
@@ -40,14 +47,18 @@ const ThemedCircleAlert = withUnistyles(CircleAlert);
 const ThemedMonitor = withUnistyles(Monitor);
 const ThemedFolder = withUnistyles(Folder);
 const ThemedFolderGit2 = withUnistyles(FolderGit2);
+const ThemedSquare = withUnistyles(Square);
+const ThemedSquareCheckBig = withUnistyles(SquareCheckBig);
 
 export function SidebarWorkspaceRowFrame({
   workspace,
   isDragging = false,
+  disableHoverCard = false,
   children,
 }: {
   workspace: SidebarWorkspaceEntry;
   isDragging?: boolean;
+  disableHoverCard?: boolean;
   children: (input: {
     isHovered: boolean;
     contextMenuOpen: boolean;
@@ -75,7 +86,7 @@ export function SidebarWorkspaceRowFrame({
       workspace={workspace}
       prHint={workspace.prHint}
       isDragging={isDragging}
-      disabled={contextMenuOpen}
+      disabled={contextMenuOpen || disableHoverCard}
     >
       {children({
         isHovered: isHovered && !contextMenuOpen && !isDragging,
@@ -100,6 +111,7 @@ export const SidebarWorkspaceRowContent = memo(function SidebarWorkspaceRowConte
   shortcutNumber = null,
   showShortcutBadge = false,
   reserveIdleStatusIndicatorSpace = true,
+  selectionChecked,
   children,
 }: {
   workspace: SidebarWorkspaceEntry;
@@ -117,6 +129,8 @@ export const SidebarWorkspaceRowContent = memo(function SidebarWorkspaceRowConte
   showShortcutBadge?: boolean;
   /** Keep the empty leading slot when the workspace has no active status. */
   reserveIdleStatusIndicatorSpace?: boolean;
+  /** Defined while sidebar Manage mode replaces the status glyph with a checkbox. */
+  selectionChecked?: boolean;
   children?: ReactNode;
 }) {
   const {
@@ -134,28 +148,36 @@ export const SidebarWorkspaceRowContent = memo(function SidebarWorkspaceRowConte
     ],
     [isHovered, isCreating],
   );
+  let leadingVisual: ReactNode;
+  if (selectionChecked !== undefined) {
+    leadingVisual = <SidebarWorkspaceSelectionIndicator checked={selectionChecked} />;
+  } else if (leadingProjectName) {
+    leadingVisual = (
+      <ProjectStatusIndicator
+        iconDataUri={leadingProjectIconDataUri}
+        displayName={leadingProjectName}
+        projectViewKey={workspace.projectViewKey}
+        statusBucket={workspace.statusBucket}
+        backdrop={backdrop}
+        loading={isLoading}
+        testID={`sidebar-row-project-icon-${workspace.workspaceKey}`}
+      />
+    );
+  } else {
+    leadingVisual = (
+      <WorkspaceStatusIndicator
+        bucket={workspace.statusBucket}
+        workspaceKind={workspace.workspaceKind}
+        loading={isLoading}
+        reserveIdleSpace={reserveIdleStatusIndicatorSpace}
+      />
+    );
+  }
 
   return (
     <View style={styles.workspaceRowContent}>
       <View style={styles.workspaceRowMain}>
-        {leadingProjectName ? (
-          <ProjectStatusIndicator
-            iconDataUri={leadingProjectIconDataUri}
-            displayName={leadingProjectName}
-            projectViewKey={workspace.projectViewKey}
-            statusBucket={workspace.statusBucket}
-            backdrop={backdrop}
-            loading={isLoading}
-            testID={`sidebar-row-project-icon-${workspace.workspaceKey}`}
-          />
-        ) : (
-          <WorkspaceStatusIndicator
-            bucket={workspace.statusBucket}
-            workspaceKind={workspace.workspaceKind}
-            loading={isLoading}
-            reserveIdleSpace={reserveIdleStatusIndicatorSpace}
-          />
-        )}
+        {leadingVisual}
         <View style={styles.workspaceContentColumn}>
           <View style={styles.workspaceTitleRow}>
             <Text style={workspaceBranchTextStyle} numberOfLines={1}>
@@ -181,6 +203,21 @@ export const SidebarWorkspaceRowContent = memo(function SidebarWorkspaceRowConte
     </View>
   );
 });
+
+function SidebarWorkspaceSelectionIndicator({ checked }: { checked: boolean }) {
+  return (
+    <View
+      style={styles.workspaceStatusDot}
+      testID={checked ? "workspace-selection-checked" : "workspace-selection-unchecked"}
+    >
+      {checked ? (
+        <ThemedSquareCheckBig size={16} uniProps={foregroundMutedColorMapping} />
+      ) : (
+        <ThemedSquare size={16} uniProps={foregroundMutedColorMapping} />
+      )}
+    </View>
+  );
+}
 
 function WorkspaceStatusIndicator({
   bucket,

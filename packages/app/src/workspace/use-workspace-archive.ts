@@ -12,7 +12,10 @@ import { useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
 import { buildWorkspaceTabPersistenceKey } from "@/workspace-tabs/model";
 import { archiveWorkspaceOptimistically } from "@/workspace/workspace-archive";
 
-function purgeArchivedWorkspaceState(input: { serverId: string; workspaceId: string }): void {
+export function purgeArchivedWorkspaceState(input: {
+  serverId: string;
+  workspaceId: string;
+}): void {
   const workspaceKey = buildWorkspaceTabPersistenceKey(input);
   if (workspaceKey) {
     useWorkspaceLayoutStore.getState().purgeWorkspace(workspaceKey);
