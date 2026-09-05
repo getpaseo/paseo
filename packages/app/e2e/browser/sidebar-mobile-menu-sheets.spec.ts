@@ -13,6 +13,24 @@ async function closeMenuSheet(page: Page): Promise<void> {
   await expect(backdrop).not.toBeVisible({ timeout: 10_000 });
 }
 
+test("sidebar header Search closes the compact sidebar before opening", async ({ page }) => {
+  const seeded = await seedWorkspace({ repoPrefix: "sidebar-mobile-search-" });
+
+  try {
+    await gotoAppShell(page);
+    await page.getByRole("button", { name: "Open menu", exact: true }).click();
+    await waitForSidebarHydration(page);
+
+    await page.getByTestId("sidebar-command-center-search").click();
+    await expect(page.getByTestId("command-center-panel")).toBeVisible({ timeout: 30_000 });
+    await page.keyboard.press("Escape");
+    await expect(page.getByTestId("command-center-panel")).not.toBeVisible();
+    await expect(page.getByTestId("sidebar-sessions")).not.toBeInViewport({ timeout: 5_000 });
+  } finally {
+    await seeded.cleanup();
+  }
+});
+
 test("project and workspace kebabs open action sheets on compact layouts", async ({ page }) => {
   const seeded = await seedWorkspace({ repoPrefix: "sidebar-mobile-menu-sheet-" });
 
