@@ -39,6 +39,7 @@ import { WindowSidebarMenuToggle } from "@/components/headers/menu-header";
 import { DesktopWindowControls } from "@/components/desktop/window-controls";
 import { SidebarModelProvider } from "@/components/sidebar/sidebar-model";
 import { WorkspacePinShortcutHandler } from "@/components/workspace-pin-shortcut-handler";
+import { WorkspaceRenameHost } from "@/components/workspace-rename-host";
 import { CompactExplorerSidebarHost } from "@/components/compact-explorer-sidebar-host";
 import { ProviderSettingsHost } from "@/components/provider-settings-host";
 import { RootErrorBoundary } from "@/components/root-error-boundary";
@@ -94,7 +95,7 @@ import { useOpenProject } from "@/hooks/use-open-project";
 import { useAppSettings } from "@/hooks/use-settings";
 import { useStableEvent } from "@/hooks/use-stable-event";
 import { useOpenAgentListGesture } from "@/mobile-panels/gestures";
-import { MobilePanelsProvider } from "@/mobile-panels/provider";
+import { MobilePanelsProvider, useIsMobilePanelActive } from "@/mobile-panels/provider";
 import { I18nProvider } from "@/i18n/provider";
 import {
   KeyboardActionDispatcherProvider,
@@ -113,7 +114,7 @@ import {
   useHosts,
 } from "@/runtime/host-runtime";
 import { getDaemonStartService } from "@/runtime/daemon-start-service";
-import { selectIsAgentListOpen, usePanelStore } from "@/stores/panel-store";
+import { usePanelStore } from "@/stores/panel-store";
 import { flushDraftPersistStorage } from "@/stores/draft-store";
 import { getNextThemePreference } from "@/styles/theme";
 import { useSessionStore } from "@/stores/session-store";
@@ -595,6 +596,7 @@ function AppContainer({ children, chromeEnabled: chromeEnabledOverride }: AppCon
       <CommandCenterWorkspaceActions />
       <PluginCommandCenterActions />
       <WorkspacePinShortcutHandler />
+      <WorkspaceRenameHost />
       <CommandCenter />
       <AddProjectFlowHost />
       <HostChooserModal />
@@ -625,10 +627,9 @@ function SidebarChrome({
   keyboardShortcutsEnabled: boolean;
 }) {
   const isCompactLayout = useIsCompactFormFactor();
-  const isOpen = usePanelStore((state) =>
-    selectIsAgentListOpen(state, { isCompact: isCompactLayout }),
-  );
-  const active = visible && isOpen;
+  const isMobileActive = useIsMobilePanelActive("agent-list");
+  const isDesktopOpen = usePanelStore((state) => state.desktop.agentListOpen);
+  const active = visible && (isCompactLayout ? isMobileActive : isDesktopOpen);
   return (
     <SidebarModelProvider active={active}>
       {mounted ? <LeftSidebar active={active} /> : null}
@@ -961,18 +962,9 @@ function RootProviders({ children }: { children: ReactNode }) {
   );
 }
 
-function recordUserActivity(): void {
-  getHostRuntimeStore().recordUserActivity();
-}
-
 function RootAppTree() {
   return (
-    <GestureHandlerRootView
-      style={flexStyle}
-      onTouchStart={recordUserActivity}
-      onTouchEnd={recordUserActivity}
-      onTouchCancel={recordUserActivity}
-    >
+    <GestureHandlerRootView style={flexStyle}>
       <View style={layoutStyles.surfaceFill}>
         <RootProviders>
           <RuntimeProviders>

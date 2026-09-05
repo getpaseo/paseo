@@ -39,6 +39,7 @@ Pick any of these from the in-app provider catalog. Each entry is a one-click in
 - [Dirac](https://dirac.run), open-source agent with hash-anchored parallel edits.
 - [Factory Droid](https://factory.ai/product/cli), Factory AI's coding agent.
 - [fast-agent](https://fast-agent.ai/acp/), multi-provider coding agent.
+- [Gajae Code](https://gajae-code.com), subscription-based coding agent with plan-before-mutation workflows.
 - [Gemini CLI](https://geminicli.com), Google's official Gemini CLI.
 - [GitHub Copilot](https://github.com/features/copilot/cli/), GitHub's AI pair programmer via ACP.
 - [GLM Agent](https://github.com/stefandevo/glm-acp-agent), Zhipu AI's GLM coding agent.

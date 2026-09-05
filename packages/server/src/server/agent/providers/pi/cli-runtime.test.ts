@@ -34,12 +34,13 @@ function createPiChild(): PiChild {
 function createRuntime(
   child: PiChild,
   launches: PiRuntimeLaunch[] = [],
-  options?: { commandsRpcName?: string },
+  options?: { commandsRpcName?: string; requestTimeoutMs?: number },
 ): PiCliRuntime {
   return new PiCliRuntime({
     logger: pino({ level: "silent" }),
     command: ["pi"],
     commandsRpcName: options?.commandsRpcName,
+    requestTimeoutMs: options?.requestTimeoutMs,
     spawnProcess: (launch) => {
       launches.push(launch);
       return child;
@@ -293,6 +294,26 @@ describe("PiCliRuntime", () => {
     await rejection;
   });
 
+  test("uses the configured RPC timeout and attributes the pending phase", async () => {
+    vi.useFakeTimers();
+    const child = createPiChild();
+    const session = await createRuntime(child, [], { requestTimeoutMs: 100 }).startSession({
+      cwd: "/workspace/project",
+    });
+
+    try {
+      const state = session.getState();
+      const rejection = expect(state).rejects.toThrow(
+        "Pi RPC request timed out phase=get_state elapsedMs=100 timeoutMs=100",
+      );
+      await vi.advanceTimersByTimeAsync(100);
+      await rejection;
+    } finally {
+      vi.useRealTimers();
+      await session.close();
+    }
+  });
+
   test("compact waits beyond the default control-plane timeout for a late response", async () => {
     vi.useFakeTimers();
     const child = createPiChild();
@@ -345,6 +366,47 @@ describe("PiCliRuntime", () => {
     await session.close();
 
     expect(child.killedSignals).toContain("SIGTERM");
+  });
+
+  test("sends the steer RPC frame", async () => {
+    const child = createPiChild();
+    replyToCommands(child, () => ({}));
+    const session = await createRuntime(child).startSession({ cwd: "/workspace/project" });
+
+    const steerCommand = capturePendingCommand(child, "steer");
+    await session.steer("focus on error handling", [
+      { type: "image", data: "aW1hZ2U=", mimeType: "image/png" },
+    ]);
+
+    expect(await steerCommand).toMatchObject({
+      type: "steer",
+      message: "focus on error handling",
+      images: [{ type: "image", data: "aW1hZ2U=", mimeType: "image/png" }],
+    });
+  });
+
+  test("sends the steer RPC frame without images", async () => {
+    const child = createPiChild();
+    replyToCommands(child, () => ({}));
+    const session = await createRuntime(child).startSession({ cwd: "/workspace/project" });
+
+    const steerCommand = capturePendingCommand(child, "steer");
+    await session.steer("focus on error handling");
+
+    const command = await steerCommand;
+    expect(command).toMatchObject({ type: "steer", message: "focus on error handling" });
+    expect(command.images).toBeUndefined();
+  });
+
+  test("sends the clear_queue RPC frame", async () => {
+    const child = createPiChild();
+    replyToCommands(child, () => ({}));
+    const session = await createRuntime(child).startSession({ cwd: "/workspace/project" });
+
+    const clearQueueCommand = capturePendingCommand(child, "clear_queue");
+    await session.clearQueue();
+
+    expect(await clearQueueCommand).toMatchObject({ type: "clear_queue" });
   });
 
   test("falls back to get_state when get_session_stats is unsupported", async () => {

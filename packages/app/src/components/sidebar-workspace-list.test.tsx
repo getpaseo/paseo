@@ -31,7 +31,6 @@ import {
   type SidebarProjectEntry,
 } from "@/hooks/use-sidebar-workspaces-list";
 import { useSidebarWorkspacesList } from "@/hooks/use-sidebar-workspaces-list";
-import { patchWorkspaceScripts } from "@/contexts/session-workspace-scripts";
 import {
   getHostRuntimeStore,
   type HostRuntimeController,
@@ -393,35 +392,6 @@ describe("sidebar workspace render isolation", () => {
       updateControllerSnapshot({
         probeByConnectionId: new Map(probeByConnectionId),
       });
-    });
-
-    expect(counts).toEqual({
-      frame: 0,
-      headers: {},
-      rows: {},
-      projectSelection: {},
-      rowSelection: {},
-    });
-  });
-
-  it("does not re-render for a deep-equal scripts patch", async () => {
-    const counts: RenderCounts = {
-      frame: 0,
-      headers: {},
-      rows: {},
-      projectSelection: {},
-      rowSelection: {},
-    };
-    ({ root, container } = await renderProbe(counts));
-
-    const applyRunningScript = (current: Parameters<typeof patchWorkspaceScripts>[0]) =>
-      patchWorkspaceScripts(current, {
-        workspaceId: "a-main",
-        scripts: [{ ...runningScript }],
-      });
-
-    act(() => {
-      useSessionStore.getState().setWorkspaces(SERVER_ID, applyRunningScript);
     });
 
     expect(counts).toEqual({

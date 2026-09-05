@@ -91,6 +91,24 @@ describe("codex tool-call mapper", () => {
     });
   });
 
+  it("keeps a quoted PowerShell payload intact after removing launch flags", () => {
+    const item = expectMapped(
+      mapCodexToolCallFromThreadItem({
+        type: "commandExecution",
+        id: "codex-call-wrapper-powershell-quoted-payload",
+        status: "running",
+        command: "powershell.exe -NoProfile -Command \"Get-ChildItem 'C:\\work space'\"",
+        cwd: "C:\\repo",
+      }),
+    );
+
+    expect(item.detail).toEqual({
+      type: "shell",
+      command: "Get-ChildItem 'C:\\work space'",
+      cwd: "C:\\repo",
+    });
+  });
+
   it("unwraps cmd wrapper arrays for commandExecution on Windows", () => {
     const item = expectMapped(
       mapCodexToolCallFromThreadItem({

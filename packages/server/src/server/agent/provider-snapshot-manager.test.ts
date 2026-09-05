@@ -1,6 +1,7 @@
 import { homedir } from "node:os";
 import { resolve } from "node:path";
 import { describe, expect, test, vi } from "vitest";
+import type { ProviderEvent, ProviderRegistration } from "@getpaseo/plugin/provider";
 
 import { createTestLogger } from "../../test-utils/test-logger.js";
 import type {
@@ -105,6 +106,29 @@ async function runTestCatalogActivities(
 }
 
 describe("ProviderSnapshotManager public surface", () => {
+  test("carries a plugin provider icon in snapshot metadata", () => {
+    const iconSvg = '<svg viewBox="0 0 24 24"><path d="M4 4h16v16H4z" /></svg>';
+    const registration: ProviderRegistration = {
+      id: "icon-provider",
+      label: "Icon Provider",
+      icon: iconSvg,
+      async connect() {
+        throw new Error("not opened by this test");
+      },
+    };
+    const manager = new ProviderSnapshotManager({ logger: createTestLogger() });
+
+    try {
+      manager.replacePluginProviders([registration]);
+
+      expect(manager.getSnapshot("/tmp/project")).toContainEqual(
+        expect.objectContaining({ provider: "icon-provider", iconSvg }),
+      );
+    } finally {
+      manager.destroy();
+    }
+  });
+
   test("validates complete Hub agent configurations through the current provider contract", async () => {
     const manager = new ProviderSnapshotManager({
       logger: createTestLogger(),
@@ -1434,6 +1458,155 @@ describe("ProviderSnapshotManager applyMutableProviderConfig", () => {
     }
   });
 
+  test("changing one provider preserves other catalogs and clients across directories", async () => {
+    const calls = { claude: 0, codex: 0 };
+    const clients = Object.fromEntries(
+      (["claude", "codex"] as const).map((provider) => [
+        provider,
+        createExtraClient(provider, {
+          async isAvailable() {
+            return true;
+          },
+          async fetchCatalog() {
+            calls[provider]++;
+            return { models: [], modes: [] };
+          },
+        }),
+      ]),
+    );
+    const config = {
+      claude: { enabled: true },
+      codex: { enabled: true, command: ["codex"], env: { TEST_SETTING: "same" } },
+      copilot: { enabled: false },
+      opencode: { enabled: false },
+      pi: { enabled: false },
+      omp: { enabled: false },
+    };
+    const manager = new ProviderSnapshotManager({
+      logger: createTestLogger(),
+      providerOverrides: config,
+      runtimeSettings: {
+        codex: { command: { mode: "replace", argv: ["codex"] }, env: { TEST_SETTING: "same" } },
+      },
+      extraClients: clients,
+    });
+    const cwds = [resolve("/tmp/catalog-a"), resolve("/tmp/catalog-b")];
+    try {
+      for (const cwd of cwds) await manager.warmUpSnapshotForCwd({ cwd });
+      const getCodexEntry = (cwd: string) =>
+        manager.getSnapshot(cwd).find((entry) => entry.provider === "codex");
+      const before = cwds.map(getCodexEntry);
+      const definition = manager.getAgentManagerProviderState().providerDefinitions.codex;
+      manager.applyMutableProviderConfig(
+        { ...config, claude: { enabled: true, label: "Renamed" } },
+        { replace: true },
+      );
+      expect(cwds.map(getCodexEntry)).toEqual(before);
+      expect(manager.getAgentManagerProviderState().providerDefinitions.codex).toEqual(definition);
+      for (const cwd of cwds) await manager.warmUpSnapshotForCwd({ cwd });
+      expect(calls).toEqual({ claude: 4, codex: 2 });
+      const listener = vi.fn();
+      manager.on("change", listener);
+      manager.applyMutableProviderConfig(
+        { ...config, claude: { label: "Renamed", enabled: true } },
+        { replace: true },
+      );
+      for (const cwd of cwds) await manager.warmUpSnapshotForCwd({ cwd });
+      expect(calls).toEqual({ claude: 4, codex: 2 });
+      expect(listener).not.toHaveBeenCalled();
+    } finally {
+      manager.destroy();
+    }
+  });
+
+  test("reload preserves an unchanged lookup in flight through commit and rollback", async () => {
+    let finish!: () => void;
+    const gate = new Promise<void>((complete) => {
+      finish = complete;
+    });
+    let calls = 0;
+    const config = {
+      claude: { enabled: false },
+      codex: { enabled: true },
+      copilot: { enabled: false },
+      opencode: { enabled: false },
+      pi: { enabled: false },
+      omp: { enabled: false },
+    };
+    const manager = new ProviderSnapshotManager({
+      logger: createTestLogger(),
+      providerOverrides: config,
+      extraClients: {
+        codex: createExtraClient("codex", {
+          async isAvailable() {
+            return true;
+          },
+          async fetchCatalog() {
+            calls++;
+            await gate;
+            return { models: [], modes: [] };
+          },
+        }),
+      },
+    });
+    const cwd = resolve("/tmp/catalog-pending");
+    try {
+      const pending = manager.warmUpSnapshotForCwd({ cwd });
+      await vi.waitFor(() => expect(calls).toBe(1));
+      manager.applyMutableProviderConfig(
+        { ...config, claude: { enabled: false, label: "Changed" } },
+        { replace: true },
+      );
+      const staged = manager.stageMutableProviderConfig(
+        { ...config, claude: { enabled: false, label: "Rollback" } },
+        { replace: true },
+      );
+      staged.rollback();
+      finish();
+      await pending;
+      expect(manager.getSnapshot(cwd).find((e) => e.provider === "codex")?.status).toBe("ready");
+      expect(calls).toBe(1);
+    } finally {
+      finish();
+      manager.destroy();
+    }
+  });
+
+  test("reload replaces derived clients only when their provider configuration changes", () => {
+    const config = {
+      claude: { enabled: true },
+      codex: { enabled: true },
+      "codex-2": { extends: "codex", label: "Codex 2", enabled: true },
+      copilot: { enabled: false },
+      opencode: { enabled: false },
+      pi: { enabled: false },
+      omp: { enabled: false },
+    };
+    const manager = new ProviderSnapshotManager({
+      logger: createTestLogger(),
+      providerOverrides: config,
+    });
+    try {
+      const before = manager.getAgentManagerProviderState().clients;
+      const unchanged = manager.applyMutableProviderConfig(config, { replace: true }).clients;
+      expect(unchanged.codex).toBe(before.codex);
+      expect(unchanged["codex-2"]).toBe(before["codex-2"]);
+      const changed = manager.applyMutableProviderConfig(
+        { ...config, codex: { enabled: true, env: { CODEX_HOME: "/tmp/other-codex-home" } } },
+        { replace: true },
+      ).clients;
+      expect(changed.claude).toBe(before.claude);
+      expect(changed.codex).not.toBe(before.codex);
+      expect(changed["codex-2"]).not.toBe(before["codex-2"]);
+      const { "codex-2": _removedProvider, ...withoutDerived } = config;
+      const removed = manager.applyMutableProviderConfig(withoutDerived, { replace: true }).clients;
+      expect(removed["codex-2"]).toBeUndefined();
+      expect(removed.claude).toBe(before.claude);
+    } finally {
+      manager.destroy();
+    }
+  });
+
   test("stages provider state without events, then publishes or rolls back", () => {
     const manager = new ProviderSnapshotManager({
       logger: createTestLogger(),
@@ -1573,12 +1746,12 @@ describe("ProviderSnapshotManager lifecycle", () => {
       const listener = vi.fn();
       manager.on("change", listener);
       manager.getSnapshot("/tmp/project");
-      manager.applyMutableProviderConfig({});
+      manager.applyMutableProviderConfig({ claude: { enabled: false, label: "Changed" } });
       const firstCallCount = listener.mock.calls.length;
-      expect(firstCallCount).toBeGreaterThan(0);
+      expect(firstCallCount).toBe(1);
 
       manager.off("change", listener);
-      manager.applyMutableProviderConfig({});
+      manager.applyMutableProviderConfig({ claude: { enabled: false, label: "Changed again" } });
       expect(listener.mock.calls.length).toBe(firstCallCount);
     } finally {
       manager.destroy();
@@ -1700,10 +1873,59 @@ describe("ProviderSnapshotManager cwd routing", () => {
       const listener = vi.fn();
       manager.on("change", listener);
       manager.getSnapshot();
-      manager.applyMutableProviderConfig({});
+      manager.applyMutableProviderConfig({ claude: { enabled: false, label: "Changed" } });
       const cwds = listener.mock.calls.map((call) => call[1]);
       expect(cwds).toContain(GLOBAL_PROVIDER_SNAPSHOT_KEY);
     } finally {
+      manager.destroy();
+    }
+  });
+
+  test("registers and unregisters plugin providers without rebuilding built-in clients", async () => {
+    let listener: ((event: ProviderEvent) => void) | null = null;
+    const registration: ProviderRegistration = {
+      id: "plugin-provider",
+      label: "Plugin provider",
+      async connect() {
+        return {
+          version: 1,
+          capabilities: [],
+          async send(input) {
+            if (input.type !== "catalog") return;
+            listener?.({
+              type: "catalog",
+              requestId: input.requestId,
+              catalog: { models: [{ id: "plugin-model", label: "Plugin model" }], modes: [] },
+            });
+          },
+          onEvent(nextListener) {
+            listener = nextListener;
+            return () => {
+              if (listener === nextListener) listener = null;
+            };
+          },
+          async close() {},
+        };
+      },
+    };
+    const manager = new ProviderSnapshotManager({ logger: createTestLogger() });
+    try {
+      const state = manager.replacePluginProviders([registration]);
+      expect(state.clients[registration.id]?.provider).toBe(registration.id);
+      await expect(
+        manager.getProvider({ provider: registration.id, wait: true }),
+      ).resolves.toMatchObject({
+        provider: registration.id,
+        source: "custom",
+        status: "ready",
+        models: [{ provider: registration.id, id: "plugin-model" }],
+      });
+
+      const withoutPlugin = manager.replacePluginProviders([]);
+      expect(manager.hasProvider(registration.id)).toBe(false);
+      expect(withoutPlugin.clients[registration.id]).toBeUndefined();
+    } finally {
+      await manager.shutdown();
       manager.destroy();
     }
   });

@@ -7,6 +7,7 @@ import {
   resolveInitialModelBrowserView,
   resolveModelBrowserAllView,
   groupProfilesByProviderModel,
+  resolveModelBrowserScrolling,
 } from "./model-browser-view";
 
 function provider(
@@ -36,6 +37,20 @@ function modelRow(
     description: modelId,
   };
 }
+
+describe("model browser scrolling", () => {
+  it("participates in native compact bottom-sheet scrolling", () => {
+    expect(resolveModelBrowserScrolling({ isNative: true, isCompact: true })).toBe("sheet");
+  });
+
+  it.each([
+    { platform: "native wide", isNative: true, isCompact: false },
+    { platform: "compact web", isNative: false, isCompact: true },
+    { platform: "wide web", isNative: false, isCompact: false },
+  ])("owns scrolling on $platform surfaces", ({ isNative, isCompact }) => {
+    expect(resolveModelBrowserScrolling({ isNative, isCompact })).toBe("independent");
+  });
+});
 
 describe("model browser initial view", () => {
   const codex = provider("codex", "Codex");

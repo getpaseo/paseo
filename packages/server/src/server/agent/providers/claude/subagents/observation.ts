@@ -24,6 +24,8 @@ export type SubagentObservation =
       /** The task this child was given. What actually distinguishes it from its siblings. */
       description?: string;
       toolCallId?: string;
+      /** Provider subagent that launched this one. Absent means a direct child of the agent. */
+      parentSubagentId?: string;
       timestamp?: string;
     }
   | { kind: "status"; id: string; status: ProviderSubagentStatus; timestamp?: string }
@@ -84,6 +86,9 @@ export function foldSubagentObservations(
       ...(observation.title === undefined ? {} : { title: observation.title }),
       ...(observation.description === undefined ? {} : { description: observation.description }),
       ...(observation.toolCallId === undefined ? {} : { toolCallId: observation.toolCallId }),
+      ...(observation.parentSubagentId === undefined
+        ? {}
+        : { parentSubagentId: observation.parentSubagentId }),
       ...(observation.timestamp ? { timestamp: observation.timestamp } : {}),
     });
   }

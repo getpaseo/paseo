@@ -107,6 +107,28 @@ export function createSqliteReplicaRowStore(
     return Array.from(hosts, ([serverId, rows]) => ({ serverId, rows }));
   }
 
+  async function read(
+    serverId: string,
+    kinds: readonly ReplicaRow["kind"][],
+    ids?: readonly string[],
+  ): Promise<ReplicaRow[]> {
+    if (kinds.length === 0 || ids?.length === 0) return [];
+    const placeholders = kinds.map(() => "?").join(", ");
+    const idClause = ids ? ` AND id IN (${ids.map(() => "?").join(", ")})` : "";
+    const storedRows = await getConnection().all<StoredRow>(
+      `SELECT server_id, kind, id, payload FROM rows
+       WHERE server_id = ? AND kind IN (${placeholders})${idClause}
+       ORDER BY kind, id`,
+      [serverId, ...kinds, ...(ids ?? [])],
+    );
+    return storedRows.map((row) => ({
+      serverId: row.server_id,
+      kind: row.kind,
+      id: row.id,
+      payload: row.payload,
+    }));
+  }
+
   async function apply(changes: ReplicaRowChanges): Promise<void> {
     await getConnection().transaction(async (transaction) => {
       for (const key of changes.deletes) {
@@ -147,5 +169,5 @@ export function createSqliteReplicaRowStore(
     await getConnection().run("DELETE FROM rows");
   }
 
-  return { open, readAll, apply, deleteHost, renameHost, clear };
+  return { open, read, readAll, apply, deleteHost, renameHost, clear };
 }

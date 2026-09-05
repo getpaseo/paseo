@@ -1,6 +1,8 @@
-import { useSyncExternalStore } from "react";
+import { useMemo, useSyncExternalStore } from "react";
 import { QueryClient } from "@tanstack/react-query";
-import { evaluatePluginClientBundle } from "./evaluate";
+import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
+import { createPluginClientRuntime } from "./client-runtime";
+import { runPluginClientBundle } from "./evaluate";
 import type { InstalledPlugin } from "./types";
 
 interface CatalogPlugin {
@@ -29,9 +31,15 @@ class PluginRegistry {
   installCatalog(
     serverId: string,
     catalog: CatalogPlugin[],
-    options: { replacePluginId?: string } = {},
-  ): void {
+    options: {
+      replacePluginId?: string;
+      client: DaemonClient;
+    },
+  ): boolean {
     const previous = this.byHost.get(serverId) ?? [];
+    const previousTimelineBundles = previous
+      .filter((plugin) => plugin.timelineTransformers.length > 0)
+      .map((plugin) => `${plugin.id}\0${plugin.clientBundle}`);
     const preserved = catalog.flatMap((entry) => {
       const existing = previous.find(
         (plugin) =>
@@ -50,6 +58,7 @@ class PluginRegistry {
     const installed = catalog.flatMap((entry) => {
       const key = `${serverId}/${entry.id}`;
       try {
+        if (!entry.clientBundle) return [];
         const existing = preserved.find(
           (plugin) => plugin.id === entry.id && plugin.clientBundle === entry.clientBundle,
         );
@@ -57,17 +66,31 @@ class PluginRegistry {
           this.evaluationErrors.delete(key);
           return [existing];
         }
-        const queryClient = new QueryClient();
-        const evaluated = [
-          {
-            ...evaluatePluginClientBundle(entry.id, entry.clientBundle),
-            serverId,
-            clientBundle: entry.clientBundle,
-            queryClient,
-          },
-        ];
+        const installation: InstalledPlugin = {
+          id: entry.id,
+          serverId,
+          clientBundle: entry.clientBundle,
+          queryClient: new QueryClient(),
+          cleanup: () => undefined,
+          surfaces: [],
+          sidebarItems: [],
+          workspacePanels: [],
+          commandCenterItems: [],
+          clientSlashCommands: [],
+          attachmentSources: [],
+          themes: [],
+          timelineTransformers: [],
+          timelineRenderers: [],
+        };
+        const evaluated = runPluginClientBundle(
+          entry.id,
+          entry.clientBundle,
+          createPluginClientRuntime(installation, options.client),
+          () => this.publish(),
+        );
+        Object.assign(installation, evaluated);
         this.evaluationErrors.delete(key);
-        return evaluated;
+        return [installation];
       } catch (error) {
         this.evaluationErrors.set(key, error instanceof Error ? error.message : String(error));
         console.warn(`[Plugins] Failed to evaluate ${serverId}/${entry.id}`, error);
@@ -82,6 +105,13 @@ class PluginRegistry {
     }
     this.byHost.set(serverId, installed);
     this.publish();
+    const installedTimelineBundles = installed
+      .filter((plugin) => plugin.timelineTransformers.length > 0)
+      .map((plugin) => `${plugin.id}\0${plugin.clientBundle}`);
+    return (
+      previousTimelineBundles.length !== installedTimelineBundles.length ||
+      previousTimelineBundles.some((bundle, index) => bundle !== installedTimelineBundles[index])
+    );
   }
 
   removeHost(serverId: string): void {
@@ -137,5 +167,6 @@ export function useInstalledPlugin(serverId: string, pluginId: string): Installe
 }
 
 export function usePluginInstallations(pluginId: string): InstalledPlugin[] {
-  return useInstalledPlugins().filter((plugin) => plugin.id === pluginId);
+  const installed = useInstalledPlugins();
+  return useMemo(() => installed.filter((plugin) => plugin.id === pluginId), [installed, pluginId]);
 }
