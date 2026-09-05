@@ -75,6 +75,7 @@ import { invokeRewindCapability, type RewindMode } from "./rewind/rewind.js";
 import { isSystemInjectedEnvelope } from "./agent-prompt.js";
 import { stripInternalPaseoMcpServer, withRuntimePaseoMcpServer } from "./runtime-mcp-config.js";
 import { resolveCreateAgentTitles } from "./create-agent-title.js";
+import { ResponseHeadingTitleTracker } from "./response-heading-title.js";
 import type { PaseoToolCatalogFactory } from "./tools/types.js";
 import {
   ProviderSubagentStore,
@@ -284,6 +285,7 @@ export interface AgentManagerOptions {
   paseoToolsEnabled?: boolean;
   paseoToolCatalogFactory?: PaseoToolCatalogFactory;
   appendSystemPrompt?: string;
+  titleFromResponseHeading?: boolean;
   agentStreamCoalesceWindowMs?: number;
   rescueTimeouts?: AgentManagerRescueTimeouts;
   beforeSteerUnavailableFallback?: (input: {
@@ -690,6 +692,8 @@ export class AgentManager {
   private readonly inFlightAgentCloses = new Map<string, Promise<void>>();
   private readonly lifecycleMutationTails = new Map<string, Promise<void>>();
   private readonly agentStreamCoalescer: AgentStreamCoalescer;
+  private readonly responseHeadingTitleTracker = new ResponseHeadingTitleTracker();
+  private readonly titleFromResponseHeading: boolean;
   private mcpBaseUrl: string | null;
   private readonly mcpAuthToken: string | null;
   private paseoToolsEnabled = true;
@@ -713,6 +717,7 @@ export class AgentManager {
     this.mcpAuthToken = options?.mcpAuthToken ?? null;
     this.configurePaseoTools(options);
     this.appendSystemPrompt = options.appendSystemPrompt ?? "";
+    this.titleFromResponseHeading = Boolean(options.titleFromResponseHeading);
     this.logger = options.logger.child({ module: "agent", component: "agent-manager" });
     this.rescueTimeouts = {
       reloadSessionCloseMs:
@@ -1779,6 +1784,9 @@ export class AgentManager {
     const agent = this.requireAgent(agentId);
     const normalizedTitle = title.trim();
     if (!normalizedTitle) {
+      return;
+    }
+    if (this.registry && (await this.registry.get(agent.id))?.title === normalizedTitle) {
       return;
     }
     if (
@@ -3370,6 +3378,7 @@ export class AgentManager {
     cancelReason: string,
   ): ManagedAgentClosed {
     this.agentStreamCoalescer.flushAndDiscard(agent.id);
+    this.responseHeadingTitleTracker.discard(agent.id);
     this.agents.delete(agent.id);
     this.previousStatuses.delete(agent.id);
     if (agent.unsubscribeSession) {
@@ -3826,6 +3835,16 @@ export class AgentManager {
 
     // Only update timestamp for live events, not history replay
     if (!options?.fromHistory) {
+      if (this.titleFromResponseHeading) {
+        const title = this.responseHeadingTitleTracker.observe({
+          agentId: agent.id,
+          turnId: eventTurnId,
+          event,
+        });
+        if (title) {
+          this.enqueueResponseHeadingTitleUpdate(agent, title);
+        }
+      }
       this.touchUpdatedAt(agent);
       if (this.agentStreamCoalescer.handle(agent.id, event)) {
         this.traceCoalescerBuffered(agent, event, eventTurnId);
@@ -4405,6 +4424,34 @@ export class AgentManager {
         timestamp: row.timestamp,
       },
     );
+  }
+
+  private enqueueResponseHeadingTitleUpdate(agent: ActiveManagedAgent, title: string): void {
+    const task = this.runLifecycleMutation(agent.id, async () => {
+      try {
+        await this.setTitle(agent.id, title);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Unknown storage error";
+        this.logger.error(
+          {
+            err: error,
+            agentId: agent.id,
+            provider: agent.provider,
+            title,
+          },
+          "Failed to synchronize agent title from response heading",
+        );
+        const current = this.agents.get(agent.id);
+        if (current?.session) {
+          await this.appendSystemErrorTimelineMessage(
+            current,
+            agent.provider,
+            `Failed to synchronize session title from response heading: ${message}`,
+          );
+        }
+      }
+    });
+    this.trackBackgroundTask(task);
   }
 
   private formatTurnFailedMessage(

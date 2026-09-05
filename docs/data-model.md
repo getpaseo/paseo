@@ -227,6 +227,7 @@ snapshot so a mixed edit can apply its live subset and still name the paths that
     local: { modelsDir: string }
   },
   agents: {
+    titleFromResponseHeading?: boolean, // default false; requires a daemon restart
     skills?: {
       selection?: { mode: "all" } | { mode: "custom", skills: string[] }
     },
@@ -253,6 +254,11 @@ snapshot so a mixed edit can apply its live subset and still name the paths that
 ```
 
 All fields are optional with sensible defaults.
+
+When `agents.titleFromResponseHeading` is `true`, the daemon copies a live turn's opening H1 into
+the agent title when it contains 4–7 words and no more than 60 characters. History replay and later
+headings in the same response are ignored. A storage failure leaves the old title intact and adds a
+system error to the timeline. The setting is startup-only.
 
 Git-managed plugins still appear as directory sources in `config.json`. This keeps the plugin
 runtime and protocol config compatible with directory-only clients. `plugins/sources.json` owns the

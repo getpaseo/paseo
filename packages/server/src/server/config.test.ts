@@ -40,6 +40,20 @@ describe("server config", () => {
     expect(config.providerCatalogRefreshTimeoutMs).toBe(180_000);
   });
 
+  test("loads response-heading title synchronization disabled by default", async () => {
+    const paseoHome = await mkdtemp(path.join(os.tmpdir(), "paseo-config-response-title-"));
+    roots.push(paseoHome);
+
+    expect(loadConfig(paseoHome, { env: {} }).titleFromResponseHeading).toBe(false);
+
+    await writeFile(
+      path.join(paseoHome, "config.json"),
+      JSON.stringify({ agents: { titleFromResponseHeading: true } }),
+    );
+
+    expect(loadConfig(paseoHome, { env: {} }).titleFromResponseHeading).toBe(true);
+  });
+
   test("resolves reload state from the supplied validated snapshot", async () => {
     const paseoHome = await mkdtemp(path.join(os.tmpdir(), "paseo-config-snapshot-"));
     roots.push(paseoHome);
