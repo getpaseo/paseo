@@ -20,6 +20,7 @@ test("configured launches appear in the shared workspace run menu", async ({ pag
         servicePorts: { blockSize: 4 },
       },
       launches: {
+        worker: { command: 'node -e "setInterval(() => {}, 60_000)"' },
         dev: {
           command:
             "node -e \"const http = require('node:http'); const net = require('node:net'); const base = Number(process.env.PASEO_PORT_BASE); http.createServer((_, res) => res.end('ok')).listen(base, '127.0.0.1'); net.createServer().listen(base + 2, '127.0.0.1'); setInterval(() => {}, 60_000)\"",
@@ -44,6 +45,7 @@ test("configured launches appear in the shared workspace run menu", async ({ pag
 
     const runButton = page.getByTestId("workspace-scripts-button");
     await expect(runButton).toBeVisible({ timeout: 30_000 });
+    await expect(runButton).toHaveAccessibleName("Run workspace commands");
     await expect(page.getByTestId("workspace-launches-button")).toHaveCount(0);
     await runButton.click();
 
@@ -59,6 +61,13 @@ test("configured launches appear in the shared workspace run menu", async ({ pag
       timeout: 30_000,
     });
 
+    await expect(page.getByTestId("workspace-launches-status-dev")).toHaveText("Running");
+    await expect(page.getByTestId("workspace-launches-view-dev")).toHaveText("Output");
+    await expect(page.getByTestId("workspace-launches-start-worker")).toHaveText("Switch");
+    await expect(page.getByTestId("workspace-launches-start-worker")).toHaveAccessibleName(
+      "Stop dev and start worker",
+    );
+
     const portRange = page.getByTestId("workspace-launches-port-range");
     await expect(portRange).toHaveText(/^ports \d+–\d+$/, { timeout: 30_000 });
     const portRangeMatch = /^ports (\d+)–\d+$/.exec((await portRange.textContent()) ?? "");
@@ -73,11 +82,24 @@ test("configured launches appear in the shared workspace run menu", async ({ pag
     });
     await page.getByTestId("workspace-launches-route-dev:p0").click();
     await expect(page.getByTestId("workspace-launches-route-dev:p0-direct")).toBeVisible();
+    await page.getByTestId("workspace-launches-route-dev:p0-direct").click();
     await expect(launch).toContainText(String(portBase));
     await expect(launch).toContainText(String(portBase + 2));
     await expect(launch).toContainText("TCP");
 
-    await page.getByTestId("workspace-launches-stop-dev").click();
+    await page.getByTestId("workspace-launches-start-worker").click();
+    await expect(page.getByTestId("workspace-launches-stop-worker")).toBeVisible({
+      timeout: 30_000,
+    });
+    await expect(page.getByTestId("workspace-launches-stop-dev")).toHaveCount(0);
+    await expect(page.getByTestId("workspace-launches-open-dev-dev:p0")).toHaveCount(0);
+    await expect(page.getByTestId("workspace-launches-item-worker")).toContainText(
+      "No listening ports detected yet",
+    );
+    await expect(portRange).toHaveText(new RegExp(`^ports ${portBase}–`));
+    await page.screenshot({ path: test.info().outputPath("run-menu.png") });
+    await page.getByTestId("workspace-launches-stop-worker").click();
+    await expect(page.getByTestId("workspace-launches-stop-worker")).toHaveCount(0);
     await expect(page.getByTestId("workspace-launches-start-dev")).toBeVisible({
       timeout: 30_000,
     });

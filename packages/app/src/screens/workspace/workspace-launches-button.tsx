@@ -307,9 +307,37 @@ function LaunchEndpointRow({
   );
 }
 
+function LaunchStatus({
+  launch,
+  starting,
+  stopping,
+}: {
+  launch: WorkspaceLaunches[number];
+  starting: boolean;
+  stopping: boolean;
+}): ReactElement {
+  const { t } = useTranslation();
+  let label = t("workspace.launches.states.stopped");
+  if (starting) {
+    label = t("common.states.starting");
+  } else if (stopping) {
+    label = t("workspace.launches.states.stopping");
+  } else if (launch.lifecycle === "running") {
+    label = t("workspace.launches.states.running");
+  } else if (launch.exitCode !== null) {
+    label = t("workspace.scripts.states.exitCode", { code: launch.exitCode });
+  }
+  return (
+    <Text testID={`workspace-launches-status-${launch.launchName}`} style={styles.portRangeText}>
+      {label}
+    </Text>
+  );
+}
+
 interface LaunchRowProps {
   launch: WorkspaceLaunches[number];
   liveTerminalIdSet: Set<string>;
+  activeLaunchName: string | null;
   activeConnection: ActiveConnection | null;
   pendingStartLaunchName: string | null;
   pendingStopLaunchName: string | null;
@@ -326,6 +354,7 @@ interface LaunchRowProps {
 function LaunchRow({
   launch,
   liveTerminalIdSet,
+  activeLaunchName,
   activeConnection,
   pendingStartLaunchName,
   pendingStopLaunchName,
@@ -342,6 +371,16 @@ function LaunchRow({
   const isRunning = launch.lifecycle === "running";
   const isStartPending = pendingStartLaunchName === launch.launchName;
   const isStopPending = pendingStopLaunchName === launch.launchName;
+  const isSwitch = activeLaunchName !== null && activeLaunchName !== launch.launchName;
+  const startLabel = isSwitch
+    ? t("workspace.launches.actions.switch")
+    : t("workspace.launches.actions.start");
+  const startDescription = isSwitch
+    ? t("workspace.launches.accessibility.switchLaunch", {
+        activeLaunchName,
+        launchName: launch.launchName,
+      })
+    : t("workspace.launches.accessibility.startLaunch", { launchName: launch.launchName });
   const hasPendingLifecycleAction =
     pendingStartLaunchName !== null || pendingStopLaunchName !== null;
   const liveTerminalId =
@@ -383,6 +422,7 @@ function LaunchRow({
           >
             {launch.launchName}
           </Text>
+          <LaunchStatus launch={launch} starting={isStartPending} stopping={isStopPending} />
         </View>
         <View style={styles.spacer} />
         {liveTerminalId ? (
@@ -405,21 +445,21 @@ function LaunchRow({
             testID={`workspace-launches-stop-${launch.launchName}`}
             disabled={hasPendingLifecycleAction}
             icon="stop"
+            label={t("workspace.launches.actions.stop")}
             onPress={handleStop}
             pending={isStopPending}
             tooltipLabel={t("workspace.launches.actions.stop")}
           />
         ) : (
           <LaunchActionButton
-            accessibilityLabel={t("workspace.launches.accessibility.startLaunch", {
-              launchName: launch.launchName,
-            })}
+            accessibilityLabel={startDescription}
             testID={`workspace-launches-start-${launch.launchName}`}
             disabled={hasPendingLifecycleAction}
             icon="start"
+            label={startLabel}
             onPress={handleStart}
             pending={isStartPending}
-            tooltipLabel={t("workspace.launches.actions.start")}
+            tooltipLabel={startDescription}
           />
         )}
       </View>
@@ -447,6 +487,11 @@ function LaunchRow({
               tooltipLabel={t("common.actions.dismiss")}
             />
           </View>
+        </View>
+      ) : null}
+      {isRunning && launch.endpoints.length === 0 ? (
+        <View style={styles.endpointList}>
+          <Text style={styles.endpointName}>{t("workspace.launches.states.noListeners")}</Text>
         </View>
       ) : null}
       {isRunning && launch.endpoints.length > 0 ? (
@@ -491,6 +536,8 @@ export function WorkspaceLaunchesSection({
     (state) => state.setPreferredRoute,
   );
   const liveTerminalIdSet = useMemo(() => new Set(liveTerminalIds), [liveTerminalIds]);
+  const activeLaunchName =
+    launches.find((launch) => launch.lifecycle === "running")?.launchName ?? null;
   const portRangeLaunch =
     launches.find(
       (launch) => launch.active && launch.portBase !== null && launch.portEnd !== null,
@@ -587,6 +634,7 @@ export function WorkspaceLaunchesSection({
           key={launch.launchName}
           launch={launch}
           liveTerminalIdSet={liveTerminalIdSet}
+          activeLaunchName={activeLaunchName}
           activeConnection={activeConnection}
           pendingStartLaunchName={pendingStartLaunchName}
           pendingStopLaunchName={pendingStopLaunchName}
