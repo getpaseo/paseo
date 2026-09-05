@@ -7,7 +7,15 @@ import { installGlobalProxyDispatcher } from "./global-proxy-dispatcher.js";
 // EnvHttpProxyAgent tunnels every proxied request through CONNECT, even a plain http://
 // target, so the fake proxy must speak the CONNECT handshake and then read/answer the
 // plain HTTP request written into that tunnel.
-function onTunnelData(req: IncomingMessage, socket: Socket, tunneledRequests: string[]) {
+function onTunnelData({
+  req,
+  socket,
+  tunneledRequests,
+}: {
+  req: IncomingMessage;
+  socket: Socket;
+  tunneledRequests: string[];
+}) {
   let buffered = "";
   socket.on("data", (chunk) => {
     buffered += chunk.toString("utf8");
@@ -20,22 +28,38 @@ function onTunnelData(req: IncomingMessage, socket: Socket, tunneledRequests: st
   });
 }
 
-function handleTunneledRequest(req: IncomingMessage, socket: Socket, tunneledRequests: string[]) {
+function handleTunneledRequest({
+  req,
+  socket,
+  tunneledRequests,
+}: {
+  req: IncomingMessage;
+  socket: Socket;
+  tunneledRequests: string[];
+}) {
   socket.write("HTTP/1.1 200 Connection Established\r\n\r\n");
-  onTunnelData(req, socket, tunneledRequests);
+  onTunnelData({ req, socket, tunneledRequests });
 }
 
 describe("installGlobalProxyDispatcher", () => {
-  test("routes a daemon-issued fetch() through HTTP_PROXY", async () => {
+  test("only routes daemon-issued fetch() through HTTP_PROXY once enabled", async () => {
     const tunneledRequests: string[] = [];
     const proxy = createServer();
-    proxy.on("connect", (req, socket) => handleTunneledRequest(req, socket, tunneledRequests));
+    proxy.on("connect", (req, socket) => handleTunneledRequest({ req, socket, tunneledRequests }));
     await new Promise<void>((resolve) => proxy.listen(0, "127.0.0.1", () => resolve()));
     const { port } = proxy.address() as AddressInfo;
 
     try {
       process.env.HTTP_PROXY = `http://127.0.0.1:${port}`;
-      // Idempotent: called twice, still installs exactly one dispatcher and does not throw.
+
+      // Disabled (e.g. globalProxyDispatcher: false): fetch reaches example.invalid directly
+      // and fails DNS resolution rather than going through the configured proxy.
+      installGlobalProxyDispatcher(false);
+      await expect(fetch("http://example.invalid/some-path")).rejects.toThrow();
+      expect(tunneledRequests).toEqual([]);
+
+      // Enabled: fetch now tunnels through HTTP_PROXY. Called twice to prove the install
+      // is idempotent and does not throw.
       installGlobalProxyDispatcher();
       installGlobalProxyDispatcher();
 
