@@ -5,7 +5,7 @@ import type { CommandOptions, ListResult, OutputSchema, CommandError } from "../
 import { collectMultiple } from "../../utils/command-options.js";
 import { isSameOrDescendantPath } from "../../utils/paths.js";
 
-type FetchAgentsOptions = NonNullable<
+export type FetchAgentsOptions = NonNullable<
   Parameters<Awaited<ReturnType<typeof connectToDaemon>>["fetchAgents"]>[0]
 >;
 
@@ -48,8 +48,19 @@ export type AgentListSource = Pick<
   | "status"
   | "cwd"
   | "createdAt"
+  | "archivedAt"
   | "labels"
 >;
+
+/** The slice of the daemon client the listing uses, so tests drive the command with an in-memory fake. */
+export interface AgentLsClient {
+  fetchAgents(options: FetchAgentsOptions): Promise<{ entries: Array<{ agent: AgentListSource }> }>;
+  close(): Promise<void>;
+}
+
+export interface AgentLsDeps {
+  connectToDaemon(options: { host?: string }): Promise<AgentLsClient>;
+}
 
 /** Helper to get relative time string */
 function relativeTime(date: Date | string): string {
@@ -104,7 +115,7 @@ export const agentLsSchema: OutputSchema<AgentListItem> = {
 };
 
 /** Transform agent snapshot to AgentListItem */
-export function toAgentListItem(agent: AgentListSource): AgentListItem {
+function toListItem(agent: AgentListSource): AgentListItem {
   const model = normalizeModelId(agent.runtimeInfo?.model) ?? normalizeModelId(agent.model);
   return {
     id: agent.id,
@@ -202,11 +213,18 @@ export async function runLsCommand(
   options: AgentLsOptions,
   _command: Command,
 ): Promise<AgentLsResult> {
+  return runLsCommandWithDeps(options, { connectToDaemon });
+}
+
+export async function runLsCommandWithDeps(
+  options: AgentLsOptions,
+  deps: AgentLsDeps,
+): Promise<AgentLsResult> {
   const host = getDaemonHost({ host: options.host });
 
-  let client;
+  let client: AgentLsClient;
   try {
-    client = await connectToDaemon({ host: options.host });
+    client = await deps.connectToDaemon({ host: options.host });
   } catch (err) {
     throw daemonConnectionFailure(host, err);
   }
@@ -269,7 +287,7 @@ export async function runLsCommand(
       return bTime - aTime;
     });
 
-    const items = agents.map(toAgentListItem);
+    const items = agents.map(toListItem);
 
     return {
       type: "list",
