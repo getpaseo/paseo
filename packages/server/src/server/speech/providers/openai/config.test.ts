@@ -203,4 +203,39 @@ describe("resolveOpenAiSpeechConfig", () => {
     expect(resolved?.stt?.apiKey).toBe("stt-only-key");
     expect(resolved?.tts).toBeUndefined();
   });
+
+  test("resolves a newer TTS model, custom voice, and instructions from voiceMode config", () => {
+    const persisted = PersistedConfigSchema.parse({
+      features: {
+        voiceMode: {
+          tts: {
+            provider: "openai",
+            model: "gpt-4o-mini-tts",
+            voice: "marin",
+            instructions: "Speak quickly and calmly, like a copilot reading a checklist.",
+          },
+        },
+      },
+    });
+    const env = { OPENAI_API_KEY: "sk-test" } as NodeJS.ProcessEnv;
+
+    const resolved = resolveOpenAiSpeechConfig({ env, persisted, providers: ALL_OPENAI });
+
+    expect(resolved?.tts?.model).toBe("gpt-4o-mini-tts");
+    expect(resolved?.tts?.voice).toBe("marin");
+    expect(resolved?.tts?.instructions).toBe(
+      "Speak quickly and calmly, like a copilot reading a checklist.",
+    );
+  });
+
+  test("defaults TTS to tts-1/alloy with no instructions when unconfigured", () => {
+    const persisted = PersistedConfigSchema.parse({});
+    const env = { OPENAI_API_KEY: "sk-test" } as NodeJS.ProcessEnv;
+
+    const resolved = resolveOpenAiSpeechConfig({ env, persisted, providers: ALL_OPENAI });
+
+    expect(resolved?.tts?.model).toBe("tts-1");
+    expect(resolved?.tts?.voice).toBe("alloy");
+    expect(resolved?.tts?.instructions).toBeUndefined();
+  });
 });

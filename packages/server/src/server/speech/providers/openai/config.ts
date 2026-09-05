@@ -12,10 +12,6 @@ export interface OpenAiSpeechProviderConfig {
   tts?: Partial<TTSConfig> & { apiKey?: string };
 }
 
-const OpenAiTtsVoiceSchema = z.enum(["alloy", "echo", "fable", "onyx", "nova", "shimmer"]);
-
-const OpenAiTtsModelSchema = z.enum(["tts-1", "tts-1-hd"]);
-
 const NumberLikeSchema = z.union([z.number(), z.string().trim().min(1)]);
 
 const OptionalFiniteNumberSchema = NumberLikeSchema.pipe(
@@ -44,14 +40,13 @@ const OpenAiSttOptionsSchema = z.object({
   sttModel: OptionalTrimmedStringSchema,
 });
 
+// Model and voice are open strings: OpenAI ships new TTS models (gpt-4o-mini-tts)
+// and voices (ash, coral, marin, ...) without notice, and custom baseUrl
+// endpoints accept their own names. The endpoint rejects invalid values.
 const OpenAiTtsOptionsSchema = z.object({
-  ttsVoice: z.string().trim().toLowerCase().pipe(OpenAiTtsVoiceSchema).default("alloy"),
-  ttsModel: z
-    .string()
-    .trim()
-    .toLowerCase()
-    .pipe(OpenAiTtsModelSchema)
-    .default(DEFAULT_OPENAI_TTS_MODEL),
+  ttsVoice: z.string().trim().toLowerCase().min(1).default("alloy"),
+  ttsModel: z.string().trim().toLowerCase().min(1).default(DEFAULT_OPENAI_TTS_MODEL),
+  ttsInstructions: OptionalTrimmedStringSchema,
 });
 
 function isOpenAiProviderActive(provider: { enabled?: boolean; provider: string }): boolean {
@@ -115,6 +110,10 @@ function buildOpenAiTtsInput(params: {
       env.TTS_MODEL,
       pickIfOpenAi(providers.voiceTts, persisted.features?.voiceMode?.tts?.model),
       DEFAULT_OPENAI_TTS_MODEL,
+    ]),
+    ttsInstructions: firstDefined<string>([
+      env.TTS_INSTRUCTIONS,
+      pickIfOpenAi(providers.voiceTts, persisted.features?.voiceMode?.tts?.instructions),
     ]),
   };
 }
@@ -201,6 +200,7 @@ function buildTtsConfig(
     ...(baseUrl ? { baseUrl } : {}),
     voice: options.ttsVoice,
     model: options.ttsModel,
+    ...(options.ttsInstructions ? { instructions: options.ttsInstructions } : {}),
     responseFormat: "pcm",
   };
 }
