@@ -1,3 +1,4 @@
+import type { AgentPermissionResponse } from "@getpaseo/protocol/agent-types";
 import type {
   AgentSnapshotPayload,
   CreateAgentRequestMessage,
@@ -24,6 +25,7 @@ import type {
   WorkspaceCreateRequest,
 } from "@getpaseo/protocol/messages";
 import { DaemonClient } from "./daemon-client.js";
+import type { PluginTimelineItem } from "@getpaseo/protocol/agent-types";
 import type {
   FetchAgentsEntry,
   FetchAgentsOptions,
@@ -237,6 +239,12 @@ export interface PaseoAgentRunOptions extends PaseoAgentSendOptions {
 }
 
 export type PaseoAgentRunResult = WaitForFinishResult;
+export type PaseoAgentPermissionResponse = AgentPermissionResponse;
+
+export interface PaseoAgentRespondToPermissionOptions {
+  requestId: string;
+  response: PaseoAgentPermissionResponse;
+}
 
 export interface PaseoAgentCommandsOptions {
   requestId?: string;
@@ -251,6 +259,7 @@ export type PaseoAgentStream = Extract<SessionOutboundMessage, { type: "agent_st
 export type PaseoAgentUpdateHandler = (update: PaseoAgentUpdate) => void;
 
 export interface PaseoAgentTimelineHandle {
+  append(item: Omit<PluginTimelineItem, "pluginId">): Promise<{ seq: number; epoch: string }>;
   /**
    * Fetches a fresh timeline page through the existing daemon RPC. If the daemon
    * includes an agent snapshot in the response, the parent handle is updated to
@@ -289,6 +298,7 @@ export interface PaseoAgentHandle {
   current(): PaseoAgent | null;
   refresh(requestId?: string): Promise<PaseoAgentRefetchResult | null>;
   send(text: string, options?: PaseoAgentSendOptions): Promise<void>;
+  respondToPermission(options: PaseoAgentRespondToPermissionOptions): Promise<void>;
   /** Sends a prompt and resolves when that turn finishes or needs attention. */
   run(text: string, options?: PaseoAgentRunOptions): Promise<PaseoAgentRunResult>;
   /** Waits for the current turn, including one started with `prompt`. */
@@ -606,6 +616,7 @@ function createAgentHandleFactory(daemonClient: DaemonClient): AgentHandleFactor
     const handle: PaseoAgentHandle = {
       id,
       timeline: {
+        append: (item) => daemonClient.appendAgentTimelineItem(id, item),
         refetch: async (options) => {
           const result = await daemonClient.fetchAgentTimeline(id, options);
           if (result.agent) {
@@ -664,6 +675,9 @@ function createAgentHandleFactory(daemonClient: DaemonClient): AgentHandleFactor
       },
       send: async (text, options) => {
         await daemonClient.sendAgentMessage(id, text, options);
+      },
+      respondToPermission: async ({ requestId, response }) => {
+        await daemonClient.respondToPermission(id, requestId, response);
       },
       run: async (text, options) => {
         const { timeoutMs, ...sendOptions } = options ?? {};

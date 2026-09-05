@@ -3,6 +3,98 @@ import { paintWebViewport } from "./paint.web";
 import type { DiffCell, DiffDocumentModel, DiffLineRow, DiffPalette, DiffSelection } from "./types";
 
 describe("web diff text shaping", () => {
+  it("matches the 30px file-header alignment rails exactly", () => {
+    const fills: Array<{ color: string; x: number; y: number; width: number; height: number }> = [];
+    const labels: Array<{ text: string; x: number; y: number; color: string; font: string }> = [];
+    let fillStyle = "";
+    let font = "";
+    const context = {
+      setTransform() {},
+      clearRect() {},
+      fillRect(x: number, y: number, width: number, height: number) {
+        fills.push({ color: fillStyle, x, y, width, height });
+      },
+      save() {},
+      restore() {},
+      beginPath() {},
+      rect() {},
+      clip() {},
+      translate() {},
+      scale() {},
+      roundRect() {},
+      moveTo() {},
+      lineTo() {},
+      stroke() {},
+      measureText(text: string) {
+        return {
+          width: text.length * 6,
+          actualBoundingBoxAscent: 8,
+          actualBoundingBoxDescent: 2,
+        } as TextMetrics;
+      },
+      fillText(text: string, x: number, y: number) {
+        labels.push({ text, x, y, color: fillStyle, font });
+      },
+      get fillStyle() {
+        return fillStyle;
+      },
+      set fillStyle(value: string | CanvasGradient | CanvasPattern) {
+        fillStyle = String(value);
+      },
+      get font() {
+        return font;
+      },
+      set font(value: string) {
+        font = value;
+      },
+      strokeStyle: "",
+      lineWidth: 1,
+      lineCap: "butt",
+      lineJoin: "miter",
+    } as unknown as CanvasRenderingContext2D;
+
+    paintWebViewport({
+      context,
+      model: {
+        ...model,
+        files: [
+          {
+            ...model.files[0]!,
+            headerHeight: 30,
+            bodyTop: 30,
+            bodyHeight: 18,
+            bottom: 48,
+          },
+        ],
+        height: 48,
+      },
+      palette,
+      typography: { family: "monospace", size: 12, lineHeight: 18 },
+      headerTypography: { family: "system-ui", size: 14, statSize: 12 },
+      measureText: { measure: () => 0 },
+      scrollTop: 0,
+      viewportWidth: 200,
+      viewportHeight: 100,
+      horizontalOffsets: new Map(),
+      selection: null,
+      devicePixelRatio: 1,
+      activeHeaderPath: null,
+    });
+
+    expect(
+      fills.filter((fill) => fill.color === "header" || fill.color === "header-border"),
+    ).toEqual([
+      { color: "header", x: 0, y: 0, width: 200, height: 30 },
+      { color: "header-border", x: 0, y: 29, width: 200, height: 1 },
+    ]);
+    expect(labels.filter((label) => label.text !== "fi")).toEqual([
+      { text: "+1", x: 142, y: 18, color: "success", font: "12px system-ui" },
+      { text: "-0", x: 158, y: 18, color: "danger", font: "12px system-ui" },
+      { text: "a.ts", x: 12, y: 18, color: "foreground", font: "14px system-ui" },
+      { text: "src", x: 40, y: 18, color: "muted", font: "14px system-ui" },
+    ]);
+  });
+
   it("paints syntax colors by clipping the complete measured shaped fragment", () => {
     const paintedText: string[] = [];
     const context = {
@@ -28,12 +120,14 @@ describe("web diff text shaping", () => {
       model,
       palette,
       typography: { family: "ligature-font", size: 12, lineHeight: 18 },
+      headerTypography,
       measureText: { measure: () => 0 },
       scrollTop: 0,
       viewportWidth: 200,
       viewportHeight: 100,
       horizontalOffsets: new Map(),
       selection: null,
+      activeHeaderPath: null,
       devicePixelRatio: 1,
     });
 
@@ -71,12 +165,14 @@ describe("web diff text shaping", () => {
       model: modelWithReview,
       palette,
       typography: { family: "monospace", size: 12, lineHeight: 18 },
+      headerTypography,
       measureText: { measure: () => 0 },
       scrollTop: 0,
       viewportWidth: 200,
       viewportHeight: 100,
       horizontalOffsets: new Map(),
       selection: null,
+      activeHeaderPath: null,
       devicePixelRatio: 1,
     });
 
@@ -134,12 +230,14 @@ describe("web diff text shaping", () => {
       model: borderedModel,
       palette,
       typography: { family: "monospace", size: 12, lineHeight: 18 },
+      headerTypography,
       measureText: { measure: () => 0 },
       scrollTop: 0,
       viewportWidth: 200,
       viewportHeight: 100,
       horizontalOffsets: new Map(),
       selection: null,
+      activeHeaderPath: null,
       devicePixelRatio: 1,
     });
 
@@ -245,12 +343,14 @@ function paintSelection(model: DiffDocumentModel, selection: DiffSelection): Sel
     model,
     palette,
     typography: { family: "monospace", size: 12, lineHeight: 18 },
+    headerTypography,
     measureText: { measure: () => 0 },
     scrollTop: 0,
     viewportWidth: 200,
     viewportHeight: 100,
     horizontalOffsets: new Map([["src/selection.ts", 50]]),
     selection,
+    activeHeaderPath: null,
     devicePixelRatio: 1,
   });
   return paints;
@@ -314,6 +414,7 @@ function createSelectionModel(layout: "unified" | "split"): DiffDocumentModel {
     layout,
     wrapLines: false,
     viewportWidth: 200,
+    reviewGeometryKey: "",
   };
 }
 
@@ -356,8 +457,15 @@ const palette: DiffPalette = {
   deletionBackground: "red-bg",
   emptyBackground: "empty",
   selection: "selection",
+  headerActiveSurface: "active-header",
+  headerBorder: "header-border",
+  statusSuccess: "success",
+  statusDanger: "danger",
+  statusWarning: "warning",
   syntax: { first: "red", second: "blue" },
 };
+
+const headerTypography = { family: "system-ui", size: 14, statSize: 12 };
 
 const model: DiffDocumentModel = {
   files: [
@@ -427,6 +535,7 @@ const model: DiffDocumentModel = {
   layout: "unified",
   wrapLines: false,
   viewportWidth: 200,
+  reviewGeometryKey: "",
 };
 
 const modelWithReview: DiffDocumentModel = {

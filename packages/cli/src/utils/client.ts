@@ -189,12 +189,20 @@ export function resolveDefaultDaemonHosts(env: NodeJS.ProcessEnv = process.env):
 }
 
 function resolveDaemonHostCandidates(options?: ConnectOptions): string[] {
-  const explicitHost = options?.host ?? process.env.PASEO_HOST;
+  const explicitHost = getExplicitDaemonHost(options?.host);
   if (explicitHost) {
     return [explicitHost];
   }
 
   return resolveDefaultDaemonHosts();
+}
+
+export function getExplicitDaemonHost(
+  host: string | undefined,
+  env: NodeJS.ProcessEnv = process.env,
+): string | undefined {
+  const explicitHost = host ?? env.PASEO_HOST;
+  return explicitHost?.trim() ? explicitHost : undefined;
 }
 
 function stripIpcPrefix(trimmed: string): string {
@@ -360,7 +368,7 @@ export async function connectToDaemon(options?: ConnectOptions): Promise<DaemonC
   const clientId = await getOrCreateCliClientId();
   const nodeWebSocketFactory = createNodeWebSocketFactory();
 
-  const explicitHost = options?.host ?? process.env.PASEO_HOST;
+  const explicitHost = getExplicitDaemonHost(options?.host);
   if (explicitHost?.trim().startsWith("ssh://")) {
     const target = parseSshTransportUri(explicitHost.trim());
     const tunnel = await createSshTunnel(target);

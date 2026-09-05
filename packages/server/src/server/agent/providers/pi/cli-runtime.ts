@@ -121,6 +121,21 @@ class PiCliRuntimeSession implements PiRuntimeSession {
     return { requestId };
   }
 
+  async steer(
+    message: string,
+    images?: Array<{ type: "image"; data: string; mimeType: string }>,
+  ): Promise<void> {
+    await this.request({
+      type: "steer",
+      message,
+      ...(images?.length ? { images } : {}),
+    });
+  }
+
+  async clearQueue(): Promise<void> {
+    await this.request({ type: "clear_queue" });
+  }
+
   async compact(customInstructions?: string): Promise<void> {
     await this.waitForCompletion({
       type: "compact",

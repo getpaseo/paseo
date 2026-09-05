@@ -1237,6 +1237,7 @@ describe.skipIf(isPlatform("win32"))("worktree-core POSIX-only", () => {
         forge: "github",
         changeRequestNumber: 526,
         headRef: "main",
+        headRepository: "therainisme/therainisme",
         headRepositoryOwner: "therainisme",
         baseRefName: "main",
         checkoutRefs: [{ remoteName: "origin", remoteRef: "refs/pull/526/head" }],

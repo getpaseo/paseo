@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import { existsSync } from "node:fs";
 import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -7,6 +8,13 @@ import { startIsolatedHostDaemon } from "./isolated-host-daemon";
 
 export interface E2EWorker {
   close(): Promise<void>;
+}
+
+export interface E2EWorkerOptions {
+  forkProviders?: string[];
+  injectPaseoTools?: boolean;
+  daemonConfig?: Record<string, unknown>;
+  environment?: Record<string, string>;
 }
 
 function resolveOptionalHome(value: string | undefined): string | null {
@@ -76,31 +84,33 @@ if (origin === fixtureRemote) {
     process.exit(0);
   }
   if (command === "pr list" || command === "pr view") {
+    const isFork = args.includes("2");
     const pr = {
-      number: 1,
+      number: isFork ? 2 : 1,
       title: "Use pasted PR as start ref",
-      url: "https://github.com/paseo-e2e/local-fixture/pull/1",
+      url: "https://github.com/paseo-e2e/local-fixture/pull/" + (isFork ? 2 : 1),
       state: "OPEN",
       body: null,
       labels: [],
       baseRefName: "main",
-      headRefName: "pr-branch-1",
+      headRefName: isFork ? "pr-branch-2" : "pr-branch-1",
       updatedAt: "2026-01-01T00:00:00Z"
     };
     process.stdout.write(JSON.stringify(command === "pr list" ? [pr] : pr));
     process.exit(0);
   }
   if (command === "api graphql" && args.some((arg) => arg.includes("PullRequestCheckoutTarget"))) {
+    const isFork = args.some((arg) => arg === "number=2");
     process.stdout.write(JSON.stringify({
       data: { repository: { pullRequest: {
-        number: 1,
+        number: isFork ? 2 : 1,
         baseRefName: "main",
-        headRefName: "pr-branch-1",
-        isCrossRepository: false,
-        headRepositoryOwner: { login: "paseo-e2e" },
+        headRefName: isFork ? "pr-branch-2" : "pr-branch-1",
+        isCrossRepository: isFork,
+        headRepositoryOwner: { login: isFork ? "fork-owner" : "paseo-e2e" },
         headRepository: {
-          sshUrl: "git@github.com:paseo-e2e/local-fixture.git",
-          url: fixtureRemote
+          sshUrl: isFork ? "git@github.com:fork-owner/local-fixture.git" : "git@github.com:paseo-e2e/local-fixture.git",
+          url: isFork ? "https://github.com/fork-owner/local-fixture" : fixtureRemote
         }
       } } }
     }));
@@ -155,7 +165,7 @@ async function applyMetadataFork(targetHome: string, providerIds: string[]): Pro
 
 export async function startE2EWorker(
   workerIndex: number,
-  options: { forkProviders?: string[] } = {},
+  options: E2EWorkerOptions = {},
 ): Promise<E2EWorker> {
   const requestedRoot = resolveOptionalHome(process.env.E2E_PASEO_HOME);
   const paseoHome = requestedRoot
@@ -168,6 +178,17 @@ export async function startE2EWorker(
 
   try {
     await applyMetadataFork(paseoHome, options.forkProviders ?? []);
+    // Worker-scoped fixture config lets a spec exercise provider discovery without
+    // reading the developer's provider state or sharing configuration with other specs.
+    if (options.daemonConfig) {
+      await writeFile(
+        path.join(paseoHome, "config.json"),
+        `${JSON.stringify(options.daemonConfig, null, 2)}\n`,
+      );
+    }
+    if (options.injectPaseoTools) {
+      await enablePaseoTools(paseoHome);
+    }
     const daemon = await startIsolatedHostDaemon(serverId, {
       paseoHome,
       preserveHome,
@@ -175,6 +196,7 @@ export async function startE2EWorker(
         NODE_ENV: "development",
         PATH: `${fakeEditorBin}${path.delimiter}${process.env.PATH ?? ""}`,
         PASEO_E2E_EDITOR_RECORD_PATH: editorRecordPath,
+        ...options.environment,
       },
     });
 
@@ -200,4 +222,29 @@ export async function startE2EWorker(
     if (!preserveHome) await rm(paseoHome, { recursive: true, force: true });
     throw error;
   }
+}
+
+async function enablePaseoTools(paseoHome: string): Promise<void> {
+  const configPath = path.join(paseoHome, "config.json");
+  const existing = existsSync(configPath)
+    ? JSON.parse(await readFile(configPath, "utf8"))
+    : { version: 1 };
+  await writeFile(
+    configPath,
+    `${JSON.stringify(
+      {
+        ...existing,
+        daemon: {
+          ...existing.daemon,
+          mcp: {
+            ...existing.daemon?.mcp,
+            enabled: true,
+            injectIntoAgents: true,
+          },
+        },
+      },
+      null,
+      2,
+    )}\n`,
+  );
 }

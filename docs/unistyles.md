@@ -349,6 +349,18 @@ Gotchas:
 - **The app shell uses one `AppearanceStyleBoundary`.** Runtime-patched numeric theme values are baked into Unistyles web classes rather than CSS variables, while parsed/memoized content also does not naturally re-run when appearance tokens change. The boundary sits below stable runtime providers in `app/_layout.tsx` and remounts the visual shell once. `applyAppearance` patches the active theme before inactive registry entries so its subscribers receive the committed values in the same update. Do not add local appearance keys or nested boundaries.
 - **Dynamic font tokens stay widened.** `fontFamily`, `fontSize`, and `lineHeight` on `commonTheme` are annotated `string`/`number` (not narrowed by `as const`) so the updater's return assigns; the platform default stacks live in `DEFAULT_UI_FONT_STACK` / `DEFAULT_MONO_FONT_STACK`.
 
+## Patching The Web Runtime
+
+When backporting a Unistyles web fix, patch the TypeScript source and both
+shipped JavaScript builds. Native Metro resolves the package's `react-native`
+export to `src`, but browser and Electron Metro resolve its `browser` export to
+`lib/module`; CommonJS consumers use `lib/commonjs`. A source-only patch leaves
+Electron running the old code.
+
+Register every dependency patch in `scripts/postinstall-patches.mjs`. A file in
+`patches/` is inert unless that script knows which installed package activates
+it.
+
 ## Debugging
 
 To inspect what the Babel plugin sees, temporarily enable [`debug: true`](https://www.unistyl.es/v3/other/babel-plugin#debug) in `packages/app/babel.config.js`:

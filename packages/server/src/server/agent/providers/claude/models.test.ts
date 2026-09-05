@@ -51,6 +51,7 @@ describe("getClaudeModels", () => {
     const models = getClaudeModels();
     expect(models.map((m) => m.id)).toEqual([
       "claude-opus-5",
+      "claude-fable-5-1",
       "claude-fable-5",
       "claude-fable-5[1m]",
       "claude-opus-4-8[1m]",
@@ -82,6 +83,7 @@ describe("getClaudeModels", () => {
     expect(contextWindows).toEqual(
       new Map([
         ["claude-opus-5", 1_000_000],
+        ["claude-fable-5-1", 1_000_000],
         ["claude-fable-5", 1_000_000],
         ["claude-fable-5[1m]", 1_000_000],
         ["claude-opus-4-8[1m]", 1_000_000],
@@ -160,6 +162,9 @@ describe("getClaudeModels", () => {
     expect(models.get("claude-fable-5")?.thinkingOptions?.map((option) => option.id)).not.toContain(
       CLAUDE_DISABLED_THINKING_OPTION_ID,
     );
+    expect(
+      models.get("claude-fable-5-1")?.thinkingOptions?.map((option) => option.id),
+    ).not.toContain(CLAUDE_DISABLED_THINKING_OPTION_ID);
     expect(models.get("claude-haiku-4-5")?.thinkingOptions).toBeUndefined();
   });
 
@@ -170,6 +175,7 @@ describe("getClaudeModels", () => {
     ["claude-sonnet-5[1m]", true, "high"],
     ["claude-sonnet-5-20260101", true, "high"],
     ["claude-fable-5", false, "high"],
+    ["claude-fable-5-1", false, "high"],
     ["claude-haiku-4-5", false, undefined],
     ["openrouter/anthropic/claude-opus-4-8", false, undefined],
     [null, false, undefined],
@@ -458,7 +464,7 @@ describe("Claude Opus 5 catalog", () => {
 describe("Claude Fable 5 catalog", () => {
   it("offers one selectable Fable 5 entry and a compatibility entry for old apps", () => {
     const fable5Models = getClaudeModels()
-      .filter((model) => model.id.startsWith("claude-fable-5"))
+      .filter((model) => model.id === "claude-fable-5" || model.id === "claude-fable-5[1m]")
       .map(({ id, aliases, isSelectable, label, contextWindowMaxTokens }) => ({
         id,
         aliases,
@@ -491,6 +497,24 @@ describe("Claude Fable 5 catalog", () => {
   });
 });
 
+describe("Claude Fable 5.1 catalog", () => {
+  it("offers one Fable 5.1 entry with a 1M context window", () => {
+    const fable51Models = getClaudeModels()
+      .filter((model) => model.id.startsWith("claude-fable-5-1"))
+      .map(({ id, label, contextWindowMaxTokens }) => ({ id, label, contextWindowMaxTokens }));
+
+    expect(fable51Models).toEqual([
+      { id: "claude-fable-5-1", label: "Fable 5.1", contextWindowMaxTokens: 1_000_000 },
+    ]);
+  });
+
+  it("resolves suffixed and dated Fable 5.1 IDs to the catalog entry", () => {
+    expect(findClaudeModel("claude-fable-5-1[1m]")?.id).toBe("claude-fable-5-1");
+    expect(findClaudeModel("claude-fable-5-1-20260901")?.id).toBe("claude-fable-5-1");
+    expect(findClaudeModel("claude-fable-5-1-20260901[1m]")?.id).toBe("claude-fable-5-1");
+  });
+});
+
 describe("claudeManifestModelSupportsFastMode", () => {
   it("keeps fast mode strict to first-party manifest model IDs", () => {
     expect(normalizeClaudeManifestModelId("openrouter/anthropic/claude-opus-4-8")).toBeNull();
@@ -502,5 +526,6 @@ describe("claudeManifestModelSupportsFastMode", () => {
     expect(claudeManifestModelSupportsFastMode("claude-opus-5")).toBe(true);
     expect(claudeManifestModelSupportsFastMode("claude-sonnet-5")).toBe(false);
     expect(claudeManifestModelSupportsFastMode("claude-fable-5")).toBe(false);
+    expect(claudeManifestModelSupportsFastMode("claude-fable-5-1")).toBe(false);
   });
 });

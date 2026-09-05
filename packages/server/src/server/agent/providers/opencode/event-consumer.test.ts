@@ -249,6 +249,37 @@ describe("OpenCodeEventConsumer", () => {
     expect(inputs).toEqual([arbitraryRecord("/one")]);
   });
 
+  test("logs OpenCode plugin load errors from the shared stream", async () => {
+    const upstream = await createSseUpstream();
+    const logger = createRecordingLogger();
+    const consumer = new OpenCodeEventConsumer({
+      serverUrl: upstream.url,
+      processExit: new Promise<Error>(() => undefined),
+      logger,
+    });
+    cleanups.push(async () => {
+      await consumer.close();
+      await upstream.close();
+    });
+
+    await upstream.connected(1);
+    upstream.send(0, connectedRecord("/workspace"));
+    await consumer.ready();
+    upstream.send(0, pluginErrorRecord("/workspace"));
+
+    await eventually(() =>
+      expect(logger.warn).toHaveBeenCalledWith(
+        expect.objectContaining({
+          directory: "/workspace",
+          error: expect.objectContaining({
+            data: expect.objectContaining({ message: expect.stringContaining("plugin") }),
+          }),
+        }),
+        "OpenCode plugin failed",
+      ),
+    );
+  });
+
   test("reconnects after a socket error with a delivered-record backoff reset", async () => {
     const upstream = await createSseUpstream();
     const timing = new ControlledTiming();
@@ -445,6 +476,21 @@ function arbitraryRecord(directory: string) {
     payload: {
       type: "session.status",
       properties: { sessionID: "unrelated", status: { type: "idle" } },
+    },
+  };
+}
+
+function pluginErrorRecord(directory: string) {
+  return {
+    directory,
+    payload: {
+      type: "session.error",
+      properties: {
+        error: {
+          name: "UnknownError",
+          data: { message: "Failed to load plugin file:///paseo-plugin.mjs" },
+        },
+      },
     },
   };
 }

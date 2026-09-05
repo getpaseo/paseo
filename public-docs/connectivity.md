@@ -28,22 +28,22 @@ Before connecting:
 The CLI accepts an SSH URI as its host:
 
 ```bash
-paseo ls -a --host ssh://user@host
+paseo --host ssh://user@host ls -a
 ```
 
 The daemon is expected at `127.0.0.1:6767` on the remote host. The port in the SSH URL is the SSH server port:
 
 ```bash
-paseo ls -a --host ssh://user@host:2222
+paseo --host ssh://user@host:2222 ls -a
 ```
 
 Set a different remote daemon port with `daemonPort`:
 
 ```bash
-paseo ls -a --host 'ssh://user@host?daemonPort=7777'
+paseo --host 'ssh://user@host?daemonPort=7777' ls -a
 ```
 
-`--host` belongs after the command. `paseo daemon status` checks only the local daemon; use `paseo ls --host ...` to verify a remote connection. `paseo run --host ...` also requires `--cwd` with a path that exists on the remote host.
+Put `--host` before the command. `paseo daemon status` checks only the local daemon; use `paseo --host ssh://user@host ls` to verify a remote connection. `paseo --host ssh://user@host run --cwd /path/on/remote ...` requires a working directory that exists on the remote host.
 
 In Paseo Desktop, open **Settings → Add host → Remote SSH** and enter the same `ssh://` destination.
 

@@ -22,7 +22,7 @@ async function createRepository(): Promise<string> {
     path.join(repository, "paseo-plugin.json"),
     JSON.stringify({ id: "managed-example" }),
   );
-  await writeFile(path.join(repository, "index.ts"), "export default () => () => {};\n");
+  await writeFile(path.join(repository, "index.server.ts"), "export default () => () => {};\n");
   await commitAll(repository, "initial");
   return repository;
 }
@@ -60,7 +60,7 @@ describe("managed Git plugin sources", () => {
 
     const initial = candidate.record.commit;
     await writeFile(
-      path.join(repository, "index.ts"),
+      path.join(repository, "index.server.ts"),
       "export default () => () => { new Date(); };\n",
     );
     const latest = await commitAll(repository, "update");
@@ -77,7 +77,9 @@ describe("managed Git plugin sources", () => {
     if (!prepared.candidate) throw new Error("Expected an update candidate");
     const updated = await sources.place("managed-example", prepared.candidate);
     sources.commit("managed-example", updated.record);
-    expect(await readFile(path.join(updated.directory, "index.ts"), "utf8")).toContain("new Date");
+    expect(await readFile(path.join(updated.directory, "index.server.ts"), "utf8")).toContain(
+      "new Date",
+    );
     expect(new ManagedPluginSources(home).get("managed-example")?.commit).toBe(latest);
 
     await runGitCommand(["tag", "v1", initial], { cwd: repository });
