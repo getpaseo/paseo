@@ -2322,6 +2322,30 @@ test("opening during reload waits for the replacement", async () => {
   }
 });
 
+test("closing during reload leaves the replacement closed", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-reload-close-race-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const client = new HeldReloadCloseClient();
+  const manager = new AgentManager({ clients: { codex: client }, registry: storage, logger });
+  try {
+    const created = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    const reloading = manager.reloadAgentSession(created.id);
+    await client.waitForCloseToStart();
+    const closing = manager.closeAgent(created.id);
+    client.finishClosing();
+    await Promise.all([reloading, closing]);
+    expect(manager.getAgent(created.id)).toBeNull();
+    expect(client.replacementSessionClosed).toBe(true);
+    expect(await storage.get(created.id)).toMatchObject({ lastStatus: "closed" });
+  } finally {
+    client.finishClosing();
+    await storage.flush();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
 test("retrying a timed-out reload waits for the original close to finish", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-reload-late-close-"));
   const storage = new AgentStorage(join(workdir, "agents"), logger);

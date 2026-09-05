@@ -1575,7 +1575,10 @@ export class AgentManager {
       return existing;
     }
 
-    const close = this.closeAgentRuntime(agentId);
+    const close = this.runLifecycleMutation(agentId, async () => {
+      // A preceding reload or archive may already have closed the durable agent.
+      if (this.agents.has(agentId)) await this.closeAgentRuntime(agentId);
+    });
     this.inFlightAgentCloses.set(agentId, close);
     const clearClose = () => {
       if (this.inFlightAgentCloses.get(agentId) === close) {
@@ -1668,7 +1671,7 @@ export class AgentManager {
 
     const { archivedAt } = await this.markRecordArchived(stored);
     agent.updatedAt = new Date(archivedAt);
-    await this.closeAgent(agentId);
+    await this.closeAgentRuntime(agentId);
     this.discardRetainedAgentState(agentId);
 
     await this.cascadeArchiveChildren(agentId);
