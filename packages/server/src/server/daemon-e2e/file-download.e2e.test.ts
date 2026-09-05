@@ -61,6 +61,46 @@ describe("daemon E2E", () => {
       rmSync(cwd, { recursive: true, force: true });
     }, 60000);
 
+    test("downloads a file whose name contains non-ASCII characters", async () => {
+      const cwd = tmpCwd();
+      const fileName = "要求.txt";
+      const filePath = path.join(cwd, fileName);
+      const fileContents = "中文文件名下载";
+      writeFileSync(filePath, fileContents, "utf-8");
+
+      const agent = await ctx.client.createAgent({
+        provider: "codex",
+        model: CODEX_TEST_MODEL,
+        thinkingOptionId: CODEX_TEST_THINKING_OPTION_ID,
+        cwd,
+        title: "Non-ASCII Download Token Test Agent",
+      });
+
+      expect(agent.id).toBeTruthy();
+
+      const tokenResponse = await ctx.client.requestDownloadToken(cwd, fileName);
+
+      expect(tokenResponse.error).toBeNull();
+      expect(tokenResponse.token).toBeTruthy();
+      expect(tokenResponse.fileName).toBe(fileName);
+
+      const response = await fetch(
+        `http://127.0.0.1:${ctx.daemon.port}/api/files/download?token=${tokenResponse.token}`,
+      );
+
+      expect(response.status).toBe(200);
+      const disposition = response.headers.get("content-disposition") ?? "";
+      expect(disposition).toContain(`filename*=UTF-8''${encodeURIComponent(fileName)}`);
+      // Header must stay a valid ASCII value (Node throws ERR_INVALID_CHAR on
+      // non-Latin-1 header characters) and keep an ASCII-safe filename= fallback.
+      expect(disposition).toContain('filename="');
+
+      const body = await response.text();
+      expect(body).toBe(fileContents);
+
+      rmSync(cwd, { recursive: true, force: true });
+    }, 60000);
+
     test("rejects invalid token", async () => {
       const response = await fetch(
         `http://127.0.0.1:${ctx.daemon.port}/api/files/download?token=invalid-token`,
