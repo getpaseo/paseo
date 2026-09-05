@@ -39,6 +39,7 @@ catalog probe. `PASEO_PROVIDER_REFRESH_TIMEOUT_MS` sets it when the config field
 - [Z.AI (Zhipu) coding plan](#zai-zhipu-coding-plan)
 - [Alibaba Cloud (Qwen) coding plan](#alibaba-cloud-qwen-coding-plan)
 - [Codex with a custom OpenAI-compatible endpoint](#codex-with-a-custom-openai-compatible-endpoint)
+- [OrcaRouter (OpenAI-compatible router)](#orcarouter-openai-compatible-router)
 - [Multiple profiles for the same provider](#multiple-profiles-for-the-same-provider)
 - [Custom binary for a provider](#custom-binary-for-a-provider)
 - [Disabling a provider](#disabling-a-provider)
@@ -252,6 +253,47 @@ requires_openai_auth = false
 - Set `models` explicitly. Custom endpoints expose their own model IDs (`anthropic/claude-opus-4-7`, `qwen/qwen3-coder`, `local/llama`, etc.), and Paseo does not discover them automatically for Codex.
 - To run multiple endpoints side-by-side, define multiple entries that each extend `"codex"` with different IDs, labels, and env. Each appears as its own provider in the app.
 - If you only want to override the binary (e.g. a nightly Codex build) without changing the endpoint, omit `OPENAI_BASE_URL` and use `command` instead — see [Custom binary for a provider](#custom-binary-for-a-provider).
+
+---
+
+## OrcaRouter (OpenAI-compatible router)
+
+OrcaRouter is an OpenAI-compatible router that exposes 150+ models from OpenAI, Anthropic, Google, DeepSeek, Qwen, MiniMax and xAI behind one API key. It speaks the OpenAI Responses API, so it works with the `extends: "codex"` wiring above with no extra bridge.
+
+### Setup
+
+```json
+{
+  "agents": {
+    "providers": {
+      "orcarouter": {
+        "extends": "codex",
+        "label": "OrcaRouter",
+        "description": "Codex via OrcaRouter",
+        "env": {
+          "OPENAI_API_KEY": "sk-orca-...",
+          "OPENAI_BASE_URL": "https://api.orcarouter.ai/v1"
+        },
+        "models": [
+          { "id": "orcarouter/auto", "label": "OrcaRouter Auto", "isDefault": true },
+          { "id": "openai/gpt-4o", "label": "GPT-4o" },
+          { "id": "anthropic/claude-sonnet-4.6", "label": "Claude Sonnet 4.6" },
+          { "id": "deepseek/deepseek-v4-pro", "label": "DeepSeek V4 Pro" },
+          { "id": "qwen/qwen3.5-flash", "label": "Qwen 3.5 Flash" },
+          { "id": "minimax/minimax-m3", "label": "MiniMax M3" },
+          { "id": "google/gemini-2.5-flash", "label": "Gemini 2.5 Flash" },
+          { "id": "z-ai/glm-5.2", "label": "GLM 5.2" }
+        ]
+      }
+    }
+  }
+}
+```
+
+### Notes
+
+- `orcarouter/auto` routes each request to an upstream model according to your routing rules. To pin a specific model, use its router ID (e.g. `anthropic/claude-sonnet-4.6`).
+- Use a scoped key to bind a key to specific models, IPs, or a spend cap.
 
 ---
 
