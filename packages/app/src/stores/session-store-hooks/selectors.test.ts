@@ -228,7 +228,7 @@ describe("workspace replica authority", () => {
       [`${hydratedServerId}:${hydratedWorkspace.id}`],
     ]);
   });
-  it("keeps automatic project grouping while a linked host is still hydrating", () => {
+  it("keeps automatic grouping when a linked host is excluded while hydrating", () => {
     const primaryServerId = "primary-server";
     const loadingServerId = "loading-server";
     const projectKey = "remote:github.com/acme/app";
@@ -256,9 +256,13 @@ describe("workspace replica authority", () => {
       },
     };
 
+    const directoryServerIds = selectWorkspaceDirectoryServerIds(state, [
+      primaryServerId,
+      loadingServerId,
+    ]);
     const projects = selectWorkspaceStructureProjects(
       state,
-      [primaryServerId, loadingServerId],
+      directoryServerIds,
       undefined,
       [
         {
@@ -272,6 +276,7 @@ describe("workspace replica authority", () => {
       ],
     );
 
+    expect(directoryServerIds).toEqual([primaryServerId]);
     expect(projects).toMatchObject([{ viewKey: projectKey, projectKey }]);
   });
 });
