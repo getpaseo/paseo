@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { readFile, rm } from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
 import { writeJsonFileAtomic } from "../../atomic-file.js";
@@ -27,6 +27,7 @@ export class AgentRequests {
       agentId: randomUUID(),
       recover: input.findAgent,
       run: input.create,
+      retrySafe: async (agentId) => !(await input.findAgent(agentId)),
     });
   }
 
@@ -35,6 +36,7 @@ export class AgentRequests {
     messageId: string;
     request: unknown;
     send: () => Promise<void>;
+    prepare?: () => Promise<void>;
   }): Promise<void> {
     await this.execute(["send", input.agentId, input.messageId], input.request, {
       agentId: input.agentId,
@@ -42,6 +44,7 @@ export class AgentRequests {
       // Never repeat that call merely because a process died in this window.
       recover: async () => false,
       run: input.send,
+      prepare: input.prepare,
     });
   }
 
@@ -52,6 +55,8 @@ export class AgentRequests {
       agentId: string;
       recover: (agentId: string) => Promise<boolean>;
       run: (agentId: string) => Promise<void>;
+      prepare?: (() => Promise<void>) | undefined;
+      retrySafe?: (agentId: string) => Promise<boolean>;
     },
   ): Promise<string> {
     const key = digest(identity);
@@ -77,6 +82,8 @@ export class AgentRequests {
       agentId: string;
       recover: (agentId: string) => Promise<boolean>;
       run: (agentId: string) => Promise<void>;
+      prepare?: (() => Promise<void>) | undefined;
+      retrySafe?: (agentId: string) => Promise<boolean>;
     },
   ): Promise<string> {
     const file = path.join(this.directory, `${key}.json`);
@@ -90,9 +97,17 @@ export class AgentRequests {
       await writeJsonFileAtomic(file, { ...existing, state: "completed" });
       return existing.agentId;
     }
+    await operation.prepare?.();
     const receipt: Receipt = { fingerprint, agentId: operation.agentId, state: "pending" };
     await writeJsonFileAtomic(file, receipt);
-    await operation.run(receipt.agentId);
+    try {
+      await operation.run(receipt.agentId);
+    } catch (error) {
+      // Keyed creation has no initial prompt. Once its normal cleanup finished,
+      // absence of an agent confirms that retrying cannot duplicate one.
+      if (await operation.retrySafe?.(receipt.agentId)) await rm(file, { force: true });
+      throw error;
+    }
     await writeJsonFileAtomic(file, { ...receipt, state: "completed" });
     return receipt.agentId;
   }

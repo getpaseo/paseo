@@ -102,3 +102,42 @@ test("ambiguous provider delivery is never blindly replayed after restart", asyn
   );
   expect(deliveries).toBe(1);
 });
+
+test("a creation failure with no stored agent can be retried", async () => {
+  const { requests } = await fixture();
+  let available = false;
+  const input = {
+    key: "unavailable",
+    request: {},
+    findAgent: async () => false,
+    create: async () => {
+      if (!available) throw new Error("provider unavailable");
+    },
+  };
+  await expect(requests.create(input)).rejects.toThrow("provider unavailable");
+  available = true;
+  await expect(requests.create(input)).resolves.toEqual(expect.any(String));
+});
+
+test("failed local message preparation does not leave an ambiguous receipt", async () => {
+  const { requests, directory } = await fixture();
+  let available = false;
+  let sends = 0;
+  const input = {
+    agentId: "agent",
+    messageId: "message",
+    request: {},
+    prepare: async () => {
+      if (!available) throw new Error("load failed");
+    },
+    send: async () => {
+      sends++;
+    },
+  };
+  await expect(requests.send(input)).rejects.toThrow("load failed");
+  available = true;
+  await new AgentRequests(directory).send(input);
+  available = false;
+  await requests.send(input);
+  expect(sends).toBe(1);
+});

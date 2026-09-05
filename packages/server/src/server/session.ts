@@ -3539,7 +3539,9 @@ export class Session {
         const id = await this.agentRequests.create({
           key: idempotencyKey,
           request,
-          findAgent: async (agentId) => (await this.agentStorage.get(agentId)) !== null,
+          findAgent: async (agentId) =>
+            this.agentManager.getAgent(agentId) != null ||
+            (await this.agentStorage.get(agentId)) !== null,
           create: async (agentId) => {
             await this.createSessionAgent(msg, agentId);
           },
@@ -7514,6 +7516,13 @@ export class Session {
           agentId,
           messageId: msg.messageId,
           request: { prompt, activeTurnBehavior: msg.activeTurnBehavior ?? "interrupt" },
+          prepare: async () => {
+            await ensureAgentLoaded(agentId, {
+              agentManager: this.agentManager,
+              agentStorage: this.agentStorage,
+              logger: this.sessionLogger,
+            });
+          },
           send,
         });
       } else {
