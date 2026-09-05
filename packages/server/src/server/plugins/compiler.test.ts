@@ -131,7 +131,7 @@ describe("plugin contribution targets", () => {
     ["a switch case", "switch (value) { case 1: plugin.addTool({}); break; }"],
     ["a try block", "try { plugin.addTool({}); } catch {}"],
     ["a catch block", "try {} catch (error) { plugin.addTool({}); }"],
-  ])("keeps a registration nested in %s in the transformed bundle", async (_description, body) => {
+  ])("rejects a registration nested in %s without transforming it", async (_description, body) => {
     const directory = await mkdtemp(path.join(tmpdir(), "paseo-plugin-compiler-"));
     temporaryDirectories.push(directory);
     const entryPath = path.join(directory, "index.ts");
@@ -144,7 +144,7 @@ describe("plugin contribution targets", () => {
 `,
     );
 
-    await expect(compilePlugin(entryPath)).resolves.toBeDefined();
+    await expect(compilePlugin(entryPath)).rejects.toThrow(/immediate.*expression statement/i);
   });
 
   it.each([
@@ -217,7 +217,7 @@ describe("plugin contribution targets", () => {
       "aliased string-generated timer code",
       `const timer = setTimeout; timer("plugin.addTool({})", 0);`,
     ],
-  ])("allows %s to survive bundle filtering", async (_description, body) => {
+  ])("rejects %s in the plugin entrypoint", async (_description, body) => {
     const directory = await mkdtemp(path.join(tmpdir(), "paseo-plugin-compiler-"));
     temporaryDirectories.push(directory);
     const entryPath = path.join(directory, "index.ts");
@@ -230,7 +230,7 @@ describe("plugin contribution targets", () => {
 `,
     );
 
-    await expect(compilePlugin(entryPath)).resolves.toBeDefined();
+    await expect(compilePlugin(entryPath)).rejects.toThrow(/dynamic code generation/i);
   });
 
   it.each([
@@ -297,7 +297,7 @@ describe("plugin contribution targets", () => {
     ["a class expression", "const Example = class Named extends plugin {};"],
     ["a computed class key", "class Example { [plugin]() {} }"],
     ["a class static block", "class Example { static { void plugin; } }"],
-  ])("allows a default context use from %s extends", async (_description, declaration) => {
+  ])("rejects a default context escape from %s extends", async (_description, declaration) => {
     const directory = await mkdtemp(path.join(tmpdir(), "paseo-plugin-compiler-"));
     temporaryDirectories.push(directory);
     const entryPath = path.join(directory, "index.ts");
@@ -310,7 +310,7 @@ describe("plugin contribution targets", () => {
 `,
     );
 
-    await expect(compilePlugin(entryPath)).resolves.toBeDefined();
+    await expect(compilePlugin(entryPath)).rejects.toThrow(/default context|direct.*context/i);
   });
 
   it("ignores type-only method signatures and declarations", async () => {
@@ -343,7 +343,7 @@ describe("plugin contribution targets", () => {
     ["TypeScript wrappers", "const value = (plugin as unknown satisfies unknown)!;"],
     ["decorators", "@plugin class Example {}"],
     ["default values", "const object = { register(value = plugin) {} };"],
-  ])("allows runtime expressions in %s", async (_description, expression) => {
+  ])("still analyzes runtime expressions in %s", async (_description, expression) => {
     const directory = await mkdtemp(path.join(tmpdir(), "paseo-plugin-compiler-"));
     temporaryDirectories.push(directory);
     const entryPath = path.join(directory, "index.ts");
@@ -356,7 +356,7 @@ describe("plugin contribution targets", () => {
 `,
     );
 
-    await expect(compilePlugin(entryPath)).resolves.toBeDefined();
+    await expect(compilePlugin(entryPath)).rejects.toThrow(/default context|direct.*context/i);
   });
 
   it("does not reject a direct registration in a nested function with a shadowing parameter", async () => {
@@ -382,7 +382,7 @@ describe("plugin contribution targets", () => {
     ["an object method", "const object = { register() { plugin.addTool({}); } };"],
     ["a class method", "class Example { register() { plugin.addTool({}); } }"],
     ["a class private method", "class Example { #register() { plugin.addTool({}); } }"],
-  ])("keeps a registration nested in %s", async (_description, declaration) => {
+  ])("rejects a registration nested in %s", async (_description, declaration) => {
     const directory = await mkdtemp(path.join(tmpdir(), "paseo-plugin-compiler-"));
     temporaryDirectories.push(directory);
     const entryPath = path.join(directory, "index.ts");
@@ -395,7 +395,7 @@ describe("plugin contribution targets", () => {
 `,
     );
 
-    await expect(compilePlugin(entryPath)).resolves.toBeDefined();
+    await expect(compilePlugin(entryPath)).rejects.toThrow(/helper|default context/i);
   });
 
   it.each([
@@ -421,7 +421,7 @@ describe("plugin contribution targets", () => {
   it.each([
     ["a default initializer", "const object = { register(value = plugin) {} };"],
     ["a destructuring default", "const object = { register({ value = plugin }) {} };"],
-  ])("allows a registration nested in %s", async (_description, declaration) => {
+  ])("rejects a default context escape from %s", async (_description, declaration) => {
     const directory = await mkdtemp(path.join(tmpdir(), "paseo-plugin-compiler-"));
     temporaryDirectories.push(directory);
     const entryPath = path.join(directory, "index.ts");
@@ -434,7 +434,7 @@ describe("plugin contribution targets", () => {
 `,
     );
 
-    await expect(compilePlugin(entryPath)).resolves.toBeDefined();
+    await expect(compilePlugin(entryPath)).rejects.toThrow(/default context|direct.*context/i);
   });
 
   it("does not reject unrelated local member helpers", async () => {
@@ -463,29 +463,8 @@ describe("plugin contribution targets", () => {
     "const { addTool: register } = plugin;\nregister({});",
     'plugin["addTool"]({});',
     'const method = "addTool";\nplugin[method]({});',
-  ])("allows indirect registration calls to survive bundle filtering", async (registration) => {
-    const directory = await mkdtemp(path.join(tmpdir(), "paseo-plugin-compiler-"));
-    temporaryDirectories.push(directory);
-    const entryPath = path.join(directory, "index.ts");
-    await writeFile(
-      entryPath,
-      `export default function contribute(plugin) {
-  ${registration}
-  return () => undefined;
-}
-`,
-    );
-
-    await expect(compilePlugin(entryPath)).resolves.toBeDefined();
-  });
-
-  it.each([
-    "plugin.addTool({ context: plugin });",
-    "plugin.addTool({ nested: { context: plugin } });",
-    "plugin.addTool({ values: [plugin] });",
-    "plugin.addTool({ handler: () => plugin.addTool({}) });",
   ])(
-    "allows context escapes and nested registrations in registration arguments: %s",
+    "rejects indirect registration calls that could cross bundle boundaries",
     async (registration) => {
       const directory = await mkdtemp(path.join(tmpdir(), "paseo-plugin-compiler-"));
       temporaryDirectories.push(directory);
@@ -499,7 +478,31 @@ describe("plugin contribution targets", () => {
 `,
       );
 
-      await expect(compilePlugin(entryPath)).resolves.toBeDefined();
+      await expect(compilePlugin(entryPath)).rejects.toThrow(/direct.*context|default context/i);
+    },
+  );
+
+  it.each([
+    "plugin.addTool({ context: plugin });",
+    "plugin.addTool({ nested: { context: plugin } });",
+    "plugin.addTool({ values: [plugin] });",
+    "plugin.addTool({ handler: () => plugin.addTool({}) });",
+  ])(
+    "rejects context escapes and nested registrations in registration arguments: %s",
+    async (registration) => {
+      const directory = await mkdtemp(path.join(tmpdir(), "paseo-plugin-compiler-"));
+      temporaryDirectories.push(directory);
+      const entryPath = path.join(directory, "index.ts");
+      await writeFile(
+        entryPath,
+        `export default function contribute(plugin) {
+  ${registration}
+  return () => undefined;
+}
+`,
+      );
+
+      await expect(compilePlugin(entryPath)).rejects.toThrow(/default context|direct.*context/i);
     },
   );
 
@@ -527,7 +530,7 @@ describe("plugin contribution targets", () => {
     'plugin.addTool({ [plugin]: "computed key" });',
     "plugin.addTool({ plugin });",
     "plugin.addTool({ value: plugin.addTool });",
-  ])("allows context binding uses in registration arguments: %s", async (registration) => {
+  ])("rejects actual context binding uses in registration arguments: %s", async (registration) => {
     const directory = await mkdtemp(path.join(tmpdir(), "paseo-plugin-compiler-"));
     temporaryDirectories.push(directory);
     const entryPath = path.join(directory, "index.ts");
@@ -540,7 +543,7 @@ describe("plugin contribution targets", () => {
 `,
     );
 
-    await expect(compilePlugin(entryPath)).resolves.toBeDefined();
+    await expect(compilePlugin(entryPath)).rejects.toThrow(/default context|direct.*context/i);
   });
 
   it.each([
@@ -549,7 +552,7 @@ describe("plugin contribution targets", () => {
     "return plugin;",
     "const stored = { context: plugin };",
     "const stored = { ...plugin };",
-  ])("allows indirect registration helpers: %s", async (registration) => {
+  ])("rejects default context escape: %s", async (registration) => {
     const directory = await mkdtemp(path.join(tmpdir(), "paseo-plugin-compiler-"));
     temporaryDirectories.push(directory);
     const entryPath = path.join(directory, "index.ts");
@@ -562,10 +565,10 @@ describe("plugin contribution targets", () => {
 `,
     );
 
-    await expect(compilePlugin(entryPath)).resolves.toBeDefined();
+    await expect(compilePlugin(entryPath)).rejects.toThrow(/default context|direct.*context/i);
   });
 
-  it("allows passing the default context to an imported helper", async () => {
+  it("rejects passing the default context to an imported helper", async () => {
     const directory = await mkdtemp(path.join(tmpdir(), "paseo-plugin-compiler-"));
     temporaryDirectories.push(directory);
     await writeFile(
@@ -584,10 +587,10 @@ export default function contribute(plugin) {
 `,
     );
 
-    await expect(compilePlugin(entryPath)).resolves.toBeDefined();
+    await expect(compilePlugin(entryPath)).rejects.toThrow(/default context|direct.*context/i);
   });
 
-  it("allows a helper that closes over the default context", async () => {
+  it("rejects a helper that closes over the default context", async () => {
     const directory = await mkdtemp(path.join(tmpdir(), "paseo-plugin-compiler-"));
     temporaryDirectories.push(directory);
     const entryPath = path.join(directory, "index.ts");
@@ -603,7 +606,7 @@ export default function contribute(plugin) {
 `,
     );
 
-    await expect(compilePlugin(entryPath)).resolves.toBeDefined();
+    await expect(compilePlugin(entryPath)).rejects.toThrow(/helper|default context/i);
   });
 
   it("keeps direct server and client imports aligned with each bundle", async () => {
@@ -639,6 +642,71 @@ export function handler() { return "server-handler"; }
     expect(clientBundle).not.toContain("server-handler");
     expect(serverBundle).toContain("server-handler");
     expect(serverBundle).not.toContain("client-surface");
+  });
+
+  it("rejects a surviving helper reference to an opposite-target import", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "paseo-plugin-compiler-"));
+    temporaryDirectories.push(directory);
+    const entryPath = path.join(directory, "index.ts");
+    await writeFile(
+      entryPath,
+      `import { serverHandler } from "./service.server";
+
+function helper() {
+  return serverHandler;
+}
+
+export default function contribute(plugin) {
+  plugin.addSurface("main", helper);
+  return () => undefined;
+}
+`,
+    );
+    await writeFile(
+      path.join(directory, "service.server.ts"),
+      `export function serverHandler() {
+  return "server-handler";
+}
+`,
+    );
+
+    await expect(compilePlugin(entryPath)).rejects.toThrow(
+      /opposite-target import.*surviving reference/i,
+    );
+  });
+
+  it("rejects context rebinding nested in an opposite-target registration argument", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "paseo-plugin-compiler-"));
+    temporaryDirectories.push(directory);
+    const entryPath = path.join(directory, "index.ts");
+    await writeFile(
+      entryPath,
+      `export default function contribute(plugin) {
+  plugin.addSurface("main", { render: () => (plugin = {}) });
+  return () => undefined;
+}
+`,
+    );
+
+    await expect(compilePlugin(entryPath)).rejects.toThrow(/default context|direct.*context/i);
+  });
+
+  it("reports the string-generated timer diagnostic", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "paseo-plugin-compiler-"));
+    temporaryDirectories.push(directory);
+    const entryPath = path.join(directory, "index.ts");
+    await writeFile(
+      entryPath,
+      `export default function contribute(plugin) {
+  setTimeout("plugin.addTool({})", 0);
+  return () => undefined;
+}
+`,
+    );
+
+    await expect(compilePlugin(entryPath)).rejects.toThrow(
+      "Plugin entrypoint cannot use string-generated code; dynamic code generation is not supported",
+    );
   });
 
   it("keeps model-facing tools out of the client bundle", async () => {

@@ -124,8 +124,7 @@ test("daemon config reload enables and disables configured plugins without resta
   );
   await writeFile(
     path.join(pluginDirectory, "index.tsx"),
-    `export default function contribute(plugin: unknown) {
-  void plugin;
+    `export default function contribute(_plugin: unknown) {
   return () => undefined;
     }`,
   );

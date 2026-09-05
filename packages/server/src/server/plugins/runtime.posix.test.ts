@@ -188,7 +188,7 @@ afterEach(async () => {
 });
 
 describe("PluginRuntime", () => {
-  it("absorbs client registrations that survive server bundle filtering", async () => {
+  it("rejects non-direct registrations before the server runtime starts", async () => {
     const directory = await createPlugin(
       "wrong-target-registrations",
       `export default function contribute(plugin: any) {
@@ -214,16 +214,15 @@ describe("PluginRuntime", () => {
     );
     const runtime = createTestRuntime();
 
-    await runtime.startPlugin("wrong-target-registrations", directory);
-
-    expect(runtime.toolCatalog()).toEqual([]);
-    await runtime.stopPluginById("wrong-target-registrations");
+    await expect(runtime.startPlugin("wrong-target-registrations", directory)).rejects.toThrow(
+      /direct.*context|default context/i,
+    );
   });
 
   it("records host-owned plugin lifecycle events", async () => {
     const directory = await createPlugin(
       "lifecycle",
-      `export default function contribute(plugin: unknown) { void plugin; return () => undefined; }`,
+      `export default function contribute(_plugin: unknown) { return () => undefined; }`,
     );
     const child = createReloadChild("lifecycle", []);
     const runtime = createTestRuntime({ spawnChild: () => child });
@@ -269,7 +268,7 @@ describe("PluginRuntime", () => {
   it("fences the plugin delivery owner before stopping its process", async () => {
     const directory = await createPlugin(
       "delivery-fence",
-      `export default function contribute(plugin: unknown) { void plugin; return () => undefined; }`,
+      `export default function contribute(_plugin: unknown) { return () => undefined; }`,
     );
     const child = createReloadChild("delivery-fence", []);
     const beginPluginShutdown = vi.fn();
@@ -289,7 +288,7 @@ describe("PluginRuntime", () => {
   it("frames stdout and stderr, normalizes CRLF, and flushes final fragments once", async () => {
     const directory = await createPlugin(
       "output",
-      `export default function contribute(plugin: unknown) { void plugin; return () => undefined; }`,
+      `export default function contribute(_plugin: unknown) { return () => undefined; }`,
     );
     const child = createReloadChild("output", []);
     const runtime = createTestRuntime({ spawnChild: () => child });
@@ -320,7 +319,7 @@ describe("PluginRuntime", () => {
   it("writes plugin output through the daemon logger with structured identity fields", async () => {
     const directory = await createPlugin(
       "tagged-output",
-      `export default function contribute(plugin: unknown) { void plugin; return () => undefined; }`,
+      `export default function contribute(_plugin: unknown) { return () => undefined; }`,
     );
     const child = createReloadChild("tagged-output", []);
     const records: Array<Record<string, unknown>> = [];
@@ -349,7 +348,7 @@ describe("PluginRuntime", () => {
   it("bounds retained output by entry count, total bytes, and individual line bytes", async () => {
     const directory = await createPlugin(
       "noisy",
-      `export default function contribute(plugin: unknown) { void plugin; return () => undefined; }`,
+      `export default function contribute(_plugin: unknown) { return () => undefined; }`,
     );
     const child = createReloadChild("noisy", []);
     const runtime = createTestRuntime({ spawnChild: () => child });
@@ -380,8 +379,7 @@ describe("PluginRuntime", () => {
   it("captures output emitted during initialization and cleanup across reloads", async () => {
     const directory = await createPlugin(
       "lifecycle-output",
-      `export default function contribute(plugin: unknown) {
-  void plugin;
+      `export default function contribute(_plugin: unknown) {
   console.log("initialized");
   console.error("initialization warning");
   return () => process.stdout.write("cleanup fragment");
@@ -439,7 +437,7 @@ describe("PluginRuntime", () => {
   it("waits for the old subprocess to exit before starting its replacement", async () => {
     const directory = await createPlugin(
       "reloadable",
-      `export default function contribute(plugin: unknown) { void plugin; return () => undefined; }`,
+      `export default function contribute(_plugin: unknown) { return () => undefined; }`,
     );
     const events: string[] = [];
     const children = [createReloadChild("old", events), createReloadChild("new", events)];
@@ -462,7 +460,7 @@ describe("PluginRuntime", () => {
   it("rejects pending RPCs when the plugin stops", async () => {
     const directory = await createPlugin(
       "pending",
-      `export default function contribute(plugin: unknown) { void plugin; return () => undefined; }`,
+      `export default function contribute(_plugin: unknown) { return () => undefined; }`,
     );
     const child = createReloadChild("pending", [], ["wait"]);
     const runtime = createTestRuntime({
@@ -514,8 +512,7 @@ export default function contribute(plugin: any) {
     const directory = await createPlugin(
       "async-cleanup",
       `import { writeFile } from "node:fs/promises";
-export default function contribute(plugin: unknown) {
-  void plugin;
+export default function contribute(_plugin: unknown) {
   return async () => {
     await new Promise((resolve) => setTimeout(resolve, 20));
     await writeFile(${JSON.stringify(cleanupFile)}, "cleaned");
@@ -536,7 +533,7 @@ export default function contribute(plugin: unknown) {
     try {
       const directory = await createPlugin(
         "held-cleanup",
-        `export default function contribute(plugin: unknown) { void plugin; return () => undefined; }`,
+        `export default function contribute(_plugin: unknown) { return () => undefined; }`,
       );
       const events: string[] = [];
       const child = createReloadChild("held-cleanup", events);
@@ -565,7 +562,7 @@ export default function contribute(plugin: unknown) {
     try {
       const directory = await createPlugin(
         "hung-shutdown-send",
-        `export default function contribute(plugin: unknown) { void plugin; return () => undefined; }`,
+        `export default function contribute(_plugin: unknown) { return () => undefined; }`,
       );
       const child = createReloadChild("hung-shutdown-send", []);
       const originalSend = child.send.bind(child);
@@ -588,7 +585,7 @@ export default function contribute(plugin: unknown) {
   it("kills a plugin child that fails initialization", async () => {
     const directory = await createPlugin(
       "broken",
-      `export default function contribute(plugin: unknown) { void plugin; return () => undefined; }`,
+      `export default function contribute(_plugin: unknown) { return () => undefined; }`,
     );
     const listeners = new Map<string, Array<(message: never) => void>>();
     const child = {
@@ -633,7 +630,7 @@ export default function contribute(plugin: unknown) {
   it("rejects a server contribution without cleanup", async () => {
     const directory = await createPlugin(
       "missing-cleanup",
-      `export default function contribute(plugin: unknown) { void plugin; }`,
+      `export default function contribute(_plugin: unknown) { }`,
     );
     const runtime = createTestRuntime();
 
@@ -1189,7 +1186,7 @@ export default function contribute(plugin: any) {
   it("releases a saturated tool slot once across result, cancel, and child-close races", async () => {
     const directory = await createPlugin(
       "fake-tool-runtime",
-      `export default function contribute(plugin: any) { void plugin; return () => undefined; }`,
+      `export default function contribute(_plugin: any) { return () => undefined; }`,
     );
     const child = createReloadChild("fake-tool-runtime", [], [], false, fakeToolCatalog);
     const requestIds: string[] = [];
@@ -1259,7 +1256,7 @@ export default function contribute(plugin: any) {
     try {
       const directory = await createPlugin(
         "oversized-context",
-        `export default function contribute(plugin: any) { void plugin; return () => undefined; }`,
+        `export default function contribute(_plugin: any) { return () => undefined; }`,
       );
       const child = createReloadChild("oversized-context", [], [], false, fakeToolCatalog);
       const requestIds: string[] = [];
@@ -1322,7 +1319,7 @@ export default function contribute(plugin: any) {
   it("quarantines a child that forges more than the host progress bound", async () => {
     const directory = await createPlugin(
       "forged-progress",
-      `export default function contribute(plugin: any) { void plugin; return () => undefined; }`,
+      `export default function contribute(_plugin: any) { return () => undefined; }`,
     );
     const child = createReloadChild("forged-progress", [], [], false, fakeToolCatalog);
     let requestId: string | undefined;
@@ -1626,7 +1623,7 @@ export default function contribute(plugin: any) {
   it("uses the config key as runtime identity without comparing the manifest id", async () => {
     const directory = await createPlugin(
       "actual",
-      `export default function contribute(plugin: unknown) { void plugin; return () => undefined; }`,
+      `export default function contribute(_plugin: unknown) { return () => undefined; }`,
     );
     const runtime = createTestRuntime();
 
@@ -1639,7 +1636,7 @@ export default function contribute(plugin: any) {
   it("does not publish a plugin when lifecycle intent changes while it starts", async () => {
     const directory = await createPlugin(
       "blocked",
-      `export default function contribute(plugin: unknown) { void plugin; return () => undefined; }`,
+      `export default function contribute(_plugin: unknown) { return () => undefined; }`,
     );
     const events: string[] = [];
     const child = createReloadChild("blocked", events);
@@ -1656,8 +1653,7 @@ export default function contribute(plugin: any) {
   it("reports an unexpected subprocess crash and removes its catalog entry", async () => {
     const directory = await createPlugin(
       "crashing",
-      `export default function contribute(plugin: unknown) {
-  void plugin;
+      `export default function contribute(_plugin: unknown) {
   process.stdout.write("before crash");
   setTimeout(() => process.exit(17), 20);
   return () => undefined;

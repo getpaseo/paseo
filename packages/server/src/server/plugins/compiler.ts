@@ -145,9 +145,20 @@ interface AstScope {
   bindings: Map<string, AstBinding>;
 }
 
+type DynamicCodeKind = "eval" | "Function constructor" | "string-generated code";
+type FunctionKind = "none" | "function" | "async-function";
+
 interface AstBinding {
   scope: AstScope;
   name: string;
+  contextAlias: boolean;
+  registrationMethod: string | null;
+  imported: boolean;
+  dynamicCode: DynamicCodeKind | null;
+  functionKind: FunctionKind;
+  stringCodeGenerator: boolean;
+  stringValue: boolean;
+  globalObjectAlias: boolean;
 }
 
 function isAstNode(value: unknown): value is object {
@@ -204,6 +215,14 @@ function bindIdentifier(
   const binding = {
     scope,
     name,
+    contextAlias: false,
+    registrationMethod: null,
+    imported: false,
+    dynamicCode: null,
+    functionKind: "none" as FunctionKind,
+    stringCodeGenerator: false,
+    stringValue: false,
+    globalObjectAlias: false,
   } satisfies AstBinding;
   scope.bindings.set(name, binding);
   return binding;
@@ -265,7 +284,13 @@ function declareDirectBindings(node: unknown, scope: AstScope): void {
     (type === "FunctionDeclaration" || type === "ClassDeclaration") &&
     Reflect.get(node, "declare") !== true
   ) {
-    bindIdentifier(Reflect.get(node, "id"), scope, true);
+    const binding = bindIdentifier(Reflect.get(node, "id"), scope, true);
+    if (binding) {
+      binding.functionKind =
+        type === "FunctionDeclaration" && Reflect.get(node, "async") === true
+          ? "async-function"
+          : "function";
+    }
   }
 }
 
@@ -285,6 +310,165 @@ function memberPropertyName(node: unknown): string | null {
     return String(Reflect.get(property, "value"));
   }
   return null;
+}
+
+function isUnshadowedGlobalIdentifier(
+  node: unknown,
+  scope: AstScope,
+  names: ReadonlySet<string>,
+): boolean {
+  const name = astIdentifierName(node);
+  return name !== null && names.has(name) && lookupBinding(scope, name) === null;
+}
+
+function isGlobalObjectExpression(node: unknown, scope: AstScope): boolean {
+  if (isUnshadowedGlobalIdentifier(node, scope, new Set(["globalThis", "window", "global"]))) {
+    return true;
+  }
+  const name = astIdentifierName(node);
+  return name !== null && lookupBinding(scope, name)?.globalObjectAlias === true;
+}
+
+function functionKindForExpression(node: unknown, scope: AstScope): FunctionKind {
+  if (!isAstNode(node)) return "none";
+  const type = Reflect.get(node, "type");
+  if (type === "TSAsExpression" || type === "TSSatisfiesExpression" || type === "TSTypeAssertion") {
+    return functionKindForExpression(Reflect.get(node, "expression"), scope);
+  }
+  if (type === "TSNonNullExpression") {
+    return functionKindForExpression(Reflect.get(node, "expression"), scope);
+  }
+  if (type === "FunctionExpression" || type === "ArrowFunctionExpression") {
+    return Reflect.get(node, "async") === true ? "async-function" : "function";
+  }
+  if (type === "ClassExpression") return "function";
+  if (type === "Identifier") {
+    return lookupBinding(scope, String(Reflect.get(node, "name")))?.functionKind ?? "none";
+  }
+  if (type !== "CallExpression") return "none";
+  const callee = Reflect.get(node, "callee");
+  if (
+    !isAstNode(callee) ||
+    memberPropertyName(callee) !== "getPrototypeOf" ||
+    !isUnshadowedGlobalIdentifier(Reflect.get(callee, "object"), scope, new Set(["Object"]))
+  ) {
+    return "none";
+  }
+  const argumentsList = Reflect.get(node, "arguments");
+  return Array.isArray(argumentsList) ? functionKindForExpression(argumentsList[0], scope) : "none";
+}
+
+// oxlint-disable-next-line complexity -- this classifier recognizes dynamic-code aliases conservatively.
+function dynamicCodeKindForExpression(node: unknown, scope: AstScope): DynamicCodeKind | null {
+  if (!isAstNode(node)) return null;
+  const type = Reflect.get(node, "type");
+  if (type === "TSAsExpression" || type === "TSSatisfiesExpression" || type === "TSTypeAssertion") {
+    return dynamicCodeKindForExpression(Reflect.get(node, "expression"), scope);
+  }
+  if (type === "TSNonNullExpression") {
+    return dynamicCodeKindForExpression(Reflect.get(node, "expression"), scope);
+  }
+  if (type === "Identifier") {
+    const binding = lookupBinding(scope, String(Reflect.get(node, "name")));
+    if (binding?.dynamicCode) return binding.dynamicCode;
+    if (isUnshadowedGlobalIdentifier(node, scope, new Set(["eval"]))) return "eval";
+    if (isUnshadowedGlobalIdentifier(node, scope, new Set(["Function"]))) {
+      return "Function constructor";
+    }
+    return null;
+  }
+  if (type === "MemberExpression" || type === "OptionalMemberExpression") {
+    const method = memberPropertyName(node);
+    const object = Reflect.get(node, "object");
+    if (isGlobalObjectExpression(object, scope)) {
+      if (method === "eval") return "eval";
+      if (method === "Function") return "Function constructor";
+    }
+    if (method === "constructor" && functionKindForExpression(object, scope) !== "none") {
+      return "Function constructor";
+    }
+    return dynamicCodeKindForExpression(object, scope);
+  }
+  if (type === "CallExpression" || type === "OptionalCallExpression") {
+    const callee = Reflect.get(node, "callee");
+    if (
+      isAstNode(callee) &&
+      memberPropertyName(callee) === "get" &&
+      isUnshadowedGlobalIdentifier(Reflect.get(callee, "object"), scope, new Set(["Reflect"]))
+    ) {
+      const argumentsList = Reflect.get(node, "arguments");
+      const property = Array.isArray(argumentsList) ? argumentsList[1] : null;
+      const propertyName =
+        isAstNode(property) && Reflect.get(property, "type") === "StringLiteral"
+          ? String(Reflect.get(property, "value"))
+          : null;
+      if (propertyName === "eval") return "eval";
+    }
+  }
+  return null;
+}
+
+function isStringExpression(node: unknown, scope: AstScope): boolean {
+  if (!isAstNode(node)) return false;
+  const type = Reflect.get(node, "type");
+  if (type === "StringLiteral" || type === "TemplateLiteral") return true;
+  if (type === "TSAsExpression" || type === "TSSatisfiesExpression" || type === "TSTypeAssertion") {
+    return isStringExpression(Reflect.get(node, "expression"), scope);
+  }
+  if (type === "TSNonNullExpression") {
+    return isStringExpression(Reflect.get(node, "expression"), scope);
+  }
+  if (type === "Identifier") {
+    return lookupBinding(scope, String(Reflect.get(node, "name")))?.stringValue === true;
+  }
+  if (type !== "BinaryExpression" || Reflect.get(node, "operator") !== "+") return false;
+  return (
+    isStringExpression(Reflect.get(node, "left"), scope) &&
+    isStringExpression(Reflect.get(node, "right"), scope)
+  );
+}
+
+function isStringCodeGeneratorExpression(node: unknown, scope: AstScope): boolean {
+  if (!isAstNode(node)) return false;
+  const type = Reflect.get(node, "type");
+  if (type === "Identifier") {
+    const binding = lookupBinding(scope, String(Reflect.get(node, "name")));
+    return (
+      binding?.stringCodeGenerator === true ||
+      isUnshadowedGlobalIdentifier(node, scope, new Set(["setTimeout", "setInterval"]))
+    );
+  }
+  if (type !== "MemberExpression" && type !== "OptionalMemberExpression") return false;
+  return (
+    isGlobalObjectExpression(Reflect.get(node, "object"), scope) &&
+    new Set(["setTimeout", "setInterval"]).has(memberPropertyName(node) ?? "")
+  );
+}
+
+function isStringGeneratedCodeCall(node: object, scope: AstScope): boolean {
+  const callee = Reflect.get(node, "callee");
+  if (!isStringCodeGeneratorExpression(callee, scope)) return false;
+  const argumentsList = Reflect.get(node, "arguments");
+  return Array.isArray(argumentsList) && isStringExpression(argumentsList[0], scope);
+}
+
+function rejectDynamicCode(kind: DynamicCodeKind): never {
+  throw new Error(`Plugin entrypoint cannot use ${kind}; dynamic code generation is not supported`);
+}
+
+function isIgnoredIdentifierPosition(node: object, parent: unknown): boolean {
+  if (!isAstNode(parent)) return false;
+  const parentType = Reflect.get(parent, "type");
+  if (
+    (parentType === "MemberExpression" || parentType === "OptionalMemberExpression") &&
+    Reflect.get(parent, "property") === node
+  ) {
+    return Reflect.get(parent, "computed") !== true;
+  }
+  if (Reflect.get(parent, "key") === node && Reflect.get(parent, "computed") !== true) {
+    return true;
+  }
+  return false;
 }
 
 function memberObjectBinding(node: unknown, scope: AstScope): AstBinding | null {
@@ -327,14 +511,140 @@ function patternContainsBinding(pattern: unknown, name: string): boolean {
   }
 }
 
-// oxlint-disable-next-line complexity -- the scoped AST walk strips direct registrations without name-only shadow false positives.
+function patternBindingName(pattern: unknown): string | null {
+  if (!isAstNode(pattern)) return null;
+  const type = Reflect.get(pattern, "type");
+  if (type === "Identifier") return String(Reflect.get(pattern, "name"));
+  if (type === "AssignmentPattern") return patternBindingName(Reflect.get(pattern, "left"));
+  if (type === "RestElement" || type === "TSParameterProperty") {
+    return patternBindingName(Reflect.get(pattern, "argument"));
+  }
+  return null;
+}
+
+function markPatternFromContext(
+  pattern: unknown,
+  targetScope: AstScope,
+  removedNames: ReadonlySet<string>,
+): void {
+  if (!isAstNode(pattern)) return;
+  const type = Reflect.get(pattern, "type");
+  if (type === "Identifier") {
+    const binding = targetScope.bindings.get(String(Reflect.get(pattern, "name")));
+    if (binding) {
+      binding.contextAlias = true;
+      binding.registrationMethod = null;
+    }
+    return;
+  }
+  if (type === "ObjectPattern") {
+    const properties = Reflect.get(pattern, "properties");
+    if (!Array.isArray(properties)) return;
+    for (const property of properties) {
+      if (!isAstNode(property)) continue;
+      if (Reflect.get(property, "type") === "ObjectProperty") {
+        const key = Reflect.get(property, "key");
+        const keyName =
+          astIdentifierName(key) ?? (isAstNode(key) ? String(Reflect.get(key, "value")) : null);
+        const value = Reflect.get(property, "value");
+        const valueName = patternBindingName(value);
+        const binding = valueName ? lookupBinding(targetScope, valueName) : null;
+        if (binding && keyName && removedNames.has(keyName)) binding.registrationMethod = keyName;
+      }
+    }
+  }
+}
+
+// oxlint-disable-next-line complexity -- destructuring can alias each supported dynamic-code source.
+function markPatternDynamicBindings(pattern: unknown, source: unknown, scope: AstScope): void {
+  if (!isAstNode(pattern) || Reflect.get(pattern, "type") !== "ObjectPattern") return;
+  const properties = Reflect.get(pattern, "properties");
+  if (!Array.isArray(properties)) return;
+  const sourceIsGlobal = isGlobalObjectExpression(source, scope);
+  const sourceFunctionKind = functionKindForExpression(source, scope);
+  for (const property of properties) {
+    if (!isAstNode(property) || Reflect.get(property, "type") !== "ObjectProperty") continue;
+    const key = Reflect.get(property, "key");
+    const keyName =
+      astIdentifierName(key) ??
+      (isAstNode(key) && Reflect.get(key, "type") === "StringLiteral"
+        ? String(Reflect.get(key, "value"))
+        : null);
+    const valueName = patternBindingName(Reflect.get(property, "value"));
+    const binding = valueName ? lookupBinding(scope, valueName) : null;
+    if (!binding || !keyName) continue;
+    if (sourceIsGlobal && keyName === "eval") binding.dynamicCode = "eval";
+    if (sourceIsGlobal && keyName === "Function") binding.dynamicCode = "Function constructor";
+    if (sourceFunctionKind !== "none" && keyName === "constructor") {
+      binding.dynamicCode = "Function constructor";
+    }
+    if (sourceIsGlobal && (keyName === "setTimeout" || keyName === "setInterval")) {
+      binding.stringCodeGenerator = true;
+    }
+  }
+}
+
+// oxlint-disable-next-line complexity -- one declaration updates all tracked lexical aliases.
+function markVariableBinding(
+  declarator: unknown,
+  scope: AstScope,
+  removedNames: ReadonlySet<string>,
+): void {
+  if (!isAstNode(declarator)) return;
+  const id = Reflect.get(declarator, "id");
+  const init = Reflect.get(declarator, "init");
+  const initBinding =
+    isAstNode(init) && Reflect.get(init, "type") === "Identifier"
+      ? lookupBinding(scope, String(Reflect.get(init, "name")))
+      : null;
+  const valueName = astIdentifierName(id);
+  const binding = valueName ? lookupBinding(scope, valueName) : null;
+  if (binding) {
+    binding.dynamicCode = dynamicCodeKindForExpression(init, scope);
+    binding.functionKind = functionKindForExpression(init, scope);
+    binding.stringCodeGenerator = isStringCodeGeneratorExpression(init, scope);
+    binding.stringValue = isStringExpression(init, scope);
+    binding.globalObjectAlias = isGlobalObjectExpression(init, scope);
+  }
+  markPatternDynamicBindings(id, init, scope);
+  if (initBinding?.contextAlias) markPatternFromContext(id, scope, removedNames);
+  if (
+    isAstNode(init) &&
+    (Reflect.get(init, "type") === "MemberExpression" ||
+      Reflect.get(init, "type") === "OptionalMemberExpression")
+  ) {
+    const source = memberObjectBinding(Reflect.get(init, "object"), scope);
+    const method = memberPropertyName(init);
+    if (source?.contextAlias && method && removedNames.has(method) && binding) {
+      binding.registrationMethod = method;
+    }
+  }
+  if (initBinding && binding) {
+    if (initBinding.registrationMethod) binding.registrationMethod = initBinding.registrationMethod;
+    if (initBinding.dynamicCode) binding.dynamicCode = initBinding.dynamicCode;
+    if (initBinding.functionKind !== "none") binding.functionKind = initBinding.functionKind;
+    if (initBinding.stringCodeGenerator) binding.stringCodeGenerator = true;
+    if (initBinding.stringValue) binding.stringValue = true;
+    if (initBinding.globalObjectAlias) binding.globalObjectAlias = true;
+  }
+}
+
+// oxlint-disable-next-line complexity -- the scoped AST walk rejects indirect registrations without name-only shadow false positives.
 function analyzeRegistrations(
+  programBody: unknown[],
   body: unknown,
   contextName: string,
   removedNames: ReadonlySet<string>,
+  oppositeTargetImportNames: ReadonlySet<string>,
 ): SourceRange[] {
   const ranges: SourceRange[] = [];
-  const functionScope = createScope(null);
+  const moduleScope = createScope(null);
+  for (const name of oppositeTargetImportNames) {
+    const binding = bindIdentifier({ type: "Identifier", name }, moduleScope);
+    if (binding) binding.imported = true;
+  }
+  predeclareStatements(programBody, moduleScope);
+  const functionScope = createScope(moduleScope);
   const contextBinding = bindIdentifier({ type: "Identifier", name: contextName }, functionScope);
   if (!contextBinding)
     throw new Error("Plugin default export must receive one named context parameter");
@@ -343,6 +653,7 @@ function analyzeRegistrations(
       "Plugin default context binding cannot be initialized, reassigned, or redeclared",
     );
   };
+  contextBinding.contextAlias = true;
   const contributionStatements = isAstNode(body) ? Reflect.get(body, "body") : null;
   const immediateBodyStatements = new Set(
     Array.isArray(contributionStatements) ? contributionStatements.filter(isAstNode) : [],
@@ -438,28 +749,14 @@ function analyzeRegistrations(
     for (const argument of argumentsList) visit(argument, scope, parent, null);
   };
 
-  const addDirectRegistrationRange = (method: string, statement: unknown): void => {
-    if (!removedNames.has(method)) return;
-    if (!isAstNode(statement)) {
-      throw new Error(
-        `Could not locate plugin context ${method} registration in plugin entry point`,
-      );
-    }
-    const start = Reflect.get(statement, "start");
-    const end = Reflect.get(statement, "end");
-    if (typeof start !== "number" || typeof end !== "number") {
-      throw new Error(
-        `Could not locate plugin context ${method} registration in plugin entry point`,
-      );
-    }
-    ranges.push({ start, end });
-  };
-
   const visitFunction = (node: object, parentScope: AstScope): void => {
     const nextScope = createScope(parentScope, undefined);
     const type = Reflect.get(node, "type");
     if (type === "FunctionDeclaration" || type === "FunctionExpression") {
-      bindIdentifier(Reflect.get(node, "id"), nextScope);
+      const binding = bindIdentifier(Reflect.get(node, "id"), nextScope, true);
+      if (binding) {
+        binding.functionKind = Reflect.get(node, "async") === true ? "async-function" : "function";
+      }
     }
     visitDecorators(node, parentScope);
     const params = Reflect.get(node, "params");
@@ -507,7 +804,8 @@ function analyzeRegistrations(
   const visitClass = (node: object, parentScope: AstScope): void => {
     if (Reflect.get(node, "declare") === true) return;
     const classScope = createScope(parentScope, parentScope.functionScope);
-    bindIdentifier(Reflect.get(node, "id"), classScope);
+    const binding = bindIdentifier(Reflect.get(node, "id"), classScope);
+    if (binding) binding.functionKind = "function";
     visitDecorators(node, parentScope);
     visit(Reflect.get(node, "superClass"), classScope, node, null);
 
@@ -570,6 +868,28 @@ function analyzeRegistrations(
       ) {
         rejectContextBindingMutation();
       }
+    }
+    const dynamicCodeKind = dynamicCodeKindForExpression(current, scope);
+    if (
+      dynamicCodeKind &&
+      (type === "Identifier" ||
+        type === "MemberExpression" ||
+        type === "OptionalMemberExpression" ||
+        type === "CallExpression" ||
+        type === "OptionalCallExpression")
+    ) {
+      rejectDynamicCode(dynamicCodeKind);
+    }
+    if (type === "NewExpression") {
+      const constructor = Reflect.get(current, "callee");
+      const constructorKind = dynamicCodeKindForExpression(constructor, scope);
+      if (constructorKind) rejectDynamicCode(constructorKind);
+    }
+    if (
+      (type === "CallExpression" || type === "OptionalCallExpression") &&
+      isStringGeneratedCodeCall(current, scope)
+    ) {
+      rejectDynamicCode("string-generated code");
     }
     if (
       type === "FunctionDeclaration" ||
@@ -679,9 +999,27 @@ function analyzeRegistrations(
       return;
     }
     if (type === "VariableDeclarator") {
+      markVariableBinding(current, scope, removedNames);
       visitPatternInitializers(Reflect.get(current, "id"), scope);
       visit(Reflect.get(current, "init"), scope, current, parent);
       return;
+    }
+    if (type === "Identifier") {
+      const binding = lookupBinding(scope, String(Reflect.get(current, "name")));
+      if (binding?.imported) {
+        const start = Reflect.get(current, "start");
+        const insideRemovedRegistration =
+          typeof start === "number" &&
+          ranges.some((range) => range.start <= start && start < range.end);
+        if (!insideRemovedRegistration && !isIgnoredIdentifierPosition(current, parent)) {
+          throw new Error(
+            "Opposite-target import has a surviving reference outside a direct removed registration",
+          );
+        }
+      }
+      if (binding?.contextAlias && !isIgnoredIdentifierPosition(current, parent)) {
+        throw new Error("Plugin default context cannot escape its direct registration call");
+      }
     }
     if (type === "AssignmentExpression") {
       const left = Reflect.get(current, "left");
@@ -690,6 +1028,37 @@ function analyzeRegistrations(
         lookupBinding(scope, contextName) === contextBinding
       ) {
         rejectContextBindingMutation();
+      }
+      const right = Reflect.get(current, "right");
+      const leftName = astIdentifierName(left);
+      const leftBinding = leftName ? lookupBinding(scope, leftName) : null;
+      const rightBinding =
+        isAstNode(right) && Reflect.get(right, "type") === "Identifier"
+          ? lookupBinding(scope, String(Reflect.get(right, "name")))
+          : null;
+      if (leftBinding) {
+        const rightDynamicCode = dynamicCodeKindForExpression(right, scope);
+        if (rightDynamicCode) leftBinding.dynamicCode = rightDynamicCode;
+        const rightFunctionKind = functionKindForExpression(right, scope);
+        if (rightFunctionKind !== "none") leftBinding.functionKind = rightFunctionKind;
+        if (isStringCodeGeneratorExpression(right, scope)) leftBinding.stringCodeGenerator = true;
+        if (isStringExpression(right, scope)) leftBinding.stringValue = true;
+      }
+      if (leftBinding && rightBinding?.contextAlias) {
+        leftBinding.contextAlias = true;
+        leftBinding.registrationMethod = null;
+      }
+      if (
+        leftBinding &&
+        isAstNode(right) &&
+        (Reflect.get(right, "type") === "MemberExpression" ||
+          Reflect.get(right, "type") === "OptionalMemberExpression")
+      ) {
+        const source = memberObjectBinding(Reflect.get(right, "object"), scope);
+        const method = memberPropertyName(right);
+        if (source?.contextAlias && method && removedNames.has(method)) {
+          leftBinding.registrationMethod = method;
+        }
       }
     }
     if (type === "UpdateExpression") {
@@ -712,20 +1081,56 @@ function analyzeRegistrations(
         Reflect.get(grandparent, "type") === "ExpressionStatement" &&
         immediateBodyStatements.has(grandparent);
       if (source === contextBinding) {
-        if (
+        const directTargetRegistration =
           directCall &&
           Reflect.get(current, "computed") !== true &&
-          method &&
-          ALL_PLUGIN_REGISTRATION_METHODS.has(method) &&
-          scope.functionScope === functionScope
-        ) {
-          visitArguments(Reflect.get(parent, "arguments"), scope, parent);
-          addDirectRegistrationRange(method, grandparent);
+          method !== null &&
+          ALL_PLUGIN_REGISTRATION_METHODS.has(method);
+        if (directTargetRegistration && method !== null && removedNames.has(method)) {
+          const start = Reflect.get(grandparent, "start");
+          const end = Reflect.get(grandparent, "end");
+          if (typeof start !== "number" || typeof end !== "number") {
+            throw new Error(
+              `Could not locate plugin context ${method} registration in plugin entry point`,
+            );
+          }
+          ranges.push({ start, end });
         }
-        // Non-direct registrations are intentionally left in the bundle. The
-        // runtime context for the opposite target exposes inert methods for
-        // these cases, including computed and dynamically generated calls.
+        if (directCall) visitArguments(Reflect.get(parent, "arguments"), scope, parent);
+        if (
+          Reflect.get(current, "computed") === true ||
+          !method ||
+          !ALL_PLUGIN_REGISTRATION_METHODS.has(method)
+        ) {
+          throw new Error("Plugin registration must use a direct default context method");
+        }
+        if (scope.functionScope !== functionScope) {
+          throw new Error(
+            `Plugin ${method} registration must use the default context directly; helper registrations are not supported`,
+          );
+        }
+        if (!directCall || Reflect.get(current, "computed") === true) {
+          throw new Error(
+            `Plugin ${method} registration must be a direct context call in an immediate expression statement of the default contribution function`,
+          );
+        }
         return;
+      }
+      if (source?.contextAlias && source !== contextBinding) {
+        throw new Error(
+          `Plugin ${String(method ?? "context")} registration must use the default context directly`,
+        );
+      }
+    }
+    if (
+      (type === "CallExpression" || type === "OptionalCallExpression") &&
+      isAstNode(Reflect.get(current, "callee"))
+    ) {
+      const callee = Reflect.get(current, "callee");
+      if (Reflect.get(callee, "type") === "Identifier") {
+        const binding = lookupBinding(scope, String(Reflect.get(callee, "name")));
+        if (binding?.registrationMethod)
+          throw new Error("Plugin registration must use the default context directly");
       }
     }
     for (const value of Object.values(current)) {
@@ -736,6 +1141,12 @@ function analyzeRegistrations(
 
   if (Array.isArray(contributionStatements)) {
     visitStatements(contributionStatements, functionScope);
+  }
+  for (const statement of programBody) {
+    if (!isAstNode(statement)) continue;
+    const type = Reflect.get(statement, "type");
+    if (type === "ImportDeclaration" || type === "ExportDefaultDeclaration") continue;
+    visit(statement, moduleScope, null, null);
   }
   return ranges;
 }
@@ -774,16 +1185,43 @@ function collectOppositeTargetImportRanges(
   }
 }
 
+function collectOppositeTargetImportNames(
+  programBody: unknown[],
+  target: PluginBuildTarget,
+): Set<string> {
+  const names = new Set<string>();
+  for (const statement of programBody) {
+    if (!isAstNode(statement) || Reflect.get(statement, "type") !== "ImportDeclaration") continue;
+    if (Reflect.get(statement, "importKind") === "type") continue;
+    const source = Reflect.get(statement, "source");
+    const specifier = isAstNode(source) ? Reflect.get(source, "value") : null;
+    if (typeof specifier !== "string" || moduleTarget(specifier) === target) continue;
+    if (moduleTarget(specifier) === null) continue;
+    const specifiers = Reflect.get(statement, "specifiers");
+    if (!Array.isArray(specifiers)) continue;
+    for (const imported of specifiers) {
+      if (!isAstNode(imported) || Reflect.get(imported, "importKind") === "type") continue;
+      const local = Reflect.get(imported, "local");
+      const name = astIdentifierName(local);
+      if (name) names.add(name);
+    }
+  }
+  return names;
+}
+
 function filterEntrypoint(source: string, target: PluginBuildTarget): string {
   const ast = parse(source, {
     sourceType: "module",
     plugins: ["typescript", "jsx", "decorators-legacy"],
   });
   const pluginFunction = defaultPluginFunction(ast.program.body);
+  const oppositeTargetImportNames = collectOppositeTargetImportNames(ast.program.body, target);
   const ranges = analyzeRegistrations(
+    ast.program.body,
     pluginFunction.body,
     pluginFunction.contextName,
     REGISTRATIONS_REMOVED_BY_TARGET[target],
+    oppositeTargetImportNames,
   );
   collectOppositeTargetImportRanges(ast.program.body, target, ranges);
 

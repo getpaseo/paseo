@@ -10,6 +10,18 @@ function bundle(body: string): string {
 }
 
 describe("evaluatePluginClientBundle", () => {
+  it("keeps indirect eval out of the contribution lexical context", () => {
+    expect(() =>
+      evaluatePluginClientBundle(
+        "indirect-eval",
+        bundle(`
+          const run = eval;
+          run("plugin.addTool({})");
+        `),
+      ),
+    ).toThrow(/plugin is not defined|cannot read properties of undefined/i);
+  });
+
   it("ignores server registrations that survive client bundle filtering", () => {
     const plugin = evaluatePluginClientBundle(
       "wrong-target",

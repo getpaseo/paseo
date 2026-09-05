@@ -249,11 +249,11 @@ describe("PluginService", () => {
     roots.push(home);
     const first = await createPlugin(
       "startup-first",
-      `export default function contribute(plugin: unknown) { void plugin; return () => undefined; }`,
+      `export default function contribute(_plugin: unknown) { return () => undefined; }`,
     );
     const second = await createPlugin(
       "startup-second",
-      `export default function contribute(plugin: unknown) { void plugin; return () => undefined; }`,
+      `export default function contribute(_plugin: unknown) { return () => undefined; }`,
     );
     const service = createService(home, {
       "startup-first": { source: "directory", path: first },
@@ -273,7 +273,7 @@ describe("PluginService", () => {
     roots.push(home);
     const directory = await createPlugin(
       "manifest-default",
-      `export default function contribute(plugin: unknown) { void plugin; return () => undefined; }`,
+      `export default function contribute(_plugin: unknown) { return () => undefined; }`,
     );
     const store = createStore(home);
     const service = bindTestSessionHost(
@@ -300,7 +300,7 @@ describe("PluginService", () => {
 
     await writeFile(
       path.join(directory, "index.tsx"),
-      `export default function contribute(plugin: unknown) { void plugin; return () => undefined; }`,
+      `export default function contribute(_plugin: unknown) { return () => undefined; }`,
     );
     await expect(service.reloadPlugin("work-plugin")).resolves.toMatchObject({ status: "running" });
     await service.stopAllPlugins();
@@ -319,7 +319,7 @@ describe("PluginService", () => {
     );
     await writeFile(
       path.join(pluginDirectory, "index.ts"),
-      "export default function contribute(plugin: unknown) { void plugin; return () => undefined; }",
+      "export default function contribute(_plugin: unknown) { return () => undefined; }",
     );
     const service = createService(home);
     await service.start();
@@ -344,7 +344,7 @@ describe("PluginService", () => {
     );
     await writeFile(
       path.join(repository, "index.ts"),
-      "export default function contribute(plugin: unknown) { void plugin; return () => undefined; }",
+      "export default function contribute(_plugin: unknown) { return () => undefined; }",
     );
     await runGitCommand(["add", "-A"], { cwd: repository });
     await runGitCommand(["commit", "-m", "initial"], { cwd: repository });
@@ -362,7 +362,7 @@ describe("PluginService", () => {
 
     await writeFile(
       path.join(repository, "index.ts"),
-      'export default function contribute(plugin: unknown) { void plugin; throw new Error("broken update"); }',
+      'export default function contribute(_plugin: unknown) { throw new Error("broken update"); }',
     );
     await runGitCommand(["add", "-A"], { cwd: repository });
     await runGitCommand(["commit", "-m", "broken update"], { cwd: repository });
@@ -464,8 +464,7 @@ describe("PluginService", () => {
     const directory = await createPlugin(
       "cleanup-plugin",
       `import { writeFileSync } from "node:fs";
-export default function contribute(plugin: unknown) {
-  void plugin;
+export default function contribute(_plugin: unknown) {
   return () => writeFileSync(${JSON.stringify(cleanupFile)}, "cleaned");
 }`,
     );
@@ -492,11 +491,11 @@ export default function contribute(plugin: unknown) {
     roots.push(home);
     const first = await createPlugin(
       "first",
-      `export default function contribute(plugin: unknown) { void plugin; return () => undefined; }`,
+      `export default function contribute(_plugin: unknown) { return () => undefined; }`,
     );
     const second = await createPlugin(
       "second",
-      `export default function contribute(plugin: unknown) { void plugin; return () => undefined; }`,
+      `export default function contribute(_plugin: unknown) { return () => undefined; }`,
     );
     const store = createStore(home);
     const service = bindTestSessionHost(
@@ -609,11 +608,11 @@ export default function contribute(plugin: unknown) {
     roots.push(home);
     const successful = await createPlugin(
       "successful-install",
-      `export default function contribute(plugin: unknown) { void plugin; return () => undefined; }`,
+      `export default function contribute(_plugin: unknown) { return () => undefined; }`,
     );
     const failed = await createPlugin(
       "failed-install",
-      `export default function contribute(plugin: unknown) { void plugin; throw new Error("startup exploded"); }`,
+      `export default function contribute(_plugin: unknown) { throw new Error("startup exploded"); }`,
     );
     const service = createService(home);
     const events: string[] = [];
@@ -638,7 +637,7 @@ export default function contribute(plugin: unknown) {
     await rm(path.join(missingEntry, "index.tsx"));
     const startupFailure = await createPlugin(
       "startup-failure",
-      `export default function contribute(plugin: unknown) { void plugin; throw new Error("startup exploded"); }`,
+      `export default function contribute(_plugin: unknown) { throw new Error("startup exploded"); }`,
     );
     const service = createService(home);
     await service.start();
@@ -672,8 +671,7 @@ export default function contribute(plugin: unknown) {
     const directory = await createPlugin(
       "cleanup-count",
       `import { appendFileSync } from "node:fs";
-export default function contribute(plugin: unknown) {
-  void plugin;
+export default function contribute(_plugin: unknown) {
   return () => {
     appendFileSync(${JSON.stringify(cleanupFile)}, "cleanup\\n");
     throw new Error("cleanup exploded");

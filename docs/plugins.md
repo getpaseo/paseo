@@ -143,12 +143,13 @@ module, or a `*.client` module from a server module, fails compilation. Top-leve
 such as `StyleSheet.create` belong in `*.client.tsx`; placing them in `index.ts` executes them in the
 server bundle.
 
-The plugin process is trusted, unsandboxed code. Compiler stripping is bundle optimization and
-direct-style enforcement: only direct registration calls are guaranteed to be removed from the
-opposite bundle. Aliased, computed, helper, or dynamically generated calls can remain. The
-opposite-target runtime context provides inert registration methods that do not invoke callbacks,
-validate or retain arguments, or mutate its catalog. Do not treat this as a sandbox, and do not
-statically ban every possible alias of `eval` or other dynamic code.
+The plugin process is trusted, unsandboxed code. The compiler accepts only direct registration
+calls from the top-level body of the default contribution function. Aliased, computed, helper,
+control-flow, nested-method, or dynamically generated registrations fail compilation. It also
+rejects direct `eval`, `Function`/`AsyncFunction` code generation, and string-generated timer code.
+The opposite-target runtime context still provides inert registration methods that do not invoke
+callbacks, validate or retain arguments, or mutate its catalog. Static analysis does not detect
+arbitrary malicious obfuscation; that is outside the threat model for trusted unsandboxed plugins.
 
 ```ts
 import type { PluginContext } from "@getpaseo/plugin";

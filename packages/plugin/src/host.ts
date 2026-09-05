@@ -63,9 +63,9 @@ export function createPluginContext(
   | "addTimelineRenderer"
 > {
   return {
-    // Server registrations can survive client bundle filtering when the source
-    // uses an alias, a computed member, or dynamic code. The client context is
-    // the safety boundary for those registrations, so it must absorb them.
+    // Older or precompiled bundles can contain server registrations that the
+    // current compiler rejects when the source uses an alias, a computed
+    // member, or dynamic code. The client context absorbs them at runtime.
     handle() {},
     addTool() {},
     addSurface(id, Component) {
