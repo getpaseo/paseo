@@ -152,17 +152,20 @@ Use one of these semantic event names for new GitHub workflows:
 
 Existing configurations may continue to use `github.issues`, `github.issue_comment`, `github.pull_request_review`, `github.pull_request_review_comment`, and `github.push`. These legacy events retain their existing behavior.
 
-`filters` supports these GitHub fields. `from_users` must be non-empty for every externally sourced workflow. All supplied filters compose with AND.
+`filters` supports these GitHub fields. Every externally sourced workflow needs a non-empty identity allowlist: `from_users`, or GitHub `from_teams`. When both are present, a listed login or active membership in a listed team qualifies. All other supplied filters compose with AND.
 
-| Field        | Type                                | Applies to                                                    | Meaning                                                                         |
-| ------------ | ----------------------------------- | ------------------------------------------------------------- | ------------------------------------------------------------------------------- |
-| `from_users` | non-empty list of strings           | all GitHub events                                             | GitHub logins allowed to start the workflow.                                    |
-| `repo`       | non-empty string                    | all GitHub events                                             | Repository in `owner/name` form.                                                |
-| `connection` | string                              | all GitHub events                                             | GitHub connection slug.                                                         |
-| `contains`   | string                              | issue, pull-request, and comment events                       | Substring in the issue or pull-request title plus body, or in the comment body. |
-| `pattern`    | string                              | issue, pull-request, and comment events                       | Start of that same text.                                                        |
-| `label`      | non-empty string                    | `github.issue_label_added`, `github.pull_request_label_added` | The label added by the delivery.                                                |
-| `labels`     | non-empty list of non-empty strings | issue, pull-request, and comment events                       | Every listed label must be currently present on the issue or pull request.      |
+| Field        | Type                                               | Applies to                                                    | Meaning                                                                         |
+| ------------ | -------------------------------------------------- | ------------------------------------------------------------- | ------------------------------------------------------------------------------- |
+| `from_users` | non-empty list of strings                          | all GitHub events                                             | GitHub logins allowed to start the workflow.                                    |
+| `from_teams` | non-empty list of `organization/team-slug` strings | all GitHub events                                             | GitHub teams whose active members may start the workflow.                       |
+| `repo`       | non-empty string                                   | all GitHub events                                             | Repository in `owner/name` form.                                                |
+| `connection` | string                                             | all GitHub events                                             | GitHub connection slug.                                                         |
+| `contains`   | string                                             | issue, pull-request, and comment events                       | Substring in the issue or pull-request title plus body, or in the comment body. |
+| `pattern`    | string                                             | issue, pull-request, and comment events                       | Start of that same text.                                                        |
+| `label`      | non-empty string                                   | `github.issue_label_added`, `github.pull_request_label_added` | The label added by the delivery.                                                |
+| `labels`     | non-empty list of non-empty strings                | issue, pull-request, and comment events                       | Every listed label must be currently present on the issue or pull request.      |
+
+`from_teams` requires the GitHub App's organization **Members** permission with read access. If you add it to an existing App, each organization installation must accept the permission update before its team-filtered workflows can match. Pending, unavailable, or denied membership checks do not start a run.
 
 `label` and `labels` match GitHub labels case-insensitively. `label` checks the one changed label; `labels` checks the full current label set and requires every entry. For example, `labels: [bug, backend]` requires both `bug` and `backend`.
 

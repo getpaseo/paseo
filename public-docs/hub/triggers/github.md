@@ -20,7 +20,7 @@ on: github.issue_created
 max_runtime: 2h
 filters:
   repo: example/project
-  from_users: [maintainer]
+  from_teams: [example/maintainers]
 steps:
   - id: triage
     environment: dev
@@ -40,7 +40,7 @@ steps:
           Call hub.finish_execution when done.
 ```
 
-`github.issue_created` fires only when someone opens an issue. `from_users` is required and matches the GitHub login that caused the event.
+`github.issue_created` fires only when someone opens an issue. See [Filter GitHub events](#filter-github-events) for the sender allowlist.
 
 ## Review new pull requests
 
@@ -190,7 +190,9 @@ Choose `github.issue_comment_created` for a comment on an issue and `github.pull
 
 ## Filter GitHub events
 
-Every externally sourced workflow needs a non-empty `from_users` allowlist. GitHub filters compose with AND: the repository, connection, sender, content, changed label, and required current labels must all match.
+Every externally sourced workflow needs a non-empty identity allowlist. See [GitHub events and filters](/docs/hub/configuration/hub-yml#github-events-and-filters) for team filters.
+
+All other GitHub filters compose with AND: the repository, connection, content, changed label, and required current labels must all match.
 
 `contains` and `pattern` inspect the title plus body for issue and pull-request events. For comment events, they inspect the comment body. `contains` is a substring match; `pattern` matches the start.
 
