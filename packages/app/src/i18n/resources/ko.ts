@@ -1786,6 +1786,8 @@ export const ko: TranslationResources = {
       loading: "파일 불러오는 중...",
       noPreview: "사용 가능한 미리보기가 없습니다",
       binaryPreviewUnavailable: "바이너리 미리보기를 사용할 수 없습니다",
+      videoPlaybackFailed:
+        "이 동영상을 재생할 수 없습니다. 파일이 손상되었거나 이 기기에서 지원하지 않는 형식일 수 있습니다.",
       tooLargeToDisplay: "이 파일은 너무 커서 표시할 수 없습니다",
       failedToLoad: "파일을 불러오지 못했습니다",
       failedToLoadPreview: "파일 미리보기를 불러오지 못했습니다",

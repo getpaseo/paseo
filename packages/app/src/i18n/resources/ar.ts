@@ -1776,6 +1776,8 @@ export const ar: TranslationResources = {
       loading: "جارٍ تحميل الملف...",
       noPreview: "لا تتوفر معاينة",
       binaryPreviewUnavailable: "المعاينة الثنائية غير متاحة",
+      videoPlaybackFailed:
+        "تعذر تشغيل هذا الفيديو. قد يكون الملف تالفًا أو تنسيقه غير مدعوم على هذا الجهاز.",
       tooLargeToDisplay: "هذا الملف كبير جدًا بحيث لا يمكن عرضه",
       failedToLoad: "فشل تحميل الملف",
       failedToLoadPreview: "فشل تحميل معاينة الملف",

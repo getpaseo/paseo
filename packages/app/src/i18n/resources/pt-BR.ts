@@ -1808,6 +1808,8 @@ export const ptBR: TranslationResources = {
       loading: "Carregando arquivo...",
       noPreview: "Nenhuma prévia disponível",
       binaryPreviewUnavailable: "Prévia binária indisponível",
+      videoPlaybackFailed:
+        "Não foi possível reproduzir este vídeo. O arquivo pode estar danificado ou o formato não ser compatível com este dispositivo.",
       tooLargeToDisplay: "Este arquivo é grande demais para exibir",
       failedToLoad: "Falha ao carregar arquivo",
       failedToLoadPreview: "Falha ao carregar prévia do arquivo",
