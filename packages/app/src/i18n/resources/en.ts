@@ -648,6 +648,7 @@ export const en = {
         reloadedAgent: "Reloaded agent",
         failedToReloadAgent: "Failed to reload agent",
         failedToCloseAgent: "Failed to close agent",
+        failedToSaveClosePreference: "Couldn't save your terminal close preference",
       },
       confirmations: {
         close: "Close",
