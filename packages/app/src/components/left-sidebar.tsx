@@ -853,6 +853,15 @@ function workspacesSectionActionStyle({
   ];
 }
 
+interface WorkspacesSectionIconActionProps {
+  icon: typeof FolderPlus;
+  label: string;
+  onPress: () => void;
+  testID: string;
+  iconTestID?: string;
+  shortcutKeys?: ReturnType<typeof useShortcutKeys>;
+}
+
 function WorkspacesSectionIconAction({
   icon: Icon,
   label,
@@ -860,14 +869,7 @@ function WorkspacesSectionIconAction({
   testID,
   iconTestID,
   shortcutKeys,
-}: {
-  icon: typeof FolderPlus;
-  label: string;
-  onPress: () => void;
-  testID: string;
-  iconTestID?: string;
-  shortcutKeys?: ReturnType<typeof useShortcutKeys>;
-}) {
+}: WorkspacesSectionIconActionProps) {
   const ThemedIcon = useMemo(() => withUnistyles(Icon), [Icon]);
   return (
     <Tooltip delayDuration={300}>
