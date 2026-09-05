@@ -6734,6 +6734,10 @@ export class Session {
         throw new Error("Workspace launches are not available on this daemon");
       }
       const context = await this.resolveWorkspaceLaunchContextById(request.workspaceId);
+      await assertWorkspaceAutomationAllowedForWorkspace(
+        this.workspaceRegistry,
+        request.workspaceId,
+      );
       const launch = await this.workspaceLaunches.start(context, request.launchName);
       this.emit({
         type: "workspace.launch.start.response",

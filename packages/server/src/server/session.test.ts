@@ -19,6 +19,8 @@ import {
   type FileTransferFrame,
 } from "@getpaseo/protocol/binary-frames/index";
 import { Session } from "./session.js";
+import { WorkspaceLaunchManager } from "./workspace-launch-manager.js";
+import { WorkspaceRuntimeEnvironmentService } from "./workspace-runtime-environment.js";
 import { OWNER_PERMISSIONS, type DaemonPermission } from "./authorization/index.js";
 import { DownloadTokenStore } from "./file-download/token-store.js";
 import { StructuredAgentFallbackError } from "./agent/agent-response-loop.js";
@@ -307,6 +309,7 @@ interface SessionForTestOptions {
   workspaceRegistry?: { get: ReturnType<typeof vi.fn>; list?: ReturnType<typeof vi.fn> };
   projectRegistry?: Partial<SessionOptions["projectRegistry"]>;
   terminalManager?: SessionOptions["terminalManager"];
+  workspaceLaunchManager?: SessionOptions["workspaceLaunchManager"];
   serviceProxy?: SessionOptions["serviceProxy"];
   scriptRuntimeStore?: SessionOptions["scriptRuntimeStore"];
   getDaemonTcpPort?: () => number | null;
@@ -403,6 +406,7 @@ function createSessionForTest(options: SessionForTestOptions = {}): Session {
       list: vi.fn().mockResolvedValue([]),
     },
     workspaceLabelService: options.workspaceLabelService,
+    workspaceLaunchManager: options.workspaceLaunchManager,
     scheduleService: asScheduleService(),
     checkoutDiffManager: asCheckoutDiffManager(checkoutDiffManager),
     github: asGitHubService(github),
@@ -4774,6 +4778,81 @@ describe("session workspace script handling", () => {
 });
 
 describe("session workspace launch handling", () => {
+  test("blocks fork workspace launches until setup clears the automation block", async () => {
+    const messages: unknown[] = [];
+    const workspaceId = "fork-workspace";
+    const untrustedSource = {
+      kind: "change_request",
+      forge: "github",
+      number: 42,
+      headRepository: "contributor/project",
+    };
+    const getWorkspace = vi.fn().mockResolvedValue({ workspaceId, untrustedSource });
+    const manager = new WorkspaceLaunchManager({
+      terminalManager: null,
+      serviceProxy: null,
+      workspaceRuntimeEnvironment: new WorkspaceRuntimeEnvironmentService(),
+      getDaemonTcpPort: null,
+      serviceProxyPublicBaseUrl: null,
+      resolveScriptHealth: null,
+      logger: pino({ level: "silent" }),
+    });
+    const launch = {
+      launchName: "dev",
+      lifecycle: "running" as const,
+      active: true,
+      portBase: 41000,
+      portEnd: 41099,
+      portCount: 100,
+      composeProjectName: "paseo-test",
+      endpoints: [],
+      exitCode: null,
+      terminalId: "launch-terminal",
+    };
+    const start = vi.spyOn(manager, "start").mockResolvedValue(launch);
+    const session = createSessionForTest({
+      messages,
+      workspaceRegistry: { get: getWorkspace },
+      workspaceLaunchManager: manager,
+    });
+    const context = {
+      workspaceId,
+      workspaceDirectory: "/tmp/fork-workspace",
+      projectSlug: "project",
+      branchName: "fork",
+    };
+    vi.spyOn(asSessionInternals(session), "resolveWorkspaceLaunchContextById").mockResolvedValue(
+      context,
+    );
+    const request = {
+      type: "workspace.launch.start.request" as const,
+      requestId: "start-launch",
+      workspaceId,
+      launchName: "dev",
+    };
+
+    await session.handleMessage(request);
+    expect(start).not.toHaveBeenCalled();
+    expect(messages).toContainEqual({
+      type: "workspace.launch.start.response",
+      payload: {
+        requestId: "start-launch",
+        workspaceId,
+        launchName: "dev",
+        launch: null,
+        error: "Scripts are blocked for PR #42 from contributor/project. Run setup to allow them.",
+      },
+    });
+
+    getWorkspace.mockResolvedValue({ workspaceId });
+    await session.handleMessage(request);
+    expect(start).toHaveBeenCalledExactlyOnceWith(context, "dev");
+    expect(messages.at(-1)).toEqual({
+      type: "workspace.launch.start.response",
+      payload: { requestId: "start-launch", workspaceId, launchName: "dev", launch, error: null },
+    });
+  });
+
   test("rejects archived workspaces before resolving a launch context", async () => {
     const projectRegistry = { get: vi.fn() };
     const session = createSessionForTest({

@@ -608,6 +608,65 @@ describe("WorkspaceLaunchManager", () => {
     }
   });
 
+  it("classifies TCP listeners once until they disappear, then detects replacements", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "paseo-launch-probe-"));
+    tempDirs.push(directory);
+    const port = await getFreePort();
+    writeFileSync(
+      join(directory, "paseo.json"),
+      JSON.stringify({
+        worktree: { servicePorts: { range: `${port}-${port}`, blockSize: 1 } },
+        launches: { dev: { command: "./bin/dev" } },
+      }),
+    );
+    let listening = true;
+    const probeHttp = vi.fn().mockResolvedValue(false);
+    const manager = new WorkspaceLaunchManager({
+      terminalManager: createTerminalManager().manager,
+      serviceProxy: createServiceProxySubsystem({ logger: pino({ level: "silent" }) }),
+      workspaceRuntimeEnvironment: new WorkspaceRuntimeEnvironmentService(),
+      getDaemonTcpPort: () => 6767,
+      serviceProxyPublicBaseUrl: null,
+      resolveScriptHealth: null,
+      endpointProbe: { probeTcp: async () => listening, probeHttp },
+      logger: pino({ level: "silent" }),
+    });
+    const context = {
+      workspaceId: "ws",
+      workspaceDirectory: directory,
+      projectSlug: "app",
+      branchName: "feature",
+    };
+    try {
+      await manager.start(context, "dev");
+      await flushAsyncWork();
+      expect(probeHttp).toHaveBeenCalledExactlyOnceWith(port);
+      expect(manager.buildSnapshot(context)[0]?.endpoints).toEqual([
+        expect.objectContaining({ port, protocol: "tcp" }),
+      ]);
+      manager.updateWorkspaceBranch(context.workspaceId, context.branchName);
+      await flushAsyncWork();
+      manager.updateWorkspaceBranch(context.workspaceId, context.branchName);
+      await flushAsyncWork();
+      expect(probeHttp).toHaveBeenCalledTimes(1);
+
+      listening = false;
+      manager.updateWorkspaceBranch(context.workspaceId, context.branchName);
+      await flushAsyncWork();
+      expect(manager.buildSnapshot(context)[0]?.endpoints).toEqual([]);
+      listening = true;
+      probeHttp.mockResolvedValue(true);
+      manager.updateWorkspaceBranch(context.workspaceId, context.branchName);
+      await flushAsyncWork();
+      expect(probeHttp).toHaveBeenCalledTimes(2);
+      expect(manager.buildSnapshot(context)[0]?.endpoints).toEqual([
+        expect.objectContaining({ port, protocol: "http", proxyUrl: expect.any(String) }),
+      ]);
+    } finally {
+      await manager.disposeWorkspace(context.workspaceId);
+    }
+  });
+
   it("uses the latest branch when it discovers a launch endpoint after a rename", async () => {
     const directory = mkdtempSync(join(tmpdir(), "paseo-workspace-launch-branch-"));
     tempDirs.push(directory);
