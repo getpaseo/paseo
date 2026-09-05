@@ -1838,7 +1838,7 @@ export class Session {
   }
 
   private isProviderVisibleToClient(provider: string): boolean {
-    if (clientSupportsAllProviders(this.appVersion)) {
+    if (this.supports(CLIENT_CAPS.allProviders) || clientSupportsAllProviders(this.appVersion)) {
       return true;
     }
     return LEGACY_PROVIDER_IDS.has(provider);

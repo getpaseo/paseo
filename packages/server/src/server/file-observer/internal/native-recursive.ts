@@ -136,7 +136,13 @@ class NativeRecursiveBackend implements ObservationBackend {
       this.host.metrics.nativeRenameEventCount += 1;
       const knownDirectory = this.directories.has(path);
       this.classify(path, (isDirectory) => {
-        if (!isDirectory) return;
+        if (!isDirectory) {
+          // Remember files as soon as we announce them. A coalesced delete must
+          // still be found by the next audit, even before the first directory scan.
+          this.files.add(path);
+          this.entries.get(scope)?.files.add(path);
+          return;
+        }
         if (knownDirectory) this.requestAudit(path, true);
         else this.requestAudit(scope);
       });

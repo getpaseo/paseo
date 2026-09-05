@@ -1,4 +1,6 @@
 export const CLIENT_CAPS = {
+  // Clients outside the Paseo app version series can explicitly accept provider IDs.
+  allProviders: "all_providers",
   // COMPAT(selectiveAgentTimeline): added in v0.1.106. Capable clients receive
   // agent streams only for their explicit viewed set. Remove after 2027-01-12
   // once the supported client floor is >= v0.1.106.

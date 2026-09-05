@@ -40,6 +40,37 @@ Changing the daemon or working directory reloads the choices. If an existing tri
 
 If the daemon is offline or needs a newer Paseo version, the agent selectors show an error and a retry action. The rest of the trigger and its YAML remain editable.
 
+## Continue the same agent
+
+Dashboard triggers default to **Same conversation**. Messages in the same Slack or Discord thread, events on the same GitHub issue or pull request, and events on the same Linear issue continue the existing agent in that project. An event without a conversation starts a new agent.
+
+If the agent is busy, the new prompt steers its current work. If its workspace is archived, Hub asks Paseo to restore it before sending the prompt. Each arrival still has its own deadline, output limits, and completion status.
+
+Choose **Custom key** to group arrivals by an input, or **New agent** to keep them separate. A self-contained trigger document can express the same choice:
+
+```yaml
+name: support
+on:
+  slack.mention:
+    filters:
+      from_users: [U01234567]
+run:
+  target:
+    daemon: laptop
+    cwd: /Users/you/code/support
+  agent:
+    provider: codex
+  continuation:
+    mode: conversation
+  max_runtime: 30m
+  idle_timeout: 5m
+  prompt: Handle this request and call finish_execution when complete.
+```
+
+The [continuation reference](/docs/hub/configuration/hub-yml#agent-continuation) describes keys and compatibility. The run detail shows whether each arrival created, continued, or restored an agent.
+
+Hub includes an `executionId` in each prompt. When using a continuing agent, pass that ID to `reply` and `finish_execution`. These tools act on that arrival's destination and contract; an old or unrelated execution ID is rejected.
+
 ## Events
 
 | `on`                                  | Fires when                                           |
