@@ -77,6 +77,12 @@ only use local param fallback during cold mount (`/` or empty pathname), or a
 hidden workspace can overwrite the remembered workspace before Settings or
 History returns.
 
+The keyboard History back/forward actions use session-local application history.
+Observe routes and focused tabs in `navigation/route-history.web.ts`; do not
+change route call sites to push browser entries. Replay workspace visits through
+the existing workspace helper with an explicit tab target. Closed tabs are skipped;
+history does not reopen resources. Reloading starts a new history.
+
 Settings detail routes are separate siblings on purpose. Keep
 `settings/[section]`, the host routes, the projects index, and project detail as
 distinct route names. `router.dismissTo()` ultimately matches stack entries by
