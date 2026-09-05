@@ -47,6 +47,7 @@ function discoverAgentRoutes(): string[] {
     "index",
     "sponsor",
     "privacy",
+    "terms",
   ]);
   return fs
     .readdirSync(routesDir, { withFileTypes: true })
@@ -86,6 +87,7 @@ const sitemapPages = [
   "/download",
   "/hub",
   "/privacy",
+  "/terms",
   ...discoverAgentRoutes(),
   ...discoverAlternativeRoutes(),
   ...discoverDocsRoutes(),

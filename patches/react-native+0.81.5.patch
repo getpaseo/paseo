@@ -1,0 +1,37 @@
+diff --git a/node_modules/react-native/ReactAndroid/src/main/java/com/facebook/react/views/scroll/ReactScrollView.java b/node_modules/react-native/ReactAndroid/src/main/java/com/facebook/react/views/scroll/ReactScrollView.java
+index f708543..26df5e0 100644
+--- a/node_modules/react-native/ReactAndroid/src/main/java/com/facebook/react/views/scroll/ReactScrollView.java
++++ b/node_modules/react-native/ReactAndroid/src/main/java/com/facebook/react/views/scroll/ReactScrollView.java
+@@ -29,6 +29,7 @@ import android.view.ViewGroup;
+ import android.view.accessibility.AccessibilityNodeInfo;
+ import android.widget.OverScroller;
+ import android.widget.ScrollView;
++import android.widget.TextView;
+ import androidx.annotation.NonNull;
+ import androidx.annotation.Nullable;
+ import androidx.core.view.ViewCompat;
+@@ -425,12 +426,23 @@ public class ReactScrollView extends ScrollView
+    */
+   @Override
+   public void requestChildFocus(View child, View focused) {
+-    if (focused != null) {
++    if (focused != null && shouldScrollToFocusedChild(focused)) {
+       scrollToChild(focused);
+     }
+     super.requestChildFocus(child, focused);
+   }
+ 
++  private boolean shouldScrollToFocusedChild(View focused) {
++    if (getScaleY() >= 0 || !focused.isInTouchMode() || !(focused instanceof TextView)) {
++      return true;
++    }
++
++    // Selectable text takes focus when tapped. In inverted lists, scrolling to that focus uses
++    // untransformed coordinates and unexpectedly moves the timeline.
++    TextView textView = (TextView) focused;
++    return !textView.isTextSelectable() || textView.onCheckIsTextEditor();
++  }
++
+   private int getScrollDelta(View descendent) {
+     descendent.getDrawingRect(mTempRect);
+     offsetDescendantRectToMyCoords(descendent, mTempRect);

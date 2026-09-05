@@ -18,6 +18,7 @@ import { useSessionStore } from "@/stores/session-store";
 import { useWorkspaceExists } from "@/stores/session-store-hooks";
 import type { Theme } from "@/styles/theme";
 import { normalizeWorkspaceOpaqueId } from "@/utils/workspace-identity";
+import { usePluginHostNavigation } from "../host-navigation";
 import { createPluginClientStateSource } from "../client-state/source";
 import { toPluginTheme } from "../theme";
 import { resolvePluginIcon } from "../icons";
@@ -63,6 +64,7 @@ function PluginPanelBody({ theme }: { theme: PluginTheme }) {
   const host = useMemo(() => ({ id: serverId, label: hostLabel }), [hostLabel, serverId]);
   const layout = useMemo(() => ({ compact, platform: resolvePlatform() }), [compact]);
   const stateSource = useMemo(() => createPluginClientStateSource(serverId), [serverId]);
+  const navigation = usePluginHostNavigation(serverId);
 
   if (!plugin || !contribution || !workspaceExists) {
     return <PluginPanelUnavailable />;
@@ -79,6 +81,7 @@ function PluginPanelBody({ theme }: { theme: PluginTheme }) {
       theme,
       host,
       layout,
+      navigation,
       workspaceId,
     };
     const Component = contribution.Component;
@@ -90,6 +93,7 @@ function PluginPanelBody({ theme }: { theme: PluginTheme }) {
       theme,
       host,
       layout,
+      navigation,
       workspaceId,
       agentId: target.agentId,
     };

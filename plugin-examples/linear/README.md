@@ -27,7 +27,7 @@ Restart the development daemon after changing its environment or plugin configur
 
 The split entry point demonstrates the complete attachment-source pattern:
 
-- define the validated search RPC and attachment metadata in `issues.shared.ts`;
-- handle it in the daemon subprocess from `issues.server.ts`;
-- wire both contributions from `index.ts`;
+- define the validated search RPC and attachment metadata in `shared/issues.ts`;
+- handle it in the daemon subprocess from `server/issues.ts` and `index.server.ts`;
+- register the attachment source from `index.client.ts`;
 - keep credentials and vendor API calls out of the client bundle.

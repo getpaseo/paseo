@@ -118,6 +118,32 @@ describe("highlightCode", () => {
     expect(result[10].find((t) => t.text === "color")?.style).toBe("property");
   });
 
+  it("highlights Astro components across frontmatter, markup, and style", () => {
+    const code = `---
+const title = "Hello";
+---
+<main class="page">
+  <h1>{title}</h1>
+</main>
+<style>
+  .page { color: red; }
+</style>`;
+
+    const tokens = highlightCode(code, "Page.astro").flat();
+
+    expect(tokens).toEqual(
+      expect.arrayContaining([
+        { text: "const", style: "keyword" },
+        { text: '"Hello"', style: "string" },
+        { text: "main", style: "tag" },
+        { text: "class", style: "attribute" },
+        { text: "title", style: "variable" },
+        { text: "page", style: "class" },
+        { text: "color", style: "property" },
+      ]),
+    );
+  });
+
   it("highlights TSX code with correct dialect", () => {
     const code = 'const el = <div className="test">hello</div>;';
     const result = highlightCode(code, "test.tsx");

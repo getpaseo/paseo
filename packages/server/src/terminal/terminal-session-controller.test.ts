@@ -617,11 +617,23 @@ describe("terminal-session-controller workspace-scoped subscriptions", () => {
 
     controller.dispatch({ type: "subscribe_terminals_request", cwd, workspaceId: "ws-a" });
     controller.dispatch({ type: "subscribe_terminals_request", cwd, workspaceId: "ws-b" });
+    await expect(controller.hasDirectorySubscription({ cwd, workspaceId: "ws-a" })).resolves.toBe(
+      true,
+    );
+    await expect(controller.hasDirectorySubscription({ cwd, workspaceId: "ws-b" })).resolves.toBe(
+      true,
+    );
     await flushMicrotasks();
     outboundMessages.length = 0;
 
     // Tearing down workspace B must not drop workspace A's live subscription.
     controller.dispatch({ type: "unsubscribe_terminals_request", cwd, workspaceId: "ws-b" });
+    await expect(controller.hasDirectorySubscription({ cwd, workspaceId: "ws-a" })).resolves.toBe(
+      true,
+    );
+    await expect(controller.hasDirectorySubscription({ cwd, workspaceId: "ws-b" })).resolves.toBe(
+      false,
+    );
 
     changedListener?.({ cwd, terminals: [{ id: "a", name: "A", cwd, workspaceId: "ws-a" }] });
     await flushMicrotasks();

@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { UserComposerAttachment } from "@/attachments/types";
+import type { TextReplacement } from "@/composer/types";
 import type { DraftAgentControlsProps } from "@/composer/agent-controls";
 import type { DraftCommandConfig } from "@/hooks/use-agent-commands-query";
 import {
@@ -56,7 +57,7 @@ export interface AgentInputDraft {
   text: string;
   editText: (text: string) => void;
   replaceText: (text: string) => void;
-  textReplacementKey: string;
+  textReplacement: TextReplacement;
   attachments: UserComposerAttachment[];
   setAttachments: (updater: AttachmentUpdater) => void;
   clear: (lifecycle: "sent" | "abandoned") => void;
@@ -88,10 +89,25 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
     (state) => state.attachmentFocusRequestByDraftKey[draftKey] ?? 0,
   );
   const [hydratedDraftKey, setHydratedDraftKey] = useState<string | null>(null);
-  const [textReplacementRevision, setTextReplacementRevision] = useState(0);
   const text = draft?.text ?? "";
   const attachments = draft?.attachments ?? [];
   const isHydrated = hydratedDraftKey === draftKey;
+  const textReplacementRevisionRef = useRef(0);
+  const [textReplacement, setTextReplacement] = useState<TextReplacement>(() => ({
+    key: `${draftKey}:0`,
+    text,
+  }));
+
+  const publishTextReplacement = useCallback(
+    (nextText: string) => {
+      textReplacementRevisionRef.current += 1;
+      setTextReplacement({
+        key: `${draftKey}:${textReplacementRevisionRef.current}`,
+        text: nextText,
+      });
+    },
+    [draftKey],
+  );
 
   const saveDraft = useCallback(
     (
@@ -135,9 +151,9 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
     (nextText: string) => {
       textPublication.cancel();
       saveDraft((current) => ({ ...current, text: nextText }));
-      setTextReplacementRevision((revision) => revision + 1);
+      publishTextReplacement(nextText);
     },
-    [saveDraft, textPublication],
+    [publishTextReplacement, saveDraft, textPublication],
   );
 
   const setAttachments = useCallback(
@@ -187,7 +203,8 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
     void (async () => {
       await useDraftStore.getState().hydrateDraftInput({ draftKey });
       if (!cancelled) {
-        setTextReplacementRevision((revision) => revision + 1);
+        const hydratedText = useDraftStore.getState().getDraftInput(draftKey)?.text ?? "";
+        publishTextReplacement(hydratedText);
         setHydratedDraftKey(draftKey);
       }
     })();
@@ -195,7 +212,7 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
     return () => {
       cancelled = true;
     };
-  }, [draftKey]);
+  }, [draftKey, publishTextReplacement]);
 
   const lockedWorkingDir = composerOptions?.lockedWorkingDir?.trim() ?? "";
   useEffect(() => {
@@ -318,7 +335,7 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
     text,
     editText,
     replaceText,
-    textReplacementKey: `${draftKey}:${textReplacementRevision}`,
+    textReplacement,
     attachments,
     setAttachments,
     clear,
