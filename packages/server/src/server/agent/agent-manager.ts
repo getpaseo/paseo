@@ -4056,8 +4056,7 @@ export class AgentManager {
         this.onStreamThreadStarted(agent);
         return undefined;
       case "usage_updated":
-        agent.lastUsage = { ...agent.lastUsage, ...event.usage };
-        this.emitState(agent);
+        this.onStreamUsageUpdated(agent, event);
         return undefined;
       case "mode_changed":
         agent.currentModeId = event.currentModeId;
@@ -4145,6 +4144,19 @@ export class AgentManager {
       }
     }
     void this.refreshRuntimeInfo(agent);
+  }
+
+  private onStreamUsageUpdated(
+    agent: ActiveManagedAgent,
+    event: Extract<AgentStreamEvent, { type: "usage_updated" }>,
+  ): void {
+    const contextWindowMaxTokens =
+      event.usage.contextWindowMaxTokens ?? agent.lastUsage?.contextWindowMaxTokens;
+    agent.lastUsage = {
+      ...event.usage,
+      ...(contextWindowMaxTokens !== undefined ? { contextWindowMaxTokens } : {}),
+    };
+    this.emitState(agent);
   }
 
   private async onStreamTimelineEvent(params: {

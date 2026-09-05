@@ -6354,7 +6354,7 @@ test("applies live autonomous events and preserves usage omitted from completion
     contextWindowUsedTokens: 175,
   });
 
-  // Emitting usage_updated with partial usage (e.g. after compaction) merges and preserves contextWindowMaxTokens
+  // Emitting usage_updated preserves contextWindowMaxTokens but replaces per-turn snapshot fields
   capturedSession!.pushEvent({
     type: "usage_updated",
     provider: "codex",
@@ -6365,7 +6365,6 @@ test("applies live autonomous events and preserves usage omitted from completion
   });
   const afterCompactionUsage = manager.getAgent(snapshot.id);
   expect(afterCompactionUsage?.lastUsage).toEqual({
-    inputTokens: 10,
     contextWindowMaxTokens: 200_000,
     contextWindowUsedTokens: 80,
   });
