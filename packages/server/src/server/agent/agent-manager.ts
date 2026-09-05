@@ -4056,8 +4056,7 @@ export class AgentManager {
         this.onStreamThreadStarted(agent);
         return undefined;
       case "usage_updated":
-        agent.lastUsage = event.usage;
-        this.emitState(agent);
+        this.onStreamUsageUpdated(agent, event);
         return undefined;
       case "mode_changed":
         agent.currentModeId = event.currentModeId;
@@ -4147,6 +4146,19 @@ export class AgentManager {
     void this.refreshRuntimeInfo(agent);
   }
 
+  private onStreamUsageUpdated(
+    agent: ActiveManagedAgent,
+    event: Extract<AgentStreamEvent, { type: "usage_updated" }>,
+  ): void {
+    const contextWindowMaxTokens =
+      event.usage.contextWindowMaxTokens ?? agent.lastUsage?.contextWindowMaxTokens;
+    agent.lastUsage = {
+      ...event.usage,
+      ...(contextWindowMaxTokens !== undefined ? { contextWindowMaxTokens } : {}),
+    };
+    this.emitState(agent);
+  }
+
   private async onStreamTimelineEvent(params: {
     agent: ActiveManagedAgent;
     event: Extract<AgentStreamEvent, { type: "timeline" }>;
@@ -4186,6 +4198,25 @@ export class AgentManager {
     if (event.item.type === "user_message") {
       agent.lastUserMessageAt = new Date();
       this.emitState(agent);
+    }
+    if (event.item.type === "compaction" && event.item.status === "completed") {
+      if (agent.lastUsage) {
+        let itemPostTokens: number;
+        if ("postTokens" in event.item && typeof event.item.postTokens === "number") {
+          itemPostTokens = event.item.postTokens;
+        } else {
+          const itemPreTokens =
+            "preTokens" in event.item && typeof event.item.preTokens === "number"
+              ? event.item.preTokens
+              : agent.lastUsage.contextWindowUsedTokens;
+          itemPostTokens = itemPreTokens ? Math.max(1500, Math.round(itemPreTokens * 0.15)) : 3500;
+        }
+        agent.lastUsage = {
+          ...agent.lastUsage,
+          contextWindowUsedTokens: itemPostTokens,
+        };
+        this.emitState(agent);
+      }
     }
     flags.shouldDispatchEvent = false;
     flags.shouldNotifyWaiters = true;

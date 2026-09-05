@@ -6353,6 +6353,22 @@ test("applies live autonomous events and preserves usage omitted from completion
     contextWindowMaxTokens: 200_000,
     contextWindowUsedTokens: 175,
   });
+
+  // Emitting usage_updated preserves contextWindowMaxTokens but replaces per-turn snapshot fields
+  capturedSession!.pushEvent({
+    type: "usage_updated",
+    provider: "codex",
+    usage: {
+      contextWindowUsedTokens: 80,
+    },
+    turnId: autonomousTurnId,
+  });
+  const afterCompactionUsage = manager.getAgent(snapshot.id);
+  expect(afterCompactionUsage?.lastUsage).toEqual({
+    contextWindowMaxTokens: 200_000,
+    contextWindowUsedTokens: 80,
+  });
+
   expect(manager.getTimeline(snapshot.id)).toContainEqual({
     type: "assistant_message",
     text: "AUTONOMOUS_PUMP_MESSAGE",

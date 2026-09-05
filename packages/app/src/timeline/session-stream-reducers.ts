@@ -1926,6 +1926,42 @@ export function createSessionAgentStreamReducerQueue(
       };
     },
     commit: (agentId, result, events) => {
+      // If a compaction item was completed in this batch of events, immediately
+      // update the agent's contextWindowUsedTokens in the session store so the
+      // context window meter reflects the compacted context without waiting for the next turn.
+      const compactionCompletedEvent = events.find(
+        (e) =>
+          e.event.type === "timeline" &&
+          e.event.item.type === "compaction" &&
+          e.event.item.status === "completed",
+      );
+      if (compactionCompletedEvent && compactionCompletedEvent.event.type === "timeline") {
+        const item = compactionCompletedEvent.event.item;
+        useSessionStore.getState().setAgents(serverId, (prev) => {
+          const existing = prev.get(agentId);
+          if (!existing || !existing.lastUsage) return prev;
+          let itemPostTokens: number;
+          if ("postTokens" in item && typeof item.postTokens === "number") {
+            itemPostTokens = item.postTokens;
+          } else {
+            const itemPreTokens =
+              "preTokens" in item && typeof item.preTokens === "number"
+                ? item.preTokens
+                : existing.lastUsage.contextWindowUsedTokens;
+            itemPostTokens = itemPreTokens
+              ? Math.max(1500, Math.round(itemPreTokens * 0.15))
+              : 3500;
+          }
+          const nextUsage = {
+            ...existing.lastUsage,
+            contextWindowUsedTokens: itemPostTokens,
+          };
+          const next = new Map(prev);
+          next.set(agentId, { ...existing, lastUsage: nextUsage });
+          return next;
+        });
+      }
+
       if (
         result.changedTail ||
         result.changedHead ||
