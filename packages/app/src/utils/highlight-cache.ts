@@ -1,5 +1,37 @@
 import { highlightCode, type HighlightToken } from "@getpaseo/highlight";
 
+interface HighlightProfileSample {
+  codeChars: number;
+  durationMs: number;
+  cacheHit: boolean;
+  lines: number;
+  tokens: number;
+}
+
+declare global {
+  var __PASEO_HIGHLIGHT_PROFILE__: HighlightProfileSample[] | undefined;
+}
+
+const highlightProfile = globalThis.__PASEO_HIGHLIGHT_PROFILE__;
+
+function recordHighlightProfile(input: {
+  codeChars: number;
+  startedAt: number;
+  cacheHit: boolean;
+  lines: HighlightToken[][];
+}): void {
+  if (!highlightProfile) {
+    return;
+  }
+  highlightProfile.push({
+    codeChars: input.codeChars,
+    durationMs: performance.now() - input.startedAt,
+    cacheHit: input.cacheHit,
+    lines: input.lines.length,
+    tokens: input.lines.reduce((sum, line) => sum + line.length, 0),
+  });
+}
+
 // Shared, theme-independent tokenization + cache for syntax highlighting.
 // Used by markdown code blocks, file preview, and tool-call detail blocks
 // (Edit diff / Write / Read). Colors are applied at render time, so the cache
@@ -50,9 +82,13 @@ const tokenizationCache = new LRUCache<string, HighlightToken[][]>(200);
 export function tokenizeToLines(code: string, ext: string | null): HighlightToken[][] | null {
   if (!ext) return null;
   if (code.length > MAX_HIGHLIGHT_CHARS) return null;
+  const startedAt = highlightProfile ? performance.now() : 0;
   const cacheKey = `${ext}:${code}`;
   const cached = tokenizationCache.get(cacheKey);
-  if (cached) return cached;
+  if (cached) {
+    recordHighlightProfile({ codeChars: code.length, startedAt, cacheHit: true, lines: cached });
+    return cached;
+  }
   let lines: HighlightToken[][];
   try {
     lines = highlightCode(code, `x.${ext}`);
@@ -60,6 +96,7 @@ export function tokenizeToLines(code: string, ext: string | null): HighlightToke
     return null;
   }
   tokenizationCache.set(cacheKey, lines);
+  recordHighlightProfile({ codeChars: code.length, startedAt, cacheHit: false, lines });
   return lines;
 }
 

@@ -1,4 +1,5 @@
 import { useLayoutEffect, useMemo, useRef } from "react";
+import type { WorkspaceTabDescriptor } from "@/screens/workspace/workspace-tabs-types";
 
 interface UseMountedTabSetInput {
   activeTabId: string | null;
@@ -17,6 +18,37 @@ interface DeriveMountedTabLruInput {
   cap: number;
   previousLru: string[];
   retainedTabIds: Set<string>;
+}
+
+interface DeriveMountableWorkspaceTabIdsInput {
+  activeTabId: string | null;
+  isWorkspaceFocused: boolean;
+  retainInactiveTimelineTabs: boolean;
+  tabs: WorkspaceTabDescriptor[];
+}
+
+type DesktopTabLifecycleE2ETestGlobals = typeof globalThis & {
+  __PASEO_E2E_RETAIN_INACTIVE_AGENT_TIMELINES?: unknown;
+};
+
+export function shouldRetainInactiveAgentTimelines(): boolean {
+  const override = (globalThis as DesktopTabLifecycleE2ETestGlobals)
+    .__PASEO_E2E_RETAIN_INACTIVE_AGENT_TIMELINES;
+  return typeof override === "boolean" ? override : true;
+}
+
+export function deriveMountableWorkspaceTabIds(
+  input: DeriveMountableWorkspaceTabIdsInput,
+): string[] {
+  return input.tabs
+    .filter((tab) => {
+      const isTimeline = tab.kind === "agent" || tab.kind === "provider_subagent";
+      if (!isTimeline || input.retainInactiveTimelineTabs) {
+        return true;
+      }
+      return input.isWorkspaceFocused && tab.tabId === input.activeTabId;
+    })
+    .map((tab) => tab.tabId);
 }
 
 function createInitialMountedTabLru(input: UseMountedTabSetInput): string[] {

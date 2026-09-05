@@ -14,6 +14,7 @@ import { useSessionStore, type SessionState } from "@/stores/session-store";
 import { useWorkspaceAttachmentsStore } from "@/attachments/workspace-attachments-store";
 import {
   applyClearDraftRecord,
+  collectStreamUserImageIds,
   collectReferencedAttachmentIdsFromState,
   DRAFT_STORE_VERSION,
   isAttachmentMetadata,
@@ -195,20 +196,6 @@ function collectQueuedMessageAttachmentIds(
         if (attachment.kind === "image") {
           referencedIds.add(attachment.metadata.id);
         }
-      }
-    }
-  }
-}
-
-function collectStreamUserImageIds(
-  streams: SessionState["agentStreamTail"],
-  referencedIds: Set<string>,
-): void {
-  for (const stream of streams.values()) {
-    for (const item of stream) {
-      if (item.kind !== "user_message") continue;
-      for (const image of item.images ?? []) {
-        referencedIds.add(image.id);
       }
     }
   }

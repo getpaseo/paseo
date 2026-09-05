@@ -213,6 +213,94 @@ interface LargeAgentStreamPayloadRequest {
 interface AgentStreamStressRequest {
   count: number;
   coalesced: boolean;
+  payloadBytes?: number;
+  payloadText?: string;
+  chunkBytes?: number;
+  intervalMs?: number;
+}
+
+const MARKDOWN_BENCHMARK_WORKLOADS = [
+  "plain_unbroken",
+  "prose_blocks",
+  "open_typescript_fence",
+  "closed_typescript_fences",
+  "mixed_markdown",
+  "link_table_dense",
+] as const;
+
+type MarkdownBenchmarkWorkload = (typeof MARKDOWN_BENCHMARK_WORKLOADS)[number];
+
+const markdownBenchmarkWorkloads = new Set<string>(MARKDOWN_BENCHMARK_WORKLOADS);
+
+function isMarkdownBenchmarkWorkload(value: string): value is MarkdownBenchmarkWorkload {
+  return markdownBenchmarkWorkloads.has(value);
+}
+
+function repeatBenchmarkPattern(pattern: string, bytes: number): string {
+  const repeats = Math.floor(bytes / pattern.length);
+  const remainder = bytes - repeats * pattern.length;
+  return `${pattern.repeat(repeats)}${"x".repeat(remainder)}`;
+}
+
+function buildMarkdownBenchmarkPayload(workload: MarkdownBenchmarkWorkload, bytes: number): string {
+  switch (workload) {
+    case "plain_unbroken":
+      return "x".repeat(bytes);
+    case "prose_blocks":
+      return repeatBenchmarkPattern(
+        "Benchmark paragraph with stable words and deterministic wrapping behavior.\n\n",
+        bytes,
+      );
+    case "open_typescript_fence": {
+      const prefix = "```ts\n";
+      if (bytes <= prefix.length) {
+        return prefix.slice(0, bytes);
+      }
+      return `${prefix}${repeatBenchmarkPattern("const value = source.map((item) => item.id);\n", bytes - prefix.length)}`;
+    }
+    case "closed_typescript_fences":
+      return repeatBenchmarkPattern(
+        "```ts\nconst value = 42;\nconsole.log(value);\n```\n\n",
+        bytes,
+      );
+    case "mixed_markdown":
+      return repeatBenchmarkPattern(
+        "## Benchmark section\n\nParagraph with **bold**, _emphasis_, and [a link](https://example.com).\n\n- first item\n- second item\n\n| name | value |\n| --- | ---: |\n| alpha | 42 |\n\n```ts\nconst alpha = 42;\n```\n\n",
+        bytes,
+      );
+    case "link_table_dense":
+      return repeatBenchmarkPattern(
+        "| name | value | link |\n| --- | ---: | --- |\n| alpha | 42 | [details](https://example.com/alpha) |\n| beta | 84 | [source](file:///tmp/source.ts) |\n\n",
+        bytes,
+      );
+  }
+}
+
+function parseMarkdownBenchmarkStress(text: string): AgentStreamStressRequest | null {
+  const match =
+    /emit\s+(\d+)\s+byte\s+markdown benchmark\s+([a-z_]+)(?:\s+in\s+(\d+)\s+byte chunks)?(?:\s+every\s+(\d+)\s+ms)?/i.exec(
+      text,
+    );
+  if (!match) {
+    return null;
+  }
+  const payloadBytes = Math.min(Number(match[1]), 1024 * 1024);
+  const workload = match[2]?.toLowerCase() ?? "";
+  const chunkBytes = Math.min(Number(match[3] ?? 512), 64 * 1024);
+  const intervalMs = match[4] ? Math.min(Number(match[4]), 1_000) : undefined;
+  const hasValidSize = Number.isInteger(payloadBytes) && payloadBytes > 0;
+  const hasValidChunks = Number.isInteger(chunkBytes) && chunkBytes > 0;
+  if (!hasValidSize || !isMarkdownBenchmarkWorkload(workload) || !hasValidChunks) {
+    return null;
+  }
+  return {
+    count: Math.ceil(payloadBytes / chunkBytes),
+    coalesced: true,
+    payloadBytes,
+    payloadText: buildMarkdownBenchmarkPayload(workload, payloadBytes),
+    chunkBytes,
+    ...(intervalMs && Number.isInteger(intervalMs) && intervalMs > 0 ? { intervalMs } : {}),
+  };
 }
 
 type SteeringReplayShape = "claude" | "codex";
@@ -399,6 +487,33 @@ function parseLargeAgentStreamPayloadPrompt(
 
 function parseAgentStreamStressPrompt(prompt: AgentPromptInput): AgentStreamStressRequest | null {
   const text = promptToText(prompt);
+  const markdownBenchmark = parseMarkdownBenchmarkStress(text);
+  if (markdownBenchmark) {
+    return markdownBenchmark;
+  }
+  const byteStreamMatch =
+    /emit\s+(\d+)\s+byte\s+coalesced assistant stream(?:\s+in\s+(\d+)\s+byte chunks)?(?:\s+every\s+(\d+)\s+ms)?/i.exec(
+      text,
+    );
+  if (byteStreamMatch) {
+    const payloadBytes = Math.min(Number(byteStreamMatch[1]), 1024 * 1024);
+    const chunkBytes = Math.min(Number(byteStreamMatch[2] ?? 512), 64 * 1024);
+    const intervalMs = byteStreamMatch[3] ? Math.min(Number(byteStreamMatch[3]), 1_000) : undefined;
+    if (
+      Number.isInteger(payloadBytes) &&
+      payloadBytes > 0 &&
+      Number.isInteger(chunkBytes) &&
+      chunkBytes > 0
+    ) {
+      return {
+        count: Math.ceil(payloadBytes / chunkBytes),
+        coalesced: true,
+        payloadBytes,
+        chunkBytes,
+        ...(intervalMs && Number.isInteger(intervalMs) && intervalMs > 0 ? { intervalMs } : {}),
+      };
+    }
+  }
   const match = /emit\s+(\d+)\s+(coalesced\s+)?agent stream updates/i.exec(text);
   if (!match) {
     return null;
@@ -1361,22 +1476,69 @@ export class MockLoadTestAgentSession implements AgentSession {
     this.clearTurnTimer(turn);
     this.emitTurnStarted(turn);
 
+    if (stress.intervalMs) {
+      this.emitStressUpdate(turn, stress, 0);
+      return;
+    }
     for (let index = 0; index < stress.count; index += 1) {
-      this.emitTimeline(
-        turn.turnId,
-        stress.coalesced
-          ? {
-              type: "assistant_message",
-              text: `stress-update-${index}`,
-              messageId: turn.assistantMessageId,
-            }
-          : {
-              type: "todo",
-              items: [{ text: `stress-update-${index}`, completed: index % 2 === 0 }],
-            },
+      this.emitStressTimelineUpdate(turn, stress, index);
+    }
+    this.finishStressTurn(turn, stress);
+  }
+
+  private emitStressUpdate(
+    turn: ActiveTurn,
+    stress: AgentStreamStressRequest,
+    index: number,
+  ): void {
+    if (this.activeTurn !== turn) {
+      return;
+    }
+    this.emitStressTimelineUpdate(turn, stress, index);
+    const nextIndex = index + 1;
+    if (nextIndex >= stress.count) {
+      this.finishStressTurn(turn, stress);
+      return;
+    }
+    turn.timer = setTimeout(() => {
+      this.emitStressUpdate(turn, stress, nextIndex);
+    }, stress.intervalMs);
+    turn.timer.unref?.();
+  }
+
+  private emitStressTimelineUpdate(
+    turn: ActiveTurn,
+    stress: AgentStreamStressRequest,
+    index: number,
+  ): void {
+    const emittedBytes = index * (stress.chunkBytes ?? 0);
+    let assistantText = `stress-update-${index}`;
+    if (stress.payloadText) {
+      const chunkEnd = emittedBytes + (stress.chunkBytes ?? stress.payloadText.length);
+      assistantText = stress.payloadText.slice(emittedBytes, chunkEnd);
+    } else if (stress.payloadBytes) {
+      const remainingBytes = stress.payloadBytes - emittedBytes;
+      assistantText = "x".repeat(
+        Math.min(stress.chunkBytes ?? stress.payloadBytes, remainingBytes),
       );
     }
+    this.emitTimeline(
+      turn.turnId,
+      stress.coalesced
+        ? {
+            type: "assistant_message",
+            text: assistantText,
+            messageId: turn.assistantMessageId,
+          }
+        : {
+            type: "todo",
+            items: [{ text: `stress-update-${index}`, completed: index % 2 === 0 }],
+          },
+    );
+  }
 
+  private finishStressTurn(turn: ActiveTurn, stress: AgentStreamStressRequest): void {
+    this.clearTurnTimer(turn);
     this.activeTurn = null;
     const usage = {
       inputTokens: 1,

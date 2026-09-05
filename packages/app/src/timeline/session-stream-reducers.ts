@@ -19,6 +19,20 @@ import {
 // is the fallback for when nothing is painting.
 const AGENT_STREAM_REDUCER_FLUSH_DELAY_MS = 16 * 3;
 
+export interface AgentStreamReducerFlushProfileSample {
+  agentId: string;
+  eventCount: number;
+  assistantChunkCount: number;
+  assistantBytes: number;
+  maxContiguousAssistantRun: number;
+  reducerDurationMs: number;
+  completedAt: number;
+}
+
+declare global {
+  var __PASEO_AGENT_STREAM_FLUSH_PROFILE__: AgentStreamReducerFlushProfileSample[] | undefined;
+}
+
 // ---------------------------------------------------------------------------
 // Shared cursor type
 // ---------------------------------------------------------------------------
@@ -1677,6 +1691,212 @@ export function processAgentStreamEvent(
   };
 }
 
+type AssistantTimelineReducerEvent = AgentStreamReducerEvent & {
+  event: Extract<AgentStreamEventPayload, { type: "timeline" }> & {
+    item: Extract<
+      Extract<AgentStreamEventPayload, { type: "timeline" }>["item"],
+      { type: "assistant_message" }
+    >;
+  };
+  seq: number;
+  epoch: string;
+};
+
+function isAssistantTimelineReducerEvent(
+  reducerEvent: AgentStreamReducerEvent | undefined,
+): reducerEvent is AssistantTimelineReducerEvent {
+  return (
+    reducerEvent !== undefined &&
+    reducerEvent.event.type === "timeline" &&
+    reducerEvent.event.item.type === "assistant_message" &&
+    typeof reducerEvent.seq === "number" &&
+    typeof reducerEvent.epoch === "string"
+  );
+}
+
+function canCoalesceAssistantEvents(
+  previous: AssistantTimelineReducerEvent,
+  next: AgentStreamReducerEvent | undefined,
+): next is AssistantTimelineReducerEvent {
+  return (
+    isAssistantTimelineReducerEvent(next) &&
+    next.seq === previous.seq + 1 &&
+    next.epoch === previous.epoch &&
+    next.event.provider === previous.event.provider &&
+    next.event.item.messageId === previous.event.item.messageId
+  );
+}
+
+function collectContiguousAssistantEvents(
+  events: AgentStreamReducerEvent[],
+  startIndex: number,
+): AssistantTimelineReducerEvent[] {
+  const first = events[startIndex];
+  if (!isAssistantTimelineReducerEvent(first)) {
+    return [];
+  }
+
+  const run = [first];
+  let previous = first;
+  for (let index = startIndex + 1; index < events.length; index += 1) {
+    const next = events[index];
+    if (!canCoalesceAssistantEvents(previous, next)) {
+      break;
+    }
+    run.push(next);
+    previous = next;
+  }
+  return run;
+}
+
+function canPreserveMarkdownPromotionTimestamps(
+  currentHead: StreamItem[],
+  continuationText: string,
+): boolean {
+  const activeAssistant = currentHead.findLast((item) => item.kind === "assistant_message");
+  const activeText = activeAssistant?.text ?? "";
+  let trailingWhitespaceStart = activeText.length;
+  while (trailingWhitespaceStart > 0 && /\s/u.test(activeText[trailingWhitespaceStart - 1] ?? "")) {
+    trailingWhitespaceStart -= 1;
+  }
+  const trailingWhitespace = activeText.slice(trailingWhitespaceStart);
+  return !/\n[^\S\n]*\n/u.test(`${trailingWhitespace}${continuationText}`);
+}
+
+function processCoalescedAssistantEvents(input: {
+  events: AssistantTimelineReducerEvent[];
+  currentTail: StreamItem[];
+  currentHead: StreamItem[];
+  currentCursor: TimelineCursor | undefined;
+  hasAuthoritativeBaseline?: boolean;
+}): ProcessAgentStreamEventOutput | null {
+  const continuationText = input.events.map((entry) => entry.event.item.text).join("");
+  if (!canPreserveMarkdownPromotionTimestamps(input.currentHead, continuationText)) {
+    return null;
+  }
+
+  let cursor = input.currentCursor;
+  let cursorChanged = false;
+  let resetLiveTimeline = false;
+  const hasAuthoritativeBaseline = input.hasAuthoritativeBaseline ?? true;
+
+  for (const reducerEvent of input.events) {
+    const sequencing = processTimelineSequencingGate({
+      event: reducerEvent.event,
+      seq: reducerEvent.seq,
+      epoch: reducerEvent.epoch,
+      currentCursor: cursor,
+      hasAuthoritativeBaseline,
+    });
+    if (!sequencing.shouldApplyStreamEvent || sequencing.sideEffects.length > 0) {
+      return null;
+    }
+    if (sequencing.cursorChanged) {
+      cursor = sequencing.nextTimelineCursor ?? undefined;
+      cursorChanged = true;
+    }
+    resetLiveTimeline = resetLiveTimeline || sequencing.resetLiveTimeline;
+  }
+
+  const first = input.events[0];
+  const last = input.events.at(-1);
+  if (!first || !last) {
+    return null;
+  }
+
+  const event: AgentStreamEventPayload = {
+    ...first.event,
+    item: {
+      ...first.event.item,
+      text: continuationText,
+    },
+  };
+  const applied = applyStreamEvent({
+    tail: resetLiveTimeline ? [] : input.currentTail,
+    head: resetLiveTimeline ? [] : input.currentHead,
+    event,
+    timestamp: last.timestamp,
+    source: "live",
+    timelineCursor: { epoch: last.epoch, seq: last.seq },
+  });
+
+  return {
+    ...applied,
+    cursor: cursor ?? null,
+    cursorChanged,
+    acknowledgedClientMessageIds: applied.acknowledgedClientMessageIds ?? [],
+    sideEffects: [],
+  };
+}
+
+function reduceNextAgentStreamEvents(input: {
+  events: AgentStreamReducerEvent[];
+  index: number;
+  currentTail: StreamItem[];
+  currentHead: StreamItem[];
+  currentCursor: TimelineCursor | undefined;
+  hasAuthoritativeBaseline?: boolean;
+  canContainCoalescedContinuation: boolean;
+  transformTimelineItem?: TimelineItemTransform;
+}): { processed: ProcessAgentStreamEventOutput; nextIndex: number } {
+  const reducerEvent = input.events[input.index];
+  if (!reducerEvent) {
+    return {
+      processed: {
+        tail: input.currentTail,
+        head: input.currentHead,
+        changedTail: false,
+        changedHead: false,
+        cursor: input.currentCursor ?? null,
+        cursorChanged: false,
+        acknowledgedClientMessageIds: [],
+        sideEffects: [],
+      },
+      nextIndex: input.index + 1,
+    };
+  }
+
+  const previousReducerEvent = input.events[input.index - 1];
+  const nextReducerEvent = input.events[input.index + 1];
+  // Keep the first chunk on the existing path so new-message identity and
+  // whitespace semantics are established before continuations are batched. Requiring
+  // a following continuation also keeps the common one- and two-event flushes on the
+  // allocation-free existing path.
+  const beginsCoalescedContinuation =
+    input.canContainCoalescedContinuation &&
+    isAssistantTimelineReducerEvent(previousReducerEvent) &&
+    canCoalesceAssistantEvents(previousReducerEvent, reducerEvent) &&
+    canCoalesceAssistantEvents(reducerEvent, nextReducerEvent);
+  const coalescedEvents = beginsCoalescedContinuation
+    ? collectContiguousAssistantEvents(input.events, input.index)
+    : null;
+  const result = coalescedEvents
+    ? processCoalescedAssistantEvents({
+        events: coalescedEvents,
+        currentTail: input.currentTail,
+        currentHead: input.currentHead,
+        currentCursor: input.currentCursor,
+        hasAuthoritativeBaseline: input.hasAuthoritativeBaseline,
+      })
+    : null;
+  return {
+    processed:
+      result ??
+      processAgentStreamEvent({
+        event: reducerEvent.event,
+        seq: reducerEvent.seq,
+        epoch: reducerEvent.epoch,
+        currentTail: input.currentTail,
+        currentHead: input.currentHead,
+        currentCursor: input.currentCursor,
+        hasAuthoritativeBaseline: input.hasAuthoritativeBaseline,
+        timestamp: reducerEvent.timestamp,
+        transformTimelineItem: input.transformTimelineItem,
+      }),
+    nextIndex: input.index + (result && coalescedEvents ? coalescedEvents.length : 1),
+  };
+}
+
 export function processAgentStreamEvents(
   input: ProcessAgentStreamEventsInput,
 ): ProcessAgentStreamEventOutput {
@@ -1701,33 +1921,35 @@ export function processAgentStreamEvents(
   let taskSnapshot: TodoEntry[] | undefined;
   const acknowledgedClientMessageIds = new Set<string>();
   const sideEffects: AgentStreamReducerSideEffect[] = [];
+  const canContainCoalescedContinuation = input.events.length >= 3;
 
-  for (const reducerEvent of input.events) {
-    const result = processAgentStreamEvent({
-      event: reducerEvent.event,
-      seq: reducerEvent.seq,
-      epoch: reducerEvent.epoch,
+  for (let index = 0; index < input.events.length; ) {
+    const { processed, nextIndex } = reduceNextAgentStreamEvents({
+      events: input.events,
+      index,
       currentTail: tail,
       currentHead: head,
       currentCursor: cursor,
       hasAuthoritativeBaseline: input.hasAuthoritativeBaseline,
-      timestamp: reducerEvent.timestamp,
+      canContainCoalescedContinuation,
+      transformTimelineItem: input.transformTimelineItem,
     });
+    index = nextIndex;
 
-    tail = result.tail;
-    head = result.head;
-    changedTail = changedTail || result.changedTail;
-    changedHead = changedHead || result.changedHead;
-    sideEffects.push(...result.sideEffects);
-    for (const clientMessageId of result.acknowledgedClientMessageIds) {
+    tail = processed.tail;
+    head = processed.head;
+    changedTail = changedTail || processed.changedTail;
+    changedHead = changedHead || processed.changedHead;
+    sideEffects.push(...processed.sideEffects);
+    for (const clientMessageId of processed.acknowledgedClientMessageIds) {
       acknowledgedClientMessageIds.add(clientMessageId);
     }
-    if (result.taskSnapshot !== undefined) {
-      taskSnapshot = result.taskSnapshot;
+    if (processed.taskSnapshot !== undefined) {
+      taskSnapshot = processed.taskSnapshot;
     }
 
-    if (result.cursorChanged) {
-      cursor = result.cursor ?? undefined;
+    if (processed.cursorChanged) {
+      cursor = processed.cursor ?? undefined;
       cursorChanged = true;
     }
   }
@@ -1769,10 +1991,44 @@ export function createAgentStreamReducerQueue(
       cancelScheduledFlush();
     }
 
+    const flushProfile = globalThis.__PASEO_AGENT_STREAM_FLUSH_PROFILE__;
+    const reducerStartedAt = flushProfile ? performance.now() : 0;
     const result = processAgentStreamEvents({
       events,
       ...input.getSnapshot(agentId),
     });
+    if (flushProfile) {
+      let assistantChunkCount = 0;
+      let assistantBytes = 0;
+      let currentAssistantRun = 0;
+      let maxContiguousAssistantRun = 0;
+      let previousAssistantEvent: AssistantTimelineReducerEvent | undefined;
+      for (const event of events) {
+        if (!isAssistantTimelineReducerEvent(event)) {
+          previousAssistantEvent = undefined;
+          currentAssistantRun = 0;
+          continue;
+        }
+        assistantChunkCount += 1;
+        assistantBytes += event.event.item.text.length;
+        currentAssistantRun =
+          previousAssistantEvent && canCoalesceAssistantEvents(previousAssistantEvent, event)
+            ? currentAssistantRun + 1
+            : 1;
+        maxContiguousAssistantRun = Math.max(maxContiguousAssistantRun, currentAssistantRun);
+        previousAssistantEvent = event;
+      }
+      const completedAt = performance.now();
+      flushProfile.push({
+        agentId,
+        eventCount: events.length,
+        assistantChunkCount,
+        assistantBytes,
+        maxContiguousAssistantRun,
+        reducerDurationMs: completedAt - reducerStartedAt,
+        completedAt,
+      });
+    }
 
     input.commit(agentId, result, events);
     if (result.sideEffects.length > 0) {

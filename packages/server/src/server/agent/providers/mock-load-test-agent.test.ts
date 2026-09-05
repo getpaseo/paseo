@@ -312,6 +312,68 @@ describe("MockLoadTestAgentClient", () => {
     expect(events).toHaveLength(eventCountAfterInterrupt);
   });
 
+  test("emits an exact byte-sized coalesced assistant stream for UI benchmarks", async () => {
+    vi.useFakeTimers();
+    const client = new MockLoadTestAgentClient();
+    const session = await client.createSession({
+      provider: "mock",
+      cwd: process.cwd(),
+      model: "ten-second-stream",
+    });
+    const events: AgentStreamEvent[] = [];
+    const unsubscribe = session.subscribe((event) => events.push(event));
+
+    const resultPromise = session.run(
+      "emit 65536 byte coalesced assistant stream in 512 byte chunks every 1 ms",
+    );
+    await vi.advanceTimersByTimeAsync(128);
+    await resultPromise;
+    unsubscribe();
+
+    const assistantChunks = events.flatMap((event) =>
+      event.type === "timeline" && event.item.type === "assistant_message" ? [event.item.text] : [],
+    );
+    expect(assistantChunks).toHaveLength(128);
+    expect(assistantChunks.join("")).toBe("x".repeat(65_536));
+  });
+
+  test.each([
+    ["plain_unbroken", "x"],
+    ["prose_blocks", "Benchmark paragraph"],
+    ["open_typescript_fence", "```ts\n"],
+    ["closed_typescript_fences", "```ts\n"],
+    ["mixed_markdown", "## Benchmark section"],
+    ["link_table_dense", "| name | value |"],
+  ] as const)("emits an exact %s Markdown benchmark workload", async (workload, marker) => {
+    vi.useFakeTimers();
+    const client = new MockLoadTestAgentClient();
+    const session = await client.createSession({
+      provider: "mock",
+      cwd: process.cwd(),
+      model: "ten-second-stream",
+    });
+    const events: AgentStreamEvent[] = [];
+    const unsubscribe = session.subscribe((event) => events.push(event));
+
+    const resultPromise = session.run(
+      `emit 4096 byte markdown benchmark ${workload} in 512 byte chunks every 1 ms`,
+    );
+    await vi.advanceTimersByTimeAsync(8);
+    await resultPromise;
+    unsubscribe();
+
+    const assistantChunks = events.flatMap((event) =>
+      event.type === "timeline" && event.item.type === "assistant_message" ? [event.item.text] : [],
+    );
+    const payload = assistantChunks.join("");
+    expect(assistantChunks).toHaveLength(8);
+    expect(Buffer.byteLength(payload)).toBe(4096);
+    expect(payload).toContain(marker);
+    if (workload === "open_typescript_fence") {
+      expect(payload.match(/^```/gm)).toHaveLength(1);
+    }
+  });
+
   test("emits a terminal failure without an assistant provider message", async () => {
     vi.useFakeTimers();
     const client = new MockLoadTestAgentClient();

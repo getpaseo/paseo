@@ -13,7 +13,7 @@ function videoMode(): "on" | "on-first-retry" | "retain-on-failure" {
 }
 
 export default defineConfig({
-  testDir: "./e2e/browser",
+  testDir: process.env.PASEO_DESKTOP_BENCHMARK === "1" ? "./e2e" : "./e2e/browser",
   globalSetup: "./e2e/support/global-setup.ts",
   timeout: 60_000,
   expect: {
@@ -27,6 +27,9 @@ export default defineConfig({
   reporter: [["list"]],
   use: {
     baseURL,
+...(process.env.PASEO_DESKTOP_BENCHMARK === "1"
+      ? { launchOptions: { args: ["--enable-precise-memory-info"] } }
+      : {}),
     trace: process.env.CI ? "on-first-retry" : "retain-on-failure",
     screenshot: "only-on-failure",
     video: videoMode(),
@@ -34,7 +37,10 @@ export default defineConfig({
   projects: [
     {
       name: "browser",
-      testIgnore: ["**/*.real.spec.ts"],
+      testIgnore: [
+        "**/*.real.spec.ts",
+        ...(process.env.PASEO_DESKTOP_BENCHMARK === "1" ? [] : ["**/*.benchmark.spec.ts"]),
+      ],
       use: { ...devices["Desktop Chrome"] },
     },
     {
