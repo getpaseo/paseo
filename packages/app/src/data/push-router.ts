@@ -12,6 +12,7 @@ import { daemonPairingOfferQueryKey } from "@/data/daemon-pairing";
 import { providerSnapshotCache, type ProviderSnapshotCache } from "@/data/provider-snapshot-cache";
 import {
   normalizeProvidersSnapshotCwd,
+  reconcileProvidersSnapshot,
   providersSnapshotQueryKey,
   providersSnapshotQueryRoot,
 } from "@/data/providers-snapshot";
@@ -197,11 +198,14 @@ export function applyProvidersSnapshotUpdate(input: {
   }
   replaceProviderSnapshotIcons(input.serverId, input.message.payload.entries);
   const queryKey = providersSnapshotQueryKey(input.serverId, input.message.payload.cwd);
-  input.queryClient.setQueryData(queryKey, {
+  const snapshot = {
     entries: input.message.payload.entries,
     generatedAt: input.message.payload.generatedAt,
     requestId: "providers_snapshot_update",
-  });
+  };
+  input.queryClient.setQueryData<typeof snapshot>(queryKey, (current) =>
+    reconcileProvidersSnapshot(current, snapshot),
+  );
   const { compactSnapshot, snapshotHash } = input.message.payload;
   if (compactSnapshot && snapshotHash) {
     void (input.cache ?? providerSnapshotCache).write({

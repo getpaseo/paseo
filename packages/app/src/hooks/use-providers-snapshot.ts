@@ -16,6 +16,7 @@ import {
 import { agentCommandsQueryRoot } from "@/hooks/agent-commands-query";
 import {
   isProvidersSnapshotHomeScope,
+  reconcileProvidersSnapshot,
   normalizeProvidersSnapshotCwd,
   providersSnapshotQueryKey,
   providersSnapshotQueryRoot,
@@ -81,7 +82,10 @@ export async function refreshAndApplyProvidersSnapshot(input: {
     cwd: input.cwd,
     cache: input.cache,
   });
-  input.queryClient.setQueryData(providersSnapshotQueryKey(input.serverId, input.cwd), snapshot);
+  input.queryClient.setQueryData<GetProvidersSnapshotResult>(
+    providersSnapshotQueryKey(input.serverId, input.cwd),
+    (current) => reconcileProvidersSnapshot(current, snapshot),
+  );
   void input.queryClient.invalidateQueries({
     queryKey: agentCommandsQueryRoot(input.serverId),
     exact: false,
@@ -148,6 +152,7 @@ export function useProvidersSnapshot(
     queryKey,
     enabled: Boolean(enabled && supportsSnapshot && serverId && client && isConnected),
     pushEvent: "providers_snapshot_update",
+    structuralSharing: reconcileProvidersSnapshot,
     queryFn: async () => {
       if (!client || !serverId) {
         throw new Error(t("workspace.terminal.hostDisconnected"));
@@ -216,6 +221,7 @@ export function prefetchProvidersSnapshot(
   void singletonQueryClient.prefetchQuery({
     queryKey,
     staleTime: Infinity,
+    structuralSharing: reconcileProvidersSnapshot,
     queryFn: () => fetchProvidersSnapshot({ client, serverId, cwd }),
   });
 }

@@ -5,6 +5,7 @@ import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import type { ProviderSnapshotEntry } from "@getpaseo/protocol/agent-types";
 import { compactProviderSnapshot } from "@getpaseo/protocol/provider-snapshot-codec";
 import type { CachedProviderSnapshot, ProviderSnapshotCache } from "@/data/provider-snapshot-cache";
+import { reconcileProvidersSnapshot } from "@/data/providers-snapshot";
 import { draftAgentCommandsQueryKey } from "@/hooks/agent-commands-query";
 import { resolveProviderIconName } from "@/components/provider-icon-name";
 import { applyProvidersSnapshotUpdate, type ProvidersSnapshotUpdate } from "@/data/push-router";
@@ -93,6 +94,21 @@ function createCache(initial: CachedProviderSnapshot | null = null): ProviderSna
     },
     async write(input) {
       writes.push(input);
+    },
+  };
+}
+
+function updateMessage(
+  entries: ProviderSnapshotEntry[],
+  cwd?: string,
+  generatedAt = "2026-01-01T00:00:01.000Z",
+): ProvidersSnapshotUpdate {
+  return {
+    type: "providers_snapshot_update",
+    payload: {
+      ...(cwd ? { cwd } : {}),
+      entries,
+      generatedAt,
     },
   };
 }
@@ -213,6 +229,211 @@ describe("fetchProvidersSnapshot", () => {
   });
 });
 
+async function fetchSnapshotIntoQuery(
+  input: Parameters<typeof fetchProvidersSnapshot>[0] & { queryClient: QueryClient },
+) {
+  const queryKey = providersSnapshotQueryKey(input.serverId, input.cwd);
+  await input.queryClient.fetchQuery({
+    queryKey,
+    structuralSharing: reconcileProvidersSnapshot,
+    queryFn: () => fetchProvidersSnapshot(input),
+  });
+  const snapshot = input.queryClient.getQueryData<GetProvidersSnapshotResult>(queryKey);
+  if (!snapshot) throw new Error("Snapshot did not reach the query cache");
+  return snapshot;
+}
+
+describe("fetchSnapshotIntoQuery", () => {
+  let queryClient: QueryClient;
+
+  beforeEach(() => {
+    queryClient = new QueryClient();
+  });
+
+  it("prefers a pushed snapshot that landed while the fetch was in flight", async () => {
+    const readyEntries = [codexEntry("ready", [readyCodexModel])];
+    const client: ProvidersSnapshotClient = {
+      async getProvidersSnapshot() {
+        applyProvidersSnapshotUpdate({
+          serverId,
+          queryClient,
+          message: updateMessage(readyEntries, "/repo-a", "2026-01-01T00:00:00.500Z"),
+        });
+        return providersSnapshot([codexEntry("loading")]);
+      },
+      async refreshProvidersSnapshot() {
+        return { acknowledged: true, requestId: "refresh-1" };
+      },
+    };
+
+    const snapshot = await fetchSnapshotIntoQuery({
+      client,
+      queryClient,
+      serverId,
+      cwd: "/repo-a",
+      cache: createCache(),
+    });
+
+    expect(snapshot.entries).toEqual(readyEntries);
+  });
+
+  it("prefers an equally-stamped pushed snapshot over the fetch response", async () => {
+    const readyEntries = [codexEntry("ready", [readyCodexModel])];
+    queryClient.setQueryData(providersSnapshotQueryKey(serverId, "/repo-a"), {
+      entries: readyEntries,
+      generatedAt: "2026-01-01T00:00:00.000Z",
+      requestId: "providers_snapshot_update",
+    });
+    const client = createClient({ snapshots: [providersSnapshot([codexEntry("loading")])] });
+
+    const snapshot = await fetchSnapshotIntoQuery({
+      client,
+      queryClient,
+      serverId,
+      cwd: "/repo-a",
+      cache: createCache(),
+    });
+
+    expect(snapshot.entries).toEqual(readyEntries);
+  });
+
+  it("returns the fetch result when it is fresher than the cached snapshot", async () => {
+    queryClient.setQueryData(providersSnapshotQueryKey(serverId, "/repo-a"), {
+      entries: [codexEntry("loading")],
+      generatedAt: "2025-12-31T00:00:00.000Z",
+      requestId: "providers_snapshot_update",
+    });
+    const client = createClient({
+      snapshots: [providersSnapshot([codexEntry("ready", [readyCodexModel])])],
+    });
+
+    const snapshot = await fetchSnapshotIntoQuery({
+      client,
+      queryClient,
+      serverId,
+      cwd: "/repo-a",
+      cache: createCache(),
+    });
+
+    expect(snapshot.entries).toEqual([codexEntry("ready", [readyCodexModel])]);
+  });
+});
+
+describe("snapshot fetch and push ordering", () => {
+  it.each([0, 1])(
+    "keeps ready models when a loading fetch finishes after a push (%i ms later)",
+    async (pushDelay) => {
+      const queryClient = new QueryClient();
+      const queryKey = providersSnapshotQueryKey(serverId, "/repo-a");
+      const writing = Promise.withResolvers<void>();
+      const releaseWrite = Promise.withResolvers<void>();
+      const loading = providersSnapshot([codexEntry("loading")]);
+      const cache: ProviderSnapshotCache = {
+        async read() {
+          return null;
+        },
+        async write() {
+          writing.resolve();
+          await releaseWrite.promise;
+        },
+      };
+      const client = createClient({
+        snapshots: [
+          {
+            ...loading,
+            compactSnapshot: compactProviderSnapshot(loading.entries),
+            snapshotHash: "loading-hash",
+          },
+        ],
+      });
+      const fetching = queryClient.fetchQuery({
+        queryKey,
+        structuralSharing: reconcileProvidersSnapshot,
+        queryFn: () => fetchProvidersSnapshot({ client, serverId, cwd: "/repo-a", cache }),
+      });
+      await writing.promise;
+      applyProvidersSnapshotUpdate({
+        serverId,
+        queryClient,
+        message: {
+          type: "providers_snapshot_update",
+          payload: {
+            cwd: "/repo-a",
+            entries: [codexEntry("ready", [readyCodexModel])],
+            generatedAt: new Date(Date.parse(loading.generatedAt) + pushDelay).toISOString(),
+          },
+        },
+      });
+      releaseWrite.resolve();
+      await fetching;
+      expect(queryClient.getQueryData<GetProvidersSnapshotResult>(queryKey)?.entries).toEqual([
+        codexEntry("ready", [readyCodexModel]),
+      ]);
+      queryClient.clear();
+    },
+  );
+});
+
+describe("snapshot cache commit ordering", () => {
+  it("keeps a push delivered after the query function returns", async () => {
+    const queryClient = new QueryClient();
+    const queryKey = providersSnapshotQueryKey(serverId, "/repo-a");
+    const loading = providersSnapshot([codexEntry("loading")]);
+    const client = createClient({ snapshots: [loading] });
+    await queryClient.fetchQuery({
+      queryKey,
+      structuralSharing: reconcileProvidersSnapshot,
+      queryFn: async () => {
+        const response = await fetchProvidersSnapshot({
+          client,
+          serverId,
+          cwd: "/repo-a",
+          cache: createCache(),
+        });
+        queueMicrotask(() =>
+          applyProvidersSnapshotUpdate({
+            serverId,
+            queryClient,
+            message: {
+              type: "providers_snapshot_update",
+              payload: {
+                cwd: "/repo-a",
+                entries: [codexEntry("ready", [readyCodexModel])],
+                generatedAt: response.generatedAt,
+              },
+            },
+          }),
+        );
+        return response;
+      },
+    });
+    expect(queryClient.getQueryData<GetProvidersSnapshotResult>(queryKey)?.entries).toEqual([
+      codexEntry("ready", [readyCodexModel]),
+    ]);
+    queryClient.clear();
+  });
+
+  it("accepts a newer fetch after a cached push", async () => {
+    const queryClient = new QueryClient();
+    const queryKey = providersSnapshotQueryKey(serverId, "/repo-a");
+    const previous = providersSnapshot([codexEntry("loading")]);
+    queryClient.setQueryData(queryKey, { ...previous, requestId: "providers_snapshot_update" });
+    const ready = {
+      ...providersSnapshot([codexEntry("ready", [readyCodexModel])]),
+      generatedAt: "2026-01-02T00:00:00.000Z",
+    };
+    const client = createClient({ snapshots: [ready] });
+    await queryClient.fetchQuery({
+      queryKey,
+      structuralSharing: reconcileProvidersSnapshot,
+      queryFn: () =>
+        fetchProvidersSnapshot({ client, serverId, cwd: "/repo-a", cache: createCache() }),
+    });
+    expect(queryClient.getQueryData(queryKey)).toEqual(ready);
+    queryClient.clear();
+  });
+});
+
 describe("refreshAndApplyProvidersSnapshot", () => {
   let queryClient: QueryClient;
 
@@ -304,6 +525,29 @@ describe("refreshAndApplyProvidersSnapshot", () => {
     ).toBe(false);
   });
 
+  it("keeps a fresher pushed snapshot over the refetched one", async () => {
+    const readyEntries = [codexEntry("ready", [readyCodexModel])];
+    queryClient.setQueryData(providersSnapshotQueryKey(serverId, "/repo-a"), {
+      entries: readyEntries,
+      generatedAt: "2026-01-01T00:00:01.000Z",
+      requestId: "providers_snapshot_update",
+    });
+    const client = createClient({ snapshots: [providersSnapshot([codexEntry("loading")])] });
+
+    await refreshAndApplyProvidersSnapshot({
+      client,
+      queryClient,
+      serverId,
+      cwd: "/repo-a",
+      cache: createCache(),
+    });
+
+    const data = queryClient.getQueryData<{ entries: ProviderSnapshotEntry[] }>(
+      providersSnapshotQueryKey(serverId, "/repo-a"),
+    );
+    expect(data?.entries).toEqual(readyEntries);
+  });
+
   it("invalidates cached agent commands when refreshing providers", async () => {
     const client = createClient({ snapshots: [providersSnapshot([])] });
     const commandsKey = draftAgentCommandsQueryKey({
@@ -330,17 +574,6 @@ describe("applyProvidersSnapshotUpdate", () => {
   beforeEach(() => {
     queryClient = new QueryClient();
   });
-
-  function updateMessage(entries: ProviderSnapshotEntry[], cwd?: string): ProvidersSnapshotUpdate {
-    return {
-      type: "providers_snapshot_update",
-      payload: {
-        ...(cwd ? { cwd } : {}),
-        entries,
-        generatedAt: "2026-01-01T00:00:01.000Z",
-      },
-    };
-  }
 
   it("routes updates to the home query cache when the message carries no cwd", () => {
     applyProvidersSnapshotUpdate({
@@ -415,6 +648,45 @@ describe("applyProvidersSnapshotUpdate", () => {
       generatedAt: "2026-01-01T00:00:01.000Z",
       requestId: "providers_snapshot_update",
     });
+  });
+
+  it("does not regress the cache when a push is older than the cached snapshot", () => {
+    const readyEntries = [codexEntry("ready", [readyCodexModel])];
+    queryClient.setQueryData(providersSnapshotQueryKey(serverId, "/repo-a"), {
+      entries: readyEntries,
+      generatedAt: "2026-01-01T00:00:02.000Z",
+      requestId: "providers_snapshot_update",
+    });
+
+    applyProvidersSnapshotUpdate({
+      serverId,
+      queryClient,
+      message: updateMessage([codexEntry("loading")], "/repo-a"),
+    });
+
+    const data = queryClient.getQueryData<{ entries: ProviderSnapshotEntry[] }>(
+      providersSnapshotQueryKey(serverId, "/repo-a"),
+    );
+    expect(data?.entries).toEqual(readyEntries);
+  });
+
+  it("applies a push stamped in the same millisecond as the cached snapshot", () => {
+    queryClient.setQueryData(providersSnapshotQueryKey(serverId, "/repo-a"), {
+      entries: [codexEntry("loading")],
+      generatedAt: "2026-01-01T00:00:01.000Z",
+      requestId: "providers_snapshot_update",
+    });
+
+    applyProvidersSnapshotUpdate({
+      serverId,
+      queryClient,
+      message: updateMessage([codexEntry("ready", [readyCodexModel])], "/repo-a"),
+    });
+
+    const data = queryClient.getQueryData<{ entries: ProviderSnapshotEntry[] }>(
+      providersSnapshotQueryKey(serverId, "/repo-a"),
+    );
+    expect(data?.entries).toEqual([codexEntry("ready", [readyCodexModel])]);
   });
 
   it("invalidates cached agent commands when a provider snapshot update arrives", () => {
