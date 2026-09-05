@@ -10,8 +10,9 @@ test.use({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true
 let searchWorkspace: SeededWorkspace | null = null;
 
 test.afterEach(async () => {
-  await searchWorkspace?.cleanup().catch(() => undefined);
+  const workspace = searchWorkspace;
   searchWorkspace = null;
+  await workspace?.cleanup();
 });
 
 async function closeMenuSheet(page: Page): Promise<void> {

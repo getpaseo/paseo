@@ -25,8 +25,9 @@ test.describe("Command center sidebar grouping", () => {
   let shortcutWorkspace: SeededWorkspace | null = null;
 
   test.afterEach(async () => {
-    await shortcutWorkspace?.cleanup().catch(() => undefined);
+    const workspace = shortcutWorkspace;
     shortcutWorkspace = null;
+    await workspace?.cleanup();
   });
 
   test("cycles sidebar grouping with Cmd/Ctrl+;", async ({ page }) => {

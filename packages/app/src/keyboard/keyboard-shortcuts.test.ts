@@ -162,6 +162,18 @@ describe("keyboard-shortcuts", () => {
       action: "sidebar.grouping.cycle",
     },
     {
+      name: "matches Cmd+; when the keyboard layout requires Shift for semicolon",
+      event: { key: ";", code: "Comma", metaKey: true, shiftKey: true },
+      context: { isMac: true, commandCenterOpen: false },
+      action: "sidebar.grouping.cycle",
+    },
+    {
+      name: "matches Ctrl+; when the keyboard layout requires Shift for semicolon",
+      event: { key: ";", code: "Comma", ctrlKey: true, shiftKey: true },
+      context: { isMac: false, commandCenterOpen: false, focusScope: "other" },
+      action: "sidebar.grouping.cycle",
+    },
+    {
       name: "matches Cmd+P to search workspace files on mac",
       event: { key: "p", code: "KeyP", metaKey: true },
       context: { isMac: true, commandCenterOpen: false },

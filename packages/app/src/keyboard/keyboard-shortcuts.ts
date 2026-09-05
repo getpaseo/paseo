@@ -1314,7 +1314,13 @@ function matchesCombo(combo: KeyCombo, event: KeyboardShortcutInput, isMac: bool
     if (!!combo.ctrl !== event.ctrlKey) return false;
   }
   if (!!combo.alt !== event.altKey) return false;
-  if (!!combo.shift !== event.shiftKey) return false;
+  const shiftedLayoutProducesTargetKey =
+    combo.shift !== true &&
+    event.shiftKey &&
+    combo.key !== undefined &&
+    combo.shiftedKey !== undefined &&
+    event.key.toLowerCase() === combo.key;
+  if (!!combo.shift !== event.shiftKey && !shiftedLayoutProducesTargetKey) return false;
   if (combo.repeat === false && event.repeat) return false;
 
   if (combo.code === "Digit") {
