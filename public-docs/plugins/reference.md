@@ -125,8 +125,9 @@ cannot spoof authority-bearing context.
 provider-session facts. Unknown facts are explicit and restrictive. `host` is null for a generic RPC
 without a selected agent and is fresh for every selected invocation. Its bounded operations are:
 
-- `host.deliveries.send(payload)`, which targets the exact caller, plus target-fenced `get` and
-  `acknowledge` with durable tombstones;
+- `host.deliveries.send(payload, { deliveryId, messageId? })`, which requires a stable bounded
+  idempotency key and targets the exact caller, plus target-fenced `get` and `acknowledge` with
+  durable tombstones;
 - `host.children.create(options)`, which fixes parent, workspace, and cwd to the caller, allowing an
   alternate cwd only through an opaque managed worktree. The child inherits the freshly resolved
   parent's provider, model, thinking, mode, provider options, and tool policy; it has no override
