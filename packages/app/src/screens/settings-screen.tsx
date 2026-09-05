@@ -48,7 +48,7 @@ import { HostPicker as SharedHostPicker } from "@/components/hosts/host-picker";
 import { HostStatusDot } from "@/components/host-status-dot";
 import { ScreenTitle } from "@/components/headers/screen-title";
 import { HeaderIconBadge } from "@/components/headers/header-icon-badge";
-import { SettingsSection } from "@/components/settings/headings";
+import { SettingsSection } from "@/components/settings/headings/settings-section";
 import { AppearanceSection } from "@/screens/settings/appearance/appearance-section";
 import { LayoutSection } from "@/screens/settings/layout/layout-section";
 import {
@@ -1443,7 +1443,7 @@ export default function SettingsScreen({ view, openAddHostIntent = null }: Setti
         .find((plugin) => plugin.serverId === view.serverId && plugin.id === view.pluginId)
         ?.settingsScreens.find((candidate) => candidate.id === view.screenId);
       return {
-        title: `${view.pluginId} · ${screen?.title ?? "Settings"}`,
+        title: `${view.pluginId} · ${screen?.title ?? t("settings.title")}`,
         Icon: screen ? resolvePluginIcon(screen.icon) : Blocks,
       };
     }

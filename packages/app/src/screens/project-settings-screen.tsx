@@ -28,8 +28,8 @@ import { AdaptiveModalSheet, type SheetHeader } from "@/components/adaptive-moda
 import { ProjectEditSheet } from "@/components/project-edit-sheet";
 import { EditingTextInput as TextInput } from "@/components/ui/text-input";
 import { SettingsTextAreaCard } from "@/components/settings-textarea";
-import { SettingsGroup } from "@/components/settings/headings";
-import { SettingsSection } from "@/components/settings/headings";
+import { SettingsGroup } from "@/components/settings/headings/settings-group";
+import { SettingsSection } from "@/components/settings/headings/settings-section";
 import { settingsStyles } from "@/styles/settings";
 import { useProjects } from "@/hooks/use-projects";
 import type { ProjectEditFormSnapshot } from "@/projects/edit-form";

@@ -17,7 +17,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { SettingsCard, SettingsSwitch } from "@/components/settings";
-import { SettingsSection } from "@/components/settings/headings";
+import { SettingsSection } from "@/components/settings/headings/settings-section";
 import { useContributedThemes } from "@/appearance/provider";
 import { EditingTextInput as TextInput } from "@/components/ui/text-input";
 import {

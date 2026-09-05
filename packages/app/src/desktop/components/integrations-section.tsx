@@ -6,7 +6,7 @@ import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { ArrowUpRight, Check, Terminal } from "lucide-react-native";
 import { Button } from "@/components/ui/button";
 import { useCliInstall } from "@/desktop/hooks/use-install-status";
-import { SettingsSection } from "@/components/settings/headings";
+import { SettingsSection } from "@/components/settings/headings/settings-section";
 import { settingsStyles } from "@/styles/settings";
 import { openExternalUrl } from "@/utils/open-external-url";
 import { shouldUseDesktopDaemon } from "@/desktop/daemon/desktop-daemon";

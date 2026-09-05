@@ -24,7 +24,8 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem } from "@/component
 import { DropdownTrigger } from "@/components/ui/dropdown-trigger";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { settingsStyles } from "@/styles/settings";
-export { SettingsGroup, SettingsSection } from "./headings";
+export { SettingsGroup } from "./headings/settings-group";
+export { SettingsSection } from "./headings/settings-section";
 
 export function SettingsCard({ children, testID }: { children: ReactNode; testID?: string }) {
   return (

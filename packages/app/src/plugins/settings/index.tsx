@@ -1,4 +1,5 @@
 import { useCallback, useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { Platform, Text, View } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { router } from "expo-router";
@@ -28,11 +29,14 @@ function SettingsLink({
   screenId,
   title,
 }: SettingsIdentity & { title: string }) {
+  const { t } = useTranslation();
   const open = useCallback(
     () => router.push(buildPluginSettingsRoute(serverId, pluginId, screenId)),
     [serverId, pluginId, screenId],
   );
-  return <SettingsAction label={title} actionLabel="Open" onPress={open} />;
+  return (
+    <SettingsAction label={title} actionLabel={t("settings.plugins.screens.open")} onPress={open} />
+  );
 }
 
 export function PluginSettingsLinks({ serverId, pluginId }: Omit<SettingsIdentity, "screenId">) {
@@ -60,6 +64,7 @@ function SettingsContent({
   screenId,
   theme,
 }: SettingsIdentity & { theme: PluginHostProps["theme"] }) {
+  const { t } = useTranslation();
   const plugin = useInstalledPlugin(serverId, pluginId);
   const client = useHostRuntimeClient(serverId);
   const connected = useHostRuntimeIsConnected(serverId);
@@ -74,11 +79,11 @@ function SettingsContent({
       <View>
         <Text style={styles.message}>{error}</Text>
         <Button variant="outline" size="sm" onPress={retry}>
-          Try again
+          {t("common.actions.retry")}
         </Button>
       </View>
     ),
-    [retry],
+    [retry, t],
   );
   const host = useMemo(
     () => ({
@@ -93,13 +98,12 @@ function SettingsContent({
     [compact, platform],
   );
   if (!connected)
-    return <Text style={styles.message}>Connect to this host to open plugin settings.</Text>;
+    return <Text style={styles.message}>{t("settings.plugins.screens.offline")}</Text>;
   // COMPAT(pluginSettings): added in v0.8, remove after 2027-03-05.
-  if (!supported)
-    return <Text style={styles.message}>Update this host to use plugin settings.</Text>;
+  if (!supported) return <Text style={styles.message}>{t("settings.plugins.screens.update")}</Text>;
   const runtime = createPluginSurfaceRuntime(client, pluginId);
   if (!plugin || !screen || !runtime)
-    return <Text style={styles.message}>This plugin settings screen is unavailable.</Text>;
+    return <Text style={styles.message}>{t("settings.plugins.screens.unavailable")}</Text>;
   const Component = screen.Component;
   return (
     <View>

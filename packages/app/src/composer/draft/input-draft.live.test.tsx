@@ -1,6 +1,6 @@
+/** @vitest-environment jsdom */
 import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { JSDOM } from "jsdom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { useDraftStore } from "@/stores/draft-store";
@@ -120,22 +120,6 @@ let useAgentInputDraft: typeof import("./input-draft").useAgentInputDraft;
 type DraftRecordForTest = ReturnType<typeof useDraftStore.getState>["drafts"][string];
 
 beforeAll(async () => {
-  const storage = new Map<string, string>();
-
-  Object.defineProperty(globalThis, "window", {
-    value: {
-      localStorage: {
-        getItem: (key: string) => storage.get(key) ?? null,
-        setItem: (key: string, value: string) => {
-          storage.set(key, value);
-        },
-        removeItem: (key: string) => {
-          storage.delete(key);
-        },
-      },
-    },
-    configurable: true,
-  });
   Object.defineProperty(globalThis, "IS_REACT_ACT_ENVIRONMENT", {
     value: true,
     configurable: true,
@@ -147,18 +131,8 @@ beforeAll(async () => {
 describe("useAgentInputDraft live contract", () => {
   beforeEach(() => {
     asyncStorage.clear();
-    const dom = new JSDOM("<!doctype html><html><body><div id='root'></div></body></html>", {
-      url: "http://localhost",
-    });
-
-    Object.defineProperty(globalThis, "document", {
-      value: dom.window.document,
-      configurable: true,
-    });
-    Object.defineProperty(globalThis, "navigator", {
-      value: dom.window.navigator,
-      configurable: true,
-    });
+    document.body.innerHTML = "<div id='root'></div>";
+    localStorage.clear();
 
     useDraftStore.setState({
       drafts: {},
@@ -438,9 +412,16 @@ describe("useAgentInputDraft live contract", () => {
     });
 
     expect(getLatest().attachments).toEqual([{ kind: "image", metadata: image }]);
-    expect(useDraftStore.getState().drafts["draft:attachments"]?.input).toEqual({
-      text: "with attachment",
-      attachments: [{ kind: "image", metadata: image }],
+    const readPersistedInput = () => useDraftStore.getState().drafts["draft:attachments"]?.input;
+    await act(async () => {
+      // Web text publication occurs after paint; attachments save immediately.
+      await expect.poll(readPersistedInput).toEqual({
+        text: "with attachment",
+        attachments: [{ kind: "image", metadata: image }],
+      });
+    });
+    await act(async () => {
+      root.unmount();
     });
   });
 

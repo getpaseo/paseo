@@ -82,7 +82,8 @@ complete`), keyed off the opened snapshot's serverId. Waiting for data is a
 
 Use the named components from `@/components/settings` for settings cards and controls.
 `SettingsCard` owns row separators; `SettingsRow` accepts custom content. Heading-only screens
-can import `SettingsGroup` and `SettingsSection` from `@/components/settings/headings`.
+can import `SettingsGroup` and `SettingsSection` directly from their modules in
+`@/components/settings/headings/`.
 The plugin UI entry exposes the same components; keep them independent of storage and routing.
 
 ## Data gating

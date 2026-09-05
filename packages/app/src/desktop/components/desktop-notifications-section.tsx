@@ -9,7 +9,7 @@ import { Switch } from "@/components/ui/switch";
 import { DesktopPermissionRow } from "@/desktop/components/desktop-permission-row";
 import { useDesktopPermissions } from "@/desktop/permissions/use-desktop-permissions";
 import { useDesktopSettings } from "@/desktop/settings/desktop-settings";
-import { SettingsSection } from "@/components/settings/headings";
+import { SettingsSection } from "@/components/settings/headings/settings-section";
 import { settingsStyles } from "@/styles/settings";
 
 const ThemedRotateCw = withUnistyles(RotateCw, (theme) => ({

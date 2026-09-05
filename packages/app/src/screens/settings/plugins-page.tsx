@@ -15,7 +15,7 @@ import { useFetchQuery } from "@/data/query";
 import { useDaemonConfig } from "@/hooks/use-daemon-config";
 import { useHostFeature } from "@/runtime/host-features";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
-import { SettingsSection } from "@/components/settings/headings";
+import { SettingsSection } from "@/components/settings/headings/settings-section";
 import { resolvePluginPageState } from "@/screens/settings/plugins-page-state";
 import { pluginRegistry, useInstalledPlugins } from "@/plugins/registry";
 import { settingsStyles } from "@/styles/settings";

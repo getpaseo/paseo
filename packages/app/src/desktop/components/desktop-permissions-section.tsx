@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { DesktopPermissionRow } from "@/desktop/components/desktop-permission-row";
 import { useDesktopPermissions } from "@/desktop/permissions/use-desktop-permissions";
 import { settingsStyles } from "@/styles/settings";
-import { SettingsSection } from "@/components/settings/headings";
+import { SettingsSection } from "@/components/settings/headings/settings-section";
 
 const ThemedRotateCw = withUnistyles(RotateCw, (theme) => ({
   size: theme.iconSize.md,
