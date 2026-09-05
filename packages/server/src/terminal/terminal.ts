@@ -25,41 +25,97 @@ let nodePtySpawnHelperChecked = false;
 const TERMINAL_TITLE_DEBOUNCE_MS = 150;
 const TERMINAL_EXIT_OUTPUT_LINE_LIMIT = 12;
 const TERMINAL_EXIT_OUTPUT_CHAR_LIMIT = 16000;
-const DEFAULT_TERMINAL_OSC_COLOR_QUERY_RESPONSES = new Map<number, string>([
-  [10, "rgb:e6e6/e6e6/e6e6"],
-  [11, "rgb:0b0b/0b0b/0b0b"],
-  [12, "rgb:e6e6/e6e6/e6e6"],
-]);
+interface RgbColor {
+  red: number;
+  green: number;
+  blue: number;
+}
 
-function toOscColor(value: string | undefined, fallback: string): string {
+const DEFAULT_TERMINAL_BACKGROUND: RgbColor = { red: 0x0b, green: 0x0b, blue: 0x0b };
+const DEFAULT_TERMINAL_FOREGROUND: RgbColor = { red: 0xe6, green: 0xe6, blue: 0xe6 };
+
+function parseHexColor(value: string | undefined): { color: RgbColor; alpha: number } | undefined {
   const hex = value?.trim().replace(/^#/, "").toLowerCase();
   if (!hex || ![3, 4, 6, 8].includes(hex.length) || !/^[0-9a-f]+$/.test(hex)) {
-    return fallback;
+    return undefined;
   }
 
   const rgb =
     hex.length <= 4
       ? hex.slice(0, 3).replaceAll(/./g, (channel) => channel + channel)
       : hex.slice(0, 6);
-  return `rgb:${rgb.slice(0, 2).repeat(2)}/${rgb.slice(2, 4).repeat(2)}/${rgb.slice(4, 6).repeat(2)}`;
+  let alpha = 0xff;
+  if (hex.length === 4) {
+    alpha = Number.parseInt(hex[3]!.repeat(2), 16);
+  } else if (hex.length === 8) {
+    alpha = Number.parseInt(hex.slice(6), 16);
+  }
+
+  return {
+    color: {
+      red: Number.parseInt(rgb.slice(0, 2), 16),
+      green: Number.parseInt(rgb.slice(2, 4), 16),
+      blue: Number.parseInt(rgb.slice(4, 6), 16),
+    },
+    alpha,
+  };
+}
+
+function compositeColor(
+  foreground: { color: RgbColor; alpha: number },
+  background: RgbColor,
+): RgbColor {
+  if (foreground.alpha === 0xff) {
+    return foreground.color;
+  }
+
+  const opacity = foreground.alpha / 0xff;
+  return {
+    red: Math.round(background.red + (foreground.color.red - background.red) * opacity),
+    green: Math.round(background.green + (foreground.color.green - background.green) * opacity),
+    blue: Math.round(background.blue + (foreground.color.blue - background.blue) * opacity),
+  };
+}
+
+function resolveColor(
+  value: string | undefined,
+  fallback: RgbColor,
+  background: RgbColor,
+): RgbColor {
+  const parsed = parseHexColor(value);
+  return parsed ? compositeColor(parsed, background) : fallback;
+}
+
+function toOscColor(color: RgbColor): string {
+  const channel = (value: number): string => value.toString(16).padStart(2, "0").repeat(2);
+  return `rgb:${channel(color.red)}/${channel(color.green)}/${channel(color.blue)}`;
 }
 
 function createOscColorQueryResponses(
   defaultColors?: TerminalDefaultColors,
 ): ReadonlyMap<number, string> {
-  const foreground = toOscColor(
-    defaultColors?.foreground,
-    DEFAULT_TERMINAL_OSC_COLOR_QUERY_RESPONSES.get(10)!,
-  );
-  const background = toOscColor(
+  // OSC RGB responses cannot carry alpha. xterm blends the foreground and cursor over the
+  // terminal background; use the existing dark fallback as the backdrop for a translucent
+  // background because the protocol does not carry another compositing surface.
+  const displayedBackground = resolveColor(
     defaultColors?.background,
-    DEFAULT_TERMINAL_OSC_COLOR_QUERY_RESPONSES.get(11)!,
+    DEFAULT_TERMINAL_BACKGROUND,
+    DEFAULT_TERMINAL_BACKGROUND,
   );
-  const cursor = toOscColor(defaultColors?.cursor ?? defaultColors?.foreground, foreground);
+  const displayedForeground = resolveColor(
+    defaultColors?.foreground,
+    DEFAULT_TERMINAL_FOREGROUND,
+    displayedBackground,
+  );
+  const displayedCursor = resolveColor(
+    defaultColors?.cursor ?? defaultColors?.foreground,
+    displayedForeground,
+    displayedBackground,
+  );
   return new Map([
-    [10, foreground],
-    [11, background],
-    [12, cursor],
+    [10, toOscColor(displayedForeground)],
+    [11, toOscColor(displayedBackground)],
+    [12, toOscColor(displayedCursor)],
   ]);
 }
 

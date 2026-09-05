@@ -1129,6 +1129,42 @@ describe.skipIf(isPlatform("win32"))("terminal POSIX-only", () => {
         expect(ack).toBe(`OSC_COLOR_OK:${code}:ESC]${code};${expected}ESC\\`);
       }
     });
+
+    it("composites translucent terminal colors before reporting OSC queries", async () => {
+      const colors = {
+        foreground: "#33669980",
+        background: "#112233cc",
+        cursor: "#abcdef40",
+      };
+      const expected = new Map([
+        [10, "rgb:2222/4242/6262"],
+        [11, "rgb:1010/1d1d/2b2b"],
+        [12, "rgb:3737/4949/5c5c"],
+      ]);
+
+      for (const [code, response] of expected) {
+        const helperPath = writeOscColorHelper(`terminal-osc${code}-alpha-helper-`);
+        const session = trackSession(
+          await createTerminal({
+            workspaceId: "ws-test",
+            cwd: "/tmp",
+            shell: "/bin/sh",
+            env: { PS1: "$ " },
+            defaultColors: colors,
+          }),
+        );
+        await waitForLines(session, ["$"]);
+
+        session.send({ type: "input", data: `${process.execPath} ${helperPath} ${code}\r` });
+        await waitForState(session, (state) =>
+          getLines(state).some((line) => line.startsWith("OSC_COLOR_OK:")),
+        );
+
+        const ack =
+          getLines(session.getState()).find((line) => line.startsWith("OSC_COLOR_OK:")) ?? "";
+        expect(ack).toBe(`OSC_COLOR_OK:${code}:ESC]${code};${response}ESC\\`);
+      }
+    });
   });
 
   describe("stream snapshots", () => {
