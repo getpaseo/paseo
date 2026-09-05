@@ -150,10 +150,8 @@ wiring. Runtime code lives behind directory boundaries:
 
 Do not put any other code modules in the plugin root.
 
-Shared files import contract helpers and types from `@getpaseo/plugin`. Paseo supplies those
-helpers in the plugin subprocess without loading the React hooks from the SDK root. Node hosts
-import runtime helpers directly from `@getpaseo/plugin/server` to keep React out of their module graph.
-Server handler files import `PluginHandlerContext` from `@getpaseo/plugin/server`. Client files import Paseo UI from
+Shared files import contract helpers and types from `@getpaseo/plugin`. Server handler files import
+`PluginHandlerContext` from `@getpaseo/plugin/server`. Client files import Paseo UI from
 `@getpaseo/plugin/react-native`. Its `Icon` resolves a Lucide name using the client's installed icon
 set; an unknown name renders nothing so it cannot break the plugin surface.
 Its controlled modal keeps presentation metadata on `<Modal title="…" icon={…}>` and body UI in

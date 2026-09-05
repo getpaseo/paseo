@@ -4,6 +4,7 @@ import {
   type PluginProcessRequest,
 } from "./plugin-process-protocol.js";
 import { createRequire } from "node:module";
+// The SDK root re-exports React hooks; packaged daemons do not ship React.
 import {
   defineAttachmentSource,
   defineRpc,

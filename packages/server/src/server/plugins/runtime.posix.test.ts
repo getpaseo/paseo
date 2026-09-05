@@ -207,20 +207,23 @@ afterEach(async () => {
 });
 
 describe("PluginRuntime", () => {
-  it.each(["@getpaseo/plugin", "@getpaseo/plugin/server"])(
-    "loads %s contracts without React in the subprocess module graph",
-    async (specifier) => {
+  it.each([
+    { specifier: "@getpaseo/plugin", moduleDirectory: "shared" },
+    { specifier: "@getpaseo/plugin/server", moduleDirectory: "server" },
+  ])(
+    "loads $specifier contracts without React in the subprocess module graph",
+    async ({ specifier, moduleDirectory }) => {
       const directory = await createPlugin(
         "react-free",
-        `import { rpc } from "./shared/contract";
+        `import { rpc } from "./${moduleDirectory}/contract";
 export default function contribute(server) {
   server.handle(rpc, (input) => input);
   return () => {};
 }`,
       );
-      await mkdir(path.join(directory, "shared"));
+      await mkdir(path.join(directory, moduleDirectory));
       await writeFile(
-        path.join(directory, "shared", "contract.ts"),
+        path.join(directory, moduleDirectory, "contract.ts"),
         `import { defineRpc, defineAttachmentSource } from "${specifier}";
 import { z } from "zod";
 export const rpc = defineRpc({ name: "echo", input: z.string(), output: z.string() });
