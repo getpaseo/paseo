@@ -4,18 +4,16 @@ import { describe, expect, test } from "vitest";
 
 import { installGlobalProxyDispatcher } from "./global-proxy-dispatcher.js";
 
-// EnvHttpProxyAgent tunnels every proxied request through CONNECT, even a plain http://
-// target, so the fake proxy must speak the CONNECT handshake and then read/answer the
-// plain HTTP request written into that tunnel.
-function onTunnelData({
-  req,
-  socket,
-  tunneledRequests,
-}: {
+interface TunneledConnection {
   req: IncomingMessage;
   socket: Socket;
   tunneledRequests: string[];
-}) {
+}
+
+// EnvHttpProxyAgent tunnels every proxied request through CONNECT, even a plain http://
+// target, so the fake proxy must speak the CONNECT handshake and then read/answer the
+// plain HTTP request written into that tunnel.
+function onTunnelData({ req, socket, tunneledRequests }: TunneledConnection) {
   let buffered = "";
   socket.on("data", (chunk) => {
     buffered += chunk.toString("utf8");
@@ -28,15 +26,7 @@ function onTunnelData({
   });
 }
 
-function handleTunneledRequest({
-  req,
-  socket,
-  tunneledRequests,
-}: {
-  req: IncomingMessage;
-  socket: Socket;
-  tunneledRequests: string[];
-}) {
+function handleTunneledRequest({ req, socket, tunneledRequests }: TunneledConnection) {
   socket.write("HTTP/1.1 200 Connection Established\r\n\r\n");
   onTunnelData({ req, socket, tunneledRequests });
 }
