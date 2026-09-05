@@ -229,6 +229,51 @@ describe("workspace replica authority", () => {
       [`${hydratedServerId}:${hydratedWorkspace.id}`],
     ]);
   });
+  it("keeps automatic project grouping while a linked host is still hydrating", () => {
+    const primaryServerId = "primary-server";
+    const loadingServerId = "loading-server";
+    const projectKey = "remote:github.com/acme/app";
+    const primaryWorkspace = createWorkspace({
+      id: "primary-workspace",
+      projectId: "primary-project",
+      projectRootPath: "/repos/app",
+    });
+    const primaryProject = {
+      ...projectDescriptorFromTestWorkspace(primaryWorkspace),
+      projectKey,
+    };
+    const state = {
+      sessions: {
+        [primaryServerId]: {
+          hasHydratedWorkspaces: true,
+          projects: new Map([[primaryProject.projectId, primaryProject]]),
+          workspaces: new Map([[primaryWorkspace.id, primaryWorkspace]]),
+        },
+        [loadingServerId]: {
+          hasHydratedWorkspaces: false,
+          projects: new Map(),
+          workspaces: new Map(),
+        },
+      },
+    };
+
+    const projects = selectWorkspaceStructureProjects(
+      state,
+      [primaryServerId, loadingServerId],
+      [
+        {
+          id: "local-link",
+          members: [
+            { serverId: primaryServerId, projectId: primaryProject.projectId },
+            { serverId: loadingServerId, projectId: "loading-project" },
+          ],
+          identity: { repository: "github.com/acme/app", subdirectory: "" },
+        },
+      ],
+    );
+
+    expect(projects).toMatchObject([{ viewKey: projectKey, projectKey }]);
+  });
 });
 
 describe("selectWorkspace", () => {
