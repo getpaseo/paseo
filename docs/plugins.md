@@ -243,7 +243,11 @@ The host capability exposes only these bounded operations:
 - `host.children.create(options)` creates a child with the caller as parent. Workspace and cwd come
   from the caller, except for a cwd supplied by an opaque managed worktree returned by this host.
   The child inherits the freshly resolved parent provider, model, thinking, mode, provider options,
-  and tool policy. The caller's read-only security ceilings remain available on `context.caller`;
+  and tool policy. `options.labels` may add bounded string metadata to the child (at most 127
+  plugin-supplied labels; the final child map allows 128 labels including daemon parentage; each
+  key and value is at most 512 UTF-8 bytes). The daemon always overwrites `paseo.parent-agent-id`
+  with the live caller ID, so plugins cannot forge or replace parent ownership. The caller's
+  read-only security ceilings remain available on `context.caller`;
   child creation has no security or tool-policy override fields.
 - `host.worktrees.create(options)` returns an authoritative workspace, cwd, and opaque ID.
   `remove(id)` accepts only an ID created by the same plugin session and caller.

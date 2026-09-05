@@ -8,6 +8,8 @@ export const MAX_PLUGIN_HOST_DELIVERY_GET_RESPONSE_BYTES = 192 * 1024;
 /** Bounds applied to authority values crossing the plugin process boundary. */
 export const MAX_PLUGIN_AUTHORITY_STRING_BYTES = 512;
 export const MAX_PLUGIN_AUTHORITY_LABELS = 128;
+/** Reserve one final label slot for daemon-owned child parentage. */
+export const MAX_PLUGIN_HOST_CHILD_LABELS = MAX_PLUGIN_AUTHORITY_LABELS - 1;
 export const MAX_PLUGIN_HOST_WORKTREE_ID_BYTES = 256;
 export const MAX_PLUGIN_HOST_NONCE_BYTES = 128;
 
@@ -43,6 +45,12 @@ const KnownStringSchema = z.discriminatedUnion("known", [
   z.object({ known: z.literal(true), value: AuthorityStringSchema }).strict(),
   z.object({ known: z.literal(false) }).strict(),
 ]);
+const AuthorityLabelsSchema = z
+  .record(AuthorityStringSchema, AuthorityStringSchema)
+  .refine((labels) => Object.keys(labels).length <= MAX_PLUGIN_AUTHORITY_LABELS);
+const PluginHostChildLabelsSchema = AuthorityLabelsSchema.refine(
+  (labels) => Object.keys(labels).length <= MAX_PLUGIN_HOST_CHILD_LABELS,
+);
 
 export const PluginFilesystemSecurityCeilingSchema = z.enum([
   "none",
@@ -90,9 +98,7 @@ export const PluginAgentSnapshotSchema = z
     requiresAttention: z.boolean(),
     attentionReason: z.enum(["finished", "error", "permission"]).nullable(),
     parentAgentId: z.string().max(MAX_PLUGIN_AUTHORITY_STRING_BYTES).nullable(),
-    labels: z
-      .record(AuthorityStringSchema, AuthorityStringSchema)
-      .refine((labels) => Object.keys(labels).length <= MAX_PLUGIN_AUTHORITY_LABELS),
+    labels: AuthorityLabelsSchema,
   })
   .strict();
 
@@ -195,6 +201,7 @@ export const PluginHostChildCreateRequestSchema = HostRequestBaseSchema.extend({
         .max(16 * 1024)
         .optional(),
       worktreeId: WorktreeIdSchema.optional(),
+      labels: PluginHostChildLabelsSchema.optional(),
     })
     .strict()
     .optional(),

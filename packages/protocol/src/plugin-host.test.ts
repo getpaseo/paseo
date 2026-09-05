@@ -2,6 +2,7 @@ import { describe, expect, test } from "vitest";
 import {
   MAX_PLUGIN_AUTHORITY_LABELS,
   MAX_PLUGIN_AUTHORITY_STRING_BYTES,
+  MAX_PLUGIN_HOST_CHILD_LABELS,
   MAX_PLUGIN_HOST_WORKTREE_ID_BYTES,
   PluginCallerAuthoritySchema,
   PluginHostChildCreateRequestSchema,
@@ -148,5 +149,55 @@ describe("plugin caller host wire contract", () => {
         }).success,
       ).toBe(false);
     }
+  });
+
+  test("accepts bounded child ownership labels", () => {
+    const base = {
+      type: "plugin.host.child.create.request" as const,
+      requestId: "request-one",
+      invocationId: "invocation-one",
+      generation: 1,
+      installationId: "installation-one",
+      options: { labels: { purpose: "review", "paseo.parent-agent-id": "forged" } },
+    };
+    expect(PluginHostChildCreateRequestSchema.safeParse(base).success).toBe(true);
+    expect(
+      PluginHostChildCreateRequestSchema.safeParse({
+        ...base,
+        options: {
+          labels: Object.fromEntries(
+            Array.from({ length: MAX_PLUGIN_HOST_CHILD_LABELS }, (_, index) => [
+              `label-${index}`,
+              "value",
+            ]),
+          ),
+        },
+      }).success,
+    ).toBe(true);
+    expect(
+      PluginHostChildCreateRequestSchema.safeParse({
+        ...base,
+        options: {
+          labels: Object.fromEntries(
+            Array.from({ length: MAX_PLUGIN_HOST_CHILD_LABELS + 1 }, (_, index) => [
+              `label-${index}`,
+              "value",
+            ]),
+          ),
+        },
+      }).success,
+    ).toBe(false);
+    expect(
+      PluginHostChildCreateRequestSchema.safeParse({
+        ...base,
+        options: { labels: { ["x".repeat(MAX_PLUGIN_AUTHORITY_STRING_BYTES + 1)]: "value" } },
+      }).success,
+    ).toBe(false);
+    expect(
+      PluginHostChildCreateRequestSchema.safeParse({
+        ...base,
+        options: { labels: { key: "🙂".repeat(MAX_PLUGIN_AUTHORITY_STRING_BYTES) } },
+      }).success,
+    ).toBe(false);
   });
 });

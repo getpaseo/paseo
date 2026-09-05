@@ -47,6 +47,7 @@ describe("plugin scaffold", () => {
       "readonly signal: AbortSignal;",
     );
     const declarations = await readFile(path.join(directory, "paseo-plugin.d.ts"), "utf8");
+    expect(declarations).toContain("readonly labels?: Readonly<Record<string, string>>;");
     expect(declarations).not.toContain("readonly security?:");
     expect(declarations).not.toContain("readonly toolPolicy?:");
     expect(declarations).not.toContain("readonly model?: string;");

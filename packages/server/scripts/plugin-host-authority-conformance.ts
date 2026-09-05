@@ -312,9 +312,15 @@ const tool = defineTool({
       await new Promise((resolve) => setTimeout(resolve, input.delayMs ?? 20));
       const tombstone = await context.host.deliveries.get({ deliveryId: "${SECOND_DELIVERY_ID}", includeAcknowledged: true });
       return { callerAgentId: context.caller.callerAgentId, callerCwd: context.caller.agent.cwd, targetAgentId: first.targetAgentId, deliveryId: first.deliveryId, firstStatus: first.status, secondStatus: second.status, acknowledgedStatus: acknowledged.status, fetchedStatus: fetched.delivery?.status ?? null, retrySequence: first.sequence === second.sequence, secondAckStatus: secondAck.status, tombstonePayloadPresent: tombstone.delivery?.payload !== undefined };
-      }
+    }
     if (input.mode === "child") {
-      const child = await context.host.children.create({ title: "Conformance child" });
+      const child = await context.host.children.create({
+        title: "Conformance child",
+        labels: Object.fromEntries([
+          ["purpose", "conformance"],
+          ...Array.from({ length: 126 }, (_, index) => ["conformance-" + index, "value"]),
+        ]),
+      });
       return { callerAgentId: context.caller.callerAgentId, callerCwd: context.caller.agent.cwd, childAgentId: child.agentId, childParentAgentId: child.parentAgentId, childCwd: child.cwd, childProvider: child.provider, childModel: child.model, childThinking: child.thinking };
     }
     if (input.mode === "worktree.create") {
@@ -622,6 +628,9 @@ async function createFixture() {
     },
     pluginDirectory,
     getLiveParent,
+    getAgent(agentId: string) {
+      return agentManager.getAgent(agentId);
+    },
     async moveParentAuthority() {
       await workspaceRegistry.update(WORKSPACE_ID, (record) => ({
         ...record,
@@ -1036,6 +1045,15 @@ export async function runConformance() {
       equal(result.childProvider, "codex-updated", "child provider inheritance");
       equal(result.childModel, "updated-model", "child model inheritance");
       equal(result.childThinking, "updated-thinking", "child thinking inheritance");
+      const childAgent = fixture.getAgent(String(result.childAgentId));
+      assert(childAgent, "created child agent disappeared");
+      equal(childAgent.labels.purpose, "conformance", "child requested label");
+      equal(Object.keys(childAgent.labels).length, 128, "child final label count");
+      equal(
+        childAgent.labels["paseo.parent-agent-id"],
+        CALLER_AGENT_ID,
+        "child parent ownership label",
+      );
       const identity = await installationIdentity(fixture);
       equal(
         identity.session.getPluginHostInvocationReferenceCount(),
@@ -1044,6 +1062,11 @@ export async function runConformance() {
       );
       return {
         child: result.childAgentId,
+        childLabels: {
+          purpose: childAgent.labels.purpose,
+          "paseo.parent-agent-id": childAgent.labels["paseo.parent-agent-id"],
+        },
+        childLabelCount: Object.keys(childAgent.labels).length,
         inheritedLiveAuthority: true,
         callerCwdBeforeMutation: result.callerCwd,
       };

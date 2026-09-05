@@ -125,6 +125,20 @@ describe("plugin host authority conformance executable", () => {
         expect(isolatedRuntime.cases.map((result) => result.ok)).toEqual(
           EXPECTED_CASE_IDS.map(() => true),
         );
+        expect(
+          isolatedRuntime.cases.find(
+            (result) =>
+              result.case === "host.child.create-inherits-live-caller-authority-after-mutation",
+          ),
+        ).toMatchObject({
+          details: {
+            childLabels: {
+              purpose: "conformance",
+              "paseo.parent-agent-id": "00000000-0000-4000-8000-000000000001",
+            },
+            childLabelCount: 128,
+          },
+        });
         expect(verifiedRuntime.cases.map((result) => result.ok)).toEqual(
           EXPECTED_CASE_IDS.map(() => true),
         );

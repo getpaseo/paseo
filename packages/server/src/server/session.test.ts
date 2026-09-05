@@ -19,6 +19,7 @@ import {
   assertPullRequestAutoMergeEnableReady,
 } from "../services/github-service.js";
 import { PARENT_AGENT_ID_LABEL } from "@getpaseo/protocol/agent-labels";
+import { MAX_PLUGIN_AUTHORITY_LABELS } from "@getpaseo/protocol/plugin-host";
 import { CLIENT_CAPS } from "@getpaseo/protocol/client-capabilities";
 import {
   WSSessionOutboundSchema,
@@ -645,7 +646,7 @@ test("plugin host inherits child authority from the freshly resolved live caller
     foregroundTurnWaiters: new Set(),
     finalizedForegroundTurnIds: new Set(),
     unsubscribeSession: null,
-    labels: { "paseo.parentAgentId": "caller-agent" },
+    labels: { [PARENT_AGENT_ID_LABEL]: "caller-agent" },
     capabilities: {
       supportsStreaming: true,
       supportsSessionPersistence: true,
@@ -687,7 +688,12 @@ test("plugin host inherits child authority from the freshly resolved live caller
       installationId: "installation-one",
       capabilityNonce: "nonce-one",
       operation: "child.create",
-      input: { options: { title: "Child" } },
+      input: {
+        options: {
+          title: "Child",
+          labels: { purpose: "review", [PARENT_AGENT_ID_LABEL]: "forged-parent" },
+        },
+      },
       signal: new AbortController().signal,
     });
 
@@ -710,7 +716,7 @@ test("plugin host inherits child authority from the freshly resolved live caller
       undefined,
       expect.objectContaining({
         workspaceId: "source-workspace",
-        labels: { "paseo.parentAgentId": "caller-agent" },
+        labels: { purpose: "review", [PARENT_AGENT_ID_LABEL]: "caller-agent" },
       }),
     );
     expect(result).toMatchObject({
@@ -734,6 +740,7 @@ test("plugin host inherits child authority from the freshly resolved live caller
           thinking: "attacker-thinking",
           toolPolicy: "none",
           security: { filesystem: "unrestricted" },
+          labels: { [PARENT_AGENT_ID_LABEL]: "attacker-parent", role: "worker" },
         },
       },
       signal: new AbortController().signal,
@@ -754,8 +761,35 @@ test("plugin host inherits child authority from the freshly resolved live caller
         },
       }),
       undefined,
-      expect.objectContaining({ workspaceId: "source-workspace" }),
+      expect.objectContaining({
+        workspaceId: "source-workspace",
+        labels: { [PARENT_AGENT_ID_LABEL]: "caller-agent", role: "worker" },
+      }),
     );
+    expect(createAgent).toHaveBeenCalledTimes(2);
+
+    await expect(
+      session.invokePluginHost({
+        pluginId: "portable-provider",
+        caller,
+        invocationId: "invocation-too-many-labels",
+        generation: 1,
+        installationId: "installation-one",
+        capabilityNonce: "nonce-too-many-labels",
+        operation: "child.create",
+        input: {
+          options: {
+            labels: Object.fromEntries(
+              Array.from({ length: MAX_PLUGIN_AUTHORITY_LABELS }, (_, index) => [
+                `label-${index}`,
+                "value",
+              ]),
+            ),
+          },
+        },
+        signal: new AbortController().signal,
+      }),
+    ).rejects.toThrow("Child labels exceed the authority label limit");
     expect(createAgent).toHaveBeenCalledTimes(2);
   } finally {
     await session.cleanup();

@@ -88,6 +88,8 @@ const SDK_DECLARATIONS = `declare module "@getpaseo/plugin/server" {
     readonly title?: string;
     readonly prompt?: string;
     readonly worktreeId?: string;
+    /** Bounded metadata labels; the daemon always owns the parent label. */
+    readonly labels?: Readonly<Record<string, string>>;
   }
   export interface PluginHostedChild {
     readonly agentId: string;

@@ -129,9 +129,12 @@ without a selected agent and is fresh for every selected invocation. Its bounded
   idempotency key and targets the exact caller, plus target-fenced `get` and `acknowledge` with
   durable tombstones;
 - `host.children.create(options)`, which fixes parent, workspace, and cwd to the caller, allowing an
-  alternate cwd only through an opaque managed worktree. The child inherits the freshly resolved
-  parent's provider, model, thinking, mode, provider options, and tool policy; it has no override
-  fields for security or tool policy;
+  alternate cwd only through an opaque managed worktree. `options.labels` may add bounded string
+  metadata to the child (at most 127 plugin-supplied labels; the final child map allows 128 labels
+  including daemon parentage; each key and value is at most 512 UTF-8 bytes), but the daemon always
+  overwrites `paseo.parent-agent-id` with the live caller ID. The child inherits the freshly
+  resolved parent's provider, model, thinking, mode, provider options, and tool policy; it has no
+  override fields for security or tool policy;
 - `host.worktrees.create(options)` and `remove(id)`, with authoritative workspace/cwd results and
   plugin-session and caller ownership checks.
 

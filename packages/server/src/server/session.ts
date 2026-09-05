@@ -64,7 +64,7 @@ import { loadPersistedConfig } from "./persisted-config.js";
 import { releaseWorkspaceServicePortPlan } from "./workspace-service-port-registry.js";
 import { getErrorMessage, getErrorMessageOr } from "@getpaseo/protocol/error-utils";
 import { getAgentStatusPriority } from "@getpaseo/protocol/agent-state-bucket";
-import { getParentAgentIdFromLabels } from "@getpaseo/protocol/agent-labels";
+import { getParentAgentIdFromLabels, PARENT_AGENT_ID_LABEL } from "@getpaseo/protocol/agent-labels";
 import type { WorkspaceGitRuntimeSnapshot, WorkspaceGitService } from "./workspace-git-service.js";
 import type { ProjectUpdate } from "./workspace-reconciliation-service.js";
 import {
@@ -274,7 +274,10 @@ import {
   createNativeDeliveryDispatcher,
   type DeliveryAgentDispatcher,
 } from "./deliveries/delivery-dispatcher.js";
-import { MAX_PLUGIN_HOST_DELIVERY_GET_RESPONSE_BYTES } from "@getpaseo/protocol/plugin-host";
+import {
+  MAX_PLUGIN_AUTHORITY_LABELS,
+  MAX_PLUGIN_HOST_DELIVERY_GET_RESPONSE_BYTES,
+} from "@getpaseo/protocol/plugin-host";
 
 function resolveWorkspaceSetupRuntime(
   runtime: WorkspaceSetupRuntime | undefined,
@@ -2513,7 +2516,15 @@ export class Session {
       title?: string;
       prompt?: string;
       worktreeId?: string;
+      labels?: Record<string, string>;
     };
+    const childLabels = {
+      ...options.labels,
+      [PARENT_AGENT_ID_LABEL]: input.caller.callerAgentId,
+    };
+    if (Object.keys(childLabels).length > MAX_PLUGIN_AUTHORITY_LABELS) {
+      throw new Error("Child labels exceed the authority label limit");
+    }
     if (options.worktreeId) {
       const worktree = this.pluginManagedWorktrees.get(options.worktreeId);
       if (
@@ -2593,7 +2604,7 @@ export class Session {
           config: dispatchConfig,
           workspaceId: dispatchManagedWorktree?.workspaceId ?? dispatchCaller.agent.workspaceId,
           initialPrompt: options.prompt,
-          labels: { ["paseo.parentAgentId"]: input.caller.callerAgentId },
+          labels: childLabels,
           provisionalTitle,
           firstAgentContext,
           onCreated: ({ agentId }) => {

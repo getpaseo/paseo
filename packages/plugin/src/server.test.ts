@@ -3,7 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
-import { defineTool } from "./server.js";
+import { defineTool, type PluginHostChildCreateOptions } from "./server.js";
 
 const srcDir = path.dirname(fileURLToPath(import.meta.url));
 const forbiddenSpecifiers = new Set([
@@ -69,5 +69,13 @@ describe("@getpaseo/plugin/server", () => {
 
     expect(tool.name).toBe("acme.lookup");
     expect(tool.input.parse({ query: "Paseo" })).toEqual({ query: "Paseo" });
+  });
+
+  it("exposes bounded labels on child creation options", () => {
+    const options: PluginHostChildCreateOptions = {
+      labels: { purpose: "review" },
+    };
+
+    expect(options).toEqual({ labels: { purpose: "review" } });
   });
 });
