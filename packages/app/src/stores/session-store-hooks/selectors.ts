@@ -152,12 +152,21 @@ export function selectWorkspaceDirectoryServerIds(
   });
 }
 
+function hasPendingWorkspaceHydration(
+  session: SessionsSnapshot["sessions"][string] | undefined,
+): boolean {
+  return !session || session.hasHydratedWorkspaces === false;
+}
+
 export function selectWorkspaceStructureProjects(
   state: SessionsSnapshot,
   serverIds: readonly string[],
   workspaceSort?: WorkspaceSort,
   localProjectLinks: Iterable<LocalProjectLink> = [],
 ): WorkspaceStructureProject[] {
+  const unhydratedProjectLinkServerIds = serverIds.filter((serverId) =>
+    hasPendingWorkspaceHydration(state.sessions[serverId]),
+  );
   const sessions: Array<{
     serverId: string;
     workspaces: Iterable<WorkspaceDescriptor>;
@@ -182,7 +191,12 @@ export function selectWorkspaceStructureProjects(
     return EMPTY_WORKSPACE_STRUCTURE.projects;
   }
 
-  return buildWorkspaceStructureProjects({ sessions, workspaceSort, localProjectLinks });
+  return buildWorkspaceStructureProjects({
+    sessions,
+    workspaceSort,
+    localProjectLinks,
+    unhydratedProjectLinkServerIds,
+  });
 }
 
 export function createWorkspaceStructureProjectsSelector(
@@ -191,6 +205,7 @@ export function createWorkspaceStructureProjectsSelector(
   localProjectLinks: readonly LocalProjectLink[] = [],
 ): (state: SessionsSnapshot) => WorkspaceStructureProject[] {
   let previousInputs: Array<{
+    hasPendingWorkspaceHydration: boolean;
     workspaces: Map<string, WorkspaceDescriptor> | undefined;
     projects: Map<string, ProjectDescriptor> | undefined;
   }> | null = null;
@@ -198,6 +213,7 @@ export function createWorkspaceStructureProjectsSelector(
 
   return (state) => {
     const inputs = serverIds.map((serverId) => ({
+      hasPendingWorkspaceHydration: hasPendingWorkspaceHydration(state.sessions[serverId]),
       workspaces: state.sessions[serverId]?.workspaces,
       projects: state.sessions[serverId]?.projects,
     }));
@@ -206,6 +222,7 @@ export function createWorkspaceStructureProjectsSelector(
       priorInputs !== null &&
       inputs.every(
         (input, index) =>
+          input.hasPendingWorkspaceHydration === priorInputs[index]?.hasPendingWorkspaceHydration &&
           input.workspaces === priorInputs[index]?.workspaces &&
           input.projects === priorInputs[index]?.projects,
       );
