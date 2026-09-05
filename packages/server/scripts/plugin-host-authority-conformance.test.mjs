@@ -41,13 +41,23 @@ function independentlyHashedInputs(sourceInputs) {
   expect(Object.keys(sourceInputs)).toEqual(expect.arrayContaining(trackedSourceInputs()));
 }
 
+function isolatedRun(artifact, args) {
+  return JSON.parse(
+    execFileSync(
+      "env",
+      ["-i", `PATH=${process.env.PATH ?? ""}`, process.execPath, artifact, ...args],
+      { cwd: "/", encoding: "utf8" },
+    ),
+  );
+}
+
 describe("plugin host authority conformance executable", () => {
   test("builds a fresh source bundle and emits every literal production-path case", () => {
     const outputDirectory = mkdtempSync(path.join(tmpdir(), "paseo-plugin-host-build-"));
     try {
       const buildOutput = execFileSync(
         process.execPath,
-        [buildScript, "--out-dir", outputDirectory],
+        [buildScript, "--out-dir", outputDirectory, "--developer-allow-dirty"],
         {
           cwd: repositoryRoot,
           encoding: "utf8",
@@ -70,6 +80,45 @@ describe("plugin host authority conformance executable", () => {
           },
         ),
       );
+      expect(manifest.package).toBe("plugin-host-conformance.tgz");
+      expect(manifest.artifactSha256).toBe(createHash("sha256").update(artifact).digest("hex"));
+      expect(Object.keys(manifest.runtimeDependencies).sort()).toEqual(
+        ["@babel/parser", `@esbuild/${process.platform}-${process.arch}`, "esbuild", "zod"].sort(),
+      );
+      const extractedDirectory = mkdtempSync(path.join(tmpdir(), "paseo-plugin-host-package-"));
+      try {
+        execFileSync("tar", ["-xzf", build.package, "-C", extractedDirectory], {
+          cwd: "/",
+        });
+        const extractedArtifact = path.join(extractedDirectory, manifest.artifact);
+        for (const [packageSpecifier, dependency] of Object.entries(manifest.runtimeDependencies)) {
+          for (const [relative, expectedHash] of Object.entries(dependency.files)) {
+            const actualHash = createHash("sha256")
+              .update(
+                readFileSync(
+                  path.join(extractedDirectory, "node_modules", packageSpecifier, relative),
+                ),
+              )
+              .digest("hex");
+            expect(actualHash).toBe(expectedHash);
+          }
+        }
+        const isolatedRuntime = isolatedRun(extractedArtifact, ["--json"]);
+        const verifiedRuntime = isolatedRun(extractedArtifact, [
+          "--verify-source",
+          repositoryRoot,
+          "--json",
+        ]);
+        expect(isolatedRuntime.cases.map((result) => result.case)).toEqual(EXPECTED_CASE_IDS);
+        expect(isolatedRuntime.cases.map((result) => result.ok)).toEqual(
+          EXPECTED_CASE_IDS.map(() => true),
+        );
+        expect(verifiedRuntime.cases.map((result) => result.ok)).toEqual(
+          EXPECTED_CASE_IDS.map(() => true),
+        );
+      } finally {
+        rmSync(extractedDirectory, { recursive: true, force: true });
+      }
       expect(manifest.caseIds).toEqual(EXPECTED_CASE_IDS);
       expect(embedded.formatVersion).toBe(1);
       expect(embedded.sourceCommit).toBe(manifest.sourceCommit);

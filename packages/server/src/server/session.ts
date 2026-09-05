@@ -2130,6 +2130,11 @@ export class Session {
     return this.pluginIdentity;
   }
 
+  /** Internal conformance/diagnostic seam; the plugin SDK never exposes this state. */
+  public getPluginHostInvocationReferenceCount(): number {
+    return this.pluginHostInvocations.size;
+  }
+
   /** Admit a host request only after PluginRuntime has validated its live capability. */
   public beginPluginHostInvocation(input: {
     pluginId: string;

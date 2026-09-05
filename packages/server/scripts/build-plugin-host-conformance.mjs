@@ -3,8 +3,9 @@
 import { build } from "esbuild";
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { cp, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
+import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -21,8 +22,11 @@ const defaultOutputDirectory = path.join(
 );
 const artifactName = "plugin-host-conformance.mjs";
 const manifestName = "plugin-host-conformance.manifest.json";
+const archiveName = "plugin-host-conformance.tgz";
+const packageMetadataName = "package.json";
+const nodeRequire = createRequire(import.meta.url);
 const runtimeBanner = {
-  js: 'import { createRequire as __createRequire, Module as __Module } from "node:module"; const __nodePathSeparator = process.platform === "win32" ? ";" : ":"; const __conformanceNodePaths = [`${process.cwd()}/node_modules`, `${process.cwd()}/packages/server/node_modules`, process.env.NODE_PATH].filter(Boolean); process.env.NODE_PATH = __conformanceNodePaths.join(__nodePathSeparator); __Module._initPaths(); const require = __createRequire(import.meta.url);',
+  js: 'import { createRequire as __createRequire } from "node:module"; const require = __createRequire(import.meta.url);',
 };
 const caseIds = [
   "compiler.target-bounded-bundles",
@@ -177,6 +181,56 @@ async function trackedSourceInputHashes() {
   return result;
 }
 
+async function hashFiles(root, relative = "") {
+  const directory = path.join(root, relative);
+  const entries = await readdir(directory, { withFileTypes: true });
+  const files = {};
+  for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {
+    const childRelative = relative ? path.join(relative, entry.name) : entry.name;
+    if (entry.isDirectory()) {
+      Object.assign(files, await hashFiles(root, childRelative));
+      continue;
+    }
+    if (!entry.isFile())
+      throw new Error(`Unsupported dependency entry: ${path.join(root, childRelative)}`);
+    const contents = await readFile(path.join(root, childRelative));
+    files[childRelative.split(path.sep).join("/")] = createHash("sha256")
+      .update(contents)
+      .digest("hex");
+  }
+  return files;
+}
+
+function resolvePackageRoot(packageSpecifier) {
+  return path.dirname(nodeRequire.resolve(`${packageSpecifier}/package.json`));
+}
+
+async function stageRuntimeDependency(outputDirectory, packageSpecifier) {
+  const sourceRoot = resolvePackageRoot(packageSpecifier);
+  const destination = path.join(outputDirectory, "node_modules", packageSpecifier);
+  await mkdir(path.dirname(destination), { recursive: true });
+  await cp(sourceRoot, destination, { recursive: true });
+  const packageJson = JSON.parse(await readFile(path.join(destination, "package.json"), "utf8"));
+  return {
+    name: packageSpecifier,
+    version: packageJson.version,
+    files: await hashFiles(destination),
+  };
+}
+
+async function stageRuntimeDependencies(outputDirectory) {
+  const platformPackage = `@esbuild/${process.platform}-${process.arch}`;
+  const packageSpecifiers = ["@babel/parser", "esbuild", platformPackage, "zod"];
+  return Object.fromEntries(
+    await Promise.all(
+      packageSpecifiers.map(async (packageSpecifier) => [
+        packageSpecifier,
+        await stageRuntimeDependency(outputDirectory, packageSpecifier),
+      ]),
+    ),
+  );
+}
+
 function sourceManifestBanner(manifest) {
   return {
     js: `${runtimeBanner.js} const __PASEO_SOURCE_MANIFEST__ = ${JSON.stringify(manifest)};`,
@@ -229,17 +283,52 @@ async function main() {
   const manifest = {
     formatVersion: 1,
     artifact: artifactName,
+    package: archiveName,
     sourceCommit,
     caseIds,
     sourceInputs: inputs,
+    artifactSha256: createHash("sha256").update(artifact).digest("hex"),
+    runtimeDependencies: {},
   };
+  const runtimeDependencies = await stageRuntimeDependencies(outputDirectory);
+  manifest.runtimeDependencies = runtimeDependencies;
   await writeFile(
     path.join(outputDirectory, manifestName),
     `${JSON.stringify(manifest, null, 2)}\n`,
     "utf8",
   );
+  await writeFile(
+    path.join(outputDirectory, packageMetadataName),
+    `${JSON.stringify(
+      {
+        name: "@getpaseo/plugin-host-conformance",
+        version: "0.0.0",
+        private: true,
+        type: "module",
+        bin: { "plugin-host-conformance": `./${artifactName}` },
+      },
+      null,
+      2,
+    )}\n`,
+    "utf8",
+  );
+  const packagePath = path.join(outputDirectory, archiveName);
+  execFileSync(
+    "tar",
+    [
+      "-czf",
+      packagePath,
+      "-C",
+      outputDirectory,
+      artifactName,
+      manifestName,
+      packageMetadataName,
+      "node_modules",
+    ],
+    { cwd: repositoryRoot, stdio: "ignore" },
+  );
   process.stdout.write(
-    `${JSON.stringify({ artifact: path.join(outputDirectory, artifactName), manifest: path.join(outputDirectory, manifestName), sourceCommit })}\n`,
+    `${JSON.stringify({ artifact: path.join(outputDirectory, artifactName), manifest: path.join(outputDirectory, manifestName), package: packagePath, sourceCommit })}\n`,
   );
 }
 

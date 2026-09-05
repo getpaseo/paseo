@@ -1,9 +1,10 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { execFileSync, fork } from "node:child_process";
 import { createServer } from "node:http";
 import { access, mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { AgentManager } from "../src/server/agent/agent-manager.ts";
 import { AgentStorage } from "../src/server/agent/agent-storage.ts";
 import {
@@ -34,7 +35,10 @@ const PROJECT_ID = "00000000-0000-4000-8000-000000000021";
 const DELIVERY_ID = "authority-conformance-delivery";
 const SECOND_DELIVERY_ID = "authority-conformance-second-delivery";
 const STALE_DELIVERY_ID = "authority-conformance-stale-delivery";
+const CANCELLATION_DELIVERY_ID = "authority-conformance-cancellation-delivery";
+const HANDLER_THROW_DELIVERY_ID = "authority-conformance-handler-throw-delivery";
 const TIMESTAMP = "2026-09-05T00:00:00.000Z";
+const CONFORMANCE_RUNTIME_DIRECTORY = path.dirname(fileURLToPath(import.meta.url));
 const CASE_IDS = [
   "compiler.target-bounded-bundles",
   "runtime.compiles-loads-and-publishes-tool",
@@ -274,7 +278,7 @@ const tool = defineTool({
   name: "conformance.host_authority",
   title: "Host authority conformance",
   description: "Exercise the invocation-scoped host authority contract.",
-  input: z.object({ mode: z.enum(["delivery", "child", "worktree.create", "worktree.remove", "stale"]), delayMs: z.number().int().nonnegative().optional(), worktreeId: z.string().optional() }),
+  input: z.object({ mode: z.enum(["delivery", "child", "worktree.create", "worktree.remove", "stale", "cancel", "throw"]), delayMs: z.number().int().nonnegative().optional(), worktreeId: z.string().optional() }),
   async handler(input, context) {
     if (input.mode === "stale") {
       const result = await context.host.deliveries.send(
@@ -282,6 +286,17 @@ const tool = defineTool({
         { deliveryId: "${STALE_DELIVERY_ID}", messageId: "stale-message" },
       );
       return { staleResult: result.status };
+    }
+    if (input.mode === "cancel") {
+      const result = await context.host.deliveries.send(
+        { kind: "cancel" },
+        { deliveryId: "${CANCELLATION_DELIVERY_ID}", messageId: "cancellation-message" },
+      );
+      return { cancellationStatus: result.status };
+    }
+    if (input.mode === "throw") {
+      await context.host.deliveries.get({ deliveryId: "${HANDLER_THROW_DELIVERY_ID}" });
+      throw new Error("conformance handler throw");
     }
     await new Promise((resolve) => setTimeout(resolve, input.delayMs ?? 20));
     if (input.mode === "delivery") {
@@ -484,6 +499,8 @@ async function createFixture() {
   const originalLedgerSend = ledger.send.bind(ledger);
   let staleDeliveryGate: Promise<void> | null = null;
   let releaseStaleDelivery: (() => void) | null = null;
+  let cancellationDeliveryGate: Promise<void> | null = null;
+  let releaseCancellationDelivery: (() => void) | null = null;
   const gatedLedger = ledger as DeliveryLedger & {
     send: (...args: Parameters<DeliveryLedger["send"]>) => ReturnType<DeliveryLedger["send"]>;
   };
@@ -491,6 +508,9 @@ async function createFixture() {
     const input = args[1] as { deliveryId?: string } | undefined;
     if (input?.deliveryId === STALE_DELIVERY_ID && staleDeliveryGate) {
       await staleDeliveryGate;
+    }
+    if (input?.deliveryId === CANCELLATION_DELIVERY_ID && cancellationDeliveryGate) {
+      await cancellationDeliveryGate;
     }
     return originalLedgerSend(...args);
   };
@@ -548,8 +568,7 @@ async function createFixture() {
   await writeFile(workerPath, __PASEO_PLUGIN_PROCESS_SOURCE__, "utf8");
   const nodePath = [
     process.env.PASEO_CONFORMANCE_NODE_PATH,
-    path.join(process.cwd(), "node_modules"),
-    path.join(process.cwd(), "packages/server/node_modules"),
+    path.join(CONFORMANCE_RUNTIME_DIRECTORY, "node_modules"),
   ]
     .filter((value): value is string => Boolean(value))
     .join(path.delimiter);
@@ -643,10 +662,17 @@ async function createFixture() {
       ).plugins.get(PLUGIN_ID);
       assert(loaded, "plugin installation disappeared before reconnect");
       equal(loaded.installationId, installationId, "reconnect source installation identity");
+      let reconnectLoad = true;
       loaded.sessionSocket.close();
       await loaded.sessionClosed;
       const reconnectRuntime = new PluginRuntime(logger, "conformance", {
-        installationIdFactory: () => installationId,
+        installationIdFactory: () => {
+          if (reconnectLoad) {
+            reconnectLoad = false;
+            return installationId;
+          }
+          return randomUUID();
+        },
         sessionHost: {
           attachPluginSocket: server.attachPluginSocket.bind(server),
           beginPluginShutdown: server.beginPluginShutdown.bind(server),
@@ -684,13 +710,27 @@ async function createFixture() {
         releaseStaleDelivery = resolve;
       });
     },
+    beginCancellationDelivery() {
+      if (cancellationDeliveryGate) throw new Error("cancellation delivery gate was already open");
+      cancellationDeliveryGate = new Promise<void>((resolve) => {
+        releaseCancellationDelivery = resolve;
+      });
+    },
     releaseStaleDelivery() {
       const release = releaseStaleDelivery;
       releaseStaleDelivery = null;
       staleDeliveryGate = null;
       release?.();
     },
+    releaseCancellationDelivery() {
+      const release = releaseCancellationDelivery;
+      releaseCancellationDelivery = null;
+      cancellationDeliveryGate = null;
+      release?.();
+    },
     async close() {
+      releaseStaleDelivery?.();
+      releaseCancellationDelivery?.();
       for (const currentRuntime of runtimes) await currentRuntime.stopAll();
       await server.close();
       httpServer.close();
@@ -781,10 +821,12 @@ async function invokeTool(
   input: Record<string, unknown>,
   callerAgentId = CALLER_AGENT_ID,
   runtime = fixture.activeRuntime,
+  signal?: AbortSignal,
 ) {
   return runtime.invokeTool(PLUGIN_ID, "conformance.host_authority", input, {
     callerAgentId,
     timeoutMs: 10_000,
+    signal,
   });
 }
 
@@ -844,7 +886,7 @@ async function installationIdentity(
   const identity = session.getPluginIdentity();
   assert(identity, "plugin installation identity is missing");
   equal(identity.installationId, loaded.installationId, "WebSocket session installation identity");
-  return loaded;
+  return { ...loaded, session };
 }
 
 async function runCase(
@@ -890,6 +932,11 @@ export async function runConformance() {
       const settled = await operation;
       if (!settled.ok) throw settled.error;
       const result = settled.value as Record<string, unknown>;
+      equal(
+        identity.session.getPluginHostInvocationReferenceCount(),
+        0,
+        "normal host completion reference map",
+      );
       equal(result.targetAgentId, CALLER_AGENT_ID, "delivery target");
       equal(result.deliveryId, DELIVERY_ID, "stable delivery id");
       equal(result.firstStatus, "accepted", "first delivery status");
@@ -960,6 +1007,11 @@ export async function runConformance() {
         !afterRemoval.records?.some((record) => record.id === worktreeId),
         "removed worktree ownership remained persisted",
       );
+      equal(
+        reconnectedIdentity.session.getPluginHostInvocationReferenceCount(),
+        0,
+        "multiple normal host completions reference map",
+      );
       return {
         worktreeId,
         opaqueId: true,
@@ -980,6 +1032,12 @@ export async function runConformance() {
       equal(result.childProvider, "codex-updated", "child provider inheritance");
       equal(result.childModel, "updated-model", "child model inheritance");
       equal(result.childThinking, "updated-thinking", "child thinking inheritance");
+      const identity = await installationIdentity(fixture);
+      equal(
+        identity.session.getPluginHostInvocationReferenceCount(),
+        0,
+        "child host completion reference map",
+      );
       return {
         child: result.childAgentId,
         inheritedLiveAuthority: true,
@@ -1006,7 +1064,54 @@ export async function runConformance() {
         liveParent.lifecycle = current;
       }
       assert(stale, "stale caller selector was accepted");
-      return { unauthorizedRejected: unauthorized, staleRejected: stale };
+      const identity = await installationIdentity(fixture);
+      const thrown = await settle(invokeTool(fixture, { mode: "throw" }));
+      assert(
+        !thrown.ok && errorText(thrown.error).includes("conformance handler throw"),
+        "handler throw was not propagated",
+      );
+      equal(
+        identity.session.getPluginHostInvocationReferenceCount(),
+        0,
+        "handler throw reference map",
+      );
+
+      fixture.beginCancellationDelivery();
+      const cancellationController = new AbortController();
+      const cancellation = settle(
+        invokeTool(
+          fixture,
+          { mode: "cancel" },
+          CALLER_AGENT_ID,
+          fixture.activeRuntime,
+          cancellationController.signal,
+        ),
+      );
+      try {
+        await waitFor(
+          () => identity.session.getPluginHostInvocationReferenceCount() === 1,
+          "cancellation host reference",
+        );
+        cancellationController.abort(new Error("conformance cancellation"));
+      } finally {
+        fixture.releaseCancellationDelivery();
+      }
+      const cancellationSettled = await settleBounded(cancellation, "cancelled host invocation");
+      assert(
+        cancellationSettled.ok && !cancellationSettled.value.ok,
+        "cancelled tool invocation completed successfully",
+      );
+      await waitFor(
+        () => identity.session.getPluginHostInvocationReferenceCount() === 0,
+        "cancellation host reference release",
+      );
+      return {
+        unauthorizedRejected: unauthorized,
+        staleRejected: stale,
+        handlerThrowRejected: true,
+        cancellationRejected: true,
+        referenceMapEmpty: true,
+      };
     });
     await runCase(results, CASE_IDS[6], async () => {
       const identity = await installationIdentity(fixture);
@@ -1024,6 +1129,11 @@ export async function runConformance() {
         reconnectedRuntime,
       )) as Record<string, unknown>;
       equal(reconnectedResult.targetAgentId, CALLER_AGENT_ID, "reconnected delivery target");
+      equal(
+        reconnectedIdentity.session.getPluginHostInvocationReferenceCount(),
+        0,
+        "reconnected host completion reference map",
+      );
       const principal = `plugin:${PLUGIN_ID}:${identity.installationId}`;
       const before = await fixture.ledger.get(principal, {
         deliveryId: SECOND_DELIVERY_ID,
@@ -1088,14 +1198,15 @@ export async function runConformance() {
         await fixture.activeRuntime.stopPluginById(PLUGIN_ID);
         await fixture.activeRuntime.startPlugin(PLUGIN_ID, fixture.pluginDirectory);
         replacement = await installationIdentity(fixture);
+        equal(replacement.generation, old.generation + 1, "replacement generation increment");
         assert(
-          replacement.generation > old.generation,
-          "replacement did not advance the attached generation",
+          replacement.installationId !== old.installationId,
+          "replacement reused the old installation principal",
         );
         equal(
-          replacement.installationId,
-          old.installationId,
-          "replacement retained the reconnect installation principal",
+          replacement.session.getPluginHostInvocationReferenceCount(),
+          0,
+          "replacement reference map after load",
         );
         fixture.releaseStaleDelivery();
         const oldSettled = await settleBounded(oldOperation, "stale host invocation", 3_000);
@@ -1103,84 +1214,59 @@ export async function runConformance() {
           oldSettled.ok && !oldSettled.value.ok,
           "late stale host result was accepted by the old tool invocation",
         );
+        equal(
+          old.session.getPluginHostInvocationReferenceCount(),
+          0,
+          "unload/replacement reference map",
+        );
 
-        const currentSession = fixture.server
-          .listSessions()
-          .find(
-            (candidate) =>
-              candidate.getPluginIdentity()?.pluginId === PLUGIN_ID &&
-              candidate.getPluginIdentity()?.installationId === replacement.installationId,
-          );
-        assert(currentSession, "replacement Session was not attached to the production socket");
-        const currentContext = await currentSession.resolvePluginToolContext(CALLER_AGENT_ID);
+        const currentContext = await replacement.session.resolvePluginToolContext(CALLER_AGENT_ID);
         assert(currentContext.caller, "replacement caller authority was not resolved");
-        const probeInvocationId = "stale-session-probe";
-        const probeNonce = "current-session-probe-nonce";
-        fixture.server.beginPluginHostInvocation({
-          pluginId: PLUGIN_ID,
-          invocationId: probeInvocationId,
-          generation: replacement.generation,
-          installationId: replacement.installationId,
-          capabilityNonce: probeNonce,
-        });
-        try {
-          const staleGeneration = await settleBounded(
-            fixture.server.invokePluginHost({
-              pluginId: PLUGIN_ID,
-              caller: currentContext.caller,
-              invocationId: probeInvocationId,
-              generation: old.generation,
-              installationId: replacement.installationId,
-              capabilityNonce: probeNonce,
-              operation: "delivery.get",
-              input: { options: { deliveryId: "stale-generation-side-effect" } },
-              signal: new AbortController().signal,
-            }),
-            "stale generation session request",
-          );
-          assert(!staleGeneration.ok, "stale generation request crossed the attached Session");
-          const staleNonce = await settleBounded(
-            fixture.server.invokePluginHost({
-              pluginId: PLUGIN_ID,
-              caller: currentContext.caller,
-              invocationId: probeInvocationId,
-              generation: replacement.generation,
-              installationId: replacement.installationId,
-              capabilityNonce: oldInvocation.capabilityNonce,
-              operation: "delivery.get",
-              input: { options: { deliveryId: "stale-nonce-side-effect" } },
-              signal: new AbortController().signal,
-            }),
-            "stale nonce session request",
-          );
-          assert(!staleNonce.ok, "stale nonce request crossed the attached Session");
-        } finally {
-          fixture.server.endPluginHostInvocation(
-            PLUGIN_ID,
-            replacement.installationId,
-            probeInvocationId,
-          );
-        }
-        const principal = `plugin:${PLUGIN_ID}:${replacement.installationId}`;
+        const staleOldCall = await settleBounded(
+          fixture.server.invokePluginHost({
+            pluginId: PLUGIN_ID,
+            caller: currentContext.caller,
+            invocationId: oldInvocation.invocationId,
+            generation: oldInvocation.generation,
+            installationId: replacement.installationId,
+            capabilityNonce: oldInvocation.capabilityNonce,
+            operation: "delivery.send",
+            input: {
+              payload: { kind: "stale-old-call" },
+              options: {
+                deliveryId: "stale-generation-side-effect",
+                messageId: "stale-old-call-message",
+              },
+            },
+            signal: new AbortController().signal,
+          }),
+          "stale old host invocation through replacement Session",
+        );
+        assert(!staleOldCall.ok, "stale old invocation crossed the attached replacement Session");
+        const oldPrincipal = `plugin:${PLUGIN_ID}:${old.installationId}`;
         for (const deliveryId of [
           STALE_DELIVERY_ID,
           "stale-generation-side-effect",
           "stale-nonce-side-effect",
         ]) {
-          const record = await fixture.ledger.get(principal, {
+          const record = await fixture.ledger.get(oldPrincipal, {
             deliveryId,
             includeAcknowledged: true,
           });
-          equal(record.delivery, null, `stale request side effect for ${deliveryId}`);
+          equal(record.delivery, null, `stale old installation side effect for ${deliveryId}`);
         }
+        equal(
+          replacement.session.getPluginHostInvocationReferenceCount(),
+          0,
+          "stale replacement request reference map",
+        );
       } finally {
         fixture.releaseStaleDelivery();
       }
       return {
         oldGeneration: old.generation,
         newGeneration: replacement.generation,
-        staleGenerationRejected: true,
-        staleNonceRejected: true,
+        staleInvocationAndNonceRejected: true,
         attachedSessionRouted: true,
         boundedRejection: true,
         noSideEffect: true,
