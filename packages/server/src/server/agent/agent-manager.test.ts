@@ -1623,7 +1623,7 @@ test("reload leaves a closed durable snapshot when shutdown starts during the sw
     }).toMatchObject({
       agents: [],
       record: { lastStatus: "closed" },
-      replacementSessionClosed: true,
+      replacementSessionClosed: false,
     });
   } finally {
     client.finishClosing();
@@ -1633,7 +1633,7 @@ test("reload leaves a closed durable snapshot when shutdown starts during the sw
   }
 });
 
-test("reload closes both sessions when the closed snapshot cannot be persisted", async () => {
+test("reload does not create a replacement when the closed snapshot cannot be persisted", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-reload-persist-failure-test-"));
   const storagePath = join(workdir, "agents");
   const storage = new AgentStorage(storagePath, logger);
@@ -1672,7 +1672,7 @@ test("reload closes both sessions when the closed snapshot cannot be persisted",
     }).toEqual({
       agents: [],
       originalSessionClosed: true,
-      replacementSessionClosed: true,
+      replacementSessionClosed: false,
     });
   } finally {
     client.finishClosing();
@@ -2244,73 +2244,253 @@ test("setAgentMode persists the selected mode across session reload", async () =
   expect(reloaded.currentModeId).toBe("full-access");
 });
 
-test("reloadAgentSession completes when the previous session close hangs", async () => {
-  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-reload-close-timeout-"));
-  const storagePath = join(workdir, "agents");
-  const storage = new AgentStorage(storagePath, logger);
-
-  class HangingCloseSession extends TestAgentSession {
-    closeCalled = false;
-
-    override async close(): Promise<void> {
-      this.closeCalled = true;
-      await new Promise(() => {});
+test("reload releases the original writer before resuming the same session", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-reload-writer-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  class ExclusiveWriterClient extends TestAgentClient {
+    current: CloseRecordingTestAgentSession | undefined;
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      this.current = new CloseRecordingTestAgentSession(config);
+      return this.current;
     }
-  }
-
-  class HangingCloseClient extends TestAgentClient {
-    readonly firstSession = new HangingCloseSession({
-      provider: "codex",
-      cwd: workdir,
-    });
-    resumeSessionCalls = 0;
-
-    override async createSession(): Promise<AgentSession> {
-      return this.firstSession;
-    }
-
     override async resumeSession(
-      _handle: AgentPersistenceHandle,
+      handle: AgentPersistenceHandle,
       config?: Partial<AgentSessionConfig>,
     ): Promise<AgentSession> {
-      this.resumeSessionCalls += 1;
-      return new TestAgentSession({
+      if (this.current && !this.current.closed) {
+        throw new Error("thread already has an active writer");
+      }
+      this.current = new CloseRecordingTestAgentSession({
         provider: "codex",
         cwd: config?.cwd ?? workdir,
       });
+      this.current.describePersistence = () => ({ provider: "codex", sessionId: handle.sessionId });
+      return this.current;
     }
   }
-
-  const client = new HangingCloseClient();
-  const manager = new AgentManager({
-    clients: {
-      codex: client,
-    },
-    registry: storage,
-    logger,
-    rescueTimeouts: { reloadSessionCloseMs: 10 },
-    idFactory: () => "00000000-0000-4000-8000-000000000302",
-  });
-
+  const client = new ExclusiveWriterClient();
+  const manager = new AgentManager({ clients: { codex: client }, registry: storage, logger });
   try {
-    const snapshot = await manager.createAgent(
-      {
-        provider: "codex",
-        cwd: workdir,
-      },
-      undefined,
-      { workspaceId: undefined },
-    );
-
-    const reloaded = await manager.reloadAgentSession(snapshot.id);
-
-    expect(reloaded.id).toBe(snapshot.id);
-    expect(client.firstSession.closeCalled).toBe(true);
-    expect(client.resumeSessionCalls).toBe(1);
+    const created = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    for (let i = 0; i < 3; i++) {
+      const reloaded = await manager.reloadAgentSession(created.id, undefined, {
+        rehydrateFromDisk: true,
+      });
+      expect(reloaded.id).toBe(created.id);
+      expect(reloaded.persistence?.sessionId).toBe(created.persistence?.sessionId);
+    }
+    await manager.closeAgent(created.id);
   } finally {
+    await client.current?.close();
+    await storage.flush();
     rmSync(workdir, { recursive: true, force: true });
   }
 });
+
+test("opening during reload waits for the replacement", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-reload-open-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const client = new HeldReloadCloseClient();
+  const manager = new AgentManager({ clients: { codex: client }, registry: storage, logger });
+  try {
+    const created = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    const reloading = manager.reloadAgentSession(created.id);
+    await client.waitForCloseToStart();
+    let opened = false;
+    const opening = ensureAgentLoaded(created.id, {
+      agentManager: manager,
+      agentStorage: storage,
+      logger,
+    }).then((agent) => {
+      opened = true;
+      return agent;
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(opened).toBe(false);
+    client.finishClosing();
+    const replacement = await reloading;
+    expect((await opening).session).toBe(replacement.session);
+    await manager.closeAgent(created.id);
+  } finally {
+    client.finishClosing();
+    await storage.flush();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("closing during reload leaves the replacement closed", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-reload-close-race-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const client = new HeldReloadCloseClient();
+  const manager = new AgentManager({ clients: { codex: client }, registry: storage, logger });
+  try {
+    const created = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    const reloading = manager.reloadAgentSession(created.id);
+    await client.waitForCloseToStart();
+    const closing = manager.closeAgent(created.id);
+    client.finishClosing();
+    await Promise.all([reloading, closing]);
+    expect(manager.getAgent(created.id)).toBeNull();
+    expect(client.replacementSessionClosed).toBe(true);
+    expect(await storage.get(created.id)).toMatchObject({ lastStatus: "closed" });
+  } finally {
+    client.finishClosing();
+    await storage.flush();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("retrying a timed-out reload waits for the original close to finish", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-reload-late-close-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const client = new HeldReloadCloseClient();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: storage,
+    logger,
+    rescueTimeouts: { reloadSessionCloseMs: 10 },
+  });
+  try {
+    const created = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    await expect(manager.reloadAgentSession(created.id)).rejects.toThrow("Timed out closing");
+    expect(manager.getAgent(created.id)?.lifecycle).toBe("error");
+    const retry = manager.reloadAgentSession(created.id);
+    client.finishClosing();
+    expect((await retry).id).toBe(created.id);
+    expect(client.originalSessionClosed).toBe(true);
+    await manager.closeAgent(created.id);
+  } finally {
+    client.finishClosing();
+    await storage.flush();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("failed reload retains the closed agent for a later resume", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-reload-recovery-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  class FailingResumeClient extends TestAgentClient {
+    fail = true;
+    override async resumeSession(
+      handle: AgentPersistenceHandle,
+      config?: Partial<AgentSessionConfig>,
+    ): Promise<AgentSession> {
+      if (this.fail) throw new Error("resume unavailable");
+      return super.resumeSession(handle, config);
+    }
+  }
+  const client = new FailingResumeClient();
+  const manager = new AgentManager({ clients: { codex: client }, registry: storage, logger });
+  try {
+    const created = await manager.createAgent(
+      { provider: "codex", cwd: workdir, title: "Keep me" },
+      undefined,
+      { workspaceId: undefined },
+    );
+    await expect(manager.reloadAgentSession(created.id)).rejects.toThrow("resume unavailable");
+    expect(manager.getAgent(created.id)).toBeNull();
+    expect(await storage.get(created.id)).toMatchObject({
+      lastStatus: "closed",
+      title: "Keep me",
+      persistence: created.persistence,
+    });
+    client.fail = false;
+    const recovered = await ensureAgentLoaded(created.id, {
+      agentManager: manager,
+      agentStorage: storage,
+      logger,
+    });
+    expect(recovered.id).toBe(created.id);
+    expect((await storage.get(created.id))?.title).toBe("Keep me");
+    await manager.closeAgent(created.id);
+  } finally {
+    await storage.flush();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test.each(["hang", "reject"])(
+  "reload does not resume when the previous session close fails: %s",
+  async (failure) => {
+    const workdir = mkdtempSync(join(tmpdir(), "agent-manager-reload-close-timeout-"));
+    const storagePath = join(workdir, "agents");
+    const storage = new AgentStorage(storagePath, logger);
+
+    class HangingCloseSession extends TestAgentSession {
+      closeCalled = false;
+
+      override async close(): Promise<void> {
+        this.closeCalled = true;
+        if (failure === "reject") throw new Error("close rejected");
+        await new Promise(() => {});
+      }
+    }
+
+    class HangingCloseClient extends TestAgentClient {
+      readonly firstSession = new HangingCloseSession({
+        provider: "codex",
+        cwd: workdir,
+      });
+      resumeSessionCalls = 0;
+
+      override async createSession(): Promise<AgentSession> {
+        return this.firstSession;
+      }
+
+      override async resumeSession(
+        _handle: AgentPersistenceHandle,
+        config?: Partial<AgentSessionConfig>,
+      ): Promise<AgentSession> {
+        this.resumeSessionCalls += 1;
+        return new TestAgentSession({
+          provider: "codex",
+          cwd: config?.cwd ?? workdir,
+        });
+      }
+    }
+
+    const client = new HangingCloseClient();
+    const manager = new AgentManager({
+      clients: {
+        codex: client,
+      },
+      registry: storage,
+      logger,
+      rescueTimeouts: { reloadSessionCloseMs: 10 },
+      idFactory: () => "00000000-0000-4000-8000-000000000302",
+    });
+
+    try {
+      const snapshot = await manager.createAgent(
+        {
+          provider: "codex",
+          cwd: workdir,
+        },
+        undefined,
+        { workspaceId: undefined },
+      );
+
+      for (let i = 0; i < 2; i++) {
+        await expect(manager.reloadAgentSession(snapshot.id)).rejects.toThrow(
+          failure === "hang" ? "Timed out closing previous session" : "close rejected",
+        );
+      }
+      expect(client.firstSession.closeCalled).toBe(true);
+      expect(client.resumeSessionCalls).toBe(0);
+      expect(manager.getAgent(snapshot.id)?.session).toBe(client.firstSession);
+    } finally {
+      rmSync(workdir, { recursive: true, force: true });
+    }
+  },
+);
 
 test("cancelAgentRun preserves running state when the provider interrupt hangs", async () => {
   const fixture = await createControlledInterruptFixture({
@@ -2809,7 +2989,7 @@ test("reloadAgentSession preserves the live session when its replacement cannot 
       }),
     ).rejects.toThrow("Provider 'codex' does not support MCP servers");
 
-    expect(replacement.closed).toBe(true);
+    expect(replacement.closed).toBe(false);
     expect(original.closed).toBe(false);
     expect(manager.getAgent(created.id)?.session).toBe(original);
     expect(manager.getAgent(created.id)?.lifecycle).toBe("idle");

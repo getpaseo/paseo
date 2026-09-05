@@ -1,4 +1,4 @@
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 
 import { createTestLogger } from "../../../../test-utils/test-logger.js";
 import {
@@ -30,6 +30,29 @@ describe("Codex app-server transport", () => {
     await client.dispose();
 
     await expect(request).rejects.toThrow("Codex app-server client is closed");
+  });
+
+  test("dispose rejects until the child has actually exited", async () => {
+    vi.useFakeTimers();
+    const child = createCodexAppServerChildProcess();
+    child.kill = () => true;
+    const client = new CodexAppServerClient(child, createTestLogger());
+    try {
+      for (let i = 0; i < 2; i++) {
+        const closing = expect(client.dispose()).rejects.toThrow(
+          "did not report exit after SIGKILL",
+        );
+        await vi.advanceTimersByTimeAsync(3_000);
+        await closing;
+      }
+      child.exitCode = 0;
+      child.emit("exit", 0, null);
+      await expect(client.dispose()).resolves.toBeUndefined();
+    } finally {
+      vi.useRealTimers();
+      child.stdout.end();
+      child.stderr.end();
+    }
   });
 
   test.each([

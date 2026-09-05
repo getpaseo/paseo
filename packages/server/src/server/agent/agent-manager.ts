@@ -704,6 +704,7 @@ export class AgentManager {
   private readonly backgroundTasks = new Set<Promise<void>>();
   private readonly agentRegistrationTasks = new Set<Promise<void>>();
   private readonly inFlightAgentCloses = new Map<string, Promise<void>>();
+  private readonly reloadedSessionCloses = new WeakMap<AgentSession, Promise<void>>();
   private readonly lifecycleMutationTails = new Map<string, Promise<void>>();
   private readonly agentStreamCoalescer: AgentStreamCoalescer;
   private mcpBaseUrl: string | null;
@@ -1120,6 +1121,8 @@ export class AgentManager {
   }
 
   async waitForAgentClose(agentId: string): Promise<void> {
+    // Loading during reload must wait for the replacement, not resume another writer.
+    await this.lifecycleMutationTails.get(agentId);
     await this.inFlightAgentCloses?.get(agentId)?.catch(() => undefined);
   }
 
@@ -1398,7 +1401,9 @@ export class AgentManager {
     options?: { rehydrateFromDisk?: boolean },
   ): Promise<ManagedAgent> {
     return this.trackAgentRegistrationOperation(
-      this.reloadAgentSessionInternal(agentId, overrides, options),
+      this.runLifecycleMutation(agentId, () =>
+        this.reloadAgentSessionInternal(agentId, overrides, options),
+      ),
     );
   }
 
@@ -1439,27 +1444,31 @@ export class AgentManager {
       paseoToolPolicy,
     );
     const providerLaunchConfig = this.resolveProviderLaunchConfig(launchConfig, launchContext);
-    this.paseoToolPolicies.set(agentId, paseoToolPolicy);
+    if (
+      Object.keys(storedConfig.mcpServers ?? {}).length > 0 &&
+      existing.session.capabilities.supportsMcpServers !== true
+    ) {
+      throw new Error(`Provider '${provider}' does not support MCP servers`);
+    }
 
     let session: AgentSession | undefined;
+    let closedExisting: ManagedAgentClosed | undefined;
     let handedToRegistration = false;
-    let replacedExisting = false;
     try {
+      // A persisted thread can have only one writer, even when its turn is idle.
+      await this.closeReloadedSession(existing.session, agentId);
+      await this.drainSessionEvents(agentId);
+      this.cancelRunningProviderSubagents(agentId);
+      closedExisting = this.prepareAgentForClosure(existing, "agent reloaded");
+      await this.persistSnapshot(closedExisting);
+      this.assertAcceptingAgentRegistrations();
+
+      this.paseoToolPolicies.set(agentId, paseoToolPolicy);
       session = handle
         ? await client.resumeSession(handle, providerLaunchConfig, launchContext)
         : await client.createSession(providerLaunchConfig, launchContext);
       await this.requireExternalMcpSupport(session, storedConfig);
-
       this.assertAcceptingAgentRegistrations();
-
-      this.cancelRunningProviderSubagents(agentId);
-      const closedExisting = this.prepareAgentForClosure(existing, "agent reloaded");
-      replacedExisting = true;
-      try {
-        await this.persistSnapshot(closedExisting);
-      } finally {
-        await this.closeReloadedSession(existing.session, agentId);
-      }
 
       if (rehydrateFromDisk) {
         // Wipe the in-memory timeline so registerSession mints a new epoch and
@@ -1484,41 +1493,49 @@ export class AgentManager {
         lastError: preservedLastError,
         attention: preservedAttention,
       });
+    } catch (error) {
+      if (closedExisting) {
+        this.emitClosedAgent(closedExisting, { persist: false });
+      } else if (this.agents.get(agentId) === existing) {
+        existing.lifecycle = "error";
+        existing.lastError = error instanceof Error ? error.message : String(error);
+        this.emitState(existing);
+      }
+      throw error;
     } finally {
-      if (!replacedExisting) {
+      if (!handedToRegistration) {
         if (hadPreviousPaseoToolPolicy) {
           this.paseoToolPolicies.set(agentId, previousPaseoToolPolicy);
         } else {
           this.paseoToolPolicies.delete(agentId);
         }
-      }
-      if (session && !handedToRegistration) {
-        await this.closeUnregisteredSession(session);
+        if (session) {
+          await this.closeUnregisteredSession(session);
+        }
       }
     }
   }
 
   private async closeReloadedSession(session: AgentSession, agentId: string): Promise<void> {
-    try {
-      const result = await this.waitWithTimeout({
-        operation: session.close(),
-        timeoutMs: this.rescueTimeouts.reloadSessionCloseMs,
-        onLateError: (error) => {
-          this.logger.warn(
-            { err: error, agentId },
-            "Previous session close failed after refresh timeout",
-          );
-        },
-      });
-
-      if (result === "timed_out") {
+    let operation = this.reloadedSessionCloses.get(session);
+    if (!operation) {
+      operation = session.close();
+      this.reloadedSessionCloses.set(session, operation);
+      // Keep pending closes across request timeouts; a retry must await the same release.
+      void operation.catch(() => this.reloadedSessionCloses.delete(session));
+    }
+    const result = await this.waitWithTimeout({
+      operation,
+      timeoutMs: this.rescueTimeouts.reloadSessionCloseMs,
+      onLateError: (error) => {
         this.logger.warn(
-          { agentId, timeoutMs: this.rescueTimeouts.reloadSessionCloseMs },
-          "Timed out closing previous session during refresh",
+          { err: error, agentId },
+          "Previous session close failed after refresh timeout",
         );
-      }
-    } catch (error) {
-      this.logger.warn({ err: error, agentId }, "Failed to close previous session during refresh");
+      },
+    });
+    if (result === "timed_out") {
+      throw new Error("Timed out closing previous session during refresh");
     }
   }
 
@@ -1558,7 +1575,10 @@ export class AgentManager {
       return existing;
     }
 
-    const close = this.closeAgentRuntime(agentId);
+    const close = this.runLifecycleMutation(agentId, async () => {
+      // A preceding reload or archive may already have closed the durable agent.
+      if (this.agents.has(agentId)) await this.closeAgentRuntime(agentId);
+    });
     this.inFlightAgentCloses.set(agentId, close);
     const clearClose = () => {
       if (this.inFlightAgentCloses.get(agentId) === close) {
@@ -1651,7 +1671,7 @@ export class AgentManager {
 
     const { archivedAt } = await this.markRecordArchived(stored);
     agent.updatedAt = new Date(archivedAt);
-    await this.closeAgent(agentId);
+    await this.closeAgentRuntime(agentId);
     this.discardRetainedAgentState(agentId);
 
     await this.cascadeArchiveChildren(agentId);
