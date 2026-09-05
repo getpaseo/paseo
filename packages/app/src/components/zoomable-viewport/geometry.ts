@@ -19,10 +19,53 @@ export interface ViewportScaleLimits {
   maxScale: number;
 }
 
+export interface ViewportFitOptions {
+  padding?: number;
+  maxWidth?: number;
+  maxHeight?: number;
+}
+
 export const FIT_TRANSFORM: ViewportTransform = { scale: 1, x: 0, y: 0 };
 
-export function fitContentSize(content: ViewportSize, viewport: ViewportSize): ViewportSize {
-  const fitScale = Math.min(viewport.width / content.width, viewport.height / content.height);
+export function isActivePinchUpdate(activeTouches: number, reportedPointers: number): boolean {
+  "worklet";
+  return activeTouches >= 2 && reportedPointers >= 2;
+}
+
+export function isPointInsideTransformedContent(input: {
+  point: ViewportPoint;
+  transform: ViewportTransform;
+  fittedContent: ViewportSize;
+  viewport: ViewportSize;
+}): boolean {
+  "worklet";
+  const centerX = input.viewport.width / 2 + input.transform.x;
+  const centerY = input.viewport.height / 2 + input.transform.y;
+  const halfWidth = (input.fittedContent.width * input.transform.scale) / 2;
+  const halfHeight = (input.fittedContent.height * input.transform.scale) / 2;
+  return (
+    input.point.x >= centerX - halfWidth &&
+    input.point.x <= centerX + halfWidth &&
+    input.point.y >= centerY - halfHeight &&
+    input.point.y <= centerY + halfHeight
+  );
+}
+
+export function fitContentSize(
+  content: ViewportSize,
+  viewport: ViewportSize,
+  options: ViewportFitOptions = {},
+): ViewportSize {
+  const padding = options.padding ?? 0;
+  const availableWidth = Math.max(
+    0,
+    Math.min(viewport.width - padding * 2, options.maxWidth ?? Number.POSITIVE_INFINITY),
+  );
+  const availableHeight = Math.max(
+    0,
+    Math.min(viewport.height - padding * 2, options.maxHeight ?? Number.POSITIVE_INFINITY),
+  );
+  const fitScale = Math.min(availableWidth / content.width, availableHeight / content.height);
   return {
     width: content.width * fitScale,
     height: content.height * fitScale,

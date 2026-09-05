@@ -77,6 +77,16 @@ only use local param fallback during cold mount (`/` or empty pathname), or a
 hidden workspace can overwrite the remembered workspace before Settings or
 History returns.
 
+Settings detail routes are separate siblings on purpose. Keep
+`settings/[section]`, the host routes, the projects index, and project detail as
+distinct route names. `router.dismissTo()` ultimately matches stack entries by
+route name. A single catch-all Settings route would make project detail and the
+projects index the same route; Back would update params in place and leave a
+phantom detail entry underneath. The host routes also stay outside the
+store-ready protected group so a cold host deep link can survive daemon startup.
+Do not collapse this topology with a catch-all, `getId`, or
+`dangerouslySingular` workaround.
+
 ## Agent Targets
 
 Notifications and agent URLs enter the router with different authoritative

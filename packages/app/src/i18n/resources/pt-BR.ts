@@ -10,10 +10,12 @@ export const ptBR: TranslationResources = {
       cancel: "Cancelar",
       close: "Fechar",
       copy: "Copiar",
+      copyLine: "Copiar linha",
       dismiss: "Dispensar",
       retry: "Tentar novamente",
       search: "Buscar",
       select: "Selecionar",
+      selectAll: "Selecionar tudo",
     },
     placeholders: {
       search: "Buscar...",
@@ -33,6 +35,7 @@ export const ptBR: TranslationResources = {
     errors: {
       error: "Erro",
       unableToSave: "Não foi possível salvar",
+      unableToCopy: "Não foi possível copiar",
       nameRequired: "O nome é obrigatório",
       daemonUnavailable: "Daemon indisponível",
       daemonClientUnavailable: "Cliente do daemon indisponível",
@@ -205,6 +208,7 @@ export const ptBR: TranslationResources = {
     empty: "Comece a conversar com este agente...",
     scrollToBottom: "Rolar para o fim",
     historyLoadFailed: "Não foi possível carregar o histórico do agente",
+    messageCapped: "Esta mensagem foi truncada ({{bytes}} bytes).",
     permission: {
       plan: "Plano",
       required: "Permissão necessária",
@@ -290,6 +294,7 @@ export const ptBR: TranslationResources = {
       zoomIn: "Aproximar",
       zoomOut: "Afastar",
       resetZoom: "Redefinir visualização",
+      fullscreen: "Tela cheia",
       viewSource: "Ver fonte",
       viewDiagram: "Ver diagrama",
     },
@@ -351,7 +356,6 @@ export const ptBR: TranslationResources = {
         added: "Adicionada",
         started: "Iniciada",
         completed: "Concluída",
-        reopened: "Reaberta",
       },
     },
     compaction: {
@@ -363,7 +367,13 @@ export const ptBR: TranslationResources = {
     },
   },
   importSession: {
+    chooseHostTitle: en.importSession.chooseHostTitle,
     title: "Importar sessão",
+    searchPlaceholder: "Buscar sessões...",
+    scope: {
+      host: "Sessões em {{host}}",
+      workspace: "Este workspace",
+    },
     filters: {
       all: "Tudo",
     },
@@ -372,14 +382,15 @@ export const ptBR: TranslationResources = {
       updateHost: "Atualize o host para importar sessões.",
       noProviders: "Nenhum provedor importável está ativado.",
       loading: "Carregando sessões recentes...",
-      failedAll: "Não foi possível carregar sessões recentes.",
-      failedProviders: "Não foi possível carregar sessões de {{providers}}.",
+      failedProvider: "Não foi possível carregar as sessões de {{provider}}",
       failedImport: "Não foi possível importar a sessão selecionada.",
     },
     actions: {
       refresh: "Atualizar sessões",
       resumeOriginal: "Retomar original",
       continueHere: "Continuar aqui",
+      showAll: "Mostrar tudo",
+      loadMore: "Carregar mais",
     },
     preview: {
       untitledSession: "Sessão sem título",
@@ -387,6 +398,7 @@ export const ptBR: TranslationResources = {
     },
     empty: {
       noRecent: "Nenhuma sessão recente para importar.",
+      noMatches: "Nenhuma sessão corresponde à sua busca.",
       alreadyImported: "Todas as sessões recentes já foram importadas.",
       noProviderSessions: "Nenhuma sessão de {{provider}} encontrada.",
     },
@@ -503,14 +515,23 @@ export const ptBR: TranslationResources = {
         completed: "Configuração concluída",
         failed: "Falha na configuração",
         workspace: "Configuração do workspace",
+        blocked: "Configuração bloqueada",
       },
       status: {
         running: "Em execução",
         completed: "Concluído",
         failed: "Falhou",
         waiting: "Aguardando saída da configuração",
+        blocked: "Bloqueado",
       },
       waiting: "Configurando workspace...",
+      blocked: {
+        title: "A configuração não foi executada",
+        description:
+          "Este PR vem de {{repository}}, um repositório diferente. A configuração e os scripts podem executar código que você não revisou.",
+        run: "Executar configuração",
+        runFailed: "Falha ao executar a configuração do workspace",
+      },
       empty: {
         noCommands: "Nenhum comando de configuração foi executado para este workspace.",
       },
@@ -1115,7 +1136,6 @@ export const ptBR: TranslationResources = {
       addProject: "Adicionar projeto",
       newWorkspace: "Novo workspace",
       hosts: "Hosts",
-      home: "Início",
       settings: "Configurações",
       closeSidebar: "Fechar barra lateral",
     },
@@ -1132,6 +1152,7 @@ export const ptBR: TranslationResources = {
     },
     sections: {
       sessions: "Histórico",
+      search: "Buscar",
       schedules: "Agendamentos",
     },
     worktreeSetup: {
@@ -2180,6 +2201,12 @@ export const ptBR: TranslationResources = {
       chatOutline: {
         title: "Estrutura do chat",
         description: "Mostrar uma estrutura para navegar entre prompts",
+      },
+      sidebar: {
+        title: "Barra lateral",
+        description: "Escolha quais itens aparecem no topo da barra lateral e em que ordem",
+        moveUp: "Mover para cima",
+        moveDown: "Mover para baixo",
       },
       fonts: {
         title: "Fontes",

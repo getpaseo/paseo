@@ -10,10 +10,12 @@ export const ko: TranslationResources = {
       cancel: "취소",
       close: "닫기",
       copy: "복사",
+      copyLine: "줄 복사",
       dismiss: "닫기",
       retry: "다시 시도",
       search: "검색",
       select: "선택",
+      selectAll: "모두 선택",
     },
     placeholders: {
       search: "검색...",
@@ -33,6 +35,7 @@ export const ko: TranslationResources = {
     errors: {
       error: "오류",
       unableToSave: "저장할 수 없습니다",
+      unableToCopy: "복사할 수 없습니다",
       nameRequired: "이름을 입력하세요",
       daemonUnavailable: "데몬을 사용할 수 없습니다",
       daemonClientUnavailable: "데몬 클라이언트를 사용할 수 없습니다",
@@ -205,6 +208,7 @@ export const ko: TranslationResources = {
     empty: "이 에이전트와 대화를 시작하세요...",
     scrollToBottom: "맨 아래로 스크롤",
     historyLoadFailed: "에이전트 기록을 로드할 수 없습니다.",
+    messageCapped: "이 메시지는 길이 제한으로 잘렸습니다({{bytes}}바이트).",
     permission: {
       plan: "계획",
       required: "권한 필요",
@@ -288,6 +292,7 @@ export const ko: TranslationResources = {
       zoomIn: "확대",
       zoomOut: "축소",
       resetZoom: "보기 초기화",
+      fullscreen: "전체 화면",
       viewSource: "소스 보기",
       viewDiagram: "다이어그램 보기",
     },
@@ -349,7 +354,6 @@ export const ko: TranslationResources = {
         added: "추가됨",
         started: "시작됨",
         completed: "완료됨",
-        reopened: "다시 열림",
       },
     },
     compaction: {
@@ -361,7 +365,13 @@ export const ko: TranslationResources = {
     },
   },
   importSession: {
+    chooseHostTitle: en.importSession.chooseHostTitle,
     title: "세션 가져오기",
+    searchPlaceholder: "세션 검색...",
+    scope: {
+      host: "{{host}}의 세션",
+      workspace: "이 워크스페이스",
+    },
     filters: {
       all: "전체",
     },
@@ -370,14 +380,15 @@ export const ko: TranslationResources = {
       updateHost: "세션을 가져오려면 호스트를 업데이트하세요.",
       noProviders: "가져올 수 있는 프로바이더가 활성화되어 있지 않습니다.",
       loading: "최근 세션을 불러오는 중...",
-      failedAll: "최근 세션을 불러올 수 없습니다.",
-      failedProviders: "{{providers}}의 세션을 불러올 수 없습니다.",
+      failedProvider: "{{provider}} 세션을 불러올 수 없습니다",
       failedImport: "선택한 세션을 가져올 수 없습니다.",
     },
     actions: {
       refresh: "세션 새로고침",
       resumeOriginal: "원본 재개",
       continueHere: "여기에서 계속",
+      showAll: "전체 표시",
+      loadMore: "더 보기",
     },
     preview: {
       untitledSession: "제목 없는 세션",
@@ -385,6 +396,7 @@ export const ko: TranslationResources = {
     },
     empty: {
       noRecent: "가져올 최근 세션이 없습니다.",
+      noMatches: "검색과 일치하는 세션이 없습니다.",
       alreadyImported: "최근 세션이 모두 이미 가져와졌습니다.",
       noProviderSessions: "{{provider}} 세션을 찾을 수 없습니다.",
     },
@@ -500,14 +512,23 @@ export const ko: TranslationResources = {
         completed: "설정 완료",
         failed: "설정 실패",
         workspace: "워크스페이스 설정",
+        blocked: "설정 차단됨",
       },
       status: {
         running: "실행 중",
         completed: "완료됨",
         failed: "실패함",
         waiting: "설정 출력을 기다리는 중",
+        blocked: "차단됨",
       },
       waiting: "워크스페이스 설정 중...",
+      blocked: {
+        title: "설정이 실행되지 않았습니다",
+        description:
+          "이 PR은 다른 저장소인 {{repository}}에서 왔습니다. 설정과 스크립트가 검토하지 않은 코드를 실행할 수 있습니다.",
+        run: "설정 실행",
+        runFailed: "워크스페이스 설정 실행 실패",
+      },
       empty: {
         noCommands: "이 워크스페이스에서 실행된 설정 명령이 없습니다.",
       },
@@ -1097,7 +1118,6 @@ export const ko: TranslationResources = {
       addProject: "프로젝트 추가",
       newWorkspace: "새 워크스페이스",
       hosts: "호스트",
-      home: "홈",
       settings: "설정",
       closeSidebar: "사이드바 닫기",
     },
@@ -1114,6 +1134,7 @@ export const ko: TranslationResources = {
     },
     sections: {
       sessions: "기록",
+      search: "검색",
       schedules: "일정",
     },
     worktreeSetup: {
@@ -2157,6 +2178,12 @@ export const ko: TranslationResources = {
       chatOutline: {
         title: "채팅 개요",
         description: "프롬프트 사이를 이동하기 위한 개요 표시",
+      },
+      sidebar: {
+        title: "사이드바",
+        description: "사이드바 상단에 표시할 항목과 순서를 선택하세요",
+        moveUp: "위로 이동",
+        moveDown: "아래로 이동",
       },
       fonts: {
         title: "글꼴",

@@ -3,7 +3,14 @@ import { View, type LayoutChangeEvent } from "react-native";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import Animated, { runOnJS, useAnimatedStyle, useSharedValue } from "react-native-reanimated";
 import { StyleSheet } from "react-native-unistyles";
-import { FIT_TRANSFORM, fitContentSize, zoomContentAtPoint, type ViewportSize } from "./geometry";
+import {
+  FIT_TRANSFORM,
+  fitContentSize,
+  isActivePinchUpdate,
+  isPointInsideTransformedContent,
+  zoomContentAtPoint,
+  type ViewportSize,
+} from "./geometry";
 import { ViewportToolbar } from "./toolbar";
 import type { ZoomableViewportProps } from "./types";
 
@@ -15,8 +22,10 @@ export function ZoomableViewport({
   children,
   actions = [],
   accessibilityLabel,
+  fit,
   maxScale = DEFAULT_MAX_SCALE,
   minScale = DEFAULT_MIN_SCALE,
+  onPressOutsideContent,
   style,
   testID,
 }: ZoomableViewportProps) {
@@ -31,9 +40,10 @@ export function ZoomableViewport({
   const pinchFocalX = useSharedValue(0);
   const pinchFocalY = useSharedValue(0);
   const pinchReady = useSharedValue(false);
+  const pinchTouchCount = useSharedValue(0);
   const fittedContent = useMemo(
-    () => (viewport ? fitContentSize(contentSize, viewport) : null),
-    [contentSize, viewport],
+    () => (viewport ? fitContentSize(contentSize, viewport, fit) : null),
+    [contentSize, fit, viewport],
   );
 
   const reset = useCallback(() => {
@@ -66,7 +76,14 @@ export function ZoomableViewport({
   const pinchGesture = useMemo(
     () =>
       Gesture.Pinch()
-        .onBegin(() => {
+        .onTouchesDown((event) => {
+          pinchTouchCount.value = event.numberOfTouches;
+        })
+        .onTouchesUp((event) => {
+          pinchTouchCount.value = event.numberOfTouches;
+        })
+        .onBegin((event) => {
+          pinchTouchCount.value = event.numberOfPointers;
           startScale.value = scale.value;
           startX.value = translateX.value;
           startY.value = translateY.value;
@@ -76,7 +93,7 @@ export function ZoomableViewport({
           if (!fittedContent || !viewport) return;
           // Android emits one final pinch update after a finger lifts. Its focal point belongs to
           // the remaining pointer, so applying it makes the content jump as the gesture ends.
-          if (event.numberOfPointers < 2) return;
+          if (!isActivePinchUpdate(pinchTouchCount.value, event.numberOfPointers)) return;
           if (!pinchReady.value) {
             pinchFocalX.value = event.focalX;
             pinchFocalY.value = event.focalY;
@@ -95,7 +112,10 @@ export function ZoomableViewport({
           translateX.value = Math.min(maxX, Math.max(-maxX, nextX));
           translateY.value = Math.min(maxY, Math.max(-maxY, nextY));
         })
-        .onFinalize(() => runOnJS(setToolbarScale)(scale.value)),
+        .onFinalize(() => {
+          pinchTouchCount.value = 0;
+          runOnJS(setToolbarScale)(scale.value);
+        }),
     [
       fittedContent,
       maxScale,
@@ -103,6 +123,7 @@ export function ZoomableViewport({
       pinchFocalX,
       pinchFocalY,
       pinchReady,
+      pinchTouchCount,
       scale,
       startScale,
       startX,
@@ -112,9 +133,42 @@ export function ZoomableViewport({
       viewport,
     ],
   );
-  const gesture = useMemo(
+  const doubleTapGesture = useMemo(
+    () =>
+      Gesture.Tap()
+        .numberOfTaps(2)
+        .onEnd((_event, success) => {
+          if (success) runOnJS(reset)();
+        }),
+    [reset],
+  );
+  const backdropTapGesture = useMemo(
+    () =>
+      Gesture.Tap()
+        .numberOfTaps(1)
+        .onEnd((event, success) => {
+          if (!success || !fittedContent || !viewport || !onPressOutsideContent) return;
+          const isInside = isPointInsideTransformedContent({
+            point: { x: event.x, y: event.y },
+            transform: { scale: scale.value, x: translateX.value, y: translateY.value },
+            fittedContent,
+            viewport,
+          });
+          if (!isInside) runOnJS(onPressOutsideContent)();
+        }),
+    [fittedContent, onPressOutsideContent, scale, translateX, translateY, viewport],
+  );
+  const tapGesture = useMemo(
+    () => Gesture.Exclusive(doubleTapGesture, backdropTapGesture),
+    [backdropTapGesture, doubleTapGesture],
+  );
+  const transformGesture = useMemo(
     () => Gesture.Simultaneous(panGesture, pinchGesture),
     [panGesture, pinchGesture],
+  );
+  const gesture = useMemo(
+    () => Gesture.Exclusive(transformGesture, tapGesture),
+    [tapGesture, transformGesture],
   );
 
   const zoomFromCenter = useCallback(

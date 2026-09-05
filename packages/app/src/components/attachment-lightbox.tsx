@@ -8,9 +8,11 @@ import { useTranslation } from "react-i18next";
 import type { AttachmentMetadata } from "@/attachments/types";
 import { useAttachmentPreviewUrl } from "@/attachments/use-attachment-preview-url";
 import { isNative, isWeb } from "@/constants/platform";
+import { SPACING } from "@/styles/theme";
 import { WindowChromeRootRegion } from "@/utils/desktop-window";
 import { ZoomableImage } from "@/components/zoomable-viewport/image";
 import type { ViewportSize } from "@/components/zoomable-viewport/geometry";
+import { useGlobalWebOverlayLayer, useWebOverlayRegistration } from "@/lib/overlay-root";
 
 export type ImageLightboxSource =
   | { type: "attachment"; metadata: AttachmentMetadata }
@@ -22,6 +24,7 @@ interface AttachmentLightboxProps {
 }
 
 const ModalRoot = isNative ? GestureHandlerRootView : View;
+const LIGHTBOX_FIT = { padding: SPACING[4], maxWidth: 960, maxHeight: 640 };
 
 export function AttachmentLightbox({ source, onClose }: AttachmentLightboxProps) {
   const { t } = useTranslation();
@@ -31,23 +34,27 @@ export function AttachmentLightbox({ source, onClose }: AttachmentLightboxProps)
   const url = source?.type === "uri" ? source.uri : attachmentUrl;
   const contentSize = source?.type === "uri" ? source.contentSize : undefined;
   const [errored, setErrored] = useState(false);
+  const modalLayer = useGlobalWebOverlayLayer("modal", isWeb && source !== null);
 
   useEffect(() => {
     setErrored(false);
   }, [metadata?.id, url]);
 
-  useEffect(() => {
-    if (!isWeb || !source) return;
-    function handleKeydown(event: KeyboardEvent) {
-      if (event.key === "Escape") {
-        onClose();
-      }
-    }
-    window.addEventListener("keydown", handleKeydown);
-    return () => {
-      window.removeEventListener("keydown", handleKeydown);
-    };
-  }, [onClose, source]);
+  const handleWebOverlayKeyDown = useCallback(
+    (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return false;
+      event.preventDefault();
+      event.stopPropagation();
+      onClose();
+      return true;
+    },
+    [onClose],
+  );
+  const setWebOverlayScope = useWebOverlayRegistration({
+    active: isWeb && source !== null,
+    layer: modalLayer,
+    onKeyDown: handleWebOverlayKeyDown,
+  });
 
   const contentLayerStyle = useMemo(
     () => [
@@ -85,7 +92,7 @@ export function AttachmentLightbox({ source, onClose }: AttachmentLightboxProps)
     <Modal transparent animationType="fade" statusBarTranslucent visible onRequestClose={onClose}>
       <ModalRoot style={styles.root}>
         <WindowChromeRootRegion corners="both">
-          <View style={styles.root}>
+          <View ref={setWebOverlayScope} style={styles.root}>
             <Pressable
               testID="attachment-lightbox-backdrop"
               accessibilityRole="button"
@@ -102,7 +109,9 @@ export function AttachmentLightbox({ source, onClose }: AttachmentLightboxProps)
                     accessibilityLabel={t("composer.attachments.openImage")}
                     actions={actions}
                     contentSize={contentSize}
+                    fit={LIGHTBOX_FIT}
                     onError={handleImageError}
+                    onPressOutsideContent={onClose}
                     style={styles.imageViewport}
                     testID="attachment-lightbox"
                     uri={url}
@@ -142,14 +151,11 @@ const styles = StyleSheet.create((theme) => ({
     flex: 1,
     alignItems: "center",
     justifyContent: "center",
-    padding: theme.spacing[4],
   },
   imageViewport: {
     flex: 1,
     width: "100%",
     alignSelf: "center",
-    maxWidth: 960,
-    maxHeight: 640,
   },
   errorText: {
     color: theme.colors.foregroundMuted,

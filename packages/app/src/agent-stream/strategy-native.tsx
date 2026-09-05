@@ -23,6 +23,7 @@ import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import type { StreamItem } from "@/types/stream";
 import type { Theme } from "@/styles/theme";
 import { useStableEvent } from "@/hooks/use-stable-event";
+import { useRevisedHistoryRows } from "./history-row-revision";
 import { useBottomAnchorController } from "./bottom-anchor-controller";
 import { useScrollKeyboardDismiss } from "./scroll-keyboard-dismiss/use-scroll-keyboard-dismiss";
 import type { StreamRenderInput, StreamStrategy, StreamViewportHandle } from "./strategy";
@@ -62,24 +63,6 @@ const historyStartSlotStyle: ViewStyle = {
   flexShrink: 0,
 };
 const HISTORY_START_SETTLE_FRAMES = 2;
-
-interface HistoryRowDisplayVariants {
-  regular?: StreamItem;
-  compact?: StreamItem;
-}
-
-const historyRowDisplayVariants = new WeakMap<StreamItem, HistoryRowDisplayVariants>();
-
-function getHistoryRowDisplayVariant(item: StreamItem, compact: boolean): StreamItem {
-  let variants = historyRowDisplayVariants.get(item);
-  if (!variants) {
-    variants = {};
-    historyRowDisplayVariants.set(item, variants);
-  }
-  const key = compact ? "compact" : "regular";
-  variants[key] ??= { ...item };
-  return variants[key];
-}
 
 function keyExtractor(item: { id: string }): string {
   return item.id;
@@ -138,27 +121,7 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
     }
     return [...segments.historyVirtualized, ...segments.historyMounted];
   }, [segments.historyMounted, segments.historyVirtualized]);
-  // Keep unchanged item identities intact so live updates only rerender rows
-  // whose projected content or local display state actually changed. A rare
-  // breakpoint change intentionally refreshes the whole history window.
-  const globallyRevisedHistoryRows = useMemo(() => {
-    const globalDisplayState = historyRowRevision?.globalDisplayState ?? false;
-    return historyItems.map((item) => getHistoryRowDisplayVariant(item, globalDisplayState));
-  }, [historyItems, historyRowRevision?.globalDisplayState]);
-  const displayStateHistoryRows = useMemo(
-    () =>
-      globallyRevisedHistoryRows.map((item) =>
-        historyRowRevision?.displayStateById.has(item.id) ? { ...item } : item,
-      ),
-    [globallyRevisedHistoryRows, historyRowRevision?.displayStateById],
-  );
-  const historyRows = useMemo(
-    () =>
-      displayStateHistoryRows.map((item) =>
-        historyRowRevision?.contentById.has(item.id) ? { ...item } : item,
-      ),
-    [displayStateHistoryRows, historyRowRevision?.contentById],
-  );
+  const historyRows = useRevisedHistoryRows(historyItems, historyRowRevision);
   const getHistoryStartPaginationInput = useStableEvent((): HistoryStartPaginationInput => {
     const metrics = streamViewportMetricsRef.current;
     const hasMeasuredViewport =

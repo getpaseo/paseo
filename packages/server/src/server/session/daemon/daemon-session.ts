@@ -110,7 +110,8 @@ export class DaemonSession {
         type:
           | "hub.management.daemon.connect.request"
           | "hub.management.daemon.get_status.request"
-          | "hub.management.daemon.disconnect.request";
+          | "hub.management.daemon.disconnect.request"
+          | "hub.management.daemon.permissions.update.request";
       }
     >,
   ): Promise<void> {
@@ -120,9 +121,21 @@ export class DaemonSession {
         const status = await this.hubRelationships.connect({
           hubUrl: msg.hubUrl,
           token: msg.token,
+          permissions: msg.permissions,
         });
         this.host.emit({
           type: "hub.management.daemon.connect.response",
+          payload: { requestId: msg.requestId, status },
+        });
+        return;
+      }
+      if (msg.type === "hub.management.daemon.permissions.update.request") {
+        const status = await this.hubRelationships.updatePermissions({
+          grant: msg.grant,
+          revoke: msg.revoke,
+        });
+        this.host.emit({
+          type: "hub.management.daemon.permissions.update.response",
           payload: { requestId: msg.requestId, status },
         });
         return;

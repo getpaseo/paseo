@@ -8,6 +8,7 @@ import type { ProviderRuntimeSettings } from "../../provider-launch-config.js";
 
 const OMP_SESSION_DIR = "~/.omp/agent/sessions";
 const DEFAULT_OMP_MODE_ID = "full";
+const DEFAULT_OMP_READY_TIMEOUT_MS = 20_000;
 const DEFAULT_OMP_RPC_TIMEOUT_MS = 60_000;
 
 export const MIN_SUPPORTED_OMP_VERSION = "16.3.9";
@@ -16,7 +17,7 @@ export { OMP_MODES };
 export const OmpProviderParamsSchema = z
   .object({
     sessionDir: z.string().min(1).optional(),
-    rpcTimeoutMs: z.number().int().positive().default(DEFAULT_OMP_RPC_TIMEOUT_MS),
+    rpcTimeoutMs: z.number().int().positive().optional(),
     smolModel: z.string().min(1).optional(),
     slowModel: z.string().min(1).optional(),
     planModel: z.string().min(1).optional(),
@@ -25,6 +26,7 @@ export const OmpProviderParamsSchema = z
 
 export interface OmpRuntimeProviderParams {
   sessionDir: string;
+  readyTimeoutMs: number;
   rpcTimeoutMs: number;
 }
 
@@ -132,10 +134,12 @@ export function resolveOmpProviderParams(providerParams: unknown): {
   modelRoleParams: OmpModelRoleParams;
 } {
   const params = OmpProviderParamsSchema.parse(providerParams ?? {});
+  const configuredRpcTimeoutMs = params.rpcTimeoutMs;
   return {
     runtimeProviderParams: {
       sessionDir: params.sessionDir ?? OMP_SESSION_DIR,
-      rpcTimeoutMs: params.rpcTimeoutMs,
+      readyTimeoutMs: configuredRpcTimeoutMs ?? DEFAULT_OMP_READY_TIMEOUT_MS,
+      rpcTimeoutMs: configuredRpcTimeoutMs ?? DEFAULT_OMP_RPC_TIMEOUT_MS,
     },
     modelRoleParams: {
       ...(params.smolModel ? { smolModel: params.smolModel } : {}),

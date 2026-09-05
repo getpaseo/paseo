@@ -27,6 +27,21 @@ if (command === "rect") {
       `${upperIdentifier} extends below the composer top: ${upperBottom} > ${lowerY}`,
     );
   }
+} else if (command === "xml-above-y") {
+  const [snapshotPath, contentDescription, lowerYArgument] = args;
+  const snapshot = await fs.readFile(snapshotPath, "utf8");
+  const escapedDescription = contentDescription.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const match = snapshot.match(
+    new RegExp(
+      `<node[^>]*content-desc="${escapedDescription}"[^>]*bounds="\\[(\\d+),(\\d+)\\]\\[(\\d+),(\\d+)\\]"`,
+    ),
+  );
+  if (!match) throw new Error(`Missing node: ${contentDescription}`);
+  const upperBottom = Number(match[4]);
+  const lowerY = Number(lowerYArgument);
+  if (upperBottom > lowerY) {
+    throw new Error(`${contentDescription} extends below the keyboard: ${upperBottom} > ${lowerY}`);
+  }
 } else if (command === "same-header") {
   const [baselinePath, keyboardPath, headerBottomArgument] = args;
   const headerBottom = Number(headerBottomArgument);

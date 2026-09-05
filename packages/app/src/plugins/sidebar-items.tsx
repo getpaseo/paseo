@@ -1,18 +1,13 @@
 import { router, usePathname } from "expo-router";
-import { useCallback, useMemo } from "react";
+import { useCallback } from "react";
 import { SidebarHeaderRow } from "@/components/sidebar/sidebar-header-row";
 import { resolvePluginIcon } from "./icons";
-import { useInstalledPlugins } from "./registry";
 import { buildPluginSurfaceRoute, hostIdFromPathname } from "./routes";
 import {
   getPreferredPluginContributionHost,
   rememberPluginContributionHost,
 } from "./contribution-host";
-import {
-  groupPluginSidebarContributions,
-  type PluginSidebarGroup,
-  type PluginSidebarTarget,
-} from "./sidebar-groups";
+import { type PluginSidebarGroup, type PluginSidebarTarget } from "./sidebar-groups";
 
 function selectTarget(
   group: PluginSidebarGroup,
@@ -25,35 +20,15 @@ function selectTarget(
   return remembered ?? group.targets[0];
 }
 
-export function PluginSidebarItems({ onBeforeNavigate }: { onBeforeNavigate?: () => void }) {
-  const plugins = useInstalledPlugins();
-  const pathname = usePathname();
-  const groups = useMemo(() => groupPluginSidebarContributions(plugins), [plugins]);
-  const currentHostId = hostIdFromPathname(pathname);
-
-  return groups.map((group) => (
-    <PluginSidebarItemRow
-      key={group.key}
-      group={group}
-      currentHostId={currentHostId}
-      pathname={pathname}
-      onBeforeNavigate={onBeforeNavigate}
-    />
-  ));
-}
-
-function PluginSidebarItemRow({
+export function PluginSidebarItemRow({
   group,
-  currentHostId,
-  pathname,
   onBeforeNavigate,
 }: {
   group: PluginSidebarGroup;
-  currentHostId: string | null;
-  pathname: string;
   onBeforeNavigate?: () => void;
 }) {
-  const target = selectTarget(group, currentHostId);
+  const pathname = usePathname();
+  const target = selectTarget(group, hostIdFromPathname(pathname));
   const route = buildPluginSurfaceRoute(target.plugin.serverId, group.pluginId, {
     kind: "sidebar",
     id: group.contributionId,

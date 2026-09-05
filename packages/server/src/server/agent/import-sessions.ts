@@ -27,6 +27,7 @@ type ImportAgentRequestMessage = z.infer<typeof ImportAgentRequestMessageSchema>
 
 const METADATA_GENERATION_PROMPT_PREFIX =
   "Generate metadata for a coding agent based on the user prompt.";
+const IMPORT_SESSION_SEARCH_SCAN_LIMIT = 500;
 export type ImportSessionAgentManager = AgentLoaderManager &
   Pick<
     AgentManager,
@@ -75,6 +76,7 @@ export interface ListImportableProviderSessionsInput {
 export interface ListImportableProviderSessionsResult {
   entries: RecentProviderSessionDescriptorPayload[];
   filteredAlreadyImportedCount: number;
+  providerErrors: Array<{ provider: string; message: string }>;
 }
 
 export interface ImportProviderSessionInput {
@@ -147,24 +149,29 @@ export async function listImportableProviderSessions(
     providerFilter,
   );
   const importedHandles = importedSessions.handles;
+  const query = normalizeImportSessionQuery(request.query);
   const targetCwd = request.targetCwd;
   const targetRepository = targetCwd
     ? await resolveContinueRepositoryIdentity(workspaceGitService, targetCwd)
     : null;
   // Continuing in another worktree needs enough source rows to filter by a
-  // local Git identity after provider discovery. A normal resume listing keeps
-  // its existing tight limit.
-  const listLimit = targetCwd
-    ? Math.min(Math.max(limit * 5, 50) + importedSessions.count, 200)
-    : limit + importedSessions.count;
+  // local Git identity after provider discovery. Search scans the bounded
+  // provider window before applying that repository filter.
+  const listingLimit = query
+    ? IMPORT_SESSION_SEARCH_SCAN_LIMIT
+    : targetCwd
+      ? Math.min(Math.max(limit * 5, 50) + importedSessions.count, 200)
+      : limit + importedSessions.count;
 
-  const sessions = await agentManager.listImportableSessions({
-    limit: listLimit,
+  const listing = await agentManager.listImportableSessions({
+    limit: listingLimit,
+    ...(query ? { query } : {}),
+    ...(query ? { scanLimit: IMPORT_SESSION_SEARCH_SCAN_LIMIT } : {}),
     providerFilter,
     cwd: request.cwd,
   });
   const { candidates, filteredAlreadyImportedCount } = await filterImportableProviderSessions({
-    sessions,
+    sessions: listing.sessions,
     requestCwd: request.cwd,
     targetCwd,
     targetRepository,
@@ -182,7 +189,16 @@ export async function listImportableProviderSessions(
       }),
     );
 
-  return { entries, filteredAlreadyImportedCount };
+  return {
+    entries,
+    filteredAlreadyImportedCount,
+    providerErrors: listing.providerErrors,
+  };
+}
+
+function normalizeImportSessionQuery(query: string | undefined): string | null {
+  const normalized = query?.trim().toLowerCase();
+  return normalized ? normalized : null;
 }
 
 async function filterImportableProviderSessions(input: {

@@ -1,6 +1,6 @@
 import type { ComponentType, ReactNode } from "react";
 import type { StyleProp, ViewStyle } from "react-native";
-import type { ViewportSize } from "./geometry";
+import type { ViewportFitOptions, ViewportSize } from "./geometry";
 
 export interface ZoomableViewportAction {
   icon: ComponentType<{ size?: number; color?: string }>;
@@ -14,8 +14,10 @@ export interface ZoomableViewportProps {
   children: ReactNode;
   actions?: ZoomableViewportAction[];
   accessibilityLabel?: string;
+  fit?: ViewportFitOptions;
   maxScale?: number;
   minScale?: number;
+  onPressOutsideContent?: () => void;
   style?: StyleProp<ViewStyle>;
   testID?: string;
   wheelActivation?: "always" | "modifier";

@@ -1,54 +1,53 @@
 ---
-title: Open Source Codex App Alternative With Linux, Mobile, and Multi-Provider Support
-description: Paseo is an open source alternative to Codex App for developers who want Linux, native mobile apps, a self-hosted daemon, and Codex alongside Claude Code, OpenCode, Copilot, and more.
+title: Open Source Codex App Alternative With Native Mobile and Multi-Provider Support
+description: Paseo is an open source Codex alternative that runs on your machines without a required Paseo account, telemetry, or cloud service.
 nav: Codex App
 order: 54
 ---
 
 # Paseo vs Codex App
 
-Codex App is OpenAI's desktop app for working with Codex threads in parallel. It runs on macOS and Windows, with local, worktree, and cloud modes.
+OpenAI provides Codex through the ChatGPT desktop app on macOS, Windows, and Linux, with local, worktree, cloud, and remote workflows.
 
 Paseo is an app for orchestrating coding agents, with native clients on desktop, mobile, web, and the CLI. Open source (Apache-2.0).
 
 ![Paseo desktop and mobile app](/hero-mockup.png)
 
-## When to pick what
+## The main difference
 
-Pick Codex App if you want OpenAI's first-party app for Codex, with Codex-specific features like cloud threads, appshots, image generation, and computer use on macOS.
+OpenAI provides Codex through the ChatGPT desktop and mobile apps. Using those product surfaces requires an OpenAI account, and cloud work runs on OpenAI-managed infrastructure.
 
-Pick Paseo if you want:
+Paseo runs your installed Codex CLI on machines you control. It does not require a Paseo account, collect telemetry, or depend on a Paseo cloud service. Connect directly from desktop, mobile, web, or the CLI, or use the optional end-to-end encrypted relay.
 
-- Linux alongside macOS and Windows
-- A native iOS and Android app
-- Codex, Claude Code, OpenCode, Copilot, Pi, and 30+ more agents in one interface
-- A self-hosted daemon you can run on a laptop, VM, or dev server
-- A CLI and MCP server for scripting and multi-agent workflows
-- Open source you can audit and fork
+Paseo does not upload or store your code. The relay cannot read your code, messages, or agent output. You can self-host the daemon, web client, and relay, and use the same control plane with Codex, Claude Code, OpenCode, Pi, ACP agents, and custom providers.
 
 ## Architecture
 
-Paseo runs a daemon on your machine. Desktop, web, mobile, and CLI clients connect to it over a websocket. The daemon launches Codex and other providers as local processes, using your installed CLIs and credentials.
+Paseo runs an independent daemon on your laptop, workstation, VM, home lab, or cloud machine. The daemon launches your installed Codex CLI with its existing credentials and configuration. Clients connect directly or through the optional end-to-end encrypted relay.
 
-Codex App is a desktop app for Codex. It can run local and worktree threads on your computer, and cloud threads on OpenAI-managed infrastructure.
+OpenAI provides local, worktree, remote, and cloud Codex workflows through its ChatGPT product surfaces. Local and remote work use a connected host, while cloud work runs on OpenAI-managed infrastructure.
 
 ## Providers
 
 Codex App runs Codex.
 
-Paseo runs Codex too, plus Claude Code, OpenCode, and Pi natively, plus 30+ more agents through the in-app catalog including GitHub Copilot, Cursor, Gemini CLI, and Amp. Paseo speaks the [Agent Client Protocol](https://agentclientprotocol.com), so any ACP agent works. Custom providers run any CLI agent. See [Supported providers](/docs/supported-providers).
+Paseo runs Codex too, plus Claude Code, OpenCode, and Pi natively, plus 30+ more agents through the in-app catalog including GitHub Copilot, Cursor, Gemini CLI, and Amp. Paseo speaks the [Agent Client Protocol](https://agentclientprotocol.com), so any ACP agent works. Custom providers run any CLI agent. See [all supported providers](/agents).
+
+## Application plugins
+
+[Paseo plugins](/docs/plugins) extend Paseo itself. They can add server behavior and native client components such as workspace panels, sidebar items, composer attachments, themes, and Command Center items across desktop, browser, iOS, and Android.
+
+Codex supports skills, MCP servers, and other agent extensions. OpenAI does not document an extension API for adding server-side behavior and native interface components to the Codex application itself.
 
 ## Desktop platforms
 
-Codex App is available on macOS and Windows. OpenAI lists Linux as not available yet.
-
-Paseo ships on macOS, Linux, and Windows.
+OpenAI's desktop app and Paseo are available on macOS, Windows, and Linux.
 
 ## Mobile
 
 Paseo ships native iOS and Android apps with the same agent workflow as the desktop app.
 
-Codex can be controlled remotely through OpenAI's mobile surfaces, including ChatGPT mobile remote connections. Codex App itself is a desktop app.
+ChatGPT Remote can start and continue Codex chats, approve actions, and review outputs from iOS and Android through a connected desktop host.
 
 ## Worktrees and local setup
 
@@ -89,22 +88,23 @@ Paseo supports dictation and realtime voice mode. Speech-to-text and text-to-spe
 
 ## Comparison
 
-|                              | Paseo                                                           | Codex App                    |
-| ---------------------------- | --------------------------------------------------------------- | ---------------------------- |
-| License                      | Open source (Apache-2.0)                                        | Not published as open source |
-| Desktop platforms            | macOS, Linux, Windows                                           | macOS, Windows               |
-| Native mobile                | iOS, Android                                                    | No                           |
-| Providers                    | Codex, Claude Code, OpenCode, Pi + 30+ via ACP catalog + custom | Codex                        |
-| Local execution              | Yes                                                             | Yes                          |
-| Cloud execution              | Cloud waitlist                                                  | Yes                          |
-| Git worktrees                | Yes                                                             | Yes                          |
-| Per-worktree dev server URLs | Yes                                                             | No                           |
-| In-app terminal              | Yes                                                             | Yes                          |
-| In-app browser               | Yes                                                             | Yes                          |
-| GitHub workflow in app       | Commit, push, PR, checks, reviews, merge                        | Commit, push, PR             |
-| CLI                          | Run, `--host`, ls, send, schedule, loop                         | Codex CLI                    |
-| MCP server for orchestration | Yes                                                             | MCP support inside Codex     |
-| Voice                        | Dictation and realtime voice                                    | Dictation                    |
-| Self-hosted daemon           | Yes                                                             | No                           |
+|                                 | Paseo                                                           | Codex App                                            |
+| ------------------------------- | --------------------------------------------------------------- | ---------------------------------------------------- |
+| License                         | Open source (Apache-2.0)                                        | Codex CLI is open source; application is proprietary |
+| Desktop platforms               | macOS, Linux, Windows                                           | macOS, Linux, Windows                                |
+| Mobile coding workflow          | Native Paseo workspace on iOS and Android                       | ChatGPT Remote on iOS and Android                    |
+| Providers                       | Codex, Claude Code, OpenCode, Pi + 30+ via ACP catalog + custom | Codex                                                |
+| Product account required        | No                                                              | OpenAI account                                       |
+| Required Paseo cloud connection | No                                                              | Not applicable                                       |
+| Git worktrees                   | Yes                                                             | Yes                                                  |
+| Per-worktree dev server URLs    | Yes                                                             | No                                                   |
+| In-app terminal                 | Yes                                                             | Yes                                                  |
+| In-app browser                  | Yes                                                             | Yes                                                  |
+| GitHub workflow in app          | Commit, push, PR, checks, reviews, merge                        | Commit, push, PR                                     |
+| CLI                             | Run, `--host`, ls, send, schedule, loop                         | Codex CLI                                            |
+| Remote transport                | Direct connection or end-to-end encrypted relay                 | OpenAI Remote                                        |
+| Application plugins             | Server code and native client components                        | No                                                   |
+| Voice                           | Dictation and realtime voice                                    | Dictation                                            |
+| Self-hosted control plane       | Daemon, web client, and relay                                   | No                                                   |
 
-See also: [Paseo vs Claude Desktop](/alternatives/claude-desktop), [Paseo vs OpenCode Desktop](/alternatives/opencode-desktop), [Supported providers](/docs/supported-providers).
+See also: [Paseo vs Claude Desktop](/alternatives/claude-desktop), [Paseo vs OpenCode Desktop](/alternatives/opencode-desktop), [all supported providers](/agents).

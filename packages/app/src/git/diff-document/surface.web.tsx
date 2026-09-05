@@ -2,14 +2,34 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { useTranslation } from "react-i18next";
 import type { ViewStyle } from "react-native";
 import { DomOverlayScrollbar } from "@/components/ui/overlay-scrollbar/dom-overlay-scrollbar";
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu";
+import { useToast } from "@/contexts/toast-context";
 import { InlineReviewAddButton, InlineReviewThread } from "@/review";
+import { copyToClipboard } from "@/utils/copy-to-clipboard";
 import type { ReviewableDiffTarget } from "@/utils/diff-layout";
 import { DocumentFileHeader } from "./document-file-header";
-import { hitTestDiffDocument, selectedSourceText } from "./hit-testing";
+import {
+  diffHeaderViewportKey,
+  diffInteractionWindowTop,
+  diffMaterializationWindow,
+  resolveVisibleFileSections,
+} from "./header-layout";
+import {
+  hitTestDiffDocument,
+  selectAllSource,
+  selectCellSource,
+  selectedSourceText,
+} from "./hit-testing";
 import { retainHorizontalOffsetMapForPaths } from "./horizontal-offsets";
 import { HorizontalScroll } from "./horizontal-scroll.web";
 import { buildDiffDocumentModel, FILE_HEADER_HEIGHT, resolveRelayoutScrollTop } from "./model";
-import { paintWebViewport } from "./paint.web";
+import { paintWebHeaders, paintWebViewport } from "./paint.web";
 import { hasPointerDragStarted } from "./pointer-gesture";
 import { createMeasuredAdvances } from "./text-measurement";
 import { retainDiffViewport } from "./viewport";
@@ -27,9 +47,11 @@ const RESIZE_SETTLE_DELAY_MS = 120;
 
 export function DiffSurface(props: DiffSurfaceProps) {
   const { t } = useTranslation();
+  const toast = useToast();
   const workspaceCache = useDiffDocumentWorkspaceCache();
   const rootRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const headerCanvasRef = useRef<HTMLCanvasElement>(null);
   const canvasScratchRef = useRef<HTMLCanvasElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const modelRef = useRef<ReturnType<typeof buildDiffDocumentModel> | null>(null);
@@ -46,6 +68,17 @@ export function DiffSurface(props: DiffSurfaceProps) {
     dismissSelectionOnClick: boolean;
   } | null>(null);
   const frameRef = useRef<number | null>(null);
+  const headerFrameRef = useRef<number | null>(null);
+  const headerPaintRef = useRef<{
+    key: string;
+    model: ReturnType<typeof buildDiffDocumentModel>;
+    width: number;
+    height: number;
+    ratio: number;
+    palette: DiffSurfaceProps["palette"];
+    typography: DiffSurfaceProps["headerTypography"];
+  } | null>(null);
+  const activeHeaderPathRef = useRef<string | null>(null);
   const resizeSettleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const resizeReleaseFrameRef = useRef<number | null>(null);
   const resizePointerActiveRef = useRef(false);
@@ -53,6 +86,12 @@ export function DiffSurface(props: DiffSurfaceProps) {
   const forcePaintRef = useRef(true);
   const canvasWindowRef = useRef({ top: 0, height: 0 });
   const [viewport, setViewport] = useState({ width: 0, height: 0 });
+  const [fileWindowTop, setFileWindowTop] = useState(0);
+  const [interactionFiles, setInteractionFiles] = useState<
+    ReturnType<typeof buildDiffDocumentModel>["files"]
+  >([]);
+  const [hasSelection, setHasSelection] = useState(false);
+  const [contextHit, setContextHit] = useState<Extract<DiffHit, { kind: "cell" }> | null>(null);
   const [hoveredAffordance, setHoveredAffordance] = useState<{
     hit: Extract<DiffHit, { kind: "cell" }>;
     left: number;
@@ -81,12 +120,18 @@ export function DiffSurface(props: DiffSurfaceProps) {
           await Promise.all([
             document.fonts.load(`400 ${desiredTypography.size}px ${desiredTypography.family}`),
             document.fonts.load(`600 ${desiredTypography.size}px ${desiredTypography.family}`),
+            document.fonts.load(
+              `400 ${props.headerTypography.size}px ${props.headerTypography.family}`,
+            ),
+            document.fonts.load(
+              `400 ${props.headerTypography.statSize}px ${props.headerTypography.family}`,
+            ),
           ]);
           await document.fonts.ready;
         },
         createMeasurer: () => createWebTextMeasurer(desiredTypography),
       }),
-    [desiredTypography, workspaceCache],
+    [desiredTypography, props.headerTypography, workspaceCache],
   );
   const [readyTypographyResource, setReadyTypographyResource] = useState<ReturnType<
     typeof workspaceCache.typography
@@ -105,7 +150,7 @@ export function DiffSurface(props: DiffSurfaceProps) {
         lineHeight: desiredTypography.lineHeight,
       });
     }
-    return workspaceCache.buildModel({
+    const next = workspaceCache.buildModel({
       files: props.files,
       collapsedFilePaths: props.collapsedFilePaths,
       layout: props.displayPreferences.layout,
@@ -119,8 +164,11 @@ export function DiffSurface(props: DiffSurfaceProps) {
         binary: t("workspace.git.diff.binaryFile"),
         tooLarge: t("workspace.git.diff.tooLarge"),
       },
+      materializationWindow: diffMaterializationWindow(fileWindowTop, viewport.height),
     });
+    return next;
   }, [
+    fileWindowTop,
     measurement,
     props.collapsedFilePaths,
     props.displayPreferences.layout,
@@ -132,6 +180,7 @@ export function DiffSurface(props: DiffSurfaceProps) {
     desiredTypography.lineHeight,
     loadedTypography,
     viewport.width,
+    viewport.height,
     workspaceCache,
   ]);
   modelRef.current = model;
@@ -171,6 +220,7 @@ export function DiffSurface(props: DiffSurfaceProps) {
     const resized = canvas.width !== pixelWidth || canvas.height !== pixelHeight;
     if (canvas.width !== pixelWidth) canvas.width = pixelWidth;
     if (canvas.height !== pixelHeight) canvas.height = pixelHeight;
+    canvas.style.width = `${currentModel.viewportWidth}px`;
     canvas.style.top = `${canvasTop}px`;
     canvas.style.height = `${canvasHeight}px`;
     const context = canvas.getContext("2d");
@@ -212,6 +262,64 @@ export function DiffSurface(props: DiffSurfaceProps) {
     },
     [paint],
   );
+  const paintHeaders = useCallback(() => {
+    headerFrameRef.current = null;
+    const canvas = headerCanvasRef.current;
+    const currentModel = modelRef.current;
+    if (!canvas || !currentModel || viewport.width <= 0 || viewport.height <= 0) return;
+    const ratio = window.devicePixelRatio || 1;
+    const key = diffHeaderViewportKey({
+      files: currentModel.files,
+      scrollTop: scrollTopRef.current,
+      viewportHeight: viewport.height,
+      activePath: activeHeaderPathRef.current,
+    });
+    const previous = headerPaintRef.current;
+    if (
+      previous?.key === key &&
+      previous.model === currentModel &&
+      previous.width === viewport.width &&
+      previous.height === viewport.height &&
+      previous.ratio === ratio &&
+      previous.palette === props.palette &&
+      previous.typography === props.headerTypography
+    ) {
+      return;
+    }
+    headerPaintRef.current = {
+      key,
+      model: currentModel,
+      width: viewport.width,
+      height: viewport.height,
+      ratio,
+      palette: props.palette,
+      typography: props.headerTypography,
+    };
+    const pixelWidth = Math.ceil(viewport.width * ratio);
+    const pixelHeight = Math.ceil(viewport.height * ratio);
+    if (canvas.width !== pixelWidth) canvas.width = pixelWidth;
+    if (canvas.height !== pixelHeight) canvas.height = pixelHeight;
+    canvas.style.width = `${viewport.width}px`;
+    canvas.style.height = `${viewport.height}px`;
+    const context = canvas.getContext("2d");
+    if (!context) return;
+    paintWebHeaders({
+      context,
+      model: currentModel,
+      palette: props.palette,
+      typography: props.headerTypography,
+      scrollTop: scrollTopRef.current,
+      viewportWidth: viewport.width,
+      viewportHeight: viewport.height,
+      devicePixelRatio: ratio,
+      activePath: activeHeaderPathRef.current,
+    });
+  }, [props.headerTypography, props.palette, viewport.height, viewport.width]);
+  const scheduleHeaderPaint = useCallback(() => {
+    if (headerFrameRef.current === null) {
+      headerFrameRef.current = requestAnimationFrame(paintHeaders);
+    }
+  }, [paintHeaders]);
 
   useLayoutEffect(() => {
     const root = rootRef.current;
@@ -299,13 +407,37 @@ export function DiffSurface(props: DiffSurfaceProps) {
       props.files.map((file) => file.path),
     );
   }, [props.files]);
-  useLayoutEffect(schedulePaint, [model, schedulePaint]);
+  const updateInteractionFiles = useCallback(
+    (scrollTop: number) => {
+      const windowTop = diffInteractionWindowTop(scrollTop, viewport.height);
+      setFileWindowTop((current) => (current === windowTop ? current : windowTop));
+      const next = resolveVisibleFileSections({
+        files: model.files,
+        scrollTop: windowTop,
+        viewportHeight: viewport.height,
+        overscan: viewport.height * 2,
+      }).files;
+      setInteractionFiles((current) =>
+        current.length === next.length && current[0] === next[0] && current.at(-1) === next.at(-1)
+          ? current
+          : next,
+      );
+    },
+    [model.files, viewport.height],
+  );
+  useLayoutEffect(() => {
+    schedulePaint();
+    scheduleHeaderPaint();
+    updateInteractionFiles(scrollTopRef.current);
+  }, [model, scheduleHeaderPaint, schedulePaint, updateInteractionFiles]);
   useEffect(
     () => () => {
       if (frameRef.current !== null) cancelAnimationFrame(frameRef.current);
+      if (headerFrameRef.current !== null) cancelAnimationFrame(headerFrameRef.current);
       // Fast Refresh preserves refs while rerunning effects. Release ownership of the canceled
       // request so the refreshed renderer can schedule its first paint.
       frameRef.current = null;
+      headerFrameRef.current = null;
     },
     [],
   );
@@ -330,6 +462,9 @@ export function DiffSurface(props: DiffSurfaceProps) {
     (scrollElement: HTMLDivElement) => {
       const scrollTop = scrollElement.scrollTop;
       scrollTopRef.current = scrollTop;
+      if (activeHeaderPathRef.current !== null) activeHeaderPathRef.current = null;
+      scheduleHeaderPaint();
+      updateInteractionFiles(scrollTop);
       if (hasHoveredAffordanceRef.current) {
         hasHoveredAffordanceRef.current = false;
         setHoveredAffordance(null);
@@ -354,7 +489,7 @@ export function DiffSurface(props: DiffSurfaceProps) {
       const nextTop = Math.round(requestedTop * ratio) / ratio;
       if (nextTop !== currentWindow.top) schedulePaint(false);
     },
-    [schedulePaint, viewport.height],
+    [scheduleHeaderPaint, schedulePaint, updateInteractionFiles, viewport.height],
   );
   useEffect(() => {
     const scroll = scrollRef.current;
@@ -370,13 +505,13 @@ export function DiffSurface(props: DiffSurfaceProps) {
     },
     [schedulePaint],
   );
-  const pointHit = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+  const pointHitAt = useCallback((clientX: number, clientY: number) => {
     const currentModel = modelRef.current;
     const root = rootRef.current;
     if (!currentModel || !root) return null;
     const bounds = root.getBoundingClientRect();
-    const x = event.clientX - bounds.left;
-    const documentY = event.clientY - bounds.top + scrollTopRef.current;
+    const x = clientX - bounds.left;
+    const documentY = clientY - bounds.top + scrollTopRef.current;
     const file = currentModel.files.find(
       (entry) => entry.top <= documentY && documentY < entry.bottom,
     );
@@ -387,6 +522,27 @@ export function DiffSurface(props: DiffSurfaceProps) {
       horizontalOffset: file ? (horizontalOffsetsRef.current.get(file.path) ?? 0) : 0,
     });
   }, []);
+  const pointHit = useCallback(
+    (event: React.PointerEvent<HTMLDivElement>) => pointHitAt(event.clientX, event.clientY),
+    [pointHitAt],
+  );
+  const setSelection = useCallback(
+    (selection: DiffSelection | null) => {
+      selectionRef.current = selection;
+      const currentModel = modelRef.current;
+      setHasSelection(
+        Boolean(
+          selection && currentModel && selectedSourceText(currentModel, selection).length > 0,
+        ),
+      );
+      schedulePaint();
+    },
+    [schedulePaint],
+  );
+  useEffect(() => {
+    dragRef.current = null;
+    setSelection(null);
+  }, [props.collapsedFilePaths, props.displayPreferences.layout, props.files, setSelection]);
   const pointerDown = useCallback(
     (event: React.PointerEvent<HTMLDivElement>) => {
       if (event.button !== 0) return;
@@ -400,8 +556,7 @@ export function DiffSurface(props: DiffSurfaceProps) {
         return;
       const dismissSelectionOnClick = selectionRef.current !== null;
       if (dismissSelectionOnClick) {
-        selectionRef.current = null;
-        schedulePaint();
+        setSelection(null);
       }
       const hit = pointHit(event);
       if (hit?.kind !== "cell") return;
@@ -412,15 +567,26 @@ export function DiffSurface(props: DiffSurfaceProps) {
         moved: false,
         dismissSelectionOnClick,
       };
-      selectionRef.current = { anchor: hit.position, focus: hit.position };
+      setSelection({ anchor: hit.position, focus: hit.position });
       event.currentTarget.focus();
       event.currentTarget.setPointerCapture(event.pointerId);
-      schedulePaint();
     },
-    [pointHit, schedulePaint],
+    [pointHit, setSelection],
+  );
+  const updateActiveHeader = useCallback(
+    (target: EventTarget | null) => {
+      const header =
+        target instanceof Element ? target.closest<HTMLElement>("[data-diff-header]") : null;
+      const activeHeaderPath = header?.dataset.diffHeaderPath ?? null;
+      if (activeHeaderPathRef.current === activeHeaderPath) return;
+      activeHeaderPathRef.current = activeHeaderPath;
+      scheduleHeaderPaint();
+    },
+    [scheduleHeaderPaint],
   );
   const pointerMove = useCallback(
     (event: React.PointerEvent<HTMLDivElement>) => {
+      updateActiveHeader(event.target);
       const drag = dragRef.current;
       if (drag) {
         drag.moved = hasPointerDragStarted({
@@ -459,10 +625,9 @@ export function DiffSurface(props: DiffSurfaceProps) {
         setHoveredAffordance(null);
       }
       if (!drag || hit?.kind !== "cell") return;
-      selectionRef.current = { anchor: drag.anchor, focus: hit.position };
-      schedulePaint();
+      setSelection({ anchor: drag.anchor, focus: hit.position });
     },
-    [pointHit, schedulePaint, viewport.width],
+    [pointHit, setSelection, updateActiveHeader, viewport.width],
   );
   const pointerUp = useCallback(
     (event: React.PointerEvent<HTMLDivElement>) => {
@@ -482,8 +647,7 @@ export function DiffSurface(props: DiffSurfaceProps) {
           })
         : false;
       if (drag && !moved && drag.dismissSelectionOnClick) {
-        selectionRef.current = null;
-        schedulePaint();
+        setSelection(null);
         return;
       }
       if (
@@ -494,16 +658,16 @@ export function DiffSurface(props: DiffSurfaceProps) {
         hit.target &&
         reviewActions
       ) {
-        selectionRef.current = null;
+        setSelection(null);
         reviewActions.onStartComment(hit.target);
-        schedulePaint();
       }
     },
-    [pointHit, reviewActions, schedulePaint],
+    [pointHit, reviewActions, setSelection],
   );
   const cancelPointer = useCallback(() => {
     dragRef.current = null;
   }, []);
+  const pointerLeave = useCallback(() => updateActiveHeader(null), [updateActiveHeader]);
   const copy = useCallback(
     (event: React.ClipboardEvent<HTMLDivElement>) => {
       if (!selectionRef.current) return;
@@ -511,6 +675,61 @@ export function DiffSurface(props: DiffSurfaceProps) {
       event.preventDefault();
     },
     [model],
+  );
+  const prepareContextMenu = useCallback(
+    (event: React.MouseEvent<HTMLDivElement>) => {
+      const hit = pointHitAt(event.clientX, event.clientY);
+      setContextHit(hit?.kind === "cell" ? hit : null);
+    },
+    [pointHitAt],
+  );
+  const writeSourceText = useCallback(
+    (text: string) => {
+      void copyToClipboard(text)
+        .then(() => toast.copied(t("common.states.copied")))
+        .catch(() => toast.error(t("common.errors.unableToCopy")));
+    },
+    [t, toast],
+  );
+  const copySelectedSource = useCallback(() => {
+    const currentModel = modelRef.current;
+    const selection = selectionRef.current;
+    if (currentModel && selection) writeSourceText(selectedSourceText(currentModel, selection));
+  }, [writeSourceText]);
+  const copyContextLine = useCallback(() => {
+    const currentModel = modelRef.current;
+    if (!currentModel || !contextHit) return;
+    const selection = selectCellSource(currentModel, contextHit.position);
+    writeSourceText(selectedSourceText(currentModel, selection));
+  }, [contextHit, writeSourceText]);
+  const selectAll = useCallback(() => {
+    const currentModel = modelRef.current;
+    if (currentModel) {
+      setSelection(
+        selectAllSource(currentModel, contextHit?.position ?? selectionRef.current?.focus),
+      );
+    }
+  }, [contextHit?.position, setSelection]);
+  const keyDown = useCallback(
+    (event: React.KeyboardEvent<HTMLDivElement>) => {
+      const target = event.target;
+      if (
+        target instanceof Element &&
+        target.closest('input, textarea, [contenteditable="true"]')
+      ) {
+        return;
+      }
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "a") {
+        event.preventDefault();
+        selectAll();
+        return;
+      }
+      if (event.key === "Escape" && selectionRef.current) {
+        event.preventDefault();
+        setSelection(null);
+      }
+    },
+    [selectAll, setSelection],
   );
   const rootStyle = useMemo<React.CSSProperties>(
     () => ({ ...ROOT_STYLE, background: props.palette.surface }),
@@ -535,14 +754,13 @@ export function DiffSurface(props: DiffSurfaceProps) {
   const canvasStyle = useMemo<React.CSSProperties>(
     () => ({
       ...CANVAS_STYLE,
-      width: model.viewportWidth,
       fontFamily: (loadedTypography ?? desiredTypography).family,
       fontSize: (loadedTypography ?? desiredTypography).size,
     }),
-    [desiredTypography, loadedTypography, model.viewportWidth],
+    [desiredTypography, loadedTypography],
   );
 
-  return (
+  const surface = (
     <div data-testid="git-diff-canvas-root" ref={rootRef} style={rootStyle}>
       <div
         ref={scrollRef}
@@ -554,12 +772,15 @@ export function DiffSurface(props: DiffSurfaceProps) {
         onPointerUp={pointerUp}
         onPointerCancel={cancelPointer}
         onLostPointerCapture={cancelPointer}
+        onPointerLeave={pointerLeave}
+        onContextMenu={prepareContextMenu}
         onCopy={copy}
+        onKeyDown={keyDown}
         style={SCROLL_STYLE}
       >
         <div style={contentStyle} onMouseDown={preventDocumentMouseSelection}>
           <canvas ref={canvasRef} data-testid="git-diff-canvas" style={canvasStyle} />
-          {model.files.map((file) => (
+          {interactionFiles.map((file) => (
             <WebFileHeaderSection key={file.path} file={file}>
               <DocumentFileHeader
                 file={file}
@@ -567,10 +788,11 @@ export function DiffSurface(props: DiffSurfaceProps) {
                 mode={props.mode}
                 onToggleFile={props.onToggleFile}
                 onSelectPath={props.onSelectPath}
+                canvasRendered
               />
             </WebFileHeaderSection>
           ))}
-          {model.files
+          {interactionFiles
             .filter((file) => !file.isCollapsed && !model.wrapLines)
             .map((file) => (
               <HorizontalScroll
@@ -609,11 +831,44 @@ export function DiffSurface(props: DiffSurfaceProps) {
             : null}
         </div>
       </div>
+      <canvas
+        ref={headerCanvasRef}
+        data-testid="git-diff-header-canvas"
+        style={HEADER_CANVAS_STYLE}
+      />
       <DomOverlayScrollbar scrollContainerRef={scrollRef} onUserScrollUp={noop} />
       {hoveredAffordance?.hit.target && reviewActions ? (
         <InlineReviewAddButton onPress={addHoveredComment} style={affordanceStyle} />
       ) : null}
     </div>
+  );
+
+  return (
+    <ContextMenu>
+      <ContextMenuTrigger contextOnly style={CONTEXT_TRIGGER_STYLE}>
+        {surface}
+      </ContextMenuTrigger>
+      <ContextMenuContent align="start" minWidth={180} testID="diff-source-context-menu">
+        <ContextMenuItem
+          disabled={!hasSelection}
+          onSelect={copySelectedSource}
+          testID="diff-source-copy-selection"
+        >
+          {t("common.actions.copy")}
+        </ContextMenuItem>
+        <ContextMenuItem
+          disabled={!contextHit}
+          onSelect={copyContextLine}
+          testID="diff-source-copy-line"
+        >
+          {t("common.actions.copyLine")}
+        </ContextMenuItem>
+        <ContextMenuSeparator />
+        <ContextMenuItem onSelect={selectAll} testID="diff-source-select-all">
+          {t("common.actions.selectAll")}
+        </ContextMenuItem>
+      </ContextMenuContent>
+    </ContextMenu>
   );
 }
 
@@ -683,9 +938,10 @@ function WebFileHeaderSection({
     [file.bottom, file.top],
   );
   return (
-    <div style={style}>
+    <div style={style} onContextMenu={stopContextMenuPropagation}>
       <div
         data-diff-header="true"
+        data-diff-header-path={file.path}
         style={STICKY_HEADER_STYLE}
         onMouseDown={preventDocumentMouseSelection}
       >
@@ -726,7 +982,7 @@ function WebReviewThread({
     [height, left, top, width],
   );
   return (
-    <div style={style} data-diff-review="true">
+    <div style={style} data-diff-review="true" onContextMenu={stopContextMenuPropagation}>
       <InlineReviewThread
         reviewTarget={target}
         reviewActions={actions}
@@ -738,12 +994,17 @@ function WebReviewThread({
   );
 }
 
+function stopContextMenuPropagation(event: React.MouseEvent): void {
+  event.stopPropagation();
+}
+
 const ROOT_STYLE: React.CSSProperties = {
   position: "relative",
   flex: 1,
   minHeight: 0,
   overflow: "hidden",
 };
+const CONTEXT_TRIGGER_STYLE: ViewStyle = { flex: 1, minHeight: 0 };
 const SCROLL_STYLE: React.CSSProperties = {
   position: "absolute",
   inset: 0,
@@ -766,6 +1027,7 @@ const FILE_SECTION_STYLE: React.CSSProperties = {
   right: 0,
   zIndex: 3,
   pointerEvents: "none",
+  userSelect: "none",
 };
 const STICKY_HEADER_STYLE: React.CSSProperties = {
   position: "sticky",
@@ -789,6 +1051,12 @@ const CANVAS_STYLE: React.CSSProperties = {
   zIndex: 1,
   pointerEvents: "none",
 };
+const HEADER_CANVAS_STYLE: React.CSSProperties = {
+  position: "absolute",
+  inset: 0,
+  zIndex: 3,
+  pointerEvents: "none",
+};
 const AFFORDANCE_STYLE: ViewStyle = {
   position: "absolute",
   zIndex: 5,
@@ -808,6 +1076,7 @@ function emptyDiffDocumentModel(input: {
     layout: input.layout,
     wrapLines: input.wrapLines,
     viewportWidth: input.viewportWidth,
+    reviewGeometryKey: "",
   };
 }
 

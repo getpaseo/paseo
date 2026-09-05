@@ -71,6 +71,10 @@ function makeImportableSession(args: {
   };
 }
 
+function makeImportableSessionsResult(sessions: ManagedImportableProviderSession[]) {
+  return { sessions, providerErrors: [] };
+}
+
 function makeManagedAgent(args: {
   id?: string;
   provider?: string;
@@ -215,7 +219,7 @@ test("listImportableProviderSessions filters, sorts, limits, and projects import
       firstPrompt: "live prompt",
     }),
   ];
-  const listImportableSessions = vi.fn(async () => sessions);
+  const listImportableSessions = vi.fn(async () => makeImportableSessionsResult(sessions));
   const agentManager = {
     listAgents: () =>
       [
@@ -262,6 +266,7 @@ test("listImportableProviderSessions filters, sorts, limits, and projects import
   });
   expect(result).toEqual({
     filteredAlreadyImportedCount: 2,
+    providerErrors: [],
     entries: [
       {
         providerId: "codex",
@@ -302,7 +307,7 @@ test("listImportableProviderSessions looks past already-imported rows to fill th
     lastActivityAt: "2026-04-30T12:01:00.000Z",
   });
   const listImportableSessions = vi.fn(async (options?: { limit?: number }) =>
-    [imported, available].slice(0, options?.limit),
+    makeImportableSessionsResult([imported, available].slice(0, options?.limit)),
   );
 
   const result = await listImportableProviderSessions({
@@ -335,29 +340,31 @@ test("listImportableProviderSessions scopes continuation candidates to the targe
   const targetCwd = "/repo/main";
   const sameRepositoryWorktree = "/repo/feature";
   const otherRepository = "/other-repo";
-  const listImportableSessions = vi.fn(async () => [
-    makeImportableSession({
-      sessionId: "same-cwd",
-      cwd: targetCwd,
-      title: "Resume here",
-      lastActivityAt: "2026-04-30T12:02:00.000Z",
-      canContinueHere: true,
-    }),
-    makeImportableSession({
-      sessionId: "same-repository",
-      cwd: sameRepositoryWorktree,
-      title: "Continue here",
-      lastActivityAt: "2026-04-30T12:01:00.000Z",
-      canContinueHere: true,
-    }),
-    makeImportableSession({
-      sessionId: "other-repository",
-      cwd: otherRepository,
-      title: "Do not offer",
-      lastActivityAt: "2026-04-30T12:03:00.000Z",
-      canContinueHere: true,
-    }),
-  ]);
+  const listImportableSessions = vi.fn(async () =>
+    makeImportableSessionsResult([
+      makeImportableSession({
+        sessionId: "same-cwd",
+        cwd: targetCwd,
+        title: "Resume here",
+        lastActivityAt: "2026-04-30T12:02:00.000Z",
+        canContinueHere: true,
+      }),
+      makeImportableSession({
+        sessionId: "same-repository",
+        cwd: sameRepositoryWorktree,
+        title: "Continue here",
+        lastActivityAt: "2026-04-30T12:01:00.000Z",
+        canContinueHere: true,
+      }),
+      makeImportableSession({
+        sessionId: "other-repository",
+        cwd: otherRepository,
+        title: "Do not offer",
+        lastActivityAt: "2026-04-30T12:03:00.000Z",
+        canContinueHere: true,
+      }),
+    ]),
+  );
   const workspaceGitService = {
     getSnapshot: async (cwd: string) => {
       if (cwd === targetCwd) return makeGitSnapshot(targetCwd);
@@ -400,6 +407,63 @@ test("listImportableProviderSessions scopes continuation candidates to the targe
   ]);
 });
 
+test("listImportableProviderSessions requests a bounded deep scan for search results", async () => {
+  const matchingSessions = [
+    makeImportableSession({
+      provider: "claude",
+      sessionId: "title-match",
+      cwd: "/tmp/archive",
+      title: "Invoice cleanup",
+      lastActivityAt: "2026-04-01T04:00:00.000Z",
+    }),
+    makeImportableSession({
+      provider: "codex",
+      sessionId: "first-prompt-match",
+      cwd: "/tmp/archive",
+      title: "Unrelated",
+      firstPrompt: "Investigate invoice totals",
+      lastActivityAt: "2026-04-01T03:00:00.000Z",
+    }),
+    makeImportableSession({
+      provider: "pi",
+      sessionId: "last-prompt-match",
+      cwd: "/tmp/archive",
+      title: "Unrelated",
+      lastPrompt: "Finish invoice export",
+      lastActivityAt: "2026-04-01T02:00:00.000Z",
+    }),
+    makeImportableSession({
+      provider: "omp",
+      sessionId: "cwd-match",
+      cwd: "/tmp/invoice-service",
+      title: "Unrelated",
+      lastActivityAt: "2026-04-01T01:00:00.000Z",
+    }),
+  ];
+  const listImportableSessions = vi.fn(async () => makeImportableSessionsResult(matchingSessions));
+
+  const result = await listImportableProviderSessions({
+    request: makeRequest({ query: "INVOICE", limit: 10 }),
+    agentManager: { listAgents: () => [], listImportableSessions },
+    agentStorage: { list: async () => [] },
+    providerSnapshotManager: { getProviderLabel: (provider) => provider },
+  });
+
+  expect(listImportableSessions).toHaveBeenCalledWith({
+    limit: 500,
+    query: "invoice",
+    scanLimit: 500,
+    providerFilter: undefined,
+    cwd: undefined,
+  });
+  expect(result.entries.map((entry) => entry.providerHandleId)).toEqual([
+    "title-match",
+    "first-prompt-match",
+    "last-prompt-match",
+    "cwd-match",
+  ]);
+});
+
 test("listImportableProviderSessions includes a provider session after its Paseo agent is archived", async () => {
   const cwd = "/tmp/project";
   const archivedSession = makeImportableSession({
@@ -415,7 +479,7 @@ test("listImportableProviderSessions includes a provider session after its Paseo
     request: makeRequest({ cwd, providers: ["claude"] }),
     agentManager: {
       listAgents: () => [],
-      listImportableSessions: async () => [archivedSession],
+      listImportableSessions: async () => makeImportableSessionsResult([archivedSession]),
     },
     agentStorage: {
       list: async () => [
@@ -459,7 +523,7 @@ test("listImportableProviderSessions includes an archived provider session still
           sessionId: "archived-live-session",
         }),
       ],
-      listImportableSessions: async () => [archivedSession],
+      listImportableSessions: async () => makeImportableSessionsResult([archivedSession]),
     },
     agentStorage: {
       list: async () => [
@@ -507,7 +571,7 @@ test("listImportableProviderSessions filters out metadata generation sessions", 
     request: makeRequest({ cwd, providers: ["codex"] }),
     agentManager: {
       listAgents: () => [],
-      listImportableSessions: async () => sessions,
+      listImportableSessions: async () => makeImportableSessionsResult(sessions),
     } satisfies Pick<AgentManager, "listAgents" | "listImportableSessions">,
     agentStorage: {
       list: async () => [],
@@ -532,17 +596,18 @@ test("listImportableProviderSessions keeps realpath-equivalent cwd matches", asy
     request: makeRequest({ cwd: linkedCwd, providers: ["pi"] }),
     agentManager: {
       listAgents: () => [],
-      listImportableSessions: async () => [
-        makeImportableSession({
-          provider: "pi",
-          sessionId: "pi-session",
-          nativeHandle: "pi-handle",
-          cwd: persistedCwd,
-          title: "Pi session",
-          lastActivityAt: "2026-04-30T12:00:00.000Z",
-          firstPrompt: "remember this",
-        }),
-      ],
+      listImportableSessions: async () =>
+        makeImportableSessionsResult([
+          makeImportableSession({
+            provider: "pi",
+            sessionId: "pi-session",
+            nativeHandle: "pi-handle",
+            cwd: persistedCwd,
+            title: "Pi session",
+            lastActivityAt: "2026-04-30T12:00:00.000Z",
+            firstPrompt: "remember this",
+          }),
+        ]),
     } satisfies Pick<AgentManager, "listAgents" | "listImportableSessions">,
     agentStorage: {
       list: async () => [],
@@ -559,7 +624,7 @@ test("listImportableProviderSessions rejects invalid since values", async () => 
       request: makeRequest({ since: "not-a-date" }),
       agentManager: {
         listAgents: () => [],
-        listImportableSessions: async () => [],
+        listImportableSessions: async () => makeImportableSessionsResult([]),
       } satisfies Pick<AgentManager, "listAgents" | "listImportableSessions">,
       agentStorage: {
         list: async () => [],

@@ -35,31 +35,54 @@ export const EditingTextInput = forwardRef<EditingTextInputHandle, EditingTextIn
     const inputRef = useRef<NativeInput | null>(null);
     const initialTextRef = useRef(initialValue);
     const textRef = useRef(initialTextRef.current);
-    const restoreFocusAfterResetRef = useRef(false);
-    const [nativeInputRevision, setNativeInputRevision] = useState(0);
+    // Clearing swaps the native input for a fresh instance (see replaceText).
+    // Until React commits that swap, `inputRef` still points at the doomed
+    // instance: focusing it asks Android for the keyboard and then tears the
+    // focused view down, which cancels the show. Fabric also runs view
+    // commands before mount items, so a focus command sent alongside the swap
+    // reaches a view that is not attached yet and the IME ignores it. Focus is
+    // therefore carried by the replacement's `autoFocus`, which native applies
+    // once the view is attached.
+    const isAwaitingReplacementRef = useRef(false);
+    const [replacement, setReplacement] = useState({ revision: 0, autoFocus: false });
 
     const assignInputRef = useCallback((input: NativeInput | null) => {
       inputRef.current = input;
-      if (!input || !restoreFocusAfterResetRef.current) return;
-      restoreFocusAfterResetRef.current = false;
-      input.focus();
+      if (input) isAwaitingReplacementRef.current = false;
+    }, []);
+
+    const setReplacementFocus = useCallback((autoFocus: boolean) => {
+      setReplacement((current) => ({ ...current, autoFocus }));
     }, []);
 
     useImperativeHandle(ref, () => ({
-      focus: () => inputRef.current?.focus(),
-      blur: () => inputRef.current?.blur(),
+      focus: () => {
+        if (isAwaitingReplacementRef.current) {
+          setReplacementFocus(true);
+          return;
+        }
+        inputRef.current?.focus();
+      },
+      blur: () => {
+        if (isAwaitingReplacementRef.current) {
+          setReplacementFocus(false);
+          return;
+        }
+        inputRef.current?.blur();
+      },
       isFocused: () => inputRef.current?.isFocused?.() ?? false,
       getText: () => textRef.current,
       replaceText: (nextText, selection) => {
         textRef.current = nextText;
         if (nextText === "") {
-          restoreFocusAfterResetRef.current = inputRef.current?.isFocused?.() ?? false;
+          const autoFocus = inputRef.current?.isFocused?.() ?? false;
           if (inputRef.current?.replaceText) {
             inputRef.current.replaceText(nextText, selection);
           } else {
             inputRef.current?.clear?.();
           }
-          setNativeInputRevision((revision) => revision + 1);
+          isAwaitingReplacementRef.current = true;
+          setReplacement((current) => ({ revision: current.revision + 1, autoFocus }));
           return;
         }
         if (inputRef.current?.replaceText) {
@@ -93,11 +116,14 @@ export const EditingTextInput = forwardRef<EditingTextInputHandle, EditingTextIn
       [onPasteError, onPasteImages],
     );
 
+    const autoFocus = replacement.revision === 0 ? props.autoFocus : replacement.autoFocus;
+
     if (onPasteImages || onPasteError) {
       return (
         <PasteInput
           {...props}
-          key={nativeInputRevision}
+          autoFocus={autoFocus}
+          key={replacement.revision}
           ref={assignInputRef as React.Ref<PasteTextInputInstance>}
           defaultValue={textRef.current}
           onChangeText={handleChangeText}
@@ -109,7 +135,8 @@ export const EditingTextInput = forwardRef<EditingTextInputHandle, EditingTextIn
       return (
         <BottomSheetTextInput
           {...props}
-          key={nativeInputRevision}
+          autoFocus={autoFocus}
+          key={replacement.revision}
           ref={assignInputRef as unknown as React.Ref<never>}
           defaultValue={textRef.current}
           onChangeText={handleChangeText}
@@ -119,7 +146,8 @@ export const EditingTextInput = forwardRef<EditingTextInputHandle, EditingTextIn
     return (
       <TextInput
         {...props}
-        key={nativeInputRevision}
+        autoFocus={autoFocus}
+        key={replacement.revision}
         ref={assignInputRef as React.Ref<TextInput>}
         defaultValue={textRef.current}
         onChangeText={handleChangeText}

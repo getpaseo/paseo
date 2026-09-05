@@ -5,7 +5,6 @@ import {
   nativeCanvasSlabsForViewport,
   nativeCanvasWindowBucket,
   nativeCanvasWindowTop,
-  nativeStickyHeaderIndices,
 } from "./native-slabs";
 import type { DiffDocumentModel } from "./types";
 
@@ -34,15 +33,11 @@ function modelWithBodies(
     layout: "unified",
     wrapLines: false,
     viewportWidth: 400,
+    reviewGeometryKey: "",
   };
 }
 
 describe("native canvas slabs", () => {
-  it("identifies each direct file header child for native sticky scrolling", () => {
-    expect(nativeStickyHeaderIndices(0)).toEqual([]);
-    expect(nativeStickyHeaderIndices(3)).toEqual([1, 3, 5]);
-  });
-
   it("cuts large file bodies into fixed document-positioned slabs", () => {
     const slabs = buildNativeCanvasSlabs(
       modelWithBodies([
@@ -58,9 +53,11 @@ describe("native canvas slabs", () => {
 
     expect(slabs.map(({ path, top, height }) => ({ path, top, height }))).toEqual([
       { path: "small.ts", top: 30, height: 200 },
-      { path: "large.ts", top: 260, height: 1200 },
-      { path: "large.ts", top: 1460, height: 1200 },
-      { path: "large.ts", top: 2660, height: 800 },
+      { path: "large.ts", top: 260, height: 768 },
+      { path: "large.ts", top: 1028, height: 768 },
+      { path: "large.ts", top: 1796, height: 768 },
+      { path: "large.ts", top: 2564, height: 768 },
+      { path: "large.ts", top: 3332, height: 128 },
     ]);
   });
 
@@ -73,7 +70,7 @@ describe("native canvas slabs", () => {
     );
 
     expect(nativeCanvasSlabsForViewport(slabs, 1700, 600).map((slab) => slab.top)).toEqual([
-      30, 1230, 2430,
+      798, 1566, 2334,
     ]);
     expect(nativeCanvasWindowBucket(899, 600)).toBe(2);
     expect(nativeCanvasWindowTop(2, 600)).toBe(600);

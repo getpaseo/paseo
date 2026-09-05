@@ -43,7 +43,6 @@ const cases: ProviderSubagentCase[] = [
     sentinel: "OPENCODE_CHILD_SENTINEL",
     expectedName: "Verify OpenCode descriptor",
     expectedSubtitle: /explore · gpt-5\.4(?: · [^\n·]+)? · \d+(?:\.\d+)?k? tokens/i,
-    expectsUserMessage: false,
     providerConfig: { model: "openai/gpt-5.4" },
     prompt:
       'Use the task tool exactly once with description "Verify OpenCode descriptor" and the explore subagent. Ask it to reply with exactly OPENCODE_CHILD_SENTINEL and do nothing else. Wait for it, then reply ROOT_DONE.',
