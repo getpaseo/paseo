@@ -227,12 +227,6 @@ function getWorkspaceLaunches(
   return workspaceDescriptor?.launches ?? EMPTY_WORKSPACE_LAUNCHES;
 }
 
-function getWorkspaceLaunchDescriptor(
-  workspaceDescriptor: WorkspaceDescriptor | null | undefined,
-): WorkspaceDescriptor["launches"] {
-  return workspaceDescriptor?.launches;
-}
-
 interface WorkspaceFileLocationFields {
   path: string | null;
   lineStart?: number;
@@ -1591,14 +1585,9 @@ function WorkspaceScreenContent({
   const supportsProvidersSnapshot = useSessionStore(
     (state) => state.sessions[normalizedServerId]?.serverInfo?.features?.providersSnapshot === true,
   );
-  const supportsWorkspaceLaunchManagement = useSessionStore(
-    (state) =>
-      state.sessions[normalizedServerId]?.serverInfo?.features?.workspaceLaunchManagement === true,
+  const workspaceLaunchManagementAvailable = useSessionStore((state) =>
+    canManageWorkspaceLaunches(state.sessions[normalizedServerId]?.serverInfo),
   );
-  const workspaceLaunchManagementAvailable = canManageWorkspaceLaunches({
-    daemonAdvertisesSupport: supportsWorkspaceLaunchManagement,
-    launchDescriptor: getWorkspaceLaunchDescriptor(workspaceDescriptor),
-  });
   const workspaceDirectory = workspaceDescriptor?.workspaceDirectory || null;
   const isMissingWorkspaceDirectory = Boolean(workspaceDescriptor) && !workspaceDirectory;
   const [isImportSheetVisible, setIsImportSheetVisible] = useState(false);
