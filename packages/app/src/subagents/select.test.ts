@@ -128,6 +128,54 @@ describe("selectSubagentsForParent", () => {
     expect(useProviderSubagentStore.getState().descriptors.size).toBe(1);
   });
 
+  it("places nested provider children only beneath their direct provider parent", () => {
+    const store = useProviderSubagentStore.getState();
+    const base = {
+      parentAgentId: "parent-a",
+      provider: "claude" as const,
+      title: "general-purpose",
+      subtitle: null,
+      status: "running" as const,
+      createdAt: "2026-09-04T10:00:00.000Z",
+      updatedAt: "2026-09-04T10:00:00.000Z",
+      toolCallId: null,
+    };
+    store.applyUpdate(SERVER_ID, {
+      kind: "upsert",
+      subagent: { ...base, id: "direct", description: "Direct", parentSubagentId: null },
+    });
+    store.applyUpdate(SERVER_ID, {
+      kind: "upsert",
+      subagent: {
+        ...base,
+        id: "nested",
+        description: "Nested",
+        parentSubagentId: "direct",
+      },
+    });
+
+    expect(
+      selectProviderSubagentsForParent(
+        useProviderSubagentStore.getState(),
+        { serverId: SERVER_ID, parentAgentId: "parent-a" },
+        true,
+        true,
+      ).map((row) => row.id),
+    ).toEqual(["direct"]);
+    expect(
+      selectProviderSubagentsForParent(
+        useProviderSubagentStore.getState(),
+        {
+          serverId: SERVER_ID,
+          parentAgentId: "parent-a",
+          providerParentSubagentId: "direct",
+        },
+        true,
+        true,
+      ).map((row) => row.id),
+    ).toEqual(["nested"]);
+  });
+
   it("returns only non-archived children for the requested parent", () => {
     setAgents([
       makeAgent({ id: "parent-a" }),

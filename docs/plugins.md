@@ -165,6 +165,8 @@ See `public-docs/plugins/v0.8/reference.md`.
 | `@getpaseo/plugin`              | contribution contracts, shared definitions, RPC input/output types, and client data hooks |
 | `@getpaseo/plugin/react-native` | Paseo React Native components and UI hooks                                                |
 | `@getpaseo/plugin/server`       | handler-only types such as `PluginHandlerContext`                                         |
+| `@getpaseo/plugin/provider`     | provider registration, connection, session, input, event, and timeline contracts          |
+| `@getpaseo/plugin/acp`          | command-backed ACP adapter and focused transformer hooks                                  |
 
 The compiler rejects a client import of `server/`, a server import of `client/`, and every `node:`
 import reachable from client code. Shared modules cannot import runtime-owned modules. A relative
@@ -252,6 +254,50 @@ They use typed plugin RPC only for plugin-specific backend work. Surface and pan
 optional client-owned agent and workspace navigation; its absence is the compatibility gate for
 older clients. Other navigation remains limited to registered global surfaces and workspace panels.
 Plugins do not receive Expo Router or workspace-layout store access.
+
+## Contribute a provider
+
+Register a provider from `index.server.ts`. The provider connection is callback-based and owns all
+of its sessions; plugin RPC is not part of the provider data path.
+
+```ts
+import type { PluginServerContext } from "@getpaseo/plugin";
+import type { ProviderRegistration } from "@getpaseo/plugin/provider";
+import { createProvider } from "./server/provider";
+
+export default function contribute(server: PluginServerContext) {
+  server.registerProvider(createProvider() satisfies ProviderRegistration);
+  return () => {};
+}
+```
+
+`send()` resolves after acceptance. Publish operation completion, prompt disposition, turn state,
+configuration, permissions, persistence, and complete timeline snapshots through `onEvent()`.
+Route messages, structured commands, steering, and command side effects through `session.prompt`.
+Provider settings are toggle/select data that Paseo renders in the composer. Keep private options in
+the opaque `providerOptions` config object.
+
+Agent refresh closes the current provider session and opens it again with current configuration and
+persistence. Providers re-read credentials, environment, global configuration, and MCP servers on
+`session.open`; there is no provider reload input.
+
+For an ACP command, register `runAcpProvider({ id, label, command })` from
+`@getpaseo/plugin/acp`. Its transformer hooks cover narrow vendor differences; do not translate the
+whole provider event stream. The direct and ACP examples live in `plugin-examples/provider-direct`
+and `plugin-examples/provider-acp-transformer`.
+
+Provider-emitted plugin timeline items use the same renderer registration as transformed and
+daemon-appended plugin items. The direct example includes both sides. The renderer-only
+`plugin-examples/inline-thinking` example shows that timeline presentation remains independent of a
+provider implementation. The public [provider plugin guide](../public-docs/plugins/v0.8/providers.md)
+owns author workflow, lifecycle, testing, and distribution guidance.
+
+`ProviderRegistration.icon` is a file path relative to the plugin directory, such as `icon.svg`.
+It must resolve inside that directory to a regular SVG file no larger than 64 KiB. The SVG must be
+self-contained: scripts, styles, `foreignObject`, event-handler attributes, JavaScript URLs, and
+external `href` or `xlink:href` references are rejected. Fragment references such as `#mark` are
+allowed. Paseo reads and sanitizes the file when the plugin starts; the string is never an inline
+SVG or URL.
 
 ## Contribute composer pills
 

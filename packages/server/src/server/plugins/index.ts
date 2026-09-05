@@ -1,6 +1,7 @@
 import path from "node:path";
 import { stat } from "node:fs/promises";
 import type pino from "pino";
+import type { ProviderRegistration } from "@getpaseo/plugin/provider";
 import {
   PluginIdSchema,
   type PluginLogEntry,
@@ -10,17 +11,24 @@ import {
   type PluginSourceUpdateItem,
 } from "@getpaseo/protocol/messages";
 import { parsePluginSourceReference } from "@getpaseo/protocol/plugin-source-reference";
+import { BUILTIN_PROVIDER_IDS } from "@getpaseo/protocol/provider-manifest";
 import type { DaemonConfigStore } from "../daemon-config-store.js";
 import { type ManagedPluginCandidate, ManagedPluginSources } from "./managed-source.js";
 import { readPluginManifest } from "./manifest.js";
 import { runPluginBuild } from "./preparation.js";
 import { PluginRuntime } from "./runtime.js";
+import type { PluginProviderMetadata } from "./plugin-process-protocol.js";
+import { readPluginProviderIcon } from "./provider-icon.js";
+
+const BUILTIN_PROVIDER_ID_SET: ReadonlySet<string> = new Set(BUILTIN_PROVIDER_IDS);
 
 interface PluginRuntimePort {
   catalog(): Array<{ id: string; clientBundle: string }>;
   invoke(pluginId: string, method: string, input: unknown): Promise<unknown>;
   getLogs(pluginId: string): PluginLogEntry[];
   clearLogs(pluginId: string): void;
+  getProviderRegistrations?(pluginId: string): readonly PluginProviderMetadata[];
+  connectProvider: PluginRuntime["connectProvider"];
   validatePlugin?(path: string): Promise<void>;
   startPlugin(pluginId: string, path: string, canPublish: () => boolean): Promise<void>;
   stopPluginById(pluginId: string): Promise<boolean>;
@@ -49,6 +57,9 @@ export class PluginService {
   private readonly logger: pino.Logger;
   private readonly errors = new Map<string, string>();
   private readonly listeners = new Set<(pluginId: string) => void>();
+  private readonly providers = new Map<string, ProviderRegistration>();
+  private readonly providerIdsByPlugin = new Map<string, readonly string[]>();
+  private readonly providerListeners = new Set<() => void>();
   private lifecycle = Promise.resolve();
   private globalStartsBlocked = true;
   private started = false;
@@ -63,6 +74,7 @@ export class PluginService {
     this.runtime = dependencies.runtime ?? new PluginRuntime(logger, daemonVersion);
     this.managedSources = dependencies.managedSources ?? null;
     this.runtime.subscribe((pluginId, error) => {
+      this.removeProviderRegistrations(pluginId);
       if (error) this.errors.set(pluginId, error);
       this.notify(pluginId);
     });
@@ -75,6 +87,15 @@ export class PluginService {
 
   bindPaseoSessionHost(sessionHost: Parameters<PluginRuntime["bindPaseoSessionHost"]>[0]): void {
     this.runtime.bindPaseoSessionHost(sessionHost);
+  }
+
+  getProviderRegistrations(): readonly ProviderRegistration[] {
+    return [...this.providers.values()].sort((left, right) => left.id.localeCompare(right.id));
+  }
+
+  subscribeProviderRegistrations(listener: () => void): () => void {
+    this.providerListeners.add(listener);
+    return () => this.providerListeners.delete(listener);
   }
 
   async start(): Promise<void> {
@@ -252,7 +273,7 @@ export class PluginService {
         throw new Error("Plugins are globally disabled");
       }
       this.errors.delete(pluginId);
-      await this.runtime.stopPluginById(pluginId);
+      await this.stopPlugin(pluginId);
       await this.startExplicit(pluginId, source.path);
       this.notify(pluginId);
       return this.requireItem(pluginId);
@@ -276,7 +297,7 @@ export class PluginService {
   async disablePlugin(pluginId: string): Promise<PluginListItem> {
     const source = this.requireSource(pluginId);
     this.patchSource(pluginId, { ...source, enabled: false });
-    const stopping = this.runtime.stopPluginById(pluginId);
+    const stopping = this.stopPlugin(pluginId);
     return this.enqueue(async () => {
       await stopping;
       this.errors.delete(pluginId);
@@ -287,7 +308,7 @@ export class PluginService {
 
   async removePlugin(pluginId: string): Promise<void> {
     this.requireSource(pluginId);
-    const stopping = this.runtime.stopPluginById(pluginId);
+    const stopping = this.stopPlugin(pluginId);
     const sources = { ...this.configStore.get().plugins };
     delete sources[pluginId];
     this.configStore.patch({ plugins: sources });
@@ -306,17 +327,17 @@ export class PluginService {
 
   async stopAllPlugins(): Promise<void> {
     this.globalStartsBlocked = true;
-    const stopping = this.runtime.stopAll();
+    const stopping = this.stopAll();
     await this.enqueue(async () => {
       await stopping;
-      await this.runtime.stopAll();
+      await this.stopAll();
     });
   }
 
   private handleGlobalSwitch(enabled: boolean): void {
     if (!enabled) {
       this.globalStartsBlocked = true;
-      const stopping = this.runtime.stopAll();
+      const stopping = this.stopAll();
       for (const id of Object.keys(this.configStore.get().plugins ?? {})) this.notify(id);
       void this.enqueue(async () => {
         await stopping;
@@ -337,7 +358,7 @@ export class PluginService {
     if (!source || source.enabled === false || !this.canPublish(pluginId)) return;
     this.errors.delete(pluginId);
     try {
-      await this.runtime.startPlugin(pluginId, source.path, () => this.canPublish(pluginId));
+      await this.startPlugin(pluginId, source.path);
     } catch (error) {
       if (this.canPublish(pluginId)) this.recordFailure(pluginId, error);
     }
@@ -345,7 +366,7 @@ export class PluginService {
 
   private async startExplicit(pluginId: string, sourcePath: string): Promise<void> {
     try {
-      await this.runtime.startPlugin(pluginId, sourcePath, () => this.canPublish(pluginId));
+      await this.startPlugin(pluginId, sourcePath);
     } catch (error) {
       if (this.canPublish(pluginId)) {
         this.recordFailure(pluginId, error);
@@ -363,6 +384,88 @@ export class PluginService {
       config.plugins?.[pluginId]?.enabled !== false &&
       config.plugins?.[pluginId] !== undefined
     );
+  }
+
+  private async startPlugin(pluginId: string, sourcePath: string): Promise<void> {
+    await this.runtime.startPlugin(pluginId, sourcePath, () => this.canPublish(pluginId));
+    try {
+      await this.publishProviderRegistrations(pluginId, sourcePath);
+    } catch (error) {
+      try {
+        this.removeProviderRegistrations(pluginId);
+      } finally {
+        await this.runtime.stopPluginById(pluginId);
+      }
+      throw error;
+    }
+  }
+
+  private stopPlugin(pluginId: string): Promise<boolean> {
+    this.removeProviderRegistrations(pluginId);
+    return this.runtime.stopPluginById(pluginId);
+  }
+
+  private async stopAll(): Promise<void> {
+    for (const pluginId of this.providerIdsByPlugin.keys()) {
+      this.removeProviderRegistrations(pluginId);
+    }
+    await this.runtime.stopAll();
+  }
+
+  private async publishProviderRegistrations(
+    pluginId: string,
+    pluginDirectory: string,
+  ): Promise<void> {
+    const metadata = this.runtime.getProviderRegistrations?.(pluginId) ?? [];
+    const configuredIds = new Set(Object.keys(this.configStore.get().providers));
+    for (const provider of metadata) {
+      if (BUILTIN_PROVIDER_ID_SET.has(provider.id)) {
+        throw new Error(`Plugin ${pluginId} cannot register builtin provider ID "${provider.id}"`);
+      }
+      if (configuredIds.has(provider.id)) {
+        throw new Error(
+          `Plugin ${pluginId} cannot register configured provider ID "${provider.id}"`,
+        );
+      }
+      if (this.providers.has(provider.id)) {
+        throw new Error(`Plugin ${pluginId} cannot register provider ID "${provider.id}" twice`);
+      }
+    }
+    const registrations = await Promise.all(
+      metadata.map(
+        async (provider): Promise<ProviderRegistration> => ({
+          id: provider.id,
+          label: provider.label,
+          description: provider.description,
+          icon: provider.iconPath
+            ? await readPluginProviderIcon(pluginDirectory, provider.iconPath)
+            : undefined,
+          connect: (request) => this.runtime.connectProvider(pluginId, provider.id, request),
+        }),
+      ),
+    );
+    const ids = registrations.map((provider) => provider.id);
+    for (const provider of registrations) {
+      this.providers.set(provider.id, {
+        ...provider,
+      });
+    }
+    if (ids.length > 0) {
+      this.providerIdsByPlugin.set(pluginId, ids);
+      this.notifyProviderRegistrations();
+    }
+  }
+
+  private removeProviderRegistrations(pluginId: string): void {
+    const ids = this.providerIdsByPlugin.get(pluginId);
+    if (!ids) return;
+    this.providerIdsByPlugin.delete(pluginId);
+    for (const id of ids) this.providers.delete(id);
+    this.notifyProviderRegistrations();
+  }
+
+  private notifyProviderRegistrations(): void {
+    for (const listener of this.providerListeners) listener();
   }
 
   private enqueue<T>(operation: () => Promise<T>): Promise<T> {
@@ -413,7 +516,7 @@ export class PluginService {
     const isGloballyEnabled = this.configStore.get().pluginsEnabled === true;
     const shouldActivate = isEnabled && isGloballyEnabled;
     if (shouldActivate) {
-      if (isRunning) await this.runtime.stopPluginById(pluginId);
+      if (isRunning) await this.stopPlugin(pluginId);
       try {
         await this.startExplicit(pluginId, candidate.directory);
       } catch (error) {
@@ -432,7 +535,7 @@ export class PluginService {
 
     const activatedSource = this.configStore.get().plugins?.[pluginId];
     if (!activatedSource) {
-      await this.runtime.stopPluginById(pluginId);
+      await this.stopPlugin(pluginId);
       await managedSources.discard(candidate);
       throw new Error(`Plugin is no longer configured: ${pluginId}`);
     }

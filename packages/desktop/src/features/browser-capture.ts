@@ -15,10 +15,13 @@ export interface BrowserCaptureRect {
   height: number;
 }
 
+interface BrowserCaptureClipboardPayload<TImage extends BrowserCaptureImage> {
+  text: string | null;
+  image: TImage | null;
+}
+
 interface BrowserCaptureClipboard<TImage extends BrowserCaptureImage> {
-  write(input: { text: string; image: TImage }): void;
-  writeImage(image: TImage): void;
-  writeText(text: string): void;
+  write(input: BrowserCaptureClipboardPayload<TImage>): Promise<void>;
 }
 
 interface BrowserCaptureDependencies<TImage extends BrowserCaptureImage> {
@@ -34,7 +37,7 @@ export interface BrowserCaptureService {
     hostWebContentsId: number;
     rect: unknown;
   }): Promise<string | null>;
-  copy(payload: unknown): boolean;
+  copy(payload: unknown): Promise<boolean>;
 }
 
 function captureRect(value: unknown): BrowserCaptureRect | null {
@@ -88,7 +91,7 @@ export function createBrowserCaptureService<TImage extends BrowserCaptureImage>(
       }
     },
 
-    copy(payload) {
+    async copy(payload) {
       const { text, imageDataUrl } = copyPayload(payload);
       let image: TImage | null = null;
       if (imageDataUrl) {
@@ -99,10 +102,8 @@ export function createBrowserCaptureService<TImage extends BrowserCaptureImage>(
           dependencies.warn("image-decode-failed", { error });
         }
       }
-      if (text && image) dependencies.clipboard.write({ text, image });
-      else if (image) dependencies.clipboard.writeImage(image);
-      else if (text) dependencies.clipboard.writeText(text);
-      else return false;
+      if (!text && !image) return false;
+      await dependencies.clipboard.write({ text, image });
       return true;
     },
   };
