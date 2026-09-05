@@ -214,6 +214,7 @@ export function configToDraft(config: PaseoConfigRaw | null | undefined): Projec
 interface ApplyDraftInput {
   draft: ProjectConfigDraft;
   base: PaseoConfigRaw | null | undefined;
+  editLaunches?: boolean;
 }
 
 export function applyDraftToConfig(input: ApplyDraftInput): PaseoConfigRaw {
@@ -266,8 +267,6 @@ export function applyDraftToConfig(input: ApplyDraftInput): PaseoConfigRaw {
     nextScripts[trimmedName] = nextEntry as PaseoScriptEntryRaw;
   }
 
-  const nextLaunches = launchesFromDraft(input.draft.launches);
-
   const nextMetadataGeneration: Record<string, unknown> = {
     ...input.draft.metadataGenerationBase,
   };
@@ -304,10 +303,13 @@ export function applyDraftToConfig(input: ApplyDraftInput): PaseoConfigRaw {
   } else {
     result.scripts = nextScripts;
   }
-  if (Object.keys(nextLaunches).length === 0) {
-    delete result.launches;
-  } else {
-    result.launches = nextLaunches;
+  if (input.editLaunches !== false) {
+    const nextLaunches = launchesFromDraft(input.draft.launches);
+    if (Object.keys(nextLaunches).length === 0) {
+      delete result.launches;
+    } else {
+      result.launches = nextLaunches;
+    }
   }
   if (Object.keys(nextMetadataGeneration).length === 0) {
     delete result.metadataGeneration;
