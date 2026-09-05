@@ -40,13 +40,16 @@ describe("findCountLabel", () => {
     ).toBe('find.cappedCount {"count":1000}');
   });
 
-  it("still names the position when a capped engine knows it", () => {
+  // The CodeMirror engine caps counting but still knows which counted match is active, so
+  // the position is real while the total is only a floor: "5 of 1000" would claim a total
+  // the engine never established.
+  it("keeps the position but marks the total as a floor when a capped engine knows it", () => {
     expect(
       findCountLabel({
         query: "error",
         result: { count: 1000, activeIndex: 4, countIsCapped: true },
         t,
       }),
-    ).toBe('find.matchPosition {"current":5,"count":1000}');
+    ).toBe('find.matchPositionCapped {"current":5,"count":1000}');
   });
 });

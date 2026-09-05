@@ -1812,6 +1812,7 @@ export const es: TranslationResources = {
   find: {
     placeholder: "Buscar",
     matchPosition: "{{current}} de {{count}}",
+    matchPositionCapped: "{{current}} de más de {{count}}",
     noResults: "Sin resultados",
     cappedCount: "Más de {{count}} coincidencias",
     previous: "Coincidencia anterior",

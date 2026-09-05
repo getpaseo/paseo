@@ -156,10 +156,14 @@ export function findCountLabel(input: {
   if (result.count === 0) {
     return t("find.noResults");
   }
-  if (result.activeIndex === null && result.countIsCapped === true) {
-    // A capped engine knows neither the total nor where the active match sits in it, so
-    // there is no position to name. Saying "1 of 1000" would name the wrong one forever.
-    return t("find.cappedCount", { count: result.count });
+  if (result.countIsCapped === true) {
+    // A capped count is a floor, so it can never be spoken as a total. xterm stops
+    // tracking matches past its limit and reports no active index at all, leaving nothing
+    // but the floor to name; the CodeMirror engine still knows which counted match is
+    // active, so it keeps the position and marks the total as the floor it is.
+    return result.activeIndex === null
+      ? t("find.cappedCount", { count: result.count })
+      : t("find.matchPositionCapped", { current: result.activeIndex + 1, count: result.count });
   }
   // An engine may report matches before it has activated one; the counter still names
   // the match the next Enter lands on.

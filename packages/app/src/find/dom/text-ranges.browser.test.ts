@@ -126,3 +126,79 @@ describe("findTextRanges", () => {
     expect(ranges[1]?.startContainer.parentElement).toBe(roots[1]);
   });
 });
+
+// Turkish dotted capital I lowercases to "i" plus a combining dot above, so the folded
+// text is longer than what the DOM holds.
+const DOTTED_CAPITAL_I = "\u0130";
+const DOTTED_LOWERCASE_I = "i\u0307";
+// Deseret, to keep an astral-plane fold honest: both forms are surrogate pairs.
+const DESERET_LONG_I = "\u{10400}";
+const DESERET_LONG_I_LOWER = "\u{10428}";
+
+describe("findTextRanges with folds that change length", () => {
+  it("matches an uppercase spelling that folds longer than itself", () => {
+    const root = mount(`<p>${DOTTED_CAPITAL_I}stanbul</p>`);
+
+    const ranges = findTextRanges({ roots: [root], query: `${DOTTED_LOWERCASE_I}stanbul` });
+
+    expect(matchedText(ranges)).toEqual([`${DOTTED_CAPITAL_I}stanbul`]);
+  });
+
+  it("does not match a spelling the fold does not produce", () => {
+    const root = mount(`<p>${DOTTED_CAPITAL_I}stanbul</p>`);
+
+    // The fold adds the combining dot rather than dropping it, so a dotless query is a
+    // different string, the same way Chromium's own find treats it.
+    expect(findTextRanges({ roots: [root], query: "istanbul" })).toEqual([]);
+  });
+
+  it("folds the query too, so an uppercase query finds lowercase text", () => {
+    const root = mount(`<p>${DOTTED_LOWERCASE_I}stanbul</p>`);
+
+    const ranges = findTextRanges({ roots: [root], query: `${DOTTED_CAPITAL_I}stanbul` });
+
+    expect(matchedText(ranges)).toEqual([`${DOTTED_LOWERCASE_I}stanbul`]);
+  });
+
+  it("covers the whole source character when a match lands inside an expanded fold", () => {
+    const root = mount(`<p>${DOTTED_CAPITAL_I}stanbul</p>`);
+
+    const [range] = findTextRanges({ roots: [root], query: "i" });
+
+    expect(range?.startOffset).toBe(0);
+    expect(range?.endOffset).toBe(1);
+    expect(range?.toString()).toBe(DOTTED_CAPITAL_I);
+  });
+
+  it("keeps offsets correct after an expanded fold earlier in the node", () => {
+    const root = mount(`<p>${DOTTED_CAPITAL_I}stanbul</p>`);
+
+    const [range] = findTextRanges({ roots: [root], query: "bul" });
+
+    expect(range?.startOffset).toBe(5);
+    expect(range?.endOffset).toBe(8);
+    expect(range?.toString()).toBe("bul");
+  });
+
+  it("matches across nodes when the fold expands at the boundary", () => {
+    const root = mount(`<div><span>${DOTTED_CAPITAL_I}</span><span>stanbul</span></div>`);
+    const [first, second] = Array.from(root.querySelectorAll("span"));
+
+    const [range] = findTextRanges({ roots: [root], query: `${DOTTED_LOWERCASE_I}stanbul` });
+
+    expect(range?.startContainer).toBe(first?.firstChild);
+    expect(range?.endContainer).toBe(second?.firstChild);
+    expect(range?.toString()).toBe(`${DOTTED_CAPITAL_I}stanbul`);
+  });
+
+  it("keeps surrogate-pair offsets intact", () => {
+    const root = mount(`<p>${DESERET_LONG_I}${DESERET_LONG_I}ok</p>`);
+
+    const ranges = findTextRanges({ roots: [root], query: DESERET_LONG_I_LOWER });
+
+    expect(ranges).toHaveLength(2);
+    expect([ranges[0]?.startOffset, ranges[0]?.endOffset]).toEqual([0, 2]);
+    expect([ranges[1]?.startOffset, ranges[1]?.endOffset]).toEqual([2, 4]);
+    expect(matchedText(ranges)).toEqual([DESERET_LONG_I, DESERET_LONG_I]);
+  });
+});
