@@ -422,6 +422,8 @@ async function execSetupCommand(
     const { stdout, stderr } = await execFileAsync(shellInvocation.shell, shellInvocation.args, {
       cwd: options.cwd,
       env: options.env,
+      windowsHide: true,
+      encoding: "utf8",
     });
     return {
       command,

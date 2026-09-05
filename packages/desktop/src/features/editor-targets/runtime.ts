@@ -153,7 +153,8 @@ export function createEditorTargetRuntime(
             env: createExternalProcessEnv(env),
             shell: commandScript,
             stdio: "ignore",
-          });
+            windowsHide: true,
+          } as SpawnOptions);
         } catch (error) {
           reject(error);
           return;
