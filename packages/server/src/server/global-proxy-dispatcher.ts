@@ -9,9 +9,14 @@ let installed = false;
  * Agent CLI subprocesses are unaffected either way — they read these vars directly from
  * their own spawned env — and the relay transport is unaffected because it talks to `ws`
  * directly, never through this dispatcher.
+ *
+ * Called from bootstrap.ts, gated by `PaseoDaemonConfig.globalProxyDispatcher` (default true).
+ * This mutates the process-wide undici dispatcher, so a host embedding `createPaseoDaemon`
+ * alongside its own fetch consumers should pass `globalProxyDispatcher: false` and manage
+ * proxying itself rather than have it installed underneath it.
  */
-export function installGlobalProxyDispatcher(): void {
-  if (installed) return;
+export function installGlobalProxyDispatcher(enabled = true): void {
+  if (!enabled || installed) return;
   installed = true;
   setGlobalDispatcher(new EnvHttpProxyAgent());
 }
