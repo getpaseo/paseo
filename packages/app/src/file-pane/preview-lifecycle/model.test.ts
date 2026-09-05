@@ -1,11 +1,63 @@
 import type { FileReadResult } from "@getpaseo/client/internal/daemon-client";
 import type { LiveFileSnapshot } from "../live-file/model";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
+import { __setAttachmentStoreForTests } from "@/attachments/store";
+import { createLocalFileAttachmentStore } from "@/attachments/local-file-attachment-store";
+import { createTestAttachmentFileSystem } from "@/attachments/test-attachment-file-system";
 import {
+  createFilePanePreview,
   FilePreviewLifecycleModel,
   type FilePanePreview,
   type FilePreviewLifecycleSnapshot,
 } from "./model";
+
+afterEach(() => __setAttachmentStoreForTests(null));
+
+describe("createFilePanePreview", () => {
+  it.each([
+    ["recording.webm", "video/webm"],
+    ["recording.mov", "video/quicktime"],
+    ["recording.mp4", "video/mp4"],
+  ])(
+    "caches binary %s bytes with a playable MIME type and file extension",
+    async (path, mimeType) => {
+      const fileSystem = createTestAttachmentFileSystem();
+      const store = createLocalFileAttachmentStore({
+        storageType: "native-file",
+        baseDirectoryName: "preview-assets",
+        fileSystem,
+        resolvePreviewUrl: async (attachment) => `file://${attachment.storageKey}`,
+      });
+      __setAttachmentStoreForTests(store);
+      const bytes = new Uint8Array([0, 1, 2, 3]);
+      const preview = await createFilePanePreview({
+        ...file(),
+        path,
+        kind: "binary",
+        mime: "application/octet-stream",
+        size: bytes.length,
+        bytes,
+      });
+      const attachment = preview?.mediaAttachment;
+      expect(attachment).toMatchObject({ mimeType, fileName: path, byteSize: bytes.length });
+      if (!attachment) throw new Error("Expected a cached video attachment");
+      const url = await store.resolvePreviewUrl({ attachment });
+      expect(url.endsWith(path.slice(path.lastIndexOf(".")))).toBe(true);
+      expect(fileSystem.files.get(url)).toEqual(bytes);
+      expect(preview?.file.kind).toBe("binary");
+    },
+  );
+
+  it("does not cache arbitrary binary files for playback", async () => {
+    const preview = await createFilePanePreview({
+      ...file(),
+      kind: "binary",
+      mime: "application/octet-stream",
+      path: "archive.zip",
+    });
+    expect(preview?.mediaAttachment).toBeNull();
+  });
+});
 
 function previewFile(content: string) {
   return {
@@ -88,7 +140,7 @@ describe("FilePreviewLifecycleModel", () => {
     const model = new FilePreviewLifecycleModel(() => preparations.shift()!.promise);
     const preview: FilePanePreview = {
       file: previewFile("preview"),
-      imageAttachment: null,
+      mediaAttachment: null,
     };
 
     model.setSource(source("/workspace:file.ts", pending()));
@@ -134,12 +186,12 @@ describe("FilePreviewLifecycleModel", () => {
     );
     const nextPreview: FilePanePreview = {
       file: previewFile("two"),
-      imageAttachment: null,
+      mediaAttachment: null,
     };
 
     model.setSource(source("/workspace:file.ts", completed(file("one"))));
     model.setSource(source("/workspace:second.ts", completed(file("two", "second.ts"))));
-    first.resolve({ file: previewFile("one"), imageAttachment: null });
+    first.resolve({ file: previewFile("one"), mediaAttachment: null });
     await Promise.resolve();
     expect(model.getSnapshot()).toEqual({ status: "preparing" });
 
