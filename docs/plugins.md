@@ -164,7 +164,7 @@ See `public-docs/plugins/v0.8/reference.md`.
 | ------------------------------- | ----------------------------------------------------------------------------------------- |
 | `@getpaseo/plugin`              | contribution contracts, shared definitions, RPC input/output types, and client data hooks |
 | `@getpaseo/plugin/react-native` | Paseo React Native components and UI hooks                                                |
-| `@getpaseo/plugin/server`       | handler-only types such as `PluginHandlerContext`                                         |
+| `@getpaseo/plugin/server`       | server runtime helpers and handler types such as `PluginHandlerContext`                   |
 | `@getpaseo/plugin/provider`     | provider registration, connection, session, input, event, and timeline contracts          |
 | `@getpaseo/plugin/acp`          | command-backed ACP adapter and focused transformer hooks                                  |
 

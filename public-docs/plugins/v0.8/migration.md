@@ -85,9 +85,9 @@ Use this table as the complete registration checklist.
 | `ZodOutput<typeof contract.input>` handler parameter types                                    | `RpcInput<typeof contract>` from `@getpaseo/plugin`; `RpcOutput` for return types          |
 
 Import `PluginClientContext` in the client entry and `PluginServerContext` in the server entry.
-Remove imports of the old context type. `@getpaseo/plugin/server` now exports only handler-side
-types such as `PluginHandlerContext`. Every client `add*` now returns an idempotent removal
-function. Preserve any remover the plugin calls before teardown; Paseo removes outstanding
+Remove imports of the old context type. `@getpaseo/plugin/server` exports handler-side types such as
+`PluginHandlerContext` and React-free runtime helpers for Node code. Keep shared contract imports on
+`@getpaseo/plugin`. Every client `add*` now returns an idempotent removal function. Preserve any remover the plugin calls before teardown; Paseo removes outstanding
 registrations after the entry cleanup runs.
 
 ## 4. Separate imports
