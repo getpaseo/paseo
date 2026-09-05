@@ -237,6 +237,37 @@ test("createPaseoApi borrows daemon capabilities without exposing connection own
   expect("skills" in paseo.agents).toBe(false);
 });
 
+test("agent handles send permission responses for their agent", async () => {
+  const { client, ws } = await connectClient();
+
+  await client.agents.ref("agent_sdk").respondToPermission({
+    requestId: "permission-request",
+    response: {
+      behavior: "deny",
+      selectedActionId: "deny-once",
+      message: "Not approved",
+      interrupt: true,
+    },
+  });
+
+  expect(parseSentFrame(ws.sent.at(-1))).toEqual({
+    type: "session",
+    message: {
+      type: "agent_permission_response",
+      agentId: "agent_sdk",
+      requestId: "permission-request",
+      response: {
+        behavior: "deny",
+        selectedActionId: "deny-once",
+        message: "Not approved",
+        interrupt: true,
+      },
+    },
+  });
+
+  await client.close();
+});
+
 test("project actions list registered projects through the existing RPC", async () => {
   const { client, ws } = await connectClient();
 
