@@ -305,6 +305,25 @@ describe("ProviderCatalogSession", () => {
     expect(err?.payload.requestId).toBe("u1");
   });
 
+  it("passes forceRefresh through to the usage service and defaults it off", async () => {
+    const listUsage = vi.fn(async () => ({ fetchedAt: "2026-06-19T00:00:00.000Z", providers: [] }));
+    const { subsystem, emitted } = makeSubsystem({ usage: { listUsage } });
+
+    await subsystem.handleProviderUsageListRequest({
+      type: "provider.usage.list.request",
+      requestId: "u2",
+      forceRefresh: true,
+    });
+    await subsystem.handleProviderUsageListRequest({
+      type: "provider.usage.list.request",
+      requestId: "u3",
+    });
+
+    expect(listUsage).toHaveBeenNthCalledWith(1, { forceRefresh: true });
+    expect(listUsage).toHaveBeenNthCalledWith(2, { forceRefresh: false });
+    expect(findByType(emitted, "provider.usage.list.response")?.payload.requestId).toBe("u2");
+  });
+
   it("surfaces a feature-list failure inline, not as an rpc_error", async () => {
     const { subsystem, emitted } = makeSubsystem({
       host: {

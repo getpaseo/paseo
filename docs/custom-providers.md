@@ -290,6 +290,8 @@ Example: two different Anthropic accounts as separate profiles:
 
 Each profile appears as a separate provider in the Paseo app. You can select which one to use when launching an agent.
 
+Claude profiles that pin an account with `CLAUDE_CODE_OAUTH_TOKEN` (from `claude setup-token`) also get their own plan-usage entry in the context-meter tooltip and the host Usage page, under the profile's label. Anthropic's usage API requires the `user:profile` scope, which setup-tokens do not carry, so those profiles read their session and weekly windows from the rate-limit headers of a minimal one-token API call instead — spending a few tokens of the pinned account's own quota per refresh. The plan label and per-model weekly windows exist only on the usage API, so they stay absent for setup-token profiles. Profiles without a pinned token share the base `claude` entry, which reads the machine's active Claude login.
+
 You can also combine profiles with model overrides to pin specific models per profile:
 
 ```json

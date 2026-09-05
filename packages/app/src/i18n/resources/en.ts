@@ -1882,6 +1882,7 @@ export const en = {
     used: "{{percentage}}% used",
     tokens: "{{used}} / {{max}} tokens",
     sessionCost: "Session cost {{cost}}",
+    pending: "No usage reported yet",
     accessibility: "Context window {{percentage}}% used",
   },
   review: {
