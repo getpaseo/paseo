@@ -13,7 +13,7 @@ import {
 import { AdaptiveRenameModal } from "@/components/rename-modal";
 import { WorkspaceMetaRow } from "@/components/sidebar/workspace-meta-row";
 import { useToast } from "@/contexts/toast-context";
-import { SettingsSection } from "@/screens/settings/settings-section";
+import { SettingsSection } from "@/components/settings/headings";
 import {
   HOST_BADGE_DISPLAYS,
   HOST_COLORS,

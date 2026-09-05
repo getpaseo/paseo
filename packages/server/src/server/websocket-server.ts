@@ -1673,6 +1673,7 @@ export class VoiceAssistantWebSocketServer {
         pluginLogs: true,
         // COMPAT(pluginThemes): added in v0.5.0, remove gate after 2027-08-20.
         pluginThemes: true,
+        pluginSettings: true,
         pluginTimelineItems: true,
         // COMPAT(skillManagement): added in v0.4.0, remove gate after 2027-08-16.
         skillManagement: true,

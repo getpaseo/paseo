@@ -896,6 +896,7 @@ function RootStack() {
       <Stack.Screen name="h/[serverId]" />
       <Stack.Screen name="settings/hosts/[serverId]/index" />
       <Stack.Screen name="settings/hosts/[serverId]/[hostSection]" />
+      <Stack.Screen name="settings/hosts/[serverId]/plugins/[pluginId]/[screenId]" />
       <Stack.Screen name="settings/hosts/[serverId]/projects/index" />
       <Stack.Screen name="settings/hosts/[serverId]/projects/[projectId]" />
     </ThemedStack>

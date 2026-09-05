@@ -10,6 +10,7 @@ function installed(): InstalledPlugin {
     clientBundle: "bundle",
     queryClient: new QueryClient(),
     cleanup: () => {},
+    settingsScreens: [],
     surfaces: [],
     sidebarItems: [],
     workspacePanels: [

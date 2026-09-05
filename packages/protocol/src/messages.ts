@@ -3448,6 +3448,7 @@ export const ServerInfoStatusPayloadSchema = z
         // A daemon that predates this flag keeps `addTheme` in the server bundle it compiles,
         // so a theme plugin cannot start there at all.
         pluginThemes: z.boolean().optional(),
+        pluginSettings: z.boolean().optional(),
         pluginTimelineItems: z.boolean().optional(),
         // COMPAT(skillManagement): added in v0.4.0, remove gate after 2027-08-16.
         skillManagement: z.boolean().optional(),
@@ -3647,6 +3648,12 @@ export const PluginCatalogChangedStatusPayloadSchema = z.object({
   pluginId: PluginIdSchema,
 });
 
+export const PluginSettingsChangedStatusPayloadSchema = z.object({
+  status: z.literal("plugin_settings_changed"),
+  pluginId: PluginIdSchema,
+  settingsId: z.string(),
+});
+
 export const KnownStatusPayloadSchema = z.discriminatedUnion("status", [
   AgentCreatedStatusPayloadSchema,
   AgentCreateFailedStatusPayloadSchema,
@@ -3656,6 +3663,7 @@ export const KnownStatusPayloadSchema = z.discriminatedUnion("status", [
   RestartRequestedStatusPayloadSchema,
   DaemonConfigChangedStatusPayloadSchema,
   PluginCatalogChangedStatusPayloadSchema,
+  PluginSettingsChangedStatusPayloadSchema,
 ]);
 
 export type KnownStatusPayload = z.infer<typeof KnownStatusPayloadSchema>;

@@ -500,6 +500,7 @@ export interface SessionOptions {
     disablePlugin(pluginId: string): Promise<import("@getpaseo/protocol/messages").PluginListItem>;
     removePlugin(pluginId: string): Promise<void>;
     subscribe(listener: (pluginId: string) => void): () => void;
+    subscribeSettings?(listener: (pluginId: string, settingsId: string) => void): () => void;
     catalog(): Array<{ id: string; clientBundle: string }>;
     invokePluginRpc(pluginId: string, method: string, input: unknown): Promise<unknown>;
   };
@@ -2215,9 +2216,19 @@ export class Session {
     pluginRuntime: SessionOptions["pluginRuntime"],
   ): (() => void) | null {
     if (!pluginRuntime) return null;
-    return pluginRuntime.subscribe((pluginId) => {
+    const catalog = pluginRuntime.subscribe((pluginId) => {
       this.emit({ type: "status", payload: { status: "plugin_catalog_changed", pluginId } });
     });
+    const settings = pluginRuntime.subscribeSettings?.((pluginId, settingsId) => {
+      this.emit({
+        type: "status",
+        payload: { status: "plugin_settings_changed", pluginId, settingsId },
+      });
+    });
+    return () => {
+      catalog();
+      settings?.();
+    };
   }
 
   private dispatchVoiceAndControlMessage(msg: SessionInboundMessage): Promise<void> | undefined {

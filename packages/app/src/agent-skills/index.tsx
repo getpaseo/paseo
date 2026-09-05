@@ -7,7 +7,7 @@ import { ArrowUpRight, Blocks, Check, Settings2 } from "lucide-react-native";
 import type { AgentSkillOperation, AgentSkillsStatus } from "@getpaseo/protocol/messages";
 import type { TFunction } from "i18next";
 import { Button } from "@/components/ui/button";
-import { SettingsSection } from "@/screens/settings/settings-section";
+import { SettingsSection } from "@/components/settings/headings";
 import { settingsStyles } from "@/styles/settings";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
 import { confirmDialog } from "@/utils/confirm-dialog";
