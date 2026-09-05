@@ -44,6 +44,7 @@ describe("agent timeline content", () => {
       { type: "assistant_message", text: oversizedText, messageId: "assistant-1" },
       { type: "reasoning", text: oversizedText },
       { type: "error", message: oversizedText },
+      { type: "notification", level: "warning", message: oversizedText },
       { type: "todo", items: [{ id: "task-1", text: oversizedText, completed: false }] },
       {
         type: "tool_call",

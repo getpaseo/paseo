@@ -169,6 +169,12 @@ function summarizeOversizedTimelineItem(item: AgentTimelineItem): AgentTimelineI
       return { type: item.type, text: truncateUtf8(item.text, TIMELINE_TEXT_MAX_BYTES) };
     case "error":
       return { type: item.type, message: truncateUtf8(item.message, TIMELINE_TEXT_MAX_BYTES) };
+    case "notification":
+      return {
+        type: item.type,
+        level: item.level,
+        message: truncateUtf8(item.message, TIMELINE_TEXT_MAX_BYTES),
+      };
     case "todo":
       return {
         type: item.type,
@@ -206,6 +212,8 @@ function minimalTimelineItem(item: AgentTimelineItem): AgentTimelineItem {
       return { type: item.type, text: notice };
     case "error":
       return { type: item.type, message: notice };
+    case "notification":
+      return { type: item.type, level: item.level, message: notice };
     case "todo":
       return { type: item.type, items: [] };
     case "tool_call":

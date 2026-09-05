@@ -5673,6 +5673,13 @@ describe("Codex app-server provider", () => {
     );
     expect(upserts).toEqual([
       expect.objectContaining({ id: "persisted-child", parentSubagentId: null }),
+    ]);
+
+    const childHistory = await session.loadProviderSubagentHistory("persisted-child");
+    const nestedUpserts = childHistory.flatMap((event) =>
+      event.event.type === "upsert" ? [event.event] : [],
+    );
+    expect(nestedUpserts).toEqual([
       expect.objectContaining({
         id: "persisted-grandchild",
         parentSubagentId: "persisted-child",
