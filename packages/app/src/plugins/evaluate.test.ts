@@ -10,6 +10,31 @@ function bundle(body: string): string {
 }
 
 describe("evaluatePluginClientBundle", () => {
+  it("ignores server registrations that survive client bundle filtering", () => {
+    const plugin = evaluatePluginClientBundle(
+      "wrong-target",
+      bundle(`
+        const register = (context, method, value) => context[method](value);
+        const serverTool = { name: "wrong-target.tool" };
+        const serverContract = { name: "wrong-target.rpc" };
+        const serverHandler = () => "not invoked";
+        function registerServerContributions(context) {
+          register(context, "addTool", serverTool);
+          const handle = context.handle;
+          handle(serverContract, serverHandler);
+        }
+        registerServerContributions(plugin);
+      `),
+    );
+
+    expect(plugin.surfaces).toEqual([]);
+    expect(plugin.sidebarItems).toEqual([]);
+    expect(plugin.attachmentSources).toEqual([]);
+    expect(plugin.themes).toEqual([]);
+    expect(plugin.timelineTransformers).toEqual([]);
+    expect(plugin.timelineRenderers).toEqual([]);
+  });
+
   it("collects timeline transformers and renderers", () => {
     const plugin = evaluatePluginClientBundle(
       "reports",

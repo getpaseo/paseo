@@ -188,6 +188,38 @@ afterEach(async () => {
 });
 
 describe("PluginRuntime", () => {
+  it("absorbs client registrations that survive server bundle filtering", async () => {
+    const directory = await createPlugin(
+      "wrong-target-registrations",
+      `export default function contribute(plugin: any) {
+  const register = (context: any, method: string) => context[method]({});
+  function registerClientContributions(context: any) {
+    const addSurface = context.addSurface;
+    addSurface({});
+    register(context, "addSidebarItem");
+    const methods = [
+      "addWorkspacePanel",
+      "addCommandCenterItem",
+      "addClientSide",
+      "addAttachmentSource",
+      "addTheme",
+      "addTimelineTransformer",
+      "addTimelineRenderer",
+    ];
+    for (const method of methods) context[method]({});
+  }
+  registerClientContributions(plugin);
+  return () => undefined;
+}`,
+    );
+    const runtime = createTestRuntime();
+
+    await runtime.startPlugin("wrong-target-registrations", directory);
+
+    expect(runtime.toolCatalog()).toEqual([]);
+    await runtime.stopPluginById("wrong-target-registrations");
+  });
+
   it("records host-owned plugin lifecycle events", async () => {
     const directory = await createPlugin(
       "lifecycle",

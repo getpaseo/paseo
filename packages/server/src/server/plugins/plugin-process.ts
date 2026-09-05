@@ -216,7 +216,25 @@ function evaluateBundle(bundle: string): void {
   if (typeof setup !== "function") {
     throw new Error("Plugin server bundle must default export a function");
   }
-  const contributedCleanup = setup({ handle: register, addTool: registerTool });
+  // The compiler removes direct client registrations from this bundle. Calls
+  // hidden behind aliases, computed members, helpers, or dynamic code can
+  // survive, so the process context absorbs every client-only method. Plugin
+  // code is trusted and unsandboxed; these no-ops protect the target catalog,
+  // not the daemon from the plugin.
+  const ignoreClientRegistration = (): void => {};
+  const contributedCleanup = setup({
+    handle: register,
+    addTool: registerTool,
+    addSurface: ignoreClientRegistration,
+    addSidebarItem: ignoreClientRegistration,
+    addWorkspacePanel: ignoreClientRegistration,
+    addCommandCenterItem: ignoreClientRegistration,
+    addClientSide: ignoreClientRegistration,
+    addAttachmentSource: ignoreClientRegistration,
+    addTheme: ignoreClientRegistration,
+    addTimelineTransformer: ignoreClientRegistration,
+    addTimelineRenderer: ignoreClientRegistration,
+  });
   if (typeof contributedCleanup !== "function") {
     throw new Error("Plugin contribution must return a cleanup function");
   }

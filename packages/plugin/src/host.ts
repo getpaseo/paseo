@@ -50,6 +50,8 @@ export function createPluginContext(
   collector: PluginCollector,
 ): Pick<
   PluginContext,
+  | "handle"
+  | "addTool"
   | "addSurface"
   | "addSidebarItem"
   | "addWorkspacePanel"
@@ -61,6 +63,11 @@ export function createPluginContext(
   | "addTimelineRenderer"
 > {
   return {
+    // Server registrations can survive client bundle filtering when the source
+    // uses an alias, a computed member, or dynamic code. The client context is
+    // the safety boundary for those registrations, so it must absorb them.
+    handle() {},
+    addTool() {},
     addSurface(id, Component) {
       collector.addSurface(id, Component);
     },
