@@ -145,11 +145,19 @@ interface AstScope {
   bindings: Map<string, AstBinding>;
 }
 
+type DynamicCodeKind = "eval" | "Function constructor" | "string-generated code";
+type FunctionKind = "none" | "function" | "async-function";
+
 interface AstBinding {
   scope: AstScope;
   name: string;
   contextAlias: boolean;
   registrationMethod: string | null;
+  dynamicCode: DynamicCodeKind | null;
+  functionKind: FunctionKind;
+  stringCodeGenerator: boolean;
+  stringValue: boolean;
+  globalObjectAlias: boolean;
 }
 
 function isAstNode(value: unknown): value is object {
@@ -208,6 +216,11 @@ function bindIdentifier(
     name,
     contextAlias: false,
     registrationMethod: null,
+    dynamicCode: null,
+    functionKind: "none" as FunctionKind,
+    stringCodeGenerator: false,
+    stringValue: false,
+    globalObjectAlias: false,
   } satisfies AstBinding;
   scope.bindings.set(name, binding);
   return binding;
@@ -273,7 +286,13 @@ function declareDirectBindings(node: unknown, scope: AstScope): void {
     (type === "FunctionDeclaration" || type === "ClassDeclaration") &&
     Reflect.get(node, "declare") !== true
   ) {
-    bindIdentifier(Reflect.get(node, "id"), scope);
+    const binding = bindIdentifier(Reflect.get(node, "id"), scope);
+    if (binding) {
+      binding.functionKind =
+        type === "FunctionDeclaration" && Reflect.get(node, "async") === true
+          ? "async-function"
+          : "function";
+    }
   }
 }
 
@@ -293,6 +312,150 @@ function memberPropertyName(node: unknown): string | null {
     return String(Reflect.get(property, "value"));
   }
   return null;
+}
+
+function isUnshadowedGlobalIdentifier(
+  node: unknown,
+  scope: AstScope,
+  names: ReadonlySet<string>,
+): boolean {
+  const name = astIdentifierName(node);
+  return name !== null && names.has(name) && lookupBinding(scope, name) === null;
+}
+
+function isGlobalObjectExpression(node: unknown, scope: AstScope): boolean {
+  if (isUnshadowedGlobalIdentifier(node, scope, new Set(["globalThis", "window", "global"]))) {
+    return true;
+  }
+  const name = astIdentifierName(node);
+  return name !== null && lookupBinding(scope, name)?.globalObjectAlias === true;
+}
+
+function functionKindForExpression(node: unknown, scope: AstScope): FunctionKind {
+  if (!isAstNode(node)) return "none";
+  const type = Reflect.get(node, "type");
+  if (type === "TSAsExpression" || type === "TSSatisfiesExpression" || type === "TSTypeAssertion") {
+    return functionKindForExpression(Reflect.get(node, "expression"), scope);
+  }
+  if (type === "TSNonNullExpression") {
+    return functionKindForExpression(Reflect.get(node, "expression"), scope);
+  }
+  if (type === "FunctionExpression" || type === "ArrowFunctionExpression") {
+    return Reflect.get(node, "async") === true ? "async-function" : "function";
+  }
+  if (type === "ClassExpression") return "function";
+  if (type === "Identifier") {
+    return lookupBinding(scope, String(Reflect.get(node, "name")))?.functionKind ?? "none";
+  }
+  if (type !== "CallExpression") return "none";
+  const callee = Reflect.get(node, "callee");
+  if (
+    !isAstNode(callee) ||
+    memberPropertyName(callee) !== "getPrototypeOf" ||
+    !isUnshadowedGlobalIdentifier(Reflect.get(callee, "object"), scope, new Set(["Object"]))
+  ) {
+    return "none";
+  }
+  const argumentsList = Reflect.get(node, "arguments");
+  return Array.isArray(argumentsList) ? functionKindForExpression(argumentsList[0], scope) : "none";
+}
+
+// oxlint-disable-next-line complexity -- this classifier recognizes dynamic-code aliases conservatively.
+function dynamicCodeKindForExpression(node: unknown, scope: AstScope): DynamicCodeKind | null {
+  if (!isAstNode(node)) return null;
+  const type = Reflect.get(node, "type");
+  if (type === "TSAsExpression" || type === "TSSatisfiesExpression" || type === "TSTypeAssertion") {
+    return dynamicCodeKindForExpression(Reflect.get(node, "expression"), scope);
+  }
+  if (type === "TSNonNullExpression") {
+    return dynamicCodeKindForExpression(Reflect.get(node, "expression"), scope);
+  }
+  if (type === "Identifier") {
+    const binding = lookupBinding(scope, String(Reflect.get(node, "name")));
+    if (binding?.dynamicCode) return binding.dynamicCode;
+    if (isUnshadowedGlobalIdentifier(node, scope, new Set(["eval"]))) return "eval";
+    if (isUnshadowedGlobalIdentifier(node, scope, new Set(["Function"]))) {
+      return "Function constructor";
+    }
+    return null;
+  }
+  if (type === "MemberExpression" || type === "OptionalMemberExpression") {
+    const method = memberPropertyName(node);
+    const object = Reflect.get(node, "object");
+    if (isGlobalObjectExpression(object, scope)) {
+      if (method === "eval") return "eval";
+      if (method === "Function") return "Function constructor";
+    }
+    if (method === "constructor" && functionKindForExpression(object, scope) !== "none") {
+      return "Function constructor";
+    }
+    return dynamicCodeKindForExpression(object, scope);
+  }
+  if (type === "CallExpression" || type === "OptionalCallExpression") {
+    const callee = Reflect.get(node, "callee");
+    if (
+      isAstNode(callee) &&
+      memberPropertyName(callee) === "get" &&
+      isUnshadowedGlobalIdentifier(Reflect.get(callee, "object"), scope, new Set(["Reflect"]))
+    ) {
+      const argumentsList = Reflect.get(node, "arguments");
+      const property = Array.isArray(argumentsList) ? argumentsList[1] : null;
+      const propertyName =
+        isAstNode(property) && Reflect.get(property, "type") === "StringLiteral"
+          ? String(Reflect.get(property, "value"))
+          : null;
+      if (propertyName === "eval") return "eval";
+    }
+  }
+  return null;
+}
+
+function isStringExpression(node: unknown, scope: AstScope): boolean {
+  if (!isAstNode(node)) return false;
+  const type = Reflect.get(node, "type");
+  if (type === "StringLiteral" || type === "TemplateLiteral") return true;
+  if (type === "TSAsExpression" || type === "TSSatisfiesExpression" || type === "TSTypeAssertion") {
+    return isStringExpression(Reflect.get(node, "expression"), scope);
+  }
+  if (type === "TSNonNullExpression") {
+    return isStringExpression(Reflect.get(node, "expression"), scope);
+  }
+  if (type === "Identifier") {
+    return lookupBinding(scope, String(Reflect.get(node, "name")))?.stringValue === true;
+  }
+  if (type !== "BinaryExpression" || Reflect.get(node, "operator") !== "+") return false;
+  return (
+    isStringExpression(Reflect.get(node, "left"), scope) &&
+    isStringExpression(Reflect.get(node, "right"), scope)
+  );
+}
+
+function isStringCodeGeneratorExpression(node: unknown, scope: AstScope): boolean {
+  if (!isAstNode(node)) return false;
+  const type = Reflect.get(node, "type");
+  if (type === "Identifier") {
+    const binding = lookupBinding(scope, String(Reflect.get(node, "name")));
+    return (
+      binding?.stringCodeGenerator === true ||
+      isUnshadowedGlobalIdentifier(node, scope, new Set(["setTimeout", "setInterval"]))
+    );
+  }
+  if (type !== "MemberExpression" && type !== "OptionalMemberExpression") return false;
+  return (
+    isGlobalObjectExpression(Reflect.get(node, "object"), scope) &&
+    new Set(["setTimeout", "setInterval"]).has(memberPropertyName(node) ?? "")
+  );
+}
+
+function isStringGeneratedCodeCall(node: object, scope: AstScope): boolean {
+  const callee = Reflect.get(node, "callee");
+  if (!isStringCodeGeneratorExpression(callee, scope)) return false;
+  const argumentsList = Reflect.get(node, "arguments");
+  return Array.isArray(argumentsList) && isStringExpression(argumentsList[0], scope);
+}
+
+function rejectDynamicCode(kind: DynamicCodeKind): never {
+  throw new Error(`Plugin entrypoint cannot use ${kind}; dynamic code generation is not supported`);
 }
 
 function isIgnoredIdentifierPosition(node: object, parent: unknown): boolean {
@@ -359,6 +522,36 @@ function markPatternFromContext(
   }
 }
 
+// oxlint-disable-next-line complexity -- destructuring can alias each supported dynamic-code source.
+function markPatternDynamicBindings(pattern: unknown, source: unknown, scope: AstScope): void {
+  if (!isAstNode(pattern) || Reflect.get(pattern, "type") !== "ObjectPattern") return;
+  const properties = Reflect.get(pattern, "properties");
+  if (!Array.isArray(properties)) return;
+  const sourceIsGlobal = isGlobalObjectExpression(source, scope);
+  const sourceFunctionKind = functionKindForExpression(source, scope);
+  for (const property of properties) {
+    if (!isAstNode(property) || Reflect.get(property, "type") !== "ObjectProperty") continue;
+    const key = Reflect.get(property, "key");
+    const keyName =
+      astIdentifierName(key) ??
+      (isAstNode(key) && Reflect.get(key, "type") === "StringLiteral"
+        ? String(Reflect.get(key, "value"))
+        : null);
+    const valueName = patternBindingName(Reflect.get(property, "value"));
+    const binding = valueName ? lookupBinding(scope, valueName) : null;
+    if (!binding || !keyName) continue;
+    if (sourceIsGlobal && keyName === "eval") binding.dynamicCode = "eval";
+    if (sourceIsGlobal && keyName === "Function") binding.dynamicCode = "Function constructor";
+    if (sourceFunctionKind !== "none" && keyName === "constructor") {
+      binding.dynamicCode = "Function constructor";
+    }
+    if (sourceIsGlobal && (keyName === "setTimeout" || keyName === "setInterval")) {
+      binding.stringCodeGenerator = true;
+    }
+  }
+}
+
+// oxlint-disable-next-line complexity -- one declaration updates all tracked lexical aliases.
 function markVariableBinding(
   declarator: unknown,
   scope: AstScope,
@@ -371,6 +564,16 @@ function markVariableBinding(
     isAstNode(init) && Reflect.get(init, "type") === "Identifier"
       ? lookupBinding(scope, String(Reflect.get(init, "name")))
       : null;
+  const valueName = astIdentifierName(id);
+  const binding = valueName ? lookupBinding(scope, valueName) : null;
+  if (binding) {
+    binding.dynamicCode = dynamicCodeKindForExpression(init, scope);
+    binding.functionKind = functionKindForExpression(init, scope);
+    binding.stringCodeGenerator = isStringCodeGeneratorExpression(init, scope);
+    binding.stringValue = isStringExpression(init, scope);
+    binding.globalObjectAlias = isGlobalObjectExpression(init, scope);
+  }
+  markPatternDynamicBindings(id, init, scope);
   if (initBinding?.contextAlias) markPatternFromContext(id, scope, removedNames);
   if (
     isAstNode(init) &&
@@ -379,15 +582,17 @@ function markVariableBinding(
   ) {
     const source = memberObjectBinding(Reflect.get(init, "object"), scope);
     const method = memberPropertyName(init);
-    const valueName = astIdentifierName(id);
-    const binding = valueName ? lookupBinding(scope, valueName) : null;
     if (source?.contextAlias && method && removedNames.has(method) && binding) {
       binding.registrationMethod = method;
     }
   }
-  if (initBinding?.registrationMethod && astIdentifierName(id)) {
-    const binding = lookupBinding(scope, astIdentifierName(id) as string);
-    if (binding) binding.registrationMethod = initBinding.registrationMethod;
+  if (initBinding && binding) {
+    if (initBinding.registrationMethod) binding.registrationMethod = initBinding.registrationMethod;
+    if (initBinding.dynamicCode) binding.dynamicCode = initBinding.dynamicCode;
+    if (initBinding.functionKind !== "none") binding.functionKind = initBinding.functionKind;
+    if (initBinding.stringCodeGenerator) binding.stringCodeGenerator = true;
+    if (initBinding.stringValue) binding.stringValue = true;
+    if (initBinding.globalObjectAlias) binding.globalObjectAlias = true;
   }
 }
 
@@ -403,6 +608,10 @@ function analyzeRegistrations(
   if (!contextBinding)
     throw new Error("Plugin default export must receive one named context parameter");
   contextBinding.contextAlias = true;
+  const contributionStatements = isAstNode(body) ? Reflect.get(body, "body") : null;
+  const immediateBodyStatements = new Set(
+    Array.isArray(contributionStatements) ? contributionStatements.filter(isAstNode) : [],
+  );
 
   const visitStatements = (statements: unknown[], scope: AstScope): void => {
     predeclareStatements(statements, scope);
@@ -493,7 +702,10 @@ function analyzeRegistrations(
     const nextScope = createScope(parentScope, undefined);
     const type = Reflect.get(node, "type");
     if (type === "FunctionDeclaration" || type === "FunctionExpression") {
-      bindIdentifier(Reflect.get(node, "id"), nextScope);
+      const binding = bindIdentifier(Reflect.get(node, "id"), nextScope);
+      if (binding) {
+        binding.functionKind = Reflect.get(node, "async") === true ? "async-function" : "function";
+      }
     }
     visitDecorators(node, parentScope);
     const params = Reflect.get(node, "params");
@@ -541,7 +753,8 @@ function analyzeRegistrations(
   const visitClass = (node: object, parentScope: AstScope): void => {
     if (Reflect.get(node, "declare") === true) return;
     const classScope = createScope(parentScope, parentScope.functionScope);
-    bindIdentifier(Reflect.get(node, "id"), classScope);
+    const binding = bindIdentifier(Reflect.get(node, "id"), classScope);
+    if (binding) binding.functionKind = "function";
     visitDecorators(node, parentScope);
     visit(Reflect.get(node, "superClass"), classScope, node, null);
 
@@ -597,6 +810,28 @@ function analyzeRegistrations(
       return;
     }
     if (isTypeOnlyAstNode(current)) return;
+    const dynamicCodeKind = dynamicCodeKindForExpression(current, scope);
+    if (
+      dynamicCodeKind &&
+      (type === "Identifier" ||
+        type === "MemberExpression" ||
+        type === "OptionalMemberExpression" ||
+        type === "CallExpression" ||
+        type === "OptionalCallExpression")
+    ) {
+      rejectDynamicCode(dynamicCodeKind);
+    }
+    if (type === "NewExpression") {
+      const constructor = Reflect.get(current, "callee");
+      const constructorKind = dynamicCodeKindForExpression(constructor, scope);
+      if (constructorKind) rejectDynamicCode(constructorKind);
+    }
+    if (
+      (type === "CallExpression" || type === "OptionalCallExpression") &&
+      isStringGeneratedCodeCall(current, scope)
+    ) {
+      rejectDynamicCode("string-generated code");
+    }
     if (
       type === "FunctionDeclaration" ||
       type === "FunctionExpression" ||
@@ -622,6 +857,62 @@ function analyzeRegistrations(
       const blockScope = createScope(scope, scope.functionScope);
       const statements = Reflect.get(current, "body");
       if (Array.isArray(statements)) visitStatements(statements, blockScope);
+      return;
+    }
+    if (type === "CatchClause") {
+      const catchScope = createScope(scope, scope.functionScope);
+      const parameter = Reflect.get(current, "param");
+      if (parameter !== null && parameter !== undefined) {
+        declarePattern(parameter, catchScope);
+        visitPatternDecorators(parameter, catchScope);
+        visitPatternInitializers(parameter, catchScope);
+      }
+      visit(Reflect.get(current, "body"), catchScope, current, parent);
+      return;
+    }
+    if (type === "ForStatement") {
+      const loopScope = createScope(scope, scope.functionScope);
+      const initializer = Reflect.get(current, "init");
+      if (isAstNode(initializer) && Reflect.get(initializer, "type") === "VariableDeclaration") {
+        declareDirectBindings(initializer, loopScope);
+      }
+      visit(initializer, loopScope, current, parent);
+      visit(Reflect.get(current, "test"), loopScope, current, parent);
+      visit(Reflect.get(current, "update"), loopScope, current, parent);
+      visit(Reflect.get(current, "body"), loopScope, current, parent);
+      return;
+    }
+    if (type === "ForInStatement" || type === "ForOfStatement") {
+      const loopScope = createScope(scope, scope.functionScope);
+      const left = Reflect.get(current, "left");
+      if (isAstNode(left) && Reflect.get(left, "type") === "VariableDeclaration") {
+        declareDirectBindings(left, loopScope);
+      }
+      visit(left, loopScope, current, parent);
+      visit(Reflect.get(current, "right"), scope, current, parent);
+      visit(Reflect.get(current, "body"), loopScope, current, parent);
+      return;
+    }
+    if (type === "SwitchStatement") {
+      visit(Reflect.get(current, "discriminant"), scope, current, parent);
+      const switchScope = createScope(scope, scope.functionScope);
+      const cases = Reflect.get(current, "cases");
+      if (Array.isArray(cases)) {
+        for (const switchCase of cases) {
+          if (!isAstNode(switchCase)) continue;
+          const consequent = Reflect.get(switchCase, "consequent");
+          if (Array.isArray(consequent)) predeclareStatements(consequent, switchScope);
+        }
+        for (const switchCase of cases) visit(switchCase, switchScope, current, parent);
+      }
+      return;
+    }
+    if (type === "SwitchCase") {
+      visit(Reflect.get(current, "test"), scope, current, parent);
+      const consequent = Reflect.get(current, "consequent");
+      if (Array.isArray(consequent)) {
+        for (const statement of consequent) visit(statement, scope, current, parent);
+      }
       return;
     }
     if (type === "VariableDeclaration") {
@@ -653,6 +944,14 @@ function analyzeRegistrations(
         isAstNode(right) && Reflect.get(right, "type") === "Identifier"
           ? lookupBinding(scope, String(Reflect.get(right, "name")))
           : null;
+      if (leftBinding) {
+        const rightDynamicCode = dynamicCodeKindForExpression(right, scope);
+        if (rightDynamicCode) leftBinding.dynamicCode = rightDynamicCode;
+        const rightFunctionKind = functionKindForExpression(right, scope);
+        if (rightFunctionKind !== "none") leftBinding.functionKind = rightFunctionKind;
+        if (isStringCodeGeneratorExpression(right, scope)) leftBinding.stringCodeGenerator = true;
+        if (isStringExpression(right, scope)) leftBinding.stringValue = true;
+      }
       if (leftBinding && rightBinding?.contextAlias) {
         leftBinding.contextAlias = true;
         leftBinding.registrationMethod = null;
@@ -681,7 +980,8 @@ function analyzeRegistrations(
         Reflect.get(parent, "callee") === current &&
         grandparent &&
         isAstNode(grandparent) &&
-        Reflect.get(grandparent, "type") === "ExpressionStatement";
+        Reflect.get(grandparent, "type") === "ExpressionStatement" &&
+        immediateBodyStatements.has(grandparent);
       if (source === contextBinding) {
         if (
           Reflect.get(current, "computed") === true ||
@@ -697,7 +997,7 @@ function analyzeRegistrations(
         }
         if (!directCall || Reflect.get(current, "computed") === true) {
           throw new Error(
-            `Plugin ${method} registration must be a direct context call in an expression statement`,
+            `Plugin ${method} registration must be a direct context call in an immediate expression statement of the default contribution function`,
           );
         }
         const argumentsList = Reflect.get(parent, "arguments");
@@ -738,8 +1038,9 @@ function analyzeRegistrations(
     }
   };
 
-  const statements = isAstNode(body) ? Reflect.get(body, "body") : null;
-  if (Array.isArray(statements)) visitStatements(statements, functionScope);
+  if (Array.isArray(contributionStatements)) {
+    visitStatements(contributionStatements, functionScope);
+  }
   return ranges;
 }
 

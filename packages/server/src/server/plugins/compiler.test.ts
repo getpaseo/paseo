@@ -120,6 +120,119 @@ export default function contribute(plugin: PluginContext) {
 });
 
 describe("plugin contribution targets", () => {
+  it.each([
+    ["an if branch", "if (enabled) { plugin.addTool({}); }"],
+    ["an else branch", "if (enabled) {} else plugin.addTool({});"],
+    ["a while loop", "while (enabled) { plugin.addTool({}); }"],
+    ["a do-while loop", "do { plugin.addTool({}); } while (enabled);"],
+    ["a for loop", "for (;;) { plugin.addTool({}); }"],
+    ["a for-in loop", "for (const item in items) { plugin.addTool({}); }"],
+    ["a for-of loop", "for (const item of items) { plugin.addTool({}); }"],
+    ["a switch case", "switch (value) { case 1: plugin.addTool({}); break; }"],
+    ["a try block", "try { plugin.addTool({}); } catch {}"],
+    ["a catch block", "try {} catch (error) { plugin.addTool({}); }"],
+  ])("rejects a registration nested in %s without transforming it", async (_description, body) => {
+    const directory = await mkdtemp(path.join(tmpdir(), "paseo-plugin-compiler-"));
+    temporaryDirectories.push(directory);
+    const entryPath = path.join(directory, "index.ts");
+    await writeFile(
+      entryPath,
+      `export default function contribute(plugin) {
+  ${body}
+  return () => undefined;
+}
+`,
+    );
+
+    await expect(compilePlugin(entryPath)).rejects.toThrow(/immediate.*expression statement/i);
+  });
+
+  it.each([
+    [
+      "a catch parameter",
+      `try {} catch (plugin) {
+    plugin.addTool({ name: "catch-local" });
+  }`,
+    ],
+    [
+      "a for statement binding",
+      `for (let plugin = { addTool() {} }; plugin; plugin = null) {
+    plugin.addTool({ name: "for-local" });
+  }`,
+    ],
+    [
+      "a for-in binding",
+      `for (const plugin in values) {
+    plugin.addTool({ name: "for-in-local" });
+  }`,
+    ],
+    [
+      "a for-of binding",
+      `for (const plugin of values) {
+    plugin.addTool({ name: "for-of-local" });
+  }`,
+    ],
+    [
+      "a switch case declaration",
+      `switch (value) {
+    case 1:
+      plugin.addTool({ name: "switch-local" });
+      break;
+    default:
+      const plugin = { addTool() {} };
+      break;
+  }`,
+    ],
+  ])("keeps %s separate from the default context", async (_description, body) => {
+    const directory = await mkdtemp(path.join(tmpdir(), "paseo-plugin-compiler-"));
+    temporaryDirectories.push(directory);
+    const entryPath = path.join(directory, "index.ts");
+    await writeFile(
+      entryPath,
+      `export default function contribute(plugin) {
+  ${body}
+  return () => undefined;
+}
+`,
+    );
+
+    const { clientBundle } = await compilePlugin(entryPath);
+    expect(clientBundle).toContain("addTool");
+  });
+
+  it.each([
+    ["direct eval", `eval("plugin.addTool({})");`],
+    ["indirect eval", `const run = eval; run("plugin.addTool({})");`],
+    ["global-object eval", `globalThis.eval("plugin.addTool({})");`],
+    ["an aliased global-object eval", `const root = globalThis; root.eval("plugin.addTool({})");`],
+    ["a destructured eval", `const { eval: run } = globalThis; run("plugin.addTool({})");`],
+    ["the Function constructor", `new Function("plugin.addTool({})");`],
+    [
+      "the AsyncFunction constructor",
+      `const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
+  new AsyncFunction("plugin.addTool({})");`,
+    ],
+    ["string-generated timer code", `setTimeout("plugin.addTool({})", 0);`],
+    [
+      "aliased string-generated timer code",
+      `const timer = setTimeout; timer("plugin.addTool({})", 0);`,
+    ],
+  ])("rejects %s in the plugin entrypoint", async (_description, body) => {
+    const directory = await mkdtemp(path.join(tmpdir(), "paseo-plugin-compiler-"));
+    temporaryDirectories.push(directory);
+    const entryPath = path.join(directory, "index.ts");
+    await writeFile(
+      entryPath,
+      `export default function contribute(plugin) {
+  ${body}
+  return () => undefined;
+}
+`,
+    );
+
+    await expect(compilePlugin(entryPath)).rejects.toThrow(/dynamic code generation/i);
+  });
+
   it("strips direct registrations when a var redeclares the context parameter", async () => {
     const directory = await mkdtemp(path.join(tmpdir(), "paseo-plugin-compiler-"));
     temporaryDirectories.push(directory);
