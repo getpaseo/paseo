@@ -1,10 +1,16 @@
 import { useMemo, type ReactNode } from "react";
 import { Text, View, type StyleProp, type ViewStyle } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
+import { SettingsInfoTip } from "@/screens/settings/settings-info-tip";
 import { settingsStyles } from "@/styles/settings";
 
 interface SettingsSectionProps {
   title: string;
+  /**
+   * What this section is for. Renders as an info tooltip on the header; a
+   * paragraph between the header and the card is wrong (docs/design.md §7).
+   */
+  info?: ReactNode;
   trailing?: ReactNode;
   testID?: string;
   style?: StyleProp<ViewStyle>;
@@ -23,6 +29,7 @@ interface SettingsSectionProps {
  */
 export function SettingsSection({
   title,
+  info,
   trailing,
   testID,
   style,
@@ -36,7 +43,16 @@ export function SettingsSection({
   return (
     <View style={sectionStyle} testID={testID}>
       <View style={styles.header}>
-        <Text style={settingsStyles.sectionHeaderTitle}>{title}</Text>
+        <View style={styles.titleRow}>
+          <Text style={settingsStyles.sectionHeaderTitle}>{title}</Text>
+          {info ? (
+            <SettingsInfoTip
+              title={title}
+              info={info}
+              testID={testID ? `${testID}-info` : undefined}
+            />
+          ) : null}
+        </View>
         {trailing}
       </View>
       <View style={styles.content}>{children}</View>
@@ -52,6 +68,11 @@ const styles = StyleSheet.create((theme) => ({
     gap: theme.spacing[2],
     marginBottom: theme.spacing[3],
     marginLeft: theme.spacing[1],
+  },
+  titleRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
   },
   content: {
     gap: theme.spacing[3],

@@ -34,8 +34,8 @@ Relay is off on new installations. When you pair a device from `paseo`, `paseo d
 1. The daemon generates a persistent ECDH keypair and stores it in `$PASEO_HOME/daemon-keypair.json`
 2. When you scan the QR code or click the pairing link, your phone receives the daemon's public key
 3. Your phone sends a handshake message with its own public key. The daemon will not accept any commands until this handshake completes.
-4. Both sides perform a Curve25519 ECDH key exchange to derive a shared key. All subsequent
-   messages are encrypted with XSalsa20-Poly1305 (NaCl `box`).
+4. Each side combines its Curve25519 key with the peer public key, then uses the resulting NaCl
+   `box` channel for XSalsa20-Poly1305 protected payloads.
 
 The relay sees only: IP addresses, timing, message sizes, and session IDs. It cannot read message contents, forge messages, or derive encryption keys from observing the handshake.
 
@@ -44,8 +44,8 @@ The relay sees only: IP addresses, timing, message sizes, and session IDs. It ca
 The daemon requires a valid cryptographic handshake before processing any commands. A compromised relay cannot:
 
 - **Send commands**, Without your phone's private key, it cannot complete the handshake
-- **Read your traffic**, All messages are encrypted with XSalsa20-Poly1305 (NaCl `box`) after the handshake
-- **Forge messages**, NaCl `box` provides authenticated encryption; tampered messages are rejected
+- **Read your traffic**, Only the paired endpoints can open the NaCl `box` payloads
+- **Forge messages**, The authenticated cipher rejects modified payloads
 - **Replay old messages**, Each session derives fresh encryption keys
 
 ### Trust model

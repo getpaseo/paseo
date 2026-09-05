@@ -293,9 +293,9 @@ export async function reloadAgentTimelineFromPersistedReplica(
   await expect
     .poll(async () => {
       const cache = await readReplicaCache(page);
-      const timeline = cache?.hosts?.find(
-        (host) => host.timeline?.agentId === agent.agentId,
-      )?.timeline;
+      const timeline = cache?.hosts
+        ?.flatMap((host) => host.timelines)
+        .find((candidate) => candidate.agentId === agent.agentId);
       return timeline?.items?.length === 50;
     })
     .toBe(true);
@@ -311,7 +311,9 @@ export async function waitForPersistedCanonicalTimelineRange(
   const readRange = async () => {
     const cache = await readReplicaCache(page);
     if (cache?.version !== 6) return null;
-    const range = cache.hosts?.find((host) => host.timeline?.agentId === agentId)?.timeline?.range;
+    const range = cache.hosts
+      ?.flatMap((host) => host.timelines)
+      .find((timeline) => timeline.agentId === agentId)?.range;
     if (
       typeof range?.epoch !== "string" ||
       typeof range.startSeq !== "number" ||

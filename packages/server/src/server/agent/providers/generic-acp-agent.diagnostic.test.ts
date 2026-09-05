@@ -17,7 +17,132 @@ function parseInitializeTrace(content: string): Array<{ clientCapabilities: unkn
     .map((line) => JSON.parse(line) as { clientCapabilities: unknown });
 }
 
+function historyBudgetClock(): () => number {
+  let calls = 0;
+  return () => (calls++ < 2 ? 0 : 60_001);
+}
+
 describe("GenericACPAgentClient diagnostics", () => {
+  test("filters empty ACP sessions by replaying history and returns prompt previews", async () => {
+    await withFakeACPAgent("history-list", async (scriptPath, mode, testDir) => {
+      const closeTracePath = path.join(testDir, "session-close.jsonl");
+      const client = new GenericACPAgentClient({
+        logger: createTestLogger(),
+        command: [process.execPath, scriptPath, mode, "", "", closeTracePath, testDir],
+      });
+
+      await expect(client.listImportableSessions({ limit: 1 })).resolves.toEqual([
+        {
+          providerHandleId: "conversation-session",
+          cwd: testDir,
+          title: "Conversation",
+          firstPromptPreview: "First prompt",
+          lastPromptPreview: "Last prompt",
+          lastActivityAt: new Date("2026-09-04T20:00:00.000Z"),
+        },
+      ]);
+      await expect(readFile(closeTracePath, "utf8")).resolves.toBe(
+        `${JSON.stringify({ sessionId: "empty-session" })}\n${JSON.stringify({ sessionId: "conversation-session" })}\n`,
+      );
+    });
+  });
+
+  test("keeps a listed session visible when its ACP history cannot be loaded", async () => {
+    await withFakeACPAgent("history-load-failure", async (scriptPath, mode, testDir) => {
+      const client = new GenericACPAgentClient({
+        logger: createTestLogger(),
+        command: [process.execPath, scriptPath, mode, "", "", "", testDir],
+      });
+
+      await expect(client.listImportableSessions({ limit: 1 })).resolves.toEqual([
+        {
+          providerHandleId: "stale-session",
+          cwd: testDir,
+          title: "Could still be real",
+          firstPromptPreview: null,
+          lastPromptPreview: null,
+          lastActivityAt: new Date("2026-09-04T20:00:00.000Z"),
+        },
+      ]);
+    });
+  });
+
+  test("keeps sessions with replayed conversation activity but no user text preview", async () => {
+    await withFakeACPAgent("history-list", async (scriptPath, mode, testDir) => {
+      const client = new GenericACPAgentClient({
+        logger: createTestLogger(),
+        command: [process.execPath, scriptPath, mode, "", "", "", testDir],
+      });
+
+      const result = await client.listImportableSessions({ limit: 2 });
+
+      expect(result).toMatchObject([
+        { providerHandleId: "conversation-session" },
+        { providerHandleId: "assistant-only-session" },
+      ]);
+      expect(result[1]).toMatchObject({
+        firstPromptPreview: null,
+        lastPromptPreview: null,
+      });
+    });
+  });
+
+  test("reuses ACP prompt previews while the listed session timestamp is unchanged", async () => {
+    await withFakeACPAgent("history-list", async (scriptPath, mode, testDir) => {
+      const loadTracePath = path.join(testDir, "session-load.jsonl");
+      const client = new GenericACPAgentClient({
+        logger: createTestLogger(),
+        command: [process.execPath, scriptPath, mode, "", "", "", testDir, loadTracePath],
+      });
+
+      const first = await client.listImportableSessions({ limit: 1 });
+      const second = await client.listImportableSessions({ limit: 1 });
+
+      expect(second).toEqual(first);
+      await expect(readFile(loadTracePath, "utf8")).resolves.toBe(
+        `${JSON.stringify({ sessionId: "empty-session" })}\n${JSON.stringify({ sessionId: "conversation-session" })}\n`,
+      );
+    });
+  });
+
+  test("bounds history loads by scanLimit when every inspected session is empty", async () => {
+    await withFakeACPAgent("history-list", async (scriptPath, mode, testDir) => {
+      const closeTracePath = path.join(testDir, "session-close.jsonl");
+      const client = new GenericACPAgentClient({
+        logger: createTestLogger(),
+        command: [process.execPath, scriptPath, mode, "", "", closeTracePath, testDir],
+      });
+
+      await expect(client.listImportableSessions({ limit: 1, scanLimit: 1 })).resolves.toEqual([]);
+      await expect(readFile(closeTracePath, "utf8")).resolves.toBe(
+        `${JSON.stringify({ sessionId: "empty-session" })}\n`,
+      );
+    });
+  });
+
+  test("bounds the total time spent loading inaccessible session histories", async () => {
+    await withFakeACPAgent("history-load-failures", async (scriptPath, mode, testDir) => {
+      const loadTracePath = path.join(testDir, "session-load.jsonl");
+      const client = new GenericACPAgentClient({
+        logger: createTestLogger(),
+        command: [process.execPath, scriptPath, mode, "", "", "", testDir, loadTracePath],
+        now: historyBudgetClock(),
+      });
+
+      const sessions = await client.listImportableSessions({ limit: 4 });
+
+      expect(sessions).toMatchObject([
+        { providerHandleId: "failed-session-1" },
+        { providerHandleId: "failed-session-2" },
+        { providerHandleId: "failed-session-3" },
+        { providerHandleId: "failed-session-4" },
+      ]);
+      await expect(readFile(loadTracePath, "utf8")).resolves.toBe(
+        `${JSON.stringify({ sessionId: "failed-session-1" })}\n`,
+      );
+    });
+  });
+
   test("probes npx-backed agent packages instead of npx itself", () => {
     expect(buildVersionProbeCommand(["npx", "-y", "@google/gemini-cli@0.41.1", "--acp"])).toEqual({
       command: "npx",
@@ -54,6 +179,25 @@ describe("GenericACPAgentClient diagnostics", () => {
       expect(diagnostic).toContain("modes=1");
       expect(diagnostic).toContain("ACP cleanup: ok");
       expect(diagnostic).not.toContain("Status:");
+    });
+  });
+
+  test("closes the native diagnostic probe session", async () => {
+    await withFakeACPAgent("success", async (scriptPath, mode, testDir) => {
+      const closeTracePath = path.join(testDir, "session-close.jsonl");
+      const client = new GenericACPAgentClient({
+        logger: createTestLogger(),
+        command: [process.execPath, scriptPath, mode, "", "", closeTracePath],
+        providerId: "custom-acp",
+        label: "Custom ACP",
+        diagnosticPhaseTimeoutMs: TEST_ACP_TIMEOUT_MS,
+      });
+
+      await client.getDiagnostic();
+
+      await expect(readFile(closeTracePath, "utf8")).resolves.toContain(
+        JSON.stringify({ sessionId: "session-1" }),
+      );
     });
   });
 
@@ -181,7 +325,12 @@ describe("GenericACPAgentClient diagnostics", () => {
 });
 
 async function withFakeACPAgent(
-  mode: "success" | "hang-session",
+  mode:
+    | "success"
+    | "hang-session"
+    | "history-list"
+    | "history-load-failure"
+    | "history-load-failures",
   run: (scriptPath: string, mode: string, testDir: string) => Promise<void>,
 ): Promise<void> {
   await withTempDir("paseo-acp-diagnostic-", async (testDir) => {
@@ -230,6 +379,9 @@ const readline = require("node:readline");
 const mode = process.argv[2];
 const pidPath = process.argv[3];
 const initializeTracePath = process.argv[4];
+const closeTracePath = process.argv[5];
+const sessionCwd = process.argv[6];
+const loadTracePath = process.argv[7];
 if (pidPath) {
   fs.writeFileSync(pidPath, String(process.pid));
 }
@@ -237,6 +389,10 @@ const rl = readline.createInterface({ input: process.stdin });
 
 function send(id, result) {
   process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id, result }) + "\\n");
+}
+
+function sendError(id, code, message) {
+  process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id, error: { code, message } }) + "\\n");
 }
 
 rl.on("line", (line) => {
@@ -250,7 +406,13 @@ rl.on("line", (line) => {
     }
     send(message.id, {
       protocolVersion: message.params?.protocolVersion ?? 1,
-      agentCapabilities: {},
+      agentCapabilities: {
+        loadSession:
+          mode === "history-list" ||
+          mode === "history-load-failure" ||
+          mode === "history-load-failures",
+        sessionCapabilities: { close: {}, list: {} },
+      },
     });
     return;
   }
@@ -272,6 +434,122 @@ rl.on("line", (line) => {
       },
       configOptions: [],
     });
+    return;
+  }
+
+  if (message.method === "session/close") {
+    if (closeTracePath) {
+      fs.appendFileSync(closeTracePath, JSON.stringify(message.params) + "\\n");
+    }
+    send(message.id, {});
+    return;
+  }
+
+  if (message.method === "session/list" && mode === "history-list") {
+    send(message.id, {
+      sessions: [
+        {
+          sessionId: "empty-session",
+          cwd: sessionCwd,
+          title: "Empty",
+          updatedAt: "2026-09-04T21:00:00.000Z",
+        },
+        {
+          sessionId: "conversation-session",
+          cwd: sessionCwd,
+          title: "Conversation",
+          updatedAt: "2026-09-04T20:00:00.000Z",
+        },
+        {
+          sessionId: "assistant-only-session",
+          cwd: sessionCwd,
+          title: "Recovered conversation",
+          updatedAt: "2026-09-04T19:00:00.000Z",
+        },
+      ],
+      nextCursor: null,
+    });
+    return;
+  }
+
+  if (message.method === "session/list" && mode === "history-load-failure") {
+    send(message.id, {
+      sessions: [{
+        sessionId: "stale-session",
+        cwd: sessionCwd,
+        title: "Could still be real",
+        updatedAt: "2026-09-04T20:00:00.000Z",
+      }],
+      nextCursor: null,
+    });
+    return;
+  }
+
+  if (message.method === "session/list" && mode === "history-load-failures") {
+    send(message.id, {
+      sessions: [1, 2, 3, 4].map((number) => ({
+        sessionId: "failed-session-" + number,
+        cwd: sessionCwd,
+        title: "Could still be real " + number,
+        updatedAt: "2026-09-04T20:00:00.000Z",
+      })),
+      nextCursor: null,
+    });
+    return;
+  }
+
+  if (message.method === "session/load" && mode === "history-list") {
+    if (loadTracePath) {
+      fs.appendFileSync(
+        loadTracePath,
+        JSON.stringify({ sessionId: message.params.sessionId }) + "\\n",
+      );
+    }
+    if (message.params.sessionId === "conversation-session") {
+      for (const [messageId, text] of [["user-1", "First prompt"], ["user-2", "Last prompt"]]) {
+        process.stdout.write(JSON.stringify({
+          jsonrpc: "2.0",
+          method: "session/update",
+          params: {
+            sessionId: message.params.sessionId,
+            update: {
+              sessionUpdate: "user_message_chunk",
+              messageId,
+              content: { type: "text", text },
+            },
+          },
+        }) + "\\n");
+      }
+    }
+    if (message.params.sessionId === "assistant-only-session") {
+      process.stdout.write(JSON.stringify({
+        jsonrpc: "2.0",
+        method: "session/update",
+        params: {
+          sessionId: message.params.sessionId,
+          update: {
+            sessionUpdate: "agent_message_chunk",
+            content: { type: "text", text: "Recovered response" },
+          },
+        },
+      }) + "\\n");
+    }
+    send(message.id, { modes: null, models: null, configOptions: [] });
+    return;
+  }
+
+  if (
+    message.method === "session/load" &&
+    (mode === "history-load-failure" || mode === "history-load-failures")
+  ) {
+    if (loadTracePath) {
+      fs.appendFileSync(
+        loadTracePath,
+        JSON.stringify({ sessionId: message.params.sessionId }) + "\\n",
+      );
+    }
+    sendError(message.id, -32602, "stale session");
+    return;
   }
 });
 `;

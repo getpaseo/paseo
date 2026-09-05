@@ -35,7 +35,7 @@ import {
   filesToImageAttachments,
 } from "@/utils/image-attachments-from-files";
 import type { ComposerAttachment } from "@/attachments/types";
-import type { ImageAttachment, MessagePayload } from "@/composer/types";
+import type { ImageAttachment, MessagePayload, TextReplacement } from "@/composer/types";
 import { focusWithRetries } from "@/utils/web-focus";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Shortcut } from "@/components/ui/shortcut";
@@ -170,8 +170,8 @@ export interface MessageInputProps {
   inputMode?: ComposerInputMode;
   /** Renders `value` as static text on the same surface, for content there is nothing to type into. */
   readOnly?: boolean;
-  /** Changes only when application state must replace native-owned text. */
-  textReplacementKey: string;
+  /** Command issued when application state must replace native-owned text. */
+  textReplacement: TextReplacement;
   /** Replaces the submit icon with this label, still inside the composer's own toolbar row. */
   submitLabel?: string;
 }
@@ -1095,7 +1095,7 @@ interface ResolvedMessageInputProps {
   attachmentSlot: React.ReactNode;
   inputMode: ComposerInputMode;
   readOnly: boolean;
-  textReplacementKey: string;
+  textReplacement: TextReplacement;
   submitLabel: string | undefined;
 }
 
@@ -1143,7 +1143,7 @@ function resolveMessageInputProps(props: MessageInputProps): ResolvedMessageInpu
     attachmentSlot: props.attachmentSlot,
     inputMode: props.inputMode ?? "chat",
     readOnly: props.readOnly ?? false,
-    textReplacementKey: props.textReplacementKey,
+    textReplacement: props.textReplacement,
     submitLabel: props.submitLabel,
   };
 }
@@ -1199,7 +1199,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
       attachmentSlot,
       inputMode,
       readOnly,
-      textReplacementKey,
+      textReplacement,
       submitLabel,
     } = resolveMessageInputProps(props);
     const mode = resolveComposerInputMode(inputMode);
@@ -1225,7 +1225,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
     const isInputFocusedRef = useRef(false);
     const valueRef = useRef(value);
     const selectionRef = useRef({ start: value.length, end: value.length });
-    const appliedTextReplacementKeyRef = useRef(textReplacementKey);
+    const appliedTextReplacementKeyRef = useRef(textReplacement.key);
     const webTextareaRef = useRef<HTMLElement | null>(null);
     const composerHeight = useComposerHeight({
       value,
@@ -1303,13 +1303,13 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
     );
 
     useEffect(() => {
-      if (appliedTextReplacementKeyRef.current === textReplacementKey) return;
-      appliedTextReplacementKeyRef.current = textReplacementKey;
-      updateComposerHeightForText?.(valueRef.current, value);
-      valueRef.current = value;
-      updateLiveTextPresence(value);
-      textInputRef.current?.replaceText(value);
-    }, [textReplacementKey, updateComposerHeightForText, updateLiveTextPresence, value]);
+      if (appliedTextReplacementKeyRef.current === textReplacement.key) return;
+      appliedTextReplacementKeyRef.current = textReplacement.key;
+      updateComposerHeightForText?.(valueRef.current, textReplacement.text);
+      valueRef.current = textReplacement.text;
+      updateLiveTextPresence(textReplacement.text);
+      textInputRef.current?.replaceText(textReplacement.text);
+    }, [textReplacement, updateComposerHeightForText, updateLiveTextPresence]);
 
     useEffect(() => {
       return () => {
@@ -1918,9 +1918,11 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
 
 const styles = StyleSheet.create((theme: Theme) => ({
   container: {
+    flexShrink: 1,
     position: "relative",
   },
   inputWrapper: {
+    flexShrink: 1,
     flexDirection: "column",
     gap: theme.spacing[3],
     backgroundColor: theme.colors.surface1,
@@ -1949,6 +1951,7 @@ const styles = StyleSheet.create((theme: Theme) => ({
     borderStyle: "dotted",
   },
   textInputScrollWrapper: {
+    flexShrink: 1,
     position: "relative",
   },
   focusHintText: {
@@ -1960,6 +1963,8 @@ const styles = StyleSheet.create((theme: Theme) => ({
     opacity: 0.5,
   },
   textInput: {
+    // Preserve the controls when an ancestor constrains an overlong draft.
+    flexShrink: 1,
     width: "100%",
     color: theme.colors.foreground,
     fontSize: theme.fontSize.content,
@@ -1981,6 +1986,7 @@ const styles = StyleSheet.create((theme: Theme) => ({
     color: theme.colors.foregroundMuted,
   },
   buttonRow: {
+    flexShrink: 0,
     flexDirection: "row",
     alignItems: "flex-end",
     justifyContent: "space-between",

@@ -1,3 +1,3 @@
-export function useKeyboardVisibility(): boolean {
+export function useKeyboardVisibility(_enabled = true): boolean {
   return false;
 }

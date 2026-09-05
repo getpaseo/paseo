@@ -1,9 +1,10 @@
 {
   "name": "@getpaseo/highlight",
-  "version": "0.6.1",
+  "version": "0.7.2",
   "files": [
     "dist",
-    "!dist/**/*.map"
+    "!dist/**/*.map",
+    "src/astro/LICENSE"
   ],
   "type": "module",
   "main": "./dist/index.js",
