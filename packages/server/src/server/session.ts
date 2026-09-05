@@ -1,3 +1,4 @@
+import type { AgentRequests } from "./agent/requests/index.js";
 import equal from "fast-deep-equal";
 import { v4 as uuidv4 } from "uuid";
 import { lstat, mkdir, mkdtemp, rename, rm, stat } from "node:fs/promises";
@@ -461,6 +462,7 @@ export interface SessionOptions {
   worktreesRoot?: string;
   agentManager: AgentManager;
   agentStorage: AgentStorage;
+  agentRequests: Pick<AgentRequests, "create" | "send">;
   projectRegistry: ProjectRegistry;
   workspaceRegistry: WorkspaceRegistry;
   directorySync?: DirectorySyncService;
@@ -745,6 +747,7 @@ export class Session {
   private readonly daemonSession: DaemonSession;
   private readonly hubExecutionController: HubExecutionController | null;
   private readonly workspaceScripts: WorkspaceScriptsService;
+  private readonly agentRequests: Pick<AgentRequests, "create" | "send">;
   private readonly createAgentLifecycleDispatch: CreateAgentLifecycleDispatch;
 
   constructor(options: SessionOptions) {
@@ -818,6 +821,7 @@ export class Session {
     this.onWorkspaceRecovered = onWorkspaceRecovered ?? null;
     this.pushNotifications = pushNotifications;
     this.paseoHome = paseoHome;
+    this.agentRequests = options.agentRequests;
     this.projectIcons = new ProjectIconReader(paseoHome);
     this.worktreesRoot = worktreesRoot;
     this.pluginRuntime = pluginRuntime;
@@ -3525,10 +3529,67 @@ export class Session {
    * Handle create agent request
    */
   private async handleCreateAgentRequest(msg: CreateAgentRequestMessage): Promise<void> {
+    try {
+      let agent: AgentSnapshotPayload;
+      if (msg.idempotencyKey !== undefined) {
+        if (msg.initialPrompt !== undefined) {
+          throw new Error("Idempotent creation requires sending the initial prompt separately");
+        }
+        const { requestId: _requestId, idempotencyKey, ...request } = msg;
+        const id = await this.agentRequests.create({
+          key: idempotencyKey,
+          request,
+          findAgent: async (agentId) => (await this.agentStorage.get(agentId)) !== null,
+          create: async (agentId) => {
+            await this.createSessionAgent(msg, agentId);
+          },
+        });
+        const record = await this.agentStorage.get(id);
+        if (!record) throw new Error("Previously created agent no longer exists");
+        agent = this.buildStoredAgentPayload(record);
+      } else {
+        agent = await this.createSessionAgent(msg);
+      }
+      this.emit({
+        type: "status",
+        payload: {
+          status: "agent_created",
+          agentId: agent.id,
+          requestId: msg.requestId,
+          agent,
+        },
+      });
+    } catch (error) {
+      const wireError = toWorktreeWireError(error);
+      this.sessionLogger.error({ err: error }, "Failed to create agent");
+      this.emit({
+        type: "status",
+        payload: {
+          status: "agent_create_failed",
+          requestId: msg.requestId,
+          error: wireError.message,
+          errorCode: wireError.code,
+        },
+      });
+      this.emit({
+        type: "activity_log",
+        payload: {
+          id: uuidv4(),
+          timestamp: new Date(),
+          type: "error",
+          content: `Failed to create agent: ${wireError.message}`,
+        },
+      });
+    }
+  }
+
+  private async createSessionAgent(
+    msg: CreateAgentRequestMessage,
+    agentId?: string,
+  ): Promise<AgentSnapshotPayload> {
     const {
       config,
       worktreeName,
-      requestId,
       initialPrompt,
       clientMessageId,
       outputSchema,
@@ -3594,6 +3655,7 @@ export class Session {
         },
         {
           kind: "session",
+          agentId,
           config: resolvedIntent.config,
           workspaceId: resolvedIntent.intent.workspaceId,
           worktreeName,
@@ -3628,50 +3690,17 @@ export class Session {
         agentId: snapshot.id,
         createdWorktree,
       });
-      if (requestId) {
-        const agentPayload = await this.buildAgentPayload(liveSnapshot);
-        this.emit({
-          type: "status",
-          payload: {
-            status: "agent_created",
-            agentId: liveSnapshot.id,
-            requestId,
-            agent: agentPayload,
-          },
-        });
-      }
-
       this.sessionLogger.info(
         { agentId: snapshot.id, provider: snapshot.provider },
-        `Created agent ${snapshot.id} (${snapshot.provider})`,
+        "Created agent",
       );
+      return this.buildAgentPayload(liveSnapshot);
     } catch (error) {
       await this.createAgentLifecycleDispatch.cleanupCreatedWorktreeAfterFailedAgentCreate({
         createdWorktree: createdWorktreeForCleanup,
         createdAgentId,
       });
-      const wireError = toWorktreeWireError(error);
-      this.sessionLogger.error({ err: error }, "Failed to create agent");
-      if (requestId) {
-        this.emit({
-          type: "status",
-          payload: {
-            status: "agent_create_failed",
-            requestId,
-            error: wireError.message,
-            errorCode: wireError.code,
-          },
-        });
-      }
-      this.emit({
-        type: "activity_log",
-        payload: {
-          id: uuidv4(),
-          timestamp: new Date(),
-          type: "error",
-          content: `Failed to create agent: ${wireError.message}`,
-        },
-      });
+      throw error;
     }
   }
 
@@ -7465,9 +7494,8 @@ export class Session {
         },
         "agent.session.send_agent_message",
       );
-      let dispatchResult: { disposition: "out_of_band" | "steered" | "turn_started" };
-      try {
-        dispatchResult = await sendPromptToAgent({
+      const send = async () => {
+        const result = await sendPromptToAgent({
           agentManager: this.agentManager,
           agentStorage: this.agentStorage,
           agentId,
@@ -7477,47 +7505,19 @@ export class Session {
           clearPendingPermissions: true,
           logger: this.sessionLogger,
         });
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        this.handleAgentRunError(agentId, error, "Failed to send agent message");
-        this.emit({
-          type: "send_agent_message_response",
-          payload: {
-            requestId: msg.requestId,
-            agentId,
-            accepted: false,
-            error: message,
-          },
+        if (result.disposition === "turn_started") {
+          await waitForAgentRunStartWithTimeout(this.agentManager, agentId);
+        }
+      };
+      if (msg.messageId) {
+        await this.agentRequests.send({
+          agentId,
+          messageId: msg.messageId,
+          request: { prompt, activeTurnBehavior: msg.activeTurnBehavior ?? "interrupt" },
+          send,
         });
-        return;
-      }
-
-      if (dispatchResult.disposition !== "turn_started") {
-        this.emit({
-          type: "send_agent_message_response",
-          payload: {
-            requestId: msg.requestId,
-            agentId,
-            accepted: true,
-            error: null,
-          },
-        });
-        return;
-      }
-
-      try {
-        await waitForAgentRunStartWithTimeout(this.agentManager, agentId);
-      } catch (error) {
-        this.emit({
-          type: "send_agent_message_response",
-          payload: {
-            requestId: msg.requestId,
-            agentId,
-            accepted: false,
-            error: errorToFriendlyMessage(error),
-          },
-        });
-        return;
+      } else {
+        await send();
       }
 
       this.emit({
@@ -7530,6 +7530,7 @@ export class Session {
         },
       });
     } catch (error) {
+      this.handleAgentRunError(resolved.agentId, error, "Failed to send agent message");
       this.emit({
         type: "send_agent_message_response",
         payload: {

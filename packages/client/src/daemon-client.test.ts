@@ -294,6 +294,24 @@ test("advertises consumer-provided browser automation capabilities", async () =>
   });
 });
 
+test("retry-safe creation rejects older hosts before sending any request", async () => {
+  const transport = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "receipt-gate",
+    transportFactory: () => transport.transport,
+    reconnect: { enabled: false },
+  });
+  clients.push(client);
+  const connecting = client.connect();
+  transport.triggerOpen();
+  await connecting;
+  await expect(
+    client.createAgent({ provider: "codex", cwd: "/project", idempotencyKey: "creation" }),
+  ).rejects.toThrow("Update the host to use retry-safe agent creation.");
+  expect(transport.sent).toEqual([]);
+});
+
 test("Hub management requires daemon support before dispatching requests", async () => {
   const mock = createMockTransport();
   const client = new DaemonClient({
@@ -2505,10 +2523,11 @@ test("sends create_agent_request with workspace and caller identity", async () =
   clients.push(client);
 
   const connectPromise = client.connect();
-  mock.triggerOpen();
+  mock.triggerOpen({ features: { agentRequestReceipts: true } });
   await connectPromise;
 
   const createPromise = client.createAgent({
+    idempotencyKey: "one-creation",
     provider: "codex",
     cwd: "/tmp/project/.paseo/worktrees/feature-a",
     workspaceId: "ws-feature-a",
@@ -2522,6 +2541,7 @@ test("sends create_agent_request with workspace and caller identity", async () =
   expect(request).toEqual(
     expect.objectContaining({
       type: "create_agent_request",
+      idempotencyKey: "one-creation",
       workspaceId: "ws-feature-a",
       callerAgentId: "parent-agent",
     }),
