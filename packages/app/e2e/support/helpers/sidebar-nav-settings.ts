@@ -107,6 +107,11 @@ export async function expectSidebarOrder(page: Page, keys: SidebarNavKey[]): Pro
 
 export async function expectSidebarItemHidden(page: Page, key: SidebarNavKey): Promise<void> {
   await expect(page.locator(`[data-testid="${SHELL_ROW_TEST_IDS[key]}"]:visible`)).toHaveCount(0);
+  if (key === "search") {
+    await expect(page.locator('[data-testid="sidebar-command-center-search"]:visible')).toHaveCount(
+      0,
+    );
+  }
 }
 
 export async function expectStoredSidebarNav(
