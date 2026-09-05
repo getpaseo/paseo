@@ -166,6 +166,7 @@ export const SHORTCUT_HELP_ROW_ORDER: Record<ShortcutSectionId, readonly string[
     "workspace-jump-index",
     "workspace-prev",
     "workspace-next",
+    "cycle-sidebar-grouping",
     "pin-workspace",
     "archive-workspace",
   ],
@@ -218,6 +219,7 @@ const SHORTCUT_HELP_LABEL_KEYS: Record<string, string> = {
   "workspace-tab-jump-index": "settings.shortcuts.help.jumpToTab",
   "workspace-prev": "settings.shortcuts.help.previousWorkspace",
   "workspace-next": "settings.shortcuts.help.nextWorkspace",
+  "cycle-sidebar-grouping": "settings.shortcuts.help.cycleSidebarGrouping",
   "workspace-tab-prev": "settings.shortcuts.help.previousTab",
   "workspace-tab-next": "settings.shortcuts.help.nextTab",
   "workspace-pane-split-right": "settings.shortcuts.help.splitPaneRight",
@@ -305,6 +307,30 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
       id: "new-workspace",
       section: "workspaces",
       label: "New workspace",
+    },
+  },
+
+  // --- Cycle sidebar grouping ---
+  {
+    id: "sidebar-grouping-cycle-cmd-g-mac",
+    action: "sidebar.grouping.cycle",
+    combo: "Cmd+G",
+    when: { mac: true, commandCenter: false },
+    help: {
+      id: "cycle-sidebar-grouping",
+      section: "workspaces",
+      label: "Cycle grouping",
+    },
+  },
+  {
+    id: "sidebar-grouping-cycle-ctrl-g-non-mac",
+    action: "sidebar.grouping.cycle",
+    combo: "Ctrl+G",
+    when: { mac: false, commandCenter: false, terminal: false },
+    help: {
+      id: "cycle-sidebar-grouping",
+      section: "workspaces",
+      label: "Cycle grouping",
     },
   },
 

@@ -40,6 +40,7 @@ export type KeyboardActionId =
   | "workspace.pane.close"
   | "workspace.navigate.index"
   | "workspace.navigate.relative"
+  | "sidebar.grouping.cycle"
   | "sidebar.toggle.left"
   | "sidebar.toggle.right"
   | "sidebar.toggle.both"
