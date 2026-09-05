@@ -150,14 +150,14 @@ describe("keyboard-shortcuts", () => {
       action: "workspace.new",
     },
     {
-      name: "matches Cmd+G to cycle sidebar grouping on mac",
-      event: { key: "g", code: "KeyG", metaKey: true },
+      name: "matches Cmd+; to cycle sidebar grouping on mac",
+      event: { key: ";", code: "Semicolon", metaKey: true },
       context: { isMac: true, commandCenterOpen: false },
       action: "sidebar.grouping.cycle",
     },
     {
-      name: "matches Ctrl+G to cycle sidebar grouping on non-mac",
-      event: { key: "g", code: "KeyG", ctrlKey: true },
+      name: "matches Ctrl+; to cycle sidebar grouping on non-mac",
+      event: { key: ";", code: "Semicolon", ctrlKey: true },
       context: { isMac: false, commandCenterOpen: false, focusScope: "other" },
       action: "sidebar.grouping.cycle",
     },
@@ -459,6 +459,21 @@ describe("keyboard-shortcuts", () => {
       context: { isMac: true, commandCenterOpen: true },
     },
     {
+      name: "leaves Cmd+; available while editing text on mac",
+      event: { key: ";", code: "Semicolon", metaKey: true },
+      context: { isMac: true, focusScope: "editable" },
+    },
+    {
+      name: "leaves Cmd+; available while a terminal is focused on mac",
+      event: { key: ";", code: "Semicolon", metaKey: true },
+      context: { isMac: true, focusScope: "terminal" },
+    },
+    {
+      name: "leaves Ctrl+; available while editing text on non-mac",
+      event: { key: ";", code: "Semicolon", ctrlKey: true },
+      context: { isMac: false, focusScope: "editable" },
+    },
+    {
       name: "does not close tab with Ctrl+W on mac desktop (Cmd+W only)",
       event: { key: "w", code: "KeyW", ctrlKey: true },
       context: { isMac: true, isDesktop: true },
@@ -663,7 +678,7 @@ describe("keyboard-shortcut help sections", () => {
       expectedKeys: {
         "new-agent": ["mod", "O"],
         "new-workspace": ["mod", "N"],
-        "cycle-sidebar-grouping": ["mod", "G"],
+        "cycle-sidebar-grouping": ["mod", ";"],
         "workspace-tab-new": ["mod", "T"],
         "workspace-jump-index": ["mod", "1-9"],
         "workspace-tab-jump-index": ["mod", "alt", "1-9"],
@@ -680,7 +695,7 @@ describe("keyboard-shortcut help sections", () => {
       name: "uses non-mac desktop defaults for tab jump and close tab",
       context: { isMac: false, isDesktop: true },
       expectedKeys: {
-        "cycle-sidebar-grouping": ["ctrl", "G"],
+        "cycle-sidebar-grouping": ["ctrl", ";"],
         "workspace-tab-jump-index": ["alt", "1-9"],
         "workspace-tab-close-current": ["ctrl", "W"],
       },
