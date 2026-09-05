@@ -31,6 +31,7 @@ export interface ProjectHostError {
 export interface ProjectHostReplica {
   serverId: string;
   serverName: string;
+  hasHydratedWorkspaces?: boolean;
   workspaces: WorkspaceDescriptor[];
   projects: ProjectDescriptor[];
 }
@@ -99,6 +100,7 @@ function selectProjectHostReplicas(
       return {
         serverId: host.serverId,
         serverName: host.label,
+        hasHydratedWorkspaces: session?.hasHydratedWorkspaces ?? false,
         workspaces: Array.from(session?.workspaces.values() ?? []),
         projects: Array.from(session?.projects.values() ?? []),
       };
@@ -137,9 +139,12 @@ export function deriveProjectsFromReplica(input: {
   });
 
   const localProjectLinks = Array.from(input.localProjectLinks ?? []);
+  const unhydratedProjectLinkServerIds = input.replicas
+    .filter((replica) => replica.hasHydratedWorkspaces === false)
+    .map((replica) => replica.serverId);
   const projectLinkPlacements = buildProjectLinkPlacements({ hosts });
   return {
-    ...buildProjects({ hosts, localProjectLinks }),
+    ...buildProjects({ hosts, localProjectLinks, unhydratedProjectLinkServerIds }),
     projectLinkPlacements,
     projectLinkSuggestions: buildProjectLinkSuggestions({
       placements: projectLinkPlacements,
