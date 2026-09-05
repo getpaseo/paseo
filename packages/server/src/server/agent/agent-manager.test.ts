@@ -2785,10 +2785,12 @@ test("reloadAgentSession preserves the live session when its replacement cannot 
     }
   }
 
+  let paseoToolPolicy = { disabledTools: ["list_agents"] };
   const manager = new AgentManager({
     clients: { codex: new UnsupportedReloadClient() },
     registry: new AgentStorage(join(workdir, "agents"), logger),
     logger,
+    resolvePaseoToolPolicy: () => paseoToolPolicy,
   });
 
   try {
@@ -2797,6 +2799,7 @@ test("reloadAgentSession preserves the live session when its replacement cannot 
       "00000000-0000-4000-8000-000000000109",
       { workspaceId: undefined },
     );
+    paseoToolPolicy = { disabledTools: ["create_agent"] };
 
     await expect(
       manager.reloadAgentSession(created.id, {
@@ -2810,6 +2813,9 @@ test("reloadAgentSession preserves the live session when its replacement cannot 
     expect(original.closed).toBe(false);
     expect(manager.getAgent(created.id)?.session).toBe(original);
     expect(manager.getAgent(created.id)?.lifecycle).toBe("idle");
+    expect(manager.getPaseoToolPolicy(created.id)).toEqual({
+      disabledTools: ["list_agents"],
+    });
   } finally {
     rmSync(workdir, { recursive: true, force: true });
   }
@@ -2938,6 +2944,168 @@ test("createAgent allows best-effort internal MCP when the provider session repo
     url: `http://127.0.0.1:6767/mcp/agents?callerAgentId=${snapshot.id}`,
     headers: { Authorization: "Bearer cap-token" },
   });
+
+  rmSync(workdir, { recursive: true, force: true });
+});
+
+test("uses each provider's current policy for new sessions and snapshots it by agent", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const policies = new Map<AgentProvider, { enabled?: boolean; disabledTools?: string[] }>([
+    ["codex", { disabledTools: ["list_agents"] }],
+    ["claude", { enabled: false }],
+  ]);
+
+  class CaptureClient extends TestAgentClient {
+    override readonly capabilities = {
+      ...TEST_CAPABILITIES,
+      supportsMcpServers: true,
+      supportsNativePaseoTools: true,
+    };
+    readonly launchContexts: AgentLaunchContext[] = [];
+    readonly configs: AgentSessionConfig[] = [];
+
+    override async createSession(
+      config: AgentSessionConfig,
+      launchContext?: AgentLaunchContext,
+    ): Promise<AgentSession> {
+      this.configs.push(config);
+      if (launchContext) this.launchContexts.push(launchContext);
+      return new TestAgentSession(config);
+    }
+  }
+
+  const codex = new CaptureClient("codex");
+  const claude = new CaptureClient("claude");
+  const policyInputs: Array<{ callerAgentId?: string; paseoToolPolicy?: unknown }> = [];
+  const paseoTools: PaseoToolCatalog = {
+    tools: new Map(),
+    getTool: () => undefined,
+    executeTool: async () => {
+      throw new Error("No tools registered in test catalog");
+    },
+  };
+  const manager = new AgentManager({
+    clients: { codex, claude },
+    registry: storage,
+    logger,
+    mcpBaseUrl: "http://127.0.0.1:6767/mcp/agents",
+    resolvePaseoToolPolicy: (provider) => policies.get(provider),
+    paseoToolCatalogFactory: async (context) => {
+      policyInputs.push(context);
+      return paseoTools;
+    },
+  });
+
+  const codexAgent = await manager.createAgent(
+    { provider: "codex", cwd: workdir },
+    "00000000-0000-4000-8000-000000000107",
+    { workspaceId: undefined },
+  );
+  const claudeAgent = await manager.createAgent(
+    { provider: "claude", cwd: workdir },
+    "00000000-0000-4000-8000-000000000108",
+    { workspaceId: undefined },
+  );
+
+  expect(policyInputs).toEqual([
+    { callerAgentId: codexAgent.id, paseoToolPolicy: { disabledTools: ["list_agents"] } },
+  ]);
+  expect(codex.launchContexts[0]?.paseoTools).toBe(paseoTools);
+  expect(claude.launchContexts[0]?.paseoTools).toBeUndefined();
+  expect(codex.configs[0]?.mcpServers?.paseo).toBeUndefined();
+  expect(claude.configs[0]?.mcpServers).toBeUndefined();
+  expect(manager.getPaseoToolPolicy(codexAgent.id)).toEqual({
+    disabledTools: ["list_agents"],
+  });
+  expect(manager.getPaseoToolPolicy(claudeAgent.id)).toEqual({ enabled: false });
+
+  policies.set("codex", { disabledTools: ["create_agent"] });
+  const nextCodexAgent = await manager.createAgent(
+    { provider: "codex", cwd: workdir },
+    "00000000-0000-4000-8000-000000000111",
+    { workspaceId: undefined },
+  );
+
+  expect(manager.getPaseoToolPolicy(codexAgent.id)).toEqual({
+    disabledTools: ["list_agents"],
+  });
+  expect(manager.getPaseoToolPolicy(nextCodexAgent.id)).toEqual({
+    disabledTools: ["create_agent"],
+  });
+  expect(policyInputs).toEqual([
+    { callerAgentId: codexAgent.id, paseoToolPolicy: { disabledTools: ["list_agents"] } },
+    {
+      callerAgentId: nextCodexAgent.id,
+      paseoToolPolicy: { disabledTools: ["create_agent"] },
+    },
+  ]);
+
+  await manager.archiveAgent(claudeAgent.id);
+  expect(manager.getPaseoToolPolicy(claudeAgent.id)).toBeUndefined();
+
+  rmSync(workdir, { recursive: true, force: true });
+});
+
+test("keeps the global Paseo-tools gate outside provider policy and MCP injection", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+
+  class McpClient extends TestAgentClient {
+    override readonly capabilities = {
+      ...TEST_CAPABILITIES,
+      supportsMcpServers: true,
+    };
+    lastConfig: AgentSessionConfig | null = null;
+
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      this.lastConfig = config;
+      return new TestAgentSession(config);
+    }
+  }
+
+  const enabledClient = new McpClient();
+  const enabledManager = new AgentManager({
+    clients: { codex: enabledClient },
+    registry: storage,
+    logger,
+    mcpBaseUrl: "http://127.0.0.1:6767/mcp/agents",
+    resolvePaseoToolPolicy: () => ({ disabledTools: ["list_agents"] }),
+  });
+  const enabledAgent = await enabledManager.createAgent(
+    { provider: "codex", cwd: workdir },
+    "00000000-0000-4000-8000-000000000109",
+    { workspaceId: undefined },
+  );
+
+  expect(enabledClient.lastConfig?.mcpServers?.paseo).toEqual({
+    type: "http",
+    url: `http://127.0.0.1:6767/mcp/agents?callerAgentId=${enabledAgent.id}`,
+  });
+
+  const disabledClient = new McpClient();
+  let catalogFactoryCalls = 0;
+  const disabledManager = new AgentManager({
+    clients: { codex: disabledClient },
+    registry: storage,
+    logger,
+    mcpBaseUrl: "http://127.0.0.1:6767/mcp/agents",
+    paseoToolsEnabled: false,
+    resolvePaseoToolPolicy: () => ({ enabled: true }),
+    paseoToolCatalogFactory: () => {
+      catalogFactoryCalls += 1;
+      return paseoTools;
+    },
+  });
+  const disabledAgent = await disabledManager.createAgent(
+    { provider: "codex", cwd: workdir },
+    "00000000-0000-4000-8000-000000000110",
+    { workspaceId: undefined },
+  );
+
+  expect(disabledClient.lastConfig?.mcpServers).toBeUndefined();
+  expect(catalogFactoryCalls).toBe(0);
+  expect(disabledManager.getPaseoToolPolicy(disabledAgent.id)).toEqual({ enabled: false });
 
   rmSync(workdir, { recursive: true, force: true });
 });

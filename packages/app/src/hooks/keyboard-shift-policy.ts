@@ -1,5 +1,25 @@
 export const DEFAULT_IOS_KEYBOARD_INSET_MIN_HEIGHT = 120;
 
+export function resolveStreamKeyboardInset(input: {
+  platform: "android" | "ios";
+  settledShift: number;
+}): {
+  contentContainerPaddingBottom: number;
+  contentInset: { bottom: number } | undefined;
+} {
+  const settledShift = Math.max(0, input.settledShift);
+  if (input.platform === "ios") {
+    return {
+      contentContainerPaddingBottom: 0,
+      contentInset: { bottom: settledShift },
+    };
+  }
+  return {
+    contentContainerPaddingBottom: settledShift,
+    contentInset: undefined,
+  };
+}
+
 export function shouldUseCompactExplorerKeyboardPadding(input: {
   isGit: boolean;
   explorerTab: "changes" | "files" | "pr";

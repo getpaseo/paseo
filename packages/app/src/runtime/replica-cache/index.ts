@@ -104,8 +104,9 @@ const StoredTimelineItemSchema = z.discriminatedUnion("kind", [
   }),
   z.strictObject({
     ...TimelineItemBaseShape,
-    kind: z.literal("activity_log"),
-    activityType: z.enum(["system", "info", "success", "error"]),
+    kind: z.literal("notification"),
+    sourceType: z.enum(["error", "notification"]),
+    level: z.enum(["info", "warning", "error"]),
     message: z.string(),
   }),
   z.strictObject({
@@ -422,11 +423,12 @@ function serializeTimelineItem(item: StreamItem): StoredTimelineItem | null {
         items: item.items,
         activity: item.activity,
       };
-    case "activity_log":
+    case "notification":
       return {
         ...base,
         kind: item.kind,
-        activityType: item.activityType,
+        sourceType: item.sourceType,
+        level: item.level,
         message: item.message,
       };
     case "compaction":
@@ -513,11 +515,12 @@ function deserializeBuiltinTimelineItem(
         items: item.items,
         activity: item.activity,
       };
-    case "activity_log":
+    case "notification":
       return {
         ...base,
         kind: item.kind,
-        activityType: item.activityType,
+        sourceType: item.sourceType,
+        level: item.level,
         message: item.message,
       };
     case "compaction":
@@ -681,8 +684,6 @@ function isTimelineItemStoredLosslessly(item: StreamItem): boolean {
   switch (item.kind) {
     case "user_message":
       return (item.images?.length ?? 0) === 0 && (item.attachments?.length ?? 0) === 0;
-    case "activity_log":
-      return item.metadata === undefined;
     case "tool_call":
       return item.payload.source === "agent";
     default:

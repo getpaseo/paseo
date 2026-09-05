@@ -22,6 +22,7 @@ test("preserves unknown fields while merging files by url", () => {
     mergeMacManifest(arm64Path, x64Path, outputPath);
     const output = readFileSync(outputPath, "utf8");
     assert.match(output, /stagingPercentage: 25/);
+    assert.match(output, /minimumSystemVersion: 22\.0\.0/);
     assert.match(output, /url: app-arm64\.zip/);
     assert.match(output, /url: app-x64\.zip/);
   } finally {
