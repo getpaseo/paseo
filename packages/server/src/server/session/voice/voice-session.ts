@@ -206,6 +206,7 @@ export class VoiceSession {
 
   private voiceModeAgentId: string | null = null;
   private voiceModeBaseConfig: VoiceModeBaseConfig | null = null;
+  private speechQueue: Promise<void> = Promise.resolve();
 
   constructor(options: VoiceSessionOptions) {
     const { host, logger, sessionId, sttLanguage, tts, stt, voice, voiceBridge, dictation } =
@@ -1029,7 +1030,7 @@ export class VoiceSession {
   }
 
   private registerVoiceBridgeForAgent(agentId: string): void {
-    this.registerVoiceSpeakHandler?.(agentId, async ({ text, signal }) => {
+    this.registerVoiceSpeakHandler?.(agentId, async ({ text }) => {
       this.sessionLogger.info(
         {
           agentId,
@@ -1038,17 +1039,10 @@ export class VoiceSession {
         },
         "Voice speak tool call received by session handler",
       );
-      const abortSignal = signal ?? this.abortController.signal;
-      await this.ttsManager.generateAndWaitForPlayback(
-        text,
-        (msg) => this.emit(msg),
-        abortSignal,
-        true,
-      );
-      this.sessionLogger.info(
-        { agentId, textLength: text.length },
-        "Voice speak tool call finished playback",
-      );
+
+      // The spoken text is the durable transcript record: emit it before any
+      // audio work so the chat carries the reply even when synthesis or
+      // playback fails, and the user can fall back to reading it.
       this.emit({
         type: "activity_log",
         payload: {
@@ -1058,6 +1052,27 @@ export class VoiceSession {
           content: text,
         },
       });
+
+      // Queue playback and return without awaiting it, so the agent keeps
+      // working while audio plays. The chain keeps overlapping speak calls in
+      // spoken order. Capture the abort signal at enqueue time: a barge-in
+      // aborts the current controller, which drains queued utterances, while
+      // speaks after the next user turn ride the fresh controller.
+      const abortSignal = this.abortController.signal;
+      this.speechQueue = this.speechQueue
+        .then(() => this.playSpeechUtterance(text, agentId, abortSignal))
+        .catch((error) => {
+          this.sessionLogger.error({ err: error, agentId }, "Voice speak playback failed");
+          this.emit({
+            type: "activity_log",
+            payload: {
+              id: uuidv4(),
+              timestamp: new Date(),
+              type: "error",
+              content: `Voice playback failed: ${getErrorMessage(error)}. The reply is shown as text above.`,
+            },
+          });
+        });
     });
 
     this.registerVoiceCallerContext?.(agentId, {
@@ -1065,6 +1080,23 @@ export class VoiceSession {
       allowCustomCwd: false,
       enableVoiceTools: true,
     });
+  }
+
+  private async playSpeechUtterance(
+    text: string,
+    agentId: string,
+    abortSignal: AbortSignal,
+  ): Promise<void> {
+    if (abortSignal.aborted) {
+      return;
+    }
+    await this.ttsManager.generateAndWaitForPlayback(
+      text,
+      (msg) => this.emit(msg),
+      abortSignal,
+      true,
+    );
+    this.sessionLogger.info({ agentId, textLength: text.length }, "Voice speak playback finished");
   }
 
   /**

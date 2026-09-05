@@ -1168,7 +1168,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
       {
         title: "Speak",
         description:
-          "Speak text to the user via daemon-managed voice output. Blocks until playback completes.",
+          "Speak text to the user via daemon-managed voice output. The text is also recorded in the chat, and the call returns once the utterance is queued — continue working while it plays.",
         inputSchema: {
           text: z
             .string()

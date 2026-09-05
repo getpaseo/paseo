@@ -1,4 +1,5 @@
 import { EventEmitter } from "node:events";
+import { Readable } from "node:stream";
 import pino from "pino";
 import { describe, expect, test, vi } from "vitest";
 
@@ -10,11 +11,13 @@ import type {
   StreamingTranscriptionCommittedEvent,
   StreamingTranscriptionEvent,
   StreamingTranscriptionSession,
+  TextToSpeechProvider,
 } from "../../speech/speech-provider.js";
 import type {
   TurnDetectionProvider,
   TurnDetectionSession,
 } from "../../speech/turn-detection-provider.js";
+import type { VoiceSpeakHandler } from "../../voice-types.js";
 
 const VOICE_AGENT_ID = "11111111-1111-4111-8111-111111111111";
 
@@ -231,6 +234,173 @@ describe("VoiceSession streaming transcription", () => {
         }),
       }),
     );
+
+    await voiceSession.cleanup();
+  });
+});
+
+class FakeVoiceTts implements TextToSpeechProvider {
+  public readonly synthesized: string[] = [];
+  public failWith: Error | null = null;
+
+  async synthesizeSpeech(text: string): Promise<{ stream: Readable; format: string }> {
+    if (this.failWith) {
+      throw this.failWith;
+    }
+    this.synthesized.push(text);
+    return {
+      stream: Readable.from([Buffer.from(text)]),
+      format: "pcm;rate=24000",
+    };
+  }
+}
+
+function createSpeakingVoiceSession() {
+  const detector = new FakeVoiceTurnDetectionSession();
+  const sttSession = new FakeVoiceSttSession();
+  const stt: SpeechToTextProvider = {
+    id: "local",
+    createSession: vi.fn(() => sttSession),
+  };
+  const turnDetection: TurnDetectionProvider = {
+    id: "local",
+    createSession: vi.fn(() => detector),
+  };
+  const host = createFakeHost();
+  const tts = new FakeVoiceTts();
+  const speakHandlers = new Map<string, VoiceSpeakHandler>();
+  const voiceSession = new VoiceSession({
+    host,
+    logger: pino({ level: "silent" }),
+    sessionId: "voice-session-speak-test",
+    sttLanguage: "en",
+    tts,
+    stt,
+    voice: { turnDetection },
+    voiceBridge: {
+      registerVoiceSpeakHandler: (agentId, handler) => {
+        speakHandlers.set(agentId, handler);
+      },
+      unregisterVoiceSpeakHandler: (agentId) => {
+        speakHandlers.delete(agentId);
+      },
+    },
+  });
+  return { voiceSession, host, tts, speakHandlers };
+}
+
+function audioOutputs(host: { emitted: SessionOutboundMessage[] }) {
+  return host.emitted.filter(
+    (msg): msg is Extract<SessionOutboundMessage, { type: "audio_output" }> =>
+      msg.type === "audio_output",
+  );
+}
+
+function assistantEntries(host: { emitted: SessionOutboundMessage[] }) {
+  return host.emitted.filter(
+    (msg) => msg.type === "activity_log" && msg.payload.type === "assistant",
+  );
+}
+
+describe("VoiceSession speak handler", () => {
+  test("records the spoken text in the chat before audio and returns without awaiting playback", async () => {
+    const { voiceSession, host, speakHandlers } = createSpeakingVoiceSession();
+    await voiceSession.handleSetVoiceMode(true, VOICE_AGENT_ID);
+    const handler = speakHandlers.get(VOICE_AGENT_ID);
+    expect(handler).toBeDefined();
+
+    // Playback is never confirmed; a handler that awaited playback would hang here.
+    await handler!({ text: "Checking the config now.", callerAgentId: VOICE_AGENT_ID });
+
+    expect(assistantEntries(host)).toHaveLength(1);
+    expect(host.emitted).toContainEqual(
+      expect.objectContaining({
+        type: "activity_log",
+        payload: expect.objectContaining({
+          type: "assistant",
+          content: "Checking the config now.",
+        }),
+      }),
+    );
+
+    await vi.waitFor(() => {
+      expect(audioOutputs(host).length).toBeGreaterThan(0);
+    });
+    const assistantIndex = host.emitted.findIndex(
+      (msg) => msg.type === "activity_log" && msg.payload.type === "assistant",
+    );
+    const audioIndex = host.emitted.findIndex((msg) => msg.type === "audio_output");
+    expect(assistantIndex).toBeLessThan(audioIndex);
+
+    await voiceSession.cleanup();
+  });
+
+  test("plays overlapping speak calls in order, starting the next only after playback confirms", async () => {
+    const { voiceSession, host, tts, speakHandlers } = createSpeakingVoiceSession();
+    await voiceSession.handleSetVoiceMode(true, VOICE_AGENT_ID);
+    const handler = speakHandlers.get(VOICE_AGENT_ID)!;
+
+    await handler({ text: "First update.", callerAgentId: VOICE_AGENT_ID });
+    await handler({ text: "Second update.", callerAgentId: VOICE_AGENT_ID });
+
+    await vi.waitFor(() => {
+      expect(tts.synthesized).toEqual(["First update."]);
+      expect(audioOutputs(host)).toHaveLength(1);
+    });
+    expect(assistantEntries(host)).toHaveLength(2);
+
+    voiceSession.handleAudioPlayed(audioOutputs(host)[0].payload.id);
+
+    await vi.waitFor(() => {
+      expect(tts.synthesized).toEqual(["First update.", "Second update."]);
+      expect(audioOutputs(host)).toHaveLength(2);
+    });
+
+    voiceSession.handleAudioPlayed(audioOutputs(host)[1].payload.id);
+    await voiceSession.cleanup();
+  });
+
+  test("drops queued speech after an abort but keeps the text record", async () => {
+    const { voiceSession, host, tts, speakHandlers } = createSpeakingVoiceSession();
+    await voiceSession.handleSetVoiceMode(true, VOICE_AGENT_ID);
+    const handler = speakHandlers.get(VOICE_AGENT_ID)!;
+
+    await handler({ text: "First update.", callerAgentId: VOICE_AGENT_ID });
+    await handler({ text: "Queued update.", callerAgentId: VOICE_AGENT_ID });
+    await vi.waitFor(() => {
+      expect(audioOutputs(host)).toHaveLength(1);
+    });
+
+    await voiceSession.handleAbort();
+    await settle();
+
+    expect(tts.synthesized).toEqual(["First update."]);
+    expect(audioOutputs(host)).toHaveLength(1);
+    expect(assistantEntries(host)).toHaveLength(2);
+
+    await voiceSession.cleanup();
+  });
+
+  test("surfaces synthesis failure as an error entry while keeping the text record", async () => {
+    const { voiceSession, host, tts, speakHandlers } = createSpeakingVoiceSession();
+    await voiceSession.handleSetVoiceMode(true, VOICE_AGENT_ID);
+    const handler = speakHandlers.get(VOICE_AGENT_ID)!;
+    tts.failWith = new Error("synthesis exploded");
+
+    await handler({ text: "Doomed reply.", callerAgentId: VOICE_AGENT_ID });
+
+    expect(assistantEntries(host)).toHaveLength(1);
+    await vi.waitFor(() => {
+      expect(host.emitted).toContainEqual(
+        expect.objectContaining({
+          type: "activity_log",
+          payload: expect.objectContaining({
+            type: "error",
+            content: expect.stringContaining("Voice playback failed: synthesis exploded"),
+          }),
+        }),
+      );
+    });
 
     await voiceSession.cleanup();
   });
