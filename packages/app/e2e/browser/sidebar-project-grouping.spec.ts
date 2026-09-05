@@ -393,7 +393,7 @@ async function reloadWithLocalProjectLinks(
 async function openProjectsSettings(page: Page, serverId: string): Promise<void> {
   await page.getByRole("button", { name: "Settings", exact: true }).click();
   await selectSettingsHost(page, serverId);
-  await page.locator('[data-testid="settings-host-section-projects"]:visible').click();
+  await page.getByRole("button", { name: "Projects", exact: true }).click();
 }
 
 function projectUnlinkTestId(serverId: string, projectId: string): string {

@@ -435,11 +435,13 @@ function areAutomaticallyGrouped(
 /**
  * Local links override automatic projectKey grouping. If their latest cached Git facts no
  * longer prove the snapshot identity, every member is blocked from automatic grouping so a
- * stale local link can never silently regroup a project.
+ * stale local link can never silently regroup a project. An unhydrated host has no authoritative
+ * Git facts yet, so defer its link override until hydration finishes.
  */
 export function buildProjectLinkGroupingOverrides(input: {
   placements: Iterable<ProjectLinkPlacement>;
   links: Iterable<LocalProjectLink>;
+  unhydratedServerIds?: Iterable<string>;
 }): Map<string, ProjectLinkGroupingOverride> {
   const placementsByKey = new Map<string, ProjectLinkPlacement>();
   for (const placement of input.placements) {
@@ -448,7 +450,11 @@ export function buildProjectLinkGroupingOverrides(input: {
 
   const overrides = new Map<string, ProjectLinkGroupingOverride>();
   const claimedMembers = new Set<string>();
+  const unhydratedServerIds = new Set(input.unhydratedServerIds ?? []);
   for (const link of input.links) {
+    if (link.members.some((member) => unhydratedServerIds.has(member.serverId))) {
+      continue;
+    }
     const memberKeys = link.members.map(projectLinkPlacementKey);
     for (const memberKey of memberKeys) {
       if (!overrides.has(memberKey)) overrides.set(memberKey, { kind: "blocked" });
