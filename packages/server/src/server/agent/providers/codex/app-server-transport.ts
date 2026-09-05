@@ -31,6 +31,8 @@ interface PendingRequest {
   resolve: (value: unknown) => void;
   reject: (error: Error) => void;
   timer: NodeJS.Timeout;
+  signal?: AbortSignal;
+  abortHandler?: () => void;
 }
 
 export class CodexAppServerRpcError extends Error {
@@ -224,8 +226,29 @@ export class CodexAppServerClient {
   }
 
   request(method: string, params?: unknown, timeoutMs = DEFAULT_TIMEOUT_MS): Promise<unknown> {
+    return this.requestInternal(method, params, timeoutMs);
+  }
+
+  requestWithSignal(
+    method: string,
+    params: unknown,
+    signal: AbortSignal,
+    timeoutMs = DEFAULT_TIMEOUT_MS,
+  ): Promise<unknown> {
+    return this.requestInternal(method, params, timeoutMs, signal);
+  }
+
+  private requestInternal(
+    method: string,
+    params: unknown,
+    timeoutMs: number,
+    signal?: AbortSignal,
+  ): Promise<unknown> {
     if (this.disposed) {
       return Promise.reject(new Error("Codex app-server client is closed"));
+    }
+    if (signal?.aborted) {
+      return Promise.reject(this.createRequestAbortError(signal));
     }
     const id = this.nextId++;
     const payload: JsonRpcRequest = { id, method, params };
@@ -233,10 +256,21 @@ export class CodexAppServerClient {
     this.child.stdin.write(`${serialized}\n`);
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
-        this.pending.delete(id);
-        reject(new Error(`Codex app-server request timed out for ${method}`));
+        this.takePendingRequest(id)?.reject(
+          new Error(`Codex app-server request timed out for ${method}`),
+        );
       }, timeoutMs);
-      this.pending.set(id, { resolve, reject, timer });
+      const pending: PendingRequest = { resolve, reject, timer, ...(signal ? { signal } : {}) };
+      if (signal) {
+        pending.abortHandler = () => {
+          this.takePendingRequest(id)?.reject(this.createRequestAbortError(signal));
+        };
+        signal.addEventListener("abort", pending.abortHandler, { once: true });
+      }
+      this.pending.set(id, pending);
+      if (signal?.aborted) {
+        pending.abortHandler?.();
+      }
     });
   }
 
@@ -257,11 +291,14 @@ export class CodexAppServerClient {
   }
 
   async dispose(): Promise<void> {
-    if (this.disposed) return;
+    if (this.disposed) {
+      this.rejectPendingRequests(new Error("Codex app-server client is closed"));
+      return;
+    }
     this.disposed = true;
     this.unexpectedTerminationHandler = null;
     this.rl.close();
-    this.rejectPending(new Error("Codex app-server client is closed"));
+    this.rejectPendingRequests(new Error("Codex app-server client is closed"));
     try {
       this.child.stdin.end();
     } catch {
@@ -286,12 +323,13 @@ export class CodexAppServerClient {
   }
 
   private handleUnexpectedTermination(error: Error): void {
-    if (this.disposed) {
-      return;
-    }
+    const alreadyDisposed = this.disposed;
     this.disposed = true;
     this.rl.close();
-    this.rejectPending(error);
+    this.rejectPendingRequests(error);
+    if (alreadyDisposed) {
+      return;
+    }
     const handler = this.unexpectedTerminationHandler;
     this.unexpectedTerminationHandler = null;
     if (!handler) {
@@ -304,12 +342,33 @@ export class CodexAppServerClient {
     }
   }
 
-  private rejectPending(error: Error): void {
-    for (const pending of this.pending.values()) {
-      clearTimeout(pending.timer);
-      pending.reject(error);
+  private createRequestAbortError(signal: AbortSignal): Error {
+    let message = "Codex app-server request aborted";
+    if (signal.reason instanceof Error) {
+      message = signal.reason.message;
+    } else if (typeof signal.reason === "string") {
+      message = signal.reason;
     }
-    this.pending.clear();
+    return Object.assign(new Error(message), { name: "AbortError" });
+  }
+
+  private takePendingRequest(id: number): PendingRequest | undefined {
+    const pending = this.pending.get(id);
+    if (!pending) {
+      return undefined;
+    }
+    this.pending.delete(id);
+    clearTimeout(pending.timer);
+    if (pending.signal && pending.abortHandler) {
+      pending.signal.removeEventListener("abort", pending.abortHandler);
+    }
+    return pending;
+  }
+
+  private rejectPendingRequests(error: Error): void {
+    for (const id of this.pending.keys()) {
+      this.takePendingRequest(id)?.reject(error);
+    }
   }
 
   private writeJsonRpcResponse(response: JsonRpcResponse): void {
@@ -341,10 +400,8 @@ export class CodexAppServerClient {
     if (isJsonRpcResponse(raw)) {
       const id = raw.id;
       if (raw.result !== undefined || raw.error) {
-        const pending = this.pending.get(id);
+        const pending = this.takePendingRequest(id);
         if (!pending) return;
-        clearTimeout(pending.timer);
-        this.pending.delete(id);
         if (raw.error) {
           pending.reject(
             new CodexAppServerRpcError(

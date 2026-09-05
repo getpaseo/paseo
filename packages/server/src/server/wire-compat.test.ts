@@ -54,6 +54,7 @@ interface SessionInternals {
 
 class InMemoryAgentManager {
   private readonly timeline = new InMemoryAgentTimelineStore();
+  readonly fetchOptions: AgentTimelineFetchOptions[] = [];
 
   constructor(rows: AgentTimelineRow[]) {
     this.timeline.initialize("agent-1", {
@@ -108,6 +109,11 @@ class InMemoryAgentManager {
   }
 
   fetchTimeline(_agentId: string, options?: AgentTimelineFetchOptions) {
+    return this.timeline.fetch("agent-1", options);
+  }
+
+  async fetchTimelinePage(_agentId: string, options?: AgentTimelineFetchOptions) {
+    this.fetchOptions.push(options ?? {});
     return this.timeline.fetch("agent-1", options);
   }
 
@@ -181,6 +187,7 @@ class InMemoryWorktreeWorkflow {
 }
 
 function createSessionForWireCompatTest(options?: {
+  agentManager?: InMemoryAgentManager;
   clientCapabilities?: Record<string, unknown> | null;
   directorySync?: DirectorySyncService;
   messages?: SessionOutboundMessage[];
@@ -214,9 +221,8 @@ function createSessionForWireCompatTest(options?: {
     downloadTokenStore: {} as SessionOptions["downloadTokenStore"],
     pushNotifications: {} as SessionOptions["pushNotifications"],
     paseoHome: "/tmp/paseo-home",
-    agentManager: new InMemoryAgentManager(
-      options?.rows ?? rows,
-    ) as unknown as SessionOptions["agentManager"],
+    agentManager: (options?.agentManager ??
+      new InMemoryAgentManager(options?.rows ?? rows)) as unknown as SessionOptions["agentManager"],
     agentStorage: new EmptyAgentStorage() as unknown as SessionOptions["agentStorage"],
     projectRegistry: new EmptyProjectRegistry() as unknown as SessionOptions["projectRegistry"],
     workspaceRegistry:
@@ -277,6 +283,7 @@ function createSessionForWireCompatTest(options?: {
 }
 
 async function emitTimelineResponse(options?: {
+  agentManager?: InMemoryAgentManager;
   clientCapabilities?: Record<string, unknown> | null;
   rows?: AgentTimelineRow[];
   request?: Partial<
@@ -285,6 +292,7 @@ async function emitTimelineResponse(options?: {
 }): Promise<Extract<SessionOutboundMessage, { type: "fetch_agent_timeline_response" }>> {
   const messages: SessionOutboundMessage[] = [];
   const session = createSessionForWireCompatTest({
+    agentManager: options?.agentManager,
     clientCapabilities: options?.clientCapabilities,
     rows: options?.rows,
     messages,
@@ -444,6 +452,229 @@ describe("wire compatibility", () => {
     expect(LegacyFetchAgentTimelineResponseMessageSchema.parse(response).payload.entries).toEqual(
       expect.arrayContaining([expect.not.objectContaining({ turnId: expect.anything() })]),
     );
+  });
+
+  test("pages backward across a long pre-cursor tool lifecycle without an unbounded fetch", async () => {
+    const rows: AgentTimelineRow[] = [
+      {
+        seq: 1,
+        timestamp: "2026-05-02T00:00:00.000Z",
+        turnId: "turn-1",
+        item: {
+          type: "tool_call",
+          callId: "call-1",
+          name: "shell",
+          status: "running",
+          detail: { type: "shell", command: "long command" },
+        },
+      },
+      ...Array.from(
+        { length: 448 },
+        (_, index): AgentTimelineRow => ({
+          seq: index + 2,
+          timestamp: "2026-05-02T00:00:01.000Z",
+          item: { type: "user_message", text: `filler-${index}` },
+        }),
+      ),
+      {
+        seq: 450,
+        timestamp: "2026-05-02T00:00:02.000Z",
+        turnId: "turn-1",
+        item: {
+          type: "tool_call",
+          callId: "call-1",
+          name: "shell",
+          status: "completed",
+          detail: { type: "shell", command: "long command", exitCode: 0 },
+        },
+      },
+    ];
+    const agentManager = new InMemoryAgentManager(rows);
+    const response = await emitTimelineResponse({
+      agentManager,
+      request: {
+        direction: "after",
+        cursor: { epoch: "epoch-1", seq: 449 },
+        limit: 1,
+      },
+    });
+
+    expect(response.payload.entries).toEqual([
+      expect.objectContaining({
+        seqStart: 1,
+        seqEnd: 450,
+        item: expect.objectContaining({ type: "tool_call", callId: "call-1", status: "completed" }),
+      }),
+    ]);
+    expect(agentManager.fetchOptions.length).toBeGreaterThan(2);
+    expect(agentManager.fetchOptions.every(({ limit }) => limit !== 0)).toBe(true);
+  });
+
+  test("stops paging at the turn boundary for a recent complete tool lifecycle", async () => {
+    const olderRows = Array.from(
+      { length: 600 },
+      (_, index): AgentTimelineRow => ({
+        seq: index + 1,
+        timestamp: "2026-05-02T00:00:00.000Z",
+        turnId: "turn-old",
+        item: { type: "assistant_message", text: `older-${index}` },
+      }),
+    );
+    const rows: AgentTimelineRow[] = [
+      ...olderRows,
+      {
+        seq: 601,
+        timestamp: "2026-05-02T00:01:00.000Z",
+        turnId: "turn-recent",
+        item: { type: "user_message", text: "run it", clientMessageId: "message-recent" },
+      },
+      {
+        seq: 602,
+        timestamp: "2026-05-02T00:01:01.000Z",
+        turnId: "turn-recent",
+        item: {
+          type: "tool_call",
+          callId: "call-recent",
+          name: "shell",
+          status: "running",
+          detail: { type: "shell", command: "true" },
+        },
+      },
+      {
+        seq: 603,
+        timestamp: "2026-05-02T00:01:02.000Z",
+        turnId: "turn-recent",
+        item: {
+          type: "tool_call",
+          callId: "call-recent",
+          name: "shell",
+          status: "completed",
+          detail: { type: "shell", command: "true", exitCode: 0 },
+        },
+      },
+    ];
+    const agentManager = new InMemoryAgentManager(rows);
+    const response = await emitTimelineResponse({
+      agentManager,
+      request: { direction: "tail", limit: 1 },
+    });
+
+    expect(response.payload.entries).toEqual([
+      expect.objectContaining({
+        seqStart: 602,
+        seqEnd: 603,
+        item: expect.objectContaining({
+          type: "tool_call",
+          callId: "call-recent",
+          status: "completed",
+        }),
+      }),
+    ]);
+    expect(agentManager.fetchOptions).toHaveLength(2);
+    expect(agentManager.fetchOptions.every(({ limit }) => limit !== 0)).toBe(true);
+  });
+
+  test("stops paging at a legacy user boundary for a recent complete tool lifecycle", async () => {
+    const rows: AgentTimelineRow[] = [
+      ...Array.from(
+        { length: 600 },
+        (_, index): AgentTimelineRow => ({
+          seq: index + 1,
+          timestamp: "2026-05-02T00:00:00.000Z",
+          item: { type: "assistant_message", text: `older-${index}` },
+        }),
+      ),
+      {
+        seq: 601,
+        timestamp: "2026-05-02T00:01:00.000Z",
+        item: { type: "user_message", text: "run it", clientMessageId: "legacy-message" },
+      },
+      {
+        seq: 602,
+        timestamp: "2026-05-02T00:01:01.000Z",
+        item: {
+          type: "tool_call",
+          callId: "legacy-call",
+          name: "shell",
+          status: "running",
+          detail: { type: "shell", command: "true" },
+        },
+      },
+      {
+        seq: 603,
+        timestamp: "2026-05-02T00:01:02.000Z",
+        item: {
+          type: "tool_call",
+          callId: "legacy-call",
+          name: "shell",
+          status: "completed",
+          detail: { type: "shell", command: "true", exitCode: 0 },
+        },
+      },
+    ];
+    const agentManager = new InMemoryAgentManager(rows);
+    const response = await emitTimelineResponse({
+      agentManager,
+      request: { direction: "tail", limit: 1 },
+    });
+
+    expect(response.payload.entries).toEqual([
+      expect.objectContaining({
+        seqStart: 602,
+        seqEnd: 603,
+        collapsed: expect.arrayContaining(["tool_lifecycle"]),
+      }),
+    ]);
+    expect(agentManager.fetchOptions).toHaveLength(2);
+  });
+
+  test("bounds legacy tool expansion and reports a partial lifecycle when no boundary is visible", async () => {
+    const rows: AgentTimelineRow[] = [
+      {
+        seq: 1,
+        timestamp: "2026-05-02T00:00:00.000Z",
+        item: {
+          type: "tool_call",
+          callId: "legacy-long-call",
+          name: "shell",
+          status: "running",
+          detail: { type: "shell", command: "long command" },
+        },
+      },
+      ...Array.from(
+        { length: 1_998 },
+        (_, index): AgentTimelineRow => ({
+          seq: index + 2,
+          timestamp: "2026-05-02T00:00:01.000Z",
+          item: { type: "assistant_message", text: `legacy-filler-${index}` },
+        }),
+      ),
+      {
+        seq: 2_000,
+        timestamp: "2026-05-02T00:01:00.000Z",
+        item: {
+          type: "tool_call",
+          callId: "legacy-long-call",
+          name: "shell",
+          status: "completed",
+          detail: { type: "shell", command: "long command", exitCode: 0 },
+        },
+      },
+    ];
+    const agentManager = new InMemoryAgentManager(rows);
+    const response = await emitTimelineResponse({
+      agentManager,
+      request: { direction: "tail", limit: 1 },
+    });
+
+    expect(response.payload).toMatchObject({
+      entries: [],
+      startCursor: null,
+      endCursor: null,
+      error: "Projected timeline lifecycle exceeds the bounded legacy history window",
+    });
+    expect(agentManager.fetchOptions).toHaveLength(5);
+    expect(agentManager.fetchOptions.every(({ limit }) => limit !== 0)).toBe(true);
   });
 
   test("legacy worktree request shape normalizes to the same internal input as the new shape", async () => {

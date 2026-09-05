@@ -14,10 +14,11 @@ The invariants are:
 > agent establishes the daemon's current tail in one bounded request, with older history reachable
 > through backward pagination.
 
-Tool output is bounded before it enters either delivery path. Canonical shell tool output is sliced
-to 64 KiB, and the same bounded item is used for runtime timeline rows and live stream events.
-Provider history hydration applies the same rule so reopening an agent cannot restore an oversized
-tool payload.
+Timeline items are bounded before they enter either delivery path. An item's encoded JSON is limited
+to 128 KiB; oversized text carries a visible truncation notice, while other oversized item shapes
+retain their discriminant and lifecycle state with summarized detail. Canonical shell tool output
+is also sliced to 64 KiB. The same bounded item is used for runtime rows, live stream events, and
+provider history hydration, so reopening an agent cannot restore an oversized payload.
 
 ## Presence is not delivery
 

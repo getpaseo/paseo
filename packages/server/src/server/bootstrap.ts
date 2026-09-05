@@ -130,6 +130,7 @@ import type { RequestedSpeechProviders } from "./speech/speech-types.js";
 import { createSpeechService } from "./speech/speech-runtime.js";
 import { AgentManager } from "./agent/agent-manager.js";
 import { AgentStorage } from "./agent/agent-storage.js";
+import { SegmentedFileAgentTimelineStore } from "./agent/segmented-file-agent-timeline-store.js";
 import { attachAgentStoragePersistence } from "./persistence-hooks.js";
 import { createAgentMcpServer } from "./agent/mcp-server.js";
 import {
@@ -147,6 +148,15 @@ import {
 } from "./workspace-registry.js";
 import { CheckoutDiffManager } from "./checkout-diff-manager.js";
 import { ScheduleService } from "./schedule/service.js";
+
+type RecursiveRemove = (target: string, options: { recursive: true; force: true }) => Promise<void>;
+
+export async function clearDisposableAgentTimelineCache(
+  cacheRoot: string,
+  remove: RecursiveRemove = rm,
+): Promise<void> {
+  await remove(cacheRoot, { recursive: true, force: true });
+}
 import { DaemonConfigStore, type MutableDaemonConfig } from "./daemon-config-store.js";
 import { createOrchestrationSkills } from "./orchestration-skills/index.js";
 import { resolveConfigFromPersisted, type CliConfigOverrides } from "./config.js";
@@ -578,6 +588,13 @@ export async function createPaseoDaemon(
       "Failed to remove obsolete agent timeline data",
     );
   });
+  const timelineCacheRoot = path.join(config.paseoHome, "agent-timeline-cache");
+  // Provider history is authoritative. Clearing every daemon start is the crash-completeness
+  // boundary for this disposable cache: a partially published prior process is never reused.
+  await clearDisposableAgentTimelineCache(timelineCacheRoot);
+  const durableTimelineStore = new SegmentedFileAgentTimelineStore(
+    path.join(timelineCacheRoot, "v1"),
+  );
   const bootstrapStart = performance.now();
   const elapsed = () => `${(performance.now() - bootstrapStart).toFixed(0)}ms`;
   const daemonVersion = config.daemonVersion ?? resolveDaemonVersion(import.meta.url);
@@ -913,6 +930,10 @@ export async function createPaseoDaemon(
     clients: initialAgentManagerState.clients,
     providerDefinitions: initialAgentManagerState.providerDefinitions,
     registry: agentStorage,
+    durableTimelineStore,
+    boundedTimeline: {
+      hot: { maxRows: 512, maxBytes: 8 * 1024 * 1024 },
+    },
     appendSystemPrompt: config.appendSystemPrompt,
     onWorkspaceStateMayHaveChanged: ({ cwd }) => {
       workspaceGitService.onWorkspaceStateMayHaveChanged(cwd);

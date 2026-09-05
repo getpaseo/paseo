@@ -32,6 +32,51 @@ describe("Codex app-server transport", () => {
     await expect(request).rejects.toThrow("Codex app-server client is closed");
   });
 
+  test("aborts a pending request, clears its timer, and ignores a late response", async () => {
+    const child = createCodexAppServerChildProcess();
+    const client = new CodexAppServerClient(child, createTestLogger());
+    const abortController = new AbortController();
+
+    const abortedRequest = client.requestWithSignal(
+      "thread/read",
+      { threadId: "child-thread" },
+      abortController.signal,
+    );
+    abortController.abort(new Error("history read canceled"));
+
+    await expect(abortedRequest).rejects.toThrow("history read canceled");
+    expect((client as unknown as { pending: Map<number, unknown> }).pending.size).toBe(0);
+
+    child.stdout.write('{"id":1,"result":{"thread":{"id":"too-late"}}}\n');
+    const nextRequest = client.request("model/list", {});
+    child.stdout.write('{"id":2,"result":{"data":[]}}\n');
+    await expect(nextRequest).resolves.toEqual({ data: [] });
+    child.stdout.end();
+    child.stderr.end();
+    child.stdin.end();
+  });
+
+  test("clears pending requests when termination follows disposal state", async () => {
+    const child = createCodexAppServerChildProcess();
+    const client = new CodexAppServerClient(child, createTestLogger());
+    const request = client.request("thread/read", { threadId: "child-thread" });
+    const rejection = expect(request).rejects.toThrow("process exited after disposal began");
+    const internals = client as unknown as {
+      disposed: boolean;
+      pending: Map<number, unknown>;
+      handleUnexpectedTermination(error: Error): void;
+    };
+
+    internals.disposed = true;
+    internals.handleUnexpectedTermination(new Error("process exited after disposal began"));
+
+    await rejection;
+    expect(internals.pending.size).toBe(0);
+    child.stdout.end();
+    child.stderr.end();
+    child.stdin.end();
+  });
+
   test.each([
     "item/commandExecution/requestApproval",
     "item/fileChange/requestApproval",

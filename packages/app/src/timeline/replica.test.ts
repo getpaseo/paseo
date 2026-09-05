@@ -352,6 +352,45 @@ describe("viewed timeline persistence", () => {
     owner.dispose();
   });
 
+  it("preserves the prior authoritative timeline when a projected fetch returns an error", () => {
+    useSessionStore.getState().initializeSession(SERVER_ID, null);
+    applySynced(AGENT_ID, 8);
+    const commits: CachedTimeline[] = [];
+    const owner = createOwner({
+      readTimeline: async () => undefined,
+      commitTimeline: (_serverId, _agentId, timeline) => commits.push(timeline),
+    });
+    const before = selectAgentTimelineState(
+      useSessionStore.getState().sessions[SERVER_ID],
+      AGENT_ID,
+    );
+
+    owner.applyTimelineResponse({
+      requestId: "bounded-projection-error",
+      agentId: AGENT_ID,
+      agent: null,
+      direction: "before",
+      projection: "projected",
+      reset: false,
+      epoch: "",
+      window: { minSeq: 0, maxSeq: 0, nextSeq: 0 },
+      startCursor: null,
+      endCursor: null,
+      entries: [],
+      error: "Projected timeline lifecycle exceeds the bounded legacy history window",
+      hasNewer: false,
+      hasOlder: false,
+      staleCursor: false,
+      gap: false,
+    });
+
+    expect(
+      selectAgentTimelineState(useSessionStore.getState().sessions[SERVER_ID], AGENT_ID),
+    ).toEqual(before);
+    expect(commits).toEqual([]);
+    owner.dispose();
+  });
+
   it("persists demanded agents independently", () => {
     useSessionStore.getState().initializeSession(SERVER_ID, null);
     const keys: string[] = [];

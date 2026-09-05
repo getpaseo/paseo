@@ -6,7 +6,12 @@ import pino from "pino";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { WebSocket } from "ws";
 
-import { createPaseoDaemon, parseListenString, type PaseoDaemonConfig } from "./bootstrap.js";
+import {
+  clearDisposableAgentTimelineCache,
+  createPaseoDaemon,
+  parseListenString,
+  type PaseoDaemonConfig,
+} from "./bootstrap.js";
 import { loadConfig } from "./config.js";
 import { AgentManagerShuttingDownError } from "./agent/agent-manager.js";
 import { hashDaemonPassword } from "./auth.js";
@@ -53,6 +58,15 @@ describe("paseo daemon bootstrap", () => {
     vi.restoreAllMocks();
   });
 
+  test("fails startup cache preparation closed when stale cache removal fails", async () => {
+    const failure = new Error("timeline cache is busy");
+    await expect(
+      clearDisposableAgentTimelineCache("/tmp/paseo/agent-timeline-cache", async () => {
+        throw failure;
+      }),
+    ).rejects.toBe(failure);
+  });
+
   test("starts and serves health endpoint", async () => {
     const daemonHandle = await createTestPaseoDaemon({
       openai: { stt: { apiKey: "test-openai-api-key" }, tts: { apiKey: "test-openai-api-key" } },
@@ -79,17 +93,23 @@ describe("paseo daemon bootstrap", () => {
     }
   });
 
-  test("keeps timeline activity in memory and removes obsolete timeline files at startup", async () => {
+  test("clears stale timeline caches and writes the versioned disposable cache", async () => {
     const paseoHomeRoot = await mkdtemp(path.join(os.tmpdir(), "paseo-timeline-cleanup-"));
     const paseoHome = path.join(paseoHomeRoot, ".paseo");
     const obsoleteTimelineDirectory = path.join(paseoHome, "agent-timelines");
+    const staleTimelineCache = path.join(paseoHome, "agent-timeline-cache", "v1");
     const agentCwd = await mkdtemp(path.join(os.tmpdir(), "paseo-timeline-agent-"));
     await mkdir(obsoleteTimelineDirectory, { recursive: true });
     await writeFile(path.join(obsoleteTimelineDirectory, "obsolete.json"), "{}\n", "utf-8");
+    await mkdir(staleTimelineCache, { recursive: true });
+    await writeFile(path.join(staleTimelineCache, "stale.json"), "{}\n", "utf-8");
 
     const daemonHandle = await createTestPaseoDaemon({ paseoHomeRoot, cleanup: false });
     try {
       await expect(access(obsoleteTimelineDirectory)).rejects.toMatchObject({ code: "ENOENT" });
+      await expect(access(path.join(staleTimelineCache, "stale.json"))).rejects.toMatchObject({
+        code: "ENOENT",
+      });
 
       const agent = await daemonHandle.daemon.agentManager.createAgent(
         { provider: "codex", cwd: agentCwd },
@@ -103,6 +123,7 @@ describe("paseo daemon bootstrap", () => {
       await daemonHandle.daemon.agentManager.flush();
 
       await expect(access(obsoleteTimelineDirectory)).rejects.toMatchObject({ code: "ENOENT" });
+      await expect(access(staleTimelineCache)).resolves.toBeUndefined();
     } finally {
       await daemonHandle.close();
       await Promise.all([
@@ -112,7 +133,7 @@ describe("paseo daemon bootstrap", () => {
     }
   });
 
-  test("does not create a timeline directory for live timeline activity", async () => {
+  test("does not restore the obsolete whole-document timeline directory", async () => {
     const paseoHomeRoot = await mkdtemp(path.join(os.tmpdir(), "paseo-timeline-memory-"));
     const agentCwd = await mkdtemp(path.join(os.tmpdir(), "paseo-timeline-agent-"));
     const daemonHandle = await createTestPaseoDaemon({ paseoHomeRoot, cleanup: false });

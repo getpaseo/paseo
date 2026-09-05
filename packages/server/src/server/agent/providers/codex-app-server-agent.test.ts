@@ -94,6 +94,7 @@ import {
 import { createTestLogger } from "../../../test-utils/test-logger.js";
 import { asInternals as castInternals, createStub } from "../../test-utils/class-mocks.js";
 import { buildProviderRegistry } from "../provider-registry.js";
+import { ProviderSubagentStore } from "../provider-subagents/store.js";
 
 interface CollaborationModeRecord {
   name: string;
@@ -138,6 +139,7 @@ type TurnTerminalEvent = Extract<
 const ONE_BY_ONE_PNG_BASE64 =
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+X1r0AAAAASUVORK5CYII=";
 const CODEX_PROVIDER = "codex";
+const MAX_SERIALIZED_PARENT_SUB_AGENT_SNAPSHOT_BYTES = 64_000;
 
 function createConfig(overrides: Partial<AgentSessionConfig> = {}): AgentSessionConfig {
   return {
@@ -147,6 +149,13 @@ function createConfig(overrides: Partial<AgentSessionConfig> = {}): AgentSession
     model: "gpt-5.4",
     ...overrides,
   };
+}
+
+function hasOnlyWellFormedCodePoints(text: string): boolean {
+  return Array.from(text).every((character) => {
+    const codePoint = character.codePointAt(0) ?? 0;
+    return character.length > 1 || codePoint < 0xd800 || codePoint > 0xdfff;
+  });
 }
 
 function createSession(
@@ -2653,6 +2662,383 @@ describe("Codex app-server provider", () => {
     });
   });
 
+  test("keeps parent sub-agent snapshots bounded while retaining canonical child activity", () => {
+    const session = createSession();
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    asInternals(session).handleNotification("item/completed", {
+      threadId: "test-thread",
+      item: {
+        type: "subAgentActivity",
+        id: "spawn-bounded-child",
+        kind: "started",
+        agentThreadId: "bounded-child-thread",
+        agentPath: "/root/bounded-child",
+      },
+    });
+    const childMessages = Array.from({ length: 20 }, (_, index) => {
+      const marker = index === 0 ? "oldest-marker" : `activity-${index}`;
+      const latestMarker = index === 19 ? " newest-marker" : "";
+      return `${String.fromCharCode(97 + index).repeat(16_000)} ${marker}${latestMarker}`;
+    });
+    for (const [index, text] of childMessages.entries()) {
+      asInternals(session).handleNotification("item/completed", {
+        threadId: "bounded-child-thread",
+        item: {
+          type: "agentMessage",
+          id: `bounded-child-message-${index}`,
+          text,
+        },
+      });
+    }
+    asInternals(session).handleNotification("turn/completed", {
+      threadId: "bounded-child-thread",
+      turn: { status: "completed" },
+    });
+
+    const parentSnapshots = events.flatMap((event) =>
+      event.type === "timeline" &&
+      event.item.type === "tool_call" &&
+      event.item.callId === "spawn-bounded-child" &&
+      event.item.detail.type === "sub_agent"
+        ? [event.item]
+        : [],
+    );
+    expect(parentSnapshots.length).toBeGreaterThan(1);
+    expect(
+      parentSnapshots.every((item) => Buffer.byteLength(item.detail.log, "utf8") <= 32_000),
+    ).toBe(true);
+    const serializedParentBytes = parentSnapshots.reduce(
+      (total, item) => total + Buffer.byteLength(JSON.stringify(item), "utf8"),
+      0,
+    );
+    expect(serializedParentBytes).toBeLessThanOrEqual(parentSnapshots.length * 33_000);
+    expect(parentSnapshots.at(-1)).toMatchObject({ status: "completed" });
+    expect(parentSnapshots.at(-1)?.detail.log).not.toContain("oldest-marker");
+    expect(parentSnapshots.at(-1)?.detail.log).toContain("newest-marker");
+
+    const canonicalMessages = events.flatMap((event) =>
+      event.type === "provider_subagent" &&
+      event.event.type === "timeline" &&
+      event.event.id === "bounded-child-thread" &&
+      event.event.item.type === "assistant_message"
+        ? [event.event.item.text]
+        : [],
+    );
+    expect(canonicalMessages).toEqual(childMessages);
+  });
+
+  test("bounds the root sub-agent prompt in the complete emitted snapshot", () => {
+    const session = createSession();
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+    const prompt = `${"p".repeat(1_000_000)} newest-prompt-marker`;
+
+    asInternals(session).handleNotification("item/completed", {
+      threadId: "test-thread",
+      item: {
+        type: "collabAgentToolCall",
+        id: "spawn-large-prompt-child",
+        tool: "spawnAgent",
+        status: "inProgress",
+        prompt,
+        receiverThreadIds: [],
+        agentsStates: {},
+      },
+    });
+
+    const rootSnapshot = events.find(
+      (event) =>
+        event.type === "timeline" &&
+        event.item.type === "tool_call" &&
+        event.item.callId === "spawn-large-prompt-child",
+    );
+    if (rootSnapshot?.type !== "timeline" || rootSnapshot.item.type !== "tool_call") {
+      throw new Error("Expected root sub-agent snapshot");
+    }
+    expect(Buffer.byteLength(JSON.stringify(rootSnapshot.item), "utf8")).toBeLessThanOrEqual(
+      MAX_SERIALIZED_PARENT_SUB_AGENT_SNAPSHOT_BYTES,
+    );
+    expect(rootSnapshot.item.detail).toMatchObject({
+      type: "sub_agent",
+      description: expect.stringContaining("newest-prompt-marker"),
+    });
+  });
+
+  test("bounds the root sub-agent error in the complete emitted snapshot", () => {
+    const session = createSession();
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+    const toJSON = vi.fn(() => ({ payload: "x".repeat(1_000_000) }));
+
+    asInternals(session).handleNotification("item/completed", {
+      threadId: "test-thread",
+      item: {
+        type: "collabAgentToolCall",
+        id: "spawn-large-error-child",
+        tool: "spawnAgent",
+        status: "failed",
+        error: { toJSON },
+        prompt: "Fail safely.",
+        receiverThreadIds: [],
+        agentsStates: {},
+      },
+    });
+
+    const rootSnapshot = events.find(
+      (event) =>
+        event.type === "timeline" &&
+        event.item.type === "tool_call" &&
+        event.item.callId === "spawn-large-error-child",
+    );
+    if (rootSnapshot?.type !== "timeline" || rootSnapshot.item.type !== "tool_call") {
+      throw new Error("Expected failed root sub-agent snapshot");
+    }
+    const serialized = JSON.stringify(rootSnapshot.item);
+    expect(toJSON).not.toHaveBeenCalled();
+    expect(Buffer.byteLength(serialized, "utf8")).toBeLessThanOrEqual(
+      MAX_SERIALIZED_PARENT_SUB_AGENT_SNAPSHOT_BYTES,
+    );
+    expect(rootSnapshot.item).toMatchObject({ status: "failed" });
+  });
+
+  test("keeps nested descendant snapshots bounded while retaining descendant history", () => {
+    const session = createSession();
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    asInternals(session).handleNotification("item/completed", {
+      threadId: "test-thread",
+      item: {
+        type: "subAgentActivity",
+        id: "spawn-bounded-root",
+        kind: "started",
+        agentThreadId: "bounded-root-thread",
+        agentPath: "/root/bounded-root",
+      },
+    });
+    asInternals(session).handleNotification("item/completed", {
+      threadId: "bounded-root-thread",
+      item: {
+        type: "subAgentActivity",
+        id: "spawn-bounded-descendant",
+        kind: "started",
+        agentThreadId: "bounded-descendant-thread",
+        agentPath: "/root/bounded-root/descendant",
+      },
+    });
+    const descendantMessages = Array.from({ length: 20 }, (_, index) => {
+      const marker = index === 0 ? "oldest-descendant-marker" : `descendant-${index}`;
+      const latestMarker = index === 19 ? " newest-descendant-marker" : "";
+      return `${String.fromCharCode(97 + index).repeat(16_000)} ${marker}${latestMarker}`;
+    });
+    for (const [index, text] of descendantMessages.entries()) {
+      asInternals(session).handleNotification("item/completed", {
+        threadId: "bounded-descendant-thread",
+        item: {
+          type: "agentMessage",
+          id: `bounded-descendant-message-${index}`,
+          text,
+        },
+      });
+    }
+    asInternals(session).handleNotification("turn/completed", {
+      threadId: "bounded-descendant-thread",
+      turn: { status: "completed" },
+    });
+    asInternals(session).handleNotification("turn/completed", {
+      threadId: "bounded-root-thread",
+      turn: { status: "completed" },
+    });
+
+    const rootSnapshots = events.flatMap((event) =>
+      event.type === "timeline" &&
+      event.item.type === "tool_call" &&
+      event.item.callId === "spawn-bounded-root" &&
+      event.item.detail.type === "sub_agent"
+        ? [event.item]
+        : [],
+    );
+    const serializedRootBytes = rootSnapshots.reduce(
+      (total, item) => total + Buffer.byteLength(JSON.stringify(item), "utf8"),
+      0,
+    );
+    expect(serializedRootBytes).toBeLessThanOrEqual(rootSnapshots.length * 33_000);
+    expect(rootSnapshots.every((item) => Buffer.byteLength(item.detail.log, "utf8") <= 4_500)).toBe(
+      true,
+    );
+    expect(rootSnapshots.at(-1)).toMatchObject({ status: "completed" });
+    expect(rootSnapshots.at(-1)?.detail.log).not.toContain("oldest-descendant-marker");
+    expect(rootSnapshots.at(-1)?.detail.log).toContain("newest-descendant-marker");
+
+    const canonicalDescendantMessages = events.flatMap((event) =>
+      event.type === "provider_subagent" &&
+      event.event.type === "timeline" &&
+      event.event.id === "bounded-descendant-thread" &&
+      event.event.item.type === "assistant_message"
+        ? [event.event.item.text]
+        : [],
+    );
+    expect(canonicalDescendantMessages).toEqual(descendantMessages);
+  });
+
+  test("builds the parent sub-agent preview from only the latest child activities", () => {
+    const session = createSession();
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    asInternals(session).handleNotification("item/completed", {
+      threadId: "test-thread",
+      item: {
+        type: "subAgentActivity",
+        id: "spawn-latest-child",
+        kind: "started",
+        agentThreadId: "latest-child-thread",
+        agentPath: "/root/latest-child",
+      },
+    });
+    const childMessages = Array.from({ length: 201 }, (_, index) =>
+      index === 0 ? "oldest-activity-marker" : `child activity ${index}`,
+    );
+    for (const [index, text] of childMessages.entries()) {
+      asInternals(session).handleNotification("item/completed", {
+        threadId: "latest-child-thread",
+        item: {
+          type: "agentMessage",
+          id: `latest-child-message-${index}`,
+          text,
+        },
+      });
+    }
+
+    const parentSnapshots = events.flatMap((event) =>
+      event.type === "timeline" &&
+      event.item.type === "tool_call" &&
+      event.item.callId === "spawn-latest-child" &&
+      event.item.detail.type === "sub_agent"
+        ? [event.item]
+        : [],
+    );
+    expect(parentSnapshots.at(-1)?.detail.log).not.toContain("oldest-activity-marker");
+    expect(parentSnapshots.at(-1)?.detail.log).toContain("child activity 200");
+
+    const canonicalMessages = events.flatMap((event) =>
+      event.type === "provider_subagent" &&
+      event.event.type === "timeline" &&
+      event.event.id === "latest-child-thread" &&
+      event.event.item.type === "assistant_message"
+        ? [event.event.item.text]
+        : [],
+    );
+    expect(canonicalMessages).toEqual(childMessages);
+  });
+
+  test("does not serialize unbounded non-sub-agent tool payloads for the parent preview", () => {
+    const session = createSession();
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    asInternals(session).handleNotification("item/completed", {
+      threadId: "test-thread",
+      item: {
+        type: "subAgentActivity",
+        id: "spawn-tool-preview-child",
+        kind: "started",
+        agentThreadId: "tool-preview-child-thread",
+        agentPath: "/root/tool-preview-child",
+      },
+    });
+    const toJSON = vi.fn(() => ({ payload: "x".repeat(1_000_000) }));
+    asInternals(session).handleNotification("item/completed", {
+      threadId: "tool-preview-child-thread",
+      item: {
+        type: "mcpToolCall",
+        id: "large-child-tool",
+        status: "completed",
+        server: "example",
+        tool: "large_payload",
+        arguments: { toJSON },
+        result: null,
+      },
+    });
+
+    expect(toJSON).not.toHaveBeenCalled();
+    const parentSnapshot = events.findLast(
+      (event) =>
+        event.type === "timeline" &&
+        event.item.type === "tool_call" &&
+        event.item.callId === "spawn-tool-preview-child" &&
+        event.item.detail.type === "sub_agent",
+    );
+    expect(parentSnapshot?.item.detail.log).toContain("example.large_payload");
+
+    const canonicalToolCall = events.find(
+      (event) =>
+        event.type === "provider_subagent" &&
+        event.event.type === "timeline" &&
+        event.event.id === "tool-preview-child-thread" &&
+        event.event.item.type === "tool_call",
+    );
+    expect(canonicalToolCall?.event.item).toMatchObject({
+      type: "tool_call",
+      callId: "large-child-tool",
+      detail: { type: "unknown", input: { toJSON } },
+    });
+  });
+
+  test("bounds streamed multibyte child activity by UTF-8 bytes without splitting code points", () => {
+    const session = createSession();
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    asInternals(session).handleNotification("item/completed", {
+      threadId: "test-thread",
+      item: {
+        type: "subAgentActivity",
+        id: "spawn-multibyte-child",
+        kind: "started",
+        agentThreadId: "multibyte-child-thread",
+        agentPath: "/root/multibyte-child",
+      },
+    });
+    const deltas = Array.from({ length: 6 }, (_, index) =>
+      index === 5
+        ? `${"界".repeat(4_000)} 😀 newest-multibyte-marker`
+        : `${"界".repeat(4_000)} 😀 delta-${index}`,
+    );
+    for (const [index, delta] of deltas.entries()) {
+      asInternals(session).handleNotification("item/agentMessage/delta", {
+        threadId: "multibyte-child-thread",
+        itemId: `multibyte-child-message-${index}`,
+        delta,
+      });
+    }
+
+    const parentLogs = events.flatMap((event) =>
+      event.type === "timeline" &&
+      event.item.type === "tool_call" &&
+      event.item.callId === "spawn-multibyte-child" &&
+      event.item.detail.type === "sub_agent"
+        ? [event.item.detail.log]
+        : [],
+    );
+    expect(parentLogs.length).toBeGreaterThan(1);
+    expect(parentLogs.every((log) => Buffer.byteLength(log, "utf8") <= 32_000)).toBe(true);
+    expect(parentLogs.every(hasOnlyWellFormedCodePoints)).toBe(true);
+    expect(parentLogs.at(-1)).toContain("😀 newest-multibyte-marker");
+
+    const canonicalDeltas = events.flatMap((event) =>
+      event.type === "provider_subagent" &&
+      event.event.type === "timeline" &&
+      event.event.id === "multibyte-child-thread" &&
+      event.event.item.type === "assistant_message"
+        ? [event.event.item.text]
+        : [],
+    );
+    expect(canonicalDeltas).toEqual(deltas);
+  });
+
   test("keeps a settled child completed until Codex starts another child turn", async () => {
     const appServer = createFakeCodexAppServer();
     const session = new CodexAppServerAgentSession(
@@ -3987,6 +4373,1059 @@ describe("Codex app-server provider", () => {
     });
   });
 
+  test("loads only root history and persisted child descriptors during resume", async () => {
+    const session = createSession();
+    const requestedThreadIds: string[] = [];
+    session.client = {
+      request: vi.fn(async (method: string, params: unknown) => {
+        if (method !== "thread/read") {
+          return {};
+        }
+        const threadId = (params as { threadId?: string }).threadId ?? "";
+        requestedThreadIds.push(threadId);
+        return {
+          thread: {
+            turns: [
+              {
+                items:
+                  threadId === "test-thread"
+                    ? [
+                        {
+                          type: "subAgentActivity",
+                          id: "child-started-history",
+                          kind: "started",
+                          agentThreadId: "history-child-thread",
+                          agentPath: "/root/history-child",
+                        },
+                      ]
+                    : [
+                        {
+                          type: "agentMessage",
+                          id: "child-message-history",
+                          text: "Child history must remain lazy.",
+                        },
+                      ],
+              },
+            ],
+          },
+        };
+      }),
+    };
+
+    await asInternals(session).loadPersistedHistory();
+
+    const history: AgentStreamEvent[] = [];
+    for await (const event of session.streamHistory()) {
+      history.push(event);
+    }
+
+    expect(requestedThreadIds).toEqual(["test-thread"]);
+    expect(history).toContainEqual({
+      type: "provider_subagent",
+      provider: "codex",
+      event: expect.objectContaining({
+        type: "upsert",
+        id: "history-child-thread",
+      }),
+    });
+    expect(
+      history.some(
+        (event) => event.type === "provider_subagent" && event.event.type === "timeline",
+      ),
+    ).toBe(false);
+  });
+
+  test("loads one persisted child history only when that child is requested", async () => {
+    const session = createSession();
+    const requestedThreadIds: string[] = [];
+    session.client = {
+      request: vi.fn(async (method: string, params: unknown) => {
+        if (method !== "thread/read") {
+          return {};
+        }
+        const threadId = (params as { threadId?: string }).threadId ?? "";
+        requestedThreadIds.push(threadId);
+        return {
+          thread: {
+            turns: [
+              {
+                items:
+                  threadId === "test-thread"
+                    ? [
+                        {
+                          type: "subAgentActivity",
+                          id: "child-started-history",
+                          kind: "started",
+                          agentThreadId: "history-child-thread",
+                          agentPath: "/root/history-child",
+                        },
+                      ]
+                    : [
+                        {
+                          type: "agentMessage",
+                          id: "child-message-history",
+                          text: "Loaded on demand.",
+                        },
+                      ],
+              },
+            ],
+          },
+        };
+      }),
+    };
+
+    await asInternals(session).loadPersistedHistory();
+    for await (const _event of session.streamHistory()) {
+      // Drain root history before observing the lazy child load.
+    }
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    events.push(...(await session.loadProviderSubagentHistory!("history-child-thread")));
+
+    expect(requestedThreadIds).toEqual(["test-thread", "history-child-thread"]);
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "provider_subagent",
+        provider: "codex",
+        event: {
+          type: "timeline",
+          id: "history-child-thread",
+          item: {
+            type: "assistant_message",
+            messageId: "child-message-history",
+            text: "Loaded on demand.",
+          },
+        },
+      }),
+    );
+  });
+
+  test("accepts a completed child hydration seed from a history-preserving reload", async () => {
+    const session = createSession();
+    const requestedThreadIds: string[] = [];
+    session.client = {
+      request: vi.fn(async (method: string, params: unknown) => {
+        if (method !== "thread/read") {
+          return {};
+        }
+        const threadId = (params as { threadId?: string }).threadId ?? "";
+        requestedThreadIds.push(threadId);
+        return {
+          thread: {
+            turns: [
+              {
+                items: [
+                  {
+                    type: "subAgentActivity",
+                    id: "child-started-history",
+                    kind: "started",
+                    agentThreadId: "history-child-thread",
+                    agentPath: "/root/history-child",
+                  },
+                ],
+              },
+            ],
+          },
+        };
+      }),
+    };
+
+    await asInternals(session).loadPersistedHistory();
+    for await (const _event of session.streamHistory()) {
+      // Drain root history before restoring the completed child hydration marker.
+    }
+    session.seedLoadedProviderSubagentHistoryIds(["history-child-thread"]);
+
+    expect(session.getLoadedProviderSubagentHistoryIds()).toEqual(["history-child-thread"]);
+    await expect(session.loadProviderSubagentHistory("history-child-thread")).resolves.toEqual([]);
+    expect(requestedThreadIds).toEqual(["test-thread"]);
+  });
+
+  test("shares one persisted child read across concurrent timeline requests", async () => {
+    const session = createSession();
+    const childRead = deferred<unknown>();
+    const requestedThreadIds: string[] = [];
+    session.client = {
+      request: vi.fn(async (method: string, params: unknown) => {
+        if (method !== "thread/read") {
+          return {};
+        }
+        const threadId = (params as { threadId?: string }).threadId ?? "";
+        requestedThreadIds.push(threadId);
+        if (threadId === "history-child-thread") {
+          return childRead.promise;
+        }
+        return {
+          thread: {
+            turns: [
+              {
+                items: [
+                  {
+                    type: "subAgentActivity",
+                    id: "child-started-history",
+                    kind: "started",
+                    agentThreadId: "history-child-thread",
+                    agentPath: "/root/history-child",
+                  },
+                ],
+              },
+            ],
+          },
+        };
+      }),
+    };
+    await asInternals(session).loadPersistedHistory();
+
+    const first = session.loadProviderSubagentHistory!("history-child-thread");
+    const second = session.loadProviderSubagentHistory!("history-child-thread");
+    await vi.waitFor(() => {
+      expect(requestedThreadIds).toEqual(["test-thread", "history-child-thread"]);
+    });
+    childRead.resolve({
+      thread: {
+        turns: [
+          {
+            items: [
+              {
+                type: "agentMessage",
+                id: "child-message-history",
+                text: "Loaded once.",
+              },
+            ],
+          },
+        ],
+      },
+    });
+
+    await Promise.all([first, second]);
+    await session.loadProviderSubagentHistory!("history-child-thread");
+
+    expect(requestedThreadIds).toEqual(["test-thread", "history-child-thread"]);
+  });
+
+  test("registers nested persisted child descriptors without reading descendants eagerly", async () => {
+    const session = createSession();
+    const requestedThreadIds: string[] = [];
+    session.client = {
+      request: vi.fn(async (method: string, params: unknown) => {
+        if (method !== "thread/read") {
+          return {};
+        }
+        const threadId = (params as { threadId?: string }).threadId ?? "";
+        requestedThreadIds.push(threadId);
+        const itemsByThreadId: Record<string, unknown[]> = {
+          "test-thread": [
+            {
+              type: "subAgentActivity",
+              id: "child-started-history",
+              kind: "started",
+              agentThreadId: "history-child-thread",
+              agentPath: "/root/history-child",
+            },
+          ],
+          "history-child-thread": [
+            {
+              type: "subAgentActivity",
+              id: "nested-started-history",
+              kind: "started",
+              agentThreadId: "history-grandchild-thread",
+              agentPath: "/root/history-child/history-grandchild",
+            },
+          ],
+          "history-grandchild-thread": [
+            {
+              type: "agentMessage",
+              id: "grandchild-message-history",
+              text: "Nested history loaded on demand.",
+            },
+          ],
+        };
+        return {
+          thread: { turns: [{ items: itemsByThreadId[threadId] ?? [] }] },
+        };
+      }),
+    };
+    await asInternals(session).loadPersistedHistory();
+    for await (const _event of session.streamHistory()) {
+      // Drain root history before observing lazy child events.
+    }
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    events.push(...(await session.loadProviderSubagentHistory!("history-child-thread")));
+
+    expect(requestedThreadIds).toEqual(["test-thread", "history-child-thread"]);
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "provider_subagent",
+        provider: "codex",
+        event: expect.objectContaining({
+          type: "upsert",
+          id: "history-grandchild-thread",
+        }),
+      }),
+    );
+    expect(
+      events.some(
+        (event) =>
+          event.type === "provider_subagent" &&
+          event.event.type === "timeline" &&
+          event.event.id === "history-grandchild-thread",
+      ),
+    ).toBe(false);
+
+    events.push(...(await session.loadProviderSubagentHistory!("history-grandchild-thread")));
+
+    expect(requestedThreadIds).toEqual([
+      "test-thread",
+      "history-child-thread",
+      "history-grandchild-thread",
+    ]);
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "provider_subagent",
+        provider: "codex",
+        event: expect.objectContaining({
+          type: "timeline",
+          id: "history-grandchild-thread",
+          item: expect.objectContaining({
+            type: "assistant_message",
+            text: "Nested history loaded on demand.",
+          }),
+        }),
+      }),
+    );
+  });
+
+  test("orders persisted child history before concurrent live events and deduplicates replay", async () => {
+    const session = createSession();
+    const childRead = deferred<unknown>();
+    session.client = {
+      request: vi.fn(async (method: string, params: unknown) => {
+        if (method !== "thread/read") {
+          return {};
+        }
+        const threadId = (params as { threadId?: string }).threadId;
+        if (threadId === "history-child-thread") {
+          return childRead.promise;
+        }
+        return {
+          thread: {
+            turns: [
+              {
+                items: [
+                  {
+                    type: "subAgentActivity",
+                    id: "child-started-history",
+                    kind: "started",
+                    agentThreadId: "history-child-thread",
+                    agentPath: "/root/history-child",
+                  },
+                ],
+              },
+            ],
+          },
+        };
+      }),
+    };
+    await asInternals(session).loadPersistedHistory();
+    for await (const _event of session.streamHistory()) {
+      // Drain root history before observing lazy child events.
+    }
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    const load = session.loadProviderSubagentHistory!("history-child-thread");
+    await vi.waitFor(() => {
+      expect(session.client?.request).toHaveBeenCalledWith("thread/read", {
+        threadId: "history-child-thread",
+        includeTurns: true,
+      });
+    });
+    asInternals(session).handleNotification("item/completed", {
+      threadId: "history-child-thread",
+      item: {
+        type: "userMessage",
+        id: "child-live-message",
+        content: [{ type: "text", text: "Concurrent child message." }],
+      },
+    });
+    asInternals(session).handleNotification("item/agentMessage/delta", {
+      threadId: "history-child-thread",
+      itemId: "child-live-assistant",
+      delta: "First live fragment. ",
+    });
+    asInternals(session).handleNotification("item/agentMessage/delta", {
+      threadId: "history-child-thread",
+      itemId: "child-live-assistant",
+      delta: "Second live fragment.",
+    });
+    asInternals(session).handleNotification("item/agentMessage/delta", {
+      threadId: "history-child-thread",
+      itemId: "child-repeated-assistant",
+      delta: "Echo",
+    });
+    asInternals(session).handleNotification("item/agentMessage/delta", {
+      threadId: "history-child-thread",
+      itemId: "child-repeated-assistant",
+      delta: "Echo",
+    });
+    expect(
+      events.filter(
+        (event) => event.type === "provider_subagent" && event.event.type === "timeline",
+      ),
+    ).toEqual([]);
+
+    childRead.resolve({
+      thread: {
+        turns: [
+          {
+            items: [
+              {
+                type: "agentMessage",
+                id: "child-persisted-message",
+                text: "Persisted history first.",
+              },
+              {
+                type: "userMessage",
+                id: "child-live-message",
+                content: [{ type: "text", text: "Concurrent child message." }],
+              },
+              {
+                type: "agentMessage",
+                id: "child-repeated-assistant",
+                text: "Echo",
+              },
+            ],
+          },
+        ],
+      },
+    });
+    events.push(...(await load));
+
+    expect(
+      events.flatMap((event) =>
+        event.type === "provider_subagent" &&
+        event.event.type === "timeline" &&
+        event.event.id === "history-child-thread"
+          ? [event.event.item]
+          : [],
+      ),
+    ).toEqual([
+      {
+        type: "assistant_message",
+        messageId: "child-persisted-message",
+        text: "Persisted history first.",
+      },
+      {
+        type: "user_message",
+        messageId: "child-live-message",
+        text: "Concurrent child message.",
+      },
+      {
+        type: "assistant_message",
+        messageId: "child-repeated-assistant",
+        text: "Echo",
+      },
+      {
+        type: "assistant_message",
+        messageId: "child-live-assistant",
+        text: "First live fragment. ",
+      },
+      {
+        type: "assistant_message",
+        messageId: "child-live-assistant",
+        text: "Second live fragment.",
+      },
+      {
+        type: "assistant_message",
+        messageId: "child-repeated-assistant",
+        text: "Echo",
+      },
+    ]);
+  });
+
+  test("buffers live events for a persisted child before its first history request", async () => {
+    const session = createSession();
+    const requestedThreadIds: string[] = [];
+    session.client = {
+      request: vi.fn(async (method: string, params: unknown) => {
+        if (method !== "thread/read") {
+          return {};
+        }
+        const threadId = (params as { threadId?: string }).threadId ?? "";
+        requestedThreadIds.push(threadId);
+        return {
+          thread: {
+            turns: [
+              {
+                items:
+                  threadId === "test-thread"
+                    ? [
+                        {
+                          type: "subAgentActivity",
+                          id: "child-started-history",
+                          kind: "started",
+                          agentThreadId: "history-child-thread",
+                          agentPath: "/root/history-child",
+                        },
+                      ]
+                    : [
+                        {
+                          type: "agentMessage",
+                          id: "child-persisted-message",
+                          text: "Older persisted history.",
+                        },
+                        {
+                          type: "userMessage",
+                          id: "child-live-before-request",
+                          content: [{ type: "text", text: "Live before first request." }],
+                        },
+                      ],
+              },
+            ],
+          },
+        };
+      }),
+    };
+    await asInternals(session).loadPersistedHistory();
+    for await (const _event of session.streamHistory()) {
+      // Drain root history before observing lazy child events.
+    }
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    asInternals(session).handleNotification("item/completed", {
+      threadId: "history-child-thread",
+      item: {
+        type: "userMessage",
+        id: "child-live-before-request",
+        content: [{ type: "text", text: "Live before first request." }],
+      },
+    });
+
+    expect(
+      events.filter(
+        (event) => event.type === "provider_subagent" && event.event.type === "timeline",
+      ),
+    ).toEqual([]);
+
+    events.push(...(await session.loadProviderSubagentHistory!("history-child-thread")));
+
+    expect(requestedThreadIds).toEqual(["test-thread", "history-child-thread"]);
+    expect(
+      events.flatMap((event) =>
+        event.type === "provider_subagent" &&
+        event.event.type === "timeline" &&
+        event.event.id === "history-child-thread"
+          ? [event.event.item]
+          : [],
+      ),
+    ).toEqual([
+      {
+        type: "assistant_message",
+        messageId: "child-persisted-message",
+        text: "Older persisted history.",
+      },
+      {
+        type: "user_message",
+        messageId: "child-live-before-request",
+        text: "Live before first request.",
+      },
+    ]);
+  });
+
+  test("publishes persisted child running status before its history is requested", async () => {
+    const session = createSession();
+    session.client = {
+      request: vi.fn(async (method: string, params: unknown) => {
+        if (method !== "thread/read") {
+          return {};
+        }
+        const threadId = (params as { threadId?: string }).threadId;
+        return {
+          thread: {
+            turns: [
+              {
+                items:
+                  threadId === "test-thread"
+                    ? [
+                        {
+                          type: "subAgentActivity",
+                          id: "child-started-history",
+                          kind: "started",
+                          agentThreadId: "history-child-thread",
+                          agentPath: "/root/history-child",
+                        },
+                      ]
+                    : [],
+              },
+            ],
+          },
+        };
+      }),
+    };
+    await asInternals(session).loadPersistedHistory();
+    const store = new ProviderSubagentStore();
+    for await (const event of session.streamHistory()) {
+      if (event.type === "provider_subagent") {
+        store.apply("parent-agent", event.provider, event.event);
+      }
+    }
+    expect(store.list("parent-agent")).toEqual([
+      expect.objectContaining({ id: "history-child-thread", status: "completed" }),
+    ]);
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => {
+      events.push(event);
+      if (event.type === "provider_subagent") {
+        store.apply("parent-agent", event.provider, event.event);
+      }
+    });
+
+    asInternals(session).handleNotification("turn/started", {
+      threadId: "history-child-thread",
+      turn: { id: "history-child-live-turn" },
+    });
+
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "provider_subagent",
+        provider: "codex",
+        event: expect.objectContaining({
+          type: "upsert",
+          id: "history-child-thread",
+          status: "running",
+        }),
+      }),
+    );
+    expect(store.list("parent-agent")).toEqual([
+      expect.objectContaining({ id: "history-child-thread", status: "running" }),
+    ]);
+    expect(session.client.request).toHaveBeenCalledTimes(1);
+  });
+
+  test("does not replay stale tool lifecycle rows over terminal persisted history", async () => {
+    const session = createSession();
+    session.client = {
+      request: vi.fn(async (method: string, params: unknown) => {
+        if (method !== "thread/read") {
+          return {};
+        }
+        const threadId = (params as { threadId?: string }).threadId;
+        return {
+          thread: {
+            turns: [
+              {
+                items:
+                  threadId === "test-thread"
+                    ? [
+                        {
+                          type: "subAgentActivity",
+                          id: "child-started-history",
+                          kind: "started",
+                          agentThreadId: "history-child-thread",
+                          agentPath: "/root/history-child",
+                        },
+                      ]
+                    : [
+                        {
+                          type: "commandExecution",
+                          id: "child-tool-call",
+                          status: "completed",
+                          command: "printf done",
+                          aggregatedOutput: "done",
+                          exitCode: 0,
+                        },
+                      ],
+              },
+            ],
+          },
+        };
+      }),
+    };
+    await asInternals(session).loadPersistedHistory();
+    for await (const _event of session.streamHistory()) {
+      // Drain the persisted descriptor before buffering newer child activity.
+    }
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    asInternals(session).handleNotification("item/started", {
+      threadId: "history-child-thread",
+      item: {
+        type: "commandExecution",
+        id: "child-tool-call",
+        status: "inProgress",
+        command: "printf done",
+      },
+    });
+    asInternals(session).handleNotification("item/completed", {
+      threadId: "history-child-thread",
+      item: {
+        type: "commandExecution",
+        id: "child-tool-call",
+        status: "completed",
+        command: "printf done",
+        aggregatedOutput: "done",
+        exitCode: 0,
+      },
+    });
+    asInternals(session).handleNotification("item/agentMessage/delta", {
+      threadId: "history-child-thread",
+      itemId: "child-live-fragment",
+      delta: "Distinct live fragment.",
+    });
+
+    const loaded = await session.loadProviderSubagentHistory!("history-child-thread");
+    const loadedItems = loaded.flatMap((event) =>
+      event.event.type === "timeline" && event.event.id === "history-child-thread"
+        ? [event.event.item]
+        : [],
+    );
+
+    expect(
+      loadedItems.flatMap((item) =>
+        item.type === "tool_call" && item.callId === "child-tool-call" ? [item.status] : [],
+      ),
+    ).toEqual(["completed"]);
+    expect(loadedItems).toContainEqual({
+      type: "assistant_message",
+      messageId: "child-live-fragment",
+      text: "Distinct live fragment.",
+    });
+  });
+
+  test("replays live child events after a failed history read and allows retry", async () => {
+    const session = createSession();
+    const firstChildRead = deferred<unknown>();
+    let childReadCount = 0;
+    session.client = {
+      request: vi.fn(async (method: string, params: unknown) => {
+        if (method !== "thread/read") {
+          return {};
+        }
+        const threadId = (params as { threadId?: string }).threadId;
+        if (threadId === "history-child-thread") {
+          childReadCount += 1;
+          if (childReadCount === 1) {
+            return firstChildRead.promise;
+          }
+          return {
+            thread: {
+              turns: [
+                {
+                  items: [
+                    {
+                      type: "agentMessage",
+                      id: "child-message-after-retry",
+                      text: "Retry succeeded.",
+                    },
+                    {
+                      type: "userMessage",
+                      id: "child-live-during-failure",
+                      content: [{ type: "text", text: "Do not lose this live event." }],
+                    },
+                  ],
+                },
+              ],
+            },
+          };
+        }
+        return {
+          thread: {
+            turns: [
+              {
+                items: [
+                  {
+                    type: "subAgentActivity",
+                    id: "child-started-history",
+                    kind: "started",
+                    agentThreadId: "history-child-thread",
+                    agentPath: "/root/history-child",
+                  },
+                ],
+              },
+            ],
+          },
+        };
+      }),
+    };
+    await asInternals(session).loadPersistedHistory();
+    for await (const _event of session.streamHistory()) {
+      // Drain root history before observing lazy child events.
+    }
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    const firstLoad = session.loadProviderSubagentHistory!("history-child-thread");
+    await vi.waitFor(() => expect(childReadCount).toBe(1));
+    asInternals(session).handleNotification("item/completed", {
+      threadId: "history-child-thread",
+      item: {
+        type: "userMessage",
+        id: "child-live-during-failure",
+        content: [{ type: "text", text: "Do not lose this live event." }],
+      },
+    });
+    firstChildRead.resolve(Promise.reject(new Error("history unavailable")));
+
+    await expect(firstLoad).rejects.toThrow("history unavailable");
+    expect(
+      events.flatMap((event) =>
+        event.type === "provider_subagent" && event.event.type === "timeline"
+          ? [event.event.item]
+          : [],
+      ),
+    ).toEqual([]);
+
+    events.push(...(await session.loadProviderSubagentHistory!("history-child-thread")));
+
+    expect(childReadCount).toBe(2);
+    expect(
+      events.flatMap((event) =>
+        event.type === "provider_subagent" && event.event.type === "timeline"
+          ? [event.event.item]
+          : [],
+      ),
+    ).toEqual([
+      {
+        type: "assistant_message",
+        messageId: "child-message-after-retry",
+        text: "Retry succeeded.",
+      },
+      {
+        type: "user_message",
+        messageId: "child-live-during-failure",
+        text: "Do not lose this live event.",
+      },
+    ]);
+  });
+
+  test("aborts a stuck persisted child read and leaves it retryable", async () => {
+    const session = createSession();
+    let childReadCount = 0;
+    session.client = {
+      request: vi.fn(async (method: string, params: unknown) => {
+        if (method !== "thread/read") {
+          return {};
+        }
+        const threadId = (params as { threadId?: string }).threadId;
+        if (threadId === "history-child-thread") {
+          childReadCount += 1;
+          if (childReadCount === 1) {
+            return await new Promise(() => undefined);
+          }
+          return {
+            thread: {
+              turns: [
+                {
+                  items: [
+                    {
+                      type: "agentMessage",
+                      id: "child-message-after-abort",
+                      text: "Retry after abort succeeded.",
+                    },
+                  ],
+                },
+              ],
+            },
+          };
+        }
+        return {
+          thread: {
+            turns: [
+              {
+                items: [
+                  {
+                    type: "subAgentActivity",
+                    id: "child-started-history",
+                    kind: "started",
+                    agentThreadId: "history-child-thread",
+                    agentPath: "/root/history-child",
+                  },
+                ],
+              },
+            ],
+          },
+        };
+      }),
+    };
+    await asInternals(session).loadPersistedHistory();
+    for await (const _event of session.streamHistory()) {
+      // Drain root history before observing lazy child events.
+    }
+    const abortController = new AbortController();
+    const firstLoad = session.loadProviderSubagentHistory!("history-child-thread", {
+      signal: abortController.signal,
+    });
+    await vi.waitFor(() => expect(childReadCount).toBe(1));
+
+    abortController.abort(new Error("reload canceled child history"));
+
+    await expect(firstLoad).rejects.toThrow("reload canceled child history");
+    await expect(
+      session.loadProviderSubagentHistory!("history-child-thread"),
+    ).resolves.toMatchObject([
+      {
+        event: {
+          type: "timeline",
+          id: "history-child-thread",
+          item: {
+            type: "assistant_message",
+            messageId: "child-message-after-abort",
+            text: "Retry after abort succeeded.",
+          },
+        },
+      },
+    ]);
+    expect(childReadCount).toBe(2);
+  });
+
+  test("discards a child read that resolves after persisted root history reloads", async () => {
+    const session = createSession();
+    const staleChildRead = deferred<unknown>();
+    let rootReadCount = 0;
+    session.client = {
+      request: vi.fn(async (method: string, params: unknown) => {
+        if (method !== "thread/read") {
+          return {};
+        }
+        const threadId = (params as { threadId?: string }).threadId;
+        if (threadId === "history-child-thread") {
+          return staleChildRead.promise;
+        }
+        rootReadCount += 1;
+        const childThreadId = rootReadCount === 1 ? "history-child-thread" : "replacement-child";
+        return {
+          thread: {
+            turns: [
+              {
+                items: [
+                  {
+                    type: "subAgentActivity",
+                    id: `child-started-${rootReadCount}`,
+                    kind: "started",
+                    agentThreadId: childThreadId,
+                    agentPath: `/root/${childThreadId}`,
+                  },
+                ],
+              },
+            ],
+          },
+        };
+      }),
+    };
+    await asInternals(session).loadPersistedHistory();
+    for await (const _event of session.streamHistory()) {
+      // Drain the first root generation.
+    }
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    const staleLoad = session.loadProviderSubagentHistory!("history-child-thread");
+    await vi.waitFor(() => {
+      expect(session.client?.request).toHaveBeenCalledWith("thread/read", {
+        threadId: "history-child-thread",
+        includeTurns: true,
+      });
+    });
+    await asInternals(session).loadPersistedHistory();
+    staleChildRead.resolve({
+      thread: {
+        turns: [
+          {
+            items: [
+              {
+                type: "agentMessage",
+                id: "stale-child-message",
+                text: "Must not escape the old generation.",
+              },
+            ],
+          },
+        ],
+      },
+    });
+    await staleLoad;
+
+    expect(
+      events.some(
+        (event) =>
+          event.type === "provider_subagent" &&
+          event.event.type === "timeline" &&
+          event.event.id === "history-child-thread",
+      ),
+    ).toBe(false);
+  });
+
+  test("discards a child read that resolves after the session closes", async () => {
+    const session = createSession();
+    const staleChildRead = deferred<unknown>();
+    session.client = {
+      request: vi.fn(async (method: string, params: unknown) => {
+        if (method !== "thread/read") {
+          return {};
+        }
+        if ((params as { threadId?: string }).threadId === "history-child-thread") {
+          return staleChildRead.promise;
+        }
+        return {
+          thread: {
+            turns: [
+              {
+                items: [
+                  {
+                    type: "subAgentActivity",
+                    id: "child-started-history",
+                    kind: "started",
+                    agentThreadId: "history-child-thread",
+                    agentPath: "/root/history-child",
+                  },
+                ],
+              },
+            ],
+          },
+        };
+      }),
+      notify: vi.fn(),
+      dispose: vi.fn(async () => undefined),
+    };
+    await asInternals(session).loadPersistedHistory();
+    for await (const _event of session.streamHistory()) {
+      // Drain root history before starting the stale child read.
+    }
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    const staleLoad = session.loadProviderSubagentHistory!("history-child-thread");
+    await vi.waitFor(() => {
+      expect(session.client?.request).toHaveBeenCalledWith("thread/read", {
+        threadId: "history-child-thread",
+        includeTurns: true,
+      });
+    });
+    await session.close();
+    staleChildRead.resolve({
+      thread: {
+        turns: [
+          {
+            items: [
+              {
+                type: "agentMessage",
+                id: "stale-child-message",
+                text: "Must not emit after close.",
+              },
+            ],
+          },
+        ],
+      },
+    });
+    await staleLoad;
+
+    expect(events).toEqual([]);
+  });
+
   test("loads mixed legacy and MultiAgentV2 sub-agent history", async () => {
     const session = createSession();
     session.client = {
@@ -4071,6 +5510,20 @@ describe("Codex app-server provider", () => {
       history.flatMap((event) =>
         event.type === "provider_subagent" && event.event.type === "timeline" ? [event.event] : [],
       ),
+    ).toEqual([]);
+    const liveEvents: AgentStreamEvent[] = [];
+    session.subscribe((event) => liveEvents.push(event));
+
+    const loadedEvents = await Promise.all([
+      session.loadProviderSubagentHistory!("legacy-child-thread"),
+      session.loadProviderSubagentHistory!("v2-child-thread"),
+    ]);
+    liveEvents.push(...loadedEvents.flat());
+
+    expect(
+      liveEvents.flatMap((event) =>
+        event.type === "provider_subagent" && event.event.type === "timeline" ? [event.event] : [],
+      ),
     ).toEqual([
       {
         type: "timeline",
@@ -4112,8 +5565,7 @@ describe("Codex app-server provider", () => {
       },
     ]);
 
-    const liveEvents: AgentStreamEvent[] = [];
-    session.subscribe((event) => liveEvents.push(event));
+    liveEvents.length = 0;
     asInternals(session).handleNotification("turn/started", {
       threadId: "v2-child-thread",
       turn: { id: "v2-child-turn-after-resume" },
@@ -4221,6 +5673,13 @@ describe("Codex app-server provider", () => {
     );
     expect(upserts).toEqual([
       expect.objectContaining({ id: "persisted-child", parentSubagentId: null }),
+    ]);
+
+    const childHistory = await session.loadProviderSubagentHistory("persisted-child");
+    const nestedUpserts = childHistory.flatMap((event) =>
+      event.event.type === "upsert" ? [event.event] : [],
+    );
+    expect(nestedUpserts).toEqual([
       expect.objectContaining({
         id: "persisted-grandchild",
         parentSubagentId: "persisted-child",

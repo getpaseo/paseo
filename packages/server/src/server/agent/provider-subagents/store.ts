@@ -76,9 +76,83 @@ function stickyField<T>(next: T | undefined, previous: T | null | undefined): T 
   return next === undefined ? (previous ?? null) : next;
 }
 
+export type ProviderSubagentTimelineStore = Pick<
+  InMemoryAgentTimelineStore,
+  "append" | "delete" | "fetch" | "getEpoch" | "getToolCallSeqBounds" | "has" | "initialize"
+>;
+
+const MAX_CANONICAL_PAGE_SIZE = 200;
+
+function initialCanonicalPageSize(projectedLimit: number): number {
+  if (projectedLimit === 0) {
+    return MAX_CANONICAL_PAGE_SIZE;
+  }
+  return Math.min(MAX_CANONICAL_PAGE_SIZE, Math.max(1, projectedLimit));
+}
+
+function expansionPageSize(accumulatedRows: number): number {
+  return Math.min(MAX_CANONICAL_PAGE_SIZE, Math.max(1, accumulatedRows));
+}
+
+function projectedSelectionNeedsMoreRows(input: {
+  direction: NonNullable<AgentTimelineFetchOptions["direction"]>;
+  limit: number;
+  timeline: AgentTimelineFetchResult;
+  rows: readonly AgentTimelineRow[];
+  selected: ReturnType<typeof selectTimelineWindowByProjectedLimit>;
+  getToolCallSeqBounds: (callId: string) => { minSeq: number; maxSeq: number } | null;
+}): "older" | "newer" | null {
+  const { direction, limit, timeline, rows, selected, getToolCallSeqBounds } = input;
+  const firstRow = rows[0];
+  const lastRow = rows.at(-1);
+  if (!firstRow || !lastRow) {
+    return null;
+  }
+
+  const expandToward = direction === "after" ? "newer" : "older";
+  const hasMore =
+    expandToward === "newer"
+      ? lastRow.seq < timeline.window.maxSeq
+      : firstRow.seq > timeline.window.minSeq;
+  if (!hasMore) {
+    return null;
+  }
+
+  if (limit === 0 || selected.projectedEntries.length < limit) {
+    return expandToward;
+  }
+
+  const hasToolCallRowsBeyondPage = selected.projectedEntries.some((entry) => {
+    if (entry.item.type !== "tool_call") {
+      return false;
+    }
+    const bounds = getToolCallSeqBounds(entry.item.callId);
+    if (!bounds) {
+      return false;
+    }
+    return expandToward === "newer" ? bounds.maxSeq > lastRow.seq : bounds.minSeq < firstRow.seq;
+  });
+  if (hasToolCallRowsBeyondPage) {
+    return expandToward;
+  }
+
+  const boundarySeq = expandToward === "newer" ? lastRow.seq : firstRow.seq;
+  const canMergeAcrossBoundary = selected.projectedEntries.some(
+    (entry) =>
+      entry.sourceSeqRanges.some(
+        (range) => boundarySeq >= range.startSeq && boundarySeq <= range.endSeq,
+      ) &&
+      (entry.item.type === "assistant_message" || entry.item.type === "reasoning"),
+  );
+  return canMergeAcrossBoundary ? expandToward : null;
+}
+
 export class ProviderSubagentStore {
   private readonly descriptors = new Map<string, ProviderSubagentDescriptor>();
-  private readonly timelines = new InMemoryAgentTimelineStore();
+
+  constructor(
+    private readonly timelines: ProviderSubagentTimelineStore = new InMemoryAgentTimelineStore(),
+  ) {}
 
   apply(
     parentAgentId: string,
@@ -153,27 +227,60 @@ export class ProviderSubagentStore {
   ): AgentTimelineFetchResult {
     const direction = options?.direction ?? "tail";
     const limit = options?.limit === undefined ? 200 : Math.max(0, Math.floor(options.limit));
-    const timeline = this.timelines.fetch(storeKey(parentAgentId, subagentId), {
+    const key = storeKey(parentAgentId, subagentId);
+    const timeline = this.timelines.fetch(key, {
       ...options,
-      limit: 0,
+      limit: initialCanonicalPageSize(limit),
     });
-    if (limit === 0 || timeline.rows.length === 0) {
+    if (timeline.rows.length === 0) {
       return timeline;
     }
-    const selected = selectTimelineWindowByProjectedLimit({
-      rows: timeline.rows,
-      direction: timeline.reset ? "tail" : direction,
+    const selectionDirection = timeline.reset ? "tail" : direction;
+    let rows = timeline.rows;
+    let selected = selectTimelineWindowByProjectedLimit({
+      rows,
+      direction: selectionDirection,
       limit,
     });
+    for (;;) {
+      const expandToward = projectedSelectionNeedsMoreRows({
+        direction: selectionDirection,
+        limit,
+        timeline,
+        rows,
+        selected,
+        getToolCallSeqBounds: (callId) => this.timelines.getToolCallSeqBounds(key, callId),
+      });
+      if (!expandToward) {
+        break;
+      }
+
+      const boundaryRow = expandToward === "older" ? rows[0] : rows.at(-1);
+      if (!boundaryRow) {
+        break;
+      }
+      const page = this.timelines.fetch(key, {
+        direction: expandToward === "older" ? "before" : "after",
+        cursor: { epoch: timeline.epoch, seq: boundaryRow.seq },
+        limit: expansionPageSize(rows.length),
+      });
+      if (page.rows.length === 0) {
+        break;
+      }
+      rows = expandToward === "older" ? [...page.rows, ...rows] : [...rows, ...page.rows];
+      selected = selectTimelineWindowByProjectedLimit({
+        rows,
+        direction: selectionDirection,
+        limit,
+      });
+    }
     const firstRow = selected.selectedRows[0];
     const lastRow = selected.selectedRows[selected.selectedRows.length - 1];
     return {
       ...timeline,
       rows: selected.selectedRows,
-      hasOlder:
-        timeline.hasOlder || (firstRow !== undefined && firstRow.seq > timeline.window.minSeq),
-      hasNewer:
-        timeline.hasNewer || (lastRow !== undefined && lastRow.seq < timeline.window.maxSeq),
+      hasOlder: firstRow ? firstRow.seq > timeline.window.minSeq : timeline.hasOlder,
+      hasNewer: lastRow ? lastRow.seq < timeline.window.maxSeq : timeline.hasNewer,
     };
   }
 

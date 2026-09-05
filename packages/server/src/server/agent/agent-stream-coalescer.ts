@@ -26,7 +26,8 @@ export interface AgentStreamCoalescerOptions {
   windowMs?: number;
   timers: AgentStreamCoalescerTimers;
   now?: () => number;
-  onFlush: (payload: AgentStreamCoalescerFlush) => void;
+  onFlush: (payload: AgentStreamCoalescerFlush) => void | Promise<void>;
+  onError?: (agentId: string, error: unknown) => void;
 }
 
 interface PendingTextEntry {
@@ -51,7 +52,8 @@ interface PendingAgentStreamBuffer {
   entries: PendingAgentStreamEntry[];
   toolCallEntryIndexes: Map<string, number>;
   timer: ReturnType<typeof setTimeout> | null;
-  flushing: boolean;
+  flushing: Promise<void> | null;
+  failure: unknown;
   lastFlushAt: number | null;
 }
 
@@ -87,16 +89,27 @@ function isSameTextStream(previous: PendingTextEntry, next: PendingTextEntry): b
 
 export class AgentStreamCoalescer {
   private readonly buffers = new Map<string, PendingAgentStreamBuffer>();
-  private readonly onFlush: (payload: AgentStreamCoalescerFlush) => void;
+  private readonly onFlush: (payload: AgentStreamCoalescerFlush) => void | Promise<void>;
   private readonly timers: AgentStreamCoalescerTimers;
   private readonly windowMs: number;
   private readonly now: () => number;
+  private readonly onError?: AgentStreamCoalescerOptions["onError"];
 
   constructor(options: AgentStreamCoalescerOptions) {
     this.windowMs = options.windowMs ?? AGENT_STREAM_COALESCE_DEFAULT_WINDOW_MS;
     this.timers = options.timers;
     this.now = options.now ?? Date.now;
     this.onFlush = options.onFlush;
+    this.onError = options.onError;
+  }
+
+  async handleAsync(agentId: string, event: AgentStreamEvent): Promise<boolean> {
+    const activeFlush = this.buffers.get(agentId)?.flushing;
+    if (activeFlush) await activeFlush;
+    const handled = this.handle(agentId, event);
+    const startedFlush = this.buffers.get(agentId)?.flushing;
+    if (startedFlush) await startedFlush;
+    return handled;
   }
 
   handle(agentId: string, event: AgentStreamEvent): boolean {
@@ -109,6 +122,7 @@ export class AgentStreamCoalescer {
     }
 
     const buffer = this.getOrCreateBuffer(agentId);
+    if (buffer.failure !== undefined) throw buffer.failure;
     this.appendToBuffer(buffer, event);
 
     if (isTerminalToolCall(event.item)) {
@@ -133,18 +147,27 @@ export class AgentStreamCoalescer {
     return true;
   }
 
-  flushFor(agentId: string): void {
-    this.flushBuffer(agentId);
-  }
-
-  flushAll(): void {
-    for (const agentId of Array.from(this.buffers.keys())) {
-      this.flushBuffer(agentId);
+  async flushFor(agentId: string): Promise<void> {
+    while (true) {
+      const buffer = this.buffers.get(agentId);
+      if (!buffer || (!buffer.flushing && buffer.entries.length === 0)) return;
+      if (buffer.failure !== undefined) throw buffer.failure;
+      await this.flushBuffer(agentId);
     }
   }
 
-  flushAndDiscard(agentId: string): void {
-    this.flushBuffer(agentId);
+  async flushAll(): Promise<void> {
+    await Promise.all(
+      Array.from(this.buffers.keys()).map(async (agentId) => await this.flushFor(agentId)),
+    );
+  }
+
+  async flushAndDiscard(agentId: string): Promise<void> {
+    await this.flushFor(agentId);
+    this.discard(agentId);
+  }
+
+  discard(agentId: string): void {
     const buffer = this.buffers.get(agentId);
     if (buffer) {
       this.clearTimer(buffer);
@@ -163,7 +186,8 @@ export class AgentStreamCoalescer {
       entries: [],
       toolCallEntryIndexes: new Map(),
       timer: null,
-      flushing: false,
+      flushing: null,
+      failure: undefined,
       lastFlushAt: null,
     };
     this.buffers.set(agentId, buffer);
@@ -201,7 +225,9 @@ export class AgentStreamCoalescer {
 
   private scheduleFlush(buffer: PendingAgentStreamBuffer): void {
     const timer = this.timers.setTimeout(() => {
-      this.flushBuffer(buffer.agentId, buffer);
+      void this.flushBuffer(buffer.agentId, buffer).catch((error: unknown) => {
+        this.onError?.(buffer.agentId, error);
+      });
     }, this.windowMs);
     timer.unref?.();
     buffer.timer = timer;
@@ -215,47 +241,82 @@ export class AgentStreamCoalescer {
     buffer.timer = null;
   }
 
-  private flushBuffer(agentId: string, expectedBuffer?: PendingAgentStreamBuffer): void {
+  private flushBuffer(agentId: string, expectedBuffer?: PendingAgentStreamBuffer): Promise<void> {
     const buffer = this.buffers.get(agentId);
     if (!buffer) {
-      return;
+      return Promise.resolve();
     }
     if (expectedBuffer && buffer !== expectedBuffer) {
-      return;
+      return Promise.resolve();
     }
-    if (buffer.flushing) {
-      return;
-    }
+    if (buffer.flushing) return buffer.flushing;
 
     this.clearTimer(buffer);
     if (buffer.entries.length === 0) {
-      return;
+      return Promise.resolve();
     }
 
-    const entries = buffer.entries;
+    const entries = this.collapseEntries(buffer.entries);
     buffer.entries = [];
     buffer.toolCallEntryIndexes.clear();
-    buffer.flushing = true;
     buffer.lastFlushAt = this.now();
-
-    try {
-      for (const entry of this.collapseEntries(entries)) {
-        this.onFlush({
-          agentId,
-          item:
-            entry.kind === "text"
-              ? {
-                  ...entry.item,
-                  text: entry.text,
-                }
-              : entry.item,
-          provider: entry.provider,
-          ...(entry.turnId !== undefined ? { turnId: entry.turnId } : {}),
-        });
+    const finish = () => {
+      buffer.flushing = null;
+      if (buffer.failure === undefined && buffer.entries.length > 0 && !buffer.timer) {
+        this.scheduleFlush(buffer);
       }
-    } finally {
-      buffer.flushing = false;
+    };
+    const restore = (start: number) => {
+      buffer.entries = [...entries.slice(start), ...buffer.entries];
+      this.rebuildToolCallIndexes(buffer);
+    };
+    const payload = (entry: PendingAgentStreamEntry): AgentStreamCoalescerFlush => ({
+      agentId,
+      item:
+        entry.kind === "text"
+          ? {
+              ...entry.item,
+              text: entry.text,
+            }
+          : entry.item,
+      provider: entry.provider,
+      ...(entry.turnId !== undefined ? { turnId: entry.turnId } : {}),
+    });
+    for (let index = 0; index < entries.length; index += 1) {
+      let completion: void | Promise<void>;
+      try {
+        completion = this.onFlush(payload(entries[index]!));
+      } catch (error) {
+        restore(index);
+        buffer.failure = error;
+        finish();
+        return Promise.reject(error);
+      }
+      if (!completion) continue;
+      buffer.flushing = (async () => {
+        let pendingIndex = index;
+        try {
+          await completion;
+          for (pendingIndex = index + 1; pendingIndex < entries.length; pendingIndex += 1) {
+            await this.onFlush(payload(entries[pendingIndex]!));
+          }
+        } catch (error) {
+          restore(pendingIndex);
+          buffer.failure = error;
+          throw error;
+        }
+      })().finally(finish);
+      return buffer.flushing;
     }
+    finish();
+    return Promise.resolve();
+  }
+
+  private rebuildToolCallIndexes(buffer: PendingAgentStreamBuffer): void {
+    buffer.toolCallEntryIndexes.clear();
+    buffer.entries.forEach((entry, index) => {
+      if (entry.kind === "tool_call") buffer.toolCallEntryIndexes.set(entry.item.callId, index);
+    });
   }
 
   private collapseEntries(entries: PendingAgentStreamEntry[]): PendingAgentStreamEntry[] {
