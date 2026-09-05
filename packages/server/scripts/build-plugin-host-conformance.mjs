@@ -28,10 +28,11 @@ const caseIds = [
   "compiler.target-bounded-bundles",
   "runtime.compiles-loads-and-publishes-tool",
   "host.delivery.targets-live-caller-and-is-idempotent",
+  "host.worktree.create-remove-enforces-ownership-and-persists",
   "host.child.create-inherits-live-caller-authority-after-mutation",
   "host.unauthorized-or-stale-selector-rejected",
   "delivery.reconnects-stable-installation-and-tombstones",
-  "installation.replacement-fences-stale-generation-and-nonce",
+  "installation.replacement-fences-stale-generation-and-nonce-through-session",
 ];
 
 function parseArgs(argv) {
@@ -40,9 +41,12 @@ function parseArgs(argv) {
   if (!outputDirectory || outputDirectory.startsWith("--")) {
     throw new Error("--out-dir requires a directory");
   }
+  if (argv.includes("--allow-dirty")) {
+    throw new Error("--allow-dirty was removed; use --developer-allow-dirty for local work only");
+  }
   return {
     outputDirectory: path.resolve(outputDirectory),
-    allowDirty: argv.includes("--allow-dirty"),
+    developerAllowDirty: argv.includes("--developer-allow-dirty"),
   };
 }
 
@@ -50,10 +54,12 @@ function git(args) {
   return execFileSync("git", args, { cwd: repositoryRoot, encoding: "utf8" }).trim();
 }
 
-function assertCleanTree(allowDirty) {
+function assertCleanTree(developerAllowDirty) {
   const status = git(["status", "--porcelain", "--untracked-files=all"]);
-  if (status && !allowDirty) {
-    throw new Error("Conformance build requires a clean git tree; pass --allow-dirty only locally");
+  if (status && !developerAllowDirty) {
+    throw new Error(
+      "Conformance build requires a clean git tree; pass --developer-allow-dirty only for local development",
+    );
   }
 }
 
@@ -128,9 +134,22 @@ function relativeSourceInput(input) {
   const absolute = path.isAbsolute(input) ? input : path.resolve(repositoryRoot, input);
   if (!absolute.startsWith(`${repositoryRoot}${path.sep}`)) return null;
   const relative = path.relative(repositoryRoot, absolute);
-  if (relative.includes(`${path.sep}dist${path.sep}`)) return null;
-  if (!relative.endsWith(".ts") && !relative.endsWith(".tsx")) return null;
+  if (
+    relative.split(path.sep).includes("node_modules") ||
+    relative.split(path.sep).includes("dist")
+  ) {
+    return null;
+  }
+  if (!/\.(?:[cm]?js|[cm]?ts|jsx?|tsx?|json)$/u.test(relative)) return null;
   return relative.split(path.sep).join("/");
+}
+
+function trackedSourcePaths() {
+  return git(["ls-files", "-z"])
+    .split("\0")
+    .filter(Boolean)
+    .map((relative) => relative.split(path.sep).join("/"))
+    .filter((relative) => relativeSourceInput(path.join(repositoryRoot, relative)) !== null);
 }
 
 async function sourceInputs(metafiles) {
@@ -149,9 +168,24 @@ async function sourceInputs(metafiles) {
   return result;
 }
 
+async function trackedSourceInputHashes() {
+  const result = {};
+  for (const relative of trackedSourcePaths()) {
+    const contents = await readFile(path.join(repositoryRoot, relative));
+    result[relative] = createHash("sha256").update(contents).digest("hex");
+  }
+  return result;
+}
+
+function sourceManifestBanner(manifest) {
+  return {
+    js: `${runtimeBanner.js} const __PASEO_SOURCE_MANIFEST__ = ${JSON.stringify(manifest)};`,
+  };
+}
+
 async function main() {
-  const { outputDirectory, allowDirty } = parseArgs(process.argv.slice(2));
-  assertCleanTree(allowDirty);
+  const { outputDirectory, developerAllowDirty } = parseArgs(process.argv.slice(2));
+  assertCleanTree(developerAllowDirty);
   const sourceCommit = git(["rev-parse", "HEAD"]);
   const worker = await buildBundle(workerEntry, {
     format: "esm",
@@ -162,16 +196,33 @@ async function main() {
   const rebuilt = await buildBundle(sourceEntry, {
     define: {
       __PASEO_PLUGIN_PROCESS_SOURCE__: JSON.stringify(workerSource),
-      __PASEO_SOURCE_COMMIT__: JSON.stringify(sourceCommit),
     },
-    banner: runtimeBanner,
+    banner: sourceManifestBanner({
+      formatVersion: 1,
+      sourceCommit,
+      sourceInputs: {},
+    }),
   });
-  const artifact = rebuilt.outputFiles[0]?.text;
-  if (!artifact) throw new Error("Conformance build produced no output");
-  const inputs = await sourceInputs([worker.metafile, rebuilt.metafile]);
-  if (Object.keys(inputs).some((input) => input.includes("/dist/") || input.startsWith("dist/"))) {
+  const bundleInputs = await sourceInputs([worker.metafile, rebuilt.metafile]);
+  if (
+    Object.keys(bundleInputs).some((input) => input.includes("/dist/") || input.startsWith("dist/"))
+  ) {
     throw new Error("Conformance artifact unexpectedly contains a dist source input");
   }
+  const inputs = { ...(await trackedSourceInputHashes()), ...bundleInputs };
+  const sourceManifest = {
+    formatVersion: 1,
+    sourceCommit,
+    sourceInputs: inputs,
+  };
+  const finalBuild = await buildBundle(sourceEntry, {
+    define: {
+      __PASEO_PLUGIN_PROCESS_SOURCE__: JSON.stringify(workerSource),
+    },
+    banner: sourceManifestBanner(sourceManifest),
+  });
+  const artifact = finalBuild.outputFiles[0]?.text;
+  if (!artifact) throw new Error("Conformance build produced no output");
   await rm(outputDirectory, { recursive: true, force: true });
   await mkdir(outputDirectory, { recursive: true });
   await writeFile(path.join(outputDirectory, artifactName), artifact, "utf8");

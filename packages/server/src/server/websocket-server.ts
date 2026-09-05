@@ -1029,6 +1029,7 @@ export class VoiceAssistantWebSocketServer {
     pluginId: string,
     ws: WebSocketLike,
     installationId?: string,
+    generation?: number,
   ): Promise<{ closed: Promise<void> }> {
     if (this.connectionLifecycle === "stopping") {
       throw new Error(`Cannot attach plugin session while shutting down: ${pluginId}`);
@@ -1059,7 +1060,7 @@ export class VoiceAssistantWebSocketServer {
         // durable deliveries belong to the plugin rather than the daemon owner.
         principalId,
         permissions: OWNER_PERMISSIONS,
-        pluginIdentity: { pluginId, installationId: stableInstallationId },
+        pluginIdentity: { pluginId, installationId: stableInstallationId, generation },
       });
     } catch (error) {
       this.pluginSocketIds.delete(ws);
@@ -1091,6 +1092,44 @@ export class VoiceAssistantWebSocketServer {
       return connection.session.invokePluginHost(input);
     }
     throw new Error(`Plugin session is unavailable: ${input.pluginId}`);
+  }
+
+  public beginPluginHostInvocation(input: {
+    pluginId: string;
+    invocationId: string;
+    generation: number;
+    installationId: string;
+    capabilityNonce: string;
+  }): void {
+    for (const connection of this.sessions.values()) {
+      if (
+        connection.lifecycle !== "ephemeral-plugin" ||
+        connection.pluginId !== input.pluginId ||
+        connection.session.getPluginIdentity()?.installationId !== input.installationId
+      ) {
+        continue;
+      }
+      connection.session.beginPluginHostInvocation(input);
+      return;
+    }
+    throw new Error(`Plugin session is unavailable: ${input.pluginId}`);
+  }
+
+  public endPluginHostInvocation(
+    pluginId: string,
+    installationId: string,
+    invocationId: string,
+  ): void {
+    for (const connection of this.sessions.values()) {
+      if (
+        connection.lifecycle === "ephemeral-plugin" &&
+        connection.pluginId === pluginId &&
+        connection.session.getPluginIdentity()?.installationId === installationId
+      ) {
+        connection.session.endPluginHostInvocation(pluginId, installationId, invocationId);
+        return;
+      }
+    }
   }
 
   /** Fence plugin delivery before PluginRuntime terminates its process. */

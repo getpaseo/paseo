@@ -528,7 +528,7 @@ export interface SessionOptions {
   /** Authenticated principal used to scope durable deliveries. */
   principalId?: string;
   /** Stable identity for a trusted plugin installation, retained across reconnects. */
-  pluginIdentity?: { pluginId: string; installationId: string };
+  pluginIdentity?: { pluginId: string; installationId: string; generation?: number };
   /** Optional resource fence supplied by the authenticated session admission. */
   resourcePermissions?: { agentIds?: readonly string[]; workspaceIds?: readonly string[] };
   permissions: readonly DaemonPermission[];
@@ -834,6 +834,10 @@ export class Session {
   private readonly pluginRpcInvocations = new Map<
     string,
     { controller: AbortController; source?: object }
+  >();
+  private readonly pluginHostInvocations = new Map<
+    string,
+    { generation: number; capabilityNonce: string; references: number }
   >();
   private readonly orchestrationSkills: SessionOptions["orchestrationSkills"];
   private unsubscribeAgentEvents: (() => void) | null = null;
@@ -2126,6 +2130,59 @@ export class Session {
     return this.pluginIdentity;
   }
 
+  /** Admit a host request only after PluginRuntime has validated its live capability. */
+  public beginPluginHostInvocation(input: {
+    pluginId: string;
+    invocationId: string;
+    generation: number;
+    installationId: string;
+    capabilityNonce: string;
+  }): void {
+    if (this.isCleanedUp) throw new Error("Plugin host session is closed");
+    if (
+      !this.pluginIdentity ||
+      input.pluginId !== this.pluginIdentity.pluginId ||
+      input.installationId !== this.pluginIdentity.installationId ||
+      this.pluginIdentity.generation !== input.generation
+    ) {
+      throw new Error("Plugin host invocation generation is stale");
+    }
+    const current = this.pluginHostInvocations.get(input.invocationId);
+    if (current) {
+      if (
+        current.generation !== input.generation ||
+        current.capabilityNonce !== input.capabilityNonce
+      ) {
+        throw new Error("Plugin host invocation nonce is stale");
+      }
+      current.references += 1;
+      return;
+    }
+    this.pluginHostInvocations.set(input.invocationId, {
+      generation: input.generation,
+      capabilityNonce: input.capabilityNonce,
+      references: 1,
+    });
+  }
+
+  public endPluginHostInvocation(
+    pluginId: string,
+    installationId: string,
+    invocationId: string,
+  ): void {
+    if (
+      !this.pluginIdentity ||
+      pluginId !== this.pluginIdentity.pluginId ||
+      installationId !== this.pluginIdentity.installationId
+    ) {
+      return;
+    }
+    const current = this.pluginHostInvocations.get(invocationId);
+    if (!current) return;
+    if (current.references <= 1) this.pluginHostInvocations.delete(invocationId);
+    else current.references -= 1;
+  }
+
   public allowsInbound(message: SessionInboundMessage): boolean {
     return this.authorization.allowsInbound(message);
   }
@@ -2174,6 +2231,16 @@ export class Session {
       input.installationId !== this.pluginIdentity.installationId
     ) {
       throw new Error("Plugin host installation is not authorized for this session");
+    }
+    if (this.pluginIdentity.generation !== undefined) {
+      const capability = this.pluginHostInvocations.get(input.invocationId);
+      if (
+        !capability ||
+        capability.generation !== input.generation ||
+        capability.capabilityNonce !== input.capabilityNonce
+      ) {
+        throw new Error("Plugin host invocation capability is stale");
+      }
     }
     if (input.caller.callerAgentId.trim() === "") {
       throw new Error("Plugin host operations require an authenticated caller agent");
@@ -8911,6 +8978,7 @@ export class Session {
       controller.abort(new Error("Session is closing"));
     }
     this.pluginRpcInvocations.clear();
+    this.pluginHostInvocations.clear();
     await this.cleanupPluginManagedWorktrees();
 
     if (this.unsubscribeAgentEvents) {

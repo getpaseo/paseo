@@ -233,10 +233,21 @@ export interface PluginPaseoSessionHost {
     input: Record<string, unknown>;
     signal: AbortSignal;
   }): Promise<unknown>;
+  /** Admit the invocation capability at the attached Session boundary. */
+  beginPluginHostInvocation?(input: {
+    pluginId: string;
+    invocationId: string;
+    generation: number;
+    installationId: string;
+    capabilityNonce: string;
+  }): void;
+  /** Release one host request reference for the exact plugin installation invocation. */
+  endPluginHostInvocation?(pluginId: string, installationId: string, invocationId: string): void;
   attachPluginSocket(
     pluginId: string,
     socket: PluginSessionSocket,
     installationId?: string,
+    generation?: number,
   ): Promise<{ closed: Promise<void> }>;
 }
 
@@ -639,7 +650,7 @@ export class PluginRuntime {
       }
     });
     const sessionAttachment = await sessionHost
-      .attachPluginSocket(pluginId, sessionSocket, installationId)
+      .attachPluginSocket(pluginId, sessionSocket, installationId, generation)
       .catch(async (error) => {
         terminatePluginChild(child);
         await sessionHost.finishPluginShutdown?.(pluginId, installationId).catch((cleanupError) => {
@@ -814,6 +825,7 @@ export class PluginRuntime {
     });
   }
 
+  // oxlint-disable-next-line complexity -- validation, admission, dispatch, and cleanup share one request path.
   private handleHostRequest(loaded: LoadedPlugin, message: PluginHostRequest): void {
     const pending = loaded.pending.get(message.invocationId);
     const responseType = message.type.replace(/\.request$/u, ".response") as PluginHostResponseType;
@@ -881,25 +893,72 @@ export class PluginRuntime {
     delete input.generation;
     delete input.installationId;
     delete input.capabilityNonce;
+    try {
+      this.sessionHost?.beginPluginHostInvocation?.({
+        pluginId: loaded.id,
+        invocationId: message.invocationId,
+        generation: message.generation,
+        installationId: message.installationId,
+        capabilityNonce: message.capabilityNonce,
+      });
+    } catch (error) {
+      reply(undefined, error);
+      return;
+    }
     pending.hostRequests.set(message.requestId, message.capabilityNonce);
-    void host({
-      pluginId: loaded.id,
-      caller: pending.caller,
-      invocationId: message.invocationId,
-      generation: message.generation,
-      installationId: message.installationId,
-      capabilityNonce: message.capabilityNonce,
-      operation,
-      input,
-      signal: pending.hostController.signal,
-    })
+    let hostResult: Promise<unknown>;
+    try {
+      hostResult = host({
+        pluginId: loaded.id,
+        caller: pending.caller,
+        invocationId: message.invocationId,
+        generation: message.generation,
+        installationId: message.installationId,
+        capabilityNonce: message.capabilityNonce,
+        operation,
+        input,
+        signal: pending.hostController.signal,
+      });
+    } catch (error) {
+      this.releaseHostRequest(loaded, message.invocationId, pending, message.requestId);
+      reply(undefined, error);
+      return;
+    }
+    void hostResult
       .then(
         (result) => reply(result),
         (error) => reply(undefined, error),
       )
       .finally(() => {
-        pending.hostRequests.delete(message.requestId);
+        this.releaseHostRequest(loaded, message.invocationId, pending, message.requestId);
       });
+  }
+
+  private releaseHostRequest(
+    loaded: LoadedPlugin,
+    invocationId: string,
+    invocation: PendingInvocation,
+    requestId: string,
+  ): void {
+    if (!invocation.hostRequests.delete(requestId)) return;
+    try {
+      this.sessionHost?.endPluginHostInvocation?.(loaded.id, loaded.installationId, invocationId);
+    } catch (error) {
+      this.logger.warn(
+        { err: error, pluginId: loaded.id, installationId: loaded.installationId, invocationId },
+        "Failed to release a plugin host invocation reference",
+      );
+    }
+  }
+
+  private releaseHostRequests(
+    loaded: LoadedPlugin,
+    invocationId: string,
+    invocation: PendingInvocation,
+  ): void {
+    for (const requestId of invocation.hostRequests.keys()) {
+      this.releaseHostRequest(loaded, invocationId, invocation, requestId);
+    }
   }
 
   private sendPluginHostReply(loaded: LoadedPlugin, response: PluginHostReply): void {
@@ -1082,6 +1141,7 @@ export class PluginRuntime {
       if (invocation.cancelTimeout) clearTimeout(invocation.cancelTimeout);
       invocation.cancelTimeout = null;
       invocation.cancellationRequested = true;
+      this.releaseHostRequests(loaded, requestId, invocation);
       invocation.hostController.abort(new Error(message));
       invocation.cleanup?.();
       if (!invocation.callerSettled) {
@@ -1114,6 +1174,7 @@ export class PluginRuntime {
     if (invocation.cancelTimeout) clearTimeout(invocation.cancelTimeout);
     invocation.timeout = null;
     invocation.cancelTimeout = null;
+    this.releaseHostRequests(loaded, requestId, invocation);
     invocation.cleanup?.();
     invocation.hostController.abort(new Error("Plugin invocation completed"));
     if (settleCaller && !invocation.callerSettled) {
@@ -1131,6 +1192,7 @@ export class PluginRuntime {
   ): void {
     if (loaded.pending.get(requestId) !== invocation || invocation.cancellationRequested) return;
     invocation.cancellationRequested = true;
+    this.releaseHostRequests(loaded, requestId, invocation);
     invocation.hostController.abort(reason);
     if (invocation.timeout) clearTimeout(invocation.timeout);
     invocation.timeout = null;
