@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { expect, test } from "../support/fixtures";
 import { seedWorkspace } from "../support/helpers/seed-client";
+import { connectNewWorkspaceDaemonClient } from "../support/helpers/new-workspace";
 import {
   closeWorkspaceAgentTab,
   createMockIdleAgent,
@@ -34,7 +35,8 @@ for (const input of ["keyboard", "mouse"] as const) {
     const first = await seedWorkspace({ repoPrefix: "app-history-a-" });
     const second = await seedWorkspace({ repoPrefix: "app-history-b-" });
     const directory = await mkdtemp(path.join(tmpdir(), "paseo-history-plugin-"));
-    const previousConfig = await first.client.getDaemonConfig();
+    const pluginClient = await connectNewWorkspaceDaemonClient({ ownProjects: false });
+    const previousConfig = await pluginClient.getDaemonConfig();
     const pluginId = "history-e2e";
     try {
       await writeFile(path.join(directory, "paseo-plugin.json"), JSON.stringify({ id: pluginId }));
@@ -50,8 +52,8 @@ for (const input of ["keyboard", "mouse"] as const) {
       }
     `,
       );
-      await first.client.patchDaemonConfig({ pluginsEnabled: true });
-      await first.client.installDirectoryPlugin(directory);
+      await pluginClient.patchDaemonConfig({ pluginsEnabled: true });
+      await pluginClient.installDirectoryPlugin(directory);
       const a = await createMockIdleAgent(first.client, {
         cwd: first.repoPath,
         workspaceId: first.workspaceId,
@@ -173,10 +175,11 @@ for (const input of ["keyboard", "mouse"] as const) {
       await back();
       await expect(tabA).toHaveAttribute("aria-selected", "true");
     } finally {
-      await first.client.removePlugin(pluginId);
-      await first.client.patchDaemonConfig({
+      await pluginClient.removePlugin(pluginId);
+      await pluginClient.patchDaemonConfig({
         pluginsEnabled: previousConfig.config.pluginsEnabled ?? false,
       });
+      await pluginClient.close();
       await rm(directory, { recursive: true, force: true });
       await second.cleanup();
       await first.cleanup();

@@ -40,7 +40,7 @@ export function useNativeHistoryShortcuts(
       const result = resolveKeyboardShortcut({
         event,
         bindings,
-        context: { isMac: true, isDesktop: false, focusScope: "global", commandCenterOpen: false },
+        context: { isMac: true, isDesktop: false, focusScope: "other", commandCenterOpen: false },
         chordState: chord,
         onChordReset: reset,
       });
