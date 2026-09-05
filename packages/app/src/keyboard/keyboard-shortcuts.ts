@@ -312,10 +312,10 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
 
   // --- Cycle sidebar grouping ---
   {
-    id: "sidebar-grouping-cycle-cmd-g-mac",
+    id: "sidebar-grouping-cycle-cmd-semicolon-mac",
     action: "sidebar.grouping.cycle",
-    combo: "Cmd+G",
-    when: { mac: true, commandCenter: false },
+    combo: "Cmd+;",
+    when: { mac: true, commandCenter: false, editable: false, terminal: false },
     help: {
       id: "cycle-sidebar-grouping",
       section: "workspaces",
@@ -323,10 +323,10 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
     },
   },
   {
-    id: "sidebar-grouping-cycle-ctrl-g-non-mac",
+    id: "sidebar-grouping-cycle-ctrl-semicolon-non-mac",
     action: "sidebar.grouping.cycle",
-    combo: "Ctrl+G",
-    when: { mac: false, commandCenter: false, terminal: false },
+    combo: "Ctrl+;",
+    when: { mac: false, commandCenter: false, editable: false, terminal: false },
     help: {
       id: "cycle-sidebar-grouping",
       section: "workspaces",

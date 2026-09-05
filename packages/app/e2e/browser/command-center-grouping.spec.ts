@@ -1,7 +1,7 @@
 import { expect, test, type Page } from "../support/fixtures";
 import { gotoAppShell } from "../support/helpers/app";
 import { openCommandCenter } from "../support/helpers/command-center";
-import { seedWorkspace } from "../support/helpers/seed-client";
+import { seedWorkspace, type SeededWorkspace } from "../support/helpers/seed-client";
 
 const GROUP_BY_STATUS = "Group by status";
 const GROUP_BY_PROJECT = "Group by project";
@@ -22,38 +22,40 @@ async function runGroupingEntry(page: Page, label: string, absent: string): Prom
 
 test.describe("Command center sidebar grouping", () => {
   test.describe.configure({ timeout: 120_000 });
+  let shortcutWorkspace: SeededWorkspace | null = null;
 
-  test("cycles sidebar grouping with Cmd/Ctrl+G", async ({ page }) => {
-    const seeded = await seedWorkspace({ repoPrefix: "keyboard-grouping-" });
+  test.afterEach(async () => {
+    await shortcutWorkspace?.cleanup().catch(() => undefined);
+    shortcutWorkspace = null;
+  });
 
-    try {
-      await gotoAppShell(page);
-      const projectList = page.getByTestId("sidebar-project-workspace-list-scroll");
-      const statusList = page.getByTestId("sidebar-status-list-scroll");
-      const toggle = page.getByTestId("sidebar-grouping-toggle");
-      const projectIcon = toggle.locator('svg[data-testid="sidebar-grouping-toggle-icon-project"]');
-      const statusIcon = toggle.locator('svg[data-testid="sidebar-grouping-toggle-icon-status"]');
+  test("cycles sidebar grouping with Cmd/Ctrl+;", async ({ page }) => {
+    shortcutWorkspace = await seedWorkspace({ repoPrefix: "keyboard-grouping-" });
 
-      await expect(projectList).toBeVisible({ timeout: 30_000 });
-      await expect(toggle).toHaveAttribute("aria-label", GROUP_BY_STATUS);
-      await expect(statusIcon).toBeVisible();
+    await gotoAppShell(page);
+    const projectList = page.getByTestId("sidebar-project-workspace-list-scroll");
+    const statusList = page.getByTestId("sidebar-status-list-scroll");
+    const toggle = page.getByTestId("sidebar-grouping-toggle");
+    const projectIcon = toggle.locator('svg[data-testid="sidebar-grouping-toggle-icon-project"]');
+    const statusIcon = toggle.locator('svg[data-testid="sidebar-grouping-toggle-icon-status"]');
 
-      await page.keyboard.press("ControlOrMeta+G");
-      await expect(statusList).toBeVisible({ timeout: 30_000 });
-      await expect(projectList).toHaveCount(0);
-      await expect(toggle).toHaveAttribute("aria-label", GROUP_BY_PROJECT);
-      await expect(projectIcon).toBeVisible();
-      await expect(statusIcon).toHaveCount(0);
+    await expect(projectList).toBeVisible({ timeout: 30_000 });
+    await expect(toggle).toHaveAttribute("aria-label", GROUP_BY_STATUS);
+    await expect(statusIcon).toBeVisible();
 
-      await page.keyboard.press("ControlOrMeta+G");
-      await expect(projectList).toBeVisible({ timeout: 30_000 });
-      await expect(statusList).toHaveCount(0);
-      await expect(toggle).toHaveAttribute("aria-label", GROUP_BY_STATUS);
-      await expect(statusIcon).toBeVisible();
-      await expect(projectIcon).toHaveCount(0);
-    } finally {
-      await seeded.cleanup().catch(() => undefined);
-    }
+    await page.keyboard.press("ControlOrMeta+;");
+    await expect(statusList).toBeVisible({ timeout: 30_000 });
+    await expect(projectList).toHaveCount(0);
+    await expect(toggle).toHaveAttribute("aria-label", GROUP_BY_PROJECT);
+    await expect(projectIcon).toBeVisible();
+    await expect(statusIcon).toHaveCount(0);
+
+    await page.keyboard.press("ControlOrMeta+;");
+    await expect(projectList).toBeVisible({ timeout: 30_000 });
+    await expect(statusList).toHaveCount(0);
+    await expect(toggle).toHaveAttribute("aria-label", GROUP_BY_STATUS);
+    await expect(statusIcon).toBeVisible();
+    await expect(projectIcon).toHaveCount(0);
   });
 
   test("flips sidebar grouping and persists the choice across a reload", async ({ page }) => {
