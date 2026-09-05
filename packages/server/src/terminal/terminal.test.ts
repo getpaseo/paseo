@@ -28,6 +28,9 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { setImmediate as waitForImmediate, setTimeout as delay } from "node:timers/promises";
 import { stripVTControlCharacters } from "node:util";
+import { captureTerminalLines } from "./terminal-capture.js";
+import xterm from "@xterm/headless";
+import { renderTerminalSnapshotToAnsi } from "@getpaseo/protocol/terminal-snapshot";
 
 const hasZsh = existsSync("/bin/zsh");
 
@@ -592,6 +595,83 @@ describe("createTerminal", () => {
 
     expect(exitInfo.lastOutputLines.length).toBeGreaterThan(0);
     expect(exitInfo.lastOutputLines[exitInfo.lastOutputLines.length - 1]).toBe("line-2999");
+  });
+
+  it("preserves wide characters and intentional spaces in grid and scrollback captures", async () => {
+    const history = "한글  中文 A界B";
+    const current = "현재  화면 끝";
+    const session = trackSession(
+      await createTerminal({
+        workspaceId: "ws-test",
+        cwd: realpathSync(tmpdir()),
+        cols: 40,
+        rows: 4,
+        command: process.execPath,
+        args: [
+          "-e",
+          `process.stdout.write(${JSON.stringify(`${history}\r\none\r\ntwo\r\nthree\r\n${current}\r\nREADY`)}); process.stdin.resume();`,
+        ],
+      }),
+    );
+    await waitForState(session, (state) => getLines(state).includes("READY"));
+
+    for (const stripAnsi of [true, false]) {
+      expect(captureTerminalLines(session, { stripAnsi }).lines).toEqual([
+        history,
+        "one",
+        "two",
+        "three",
+        current,
+        "READY",
+      ]);
+    }
+  });
+
+  it("restores wrapped wide output without displacing the next footer repaint", async () => {
+    const session = trackSession(
+      await createTerminal({
+        workspaceId: "ws-test",
+        cwd: realpathSync(tmpdir()),
+        cols: 20,
+        rows: 4,
+        command: process.execPath,
+        args: [
+          "-e",
+          `process.stdout.write(${JSON.stringify(`${"한글".repeat(8)}\r\n😀e\u0301  끝\r\nREADY`)}); process.stdin.resume();`,
+        ],
+      }),
+    );
+    await waitForState(session, (state) => getLines(state).includes("READY"));
+    const snapshot = session.getStateSnapshot({ includeWrapFlags: true }).state;
+    const restored = new xterm.Terminal({ cols: 20, rows: 4, allowProposedApi: true });
+    try {
+      await new Promise<void>((resolve) =>
+        restored.write(renderTerminalSnapshotToAnsi(snapshot), resolve),
+      );
+      const visibleLines = () =>
+        Array.from({ length: restored.rows }, (_, row) =>
+          restored.buffer.active
+            .getLine(restored.buffer.active.baseY + row)
+            ?.translateToString(true),
+        );
+      expect(visibleLines()).toEqual([
+        "한글한글한글한글한글",
+        "한글한글한글",
+        "😀e\u0301  끝",
+        "READY",
+      ]);
+
+      await new Promise<void>((resolve) => restored.write("\r\u001b[2K갱신 완료", resolve));
+      expect(visibleLines()).toEqual([
+        "한글한글한글한글한글",
+        "한글한글한글",
+        "😀e\u0301  끝",
+        "갱신 완료",
+      ]);
+      expect(restored.buffer.active.baseY).toBe(0);
+    } finally {
+      restored.dispose();
+    }
   });
 });
 
