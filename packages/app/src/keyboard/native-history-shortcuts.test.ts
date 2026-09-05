@@ -29,7 +29,7 @@ describe("native history shortcuts", () => {
     const result = resolveKeyboardShortcut({
       event: commands[0],
       bindings,
-      context: { isMac: true, isDesktop: false, focusScope: "global", commandCenterOpen: false },
+      context: { isMac: true, isDesktop: false, focusScope: "other", commandCenterOpen: false },
       chordState: { candidateIndices: [], step: 0, timeoutId: null },
       onChordReset() {},
     });
