@@ -352,9 +352,12 @@ export class WorkspaceLaunchManager {
       const httpPorts = new Set(
         (
           await Promise.all(
-            Array.from(listeningPorts, async (port) =>
-              (await this.endpointProbe.probeHttp(port)) ? port : null,
-            ),
+            Array.from(listeningPorts, async (port) => {
+              // Raw services must not receive an HTTP request on every scan. A missing
+              // listener removes its classification below, allowing detection on restart.
+              if (runtime.endpoints.get(port)?.protocol === "tcp") return null;
+              return (await this.endpointProbe.probeHttp(port)) ? port : null;
+            }),
           )
         ).filter((port): port is number => port !== null),
       );
