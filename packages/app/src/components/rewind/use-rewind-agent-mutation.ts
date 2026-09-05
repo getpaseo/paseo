@@ -29,15 +29,24 @@ export function useRewindAgentMutation(input: UseRewindAgentMutationInput): {
   const { t } = useTranslation();
   const composerRestore = useRewindComposerRestore();
   const { isPending, mutateAsync } = useMutation({
-    mutationFn: async ({ mode }: RewindAgentInput) => {
-      if (!input.client || !input.agentId || !input.messageId) {
-        throw new Error(t("common.errors.daemonClientUnavailable"));
-      }
-      // Optimistic truncation: slice the local stream immediately (Zed-style zero-flash)
-      if (mode !== "files" && input.serverId) {
+    onMutate: async ({ mode }: RewindAgentInput) => {
+      if (mode !== "files" && input.serverId && input.agentId && input.messageId) {
+        const session = useSessionStore.getState().sessions[input.serverId];
+        const previousTail = session?.agentStreamTail.get(input.agentId);
+        const previousHead = session?.agentStreamHead.get(input.agentId);
+
+        // Optimistic truncation: slice the local stream immediately (Zed-style zero-flash)
         useSessionStore
           .getState()
           .truncateAgentStreamTailAtMessageId(input.serverId, input.agentId, input.messageId);
+
+        return { previousTail, previousHead };
+      }
+      return undefined;
+    },
+    mutationFn: async ({ mode }: RewindAgentInput) => {
+      if (!input.client || !input.agentId || !input.messageId) {
+        throw new Error(t("common.errors.daemonClientUnavailable"));
       }
       await input.client.rewindAgent(input.agentId, input.messageId, mode);
       if (mode !== "files") {
@@ -60,7 +69,18 @@ export function useRewindAgentMutation(input: UseRewindAgentMutationInput): {
       }
       composerRestore?.completeRewind(variables.rewoundText);
     },
-    onError: (error) => {
+    onError: (error, _variables, context) => {
+      // Rollback optimistic truncation on failure
+      if (input.serverId && input.agentId && context) {
+        useSessionStore.getState().setAgentStreamState(input.serverId, input.agentId, {
+          tail: context.previousTail,
+          head: context.previousHead,
+        });
+        void getHostRuntimeStore().fetchAgentTimeline(input.serverId, input.agentId, {
+          direction: "tail",
+          projection: "projected",
+        });
+      }
       toast.error(error instanceof Error ? error.message : t("rewind.errors.failed"));
     },
   });
