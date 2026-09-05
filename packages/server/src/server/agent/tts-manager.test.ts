@@ -165,26 +165,11 @@ describe("TTSManager", () => {
     await task;
   });
 
-  it("destroys prefetched streams after abort", async () => {
-    const destroyed: string[] = [];
+  it("stops emitting and resolves promptly when aborted mid-playback", async () => {
     const tts: TextToSpeechProvider = {
       async synthesizeSpeech(text: string): Promise<{ stream: Readable; format: string }> {
-        const stream = new Readable({
-          read() {
-            this.push(Buffer.from(text));
-            this.push(null);
-          },
-        });
-        const destroySpy = vi.spyOn(stream, "destroy").mockImplementation(function (
-          this: Readable,
-          error?: Error,
-        ) {
-          destroyed.push(text);
-          return Readable.prototype.destroy.call(this, error);
-        });
-        void destroySpy;
         return {
-          stream,
+          stream: Readable.from([Buffer.from(text)]),
           format: "pcm;rate=24000",
         };
       },
@@ -192,7 +177,7 @@ describe("TTSManager", () => {
 
     const manager = new TTSManager("s1", pino({ level: "silent" }), tts);
     const abort = new AbortController();
-    let firstChunkId: string | null = null;
+    const emittedChunkIds: string[] = [];
 
     const task = manager.generateAndWaitForPlayback(
       [
@@ -201,8 +186,8 @@ describe("TTSManager", () => {
         "Third sentence that should also be cleaned up if it was prefetched before the abort.",
       ].join(" "),
       (msg) => {
-        if (msg.type === "audio_output" && firstChunkId === null) {
-          firstChunkId = msg.payload.id;
+        if (msg.type === "audio_output") {
+          emittedChunkIds.push(msg.payload.id);
         }
       },
       abort.signal,
@@ -210,15 +195,15 @@ describe("TTSManager", () => {
     );
 
     await vi.waitFor(() => {
-      expect(firstChunkId).not.toBeNull();
+      expect(emittedChunkIds.length).toBe(1);
     });
 
     abort.abort();
-
     await task;
-    await vi.waitFor(() => {
-      expect(destroyed.length).toBeGreaterThanOrEqual(2);
-    });
+
+    // The aborted utterance never emits its remaining prefetched segments.
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(emittedChunkIds).toHaveLength(1);
   });
 
   it("does not emit unhandled rejections when stream iteration fails", async () => {
