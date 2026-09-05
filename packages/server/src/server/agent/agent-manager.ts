@@ -693,6 +693,11 @@ export class AgentManager {
   private readonly lifecycleMutationTails = new Map<string, Promise<void>>();
   private readonly agentStreamCoalescer: AgentStreamCoalescer;
   private readonly responseHeadingTitleTracker = new ResponseHeadingTitleTracker();
+  private readonly titleRevisions = new Map<string, number>();
+  private readonly responseHeadingTurnTitleRevisions = new Map<
+    string,
+    { turnId: string; revision: number }
+  >();
   private readonly titleFromResponseHeading: boolean;
   private mcpBaseUrl: string | null;
   private readonly mcpAuthToken: string | null;
@@ -1796,6 +1801,7 @@ export class AgentManager {
     ) {
       return;
     }
+    this.titleRevisions.set(agent.id, (this.titleRevisions.get(agent.id) ?? 0) + 1);
     this.touchUpdatedAt(agent);
     await this.persistSnapshot(agent, { title: normalizedTitle });
     this.emitState(agent, { persist: false });
@@ -3379,6 +3385,8 @@ export class AgentManager {
   ): ManagedAgentClosed {
     this.agentStreamCoalescer.flushAndDiscard(agent.id);
     this.responseHeadingTitleTracker.discard(agent.id);
+    this.titleRevisions.delete(agent.id);
+    this.responseHeadingTurnTitleRevisions.delete(agent.id);
     this.agents.delete(agent.id);
     this.previousStatuses.delete(agent.id);
     if (agent.unsubscribeSession) {
@@ -3836,14 +3844,7 @@ export class AgentManager {
     // Only update timestamp for live events, not history replay
     if (!options?.fromHistory) {
       if (this.titleFromResponseHeading) {
-        const title = this.responseHeadingTitleTracker.observe({
-          agentId: agent.id,
-          turnId: eventTurnId,
-          event,
-        });
-        if (title) {
-          this.enqueueResponseHeadingTitleUpdate(agent, title);
-        }
+        this.handleResponseHeadingTitleEvent(agent, event, eventTurnId);
       }
       this.touchUpdatedAt(agent);
       if (this.agentStreamCoalescer.handle(agent.id, event)) {
@@ -4426,12 +4427,66 @@ export class AgentManager {
     );
   }
 
-  private enqueueResponseHeadingTitleUpdate(agent: ActiveManagedAgent, title: string): void {
+  private captureResponseHeadingTitleRevision(
+    agentId: string,
+    turnId: string | undefined,
+  ): number | undefined {
+    if (!turnId) {
+      return undefined;
+    }
+    const tracked = this.responseHeadingTurnTitleRevisions.get(agentId);
+    if (tracked?.turnId === turnId) {
+      return tracked.revision;
+    }
+    const revision = this.titleRevisions.get(agentId) ?? 0;
+    this.responseHeadingTurnTitleRevisions.set(agentId, { turnId, revision });
+    return revision;
+  }
+
+  private handleResponseHeadingTitleEvent(
+    agent: ActiveManagedAgent,
+    event: AgentStreamEvent,
+    turnId: string | undefined,
+  ): void {
+    const expectedTitleRevision = this.captureResponseHeadingTitleRevision(agent.id, turnId);
+    const title = this.responseHeadingTitleTracker.observe({
+      agentId: agent.id,
+      turnId,
+      event,
+    });
+    if (title && expectedTitleRevision !== undefined) {
+      this.enqueueResponseHeadingTitleUpdate(agent, title, expectedTitleRevision);
+    }
+    if (turnId && isTurnTerminalEvent(event)) {
+      const tracked = this.responseHeadingTurnTitleRevisions.get(agent.id);
+      if (tracked?.turnId === turnId) {
+        this.responseHeadingTurnTitleRevisions.delete(agent.id);
+      }
+    }
+  }
+
+  private enqueueResponseHeadingTitleUpdate(
+    agent: ActiveManagedAgent,
+    title: string,
+    expectedTitleRevision: number,
+  ): void {
     const task = this.runLifecycleMutation(agent.id, async () => {
       try {
+        if ((this.titleRevisions.get(agent.id) ?? 0) !== expectedTitleRevision) {
+          this.logger.debug(
+            {
+              agentId: agent.id,
+              provider: agent.provider,
+              title,
+              expectedTitleRevision,
+              currentTitleRevision: this.titleRevisions.get(agent.id) ?? 0,
+            },
+            "Skipped stale agent title synchronization from response heading",
+          );
+          return;
+        }
         await this.setTitle(agent.id, title);
       } catch (error) {
-        const message = error instanceof Error ? error.message : "Unknown storage error";
         this.logger.error(
           {
             err: error,
@@ -4446,7 +4501,7 @@ export class AgentManager {
           await this.appendSystemErrorTimelineMessage(
             current,
             agent.provider,
-            `Failed to synchronize session title from response heading: ${message}`,
+            "Failed to synchronize the session title from the response heading. The previous title was kept.",
           );
         }
       }
