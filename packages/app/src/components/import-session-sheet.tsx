@@ -316,6 +316,7 @@ function SheetEmptyState({ title }: { title: string }) {
 }
 
 function ImportSessionSheetRow({
+  serverId,
   entry,
   action,
   disabled,
@@ -323,6 +324,7 @@ function ImportSessionSheetRow({
   folder,
   onImportSession,
 }: {
+  serverId: string | null;
   entry: FetchRecentProviderSessionEntry;
   action: ImportSessionAction;
   disabled: boolean;
@@ -336,7 +338,7 @@ function ImportSessionSheetRow({
   const title = getSessionTitle(entry);
   const promptPreview = getPromptPreview(entry);
   const lastActivity = formatTimeAgo(new Date(entry.lastActivityAt));
-  const ProviderIcon = getProviderIcon(entry.providerId);
+  const ProviderIcon = getProviderIcon(entry.providerId, serverId);
   const accessibilityState = useMemo(
     () => (disabled ? DISABLED_ACCESSIBILITY_STATE : undefined),
     [disabled],
@@ -410,12 +412,14 @@ function ImportSessionSheetRow({
 }
 
 function SessionRows({
+  serverId,
   entries,
   disabled,
   importingSessionKey,
   resolveFolder,
   onImportSession,
 }: {
+  serverId: string | null;
   entries: ReadonlyArray<{
     entry: FetchRecentProviderSessionEntry;
     action: ImportSessionAction;
@@ -433,6 +437,7 @@ function SessionRows({
       {entries.map(({ entry, action }) => (
         <ImportSessionSheetRow
           key={`${entry.providerId}:${entry.providerHandleId}`}
+          serverId={serverId}
           entry={entry}
           action={action}
           disabled={disabled}
@@ -443,6 +448,29 @@ function SessionRows({
       ))}
     </View>
   );
+}
+
+function resolveSessionListingScope(input: {
+  cwd: string | null;
+  workspaceId: string | null;
+  isShowingAllDirectories: boolean;
+  supportsProviderSessionContinue: boolean;
+}): {
+  scopeCwd: string | null;
+  usesTargetListing: boolean;
+  listingCwd: string | null;
+  listingTargetCwd: string | null;
+} {
+  const scopeCwd = input.isShowingAllDirectories ? null : input.cwd;
+  const usesTargetListing = Boolean(
+    input.workspaceId && input.cwd && input.supportsProviderSessionContinue && scopeCwd !== null,
+  );
+  return {
+    scopeCwd,
+    usesTargetListing,
+    listingCwd: usesTargetListing ? null : scopeCwd,
+    listingTargetCwd: usesTargetListing ? input.cwd : null,
+  };
 }
 
 export function ImportSessionSheet({
@@ -467,7 +495,13 @@ export function ImportSessionSheet({
   const [pageLimit, setPageLimit] = useState(PER_PROVIDER_LIMIT);
   const [selectedProvider, setSelectedProvider] = useState<string>(ALL_FILTER_VALUE);
 
-  const scopeCwd = isShowingAllDirectories ? null : (cwd ?? null);
+  const supportsProviderSessionContinue = useHostFeature(serverId, "providerSessionContinue");
+  const { scopeCwd, usesTargetListing, listingCwd, listingTargetCwd } = resolveSessionListingScope({
+    cwd: cwd ?? null,
+    workspaceId: workspaceId ?? null,
+    isShowingAllDirectories,
+    supportsProviderSessionContinue,
+  });
   const supportsSearch = useHostFeature(serverId, "importSessionSearch");
   const query = useDebouncedValue(supportsSearch ? searchInput : "", SEARCH_DEBOUNCE_MS).trim();
 
@@ -488,7 +522,6 @@ export function ImportSessionSheet({
     enabled: visible,
   });
   const supportsWorkspaceTarget = useHostFeature(serverId, "importSessionWorkspaceTarget");
-  const supportsProviderSessionContinue = useHostFeature(serverId, "providerSessionContinue");
   const requiresHostUpgrade = requiresImportSessionsHostUpgrade({
     supportsSnapshot,
     workspaceId,
@@ -504,11 +537,6 @@ export function ImportSessionSheet({
     () => buildProviderLabelMap(snapshotEntries),
     [snapshotEntries],
   );
-
-  const hasTargetWorkspace = Boolean(workspaceId && cwd && supportsProviderSessionContinue);
-  const usesTargetListing = hasTargetWorkspace && scopeCwd !== null;
-  const listingCwd = usesTargetListing ? null : scopeCwd;
-  const listingTargetCwd = usesTargetListing ? (cwd ?? null) : null;
 
   const sessionsQueryRoot = useMemo(
     () =>
@@ -630,11 +658,11 @@ export function ImportSessionSheet({
     const map = new Map<string, React.ReactNode>();
     map.set(ALL_FILTER_VALUE, <Layers size={14} color={theme.colors.foregroundMuted} />);
     for (const provider of filterProviders) {
-      const ProviderIcon = getProviderIcon(provider);
+      const ProviderIcon = getProviderIcon(provider, serverId);
       map.set(provider, <ProviderIcon size={14} color={theme.colors.foregroundMuted} />);
     }
     return map;
-  }, [filterProviders, theme.colors.foregroundMuted]);
+  }, [filterProviders, serverId, theme.colors.foregroundMuted]);
 
   const renderFilterOption = useCallback(
     ({
@@ -835,7 +863,7 @@ export function ImportSessionSheet({
               <Layers size={14} color={theme.colors.foregroundMuted} />
             ) : (
               (() => {
-                const ProviderIcon = getProviderIcon(selectedProvider);
+                const ProviderIcon = getProviderIcon(selectedProvider, serverId);
                 return <ProviderIcon size={14} color={theme.colors.foregroundMuted} />;
               })()
             )}
@@ -872,6 +900,7 @@ export function ImportSessionSheet({
       ) : null}
       {visibleEntries.length > 0 ? (
         <SessionRows
+          serverId={serverId}
           entries={visibleEntries}
           disabled={importMutation.isPending}
           importingSessionKey={importingSessionKey}

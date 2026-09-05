@@ -1022,7 +1022,13 @@ describe("Codex app-server provider", () => {
     child.stderr = new PassThrough() as ChildProcessWithoutNullStreams["stderr"];
     child.exitCode = null;
     child.signalCode = null;
-    child.kill = vi.fn(() => true) as ChildProcessWithoutNullStreams["kill"];
+    child.kill = vi.fn((signal) => {
+      if (signal === "SIGKILL") {
+        child.signalCode = "SIGKILL";
+        child.emit("exit", null, "SIGKILL");
+      }
+      return true;
+    }) as ChildProcessWithoutNullStreams["kill"];
     const client = new CodexAppServerClient(child, createTestLogger());
 
     try {
@@ -3266,6 +3272,22 @@ describe("Codex app-server provider", () => {
       turn: { status: "completed" },
     });
 
+    const providerSubagents = events.flatMap((event) =>
+      event.type === "provider_subagent" && event.event.type === "upsert" ? [event.event] : [],
+    );
+    expect(providerSubagents).toContainEqual(
+      expect.objectContaining({
+        id: "child-thread-root",
+        parentSubagentId: null,
+      }),
+    );
+    expect(providerSubagents).toContainEqual(
+      expect.objectContaining({
+        id: "grandchild-thread",
+        parentSubagentId: "child-thread-root",
+      }),
+    );
+
     const beforeParentCompletes = events
       .filter((event) => event.type === "timeline" && event.item.type === "tool_call")
       .map((event) => event.item);
@@ -3285,6 +3307,70 @@ describe("Codex app-server provider", () => {
     expect(events.at(-1)).toMatchObject({
       type: "timeline",
       item: { callId: "spawn-child-root", status: "completed" },
+    });
+  });
+
+  test("keeps a nested child under its spawning parent after a root interaction", () => {
+    const session = createSession();
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    asInternals(session).handleNotification("item/completed", {
+      threadId: "test-thread",
+      item: {
+        type: "subAgentActivity",
+        id: "spawn-child-root",
+        kind: "started",
+        agentThreadId: "child-thread-root",
+        agentPath: "/root/child",
+      },
+    });
+    asInternals(session).handleNotification("item/completed", {
+      threadId: "child-thread-root",
+      item: {
+        type: "subAgentActivity",
+        id: "spawn-grandchild",
+        kind: "started",
+        agentThreadId: "grandchild-thread",
+        agentPath: "/root/child/grandchild",
+      },
+    });
+    asInternals(session).handleNotification("item/completed", {
+      threadId: "test-thread",
+      item: {
+        type: "collabAgentToolCall",
+        id: "wait-for-grandchild",
+        tool: "wait",
+        status: "completed",
+        receiverThreadIds: ["grandchild-thread"],
+        agentsStates: {
+          "grandchild-thread": { status: "running", message: null },
+        },
+      },
+    });
+    asInternals(session).handleNotification("item/agentMessage/delta", {
+      threadId: "grandchild-thread",
+      itemId: "grandchild-after-wait",
+      delta: "Still nested.",
+    });
+
+    const grandchildUpserts = events.flatMap((event) =>
+      event.type === "provider_subagent" &&
+      event.event.type === "upsert" &&
+      event.event.id === "grandchild-thread"
+        ? [event.event]
+        : [],
+    );
+    expect(grandchildUpserts.map((event) => event.parentSubagentId)).toEqual([
+      "child-thread-root",
+      "child-thread-root",
+    ]);
+    expect(events.at(-1)).toMatchObject({
+      type: "timeline",
+      item: {
+        callId: "spawn-child-root",
+        detail: { type: "sub_agent", log: expect.stringContaining("Still nested.") },
+      },
     });
   });
 
@@ -4083,6 +4169,69 @@ describe("Codex app-server provider", () => {
         detail: { type: "sub_agent", log: "[Assistant] Legacy findings after resume." },
       },
     });
+  });
+
+  test("restores nested MultiAgentV2 ownership from persisted child threads", async () => {
+    const session = createSession();
+    session.client = {
+      request: vi.fn(async (method: string, params: unknown) => {
+        if (method !== "thread/read") {
+          return {};
+        }
+        const threadId = (params as { threadId?: string }).threadId;
+        const itemsByThreadId = {
+          "test-thread": [
+            {
+              type: "subAgentActivity",
+              id: "spawn-persisted-child",
+              kind: "started",
+              agentThreadId: "persisted-child",
+              agentPath: "/root/persisted-child",
+            },
+            {
+              type: "collabAgentToolCall",
+              id: "root-wait-grandchild",
+              tool: "wait",
+              status: "completed",
+              receiverThreadIds: ["persisted-grandchild"],
+              agentsStates: { "persisted-grandchild": { status: "completed" } },
+            },
+          ],
+          "persisted-child": [
+            {
+              type: "subAgentActivity",
+              id: "spawn-persisted-grandchild",
+              kind: "started",
+              agentThreadId: "persisted-grandchild",
+              agentPath: "/root/persisted-child/grandchild",
+            },
+          ],
+        } as const;
+        const items = threadId ? itemsByThreadId[threadId as keyof typeof itemsByThreadId] : [];
+        return {
+          thread: {
+            turns: items ? [{ items }] : [],
+          },
+        };
+      }),
+    };
+
+    await asInternals(session).loadPersistedHistory();
+
+    const history: AgentStreamEvent[] = [];
+    for await (const event of session.streamHistory()) {
+      history.push(event);
+    }
+    const upserts = history.flatMap((event) =>
+      event.type === "provider_subagent" && event.event.type === "upsert" ? [event.event] : [],
+    );
+    expect(upserts).toEqual([
+      expect.objectContaining({ id: "persisted-child", parentSubagentId: null }),
+      expect.objectContaining({
+        id: "persisted-grandchild",
+        parentSubagentId: "persisted-child",
+      }),
+    ]);
   });
 
   test("coalesces persisted MultiAgentV2 activity for one child into one terminal card", async () => {

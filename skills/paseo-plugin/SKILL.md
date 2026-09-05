@@ -14,7 +14,7 @@ Build or manage the requested plugin directly. Use the current public docs to ca
 Fetch [https://paseo.sh/llms.txt](https://paseo.sh/llms.txt) first. Select and fetch the current plugin Markdown pages from that index before changing a plugin:
 
 - [Plugin quickstart](https://paseo.sh/docs/plugins.md) ([browser page](https://paseo.sh/docs/plugins))
-- [Plugin reference](https://paseo.sh/docs/plugins/reference.md) ([browser page](https://paseo.sh/docs/plugins/reference))
+- [Plugin reference](https://paseo.sh/docs/plugins/v0.8/reference.md) ([browser page](https://paseo.sh/docs/plugins/v0.8/reference))
 
 Use the deployed docs when they disagree with this skill. Do not send the user away to read them instead of completing the work.
 
@@ -598,7 +598,7 @@ Use `--host <url>` when managing a daemon other than the CLI default. A Git sour
 
 Do not restart the daemon to load source changes. Restarting it can kill the agent performing the work.
 
-For an old mixed entry, follow the standalone [runtime-entry migration guide](https://paseo.sh/docs/plugins/migration.md) mechanically.
+For an old mixed entry, follow the standalone [v0.8 runtime-entry migration guide](https://paseo.sh/docs/plugins/v0.8/migration) mechanically.
 
 ## Verify the outcome
 

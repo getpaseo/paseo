@@ -2,11 +2,13 @@
 title: Migrate a plugin to runtime entries
 description: Mechanical migration from a mixed plugin entry to explicit client and server entries.
 nav: Migration
-order: 47
+order: 48
 category: Plugins
 ---
 
 # Migrate a plugin to runtime entries
+
+> **For the upcoming Paseo v0.8 release.** This migration is not required for Paseo v0.7.
 
 Give this page to a coding agent with the plugin directory as its working directory. Execute the
 steps in order. Do not keep a compatibility entry.
@@ -99,7 +101,7 @@ its registration; that registration belongs in the client entry.
 
 | Compiler or load error                                                                                                     | Meaning and fix                                                                                                           |
 | -------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
-| `Plugin entry split is required`                                                                                           | The directory still has only the old root entry. Create a runtime entry, move registrations, then delete the old file.    |
+| `This plugin was made for an older version of Paseo`                                                                       | The directory still has only the old root entry. Create a runtime entry, move registrations, then delete the old file.    |
 | `Plugin entry points are missing: expected index.client.ts or index.client.tsx and/or index.server.ts or index.server.tsx` | No supported entry exists. Add at least one exact filename.                                                               |
 | `server-only module cannot be imported into the plugin client bundle: <file>`                                              | A client import reaches `server/`. Move the call behind an RPC and import its contract from `shared/`.                    |
 | `client-only module cannot be imported into the plugin server bundle: <file>`                                              | A server import reaches `client/`. Move that registration and import to the client entry.                                 |

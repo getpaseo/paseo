@@ -93,7 +93,10 @@ diffPerfDescribe("Diff canvas performance", () => {
             [
               root.querySelectorAll('[data-diff-header="true"]').length,
               root.querySelectorAll("*").length,
-              root.querySelector('[data-testid="git-diff-header-canvas"]') ? "canvas" : "dom",
+              root.querySelector('[data-testid="git-diff-canvas"]') &&
+              root.querySelectorAll('[data-testid^="git-diff-sticky-header-"]').length === 2
+                ? "canvas-pool"
+                : "dom",
             ] as const,
         );
       const headerDomMetrics = await page.getByTestId("diff-file-0-toggle").evaluate((header) => {
@@ -125,7 +128,7 @@ diffPerfDescribe("Diff canvas performance", () => {
         };
       });
       const headerCanvasMetrics = await page
-        .getByTestId("git-diff-header-canvas")
+        .getByTestId("git-diff-sticky-header-0")
         .evaluate((canvas: HTMLCanvasElement) => {
           const context = canvas.getContext("2d");
           if (!context) throw new Error("Header canvas has no 2D context");
@@ -168,6 +171,7 @@ diffPerfDescribe("Diff canvas performance", () => {
       );
       if (!RUN_HEADER_COMPARISON) {
         expect(benchmark.maximumShells).toBeLessThan(120);
+        expect(benchmark.maximumStickyCanvases).toBe(2);
         expect(benchmark.blankHeaderFrames).toBe(0);
         expect(benchmark.medianFrameMs).toBeLessThanOrEqual(MANY_FILE_MAX_MEDIAN_FRAME_MS);
         expect(benchmark.p95FrameMs).toBeLessThanOrEqual(MANY_FILE_MAX_P95_FRAME_MS);
@@ -435,7 +439,8 @@ async function openFirstReviewEditor(page: Page): Promise<number> {
 }
 
 async function expectBoundedCanvasSurfaces(page: Page): Promise<void> {
-  await expect(page.locator("canvas")).toHaveCount(2);
+  await expect(page.locator("canvas")).toHaveCount(3);
+  await expect(page.locator('[data-testid^="git-diff-sticky-header-"]')).toHaveCount(2);
   await expect(page.locator('[data-testid^="diff-code-row-"]')).toHaveCount(0);
   const elementCount = await page
     .getByTestId("git-diff-canvas-root")
@@ -527,40 +532,57 @@ async function benchmarkManyFileHeaderScrolling(page: Page): Promise<{
   p95FrameMs: number;
   maximumFrameMs: number;
   maximumShells: number;
+  maximumStickyCanvases: number;
   blankHeaderFrames: number;
   endScrollTop: number;
   maximumScrollTop: number;
 }> {
   return page.getByTestId("git-diff-scroll").evaluate(async (element) => {
     const scroll = element as HTMLElement;
-    const canvas = document.querySelector<HTMLCanvasElement>(
-      '[data-testid="git-diff-header-canvas"]',
-    );
     const maximumScrollTop = scroll.scrollHeight - scroll.clientHeight;
     const frameDurations: number[] = [];
     let maximumShells = 0;
+    let maximumStickyCanvases = 0;
     let blankHeaderFrames = 0;
     const sampleHeader = () => {
       maximumShells = Math.max(
         maximumShells,
         document.querySelectorAll('[data-diff-header="true"]').length,
       );
+      const canvases = Array.from(
+        document.querySelectorAll<HTMLCanvasElement>('[data-testid^="git-diff-sticky-header-"]'),
+      );
+      maximumStickyCanvases = Math.max(maximumStickyCanvases, canvases.length);
+      const scrollBounds = scroll.getBoundingClientRect();
+      const sampleX = scrollBounds.left + 4;
+      const sampleY = scrollBounds.top + 10;
+      const canvas = canvases.find((candidate) => {
+        const bounds = candidate.getBoundingClientRect();
+        return (
+          bounds.width > 0 &&
+          sampleX >= bounds.left &&
+          sampleX < bounds.right &&
+          sampleY >= bounds.top &&
+          sampleY < bounds.bottom
+        );
+      });
       if (canvas) {
         const context = canvas.getContext("2d")!;
-        const ratio = canvas.width / canvas.getBoundingClientRect().width;
+        const bounds = canvas.getBoundingClientRect();
+        const ratio = canvas.width / bounds.width;
         if (
-          context.getImageData(Math.round(4 * ratio), Math.round(10 * ratio), 1, 1).data[3] === 0
+          context.getImageData(
+            Math.round((sampleX - bounds.left) * ratio),
+            Math.round((sampleY - bounds.top) * ratio),
+            1,
+            1,
+          ).data[3] === 0
         ) {
           blankHeaderFrames += 1;
         }
         return;
       }
-      const bounds = scroll.getBoundingClientRect();
-      if (
-        !document.elementFromPoint(bounds.left + 4, bounds.top + 10)?.closest("[data-diff-header]")
-      ) {
-        blankHeaderFrames += 1;
-      }
+      blankHeaderFrames += 1;
     };
 
     for (const progress of [0, 0.25, 0.5, 0.75, 1]) {
@@ -601,6 +623,7 @@ async function benchmarkManyFileHeaderScrolling(page: Page): Promise<{
       p95FrameMs: percentile(0.95),
       maximumFrameMs: Math.max(...frameDurations),
       maximumShells,
+      maximumStickyCanvases,
       blankHeaderFrames,
       endScrollTop: scroll.scrollTop,
       maximumScrollTop,

@@ -48,6 +48,21 @@ describe("SessionAuthorization", () => {
       true,
     );
     expect(authorization.allowsOutbound(outboundMessage("hub.execution.agent.update"))).toBe(true);
+    expect(authorization.allowsInbound(inboundMessage("get_providers_snapshot_request"))).toBe(
+      true,
+    );
+    expect(authorization.allowsInbound(inboundMessage("refresh_providers_snapshot_request"))).toBe(
+      true,
+    );
+    expect(authorization.allowsOutbound(outboundMessage("get_providers_snapshot_response"))).toBe(
+      true,
+    );
+    expect(authorization.allowsOutbound(outboundMessage("providers_snapshot_update"))).toBe(true);
+    expect(
+      authorization.allowsOutbound(outboundMessage("refresh_providers_snapshot_response")),
+    ).toBe(true);
+    expect(authorization.allowsInbound(inboundMessage("get_daemon_config_request"))).toBe(false);
+    expect(authorization.allowsInbound(inboundMessage("provider_diagnostic_request"))).toBe(false);
     expect(authorization.allowsInbound(inboundMessage("ping"))).toBe(false);
     expect(
       authorization.allowsInbound(inboundMessage("hub.management.daemon.get_status.request")),

@@ -743,6 +743,7 @@ test("advertises client capabilities in hello", async () => {
       provider_subagents: true,
       reasoning_merge_enum: true,
       terminal_reflowable_snapshot: true,
+      timeline_notifications: true,
       browser_host: {
         supportedCommands: ["list_tabs"],
         hostKind: "desktop app",

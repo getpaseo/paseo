@@ -2,13 +2,15 @@
 title: Plugin reference
 description: Local plugin files, client and server runtimes, platform limits, contributions, RPCs, lifecycle, hosts, and CLI commands.
 nav: Reference
-order: 46
+order: 48
 category: Plugins
 ---
 
 # Plugin reference
 
-Migrating an existing plugin? Follow the standalone [runtime-entry migration guide](/docs/plugins/migration).
+> **For the upcoming Paseo v0.8 release.** Return to the [v0.8 quickstart](/docs/plugins/v0.8).
+
+Migrating an existing plugin? Follow the standalone [runtime-entry migration guide](/docs/plugins/v0.8/migration).
 
 Local plugins are directory sources installed into one Paseo daemon. A plugin can contribute:
 
@@ -52,7 +54,7 @@ The required root manifest is `paseo-plugin.json`. It contains the default plugi
 | `index.server.ts`  | Daemon subprocess     | `PluginServerContext` | When the plugin handles RPCs                                      |
 
 At least one entry is required; both accept `.ts` or `.tsx`. A directory that still has only the
-old `index.ts` fails to load and points at the [migration guide](/docs/plugins/migration).
+old `index.ts` fails to load and points at the [migration guide](/docs/plugins/v0.8/migration).
 
 Plugin, surface, sidebar-item, workspace-panel, Command Center item, attachment-source, and
 slash-command IDs start with a lowercase letter and contain lowercase letters, numbers, or hyphens.
@@ -140,7 +142,42 @@ Center callbacks can only open surfaces and panels registered by the same plugin
 
 ### Server runtime
 
-Paseo provides `@getpaseo/plugin`, `@getpaseo/plugin/server`, and `zod` to server code. Backend contributions run in a daemon subprocess with Node access to the host machine. Keep filesystem, process, credential, and other machine-local work under `server/`. A plugin without `index.server.ts` starts no subprocess.
+Paseo provides `@getpaseo/plugin`, `@getpaseo/plugin/server`,
+`@getpaseo/plugin/provider`, `@getpaseo/plugin/acp`, and `zod` to server code. Backend
+contributions run in a daemon subprocess with Node access to the host machine. Keep filesystem,
+process, credential, and other machine-local work under `server/`. A plugin without
+`index.server.ts` starts no subprocess.
+
+### Providers
+
+Follow [Build a provider plugin](/docs/plugins/v0.8/providers) for direct and ACP implementations,
+session lifecycle, composer settings, timeline renderers, testing, and distribution.
+
+Call `server.registerProvider()` with a `ProviderRegistration` from
+`@getpaseo/plugin/provider`. Its connection accepts inputs with `send()` and emits complete state
+snapshots through `onEvent()`. `send()` reports acceptance only; prompt disposition, turns,
+configuration, persistence, permissions, and failures are events.
+
+Use the single `session.prompt` input for messages, structured commands, steering, and command side
+effects. Repeat `clientMessageId` on the live user timeline item and publish exactly one matching
+`session.prompt_result`. Publish provider-created children as sessions with `parentSessionId`.
+
+Provider settings are toggle/select descriptors that Paseo renders in the composer. Keep
+provider-private JSON under `providerOptions`. Host tools arrive as MCP servers in the complete
+session config.
+
+Paseo refreshes an agent by closing its current provider session and opening it with current
+configuration and persistence. Providers re-read external state during `session.open`.
+
+Use `runAcpProvider()` from `@getpaseo/plugin/acp` to adapt a command-backed ACP. Add transformer
+hooks only for a vendor's discovery, configuration, notification, or tool-call differences.
+
+`ProviderRegistration.icon` is a file path relative to the plugin directory, such as `icon.svg`.
+It must resolve inside that directory to a regular SVG file no larger than 64 KiB. The SVG must be
+self-contained: scripts, styles, `foreignObject`, event-handler attributes, JavaScript URLs, and
+external `href` or `xlink:href` references are rejected. Fragment references such as `#mark` are
+allowed. Paseo reads and sanitizes the file when the plugin starts; the string is never an inline
+SVG or URL.
 
 ## Entry point and cleanup
 
@@ -901,7 +938,7 @@ CLI:
 ```bash
 paseo plugin logs my-plugin
 paseo plugin logs my-plugin --json
-paseo plugin logs my-plugin --host <url>
+paseo --host <url> plugin logs my-plugin
 ```
 
 The command returns a snapshot rather than following live output. Refresh the settings view or run
@@ -1014,10 +1051,9 @@ paseo plugin install /absolute/path/to/plugin --id another-runtime-id
 paseo plugin add owner/repository
 paseo plugin add https://git.example.com/owner/repository.git --ref main
 paseo plugin add owner/monorepo:plugins/review
-paseo plugin status [id]
+paseo plugin ls [id]
 paseo plugin update <id>
 paseo plugin update --all
-paseo plugin ls
 paseo plugin reload my-plugin
 paseo plugin logs my-plugin
 paseo plugin disable my-plugin
@@ -1025,11 +1061,14 @@ paseo plugin enable my-plugin
 paseo plugin remove my-plugin
 ```
 
-Pass `--host <url>` to management commands when the target is not the CLI's default daemon. `remove`
+`ls` reports runtime state, source details, and the installed commit without contacting the remote.
+Use `update` when you want Paseo to contact a tracked Git remote and install an available update.
+
+Put `--host <url>` before a management command when the target is not the CLI's default daemon. `remove`
 never deletes a directory source; it deletes the managed checkout for a Git source. The install-time
 `--id` is the runtime ID and allows the same directory or repository to be installed more than once.
 
-> **Trust every plugin you add.** `paseo plugin add` and `paseo plugin install` mean “I trust this codebase.” Server code and Git preparation commands run unsandboxed with the daemon user's access on the daemon host; client contributions run inside Paseo. Dependencies and future updates are part of that decision. With `--host`, commands run on the remote daemon host.
+> **Trust every plugin you add.** `paseo plugin add` and `paseo plugin install` mean “I trust this codebase.” Server code and Git preparation commands run unsandboxed with the daemon user's access on the daemon host; client contributions run inside Paseo. Dependencies and future updates are part of that decision. With the global `--host` option, commands run on the remote daemon host.
 
 An existing directory wins over `owner/repository` GitHub shorthand. Append `:relative/path` when
 the plugin lives below the repository root. Omit `--ref` to track the default branch. Explicit
@@ -1054,7 +1093,7 @@ from the staged plugin directory after resolving the exact commit and manifest. 
 package manager or commands from lockfiles. Install and update both run `build` before validation,
 compilation, activation, or replacement. A failing command reports its output, discards the
 candidate, and leaves the installed/running version intact. The daemon log records each command and
-output; with `--host`, execution is on that daemon host.
+output; with the global `--host` option, execution is on that daemon host.
 
 Run `npm run typecheck` before install or reload. Never edit the daemon config directly.
 
@@ -1068,7 +1107,7 @@ Use `paseo plugin ls` to read the current status and error.
 
 | Symptom                                                               | Check                                                                                                                                   |
 | --------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
-| `Plugin entry split is required`                                      | The directory has only an `index.ts` entry. Follow the [migration guide](/docs/plugins/migration).                                      |
+| `This plugin was made for an older version of Paseo`                  | The directory has only an `index.ts` entry. Follow the [migration guide](/docs/plugins/v0.8/migration).                                 |
 | `Plugin entry points are missing`                                     | Neither `index.client.tsx` nor `index.server.ts` exists with that exact name.                                                           |
 | `server-only module cannot be imported into the plugin client bundle` | Client code imports `server/` or a `*.server.*` file. Move the work behind an RPC and import its contract from `shared/`.               |
 | `client-only module cannot be imported into the plugin server bundle` | Server code imports `client/` or a `*.client.*` file. Register that contribution from `index.client.tsx` instead.                       |

@@ -362,7 +362,7 @@ function useAgentPanelDescriptor(
   );
   const provider = descriptorState.provider;
   const label = resolveWorkspaceAgentTabLabel(descriptorState.title);
-  const icon = getProviderIcon(provider);
+  const icon = getProviderIcon(provider, context.serverId);
 
   return {
     label: label ?? "",
@@ -1390,7 +1390,7 @@ const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
       setText={agentInputDraft.replaceText}
       onRewindComplete={handleRewindComplete}
     >
-      <View style={styles.root}>
+      <View style={styles.root} collapsable={false}>
         <DockedChatSurface disabled={isArchivingCurrentAgent}>
           {contentContainer}
 
@@ -1823,6 +1823,8 @@ const styles = StyleSheet.create((theme) => ({
   root: {
     flex: 1,
     backgroundColor: theme.colors.surface0,
+    // KeyboardDock translates the chat surface while the keyboard moves; clip it at the header edge.
+    overflow: "hidden",
   },
   container: {
     flex: 1,

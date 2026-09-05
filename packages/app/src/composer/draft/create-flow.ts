@@ -114,23 +114,23 @@ function buildPendingCreateAttempt(input: {
   };
 }
 
-type DraftAgentMachineState =
+type DraftAgentMachineState<TDraftAgent> =
   | { tag: "draft"; errorMessage: string }
-  | { tag: "creating"; attempt: CreateAttempt };
+  | { tag: "creating"; attempt: CreateAttempt; draftAgent: TDraftAgent };
 
-type DraftAgentMachineEvent =
+type DraftAgentMachineEvent<TDraftAgent> =
   | { type: "DRAFT_SET_ERROR"; message: string }
-  | { type: "SUBMIT"; attempt: CreateAttempt }
+  | { type: "SUBMIT"; attempt: CreateAttempt; draftAgent: TDraftAgent }
   | { type: "CREATE_FAILED"; message: string };
 
 function assertNever(value: never): never {
   throw new Error(`Unhandled state: ${JSON.stringify(value)}`);
 }
 
-function reducer(
-  state: DraftAgentMachineState,
-  event: DraftAgentMachineEvent,
-): DraftAgentMachineState {
+function reducer<TDraftAgent>(
+  state: DraftAgentMachineState<TDraftAgent>,
+  event: DraftAgentMachineEvent<TDraftAgent>,
+): DraftAgentMachineState<TDraftAgent> {
   switch (event.type) {
     case "DRAFT_SET_ERROR": {
       if (state.tag !== "draft") {
@@ -139,7 +139,7 @@ function reducer(
       return { ...state, errorMessage: event.message };
     }
     case "SUBMIT": {
-      return { tag: "creating", attempt: event.attempt };
+      return { tag: "creating", attempt: event.attempt, draftAgent: event.draftAgent };
     }
     case "CREATE_FAILED": {
       if (state.tag !== "creating") {
@@ -149,6 +149,17 @@ function reducer(
     }
     default:
       return assertNever(event);
+  }
+}
+
+function prepareCreateAttempt<TDraftAgent>(
+  attempt: CreateAttempt,
+  buildDraftAgent: (attempt: CreateAttempt) => TDraftAgent,
+): DraftAgentMachineState<TDraftAgent> {
+  try {
+    return { tag: "creating", attempt, draftAgent: buildDraftAgent(attempt) };
+  } catch (error) {
+    return { tag: "draft", errorMessage: error instanceof Error ? error.message : String(error) };
   }
 }
 
@@ -202,11 +213,11 @@ export function useDraftAgentCreateFlow<TDraftAgent, TCreateResult>({
 }: UseDraftAgentCreateFlowOptions<TDraftAgent, TCreateResult>) {
   const { t } = useTranslation();
   const [machine, dispatch] = useReducer(
-    reducer,
+    reducer<TDraftAgent>,
     initialAttempt,
-    (attempt): DraftAgentMachineState =>
+    (attempt): DraftAgentMachineState<TDraftAgent> =>
       attempt
-        ? { tag: "creating", attempt }
+        ? prepareCreateAttempt(attempt, buildDraftAgent)
         : {
             tag: "draft",
             errorMessage: "",
@@ -252,12 +263,18 @@ export function useDraftAgentCreateFlow<TDraftAgent, TCreateResult>({
     ];
   }, [machine]);
 
-  const draftAgent = useMemo<TDraftAgent | null>(() => {
-    if (machine.tag !== "creating") {
-      return null;
-    }
-    return buildDraftAgent(machine.attempt);
-  }, [buildDraftAgent, machine]);
+  const draftAgent = machine.tag === "creating" ? machine.draftAgent : null;
+  const startCreateAttempt = useCallback(
+    (attempt: CreateAttempt) => {
+      const prepared = prepareCreateAttempt(attempt, buildDraftAgent);
+      if (prepared.tag === "draft") {
+        dispatch({ type: "DRAFT_SET_ERROR", message: prepared.errorMessage });
+        throw new Error(prepared.errorMessage);
+      }
+      dispatch({ type: "SUBMIT", attempt, draftAgent: prepared.draftAgent });
+    },
+    [buildDraftAgent],
+  );
 
   const runCreateAttempt = useCallback(
     async ({ attempt, cwd }: { attempt: CreateAttempt; cwd: string }) => {
@@ -395,6 +412,8 @@ export function useDraftAgentCreateFlow<TDraftAgent, TCreateResult>({
         images,
         attachments: wirePayload.attachments,
       });
+
+      startCreateAttempt(attempt);
       setPendingCreateAttempt(
         buildPendingCreateAttempt({
           draftId,
@@ -403,7 +422,6 @@ export function useDraftAgentCreateFlow<TDraftAgent, TCreateResult>({
         }),
       );
 
-      dispatch({ type: "SUBMIT", attempt });
       onCreateStart?.();
       await runCreateAttempt({ attempt, cwd });
     },
@@ -416,6 +434,7 @@ export function useDraftAgentCreateFlow<TDraftAgent, TCreateResult>({
       onCreateStart,
       runCreateAttempt,
       setPendingCreateAttempt,
+      startCreateAttempt,
       t,
       validateBeforeSubmit,
     ],
@@ -424,11 +443,11 @@ export function useDraftAgentCreateFlow<TDraftAgent, TCreateResult>({
   const continueCreateFromAttempt = useCallback(
     async ({ attempt, cwd }: { attempt: CreateAttempt; cwd: string }) => {
       if (!isSubmitting) {
-        dispatch({ type: "SUBMIT", attempt });
+        startCreateAttempt(attempt);
       }
       await runCreateAttempt({ attempt, cwd });
     },
-    [isSubmitting, runCreateAttempt],
+    [isSubmitting, runCreateAttempt, startCreateAttempt],
   );
 
   return {

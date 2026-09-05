@@ -3,6 +3,7 @@ import type { PaseoApi } from "@getpaseo/client";
 import type { AgentTimelineItem, JsonValue } from "@getpaseo/protocol/agent-types";
 import type { ZodType, input as ZodInput, output as ZodOutput } from "zod";
 import type { PluginRpcContract } from "./rpc.js";
+import type { ProviderRegistration } from "./provider.js";
 
 export interface PluginTheme {
   readonly colors: {
@@ -317,6 +318,7 @@ export interface PluginServerContext {
       context: PluginHandlerContext,
     ) => ZodInput<OutputSchema> | Promise<ZodInput<OutputSchema>>,
   ): void;
+  registerProvider(provider: ProviderRegistration): void;
 }
 
 export type PluginCleanup = () => void | Promise<void>;
