@@ -1,4 +1,5 @@
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { fork } from "node:child_process";
 import { tmpdir } from "node:os";
 import { PassThrough } from "node:stream";
 import path from "node:path";
@@ -206,6 +207,62 @@ afterEach(async () => {
 });
 
 describe("PluginRuntime", () => {
+  it.each(["@getpaseo/plugin", "@getpaseo/plugin/server"])(
+    "loads %s contracts without React in the subprocess module graph",
+    async (specifier) => {
+      const directory = await createPlugin(
+        "react-free",
+        `import { rpc } from "./shared/contract";
+export default function contribute(server) {
+  server.handle(rpc, (input) => input);
+  return () => {};
+}`,
+      );
+      await mkdir(path.join(directory, "shared"));
+      await writeFile(
+        path.join(directory, "shared", "contract.ts"),
+        `import { defineRpc, defineAttachmentSource } from "${specifier}";
+import { z } from "zod";
+export const rpc = defineRpc({ name: "echo", input: z.string(), output: z.string() });
+const source = defineAttachmentSource({ id: "test", search: rpc });
+if (source.search !== rpc) throw new Error("Attachment contract was not preserved");`,
+      );
+      // Reject imports even when the workspace has React installed. This covers the host's
+      // static graph and SDK imports evaluated through the compiled plugin's runtimeRequire.
+      const guard = `export function resolve(specifier, context, nextResolve) {
+  if (/^(react|react-dom|react-native|use-sync-external-store)(\\/|$)/.test(specifier)) {
+    throw new Error("React module reached plugin subprocess: " + specifier);
+  }
+  return nextResolve(specifier, context);
+}`;
+      const guardUrl = `data:text/javascript,${encodeURIComponent(guard)}`;
+      const loaderUrl = new URL("../../terminal/terminal-ts-loader.mjs", import.meta.url).href;
+      const setup = `import { register } from "node:module";
+register(${JSON.stringify(loaderUrl)});
+register(${JSON.stringify(guardUrl)});`;
+      const runtime = createTestRuntime({
+        spawnChild: () =>
+          fork(new URL("./plugin-process.ts", import.meta.url), [], {
+            execArgv: [
+              "--experimental-strip-types",
+              "--import",
+              `data:text/javascript,${encodeURIComponent(setup)}`,
+            ],
+            serialization: "advanced",
+            stdio: ["ignore", "pipe", "pipe", "ipc"],
+          }),
+      });
+      try {
+        await runtime.startPlugin("react-free", directory);
+        await expect(runtime.invoke("react-free", "echo", "hello")).resolves.toBe("hello");
+      } catch (error) {
+        throw new Error(JSON.stringify(runtime.getLogs("react-free")), { cause: error });
+      } finally {
+        await runtime.stopAll();
+      }
+    },
+  );
+
   it("runs the direct example through the existing AgentClient path", async () => {
     const pluginId = "provider-direct-example";
     const directory = fileURLToPath(

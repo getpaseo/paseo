@@ -233,7 +233,7 @@ Client code may import `react`, `react-native`, `@tanstack/react-query`, `zod`, 
 | ------------------------------- | -------------------------------------------------------------------------------------------------------- |
 | `@getpaseo/plugin`              | contribution contracts, shared definitions, RPC input/output types, `usePaseo`, `useRpc`, and data hooks |
 | `@getpaseo/plugin/react-native` | Paseo UI: `Icon`, `Modal`, `useToast`, `useRevealedText`                                                 |
-| `@getpaseo/plugin/server`       | handler-only types such as `PluginHandlerContext`                                                        |
+| `@getpaseo/plugin/server`       | server runtime helpers and handler types such as `PluginHandlerContext`                                  |
 
 ## Works on mobile
 

@@ -86,7 +86,7 @@ Paseo provides these modules to client code:
 | ------------------------------- | ------------------------------------------------------------------------------------------------------ |
 | `@getpaseo/plugin`              | Contribution contracts, `defineRpc`, `defineAttachmentSource`, `RpcInput`, `RpcOutput`, and data hooks |
 | `@getpaseo/plugin/react-native` | Paseo UI components and UI hooks                                                                       |
-| `@getpaseo/plugin/server`       | Handler-only types such as `PluginHandlerContext`                                                      |
+| `@getpaseo/plugin/server`       | Server runtime helpers and handler types such as `PluginHandlerContext`                                |
 | `@tanstack/react-query`         | Request state and caching                                                                              |
 | `react`                         | Components and hooks                                                                                   |
 | `react/jsx-runtime`             | Compiled JSX                                                                                           |
