@@ -585,10 +585,6 @@ An invalid directory row and its affected checkpoint cursor are repaired in one 
 later launch cannot accept a checkpoint for a partial baseline. Directory changes and their
 checkpoint are also applied in one transaction.
 
-Owners submit keyed values and tombstones, not directory snapshots. The cache coalesces each key while
-the value remains structured, then serializes only the surviving changed rows during the deferred
-write. App backgrounding flushes immediately; the ordinary write window is one second.
-
 The cache is capped at 32 MiB and evicts whole hosts in least-recently-written order. Budget
 bookkeeping may scan opaque row sizes during a deferred write, never during host registry startup or
 before a requested cache row can paint. The row store is not encrypted. A cached timeline can contain
