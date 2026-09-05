@@ -27,6 +27,19 @@ describe("workspace draft agent model validation", () => {
     expect(validate({})).toBeNull();
   });
 
+  test("reports the disconnected host before the empty provider list", () => {
+    expect(
+      validate({
+        hasClient: false,
+        composerState: {
+          ...baseComposerState,
+          providerDefinitions: [],
+          selectedProvider: null,
+        },
+      }),
+    ).toBe("Host is not connected");
+  });
+
   test("keeps waiting while model defaults are loading", () => {
     expect(
       validate({

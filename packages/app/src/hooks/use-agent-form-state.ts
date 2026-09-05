@@ -6,7 +6,7 @@ import type {
   AgentProvider,
   ProviderSnapshotEntry,
 } from "@getpaseo/protocol/agent-types";
-import { useHosts } from "@/runtime/host-runtime";
+import { useHostRuntimeConnectionStatus, useHosts } from "@/runtime/host-runtime";
 import { buildProviderDefinitions } from "@/utils/provider-definitions";
 import {
   buildSelectableProviderSelectorProviders,
@@ -270,6 +270,10 @@ export function useAgentFormState(options: UseAgentFormStateOptions = {}): UseAg
     refresh: refreshSnapshot,
     refetchIfStale: refetchSnapshotIfStale,
   } = useProvidersSnapshot(formState.serverId, { cwd: formState.workingDir });
+  const hostConnectionStatus = useHostRuntimeConnectionStatus(formState.serverId ?? "");
+  // The snapshot query is disabled while the host is unreachable, so resolution
+  // stays pending with no data. That is not "loading"; it resumes on reconnect.
+  const isHostUnreachable = hostConnectionStatus === "offline" || hostConnectionStatus === "error";
 
   const allProviderEntries = useMemo(() => snapshotEntries ?? [], [snapshotEntries]);
   const snapshotProviderDefinitions = useMemo(
@@ -332,7 +336,8 @@ export function useAgentFormState(options: UseAgentFormStateOptions = {}): UseAg
   const availableModels = snapshotSelectedProviderModels;
   const modeOptions = snapshotSelectedProviderModes;
   const isModelSelectionLoading =
-    resolution.status === "pending" || snapshotIsLoading || selectedProviderIsLoading;
+    !isHostUnreachable &&
+    (resolution.status === "pending" || snapshotIsLoading || selectedProviderIsLoading);
   const isAllModelsLoading = isModelSelectionLoading;
 
   const combinedInitialValues = useMemo(

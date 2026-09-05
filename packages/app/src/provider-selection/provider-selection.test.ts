@@ -391,6 +391,25 @@ describe("combined model selector data", () => {
     ).toEqual({ ok: true });
   });
 
+  it("blames the disconnected host rather than the missing provider snapshot", () => {
+    expect(
+      resolveSubmissionReadiness({
+        text: "hello",
+        allowsEmptyAutoSubmit: false,
+        providerCount: 0,
+        selection: {
+          provider: null,
+          modelId: "",
+          availableModels: [],
+          isModelLoading: false,
+        },
+        autoSubmitConfig: null,
+        workspaceDirectory: "/repo",
+        hasClient: false,
+      }),
+    ).toEqual({ ok: false, reason: "Host is not connected" });
+  });
+
   it("uses the active app language for utility labels", async () => {
     await i18n.changeLanguage("zh-CN");
     try {
