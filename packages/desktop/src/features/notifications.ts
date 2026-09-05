@@ -126,6 +126,11 @@ export function registerNotificationHandlers(): void {
       activeNotifications.delete(notification);
     });
 
+    notification.on("close", () => {
+      activeNotifications.delete(notification);
+    });
+
+    notification.show();
     // Determine if the app window is currently focused.
     // If the app is in focus, the user sees the in-app toast notification.
     // If the app is minimized / in background / out of focus, show the floating screen popup on the display.

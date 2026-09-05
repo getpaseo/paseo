@@ -26,18 +26,16 @@ export function InAppNotificationCard({
   notification: InAppNotificationItem;
   onDismiss: (id: string) => void;
 }) {
-  const opacity = useRef(new Animated.Value(0)).current;
-  const translateX = useRef(new Animated.Value(24)).current;
+  const [opacity] = useState(() => new Animated.Value(0));
+  const [translateX] = useState(() => new Animated.Value(24));
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const remainingTimeRef = useRef<number>(notification.durationMs ?? 5000);
-  const startTimeRef = useRef<number>(Date.now());
+  const startTimeRef = useRef<number>(0);
   const [isHovered, setIsHovered] = useState(false);
 
   const animateOut = useCallback(() => {
-    if (timerRef.current) {
-      clearTimeout(timerRef.current);
-      timerRef.current = null;
-    }
+    clearTimeout(timerRef.current);
+    timerRef.current = null;
     Animated.parallel([
       Animated.timing(opacity, {
         toValue: 0,
@@ -113,11 +111,13 @@ export function InAppNotificationCard({
     }
 
     return () => {
-      if (timerRef.current) clearTimeout(timerRef.current);
+      clearTimeout(timerRef.current);
     };
   }, [notification.durationMs, opacity, startTimer, translateX]);
 
   const handleClick = useCallback(() => {
+    clearTimeout(timerRef.current);
+    timerRef.current = null;
     const data = notification.data as Record<string, unknown> | undefined;
     const target = resolveNotificationTarget(data);
     const hasTarget =
