@@ -1,5 +1,9 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { buildElementPreviewScript } from "./element-preview.electron";
+import {
+  buildElementPreviewScript,
+  previewElementChanges,
+  restoreElementPreview,
+} from "./element-preview.electron";
 
 afterEach(() => {
   window.eval("window.__paseoElementPreview?.destroy() ");
@@ -7,6 +11,64 @@ afterEach(() => {
 });
 
 describe("element preview guest script", () => {
+  it("reports a missing target through the preview queue and allows cleanup", async () => {
+    const webview = Object.assign(document.createElement("div"), {
+      executeJavaScript: async (code: string): Promise<unknown> => window.eval(code),
+    });
+    document.body.append(webview);
+    const previewed = await previewElementChanges(
+      webview,
+      {
+        tag: "p",
+        selector: "#removed",
+        text: "Original",
+        url: "https://example.test",
+        outerHTML: "<p>Original</p>",
+        computedStyles: {},
+        boundingRect: { x: 0, y: 0, width: 100, height: 20 },
+        reactSource: null,
+        parentChain: [],
+        children: [],
+      },
+      [{ fieldId: "text", from: "Original", to: "Preview" }],
+    );
+    expect(previewed).toBe(false);
+    expect(await restoreElementPreview(webview)).toBe(true);
+  });
+
+  it("previews and restores every selected option in a multiple select", () => {
+    document.body.innerHTML =
+      '<select id="regions" multiple><option selected value="a">A</option><option selected value="b">B</option><option value="c">C</option></select>';
+    const select = document.querySelector<HTMLSelectElement>("#regions");
+    if (!select) throw new Error("Expected select");
+    window.eval(
+      buildElementPreviewScript({
+        selector: "#regions",
+        changes: [{ fieldId: "value", from: ["a", "b"], to: ["b", "c"] }],
+      }),
+    );
+    expect(Array.from(select.selectedOptions, (option) => option.value)).toEqual(["b", "c"]);
+    window.eval("window.__paseoElementPreview.destroy()");
+    expect(Array.from(select.selectedOptions, (option) => option.value)).toEqual(["a", "b"]);
+  });
+
+  it("restores the original radio group selection", () => {
+    document.body.innerHTML =
+      '<input id="first" type="radio" name="choice" checked><input id="second" type="radio" name="choice">';
+    const first = document.querySelector<HTMLInputElement>("#first");
+    const second = document.querySelector<HTMLInputElement>("#second");
+    if (!first || !second) throw new Error("Expected radios");
+    window.eval(
+      buildElementPreviewScript({
+        selector: "#second",
+        changes: [{ fieldId: "checked", from: false, to: true }],
+      }),
+    );
+    expect([first.checked, second.checked]).toEqual([false, true]);
+    window.eval("window.__paseoElementPreview.destroy()");
+    expect([first.checked, second.checked]).toEqual([true, false]);
+  });
+
   it("previews DOM text and styles, then restores the inspection snapshot", () => {
     document.body.innerHTML = '<h2 id="title" style="color: red">Original</h2>';
     const title = document.querySelector<HTMLElement>("#title");

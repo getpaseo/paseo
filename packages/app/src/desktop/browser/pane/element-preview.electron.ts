@@ -9,8 +9,7 @@ function executePreviewScript(webview: ElementSelectorWebview, code: string): Pr
     .catch(() => false)
     .then(async () => {
       if (!webview.isConnected || !webview.executeJavaScript) return false;
-      await webview.executeJavaScript(code);
-      return true;
+      return (await webview.executeJavaScript(code)) === true;
     })
     .catch(() => false);
   previewQueues.set(webview, next);
@@ -46,6 +45,8 @@ export function buildElementPreviewScript(input: {
             if (Object.prototype.hasOwnProperty.call(snapshots, 'textContent')) el.textContent = snapshots.textContent;
             if (Object.prototype.hasOwnProperty.call(snapshots, 'value')) el.value = snapshots.value;
             if (Object.prototype.hasOwnProperty.call(snapshots, 'checked')) el.checked = snapshots.checked;
+            if (snapshots.options) snapshots.options.forEach(function(snapshot) { snapshot.option.selected = snapshot.selected; });
+            if (snapshots.radios) snapshots.radios.forEach(function(snapshot) { snapshot.radio.checked = snapshot.checked; });
             Object.keys(snapshots.attributes).forEach(function(name) {
               var value = snapshots.attributes[name];
               if (value === null) el.removeAttribute(name); else el.setAttribute(name, value);
@@ -74,11 +75,22 @@ export function buildElementPreviewScript(input: {
           return;
         }
         if (path === 'value' && 'value' in target) {
+          if (target.tagName === 'SELECT' && target.multiple) {
+            if (!snapshots.options) snapshots.options = Array.from(target.options, function(option) { return { option: option, selected: option.selected }; });
+            var values = Array.isArray(value) ? value.map(String) : [];
+            Array.from(target.options).forEach(function(option) { option.selected = values.indexOf(option.value) !== -1; });
+            return;
+          }
           if (!Object.prototype.hasOwnProperty.call(snapshots, 'value')) snapshots.value = target.value;
           target.value = value == null ? '' : String(value);
           return;
         }
         if (path === 'checked' && 'checked' in target) {
+          if (target.type === 'radio' && target.name && !snapshots.radios) {
+            snapshots.radios = Array.from(target.getRootNode().querySelectorAll('input[type="radio"]'))
+              .filter(function(radio) { return radio.name === target.name && radio.form === target.form; })
+              .map(function(radio) { return { radio: radio, checked: radio.checked }; });
+          }
           if (!Object.prototype.hasOwnProperty.call(snapshots, 'checked')) snapshots.checked = target.checked;
           target.checked = Boolean(value);
           return;
@@ -120,6 +132,6 @@ export function previewElementChanges(
 export function restoreElementPreview(webview: ElementSelectorWebview): Promise<boolean> {
   return executePreviewScript(
     webview,
-    "if (window.__paseoElementPreview) window.__paseoElementPreview.destroy();",
+    "(function() { if (window.__paseoElementPreview) window.__paseoElementPreview.destroy(); return true; })()",
   );
 }
