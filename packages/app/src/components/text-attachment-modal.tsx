@@ -1,6 +1,7 @@
 import React, { memo, useCallback, useEffect, useState } from "react";
 import { Modal, Pressable, ScrollView, Text, View } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
+import * as Clipboard from "expo-clipboard";
 import { Check, Copy, X } from "lucide-react-native";
 import { isWeb } from "@/constants/platform";
 import { WindowChromeRootRegion } from "@/utils/desktop-window";
@@ -74,7 +75,7 @@ export const TextAttachmentModal = memo(function TextAttachmentModal({
   const [copied, setCopied] = useState(false);
 
   useEffect(() => {
-    if (!isWeb || !visible) return;
+    if (!isWeb || !visible || typeof window === "undefined") return;
     function handleKeydown(event: KeyboardEvent) {
       if (event.key === "Escape") {
         onClose();
@@ -88,11 +89,9 @@ export const TextAttachmentModal = memo(function TextAttachmentModal({
 
   const handleCopy = useCallback(() => {
     if (!text) return;
-    if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
-      void navigator.clipboard.writeText(text);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    }
+    void Clipboard.setStringAsync(text);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
   }, [text]);
 
   if (!visible || text === null) {

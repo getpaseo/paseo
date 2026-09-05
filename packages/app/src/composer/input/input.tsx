@@ -37,6 +37,7 @@ import {
 import type { ComposerAttachment } from "@/attachments/types";
 import type { ImageAttachment, MessagePayload, TextReplacement } from "@/composer/types";
 import { focusWithRetries } from "@/utils/web-focus";
+import { shouldCollapsePastedText } from "@/components/collapsible-text";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Shortcut } from "@/components/ui/shortcut";
 import {
@@ -493,7 +494,7 @@ function usePasteImagesEffect(args: PasteImagesEffectArgs): void {
 
       // Check for large pasted text (e.g. >= 400 chars or >= 10 lines)
       const pastedText = event.clipboardData?.getData("text/plain") ?? "";
-      const isLargeText = pastedText.length >= 400 || pastedText.split("\n").length >= 10;
+      const isLargeText = shouldCollapsePastedText(pastedText);
       if (isLargeText && onAddPastedText) {
         event.preventDefault();
         onAddPastedText(pastedText);

@@ -15,7 +15,8 @@ import { getFileTypeLabel } from "@/attachments/file-types";
 import { isPullRequestContextAttachment } from "@/attachments/workspace-attachment-utils";
 import { getForgePresentation } from "@/git/forge";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
-
+import { getUtf8ByteLength } from "@/components/assistant-message-render-limit";
+import { formatPastedTextSummary } from "@/components/collapsible-text";
 export interface AttachmentPillContent {
   icon: ReactNode;
   title: string;
@@ -50,7 +51,7 @@ function getTextAttachmentSubtitle(attachment: Extract<AgentAttachment, { type: 
   }
   const lines = attachment.text.split("\n").length;
   const lineStr = lines === 1 ? "1 line" : `${lines} lines`;
-  const size = attachment.text.length;
+  const size = getUtf8ByteLength(attachment.text);
   const sizeStr = size < 1024 ? `${size} B` : `${(size / 1024).toFixed(1)} KB`;
   return `${lineStr} • ${sizeStr}`;
 }
@@ -145,15 +146,10 @@ export function getPastedTextAttachmentPillContent(
   attachment: { text: string; lineCount: number; byteSize: number; title?: string },
   _t?: TFunction,
 ): AttachmentPillContent {
-  const lineLabel = attachment.lineCount === 1 ? "1 line" : `${attachment.lineCount} lines`;
-  const sizeLabel =
-    attachment.byteSize < 1024
-      ? `${attachment.byteSize} B`
-      : `${(attachment.byteSize / 1024).toFixed(1)} KB`;
   return {
     icon: attachmentFileIcon,
     title: attachment.title ?? "Pasted text",
-    subtitle: `${lineLabel} • ${sizeLabel}`,
+    subtitle: formatPastedTextSummary(attachment.lineCount, attachment.byteSize),
   };
 }
 

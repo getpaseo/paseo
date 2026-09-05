@@ -23,8 +23,21 @@ interface CollapsibleTextProps {
   testID?: string;
 }
 
-const DEFAULT_MAX_LINES = 10;
-const DEFAULT_MAX_CHARS = 400;
+import {
+  PASTE_COLLAPSE_MIN_CHARS,
+  PASTE_COLLAPSE_MIN_LINES,
+  formatPastedTextSummary,
+  shouldCollapsePastedText,
+} from "@/composer/attachments/pasted-text";
+
+export {
+  PASTE_COLLAPSE_MIN_CHARS,
+  PASTE_COLLAPSE_MIN_LINES,
+  formatPastedTextSummary,
+  shouldCollapsePastedText,
+};
+export const DEFAULT_MAX_LINES = PASTE_COLLAPSE_MIN_LINES;
+export const DEFAULT_MAX_CHARS = PASTE_COLLAPSE_MIN_CHARS;
 
 export function CollapsibleText({
   text,
