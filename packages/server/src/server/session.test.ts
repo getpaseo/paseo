@@ -19,6 +19,8 @@ import {
   type FileTransferFrame,
 } from "@getpaseo/protocol/binary-frames/index";
 import { Session } from "./session.js";
+import { WorkspaceLaunchManager } from "./workspace-launch-manager.js";
+import { WorkspaceRuntimeEnvironmentService } from "./workspace-runtime-environment.js";
 import { OWNER_PERMISSIONS, type DaemonPermission } from "./authorization/index.js";
 import { DownloadTokenStore } from "./file-download/token-store.js";
 import { StructuredAgentFallbackError } from "./agent/agent-response-loop.js";
@@ -84,6 +86,7 @@ interface SessionHandlerInternals {
   handleStashPopRequest(params: unknown): Promise<unknown>;
   createPaseoWorktree(params: unknown): Promise<unknown>;
   handleStartWorkspaceScriptRequest(params: unknown): Promise<unknown>;
+  resolveWorkspaceLaunchContextById(workspaceId: string): Promise<unknown>;
 }
 
 function asSessionInternals(session: Session): SessionHandlerInternals {
@@ -303,9 +306,10 @@ interface SessionForTestOptions {
     getWorkspaceGitMetadata?: ReturnType<typeof vi.fn>;
     getProjectSlug?: ReturnType<typeof vi.fn>;
   };
-  workspaceRegistry?: { get: ReturnType<typeof vi.fn> };
+  workspaceRegistry?: { get: ReturnType<typeof vi.fn>; list?: ReturnType<typeof vi.fn> };
   projectRegistry?: Partial<SessionOptions["projectRegistry"]>;
   terminalManager?: SessionOptions["terminalManager"];
+  workspaceLaunchManager?: SessionOptions["workspaceLaunchManager"];
   serviceProxy?: SessionOptions["serviceProxy"];
   scriptRuntimeStore?: SessionOptions["scriptRuntimeStore"];
   getDaemonTcpPort?: () => number | null;
@@ -326,6 +330,7 @@ interface SessionForTestOptions {
   pluginRuntime?: SessionOptions["pluginRuntime"];
   orchestrationSkills?: SessionOptions["orchestrationSkills"];
   workspaceLabelService?: WorkspaceLabelService;
+  emitWorkspaceUpdatesForExternalWorkspaceIds?: SessionOptions["emitWorkspaceUpdatesForExternalWorkspaceIds"];
 }
 
 function createSessionForTest(options: SessionForTestOptions = {}): Session {
@@ -401,6 +406,7 @@ function createSessionForTest(options: SessionForTestOptions = {}): Session {
       list: vi.fn().mockResolvedValue([]),
     },
     workspaceLabelService: options.workspaceLabelService,
+    workspaceLaunchManager: options.workspaceLaunchManager,
     scheduleService: asScheduleService(),
     checkoutDiffManager: asCheckoutDiffManager(checkoutDiffManager),
     github: asGitHubService(github),
@@ -424,6 +430,8 @@ function createSessionForTest(options: SessionForTestOptions = {}): Session {
     scriptRuntimeStore: options.scriptRuntimeStore,
     getDaemonTcpPort: options.getDaemonTcpPort,
     getDaemonTcpHost: options.getDaemonTcpHost,
+    emitWorkspaceUpdatesForExternalWorkspaceIds:
+      options.emitWorkspaceUpdatesForExternalWorkspaceIds,
     voice: options.voice,
     serverId: options.serverId,
     daemonVersion: options.daemonVersion,
@@ -1757,6 +1765,48 @@ describe("project config RPC authorization", () => {
           }),
         },
       },
+    ]);
+  });
+
+  test("fans out active project workspace updates after a config write", async () => {
+    const repoRoot = makeRoot();
+    const project = createProjectRecord(repoRoot);
+    const emitWorkspaceUpdatesForExternalWorkspaceIds = vi.fn(async () => undefined);
+    const session = createSessionForTest({
+      projectRegistry: { list: vi.fn().mockResolvedValue([project]) },
+      workspaceRegistry: {
+        get: vi.fn(),
+        list: vi.fn().mockResolvedValue([
+          {
+            workspaceId: "workspace-active",
+            projectId: project.projectId,
+            archivedAt: null,
+          },
+          {
+            workspaceId: "workspace-archived",
+            projectId: project.projectId,
+            archivedAt: "2026-09-01T00:00:00.000Z",
+          },
+          {
+            workspaceId: "workspace-other-project",
+            projectId: "project:other",
+            archivedAt: null,
+          },
+        ]),
+      },
+      emitWorkspaceUpdatesForExternalWorkspaceIds,
+    });
+
+    await session.handleMessage({
+      type: "write_project_config_request",
+      requestId: "write-project-launches",
+      repoRoot,
+      config: { launches: { dev: { command: "npm run dev" } } },
+      expectedRevision: null,
+    });
+
+    expect(emitWorkspaceUpdatesForExternalWorkspaceIds).toHaveBeenCalledExactlyOnceWith([
+      "workspace-active",
     ]);
   });
 
@@ -4724,6 +4774,103 @@ describe("session workspace script handling", () => {
         error: null,
       },
     });
+  });
+});
+
+describe("session workspace launch handling", () => {
+  test("blocks fork workspace launches until setup clears the automation block", async () => {
+    const messages: unknown[] = [];
+    const workspaceId = "fork-workspace";
+    const untrustedSource = {
+      kind: "change_request",
+      forge: "github",
+      number: 42,
+      headRepository: "contributor/project",
+    };
+    const getWorkspace = vi.fn().mockResolvedValue({ workspaceId, untrustedSource });
+    const manager = new WorkspaceLaunchManager({
+      terminalManager: null,
+      serviceProxy: null,
+      workspaceRuntimeEnvironment: new WorkspaceRuntimeEnvironmentService(),
+      getDaemonTcpPort: null,
+      serviceProxyPublicBaseUrl: null,
+      resolveScriptHealth: null,
+      logger: pino({ level: "silent" }),
+    });
+    const launch = {
+      launchName: "dev",
+      lifecycle: "running" as const,
+      active: true,
+      portBase: 41000,
+      portEnd: 41099,
+      portCount: 100,
+      composeProjectName: "paseo-test",
+      endpoints: [],
+      exitCode: null,
+      terminalId: "launch-terminal",
+    };
+    const start = vi.spyOn(manager, "start").mockResolvedValue(launch);
+    const session = createSessionForTest({
+      messages,
+      workspaceRegistry: { get: getWorkspace },
+      workspaceLaunchManager: manager,
+    });
+    const context = {
+      workspaceId,
+      workspaceDirectory: "/tmp/fork-workspace",
+      projectSlug: "project",
+      branchName: "fork",
+    };
+    vi.spyOn(asSessionInternals(session), "resolveWorkspaceLaunchContextById").mockResolvedValue(
+      context,
+    );
+    const request = {
+      type: "workspace.launch.start.request" as const,
+      requestId: "start-launch",
+      workspaceId,
+      launchName: "dev",
+    };
+
+    await session.handleMessage(request);
+    expect(start).not.toHaveBeenCalled();
+    expect(messages).toContainEqual({
+      type: "workspace.launch.start.response",
+      payload: {
+        requestId: "start-launch",
+        workspaceId,
+        launchName: "dev",
+        launch: null,
+        error: "Scripts are blocked for PR #42 from contributor/project. Run setup to allow them.",
+      },
+    });
+
+    getWorkspace.mockResolvedValue({ workspaceId });
+    await session.handleMessage(request);
+    expect(start).toHaveBeenCalledExactlyOnceWith(context, "dev");
+    expect(messages.at(-1)).toEqual({
+      type: "workspace.launch.start.response",
+      payload: { requestId: "start-launch", workspaceId, launchName: "dev", launch, error: null },
+    });
+  });
+
+  test("rejects archived workspaces before resolving a launch context", async () => {
+    const projectRegistry = { get: vi.fn() };
+    const session = createSessionForTest({
+      workspaceRegistry: {
+        get: vi.fn().mockResolvedValue({
+          workspaceId: "archived-workspace",
+          cwd: "/tmp/archived-workspace",
+          projectId: "project-1",
+          archivedAt: "2026-09-01T00:00:00.000Z",
+        }),
+      },
+      projectRegistry,
+    });
+
+    await expect(
+      asSessionInternals(session).resolveWorkspaceLaunchContextById("archived-workspace"),
+    ).rejects.toThrow("Workspace not found: archived-workspace");
+    expect(projectRegistry.get).not.toHaveBeenCalled();
   });
 });
 

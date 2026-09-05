@@ -21,11 +21,13 @@ import { readPaseoConfigJson, resolvePaseoConfigPath } from "./paseo-config-file
 export {
   PaseoConfigRawSchema,
   PaseoLifecycleCommandRawSchema,
+  PaseoLaunchEntryRawSchema,
   PaseoScriptEntryRawSchema,
   PaseoWorktreeConfigRawSchema,
   PaseoConfigSchema,
   type PaseoConfig,
   type PaseoConfigRaw,
+  type PaseoLaunchEntryRaw,
 } from "@getpaseo/protocol/paseo-config-schema";
 import { PaseoConfigSchema, type PaseoConfig } from "@getpaseo/protocol/paseo-config-schema";
 import {
@@ -122,6 +124,10 @@ export interface ServiceScriptConfig {
 }
 
 export type ScriptConfig = PlainScriptConfig | ServiceScriptConfig;
+
+export interface WorkspaceLaunchConfig {
+  command: string;
+}
 
 export function isServiceScript(config: ScriptConfig): config is ServiceScriptConfig {
   return "type" in config && config.type === "service";
@@ -359,6 +365,46 @@ export function getScriptConfigs(config: PaseoConfig | null): Map<string, Script
     result.set(name, scriptConfig);
   }
 
+  return result;
+}
+
+export function getExplicitWorkspaceServicePorts(config: PaseoConfig | null): Set<number> {
+  const ports = new Set<number>();
+  for (const script of getScriptConfigs(config).values()) {
+    if (isServiceScript(script) && script.port !== undefined) {
+      ports.add(script.port);
+    }
+  }
+  return ports;
+}
+
+/**
+ * Launches are named workspace runtime entrypoints. They deliberately use the
+ * same small command shape as scripts, while their lifecycle and listener
+ * discovery are managed separately from individual services.
+ */
+export function getWorkspaceLaunchConfigs(
+  config: PaseoConfig | null,
+): Map<string, WorkspaceLaunchConfig> {
+  const launches = config?.launches;
+  if (!launches || typeof launches !== "object") {
+    return new Map();
+  }
+
+  const result = new Map<string, WorkspaceLaunchConfig>();
+  for (const [name, entry] of Object.entries(launches)) {
+    if (!entry || typeof entry !== "object") {
+      continue;
+    }
+    const rawCommand = entry.command;
+    if (typeof rawCommand !== "string") {
+      continue;
+    }
+    const command = rawCommand.trim();
+    if (command) {
+      result.set(name, { command });
+    }
+  }
   return result;
 }
 

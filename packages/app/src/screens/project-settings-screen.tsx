@@ -42,10 +42,12 @@ import { confirmDialog } from "@/utils/confirm-dialog";
 import {
   applyDraftToConfig,
   configToDraft,
+  getDuplicateLaunchNames,
   METADATA_PROMPT_KEYS,
   type LifecycleOriginalKind,
   type MetadataPromptKey,
   type ProjectConfigDraft,
+  type ProjectLaunchDraft,
   type ProjectScriptDraft,
 } from "@/utils/project-config-form";
 import {
@@ -230,6 +232,10 @@ function ProjectSettingsBody({
 
   const data = readQuery.data;
   const supportsCustomIcon = useHostFeature(selectedHost.serverId, "projectCustomIcon");
+  const supportsWorkspaceLaunchManagement = useHostFeature(
+    selectedHost.serverId,
+    "workspaceLaunchManagement",
+  );
   const customIconRevision = selectedHost.customIconRevision ?? null;
   const projectIconTargets = useMemo(() => {
     const target = createProjectIconTarget({
@@ -313,6 +319,7 @@ function ProjectSettingsBody({
         selectedHost,
         queryKey,
         client,
+        supportsWorkspaceLaunchManagement,
         onReload: handleReload,
         isHostGone,
         onBackToProjects,
@@ -331,6 +338,7 @@ interface RenderContentInput {
   selectedHost: ProjectHostEntry;
   queryKey: readonly [string, string, string];
   client: DaemonClient;
+  supportsWorkspaceLaunchManagement: boolean;
   onReload: () => void;
   isHostGone: boolean;
   onBackToProjects: () => void;
@@ -346,6 +354,7 @@ function renderContent({
   selectedHost,
   queryKey,
   client,
+  supportsWorkspaceLaunchManagement,
   onReload,
   isHostGone,
   onBackToProjects,
@@ -394,6 +403,7 @@ function renderContent({
       repoRoot={selectedHost.repoRoot}
       queryKey={queryKey}
       client={client}
+      supportsWorkspaceLaunchManagement={supportsWorkspaceLaunchManagement}
       onReload={onReload}
     />
   );
@@ -475,6 +485,7 @@ interface ProjectConfigFormProps {
   repoRoot: string;
   queryKey: readonly [string, string, string];
   client: DaemonClient;
+  supportsWorkspaceLaunchManagement: boolean;
   onReload: () => void;
 }
 
@@ -485,6 +496,7 @@ function ProjectConfigForm({
   repoRoot,
   queryKey,
   client,
+  supportsWorkspaceLaunchManagement,
   onReload,
 }: ProjectConfigFormProps) {
   const { t } = useTranslation();
@@ -494,6 +506,7 @@ function ProjectConfigForm({
   const [draft, setDraft] = useState<ProjectConfigDraft>(() => configToDraft(baseConfig));
   const [writeError, setWriteError] = useState<ProjectConfigRpcError | null>(null);
   const [editingScriptId, setEditingScriptId] = useState<string | null>(null);
+  const [editingLaunchId, setEditingLaunchId] = useState<string | null>(null);
 
   const saveMutation = useMutation({
     mutationFn: async (input: {
@@ -531,9 +544,13 @@ function ProjectConfigForm({
 
   const handleSave = useCallback(() => {
     if (writeError?.code === "stale_project_config") return;
-    const config = applyDraftToConfig({ draft, base: baseConfig });
+    const config = applyDraftToConfig({
+      draft,
+      base: baseConfig,
+      editLaunches: supportsWorkspaceLaunchManagement,
+    });
     saveMutation.mutate({ config, expectedRevision: revision });
-  }, [draft, baseConfig, revision, writeError, saveMutation]);
+  }, [draft, baseConfig, revision, writeError, saveMutation, supportsWorkspaceLaunchManagement]);
 
   const handleReload = useCallback(() => {
     setWriteError(null);
@@ -638,11 +655,93 @@ function ProjectConfigForm({
     setEditingScriptId(null);
   }, []);
 
+  const handleRemoveLaunch = useCallback(
+    async (launch: ProjectLaunchDraft) => {
+      const ok = await confirmDialog({
+        title: t("settings.project.launches.removeTitle"),
+        message: t("settings.project.launches.removeMessage", {
+          name: launch.name || t("settings.project.launches.removeFallbackName"),
+        }),
+        confirmLabel: t("settings.project.launches.actions.remove"),
+        cancelLabel: t("settings.project.actions.cancel"),
+        destructive: true,
+      });
+      if (!ok) return;
+      updateDraft((d) => ({
+        ...d,
+        launches: d.launches.filter((entry) => entry.id !== launch.id),
+      }));
+    },
+    [t, updateDraft],
+  );
+
+  const handleEditLaunch = useCallback((launch: ProjectLaunchDraft) => {
+    setEditingLaunchId(launch.id);
+  }, []);
+
+  const handleAddLaunch = useCallback(() => {
+    const id = `launch-draft-new-${Date.now()}`;
+    updateDraft((d) => ({
+      ...d,
+      launches: [
+        ...d.launches,
+        {
+          id,
+          name: "",
+          commandText: "",
+          rawEntry: {},
+        },
+      ],
+    }));
+    setEditingLaunchId(id);
+  }, [updateDraft]);
+
+  const handleEditingLaunchDraftChange = useCallback(
+    (next: ProjectLaunchDraft) => {
+      updateDraft((d) => ({
+        ...d,
+        launches: d.launches.map((entry) => (entry.id === next.id ? next : entry)),
+      }));
+    },
+    [updateDraft],
+  );
+
+  const handleCancelEditingLaunch = useCallback(() => {
+    if (!editingLaunchId) {
+      return;
+    }
+    updateDraft((d) => {
+      const entry = d.launches.find((row) => row.id === editingLaunchId);
+      if (!entry) return d;
+      const isEmpty = entry.name.trim().length === 0 && entry.commandText.trim().length === 0;
+      if (!isEmpty) return d;
+      return { ...d, launches: d.launches.filter((row) => row.id !== editingLaunchId) };
+    });
+    setEditingLaunchId(null);
+  }, [editingLaunchId, updateDraft]);
+
+  const handleSaveEditingLaunch = useCallback(() => {
+    setEditingLaunchId(null);
+  }, []);
+
   const editingScript = draft.scripts.find((entry) => entry.id === editingScriptId);
+  const editingLaunch = draft.launches.find((entry) => entry.id === editingLaunchId);
+
+  const duplicateLaunchNames = useMemo(
+    () => getDuplicateLaunchNames(draft.launches),
+    [draft.launches],
+  );
 
   const hasInvalidScripts = useMemo(
     () => draft.scripts.some((script) => validateScript(script, t).hasErrors),
     [draft.scripts, t],
+  );
+
+  const hasInvalidLaunches = useMemo(
+    () =>
+      supportsWorkspaceLaunchManagement &&
+      draft.launches.some((launch) => validateLaunch(launch, t, duplicateLaunchNames).hasErrors),
+    [draft.launches, duplicateLaunchNames, t, supportsWorkspaceLaunchManagement],
   );
 
   const scriptsTrailing = useMemo(
@@ -659,6 +758,22 @@ function ProjectConfigForm({
       </Pressable>
     ),
     [handleAddScript, t],
+  );
+
+  const launchesTrailing = useMemo(
+    () => (
+      <Pressable
+        onPress={handleAddLaunch}
+        hitSlop={8}
+        style={settingsStyles.sectionHeaderLink}
+        accessibilityRole="button"
+        accessibilityLabel={t("settings.project.launches.actions.add")}
+        testID="launches-add-button"
+      >
+        <Plus size={ICON_SIZE} color={styles.iconColor.color} />
+      </Pressable>
+    ),
+    [handleAddLaunch, t],
   );
 
   const setupDocsLink = useMemo(
@@ -686,7 +801,7 @@ function ProjectConfigForm({
 
   const isStale = writeError?.code === "stale_project_config";
   const isWriteFailed = writeError?.code === "write_failed";
-  const saveDisabled = saveMutation.isPending || isStale || hasInvalidScripts;
+  const saveDisabled = saveMutation.isPending || isStale || hasInvalidScripts || hasInvalidLaunches;
 
   return (
     <View>
@@ -756,6 +871,33 @@ function ProjectConfigForm({
           )}
         </View>
       </SettingsGroup>
+
+      {supportsWorkspaceLaunchManagement ? (
+        <SettingsGroup
+          title={t("settings.project.launches.title")}
+          info={t("settings.project.launches.info")}
+          trailing={launchesTrailing}
+          testID="launches-group"
+        >
+          <View style={settingsStyles.card} testID="launches-list">
+            {draft.launches.length === 0 ? (
+              <View style={settingsStyles.row}>
+                <Text style={styles.emptyScripts}>{t("settings.project.launches.empty")}</Text>
+              </View>
+            ) : (
+              draft.launches.map((launch, index) => (
+                <LaunchRow
+                  key={launch.id}
+                  launch={launch}
+                  isFirst={index === 0}
+                  onEdit={handleEditLaunch}
+                  onRemove={handleRemoveLaunch}
+                />
+              ))
+            )}
+          </View>
+        </SettingsGroup>
+      ) : null}
 
       <SettingsGroup
         title={t("settings.project.metadata.title")}
@@ -843,6 +985,15 @@ function ProjectConfigForm({
           onChange={handleEditingDraftChange}
           onCancel={handleCancelEditing}
           onSave={handleSaveEditing}
+        />
+      ) : null}
+      {editingLaunch ? (
+        <LaunchEditModal
+          launch={editingLaunch}
+          duplicateLaunchNames={duplicateLaunchNames}
+          onChange={handleEditingLaunchDraftChange}
+          onCancel={handleCancelEditingLaunch}
+          onSave={handleSaveEditingLaunch}
         />
       ) : null}
     </View>
@@ -950,6 +1101,54 @@ function ScriptRow({ script, isFirst, onEdit, onRemove }: ScriptRowProps) {
   );
 }
 
+interface LaunchRowProps {
+  launch: ProjectLaunchDraft;
+  isFirst: boolean;
+  onEdit: (launch: ProjectLaunchDraft) => void;
+  onRemove: (launch: ProjectLaunchDraft) => void;
+}
+
+function LaunchRow({ launch, isFirst, onEdit, onRemove }: LaunchRowProps) {
+  const { t } = useTranslation();
+  const handleEdit = useCallback(() => onEdit(launch), [launch, onEdit]);
+  const handleRemove = useCallback(() => onRemove(launch), [launch, onRemove]);
+  const rowStyle = isFirst ? styles.scriptRow : styles.scriptRowWithBorder;
+
+  return (
+    <View style={rowStyle} testID={`launch-row-${launch.id}`}>
+      <Pressable style={styles.scriptRowMain} onPress={handleEdit}>
+        <Text style={settingsStyles.rowTitle} numberOfLines={1}>
+          {launch.name || t("settings.project.launches.untitled")}
+        </Text>
+        <Text style={settingsStyles.rowHint} numberOfLines={1}>
+          {launch.commandText.split("\n")[0] ?? ""}
+        </Text>
+      </Pressable>
+      <DropdownMenu>
+        <DropdownMenuTrigger
+          accessibilityLabel={t("settings.project.launches.menuAccessibility")}
+          testID={`launch-row-menu-${launch.id}`}
+          style={styles.scriptKebab}
+        >
+          <MoreVertical size={ICON_SIZE} color={styles.chevronColor.color} />
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" minWidth={160}>
+          <DropdownMenuItem testID={`launch-action-${launch.id}-edit`} onSelect={handleEdit}>
+            {t("settings.project.launches.actions.edit")}
+          </DropdownMenuItem>
+          <DropdownMenuItem
+            testID={`launch-action-${launch.id}-remove`}
+            destructive
+            onSelect={handleRemove}
+          >
+            {t("settings.project.launches.actions.remove")}
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </View>
+  );
+}
+
 function scriptHint(script: ProjectScriptDraft, t: TFunction): string {
   const pieces: string[] = [];
   if (script.type) pieces.push(script.type);
@@ -969,6 +1168,27 @@ function validateScript(script: ProjectScriptDraft, t: TFunction): ScriptValidat
     script.name.trim().length === 0 ? t("settings.project.scripts.nameRequired") : null;
   const commandError =
     script.commandText.trim().length === 0 ? t("settings.project.scripts.commandRequired") : null;
+  return {
+    hasErrors: Boolean(nameError || commandError),
+    nameError,
+    commandError,
+  };
+}
+
+function validateLaunch(
+  launch: ProjectLaunchDraft,
+  t: TFunction,
+  duplicateLaunchNames: ReadonlySet<string>,
+): ScriptValidation {
+  const trimmedName = launch.name.trim();
+  let nameError: string | null = null;
+  if (trimmedName.length === 0) {
+    nameError = t("settings.project.launches.nameRequired");
+  } else if (duplicateLaunchNames.has(trimmedName)) {
+    nameError = t("settings.project.launches.nameDuplicate");
+  }
+  const commandError =
+    launch.commandText.trim().length === 0 ? t("settings.project.launches.commandRequired") : null;
   return {
     hasErrors: Boolean(nameError || commandError),
     nameError,
@@ -1107,6 +1327,116 @@ function ScriptEditModal({ script, onChange, onCancel, onSave }: ScriptEditModal
           {t("settings.project.actions.cancel")}
         </Button>
         <Button onPress={handleSavePress} variant="default" size="md" testID="script-edit-save">
+          {t("settings.project.actions.save")}
+        </Button>
+      </View>
+    </AdaptiveModalSheet>
+  );
+}
+
+interface LaunchEditModalProps {
+  launch: ProjectLaunchDraft;
+  duplicateLaunchNames: ReadonlySet<string>;
+  onChange: (next: ProjectLaunchDraft) => void;
+  onCancel: () => void;
+  onSave: () => void;
+}
+
+function LaunchEditModal({
+  launch,
+  duplicateLaunchNames,
+  onChange,
+  onCancel,
+  onSave,
+}: LaunchEditModalProps) {
+  const { t } = useTranslation();
+  const [touched, setTouched] = useState<ScriptFieldsTouched>(NONE_TOUCHED);
+
+  useEffect(() => {
+    setTouched(NONE_TOUCHED);
+  }, [launch.id]);
+
+  const markTouched = useCallback((field: keyof ScriptFieldsTouched) => {
+    setTouched((prev) => (prev[field] ? prev : { ...prev, [field]: true }));
+  }, []);
+  const handleNameChange = useCallback(
+    (text: string) => onChange({ ...launch, name: text }),
+    [launch, onChange],
+  );
+  const handleCommandChange = useCallback(
+    (text: string) => onChange({ ...launch, commandText: text }),
+    [launch, onChange],
+  );
+  const handleNameBlur = useCallback(() => markTouched("name"), [markTouched]);
+  const handleCommandBlur = useCallback(() => markTouched("command"), [markTouched]);
+  const validation = validateLaunch(launch, t, duplicateLaunchNames);
+  const handleSavePress = useCallback(() => {
+    if (validation.hasErrors) {
+      setTouched(ALL_TOUCHED);
+      return;
+    }
+    onSave();
+  }, [onSave, validation.hasErrors]);
+  const sheetHeader = useMemo<SheetHeader>(
+    () => ({
+      title: launch.name
+        ? t("settings.project.launches.editLaunch", { name: launch.name })
+        : t("settings.project.launches.newLaunch"),
+    }),
+    [launch.name, t],
+  );
+
+  return (
+    <AdaptiveModalSheet
+      visible
+      header={sheetHeader}
+      onClose={onCancel}
+      testID="launch-edit-modal"
+      desktopMaxWidth={560}
+    >
+      <View style={styles.modalSection}>
+        <Text style={styles.modalLabel}>{t("settings.project.launches.name")}</Text>
+        <TextInput
+          testID="launch-edit-name"
+          accessibilityLabel={t("settings.project.launches.nameAccessibility")}
+          initialValue={launch.name}
+          onChangeText={handleNameChange}
+          onBlur={handleNameBlur}
+          placeholder="dev"
+          placeholderTextColor={styles.placeholderColor.color}
+          style={styles.modalInput}
+        />
+        {touched.name && validation.nameError ? (
+          <Text testID="launch-edit-name-error" style={styles.fieldError}>
+            {validation.nameError}
+          </Text>
+        ) : null}
+      </View>
+      <View style={styles.modalSection}>
+        <Text style={styles.modalLabel}>{t("settings.project.launches.command")}</Text>
+        <TextInput
+          testID="launch-edit-command"
+          accessibilityLabel={t("settings.project.launches.commandAccessibility")}
+          multiline
+          initialValue={launch.commandText}
+          onChangeText={handleCommandChange}
+          onBlur={handleCommandBlur}
+          placeholder="./bin/dev"
+          placeholderTextColor={styles.placeholderColor.color}
+          style={styles.modalMultilineInput}
+        />
+        {touched.command && validation.commandError ? (
+          <Text testID="launch-edit-command-error" style={styles.fieldError}>
+            {validation.commandError}
+          </Text>
+        ) : null}
+      </View>
+      <Text style={styles.modalHint}>{t("settings.project.launches.commandHint")}</Text>
+      <View style={styles.modalFooter}>
+        <Button onPress={onCancel} variant="ghost" size="md" testID="launch-edit-cancel">
+          {t("settings.project.actions.cancel")}
+        </Button>
+        <Button onPress={handleSavePress} variant="default" size="md" testID="launch-edit-save">
           {t("settings.project.actions.save")}
         </Button>
       </View>

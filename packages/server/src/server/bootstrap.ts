@@ -189,6 +189,8 @@ import { releaseWorkspaceServicePortPlan } from "./workspace-service-port-regist
 import { ScriptHealthMonitor } from "./script-health-monitor.js";
 import { createScriptStatusEmitter } from "./script-status-projection.js";
 import { WorkspaceScriptRuntimeStore } from "./workspace-script-runtime-store.js";
+import { WorkspaceRuntimeEnvironmentService } from "./workspace-runtime-environment.js";
+import { WorkspaceLaunchManager } from "./workspace-launch-manager.js";
 import { createWorkspaceScriptsService } from "./session/workspace-scripts/workspace-scripts-service.js";
 import { assertWorkspaceAutomationAllowedForWorkspace } from "./workspace-automation-gate.js";
 import { spawnWorkspaceScript } from "./worktree-bootstrap.js";
@@ -658,6 +660,8 @@ export async function createPaseoDaemon(
     publicBaseUrl: serviceProxyPublicBaseUrl,
   });
   const scriptRuntimeStore = new WorkspaceScriptRuntimeStore();
+  const workspaceRuntimeEnvironment = new WorkspaceRuntimeEnvironmentService();
+  let workspaceLaunchManager: WorkspaceLaunchManager | null = null;
   const workspaceSetupRuntime = new WorkspaceSetupRuntime();
   let configuredHostnames = config.hostnames ?? config.allowedHosts;
   let appBaseUrl = config.appBaseUrl ?? "https://app.paseo.sh";
@@ -669,29 +673,58 @@ export async function createPaseoDaemon(
   });
   let wsServer: VoiceAssistantWebSocketServer | null = null;
   let serviceProxyListenTarget: ListenTarget | null = null;
+  const emitWorkspaceUpdatesExternal = async (workspaceIds: Iterable<string>) => {
+    const workspaceIdList = Array.from(workspaceIds);
+    await Promise.all(
+      (wsServer?.listSessions() ?? []).map((session) =>
+        session.emitWorkspaceUpdatesForExternalWorkspaceIds(workspaceIdList),
+      ),
+    );
+  };
+  const emitScriptStatusUpdate = createScriptStatusEmitter({
+    sessions: () =>
+      wsServer?.listSessions().map((session) => ({
+        emit: (message) => session.emitServerMessage(message),
+      })) ?? [],
+    serviceProxy,
+    runtimeStore: scriptRuntimeStore,
+    daemonPort: () => (boundListenTarget?.type === "tcp" ? boundListenTarget.port : null),
+    resolveWorkspaceConfig: async (workspaceId) => {
+      const workspace = await workspaceRegistry?.get(workspaceId);
+      if (!workspace) {
+        return null;
+      }
+      const project = await projectRegistry.get(workspace.projectId);
+      return {
+        workspaceDirectory: workspace.cwd,
+        projectConfigDirectory: project?.rootPath ?? workspace.cwd,
+      };
+    },
+    emitWorkspaceSnapshot: async (workspaceId) => {
+      await emitWorkspaceUpdatesExternal([workspaceId]);
+    },
+    logger,
+    serviceProxyPublicBaseUrl,
+  });
   const scriptHealthMonitor = new ScriptHealthMonitor({
     serviceProxy,
-    onChange: createScriptStatusEmitter({
-      sessions: () =>
-        wsServer?.listSessions().map((session) => ({
-          emit: (message) => session.emitServerMessage(message),
-        })) ?? [],
-      serviceProxy,
-      runtimeStore: scriptRuntimeStore,
-      daemonPort: () => (boundListenTarget?.type === "tcp" ? boundListenTarget.port : null),
-      resolveWorkspaceDirectory: async (workspaceId) =>
-        (await workspaceRegistry?.get(workspaceId))?.cwd ?? null,
-      logger,
-      serviceProxyPublicBaseUrl,
-    }),
+    onChange: emitScriptStatusUpdate,
   });
-  const handleBranchChange = createBranchChangeRouteHandler({
+  const handleServiceProxyBranchChange = createBranchChangeRouteHandler({
     serviceProxy,
     onRoutesChanged: (workspaceId) => {
       scriptHealthMonitor.invalidateWorkspace(workspaceId);
     },
     logger,
   });
+  const handleBranchChange = (
+    workspaceId: string,
+    oldBranch: string | null,
+    newBranch: string | null,
+  ): void => {
+    handleServiceProxyBranchChange(workspaceId, oldBranch, newBranch);
+    workspaceLaunchManager?.updateWorkspaceBranch(workspaceId, newBranch);
+  };
 
   // Service proxy classifies service hosts before daemon auth/route fallthrough.
   // Registered service hosts proxy directly; known service namespaces without a
@@ -950,6 +983,15 @@ export async function createPaseoDaemon(
   logger.info({ elapsed: elapsed() }, "Workspace registries bootstrapped");
   const teardownArchivedWorkspaceRuntime = (workspaceId: string): void => {
     scriptRuntimeStore.removeForWorkspace(workspaceId);
+    if (workspaceLaunchManager) {
+      void workspaceLaunchManager
+        .disposeWorkspace(workspaceId)
+        .catch((error) =>
+          logger.warn({ err: error, workspaceId }, "Failed to stop workspace launch"),
+        );
+    } else {
+      workspaceRuntimeEnvironment.release(workspaceId);
+    }
     releaseWorkspaceServicePortPlan(workspaceId);
   };
   const workspaceReconciliation = new WorkspaceReconciliationService({
@@ -1036,14 +1078,18 @@ export async function createPaseoDaemon(
       session.clearWorkspaceArchivingForExternalMutation(workspaceIdList);
     }
   };
-  const emitWorkspaceUpdatesExternal = async (workspaceIds: Iterable<string>) => {
-    const workspaceIdList = Array.from(workspaceIds);
-    await Promise.all(
-      (wsServer?.listSessions() ?? []).map((session) =>
-        session.emitWorkspaceUpdatesForExternalWorkspaceIds(workspaceIdList),
-      ),
-    );
-  };
+  workspaceLaunchManager = new WorkspaceLaunchManager({
+    terminalManager,
+    serviceProxy,
+    workspaceRuntimeEnvironment,
+    scriptRuntimeStore,
+    getDaemonTcpPort: () => (boundListenTarget?.type === "tcp" ? boundListenTarget.port : null),
+    serviceProxyPublicBaseUrl,
+    globalServicePorts: loadPersistedConfig(config.paseoHome).worktrees?.servicePorts,
+    resolveScriptHealth: (hostname) => scriptHealthMonitor.getHealthForHostname(hostname),
+    emitWorkspaceUpdates: emitWorkspaceUpdatesExternal,
+    logger,
+  });
   const ensureWorkspaceForCreateAndBroadcastExternal = async (
     cwd: string,
     firstAgentContext?: FirstAgentContext,
@@ -1394,6 +1440,7 @@ export async function createPaseoDaemon(
       assertAutomationAllowed: (workspaceId) =>
         assertWorkspaceAutomationAllowedForWorkspace(workspaceRegistry, workspaceId),
       globalServicePorts: loadPersistedConfig(config.paseoHome).worktrees?.servicePorts,
+      workspaceRuntimeEnvironment,
     }),
     markWorkspaceArchiving: markWorkspaceArchivingExternal,
     clearWorkspaceArchiving: clearWorkspaceArchivingExternal,
@@ -1707,6 +1754,10 @@ export async function createPaseoDaemon(
               orchestrationSkills,
               workspaceLabelService,
             );
+            wsServer.setWorkspaceLaunchServices({
+              workspaceRuntimeEnvironment,
+              workspaceLaunchManager,
+            });
             pluginRuntime.bindPaseoSessionHost(wsServer);
             await pluginRuntime.start();
             wsServer.beginAcceptingConnections();

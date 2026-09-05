@@ -25,7 +25,9 @@ import {
   readPaseoConfigForProjection,
 } from "../../script-status-projection.js";
 import { deriveProjectServiceSlug, deriveProjectSlug } from "../../workspace-git-metadata.js";
+import { getWorkspaceLaunchConfigs } from "../../../utils/worktree.js";
 import type { PaseoServicePortAllocation } from "@getpaseo/protocol/paseo-config-schema";
+import type { WorkspaceRuntimeEnvironmentService } from "../../workspace-runtime-environment.js";
 
 type WorkspaceScriptsPayload = WorkspaceDescriptorPayload["scripts"];
 
@@ -64,6 +66,7 @@ export function createWorkspaceScriptsService(deps: {
   serviceProxyPublicBaseUrl: string | null;
   resolveScriptHealth: ((hostname: string) => ScriptHealthState | null) | null;
   globalServicePorts?: PaseoServicePortAllocation;
+  workspaceRuntimeEnvironment?: Pick<WorkspaceRuntimeEnvironmentService, "ensure"> | null;
   logger: pino.Logger;
   emit: (message: SessionOutboundMessage) => void;
   spawnWorkspaceScript: (options: SpawnWorkspaceScriptOptions) => Promise<WorktreeScriptResult>;
@@ -81,6 +84,7 @@ export function createWorkspaceScriptsService(deps: {
     serviceProxyPublicBaseUrl,
     resolveScriptHealth,
     globalServicePorts,
+    workspaceRuntimeEnvironment,
     logger,
     emit,
     spawnWorkspaceScript,
@@ -119,6 +123,7 @@ export function createWorkspaceScriptsService(deps: {
       workspaceId: workspace.workspaceId,
       workspaceDirectory: workspace.cwd,
       paseoConfig: readPaseoConfigForProjection(workspace.cwd, logger),
+      suppressedScriptNames: getProjectLaunchNames(workspace, project),
       serviceProxy,
       runtimeStore: scriptRuntimeStore,
       daemonPort: getDaemonTcpPort?.() ?? null,
@@ -173,6 +178,11 @@ export function createWorkspaceScriptsService(deps: {
     const workspace = await getWorkspace(input.workspaceId);
     await assertAutomationAllowed(workspace.workspaceId);
     const project = await projectRegistry.get(workspace.projectId);
+    if (getProjectLaunchNames(workspace, project).has(input.scriptName)) {
+      throw new Error(
+        `Script '${input.scriptName}' is configured as a project launch; use 'paseo launch start ${input.scriptName}' instead`,
+      );
+    }
     const gitMetadata = resolveGitMetadata(workspace, project);
     const result = await spawnWorkspaceScript({
       repoRoot: workspace.cwd,
@@ -187,6 +197,7 @@ export function createWorkspaceScriptsService(deps: {
       runtimeStore: available.runtimeStore,
       terminalManager: available.terminalManager,
       globalServicePorts,
+      workspaceRuntimeEnvironment: workspaceRuntimeEnvironment ?? undefined,
       logger,
       onLifecycleChanged: () => {
         void emitStatusUpdate(workspace.workspaceId, workspace.cwd);
@@ -228,14 +239,34 @@ export function createWorkspaceScriptsService(deps: {
     // The launcher's terminal exit listener owns route removal and runtime state updates.
     await available.terminalManager.killTerminalAndWait(runtime.terminalId);
 
-    const script = buildSnapshot(workspace, project).find(
-      (entry) => entry.scriptName === input.scriptName,
-    );
+    const script =
+      buildSnapshot(workspace, project).find((entry) => entry.scriptName === input.scriptName) ??
+      buildWorkspaceScriptPayloads({
+        workspaceId: workspace.workspaceId,
+        workspaceDirectory: workspace.cwd,
+        paseoConfig: readPaseoConfigForProjection(workspace.cwd, logger),
+        serviceProxy: available.serviceProxy,
+        runtimeStore: available.runtimeStore,
+        daemonPort: getDaemonTcpPort?.() ?? null,
+        serviceProxyPublicBaseUrl,
+        gitMetadata: resolveGitMetadata(workspace, project),
+        resolveHealth: resolveScriptHealth ?? undefined,
+      }).find((entry) => entry.scriptName === input.scriptName);
     if (!script) {
       throw new Error(`Script '${input.scriptName}' did not produce a status record`);
     }
     void emitStatusUpdate(workspace.workspaceId, workspace.cwd);
     return script;
+  }
+
+  function getProjectLaunchNames(
+    workspace: PersistedWorkspaceRecord,
+    project: PersistedProjectRecord | null,
+  ): Set<string> {
+    const configDirectory = project?.rootPath ?? workspace.cwd;
+    return new Set(
+      getWorkspaceLaunchConfigs(readPaseoConfigForProjection(configDirectory, logger)).keys(),
+    );
   }
 
   async function start(request: StartWorkspaceScriptRequest): Promise<void> {

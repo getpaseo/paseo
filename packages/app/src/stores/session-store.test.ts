@@ -507,6 +507,46 @@ describe("normalizeWorkspaceDescriptor", () => {
     expect(workspace.scripts).toEqual([]);
   });
 
+  it("preserves missing launches and copies launch payloads from new daemons", () => {
+    const base = {
+      id: "1",
+      projectId: "1",
+      projectDisplayName: "Project 1",
+      projectRootPath: "/repo",
+      workspaceDirectory: "/repo",
+      projectKind: "git",
+      workspaceKind: "checkout",
+      name: "main",
+      archivingAt: null,
+      status: "done",
+      statusEnteredAt: null,
+      activityAt: null,
+      diffStat: null,
+      scripts: [],
+    } satisfies Omit<WorkspaceDescriptorPayload, "launches">;
+
+    const legacy = normalizeWorkspaceDescriptor(base);
+    const launches = [
+      {
+        launchName: "dev",
+        lifecycle: "stopped" as const,
+        active: false,
+        portBase: null,
+        portEnd: null,
+        portCount: null,
+        composeProjectName: null,
+        endpoints: [],
+        exitCode: null,
+        terminalId: null,
+      },
+    ];
+    const current = normalizeWorkspaceDescriptor({ ...base, launches });
+
+    expect(legacy.launches).toBeUndefined();
+    expect(current.launches).toEqual(launches);
+    expect(current.launches).not.toBe(launches);
+  });
+
   it("defaults missing archivingAt to null", () => {
     const payload = {
       id: "1",

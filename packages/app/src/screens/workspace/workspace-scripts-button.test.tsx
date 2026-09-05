@@ -3,9 +3,9 @@
  */
 import { i18n as testI18n } from "@/i18n/i18next";
 import React, { type ReactElement } from "react";
-import { act, fireEvent } from "@testing-library/react";
+import { act, fireEvent, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import type { WorkspaceScriptPayload } from "@getpaseo/protocol/messages";
+import type { WorkspaceLaunchPayload, WorkspaceScriptPayload } from "@getpaseo/protocol/messages";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createRoot } from "react-dom/client";
 import { WorkspaceScriptsButton } from "@/screens/workspace/workspace-scripts-button";
@@ -14,6 +14,8 @@ void testI18n;
 
 const {
   theme,
+  startWorkspaceLaunchMock,
+  stopWorkspaceLaunchMock,
   startWorkspaceScriptMock,
   killTerminalMock,
   setStringAsyncMock,
@@ -50,6 +52,10 @@ const {
 
   return {
     theme: hoistedTheme,
+    startWorkspaceLaunchMock: vi.fn(async () => ({
+      launch: { terminalId: "terminal-launch-1" },
+    })),
+    stopWorkspaceLaunchMock: vi.fn(async () => ({})),
     startWorkspaceScriptMock: vi.fn(async () => ({ terminalId: "terminal-script-1" })),
     killTerminalMock: vi.fn(async () => ({
       terminalId: "terminal-script-1",
@@ -119,6 +125,8 @@ vi.mock("@/stores/session-store", () => ({
       sessions: {
         "test-server": {
           client: {
+            startWorkspaceLaunch: startWorkspaceLaunchMock,
+            stopWorkspaceLaunch: stopWorkspaceLaunchMock,
             startWorkspaceScript: startWorkspaceScriptMock,
             killTerminal: killTerminalMock,
           },
@@ -144,6 +152,7 @@ vi.mock("@/components/ui/dropdown-menu", () => ({
   DropdownMenuContent: ({ children, testID }: { children: React.ReactNode; testID?: string }) => (
     <div data-testid={testID}>{children}</div>
   ),
+  DropdownMenuLabel: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
   DropdownMenuSeparator: () => <div role="separator" />,
   DropdownMenuItem: ({
     children,
@@ -231,10 +240,28 @@ function script(
   };
 }
 
+function launch(
+  input: Partial<WorkspaceLaunchPayload> & Pick<WorkspaceLaunchPayload, "launchName">,
+): WorkspaceLaunchPayload {
+  return {
+    launchName: input.launchName,
+    lifecycle: input.lifecycle ?? "stopped",
+    active: input.active ?? false,
+    portBase: input.portBase ?? null,
+    portEnd: input.portEnd ?? null,
+    portCount: input.portCount ?? null,
+    composeProjectName: input.composeProjectName ?? null,
+    endpoints: input.endpoints ?? [],
+    exitCode: input.exitCode ?? null,
+    terminalId: input.terminalId ?? null,
+  };
+}
+
 const LIVE_TERMINAL_IDS: string[] = ["terminal-script-1"];
 
 interface RenderScriptsOptions {
   hideLabels?: boolean;
+  launches?: WorkspaceLaunchPayload[];
   presentation?: "split" | "ghost";
 }
 
@@ -262,6 +289,7 @@ function renderScripts(
           serverId="test-server"
           workspaceId="workspace-1"
           scripts={nextScripts}
+          launches={options.launches}
           liveTerminalIds={LIVE_TERMINAL_IDS}
           hideLabels={options.hideLabels}
           presentation={options.presentation}
@@ -320,6 +348,8 @@ describe("WorkspaceScriptsButton", () => {
       },
     );
     document.body.innerHTML = "";
+    startWorkspaceLaunchMock.mockClear();
+    stopWorkspaceLaunchMock.mockClear();
     startWorkspaceScriptMock.mockClear();
     killTerminalMock.mockClear();
     setStringAsyncMock.mockClear();
@@ -616,5 +646,92 @@ describe("WorkspaceScriptsButton", () => {
     await act(async () => {});
 
     expect(startWorkspaceScriptMock).toHaveBeenCalledWith("workspace-1", "dev");
+  });
+
+  it("shows progress while a launch start is pending", async () => {
+    let resolveStart!: (value: { launch: { terminalId: string } }) => void;
+    const pendingStart = new Promise<{ launch: { terminalId: string } }>((resolve) => {
+      resolveStart = resolve;
+    });
+    startWorkspaceLaunchMock.mockReturnValueOnce(pendingStart);
+    current = renderScripts([], { launches: [launch({ launchName: "dev" })] });
+
+    const startButton = document.querySelector('[data-testid="workspace-launches-start-dev"]');
+    expect(startButton).toBeInstanceOf(HTMLButtonElement);
+    expect(startButton?.textContent).toBe("Start");
+    expect(
+      document.querySelector('[data-testid="workspace-launches-status-dev"]')?.textContent,
+    ).toBe("Stopped");
+    fireEvent.click(startButton as HTMLElement);
+    await act(async () => {});
+
+    expect(startWorkspaceLaunchMock).toHaveBeenCalledWith("workspace-1", "dev");
+    await waitFor(() => {
+      expect(
+        document.querySelector('[data-testid="workspace-launches-start-dev-pending"]'),
+      ).not.toBeNull();
+      expect(
+        document.querySelector('[data-testid="workspace-launches-status-dev"]')?.textContent,
+      ).toBe("Starting...");
+    });
+    fireEvent.click(
+      document.querySelector('[data-testid="workspace-launches-start-dev"]') as HTMLElement,
+    );
+    expect(startWorkspaceLaunchMock).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      resolveStart({ launch: { terminalId: "terminal-launch-1" } });
+      await pendingStart;
+    });
+    await act(async () => {});
+
+    await waitFor(() => {
+      expect(
+        document.querySelector('[data-testid="workspace-launches-start-dev-pending"]'),
+      ).toBeNull();
+    });
+  });
+
+  it("disables another launch's stop action while a start is pending", async () => {
+    let resolveStart!: (value: { launch: { terminalId: string } }) => void;
+    const pendingStart = new Promise<{ launch: { terminalId: string } }>((resolve) => {
+      resolveStart = resolve;
+    });
+    startWorkspaceLaunchMock.mockReturnValueOnce(pendingStart);
+    current = renderScripts([], {
+      launches: [
+        launch({ launchName: "dev" }),
+        launch({ launchName: "worker", lifecycle: "running" }),
+      ],
+    });
+
+    const switchButton = document.querySelector('[data-testid="workspace-launches-start-dev"]');
+    expect(switchButton?.textContent).toBe("Switch");
+    expect(switchButton?.getAttribute("aria-label")).toBe("Stop worker and start dev");
+    expect(
+      document.querySelector('[data-testid="workspace-launches-status-worker"]')?.textContent,
+    ).toBe("Running");
+    expect(
+      document.querySelector('[data-testid="workspace-launches-item-worker"]')?.textContent,
+    ).toContain("No listening ports detected yet");
+
+    fireEvent.click(
+      document.querySelector('[data-testid="workspace-launches-start-dev"]') as HTMLElement,
+    );
+    await waitFor(() => {
+      expect(
+        document.querySelector('[data-testid="workspace-launches-start-dev-pending"]'),
+      ).not.toBeNull();
+    });
+
+    fireEvent.click(
+      document.querySelector('[data-testid="workspace-launches-stop-worker"]') as HTMLElement,
+    );
+    expect(stopWorkspaceLaunchMock).not.toHaveBeenCalled();
+
+    await act(async () => {
+      resolveStart({ launch: { terminalId: "terminal-launch-1" } });
+      await pendingStart;
+    });
   });
 });

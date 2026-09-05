@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, type ReactElement } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactElement } from "react";
 import type { GestureResponderEvent } from "react-native";
 import { Pressable, Text, View } from "react-native";
 import * as Clipboard from "expo-clipboard";
@@ -22,6 +22,8 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
   useDropdownMenuClose,
 } from "@/components/ui/dropdown-menu";
@@ -38,6 +40,11 @@ import type { Theme } from "@/styles/theme";
 import { useWorkspaceServiceRoutePreferencesStore } from "@/workspace-service-routes/store";
 import { buttonControlHeight, HEADER_CONTROL_HEIGHT } from "@/components/ui/control-geometry";
 import { extraMutedIconColorMapping } from "@/components/ui/icon-color";
+import {
+  WorkspaceLaunchesSection,
+  type WorkspaceLaunchError,
+  type WorkspaceLaunchesSectionProps,
+} from "@/screens/workspace/workspace-launches-button";
 
 type RowActionIcon = "copy" | "open" | "restart" | "start" | "stop" | "terminal";
 
@@ -45,6 +52,7 @@ interface WorkspaceScriptsButtonProps {
   serverId: string;
   workspaceId: string;
   scripts: WorkspaceDescriptor["scripts"];
+  launches?: WorkspaceDescriptor["launches"];
   liveTerminalIds?: readonly string[];
   onScriptTerminalStarted?: (terminalId: string) => void;
   onViewTerminal?: (terminalId: string) => void;
@@ -63,6 +71,7 @@ const ThemedRotateCw = withUnistyles(RotateCw);
 const ThemedSquare = withUnistyles(Square);
 
 const GHOST_TRIGGER_ICON_SIZE = 16;
+const EMPTY_LAUNCH_ERRORS: Readonly<Record<string, WorkspaceLaunchError | undefined>> = {};
 
 const foregroundColorMapping = (theme: Theme) => ({
   color: theme.colors.foreground,
@@ -534,10 +543,82 @@ function ScriptRow({
   );
 }
 
+interface WorkspaceScriptSectionProps {
+  label: string;
+  scripts: WorkspaceDescriptor["scripts"];
+  testID: string;
+  rowProps: Omit<ScriptRowProps, "script">;
+}
+
+function WorkspaceScriptSection({
+  label,
+  scripts,
+  testID,
+  rowProps,
+}: WorkspaceScriptSectionProps): ReactElement {
+  return (
+    <View testID={testID}>
+      <DropdownMenuLabel>{label}</DropdownMenuLabel>
+      {scripts.map((script) => (
+        <ScriptRow key={script.scriptName} script={script} {...rowProps} />
+      ))}
+    </View>
+  );
+}
+
+interface WorkspaceRunMenuContentProps {
+  launches: NonNullable<WorkspaceDescriptor["launches"]>;
+  launchSectionProps: Omit<WorkspaceLaunchesSectionProps, "launches">;
+  scripts: WorkspaceDescriptor["scripts"];
+  scriptRowProps: Omit<ScriptRowProps, "script">;
+  servicesLabel: string;
+  scriptsLabel: string;
+}
+
+function WorkspaceRunMenuContent({
+  launches,
+  launchSectionProps,
+  scripts,
+  scriptRowProps,
+  servicesLabel,
+  scriptsLabel,
+}: WorkspaceRunMenuContentProps): ReactElement {
+  const serviceScripts = scripts.filter((script) => (script.type ?? "service") === "service");
+  const plainScripts = scripts.filter((script) => (script.type ?? "service") === "script");
+  const hasScripts = serviceScripts.length > 0 || plainScripts.length > 0;
+
+  return (
+    <>
+      {launches.length > 0 ? (
+        <WorkspaceLaunchesSection launches={launches} {...launchSectionProps} />
+      ) : null}
+      {launches.length > 0 && hasScripts ? <DropdownMenuSeparator /> : null}
+      {serviceScripts.length > 0 ? (
+        <WorkspaceScriptSection
+          label={servicesLabel}
+          scripts={serviceScripts}
+          testID="workspace-scripts-services-section"
+          rowProps={scriptRowProps}
+        />
+      ) : null}
+      {serviceScripts.length > 0 && plainScripts.length > 0 ? <DropdownMenuSeparator /> : null}
+      {plainScripts.length > 0 ? (
+        <WorkspaceScriptSection
+          label={scriptsLabel}
+          scripts={plainScripts}
+          testID="workspace-scripts-scripts-section"
+          rowProps={scriptRowProps}
+        />
+      ) : null}
+    </>
+  );
+}
+
 export function WorkspaceScriptsButton({
   serverId,
   workspaceId,
   scripts,
+  launches = [],
   liveTerminalIds = [],
   onScriptTerminalStarted,
   onViewTerminal,
@@ -557,6 +638,40 @@ export function WorkspaceScriptsButton({
   );
   const liveTerminalIdSet = useMemo(() => new Set(liveTerminalIds), [liveTerminalIds]);
   const pendingRestartRef = useRef<Set<string>>(new Set());
+  const [launchErrorsByWorkspace, setLaunchErrorsByWorkspace] = useState<
+    Record<string, Record<string, WorkspaceLaunchError | undefined>>
+  >({});
+  const launchErrors = launchErrorsByWorkspace[workspaceId] ?? EMPTY_LAUNCH_ERRORS;
+
+  const handleLaunchError = useCallback(
+    (launchName: string, error: WorkspaceLaunchError) => {
+      setLaunchErrorsByWorkspace((current) => ({
+        ...current,
+        [workspaceId]: { ...current[workspaceId], [launchName]: error },
+      }));
+    },
+    [workspaceId],
+  );
+  const handleClearLaunchError = useCallback(
+    (launchName: string) => {
+      setLaunchErrorsByWorkspace((current) => {
+        const workspaceErrors = current[workspaceId];
+        if (!workspaceErrors?.[launchName]) {
+          return current;
+        }
+        const nextWorkspaceErrors = { ...workspaceErrors };
+        delete nextWorkspaceErrors[launchName];
+        const next = { ...current };
+        if (Object.keys(nextWorkspaceErrors).length === 0) {
+          delete next[workspaceId];
+        } else {
+          next[workspaceId] = nextWorkspaceErrors;
+        }
+        return next;
+      });
+    },
+    [workspaceId],
+  );
 
   const startScriptMutation = useMutation({
     mutationFn: async (scriptName: string) => {
@@ -666,11 +781,69 @@ export function WorkspaceScriptsButton({
     [serverId, setPreferredRoute],
   );
 
-  if (scripts.length === 0) {
+  const launchSectionProps = useMemo(
+    () => ({
+      serverId,
+      workspaceId,
+      launchErrors,
+      onLaunchError: handleLaunchError,
+      onClearLaunchError: handleClearLaunchError,
+      liveTerminalIds,
+      onLaunchTerminalStarted: onScriptTerminalStarted,
+      onViewTerminal,
+      onOpenUrlInBrowserTab,
+    }),
+    [
+      serverId,
+      workspaceId,
+      launchErrors,
+      handleLaunchError,
+      handleClearLaunchError,
+      liveTerminalIds,
+      onScriptTerminalStarted,
+      onViewTerminal,
+      onOpenUrlInBrowserTab,
+    ],
+  );
+
+  const scriptRowProps = useMemo(
+    () => ({
+      liveTerminalIdSet,
+      activeConnection,
+      isStartPending: startScriptMutation.isPending,
+      isStopPending: stopScriptMutation.isPending,
+      onStartScript: handleStartScript,
+      onStopScript: handleStopScript,
+      onRestartScript: handleRestartScript,
+      onCopyUrl: handleCopyUrl,
+      preferredRouteKind,
+      onSelectRouteKind: handleSelectRouteKind,
+      onViewTerminal,
+      onOpenUrlInBrowserTab,
+    }),
+    [
+      liveTerminalIdSet,
+      activeConnection,
+      startScriptMutation.isPending,
+      stopScriptMutation.isPending,
+      handleStartScript,
+      handleStopScript,
+      handleRestartScript,
+      handleCopyUrl,
+      preferredRouteKind,
+      handleSelectRouteKind,
+      onViewTerminal,
+      onOpenUrlInBrowserTab,
+    ],
+  );
+
+  if (scripts.length === 0 && launches.length === 0) {
     return null;
   }
 
-  const hasAnyRunning = scripts.some((s) => s.lifecycle === "running");
+  const hasAnyRunning =
+    scripts.some((script) => script.lifecycle === "running") ||
+    launches.some((launch) => launch.lifecycle === "running");
   const triggerPlayMapping = hasAnyRunning ? blueColorMapping : mutedColorMapping;
   const triggerIconSize = presentation === "ghost" ? GHOST_TRIGGER_ICON_SIZE : 14;
   const triggerPlayProps =
@@ -693,7 +866,7 @@ export function WorkspaceScriptsButton({
                 {...triggerPlayProps}
               />
               {!hideLabels && (
-                <Text style={styles.splitButtonText}>{t("workspace.scripts.title")}</Text>
+                <Text style={styles.splitButtonText}>{t("workspace.scripts.actions.run")}</Text>
               )}
               {presentation === "split" ? (
                 <ThemedChevronDown size={16} uniProps={extraMutedIconColorMapping} />
@@ -702,28 +875,20 @@ export function WorkspaceScriptsButton({
           </DropdownMenuTrigger>
           <DropdownMenuContent
             align="end"
-            minWidth={200}
-            maxWidth={280}
+            minWidth={220}
+            maxWidth={320}
+            maxHeight={460}
+            scrollable
             testID="workspace-scripts-menu"
           >
-            {scripts.map((script) => (
-              <ScriptRow
-                key={script.scriptName}
-                script={script}
-                liveTerminalIdSet={liveTerminalIdSet}
-                activeConnection={activeConnection}
-                isStartPending={startScriptMutation.isPending}
-                isStopPending={stopScriptMutation.isPending}
-                onStartScript={handleStartScript}
-                onStopScript={handleStopScript}
-                onRestartScript={handleRestartScript}
-                onCopyUrl={handleCopyUrl}
-                preferredRouteKind={preferredRouteKind}
-                onSelectRouteKind={handleSelectRouteKind}
-                onViewTerminal={onViewTerminal}
-                onOpenUrlInBrowserTab={onOpenUrlInBrowserTab}
-              />
-            ))}
+            <WorkspaceRunMenuContent
+              launches={launches}
+              launchSectionProps={launchSectionProps}
+              scripts={scripts}
+              scriptRowProps={scriptRowProps}
+              servicesLabel={t("sidebar.display.show.services")}
+              scriptsLabel={t("workspace.scripts.title")}
+            />
           </DropdownMenuContent>
         </DropdownMenu>
       </View>

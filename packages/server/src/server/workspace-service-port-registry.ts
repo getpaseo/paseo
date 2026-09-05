@@ -1,3 +1,5 @@
+import { runWithWorkspacePortAllocationLock } from "./workspace-port-allocation-lock.js";
+
 interface WorkspaceServicePortDeclaration {
   scriptName: string;
   port?: number;
@@ -12,12 +14,16 @@ interface EnsureWorkspaceServicePortPlanOptions {
   workspaceId: string;
   services: readonly WorkspaceServicePortDeclaration[];
   allocatePort: (request: WorkspaceServicePortAllocationRequest) => Promise<number>;
+  /** Daemon-wide runtime leases, read while the shared allocation lock is held. */
+  getReservedPorts?: () => ReadonlySet<number>;
 }
 
 interface RefreshWorkspaceServicePortOptions {
   workspaceId: string;
   service: WorkspaceServicePortDeclaration;
   allocatePort: (request: WorkspaceServicePortAllocationRequest) => Promise<number>;
+  /** Daemon-wide runtime leases, read while the shared allocation lock is held. */
+  getReservedPorts?: () => ReadonlySet<number>;
 }
 
 interface PendingWorkspaceServicePortPlanToken {
@@ -33,6 +39,7 @@ const pendingWorkspaceServicePortPlanTokens = new Map<
 const dynamicPortOwners = new Map<number, string>();
 const dynamicPortsByWorkspace = new Map<string, Map<string, number>>();
 const MAX_DYNAMIC_PORT_ALLOCATION_ATTEMPTS = 10;
+const EMPTY_RESERVED_PORTS: ReadonlySet<number> = new Set();
 
 export async function ensureWorkspaceServicePortPlan(
   options: EnsureWorkspaceServicePortPlanOptions,
@@ -45,12 +52,15 @@ export async function ensureWorkspaceServicePortPlan(
   let pendingPlan = pendingWorkspaceServicePortPlans.get(options.workspaceId);
   if (!pendingPlan) {
     const token: PendingWorkspaceServicePortPlanToken = { isReleased: false };
-    pendingPlan = createPendingWorkspaceServicePortPlan({
-      workspaceId: options.workspaceId,
-      services: options.services,
-      allocatePort: options.allocatePort,
-      token,
-    });
+    pendingPlan = runWithWorkspacePortAllocationLock(() =>
+      createPendingWorkspaceServicePortPlan({
+        workspaceId: options.workspaceId,
+        services: options.services,
+        allocatePort: options.allocatePort,
+        getReservedPorts: options.getReservedPorts,
+        token,
+      }),
+    );
     pendingWorkspaceServicePortPlans.set(options.workspaceId, pendingPlan);
     pendingWorkspaceServicePortPlanTokens.set(options.workspaceId, token);
   }
@@ -67,6 +77,22 @@ export function requirePlannedWorkspaceServicePort(
     throw new Error(`Service '${scriptName}' is missing from workspace service port plan`);
   }
   return port;
+}
+
+/** Returns every dynamic or configured service port already leased by the daemon. */
+export function getAllReservedWorkspaceServicePorts(): ReadonlySet<number> {
+  const ports = new Set<number>();
+  for (const plan of workspaceServicePortPlans.values()) {
+    for (const port of plan.values()) {
+      ports.add(port);
+    }
+  }
+  for (const workspacePorts of dynamicPortsByWorkspace.values()) {
+    for (const port of workspacePorts.values()) {
+      ports.add(port);
+    }
+  }
+  return ports;
 }
 
 export function releaseWorkspaceServicePortPlan(workspaceId: string): void {
@@ -86,6 +112,7 @@ async function createPendingWorkspaceServicePortPlan(options: {
   workspaceId: string;
   services: readonly WorkspaceServicePortDeclaration[];
   allocatePort: (request: WorkspaceServicePortAllocationRequest) => Promise<number>;
+  getReservedPorts: (() => ReadonlySet<number>) | undefined;
   token: PendingWorkspaceServicePortPlanToken;
 }): Promise<Map<string, number>> {
   try {
@@ -93,6 +120,7 @@ async function createPendingWorkspaceServicePortPlan(options: {
       workspaceId: options.workspaceId,
       services: options.services,
       allocatePort: options.allocatePort,
+      getReservedPorts: options.getReservedPorts,
     });
     if (options.token.isReleased) {
       throw new Error(
@@ -114,10 +142,13 @@ async function buildWorkspaceServicePortPlan(options: {
   workspaceId: string;
   services: readonly WorkspaceServicePortDeclaration[];
   allocatePort: (request: WorkspaceServicePortAllocationRequest) => Promise<number>;
+  getReservedPorts: (() => ReadonlySet<number>) | undefined;
 }): Promise<Map<string, number>> {
+  const runtimeReservedPorts = options.getReservedPorts?.() ?? EMPTY_RESERVED_PORTS;
   const explicitPortOwners = new Map<number, string>();
   for (const service of options.services) {
     if (service.port === undefined) continue;
+    assertPortIsNotReservedByRuntimeBlock(service, runtimeReservedPorts);
     if (explicitPortOwners.has(service.port)) {
       throw new Error(`Service '${service.scriptName}' has a duplicate port ${service.port}`);
     }
@@ -130,7 +161,11 @@ async function buildWorkspaceServicePortPlan(options: {
       plan.set(service.scriptName, service.port);
       continue;
     }
-    const reservedPorts = new Set([...explicitPortOwners.keys(), ...plan.values()]);
+    const reservedPorts = new Set([
+      ...runtimeReservedPorts,
+      ...explicitPortOwners.keys(),
+      ...plan.values(),
+    ]);
     plan.set(
       service.scriptName,
       await resolveServicePort({
@@ -148,32 +183,36 @@ async function buildWorkspaceServicePortPlan(options: {
 export async function refreshWorkspaceServicePort(
   options: RefreshWorkspaceServicePortOptions,
 ): Promise<number> {
-  const plan = workspaceServicePortPlans.get(options.workspaceId) ?? new Map<string, number>();
+  return await runWithWorkspacePortAllocationLock(async () => {
+    const plan = workspaceServicePortPlans.get(options.workspaceId) ?? new Map<string, number>();
 
-  const reservedPorts = new Set(plan.values());
-  const previousPort = plan.get(options.service.scriptName);
-  if (previousPort !== undefined) {
-    reservedPorts.delete(previousPort);
-  }
-  const oldDynamicPort = dynamicPortsByWorkspace
-    .get(options.workspaceId)
-    ?.get(options.service.scriptName);
-  const port = await resolveServicePort({
-    service: options.service,
-    workspaceId: options.workspaceId,
-    allocatePort: options.allocatePort,
-    reservedPorts,
-  });
-  if (oldDynamicPort !== undefined && oldDynamicPort !== port) {
-    releaseDynamicPort({
+    const runtimeReservedPorts = options.getReservedPorts?.() ?? EMPTY_RESERVED_PORTS;
+    assertPortIsNotReservedByRuntimeBlock(options.service, runtimeReservedPorts);
+    const reservedPorts = new Set([...plan.values(), ...runtimeReservedPorts]);
+    const previousPort = plan.get(options.service.scriptName);
+    if (previousPort !== undefined) {
+      reservedPorts.delete(previousPort);
+    }
+    const oldDynamicPort = dynamicPortsByWorkspace
+      .get(options.workspaceId)
+      ?.get(options.service.scriptName);
+    const port = await resolveServicePort({
+      service: options.service,
       workspaceId: options.workspaceId,
-      scriptName: options.service.scriptName,
-      port: oldDynamicPort,
+      allocatePort: options.allocatePort,
+      reservedPorts,
     });
-  }
-  plan.set(options.service.scriptName, port);
-  workspaceServicePortPlans.set(options.workspaceId, plan);
-  return port;
+    if (oldDynamicPort !== undefined && oldDynamicPort !== port) {
+      releaseDynamicPort({
+        workspaceId: options.workspaceId,
+        scriptName: options.service.scriptName,
+        port: oldDynamicPort,
+      });
+    }
+    plan.set(options.service.scriptName, port);
+    workspaceServicePortPlans.set(options.workspaceId, plan);
+    return port;
+  });
 }
 
 async function resolveServicePort(options: {
@@ -242,4 +281,14 @@ function releaseDynamicPort(options: {
 
 function toServiceOwner(workspaceId: string, scriptName: string): string {
   return `${workspaceId}\0${scriptName}`;
+}
+
+function assertPortIsNotReservedByRuntimeBlock(
+  service: WorkspaceServicePortDeclaration,
+  runtimeReservedPorts: ReadonlySet<number>,
+): void {
+  if (service.port === undefined || !runtimeReservedPorts.has(service.port)) return;
+  throw new Error(
+    `Service '${service.scriptName}' has a port reserved by a workspace runtime block: ${service.port}`,
+  );
 }
