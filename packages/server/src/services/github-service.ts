@@ -2928,6 +2928,14 @@ function isNoPullRequestFoundError(error: unknown): boolean {
   return text.includes("no pull requests found");
 }
 
+function isDetachedHeadError(error: unknown): boolean {
+  if (!(error instanceof GitHubCommandError)) {
+    return false;
+  }
+  const text = error.stderr.toLowerCase();
+  return text.includes("could not determine current branch") && text.includes("not on any branch");
+}
+
 function isStatusCheckRollupPermissionError(error: unknown): boolean {
   if (!(error instanceof GitHubCommandError)) {
     return false;
@@ -3070,7 +3078,7 @@ async function tryCurrentPullRequestView(options: {
       cwd: options.cwd,
     });
   } catch (error) {
-    if (isNoPullRequestFoundError(error)) {
+    if (isNoPullRequestFoundError(error) || isDetachedHeadError(error)) {
       return null;
     }
     throw error;
