@@ -7,6 +7,7 @@ import {
   enrollmentTokenSchema,
   installResponseSchema,
   projectsResponseSchema,
+  triggersResponseSchema,
   validationResponseSchema,
   type CliAuthorization,
   type CliAuthorizationPoll,
@@ -15,6 +16,7 @@ import {
   setupResourcesSchema,
   type HubSetupResources,
   type HubProject,
+  type HubTrigger,
   type HubValidationResult,
 } from "./internal/contracts.js";
 import { requestHub } from "./internal/transport.js";
@@ -26,6 +28,7 @@ export type {
   HubConfigurationResources,
   HubSetupResources,
   HubProject,
+  HubTrigger,
   HubValidationResult,
 } from "./internal/contracts.js";
 
@@ -84,6 +87,19 @@ export class HubHttpClient {
       failureMessage: "Hub project listing failed",
     });
     return response.projects;
+  }
+
+  async listTriggers(origin: string, apiKey: string): Promise<HubTrigger[]> {
+    const response = await requestHub({
+      origin,
+      path: "/api/v1/triggers",
+      method: "GET",
+      apiKey,
+      successStatus: 200,
+      schema: triggersResponseSchema,
+      failureMessage: "Hub trigger export failed",
+    });
+    return response.triggers;
   }
 
   listConfigurationResources(origin: string, apiKey: string): Promise<HubConfigurationResources> {

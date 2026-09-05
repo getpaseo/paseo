@@ -115,6 +115,64 @@ describe("viewed timeline persistence", () => {
     owner.dispose();
   });
 
+  it("reconciles an overlapping projected message against its cached cursor", async () => {
+    useSessionStore.getState().initializeSession(SERVER_ID, null);
+    const partial = "```mermaid\nflowchart LR\n  Start --> Mid";
+    const complete = `${partial}dle\n  Middle --> Done\n\`\`\``;
+    const owner = createOwner({
+      readTimeline: async () => ({
+        agentId: AGENT_ID,
+        items: [item("cached", partial, 4)],
+        range: { epoch: "epoch-1", startSeq: 1, endSeq: 4 },
+        hasOlder: false,
+      }),
+      commitTimeline: () => undefined,
+    });
+
+    owner.replaceVisibleAgentIds("test", [AGENT_ID]);
+    await expect
+      .poll(() =>
+        selectAgentTimelineState(useSessionStore.getState().sessions[SERVER_ID], AGENT_ID),
+      )
+      .toMatchObject({ status: "painted" });
+
+    owner.applyTimelineResponse({
+      requestId: "page-after-cache",
+      agentId: AGENT_ID,
+      agent: null,
+      direction: "after",
+      projection: "projected",
+      reset: false,
+      epoch: "epoch-1",
+      window: { minSeq: 1, maxSeq: 5, nextSeq: 6 },
+      startCursor: { epoch: "epoch-1", seq: 5 },
+      endCursor: { epoch: "epoch-1", seq: 5 },
+      entries: [
+        {
+          provider: "mock",
+          item: { type: "assistant_message", text: complete },
+          timestamp: "2026-08-26T10:00:00.000Z",
+          seqStart: 2,
+          seqEnd: 5,
+          sourceSeqRanges: [{ startSeq: 2, endSeq: 5 }],
+          collapsed: ["assistant_merge"],
+        },
+      ],
+      error: null,
+      hasNewer: false,
+      hasOlder: false,
+      staleCursor: false,
+      gap: false,
+    });
+
+    const session = useSessionStore.getState().sessions[SERVER_ID];
+    expect([
+      ...(session?.agentStreamTail.get(AGENT_ID) ?? []),
+      ...(session?.agentStreamHead.get(AGENT_ID) ?? []),
+    ]).toMatchObject([{ kind: "assistant_message", text: complete }]);
+    owner.dispose();
+  });
+
   it("does not let a late cache read overwrite newer network state", async () => {
     useSessionStore.getState().initializeSession(SERVER_ID, null);
     let release!: (value: CachedTimeline) => void;
@@ -136,6 +194,103 @@ describe("viewed timeline persistence", () => {
       )
       .toMatchObject({ status: "synced", range: { endSeq: 8 } });
     owner.dispose();
+  });
+
+  it("paints cached rows without replacing a live head that arrives during preparation", async () => {
+    useSessionStore.getState().initializeSession(SERVER_ID, null);
+    let release!: (value: CachedTimeline) => void;
+    const read = new Promise<CachedTimeline>((resolve) => {
+      release = resolve;
+    });
+    const replica = createTimelineReplica({
+      serverId: SERVER_ID,
+      storage: {
+        readTimeline: () => read,
+        commitTimeline: () => undefined,
+      },
+      prepareAgent: async () => undefined,
+    });
+
+    const preparation = replica.prepare(AGENT_ID);
+    useSessionStore.getState().setAgentStreamState(SERVER_ID, AGENT_ID, {
+      head: [item("live", "live", 5)],
+    });
+    release(cachedTimeline());
+    await preparation;
+
+    expect(replica.readCursor(AGENT_ID)).toEqual({ epoch: "epoch-1", endSeq: 4 });
+    expect(
+      selectAgentTimelineState(useSessionStore.getState().sessions[SERVER_ID], AGENT_ID),
+    ).toEqual({ status: "painted", items: cachedTimeline().items });
+    expect(useSessionStore.getState().sessions[SERVER_ID]?.agentStreamHead.get(AGENT_ID)).toEqual([
+      item("live", "live", 5),
+    ]);
+  });
+
+  it("reconciles a live head that overlaps the cached canonical timeline", async () => {
+    useSessionStore.getState().initializeSession(SERVER_ID, null);
+    let release!: (value: CachedTimeline) => void;
+    const read = new Promise<CachedTimeline>((resolve) => {
+      release = resolve;
+    });
+    const replica = createTimelineReplica({
+      serverId: SERVER_ID,
+      storage: {
+        readTimeline: () => read,
+        commitTimeline: () => undefined,
+      },
+      prepareAgent: async () => undefined,
+    });
+
+    const preparation = replica.prepare(AGENT_ID);
+    useSessionStore.getState().setAgentStreamState(SERVER_ID, AGENT_ID, {
+      head: [item("cached", "cached", 4), item("live", "live", 5)],
+    });
+    release(cachedTimeline());
+    await preparation;
+
+    const session = useSessionStore.getState().sessions[SERVER_ID];
+    expect([
+      ...(session?.agentStreamTail.get(AGENT_ID) ?? []),
+      ...(session?.agentStreamHead.get(AGENT_ID) ?? []),
+    ]).toEqual([item("cached", "cached", 4), item("live", "live", 5)]);
+    expect(replica.readCursor(AGENT_ID)).toEqual({ epoch: "epoch-1", endSeq: 4 });
+  });
+
+  it("reconciles cached rows with a non-authoritative timeline painted during preparation", async () => {
+    useSessionStore.getState().initializeSession(SERVER_ID, null);
+    let release!: (value: CachedTimeline) => void;
+    const read = new Promise<CachedTimeline>((resolve) => {
+      release = resolve;
+    });
+    const replica = createTimelineReplica({
+      serverId: SERVER_ID,
+      storage: {
+        readTimeline: () => read,
+        commitTimeline: () => undefined,
+      },
+      prepareAgent: async () => undefined,
+    });
+
+    const preparation = replica.prepare(AGENT_ID);
+    useSessionStore.getState().applyAgentTimelineResponseState(SERVER_ID, AGENT_ID, {
+      items: [item("live", "live", 5)],
+      head: [],
+      range: null,
+      older: "none",
+      newer: false,
+      synchronized: false,
+      acknowledgedClientMessageIds: [],
+    });
+    release(cachedTimeline());
+    await preparation;
+
+    const session = useSessionStore.getState().sessions[SERVER_ID];
+    expect([
+      ...(session?.agentStreamTail.get(AGENT_ID) ?? []),
+      ...(session?.agentStreamHead.get(AGENT_ID) ?? []),
+    ]).toEqual([item("cached", "cached", 4), item("live", "live", 5)]);
+    expect(replica.readCursor(AGENT_ID)).toEqual({ epoch: "epoch-1", endSeq: 4 });
   });
 
   it("persists accepted live stream commits through the owner", () => {

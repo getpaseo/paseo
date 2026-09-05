@@ -106,13 +106,16 @@ export type AgentLsResult = ListResult<AgentListItem>;
 
 function daemonConnectionFailure(host: string, cause: unknown): CommandError {
   const reason = cause instanceof Error ? cause.message : String(cause);
+  const isSsh = host.trim().startsWith("ssh://");
   return {
     code: "DAEMON_NOT_RUNNING",
     message: `Cannot reach the daemon at ${host}: ${reason}`,
-    details: [
-      "Start a local daemon with: paseo daemon start",
-      "To use another daemon, pass --host <host:port> or set PASEO_HOST.",
-    ].join("\n"),
+    details: isSsh
+      ? "Start the Paseo daemon on the SSH host; SSH transport does not install or start it."
+      : [
+          "Start a local daemon with: paseo daemon start",
+          "To use another daemon, pass --host <host:port> or set PASEO_HOST.",
+        ].join("\n"),
   };
 }
 

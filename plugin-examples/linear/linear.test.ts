@@ -1,7 +1,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { describe, expect, it } from "vitest";
-import { createLinearIssueSearch } from "./linear";
+import { createLinearIssueSearch } from "./server/linear";
 
 const issue = {
   id: "issue-uuid",

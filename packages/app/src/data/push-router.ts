@@ -5,6 +5,7 @@ import type {
   SessionOutboundMessage,
 } from "@getpaseo/protocol/messages";
 import { agentCommandsQueryRoot } from "@/hooks/agent-commands-query";
+import { replaceProviderSnapshotIcons } from "@/components/provider-icon-name";
 import { orderCheckoutDiffFiles } from "@/git/diff-order";
 import { daemonConfigQueryKey } from "@/data/daemon-config";
 import { daemonPairingOfferQueryKey } from "@/data/daemon-pairing";
@@ -194,6 +195,7 @@ export function applyProvidersSnapshotUpdate(input: {
   if (input.message.type !== "providers_snapshot_update") {
     return;
   }
+  replaceProviderSnapshotIcons(input.serverId, input.message.payload.entries);
   const queryKey = providersSnapshotQueryKey(input.serverId, input.message.payload.cwd);
   input.queryClient.setQueryData(queryKey, {
     entries: input.message.payload.entries,

@@ -5,6 +5,7 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 
 import { Session } from "./session.js";
 import type { SessionOptions } from "./session.js";
+import { OWNER_PERMISSIONS } from "./authorization/index.js";
 import { createTestPaseoDaemon } from "./test-utils/paseo-daemon.js";
 import { asInternals, createStub } from "./test-utils/class-mocks.js";
 import { createProviderSnapshotManagerStub } from "./test-utils/session-stubs.js";
@@ -99,7 +100,7 @@ describe("snapshot mutation ownership boundary", () => {
     const session = asInternals<SessionInternals>(
       new Session({
         clientId: "test-client",
-        scopes: ["*"],
+        permissions: OWNER_PERMISSIONS,
         onMessage,
         logger: createStub<SessionOptions["logger"]>(logger),
         downloadTokenStore: createStub<SessionOptions["downloadTokenStore"]>({}),

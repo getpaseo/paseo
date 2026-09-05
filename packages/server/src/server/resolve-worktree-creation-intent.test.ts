@@ -204,6 +204,7 @@ describe("resolveWorktreeCreationIntent", () => {
       baseRefName: "main",
       checkoutRefs: [{ remoteName: "origin", remoteRef: "refs/pull/526/head" }],
       headRepositoryOwner: "therainisme",
+      headRepository: "therainisme/paseo",
       localBranchName: "therainisme/main",
       pushRemoteUrl: "git@github.com:therainisme/paseo.git",
     });
@@ -285,6 +286,7 @@ describe("resolveWorktreeCreationIntent", () => {
       forge: "gitlab",
       changeRequestNumber: 7,
       headRef: "feature/mr-source",
+      headRepository: "unknown repository",
       baseRefName: "main",
       checkoutRefs: [{ remoteName: "origin", remoteRef: "refs/merge-requests/7/head" }],
     });

@@ -91,6 +91,32 @@ describe("Hub HTTP client", () => {
     );
   });
 
+  it("reads self-contained trigger documents for export", async () => {
+    const requests: Array<{ url: string | undefined; body: string }> = [];
+    const origin = await startServer(
+      () => ({
+        status: 200,
+        body: {
+          triggers: [
+            {
+              id: "a50e05af-4f20-4c8f-8dcc-58e5ea360663",
+              name: "slack-help",
+              enabled: true,
+              format: "single_run",
+              yaml: "name: slack-help\n",
+            },
+          ],
+        },
+      }),
+      requests,
+    );
+
+    const triggers = await new HubHttpClient().listTriggers(origin, "secret");
+
+    assert.equal(triggers[0]?.yaml, "name: slack-help\n");
+    assert.deepEqual(requests[0], { url: "/api/v1/triggers", body: "" });
+  });
+
   it("reads configuration resources in the Hub's slug vocabulary", async () => {
     const requests: Array<{ url: string | undefined; body: string }> = [];
     const origin = await startServer(

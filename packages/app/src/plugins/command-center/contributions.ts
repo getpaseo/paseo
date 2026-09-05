@@ -1,5 +1,3 @@
-import { callPluginRpc } from "@getpaseo/plugin/host";
-import type { PluginCommandCapabilities, PluginPanelLocation } from "@getpaseo/plugin";
 import type { PluginClientStateSource } from "@getpaseo/plugin/host";
 import type { CommandCenterContribution } from "@/command-center/contributions";
 import { getCommandCenterIcon } from "@/command-center/icon";
@@ -7,17 +5,7 @@ import { resolvePluginIcon } from "../icons";
 import { resolvePluginPanelOpenLocation } from "../workspace-panels/locations";
 import type { PluginSurfaceRuntime } from "../surface-runtime";
 import type { InstalledPlugin } from "../types";
-
-export interface PluginCommandCenterNavigation {
-  openSurface(pluginId: string, surfaceId: string): void;
-  openWorkspacePanel(pluginId: string, panelId: string, location: PluginPanelLocation): void;
-  openAgentPanel(
-    pluginId: string,
-    panelId: string,
-    agentId: string,
-    location: PluginPanelLocation,
-  ): void;
-}
+import { createPluginCapabilities, type PluginNavigation } from "../actions";
 
 export interface PluginCommandCenterSource {
   plugins: readonly InstalledPlugin[];
@@ -25,25 +13,8 @@ export interface PluginCommandCenterSource {
   state: PluginClientStateSource;
   workspaceId: string | null;
   agentId: string | null;
-  navigation: PluginCommandCenterNavigation;
+  navigation: PluginNavigation;
   reportError(error: unknown): void;
-}
-
-function capabilities(
-  plugin: InstalledPlugin,
-  runtime: PluginSurfaceRuntime,
-  navigation: PluginCommandCenterNavigation,
-): PluginCommandCapabilities {
-  return {
-    paseo: runtime.paseo,
-    rpc: (contract, input) => callPluginRpc(contract, runtime.invoke, input),
-    openSurface(surfaceId) {
-      if (!plugin.surfaces.some((surface) => surface.id === surfaceId)) {
-        throw new Error(`Plugin surface is unavailable: ${surfaceId}`);
-      }
-      navigation.openSurface(plugin.id, surfaceId);
-    },
-  };
 }
 
 export function buildPluginCommandCenterContributions(
@@ -52,7 +23,7 @@ export function buildPluginCommandCenterContributions(
   const contributions: CommandCenterContribution[] = [];
   for (const plugin of source.plugins) {
     const runtime = source.runtime(plugin.id);
-    const common = capabilities(plugin, runtime, source.navigation);
+    const common = createPluginCapabilities(plugin, runtime, source.navigation);
     for (const [rank, item] of plugin.commandCenterItems.entries()) {
       if (item.context === "workspace" && !source.workspaceId) continue;
       if (item.context === "agent" && (!source.workspaceId || !source.agentId)) continue;
