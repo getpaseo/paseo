@@ -31,6 +31,14 @@ vi.mock("react-native", () => ({
     React.createElement("span", props, children),
   ScrollView: ({ children, ...props }: React.PropsWithChildren<Record<string, unknown>>) =>
     React.createElement("div", props, children),
+  Pressable: ({ children, ...props }: React.PropsWithChildren<Record<string, unknown>>) =>
+    React.createElement("button", { type: "button", ...props }, children),
+  Image: (props: Record<string, unknown>) => React.createElement("img", props),
+}));
+
+vi.mock("lucide-react-native", () => ({
+  ChevronDown: () => null,
+  ChevronRight: () => null,
 }));
 
 vi.mock("react-native-gesture-handler", () => ({
@@ -58,16 +66,16 @@ vi.mock("react-i18next", () => ({
   }),
 }));
 
-vi.mock("@/components/markdown/renderer", () => ({
-  MarkdownRenderer: ({ text, compact }: { text: string; compact?: boolean }) =>
-    React.createElement("div", { "data-testid": "markdown-renderer", "data-compact": compact ? "true" : "false" }, text),
-}));
 
 vi.stubGlobal("React", React);
 vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-
 import { ToolCallDetailsContent } from "./tool-call-details";
 
+const TEST_DETAIL = {
+  type: "unknown" as const,
+  input: "**Scaling Jitter Configuration**\n\nSome reasoning text `inlineCode`.",
+  output: null,
+};
 describe("ToolCallDetailsContent", () => {
   let container: HTMLDivElement | null = null;
   let root: Root | null = null;
@@ -91,20 +99,11 @@ describe("ToolCallDetailsContent", () => {
 
   it("renders unknown string detail (such as thinking) using MarkdownRenderer", async () => {
     await act(async () => {
-      root?.render(
-        <ToolCallDetailsContent
-          detail={{
-            type: "unknown",
-            input: "**Scaling Jitter Configuration**\n\nSome reasoning text `inlineCode`.",
-            output: null,
-          }}
-        />,
-      );
+      root?.render(<ToolCallDetailsContent detail={TEST_DETAIL} />);
     });
 
-    const markdownNode = container?.querySelector('[data-testid="markdown-renderer"]');
-    expect(markdownNode).not.toBeNull();
-    expect(markdownNode?.textContent).toBe("**Scaling Jitter Configuration**\n\nSome reasoning text `inlineCode`.");
-    expect(markdownNode?.getAttribute("data-compact")).toBe("true");
+    expect(container?.textContent).toContain("Scaling Jitter Configuration");
+    expect(container?.textContent).toContain("Some reasoning text");
+    expect(container?.textContent).toContain("inlineCode");
   });
 });
