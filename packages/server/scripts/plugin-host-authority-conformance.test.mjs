@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -14,7 +14,8 @@ const EXPECTED_CASE_IDS = [
   "host.child.create-inherits-live-caller-authority-after-mutation",
   "host.unauthorized-or-stale-selector-rejected",
   "delivery.reconnects-stable-installation-and-tombstones",
-  "installation.replacement-fences-stale-generation-and-nonce-through-session",
+  "installation.replacement-fences-stale-generation-through-session",
+  "installation.replacement-fences-stale-nonce-through-session",
 ];
 const scriptDirectory = path.dirname(fileURLToPath(import.meta.url));
 const repositoryRoot = path.resolve(scriptDirectory, "../../..");
@@ -43,11 +44,11 @@ function independentlyHashedInputs(sourceInputs) {
 
 function isolatedRun(artifact, args) {
   return JSON.parse(
-    execFileSync(
-      "env",
-      ["-i", `PATH=${process.env.PATH ?? ""}`, process.execPath, artifact, ...args],
-      { cwd: "/", encoding: "utf8" },
-    ),
+    execFileSync(artifact, args, {
+      cwd: "/",
+      env: { PATH: process.env.PATH ?? "" },
+      encoding: "utf8",
+    }),
   );
 }
 
@@ -67,6 +68,8 @@ describe("plugin host authority conformance executable", () => {
       const build = JSON.parse(buildOutput.trim());
       const manifest = JSON.parse(readFileSync(build.manifest, "utf8"));
       const artifact = readFileSync(build.artifact, "utf8");
+      expect(artifact.startsWith("#!/usr/bin/env node\n")).toBe(true);
+      expect(statSync(build.artifact).mode & 0o777).toBe(0o755);
       const embeddedMatch = artifact.match(/const __PASEO_SOURCE_MANIFEST__ = (\{[\s\S]*?\});/u);
       expect(embeddedMatch).not.toBeNull();
       const embedded = JSON.parse(embeddedMatch[1]);
@@ -91,6 +94,13 @@ describe("plugin host authority conformance executable", () => {
           cwd: "/",
         });
         const extractedArtifact = path.join(extractedDirectory, manifest.artifact);
+        const extractedPackageMetadata = JSON.parse(
+          readFileSync(path.join(extractedDirectory, "package.json"), "utf8"),
+        );
+        expect(extractedPackageMetadata.bin).toEqual({
+          "plugin-host-conformance": `./${manifest.artifact}`,
+        });
+        expect(statSync(extractedArtifact).mode & 0o777).toBe(0o755);
         for (const [packageSpecifier, dependency] of Object.entries(manifest.runtimeDependencies)) {
           for (const [relative, expectedHash] of Object.entries(dependency.files)) {
             const actualHash = createHash("sha256")
@@ -109,6 +119,8 @@ describe("plugin host authority conformance executable", () => {
           repositoryRoot,
           "--json",
         ]);
+        expect(Object.keys(isolatedRuntime).sort()).toEqual(["caseIds", "cases", "sourceCommit"]);
+        expect(isolatedRuntime.caseIds).toEqual(EXPECTED_CASE_IDS);
         expect(isolatedRuntime.cases.map((result) => result.case)).toEqual(EXPECTED_CASE_IDS);
         expect(isolatedRuntime.cases.map((result) => result.ok)).toEqual(
           EXPECTED_CASE_IDS.map(() => true),

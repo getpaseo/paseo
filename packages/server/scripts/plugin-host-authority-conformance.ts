@@ -35,6 +35,8 @@ const PROJECT_ID = "00000000-0000-4000-8000-000000000021";
 const DELIVERY_ID = "authority-conformance-delivery";
 const SECOND_DELIVERY_ID = "authority-conformance-second-delivery";
 const STALE_DELIVERY_ID = "authority-conformance-stale-delivery";
+const STALE_GENERATION_DELIVERY_ID = "authority-conformance-stale-generation-delivery";
+const STALE_NONCE_DELIVERY_ID = "authority-conformance-stale-nonce-delivery";
 const CANCELLATION_DELIVERY_ID = "authority-conformance-cancellation-delivery";
 const HANDLER_THROW_DELIVERY_ID = "authority-conformance-handler-throw-delivery";
 const TIMESTAMP = "2026-09-05T00:00:00.000Z";
@@ -47,7 +49,8 @@ const CASE_IDS = [
   "host.child.create-inherits-live-caller-authority-after-mutation",
   "host.unauthorized-or-stale-selector-rejected",
   "delivery.reconnects-stable-installation-and-tombstones",
-  "installation.replacement-fences-stale-generation-and-nonce-through-session",
+  "installation.replacement-fences-stale-generation-through-session",
+  "installation.replacement-fences-stale-nonce-through-session",
 ];
 
 function sourceManifestError(message: string): never {
@@ -903,6 +906,7 @@ async function runCase(
 
 export async function runConformance() {
   const results: Array<Record<string, unknown>> = [];
+  let retiredInstallationId: string | null = null;
   await runCase(results, CASE_IDS[0], compilerCase);
   const fixture = await createFixture();
   try {
@@ -1155,6 +1159,7 @@ export async function runConformance() {
     });
     await runCase(results, CASE_IDS[7], async () => {
       const old = await installationIdentity(fixture);
+      retiredInstallationId = old.installationId;
       fixture.beginStaleDelivery();
       const oldOperation = settle(invokeTool(fixture, { mode: "stale" }));
       let oldInvocation: {
@@ -1222,55 +1227,172 @@ export async function runConformance() {
 
         const currentContext = await replacement.session.resolvePluginToolContext(CALLER_AGENT_ID);
         assert(currentContext.caller, "replacement caller authority was not resolved");
-        const staleOldCall = await settleBounded(
-          fixture.server.invokePluginHost({
-            pluginId: PLUGIN_ID,
-            caller: currentContext.caller,
-            invocationId: oldInvocation.invocationId,
-            generation: oldInvocation.generation,
-            installationId: replacement.installationId,
-            capabilityNonce: oldInvocation.capabilityNonce,
-            operation: "delivery.send",
-            input: {
-              payload: { kind: "stale-old-call" },
-              options: {
-                deliveryId: "stale-generation-side-effect",
-                messageId: "stale-old-call-message",
+        const generationProbeInvocationId = "replacement-generation-probe";
+        const generationProbeNonce = "replacement-generation-probe-nonce";
+        fixture.server.beginPluginHostInvocation({
+          pluginId: PLUGIN_ID,
+          invocationId: generationProbeInvocationId,
+          generation: replacement.generation,
+          installationId: replacement.installationId,
+          capabilityNonce: generationProbeNonce,
+        });
+        try {
+          const staleGeneration = await settleBounded(
+            fixture.server.invokePluginHost({
+              pluginId: PLUGIN_ID,
+              caller: currentContext.caller,
+              invocationId: generationProbeInvocationId,
+              generation: oldInvocation.generation,
+              installationId: replacement.installationId,
+              capabilityNonce: generationProbeNonce,
+              operation: "delivery.send",
+              input: {
+                payload: { kind: "stale-generation" },
+                options: {
+                  deliveryId: STALE_GENERATION_DELIVERY_ID,
+                  messageId: "stale-generation-message",
+                },
               },
-            },
-            signal: new AbortController().signal,
-          }),
-          "stale old host invocation through replacement Session",
-        );
-        assert(!staleOldCall.ok, "stale old invocation crossed the attached replacement Session");
-        const oldPrincipal = `plugin:${PLUGIN_ID}:${old.installationId}`;
-        for (const deliveryId of [
-          STALE_DELIVERY_ID,
-          "stale-generation-side-effect",
-          "stale-nonce-side-effect",
-        ]) {
-          const record = await fixture.ledger.get(oldPrincipal, {
-            deliveryId,
-            includeAcknowledged: true,
-          });
-          equal(record.delivery, null, `stale old installation side effect for ${deliveryId}`);
+              signal: new AbortController().signal,
+            }),
+            "stale generation host invocation through replacement Session",
+          );
+          assert(!staleGeneration.ok, "stale generation crossed the attached replacement Session");
+          equal(
+            errorText(staleGeneration.error),
+            "Plugin host invocation generation is stale",
+            "stale generation rejection",
+          );
+          equal(
+            replacement.session.getPluginHostInvocationReferenceCount(),
+            1,
+            "stale generation preserved admitted reference",
+          );
+        } finally {
+          fixture.server.endPluginHostInvocation(
+            PLUGIN_ID,
+            replacement.installationId,
+            generationProbeInvocationId,
+          );
         }
         equal(
           replacement.session.getPluginHostInvocationReferenceCount(),
           0,
-          "stale replacement request reference map",
+          "stale generation reference map",
         );
+        const currentPrincipal = `plugin:${PLUGIN_ID}:${replacement.installationId}`;
+        const oldPrincipal = `plugin:${PLUGIN_ID}:${old.installationId}`;
+        for (const [principal, label] of [
+          [currentPrincipal, "current"],
+          [oldPrincipal, "old"],
+        ] as const) {
+          for (const deliveryId of [STALE_DELIVERY_ID, STALE_GENERATION_DELIVERY_ID]) {
+            const record = await fixture.ledger.get(principal, {
+              deliveryId,
+              includeAcknowledged: true,
+            });
+            equal(
+              record.delivery,
+              null,
+              `stale ${label} installation side effect for ${deliveryId}`,
+            );
+          }
+        }
       } finally {
         fixture.releaseStaleDelivery();
       }
       return {
         oldGeneration: old.generation,
         newGeneration: replacement.generation,
-        staleInvocationAndNonceRejected: true,
+        staleGenerationRejected: true,
         attachedSessionRouted: true,
         boundedRejection: true,
         noSideEffect: true,
         lateResultIgnored: true,
+      };
+    });
+    await runCase(results, CASE_IDS[8], async () => {
+      const replacement = await installationIdentity(fixture);
+      assert(retiredInstallationId, "retired installation identity was not recorded");
+      const currentContext = await replacement.session.resolvePluginToolContext(CALLER_AGENT_ID);
+      assert(currentContext.caller, "replacement caller authority was not resolved");
+      const invocationId = "replacement-nonce-probe";
+      const nonceA = "replacement-nonce-a";
+      const nonceB = "replacement-nonce-b";
+      fixture.server.beginPluginHostInvocation({
+        pluginId: PLUGIN_ID,
+        invocationId,
+        generation: replacement.generation,
+        installationId: replacement.installationId,
+        capabilityNonce: nonceA,
+      });
+      equal(
+        replacement.session.getPluginHostInvocationReferenceCount(),
+        1,
+        "nonce probe admitted reference",
+      );
+      try {
+        const staleNonce = await settleBounded(
+          fixture.server.invokePluginHost({
+            pluginId: PLUGIN_ID,
+            caller: currentContext.caller,
+            invocationId,
+            generation: replacement.generation,
+            installationId: replacement.installationId,
+            capabilityNonce: nonceB,
+            operation: "delivery.send",
+            input: {
+              payload: { kind: "stale-nonce" },
+              options: {
+                deliveryId: STALE_NONCE_DELIVERY_ID,
+                messageId: "stale-nonce-message",
+              },
+            },
+            signal: new AbortController().signal,
+          }),
+          "stale nonce host invocation through replacement Session",
+        );
+        assert(!staleNonce.ok, "stale nonce crossed the attached replacement Session");
+        equal(
+          errorText(staleNonce.error),
+          "Plugin host invocation nonce is stale",
+          "stale nonce rejection",
+        );
+        equal(
+          replacement.session.getPluginHostInvocationReferenceCount(),
+          1,
+          "stale nonce preserved admitted reference",
+        );
+      } finally {
+        fixture.server.endPluginHostInvocation(PLUGIN_ID, replacement.installationId, invocationId);
+      }
+      equal(
+        replacement.session.getPluginHostInvocationReferenceCount(),
+        0,
+        "stale nonce reference map",
+      );
+      const principals = [
+        `plugin:${PLUGIN_ID}:${replacement.installationId}`,
+        `plugin:${PLUGIN_ID}:${retiredInstallationId}`,
+      ] as const;
+      for (const principal of principals) {
+        const record = await fixture.ledger.get(principal, {
+          deliveryId: STALE_NONCE_DELIVERY_ID,
+          includeAcknowledged: true,
+        });
+        equal(record.delivery, null, `stale nonce side effect for ${principal}`);
+      }
+      return {
+        installationId: replacement.installationId,
+        generation: replacement.generation,
+        invocationId,
+        admittedNonce: nonceA,
+        rejectedNonce: nonceB,
+        staleNonceRejected: true,
+        currentAndRetiredPrincipalsChecked: true,
+        referencesBalanced: true,
+        attachedSessionRouted: true,
+        noSideEffect: true,
       };
     });
   } finally {

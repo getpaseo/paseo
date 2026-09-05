@@ -865,11 +865,16 @@ export class PluginRuntime {
     }
     if (
       message.generation !== loaded.generation ||
-      message.installationId !== loaded.installationId ||
+      message.installationId !== loaded.installationId
+    ) {
+      reply(undefined, new Error("Plugin host invocation generation is stale"));
+      return;
+    }
+    if (
       message.capabilityNonce === undefined ||
       message.capabilityNonce !== pending.capabilityNonce
     ) {
-      reply(undefined, new Error("Plugin host invocation generation is stale"));
+      reply(undefined, new Error("Plugin host invocation nonce is stale"));
       return;
     }
     if (

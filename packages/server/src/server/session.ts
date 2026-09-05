@@ -2239,12 +2239,14 @@ export class Session {
     }
     if (this.pluginIdentity.generation !== undefined) {
       const capability = this.pluginHostInvocations.get(input.invocationId);
-      if (
-        !capability ||
-        capability.generation !== input.generation ||
-        capability.capabilityNonce !== input.capabilityNonce
-      ) {
+      if (!capability) {
         throw new Error("Plugin host invocation capability is stale");
+      }
+      if (capability.generation !== input.generation) {
+        throw new Error("Plugin host invocation generation is stale");
+      }
+      if (capability.capabilityNonce !== input.capabilityNonce) {
+        throw new Error("Plugin host invocation nonce is stale");
       }
     }
     if (input.caller.callerAgentId.trim() === "") {

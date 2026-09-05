@@ -3,7 +3,7 @@
 import { build } from "esbuild";
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { cp, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, cp, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
@@ -24,6 +24,7 @@ const artifactName = "plugin-host-conformance.mjs";
 const manifestName = "plugin-host-conformance.manifest.json";
 const archiveName = "plugin-host-conformance.tgz";
 const packageMetadataName = "package.json";
+const executableShebang = "#!/usr/bin/env node\n";
 const nodeRequire = createRequire(import.meta.url);
 const runtimeBanner = {
   js: 'import { createRequire as __createRequire } from "node:module"; const require = __createRequire(import.meta.url);',
@@ -36,7 +37,8 @@ const caseIds = [
   "host.child.create-inherits-live-caller-authority-after-mutation",
   "host.unauthorized-or-stale-selector-rejected",
   "delivery.reconnects-stable-installation-and-tombstones",
-  "installation.replacement-fences-stale-generation-and-nonce-through-session",
+  "installation.replacement-fences-stale-generation-through-session",
+  "installation.replacement-fences-stale-nonce-through-session",
 ];
 
 function parseArgs(argv) {
@@ -277,9 +279,12 @@ async function main() {
   });
   const artifact = finalBuild.outputFiles[0]?.text;
   if (!artifact) throw new Error("Conformance build produced no output");
+  const executableArtifact = `${executableShebang}${artifact}`;
   await rm(outputDirectory, { recursive: true, force: true });
   await mkdir(outputDirectory, { recursive: true });
-  await writeFile(path.join(outputDirectory, artifactName), artifact, "utf8");
+  const artifactPath = path.join(outputDirectory, artifactName);
+  await writeFile(artifactPath, executableArtifact, "utf8");
+  await chmod(artifactPath, 0o755);
   const manifest = {
     formatVersion: 1,
     artifact: artifactName,
@@ -287,7 +292,7 @@ async function main() {
     sourceCommit,
     caseIds,
     sourceInputs: inputs,
-    artifactSha256: createHash("sha256").update(artifact).digest("hex"),
+    artifactSha256: createHash("sha256").update(executableArtifact).digest("hex"),
     runtimeDependencies: {},
   };
   const runtimeDependencies = await stageRuntimeDependencies(outputDirectory);
