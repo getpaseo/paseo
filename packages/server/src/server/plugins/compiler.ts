@@ -139,6 +139,17 @@ function astIdentifierName(node: unknown): string | null {
   return Reflect.get(node, "type") === "Identifier" ? String(Reflect.get(node, "name")) : null;
 }
 
+function astJsxIdentifierName(node: unknown): string | null {
+  if (node === null || typeof node !== "object") return null;
+  return Reflect.get(node, "type") === "JSXIdentifier" ? String(Reflect.get(node, "name")) : null;
+}
+
+function isJsxComponentIdentifier(name: string): boolean {
+  // JSX names beginning with a lowercase ASCII letter are intrinsic strings.
+  // Other names, including _Component and $Component, are emitted as values.
+  return !/^[a-z]/.test(name);
+}
+
 interface AstScope {
   parent: AstScope | null;
   functionScope: AstScope;
@@ -749,6 +760,46 @@ function analyzeRegistrations(
     for (const argument of argumentsList) visit(argument, scope, parent, null);
   };
 
+  const visitLexicalBinding = (
+    node: object,
+    scope: AstScope,
+    name: string,
+    ignored = false,
+  ): void => {
+    const binding = lookupBinding(scope, name);
+    if (binding?.imported) {
+      const start = Reflect.get(node, "start");
+      const insideRemovedRegistration =
+        typeof start === "number" &&
+        ranges.some((range) => range.start <= start && start < range.end);
+      if (!insideRemovedRegistration && !ignored) {
+        throw new Error(
+          "Opposite-target import has a surviving reference outside a direct removed registration",
+        );
+      }
+    }
+    if (binding?.contextAlias && !ignored) {
+      throw new Error("Plugin default context cannot escape its direct registration call");
+    }
+  };
+
+  const visitJsxTagName = (node: unknown, scope: AstScope, memberObject = false): void => {
+    if (!isAstNode(node)) return;
+    const type = Reflect.get(node, "type");
+    if (type === "JSXIdentifier") {
+      const name = astJsxIdentifierName(node);
+      if (name !== null && (memberObject || isJsxComponentIdentifier(name))) {
+        visitLexicalBinding(node, scope, name);
+      }
+      return;
+    }
+    if (type === "JSXMemberExpression") {
+      visitJsxTagName(Reflect.get(node, "object"), scope, true);
+      return;
+    }
+    // JSXNamespacedName is a literal tag name, not a JavaScript expression.
+  };
+
   const visitFunction = (node: object, parentScope: AstScope): void => {
     const nextScope = createScope(parentScope, undefined);
     const type = Reflect.get(node, "type");
@@ -903,6 +954,19 @@ function analyzeRegistrations(
       visitClass(current, scope);
       return;
     }
+    if (type === "JSXOpeningElement") {
+      visitJsxTagName(Reflect.get(current, "name"), scope);
+      const attributes = Reflect.get(current, "attributes");
+      if (Array.isArray(attributes)) {
+        for (const attribute of attributes) visit(attribute, scope, current, parent);
+      }
+      return;
+    }
+    if (type === "JSXClosingElement") {
+      // The opening element owns the component value; the closing tag is syntax
+      // for the same JSX element and must not count as another binding use.
+      return;
+    }
     if (
       type === "ObjectMethod" ||
       type === "ClassMethod" ||
@@ -1005,21 +1069,12 @@ function analyzeRegistrations(
       return;
     }
     if (type === "Identifier") {
-      const binding = lookupBinding(scope, String(Reflect.get(current, "name")));
-      if (binding?.imported) {
-        const start = Reflect.get(current, "start");
-        const insideRemovedRegistration =
-          typeof start === "number" &&
-          ranges.some((range) => range.start <= start && start < range.end);
-        if (!insideRemovedRegistration && !isIgnoredIdentifierPosition(current, parent)) {
-          throw new Error(
-            "Opposite-target import has a surviving reference outside a direct removed registration",
-          );
-        }
-      }
-      if (binding?.contextAlias && !isIgnoredIdentifierPosition(current, parent)) {
-        throw new Error("Plugin default context cannot escape its direct registration call");
-      }
+      visitLexicalBinding(
+        current,
+        scope,
+        String(Reflect.get(current, "name")),
+        isIgnoredIdentifierPosition(current, parent),
+      );
     }
     if (type === "AssignmentExpression") {
       const left = Reflect.get(current, "left");

@@ -22,6 +22,7 @@ import {
   useWorkspace,
   useRpc,
 } from "@getpaseo/plugin";
+import { defineTool } from "@getpaseo/plugin/server";
 import { createPluginContext, type PluginRegistrationCollector } from "@getpaseo/plugin/host";
 import type { EvaluatedPlugin } from "./types";
 import type { ComponentType } from "react";
@@ -258,7 +259,7 @@ export function evaluatePluginClientBundle(id: string, bundle: string): Evaluate
     useWorkspace,
     useRpc,
   };
-  const pluginServerRuntime = { defineAttachmentSource, defineRpc };
+  const pluginServerRuntime = { defineAttachmentSource, defineRpc, defineTool };
   const runtimeRequire = (name: string): unknown => {
     if (name === "react") return React;
     if (name === "react/jsx-runtime") return ReactJsxRuntime;

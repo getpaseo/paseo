@@ -465,10 +465,13 @@ describe("evaluatePluginClientBundle", () => {
       const plugin = evaluatePluginClientBundle(
         "example",
         `(function(require) {
-        const { defineRpc, defineAttachmentSource } = require(${JSON.stringify(specifier)});
+        const { defineRpc, defineAttachmentSource, defineTool } = require(${JSON.stringify(specifier)});
         const search = defineRpc({ name: "issues.search", input: {}, output: {} });
+        const tool = defineTool({ name: "issues.lookup" });
+        if (tool.name !== "issues.lookup") throw new Error("defineTool is not an identity helper");
         const module = { exports: {} };
         module.exports.default = function(plugin) {
+          plugin.addTool(tool);
           plugin.addAttachmentSource(defineAttachmentSource({
             id: "issues",
             title: "Issue",

@@ -675,6 +675,106 @@ export default function contribute(plugin) {
     );
   });
 
+  it("rejects an opposite-target component reference that survives in TSX", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "paseo-plugin-compiler-"));
+    temporaryDirectories.push(directory);
+    const entryPath = path.join(directory, "index.tsx");
+    await writeFile(
+      entryPath,
+      `import { ServerSurface } from "./surface.server";
+
+const rendered = <ServerSurface></ServerSurface>;
+
+export default function contribute(plugin) {
+  return () => rendered;
+}
+`,
+    );
+    await writeFile(
+      path.join(directory, "surface.server.tsx"),
+      `export function ServerSurface() {
+  return null;
+}
+`,
+    );
+
+    await expect(compilePlugin(entryPath)).rejects.toThrow(
+      /opposite-target import.*surviving reference/i,
+    );
+  });
+
+  it("tracks JSX member roots and context components as lexical uses", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "paseo-plugin-compiler-"));
+    temporaryDirectories.push(directory);
+    const memberEntryPath = path.join(directory, "member.tsx");
+    await writeFile(
+      memberEntryPath,
+      `import * as ServerComponents from "./surface.server";
+
+const rendered = <ServerComponents.Surface />;
+
+export default function contribute(plugin) {
+  return () => rendered;
+}
+`,
+    );
+    await writeFile(
+      path.join(directory, "surface.server.tsx"),
+      `export function Surface() {
+  return null;
+}
+`,
+    );
+
+    await expect(compilePlugin(memberEntryPath)).rejects.toThrow(
+      /opposite-target import.*surviving reference/i,
+    );
+
+    const contextEntryPath = path.join(directory, "context.tsx");
+    await writeFile(
+      contextEntryPath,
+      `export default function contribute(Plugin) {
+  const rendered = <Plugin />;
+  return () => rendered;
+}
+`,
+    );
+
+    await expect(compilePlugin(contextEntryPath)).rejects.toThrow(
+      /default context|direct.*context/i,
+    );
+  });
+
+  it("does not treat intrinsic or namespaced JSX tags as lexical uses", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "paseo-plugin-compiler-"));
+    temporaryDirectories.push(directory);
+    const entryPath = path.join(directory, "intrinsic.tsx");
+    await writeFile(
+      entryPath,
+      `import { server } from "./surface.server";
+import { Surface } from "./surface.server";
+
+const rendered = <server><Surface:Panel /></server>;
+
+export default function contribute(plugin) {
+  return () => rendered;
+}
+`,
+    );
+    await writeFile(
+      path.join(directory, "surface.server.tsx"),
+      `export function server() {
+  return null;
+}
+export function Surface() {
+  return null;
+}
+`,
+    );
+
+    await expect(compilePlugin(entryPath)).resolves.toBeDefined();
+  });
+
   it("rejects context rebinding nested in an opposite-target registration argument", async () => {
     const directory = await mkdtemp(path.join(tmpdir(), "paseo-plugin-compiler-"));
     temporaryDirectories.push(directory);
