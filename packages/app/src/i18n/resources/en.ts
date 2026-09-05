@@ -712,7 +712,7 @@ export const en = {
         view: "View terminal",
       },
       accessibility: {
-        trigger: "Workspace scripts",
+        trigger: "Run workspace commands",
         openService: "View {{scriptName}} service",
         viewTerminal: "View {{scriptName}} terminal",
         runScript: "Run {{scriptName}} script",
@@ -736,12 +736,14 @@ export const en = {
     launches: {
       title: "Launches",
       actions: {
+        switch: "Switch",
         start: "Start",
         stop: "Stop",
-        view: "View terminal",
+        view: "Output",
         openService: "View service",
       },
       accessibility: {
+        switchLaunch: "Stop {{activeLaunchName}} and start {{launchName}}",
         trigger: "Workspace launches",
         launch: "{{launchName}} launch",
         startLaunch: "Start {{launchName}}",
@@ -750,6 +752,10 @@ export const en = {
         openService: "View {{hostname}} service",
       },
       states: {
+        running: "Running",
+        stopped: "Stopped",
+        stopping: "Stopping…",
+        noListeners: "No listening ports detected yet",
         startFailed: "Failed to start {{launchName}}",
         stopFailed: "Failed to stop {{launchName}}",
         portRange: "ports {{base}}–{{end}}",
@@ -2734,7 +2740,7 @@ export const en = {
       },
       scripts: {
         title: "Scripts",
-        info: "Long-running services and one-off commands you can launch from any agent in this project",
+        info: "Named commands in the Run menu. Scripts run on demand; services stay running and expose one HTTP port. Existing worktrees use their own checked-out script definitions.",
         empty: "No scripts yet.",
         untitled: "Untitled script",
         port: "port {{port}}",
@@ -2760,8 +2766,8 @@ export const en = {
       },
       launches: {
         title: "Launches",
-        info: "Development configurations you can start from any workspace in this project",
-        empty: "No launches yet.",
+        info: "Commands that start a whole development stack, such as bin/dev. They appear beside scripts and services in Run. One launch runs per workspace; switching stops the current launch. These definitions apply to every workspace in this project.",
+        empty: "Already use bin/dev or npm run dev? Add it as a launch.",
         untitled: "Untitled launch",
         menuAccessibility: "Open launch menu",
         removeTitle: "Remove launch?",
@@ -2777,7 +2783,7 @@ export const en = {
         newLaunch: "New launch",
         editLaunch: "Edit {{name}}",
         commandHint:
-          "Paseo runs this command with the workspace port block and Compose project name in its environment.",
+          "Use your existing dev command and keep it running in the foreground. It receives PASEO_PORT_BASE, PASEO_PORT_END, and COMPOSE_PROJECT_NAME. Output opens in a terminal tab; listening ports appear under the launch.",
         actions: {
           add: "Add launch",
           edit: "Edit",

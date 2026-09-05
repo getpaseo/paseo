@@ -722,7 +722,7 @@ export const es: TranslationResources = {
         view: "Ver terminal",
       },
       accessibility: {
-        trigger: "GuionesWorkspace",
+        trigger: "Ejecutar comandos del espacio de trabajo",
         openService: "Ver servicio {{scriptName}}",
         viewTerminal: "Ver terminal{{scriptName}}",
         runScript: "Ejecute el script{{scriptName}}",
@@ -746,12 +746,14 @@ export const es: TranslationResources = {
     launches: {
       title: "Inicios",
       actions: {
+        switch: "Cambiar",
         start: "Iniciar",
         stop: "Detener",
-        view: "Ver terminal",
+        view: "Salida",
         openService: "Ver servicio",
       },
       accessibility: {
+        switchLaunch: "Detener {{activeLaunchName}} e iniciar {{launchName}}",
         trigger: "Inicios del espacio de trabajo",
         launch: "Inicio {{launchName}}",
         startLaunch: "Iniciar {{launchName}}",
@@ -760,6 +762,10 @@ export const es: TranslationResources = {
         openService: "Ver servicio {{hostname}}",
       },
       states: {
+        running: "En ejecución",
+        stopped: "Detenido",
+        stopping: "Deteniendo…",
+        noListeners: "Aún no se han detectado puertos en escucha",
         startFailed: "No se pudo iniciar {{launchName}}",
         stopFailed: "No se pudo detener {{launchName}}",
         portRange: "puertos {{base}}–{{end}}",

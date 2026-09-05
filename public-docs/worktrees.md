@@ -222,8 +222,16 @@ when `blockSize` is set for scripts and services, or when a launch starts.
 ### Workspace launches
 
 Use `launches` for an existing command that starts a whole development configuration, such as a
-Docker Compose wrapper plus host processes. A launch is a selected workspace runtime, not a list
-of child services:
+Docker Compose wrapper plus host processes. Scripts, services, and launches are named commands
+in the same **Run** menu. Choose the behavior that matches the command:
+
+| Kind    | Use it for                                                                        |
+| ------- | --------------------------------------------------------------------------------- |
+| Script  | An on-demand command, such as tests or migrations.                                |
+| Service | One long-running service with one assigned HTTP port.                             |
+| Launch  | Your existing dev entrypoint, with terminal output and multiple discovered ports. |
+
+A launch reuses your project’s orchestration:
 
 ```json
 {
@@ -242,8 +250,11 @@ as a `scripts` service: services receive one `$PASEO_PORT`, while launches recei
 `$PASEO_PORT_BASE` through `$PASEO_PORT_END` block. A project launch takes precedence over a
 same-named worktree script; Paseo hides the legacy script and stops it before starting the launch.
 
-Only one launch runs per workspace. Starting another launch stops the active one. Paseo owns the
-launch terminal, then probes the leased block for live TCP listeners. HTTP listeners get a route
+Only one launch runs per workspace. **Switch** stops the current launch and starts the selected
+one. **Output** opens its terminal tab, including stdout and stderr. The row shows running,
+stopped, or the last exit code; running does not imply every child service is ready.
+
+Paseo probes the leased block for live TCP listeners. HTTP listeners get a route
 through the existing reverse proxy; raw TCP listeners remain direct local ports. This works for
 host listeners and Docker-published ports.
 

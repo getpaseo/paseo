@@ -722,7 +722,7 @@ export const ru: TranslationResources = {
         view: "Открыть терминал",
       },
       accessibility: {
-        trigger: "Скрипты рабочего пространства",
+        trigger: "Запустить команды рабочего пространства",
         openService: "Открыть сервис {{scriptName}}",
         viewTerminal: "Открыть терминал скрипта {{scriptName}}",
         runScript: "Запустить скрипт {{scriptName}}",
@@ -746,12 +746,14 @@ export const ru: TranslationResources = {
     launches: {
       title: "Запуски",
       actions: {
+        switch: "Переключить",
         start: "Запустить",
         stop: "Остановить",
-        view: "Открыть терминал",
+        view: "Вывод",
         openService: "Открыть сервис",
       },
       accessibility: {
+        switchLaunch: "Остановить {{activeLaunchName}} и запустить {{launchName}}",
         trigger: "Запуски рабочего пространства",
         launch: "Запуск {{launchName}}",
         startLaunch: "Запустить {{launchName}}",
@@ -760,6 +762,10 @@ export const ru: TranslationResources = {
         openService: "Открыть сервис {{hostname}}",
       },
       states: {
+        running: "Выполняется",
+        stopped: "Остановлено",
+        stopping: "Остановка…",
+        noListeners: "Прослушиваемые порты пока не обнаружены",
         startFailed: "Не удалось запустить {{launchName}}",
         stopFailed: "Не удалось остановить {{launchName}}",
         portRange: "порты {{base}}–{{end}}",

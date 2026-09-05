@@ -716,7 +716,7 @@ export const ko: TranslationResources = {
         view: "터미널 보기",
       },
       accessibility: {
-        trigger: "워크스페이스 스크립트",
+        trigger: "작업 공간 명령 실행",
         openService: "{{scriptName}} 서비스 보기",
         viewTerminal: "{{scriptName}} 터미널 보기",
         runScript: "{{scriptName}} 스크립트 실행",
@@ -739,8 +739,15 @@ export const ko: TranslationResources = {
     },
     launches: {
       title: "실행 구성",
-      actions: { start: "시작", stop: "중지", view: "터미널 보기", openService: "서비스 보기" },
+      actions: {
+        switch: "전환",
+        start: "시작",
+        stop: "중지",
+        view: "출력",
+        openService: "서비스 보기",
+      },
       accessibility: {
+        switchLaunch: "{{activeLaunchName}} 중지 후 {{launchName}} 시작",
         trigger: "작업 공간 실행 구성",
         launch: "{{launchName}} 실행 구성",
         startLaunch: "{{launchName}} 시작",
@@ -749,6 +756,10 @@ export const ko: TranslationResources = {
         openService: "{{hostname}} 서비스 보기",
       },
       states: {
+        running: "실행 중",
+        stopped: "중지됨",
+        stopping: "중지 중…",
+        noListeners: "아직 수신 대기 포트가 감지되지 않았습니다",
         startFailed: "{{launchName}}을(를) 시작하지 못했습니다",
         stopFailed: "{{launchName}}을(를) 중지하지 못했습니다",
         portRange: "포트 {{base}}–{{end}}",

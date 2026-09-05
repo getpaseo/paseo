@@ -658,6 +658,10 @@ describe("WorkspaceScriptsButton", () => {
 
     const startButton = document.querySelector('[data-testid="workspace-launches-start-dev"]');
     expect(startButton).toBeInstanceOf(HTMLButtonElement);
+    expect(startButton?.textContent).toBe("Start");
+    expect(
+      document.querySelector('[data-testid="workspace-launches-status-dev"]')?.textContent,
+    ).toBe("Stopped");
     fireEvent.click(startButton as HTMLElement);
     await act(async () => {});
 
@@ -666,6 +670,9 @@ describe("WorkspaceScriptsButton", () => {
       expect(
         document.querySelector('[data-testid="workspace-launches-start-dev-pending"]'),
       ).not.toBeNull();
+      expect(
+        document.querySelector('[data-testid="workspace-launches-status-dev"]')?.textContent,
+      ).toBe("Starting...");
     });
     fireEvent.click(
       document.querySelector('[data-testid="workspace-launches-start-dev"]') as HTMLElement,
@@ -697,6 +704,16 @@ describe("WorkspaceScriptsButton", () => {
         launch({ launchName: "worker", lifecycle: "running" }),
       ],
     });
+
+    const switchButton = document.querySelector('[data-testid="workspace-launches-start-dev"]');
+    expect(switchButton?.textContent).toBe("Switch");
+    expect(switchButton?.getAttribute("aria-label")).toBe("Stop worker and start dev");
+    expect(
+      document.querySelector('[data-testid="workspace-launches-status-worker"]')?.textContent,
+    ).toBe("Running");
+    expect(
+      document.querySelector('[data-testid="workspace-launches-item-worker"]')?.textContent,
+    ).toContain("No listening ports detected yet");
 
     fireEvent.click(
       document.querySelector('[data-testid="workspace-launches-start-dev"]') as HTMLElement,

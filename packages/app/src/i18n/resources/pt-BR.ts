@@ -719,7 +719,7 @@ export const ptBR: TranslationResources = {
         view: "Ver terminal",
       },
       accessibility: {
-        trigger: "Scripts do workspace",
+        trigger: "Executar comandos do espaço de trabalho",
         openService: "Ver serviço {{scriptName}}",
         viewTerminal: "Ver terminal de {{scriptName}}",
         runScript: "Executar script {{scriptName}}",
@@ -743,12 +743,14 @@ export const ptBR: TranslationResources = {
     launches: {
       title: "Inicializações",
       actions: {
+        switch: "Alternar",
         start: "Iniciar",
         stop: "Parar",
-        view: "Ver terminal",
+        view: "Saída",
         openService: "Ver serviço",
       },
       accessibility: {
+        switchLaunch: "Parar {{activeLaunchName}} e iniciar {{launchName}}",
         trigger: "Inicializações do espaço de trabalho",
         launch: "Inicialização {{launchName}}",
         startLaunch: "Iniciar {{launchName}}",
@@ -757,6 +759,10 @@ export const ptBR: TranslationResources = {
         openService: "Ver serviço {{hostname}}",
       },
       states: {
+        running: "Em execução",
+        stopped: "Parado",
+        stopping: "Parando…",
+        noListeners: "Nenhuma porta em escuta detectada ainda",
         startFailed: "Não foi possível iniciar {{launchName}}",
         stopFailed: "Não foi possível parar {{launchName}}",
         portRange: "portas {{base}}–{{end}}",
