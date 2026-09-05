@@ -329,6 +329,22 @@ describe("local project links", () => {
     expect(blocked.get(projectLinkPlacementKey(drifted[1]!))).toEqual({ kind: "blocked" });
   });
 
+  test("does not block grouping when a linked host is omitted from the projection", () => {
+    const placements = buildProjectLinkPlacements({ hosts: hosts() });
+    const link = {
+      id: "link-1",
+      members: placements.map(({ serverId, projectId }) => ({ serverId, projectId })),
+      identity: { repository: "github.com/acme/app", subdirectory: "packages/web" },
+    };
+
+    const overrides = buildProjectLinkGroupingOverrides({
+      placements: [placements[0]!],
+      links: [link],
+    });
+
+    expect(overrides).toEqual(new Map());
+  });
+
   test("keeps a saved cloud SSH-alias link valid after remote canonicalization", () => {
     const placements = buildProjectLinkPlacements({ hosts: hosts() });
     const link = {
