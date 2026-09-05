@@ -118,6 +118,8 @@ export interface WorkspaceDescriptor {
   name: string;
   title?: string | null;
   pinnedAt?: string | null;
+  pinGroupId?: string | null;
+  pinGroupAssignedAt?: string | null;
   labels?: string[];
   status: WorkspaceDescriptorPayload["status"];
   statusEnteredAt: Date | null;
@@ -155,6 +157,9 @@ export function normalizeWorkspaceDescriptor(
     name: payload.name,
     title: payload.title ?? null,
     pinnedAt: payload.pinnedAt ?? null,
+    // COMPAT(workspacePinGroups): added in v0.7.0, remove defaults after 2027-03-01.
+    pinGroupId: payload.pinGroupId ?? null,
+    pinGroupAssignedAt: payload.pinGroupAssignedAt ?? null,
     // COMPAT(workspaceLabels): old daemons omit assignments.
     labels: payload.labels ?? [],
     status: payload.status,

@@ -6,6 +6,7 @@ import { resolvePaseoHome } from "./paseo-home.js";
 import { createRootLogger } from "./logger.js";
 import type { DaemonLifecycleIntent } from "./bootstrap.js";
 import { getProcessDiagnostics } from "./process-diagnostics.js";
+import { WorkspaceRegistryIntegrityError } from "./workspace-registry.js";
 
 process.title = "Paseo Daemon";
 
@@ -317,6 +318,12 @@ async function main() {
     );
   } catch (err) {
     logger.fatal({ err }, "Daemon bootstrap failed");
+    if (err instanceof WorkspaceRegistryIntegrityError) {
+      sendSupervisorLifecycleMessage({
+        type: "paseo:shutdown",
+        reason: "workspace_registry_integrity_failure",
+      });
+    }
     throw err;
   }
 

@@ -113,7 +113,7 @@ export interface WorkspaceCommandCenterSource {
     canSplitPanes: boolean;
     canOpenBrowserTabs: boolean;
     isGit: boolean;
-    /** Host supports the `workspacePinning` feature. */
+    /** Host supports the `workspacePinGroups` feature. */
     canPin: boolean;
     /** The workspace has setup commands or a setup error — same gate as the header menu. */
     canShowSetup: boolean;

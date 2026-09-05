@@ -1,14 +1,20 @@
 import os from "node:os";
 import path from "node:path";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 
-import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
 import { createTestLogger } from "../test-utils/test-logger.js";
 import { AgentStorage } from "./agent/agent-storage.js";
 import { createNoopWorkspaceGitService } from "./test-utils/workspace-git-service-stub.js";
 import type { WorkspaceGitService } from "./workspace-git-service.js";
-import { FileBackedProjectRegistry, FileBackedWorkspaceRegistry } from "./workspace-registry.js";
+import {
+  createPersistedProjectRecord,
+  createPersistedWorkspaceRecord,
+  FileBackedProjectRegistry,
+  FileBackedWorkspaceRegistry,
+  WorkspaceRegistryIntegrityError,
+} from "./workspace-registry.js";
 import { bootstrapWorkspaceRegistries } from "./workspace-registry-bootstrap.js";
 import { deriveProjectKey } from "./project-key.js";
 
@@ -576,5 +582,111 @@ describe("bootstrapWorkspaceRegistries", () => {
     const projects = await projectRegistry.list();
     expect(projects).toHaveLength(1);
     expect(projects[0]?.projectId).toBe(NON_GIT_PROJECT);
+  });
+
+  test("blocks bootstrap reconstruction after primary loss until the registry is restored", async () => {
+    const projectsPath = path.join(paseoHome, "projects", "projects.json");
+    const workspacesPath = path.join(paseoHome, "projects", "workspaces.json");
+    const sidecarPath = path.join(paseoHome, "projects", "workspace-pin-groups.json");
+    const backupPath = path.join(paseoHome, "projects", "workspace-pin-groups.backup.json");
+    const markerPath = path.join(paseoHome, "projects", "workspace-pin-groups.expected.json");
+
+    await projectRegistry.initialize();
+    await projectRegistry.upsert(
+      createPersistedProjectRecord({
+        projectId: "proj-preserved",
+        rootPath: NON_GIT_PROJECT,
+        kind: "non_git",
+        displayName: "Preserved project",
+        createdAt: "2026-08-31T12:00:00.000Z",
+        updatedAt: "2026-08-31T12:00:00.000Z",
+      }),
+    );
+    await workspaceRegistry.initialize();
+    await workspaceRegistry.upsert(
+      createPersistedWorkspaceRecord({
+        workspaceId: "ws-preserved",
+        projectId: "proj-preserved",
+        cwd: NON_GIT_PROJECT,
+        kind: "directory",
+        displayName: "Preserved workspace",
+        createdAt: "2026-08-31T12:00:00.000Z",
+        updatedAt: "2026-08-31T12:00:00.000Z",
+      }),
+    );
+    const group = await workspaceRegistry.createPinGroup("Preserved");
+    await workspaceRegistry.setWorkspacePinGroup({
+      workspaceId: "ws-preserved",
+      groupId: group.id,
+      updatedAt: "2026-08-31T13:00:00.000Z",
+    });
+    await agentStorage.initialize();
+    await agentStorage.upsert({
+      id: "agent-preserved",
+      provider: "codex",
+      cwd: NON_GIT_PROJECT,
+      workspaceId: "ws-preserved",
+      createdAt: "2026-08-31T12:00:00.000Z",
+      updatedAt: "2026-08-31T13:00:00.000Z",
+      lastActivityAt: "2026-08-31T13:00:00.000Z",
+      lastUserMessageAt: null,
+      title: null,
+      labels: {},
+      lastStatus: "idle",
+      lastModeId: null,
+      config: null,
+      runtimeInfo: { provider: "codex", sessionId: null },
+      persistence: null,
+      archivedAt: null,
+    });
+    const primaryBytes = readFileSync(workspacesPath, "utf8");
+    const sidecarBytes = readFileSync(sidecarPath, "utf8");
+    const backupBytes = readFileSync(backupPath, "utf8");
+    const markerBytes = readFileSync(markerPath, "utf8");
+    rmSync(workspacesPath);
+
+    const getCheckout = vi.fn(workspaceGitService.getCheckout);
+    workspaceGitService = { ...workspaceGitService, getCheckout };
+    projectRegistry = new FileBackedProjectRegistry(projectsPath, logger);
+    workspaceRegistry = new FileBackedWorkspaceRegistry(workspacesPath, logger);
+
+    await expect(
+      bootstrapWorkspaceRegistries({
+        paseoHome,
+        agentStorage,
+        projectRegistry,
+        workspaceRegistry,
+        workspaceGitService,
+        logger,
+      }),
+    ).rejects.toBeInstanceOf(WorkspaceRegistryIntegrityError);
+    expect(getCheckout).not.toHaveBeenCalled();
+    expect(existsSync(workspacesPath)).toBe(false);
+    expect(readFileSync(sidecarPath, "utf8")).toBe(sidecarBytes);
+    expect(readFileSync(backupPath, "utf8")).toBe(backupBytes);
+    expect(readFileSync(markerPath, "utf8")).toBe(markerBytes);
+
+    writeFileSync(workspacesPath, primaryBytes);
+    projectRegistry = new FileBackedProjectRegistry(projectsPath, logger);
+    workspaceRegistry = new FileBackedWorkspaceRegistry(workspacesPath, logger);
+    await bootstrapWorkspaceRegistries({
+      paseoHome,
+      agentStorage,
+      projectRegistry,
+      workspaceRegistry,
+      workspaceGitService,
+      logger,
+    });
+
+    expect(await workspaceRegistry.get("ws-preserved")).toMatchObject({
+      pinGroupId: group.id,
+      pinGroupAssignedAt: "2026-08-31T13:00:00.000Z",
+      pinnedAt: null,
+    });
+    expect(JSON.parse(readFileSync(sidecarPath, "utf8"))).toMatchObject({
+      memberships: {
+        "ws-preserved": { groupId: group.id, assignedAt: "2026-08-31T13:00:00.000Z" },
+      },
+    });
   });
 });

@@ -1126,6 +1126,7 @@ export const es: TranslationResources = {
       clear: "Borrar filtros",
     },
     pinned: {
+      ...en.sidebar.pinned,
       title: "Anclados",
     },
     host: {

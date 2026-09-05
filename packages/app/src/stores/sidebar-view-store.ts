@@ -7,9 +7,16 @@ import { createValidatedPersistStorage } from "@/storage/validated-persist-stora
 
 export type SidebarGroupMode = "project" | "status";
 
+export const DEFAULT_WORKSPACE_PIN_GROUP_ID = "default";
+
+export interface WorkspacePinGroupSelection {
+  serverId: string;
+  groupId: string;
+}
+
 const SIDEBAR_VIEW_STORAGE_KEY = "sidebar-view";
 const LEGACY_SIDEBAR_GROUP_MODE_STORAGE_KEY = "sidebar-group-mode";
-const SIDEBAR_VIEW_STORE_VERSION = 6;
+const SIDEBAR_VIEW_STORE_VERSION = 9;
 
 /**
  * The key standing for "this workspace carries no labels at all".
@@ -47,6 +54,7 @@ function toggleFilterEntry(list: readonly string[], key: string): string[] {
 
 interface SidebarViewStoreState {
   groupMode: SidebarGroupMode;
+  activePinGroup: WorkspacePinGroupSelection | null;
   // Empty means "all hosts". A non-empty list pins the sidebar to those hosts.
   hostFilters: string[];
   /**
@@ -62,6 +70,7 @@ interface SidebarViewStoreState {
   projectFilters: string[];
   labelFilter: SidebarLabelFilter;
   setGroupMode: (mode: SidebarGroupMode) => void;
+  setActivePinGroup: (selection: WorkspacePinGroupSelection | null) => void;
   toggleHostFilter: (serverId: string) => void;
   clearHostFilters: () => void;
   toggleProjectFilter: (viewKey: string) => void;
@@ -70,10 +79,12 @@ interface SidebarViewStoreState {
   clearLabelFilter: () => void;
   reconcileLabelFilter: (labels: readonly string[]) => void;
   reconcileHostFilters: (serverIds: readonly string[]) => void;
+  reconcilePinGroups: (serverId: string, groupIds: readonly string[]) => void;
 }
 
 interface SidebarViewPersistedState {
   groupMode: SidebarGroupMode;
+  activePinGroup: WorkspacePinGroupSelection | null;
   hostFilters: string[];
   projectFilters: string[];
   labelFilter: SidebarLabelFilter;
@@ -83,8 +94,17 @@ const PersistedSidebarGroupModeSchema = z.enum(["project", "status", "label"]);
 const SidebarLabelFilterSchema = z.object({
   labels: z.array(z.string()),
 });
+const WorkspacePinGroupSelectionSchema = z.object({
+  serverId: z.string(),
+  groupId: z.string(),
+});
 const SidebarViewPersistedStateSchema = z.strictObject({
   groupMode: PersistedSidebarGroupModeSchema.optional(),
+  activePinGroup: WorkspacePinGroupSelectionSchema.nullable().optional(),
+  // COMPAT(workspacePinGroupSelection): v7-v8 persisted these as parallel fields. Remove after
+  // 2027-03-01 once that client-state window has aged out.
+  activePinGroupId: z.string().optional(),
+  activePinGroupServerId: z.string().nullable().optional(),
   hostFilters: z.array(z.string()).optional(),
   hostFilter: z.string().nullable().optional(),
   projectFilters: z.array(z.string()).optional(),
@@ -118,11 +138,29 @@ function readHostFilters(persistedState: SidebarViewStorageState): string[] {
   return legacyHostFilter ? [legacyHostFilter] : [];
 }
 
+function normalizePinGroupSelection(
+  selection: WorkspacePinGroupSelection | null | undefined,
+): WorkspacePinGroupSelection | null {
+  const serverId = selection?.serverId.trim() ?? "";
+  const groupId = selection?.groupId.trim() ?? "";
+  return serverId && groupId ? { serverId, groupId } : null;
+}
+
+function readPinGroupSelection(state: SidebarViewStorageState): WorkspacePinGroupSelection | null {
+  const selection = normalizePinGroupSelection(state.activePinGroup);
+  if (selection) return selection;
+
+  const serverId = state.activePinGroupServerId?.trim() ?? "";
+  const groupId = state.activePinGroupId?.trim() ?? "";
+  return serverId && groupId ? { serverId, groupId } : null;
+}
+
 export function migrateSidebarViewState(persistedState: unknown): SidebarViewPersistedState {
   const result = SidebarViewPersistedStateSchema.safeParse(persistedState);
   if (!result.success) {
     return {
       groupMode: "project",
+      activePinGroup: null,
       hostFilters: [],
       projectFilters: [],
       labelFilter: emptyLabelFilter(),
@@ -134,6 +172,7 @@ export function migrateSidebarViewState(persistedState: unknown): SidebarViewPer
   if (legacyGroupMode) {
     return {
       groupMode: legacyGroupMode,
+      activePinGroup: null,
       hostFilters: [],
       projectFilters: [],
       labelFilter: emptyLabelFilter(),
@@ -142,6 +181,7 @@ export function migrateSidebarViewState(persistedState: unknown): SidebarViewPer
 
   return {
     groupMode: state.groupMode === "status" ? "status" : "project",
+    activePinGroup: readPinGroupSelection(state),
     hostFilters: readHostFilters(state),
     projectFilters: state.projectFilters ?? [],
     labelFilter: state.labelFilter
@@ -179,10 +219,13 @@ export const useSidebarViewStore = create<SidebarViewStoreState>()(
   persist(
     (set) => ({
       groupMode: "project",
+      activePinGroup: null,
       hostFilters: [],
       projectFilters: [],
       labelFilter: emptyLabelFilter(),
       setGroupMode: (mode) => set({ groupMode: mode }),
+      setActivePinGroup: (selection) =>
+        set({ activePinGroup: normalizePinGroupSelection(selection) }),
       toggleHostFilter: (serverId) =>
         set((state) => ({ hostFilters: toggleFilterEntry(state.hostFilters, serverId) })),
       clearHostFilters: () => set({ hostFilters: [] }),
@@ -209,15 +252,27 @@ export const useSidebarViewStore = create<SidebarViewStoreState>()(
         }),
       reconcileHostFilters: (serverIds) =>
         set((state) => {
-          if (state.hostFilters.length === 0) {
-            return state;
-          }
           const allowed = new Set(serverIds);
-          const next = state.hostFilters.filter((id) => allowed.has(id));
-          if (next.length === state.hostFilters.length) {
+          const hostFilters = state.hostFilters.filter((id) => allowed.has(id));
+          const activePinGroupOwnerRemoved =
+            state.activePinGroup !== null && !allowed.has(state.activePinGroup.serverId);
+          if (hostFilters.length === state.hostFilters.length && !activePinGroupOwnerRemoved) {
             return state;
           }
-          return { hostFilters: next };
+          return {
+            hostFilters,
+            ...(activePinGroupOwnerRemoved ? { activePinGroup: null } : {}),
+          };
+        }),
+      reconcilePinGroups: (serverId, groupIds) =>
+        set((state) => {
+          if (state.activePinGroup?.serverId !== serverId) return state;
+          if (groupIds.includes(state.activePinGroup.groupId)) return state;
+          return {
+            activePinGroup: groupIds.includes(DEFAULT_WORKSPACE_PIN_GROUP_ID)
+              ? { serverId, groupId: DEFAULT_WORKSPACE_PIN_GROUP_ID }
+              : null,
+          };
         }),
     }),
     {
@@ -229,6 +284,7 @@ export const useSidebarViewStore = create<SidebarViewStoreState>()(
       ),
       partialize: (state) => ({
         groupMode: state.groupMode,
+        activePinGroup: state.activePinGroup,
         hostFilters: state.hostFilters,
         projectFilters: state.projectFilters,
         labelFilter: state.labelFilter,

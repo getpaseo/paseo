@@ -22,6 +22,7 @@ import {
   type ProjectPlacementPayload,
   type WorkspaceSetupSnapshot,
   type WorkspaceDescriptorPayload,
+  type WorkspacePinGroup,
 } from "./messages.js";
 import type {
   TerminalManager,
@@ -145,6 +146,7 @@ import {
 } from "./workspace-registry-model.js";
 import { resolveWorkspaceIdForPath } from "./resolve-workspace-id-for-path.js";
 import {
+  DEFAULT_WORKSPACE_PIN_GROUP_ID,
   resolveProjectDisplayName,
   resolveWorkspaceDisplayName,
   resolveWorkspaceName,
@@ -612,7 +614,12 @@ interface WorkspaceUpdateOptions {
   dedupeGitState?: boolean;
   removedProjectId?: string;
   optimisticStatus?: WorkspaceDescriptorPayload["status"];
+  pinGroups?: WorkspacePinGroup[];
 }
+
+// A catalog-only invalidation still uses the backward-compatible workspace update envelope.
+// Old clients treat this unknown removal as a no-op; capable clients consume `pinGroups`.
+const WORKSPACE_PIN_GROUP_CATALOG_UPDATE_ID = "__workspace_pin_groups__";
 
 function resolveDirectorySync(service: DirectorySyncService | undefined): DirectorySyncService {
   return service ?? new DirectorySyncService();
@@ -1531,6 +1538,12 @@ export class Session {
       if (this.isCleanedUp) {
         return;
       }
+      if (mutation.kind === "pin_groups") {
+        await this.emitWorkspaceUpdatesForWorkspaceIds([WORKSPACE_PIN_GROUP_CATALOG_UPDATE_ID], {
+          pinGroups: mutation.pinGroups,
+        });
+        return;
+      }
       if (
         mutation.kind === "archive" ||
         mutation.kind === "remove" ||
@@ -1549,13 +1562,19 @@ export class Session {
       );
     } catch (error) {
       this.sessionLogger.warn(
-        { err: error, workspaceId: mutation.workspaceId, mutationKind: mutation.kind },
+        {
+          err: error,
+          workspaceId: mutation.kind === "pin_groups" ? undefined : mutation.workspaceId,
+          mutationKind: mutation.kind,
+        },
         "Failed to apply workspace mutation to session",
       );
     }
   }
 
-  private async syncWorkspaceMutationObserver(mutation: WorkspaceMutation): Promise<void> {
+  private async syncWorkspaceMutationObserver(
+    mutation: Exclude<WorkspaceMutation, { kind: "pin_groups" }>,
+  ): Promise<void> {
     const subscription = this.workspaceUpdatesSubscription;
     if (!mutation.workspace || !subscription) {
       return;
@@ -1988,6 +2007,7 @@ export class Session {
       this.dispatchAgentConfigMessage(msg) ??
       this.dispatchCheckoutMessage(msg) ??
       this.dispatchWorkspaceLifecycleMessage(msg) ??
+      this.dispatchWorkspacePinGroupMessage(msg) ??
       this.dispatchWorkspaceFileMessage(msg, source) ??
       this.dispatchProviderMessage(msg) ??
       this.dispatchOrchestrationSkillsMessage(msg) ??
@@ -2547,6 +2567,27 @@ export class Session {
         return this.handleWorkspaceTitleSetRequest(msg.workspaceId, msg.title, msg.requestId);
       case "workspace.pin.set.request":
         return this.handleWorkspacePinSetRequest(msg.workspaceId, msg.pinned, msg.requestId);
+      default:
+        return undefined;
+    }
+  }
+
+  private dispatchWorkspacePinGroupMessage(msg: SessionInboundMessage): Promise<void> | undefined {
+    switch (msg.type) {
+      case "workspace.pin_group.list.request":
+        return this.handleWorkspacePinGroupListRequest(msg.requestId);
+      case "workspace.pin_group.set_membership.request":
+        return this.handleWorkspacePinGroupSetMembershipRequest(
+          msg.workspaceId,
+          msg.groupId,
+          msg.requestId,
+        );
+      case "workspace.pin_group.create.request":
+        return this.handleWorkspacePinGroupCreateRequest(msg.name, msg.requestId);
+      case "workspace.pin_group.rename.request":
+        return this.handleWorkspacePinGroupRenameRequest(msg.groupId, msg.name, msg.requestId);
+      case "workspace.pin_group.delete.request":
+        return this.handleWorkspacePinGroupDeleteRequest(msg.groupId, msg.requestId);
       default:
         return undefined;
     }
@@ -3381,28 +3422,40 @@ export class Session {
     pinned: boolean,
     requestId: string,
   ): Promise<void> {
+    const resolvedGroupId = pinned ? DEFAULT_WORKSPACE_PIN_GROUP_ID : null;
     const logContext = { workspaceId, pinned, requestId };
     this.sessionLogger.info(logContext, "session: workspace.pin.set.request");
-    const emitResponse = (accepted: boolean, pinnedAt: string | null, error: string | null) => {
+    const emitResponse = (input: {
+      accepted: boolean;
+      pinnedAt: string | null;
+      error: string | null;
+    }) => {
       this.emit({
         type: "workspace.pin.set.response",
-        payload: { requestId, workspaceId, accepted, pinnedAt, error },
+        payload: { requestId, workspaceId, ...input },
       });
     };
 
     try {
-      const nextPinnedAt = pinned ? new Date().toISOString() : null;
       const updatedAt = new Date().toISOString();
-      const updated = await this.workspaceRegistry.update(workspaceId, (existing) => ({
-        ...existing,
-        pinnedAt: nextPinnedAt,
+      const updated = await this.workspaceRegistry.setWorkspacePinGroup({
+        workspaceId,
+        groupId: resolvedGroupId,
         updatedAt,
-      }));
+      });
       if (!updated) {
-        emitResponse(false, null, "Workspace not found");
+        emitResponse({
+          accepted: false,
+          pinnedAt: null,
+          error: "Workspace not found",
+        });
         return;
       }
-      emitResponse(true, nextPinnedAt, null);
+      emitResponse({
+        accepted: true,
+        pinnedAt: updated.pinnedAt,
+        error: null,
+      });
       await this.emitWorkspaceUpdatesForWorkspaceIds([workspaceId]);
     } catch (error) {
       this.sessionLogger.error(
@@ -3418,8 +3471,73 @@ export class Session {
           content: `Failed to pin workspace: ${getErrorMessage(error)}`,
         },
       });
-      emitResponse(false, null, getErrorMessageOr(error, "Failed to pin workspace"));
+      emitResponse({
+        accepted: false,
+        pinnedAt: null,
+        error: getErrorMessageOr(error, "Failed to pin workspace"),
+      });
     }
+  }
+
+  private async handleWorkspacePinGroupListRequest(requestId: string): Promise<void> {
+    const groups = await this.workspaceRegistry.listPinGroups();
+    this.emit({
+      type: "workspace.pin_group.list.response",
+      payload: { requestId, groups },
+    });
+  }
+
+  private async handleWorkspacePinGroupSetMembershipRequest(
+    workspaceId: string,
+    groupId: string | null,
+    requestId: string,
+  ): Promise<void> {
+    const updated = await this.workspaceRegistry.setWorkspacePinGroup({
+      workspaceId,
+      groupId,
+      updatedAt: new Date().toISOString(),
+    });
+    if (!updated) throw new Error("Workspace not found");
+    this.emit({
+      type: "workspace.pin_group.set_membership.response",
+      payload: { requestId, workspaceId, groupId: updated.pinGroupId },
+    });
+    await this.emitWorkspaceUpdatesForWorkspaceIds([workspaceId]);
+  }
+
+  private async handleWorkspacePinGroupCreateRequest(
+    name: string,
+    requestId: string,
+  ): Promise<void> {
+    const group = await this.workspaceRegistry.createPinGroup(name);
+    this.emit({
+      type: "workspace.pin_group.create.response",
+      payload: { requestId, group },
+    });
+  }
+
+  private async handleWorkspacePinGroupRenameRequest(
+    groupId: string,
+    name: string,
+    requestId: string,
+  ): Promise<void> {
+    const group = await this.workspaceRegistry.renamePinGroup(groupId, name);
+    this.emit({
+      type: "workspace.pin_group.rename.response",
+      payload: { requestId, group },
+    });
+  }
+
+  private async handleWorkspacePinGroupDeleteRequest(
+    groupId: string,
+    requestId: string,
+  ): Promise<void> {
+    const unpinnedWorkspaceIds = await this.workspaceRegistry.deletePinGroup(groupId);
+    this.emit({
+      type: "workspace.pin_group.delete.response",
+      payload: { requestId, groupId },
+    });
+    await this.emitWorkspaceUpdatesForWorkspaceIds(unpinnedWorkspaceIds);
   }
 
   private async handleWorkspaceRecoveryInspectRequest(
@@ -4934,6 +5052,8 @@ export class Session {
       name: resolveWorkspaceDisplayName(workspace),
       title: workspace.title,
       pinnedAt: workspace.pinnedAt,
+      pinGroupId: workspace.pinGroupId,
+      pinGroupAssignedAt: workspace.pinGroupAssignedAt,
       ...(workspace.labels && workspace.labels.length > 0 ? { labels: workspace.labels } : {}),
       archivingAt: null,
       status: "done",
@@ -5026,6 +5146,8 @@ export class Session {
       }),
       title: result.workspace.title,
       pinnedAt: result.workspace.pinnedAt,
+      pinGroupId: result.workspace.pinGroupId,
+      pinGroupAssignedAt: result.workspace.pinGroupAssignedAt,
       ...(result.workspace.labels && result.workspace.labels.length > 0
         ? { labels: result.workspace.labels }
         : {}),
@@ -5391,7 +5513,7 @@ export class Session {
       }
       this.workspaceGitObserver.recordDescriptorState(workspaceId, nextWorkspace);
       if (!nextWorkspace) {
-        if (this.shouldSkipWorkspaceRemoval(lastEmitted, options?.removedProjectId)) {
+        if (this.shouldSkipWorkspaceRemovalUpdate(lastEmitted, options)) {
           continue;
         }
         if (this.workspaceUpdatesSubscription !== subscription) {
@@ -5405,7 +5527,7 @@ export class Session {
         this.bufferOrEmitWorkspaceUpdate(
           subscription,
           this.directorySync.sequenceWorkspaceUpdate(
-            removePayload,
+            this.attachPinGroupCatalog(removePayload, options?.pinGroups),
             workspace ?? null,
             workspaceId,
             subscription.syncEnabled === true,
@@ -5415,22 +5537,48 @@ export class Session {
       }
 
       const nextPayload: WorkspaceUpdatePayload = this.directorySync.sequenceWorkspaceUpdate(
-        { kind: "upsert", workspace: nextWorkspace },
+        this.attachPinGroupCatalog(
+          { kind: "upsert", workspace: nextWorkspace },
+          options?.pinGroups,
+        ),
         workspace ?? null,
         workspaceId,
         subscription.syncEnabled === true,
       );
 
-      if (
-        lastEmitted &&
-        lastEmitted.kind === "upsert" &&
-        equal(lastEmitted.workspace, nextWorkspace)
-      ) {
+      if (this.shouldSkipWorkspaceUpsertUpdate(lastEmitted, nextWorkspace, options)) {
         continue;
       }
 
       this.bufferOrEmitWorkspaceUpdate(subscription, nextPayload);
     }
+  }
+
+  private attachPinGroupCatalog<TPayload extends WorkspaceUpdatePayload>(
+    payload: TPayload,
+    pinGroups: WorkspacePinGroup[] | undefined,
+  ): TPayload {
+    if (pinGroups === undefined) return payload;
+    return { ...payload, pinGroups };
+  }
+
+  private shouldSkipWorkspaceRemovalUpdate(
+    lastEmitted: WorkspaceUpdatePayload | undefined,
+    options: WorkspaceUpdateOptions | undefined,
+  ): boolean {
+    if (options?.pinGroups !== undefined) return false;
+    return this.shouldSkipWorkspaceRemoval(lastEmitted, options?.removedProjectId);
+  }
+
+  private shouldSkipWorkspaceUpsertUpdate(
+    lastEmitted: WorkspaceUpdatePayload | undefined,
+    nextWorkspace: WorkspaceDescriptorPayload,
+    options: WorkspaceUpdateOptions | undefined,
+  ): boolean {
+    if (options?.pinGroups !== undefined || !lastEmitted || lastEmitted.kind !== "upsert") {
+      return false;
+    }
+    return equal(lastEmitted.workspace, nextWorkspace);
   }
 
   private applyOptimisticWorkspaceStatus(

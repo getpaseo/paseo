@@ -1117,6 +1117,7 @@ export const ptBR: TranslationResources = {
       clear: "Limpar filtros",
     },
     pinned: {
+      ...en.sidebar.pinned,
       title: "Fixados",
     },
     host: {

@@ -57,6 +57,8 @@ $PASEO_HOME/
 ├── projects/
 │   ├── projects.json                    # Project registry
 │   ├── workspaces.json                  # Workspace registry
+│   ├── workspace-pin-groups.json        # Pin-group catalog and membership order
+│   ├── workspace-pin-groups.transaction.json # Recoverable pin-group/workspace commit
 │   ├── workspace-labels.json            # Shared host-local label catalog
 │   ├── workspace-labels.transaction.json # Recoverable catalog/assignment compound commit
 │   └── icons/                           # Host-local custom project icon images
@@ -474,9 +476,36 @@ workspace together with its owning project.
 
 ## 5. Workspace Registry
 
-**Path:** `$PASEO_HOME/projects/workspaces.json`
+**Paths:** `$PASEO_HOME/projects/workspaces.json`,
+`$PASEO_HOME/projects/workspace-pin-groups.json`, and
+`$PASEO_HOME/projects/workspace-pin-groups.transaction.json`. The pin-group sidecar also has
+`workspace-pin-groups.backup.json` and `workspace-pin-groups.expected.json` siblings.
 
-Array of workspace records. A workspace is a specific working directory within a project.
+`workspaces.json` remains an array of workspace records so a downgraded daemon can still read every
+workspace. The pin-group sidecar owns its catalog and memberships and records the SHA-256 hash of
+the primary bytes it was written with. A changed primary hash means a downgraded daemon wrote the
+array; the next upgrade accepts its workspace fields and reconciles `pinnedAt` as default-group
+membership before updating the sidecar projection. The mirrored sidecar restores one missing
+catalog copy. The expected marker makes losing both copies a startup error instead of an empty
+migration.
+
+The versioned transaction journal stores raw before-images and hashes for every file. Prepared
+recovery rolls back files matching a known before- or after-image. If a valid later primary exists,
+prepared and committed recovery preserve it, converge the sidecar artifacts on the transaction's
+after-image, and let primary-hash reconciliation accept the downgrade write. Recovery validates a
+later primary before changing any artifact. Unknown auxiliary states block startup without writes;
+manual recovery must restore the complete pre-transaction snapshot before removing the journal. A
+missing primary with any established sidecar, backup, or marker blocks startup until you restore
+the primary or explicitly reset the pin-group artifacts. Unknown newer sidecar and journal format
+versions, malformed or integrity-invalid journals, and persistent journal read failures block
+startup as integrity failures without rewriting their bytes. A future-version journal must be
+opened by a newer daemon, as must a future-version sidecar, backup, or expected marker. Permission
+failures require repairing access to the journal. Other persistent filesystem failures require
+repairing the journal path before recovery. Only `EAGAIN`, `EBUSY`, `EMFILE`, and `ENFILE` stay on
+the ordinary retry path. These atomic rename and journal guarantees cover process crashes. They do
+not promise recovery from power loss because the atomic writer does not fsync file and directory
+entries. A malformed primary file or sidecar blocks initialization and remains byte-for-byte
+untouched. A workspace is a specific working directory within a project.
 
 | Field                          | Type                                                         | Description                                                                                                                                                                                   |
 | ------------------------------ | ------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -496,10 +525,20 @@ Array of workspace records. A workspace is a specific working directory within a
 | `archivedAt`                   | `string \| null` (ISO 8601)                                  | Soft-delete; required nullable                                                                                                                                                                |
 | `autoArchivedChangeRequestUrl` | `string \| null`                                             | Change request whose merged state triggered auto-archive. Restore replaces it with the current merged change request, when present, so repeated snapshots cannot archive the workspace again. |
 | `labels`                       | `string[]?`                                                  | Normalized display names assigned from this host's shared label catalog. Missing means unlabelled.                                                                                            |
-| `pinnedAt`                     | `string \| null` (ISO 8601)                                  | Pinned-to-top-of-sidebar timestamp; null means "not pinned"                                                                                                                                   |
+| `pinnedAt`                     | `string \| null` (ISO 8601)                                  | Old-client pin projection. Non-null only for membership in the `default` group.                                                                                                               |
 | `untrustedSource`              | `{ kind: "change_request", forge, number, headRepository }?` | Provenance captured when a cross-repository change request creates the workspace. Missing means repository automation is allowed; explicit setup removes the field.                           |
 
 > **Opaque-ID invariant:** `workspaceId` is opaque identity, never a filesystem path. Filesystem and git operations take `cwd`/`workspaceDirectory` only — never the id. A compatibility-only first-materialization bootstrap still groups pre-registry agent records by path and Git remote so existing installs retain their legacy records. That grouping never runs against a live registry, and its keys are not runtime project or workspace identity.
+
+### Workspace pin groups
+
+The sidecar stores `formatVersion`, `primaryContentHash`, `groups: [{ id, name, createdAt }]`, and a
+workspace-keyed `memberships` object. Each membership contains one `groupId` and its ISO
+`assignedAt`, which is the ordering timestamp for that group. The daemon always owns the `default`
+group named `Pinned`; you cannot rename or delete it. Legacy records with `pinnedAt` join that group
+on initialization. The daemon continues writing `pinnedAt` only for default-group members so older
+builds can display those pins. Deleting another group removes its memberships without archiving its
+workspaces.
 
 ### Workspace label catalog
 

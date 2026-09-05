@@ -3135,6 +3135,155 @@ test("sends project.remove.request", async () => {
   await expect(removePromise).resolves.toEqual({ removedWorkspaceIds: ["ws-main"] });
 });
 
+test("sends workspace pin group CRUD requests and returns their groups", async () => {
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "pin-groups-unit-test",
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+
+  const defaultGroup = {
+    id: "default",
+    name: "Pinned",
+    createdAt: "2026-08-31T12:00:00.000Z",
+  };
+  const listPromise = client.listWorkspacePinGroups("req-pin-group-list");
+  expect(parseSentFrame(mock.sent[0])).toEqual({
+    type: "workspace.pin_group.list.request",
+    requestId: "req-pin-group-list",
+  });
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "workspace.pin_group.list.response",
+      payload: { requestId: "req-pin-group-list", groups: [defaultGroup] },
+    }),
+  );
+  await expect(listPromise).resolves.toEqual([defaultGroup]);
+
+  const focusGroup = { ...defaultGroup, id: "pgrp-focus", name: "Focus" };
+  const createPromise = client.createWorkspacePinGroup("Focus", "req-pin-group-create");
+  expect(parseSentFrame(mock.sent[1])).toEqual({
+    type: "workspace.pin_group.create.request",
+    requestId: "req-pin-group-create",
+    name: "Focus",
+  });
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "workspace.pin_group.create.response",
+      payload: { requestId: "req-pin-group-create", group: focusGroup },
+    }),
+  );
+  await expect(createPromise).resolves.toEqual(focusGroup);
+
+  const renamedGroup = { ...focusGroup, name: "This week" };
+  const renamePromise = client.renameWorkspacePinGroup(
+    focusGroup.id,
+    "This week",
+    "req-pin-group-rename",
+  );
+  expect(parseSentFrame(mock.sent[2])).toEqual({
+    type: "workspace.pin_group.rename.request",
+    requestId: "req-pin-group-rename",
+    groupId: focusGroup.id,
+    name: "This week",
+  });
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "workspace.pin_group.rename.response",
+      payload: { requestId: "req-pin-group-rename", group: renamedGroup },
+    }),
+  );
+  await expect(renamePromise).resolves.toEqual(renamedGroup);
+
+  const deletePromise = client.deleteWorkspacePinGroup(focusGroup.id, "req-pin-group-delete");
+  expect(parseSentFrame(mock.sent[3])).toEqual({
+    type: "workspace.pin_group.delete.request",
+    requestId: "req-pin-group-delete",
+    groupId: focusGroup.id,
+  });
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "workspace.pin_group.delete.response",
+      payload: { requestId: "req-pin-group-delete", groupId: focusGroup.id },
+    }),
+  );
+  await expect(deletePromise).resolves.toBeUndefined();
+});
+
+test("keeps the legacy workspace pin request unchanged", async () => {
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "pin-membership-unit-test",
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+
+  const pinPromise = client.setWorkspacePinned("ws-1", true, "req-pin-default");
+  expect(parseSentFrame(mock.sent[0])).toEqual({
+    type: "workspace.pin.set.request",
+    requestId: "req-pin-default",
+    workspaceId: "ws-1",
+    pinned: true,
+  });
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "workspace.pin.set.response",
+      payload: {
+        requestId: "req-pin-default",
+        workspaceId: "ws-1",
+        accepted: true,
+        pinnedAt: "2026-08-31T12:00:00.000Z",
+        error: null,
+      },
+    }),
+  );
+  await expect(pinPromise).resolves.toEqual({ pinnedAt: "2026-08-31T12:00:00.000Z" });
+});
+
+test("sends workspace group membership through its dotted RPC", async () => {
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "pin-membership-unit-test",
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+
+  const pinPromise = client.setWorkspacePinGroup("ws-1", "pgrp-focus", "req-pin-membership");
+  expect(parseSentFrame(mock.sent[0])).toEqual({
+    type: "workspace.pin_group.set_membership.request",
+    requestId: "req-pin-membership",
+    workspaceId: "ws-1",
+    groupId: "pgrp-focus",
+  });
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "workspace.pin_group.set_membership.response",
+      payload: {
+        requestId: "req-pin-membership",
+        workspaceId: "ws-1",
+        groupId: "pgrp-focus",
+      },
+    }),
+  );
+  await expect(pinPromise).resolves.toEqual({ groupId: "pgrp-focus" });
+});
+
 test("sends worktree base-ref fields in create_paseo_worktree_request", async () => {
   const logger = createMockLogger();
   const mock = createMockTransport();

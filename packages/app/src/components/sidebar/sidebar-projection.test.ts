@@ -73,7 +73,7 @@ function projectionInput(options?: {
     projects: [makeProject([pinned.placement, unpinned.placement])],
     pinnedKeys: {
       pinnedWorkspaceKeys: [pinned.placement.workspaceKey],
-      pinnedAtByKey: { [pinned.placement.workspaceKey]: "2026-07-12T12:00:00.000Z" },
+      pinAssignedAtByKey: { [pinned.placement.workspaceKey]: "2026-07-12T12:00:00.000Z" },
     },
     pinnedWorkspaceOrder: [],
     workspaceEntriesByKey: new Map([
@@ -98,7 +98,7 @@ function twoProjectInput(groupMode: "project" | "status") {
   return {
     ...projectionInput({ groupMode }),
     projects: [makeProject([first.placement]), makeProject([second.placement], "other-project")],
-    pinnedKeys: { pinnedWorkspaceKeys: [], pinnedAtByKey: {} },
+    pinnedKeys: { pinnedWorkspaceKeys: [], pinAssignedAtByKey: {} },
     workspaceEntriesByKey: new Map([
       [first.entry.workspaceKey, first.entry],
       [second.entry.workspaceKey, second.entry],

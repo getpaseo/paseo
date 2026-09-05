@@ -47,7 +47,7 @@ import {
   type ToggleSidebarWorkspacePin,
 } from "@/hooks/use-sidebar-workspace-pin";
 import { useSidebarCollapsedSectionsStore } from "@/stores/sidebar-collapsed-sections-store";
-import { useHostFeatureMap } from "@/runtime/host-features";
+import { useHostFeatureAvailabilityMap, useHostFeatureMap } from "@/runtime/host-features";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { useProjectIcons } from "@/projects/icons";
 import {
@@ -65,6 +65,7 @@ import {
 import { useSidebarOrderStore } from "@/stores/sidebar-order-store";
 import {
   hasActiveSidebarLabelFilter,
+  DEFAULT_WORKSPACE_PIN_GROUP_ID,
   useSidebarViewStore,
   type SidebarGroupMode,
 } from "@/stores/sidebar-view-store";
@@ -151,6 +152,13 @@ import type { HostBadgeModel } from "@/hosts/appearance";
 import { useHostBadges } from "@/hosts/use-host-badges";
 import { useSidebarRowItems } from "@/components/sidebar/display-preferences/model";
 import { PullRequestStateIcon } from "@/git/pull-request-state-icon";
+import {
+  isWorkspacePinnedInGroup,
+  reconcileWorkspacePinGroupSelection,
+  resolveWorkspacePinAction,
+  resolveWorkspacePinGroupServerId,
+  type WorkspacePinAction,
+} from "@/workspace-pin-groups/menu-model";
 
 const workspaceKeyExtractor = (workspace: SidebarWorkspacePlacement) => workspace.workspaceKey;
 
@@ -170,6 +178,7 @@ const foregroundColorMapping = (theme: Theme) => ({
 const foregroundMutedColorMapping = (theme: Theme) => ({
   color: theme.colors.foregroundMuted,
 });
+const UNAVAILABLE_WORKSPACE_PIN_ACTION: WorkspacePinAction = { kind: "unavailable" };
 
 function isWorkspaceSelected(input: {
   selection: ActiveWorkspaceSelection | null;
@@ -1210,7 +1219,7 @@ function WorkspaceRowWithMenu({
   isDragging,
   dragHandleProps,
   canCopyBranchName,
-  canPin,
+  pinAction,
   onToggleWorkspacePin,
   reserveIdleStatusIndicatorSpace = true,
   isCreating = false,
@@ -1227,7 +1236,7 @@ function WorkspaceRowWithMenu({
   isDragging: boolean;
   dragHandleProps?: DraggableListDragHandleProps;
   canCopyBranchName: boolean;
-  canPin: boolean;
+  pinAction: WorkspacePinAction;
   onToggleWorkspacePin: ToggleSidebarWorkspacePin;
   reserveIdleStatusIndicatorSpace?: boolean;
   isCreating?: boolean;
@@ -1279,11 +1288,16 @@ function WorkspaceRowWithMenu({
     setIsRenameOpen(false);
   }, []);
 
-  const isPinned = workspace.pinnedAt != null;
+  const isPinned =
+    pinAction.kind === "set-membership" &&
+    isWorkspacePinnedInGroup({
+      pinGroupId: workspace.pinGroupId,
+      activeGroupId: pinAction.selection.groupId,
+    });
   const handleTogglePin = useCallback(() => {
-    onToggleWorkspacePin(workspace);
-  }, [onToggleWorkspacePin, workspace]);
-  const onTogglePin = canPin ? handleTogglePin : undefined;
+    onToggleWorkspacePin(workspace, pinAction);
+  }, [onToggleWorkspacePin, pinAction, workspace]);
+  const onTogglePin = pinAction.kind === "unavailable" ? undefined : handleTogglePin;
 
   const archiveShortcutKeys = useShortcutKeys("archive-workspace");
   const { hasClearableAttention, clearAttention } = useClearWorkspaceAttention({
@@ -1356,7 +1370,7 @@ interface WorkspaceRowItemProps {
   shortcutNumber: number | null;
   showShortcutBadge: boolean;
   canCopyBranchName: boolean;
-  canPin: boolean;
+  pinAction: WorkspacePinAction;
   onToggleWorkspacePin: ToggleSidebarWorkspacePin;
   reserveIdleStatusIndicatorSpace?: boolean;
   isCreating?: boolean;
@@ -1377,7 +1391,7 @@ function WorkspaceRowItem({
   shortcutNumber,
   showShortcutBadge,
   canCopyBranchName,
-  canPin,
+  pinAction,
   onToggleWorkspacePin,
   reserveIdleStatusIndicatorSpace = true,
   isCreating = false,
@@ -1405,7 +1419,7 @@ function WorkspaceRowItem({
       shortcutNumber={shortcutNumber}
       showShortcutBadge={showShortcutBadge}
       canCopyBranchName={canCopyBranchName}
-      canPin={canPin}
+      pinAction={pinAction}
       onToggleWorkspacePin={onToggleWorkspacePin}
       reserveIdleStatusIndicatorSpace={reserveIdleStatusIndicatorSpace}
       isCreating={isCreating}
@@ -1448,7 +1462,7 @@ function areWorkspaceRowItemPropsEqual(
     previous.shortcutNumber === next.shortcutNumber &&
     previous.showShortcutBadge === next.showShortcutBadge &&
     previous.canCopyBranchName === next.canCopyBranchName &&
-    previous.canPin === next.canPin &&
+    previous.pinAction === next.pinAction &&
     previous.onToggleWorkspacePin === next.onToggleWorkspacePin &&
     previous.reserveIdleStatusIndicatorSpace === next.reserveIdleStatusIndicatorSpace &&
     previous.isCreating === next.isCreating &&
@@ -1474,7 +1488,7 @@ function WorkspaceRow({
   isDragging,
   dragHandleProps,
   canCopyBranchName,
-  canPin,
+  pinAction,
   onToggleWorkspacePin,
   reserveIdleStatusIndicatorSpace = true,
   isCreating = false,
@@ -1491,7 +1505,7 @@ function WorkspaceRow({
   isDragging: boolean;
   dragHandleProps?: DraggableListDragHandleProps;
   canCopyBranchName: boolean;
-  canPin: boolean;
+  pinAction: WorkspacePinAction;
   onToggleWorkspacePin: ToggleSidebarWorkspacePin;
   reserveIdleStatusIndicatorSpace?: boolean;
   isCreating?: boolean;
@@ -1515,7 +1529,7 @@ function WorkspaceRow({
       isDragging={isDragging}
       dragHandleProps={dragHandleProps}
       canCopyBranchName={canCopyBranchName}
-      canPin={canPin}
+      pinAction={pinAction}
       onToggleWorkspacePin={onToggleWorkspacePin}
       reserveIdleStatusIndicatorSpace={reserveIdleStatusIndicatorSpace}
       isCreating={isCreating}
@@ -1546,7 +1560,7 @@ function ProjectBlock({
   activeWorkspaceSelection,
   hostBadgeByServerId,
   supportsMultiplicityByServerId,
-  supportsPinningByServerId,
+  pinActionByServerId,
   onToggleWorkspacePin,
 }: {
   project: SidebarProjectEntry;
@@ -1571,7 +1585,7 @@ function ProjectBlock({
   activeWorkspaceSelection: ActiveWorkspaceSelection | null;
   hostBadgeByServerId: ReadonlyMap<string, HostBadgeModel>;
   supportsMultiplicityByServerId: ReadonlyMap<string, boolean>;
-  supportsPinningByServerId: ReadonlyMap<string, boolean>;
+  pinActionByServerId: ReadonlyMap<string, WorkspacePinAction>;
   onToggleWorkspacePin: ToggleSidebarWorkspacePin;
 }) {
   const {
@@ -1620,7 +1634,7 @@ function ProjectBlock({
           shortcutNumber={shortcutIndexByWorkspaceKey.get(item.workspaceKey) ?? null}
           showShortcutBadge={showShortcutBadges}
           canCopyBranchName={project.projectKind === "git"}
-          canPin={supportsPinningByServerId.get(item.serverId) === true}
+          pinAction={pinActionByServerId.get(item.serverId) ?? UNAVAILABLE_WORKSPACE_PIN_ACTION}
           onToggleWorkspacePin={onToggleWorkspacePin}
           isCreating={creatingWorkspaceIds.has(item.workspaceId)}
           selectionEnabled={selectionEnabled}
@@ -1635,7 +1649,7 @@ function ProjectBlock({
     [
       project.projectKind,
       onToggleWorkspacePin,
-      supportsPinningByServerId,
+      pinActionByServerId,
       activeWorkspaceSelection,
       creatingWorkspaceIds,
       hostBadgeByServerId,
@@ -1819,7 +1833,7 @@ function areProjectBlockPropsEqual(previous: ProjectBlockProps, next: ProjectBlo
     previous.shortcutIndexByWorkspaceKey === next.shortcutIndexByWorkspaceKey &&
     previous.hostBadgeByServerId === next.hostBadgeByServerId &&
     previous.supportsMultiplicityByServerId === next.supportsMultiplicityByServerId &&
-    previous.supportsPinningByServerId === next.supportsPinningByServerId &&
+    previous.pinActionByServerId === next.pinActionByServerId &&
     previous.onToggleWorkspacePin === next.onToggleWorkspacePin &&
     previous.parentGestureRef === next.parentGestureRef &&
     previous.onToggleCollapsed === next.onToggleCollapsed &&
@@ -1898,7 +1912,53 @@ export function SidebarWorkspaceList({
   });
   const serverIds = useMemo(() => hosts.map((host) => host.serverId), [hosts]);
   const supportsMultiplicityByServerId = useHostFeatureMap(serverIds, "workspaceMultiplicity");
-  const supportsPinningByServerId = useHostFeatureMap(serverIds, "workspacePinning");
+  const supportsPinGroupsByServerId = useHostFeatureAvailabilityMap(
+    serverIds,
+    "workspacePinGroups",
+  );
+  const activePinGroup = useSidebarViewStore((state) => state.activePinGroup);
+  const setActivePinGroup = useSidebarViewStore((state) => state.setActivePinGroup);
+  const pinActionByServerId = useMemo(
+    () =>
+      new Map(
+        serverIds.map((serverId) => [
+          serverId,
+          resolveWorkspacePinAction({
+            workspaceServerId: serverId,
+            pinGroupAvailability: supportsPinGroupsByServerId.get(serverId) ?? null,
+            activePinGroup,
+          }),
+        ]),
+      ),
+    [activePinGroup, serverIds, supportsPinGroupsByServerId],
+  );
+  const hostFilters = useSidebarViewStore((state) => state.hostFilters);
+  const activeWorkspaceSelection = useActiveWorkspaceSelection();
+  const pinGroupServerId = resolveWorkspacePinGroupServerId({
+    registeredServerIds: serverIds,
+    activePinGroup,
+    activeWorkspaceServerId: activeWorkspaceSelection?.serverId,
+    hostFilters,
+  });
+  useEffect(() => {
+    const reconciledActivePinGroup = reconcileWorkspacePinGroupSelection({
+      registeredServerIds: serverIds,
+      activePinGroup,
+      activeWorkspaceServerId: activeWorkspaceSelection?.serverId,
+    });
+    if (reconciledActivePinGroup !== activePinGroup) {
+      setActivePinGroup(reconciledActivePinGroup);
+      return;
+    }
+    if (activePinGroup !== null || !pinGroupServerId) return;
+    setActivePinGroup({ serverId: pinGroupServerId, groupId: DEFAULT_WORKSPACE_PIN_GROUP_ID });
+  }, [
+    activePinGroup,
+    activeWorkspaceSelection?.serverId,
+    pinGroupServerId,
+    serverIds,
+    setActivePinGroup,
+  ]);
   const onToggleWorkspacePin = useSidebarWorkspacePinController();
   const getPinnedWorkspaceOrder = useSidebarOrderStore((state) => state.getPinnedWorkspaceOrder);
   const setPinnedWorkspaceOrder = useSidebarOrderStore((state) => state.setPinnedWorkspaceOrder);
@@ -1955,7 +2015,8 @@ export function SidebarWorkspaceList({
         shortcutIndexByWorkspaceKey={shortcutIndexByWorkspaceKey}
         onWorkspacePress={onWorkspacePress}
         hostBadgeByServerId={hostBadgeByServerId}
-        supportsPinningByServerId={supportsPinningByServerId}
+        pinActionByServerId={pinActionByServerId}
+        pinGroupServerId={pinGroupServerId}
         onToggleWorkspacePin={onToggleWorkspacePin}
         onPinnedWorkspaceReorder={handlePinnedWorkspaceReorder}
         listHeaderComponent={listHeaderComponent}
@@ -1984,7 +2045,8 @@ export function SidebarWorkspaceList({
         pathname={pathname}
         hostBadgeByServerId={hostBadgeByServerId}
         supportsMultiplicityByServerId={supportsMultiplicityByServerId}
-        supportsPinningByServerId={supportsPinningByServerId}
+        pinActionByServerId={pinActionByServerId}
+        pinGroupServerId={pinGroupServerId}
         onToggleWorkspacePin={onToggleWorkspacePin}
         onPinnedWorkspaceReorder={handlePinnedWorkspaceReorder}
       />
@@ -2007,7 +2069,8 @@ function SidebarGroupedModeList({
   shortcutIndexByWorkspaceKey: _projectShortcutIndex,
   onWorkspacePress,
   hostBadgeByServerId,
-  supportsPinningByServerId,
+  pinActionByServerId,
+  pinGroupServerId,
   onToggleWorkspacePin,
   onPinnedWorkspaceReorder,
   listHeaderComponent,
@@ -2022,7 +2085,8 @@ function SidebarGroupedModeList({
   shortcutIndexByWorkspaceKey: Map<string, number>;
   onWorkspacePress?: () => void;
   hostBadgeByServerId: ReadonlyMap<string, HostBadgeModel>;
-  supportsPinningByServerId: ReadonlyMap<string, boolean>;
+  pinActionByServerId: ReadonlyMap<string, WorkspacePinAction>;
+  pinGroupServerId: string | null;
   onToggleWorkspacePin: ToggleSidebarWorkspacePin;
   onPinnedWorkspaceReorder: (workspaces: SidebarWorkspacePlacement[]) => void;
   listHeaderComponent?: ReactElement | null;
@@ -2049,7 +2113,8 @@ function SidebarGroupedModeList({
       showShortcutBadges={showShortcutBadges}
       onWorkspacePress={onWorkspacePress}
       hostBadgeByServerId={hostBadgeByServerId}
-      supportsPinningByServerId={supportsPinningByServerId}
+      pinActionByServerId={pinActionByServerId}
+      pinGroupServerId={pinGroupServerId}
       onToggleWorkspacePin={onToggleWorkspacePin}
       onPinnedWorkspaceReorder={onPinnedWorkspaceReorder}
       listHeaderComponent={listHeaderComponent}
@@ -2080,7 +2145,8 @@ function ProjectModeList({
   pathname,
   hostBadgeByServerId,
   supportsMultiplicityByServerId,
-  supportsPinningByServerId,
+  pinActionByServerId,
+  pinGroupServerId,
   onToggleWorkspacePin,
   onPinnedWorkspaceReorder,
 }: Omit<
@@ -2098,7 +2164,8 @@ function ProjectModeList({
   pathname: string;
   hostBadgeByServerId: ReadonlyMap<string, HostBadgeModel>;
   supportsMultiplicityByServerId: ReadonlyMap<string, boolean>;
-  supportsPinningByServerId: ReadonlyMap<string, boolean>;
+  pinActionByServerId: ReadonlyMap<string, WorkspacePinAction>;
+  pinGroupServerId: string | null;
   onToggleWorkspacePin: ToggleSidebarWorkspacePin;
   onPinnedWorkspaceReorder: (workspaces: SidebarWorkspacePlacement[]) => void;
 }) {
@@ -2298,7 +2365,7 @@ function ProjectModeList({
           activeWorkspaceSelection={activeWorkspaceSelection}
           hostBadgeByServerId={hostBadgeByServerId}
           supportsMultiplicityByServerId={supportsMultiplicityByServerId}
-          supportsPinningByServerId={supportsPinningByServerId}
+          pinActionByServerId={pinActionByServerId}
           onToggleWorkspacePin={onToggleWorkspacePin}
         />
       );
@@ -2310,7 +2377,7 @@ function ProjectModeList({
       handleWorkspaceReorder,
       hostBadgeByServerId,
       supportsMultiplicityByServerId,
-      supportsPinningByServerId,
+      pinActionByServerId,
       onToggleWorkspacePin,
       onWorkspacePress,
       onToggleProjectCollapsed,
@@ -2350,7 +2417,9 @@ function ProjectModeList({
           shortcutNumber={shortcutIndexByWorkspaceKey.get(workspace.workspaceKey) ?? null}
           showShortcutBadge={showShortcutBadges}
           canCopyBranchName={workspace.projectKind === "git"}
-          canPin={supportsPinningByServerId.get(workspace.serverId) === true}
+          pinAction={
+            pinActionByServerId.get(workspace.serverId) ?? UNAVAILABLE_WORKSPACE_PIN_ACTION
+          }
           onToggleWorkspacePin={onToggleWorkspacePin}
           isCreating={creatingWorkspaceIds.has(workspace.workspaceId)}
           selectionEnabled={selectionEnabled}
@@ -2370,7 +2439,7 @@ function ProjectModeList({
       selectionEnabled,
       shortcutIndexByWorkspaceKey,
       showShortcutBadges,
-      supportsPinningByServerId,
+      pinActionByServerId,
       onToggleWorkspacePin,
       projectIconByProjectViewKey,
       workspaceEntriesByKey,
@@ -2399,9 +2468,13 @@ function ProjectModeList({
 
   const content = (
     <>
-      {pinnedChats.length > 0 ? (
+      {pinnedChats.length > 0 || pinGroupServerId ? (
         <View style={styles.pinnedSection} testID="sidebar-pinned-section">
-          <PinnedSectionHeader collapsed={pinnedCollapsed} onToggle={togglePinnedCollapsed} />
+          <PinnedSectionHeader
+            collapsed={pinnedCollapsed}
+            onToggle={togglePinnedCollapsed}
+            pinGroupServerId={pinGroupServerId}
+          />
           {pinnedCollapsed ? null : (
             <>
               <DraggableList

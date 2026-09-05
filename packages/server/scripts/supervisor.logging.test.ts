@@ -200,6 +200,27 @@ describe("supervisor durable logging", () => {
     expect(result.log).toContain('"workerPid":');
   });
 
+  test("does not restart a crashed worker after a terminal bootstrap shutdown", async () => {
+    const result = await runSupervisorFixture({
+      restartOnCrash: true,
+      workerSource: `
+        process.on("SIGTERM", () => process.exit(1));
+        process.send?.({
+          type: "paseo:shutdown",
+          reason: "workspace_registry_integrity_failure",
+        });
+        setTimeout(() => process.exit(1), 50);
+      `,
+    });
+
+    expect(result.code).toBe(0);
+    expect(result.signal).toBeNull();
+    expect(result.log).toContain('"reason":"workspace_registry_integrity_failure"');
+    expect(result.log).toContain('"msg":"Worker exited","code":1');
+    expect(result.log.match(/"msg":"Spawning worker"/g)).toHaveLength(1);
+    expect(result.log).not.toContain("Restarting worker");
+  });
+
   test("lets the worker clean up its descendant before supervised shutdown", async () => {
     const result = await runSupervisorFixture({
       workerSource: `

@@ -1099,6 +1099,7 @@ export const ko: TranslationResources = {
       clear: "필터 지우기",
     },
     pinned: {
+      ...en.sidebar.pinned,
       title: "고정됨",
     },
     host: {

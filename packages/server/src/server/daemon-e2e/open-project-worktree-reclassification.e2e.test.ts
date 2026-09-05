@@ -110,7 +110,7 @@ test("openProject preserves a worktree's exact-root project without rehoming it"
 
     const response = await client.openProject(worktreeRoot);
     const persistedProjects = await readRegistry<PersistedProjectRecord>(projectsPath);
-    const persistedWorkspaces = await readRegistry<PersistedWorkspaceRecord>(workspacesPath);
+    const persistedWorkspaces = await readWorkspaceRegistry(workspacesPath);
 
     expect(response.error).toBeNull();
     expect(response.workspace?.projectId).toBe(worktreeRoot);
@@ -134,4 +134,11 @@ async function writeRegistry(
 
 async function readRegistry<TRecord>(filePath: string): Promise<TRecord[]> {
   return JSON.parse(await readFile(filePath, "utf8")) as TRecord[];
+}
+
+async function readWorkspaceRegistry(filePath: string): Promise<PersistedWorkspaceRecord[]> {
+  const persisted = JSON.parse(await readFile(filePath, "utf8")) as
+    | PersistedWorkspaceRecord[]
+    | { workspaces: PersistedWorkspaceRecord[] };
+  return Array.isArray(persisted) ? persisted : persisted.workspaces;
 }

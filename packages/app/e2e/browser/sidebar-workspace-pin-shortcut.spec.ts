@@ -22,6 +22,18 @@ function pinnedSection(page: Page) {
   return page.getByTestId("sidebar-pinned-section");
 }
 
+function pinnedWorkspaceRow(page: Page, workspaceId: string) {
+  return pinnedSection(page).getByTestId(`sidebar-workspace-row-${getServerId()}:${workspaceId}`);
+}
+
+async function fetchPinGroupId(workspace: SeededWorkspace): Promise<string | null> {
+  const descriptor = (await workspace.client.fetchWorkspaces()).entries.find(
+    (entry) => entry.id === workspace.workspaceId,
+  );
+  if (!descriptor) throw new Error(`Workspace ${workspace.workspaceId} is missing from daemon`);
+  return descriptor.pinGroupId ?? null;
+}
+
 // Opens the workspace so it becomes the active route selection, which is what the shortcut acts on.
 async function openWorkspace(page: Page, workspaceId: string) {
   const row = workspaceRow(page, workspaceId);
@@ -103,7 +115,7 @@ async function installPinRpcGate(
     ws.onMessage((message) => {
       const sessionMessage = readSessionMessage(message);
       if (
-        sessionMessage?.type === "workspace.pin.set.request" &&
+        sessionMessage?.type === "workspace.pin_group.set_membership.request" &&
         typeof sessionMessage.requestId === "string"
       ) {
         sent += 1;
@@ -115,7 +127,7 @@ async function installPinRpcGate(
                 type: "rpc_error",
                 payload: {
                   requestId: sessionMessage.requestId,
-                  requestType: "workspace.pin.set.request",
+                  requestType: "workspace.pin_group.set_membership.request",
                   error: PIN_REJECTION_MESSAGE,
                   code: "transport",
                 },
@@ -160,18 +172,24 @@ test.describe("Pin workspace shortcut", () => {
 
       await test.step("sends one RPC for each pin transition", async () => {
         await page.keyboard.press(PIN_SHORTCUT);
-        await expect(pinnedSection(page)).toBeVisible({ timeout: 10_000 });
+        await expect(pinnedWorkspaceRow(page, workspace.workspaceId)).toBeVisible({
+          timeout: 10_000,
+        });
         expect(gate.sentCount()).toBe(1);
 
         await page.keyboard.press(PIN_SHORTCUT);
-        await expect(pinnedSection(page)).toHaveCount(0, { timeout: 10_000 });
+        await expect(pinnedWorkspaceRow(page, workspace.workspaceId)).toHaveCount(0, {
+          timeout: 10_000,
+        });
         expect(gate.sentCount()).toBe(2);
         await expect(workspaceRow(page, workspace.workspaceId)).toHaveCount(1);
       });
 
       await test.step("keeps the pinned project available to workspace creation", async () => {
         await page.keyboard.press(PIN_SHORTCUT);
-        await expect(pinnedSection(page)).toBeVisible({ timeout: 10_000 });
+        await expect(pinnedWorkspaceRow(page, workspace.workspaceId)).toBeVisible({
+          timeout: 10_000,
+        });
         expect(gate.sentCount()).toBe(3);
 
         await openNewWorkspaceComposer(page, workspace);
@@ -218,7 +236,7 @@ test.describe("Pin workspace shortcut", () => {
 
       await page.keyboard.press(PIN_SHORTCUT);
 
-      await expect(pinnedSection(page)).toHaveCount(0, { timeout: 10_000 });
+      await expect(workspaceRow(page, workspace.workspaceId)).toHaveCount(1, { timeout: 10_000 });
     } finally {
       await workspace.cleanup();
     }
@@ -262,7 +280,7 @@ test.describe("Pin workspace shortcut", () => {
       await expect(page.getByTestId("app-toast-message")).toContainText(PIN_REJECTION_MESSAGE, {
         timeout: 10_000,
       });
-      await expect(pinnedSection(page)).toHaveCount(0);
+      await expect(pinnedWorkspaceRow(page, workspace.workspaceId)).toHaveCount(0);
       await expect(workspaceRow(page, workspace.workspaceId)).toHaveCount(1);
 
       // The failure must leave the action usable: the in-flight guard has to release the key so a
@@ -270,6 +288,10 @@ test.describe("Pin workspace shortcut", () => {
       await page.keyboard.press(PIN_SHORTCUT);
 
       await expect(pinnedSection(page)).toBeVisible({ timeout: 10_000 });
+      await expect(pinnedWorkspaceRow(page, workspace.workspaceId)).toBeVisible({
+        timeout: 10_000,
+      });
+      await expect(fetchPinGroupId(workspace)).resolves.toBe("default");
       expect(gate.sentCount()).toBe(2);
     } finally {
       await workspace.cleanup();

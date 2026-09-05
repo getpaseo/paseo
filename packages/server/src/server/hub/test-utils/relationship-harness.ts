@@ -953,9 +953,12 @@ export class HubRelationshipHarness {
   }
 
   private workspaceArchivedAt(workspaceId: string): string | null {
-    const records = JSON.parse(
+    const persisted = JSON.parse(
       readFileSync(path.join(this.paseoHome, "projects", "workspaces.json"), "utf8"),
-    ) as Array<{ workspaceId: string; archivedAt?: string | null }>;
+    ) as
+      | Array<{ workspaceId: string; archivedAt?: string | null }>
+      | { workspaces: Array<{ workspaceId: string; archivedAt?: string | null }> };
+    const records = Array.isArray(persisted) ? persisted : persisted.workspaces;
     return records.find((workspace) => workspace.workspaceId === workspaceId)?.archivedAt ?? null;
   }
 

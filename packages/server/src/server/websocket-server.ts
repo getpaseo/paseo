@@ -329,6 +329,11 @@ function createNoopProjectRegistry(): ProjectRegistry {
 }
 
 function createNoopWorkspaceRegistry(): WorkspaceRegistry {
+  const defaultPinGroup = {
+    id: "default",
+    name: "Pinned",
+    createdAt: new Date(0).toISOString(),
+  };
   return {
     initialize: async () => {},
     existsOnDisk: async () => true,
@@ -338,6 +343,11 @@ function createNoopWorkspaceRegistry(): WorkspaceRegistry {
     upsert: async () => {},
     archive: async () => {},
     remove: async () => {},
+    listPinGroups: async () => [defaultPinGroup],
+    createPinGroup: async (name) => ({ ...defaultPinGroup, id: "noop", name }),
+    renamePinGroup: async (groupId, name) => ({ ...defaultPinGroup, id: groupId, name }),
+    deletePinGroup: async () => [],
+    setWorkspacePinGroup: async () => null,
   };
 }
 
@@ -1632,6 +1642,8 @@ export class VoiceAssistantWebSocketServer {
         directorySync: true,
         // COMPAT(workspaceLabels): added in v0.5.0, remove after 2027-08-14.
         ...(this.workspaceLabelService ? { workspaceLabels: true } : {}),
+        // COMPAT(workspacePinGroups): added in v0.7.0, remove gate after 2027-03-01.
+        workspacePinGroups: true,
         // COMPAT(workspaceSetupRun): added in v0.7.3, remove gate after 2027-09-02.
         workspaceSetupRun: true,
         // COMPAT(providersSnapshot): keep optional until all clients rely on snapshot flow.

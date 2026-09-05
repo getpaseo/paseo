@@ -1092,6 +1092,7 @@ export const ar: TranslationResources = {
       clear: "مسح عوامل التصفية",
     },
     pinned: {
+      ...en.sidebar.pinned,
       title: "المثبتة",
     },
     host: {

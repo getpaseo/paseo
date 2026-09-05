@@ -1020,6 +1020,43 @@ export const WorkspacePinSetRequestSchema = z.object({
   requestId: z.string(),
 });
 
+export const WorkspacePinGroupSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  createdAt: z.string(),
+});
+
+export const WorkspacePinGroupListRequestSchema = z.object({
+  type: z.literal("workspace.pin_group.list.request"),
+  requestId: z.string(),
+});
+
+export const WorkspacePinGroupSetMembershipRequestSchema = z.object({
+  type: z.literal("workspace.pin_group.set_membership.request"),
+  workspaceId: z.string(),
+  groupId: z.string().nullable(),
+  requestId: z.string(),
+});
+
+export const WorkspacePinGroupCreateRequestSchema = z.object({
+  type: z.literal("workspace.pin_group.create.request"),
+  name: z.string(),
+  requestId: z.string(),
+});
+
+export const WorkspacePinGroupRenameRequestSchema = z.object({
+  type: z.literal("workspace.pin_group.rename.request"),
+  groupId: z.string(),
+  name: z.string(),
+  requestId: z.string(),
+});
+
+export const WorkspacePinGroupDeleteRequestSchema = z.object({
+  type: z.literal("workspace.pin_group.delete.request"),
+  groupId: z.string(),
+  requestId: z.string(),
+});
+
 export const WorkspaceLabelColorSchema = z.enum(WORKSPACE_LABEL_COLORS);
 export const WorkspaceLabelDefinitionSchema = z.object({
   name: z.string(),
@@ -2028,6 +2065,47 @@ export const WorkspacePinSetResponsePayloadSchema = z.object({
 export const WorkspacePinSetResponseSchema = z.object({
   type: z.literal("workspace.pin.set.response"),
   payload: WorkspacePinSetResponsePayloadSchema,
+});
+
+export const WorkspacePinGroupListResponseSchema = z.object({
+  type: z.literal("workspace.pin_group.list.response"),
+  payload: z.object({
+    requestId: z.string(),
+    groups: z.array(WorkspacePinGroupSchema),
+  }),
+});
+
+export const WorkspacePinGroupSetMembershipResponseSchema = z.object({
+  type: z.literal("workspace.pin_group.set_membership.response"),
+  payload: z.object({
+    requestId: z.string(),
+    workspaceId: z.string(),
+    groupId: z.string().nullable(),
+  }),
+});
+
+export const WorkspacePinGroupCreateResponseSchema = z.object({
+  type: z.literal("workspace.pin_group.create.response"),
+  payload: z.object({
+    requestId: z.string(),
+    group: WorkspacePinGroupSchema,
+  }),
+});
+
+export const WorkspacePinGroupRenameResponseSchema = z.object({
+  type: z.literal("workspace.pin_group.rename.response"),
+  payload: z.object({
+    requestId: z.string(),
+    group: WorkspacePinGroupSchema,
+  }),
+});
+
+export const WorkspacePinGroupDeleteResponseSchema = z.object({
+  type: z.literal("workspace.pin_group.delete.response"),
+  payload: z.object({
+    requestId: z.string(),
+    groupId: z.string(),
+  }),
 });
 
 export const WorkspaceRecoveryStateSchema = z.discriminatedUnion("kind", [
@@ -3058,6 +3136,11 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   ProjectRemoveRequestSchema,
   WorkspaceTitleSetRequestSchema,
   WorkspacePinSetRequestSchema,
+  WorkspacePinGroupListRequestSchema,
+  WorkspacePinGroupSetMembershipRequestSchema,
+  WorkspacePinGroupCreateRequestSchema,
+  WorkspacePinGroupRenameRequestSchema,
+  WorkspacePinGroupDeleteRequestSchema,
   WorkspaceLabelListRequestSchema,
   WorkspaceLabelAssignmentSetRequestSchema,
   WorkspaceLabelUpdateRequestSchema,
@@ -3406,6 +3489,8 @@ export const ServerInfoStatusPayloadSchema = z
         directorySync: z.boolean().optional(),
         // COMPAT(workspaceLabels): added in v0.5.0, remove after 2027-08-14.
         workspaceLabels: z.boolean().optional(),
+        // COMPAT(workspacePinGroups): added in v0.7.0, remove gate after 2027-03-01.
+        workspacePinGroups: z.boolean().optional(),
         // COMPAT(workspaceSetupRun): added in v0.7.3, remove gate after 2027-09-02.
         workspaceSetupRun: z.boolean().optional(),
         // COMPAT(checkoutForgeSetAutoMerge): added in v0.2.0-beta.1. Remove the
@@ -3841,6 +3926,10 @@ export const WorkspaceDescriptorPayloadSchema = z
     title: z.string().nullable().optional(),
     // COMPAT(workspacePinning): added in v0.1.107, remove optional after 2027-01-12.
     pinnedAt: z.string().nullable().optional(),
+    // COMPAT(workspacePinGroups): added in v0.7.0, remove optional after 2027-03-01.
+    pinGroupId: z.string().nullable().optional(),
+    // COMPAT(workspacePinGroups): added in v0.7.0, remove optional after 2027-03-01.
+    pinGroupAssignedAt: z.string().nullable().optional(),
     // COMPAT(workspaceLabels): added in v0.5.0, remove optional after 2027-08-14.
     labels: z.array(z.string()).optional(),
     archivingAt: z.string().nullable().optional().default(null),
@@ -4051,6 +4140,10 @@ export const WorkspaceUpdateMessageSchema = z.object({
     z.object({
       kind: z.literal("upsert"),
       workspace: WorkspaceDescriptorPayloadSchema,
+      // Uncorrelated catalog invalidation rides the existing workspace update channel so old
+      // clients can parse and ignore it. New clients replace their host-local catalog cache.
+      // COMPAT(workspacePinGroups): added in v0.7.0, remove optional after 2027-03-01.
+      pinGroups: z.array(WorkspacePinGroupSchema).optional(),
       generation: z.string().optional(),
       seq: z.number().int().positive().optional(),
     }),
@@ -4067,6 +4160,8 @@ export const WorkspaceUpdateMessageSchema = z.object({
       // Project removal is represented on the existing workspace update channel
       // so old clients can still parse the message and ignore the extra field.
       removedProjectId: z.string().optional(),
+      // COMPAT(workspacePinGroups): added in v0.7.0, remove optional after 2027-03-01.
+      pinGroups: z.array(WorkspacePinGroupSchema).optional(),
       generation: z.string().optional(),
       seq: z.number().int().positive().optional(),
     }),
@@ -6509,6 +6604,11 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   ProjectRemoveResponseSchema,
   WorkspaceTitleSetResponseSchema,
   WorkspacePinSetResponseSchema,
+  WorkspacePinGroupListResponseSchema,
+  WorkspacePinGroupSetMembershipResponseSchema,
+  WorkspacePinGroupCreateResponseSchema,
+  WorkspacePinGroupRenameResponseSchema,
+  WorkspacePinGroupDeleteResponseSchema,
   WorkspaceRecoveryInspectResponseSchema,
   WorkspaceRecoveryRestoreResponseSchema,
   WaitForFinishResponseMessageSchema,
@@ -6711,6 +6811,14 @@ export type WorkspaceTitleSetResponsePayload = z.infer<
 >;
 export type WorkspacePinSetResponse = z.infer<typeof WorkspacePinSetResponseSchema>;
 export type WorkspacePinSetResponsePayload = z.infer<typeof WorkspacePinSetResponsePayloadSchema>;
+export type WorkspacePinGroup = z.infer<typeof WorkspacePinGroupSchema>;
+export type WorkspacePinGroupListResponse = z.infer<typeof WorkspacePinGroupListResponseSchema>;
+export type WorkspacePinGroupSetMembershipResponse = z.infer<
+  typeof WorkspacePinGroupSetMembershipResponseSchema
+>;
+export type WorkspacePinGroupCreateResponse = z.infer<typeof WorkspacePinGroupCreateResponseSchema>;
+export type WorkspacePinGroupRenameResponse = z.infer<typeof WorkspacePinGroupRenameResponseSchema>;
+export type WorkspacePinGroupDeleteResponse = z.infer<typeof WorkspacePinGroupDeleteResponseSchema>;
 export type WorkspaceRecoveryState = z.infer<typeof WorkspaceRecoveryStateSchema>;
 export type WorkspaceRecoveryInspectResponse = z.infer<
   typeof WorkspaceRecoveryInspectResponseSchema
@@ -6857,6 +6965,13 @@ export type ProjectIconSetRequest = z.infer<typeof ProjectIconSetRequestSchema>;
 export type ProjectRemoveRequest = z.infer<typeof ProjectRemoveRequestSchema>;
 export type WorkspaceTitleSetRequest = z.infer<typeof WorkspaceTitleSetRequestSchema>;
 export type WorkspacePinSetRequest = z.infer<typeof WorkspacePinSetRequestSchema>;
+export type WorkspacePinGroupListRequest = z.infer<typeof WorkspacePinGroupListRequestSchema>;
+export type WorkspacePinGroupSetMembershipRequest = z.infer<
+  typeof WorkspacePinGroupSetMembershipRequestSchema
+>;
+export type WorkspacePinGroupCreateRequest = z.infer<typeof WorkspacePinGroupCreateRequestSchema>;
+export type WorkspacePinGroupRenameRequest = z.infer<typeof WorkspacePinGroupRenameRequestSchema>;
+export type WorkspacePinGroupDeleteRequest = z.infer<typeof WorkspacePinGroupDeleteRequestSchema>;
 export type WorkspaceRecoveryInspectRequest = z.infer<typeof WorkspaceRecoveryInspectRequestSchema>;
 export type WorkspaceRecoveryRestoreRequest = z.infer<typeof WorkspaceRecoveryRestoreRequestSchema>;
 export type SetAgentModeRequestMessage = z.infer<typeof SetAgentModeRequestMessageSchema>;

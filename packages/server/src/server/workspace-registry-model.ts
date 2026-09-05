@@ -17,6 +17,10 @@ export function generateProjectId(): string {
   return `prj_${randomBytes(8).toString("hex")}`;
 }
 
+export function generateWorkspacePinGroupId(): string {
+  return `pgrp_${randomBytes(8).toString("hex")}`;
+}
+
 export function deriveProjectKind(checkout: ProjectCheckoutLitePayload): PersistedProjectKind {
   return checkout.isGit ? "git" : "non_git";
 }

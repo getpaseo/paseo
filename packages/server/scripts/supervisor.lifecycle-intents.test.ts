@@ -10,4 +10,12 @@ describe("supervisor lifecycle intents", () => {
     expect(source).toContain('"paseo:restart"');
     expect(source).not.toContain(legacyShutdownReason);
   });
+
+  test("routes workspace registry integrity failures through terminal shutdown", () => {
+    const source = readFileSync(new URL("../src/server/daemon-worker.ts", import.meta.url), "utf8");
+
+    expect(source).toContain("err instanceof WorkspaceRegistryIntegrityError");
+    expect(source).toContain('type: "paseo:shutdown"');
+    expect(source).toContain('reason: "workspace_registry_integrity_failure"');
+  });
 });

@@ -22,6 +22,7 @@ import type {
   SendAgentMessageRequest,
   SessionOutboundMessage,
   WorkspaceDescriptorPayload,
+  WorkspacePinGroup,
   WorkspaceCreateRequest,
 } from "@getpaseo/protocol/messages";
 import { DaemonClient } from "./daemon-client.js";
@@ -81,6 +82,7 @@ export interface PaseoClientConfig {
 }
 
 export type PaseoWorkspace = WorkspaceDescriptorPayload;
+export type PaseoWorkspacePinGroup = WorkspacePinGroup;
 export type PaseoAgent = AgentSnapshotPayload;
 export type PaseoAgentListOptions = FetchAgentsOptions;
 export type PaseoProject = WorkspaceProjectDescriptorPayload;

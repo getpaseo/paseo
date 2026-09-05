@@ -1084,6 +1084,7 @@ export const zhCN: TranslationResources = {
       clear: "清除筛选",
     },
     pinned: {
+      ...en.sidebar.pinned,
       title: "已置顶",
     },
     host: {
