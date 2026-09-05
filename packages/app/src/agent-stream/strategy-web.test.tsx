@@ -58,6 +58,7 @@ describe("createWebStreamStrategy", () => {
   let root: Root | null = null;
   let container: HTMLDivElement | null = null;
   let originalScrollTo: HTMLElement["scrollTo"] | undefined;
+  let originalAnimate: HTMLElement["animate"] | undefined;
   let originalOffsetHeight: PropertyDescriptor | undefined;
 
   beforeEach(() => {
@@ -75,6 +76,11 @@ describe("createWebStreamStrategy", () => {
     });
     originalScrollTo = HTMLElement.prototype.scrollTo;
     HTMLElement.prototype.scrollTo = vi.fn();
+    originalAnimate = HTMLElement.prototype.animate;
+    HTMLElement.prototype.animate = vi.fn(() => ({
+      addEventListener: vi.fn(),
+      cancel: vi.fn(),
+    })) as unknown as typeof HTMLElement.prototype.animate;
     originalOffsetHeight = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "offsetHeight");
     Object.defineProperty(HTMLElement.prototype, "offsetHeight", {
       configurable: true,
@@ -97,6 +103,11 @@ describe("createWebStreamStrategy", () => {
       HTMLElement.prototype.scrollTo = originalScrollTo;
     } else {
       Reflect.deleteProperty(HTMLElement.prototype, "scrollTo");
+    }
+    if (originalAnimate) {
+      HTMLElement.prototype.animate = originalAnimate;
+    } else {
+      Reflect.deleteProperty(HTMLElement.prototype, "animate");
     }
     if (originalOffsetHeight) {
       Object.defineProperty(HTMLElement.prototype, "offsetHeight", originalOffsetHeight);
@@ -1332,6 +1343,292 @@ describe("createWebStreamStrategy", () => {
       );
     });
     expect(scrollTo).not.toHaveBeenCalled();
+  });
+
+  it("rises the timeline in the same frame as followed content growth", () => {
+    const observed = new Map<
+      Element,
+      { callback: ResizeObserverCallback; observer: ResizeObserver }
+    >();
+    Object.defineProperty(globalThis, "ResizeObserver", {
+      configurable: true,
+      value: class TestResizeObserver {
+        constructor(private readonly callback: ResizeObserverCallback) {}
+
+        observe(target: Element) {
+          observed.set(target, {
+            callback: this.callback,
+            observer: this as unknown as ResizeObserver,
+          });
+        }
+
+        disconnect() {}
+
+        unobserve() {}
+      },
+    });
+    const notifyResize = (target: Element) => {
+      const observation = observed.get(target);
+      if (!observation) {
+        throw new Error("Expected observed resize target");
+      }
+      observation.callback(
+        [
+          {
+            target,
+            contentRect: target.getBoundingClientRect(),
+          } as ResizeObserverEntry,
+        ],
+        observation.observer,
+      );
+    };
+    const scrollTo = vi.fn(function (this: HTMLElement, options?: ScrollToOptions | number) {
+      const requestedTop = typeof options === "object" ? (options.top ?? 0) : 0;
+      const maxTop = Math.max(0, this.scrollHeight - this.clientHeight);
+      Object.defineProperty(this, "scrollTop", {
+        configurable: true,
+        value: Math.min(requestedTop, maxTop),
+      });
+    });
+    HTMLElement.prototype.scrollTo = scrollTo;
+    const animate = vi.mocked(HTMLElement.prototype.animate);
+
+    const strategy = createWebStreamStrategy({ isMobileBreakpoint: true });
+    const liveHead = [userMessage(1)];
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    const renderers = createRenderers(vi.fn());
+    renderers.renderLiveAuxiliary = () => <div data-testid="live-auxiliary" />;
+
+    act(() => {
+      root?.render(
+        strategy.render({
+          agentId: "agent",
+          segments: {
+            historyVirtualized: [],
+            historyMounted: [],
+            liveHead,
+          },
+          boundary: {
+            hasVirtualizedHistory: false,
+            hasMountedHistory: false,
+            hasLiveHead: true,
+          },
+          renderers,
+          listEmptyComponent: null,
+          viewportRef: React.createRef<StreamViewportHandle>(),
+          routeBottomAnchorRequest: null,
+          isAuthoritativeHistoryReady: true,
+          onNearBottomChange: vi.fn(),
+          onNearHistoryStart: vi.fn().mockReturnValue(true),
+          isLoadingOlderHistory: false,
+          hasOlderHistory: false,
+          olderHistoryProgressKey: null,
+          scrollEnabled: true,
+          listStyle: null,
+          baseListContentContainerStyle: null,
+          forwardListContentContainerStyle: null,
+        }),
+      );
+    });
+
+    const scrollContainer = container.querySelector('[data-testid="agent-chat-scroll"]');
+    const contentNode = container.querySelector('[data-testid="agent-chat-content"]');
+    const timelineClip = container.querySelector('[data-testid="agent-chat-timeline-clip"]');
+    const timeline = container.querySelector('[data-testid="agent-chat-timeline"]');
+    const liveAuxiliary = container.querySelector('[data-testid="live-auxiliary"]');
+    if (
+      !(scrollContainer instanceof HTMLElement) ||
+      !(contentNode instanceof HTMLElement) ||
+      !(timelineClip instanceof HTMLElement) ||
+      !(timeline instanceof HTMLElement) ||
+      !(liveAuxiliary instanceof HTMLElement)
+    ) {
+      throw new Error("Expected followed chat scroll, clipped timeline, and live footer");
+    }
+    expect(timeline.contains(liveAuxiliary)).toBe(false);
+    expect(timelineClip.contains(timeline)).toBe(true);
+    expect(timelineClip.contains(liveAuxiliary)).toBe(false);
+    expect(timelineClip.style.overflow).toBe("hidden");
+    expect(timelineClip.nextElementSibling).toBe(liveAuxiliary);
+
+    Object.defineProperty(scrollContainer, "clientHeight", { configurable: true, value: 400 });
+    Object.defineProperty(scrollContainer, "scrollHeight", { configurable: true, value: 800 });
+    Object.defineProperty(scrollContainer, "scrollTop", { configurable: true, value: 400 });
+    act(() => scrollContainer.dispatchEvent(new Event("scroll")));
+    scrollTo.mockClear();
+    animate.mockClear();
+
+    Object.defineProperty(scrollContainer, "scrollHeight", { configurable: true, value: 860 });
+    act(() => notifyResize(contentNode));
+
+    expect(scrollTo).toHaveBeenCalledWith({ top: 860, behavior: "auto" });
+    expect(animate).toHaveBeenCalledTimes(1);
+    expect(animate.mock.instances[0]).toBe(timeline);
+    expect(animate.mock.calls[0]?.[0]).toEqual([
+      { transform: "translateY(60px)" },
+      { transform: "translateY(0px)" },
+    ]);
+    expect(animate.mock.calls[0]?.[1]).toMatchObject({ fill: "both" });
+  });
+
+  it("starts the next timeline rise before cancelling an in-flight rise", () => {
+    const observed = new Map<
+      Element,
+      { callback: ResizeObserverCallback; observer: ResizeObserver }
+    >();
+    Object.defineProperty(globalThis, "ResizeObserver", {
+      configurable: true,
+      value: class TestResizeObserver {
+        constructor(private readonly callback: ResizeObserverCallback) {}
+
+        observe(target: Element) {
+          observed.set(target, {
+            callback: this.callback,
+            observer: this as unknown as ResizeObserver,
+          });
+        }
+
+        disconnect() {}
+
+        unobserve() {}
+      },
+    });
+    const notifyResize = (target: Element) => {
+      const observation = observed.get(target);
+      if (!observation) {
+        throw new Error("Expected observed resize target");
+      }
+      observation.callback(
+        [
+          {
+            target,
+            contentRect: target.getBoundingClientRect(),
+          } as ResizeObserverEntry,
+        ],
+        observation.observer,
+      );
+    };
+    const scrollTo = vi.fn(function (this: HTMLElement, options?: ScrollToOptions | number) {
+      const requestedTop = typeof options === "object" ? (options.top ?? 0) : 0;
+      const maxTop = Math.max(0, this.scrollHeight - this.clientHeight);
+      Object.defineProperty(this, "scrollTop", {
+        configurable: true,
+        value: Math.min(requestedTop, maxTop),
+      });
+    });
+    HTMLElement.prototype.scrollTo = scrollTo;
+    const firstRise = {
+      addEventListener: vi.fn(),
+      cancel: vi.fn(),
+    };
+    const secondRise = {
+      addEventListener: vi.fn(),
+      cancel: vi.fn(),
+    };
+    const animate = vi.mocked(HTMLElement.prototype.animate);
+    animate.mockReturnValueOnce(firstRise as unknown as Animation);
+    animate.mockReturnValueOnce(secondRise as unknown as Animation);
+
+    const strategy = createWebStreamStrategy({ isMobileBreakpoint: true });
+    const liveHead = [userMessage(1)];
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+
+    act(() => {
+      root?.render(
+        strategy.render({
+          agentId: "agent",
+          segments: {
+            historyVirtualized: [],
+            historyMounted: [],
+            liveHead,
+          },
+          boundary: {
+            hasVirtualizedHistory: false,
+            hasMountedHistory: false,
+            hasLiveHead: true,
+          },
+          renderers: createRenderers(vi.fn()),
+          listEmptyComponent: null,
+          viewportRef: React.createRef<StreamViewportHandle>(),
+          routeBottomAnchorRequest: null,
+          isAuthoritativeHistoryReady: true,
+          onNearBottomChange: vi.fn(),
+          onNearHistoryStart: vi.fn().mockReturnValue(true),
+          isLoadingOlderHistory: false,
+          hasOlderHistory: false,
+          olderHistoryProgressKey: null,
+          scrollEnabled: true,
+          listStyle: null,
+          baseListContentContainerStyle: null,
+          forwardListContentContainerStyle: null,
+        }),
+      );
+    });
+
+    const scrollContainer = container.querySelector('[data-testid="agent-chat-scroll"]');
+    const contentNode = container.querySelector('[data-testid="agent-chat-content"]');
+    const timeline = container.querySelector('[data-testid="agent-chat-timeline"]');
+    if (
+      !(scrollContainer instanceof HTMLElement) ||
+      !(contentNode instanceof HTMLElement) ||
+      !(timeline instanceof HTMLElement)
+    ) {
+      throw new Error("Expected followed chat scroll, content, and timeline");
+    }
+
+    Object.defineProperty(scrollContainer, "clientHeight", { configurable: true, value: 400 });
+    Object.defineProperty(scrollContainer, "scrollHeight", { configurable: true, value: 800 });
+    Object.defineProperty(scrollContainer, "scrollTop", { configurable: true, value: 400 });
+    act(() => scrollContainer.dispatchEvent(new Event("scroll")));
+    scrollTo.mockClear();
+    animate.mockClear();
+    animate.mockReturnValueOnce(firstRise as unknown as Animation);
+    animate.mockReturnValueOnce(secondRise as unknown as Animation);
+
+    Object.defineProperty(scrollContainer, "scrollHeight", { configurable: true, value: 860 });
+    act(() => notifyResize(contentNode));
+
+    const originalGetComputedStyle = window.getComputedStyle.bind(window);
+    const originalDOMMatrixReadOnly = globalThis.DOMMatrixReadOnly;
+    class TestDOMMatrixReadOnly {
+      m42: number;
+      constructor(transform: string) {
+        const match = /matrix\([^,]+,[^,]+,[^,]+,[^,]+,[^,]+,\s*([^)]+)\)/.exec(transform);
+        this.m42 = match ? Number(match[1]) : 0;
+      }
+    }
+    Object.defineProperty(globalThis, "DOMMatrixReadOnly", {
+      configurable: true,
+      value: TestDOMMatrixReadOnly,
+    });
+    window.getComputedStyle = ((element: Element) => {
+      if (element === timeline) {
+        return { transform: "matrix(1, 0, 0, 1, 0, 18)" } as CSSStyleDeclaration;
+      }
+      return originalGetComputedStyle(element);
+    }) as typeof window.getComputedStyle;
+
+    Object.defineProperty(scrollContainer, "scrollHeight", { configurable: true, value: 880 });
+    act(() => notifyResize(contentNode));
+    window.getComputedStyle = originalGetComputedStyle;
+    Object.defineProperty(globalThis, "DOMMatrixReadOnly", {
+      configurable: true,
+      value: originalDOMMatrixReadOnly,
+    });
+
+    expect(animate).toHaveBeenCalledTimes(2);
+    expect(animate.mock.calls[1]?.[0]).toEqual([
+      { transform: "translateY(38px)" },
+      { transform: "translateY(0px)" },
+    ]);
+    expect(firstRise.cancel).toHaveBeenCalledTimes(1);
+    expect(firstRise.cancel.mock.invocationCallOrder[0]).toBeGreaterThan(
+      animate.mock.invocationCallOrder[1]!,
+    );
   });
 
   it("keeps the retained viewport mounted while inactive and reconciles it once on return", async () => {
