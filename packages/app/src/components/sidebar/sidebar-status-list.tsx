@@ -40,14 +40,11 @@ import {
   CircleX,
 } from "lucide-react-native";
 import { useToast } from "@/contexts/toast-context";
-import { useMutation } from "@tanstack/react-query";
-import { getHostRuntimeStore } from "@/runtime/host-runtime";
-import { AdaptiveRenameModal } from "@/components/rename-modal";
-import { requireWorkspaceDirectory } from "@/utils/workspace-directory";
+import { WorkspaceRenameModal } from "@/components/workspace-rename-modal";
+import { useWorkspaceClipboardActions } from "@/hooks/use-workspace-clipboard-actions";
 import { redirectIfArchivingActiveWorkspace } from "@/utils/sidebar-workspace-archive-redirect";
 import { useWorkspaceArchive } from "@/workspace/use-workspace-archive";
 import { toWorktreeArchiveRisk } from "@/git/worktree-archive-warning";
-import * as Clipboard from "expo-clipboard";
 import type { ShortcutKey } from "@/utils/format-shortcut";
 import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
 import { useKeyboardActionHandler } from "@/hooks/use-keyboard-action-handler";
@@ -129,7 +126,7 @@ interface StatusWorkspaceListProps {
   /** Swaps the group list for the label filter's empty state. Never the header above it. */
   sidebarFilterEmpty?: boolean;
   parentGestureRef?: MutableRefObject<GestureType | undefined>;
-  dragGestureHostPresented?: boolean;
+  dragGestureHostActive?: boolean;
 }
 
 export function SidebarStatusWorkspaceList({
@@ -146,7 +143,7 @@ export function SidebarStatusWorkspaceList({
   listHeaderComponent,
   sidebarFilterEmpty = false,
   parentGestureRef,
-  dragGestureHostPresented,
+  dragGestureHostActive,
 }: StatusWorkspaceListProps) {
   const collapsedWorkspaceGroupKeys = useSidebarCollapsedSectionsStore(
     (state) => state.collapsedWorkspaceGroupKeys,
@@ -217,7 +214,7 @@ export function SidebarStatusWorkspaceList({
                 useDragHandle
                 nestable={platformIsNative}
                 simultaneousGestureRef={parentGestureRef}
-                gestureHostPresented={dragGestureHostPresented}
+                gestureHostPresented={dragGestureHostActive}
               />
               {canTogglePinnedWorkspaces ? (
                 <SidebarGroupToggleRow
@@ -626,42 +623,17 @@ function StatusWorkspaceRowWithMenu({
     archiveController.archive();
   }, [archiveController, isArchiving]);
 
+  const clipboard = useWorkspaceClipboardActions();
   const handleCopyPath = useCallback(() => {
-    let copyTargetDirectory: string;
-    try {
-      copyTargetDirectory = requireWorkspaceDirectory({
-        workspaceId: workspace.workspaceId,
-        workspaceDirectory: workspace.workspaceDirectory,
-      });
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Workspace path not available");
-      return;
-    }
-    void Clipboard.setStringAsync(copyTargetDirectory);
-    toast.copied("Path copied");
-  }, [toast, workspace.workspaceDirectory, workspace.workspaceId]);
+    clipboard.copyPath(workspace);
+  }, [clipboard, workspace]);
 
   const handleCopyBranchName = useCallback(() => {
-    void Clipboard.setStringAsync(workspace.name);
-    toast.copied("Branch name copied");
-  }, [toast, workspace.name]);
-
-  const renameMutation = useMutation({
-    mutationFn: async (title: string) => {
-      const client = getHostRuntimeStore().getClient(workspace.serverId);
-      if (!client) throw new Error(t("workspace.terminal.hostDisconnected"));
-      await client.setWorkspaceTitle(workspace.workspaceId, title.length === 0 ? null : title);
-    },
-  });
+    clipboard.copyBranchName(workspace);
+  }, [clipboard, workspace]);
 
   const handleOpenRename = useCallback(() => setIsRenameOpen(true), []);
   const handleCloseRename = useCallback(() => setIsRenameOpen(false), []);
-  const handleSubmitRename = useCallback(
-    async (value: string) => {
-      await renameMutation.mutateAsync(value.trim());
-    },
-    [renameMutation],
-  );
   const isPinned = workspace.pinnedAt != null;
   const handleTogglePin = useCallback(() => {
     onToggleWorkspacePin(workspace);
@@ -719,14 +691,10 @@ function StatusWorkspaceRowWithMenu({
         isDragging={isDragging}
         dragHandleProps={dragHandleProps}
       />
-      <AdaptiveRenameModal
+      <WorkspaceRenameModal
         visible={isRenameOpen}
-        title="Rename workspace"
-        initialValue={workspace.title ?? workspace.name}
-        placeholder={workspace.name}
-        submitLabel="Rename"
+        workspace={workspace}
         onClose={handleCloseRename}
-        onSubmit={handleSubmitRename}
         testID={`sidebar-workspace-rename-modal-${workspace.workspaceKey}`}
       />
     </>

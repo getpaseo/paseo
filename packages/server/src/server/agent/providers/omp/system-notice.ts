@@ -1,5 +1,3 @@
-import { createHash } from "node:crypto";
-
 import type { AgentTimelineItem } from "../../agent-sdk-types.js";
 
 const SYSTEM_NOTICE_OPEN_TAG = "<system-notice>";
@@ -9,18 +7,13 @@ const TASK_RESULT_TAG_PATTERN = /<task-result\b([^>]*)>/i;
 // with typographic quotes after copy/paste round-trips; accept both.
 const TASK_RESULT_ATTRIBUTE_PATTERN = /([\w-]+)=["'“‘]([^"'“”‘’]*)["'”’]/g;
 
-type OmpSystemNoticeToolCallItem = Extract<AgentTimelineItem, { type: "tool_call" }>;
+type OmpSystemNotificationItem = Extract<AgentTimelineItem, { type: "notification" }>;
 
 interface OmpTaskResultSummary {
   id: string | null;
   agent: string | null;
   status: string | null;
 }
-
-type OmpNoticeLifecycle =
-  | { status: "completed"; error: null }
-  | { status: "failed"; error: string }
-  | { status: "canceled"; error: null };
 
 export function isOmpSystemNotice(text: string): boolean {
   return text.trimStart().startsWith(SYSTEM_NOTICE_OPEN_TAG);
@@ -62,18 +55,17 @@ function readNoticeFirstLine(text: string): string | null {
   return null;
 }
 
-function buildLifecycle(
+function notificationLevel(
   taskResult: OmpTaskResultSummary | null,
-  label: string,
-): OmpNoticeLifecycle {
+): OmpSystemNotificationItem["level"] {
   const status = taskResult?.status?.toLowerCase() ?? null;
   if (status === "failed" || status === "error") {
-    return { status: "failed", error: label };
+    return "error";
   }
   if (status === "canceled" || status === "cancelled" || status === "stopped") {
-    return { status: "canceled", error: null };
+    return "warning";
   }
-  return { status: "completed", error: null };
+  return "info";
 }
 
 function buildLabel(taskResult: OmpTaskResultSummary | null, text: string): string {
@@ -83,46 +75,15 @@ function buildLabel(taskResult: OmpTaskResultSummary | null, text: string): stri
   return readNoticeFirstLine(text) ?? "System notice";
 }
 
-function buildCallId(taskResult: OmpTaskResultSummary | null, text: string): string {
-  if (taskResult?.id) {
-    return `omp-notice:${taskResult.id}`;
-  }
-  const digest = createHash("sha1").update(text.trim()).digest("hex").slice(0, 12);
-  return `omp-notice:${digest}`;
-}
-
-export function mapOmpSystemNoticeToToolCall(text: string): OmpSystemNoticeToolCallItem | null {
+export function mapOmpSystemNoticeToNotification(text: string): OmpSystemNotificationItem | null {
   if (!isOmpSystemNotice(text)) {
     return null;
   }
 
   const taskResult = readTaskResult(text);
-  const label = buildLabel(taskResult, text);
-  const lifecycle = buildLifecycle(taskResult, label);
-  const base = {
-    type: "tool_call" as const,
-    callId: buildCallId(taskResult, text),
-    name: "task_notification",
-    detail: {
-      type: "plain_text" as const,
-      label,
-      text,
-      icon: "wrench" as const,
-    },
-    metadata: {
-      synthetic: true,
-      source: "omp_system_notice",
-      ...(taskResult?.id ? { taskId: taskResult.id } : {}),
-      ...(taskResult?.agent ? { subagentType: taskResult.agent } : {}),
-      ...(taskResult?.status ? { status: taskResult.status } : {}),
-    },
+  return {
+    type: "notification",
+    level: notificationLevel(taskResult),
+    message: buildLabel(taskResult, text),
   };
-
-  if (lifecycle.status === "failed") {
-    return { ...base, status: "failed", error: lifecycle.error };
-  }
-  if (lifecycle.status === "canceled") {
-    return { ...base, status: "canceled", error: null };
-  }
-  return { ...base, status: "completed", error: null };
 }

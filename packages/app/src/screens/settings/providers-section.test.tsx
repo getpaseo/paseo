@@ -166,6 +166,10 @@ vi.mock("@/components/ui/loading-spinner", () => ({
   LoadingSpinner: () => React.createElement("span", { "data-testid": "loading-spinner" }),
 }));
 
+vi.mock("@/screens/settings/settings-info-tip", () => ({
+  SettingsInfoTip: () => null,
+}));
+
 vi.mock("@/components/ui/dropdown-menu", () => ({
   DropdownMenu: ({ children }: { children?: React.ReactNode }) =>
     React.createElement("div", null, children),

@@ -1,6 +1,6 @@
 {
   "name": "paseo",
-  "version": "0.6.1",
+  "version": "0.7.2",
   "private": true,
   "description": "Paseo: voice-controlled development environment for local AI coding agents",
   "keywords": [
@@ -11,7 +11,7 @@
     "voice-assistant"
   ],
   "homepage": "https://paseo.sh",
-  "license": "AGPL-3.0-or-later",
+  "license": "Apache-2.0",
   "author": {
     "name": "Mohamed Boudra",
     "email": "hello@moboudra.com"
@@ -41,6 +41,7 @@
     "dev:server:raw": "npm run dev --workspace=@getpaseo/server",
     "dev:app": "cross-env PASEO_LISTEN=127.0.0.1:6768 EXPO_PORT=8081 ./scripts/dev-app.sh",
     "test:e2e:mobile": "./scripts/test-mobile-agent-device.sh",
+    "test:e2e:composer-keyboard:android": "./packages/app/e2e/mobile/composer-keyboard/android.sh",
     "dev:website": "npm run dev --workspace=@getpaseo/website",
     "postinstall": "node scripts/postinstall-patches.mjs",
     "prepare": "lefthook install --force",
@@ -125,6 +126,7 @@
     "@vercel/nft": "^1.5.0",
     "concurrently": "^9.2.1",
     "cross-env": "^10.1.0",
+    "electron": "44.2.0",
     "get-port-cli": "^3.0.0",
     "js-yaml": "^4.1.1",
     "knip": "^5.82.1",

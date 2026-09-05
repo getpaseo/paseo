@@ -31,7 +31,10 @@ export function PluginCatalogSync({
           .getPluginCatalog()
           .then((catalog) => {
             if (!cancelled) {
-              pluginRegistry.installCatalog(serverId, catalog, { replacePluginId });
+              pluginRegistry.installCatalog(serverId, catalog, {
+                replacePluginId,
+                client,
+              });
             }
             return undefined;
           })

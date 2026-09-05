@@ -267,4 +267,18 @@ describe("wire schema compatibility", () => {
     expect(parsed.capabilities.supportsRewindFiles).toBe(false);
     expect(parsed.capabilities.supportsRewindBoth).toBe(false);
   });
+
+  test("notification timeline items parse their level and message", () => {
+    expect(
+      AgentTimelineItemPayloadSchema.parse({
+        type: "notification",
+        level: "warning",
+        message: "Command blocked by user",
+      }),
+    ).toEqual({
+      type: "notification",
+      level: "warning",
+      message: "Command blocked by user",
+    });
+  });
 });

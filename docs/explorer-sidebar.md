@@ -27,6 +27,13 @@ On desktop, the shell is rendered outside the workspace split canvas so it divid
 workspace, including the header. It has its own persisted width and resize handle. Main-pane splits
 never read or modify that width.
 
+`packages/app/src/workspace-tabs/open-supporting-view.ts` owns semantic Changes and pull-request
+opens. Compact and wide native layouts select the matching Explorer tab. Desktop Changes opens
+follow the shared diff preference. Desktop pull requests use their Main panel, On the side, or
+Explorer sidebar setting. Callers request the content and never choose the shell.
+The composer Changes pill is a two-stage desktop action: it first reveals Explorer on Changes, then
+routes later presses to the working diff through the shared diff preference.
+
 The persisted layout still contains the Explorer pane so tabs survive reloads. The renderer removes
 that pane from the workspace split tree and docks it separately. Persisted identifiers retain the
 literal `"explorer"` pane id and `explorerPaneIdByWorkspace` key for compatibility.
@@ -36,11 +43,12 @@ toggles the singleton Files and Changes views. Individual tab menus close instan
 compatible tabs to main. Explorer tabs can be reordered, but the dock cannot be split. Selecting
 an Explorer tab does not change workspace focus.
 
-Cmd+E selects Changes for Git workspaces and Files otherwise. Compact layouts use the combined
-full-screen Explorer overlay and close it after a file opens. Wide native layouts without pane
-splits use the same combined content in a resizable inline dock; opening a file leaves that dock
-visible. Both presentations keep their selection in the panel store and reuse the layout store's
-per-workspace Explorer width. They do not create a second Explorer lifecycle.
+Cmd+E shows or hides Explorer without changing its selected view. Compact layouts use the combined
+full-screen Explorer overlay for Changes, Files, and pull requests, and close it after a file opens.
+Wide native layouts without pane splits use the same combined content in a resizable inline dock;
+opening a file leaves that dock visible. Both presentations keep their selection in the panel store
+and reuse the layout store's per-workspace Explorer width. They do not create a second Explorer
+lifecycle.
 
 ## Side pane
 
@@ -65,9 +73,13 @@ new target and never yanks an existing tab out of a user-selected pane.
 
 ## Routing preferences
 
-Desktop **Settings → Layout → Open in side pane** has independent switches for Explorer Files,
-Explorer Changes, chat files, diff files, subagents, pull requests, and Changes links. All switches
-default off. Mobile ignores them.
+Desktop **Settings → Layout → Open location** has independent Main panel or On the side choices for
+Explorer Files, diffs, chat files, files opened from diffs, and subagents. They default to Main
+panel. Mobile ignores them.
+
+Pull requests have a three-way open location: Main panel, On the side, or Explorer sidebar. Explorer
+sidebar is the default. Compact layouts always open pull requests in Explorer regardless of this
+desktop preference.
 
 Panels request an implicit open through the narrow `openPreferredTarget(target, source)` pane
 contract. Entry points outside panels use `openPreferredWorkspaceTarget`. Do not branch on a

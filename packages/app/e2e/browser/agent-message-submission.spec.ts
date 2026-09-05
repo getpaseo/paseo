@@ -39,7 +39,10 @@ import {
   expectResumeOverflowFallsBackToOneTail,
   rememberTimelineRequestCounts,
 } from "../support/helpers/timeline-resume";
-import { workspaceDeckEntryLocator } from "../support/helpers/workspace-ui";
+import {
+  waitForWorkspaceInSidebar,
+  workspaceDeckEntryLocator,
+} from "../support/helpers/workspace-ui";
 import { expectInFlightForkAvailable } from "../support/helpers/assistant-fork";
 import {
   scrollTimelineToNewestLoadedEdge,
@@ -468,6 +471,10 @@ async function expectHiddenStreamingSubmissionOrderAfterWorkspaceEviction(
 
     await target.client.waitForFinish(target.agentId, 30_000);
     const requestsBeforeReturn = rememberTimelineRequestCounts(gate);
+    await waitForWorkspaceInSidebar(page, {
+      serverId: getServerId(),
+      workspaceId: target.workspaceId,
+    });
     await openAgentRoute(page, target);
     await expectComposerVisible(page);
     await subscriptions.waitForSubscribedAgents([target.agentId]);
