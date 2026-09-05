@@ -76,6 +76,7 @@ function createTerminalHost(input: {
   width: number;
   height: number;
   scrollback?: number;
+  isMacLikePlatform?: boolean;
 }): MountedTerminal {
   const root = document.createElement("div");
   root.style.width = `${input.width}px`;
@@ -117,6 +118,7 @@ function createTerminalHost(input: {
     host,
     initialSnapshot: null,
     scrollback: input.scrollback ?? 10_000,
+    isMacLikePlatform: input.isMacLikePlatform,
     theme: {
       background: "#0b0b0b",
       foreground: "#e6e6e6",
@@ -165,6 +167,7 @@ function getBrowserTerminal(): BrowserTerminal {
 function dispatchTerminalKey(input: {
   host: HTMLElement;
   key: string;
+  keyCode?: number;
   shiftKey?: boolean;
   ctrlKey?: boolean;
   altKey?: boolean;
@@ -175,17 +178,21 @@ function dispatchTerminalKey(input: {
     throw new Error("Expected xterm textarea to be mounted");
   }
   textarea.focus();
-  return textarea.dispatchEvent(
-    new KeyboardEvent("keydown", {
-      key: input.key,
-      shiftKey: input.shiftKey ?? false,
-      ctrlKey: input.ctrlKey ?? false,
-      altKey: input.altKey ?? false,
-      metaKey: input.metaKey ?? false,
-      bubbles: true,
-      cancelable: true,
-    }),
-  );
+  const event = new KeyboardEvent("keydown", {
+    key: input.key,
+    shiftKey: input.shiftKey ?? false,
+    ctrlKey: input.ctrlKey ?? false,
+    altKey: input.altKey ?? false,
+    metaKey: input.metaKey ?? false,
+    bubbles: true,
+    cancelable: true,
+  });
+  if (input.keyCode !== undefined) {
+    // Synthetic KeyboardEvents always report keyCode 0; xterm's fallback encoder
+    // switches on keyCode, so hardware-like events need it filled in.
+    Object.defineProperty(event, "keyCode", { value: input.keyCode });
+  }
+  return textarea.dispatchEvent(event);
 }
 
 afterEach(() => {
@@ -462,6 +469,64 @@ describe("terminal emulator runtime in a real browser", () => {
       startIndex: sizeCount,
       baseline: sizeBeforeKey,
     });
+  });
+
+  it("translates mac editing shortcuts into shell editing sequences", async () => {
+    await page.viewport(900, 600);
+    const mounted = createTerminalHost({ width: 720, height: 360, isMacLikePlatform: true });
+
+    await waitFor({ predicate: () => mounted.sizes.length > 0 });
+
+    dispatchTerminalKey({ host: mounted.host, key: "ArrowRight", keyCode: 39 });
+    dispatchTerminalKey({ host: mounted.host, key: "ArrowLeft", keyCode: 37, metaKey: true });
+    dispatchTerminalKey({ host: mounted.host, key: "ArrowRight", keyCode: 39, metaKey: true });
+    dispatchTerminalKey({ host: mounted.host, key: "ArrowLeft", keyCode: 37, altKey: true });
+    dispatchTerminalKey({ host: mounted.host, key: "ArrowRight", keyCode: 39, altKey: true });
+    dispatchTerminalKey({ host: mounted.host, key: "Backspace", keyCode: 8, metaKey: true });
+    await nextFrame();
+
+    expect(mounted.inputs).toEqual([
+      "\x1b[C", // plain arrow keeps xterm's default encoding
+      "\x01", // cmd+left -> line start
+      "\x05", // cmd+right -> line end
+      "\x1bb", // option+left -> word back
+      "\x1bf", // option+right -> word forward
+      "\x15", // cmd+backspace -> kill line
+    ]);
+    expect(mounted.terminalKeys).toEqual([]);
+  });
+
+  it("keeps cmd+shift+arrow free for app-level shortcuts", async () => {
+    await page.viewport(900, 600);
+    const mounted = createTerminalHost({ width: 720, height: 360, isMacLikePlatform: true });
+
+    await waitFor({ predicate: () => mounted.sizes.length > 0 });
+
+    dispatchTerminalKey({
+      host: mounted.host,
+      key: "ArrowRight",
+      keyCode: 39,
+      metaKey: true,
+      shiftKey: true,
+    });
+    await nextFrame();
+
+    expect(mounted.inputs).toEqual([]);
+    expect(mounted.terminalKeys).toEqual([]);
+  });
+
+  it("does not remap modified arrows on non-mac platforms", async () => {
+    await page.viewport(900, 600);
+    const mounted = createTerminalHost({ width: 720, height: 360, isMacLikePlatform: false });
+
+    await waitFor({ predicate: () => mounted.sizes.length > 0 });
+
+    dispatchTerminalKey({ host: mounted.host, key: "ArrowRight", keyCode: 39, metaKey: true });
+    dispatchTerminalKey({ host: mounted.host, key: "ArrowRight", keyCode: 39, altKey: true });
+    await nextFrame();
+
+    // Meta+arrow is ignored by xterm; alt+arrow takes xterm's generic encoding.
+    expect(mounted.inputs).toEqual(["\x1b[1;3C"]);
   });
 
   it.each([
