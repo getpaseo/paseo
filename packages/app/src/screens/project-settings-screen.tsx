@@ -544,9 +544,13 @@ function ProjectConfigForm({
 
   const handleSave = useCallback(() => {
     if (writeError?.code === "stale_project_config") return;
-    const config = applyDraftToConfig({ draft, base: baseConfig });
+    const config = applyDraftToConfig({
+      draft,
+      base: baseConfig,
+      editLaunches: supportsWorkspaceLaunchManagement,
+    });
     saveMutation.mutate({ config, expectedRevision: revision });
-  }, [draft, baseConfig, revision, writeError, saveMutation]);
+  }, [draft, baseConfig, revision, writeError, saveMutation, supportsWorkspaceLaunchManagement]);
 
   const handleReload = useCallback(() => {
     setWriteError(null);
@@ -735,8 +739,9 @@ function ProjectConfigForm({
 
   const hasInvalidLaunches = useMemo(
     () =>
+      supportsWorkspaceLaunchManagement &&
       draft.launches.some((launch) => validateLaunch(launch, t, duplicateLaunchNames).hasErrors),
-    [draft.launches, duplicateLaunchNames, t],
+    [draft.launches, duplicateLaunchNames, t, supportsWorkspaceLaunchManagement],
   );
 
   const scriptsTrailing = useMemo(
