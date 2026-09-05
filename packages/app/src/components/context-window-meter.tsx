@@ -4,6 +4,7 @@ import Svg, { Circle } from "react-native-svg";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import type { AgentPlanUsageWindow } from "@getpaseo/protocol/agent-types";
 import { ProviderUsageTooltipSection } from "@/provider-usage/tooltip-section";
 import { useProviderUsage } from "@/provider-usage/use-provider-usage";
 import { formatTokenCount } from "./context-window-meter.utils";
@@ -18,6 +19,9 @@ interface ContextWindowMeterProps {
   provider?: string | null;
   /** Reserve the meter footprint and show a loading ring while usage is pending. */
   pending?: boolean;
+  /** Plan windows the agent observed from its own traffic (per account, per model). */
+  planWindows?: AgentPlanUsageWindow[] | null;
+  planWindowsObservedAt?: string | null;
   /** Optional glyph envelope for icon-toolbar alignment. */
   glyphSize?: number;
 }
@@ -103,6 +107,8 @@ export function ContextWindowMeter({
   showPercentage = false,
   serverId,
   provider,
+  planWindows = null,
+  planWindowsObservedAt = null,
   pending = false,
   glyphSize,
 }: ContextWindowMeterProps) {
@@ -129,32 +135,60 @@ export function ContextWindowMeter({
 
   // No usage yet: reserve the footprint with a track-only ring while a session is
   // active so the real ring fades in without shifting siblings. Render nothing when
-  // no usage is expected.
+  // no usage is expected. The pending ring keeps the tooltip: a running or stalled
+  // agent with no usage report is exactly when someone hovers to check plan limits.
   if (percentage === null || maxTokens === null || usedTokens === null) {
     if (!pending) {
       return null;
     }
     return (
-      <View style={geometry.containerStyle}>
-        <Svg
-          width={geometry.svgSize}
-          height={geometry.svgSize}
-          viewBox={`0 0 ${geometry.svgSize} ${geometry.svgSize}`}
-          style={styles.svg}
-          accessibilityElementsHidden
-          importantForAccessibility="no-hide-descendants"
-        >
-          <Circle
-            cx={geometry.center}
-            cy={geometry.center}
-            r={geometry.radius}
-            fill="none"
-            stroke={theme.colors.surface3}
-            strokeWidth={geometry.strokeWidth}
-          />
-        </Svg>
-        {showPercentage ? <View style={styles.skeletonLabel} /> : null}
-      </View>
+      <Tooltip
+        open={isTooltipOpen}
+        onOpenChange={handleTooltipOpenChange}
+        delayDuration={0}
+        enabledOnDesktop
+        enabledOnMobile
+      >
+        <TooltipTrigger asChild triggerRefProp="ref">
+          <Pressable
+            style={geometry.containerStyle}
+            testID="context-window-meter"
+            accessibilityRole="image"
+            accessibilityLabel={t("contextWindow.title")}
+          >
+            <Svg
+              width={geometry.svgSize}
+              height={geometry.svgSize}
+              viewBox={`0 0 ${geometry.svgSize} ${geometry.svgSize}`}
+              style={styles.svg}
+              accessibilityElementsHidden
+              importantForAccessibility="no-hide-descendants"
+            >
+              <Circle
+                cx={geometry.center}
+                cy={geometry.center}
+                r={geometry.radius}
+                fill="none"
+                stroke={theme.colors.surface3}
+                strokeWidth={geometry.strokeWidth}
+              />
+            </Svg>
+            {showPercentage ? <View style={styles.skeletonLabel} /> : null}
+          </Pressable>
+        </TooltipTrigger>
+        <TooltipContent side="top" align="center" offset={8}>
+          <View style={styles.tooltipContent}>
+            <Text style={styles.tooltipTitle}>{t("contextWindow.title")}</Text>
+            <Text style={styles.tooltipDetail}>{t("contextWindow.pending")}</Text>
+            <ProviderUsageTooltipSection
+              view={providerUsageView}
+              activeProviderId={provider}
+              agentPlanWindows={planWindows}
+              agentPlanWindowsObservedAt={planWindowsObservedAt}
+            />
+          </View>
+        </TooltipContent>
+      </Tooltip>
     );
   }
 
@@ -233,7 +267,12 @@ export function ContextWindowMeter({
               {t("contextWindow.sessionCost", { cost: formattedSessionCost })}
             </Text>
           ) : null}
-          <ProviderUsageTooltipSection view={providerUsageView} activeProviderId={provider} />
+          <ProviderUsageTooltipSection
+            view={providerUsageView}
+            activeProviderId={provider}
+            agentPlanWindows={planWindows}
+            agentPlanWindowsObservedAt={planWindowsObservedAt}
+          />
         </View>
       </TooltipContent>
     </Tooltip>

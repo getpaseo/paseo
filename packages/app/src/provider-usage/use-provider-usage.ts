@@ -14,8 +14,11 @@ export function providerUsageQueryKey(serverId: string | null | undefined) {
   return ["providerUsage", serverId ?? ""] as const;
 }
 
-async function fetchProviderUsage(client: ProviderUsageClient): Promise<ProviderUsageListPayload> {
-  return client.listProviderUsage();
+async function fetchProviderUsage(
+  client: ProviderUsageClient,
+  options?: { forceRefresh?: boolean },
+): Promise<ProviderUsageListPayload> {
+  return client.listProviderUsage(options);
 }
 
 interface UseProviderUsageOptions {
@@ -58,14 +61,16 @@ export function useProviderUsage(
   });
 
   const refresh = useCallback(async () => {
-    if (!canFetch) return;
-    await queryClient.invalidateQueries({ queryKey });
+    if (!canFetch || !client) return;
+    // An explicit refresh asks the daemon to bypass its own usage cache too;
+    // staleTime 0 makes react-query actually refetch instead of serving the
+    // client-side cache it just wrote.
     await queryClient.fetchQuery({
       queryKey,
-      queryFn,
-      staleTime: PROVIDER_USAGE_STALE_TIME_MS,
+      queryFn: () => fetchProviderUsage(client, { forceRefresh: true }),
+      staleTime: 0,
     });
-  }, [canFetch, queryClient, queryFn, queryKey]);
+  }, [canFetch, client, queryClient, queryKey]);
 
   const view = useMemo<ProviderUsageView>(() => {
     if (!serverId || !client || !isConnected) {

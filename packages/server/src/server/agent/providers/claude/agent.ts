@@ -44,6 +44,7 @@ import {
 } from "./model-manifest.js";
 import { parsePartialJsonObject } from "./partial-json.js";
 import { ClaudeSidechainTracker } from "./sidechain-tracker.js";
+import { planWindowsFromRateLimitInfo } from "./plan-usage.js";
 import { ClaudeTaskState } from "./task-state.js";
 import {
   ClaudeTaskProtocolSource,
@@ -114,6 +115,7 @@ import {
   type SteerResult,
   type AgentStreamEvent,
   type AgentTimelineItem,
+  type AgentPlanUsageWindow,
   type AgentUsage,
   type AgentRuntimeInfo,
   type FetchCatalogOptions,
@@ -1892,6 +1894,12 @@ class ClaudeContextUsageState {
   private streamRequestOutputTokens: number | undefined;
   private compactedContextWindowUsedTokens: number | undefined;
   private completedResultTurns = 0;
+  // Latest plan windows from the CLI's rate_limit_event. Kept across turns and
+  // attached to every usage this class builds: `usage_updated` replaces
+  // `lastUsage` wholesale, so windows missing from any one emission would
+  // vanish from the meter until the next event.
+  private planWindows: AgentPlanUsageWindow[] | undefined;
+  private planWindowsObservedAt: string | undefined;
 
   constructor(initialContextWindowMaxTokens?: number) {
     this.contextWindowMaxTokens = initialContextWindowMaxTokens;
@@ -1905,6 +1913,18 @@ class ClaudeContextUsageState {
 
   setInitialContextWindowMaxTokens(contextWindowMaxTokens: number | undefined): void {
     this.contextWindowMaxTokens = contextWindowMaxTokens;
+  }
+
+  setPlanWindows(planWindows: AgentPlanUsageWindow[], observedAt: string): void {
+    this.planWindows = planWindows;
+    this.planWindowsObservedAt = observedAt;
+  }
+
+  private withPlanWindows(usage: AgentUsage): AgentUsage {
+    if (!this.planWindows) return usage;
+    usage.planWindows = this.planWindows;
+    if (this.planWindowsObservedAt) usage.planWindowsObservedAt = this.planWindowsObservedAt;
+    return usage;
   }
 
   recordModelUsage(modelUsage: unknown): number | undefined {
@@ -1972,7 +1992,7 @@ class ClaudeContextUsageState {
       if (usedTokens !== undefined) {
         usage.contextWindowUsedTokens = usedTokens;
       }
-      return usage;
+      return this.withPlanWindows(usage);
     } finally {
       this.compactedContextWindowUsedTokens = undefined;
       this.completedResultTurns += 1;
@@ -2000,7 +2020,7 @@ class ClaudeContextUsageState {
     return {
       type: "usage_updated",
       provider: "claude",
-      usage,
+      usage: this.withPlanWindows(usage),
     };
   }
 
@@ -2018,7 +2038,7 @@ class ClaudeContextUsageState {
     return {
       type: "usage_updated",
       provider: "claude",
-      usage,
+      usage: this.withPlanWindows(usage),
     };
   }
 }
@@ -2063,6 +2083,8 @@ class ClaudeAgentSession implements AgentSession {
   private autonomousTurn: AutonomousTurnState | null = null;
   private readonly subscribers = new Set<(event: AgentStreamEvent) => void>();
   private readonly timelineAssembler = new TimelineAssembler();
+  /** Model named on the latest assistant message; the configured model until one arrives. */
+  private lastObservedModel: string | null = null;
   private readonly taskState = new ClaudeTaskState();
   private readonly taskProtocolSource = new ClaudeTaskProtocolSource({
     getToolInput: (toolUseId) => this.toolUseCache.get(toolUseId)?.input ?? null,
@@ -4081,6 +4103,7 @@ class ClaudeAgentSession implements AgentSession {
     }
 
     this.forgetReadSteer(message);
+    this.observePlanUsage(message);
 
     switch (message.type) {
       case "system":
@@ -4091,6 +4114,7 @@ class ClaudeAgentSession implements AgentSession {
         this.appendSidechainResultEvents(message, events);
         break;
       case "assistant": {
+        this.rememberObservedModel(message.message);
         const timelineItems = this.mapBlocksToTimeline(message.message.content, {
           suppressAssistantText: options?.suppressAssistantText ?? false,
           suppressReasoning: options?.suppressReasoning ?? false,
@@ -4112,6 +4136,28 @@ class ClaudeAgentSession implements AgentSession {
     }
 
     return events;
+  }
+
+  private rememberObservedModel(assistantMessage: unknown): void {
+    const model = toObjectRecord(assistantMessage)?.model;
+    if (typeof model === "string" && model.trim()) {
+      this.lastObservedModel = model.trim();
+    }
+  }
+
+  /**
+   * Plan windows ride on every usage the context state builds from here on, so
+   * they reach `lastUsage` with the next stream usage event (message_start
+   * follows a rate_limit_event within the same API call) and the turn result.
+   */
+  private observePlanUsage(message: SDKMessage): void {
+    if (message.type !== "rate_limit_event") return;
+    const windows = planWindowsFromRateLimitInfo(
+      message.rate_limit_info,
+      this.lastObservedModel ?? this.config.model ?? null,
+    );
+    if (!windows) return;
+    this.contextUsage.setPlanWindows(windows, new Date().toISOString());
   }
 
   /** Once Claude has read a steer there is nothing left to discard on interrupt. */

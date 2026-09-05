@@ -16,6 +16,8 @@ import type {
   AgentRuntimeInfo,
   AgentUsage,
   ImportableProviderSession,
+  AgentPlanUsageTone,
+  AgentPlanUsageWindow,
 } from "./agent-sdk-types.js";
 import type { ManagedAgent } from "./agent-manager.js";
 import type { JsonValue } from "../json-utils.js";
@@ -454,7 +456,34 @@ function sanitizeMetadataArray(value: unknown): AgentMetadata[] | undefined {
   return sanitized.length > 0 ? sanitized : undefined;
 }
 
-type UsageNumericField = Exclude<keyof AgentUsage, never>;
+type UsageNumericField =
+  | "inputTokens"
+  | "cachedInputTokens"
+  | "outputTokens"
+  | "totalCostUsd"
+  | "contextWindowMaxTokens"
+  | "contextWindowUsedTokens";
+
+const PLAN_USAGE_TONES: ReadonlySet<string> = new Set(["default", "ok", "warning", "danger"]);
+
+/** Plan windows survive only when every kept entry is well-formed; malformed entries are dropped. */
+function sanitizePlanWindows(value: JsonValue | undefined): AgentPlanUsageWindow[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const windows: AgentPlanUsageWindow[] = [];
+  for (const entry of value) {
+    if (!isJsonObject(entry)) continue;
+    const { id, label, usedPct, resetsAt, tone } = entry;
+    if (typeof id !== "string" || typeof label !== "string") continue;
+    if (typeof usedPct !== "number" || !Number.isFinite(usedPct)) continue;
+    const window: AgentPlanUsageWindow = { id, label, usedPct };
+    if (typeof resetsAt === "string") window.resetsAt = resetsAt;
+    if (typeof tone === "string" && PLAN_USAGE_TONES.has(tone)) {
+      window.tone = tone as AgentPlanUsageTone;
+    }
+    windows.push(window);
+  }
+  return windows.length > 0 ? windows : undefined;
+}
 
 function assignFiniteNumber(
   source: { [key: string]: JsonValue },
@@ -486,6 +515,13 @@ function sanitizeUsage(value: unknown): AgentUsage | undefined {
   for (const field of fields) {
     if (!assignFiniteNumber(sanitized, result, field)) {
       return undefined;
+    }
+  }
+  const planWindows = sanitizePlanWindows(sanitized.planWindows);
+  if (planWindows) {
+    result.planWindows = planWindows;
+    if (typeof sanitized.planWindowsObservedAt === "string") {
+      result.planWindowsObservedAt = sanitized.planWindowsObservedAt;
     }
   }
   return Object.keys(result).length ? result : undefined;

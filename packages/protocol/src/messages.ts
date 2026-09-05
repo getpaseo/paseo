@@ -422,6 +422,14 @@ const AgentCapabilityFlagsSchema: z.ZodType<AgentCapabilityFlags> = z
   })
   .catchall(z.boolean());
 
+const AgentPlanUsageWindowSchema = z.object({
+  id: z.string(),
+  label: z.string(),
+  usedPct: z.number(),
+  resetsAt: z.string().nullable().optional(),
+  tone: z.enum(["default", "ok", "warning", "danger"]).optional(),
+});
+
 const AgentUsageSchema: z.ZodType<AgentUsage> = z.object({
   inputTokens: z.number().optional(),
   cachedInputTokens: z.number().optional(),
@@ -429,6 +437,8 @@ const AgentUsageSchema: z.ZodType<AgentUsage> = z.object({
   totalCostUsd: z.number().optional(),
   contextWindowMaxTokens: z.number().optional(),
   contextWindowUsedTokens: z.number().optional(),
+  planWindows: z.array(AgentPlanUsageWindowSchema).optional(),
+  planWindowsObservedAt: z.string().optional(),
 });
 
 const McpStdioServerConfigSchema = z.object({
@@ -1739,6 +1749,9 @@ export const ProviderDiagnosticRequestMessageSchema = z.object({
 export const ProviderUsageListRequestMessageSchema = z.object({
   type: z.literal("provider.usage.list.request"),
   requestId: z.string(),
+  // Bypass the daemon-side usage cache (still subject to a short server-side
+  // floor). Optional and additive: old daemons strip it and serve the cache.
+  forceRefresh: z.boolean().optional(),
 });
 
 export const ResumeAgentRequestMessageSchema = z.object({

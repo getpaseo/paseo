@@ -750,7 +750,16 @@ function maxFiniteNumber(left: number | undefined, right: number): number {
   return left === undefined ? right : Math.max(left, right);
 }
 
-function assignUsageNumber(usage: AgentUsage, key: keyof AgentUsage, value: number | undefined) {
+// The numeric fields of AgentUsage; plan windows and their timestamp are not numbers.
+type AgentUsageNumericKey = {
+  [K in keyof AgentUsage]-?: AgentUsage[K] extends number | undefined ? K : never;
+}[keyof AgentUsage];
+
+function assignUsageNumber(
+  usage: AgentUsage,
+  key: AgentUsageNumericKey,
+  value: number | undefined,
+) {
   if (value !== undefined) {
     usage[key] = value;
   }

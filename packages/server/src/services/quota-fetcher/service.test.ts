@@ -15,6 +15,7 @@ import { KimiQuotaProvider } from "./providers/kimi.js";
 import { MiniMaxQuotaProvider } from "./providers/minimax.js";
 import { ZaiQuotaProvider } from "./providers/zai.js";
 import { ProviderUsageService } from "./service.js";
+import { buildProfileUsageFetchers, createProfileUsageFetcherSource } from "./profile-fetchers.js";
 
 function writeClaudeCredentials(
   dir: string,
@@ -261,6 +262,74 @@ describe("ProviderUsageService", () => {
     expect(calls).toBe(2);
     expect(cached).toBe(first);
     expect(refreshed.providers[0]?.windows[0]?.usedPct).toBe(2);
+  });
+
+  it("still serves the cache when a forced refresh arrives within the floor", async () => {
+    let now = Date.parse("2026-06-19T00:00:00.000Z");
+    let calls = 0;
+    const service = new ProviderUsageService({
+      logger: createLogger(),
+      now: () => now,
+      cacheTtlMs: 60_000,
+      forceRefreshMinIntervalMs: 15_000,
+      fetchers: [
+        {
+          providerId: "claude",
+          displayName: "Claude",
+          fetchUsage: async () => {
+            calls += 1;
+            return {
+              providerId: "claude",
+              displayName: "Claude",
+              status: "available",
+              planLabel: "Max 20x",
+              windows: [{ id: "session", label: "Session", usedPct: calls }],
+            };
+          },
+        },
+      ],
+    });
+
+    const first = await service.listUsage();
+    now += 5_000;
+    const withinFloor = await service.listUsage({ forceRefresh: true });
+    now += 15_000;
+    const beyondFloor = await service.listUsage({ forceRefresh: true });
+
+    expect(withinFloor).toBe(first);
+    expect(beyondFloor.providers[0]?.windows[0]?.usedPct).toBe(2);
+    expect(calls).toBe(2);
+  });
+
+  it("re-evaluates dynamic fetchers on every refresh so config reloads apply", async () => {
+    const makeFetcher = (providerId: string) => ({
+      providerId,
+      displayName: providerId,
+      fetchUsage: async () => ({
+        providerId,
+        displayName: providerId,
+        status: "available" as const,
+        planLabel: null,
+        windows: [],
+      }),
+    });
+    let dynamic = [makeFetcher("claude-work")];
+    const service = new ProviderUsageService({
+      logger: createLogger(),
+      cacheTtlMs: 0,
+      fetchers: [makeFetcher("claude")],
+      dynamicFetchers: () => dynamic,
+    });
+
+    const first = await service.listUsage();
+    expect(first.providers.map((p) => p.providerId)).toEqual(["claude", "claude-work"]);
+
+    // Simulate `paseo daemon reload` adding a profile and removing the old one.
+    // Plain listUsage: cacheTtlMs 0 means the next read refetches, proving a
+    // reload needs no force flag (and no service lifecycle hooks) to apply.
+    dynamic = [makeFetcher("claude-personal")];
+    const second = await service.listUsage();
+    expect(second.providers.map((p) => p.providerId)).toEqual(["claude", "claude-personal"]);
   });
 
   it("deduplicates concurrent cache misses", async () => {
@@ -572,6 +641,310 @@ describe("real provider usage fetchers", () => {
         headers: expect.objectContaining({ Authorization: "Bearer at_expired" }),
       }),
     );
+  });
+
+  it("prefers the macOS Keychain over a .credentials.json left by other tools", async () => {
+    // Third-party account switchers maintain a file copy that goes stale when
+    // Claude Code renews the Keychain entry behind them; the Keychain is the
+    // canonical store on macOS and must win.
+    writeClaudeCredentials(claudeHome, "at_stale_file");
+    fetchApi = mockFetch(
+      new Map([
+        ["https://api.anthropic.com/api/oauth/usage", () => jsonResponse(makeClaudeResponse())],
+      ]),
+    );
+
+    const result = await service({
+      platform: "darwin",
+      keychain: async () => ({ claudeAiOauth: { accessToken: "at_keychain_fresh" } }),
+    }).listUsage();
+
+    expect(findProvider(result, "claude").status).toBe("available");
+    expect(fetchApi).toHaveBeenCalledWith(
+      "https://api.anthropic.com/api/oauth/usage",
+      expect.objectContaining({
+        headers: expect.objectContaining({ Authorization: "Bearer at_keychain_fresh" }),
+      }),
+    );
+  });
+
+  it("falls back to .credentials.json on macOS when the Keychain is empty", async () => {
+    writeClaudeCredentials(claudeHome, "at_file_only");
+    fetchApi = mockFetch(
+      new Map([
+        ["https://api.anthropic.com/api/oauth/usage", () => jsonResponse(makeClaudeResponse())],
+      ]),
+    );
+
+    const result = await service({ platform: "darwin", keychain: async () => null }).listUsage();
+
+    expect(findProvider(result, "claude").status).toBe("available");
+    expect(fetchApi).toHaveBeenCalledWith(
+      "https://api.anthropic.com/api/oauth/usage",
+      expect.objectContaining({
+        headers: expect.objectContaining({ Authorization: "Bearer at_file_only" }),
+      }),
+    );
+  });
+
+  it("fetches profile usage with the profile's pinned token, ignoring shared stores", async () => {
+    // Shared stores describe a DIFFERENT account than the profile's token.
+    writeClaudeCredentials(claudeHome, "at_shared_store");
+    fetchApi = mockFetch(
+      new Map([
+        ["https://api.anthropic.com/api/oauth/usage", () => jsonResponse(makeClaudeResponse())],
+      ]),
+    );
+    const logger = createLogger();
+    const fetchThroughTestDouble = ((url: RequestInfo | URL, init?: RequestInit) =>
+      fetchApi(url, init)) as typeof fetch;
+    const usageService = new ProviderUsageService({
+      logger,
+      cacheTtlMs: 0,
+      fetchers: [],
+      dynamicFetchers: () =>
+        buildProfileUsageFetchers({
+          logger,
+          fetch: fetchThroughTestDouble,
+          providers: {
+            "claude-work": {
+              extends: "claude",
+              label: "Claude (Work)",
+              env: { CLAUDE_CODE_OAUTH_TOKEN: "sk-ant-oat01-work" },
+            },
+          },
+        }),
+    });
+
+    const result = await usageService.listUsage();
+    const profile = findProvider(result, "claude-work");
+
+    expect(profile).toMatchObject({
+      providerId: "claude-work",
+      displayName: "Claude (Work)",
+      status: "available",
+      planLabel: null,
+    });
+    expect(profile.windows.length).toBeGreaterThan(0);
+    expect(fetchApi).toHaveBeenCalledWith(
+      "https://api.anthropic.com/api/oauth/usage",
+      expect.objectContaining({
+        headers: expect.objectContaining({ Authorization: "Bearer sk-ant-oat01-work" }),
+      }),
+    );
+  });
+
+  it("falls back to rate-limit headers when the usage endpoint refuses the pinned token's scope", async () => {
+    // Setup tokens carry only the inference scope: the usage endpoint 403s,
+    // and the fetcher must derive the windows from a minimal messages call.
+    fetchApi = mockFetch(
+      new Map([
+        [
+          "https://api.anthropic.com/api/oauth/usage",
+          () => jsonResponse({ error: { type: "permission_error" } }, 403),
+        ],
+        [
+          "https://api.anthropic.com/v1/models",
+          () => jsonResponse({ data: [{ id: "claude-haiku-4-5-20251001" }] }),
+        ],
+        [
+          "https://api.anthropic.com/v1/messages",
+          () =>
+            new Response("{}", {
+              status: 200,
+              headers: {
+                "anthropic-ratelimit-unified-5h-utilization": "0.42",
+                "anthropic-ratelimit-unified-5h-reset": "1788144000",
+                "anthropic-ratelimit-unified-7d-utilization": "0.07",
+                "anthropic-ratelimit-unified-7d-reset": "1788688800",
+              },
+            }),
+        ],
+      ]),
+    );
+    const logger = createLogger();
+    const fetchThroughTestDouble = ((url: RequestInfo | URL, init?: RequestInit) =>
+      fetchApi(url, init)) as typeof fetch;
+    const usageService = new ProviderUsageService({
+      logger,
+      cacheTtlMs: 0,
+      fetchers: [],
+      dynamicFetchers: createProfileUsageFetcherSource({
+        logger,
+        fetch: fetchThroughTestDouble,
+        getProviders: () => ({
+          "claude-pinned": {
+            extends: "claude",
+            label: "Claude (Pinned)",
+            env: { CLAUDE_CODE_OAUTH_TOKEN: "sk-ant-oat01-pinned" },
+          },
+        }),
+      }),
+    });
+
+    const result = await usageService.listUsage();
+    const profile = findProvider(result, "claude-pinned");
+
+    expect(profile).toMatchObject({ status: "available", planLabel: null, error: null });
+    expect(profile.windows).toEqual([
+      expect.objectContaining({
+        id: "five_hour",
+        label: "Session",
+        usedPct: 42,
+        resetsAt: new Date(1788144000 * 1000).toISOString(),
+      }),
+      expect.objectContaining({
+        id: "weekly",
+        label: "Weekly",
+        usedPct: 7,
+        resetsAt: new Date(1788688800 * 1000).toISOString(),
+      }),
+    ]);
+    expect(fetchApi).toHaveBeenCalledWith(
+      "https://api.anthropic.com/v1/messages",
+      expect.objectContaining({
+        headers: expect.objectContaining({ Authorization: "Bearer sk-ant-oat01-pinned" }),
+      }),
+    );
+  });
+
+  it("stops calling the refused usage endpoint on later refreshes once the fallback works", async () => {
+    fetchApi = mockFetch(
+      new Map([
+        [
+          "https://api.anthropic.com/api/oauth/usage",
+          () => jsonResponse({ error: { type: "permission_error" } }, 403),
+        ],
+        [
+          "https://api.anthropic.com/v1/models",
+          () => jsonResponse({ data: [{ id: "claude-haiku-4-5-20251001" }] }),
+        ],
+        [
+          "https://api.anthropic.com/v1/messages",
+          () =>
+            new Response("{}", {
+              status: 200,
+              headers: { "anthropic-ratelimit-unified-5h-utilization": "0.1" },
+            }),
+        ],
+      ]),
+    );
+    const logger = createLogger();
+    const fetchThroughTestDouble = ((url: RequestInfo | URL, init?: RequestInit) =>
+      fetchApi(url, init)) as typeof fetch;
+    const usageService = new ProviderUsageService({
+      logger,
+      cacheTtlMs: 0,
+      fetchers: [],
+      dynamicFetchers: createProfileUsageFetcherSource({
+        logger,
+        fetch: fetchThroughTestDouble,
+        getProviders: () => ({
+          "claude-pinned": {
+            extends: "claude",
+            env: { CLAUDE_CODE_OAUTH_TOKEN: "sk-ant-oat01-pinned" },
+          },
+        }),
+      }),
+    });
+
+    await usageService.listUsage();
+    await usageService.listUsage();
+
+    const calls = (fetchApi as ReturnType<typeof vi.fn>).mock.calls.map((call) => String(call[0]));
+    expect(calls.filter((url) => url.endsWith("/api/oauth/usage"))).toHaveLength(1);
+    expect(calls.filter((url) => url.endsWith("/v1/messages"))).toHaveLength(2);
+    // The ping model is resolved once and remembered alongside the refusal.
+    expect(calls.filter((url) => url.endsWith("/v1/models"))).toHaveLength(1);
+  });
+
+  it("answers from headers when the usage endpoint is throttled, without giving up on it", async () => {
+    // A 429 is transient (unlike a scope refusal), so the endpoint must stay
+    // first choice on the next refresh while this refresh still shows data.
+    fetchApi = mockFetch(
+      new Map([
+        ["https://api.anthropic.com/api/oauth/usage", () => jsonResponse({}, 429)],
+        [
+          "https://api.anthropic.com/v1/models",
+          () => jsonResponse({ data: [{ id: "claude-haiku-4-5-20251001" }] }),
+        ],
+        [
+          "https://api.anthropic.com/v1/messages",
+          () =>
+            new Response("{}", {
+              status: 200,
+              headers: { "anthropic-ratelimit-unified-5h-utilization": "0.66" },
+            }),
+        ],
+      ]),
+    );
+    const logger = createLogger();
+    const fetchThroughTestDouble = ((url: RequestInfo | URL, init?: RequestInit) =>
+      fetchApi(url, init)) as typeof fetch;
+    const usageService = new ProviderUsageService({
+      logger,
+      cacheTtlMs: 0,
+      fetchers: [],
+      dynamicFetchers: createProfileUsageFetcherSource({
+        logger,
+        fetch: fetchThroughTestDouble,
+        getProviders: () => ({
+          "claude-pinned": {
+            extends: "claude",
+            env: { CLAUDE_CODE_OAUTH_TOKEN: "sk-ant-oat01-pinned" },
+          },
+        }),
+      }),
+    });
+
+    const first = findProvider(await usageService.listUsage(), "claude-pinned");
+    expect(first).toMatchObject({ status: "available", error: null });
+    expect(first.windows).toEqual([
+      expect.objectContaining({ id: "five_hour", label: "Session", usedPct: 66 }),
+    ]);
+
+    await usageService.listUsage();
+    const calls = (fetchApi as ReturnType<typeof vi.fn>).mock.calls.map((call) => String(call[0]));
+    expect(calls.filter((url) => url.endsWith("/api/oauth/usage"))).toHaveLength(2);
+  });
+
+  it("reports a pinned profile unavailable when the header fallback also fails", async () => {
+    fetchApi = mockFetch(
+      new Map([
+        [
+          "https://api.anthropic.com/api/oauth/usage",
+          () => jsonResponse({ error: { type: "permission_error" } }, 403),
+        ],
+        [
+          "https://api.anthropic.com/v1/models",
+          () => jsonResponse({ data: [{ id: "claude-haiku-4-5-20251001" }] }),
+        ],
+        ["https://api.anthropic.com/v1/messages", () => new Response("{}", { status: 500 })],
+      ]),
+    );
+    const logger = createLogger();
+    const fetchThroughTestDouble = ((url: RequestInfo | URL, init?: RequestInit) =>
+      fetchApi(url, init)) as typeof fetch;
+    const usageService = new ProviderUsageService({
+      logger,
+      cacheTtlMs: 0,
+      fetchers: [],
+      dynamicFetchers: createProfileUsageFetcherSource({
+        logger,
+        fetch: fetchThroughTestDouble,
+        getProviders: () => ({
+          "claude-pinned": {
+            extends: "claude",
+            env: { CLAUDE_CODE_OAUTH_TOKEN: "sk-ant-oat01-pinned" },
+          },
+        }),
+      }),
+    });
+
+    const result = await usageService.listUsage();
+    const profile = findProvider(result, "claude-pinned");
+
+    expect(profile).toMatchObject({ status: "unavailable", windows: [] });
   });
 
   it("fetches Codex windows and coerces string credit balances", async () => {
