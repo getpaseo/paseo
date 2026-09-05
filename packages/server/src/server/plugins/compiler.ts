@@ -158,6 +158,24 @@ function isAstNode(value: unknown): value is object {
   );
 }
 
+function isTypeOnlyAstNode(node: object): boolean {
+  const type = Reflect.get(node, "type");
+  if (typeof type !== "string") return false;
+  return (
+    type.startsWith("TSType") ||
+    type === "TSDeclareFunction" ||
+    type === "TSDeclareMethod" ||
+    type === "TSInterfaceDeclaration" ||
+    type === "TSInterfaceBody" ||
+    type === "TSInterfaceHeritage" ||
+    type === "TSPropertySignature" ||
+    type === "TSMethodSignature" ||
+    type === "TSCallSignatureDeclaration" ||
+    type === "TSConstructSignatureDeclaration" ||
+    type === "TSIndexSignature"
+  );
+}
+
 function createScope(parent: AstScope | null, functionScope?: AstScope): AstScope {
   const scope = {} as AstScope;
   scope.parent = parent;
@@ -174,9 +192,17 @@ function lookupBinding(scope: AstScope, name: string): AstBinding | null {
   return null;
 }
 
-function bindIdentifier(node: unknown, scope: AstScope): AstBinding | null {
+function bindIdentifier(
+  node: unknown,
+  scope: AstScope,
+  preserveExisting = false,
+): AstBinding | null {
   const name = astIdentifierName(node);
   if (!name) return null;
+  if (preserveExisting) {
+    const existing = scope.bindings.get(name);
+    if (existing) return existing;
+  }
   const binding = {
     scope,
     name,
@@ -187,11 +213,11 @@ function bindIdentifier(node: unknown, scope: AstScope): AstBinding | null {
   return binding;
 }
 
-function declarePattern(pattern: unknown, scope: AstScope): void {
+function declarePattern(pattern: unknown, scope: AstScope, preserveExisting = false): void {
   if (!isAstNode(pattern)) return;
   switch (Reflect.get(pattern, "type")) {
     case "Identifier":
-      bindIdentifier(pattern, scope);
+      bindIdentifier(pattern, scope, preserveExisting);
       return;
     case "ObjectPattern": {
       const properties = Reflect.get(pattern, "properties");
@@ -199,22 +225,25 @@ function declarePattern(pattern: unknown, scope: AstScope): void {
       for (const property of properties) {
         if (!isAstNode(property)) continue;
         const type = Reflect.get(property, "type");
-        if (type === "ObjectProperty") declarePattern(Reflect.get(property, "value"), scope);
-        else if (type === "RestElement") declarePattern(Reflect.get(property, "argument"), scope);
+        if (type === "ObjectProperty")
+          declarePattern(Reflect.get(property, "value"), scope, preserveExisting);
+        else if (type === "RestElement")
+          declarePattern(Reflect.get(property, "argument"), scope, preserveExisting);
       }
       return;
     }
     case "ArrayPattern": {
       const elements = Reflect.get(pattern, "elements");
-      if (Array.isArray(elements)) for (const element of elements) declarePattern(element, scope);
+      if (Array.isArray(elements))
+        for (const element of elements) declarePattern(element, scope, preserveExisting);
       return;
     }
     case "AssignmentPattern":
-      declarePattern(Reflect.get(pattern, "left"), scope);
+      declarePattern(Reflect.get(pattern, "left"), scope, preserveExisting);
       return;
     case "RestElement":
     case "TSParameterProperty":
-      declarePattern(Reflect.get(pattern, "argument"), scope);
+      declarePattern(Reflect.get(pattern, "argument"), scope, preserveExisting);
       return;
   }
 }
@@ -227,15 +256,23 @@ function declareDirectBindings(node: unknown, scope: AstScope): void {
   if (!isAstNode(node)) return;
   const type = Reflect.get(node, "type");
   if (type === "VariableDeclaration") {
+    if (Reflect.get(node, "declare") === true) return;
     const kind = Reflect.get(node, "kind");
     const declarations = Reflect.get(node, "declarations");
     if (Array.isArray(declarations)) {
       for (const declaration of declarations) {
         if (isAstNode(declaration))
-          declarePattern(Reflect.get(declaration, "id"), declarationScope(scope, kind));
+          declarePattern(
+            Reflect.get(declaration, "id"),
+            declarationScope(scope, kind),
+            kind === "var",
+          );
       }
     }
-  } else if (type === "FunctionDeclaration" || type === "ClassDeclaration") {
+  } else if (
+    (type === "FunctionDeclaration" || type === "ClassDeclaration") &&
+    Reflect.get(node, "declare") !== true
+  ) {
     bindIdentifier(Reflect.get(node, "id"), scope);
   }
 }
@@ -408,12 +445,64 @@ function analyzeRegistrations(
     }
   };
 
+  const visitDecorators = (node: unknown, scope: AstScope): void => {
+    if (!isAstNode(node)) return;
+    const decorators = Reflect.get(node, "decorators");
+    if (!Array.isArray(decorators)) return;
+    for (const decorator of decorators) {
+      if (isAstNode(decorator)) visit(Reflect.get(decorator, "expression"), scope, decorator, null);
+    }
+  };
+
+  const visitPatternDecorators = (pattern: unknown, scope: AstScope): void => {
+    if (!isAstNode(pattern)) return;
+    visitDecorators(pattern, scope);
+    const type = Reflect.get(pattern, "type");
+    if (type === "AssignmentPattern") {
+      visitPatternDecorators(Reflect.get(pattern, "left"), scope);
+      return;
+    }
+    if (type === "ObjectPattern") {
+      const properties = Reflect.get(pattern, "properties");
+      if (Array.isArray(properties)) {
+        for (const property of properties) {
+          if (!isAstNode(property)) continue;
+          visitDecorators(property, scope);
+          if (Reflect.get(property, "type") === "ObjectProperty") {
+            visitPatternDecorators(Reflect.get(property, "value"), scope);
+          } else if (Reflect.get(property, "type") === "RestElement") {
+            visitPatternDecorators(Reflect.get(property, "argument"), scope);
+          }
+        }
+      }
+      return;
+    }
+    if (type === "ArrayPattern") {
+      const elements = Reflect.get(pattern, "elements");
+      if (Array.isArray(elements)) {
+        for (const element of elements) visitPatternDecorators(element, scope);
+      }
+      return;
+    }
+    if (type === "RestElement" || type === "TSParameterProperty") {
+      visitPatternDecorators(Reflect.get(pattern, "argument"), scope);
+    }
+  };
+
   const visitFunction = (node: object, parentScope: AstScope): void => {
     const nextScope = createScope(parentScope, undefined);
+    const type = Reflect.get(node, "type");
+    if (type === "FunctionDeclaration" || type === "FunctionExpression") {
+      bindIdentifier(Reflect.get(node, "id"), nextScope);
+    }
+    visitDecorators(node, parentScope);
     const params = Reflect.get(node, "params");
     if (Array.isArray(params)) {
-      for (const parameter of params) declarePattern(parameter, nextScope);
-      for (const parameter of params) visitPatternInitializers(parameter, nextScope);
+      for (const parameter of params) {
+        declarePattern(parameter, nextScope);
+        visitPatternDecorators(parameter, nextScope);
+        visitPatternInitializers(parameter, nextScope);
+      }
     }
     const functionBody = Reflect.get(node, "body");
     if (isAstNode(functionBody) && Reflect.get(functionBody, "type") === "BlockStatement") {
@@ -426,9 +515,13 @@ function analyzeRegistrations(
 
   const visitMethod = (node: object, parentScope: AstScope): void => {
     const nextScope = createScope(parentScope, undefined);
+    visitDecorators(node, parentScope);
     const params = Reflect.get(node, "params");
     if (Array.isArray(params)) {
-      for (const parameter of params) declarePattern(parameter, nextScope);
+      for (const parameter of params) {
+        declarePattern(parameter, nextScope);
+        visitPatternDecorators(parameter, nextScope);
+      }
     }
     if (Reflect.get(node, "computed") === true) {
       visit(Reflect.get(node, "key"), parentScope, node, null);
@@ -445,6 +538,43 @@ function analyzeRegistrations(
     }
   };
 
+  const visitClass = (node: object, parentScope: AstScope): void => {
+    if (Reflect.get(node, "declare") === true) return;
+    const classScope = createScope(parentScope, parentScope.functionScope);
+    bindIdentifier(Reflect.get(node, "id"), classScope);
+    visitDecorators(node, parentScope);
+    visit(Reflect.get(node, "superClass"), classScope, node, null);
+
+    const classBody = Reflect.get(node, "body");
+    const members = isAstNode(classBody) ? Reflect.get(classBody, "body") : null;
+    if (!Array.isArray(members)) return;
+    for (const member of members) {
+      if (!isAstNode(member)) continue;
+      const type = Reflect.get(member, "type");
+      if (type === "StaticBlock") {
+        const staticScope = createScope(classScope);
+        const statements = Reflect.get(member, "body");
+        if (Array.isArray(statements)) visitStatements(statements, staticScope);
+        continue;
+      }
+      if (
+        type === "ClassMethod" ||
+        type === "ClassPrivateMethod" ||
+        type === "ObjectMethod" ||
+        type === "ObjectPrivateMethod"
+      ) {
+        visitMethod(member, classScope);
+        continue;
+      }
+      if (isTypeOnlyAstNode(member)) continue;
+      visitDecorators(member, parentScope);
+      if (Reflect.get(member, "computed") === true) {
+        visit(Reflect.get(member, "key"), classScope, member, null);
+      }
+      visit(Reflect.get(member, "value"), classScope, member, null);
+    }
+  };
+
   // oxlint-disable-next-line complexity -- this walk resolves lexical bindings and removes only direct registrations.
   const visit = (
     current: unknown,
@@ -455,11 +585,28 @@ function analyzeRegistrations(
     if (!isAstNode(current)) return;
     const type = Reflect.get(current, "type");
     if (
+      type === "TSAsExpression" ||
+      type === "TSSatisfiesExpression" ||
+      type === "TSTypeAssertion"
+    ) {
+      visit(Reflect.get(current, "expression"), scope, current, parent);
+      return;
+    }
+    if (type === "TSNonNullExpression") {
+      visit(Reflect.get(current, "expression"), scope, current, parent);
+      return;
+    }
+    if (isTypeOnlyAstNode(current)) return;
+    if (
       type === "FunctionDeclaration" ||
       type === "FunctionExpression" ||
       type === "ArrowFunctionExpression"
     ) {
       visitFunction(current, scope);
+      return;
+    }
+    if (type === "ClassDeclaration" || type === "ClassExpression") {
+      visitClass(current, scope);
       return;
     }
     if (
@@ -477,8 +624,19 @@ function analyzeRegistrations(
       if (Array.isArray(statements)) visitStatements(statements, blockScope);
       return;
     }
+    if (type === "VariableDeclaration") {
+      if (Reflect.get(current, "declare") === true) return;
+      const declarations = Reflect.get(current, "declarations");
+      if (Array.isArray(declarations)) {
+        for (const declaration of declarations) visit(declaration, scope, current, parent);
+      }
+      return;
+    }
     if (type === "VariableDeclarator") {
       markVariableBinding(current, scope, removedNames);
+      visitPatternInitializers(Reflect.get(current, "id"), scope);
+      visit(Reflect.get(current, "init"), scope, current, parent);
+      return;
     }
     if (type === "Identifier") {
       const binding = lookupBinding(scope, String(Reflect.get(current, "name")));
@@ -622,7 +780,7 @@ function collectOppositeTargetImportRanges(
 function filterEntrypoint(source: string, target: PluginBuildTarget): string {
   const ast = parse(source, {
     sourceType: "module",
-    plugins: ["typescript", "jsx"],
+    plugins: ["typescript", "jsx", "decorators-legacy"],
   });
   const pluginFunction = defaultPluginFunction(ast.program.body);
   const ranges = analyzeRegistrations(
