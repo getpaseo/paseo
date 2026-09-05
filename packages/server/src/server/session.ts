@@ -2209,6 +2209,19 @@ export class Session {
       : new Error("Plugin host request cancelled");
   }
 
+  /** Resolve the invocation context for a plugin tool from the managed registries. */
+  public async resolvePluginToolContext(
+    callerAgentId: string,
+  ): Promise<import("./plugins/plugin-process-protocol.js").PluginToolCallerContext> {
+    const caller = await this.resolveLivePluginCallerAuthority(callerAgentId);
+    return {
+      callerAgentId,
+      agent: caller.agent as unknown as Record<string, unknown>,
+      workspace: caller.workspace as unknown as Record<string, unknown> | null,
+      caller,
+    };
+  }
+
   // oxlint-disable-next-line complexity -- this assembles every live authority dimension.
   private async resolveLivePluginCallerAuthority(
     callerAgentId: string,

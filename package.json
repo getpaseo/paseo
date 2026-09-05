@@ -59,6 +59,7 @@
     "build:server-deps": "npm run build:client && concurrently --kill-others-on-fail --names highlight,plugin,relay --prefix-colors yellow,green,blue \"npm run build:highlight\" \"npm run build:plugin\" \"npm run build:relay\"",
     "build:server-deps:clean": "npm run build:client:clean && npm run build:highlight:clean && npm run build:plugin:clean && npm run build:relay:clean",
     "build:server": "npm run build:server-deps && npm run build --workspace=@getpaseo/server && npm run build --workspace=@getpaseo/cli",
+    "build:plugin-host-conformance": "npm run build:plugin-host-conformance --workspace=@getpaseo/server --",
     "build:server:clean": "npm run build:server-deps:clean && npm run build:clean --workspace=@getpaseo/server && npm run build:clean --workspace=@getpaseo/cli",
     "build:daemon-web-ui": "node scripts/build-daemon-web-ui.mjs",
     "build:app-deps": "npm run build:highlight && npm run build:client && npm run build:plugin && npm run build --workspace=@getpaseo/expo-two-way-audio",

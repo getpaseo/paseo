@@ -134,6 +134,7 @@ interface LoadedPlugin {
 
 interface PluginRuntimeDependencies {
   spawnChild?: () => PluginChild;
+  installationIdFactory?: () => string;
   terminateProcess?: ProcessTerminator;
   sessionHost?: PluginPaseoSessionHost;
   resolveToolContext?: (
@@ -326,6 +327,7 @@ export class PluginRuntime {
   private readonly logTails = new Map<string, PluginLogTail>();
   private readonly logger: pino.Logger;
   private readonly spawnChild: () => PluginChild;
+  private readonly installationIdFactory: () => string;
   private readonly terminateProcess: ProcessTerminator;
   private sessionHost: PluginPaseoSessionHost | null;
   private resolveToolContext:
@@ -348,6 +350,7 @@ export class PluginRuntime {
   ) {
     this.logger = logger.child({ module: "plugins" });
     this.spawnChild = dependencies.spawnChild ?? spawnPluginChild;
+    this.installationIdFactory = dependencies.installationIdFactory ?? randomUUID;
     this.terminateProcess = dependencies.terminateProcess ?? terminateWithTreeKill;
     this.sessionHost = dependencies.sessionHost ?? null;
     this.resolveToolContext = dependencies.resolveToolContext ?? null;
@@ -616,7 +619,7 @@ export class PluginRuntime {
     const pending = new Map<string, PendingInvocation>();
     const generation = (this.nextGenerations.get(pluginId) ?? 0) + 1;
     this.nextGenerations.set(pluginId, generation);
-    const installationId = randomUUID();
+    const installationId = this.installationIdFactory();
     let loaded: LoadedPlugin | null = null;
     let childClosedObserved = false;
     let resolveChildClosed!: () => void;

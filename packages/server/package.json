@@ -44,6 +44,7 @@
     "start": "node dist/scripts/supervisor-entrypoint.js",
     "typecheck": "tsgo -p tsconfig.server.typecheck.json --noEmit",
     "generate:config-schema": "tsx scripts/generate-config-schema.ts",
+    "build:plugin-host-conformance": "node scripts/build-plugin-host-conformance.mjs",
     "measure:agent-tools": "tsx scripts/measure-agent-tools-context.ts",
     "measure:git-observation": "tsx scripts/measure-git-observation.ts",
     "measure:file-observer": "tsx scripts/measure-file-observer.ts",

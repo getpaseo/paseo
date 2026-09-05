@@ -1,15 +1,15 @@
-import { createRequire } from "node:module";
 import { existsSync } from "node:fs";
 import { execCommand } from "../utils/spawn.js";
 import { isWindowsCommandScript } from "../utils/windows-command.js";
 import { windowsExecutableResolution } from "./windows.js";
+// @ts-expect-error -- which@2 ships no declaration file.
+import whichModule from "which";
 
 export { quoteWindowsArgument, quoteWindowsCommand } from "../utils/windows-command.js";
 
 type Which = (command: string, options: { all: true }) => Promise<string[]>;
 
-const require = createRequire(import.meta.url);
-const which = require("which") as Which;
+const which = whichModule as unknown as Which;
 const PROBE_TIMEOUT_MS = 2000;
 
 function hasPathSeparator(value: string): boolean {
