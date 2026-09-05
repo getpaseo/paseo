@@ -30,17 +30,20 @@ export function useNativeHistoryShortcuts(
     };
     setNativeHistoryCommands(buildNativeHistoryCommands(bindings, chord));
     const listener = addNativeHistoryShortcutListener((event) => {
-      if (
-        AppState.currentState !== "active" ||
-        useKeyboardShortcutsStore.getState().capturingShortcut
-      ) {
+      const { capturingShortcut, commandCenterOpen } = useKeyboardShortcutsStore.getState();
+      if (AppState.currentState !== "active" || capturingShortcut) {
         reset();
         return;
       }
       const result = resolveKeyboardShortcut({
         event,
         bindings,
-        context: { isMac: true, isDesktop: false, focusScope: "other", commandCenterOpen: false },
+        context: {
+          isMac: true,
+          isDesktop: false,
+          focusScope: commandCenterOpen ? "command-center" : "other",
+          commandCenterOpen,
+        },
         chordState: chord,
         onChordReset: reset,
       });

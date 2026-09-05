@@ -77,7 +77,9 @@ public class PaseoHardwareKeyboardModule: Module {
 
     Function("setHardwareKeyboardSubmitEnabled") { (enabled: Bool) in
       DispatchQueue.main.async {
+        guard activeModule === self else { return }
         isHardwareSubmitEnabled = enabled
+        UIMenuSystem.main.setNeedsRebuild()
       }
     }
 
@@ -85,15 +87,19 @@ public class PaseoHardwareKeyboardModule: Module {
       DispatchQueue.main.async {
         guard activeModule === self else { return }
         shortcuts = commands
+        // Capture and chord steps replace commands without changing responders.
+        UIMenuSystem.main.setNeedsRebuild()
       }
     }
 
     OnDestroy {
-      if activeModule === self {
+      DispatchQueue.main.async {
+        guard activeModule === self else { return }
         activeModule = nil
+        isHardwareSubmitEnabled = false
+        shortcuts = []
+        UIMenuSystem.main.setNeedsRebuild()
       }
-      isHardwareSubmitEnabled = false
-      shortcuts = []
     }
   }
 
