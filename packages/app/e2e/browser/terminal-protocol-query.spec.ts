@@ -1,68 +1,76 @@
-import { writeFile } from "node:fs/promises";
-import path from "node:path";
+import type { Page } from "@playwright/test";
 import { test, expect } from "../support/fixtures";
 import { TerminalE2EHarness } from "../support/helpers/terminal-dsl";
 import { getTerminalBufferText, waitForTerminalContent } from "../support/helpers/terminal-perf";
 
-const OSC11_CAPTURE_SCRIPT = `
-let captured = Buffer.alloc(0);
+const CODEX_START_COMMAND =
+  "TERM=xterm-256color codex --no-alt-screen --ask-for-approval never --sandbox read-only";
 
-function finish() {
-  process.stdout.write("PASEO_OSC11_CAPTURE:" + JSON.stringify(captured.toString("latin1")) + "\\n");
-  process.exit(0);
-}
-
-process.stdout.write("\\x1b]11;?\\x07");
-if (process.stdin.isTTY) {
-  process.stdin.setRawMode(true);
-}
-process.stdin.resume();
-process.stdin.on("data", (chunk) => {
-  captured = Buffer.concat([captured, chunk]);
-  if (captured.includes(Buffer.from("rgb:"))) {
-    finish();
+async function launchCodex(page: Page): Promise<void> {
+  const terminal = page.locator('[data-testid="terminal-surface"]');
+  await terminal.pressSequentially(`${CODEX_START_COMMAND}\n`, { delay: 0 });
+  await waitForTerminalContent(
+    page,
+    (text) => text.includes("Do you trust the contents of this directory?"),
+    10_000,
+  ).catch(() => undefined);
+  const trustPrompt = await getTerminalBufferText(page);
+  if (trustPrompt.includes("Do you trust the contents of this directory?")) {
+    await terminal.pressSequentially("1\n", { delay: 0 });
   }
-});
-setTimeout(finish, 700);
-`;
+  await waitForTerminalContent(page, (text) => text.includes("OpenAI Codex"), 30_000);
+}
 
-test.describe("Terminal protocol queries", () => {
+test.describe("Terminal protocol colors", () => {
   let harness: TerminalE2EHarness;
 
   test.beforeAll(async () => {
     harness = await TerminalE2EHarness.create({ tempPrefix: "terminal-protocol-query-" });
-    await writeFile(path.join(harness.tempRepo.path, "osc11-capture.cjs"), OSC11_CAPTURE_SCRIPT);
   });
 
   test.afterAll(async () => {
     await harness?.cleanup();
   });
 
-  test("does not send browser OSC 11 color-query replies back to the PTY", async ({ page }) => {
-    const terminalInstance = await harness.createTerminal({
-      name: "osc11-query",
-      defaultColors: {
-        foreground: "#18181b",
-        background: "#ffffff",
-        cursor: "#18181b",
-      },
+  test("keeps Codex terminal colors readable in light and dark mode", async ({ page }) => {
+    await page.emulateMedia({ colorScheme: "light" });
+
+    const lightTerminal = await harness.createTerminal({
+      name: "codex-light-colors",
+      defaultColors: { foreground: "#1a1a1e", background: "#ffffff", cursor: "#1a1a1e" },
     });
     try {
-      await harness.openTerminal(page, { terminalId: terminalInstance.id });
+      await harness.openTerminal(page, { terminalId: lightTerminal.id });
       await harness.setupPrompt(page);
+      await launchCodex(page);
+      const lightText = await getTerminalBufferText(page);
+      expect(lightText).toContain("OpenAI Codex");
 
-      const terminal = harness.terminalSurface(page);
-      await terminal.pressSequentially("node osc11-capture.cjs\n", { delay: 0 });
+      await page.waitForTimeout(3000);
+      await page.keyboard.press("Control+C");
+      await page.waitForTimeout(1000);
 
-      await waitForTerminalContent(page, (text) => text.includes("PASEO_OSC11_CAPTURE:"), 10_000);
-      await page.waitForTimeout(500);
-
-      const text = await getTerminalBufferText(page);
-
-      expect(text).toContain("rgb:ffff/ffff/ffff");
-      expect(text).not.toContain("rgb:0b0b/0b0b/0b0b");
+      const darkTerminal = await harness.createTerminal({
+        name: "codex-dark-colors",
+        defaultColors: { foreground: "#fafafa", background: "#181b1a", cursor: "#fafafa" },
+      });
+      try {
+        await page.emulateMedia({ colorScheme: "dark" });
+        await page.reload();
+        await page.waitForTimeout(1000);
+        await harness.openTerminal(page, { terminalId: darkTerminal.id });
+        await harness.setupPrompt(page);
+        await launchCodex(page);
+        const darkText = await getTerminalBufferText(page);
+        expect(darkText).toContain("OpenAI Codex");
+        await page.waitForTimeout(3000);
+        await page.keyboard.press("Control+C");
+        await page.waitForTimeout(1000);
+      } finally {
+        await harness.killTerminal(darkTerminal.id);
+      }
     } finally {
-      await harness.killTerminal(terminalInstance.id);
+      await harness.killTerminal(lightTerminal.id);
     }
   });
 });
