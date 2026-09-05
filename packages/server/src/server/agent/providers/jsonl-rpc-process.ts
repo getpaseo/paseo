@@ -104,6 +104,9 @@ export class JsonlRpcProcess {
         this.stderrBuffer = this.stderrBuffer.slice(-STDERR_BUFFER_LIMIT);
       }
     });
+    this.child.stdin.on("error", (error) => {
+      this.handleStdinError(error);
+    });
     this.child.on("error", (error) => {
       this.failAll(error instanceof Error ? error : new Error(String(error)));
     });
@@ -173,10 +176,18 @@ export class JsonlRpcProcess {
   }
 
   send(message: Record<string, unknown>): void {
-    if (this.disposed || this.child.stdin.destroyed || !this.child.stdin.writable) {
+    if (this.disposed) {
       return;
     }
-    this.child.stdin.write(`${JSON.stringify(message)}\n`);
+    if (this.child.stdin.destroyed || !this.child.stdin.writable) {
+      this.handleStdinError(new Error(`${this.diagnosticName} stdin is not writable`));
+      return;
+    }
+    try {
+      this.child.stdin.write(`${JSON.stringify(message)}\n`);
+    } catch (error) {
+      this.handleStdinError(error);
+    }
   }
 
   async close(error = new Error(`${this.diagnosticName} process is closed`)): Promise<void> {
@@ -241,6 +252,15 @@ export class JsonlRpcProcess {
       return;
     }
     pending.resolve(response.data);
+  }
+
+  private handleStdinError(error: unknown): void {
+    if (this.disposed) {
+      return;
+    }
+    const err = error instanceof Error ? error : new Error(String(error));
+    this.options.logger.warn({ err }, `${this.diagnosticName} stdin write failed`);
+    void this.close(err);
   }
 
   private failAll(error: Error): void {

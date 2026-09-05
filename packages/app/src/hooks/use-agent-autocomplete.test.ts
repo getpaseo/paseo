@@ -10,6 +10,7 @@ describe("buildCommandAutocompleteOptions", () => {
       isVisible: true,
       mode: "file",
       commands: [],
+      pluginCommands: [],
       isDraftContext: false,
       commandFilterQuery: "",
       activeSlashCommand: null,

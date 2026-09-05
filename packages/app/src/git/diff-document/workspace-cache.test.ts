@@ -1,7 +1,12 @@
 import type { ParsedDiffFile } from "@getpaseo/protocol/messages";
 import { describe, expect, it } from "vitest";
 import { createDiffDocumentWorkspaceCache } from "./workspace-cache";
-import type { BuildDiffDocumentModelInput, DiffPalette, TextMeasurer } from "./types";
+import type {
+  BuildDiffDocumentModelInput,
+  DiffDocumentModel,
+  DiffPalette,
+  TextMeasurer,
+} from "./types";
 
 const palette: DiffPalette = {
   surface: "#000",
@@ -15,6 +20,11 @@ const palette: DiffPalette = {
   deletionBackground: "#100",
   emptyBackground: "#111",
   selection: "blue",
+  headerActiveSurface: "#222",
+  headerBorder: "#333",
+  statusSuccess: "green",
+  statusDanger: "red",
+  statusWarning: "orange",
   syntax: { keyword: "purple" },
 };
 
@@ -137,6 +147,33 @@ describe("diff document workspace cache", () => {
     expect(second.rows[0]).toMatchObject({ kind: "status", label: "Binary blob" });
   });
 
+  it("materializes successive unwrapped windows without remeasuring retained files", () => {
+    const cache = createDiffDocumentWorkspaceCache();
+    const files = [diffFile(), { ...diffFile(), path: "src/b.ts" }];
+    const { measureText, stats } = countingMeasurer();
+    const first = cache.buildModel(
+      modelInput(files, measureText, { materializationWindow: { top: 0, height: 20 } }),
+    );
+    const firstCalls = stats.calls;
+    const secondFile = first.files[1]!;
+
+    const second = cache.buildModel(
+      modelInput(files, measureText, {
+        materializationWindow: {
+          top: secondFile.top,
+          height: secondFile.bottom - secondFile.top,
+        },
+      }),
+    );
+
+    expect(firstCalls).toBeGreaterThan(0);
+    expect(stats.calls).toBeGreaterThan(firstCalls);
+    expect(measuredFragmentCount(first, 0)).toBeGreaterThan(0);
+    expect(measuredFragmentCount(first, 1)).toBe(0);
+    expect(measuredFragmentCount(second, 0)).toBeGreaterThan(0);
+    expect(measuredFragmentCount(second, 1)).toBeGreaterThan(0);
+  });
+
   it("shares loaded typography and its text measurer across mounts", async () => {
     const cache = createDiffDocumentWorkspaceCache();
     const { measureText } = countingMeasurer();
@@ -171,3 +208,13 @@ describe("diff document workspace cache", () => {
     expect(resource.isReady()).toBe(true);
   });
 });
+
+function measuredFragmentCount(model: DiffDocumentModel, fileIndex: number): number {
+  const file = model.files[fileIndex];
+  if (!file) throw new Error(`Expected file ${fileIndex}`);
+  return model.rows
+    .slice(file.rowStart, file.rowEnd)
+    .filter((row) => row.kind === "line")
+    .flatMap((row) => row.cells)
+    .reduce((count, cell) => count + (cell?.fragments.length ?? 0), 0);
+}

@@ -7,10 +7,12 @@ export const en = {
       cancel: "Cancel",
       close: "Close",
       copy: "Copy",
+      copyLine: "Copy line",
       dismiss: "Dismiss",
       retry: "Retry",
       search: "Search",
       select: "Select",
+      selectAll: "Select all",
     },
     placeholders: {
       search: "Search...",
@@ -30,6 +32,7 @@ export const en = {
     errors: {
       error: "Error",
       unableToSave: "Unable to save",
+      unableToCopy: "Unable to copy",
       nameRequired: "Name is required",
       daemonUnavailable: "Daemon unavailable",
       daemonClientUnavailable: "Daemon client unavailable",
@@ -202,6 +205,7 @@ export const en = {
     empty: "Start chatting with this agent...",
     scrollToBottom: "Scroll to bottom",
     historyLoadFailed: "Couldn't load agent history",
+    messageCapped: "This message was capped ({{bytes}} bytes).",
     permission: {
       plan: "Plan",
       required: "Permission Required",
@@ -285,6 +289,7 @@ export const en = {
       zoomIn: "Zoom in",
       zoomOut: "Zoom out",
       resetZoom: "Reset view",
+      fullscreen: "Fullscreen",
       viewSource: "View source",
       viewDiagram: "View diagram",
     },
@@ -346,7 +351,6 @@ export const en = {
         added: "Added",
         started: "Started",
         completed: "Completed",
-        reopened: "Reopened",
       },
     },
     compaction: {
@@ -359,6 +363,12 @@ export const en = {
   },
   importSession: {
     title: "Import session",
+    chooseHostTitle: "Import from host",
+    searchPlaceholder: "Search sessions...",
+    scope: {
+      host: "Sessions on {{host}}",
+      workspace: "This workspace",
+    },
     filters: {
       all: "All",
     },
@@ -367,12 +377,13 @@ export const en = {
       updateHost: "Update the host to import sessions.",
       noProviders: "No importable providers are enabled.",
       loading: "Loading recent sessions...",
-      failedAll: "Could not load recent sessions.",
-      failedProviders: "Could not load sessions for {{providers}}.",
+      failedProvider: "Could not load {{provider}} sessions",
       failedImport: "Could not import selected session.",
     },
     actions: {
       refresh: "Refresh sessions",
+      showAll: "Show all",
+      loadMore: "Load more",
     },
     preview: {
       untitledSession: "Untitled session",
@@ -380,6 +391,7 @@ export const en = {
     },
     empty: {
       noRecent: "No recent sessions to import.",
+      noMatches: "No sessions match your search.",
       alreadyImported: "All recent sessions are already imported.",
       noProviderSessions: "No {{provider}} sessions found.",
     },
@@ -492,14 +504,23 @@ export const en = {
         completed: "Setup completed",
         failed: "Setup failed",
         workspace: "Workspace setup",
+        blocked: "Setup blocked",
       },
       status: {
         running: "Running",
         completed: "Completed",
         failed: "Failed",
         waiting: "Waiting for setup output",
+        blocked: "Blocked",
       },
       waiting: "Setting up workspace...",
+      blocked: {
+        title: "Setup was not run",
+        description:
+          "This PR comes from {{repository}}, a different repository. Its setup and scripts could run code you have not reviewed.",
+        run: "Run setup",
+        runFailed: "Failed to run workspace setup",
+      },
       empty: {
         noCommands: "No setup commands ran for this workspace.",
       },
@@ -1094,7 +1115,6 @@ export const en = {
       addProject: "Add project",
       newWorkspace: "New workspace",
       hosts: "Hosts",
-      home: "Home",
       settings: "Settings",
       closeSidebar: "Close sidebar",
     },
@@ -1111,6 +1131,7 @@ export const en = {
     },
     sections: {
       sessions: "History",
+      search: "Search",
       schedules: "Schedules",
     },
     worktreeSetup: {
@@ -1425,7 +1446,7 @@ export const en = {
       },
       importSession: {
         title: "Import session",
-        description: "Bring in recent external CLI sessions",
+        description: "Open a Claude Code, Codex or other session you started in a terminal",
       },
       setupProviders: {
         title: "Setup providers",
@@ -2228,6 +2249,12 @@ export const en = {
       chatOutline: {
         title: "Chat outline",
         description: "Show an outline for jumping between prompts",
+      },
+      sidebar: {
+        title: "Sidebar",
+        description: "Choose which items appear at the top of the sidebar and in what order",
+        moveUp: "Move up",
+        moveDown: "Move down",
       },
       fonts: {
         title: "Fonts",

@@ -103,23 +103,15 @@ async function createFeatureCommit(repoPath: string): Promise<void> {
 }
 
 async function expectCommitDiffHeaderGeometry(panel: Locator): Promise<void> {
-  const [header, content, name, stat] = await Promise.all([
+  const [header, canvas] = await Promise.all([
     panel.getByTestId("diff-file-0").boundingBox(),
-    panel.getByTestId("diff-file-0-header-content").boundingBox(),
-    panel.getByTestId("diff-file-0-name").boundingBox(),
-    panel.getByTestId("diff-file-0-stat").boundingBox(),
+    panel.getByTestId("git-diff-header-canvas").boundingBox(),
   ]);
   expect(header).not.toBeNull();
-  expect(content).not.toBeNull();
-  expect(name).not.toBeNull();
-  expect(stat).not.toBeNull();
+  expect(canvas).not.toBeNull();
   expect(header!.height).toBeCloseTo(30, 0);
-  expect(content!.x).toBeCloseTo(header!.x, 0);
-  expect(content!.width).toBeCloseTo(header!.width, 0);
-  expect(name!.x - header!.x).toBeCloseTo(12, 0);
-  expect(name!.x + name!.width).toBeLessThan(stat!.x);
-  expect(Math.abs(name!.y + name!.height / 2 - (stat!.y + stat!.height / 2))).toBeLessThanOrEqual(
-    1,
-  );
-  expect(stat!.x + stat!.width).toBeLessThan(header!.x + header!.width);
+  expect(header!.x).toBeCloseTo(canvas!.x, 0);
+  expect(header!.width).toBeCloseTo(canvas!.width, 0);
+  expect(header!.y).toBeCloseTo(canvas!.y, 0);
+  await expect(panel.getByTestId("diff-file-0")).toHaveAccessibleName("feature.txt, +2, -0");
 }

@@ -15,6 +15,8 @@ import type { AggregatedAgent } from "./use-aggregated-agents";
 import { useSessionStore } from "@/stores/session-store";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import { CLIENT_SLASH_COMMANDS, type ClientSlashCommand } from "@/client-slash-commands";
+import type { PluginClientSlashCommand } from "@/plugins/client-slash-commands";
+import { mergeSlashCommandSources } from "@/plugins/client-slash-commands/model";
 import {
   applySlashCommandReplacement,
   filterAndRankCommandAutocompleteEntries,
@@ -52,6 +54,7 @@ interface UseAgentAutocompleteInput {
   onSelectAgent?: (agent: AgentMentionSelection) => boolean | void;
   onClientSlashCommand?: (command: ClientSlashCommand) => void;
   canExecuteClientSlashCommand?: boolean;
+  pluginClientSlashCommands?: readonly PluginClientSlashCommand[];
 }
 
 interface AgentAutocompleteKeyPressEvent {
@@ -67,6 +70,10 @@ interface AgentAutocompleteInputSnapshot {
 
 type AgentAutocompleteOption =
   | (AutocompleteOption & { type: "client_command"; command: ClientSlashCommand })
+  | (AutocompleteOption & {
+      type: "plugin_command";
+      command: PluginClientSlashCommand;
+    })
   | (AutocompleteOption & { type: "provider_command" })
   | (AutocompleteOption & {
       type: "workspace_entry";
@@ -128,6 +135,7 @@ export interface DirectorySuggestionEntry {
 
 type AvailableCommand =
   | { source: "client"; command: ClientSlashCommand }
+  | { source: "plugin"; command: PluginClientSlashCommand }
   | { source: "provider"; command: AgentSlashCommand };
 
 function normalizeDraftCommandConfig(
@@ -196,6 +204,9 @@ function mapCommandToOption(entry: AvailableCommand, t: TFunction): AgentAutocom
       command: entry.command,
     };
   }
+  if (entry.source === "plugin") {
+    return { ...base, type: "plugin_command", command: entry.command };
+  }
   return {
     ...base,
     type: "provider_command",
@@ -227,6 +238,7 @@ export interface BuildAutocompleteOptionsInput {
   isVisible: boolean;
   mode: AutocompleteMode;
   commands: AgentSlashCommand[];
+  pluginCommands: readonly PluginClientSlashCommand[];
   isDraftContext: boolean;
   commandFilterQuery: string;
   activeSlashCommand: SlashCommandRange | null;
@@ -242,19 +254,26 @@ export function buildCommandAutocompleteOptions(input: BuildAutocompleteOptionsI
   }
 
   if (input.mode === "command") {
-    const providerCommands = input.commands.map(
-      (command): AvailableCommand => ({ source: "provider", command }),
-    );
-    const clientCommandNames = new Set(CLIENT_SLASH_COMMANDS.map((command) => command.name));
-    const rootCommands: AvailableCommand[] = input.isDraftContext
-      ? providerCommands
-      : [
-          ...CLIENT_SLASH_COMMANDS.map(
-            (command): AvailableCommand => ({ source: "client", command }),
-          ),
-          ...providerCommands.filter((entry) => !clientCommandNames.has(entry.command.name)),
-        ];
-    const availableCommands =
+    const providerCommands = input.commands.map((command) => ({
+      source: "provider" as const,
+      command,
+    }));
+    const rootCommands: AvailableCommand[] = mergeSlashCommandSources({
+      builtIn: CLIENT_SLASH_COMMANDS,
+      plugins: input.pluginCommands,
+      provider: input.commands,
+      onPluginCollision(command, winner) {
+        console.warn(
+          `[Plugins] Client slash command /${command.name} from ${command.pluginId} ignored; ${winner} command wins`,
+        );
+      },
+    })
+      .filter((entry) => !input.isDraftContext || entry.source !== "built-in")
+      .map((entry): AvailableCommand => {
+        if (entry.source === "built-in") return { source: "client", command: entry.command };
+        return entry;
+      });
+    const availableCommands: AvailableCommand[] =
       input.activeSlashCommand?.position === "inline"
         ? filterInlineSkillCommandEntries(providerCommands)
         : rootCommands;
@@ -468,6 +487,7 @@ export function useAgentAutocomplete(input: UseAgentAutocompleteInput): AgentAut
     onSelectAgent,
     onClientSlashCommand,
     canExecuteClientSlashCommand,
+    pluginClientSlashCommands = [],
   } = input;
 
   const activeSlashCommand = useMemo(
@@ -604,6 +624,7 @@ export function useAgentAutocomplete(input: UseAgentAutocompleteInput): AgentAut
         activeFileMention,
         commandFilterQuery,
         commands,
+        pluginCommands: pluginClientSlashCommands,
         activeSlashCommand,
         agentSuggestions,
         fileSuggestions: fileSuggestionsQuery.data ?? [],
@@ -618,6 +639,7 @@ export function useAgentAutocomplete(input: UseAgentAutocompleteInput): AgentAut
       agentSuggestions,
       commandFilterQuery,
       commands,
+      pluginClientSlashCommands,
       fileSuggestionsQuery.data,
       isDraftContext,
       isVisible,
@@ -637,7 +659,9 @@ export function useAgentAutocomplete(input: UseAgentAutocompleteInput): AgentAut
         activeFileMention,
       });
       const selectedIsCommand =
-        selected.type === "client_command" || selected.type === "provider_command";
+        selected.type === "client_command" ||
+        selected.type === "plugin_command" ||
+        selected.type === "provider_command";
       if (snapshot && selectedIsCommand && !current.slashCommand) return;
       if (
         selected.type === "client_command" &&

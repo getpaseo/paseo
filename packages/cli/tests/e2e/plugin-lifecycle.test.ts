@@ -27,7 +27,7 @@ async function main(): Promise<void> {
   const context = await createE2ETestContext({ timeout: 45_000 });
   try {
     await writeFile(path.join(directory, "paseo-plugin.json"), JSON.stringify({ id: "cli-e2e" }));
-    await writeFile(path.join(directory, "index.tsx"), pluginSource);
+    await writeFile(path.join(directory, "index.server.ts"), pluginSource);
 
     const install = await context.paseo(["plugin", "install", directory, "--json"]);
     assert.equal(install.exitCode, 0, install.stderr);
@@ -44,7 +44,7 @@ async function main(): Promise<void> {
       path.join(gitDirectory, "paseo-plugin.json"),
       JSON.stringify({ id: "git-cli-e2e" }),
     );
-    await writeFile(path.join(gitDirectory, "index.ts"), pluginSource);
+    await writeFile(path.join(gitDirectory, "index.server.ts"), pluginSource);
     await git(gitDirectory, ["add", "-A"]);
     await git(gitDirectory, ["commit", "-m", "initial"]);
 
@@ -58,7 +58,7 @@ async function main(): Promise<void> {
     assert.equal(JSON.parse(gitInstall.stdout).source, "git");
 
     await writeFile(
-      path.join(gitDirectory, "index.ts"),
+      path.join(gitDirectory, "index.server.ts"),
       `${pluginSource}\nconst updated = true;\n`,
     );
     await git(gitDirectory, ["add", "-A"]);

@@ -1901,9 +1901,11 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
 
 const styles = StyleSheet.create((theme: Theme) => ({
   container: {
+    flexShrink: 1,
     position: "relative",
   },
   inputWrapper: {
+    flexShrink: 1,
     flexDirection: "column",
     gap: theme.spacing[3],
     backgroundColor: theme.colors.surface1,
@@ -1932,6 +1934,7 @@ const styles = StyleSheet.create((theme: Theme) => ({
     borderStyle: "dotted",
   },
   textInputScrollWrapper: {
+    flexShrink: 1,
     position: "relative",
   },
   focusHintText: {
@@ -1943,6 +1946,8 @@ const styles = StyleSheet.create((theme: Theme) => ({
     opacity: 0.5,
   },
   textInput: {
+    // Preserve the controls when an ancestor constrains an overlong draft.
+    flexShrink: 1,
     width: "100%",
     color: theme.colors.foreground,
     fontSize: theme.fontSize.content,
@@ -1964,6 +1969,7 @@ const styles = StyleSheet.create((theme: Theme) => ({
     color: theme.colors.foregroundMuted,
   },
   buttonRow: {
+    flexShrink: 0,
     flexDirection: "row",
     alignItems: "flex-end",
     justifyContent: "space-between",

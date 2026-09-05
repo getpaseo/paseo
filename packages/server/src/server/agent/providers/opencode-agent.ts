@@ -1053,7 +1053,11 @@ async function collectOpenCodeImportableSessionsFromSdk(
   options?: ListImportableSessionsOptions,
 ): Promise<ImportableProviderSession[]> {
   const limit = options?.limit ?? OPENCODE_PERSISTED_SESSION_LIMIT;
-  const sessionListLimit = options?.cwd ? Math.max(limit, OPENCODE_PERSISTED_SESSION_LIMIT) : limit;
+  const scanLimit = Math.min(options?.scanLimit ?? limit, 500);
+  const sessionListLimit = Math.min(
+    options?.cwd ? Math.max(scanLimit, OPENCODE_PERSISTED_SESSION_LIMIT) : scanLimit,
+    500,
+  );
   const response = await client.experimental.session.list({
     archived: true,
     roots: true,
@@ -2811,7 +2815,7 @@ function appendOpenCodeTextPart(
   events: AgentStreamEvent[],
 ): void {
   if (messageRole === "user") {
-    if (!part.time?.end || !part.text || state.emittedUserMessageIds?.has(part.messageID)) {
+    if (!part.text || state.emittedUserMessageIds?.has(part.messageID)) {
       return;
     }
     state.emittedUserMessageIds?.add(part.messageID);

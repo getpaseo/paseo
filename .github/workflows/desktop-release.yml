@@ -75,7 +75,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          if gh release view "$RELEASE_TAG" --repo "${{ github.repository }}" > /dev/null 2>&1; then
+          if node scripts/github-release.mjs --repo "${{ github.repository }}" --tag "$RELEASE_TAG" > /dev/null 2>&1; then
             echo "Release $RELEASE_TAG already exists, skipping creation"
           else
             prerelease_flag=""
@@ -86,8 +86,10 @@ jobs:
               --repo "${{ github.repository }}" \
               --title "Paseo $RELEASE_TAG" \
               --notes "" \
+              --draft \
               $prerelease_flag || {
                 echo "Release creation raced with another workflow; continuing."
+                node scripts/github-release.mjs --repo "${{ github.repository }}" --tag "$RELEASE_TAG" > /dev/null
               }
           fi
 
@@ -191,7 +193,8 @@ jobs:
             echo "::error::No release artifacts found in $release_dir"
             exit 1
           fi
-          gh release upload "$RELEASE_TAG" "${files[@]}" --clobber --repo "${{ github.repository }}"
+          release_lookup="$(node scripts/github-release.mjs --repo "${{ github.repository }}" --tag "$RELEASE_TAG")"
+          gh release upload "$release_lookup" "${files[@]}" --clobber --repo "${{ github.repository }}"
 
       - name: Upload desktop artifacts to workflow
         if: env.SHOULD_PUBLISH != 'true'
@@ -299,7 +302,8 @@ jobs:
             echo "::error::No release artifacts found in $release_dir"
             exit 1
           fi
-          gh release upload "$RELEASE_TAG" "${files[@]}" --clobber --repo "${{ github.repository }}"
+          release_lookup="$(node scripts/github-release.mjs --repo "${{ github.repository }}" --tag "$RELEASE_TAG")"
+          gh release upload "$release_lookup" "${files[@]}" --clobber --repo "${{ github.repository }}"
 
       - name: Upload desktop artifacts to workflow
         if: env.SHOULD_PUBLISH != 'true'
@@ -404,7 +408,8 @@ jobs:
             echo "::error::No release artifacts found in $release_dir"
             exit 1
           fi
-          gh release upload "$RELEASE_TAG" "${files[@]}" --clobber --repo "${{ github.repository }}"
+          release_lookup="$(node scripts/github-release.mjs --repo "${{ github.repository }}" --tag "$RELEASE_TAG")"
+          gh release upload "$release_lookup" "${files[@]}" --clobber --repo "${{ github.repository }}"
 
       - name: Upload desktop artifacts to workflow
         if: env.SHOULD_PUBLISH != 'true'
@@ -424,7 +429,7 @@ jobs:
 
   finalize-rollout:
     needs: [publish-macos, publish-linux, publish-windows]
-    if: ${{ always() && (needs.publish-macos.result == 'success' || needs.publish-macos.result == 'skipped') && (needs.publish-linux.result == 'success' || needs.publish-linux.result == 'skipped') && (needs.publish-windows.result == 'success' || needs.publish-windows.result == 'skipped') && (github.event_name != 'workflow_dispatch' || github.event.inputs.publish != 'false') }}
+    if: ${{ always() && (github.event_name != 'workflow_dispatch' || github.event.inputs.publish != 'false') }}
     permissions:
       contents: write
     runs-on: ubuntu-latest
@@ -480,7 +485,7 @@ jobs:
           name: windows-manifest
           path: release-manifests/windows-manifest
 
-      - name: Assemble and upload stamped manifests
+      - name: Assemble manifests and publish release
         if: env.IS_SMOKE_TAG != 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -490,6 +495,33 @@ jobs:
           cd release-manifests
           manifests_dir="$PWD/final"
           mkdir -p "$manifests_dir"
+
+          expected_manifests=(
+            "${RELEASE_CHANNEL}-mac.yml"
+            "${RELEASE_CHANNEL}-linux.yml"
+            "${RELEASE_CHANNEL}.yml"
+          )
+          release_lookup="$(node ../scripts/github-release.mjs --repo "${{ github.repository }}" --tag "$RELEASE_TAG" --cleanup-duplicates)"
+          existing_assets="$(gh release view "$release_lookup" --repo "${{ github.repository }}" --json assets --jq '.assets[].name')"
+          for manifest_name in "${expected_manifests[@]}"; do
+            if grep -Fxq "$manifest_name" <<< "$existing_assets"; then
+              case "$manifest_name" in
+                "${RELEASE_CHANNEL}-mac.yml") platform_result="${{ needs.publish-macos.result }}" ;;
+                "${RELEASE_CHANNEL}-linux.yml") platform_result="${{ needs.publish-linux.result }}" ;;
+                "${RELEASE_CHANNEL}.yml") platform_result="${{ needs.publish-windows.result }}" ;;
+              esac
+              if [[ "$platform_result" =~ ^(success|skipped)$ ]]; then
+                gh release download "$release_lookup" \
+                  --repo "${{ github.repository }}" \
+                  --pattern "$manifest_name" \
+                  --dir "$manifests_dir"
+              else
+                gh release delete-asset "$release_lookup" "$manifest_name" \
+                  --repo "${{ github.repository }}" \
+                  --yes
+              fi
+            fi
+          done
 
           if [[ "${{ needs.publish-macos.result }}" == "success" ]]; then
             manifest_name="${RELEASE_CHANNEL}-mac.yml"
@@ -515,6 +547,7 @@ jobs:
           fi
           timestamp="$(date -u +"%Y-%m-%dT%H:%M:%S.000Z")"
           node ../scripts/stamp-rollout.mjs --release-date "$timestamp" --rollout-hours "$ROLLOUT_HOURS" "${files[@]}"
+          # shellcheck disable=SC2016
           ROLLOUT_HOURS_EXPECTED="$ROLLOUT_HOURS" RELEASE_DATE_EXPECTED="$timestamp" node -e '
             const yaml = require("js-yaml");
             const fs = require("fs");
@@ -536,4 +569,28 @@ jobs:
               }
             }
           ' "${files[@]}"
-          gh release upload "$RELEASE_TAG" "${files[@]}" --clobber --repo "${{ github.repository }}"
+          gh release upload "$release_lookup" "${files[@]}" --clobber --repo "${{ github.repository }}"
+
+          failed_builds=()
+          [[ "${{ needs.publish-macos.result }}" =~ ^(success|skipped)$ ]] || failed_builds+=(macOS)
+          [[ "${{ needs.publish-linux.result }}" =~ ^(success|skipped)$ ]] || failed_builds+=(Linux)
+          [[ "${{ needs.publish-windows.result }}" =~ ^(success|skipped)$ ]] || failed_builds+=(Windows)
+          if (( ${#failed_builds[@]} > 0 )); then
+            echo "::error::Desktop builds did not complete for ${failed_builds[*]}; the release remains a draft"
+            exit 1
+          fi
+
+          missing_manifests=()
+          for manifest_name in "${expected_manifests[@]}"; do
+            [[ -f "$manifests_dir/$manifest_name" ]] || missing_manifests+=("$manifest_name")
+          done
+          if (( ${#missing_manifests[@]} > 0 )); then
+            echo "::error::Missing updater manifests: ${missing_manifests[*]}; the release remains a draft"
+            exit 1
+          fi
+
+          publish_args=(release edit "$release_lookup" --tag "$RELEASE_TAG" --draft=false --repo "${{ github.repository }}")
+          if [[ "$IS_PRERELEASE" == "true" ]]; then
+            publish_args+=(--prerelease)
+          fi
+          gh "${publish_args[@]}"

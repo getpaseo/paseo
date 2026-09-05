@@ -8,8 +8,9 @@ import {
   NativeExplorerSidebarDock,
 } from "@/components/compact-explorer-sidebar";
 import { useOpenFileExplorerGesture } from "@/mobile-panels/gestures";
+import { useIsMobilePanelActive } from "@/mobile-panels/provider";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
-import { selectIsCompactFileExplorerOpen, usePanelStore } from "@/stores/panel-store";
+import { usePanelStore } from "@/stores/panel-store";
 import { useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
 import type { WorkspaceTabTarget } from "@/workspace-tabs/model";
 import { useWorkspaceCheckoutStatus } from "@/screens/workspace/use-workspace-checkout-status";
@@ -51,7 +52,7 @@ function useActiveCompactExplorerSidebarModel(
 ): CompactExplorerSidebarHostModel | null {
   const selection = useActiveWorkspaceSelection();
   const workspace = useWorkspace(selection?.serverId ?? null, selection?.workspaceId ?? null);
-  const isExplorerOpen = usePanelStore(selectIsCompactFileExplorerOpen);
+  const isExplorerActive = useIsMobilePanelActive("file-explorer");
   const showMobileAgent = usePanelStore((state) => state.showMobileAgent);
   const client = useHostRuntimeClient(selection?.serverId ?? "");
   const isConnected = useHostRuntimeIsConnected(selection?.serverId ?? "");
@@ -67,32 +68,32 @@ function useActiveCompactExplorerSidebarModel(
   const resolvedModel = useMemo(
     () =>
       resolveCompactExplorerSidebarHostModel({
-        previous: isExplorerOpen ? retainedModelRef.current : null,
+        previous: isExplorerActive ? retainedModelRef.current : null,
         selection,
         workspace,
         isGit: checkoutQuery.data?.isGit ?? false,
       }),
-    [checkoutQuery.data?.isGit, isExplorerOpen, selection, workspace],
+    [checkoutQuery.data?.isGit, isExplorerActive, selection, workspace],
   );
 
   useEffect(() => {
     if (!selection) {
       retainedModelRef.current = null;
-      if (enabled && isExplorerOpen) {
+      if (enabled && isExplorerActive) {
         showMobileAgent();
       }
       return;
     }
-    if (!isExplorerOpen) {
+    if (!isExplorerActive) {
       retainedModelRef.current = null;
       return;
     }
     if (resolvedModel) {
       retainedModelRef.current = resolvedModel;
     }
-  }, [enabled, isExplorerOpen, resolvedModel, selection, showMobileAgent]);
+  }, [enabled, isExplorerActive, resolvedModel, selection, showMobileAgent]);
 
-  return selection ? (resolvedModel ?? (isExplorerOpen ? retainedModelRef.current : null)) : null;
+  return selection ? (resolvedModel ?? (isExplorerActive ? retainedModelRef.current : null)) : null;
 }
 
 interface CompactExplorerSidebarHostProps {
