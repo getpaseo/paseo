@@ -246,6 +246,29 @@ describe("resolveWorkspaceLaunchEndpointLink", () => {
     });
   });
 
+  it.each<ActiveConnection>([
+    { type: "relay", endpoint: "relay.paseo.sh:443", display: "relay" },
+    { type: "remoteSsh", endpoint: "user@remote-host", display: "SSH" },
+  ])("offers only public launch routes over $type", (activeConnection) => {
+    expect(
+      resolveWorkspaceLaunchEndpointLink({ endpoint: runningLaunchEndpoint, activeConnection }),
+    ).toEqual({ primary: null, targets: [] });
+    const publicProxyUrl = "https://dev.services.example.com";
+    const publicTarget = { kind: "public", label: "dev.services.example.com", url: publicProxyUrl };
+    expect(
+      resolveWorkspaceLaunchEndpointLink({
+        endpoint: { ...runningLaunchEndpoint, publicProxyUrl },
+        activeConnection,
+      }),
+    ).toEqual({ primary: publicTarget, targets: [publicTarget] });
+    expect(
+      resolveWorkspaceLaunchEndpointLink({
+        endpoint: { ...runningLaunchEndpoint, publicProxyUrl: "http://dev.localhost:6767" },
+        activeConnection,
+      }),
+    ).toEqual({ primary: null, targets: [] });
+  });
+
   it("does not offer browser routes for TCP listeners", () => {
     expect(
       resolveWorkspaceLaunchEndpointLink({

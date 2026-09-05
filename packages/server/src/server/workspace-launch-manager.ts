@@ -19,7 +19,7 @@ import {
 import type { ScriptHealthState } from "./script-health-monitor.js";
 import type { ServiceProxySubsystem } from "./service-proxy.js";
 import { getAllReservedWorkspaceServicePorts } from "./workspace-service-port-registry.js";
-import { waitForTerminalBootstrapReadiness } from "./worktree-bootstrap.js";
+import { buildStringCommandShellInvocation } from "../utils/string-command-shell.js";
 import type { WorkspaceScriptRuntimeStore } from "./workspace-script-runtime-store.js";
 import type {
   WorkspaceRuntimeEnvironment,
@@ -163,12 +163,16 @@ export class WorkspaceLaunchManager {
       allocation: configResult.config?.worktree?.servicePorts ?? this.deps.globalServicePorts,
       excludedPorts: () => this.getExcludedServicePorts(context, configResult.config),
     });
+    const invocation = buildStringCommandShellInvocation({ command: config.command });
     const terminal = await this.deps.terminalManager.createTerminal({
       cwd: context.workspaceDirectory,
       workspaceId: context.workspaceId,
       name: `launch:${launchName}`,
       title: `launch:${launchName}`,
-      env: { ...environment.env, PASEO_LAUNCH_NAME: launchName },
+      command: invocation.shell,
+      args: invocation.args,
+      // Non-interactive Bash must not source an inherited BASH_ENV startup script.
+      env: { ...environment.env, PASEO_LAUNCH_NAME: launchName, BASH_ENV: "" },
     });
     const runtime: WorkspaceLaunchRuntime = {
       launchName,
@@ -188,12 +192,9 @@ export class WorkspaceLaunchManager {
     this.activeLaunches.set(context.workspaceId, launchName);
 
     let unsubscribeExit: (() => void) | null = null;
-    let unsubscribeCommandFinished: (() => void) | null = null;
     runtime.stopListener = () => {
       unsubscribeExit?.();
       unsubscribeExit = null;
-      unsubscribeCommandFinished?.();
-      unsubscribeCommandFinished = null;
     };
     const stopRuntime = (exitCode: number | null) => {
       this.markStopped(runtime, exitCode);
@@ -202,13 +203,8 @@ export class WorkspaceLaunchManager {
     unsubscribeExit = terminal.onExit((info) => {
       stopRuntime(info.exitCode);
     });
-    unsubscribeCommandFinished = terminal.onCommandFinished((info) => {
-      stopRuntime(info.exitCode);
-    });
 
     try {
-      await waitForTerminalBootstrapReadiness(terminal);
-      terminal.send({ type: "input", data: `${config.command}\r` });
       if (this.isCurrentRunningRuntime(runtime)) {
         this.startEndpointMonitor(runtime);
         void this.scanEndpoints(runtime);

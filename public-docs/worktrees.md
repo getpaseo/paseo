@@ -258,8 +258,10 @@ Paseo probes the leased block for live TCP listeners. HTTP listeners get a route
 through the existing reverse proxy; raw TCP listeners remain direct local ports. This works for
 host listeners and Docker-published ports.
 
-Your command owns Docker, dependencies, and restart policy. Keep it in the foreground so Paseo can
-stop it; a bare `docker compose up -d` exits immediately and is not a useful launch command.
+Your command owns Docker, dependencies, and restart policy. Launch commands use Bash on Unix
+and PowerShell on Windows, independent of your interactive shell. The launch stops when that
+command exits. Keep it in the foreground so Paseo can stop it; a bare `docker compose up -d` exits
+immediately and is not a useful launch command.
 
 ```bash
 paseo launch ls
