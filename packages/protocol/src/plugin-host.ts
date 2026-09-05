@@ -2,6 +2,9 @@ import { z } from "zod";
 
 import { DeliveryIdSchema, DeliveryRecordSchema, MAX_DELIVERY_PAGE_SIZE } from "./deliveries.js";
 
+/** Leave room for the plugin-process host response envelope and its error path. */
+export const MAX_PLUGIN_HOST_DELIVERY_GET_RESPONSE_BYTES = 192 * 1024;
+
 /** Bounds applied to authority values crossing the plugin process boundary. */
 export const MAX_PLUGIN_AUTHORITY_STRING_BYTES = 512;
 export const MAX_PLUGIN_AUTHORITY_LABELS = 128;

@@ -26,6 +26,7 @@ import {
   type WorkspaceDescriptorPayload,
 } from "@getpaseo/protocol/messages";
 import { MAX_DELIVERY_RESPONSE_BYTES } from "@getpaseo/protocol/transport-limits";
+import { MAX_PLUGIN_HOST_DELIVERY_GET_RESPONSE_BYTES } from "@getpaseo/protocol/plugin-host";
 import {
   decodeFileTransferFrame,
   encodeFileTransferFrame,
@@ -1491,6 +1492,97 @@ test("near-limit deliveries.get response stays correlated through WS serializati
     expect(response.message).toMatchObject({
       type: "deliveries.get.response",
       payload: { requestId: "r".repeat(256) },
+    });
+  } finally {
+    await session.cleanup();
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("bounds plugin host delivery pages while preserving exact lookup and cursors", async () => {
+  const home = mkdtempSync(join(tmpdir(), "paseo-plugin-delivery-get-bound-"));
+  const ledger = new DeliveryLedger(home, { maxBytesPerOwner: 4 * 1024 * 1024 });
+  const caller = createPluginCallerAuthority();
+  const liveCaller = createLivePluginCaller();
+  const pluginIdentity = { pluginId: "delivery-get", installationId: "installation-one" };
+  const principalId = "plugin:delivery-get:installation-one";
+  const largePayload = {
+    first: "x".repeat(15_000),
+    second: "x".repeat(15_000),
+    third: "x".repeat(15_000),
+    fourth: "x".repeat(15_000),
+  };
+  for (let index = 1; index <= 4; index += 1) {
+    await ledger.send(principalId, {
+      deliveryId: `delivery-${index}`,
+      targetAgentId: caller.callerAgentId,
+      payload: largePayload,
+    });
+  }
+  const session = createSessionForTest({
+    paseoHome: home,
+    principalId,
+    pluginIdentity,
+    deliveryLedger: ledger,
+    agentManager: { getAgent: vi.fn(() => liveCaller) },
+    workspaceRegistry: {
+      get: vi.fn(async () => ({
+        workspaceId: "source-workspace",
+        projectId: "source-project",
+        cwd: "/repo",
+        archivedAt: null,
+      })),
+      list: vi.fn().mockResolvedValue([]),
+    },
+    projectRegistry: {
+      get: vi.fn(async () => ({ projectId: "source-project", archivedAt: null })),
+    },
+  });
+
+  let invocationNumber = 0;
+  const invokeGet = (options: Record<string, unknown>) =>
+    session.invokePluginHost({
+      pluginId: pluginIdentity.pluginId,
+      caller,
+      invocationId: `invocation-${++invocationNumber}`,
+      generation: 1,
+      installationId: pluginIdentity.installationId,
+      capabilityNonce: `nonce-${invocationNumber}`,
+      operation: "delivery.get",
+      input: { options },
+      signal: new AbortController().signal,
+    }) as Promise<{
+      delivery: DeliveryRecord | null;
+      deliveries: DeliveryRecord[];
+      nextCursor: string | null;
+    }>;
+
+  try {
+    const firstPage = await invokeGet({ limit: 100 });
+    expect(firstPage.deliveries.map(({ deliveryId }) => deliveryId)).toEqual([
+      "delivery-1",
+      "delivery-2",
+      "delivery-3",
+    ]);
+    expect(firstPage.nextCursor).toBe("seq:3");
+    expect(
+      Buffer.byteLength(
+        JSON.stringify({
+          type: "session",
+          message: { type: "deliveries.get.response", payload: firstPage },
+        }),
+        "utf8",
+      ),
+    ).toBeLessThanOrEqual(MAX_PLUGIN_HOST_DELIVERY_GET_RESPONSE_BYTES);
+
+    await expect(invokeGet({ cursor: firstPage.nextCursor, limit: 100 })).resolves.toMatchObject({
+      deliveries: [{ deliveryId: "delivery-4" }],
+      nextCursor: null,
+    });
+    await expect(invokeGet({ deliveryId: "delivery-4" })).resolves.toMatchObject({
+      delivery: { deliveryId: "delivery-4" },
+      deliveries: [{ deliveryId: "delivery-4" }],
+      nextCursor: null,
     });
   } finally {
     await session.cleanup();

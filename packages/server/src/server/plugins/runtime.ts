@@ -55,6 +55,27 @@ const MAX_LOG_ENTRIES = 500;
 const MAX_LOG_BYTES = 256 * 1024;
 const MAX_LOG_LINE_BYTES = 16 * 1024;
 
+type PluginHostResponseType =
+  | "plugin.host.delivery.send.response"
+  | "plugin.host.delivery.get.response"
+  | "plugin.host.delivery.acknowledge.response"
+  | "plugin.host.child.create.response"
+  | "plugin.host.worktree.create.response"
+  | "plugin.host.worktree.remove.response"
+  | "plugin.host.cancel.response";
+
+interface PluginHostReply {
+  type: PluginHostResponseType;
+  requestId: string;
+  invocationId: string;
+  generation: number;
+  installationId: string;
+  capabilityNonce?: string;
+  ok: boolean;
+  result?: unknown;
+  error?: string;
+}
+
 interface PluginOutputStream {
   on(event: "data", listener: (chunk: Buffer | string) => void): this;
 }
@@ -267,7 +288,11 @@ function canObservePluginExit(child: PluginChild): boolean {
 }
 
 function describeError(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+  try {
+    return error instanceof Error ? error.message : String(error);
+  } catch {
+    return "Unknown plugin error";
+  }
 }
 
 function boundError(error: unknown): string {
@@ -788,16 +813,9 @@ export class PluginRuntime {
 
   private handleHostRequest(loaded: LoadedPlugin, message: PluginHostRequest): void {
     const pending = loaded.pending.get(message.invocationId);
-    const responseType = message.type.replace(/\.request$/u, ".response") as
-      | "plugin.host.delivery.send.response"
-      | "plugin.host.delivery.get.response"
-      | "plugin.host.delivery.acknowledge.response"
-      | "plugin.host.child.create.response"
-      | "plugin.host.worktree.create.response"
-      | "plugin.host.worktree.remove.response"
-      | "plugin.host.cancel.response";
+    const responseType = message.type.replace(/\.request$/u, ".response") as PluginHostResponseType;
     const reply = (result?: unknown, error?: unknown): void => {
-      void send(loaded.child, {
+      this.sendPluginHostReply(loaded, {
         type: responseType,
         requestId: message.requestId,
         invocationId: message.invocationId,
@@ -806,8 +824,6 @@ export class PluginRuntime {
         capabilityNonce: message.capabilityNonce,
         ok: error === undefined,
         ...(error === undefined ? { result } : { error: boundError(error) }),
-      } as PluginProcessRequest).catch((sendError) => {
-        this.quarantinePlugin(loaded, `Plugin host response failed: ${describeError(sendError)}`);
       });
     };
 
@@ -881,6 +897,61 @@ export class PluginRuntime {
       .finally(() => {
         pending.hostRequests.delete(message.requestId);
       });
+  }
+
+  private sendPluginHostReply(loaded: LoadedPlugin, response: PluginHostReply): void {
+    let sending: Promise<void>;
+    try {
+      sending = send(loaded.child, response as PluginProcessRequest);
+    } catch (error) {
+      this.sendPluginHostReplyFallback(loaded, response, error);
+      return;
+    }
+    void sending.catch((error) => {
+      this.sendPluginHostReplyFallback(loaded, response, error);
+    });
+  }
+
+  private sendPluginHostReplyFallback(
+    loaded: LoadedPlugin,
+    response: PluginHostReply,
+    error: unknown,
+  ): void {
+    const fallback: PluginHostReply = {
+      type: response.type,
+      requestId: response.requestId,
+      invocationId: response.invocationId,
+      generation: response.generation,
+      installationId: response.installationId,
+      ...(response.capabilityNonce === undefined
+        ? {}
+        : { capabilityNonce: response.capabilityNonce }),
+      ok: false,
+      error: boundError(error),
+    };
+    let sending: Promise<void>;
+    try {
+      sending = send(loaded.child, fallback as PluginProcessRequest);
+    } catch (fallbackError) {
+      this.quarantinePluginAfterHostReplyFailure(loaded, fallbackError);
+      return;
+    }
+    void sending.catch((fallbackError) => {
+      this.quarantinePluginAfterHostReplyFailure(loaded, fallbackError);
+    });
+  }
+
+  private quarantinePluginAfterHostReplyFailure(loaded: LoadedPlugin, error: unknown): void {
+    const reason = `Plugin host response fallback failed: ${describeError(error)}`;
+    try {
+      this.quarantinePlugin(loaded, reason);
+    } catch (quarantineError) {
+      this.logger.error(
+        { err: quarantineError, pluginId: loaded.id },
+        "Failed to quarantine plugin after host response fallback failure",
+      );
+      this.rejectPending(loaded, reason);
+    }
   }
 
   private handleToolUpdate(

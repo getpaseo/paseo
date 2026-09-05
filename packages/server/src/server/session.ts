@@ -274,6 +274,7 @@ import {
   createNativeDeliveryDispatcher,
   type DeliveryAgentDispatcher,
 } from "./deliveries/delivery-dispatcher.js";
+import { MAX_PLUGIN_HOST_DELIVERY_GET_RESPONSE_BYTES } from "@getpaseo/protocol/plugin-host";
 
 function resolveWorkspaceSetupRuntime(
   runtime: WorkspaceSetupRuntime | undefined,
@@ -2372,9 +2373,14 @@ export class Session {
     await this.resolveLivePluginCallerAuthority(input.caller.callerAgentId);
     this.throwIfPluginHostCancelled(input.signal);
     const options = (input.input.options ?? {}) as DeliveryLedgerGetOptions;
+    const requestedMaxEncodedBytes = options.maxEncodedBytes ?? MAX_DELIVERY_RESPONSE_BYTES;
     return this.deliveryLedger.get(this.principalId, {
       ...options,
       targetAgentId: input.caller.callerAgentId,
+      maxEncodedBytes: Math.min(
+        requestedMaxEncodedBytes,
+        MAX_PLUGIN_HOST_DELIVERY_GET_RESPONSE_BYTES,
+      ),
       allowPayloadTombstones: true,
       signal: input.signal,
     });

@@ -9,14 +9,86 @@ import { PluginRuntime } from "./runtime.js";
 import type { PluginSessionSocket } from "./session-socket.js";
 import {
   PLUGIN_TOOL_MAX_CONCURRENT_PER_PLUGIN,
+  PLUGIN_TOOL_MAX_ERROR_BYTES,
   PLUGIN_TOOL_MAX_UPDATE_COUNT,
 } from "./plugin-tool.js";
 import {
   MAX_PLUGIN_PROCESS_MESSAGE_BYTES,
   type PluginToolCatalogEntry,
+  type PluginToolCallerContext,
 } from "./plugin-process-protocol.js";
 
 const temporaryDirectories: string[] = [];
+
+function createLargeDeliveryPayload(): Record<string, string> {
+  return {
+    first: "x".repeat(15_000),
+    second: "x".repeat(15_000),
+    third: "x".repeat(15_000),
+    fourth: "x".repeat(15_000),
+  };
+}
+
+function createHostCallerAuthority(
+  callerAgentId: string,
+): NonNullable<PluginToolCallerContext["caller"]> {
+  return {
+    callerAgentId,
+    agent: {
+      id: callerAgentId,
+      workspaceId: "",
+      provider: "codex",
+      status: "idle",
+      createdAt: "2026-09-05T00:00:00.000Z",
+      updatedAt: "2026-09-05T00:00:00.000Z",
+      lastActivityAt: "2026-09-05T00:00:00.000Z",
+      title: null,
+      cwd: "/repo",
+      model: null,
+      currentModeId: null,
+      thinkingOptionId: null,
+      requiresAttention: false,
+      attentionReason: null,
+      parentAgentId: null,
+      labels: {},
+    },
+    workspace: null,
+    effective: {
+      provider: { known: false },
+      model: { known: false },
+      thinking: { known: false },
+      providerSessionId: { known: false },
+    },
+    securityCeiling: {
+      filesystem: "unknown",
+      network: "unknown",
+      approvals: "unknown",
+      unattended: "unknown",
+    },
+  };
+}
+
+function createOversizedDeliveryPage(): {
+  delivery: null;
+  deliveries: Array<{
+    deliveryId: string;
+    createdAt: string;
+    acknowledgedAt: null;
+    payload: Record<string, string>;
+  }>;
+  nextCursor: null;
+} {
+  return {
+    delivery: null,
+    deliveries: Array.from({ length: 5 }, (_, index) => ({
+      deliveryId: `delivery-${index}`,
+      createdAt: "2026-09-05T00:00:00.000Z",
+      acknowledgedAt: null,
+      payload: createLargeDeliveryPayload(),
+    })),
+    nextCursor: null,
+  };
+}
 
 async function createPlugin(id: string, source: string): Promise<string> {
   const directory = await mkdtemp(path.join(tmpdir(), "paseo-plugin-"));
@@ -895,6 +967,144 @@ export default function contribute(plugin: any) {
     expect(invokePluginHost).toHaveBeenCalledOnce();
     expect(invokePluginHost.mock.calls[0]?.[0].caller.callerAgentId).toBe("agent-host");
     await runtime.stopAll();
+  });
+
+  it("falls back to a bounded host error when a reply result is too large", async () => {
+    const directory = await createPlugin(
+      "oversized-host-reply",
+      `export default function contribute(_plugin: any) { return () => undefined; }`,
+    );
+    const child = createReloadChild("oversized-host-reply", [], ["inspect"]);
+    const oversizedPage = createOversizedDeliveryPage();
+    let invocationRequestId: string | undefined;
+    let fallbackResponse: { ok: boolean; error?: string } | undefined;
+    const originalSend = child.send.bind(child);
+    child.send = (message, callback) => {
+      if (message.type === "plugin.host.delivery.get.response") {
+        const response = message as { ok: boolean; error?: string };
+        fallbackResponse = response;
+        callback?.(null);
+        if (!response.ok && invocationRequestId) {
+          queueMicrotask(() =>
+            child.emit("message", {
+              type: "error",
+              requestId: invocationRequestId,
+              error: response.error ?? "Plugin host request failed",
+            }),
+          );
+        }
+        return true;
+      }
+      const sent = originalSend(message, callback);
+      if (message.type === "invoke") {
+        invocationRequestId = (message as { requestId: string }).requestId;
+        const invokeMessage = message as {
+          requestId: string;
+          generation: number;
+          installationId: string;
+          capabilityNonce: string;
+        };
+        queueMicrotask(() =>
+          child.emit("message", {
+            type: "plugin.host.delivery.get.request",
+            requestId: "host-request",
+            invocationId: invokeMessage.requestId,
+            generation: invokeMessage.generation,
+            installationId: invokeMessage.installationId,
+            capabilityNonce: invokeMessage.capabilityNonce,
+            options: { limit: 100 },
+          }),
+        );
+      }
+      return sent;
+    };
+    const runtime = createTestRuntime({
+      spawnChild: () => child,
+      sessionHost: {
+        ...createTrackedSessionHost().host,
+        invokePluginHost: vi.fn(async () => oversizedPage),
+      },
+      resolveToolContext: async (callerAgentId): Promise<PluginToolCallerContext> => ({
+        callerAgentId,
+        agent: null,
+        workspace: null,
+        caller: createHostCallerAuthority(callerAgentId),
+      }),
+    });
+
+    await runtime.startPlugin("oversized-host-reply", directory);
+    await expect(
+      runtime.invoke("oversized-host-reply", "inspect", {}, { callerAgentId: "agent-host" }),
+    ).rejects.toThrow(/exceeds.*limit/i);
+    expect(fallbackResponse?.ok).toBe(false);
+    expect(fallbackResponse?.error).toMatch(/exceeds.*limit/i);
+    expect(Buffer.byteLength(fallbackResponse?.error ?? "", "utf8")).toBeLessThanOrEqual(
+      PLUGIN_TOOL_MAX_ERROR_BYTES,
+    );
+    expect(runtime.catalog()).toEqual([expect.objectContaining({ id: "oversized-host-reply" })]);
+    await runtime.stopAll();
+  });
+
+  it("quarantines and rejects the invocation when the host error fallback fails", async () => {
+    const directory = await createPlugin(
+      "failed-host-fallback",
+      `export default function contribute(_plugin: any) { return () => undefined; }`,
+    );
+    const child = createReloadChild("failed-host-fallback", [], ["inspect"]);
+    const originalSend = child.send.bind(child);
+    let invocationRequestId: string | undefined;
+    child.send = (message, callback) => {
+      if (message.type === "plugin.host.delivery.get.response") {
+        callback?.(new Error("fallback send failed"));
+        return true;
+      }
+      const sent = originalSend(message, callback);
+      if (message.type === "invoke") {
+        invocationRequestId = (message as { requestId: string }).requestId;
+        const invokeMessage = message as {
+          requestId: string;
+          generation: number;
+          installationId: string;
+          capabilityNonce: string;
+        };
+        queueMicrotask(() =>
+          child.emit("message", {
+            type: "plugin.host.delivery.get.request",
+            requestId: "host-request",
+            invocationId: invokeMessage.requestId,
+            generation: invokeMessage.generation,
+            installationId: invokeMessage.installationId,
+            capabilityNonce: invokeMessage.capabilityNonce,
+            options: { limit: 100 },
+          }),
+        );
+      }
+      return sent;
+    };
+    const runtime = createTestRuntime({
+      spawnChild: () => child,
+      sessionHost: {
+        ...createTrackedSessionHost().host,
+        invokePluginHost: vi.fn(async () => createOversizedDeliveryPage()),
+      },
+      resolveToolContext: async (callerAgentId): Promise<PluginToolCallerContext> => ({
+        callerAgentId,
+        agent: null,
+        workspace: null,
+        caller: createHostCallerAuthority(callerAgentId),
+      }),
+    });
+
+    await runtime.startPlugin("failed-host-fallback", directory);
+    const invocation = runtime.invoke(
+      "failed-host-fallback",
+      "inspect",
+      {},
+      { callerAgentId: "agent-host" },
+    );
+    await expect(invocation).rejects.toThrow(/fallback send failed/i);
+    expect(invocationRequestId).toMatch(/^[0-9a-f-]{36}$/u);
+    expect(runtime.catalog()).toEqual([]);
   });
 
   it("publishes and invokes model-facing tools with host-owned context", async () => {
