@@ -21,7 +21,6 @@ import { hasMeaningfulToolCallDetail } from "@/utils/tool-call-detail-state";
 import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
 import { CODE_SURFACE_DATASET } from "@/styles/code-surface";
 import { extensionFromPath, highlightToKeyedLines } from "@/utils/highlight-cache";
-import { stripReadLineNumberGutter } from "@/utils/read-gutter";
 import { HighlightedLines } from "./highlighted-content";
 import { DiffViewer } from "./diff-viewer";
 import { getCodeInsets } from "./code-insets";
@@ -722,9 +721,8 @@ function buildDetailSections(
   }
   if (detail.type === "read") {
     if (!detail.content) return [];
-    const stripped = stripReadLineNumberGutter(detail.content);
-    const content = stripped?.content ?? detail.content;
-    const startLine = stripped?.startLine ?? detail.offset ?? 1;
+    const content = detail.content;
+    const startLine = detail.offset ?? 1;
     return [
       <ScrollableTextSection
         key="read"

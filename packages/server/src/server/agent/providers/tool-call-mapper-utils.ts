@@ -153,14 +153,14 @@ export interface StrippedReadContent {
   startLine?: number;
 }
 
-// Claude and other providers return cat -n or line-prefixed content: each line prefixed
-// with a line number and tab or colon+space (`␣␣␣1\timport ...` or `1: import ...`).
-// Other providers return raw source. We strip the gutter here so `read.content` is uniformly
+// Claude's Read tool returns `cat -n`-style content: each line prefixed with a
+// right-aligned line number and a tab (`␣␣␣1\timport ...`). Other providers
+// return raw source. We strip the gutter here so `read.content` is uniformly
 // raw source across providers, and surface the first line number as `offset`
 // so the client can rebuild the gutter itself. Guarded tightly (first line must
-// match, near-total match ratio, strictly sequential numbering) so real source
-// is never mistaken for a gutter.
-const READ_GUTTER_LINE = /^\s*(\d+)(?:\t|:\s?)(.*)$/;
+// match, near-total match ratio, strictly sequential numbering with tab separator)
+// so real source (including sequential colon-prefixed text) is never mistaken for a gutter.
+const READ_GUTTER_LINE = /^\s*(\d+)\t(.*)$/;
 
 export function stripReadLineNumberGutter(
   content: string | undefined,
