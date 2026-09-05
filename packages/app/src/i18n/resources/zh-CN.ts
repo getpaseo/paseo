@@ -1232,6 +1232,10 @@ export const zhCN: TranslationResources = {
       noMatchingRefs: "没有匹配的 refs。",
       searchPlaceholder: "搜索分支和 PR",
       title: "起始位置",
+      fetchBase: {
+        label: "从远程获取最新提交",
+        hint: "从最近推送的提交开始",
+      },
     },
     launch: {
       title: "What to launch",

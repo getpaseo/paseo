@@ -1243,6 +1243,10 @@ export const ar: TranslationResources = {
       noMatchingRefs: "لا توجد مراجع مطابقة.",
       searchPlaceholder: "بحث الفروع والعلاقات العامة",
       title: "ابدأ من",
+      fetchBase: {
+        label: "جلب أحدث نسخة من المستودع البعيد",
+        hint: "ابدأ من أحدث تغيير تم دفعه",
+      },
     },
     launch: {
       title: "What to launch",

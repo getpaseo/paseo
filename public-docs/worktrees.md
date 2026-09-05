@@ -55,7 +55,13 @@ paseo workspace create \
   --base origin/main
 ```
 
-Use `origin/main` rather than `main`. Paseo fetches remote refs in the background, so the remote-tracking branch is current, while your local `main` is whatever you last pulled. An unqualified `main` resolves to that local branch first, and the worktree starts from stale history. Prefixing the remote names the fetched ref explicitly.
+Paseo fetches the base branch from its remote before cutting the worktree, then starts from the remote tip when your local branch is purely behind it. So `--base main` picks up commits you never pulled, instead of silently starting the workspace on history that trails the remote. Your own checkout is never touched: no branch moves and no working tree changes.
+
+Two cases keep the local branch instead. If it holds commits the remote does not, branching off the remote would drop them, so the local branch wins. And if the remote is unreachable, creation continues from local history rather than failing.
+
+Naming the remote explicitly, as in `--base origin/main`, still works and skips the local-versus-remote question entirely.
+
+Turn the fetch off with the "Fetch latest from remote" toggle in the New Workspace ref picker, or per call with `fetchBase: false` on the workspace-create request. Opting out branches from local refs as they stand, which is what you want when the repository's fetching is managed outside Paseo.
 
 Check out an existing branch:
 

@@ -1268,6 +1268,10 @@ export const ptBR: TranslationResources = {
       noMatchingRefs: "Nenhuma ref correspondente.",
       searchPlaceholder: "Buscar branches e PRs",
       title: "Começar de",
+      fetchBase: {
+        label: "Buscar o mais recente do remoto",
+        hint: "Começa do commit publicado mais recente",
+      },
     },
     launch: {
       title: "What to launch",

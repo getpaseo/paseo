@@ -20,6 +20,11 @@ export interface ResolveWorktreeCreationIntentInput {
    * supported client floor is >= v0.2.0.
    */
   githubPrNumber?: number;
+  /**
+   * Refresh the base ref from its remote before branching. Absent means fetch:
+   * callers opt out explicitly. Only branch-off intents carry it.
+   */
+  fetchBase?: boolean;
 }
 
 export interface ResolveWorktreeCreationIntentDeps {
@@ -69,6 +74,7 @@ export async function resolveWorktreeCreationIntent(
   if (input.action === "branch-off") {
     return {
       kind: "branch-off",
+      fetchBase: input.fetchBase,
       baseBranch: input.refName?.trim() || (await resolveDefaultBranch(repoRoot, deps)),
       branchName: input.branchName ?? input.worktreeSlug ?? "worktree",
     };
@@ -111,6 +117,7 @@ export async function resolveWorktreeCreationIntent(
   if (input.refName?.trim()) {
     return {
       kind: "branch-off",
+      fetchBase: input.fetchBase,
       baseBranch: input.refName.trim(),
       branchName: input.branchName ?? input.worktreeSlug ?? "worktree",
     };
@@ -118,6 +125,7 @@ export async function resolveWorktreeCreationIntent(
 
   return {
     kind: "branch-off",
+    fetchBase: input.fetchBase,
     baseBranch: await resolveDefaultBranch(repoRoot, deps),
     branchName: input.branchName ?? input.worktreeSlug ?? "worktree",
   };

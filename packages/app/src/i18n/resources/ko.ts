@@ -1250,6 +1250,10 @@ export const ko: TranslationResources = {
       noMatchingRefs: "일치하는 ref가 없습니다.",
       searchPlaceholder: "브랜치와 PR 검색",
       title: "시작 위치",
+      fetchBase: {
+        label: "원격에서 최신 항목 가져오기",
+        hint: "마지막으로 푸시된 커밋에서 시작합니다",
+      },
     },
     launch: {
       title: "What to launch",

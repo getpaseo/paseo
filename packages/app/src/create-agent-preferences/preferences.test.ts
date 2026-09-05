@@ -5,6 +5,7 @@ import {
   mergeCreateAgentSelectionPreferences,
   mergeProviderPreferences,
   parseFormPreferences,
+  resolveFetchBaseBeforeCreate,
 } from "./preferences";
 import { FakeCreateAgentPreferenceStorage } from "./test-utils/fake-preference-storage";
 
@@ -275,5 +276,40 @@ describe("create agent preferences", () => {
 
   it("rejects an unknown launch target kind as invalid stored preferences", () => {
     expect(parseFormPreferences({ launchTarget: { kind: "shell" } })).toEqual({});
+  });
+});
+
+describe("fetch base before create preference", () => {
+  it("fetches when the preference was never set", () => {
+    expect(resolveFetchBaseBeforeCreate(parseFormPreferences({}))).toBe(true);
+  });
+
+  it("round-trips an explicit opt-out", () => {
+    const parsed = parseFormPreferences({ fetchBaseBeforeCreate: false });
+
+    expect(parsed.fetchBaseBeforeCreate).toBe(false);
+    expect(resolveFetchBaseBeforeCreate(parsed)).toBe(false);
+  });
+
+  it("round-trips an explicit opt-in", () => {
+    const parsed = parseFormPreferences({ fetchBaseBeforeCreate: true });
+
+    expect(resolveFetchBaseBeforeCreate(parsed)).toBe(true);
+  });
+
+  it("keeps the rest of the form preferences alongside it", () => {
+    const parsed = parseFormPreferences({
+      isolation: "worktree",
+      fetchBaseBeforeCreate: false,
+    });
+
+    expect(parsed.isolation).toBe("worktree");
+    expect(resolveFetchBaseBeforeCreate(parsed)).toBe(false);
+  });
+
+  it("falls back to fetching when the stored value is not a boolean", () => {
+    expect(
+      resolveFetchBaseBeforeCreate(parseFormPreferences({ fetchBaseBeforeCreate: "no" })),
+    ).toBe(true);
   });
 });

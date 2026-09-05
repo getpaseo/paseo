@@ -1277,6 +1277,10 @@ export const es: TranslationResources = {
       noMatchingRefs: "No hay árbitros coincidentes.",
       searchPlaceholder: "Buscar sucursales y relaciones públicas",
       title: "Empezar desde",
+      fetchBase: {
+        label: "Obtener lo último del remoto",
+        hint: "Empieza desde el commit publicado más reciente",
+      },
     },
     launch: {
       title: "What to launch",

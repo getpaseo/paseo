@@ -65,6 +65,7 @@ import {
 import { useKeyboardActionHandler } from "@/hooks/use-keyboard-action-handler";
 import type { KeyboardActionId } from "@/keyboard/keyboard-action-dispatcher";
 import { useFormPreferences } from "@/hooks/use-form-preferences";
+import { resolveFetchBaseBeforeCreate } from "@/create-agent-preferences/preferences";
 import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
 import type { CreateAgentInitialValues } from "@/hooks/use-agent-form-state";
 import { generateMessageId } from "@/types/stream";
@@ -724,6 +725,44 @@ function useWorkspaceIsolation(input: {
   };
 }
 
+interface FetchBaseState {
+  enabled: boolean;
+  toggle: () => void;
+  supported: boolean;
+}
+
+// Whether to refresh the base ref from its remote before cutting the worktree.
+// Remembered alongside the other New Workspace form preferences; a manual pick
+// overrides the remembered value until the screen remounts.
+function useFetchBaseBeforeCreate(serverId: string): FetchBaseState {
+  const { preferences, updatePreferences } = useFormPreferences();
+  const supported = useHostFeature(serverId, "workspaceCreateFetchBase");
+  const [manual, setManual] = useState<boolean | null>(null);
+  const enabled = manual ?? resolveFetchBaseBeforeCreate(preferences);
+
+  const toggle = useCallback(() => {
+    const next = !enabled;
+    setManual(next);
+    void updatePreferences({ fetchBaseBeforeCreate: next });
+  }, [enabled, updatePreferences]);
+
+  return { enabled, toggle, supported };
+}
+
+function FetchBasePickerAction({ enabled, onPress }: { enabled: boolean; onPress: () => void }) {
+  const { t } = useTranslation();
+  return (
+    <ComboboxItem
+      testID="workspace-create-fetch-base-toggle"
+      label={t("newWorkspace.refPicker.fetchBase.label")}
+      description={t("newWorkspace.refPicker.fetchBase.hint")}
+      selected={enabled}
+      onPress={onPress}
+      accessibilityLabel={t("newWorkspace.refPicker.fetchBase.label")}
+    />
+  );
+}
+
 function isolationLabel(t: TFunction, isolation: "local" | "worktree"): string {
   return isolation === "worktree"
     ? t("newWorkspace.isolation.worktree")
@@ -804,6 +843,7 @@ async function createMultiplicityWorkspace(input: {
   project: HostProjectListItem;
   sourceDirectory: string;
   checkoutRequest: PickerCheckoutRequest | undefined;
+  fetchBase: boolean;
   withInitialAgent: boolean;
   prompt: string;
   attachments: AgentAttachment[];
@@ -828,6 +868,8 @@ async function createMultiplicityWorkspace(input: {
           cwd: input.sourceDirectory,
           projectId,
           worktreeSlug: createNameId(),
+          // Absent means fetch on the daemon, so only the opt-out travels.
+          ...(input.fetchBase ? {} : { fetchBase: false }),
           ...input.checkoutRequest,
         }
       : {
@@ -1333,6 +1375,7 @@ interface NewWorkspaceFormStackInput {
     emptyText: string;
     renderOption: RefPickerRenderOption;
     showRefPicker: boolean;
+    fetchBase: FetchBaseState;
   };
   launch: {
     serverId: string;
@@ -1355,6 +1398,15 @@ function useNewWorkspaceFormStack(input: NewWorkspaceFormStackInput): ReactEleme
   const addProjectAction = useMemo(
     () => <AddProjectPickerAction onPress={project.onAddProject} />,
     [project.onAddProject],
+  );
+  // Only for worktrees on a capable host: branching off is the only mode the
+  // flag reaches, and a checkout picked from a PR fetches its refs regardless.
+  const fetchBaseAction = useMemo(
+    () =>
+      base.fetchBase.supported && isolation.effectiveIsolation === "worktree" ? (
+        <FetchBasePickerAction enabled={base.fetchBase.enabled} onPress={base.fetchBase.toggle} />
+      ) : null,
+    [base.fetchBase, isolation.effectiveIsolation],
   );
 
   const badgePressableStyle = useCallback(
@@ -1504,6 +1556,7 @@ function useNewWorkspaceFormStack(input: NewWorkspaceFormStackInput): ReactEleme
         anchorRef={base.anchorRef}
         emptyText={base.emptyText}
         renderOption={base.renderOption}
+        footer={fetchBaseAction}
       />
     </View>
   ) : null;
@@ -1722,6 +1775,7 @@ export function NewWorkspaceScreen({
       supportsMultiplicity: supportsWorkspaceMultiplicity,
       worktreeSupport,
     });
+  const fetchBase = useFetchBaseBeforeCreate(selectedServerId);
 
   const branchSuggestionsQuery = useQuery({
     queryKey: [
@@ -2004,6 +2058,7 @@ export function NewWorkspaceScreen({
             project: selectedProject,
             sourceDirectory: selectedSourceDirectory,
             checkoutRequest,
+            fetchBase: fetchBase.enabled,
             withInitialAgent: input.withInitialAgent,
             prompt: input.prompt,
             attachments: input.attachments,
@@ -2025,6 +2080,7 @@ export function NewWorkspaceScreen({
       buildCreateWorktreeInput,
       createdWorkspace,
       effectiveIsolation,
+      fetchBase.enabled,
       mergeWorkspaces,
       queryClient,
       selectedItem,
@@ -2261,6 +2317,7 @@ export function NewWorkspaceScreen({
       emptyText: pickerEmptyText,
       renderOption: renderPickerOption,
       showRefPicker,
+      fetchBase,
     },
     launch: {
       serverId: selectedServerId,

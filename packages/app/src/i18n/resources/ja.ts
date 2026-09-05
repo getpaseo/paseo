@@ -1255,6 +1255,10 @@ export const ja: TranslationResources = {
       noMatchingRefs: "一致するRefがありません。",
       searchPlaceholder: "ブランチとPRを検索",
       title: "開始点",
+      fetchBase: {
+        label: "リモートから最新を取得",
+        hint: "最後にプッシュされたコミットから開始します",
+      },
     },
     launch: {
       title: "What to launch",

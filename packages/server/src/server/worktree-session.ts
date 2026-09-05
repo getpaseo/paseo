@@ -67,6 +67,7 @@ export interface NormalizedGitOptions {
   action?: "branch-off" | "checkout";
   checkoutSource?: ChangeRequestCheckoutSource;
   githubPrNumber?: number;
+  fetchBase?: boolean;
 }
 
 type EmitSessionMessage = (message: SessionOutboundMessage) => void;
@@ -243,6 +244,7 @@ export async function buildAgentSessionConfig(
         action: normalized.action,
         checkoutSource: normalized.checkoutSource,
         githubPrNumber: normalized.githubPrNumber,
+        fetchBase: normalized.fetchBase,
         firstAgentContext,
         runSetup: false,
         paseoHome: dependencies.paseoHome,
@@ -356,6 +358,7 @@ export function normalizeGitOptions(
       ? ({ kind: "change_request", forge: "github", number: merged.githubPrNumber } as const)
       : undefined);
   const githubPrNumber = merged.githubPrNumber;
+  const fetchBase = merged.fetchBase;
 
   if (
     !createWorktree &&
@@ -387,6 +390,7 @@ export function normalizeGitOptions(
     action,
     checkoutSource,
     githubPrNumber,
+    fetchBase,
   };
 }
 

@@ -1277,6 +1277,10 @@ export const fr: TranslationResources = {
       noMatchingRefs: "Aucune référence correspondante.",
       searchPlaceholder: "Rechercher des succursales et des PR",
       title: "Commencer à partir de",
+      fetchBase: {
+        label: "Récupérer la dernière version distante",
+        hint: "Démarrer au dernier commit publié",
+      },
     },
     launch: {
       title: "What to launch",

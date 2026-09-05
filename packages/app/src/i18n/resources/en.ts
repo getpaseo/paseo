@@ -1252,6 +1252,10 @@ export const en = {
       noMatchingRefs: "No matching refs.",
       searchPlaceholder: "Search branches and PRs",
       title: "Start from",
+      fetchBase: {
+        label: "Fetch latest from remote",
+        hint: "Start from the newest pushed commit",
+      },
     },
     launch: {
       title: "What to launch",
