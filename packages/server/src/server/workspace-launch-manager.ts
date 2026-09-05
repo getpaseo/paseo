@@ -28,6 +28,8 @@ import type {
 
 const LAUNCH_ENDPOINT_SCAN_INTERVAL_MS = 2_000;
 const LAUNCH_ENDPOINT_PROBE_TIMEOUT_MS = 300;
+const HTTP_RETRY_INITIAL_MS = 5_000;
+const HTTP_RETRY_MAX_MS = 60_000;
 const LAUNCH_PROXY_NAMESPACE = "@paseo/launch";
 
 export interface WorkspaceLaunchContext {
@@ -59,6 +61,7 @@ interface WorkspaceLaunchRuntime {
 interface LaunchEndpointRuntime {
   protocol: "http" | "tcp";
   scriptName: string | null;
+  httpRetry?: { delayMs: number; retryAt: number };
 }
 
 export interface WorkspaceLaunchEndpointProbe {
@@ -348,12 +351,9 @@ export class WorkspaceLaunchManager {
       const httpPorts = new Set(
         (
           await Promise.all(
-            Array.from(listeningPorts, async (port) => {
-              // Raw services must not receive an HTTP request on every scan. A missing
-              // listener removes its classification below, allowing detection on restart.
-              if (runtime.endpoints.get(port)?.protocol === "tcp") return null;
-              return (await this.endpointProbe.probeHttp(port)) ? port : null;
-            }),
+            Array.from(listeningPorts, async (port) =>
+              (await this.probeHttpEndpoint(runtime, port)) ? port : null,
+            ),
           )
         ).filter((port): port is number => port !== null),
       );
@@ -376,7 +376,14 @@ export class WorkspaceLaunchManager {
         }
 
         if (protocol === "tcp") {
-          runtime.endpoints.set(port, { protocol, scriptName: null });
+          runtime.endpoints.set(port, {
+            protocol,
+            scriptName: null,
+            httpRetry: {
+              delayMs: HTTP_RETRY_INITIAL_MS,
+              retryAt: Date.now() + HTTP_RETRY_INITIAL_MS,
+            },
+          });
           changed = true;
           continue;
         }
@@ -432,6 +439,20 @@ export class WorkspaceLaunchManager {
     } finally {
       runtime.scanInFlight = false;
     }
+  }
+
+  private async probeHttpEndpoint(runtime: WorkspaceLaunchRuntime, port: number): Promise<boolean> {
+    const existing = runtime.endpoints.get(port);
+    const retry = existing?.httpRetry;
+    // A bound socket may be an HTTP server still starting. Retry classification,
+    // but back off so raw TCP services do not receive malformed HTTP every scan.
+    if (retry && Date.now() < retry.retryAt) return false;
+    const isHttp = await this.endpointProbe.probeHttp(port);
+    if (!isHttp && retry) {
+      retry.delayMs = Math.min(retry.delayMs * 2, HTTP_RETRY_MAX_MS);
+      retry.retryAt = Date.now() + retry.delayMs;
+    }
+    return isHttp;
   }
 
   private isCurrentRunningRuntime(runtime: WorkspaceLaunchRuntime): boolean {
