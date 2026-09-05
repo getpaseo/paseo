@@ -31,19 +31,26 @@ test.describe("Command center sidebar grouping", () => {
       const projectList = page.getByTestId("sidebar-project-workspace-list-scroll");
       const statusList = page.getByTestId("sidebar-status-list-scroll");
       const toggle = page.getByTestId("sidebar-grouping-toggle");
+      const projectIcon = toggle.locator('svg[data-testid="sidebar-grouping-toggle-icon-project"]');
+      const statusIcon = toggle.locator('svg[data-testid="sidebar-grouping-toggle-icon-status"]');
 
       await expect(projectList).toBeVisible({ timeout: 30_000 });
       await expect(toggle).toHaveAttribute("aria-label", GROUP_BY_STATUS);
+      await expect(statusIcon).toBeVisible();
 
       await page.keyboard.press("ControlOrMeta+G");
       await expect(statusList).toBeVisible({ timeout: 30_000 });
       await expect(projectList).toHaveCount(0);
       await expect(toggle).toHaveAttribute("aria-label", GROUP_BY_PROJECT);
+      await expect(projectIcon).toBeVisible();
+      await expect(statusIcon).toHaveCount(0);
 
       await page.keyboard.press("ControlOrMeta+G");
       await expect(projectList).toBeVisible({ timeout: 30_000 });
       await expect(statusList).toHaveCount(0);
       await expect(toggle).toHaveAttribute("aria-label", GROUP_BY_STATUS);
+      await expect(statusIcon).toBeVisible();
+      await expect(projectIcon).toHaveCount(0);
     } finally {
       await seeded.cleanup().catch(() => undefined);
     }
