@@ -5,7 +5,9 @@ import {
   Pressable,
   ScrollView,
   type GestureResponderEvent,
+  type LayoutChangeEvent,
   type PressableStateCallbackType,
+  type Role,
   type StyleProp,
   type ViewStyle,
 } from "react-native";
@@ -15,7 +17,10 @@ import {
   useMemo,
   useState,
   useEffect,
+  useLayoutEffect,
   useRef,
+  createContext,
+  useContext,
   type ReactElement,
   type MutableRefObject,
   type Ref,
@@ -151,6 +156,25 @@ import type { HostBadgeModel } from "@/hosts/appearance";
 import { useHostBadges } from "@/hosts/use-host-badges";
 import { useSidebarRowItems } from "@/components/sidebar/display-preferences/model";
 import { PullRequestStateIcon } from "@/git/pull-request-state-icon";
+import Animated, {
+  Easing,
+  ReduceMotion,
+  useAnimatedStyle,
+  useReducedMotion,
+  useSharedValue,
+  withTiming,
+} from "react-native-reanimated";
+import {
+  SIDEBAR_ITEM_MOTION_AUTO_HEIGHT,
+  SIDEBAR_ITEM_MOTION_DURATION_MS,
+  SIDEBAR_ITEM_MOTION_OFFSET,
+  isNewSidebarMotionItem,
+  rememberSidebarMotionItem,
+  seedSidebarItemMotionKeys,
+  shouldMeasureSidebarItemEnterOffscreen,
+  sidebarProjectMotionKey,
+  sidebarWorkspaceMotionKey,
+} from "@/components/sidebar/item-motion";
 
 const workspaceKeyExtractor = (workspace: SidebarWorkspacePlacement) => workspace.workspaceKey;
 
@@ -163,6 +187,211 @@ const ThemedPlus = withUnistyles(Plus);
 const ThemedMoreVertical = withUnistyles(MoreVertical);
 const ThemedTrash2 = withUnistyles(Trash2);
 const ThemedSettings = withUnistyles(Settings);
+
+interface SidebarItemMotionRegistry {
+  didHydrate: MutableRefObject<boolean>;
+  seenKeys: MutableRefObject<Set<string>>;
+}
+
+const SidebarItemMotionContext = createContext<SidebarItemMotionRegistry | null>(null);
+const EMPTY_SIDEBAR_ITEM_MOTION_KEYS: ReadonlySet<string> = new Set();
+
+function collectSidebarItemMotionKeys(input: {
+  projects: readonly SidebarProjectEntry[];
+  pinnedChats: readonly SidebarWorkspacePlacement[];
+  workspaceGroups: readonly SidebarWorkspaceGroup[];
+}): string[] {
+  const keys: string[] = [];
+  for (const project of input.projects) {
+    keys.push(sidebarProjectMotionKey(project.viewKey));
+    for (const workspace of project.workspaces) {
+      keys.push(sidebarWorkspaceMotionKey(workspace.workspaceKey));
+    }
+  }
+  for (const workspace of input.pinnedChats) {
+    keys.push(sidebarWorkspaceMotionKey(workspace.workspaceKey));
+  }
+  for (const group of input.workspaceGroups) {
+    for (const workspace of group.rows) {
+      keys.push(sidebarWorkspaceMotionKey(workspace.workspaceKey));
+    }
+  }
+  return keys;
+}
+
+function SidebarItemMotionProvider({
+  children,
+  itemKeys,
+}: PropsWithChildren<{ itemKeys: readonly string[] }>) {
+  const didHydrate = useRef(false);
+  const seenKeys = useRef(new Set<string>());
+  const registry = useMemo(() => ({ didHydrate, seenKeys }), []);
+
+  seedSidebarItemMotionKeys({
+    seenKeys: seenKeys.current,
+    didHydrate: didHydrate.current,
+    keys: itemKeys,
+  });
+
+  useEffect(() => {
+    didHydrate.current = true;
+  }, []);
+
+  return (
+    <SidebarItemMotionContext.Provider value={registry}>
+      {children}
+    </SidebarItemMotionContext.Provider>
+  );
+}
+
+function useIsNewSidebarItem(key: string): boolean {
+  const registry = useContext(SidebarItemMotionContext);
+  const isNew = isNewSidebarMotionItem({
+    key,
+    didHydrate: registry?.didHydrate.current === true,
+    seenKeys: registry?.seenKeys.current ?? EMPTY_SIDEBAR_ITEM_MOTION_KEYS,
+  });
+
+  useEffect(() => {
+    if (!registry) {
+      return undefined;
+    }
+    return rememberSidebarMotionItem({
+      seenKeys: registry.seenKeys.current,
+      key,
+    });
+  }, [key, registry]);
+
+  return isNew;
+}
+
+function useSidebarItemMotion(input: { entering: boolean; exiting: boolean }) {
+  const offset = useSharedValue(input.entering ? -SIDEBAR_ITEM_MOTION_OFFSET : 0);
+  const opacity = useSharedValue(input.entering ? 0 : 1);
+  const height = useSharedValue(input.entering ? 0 : SIDEBAR_ITEM_MOTION_AUTO_HEIGHT);
+  const measuredHeight = useRef(0);
+  const didArmEnter = useRef(false);
+  const [hasMeasuredEnter, setHasMeasuredEnter] = useState(!input.entering);
+  const measureOffscreen = shouldMeasureSidebarItemEnterOffscreen({
+    entering: input.entering,
+    hasMeasuredEnter,
+  });
+
+  const handleLayout = useCallback(
+    (event: LayoutChangeEvent) => {
+      const nextHeight = event.nativeEvent.layout.height;
+      if (nextHeight <= 0) {
+        return;
+      }
+      if (nextHeight >= measuredHeight.current) {
+        measuredHeight.current = nextHeight;
+      }
+      if (measureOffscreen) {
+        setHasMeasuredEnter(true);
+      }
+    },
+    [measureOffscreen],
+  );
+
+  useLayoutEffect(() => {
+    const timing = {
+      duration: SIDEBAR_ITEM_MOTION_DURATION_MS,
+      easing: Easing.out(Easing.cubic),
+      reduceMotion: ReduceMotion.System,
+    };
+
+    if (input.exiting) {
+      if (height.value < 0 && measuredHeight.current > 0) {
+        height.value = measuredHeight.current;
+      }
+      height.value = withTiming(0, timing);
+      offset.value = withTiming(SIDEBAR_ITEM_MOTION_OFFSET, timing);
+      opacity.value = withTiming(0, timing);
+      return;
+    }
+
+    if (input.entering && hasMeasuredEnter && !didArmEnter.current) {
+      didArmEnter.current = true;
+      height.value = 0;
+      offset.value = -SIDEBAR_ITEM_MOTION_OFFSET;
+      opacity.value = 0;
+      height.value = withTiming(measuredHeight.current, timing, (finished) => {
+        if (finished) {
+          height.value = SIDEBAR_ITEM_MOTION_AUTO_HEIGHT;
+        }
+      });
+      offset.value = withTiming(0, timing);
+      opacity.value = withTiming(1, timing);
+      return;
+    }
+
+    if (!input.entering) {
+      didArmEnter.current = false;
+      offset.value = withTiming(0, timing);
+      opacity.value = withTiming(1, timing);
+    }
+  }, [hasMeasuredEnter, height, input.entering, input.exiting, offset, opacity]);
+
+  const style = useAnimatedStyle(() => {
+    const nextHeight = height.value;
+    if (nextHeight >= 0) {
+      return {
+        height: nextHeight,
+        opacity: opacity.value,
+        overflow: "hidden",
+        transform: [{ translateY: offset.value }],
+      };
+    }
+    return {
+      opacity: opacity.value,
+      overflow: "visible",
+      transform: [{ translateY: offset.value }],
+    };
+  });
+
+  const measureStyle = measureOffscreen ? styles.itemMotionMeasureOffscreen : undefined;
+
+  return { style, measureStyle, onLayout: handleLayout };
+}
+
+function SidebarItemMotionView({
+  entering,
+  exiting,
+  innerStyle,
+  role,
+  accessibilityLabel,
+  children,
+}: PropsWithChildren<{
+  entering: boolean;
+  exiting: boolean;
+  innerStyle?: StyleProp<ViewStyle>;
+  role?: Role;
+  accessibilityLabel?: string;
+}>) {
+  const motion = useSidebarItemMotion({ entering, exiting });
+  return (
+    <Animated.View
+      role={role}
+      accessibilityLabel={accessibilityLabel}
+      style={[styles.itemMotionFrame, motion.style]}
+    >
+      <View
+        onLayout={motion.onLayout}
+        style={[innerStyle, motion.measureStyle]}
+        collapsable={false}
+      >
+        {children}
+      </View>
+    </Animated.View>
+  );
+}
+
+function waitForSidebarItemMotion(reducedMotion: boolean): Promise<void> {
+  if (reducedMotion) {
+    return Promise.resolve();
+  }
+  return new Promise((resolve) => setTimeout(resolve, SIDEBAR_ITEM_MOTION_DURATION_MS));
+}
 
 const foregroundColorMapping = (theme: Theme) => ({
   color: theme.colors.foreground,
@@ -1237,6 +1466,8 @@ function WorkspaceRowWithMenu({
   const [isHidingWorkspace, setIsHidingWorkspace] = useState(false);
   const [isRenameOpen, setIsRenameOpen] = useState(false);
   const isArchiving = workspace.archivingAt !== null || isHidingWorkspace;
+  const reducedMotion = useReducedMotion();
+  const isNew = useIsNewSidebarItem(sidebarWorkspaceMotionKey(workspace.workspaceKey));
   const redirectAfterArchive = useCallback(() => {
     redirectIfArchivingActiveWorkspace({
       serverId: workspace.serverId,
@@ -1244,6 +1475,10 @@ function WorkspaceRowWithMenu({
       activeWorkspaceSelection: selectionForSelectedWorkspace(selected, workspace),
     });
   }, [selected, workspace]);
+  const animateBeforeArchive = useCallback(
+    () => waitForSidebarItemMotion(reducedMotion),
+    [reducedMotion],
+  );
 
   const archiveController = useWorkspaceArchive({
     serverId: workspace.serverId,
@@ -1251,6 +1486,7 @@ function WorkspaceRowWithMenu({
     workspaceKind: workspace.workspaceKind,
     name: workspace.name,
     ...toWorktreeArchiveRisk(workspace),
+    onBeforeArchive: animateBeforeArchive,
     onArchiveStarted: redirectAfterArchive,
     onSetHiding: setIsHidingWorkspace,
   });
@@ -1309,34 +1545,36 @@ function WorkspaceRowWithMenu({
 
   return (
     <>
-      <WorkspaceRowInner
-        workspace={workspace}
-        hostBadge={hostBadge}
-        leadingProjectName={leadingProjectName}
-        leadingProjectIconDataUri={leadingProjectIconDataUri}
-        selected={selected}
-        shortcutNumber={shortcutNumber}
-        showShortcutBadge={showShortcutBadge}
-        onPress={onPress}
-        drag={drag}
-        isDragging={isDragging}
-        isArchiving={isArchiving}
-        isCreating={isCreating}
-        dragHandleProps={dragHandleProps}
-        menuController={null}
-        archiveLabel={t("sidebar.workspace.actions.archive")}
-        archiveStatus={isArchiving ? "pending" : "idle"}
-        archivePendingLabel={t("sidebar.workspace.actions.archiving")}
-        onArchive={handleArchive}
-        onCopyBranchName={canCopyBranchName ? handleCopyBranchName : undefined}
-        onCopyPath={handleCopyPath}
-        onRename={handleOpenRename}
-        onMarkAsRead={hasClearableAttention ? handleMarkAsRead : undefined}
-        archiveShortcutKeys={selected ? archiveShortcutKeys : null}
-        isPinned={isPinned}
-        onTogglePin={onTogglePin}
-        reserveIdleStatusIndicatorSpace={reserveIdleStatusIndicatorSpace}
-      />
+      <SidebarItemMotionView entering={isNew} exiting={isArchiving}>
+        <WorkspaceRowInner
+          workspace={workspace}
+          hostBadge={hostBadge}
+          leadingProjectName={leadingProjectName}
+          leadingProjectIconDataUri={leadingProjectIconDataUri}
+          selected={selected}
+          shortcutNumber={shortcutNumber}
+          showShortcutBadge={showShortcutBadge}
+          onPress={onPress}
+          drag={drag}
+          isDragging={isDragging}
+          isArchiving={isArchiving}
+          isCreating={isCreating}
+          dragHandleProps={dragHandleProps}
+          menuController={null}
+          archiveLabel={t("sidebar.workspace.actions.archive")}
+          archiveStatus={isArchiving ? "pending" : "idle"}
+          archivePendingLabel={t("sidebar.workspace.actions.archiving")}
+          onArchive={handleArchive}
+          onCopyBranchName={canCopyBranchName ? handleCopyBranchName : undefined}
+          onCopyPath={handleCopyPath}
+          onRename={handleOpenRename}
+          onMarkAsRead={hasClearableAttention ? handleMarkAsRead : undefined}
+          archiveShortcutKeys={selected ? archiveShortcutKeys : null}
+          isPinned={isPinned}
+          onTogglePin={onTogglePin}
+          reserveIdleStatusIndicatorSpace={reserveIdleStatusIndicatorSpace}
+        />
+      </SidebarItemMotionView>
       <WorkspaceRenameModal
         visible={isRenameOpen}
         workspace={workspace}
@@ -1673,6 +1911,8 @@ function ProjectBlock({
   const toast = useToast();
   const { t } = useTranslation();
   const [isRemovingProject, setIsRemovingProject] = useState(false);
+  const reducedMotion = useReducedMotion();
+  const isNew = useIsNewSidebarItem(sidebarProjectMotionKey(project.viewKey));
 
   const handleRemoveProject = useCallback(() => {
     if (isRemovingProject) {
@@ -1692,6 +1932,7 @@ function ProjectBlock({
       }
 
       setIsRemovingProject(true);
+      await waitForSidebarItemMotion(reducedMotion);
       const readiness = getCurrentProjectRemoveReadiness({
         hosts: project.hosts,
       });
@@ -1724,7 +1965,7 @@ function ProjectBlock({
           setIsRemovingProject(false);
         });
     })();
-  }, [isRemovingProject, displayName, t, toast, project.hosts]);
+  }, [isRemovingProject, displayName, t, toast, project.hosts, reducedMotion]);
 
   const handleToggleCollapsed = useCallback(() => {
     onToggleCollapsed(project.viewKey);
@@ -1770,11 +2011,15 @@ function ProjectBlock({
     }
   }
 
+  // Collapse/expand stays instant so the project name does not interpolate.
+  // Add/archive grow or shrink the inserted item's height instead.
   return (
-    <View
+    <SidebarItemMotionView
+      entering={isNew}
+      exiting={isRemovingProject}
       role="group"
       accessibilityLabel={displayName}
-      style={projectChildren ? styles.projectBlockExpanded : undefined}
+      innerStyle={projectChildren ? styles.projectBlockExpanded : undefined}
     >
       <ProjectHeaderRow
         project={project}
@@ -1800,7 +2045,7 @@ function ProjectBlock({
       />
 
       {projectChildren}
-    </View>
+    </SidebarItemMotionView>
   );
 }
 
@@ -1941,6 +2186,15 @@ export function SidebarWorkspaceList({
   // project or is not applied at all — it can narrow this list but never empty it.
   const sidebarFilterEmpty =
     hasActiveLabelFilter && hasProjectsBeforeFilter && projects.length === 0;
+  const itemMotionKeys = useMemo(
+    () =>
+      collectSidebarItemMotionKeys({
+        projects,
+        pinnedChats: pinnedGroups.pinnedChats,
+        workspaceGroups,
+      }),
+    [pinnedGroups.pinnedChats, projects, workspaceGroups],
+  );
 
   // Project mode is the one that keeps its project headers; every other grouping mode is a flat
   // list of grouped rows, so a new mode lands in the grouped branch rather than silently in this
@@ -1990,7 +2244,7 @@ export function SidebarWorkspaceList({
       />
     );
 
-  return content;
+  return <SidebarItemMotionProvider itemKeys={itemMotionKeys}>{content}</SidebarItemMotionProvider>;
 }
 
 /**
@@ -2475,6 +2729,17 @@ function ProjectModeList({
 const styles = StyleSheet.create((theme) => ({
   container: {
     flex: 1,
+  },
+  itemMotionMeasureOffscreen: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    opacity: 0,
+    pointerEvents: "none",
+  },
+  itemMotionFrame: {
+    width: "100%",
+    position: "relative",
   },
   list: {
     flex: 1,
