@@ -6,6 +6,7 @@ import { randomUUID } from "node:crypto";
 import { hostname as getHostname } from "node:os";
 import path from "node:path";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
+import { SUPPORTED_PROTOCOL_VERSIONS } from "@modelcontextprotocol/sdk/types.js";
 import type { Logger } from "pino";
 import { z } from "zod";
 import { createBranchChangeRouteHandler } from "./script-route-branch-handler.js";
@@ -1506,6 +1507,41 @@ export async function createPaseoDaemon(
             id: null,
           });
           return;
+        }
+        // Some MCP clients (Codex CLI >= 0.148, Claude Code >= 2.1.257) send
+        // their *preferred* protocol version in the MCP-Protocol-Version
+        // header on post-initialize requests instead of the *negotiated* one
+        // (#3599). The bundled SDK only advertises versions up to its own
+        // LATEST_PROTOCOL_VERSION, so every tools/list and tools/call is then
+        // rejected with 400 "Unsupported protocol version". Claude Code
+        // recovers by retrying with an accepted value; Codex does not, and
+        // its agents silently lose the injected Paseo tools.
+        //
+        // The header is a post-handshake sanity echo, not a negotiation
+        // point: initialize already negotiated a version this server
+        // supports, and this stateless transport serves every request
+        // independently. Drop unadvertised header values so misbehaving
+        // clients keep working; advertised values pass through untouched.
+        const requestedProtocolVersion = req.headers["mcp-protocol-version"];
+        if (
+          typeof requestedProtocolVersion === "string" &&
+          !SUPPORTED_PROTOCOL_VERSIONS.includes(requestedProtocolVersion)
+        ) {
+          logger.warn(
+            { requestedProtocolVersion },
+            "Agent MCP client sent an unadvertised MCP-Protocol-Version header; ignoring it (see #3599)",
+          );
+          delete req.headers["mcp-protocol-version"];
+          // The SDK's Node-to-web-standard adapter builds the fetch Request
+          // from rawHeaders, which the delete above does not touch — strip
+          // the header pair there too, or the transport still sees it.
+          const filteredRawHeaders: string[] = [];
+          for (let i = 0; i < req.rawHeaders.length; i += 2) {
+            if (req.rawHeaders[i].toLowerCase() !== "mcp-protocol-version") {
+              filteredRawHeaders.push(req.rawHeaders[i], req.rawHeaders[i + 1]);
+            }
+          }
+          req.rawHeaders = filteredRawHeaders;
         }
         const callerAgentIdRaw = req.query.callerAgentId;
         let callerAgentId: string | undefined;
