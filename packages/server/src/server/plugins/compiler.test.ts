@@ -185,6 +185,70 @@ describe("plugin contribution targets", () => {
   );
 
   it.each([
+    "plugin.addTool({ context: plugin });",
+    "plugin.addTool({ nested: { context: plugin } });",
+    "plugin.addTool({ values: [plugin] });",
+    "plugin.addTool({ handler: () => plugin.addTool({}) });",
+  ])(
+    "rejects context escapes and nested registrations in registration arguments: %s",
+    async (registration) => {
+      const directory = await mkdtemp(path.join(tmpdir(), "paseo-plugin-compiler-"));
+      temporaryDirectories.push(directory);
+      const entryPath = path.join(directory, "index.ts");
+      await writeFile(
+        entryPath,
+        `export default function contribute(plugin) {
+  ${registration}
+  return () => undefined;
+}
+`,
+      );
+
+      await expect(compilePlugin(entryPath)).rejects.toThrow(/default context|direct.*context/i);
+    },
+  );
+
+  it("ignores noncomputed property names and ordinary object keys while analyzing arguments", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "paseo-plugin-compiler-"));
+    temporaryDirectories.push(directory);
+    const entryPath = path.join(directory, "index.ts");
+    await writeFile(
+      entryPath,
+      `export default function contribute(plugin) {
+  plugin.addTool({
+    plugin: "ordinary key",
+    nested: { plugin: true },
+    value: { plugin: "member key" }.plugin,
+  });
+  return () => undefined;
+}
+`,
+    );
+
+    await expect(compilePlugin(entryPath)).resolves.toBeDefined();
+  });
+
+  it.each([
+    'plugin.addTool({ [plugin]: "computed key" });',
+    "plugin.addTool({ plugin });",
+    "plugin.addTool({ value: plugin.addTool });",
+  ])("rejects actual context binding uses in registration arguments: %s", async (registration) => {
+    const directory = await mkdtemp(path.join(tmpdir(), "paseo-plugin-compiler-"));
+    temporaryDirectories.push(directory);
+    const entryPath = path.join(directory, "index.ts");
+    await writeFile(
+      entryPath,
+      `export default function contribute(plugin) {
+  ${registration}
+  return () => undefined;
+}
+`,
+    );
+
+    await expect(compilePlugin(entryPath)).rejects.toThrow(/default context|direct.*context/i);
+  });
+
+  it.each([
     "helper(plugin);",
     "const stored = plugin;",
     "return plugin;",

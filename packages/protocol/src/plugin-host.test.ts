@@ -4,6 +4,7 @@ import {
   MAX_PLUGIN_AUTHORITY_STRING_BYTES,
   MAX_PLUGIN_HOST_WORKTREE_ID_BYTES,
   PluginCallerAuthoritySchema,
+  PluginHostChildCreateRequestSchema,
   PluginHostDeliverySendRequestSchema,
   PluginHostResponseSchema,
 } from "./plugin-host.js";
@@ -127,5 +128,25 @@ describe("plugin caller host wire contract", () => {
         result: { deliveryId: "not-a-record" },
       }).success,
     ).toBe(false);
+  });
+
+  test("does not expose child security or tool-policy overrides", () => {
+    const base = {
+      type: "plugin.host.child.create.request" as const,
+      requestId: "request-one",
+      invocationId: "invocation-one",
+      generation: 1,
+      installationId: "installation-one",
+      options: { title: "Child" },
+    };
+    expect(PluginHostChildCreateRequestSchema.safeParse(base).success).toBe(true);
+    for (const field of ["model", "thinking", "toolPolicy", "security"]) {
+      expect(
+        PluginHostChildCreateRequestSchema.safeParse({
+          ...base,
+          options: { ...base.options, [field]: field === "security" ? {} : "override" },
+        }).success,
+      ).toBe(false);
+    }
   });
 });

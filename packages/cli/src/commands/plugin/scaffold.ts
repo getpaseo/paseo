@@ -85,10 +85,6 @@ const SDK_DECLARATIONS = `declare module "@getpaseo/plugin/server" {
     readonly acknowledge(deliveryId: string): Promise<DeliveryRecord>;
   }
   export interface PluginHostChildCreateOptions {
-    readonly model?: string;
-    readonly thinking?: string;
-    readonly toolPolicy?: "none" | "readonly" | "standard" | "all";
-    readonly security?: Partial<PluginSecurityCeiling>;
     readonly title?: string;
     readonly prompt?: string;
     readonly worktreeId?: string;

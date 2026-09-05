@@ -186,10 +186,6 @@ export const PluginHostChildCreateRequestSchema = HostRequestBaseSchema.extend({
   type: z.literal("plugin.host.child.create.request"),
   options: z
     .object({
-      model: AuthorityStringSchema.optional(),
-      thinking: AuthorityStringSchema.optional(),
-      toolPolicy: z.enum(["none", "readonly", "standard", "all"]).optional(),
-      security: PluginSecurityCeilingSchema.partial().optional(),
       title: AuthorityStringSchema.optional(),
       prompt: z
         .string()

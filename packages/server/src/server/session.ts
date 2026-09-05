@@ -239,7 +239,6 @@ import {
   type CreatePaseoWorktreeResult,
 } from "./paseo-worktree-service.js";
 import { archiveCommand } from "./worktree/commands.js";
-import { isPluginSecurityRequestAllowed } from "./plugins/authority.js";
 import { WorkspaceAutoName } from "./workspace-auto-name.js";
 import {
   buildAgentSessionConfig as buildWorktreeAgentSessionConfig,
@@ -2418,23 +2417,10 @@ export class Session {
       throw new Error("Caller agent has no workspace for child creation");
     }
     const options = (input.input.options ?? {}) as {
-      model?: string;
-      thinking?: string;
-      toolPolicy?: "none" | "readonly" | "standard" | "all";
-      security?: Record<string, string>;
       title?: string;
       prompt?: string;
       worktreeId?: string;
     };
-    if (
-      options.security &&
-      !isPluginSecurityRequestAllowed(input.caller.securityCeiling, options.security)
-    ) {
-      throw new Error("Child security request exceeds the caller security ceiling");
-    }
-    if (options.toolPolicy && options.toolPolicy !== "none") {
-      throw new Error("Child tool policy is outside the caller authority");
-    }
     if (options.worktreeId) {
       const worktree = this.pluginManagedWorktrees.get(options.worktreeId);
       if (
@@ -2473,12 +2459,6 @@ export class Session {
       ) {
         throw new Error("Caller workspace authority changed during child creation");
       }
-      if (
-        options.security &&
-        !isPluginSecurityRequestAllowed(dispatchCaller.securityCeiling, options.security)
-      ) {
-        throw new Error("Child security request exceeds the caller security ceiling");
-      }
       const dispatchManagedWorktree = options.worktreeId
         ? this.pluginManagedWorktrees.get(options.worktreeId)
         : undefined;
@@ -2492,32 +2472,19 @@ export class Session {
       ) {
         throw new Error("Managed worktree authority changed during child creation");
       }
-      const dispatchModel =
-        options.model ??
-        (dispatchCaller.effective.model.known ? dispatchCaller.effective.model.value : undefined);
-      const dispatchThinking =
-        options.thinking ??
-        (dispatchCaller.effective.thinking.known
-          ? dispatchCaller.effective.thinking.value
-          : undefined);
-      if (
-        (options.model &&
-          (!dispatchCaller.effective.model.known ||
-            options.model !== dispatchCaller.effective.model.value)) ||
-        (options.thinking &&
-          (!dispatchCaller.effective.thinking.known ||
-            options.thinking !== dispatchCaller.effective.thinking.value))
-      ) {
-        throw new Error("Child runtime option is outside the caller authority");
-      }
       const dispatchConfig: AgentSessionConfig = {
         ...dispatchParent.config,
         provider: dispatchParent.config.provider,
         cwd: options.worktreeId ? dispatchManagedWorktree!.cwd : dispatchCaller.agent.cwd,
-        ...(dispatchModel ? { model: dispatchModel } : {}),
-        ...(dispatchThinking ? { thinkingOptionId: dispatchThinking } : {}),
+        model: dispatchCaller.effective.model.known
+          ? dispatchCaller.effective.model.value
+          : dispatchParent.config.model,
+        thinkingOptionId: dispatchCaller.effective.thinking.known
+          ? dispatchCaller.effective.thinking.value
+          : dispatchParent.config.thinkingOptionId,
         modeId: dispatchCaller.agent.currentModeId ?? dispatchParent.config.modeId,
-        ...(options.toolPolicy === "none" ? { toolPolicy: { preapproved: [] } } : {}),
+        providerOptions: dispatchParent.config.providerOptions,
+        toolPolicy: dispatchParent.config.toolPolicy,
       };
       const result = await createAgentCommand(
         {

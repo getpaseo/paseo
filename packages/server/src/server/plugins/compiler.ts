@@ -258,6 +258,21 @@ function memberPropertyName(node: unknown): string | null {
   return null;
 }
 
+function isIgnoredIdentifierPosition(node: object, parent: unknown): boolean {
+  if (!isAstNode(parent)) return false;
+  const parentType = Reflect.get(parent, "type");
+  if (
+    (parentType === "MemberExpression" || parentType === "OptionalMemberExpression") &&
+    Reflect.get(parent, "property") === node
+  ) {
+    return Reflect.get(parent, "computed") !== true;
+  }
+  if (Reflect.get(parent, "key") === node && Reflect.get(parent, "computed") !== true) {
+    return true;
+  }
+  return false;
+}
+
 function memberObjectBinding(node: unknown, scope: AstScope): AstBinding | null {
   if (!isAstNode(node)) return null;
   return lookupBinding(scope, String(Reflect.get(node, "name")));
@@ -398,7 +413,7 @@ function analyzeRegistrations(
     }
     if (type === "Identifier") {
       const binding = lookupBinding(scope, String(Reflect.get(current, "name")));
-      if (binding?.contextAlias) {
+      if (binding?.contextAlias && !isIgnoredIdentifierPosition(current, parent)) {
         throw new Error("Plugin default context cannot escape its direct registration call");
       }
     }
@@ -457,6 +472,10 @@ function analyzeRegistrations(
           throw new Error(
             `Plugin ${method} registration must be a direct context call in an expression statement`,
           );
+        }
+        const argumentsList = Reflect.get(parent, "arguments");
+        if (Array.isArray(argumentsList)) {
+          for (const argument of argumentsList) visit(argument, scope, parent, grandparent);
         }
         if (!removedNames.has(method)) return;
         const start = Reflect.get(grandparent, "start");

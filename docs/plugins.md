@@ -234,8 +234,9 @@ The host capability exposes only these bounded operations:
   `acknowledge` apply the same target fence and retain acknowledgement tombstone semantics.
 - `host.children.create(options)` creates a child with the caller as parent. Workspace and cwd come
   from the caller, except for a cwd supplied by an opaque managed worktree returned by this host.
-  Requested model, thinking, tool policy, and security values cannot widen caller authority; an
-  unknown ceiling rejects a permission request.
+  The child inherits the freshly resolved parent provider, model, thinking, mode, provider options,
+  and tool policy. The caller's read-only security ceilings remain available on `context.caller`;
+  child creation has no security or tool-policy override fields.
 - `host.worktrees.create(options)` returns an authoritative workspace, cwd, and opaque ID.
   `remove(id)` accepts only an ID created by the same plugin session and caller.
 

@@ -46,6 +46,11 @@ describe("plugin scaffold", () => {
     await expect(readFile(path.join(directory, "paseo-plugin.d.ts"), "utf8")).resolves.toContain(
       "readonly signal: AbortSignal;",
     );
+    const declarations = await readFile(path.join(directory, "paseo-plugin.d.ts"), "utf8");
+    expect(declarations).not.toContain("readonly security?:");
+    expect(declarations).not.toContain("readonly toolPolicy?:");
+    expect(declarations).not.toContain("readonly model?: string;");
+    expect(declarations).not.toContain("readonly thinking?: string;");
     await expect(readFile(path.join(directory, "tool.server.ts"), "utf8")).resolves.toContain(
       "defineTool",
     );

@@ -610,7 +610,7 @@ function createLivePluginCaller(): Record<string, unknown> {
   };
 }
 
-test("plugin host fixes child authority to the live caller and fails closed on unknown security", async () => {
+test("plugin host inherits child authority from the freshly resolved live caller", async () => {
   const caller = createPluginCallerAuthority();
   const liveCaller = createLivePluginCaller();
   const child = {
@@ -722,55 +722,39 @@ test("plugin host fixes child authority to the live caller and fails closed on u
     await session.invokePluginHost({
       pluginId: "portable-provider",
       caller,
-      invocationId: "invocation-narrow",
+      invocationId: "invocation-forged-overrides",
       generation: 1,
       installationId: "installation-one",
-      capabilityNonce: "nonce-narrow",
+      capabilityNonce: "nonce-forged-overrides",
       operation: "child.create",
-      input: { options: { toolPolicy: "none" } },
+      input: {
+        options: {
+          model: "attacker-model",
+          thinking: "attacker-thinking",
+          toolPolicy: "none",
+          security: { filesystem: "unrestricted" },
+        },
+      },
       signal: new AbortController().signal,
     });
     expect(createAgent).toHaveBeenLastCalledWith(
       expect.objectContaining({
+        provider: "codex",
+        model: "caller-model",
+        thinkingOptionId: "caller-thinking",
+        modeId: "default",
         providerOptions: {
           sandbox_mode: "read-only",
           network_access: false,
           approval_policy: "never",
         },
-        toolPolicy: { preapproved: [] },
+        toolPolicy: {
+          preapproved: [{ kind: "mcp", server: "review", tool: "read" }],
+        },
       }),
       undefined,
       expect.objectContaining({ workspaceId: "source-workspace" }),
     );
-
-    await expect(
-      session.invokePluginHost({
-        pluginId: "portable-provider",
-        caller,
-        invocationId: "invocation-two",
-        generation: 1,
-        installationId: "installation-one",
-        capabilityNonce: "nonce-two",
-        operation: "child.create",
-        input: { options: { security: { filesystem: "workspace" } } },
-        signal: new AbortController().signal,
-      }),
-    ).rejects.toThrow("security request exceeds");
-    expect(createAgent).toHaveBeenCalledTimes(2);
-
-    await expect(
-      session.invokePluginHost({
-        pluginId: "portable-provider",
-        caller,
-        invocationId: "invocation-three",
-        generation: 1,
-        installationId: "installation-one",
-        capabilityNonce: "nonce-three",
-        operation: "child.create",
-        input: { options: { security: { network: "unrestricted" } } },
-        signal: new AbortController().signal,
-      }),
-    ).rejects.toThrow("security request exceeds");
     expect(createAgent).toHaveBeenCalledTimes(2);
   } finally {
     await session.cleanup();
