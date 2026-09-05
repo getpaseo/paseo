@@ -237,19 +237,24 @@ test("createPaseoApi borrows daemon capabilities without exposing connection own
   expect("skills" in paseo.agents).toBe(false);
 });
 
-test("agent handles delegate permission responses to the daemon client", async () => {
-  const daemonClient = new DaemonClient({
-    url: "ws://daemon.test",
-    clientId: "borrowed-api",
-    reconnect: { enabled: false },
-  });
-  const respondToPermission = vi
-    .spyOn(daemonClient, "respondToPermission")
-    .mockResolvedValue(undefined);
+test("agent handles send permission responses for their agent", async () => {
+  const { client, ws } = await connectClient();
 
-  await createPaseoApi(daemonClient)
-    .agents.ref("agent_sdk")
-    .respondToPermission({
+  await client.agents.ref("agent_sdk").respondToPermission({
+    requestId: "permission-request",
+    response: {
+      behavior: "deny",
+      selectedActionId: "deny-once",
+      message: "Not approved",
+      interrupt: true,
+    },
+  });
+
+  expect(parseSentFrame(ws.sent.at(-1))).toEqual({
+    type: "session",
+    message: {
+      type: "agent_permission_response",
+      agentId: "agent_sdk",
       requestId: "permission-request",
       response: {
         behavior: "deny",
@@ -257,14 +262,10 @@ test("agent handles delegate permission responses to the daemon client", async (
         message: "Not approved",
         interrupt: true,
       },
-    });
-
-  expect(respondToPermission).toHaveBeenCalledWith("agent_sdk", "permission-request", {
-    behavior: "deny",
-    selectedActionId: "deny-once",
-    message: "Not approved",
-    interrupt: true,
+    },
   });
+
+  await client.close();
 });
 
 test("project actions list registered projects through the existing RPC", async () => {
