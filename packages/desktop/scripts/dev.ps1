@@ -110,10 +110,7 @@ Write-Host @"
 ======================================================
 "@
 
-# Launch Metro + Electron together, kill both on exit
-concurrently `
-    --kill-others `
-    --names "metro,electron" `
-    --prefix-colors "magenta,cyan" `
-    "cd `"$AppDir`" && cross-env PASEO_WEB_PLATFORM=electron npx expo start --port $($env:EXPO_PORT)" `
-    "npx wait-on tcp:$($env:EXPO_PORT) && npx electron `"$DesktopDir`""
+# Launch Metro + Electron with explicit working directories and argument arrays.
+# Passing path-sensitive shell strings through the old orchestrator loses the quotes
+# around worktrees whose paths contain spaces on Windows.
+node "$ScriptDir\dev-runner.mjs"
