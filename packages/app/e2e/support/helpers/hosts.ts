@@ -223,6 +223,45 @@ export async function expectNoHostBadge(page: Page, target: HostBadgeTarget): Pr
   await expect(hostBadge(page, target)).toHaveCount(0, { timeout: 15_000 });
 }
 
+// The workspace deck keeps other screens mounted but hidden, so the header is the visible one.
+function workspaceHeaderProjectRow(page: Page) {
+  return page.getByTestId("workspace-header-project-row").filter({ visible: true }).first();
+}
+
+export async function expectWorkspaceHeaderHostBadge(
+  page: Page,
+  input: { serverId: string; hostName: string; color: IdentityColorName },
+): Promise<void> {
+  const badge = workspaceHeaderProjectRow(page).getByTestId(`host-badge-${input.serverId}`);
+  await expect(badge).toBeVisible({ timeout: 30_000 });
+  await expect(badge).toHaveText(input.hostName);
+  await expect(badge.locator("svg")).toHaveAttribute(
+    "stroke",
+    identityForeground(input.color, "light"),
+  );
+}
+
+export async function expectWorkspaceHeaderWithoutHostBadge(
+  page: Page,
+  serverId: string,
+): Promise<void> {
+  const row = workspaceHeaderProjectRow(page);
+  await expect(row.getByTestId("workspace-header-subtitle")).toBeVisible();
+  await expect(row.getByTestId(`host-badge-${serverId}`)).toHaveCount(0);
+}
+
+// Web paints the badge label from a registered style, so a surface that reuses that paint is
+// held to the badge's computed colour for the same host rather than to a hex the two could
+// drift from.
+export async function readHostBadgeLabelColor(
+  page: Page,
+  target: HostBadgeTarget,
+): Promise<string> {
+  const label = hostBadge(page, target).getByText(target.hostName, { exact: true });
+  await expect(label).toBeVisible();
+  return label.evaluate((element) => getComputedStyle(element).color);
+}
+
 // The host sits on the meta line as plain secondary text, so its identity colour lives on the
 // server icon alone. The label stays muted like every other item on that line — asserting a
 // tinted label or a pill fill would re-assert the design the meta row replaced.

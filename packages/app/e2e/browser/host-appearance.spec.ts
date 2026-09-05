@@ -9,8 +9,11 @@ import {
   expectHostBadgeName,
   expectHostBadgeTinted,
   expectNoHostBadge,
+  expectWorkspaceHeaderHostBadge,
+  expectWorkspaceHeaderWithoutHostBadge,
   leaveHostAppearanceSettings,
   openHostAppearanceSettings,
+  readHostBadgeLabelColor,
   reloadPreservingHostRegistry,
   renameHostFromSettings,
   waitForConnectedHost,
@@ -19,14 +22,18 @@ import {
   type IsolatedHostDaemon,
   startIsolatedHostDaemon,
 } from "../support/helpers/isolated-host-daemon";
+import {
+  expectNewWorkspaceHostPillColor,
+  openGlobalNewWorkspaceComposer,
+  readNewWorkspaceHostPillColor,
+  selectNewWorkspaceHost,
+} from "../support/helpers/new-workspace";
 import { seedWorkspace, type SeededWorkspace } from "../support/helpers/seed-client";
 import { getServerId } from "../support/helpers/server-id";
-import { openGlobalNewWorkspaceComposer } from "../support/helpers/new-workspace";
 import {
   switchWorkspaceViaSidebar,
   waitForSidebarHydration,
 } from "../support/helpers/workspace-ui";
-import { identityForeground } from "@/styles/identity-colors";
 
 const PRIMARY_HOST_LABEL = "Primary Host";
 const SECONDARY_HOST_LABEL = "Secondary Host";
@@ -211,67 +218,46 @@ test.describe("Host appearance", () => {
     page,
     twoHostSidebar,
   }) => {
-    const target = {
+    const host = {
       serverId: twoHostSidebar.secondaryServerId,
       workspaceId: twoHostSidebar.secondaryWorkspaceId,
     };
-    const headerRow = () =>
-      page.getByTestId("workspace-header-project-row").filter({ visible: true }).first();
-    const headerBadge = () => headerRow().getByTestId(`host-badge-${target.serverId}`);
 
-    await openHostAppearanceSettings(page, target.serverId);
+    await openHostAppearanceSettings(page, host.serverId);
     await chooseHostColor(page, "Teal");
     await leaveHostAppearanceSettings(page);
+    await switchWorkspaceViaSidebar({ page, ...host });
+    await expectWorkspaceHeaderHostBadge(page, {
+      serverId: host.serverId,
+      hostName: SECONDARY_HOST_LABEL,
+      color: "teal",
+    });
 
-    await switchWorkspaceViaSidebar({ page, ...target });
-    await expect(headerBadge()).toBeVisible({ timeout: 30_000 });
-    await expect(headerBadge()).toHaveText(SECONDARY_HOST_LABEL);
-    await expect(headerBadge().locator("svg")).toHaveAttribute(
-      "stroke",
-      identityForeground("teal", "light"),
-    );
-
-    await openHostAppearanceSettings(page, target.serverId);
+    await openHostAppearanceSettings(page, host.serverId);
     await chooseHostBadgeDisplay(page, "Hidden");
     await leaveHostAppearanceSettings(page);
-
-    await switchWorkspaceViaSidebar({ page, ...target });
-    await expect(headerRow().getByTestId("workspace-header-subtitle")).toBeVisible();
-    await expect(headerBadge()).toHaveCount(0);
+    await switchWorkspaceViaSidebar({ page, ...host });
+    await expectWorkspaceHeaderWithoutHostBadge(page, host.serverId);
   });
 
-  // Web paints the badge label from a registered style, so the pill is held to the same paint
-  // as the sidebar badge for the same host rather than to a hex the two could drift from.
   test("the new-workspace host pill wears the host color", async ({ page, twoHostSidebar }) => {
     await openHostAppearanceSettings(page, twoHostSidebar.secondaryServerId);
     await chooseHostColor(page, "Teal");
     await leaveHostAppearanceSettings(page);
 
     await openGlobalNewWorkspaceComposer(page);
-    const trigger = page.getByTestId("host-picker-trigger");
-    const pillLabel = (label: string) => trigger.getByText(label, { exact: true });
-    const pickHost = async (serverId: string) => {
-      await trigger.click();
-      await page.getByTestId(`new-workspace-host-picker-option-${serverId}`).click();
-    };
-    const computedColor = (locator: ReturnType<typeof pillLabel>) =>
-      locator.evaluate((element) => getComputedStyle(element).color);
-
-    // The primary host has no color, so its label is the pill's muted default.
-    await pickHost(twoHostSidebar.primaryServerId);
-    await expect(pillLabel(PRIMARY_HOST_LABEL)).toBeVisible();
-    const mutedColor = await computedColor(pillLabel(PRIMARY_HOST_LABEL));
-
-    await pickHost(twoHostSidebar.secondaryServerId);
-    await expect(pillLabel(SECONDARY_HOST_LABEL)).toBeVisible();
-    const sidebarLabel = page
-      .getByTestId(
-        `sidebar-workspace-row-${twoHostSidebar.secondaryServerId}:${twoHostSidebar.secondaryWorkspaceId}`,
-      )
-      .getByTestId(`host-badge-${twoHostSidebar.secondaryServerId}`)
-      .getByText(SECONDARY_HOST_LABEL, { exact: true });
-    const badgeColor = await computedColor(sidebarLabel);
+    await selectNewWorkspaceHost(page, PRIMARY_HOST_LABEL);
+    const mutedColor = await readNewWorkspaceHostPillColor(page, PRIMARY_HOST_LABEL);
+    await selectNewWorkspaceHost(page, SECONDARY_HOST_LABEL);
+    const badgeColor = await readHostBadgeLabelColor(page, {
+      serverId: twoHostSidebar.secondaryServerId,
+      workspaceId: twoHostSidebar.secondaryWorkspaceId,
+      hostName: SECONDARY_HOST_LABEL,
+    });
     expect(badgeColor).not.toBe(mutedColor);
-    await expect(pillLabel(SECONDARY_HOST_LABEL)).toHaveCSS("color", badgeColor);
+    await expectNewWorkspaceHostPillColor(page, {
+      hostLabel: SECONDARY_HOST_LABEL,
+      color: badgeColor,
+    });
   });
 });
