@@ -655,6 +655,7 @@ export const ru: TranslationResources = {
         reloadedAgent: "Агент перезагружен",
         failedToReloadAgent: "Не удалось перезагрузить агента",
         failedToCloseAgent: "Не удалось закрыть агента",
+        failedToSaveClosePreference: "Не удалось сохранить настройку закрытия терминала",
       },
       confirmations: {
         unsavedTitle: "Несохранённые изменения",

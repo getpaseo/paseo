@@ -650,6 +650,7 @@ export const zhCN: TranslationResources = {
         reloadedAgent: "已重新加载 Agent",
         failedToReloadAgent: "重新加载 Agent 失败",
         failedToCloseAgent: "关闭 Agent 失败",
+        failedToSaveClosePreference: "无法保存终端关闭偏好设置",
       },
       confirmations: {
         unsavedTitle: "未保存的更改",

@@ -106,6 +106,7 @@ import { useWorkspace } from "@/stores/session-store-hooks";
 import { useWorkspaceTerminalSessionRetention } from "@/terminal/hooks/use-workspace-terminal-session-retention";
 import type { CheckoutStatusPayload } from "@/git/use-status-query";
 import { confirmDialog, confirmDialogWithRemember } from "@/utils/confirm-dialog";
+import { rememberTerminalCloseChoice } from "@/screens/workspace/terminals/remember-close-choice";
 import { useArchiveAgent } from "@/hooks/use-archive-agent";
 import { useStableEvent } from "@/hooks/use-stable-event";
 import { removeResidentBrowserWebview } from "@/desktop/browser/resident-webviews";
@@ -2503,7 +2504,15 @@ function WorkspaceScreenContent({
             return;
           }
           if (remember) {
-            void persistAppSettings({ confirmTerminalClose: false });
+            await rememberTerminalCloseChoice({
+              persist: () => persistAppSettings({ confirmTerminalClose: false }),
+              onFailure: (error) => {
+                console.error("[WorkspaceScreen] Failed to save terminal close preference", {
+                  error,
+                });
+                toast.error(t("workspace.tabs.toasts.failedToSaveClosePreference"));
+              },
+            });
           }
         }
 
@@ -2528,6 +2537,7 @@ function WorkspaceScreenContent({
       persistenceKey,
       removeTerminalFromCache,
       t,
+      toast,
     ],
   );
 

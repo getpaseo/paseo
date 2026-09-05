@@ -652,6 +652,7 @@ export const ko: TranslationResources = {
         reloadedAgent: "에이전트를 다시 로드했습니다",
         failedToReloadAgent: "에이전트를 다시 로드하지 못했습니다",
         failedToCloseAgent: "에이전트를 닫지 못했습니다",
+        failedToSaveClosePreference: "터미널 닫기 설정을 저장하지 못했습니다",
       },
       confirmations: {
         close: "닫기",

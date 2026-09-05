@@ -650,6 +650,7 @@ export const ar: TranslationResources = {
         reloadedAgent: "وكيل إعادة تحميل",
         failedToReloadAgent: "فشل في إعادة تحميل الوكيل",
         failedToCloseAgent: "فشل في إغلاق الوكيل",
+        failedToSaveClosePreference: "تعذّر حفظ تفضيل إغلاق المحطة",
       },
       confirmations: {
         unsavedTitle: "تغييرات غير محفوظة",

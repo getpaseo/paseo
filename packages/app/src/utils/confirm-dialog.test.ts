@@ -1,256 +1,153 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
+import { confirmDialog, confirmDialogWithRemember } from "./confirm-dialog";
+import { createFakeConfirmDialogHost } from "./confirm-dialog.fakes";
 
-const desktopHostState = {
-  api: null as {
-    dialog?: {
-      ask?: (message: string, options?: Record<string, unknown>) => Promise<boolean>;
-      askWithCheckbox?: (
-        message: string,
-        options: Record<string, unknown>,
-      ) => Promise<{ confirmed: boolean; dontAskAgain: boolean }>;
-    };
-  } | null,
+const RESTART_HOST = {
+  title: "Restart host",
+  message: "This will restart the daemon.",
+  confirmLabel: "Restart",
+  cancelLabel: "Cancel",
+  destructive: true,
 };
 
-type MockPlatform = "web" | "ios" | "android";
-
-interface AlertButton {
-  text?: string;
-  onPress?: () => void;
-}
-
-async function loadModuleForPlatform(platform: MockPlatform): Promise<{
-  confirmDialog: typeof import("./confirm-dialog").confirmDialog;
-  confirmDialogWithRemember: typeof import("./confirm-dialog").confirmDialogWithRemember;
-  alertMock: ReturnType<typeof vi.fn>;
-}> {
-  vi.resetModules();
-
-  const alertMock = vi.fn();
-  vi.doMock("react-native", () => ({
-    Alert: {
-      alert: alertMock,
-    },
-    Platform: { OS: platform },
-  }));
-  vi.doMock("@/desktop/host", () => ({
-    getDesktopHost: () => desktopHostState.api,
-  }));
-
-  const module = await import("./confirm-dialog");
-  return {
-    confirmDialog: module.confirmDialog,
-    confirmDialogWithRemember: module.confirmDialogWithRemember,
-    alertMock,
-  };
-}
-
-function pressAlertButton(buttons: AlertButton[] | undefined, label: string): void {
-  for (const button of buttons ?? []) {
-    if (button.text === label) {
-      button.onPress?.();
-      return;
-    }
-  }
-}
-
-function clearDialogGlobals(): void {
-  desktopHostState.api = null;
-  delete (globalThis as { confirm?: unknown }).confirm;
-}
+const CLOSE_TERMINAL = {
+  title: "Close terminal?",
+  message: "Any running process in this terminal will be stopped immediately.",
+  confirmLabel: "Close",
+  cancelLabel: "Cancel",
+  rememberLabel: "Remember this choice",
+  rememberConfirmLabel: "Close and don't ask again",
+  destructive: true,
+};
 
 describe("confirmDialog", () => {
-  afterEach(() => {
-    vi.doUnmock("react-native");
-    vi.restoreAllMocks();
-    vi.resetModules();
-    clearDialogGlobals();
-  });
+  it("asks the desktop dialog and drops focus first", async () => {
+    const host = createFakeConfirmDialogHost({ desktopAsk: () => true });
 
-  it("uses the desktop dialog bridge on web when available", async () => {
-    const askMock = vi.fn(async () => true);
-    const blurMock = vi.fn();
-    (globalThis as { document?: unknown }).document = {
-      activeElement: { blur: blurMock },
-    } as unknown as Document;
-    desktopHostState.api = {
-      dialog: { ask: askMock },
-    };
-
-    const { confirmDialog, alertMock } = await loadModuleForPlatform("web");
-    const confirmed = await confirmDialog({
-      title: "Restart host",
-      message: "This will restart the daemon.",
-      confirmLabel: "Restart",
-      cancelLabel: "Cancel",
-      destructive: true,
-    });
-
-    expect(confirmed).toBe(true);
-    expect(alertMock).not.toHaveBeenCalled();
-    expect(blurMock).toHaveBeenCalledTimes(1);
-    expect(askMock).toHaveBeenCalledWith("This will restart the daemon.", {
-      title: "Restart host",
-      okLabel: "Restart",
-      cancelLabel: "Cancel",
-      kind: "warning",
-    });
-  });
-
-  it("falls back to browser confirm on web when desktop APIs are unavailable", async () => {
-    const browserConfirm = vi.fn(() => true);
-    const blurMock = vi.fn();
-    (globalThis as { document?: unknown }).document = {
-      activeElement: { blur: blurMock },
-    } as unknown as Document;
-    (globalThis as { confirm?: unknown }).confirm = browserConfirm;
-
-    const { confirmDialog } = await loadModuleForPlatform("web");
-    const confirmed = await confirmDialog({
-      title: "Restart host",
-      message: "This will restart the daemon.",
-    });
-
-    expect(confirmed).toBe(true);
-    expect(blurMock).toHaveBeenCalledTimes(1);
-    expect(browserConfirm).toHaveBeenCalledWith("Restart host\n\nThis will restart the daemon.");
-  });
-
-  it("throws on web when no confirm backend exists", async () => {
-    const { confirmDialog } = await loadModuleForPlatform("web");
-
-    await expect(
-      confirmDialog({
-        title: "Restart host",
+    await expect(confirmDialog(RESTART_HOST, host)).resolves.toBe(true);
+    expect(host.desktopAsks).toEqual([
+      {
         message: "This will restart the daemon.",
-      }),
-    ).rejects.toThrow("[ConfirmDialog] No web confirmation backend is available.");
+        options: {
+          title: "Restart host",
+          okLabel: "Restart",
+          cancelLabel: "Cancel",
+          kind: "warning",
+        },
+      },
+    ]);
+    expect(host.blurCount()).toBe(1);
+    expect(host.alerts).toEqual([]);
   });
 
-  it("uses native Alert on iOS/Android", async () => {
-    const { confirmDialog, alertMock } = await loadModuleForPlatform("ios");
-    alertMock.mockImplementation((_title: string, _message: string, buttons?: AlertButton[]) => {
-      const confirmButton = buttons?.[1];
-      confirmButton?.onPress?.();
-    });
+  it("falls back to browser confirm when no desktop bridge exists", async () => {
+    const host = createFakeConfirmDialogHost({ browserConfirm: () => true });
 
-    const confirmed = await confirmDialog({
-      title: "Restart host",
-      message: "This will restart the daemon.",
-      confirmLabel: "Restart",
-      cancelLabel: "Cancel",
-      destructive: true,
-    });
+    await expect(confirmDialog(RESTART_HOST, host)).resolves.toBe(true);
+    expect(host.browserPrompts).toEqual(["Restart host\n\nThis will restart the daemon."]);
+    expect(host.blurCount()).toBe(1);
+  });
 
-    expect(confirmed).toBe(true);
-    expect(alertMock).toHaveBeenCalled();
+  it("throws when no web confirmation backend is available", async () => {
+    const host = createFakeConfirmDialogHost();
+
+    await expect(confirmDialog(RESTART_HOST, host)).rejects.toThrow(
+      "[ConfirmDialog] No web confirmation backend is available.",
+    );
+  });
+
+  it("uses a two-button alert on native", async () => {
+    const host = createFakeConfirmDialogHost({ isNative: true, pressAlertButton: "Restart" });
+
+    await expect(confirmDialog(RESTART_HOST, host)).resolves.toBe(true);
+    expect(host.lastAlertButtons()).toEqual([
+      { text: "Cancel", style: "cancel" },
+      { text: "Restart", style: "destructive" },
+    ]);
+    expect(host.desktopAsks).toEqual([]);
   });
 });
 
 describe("confirmDialogWithRemember", () => {
-  const input = {
-    title: "Close terminal?",
-    message: "Any running process in this terminal will be stopped immediately.",
-    confirmLabel: "Close",
-    cancelLabel: "Cancel",
-    rememberLabel: "Remember this choice",
-    rememberConfirmLabel: "Close and don't ask again",
-    destructive: true,
-  };
-
-  afterEach(() => {
-    vi.doUnmock("react-native");
-    vi.restoreAllMocks();
-    vi.resetModules();
-    clearDialogGlobals();
-  });
-
   it("reports the checkbox from the desktop dialog", async () => {
-    const askWithCheckbox = vi.fn(async () => ({ confirmed: true, dontAskAgain: true }));
-    desktopHostState.api = { dialog: { askWithCheckbox } };
+    const host = createFakeConfirmDialogHost({
+      desktopAskWithCheckbox: () => ({ confirmed: true, dontAskAgain: true }),
+    });
 
-    const { confirmDialogWithRemember } = await loadModuleForPlatform("web");
-
-    await expect(confirmDialogWithRemember(input)).resolves.toEqual({
+    await expect(confirmDialogWithRemember(CLOSE_TERMINAL, host)).resolves.toEqual({
       confirmed: true,
       remember: true,
     });
-    expect(askWithCheckbox).toHaveBeenCalledWith(
-      "Any running process in this terminal will be stopped immediately.",
+    expect(host.desktopAsksWithCheckbox).toEqual([
       {
-        title: "Close terminal?",
-        okLabel: "Close",
-        cancelLabel: "Cancel",
-        kind: "warning",
-        checkboxLabel: "Remember this choice",
+        message: "Any running process in this terminal will be stopped immediately.",
+        options: {
+          title: "Close terminal?",
+          okLabel: "Close",
+          cancelLabel: "Cancel",
+          kind: "warning",
+          checkboxLabel: "Remember this choice",
+        },
       },
-    );
+    ]);
   });
 
   it("never remembers a cancelled desktop dialog", async () => {
-    desktopHostState.api = {
-      dialog: { askWithCheckbox: async () => ({ confirmed: false, dontAskAgain: true }) },
-    };
+    const host = createFakeConfirmDialogHost({
+      desktopAskWithCheckbox: () => ({ confirmed: false, dontAskAgain: true }),
+    });
 
-    const { confirmDialogWithRemember } = await loadModuleForPlatform("web");
-
-    await expect(confirmDialogWithRemember(input)).resolves.toEqual({
+    await expect(confirmDialogWithRemember(CLOSE_TERMINAL, host)).resolves.toEqual({
       confirmed: false,
       remember: false,
     });
   });
 
   it("falls back to the plain desktop dialog when the checkbox bridge is missing", async () => {
-    const ask = vi.fn(async () => true);
-    desktopHostState.api = { dialog: { ask } };
+    const host = createFakeConfirmDialogHost({ desktopAsk: () => true });
 
-    const { confirmDialogWithRemember } = await loadModuleForPlatform("web");
-
-    await expect(confirmDialogWithRemember(input)).resolves.toEqual({
+    await expect(confirmDialogWithRemember(CLOSE_TERMINAL, host)).resolves.toEqual({
       confirmed: true,
       remember: false,
     });
-    expect(ask).toHaveBeenCalledTimes(1);
+    expect(host.desktopAsks).toHaveLength(1);
   });
 
   it("falls back to browser confirm with no way to remember", async () => {
-    (globalThis as { confirm?: unknown }).confirm = vi.fn(() => true);
+    const host = createFakeConfirmDialogHost({ browserConfirm: () => true });
 
-    const { confirmDialogWithRemember } = await loadModuleForPlatform("web");
-
-    await expect(confirmDialogWithRemember(input)).resolves.toEqual({
+    await expect(confirmDialogWithRemember(CLOSE_TERMINAL, host)).resolves.toEqual({
       confirmed: true,
       remember: false,
     });
+  });
+
+  it("offers cancel, close, and close-and-remember on native", async () => {
+    const host = createFakeConfirmDialogHost({ isNative: true, pressAlertButton: "Cancel" });
+
+    await confirmDialogWithRemember(CLOSE_TERMINAL, host);
+
+    expect(host.lastAlertButtons()).toEqual([
+      { text: "Cancel", style: "cancel" },
+      { text: "Close", style: "destructive" },
+      { text: "Close and don't ask again", style: "destructive" },
+    ]);
   });
 
   it.each([
     ["Cancel", { confirmed: false, remember: false }],
     ["Close", { confirmed: true, remember: false }],
     ["Close and don't ask again", { confirmed: true, remember: true }],
-  ])("maps the native %s button", async (label, expected) => {
-    const { confirmDialogWithRemember, alertMock } = await loadModuleForPlatform("ios");
-    alertMock.mockImplementation((_title: string, _message: string, buttons?: AlertButton[]) => {
-      pressAlertButton(buttons, label);
-    });
+  ])("maps the native %s button", async (pressAlertButton, expected) => {
+    const host = createFakeConfirmDialogHost({ isNative: true, pressAlertButton });
 
-    await expect(confirmDialogWithRemember(input)).resolves.toEqual(expected);
+    await expect(confirmDialogWithRemember(CLOSE_TERMINAL, host)).resolves.toEqual(expected);
   });
 
   it("declines when the native alert is dismissed", async () => {
-    const { confirmDialogWithRemember, alertMock } = await loadModuleForPlatform("ios");
-    alertMock.mockImplementation(
-      (
-        _title: string,
-        _message: string,
-        _buttons?: AlertButton[],
-        options?: { onDismiss?: () => void },
-      ) => {
-        options?.onDismiss?.();
-      },
-    );
+    const host = createFakeConfirmDialogHost({ isNative: true });
 
-    await expect(confirmDialogWithRemember(input)).resolves.toEqual({
+    await expect(confirmDialogWithRemember(CLOSE_TERMINAL, host)).resolves.toEqual({
       confirmed: false,
       remember: false,
     });
