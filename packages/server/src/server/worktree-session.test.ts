@@ -23,6 +23,7 @@ import {
   runWorktreeSetupInBackground,
   handleCreatePaseoWorktreeRequest,
   handleWorkspaceSetupStatusRequest,
+  handleWorkspaceSetupRunRequest,
 } from "./worktree-session.js";
 import {
   createWorktree as createWorktreePrimitive,
@@ -49,6 +50,7 @@ import { WorkspaceGitServiceImpl } from "./workspace-git-service.js";
 import type { WorkspaceGitService } from "./workspace-git-service.js";
 import { isPlatform } from "../test-utils/platform.js";
 import { createWorkspaceProvisioningService } from "./session/workspace-provisioning/workspace-provisioning-service.js";
+import { WorkspaceAutomationBlockedError } from "./workspace-automation-gate.js";
 
 interface LegacyCreateWorktreeTestOptions {
   branchName: string;
@@ -451,6 +453,73 @@ describe("resolveGitCreateBaseBranch", () => {
 });
 
 describe("create-agent worktree setup boundary", () => {
+  test("blocked worktrees keep their workspace but skip setup and automatic terminals", async () => {
+    const { tempDir, repoDir } = createGitRepo();
+    const paseoHome = path.join(tempDir, ".paseo");
+    const setupMarker = path.join(tempDir, "setup-ran");
+    const emitted: SessionOutboundMessage[] = [];
+    writeFileSync(
+      path.join(repoDir, "paseo.json"),
+      JSON.stringify({
+        worktree: {
+          setup: [`node -e "require('fs').writeFileSync('${setupMarker}', 'ran')"`],
+          terminals: [{ command: "unsafe-terminal" }],
+        },
+      }),
+    );
+
+    try {
+      const result = await createPaseoWorktreeWorkflow(
+        {
+          paseoHome,
+          createPaseoWorktree: createPaseoWorktreeForTest({ paseoHome }),
+          warmWorkspaceGitData: async () => {},
+          autoNameWorkspaceBranchForFirstAgent: () => {},
+          assertWorkspaceAutomationAllowed: async () => {
+            throw new WorkspaceAutomationBlockedError({
+              kind: "change_request",
+              forge: "github",
+              number: 42,
+              headRepository: "contributor/paseo",
+            });
+          },
+          emitWorkspaceUpdateForWorkspaceId: async () => {},
+          cacheWorkspaceSetupSnapshot: () => {},
+          emit: (message) => emitted.push(message),
+          sessionLogger: createLogger(),
+          terminalManager: createTerminalManagerStub().manager,
+          archiveWorkspaceRecord: async () => {},
+          serviceProxy: null,
+          scriptRuntimeStore: null,
+          getDaemonTcpPort: null,
+          getDaemonTcpHost: null,
+          onScriptsChanged: null,
+        },
+        { cwd: repoDir, worktreeSlug: "blocked-fork", runSetup: false, paseoHome },
+        {
+          setupContinuation: {
+            kind: "agent",
+            terminalManager: createTerminalManagerStub().manager,
+            appendTimelineItem: async () => true,
+            logger: createLogger(),
+          },
+        },
+      );
+
+      expect(result.setupContinuation?.kind).toBe("agent");
+      result.setupContinuation?.startAfterAgentCreate({ agentId: "agent-fork" });
+      expect(existsSync(setupMarker)).toBe(false);
+      expect(emitted).toContainEqual(
+        expect.objectContaining({
+          type: "workspace_setup_progress",
+          payload: expect.objectContaining({ status: "blocked" }),
+        }),
+      );
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
   test("agent setup continuation starts setup for the created agent timeline", async () => {
     const { tempDir, repoDir } = createGitRepo();
     const paseoHome = path.join(tempDir, ".paseo");
@@ -1222,6 +1291,7 @@ describe("runWorktreeSetupInBackground", () => {
       {
         emit: (message) => emitted.push(message),
         workspaceSetupSnapshots: snapshots,
+        getWorkspace: async () => null,
       },
       {
         type: "workspace_setup_status_request",
@@ -1257,6 +1327,7 @@ describe("runWorktreeSetupInBackground", () => {
       {
         emit: (message) => emitted.push(message),
         workspaceSetupSnapshots: new Map(),
+        getWorkspace: async () => null,
       },
       {
         type: "workspace_setup_status_request",
@@ -1273,6 +1344,121 @@ describe("runWorktreeSetupInBackground", () => {
         snapshot: null,
       },
     });
+  });
+
+  test("reports persisted fork provenance as blocked after restart", async () => {
+    const emitted: SessionOutboundMessage[] = [];
+    await handleWorkspaceSetupStatusRequest(
+      {
+        emit: (message) => emitted.push(message),
+        workspaceSetupSnapshots: new Map(),
+        getWorkspace: async () =>
+          ({
+            workspaceId: "ws-fork",
+            cwd: "/repo/fork",
+            worktreeRoot: "/repo/fork",
+            branch: "fork-branch",
+            untrustedSource: {
+              kind: "change_request",
+              forge: "github",
+              number: 42,
+              headRepository: "contributor/paseo",
+            },
+          }) as PersistedWorkspaceRecord,
+      },
+      {
+        type: "workspace_setup_status_request",
+        workspaceId: "ws-fork",
+        requestId: "req-blocked",
+      },
+    );
+
+    expect(emitted[0]).toMatchObject({
+      type: "workspace_setup_status_response",
+      payload: {
+        snapshot: {
+          status: "blocked",
+          blockedSource: { number: 42, headRepository: "contributor/paseo" },
+        },
+      },
+    });
+  });
+
+  test("run setup clears the block and starts the existing setup runtime once", async () => {
+    const tempDir = mkdtempSync(path.join(tmpdir(), "workspace-setup-run-"));
+    cleanupPaths.push(tempDir);
+    execFileSync("git", ["init", "-b", "fork-branch"], { cwd: tempDir, stdio: "ignore" });
+    const setupMarker = path.join(tempDir, "setup-ran");
+    writeFileSync(
+      path.join(tempDir, "paseo.json"),
+      JSON.stringify({
+        worktree: {
+          setup: [`node -e "require('fs').writeFileSync('setup-ran', 'ran')"`],
+          terminals: [{ command: "start-preview" }],
+        },
+      }),
+    );
+    const emitted: SessionOutboundMessage[] = [];
+    let blocked = true;
+    const operations: Array<(signal: AbortSignal) => Promise<void>> = [];
+    const workspace = {
+      workspaceId: "ws-fork",
+      cwd: tempDir,
+      worktreeRoot: tempDir,
+      branch: "fork-branch",
+      mainRepoRoot: tempDir,
+      archivedAt: null,
+    } as PersistedWorkspaceRecord;
+    const terminalManager = createTerminalManagerStub();
+    const dependencies = {
+      getWorkspace: async () => workspace,
+      clearAutomationBlock: async () => {
+        if (!blocked) return false;
+        blocked = false;
+        return true;
+      },
+      startWorkspaceSetup: (
+        _workspaceId: string,
+        operation: (signal: AbortSignal) => Promise<void>,
+      ) => operations.push(operation),
+      emitWorkspaceUpdateForWorkspaceId: vi.fn(async () => {}),
+      cacheWorkspaceSetupSnapshot: vi.fn(),
+      emit: (message: SessionOutboundMessage) => emitted.push(message),
+      sessionLogger: createLogger(),
+      terminalManager: terminalManager.manager,
+      archiveWorkspaceRecord: vi.fn(async () => {}),
+      serviceProxy: null,
+      scriptRuntimeStore: null,
+      getDaemonTcpPort: null,
+      getDaemonTcpHost: null,
+      onScriptsChanged: null,
+    };
+
+    await handleWorkspaceSetupRunRequest(dependencies, {
+      type: "workspace.setup.run.request",
+      workspaceId: "ws-fork",
+      requestId: "req-run-1",
+    });
+    await handleWorkspaceSetupRunRequest(dependencies, {
+      type: "workspace.setup.run.request",
+      workspaceId: "ws-fork",
+      requestId: "req-run-2",
+    });
+
+    expect(operations).toHaveLength(1);
+    await operations[0]!(new AbortController().signal);
+    expect(readFileSync(setupMarker, "utf8")).toBe("ran");
+    expect(terminalManager.terminals[0]?.sent).toEqual(["start-preview\r"]);
+    expect(emitted.filter((message) => message.type === "workspace.setup.run.response")).toEqual([
+      {
+        type: "workspace.setup.run.response",
+        payload: { requestId: "req-run-1", workspaceId: "ws-fork", started: true, error: null },
+      },
+      {
+        type: "workspace.setup.run.response",
+        payload: { requestId: "req-run-2", workspaceId: "ws-fork", started: false, error: null },
+      },
+    ]);
   });
 });
 

@@ -27,6 +27,10 @@ export const CLIENT_CAPS = {
   // COMPAT(timelineReplacementInvalidation): added in v0.5.0, remove legacy
   // reconstructed timeline replay after 2027-02-21 once the client floor supports invalidation.
   timelineReplacementInvalidation: "timeline_replacement_invalidation",
+  // COMPAT(timelineNotifications): added in v0.7.2. The daemon omits notification
+  // timeline items for older clients whose strict timeline union rejects them.
+  // Remove after 2027-03-03 once the supported client floor is >= v0.7.2.
+  timelineNotifications: "timeline_notifications",
   browserHost: "browser_host",
 } as const;
 

@@ -1,6 +1,10 @@
 import { expect, test, vi } from "vitest";
 import type { ProjectedTimelineForwardFetchPlan } from "./timeline-sync-plan";
-import { createViewedTimelineSync } from "./viewed-timeline-sync";
+import {
+  consumeForcedTimelineTailReplacement,
+  createViewedTimelineSync,
+  type TimelineResponsePayload,
+} from "./viewed-timeline-sync";
 
 interface Deferred<T> {
   promise: Promise<T>;
@@ -34,7 +38,16 @@ interface TimelineFetch {
 class TimelineWorld {
   readonly errors: string[] = [];
   readonly cursors = new Map<string, { epoch: string; endSeq: number }>();
+  readonly cacheRequests: string[] = [];
+  readonly forcedTimelineTailReplacements = new Set<string>();
+  cacheGate: Deferred<void> | null = null;
   readonly sync = createViewedTimelineSync({
+    replaceDemandedAgentIds: () => undefined,
+    prepare: async (agentId) => {
+      this.cacheRequests.push(agentId);
+      this.cacheRequestWaiters.shift()?.(agentId);
+      await this.cacheGate?.promise;
+    },
     initialDeliveryMode: "selective",
     setSubscription: async (agentIds) => {
       const result = deferred<void>();
@@ -65,12 +78,18 @@ class TimelineWorld {
       this.releaseFetchWaiters();
       return result.promise;
     },
-    fetchLatestTail: (agentId) =>
-      this.fetchTimeline(agentId, {
-        direction: "tail",
-        limit: 40,
-        projection: "projected",
-      }),
+    fetchLatestTail: async (agentId) => {
+      this.forcedTimelineTailReplacements.add(agentId);
+      try {
+        return await this.fetchTimeline(agentId, {
+          direction: "tail",
+          limit: 40,
+          projection: "projected",
+        });
+      } finally {
+        this.forcedTimelineTailReplacements.delete(agentId);
+      }
+    },
     reportError: (error) => {
       this.errors.push(error instanceof Error ? error.message : String(error));
       const waiter = this.errorWaiters.shift();
@@ -100,11 +119,26 @@ class TimelineWorld {
     resolve(fetch: TimelineFetch): void;
   }> = [];
   private readonly errorWaiters: Array<(message: string) => void> = [];
+  private readonly cacheRequestWaiters: Array<(agentId: string) => void> = [];
   private readonly scheduled: Array<{ task: () => void; delayMs: number }> = [];
   private readonly retryWaiters: Array<{
     delayMs: number;
     resolve(retry: () => void): void;
   }> = [];
+
+  get pendingFetchCount(): number {
+    return this.fetches.length;
+  }
+
+  applyTimelineResponse(payload: TimelineResponsePayload): TimelineResponsePayload {
+    return consumeForcedTimelineTailReplacement(payload, this.forcedTimelineTailReplacements);
+  }
+
+  nextCacheRequest(): Promise<string> {
+    const request = this.cacheRequests.at(-1);
+    if (request) return Promise.resolve(request);
+    return new Promise((resolve) => this.cacheRequestWaiters.push(resolve));
+  }
 
   private fetchTimeline(
     agentId: string,
@@ -197,6 +231,31 @@ test("uses a tail fetch when an agent becomes visible", async () => {
   fetch.respond({ hasNewer: false });
 });
 
+test("loads the cache before choosing the authoritative network request", async () => {
+  const world = new TimelineWorld();
+  world.cacheGate = deferred<void>();
+  world.sync.setConnected(true);
+  world.sync.replaceVisibleAgentIds("workspace", ["agent-a"]);
+  const membership = await world.nextMembership();
+  membership.succeed();
+  const cacheRequest = await world.nextCacheRequest();
+
+  expect(cacheRequest).toBe("agent-a");
+  expect(world.pendingFetchCount).toBe(0);
+
+  world.cursors.set("agent-a", { epoch: "cached-epoch", endSeq: 17 });
+  world.cacheGate.resolve();
+  const fetch = await world.nextFetch("agent-a");
+
+  expect(fetch.request).toEqual({
+    direction: "after",
+    cursor: { epoch: "cached-epoch", seq: 17 },
+    limit: 40,
+    projection: "projected",
+  });
+  fetch.respond({ hasNewer: false });
+});
+
 test("catches up after the restored cursor when an agent becomes visible", async () => {
   const world = new TimelineWorld();
   world.cursors.set("agent-a", { epoch: "epoch-agent-a", endSeq: 42 });
@@ -229,6 +288,26 @@ test("falls back to the latest tail when a restored cursor has more than one cat
 
   const fallback = await world.nextFetch("agent-a");
   expect(fallback.request).toEqual({ direction: "tail", limit: 40, projection: "projected" });
+  expect(
+    world.applyTimelineResponse({
+      requestId: "fallback-tail",
+      agentId: "agent-a",
+      agent: null,
+      direction: "tail",
+      projection: "projected",
+      epoch: "epoch-agent-a",
+      reset: false,
+      staleCursor: false,
+      gap: false,
+      window: { minSeq: 43, maxSeq: 82, nextSeq: 83 },
+      startCursor: { epoch: "epoch-agent-a", seq: 43 },
+      endCursor: { epoch: "epoch-agent-a", seq: 82 },
+      hasOlder: true,
+      hasNewer: false,
+      entries: [],
+      error: null,
+    }).reset,
+  ).toBe(true);
   fallback.respond({ hasNewer: false });
 });
 

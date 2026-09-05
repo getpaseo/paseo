@@ -34,7 +34,7 @@ describe("shared tool-call display mapping", () => {
     });
 
     expect(display).toEqual({
-      displayName: "Exec Command",
+      displayName: "Exec command",
     });
   });
 
@@ -81,7 +81,7 @@ describe("shared tool-call display mapping", () => {
     });
 
     expect(display).toEqual({
-      displayName: "Worktree Setup",
+      displayName: "Worktree setup",
       summary: "feature-branch",
     });
   });
@@ -142,7 +142,7 @@ describe("shared tool-call display mapping", () => {
       error: null,
       detail: { type: "unknown", input: null, output: null },
     });
-    expect(display.displayName).toBe("Create Agent");
+    expect(display.displayName).toBe("Create agent");
   });
 
   it("humanizes Paseo MCP tool names (Codex format)", () => {
@@ -152,7 +152,7 @@ describe("shared tool-call display mapping", () => {
       error: null,
       detail: { type: "unknown", input: null, output: null },
     });
-    expect(display.displayName).toBe("Create Agent");
+    expect(display.displayName).toBe("Create agent");
   });
 
   it("humanizes list_agents Paseo tool", () => {
@@ -162,7 +162,7 @@ describe("shared tool-call display mapping", () => {
       error: null,
       detail: { type: "unknown", input: null, output: null },
     });
-    expect(display.displayName).toBe("List Agents");
+    expect(display.displayName).toBe("List agents");
   });
 
   it("does not override speak tool display name", () => {

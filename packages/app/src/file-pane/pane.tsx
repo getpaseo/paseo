@@ -9,7 +9,7 @@ import React, {
   useSyncExternalStore,
 } from "react";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
-import { Image as RNImage, ScrollView as RNScrollView, Text, View } from "react-native";
+import { ScrollView as RNScrollView, Text, View } from "react-native";
 import { StyleSheet, UnistylesRuntime, withUnistyles } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
 import { useIsCompactFormFactor } from "@/constants/layout";
@@ -39,6 +39,7 @@ import type { LiveFileModel } from "./live-file/model";
 import { confirmDialog } from "@/utils/confirm-dialog";
 import { usePublishPanelInstanceAttributes } from "@/panels/panel-instance-attributes";
 import type { Theme } from "@/styles/theme";
+import { ZoomableImage } from "@/components/zoomable-viewport/image";
 
 const ThemedLoadingSpinner = withUnistyles(LoadingSpinner);
 const foregroundMutedColorMapping = (theme: Theme) => ({
@@ -146,11 +147,6 @@ function FilePreviewBody({
 
   const previewScrollRef = useRef<RNScrollView>(null);
 
-  const imageSource = useMemo(
-    () => (imagePreviewUri ? { uri: imagePreviewUri } : null),
-    [imagePreviewUri],
-  );
-
   if (isLoading && !preview) {
     return (
       <View style={styles.centerState} testID="file-preview-loading">
@@ -212,22 +208,7 @@ function FilePreviewBody({
       );
     }
 
-    return (
-      <View style={styles.previewScrollContainer}>
-        <RNScrollView
-          ref={previewScrollRef}
-          style={styles.previewContent}
-          contentContainerStyle={styles.previewImageScrollContent}
-          showsVerticalScrollIndicator
-        >
-          <RNImage
-            source={imageSource ?? undefined}
-            style={styles.previewImage}
-            resizeMode="contain"
-          />
-        </RNScrollView>
-      </View>
-    );
+    return <ZoomableImage uri={imagePreviewUri} testID="image-file-preview" />;
   }
 
   return (
@@ -710,15 +691,5 @@ const styles = StyleSheet.create((theme) => ({
   },
   previewCodeScrollContent: {
     padding: theme.spacing[4],
-  },
-  previewImageScrollContent: {
-    flexGrow: 1,
-    padding: theme.spacing[4],
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  previewImage: {
-    width: "100%",
-    height: 420,
   },
 }));

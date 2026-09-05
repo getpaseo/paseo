@@ -113,6 +113,7 @@ export interface ProviderSnapshotEntry {
   fetchedAt?: string;
   label?: string;
   description?: string;
+  iconSvg?: string;
   defaultModeId?: string | null;
 }
 
@@ -339,6 +340,15 @@ export interface CompactionTimelineItem {
   preTokens?: number;
 }
 
+export interface PluginTimelineItem {
+  type: "plugin";
+  id: string;
+  pluginId: string;
+  kind: string;
+  version: number;
+  data: JsonValue;
+}
+
 export interface AgentTaskItem {
   text: string;
   completed: boolean;
@@ -354,7 +364,13 @@ export type AgentTimelineItem =
   | ToolCallTimelineItem
   | { type: "todo"; items: AgentTaskItem[] }
   | { type: "error"; message: string }
-  | CompactionTimelineItem;
+  | {
+      type: "notification";
+      level: "info" | "warning" | "error";
+      message: string;
+    }
+  | CompactionTimelineItem
+  | PluginTimelineItem;
 
 export type AgentStreamEvent =
   | { type: "thread_started"; sessionId: string; provider: AgentProvider }

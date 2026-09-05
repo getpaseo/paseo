@@ -1,0 +1,11 @@
+Added
+- Added active-turn steering for pi agents so new messages reach the running turn without interrupting it
+- Added declared build commands and monorepo source paths for Git-hosted plugins
+
+Improved
+- Reduced JS stalls while watching a streaming agent on mobile
+
+Fixed
+- Fixed large and many-file diffs stalling or crashing while opening and scrolling
+
+Full notes: https://paseo.sh/changelog

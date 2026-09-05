@@ -55,6 +55,22 @@ export function runReplicaRowStoreContract(
       ]);
     });
 
+    it("reads only requested kinds for one host", async () => {
+      await store.apply({
+        upserts: [
+          row("server-a", "agent", "agent-1", "agent"),
+          row("server-a", "timeline", "singleton", "timeline"),
+          row("server-b", "agent", "agent-2", "other host"),
+        ],
+        deletes: [],
+      });
+
+      expect(await store.read("server-a", ["timeline"])).toEqual([
+        row("server-a", "timeline", "singleton", "timeline"),
+      ]);
+      expect(await store.read("server-a", ["agent"], ["missing"])).toEqual([]);
+    });
+
     it("overwrites an existing row on upsert", async () => {
       await store.apply({
         upserts: [row("server-a", "agent", "agent-1", "old")],
