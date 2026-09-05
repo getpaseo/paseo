@@ -243,11 +243,18 @@ The host capability exposes only these bounded operations:
 - `host.children.create(options)` creates a child with the caller as parent. Workspace and cwd come
   from the caller, except for a cwd supplied by an opaque managed worktree returned by this host.
   The child inherits the freshly resolved parent provider, model, thinking, mode, provider options,
-  and tool policy. `options.labels` may add bounded string metadata to the child (at most 127
-  plugin-supplied labels; the final child map allows 128 labels including daemon parentage; each
-  key and value is at most 512 UTF-8 bytes). The daemon always overwrites `paseo.parent-agent-id`
-  with the live caller ID, so plugins cannot forge or replace parent ownership. The caller's
-  read-only security ceilings remain available on `context.caller`;
+  and tool policy. `options.labels` may add bounded string metadata to the child. The map accepts at
+  most `MAX_PLUGIN_HOST_CHILD_LABELS` (32) plugin-supplied labels; the daemon adds
+  `PARENT_AGENT_ID_LABEL` outside that cap. Keys are limited to
+  `MAX_PLUGIN_AUTHORITY_LABEL_KEY_BYTES` (128) UTF-8 bytes and must start with an ASCII letter or
+  digit, followed by ASCII letters, digits, `.`, `_`, or `-`. Values are limited to
+  `MAX_PLUGIN_AUTHORITY_LABEL_VALUE_BYTES` (512) UTF-8 bytes. The case-insensitive `paseo.`,
+  `plugin.`, `system.`, `internal.`, and `security.` namespaces, the authority names
+  `parent`, `parentAgentId`, `workspace`, `workspaceId`, `provider`, `model`, `cwd`, `mode`,
+  `toolPolicy`, and `options` as exact or dot-separated segments, and dangerous prototype keys are
+  rejected. `subagents.*` is allowed. The daemon adds `paseo.parent-agent-id` with the live caller
+  ID, so plugins cannot forge or replace parent ownership. The caller's read-only security ceilings
+  remain available on `context.caller`;
   child creation has no security or tool-policy override fields.
 - `host.worktrees.create(options)` returns an authoritative workspace, cwd, and opaque ID.
   `remove(id)` accepts only an ID created by the same plugin session and caller.

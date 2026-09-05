@@ -19,7 +19,7 @@ import {
   assertPullRequestAutoMergeEnableReady,
 } from "../services/github-service.js";
 import { PARENT_AGENT_ID_LABEL } from "@getpaseo/protocol/agent-labels";
-import { MAX_PLUGIN_AUTHORITY_LABELS } from "@getpaseo/protocol/plugin-host";
+import { MAX_PLUGIN_HOST_CHILD_LABELS } from "@getpaseo/protocol/plugin-host";
 import { CLIENT_CAPS } from "@getpaseo/protocol/client-capabilities";
 import {
   WSSessionOutboundSchema,
@@ -99,6 +99,7 @@ interface SessionHandlerInternals {
   handleStashListRequest(params: unknown): Promise<unknown>;
   handleStashSaveRequest(params: unknown): Promise<unknown>;
   handleStashPopRequest(params: unknown): Promise<unknown>;
+  resolveLivePluginCallerAuthority(callerAgentId: string): Promise<PluginCallerAuthority>;
   createPaseoWorktree(params: unknown): Promise<unknown>;
   createPaseoWorktreeWorkflow(params: unknown): Promise<unknown>;
   buildPluginWorkspaceSnapshot(workspace: unknown, agent: unknown): Promise<unknown>;
@@ -691,7 +692,7 @@ test("plugin host inherits child authority from the freshly resolved live caller
       input: {
         options: {
           title: "Child",
-          labels: { purpose: "review", [PARENT_AGENT_ID_LABEL]: "forged-parent" },
+          labels: { purpose: "review", "subagents.role": "worker" },
         },
       },
       signal: new AbortController().signal,
@@ -716,7 +717,11 @@ test("plugin host inherits child authority from the freshly resolved live caller
       undefined,
       expect.objectContaining({
         workspaceId: "source-workspace",
-        labels: { purpose: "review", [PARENT_AGENT_ID_LABEL]: "caller-agent" },
+        labels: expect.objectContaining({
+          purpose: "review",
+          "subagents.role": "worker",
+          [PARENT_AGENT_ID_LABEL]: "caller-agent",
+        }),
       }),
     );
     expect(result).toMatchObject({
@@ -735,13 +740,7 @@ test("plugin host inherits child authority from the freshly resolved live caller
       capabilityNonce: "nonce-forged-overrides",
       operation: "child.create",
       input: {
-        options: {
-          model: "attacker-model",
-          thinking: "attacker-thinking",
-          toolPolicy: "none",
-          security: { filesystem: "unrestricted" },
-          labels: { [PARENT_AGENT_ID_LABEL]: "attacker-parent", role: "worker" },
-        },
+        options: { labels: { role: "worker" } },
       },
       signal: new AbortController().signal,
     });
@@ -780,7 +779,7 @@ test("plugin host inherits child authority from the freshly resolved live caller
         input: {
           options: {
             labels: Object.fromEntries(
-              Array.from({ length: MAX_PLUGIN_AUTHORITY_LABELS }, (_, index) => [
+              Array.from({ length: MAX_PLUGIN_HOST_CHILD_LABELS + 1 }, (_, index) => [
                 `label-${index}`,
                 "value",
               ]),
@@ -789,8 +788,105 @@ test("plugin host inherits child authority from the freshly resolved live caller
         },
         signal: new AbortController().signal,
       }),
-    ).rejects.toThrow("Child labels exceed the authority label limit");
+    ).rejects.toThrow(/label|limit/i);
     expect(createAgent).toHaveBeenCalledTimes(2);
+
+    await expect(
+      session.invokePluginHost({
+        pluginId: "portable-provider",
+        caller,
+        invocationId: "invocation-reserved-label",
+        generation: 1,
+        installationId: "installation-one",
+        capabilityNonce: "nonce-reserved-label",
+        operation: "child.create",
+        input: {
+          options: { labels: { "paseo.open-agent-tab.attacker": "true" } },
+        },
+        signal: new AbortController().signal,
+      }),
+    ).rejects.toThrow(/reserved|authority|label/i);
+    expect(createAgent).toHaveBeenCalledTimes(2);
+  } finally {
+    await session.cleanup();
+  }
+});
+
+test("plugin child creation rolls back when cancellation wins the final authority window", async () => {
+  const caller = createPluginCallerAuthority();
+  const liveCaller = createLivePluginCaller();
+  const child = {
+    ...liveCaller,
+    id: "child-agent",
+    labels: { purpose: "review", [PARENT_AGENT_ID_LABEL]: "caller-agent" },
+  };
+  const liveAgents = new Map<string, unknown>([["caller-agent", liveCaller]]);
+  const createAgent = vi.fn(async () => {
+    liveAgents.set(child.id, child);
+    return child;
+  });
+  const archiveAgent = vi.fn(async (agentId: string) => {
+    liveAgents.delete(agentId);
+    return { archivedAt: "2026-01-01T00:00:01.000Z" };
+  });
+  const controller = new AbortController();
+  const session = createSessionForTest({
+    pluginIdentity: { pluginId: "portable-provider", installationId: "installation-one" },
+    agentManager: {
+      getAgent: vi.fn((agentId: string) => liveAgents.get(agentId) ?? null),
+      createAgent,
+      hasInFlightRun: vi.fn(() => false),
+      clearAgentAttention: vi.fn(async () => undefined),
+      archiveAgent,
+    },
+    agentStorage: {
+      get: vi.fn(async (agentId: string) =>
+        agentId === child.id ? { id: child.id, archivedAt: "2026-01-01T00:00:01.000Z" } : undefined,
+      ),
+    },
+    workspaceRegistry: {
+      get: vi.fn(async () => ({
+        workspaceId: "source-workspace",
+        projectId: "source-project",
+        cwd: "/repo",
+        archivedAt: null,
+      })),
+    },
+    projectRegistry: {
+      get: vi.fn(async () => ({ projectId: "source-project", archivedAt: null })),
+    },
+  });
+  const internals = asSessionInternals(session);
+  internals.agentUpdates.forwardLiveAgent = vi.fn(async () => undefined);
+  const originalResolve = internals.resolveLivePluginCallerAuthority.bind(session);
+  let resolutionCount = 0;
+  internals.resolveLivePluginCallerAuthority = vi.fn(async (callerAgentId) => {
+    const authority = await originalResolve(callerAgentId);
+    resolutionCount += 1;
+    if (resolutionCount === 5) {
+      controller.abort(new Error("controlled final-window abort"));
+    }
+    return authority;
+  });
+
+  try {
+    await expect(
+      session.invokePluginHost({
+        pluginId: "portable-provider",
+        caller,
+        invocationId: "invocation-final-window-abort",
+        generation: 1,
+        installationId: "installation-one",
+        capabilityNonce: "nonce-final-window-abort",
+        operation: "child.create",
+        input: { options: { labels: { purpose: "review" } } },
+        signal: controller.signal,
+      }),
+    ).rejects.toThrow("controlled final-window abort");
+    expect(resolutionCount).toBe(5);
+    expect(createAgent).toHaveBeenCalledOnce();
+    expect(archiveAgent).toHaveBeenCalledWith(child.id);
+    expect(liveAgents.has(child.id)).toBe(false);
   } finally {
     await session.cleanup();
   }

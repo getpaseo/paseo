@@ -7,12 +7,22 @@ import {
 import { PLUGIN_TOOL_MAX_ERROR_BYTES } from "./plugin-tool.js";
 import { PLUGIN_TOOL_MAX_CATALOG_BYTES } from "./plugin-tool.js";
 import { MAX_WEBSOCKET_MESSAGE_BYTES } from "@getpaseo/protocol/transport-limits";
+import {
+  MAX_PLUGIN_HOST_CHILD_LABELS,
+  PluginHostChildCreateRequestSchema,
+} from "@getpaseo/protocol/plugin-host";
 
 const callerContext = {
   callerAgentId: "agent-1",
   agent: { id: "agent-1", status: "running" },
   workspace: null,
 };
+
+function buildLabels(count: number): Record<string, string> {
+  return Object.fromEntries(
+    Array.from({ length: count }, (_, index) => [`label-${index}`, "value"]),
+  );
+}
 
 describe("plugin process tool protocol", () => {
   it("validates separate invoke, update, result, and cancel envelopes", () => {
@@ -162,5 +172,34 @@ describe("plugin process tool protocol", () => {
         options: { deliveryId: "delivery-one" },
       }),
     ).toThrow(/payload|large|limit|bounded JSON/i);
+  });
+
+  it("applies the child-label policy at the process boundary", () => {
+    const base = {
+      type: "plugin.host.child.create.request" as const,
+      requestId: "host-request",
+      invocationId: "invocation-one",
+      generation: 3,
+      installationId: "installation-one",
+      options: { labels: { "subagents.worker": "true" } },
+    };
+    expect(PluginHostChildCreateRequestSchema.safeParse(base).success).toBe(true);
+    expect(validatePluginProcessMessage(base)).toMatchObject({
+      type: "plugin.host.child.create.request",
+    });
+    expect(() =>
+      validatePluginProcessMessage({
+        ...base,
+        options: {
+          labels: buildLabels(MAX_PLUGIN_HOST_CHILD_LABELS + 1),
+        },
+      }),
+    ).toThrow(/label|limit/i);
+    expect(() =>
+      validatePluginProcessMessage({
+        ...base,
+        options: { labels: { "paseo.open-agent-tab.attacker": "true" } },
+      }),
+    ).toThrow(/reserved|authority|label/i);
   });
 });

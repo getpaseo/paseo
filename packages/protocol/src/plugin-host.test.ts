@@ -1,6 +1,8 @@
 import { describe, expect, test } from "vitest";
 import {
   MAX_PLUGIN_AUTHORITY_LABELS,
+  MAX_PLUGIN_AUTHORITY_LABEL_KEY_BYTES,
+  MAX_PLUGIN_AUTHORITY_LABEL_VALUE_BYTES,
   MAX_PLUGIN_AUTHORITY_STRING_BYTES,
   MAX_PLUGIN_HOST_CHILD_LABELS,
   MAX_PLUGIN_HOST_WORKTREE_ID_BYTES,
@@ -158,7 +160,7 @@ describe("plugin caller host wire contract", () => {
       invocationId: "invocation-one",
       generation: 1,
       installationId: "installation-one",
-      options: { labels: { purpose: "review", "paseo.parent-agent-id": "forged" } },
+      options: { labels: { purpose: "review", "subagents.role": "worker" } },
     };
     expect(PluginHostChildCreateRequestSchema.safeParse(base).success).toBe(true);
     expect(
@@ -190,13 +192,75 @@ describe("plugin caller host wire contract", () => {
     expect(
       PluginHostChildCreateRequestSchema.safeParse({
         ...base,
-        options: { labels: { ["x".repeat(MAX_PLUGIN_AUTHORITY_STRING_BYTES + 1)]: "value" } },
+        options: { labels: { ["x".repeat(MAX_PLUGIN_AUTHORITY_LABEL_KEY_BYTES)]: "value" } },
+      }).success,
+    ).toBe(true);
+    expect(
+      PluginHostChildCreateRequestSchema.safeParse({
+        ...base,
+        options: {
+          labels: { ["x".repeat(MAX_PLUGIN_AUTHORITY_LABEL_KEY_BYTES + 1)]: "value" },
+        },
       }).success,
     ).toBe(false);
     expect(
       PluginHostChildCreateRequestSchema.safeParse({
         ...base,
-        options: { labels: { key: "🙂".repeat(MAX_PLUGIN_AUTHORITY_STRING_BYTES) } },
+        options: {
+          labels: { key: "€".repeat(Math.floor(MAX_PLUGIN_AUTHORITY_LABEL_VALUE_BYTES / 3)) },
+        },
+      }).success,
+    ).toBe(true);
+    expect(
+      PluginHostChildCreateRequestSchema.safeParse({
+        ...base,
+        options: {
+          labels: { key: "€".repeat(Math.floor(MAX_PLUGIN_AUTHORITY_LABEL_VALUE_BYTES / 3) + 1) },
+        },
+      }).success,
+    ).toBe(false);
+
+    for (const key of [
+      "Paseo.open-agent-tab.attacker",
+      "PLUGIN.metadata",
+      "system.fake",
+      "internal.fake",
+      "security.fake",
+      "parent",
+      "child.parentAgentId",
+      "workspaceId.extra",
+      "constructor",
+      "prototype",
+    ]) {
+      expect(
+        PluginHostChildCreateRequestSchema.safeParse({
+          ...base,
+          options: { labels: { [key]: "value" } },
+        }).success,
+      ).toBe(false);
+    }
+    expect(
+      PluginHostChildCreateRequestSchema.safeParse({
+        ...base,
+        options: { labels: { "subagents.worker": "true" } },
+      }).success,
+    ).toBe(true);
+    expect(
+      PluginHostChildCreateRequestSchema.safeParse({
+        ...base,
+        options: { labels: { "bad key": "value" } },
+      }).success,
+    ).toBe(false);
+    expect(
+      PluginHostChildCreateRequestSchema.safeParse({
+        ...base,
+        options: { labels: { é: "value" } },
+      }).success,
+    ).toBe(false);
+    expect(
+      PluginHostChildCreateRequestSchema.safeParse({
+        ...base,
+        options: { labels: JSON.parse('{"__proto__":"unsafe"}') },
       }).success,
     ).toBe(false);
   });

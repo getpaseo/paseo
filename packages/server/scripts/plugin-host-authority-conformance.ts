@@ -15,6 +15,10 @@ import { DeliveryLedger } from "../src/server/deliveries/delivery-ledger.ts";
 import { DownloadTokenStore } from "../src/server/file-download/token-store.ts";
 import { PluginRuntime } from "../src/server/plugins/runtime.ts";
 import { VoiceAssistantWebSocketServer } from "../src/server/websocket-server.ts";
+import {
+  MAX_PLUGIN_HOST_CHILD_LABELS,
+  PluginHostChildCreateOptionsSchema,
+} from "@getpaseo/protocol/plugin-host";
 
 declare const __PASEO_PLUGIN_PROCESS_SOURCE__: string;
 declare const __PASEO_SOURCE_MANIFEST__: {
@@ -314,12 +318,14 @@ const tool = defineTool({
       return { callerAgentId: context.caller.callerAgentId, callerCwd: context.caller.agent.cwd, targetAgentId: first.targetAgentId, deliveryId: first.deliveryId, firstStatus: first.status, secondStatus: second.status, acknowledgedStatus: acknowledged.status, fetchedStatus: fetched.delivery?.status ?? null, retrySequence: first.sequence === second.sequence, secondAckStatus: secondAck.status, tombstonePayloadPresent: tombstone.delivery?.payload !== undefined };
     }
     if (input.mode === "child") {
+      const labels = Object.fromEntries([
+        ["purpose", "conformance"],
+        ["subagents.role", "worker"],
+        ...Array.from({ length: 30 }, (_, index) => ["conformance-" + index, "value"]),
+      ]);
       const child = await context.host.children.create({
         title: "Conformance child",
-        labels: Object.fromEntries([
-          ["purpose", "conformance"],
-          ...Array.from({ length: 126 }, (_, index) => ["conformance-" + index, "value"]),
-        ]),
+        labels,
       });
       return { callerAgentId: context.caller.callerAgentId, callerCwd: context.caller.agent.cwd, childAgentId: child.agentId, childParentAgentId: child.parentAgentId, childCwd: child.cwd, childProvider: child.provider, childModel: child.model, childThinking: child.thinking };
     }
@@ -1045,10 +1051,24 @@ export async function runConformance() {
       equal(result.childProvider, "codex-updated", "child provider inheritance");
       equal(result.childModel, "updated-model", "child model inheritance");
       equal(result.childThinking, "updated-thinking", "child thinking inheritance");
+      const tooManyLabelsRejected = !PluginHostChildCreateOptionsSchema.safeParse({
+        labels: Object.fromEntries(
+          Array.from({ length: MAX_PLUGIN_HOST_CHILD_LABELS + 1 }, (_, index) => [
+            "too-many-" + index,
+            "value",
+          ]),
+        ),
+      }).success;
+      const openTabSpoofRejected = !PluginHostChildCreateOptionsSchema.safeParse({
+        labels: { "paseo.open-agent-tab.attacker": "true" },
+      }).success;
+      equal(tooManyLabelsRejected, true, "child label count limit");
+      equal(openTabSpoofRejected, true, "reserved open-tab label rejection");
       const childAgent = fixture.getAgent(String(result.childAgentId));
       assert(childAgent, "created child agent disappeared");
       equal(childAgent.labels.purpose, "conformance", "child requested label");
-      equal(Object.keys(childAgent.labels).length, 128, "child final label count");
+      equal(childAgent.labels["subagents.role"], "worker", "child subagents label");
+      equal(Object.keys(childAgent.labels).length, 33, "child final label count");
       equal(
         childAgent.labels["paseo.parent-agent-id"],
         CALLER_AGENT_ID,
@@ -1064,9 +1084,12 @@ export async function runConformance() {
         child: result.childAgentId,
         childLabels: {
           purpose: childAgent.labels.purpose,
+          "subagents.role": childAgent.labels["subagents.role"],
           "paseo.parent-agent-id": childAgent.labels["paseo.parent-agent-id"],
         },
         childLabelCount: Object.keys(childAgent.labels).length,
+        tooManyLabelsRejected,
+        openTabSpoofRejected,
         inheritedLiveAuthority: true,
         callerCwdBeforeMutation: result.callerCwd,
       };

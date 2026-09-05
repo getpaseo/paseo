@@ -275,7 +275,7 @@ import {
   type DeliveryAgentDispatcher,
 } from "./deliveries/delivery-dispatcher.js";
 import {
-  MAX_PLUGIN_AUTHORITY_LABELS,
+  PluginHostChildCreateOptionsSchema,
   MAX_PLUGIN_HOST_DELIVERY_GET_RESPONSE_BYTES,
 } from "@getpaseo/protocol/plugin-host";
 
@@ -2503,6 +2503,7 @@ export class Session {
     input: Record<string, unknown>;
     signal: AbortSignal;
   }): Promise<PluginHostedChild> {
+    const options = PluginHostChildCreateOptionsSchema.optional().parse(input.input.options) ?? {};
     await this.pluginManagedWorktreesReady;
     this.throwIfPluginHostCancelled(input.signal);
     input = {
@@ -2512,19 +2513,10 @@ export class Session {
     if (!input.caller.agent.workspaceId) {
       throw new Error("Caller agent has no workspace for child creation");
     }
-    const options = (input.input.options ?? {}) as {
-      title?: string;
-      prompt?: string;
-      worktreeId?: string;
-      labels?: Record<string, string>;
-    };
     const childLabels = {
       ...options.labels,
       [PARENT_AGENT_ID_LABEL]: input.caller.callerAgentId,
     };
-    if (Object.keys(childLabels).length > MAX_PLUGIN_AUTHORITY_LABELS) {
-      throw new Error("Child labels exceed the authority label limit");
-    }
     if (options.worktreeId) {
       const worktree = this.pluginManagedWorktrees.get(options.worktreeId);
       if (
@@ -2619,6 +2611,10 @@ export class Session {
       await this.agentUpdates.forwardLiveAgent(result.liveSnapshot);
       this.throwIfPluginHostCancelled(input.signal);
       const finalCaller = await this.resolveLivePluginCallerAuthority(input.caller.callerAgentId);
+      // This is the last awaited handoff in the child-create transaction. Once this check passes,
+      // the synchronous result construction below is the commit boundary: a later abort belongs to
+      // the already-completed invocation and must not reinterpret the returned child.
+      this.throwIfPluginHostCancelled(input.signal);
       const child = toAgentPayload(result.liveSnapshot);
       return {
         agentId: child.id,

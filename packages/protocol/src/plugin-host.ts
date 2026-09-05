@@ -8,10 +8,33 @@ export const MAX_PLUGIN_HOST_DELIVERY_GET_RESPONSE_BYTES = 192 * 1024;
 /** Bounds applied to authority values crossing the plugin process boundary. */
 export const MAX_PLUGIN_AUTHORITY_STRING_BYTES = 512;
 export const MAX_PLUGIN_AUTHORITY_LABELS = 128;
-/** Reserve one final label slot for daemon-owned child parentage. */
-export const MAX_PLUGIN_HOST_CHILD_LABELS = MAX_PLUGIN_AUTHORITY_LABELS - 1;
+export const MAX_PLUGIN_AUTHORITY_LABEL_KEY_BYTES = 128;
+export const MAX_PLUGIN_AUTHORITY_LABEL_VALUE_BYTES = MAX_PLUGIN_AUTHORITY_STRING_BYTES;
+export const MAX_PLUGIN_HOST_CHILD_LABELS = 32;
 export const MAX_PLUGIN_HOST_WORKTREE_ID_BYTES = 256;
 export const MAX_PLUGIN_HOST_NONCE_BYTES = 128;
+
+/** Namespaces and authority fields are daemon-owned on plugin-created children. */
+export const PLUGIN_HOST_CHILD_RESERVED_NAMESPACES = [
+  "paseo.",
+  "plugin.",
+  "system.",
+  "internal.",
+  "security.",
+] as const;
+export const PLUGIN_HOST_CHILD_RESERVED_AUTHORITY_SEGMENTS = [
+  "parent",
+  "parentAgentId",
+  "workspace",
+  "workspaceId",
+  "provider",
+  "model",
+  "cwd",
+  "mode",
+  "toolPolicy",
+  "options",
+] as const;
+export const PLUGIN_HOST_CHILD_DANGEROUS_KEYS = ["__proto__", "constructor", "prototype"] as const;
 
 const authorityTextEncoder = new TextEncoder();
 const AuthorityStringSchema = z
@@ -45,12 +68,93 @@ const KnownStringSchema = z.discriminatedUnion("known", [
   z.object({ known: z.literal(true), value: AuthorityStringSchema }).strict(),
   z.object({ known: z.literal(false) }).strict(),
 ]);
+const authorityLabelTextEncoder = new TextEncoder();
+const pluginHostChildLabelAuthoritySegments = new Set(
+  PLUGIN_HOST_CHILD_RESERVED_AUTHORITY_SEGMENTS.map((segment) => segment.toLowerCase()),
+);
+const pluginHostChildDangerousKeys = new Set(
+  PLUGIN_HOST_CHILD_DANGEROUS_KEYS.map((key) => key.toLowerCase()),
+);
+const PluginHostChildLabelKeySchema = z
+  .string()
+  .min(1)
+  .max(MAX_PLUGIN_AUTHORITY_LABEL_KEY_BYTES)
+  .refine(
+    (value) =>
+      authorityLabelTextEncoder.encode(value).byteLength <= MAX_PLUGIN_AUTHORITY_LABEL_KEY_BYTES,
+    `must be at most ${MAX_PLUGIN_AUTHORITY_LABEL_KEY_BYTES} UTF-8 bytes`,
+  )
+  .refine(
+    (value) => /^[A-Za-z0-9][A-Za-z0-9._-]*$/u.test(value),
+    "must start with an ASCII letter or digit and contain only ASCII letters, digits, '.', '_' or '-'",
+  );
+const PluginHostChildLabelValueSchema = z
+  .string()
+  .min(1)
+  .max(MAX_PLUGIN_AUTHORITY_LABEL_VALUE_BYTES)
+  .refine(
+    (value) =>
+      authorityLabelTextEncoder.encode(value).byteLength <= MAX_PLUGIN_AUTHORITY_LABEL_VALUE_BYTES,
+    `must be at most ${MAX_PLUGIN_AUTHORITY_LABEL_VALUE_BYTES} UTF-8 bytes`,
+  )
+  .refine((value) => value.trim() === value, "must not have leading or trailing whitespace");
 const AuthorityLabelsSchema = z
   .record(AuthorityStringSchema, AuthorityStringSchema)
   .refine((labels) => Object.keys(labels).length <= MAX_PLUGIN_AUTHORITY_LABELS);
-const PluginHostChildLabelsSchema = AuthorityLabelsSchema.refine(
-  (labels) => Object.keys(labels).length <= MAX_PLUGIN_HOST_CHILD_LABELS,
+const PluginHostChildLabelsRecordSchema = z.record(
+  PluginHostChildLabelKeySchema,
+  PluginHostChildLabelValueSchema,
 );
+export const PluginHostChildLabelsSchema = z
+  .preprocess((value, context) => {
+    if (typeof value !== "object" || value === null || Array.isArray(value)) {
+      return value;
+    }
+    for (const key of Object.keys(value)) {
+      if (pluginHostChildDangerousKeys.has(key.toLowerCase())) {
+        context.addIssue({
+          code: "custom",
+          path: [key],
+          message: "uses a dangerous prototype key",
+        });
+      }
+    }
+    return value;
+  }, PluginHostChildLabelsRecordSchema)
+  .superRefine((labels, context) => {
+    const keys = Object.keys(labels);
+    if (keys.length > MAX_PLUGIN_HOST_CHILD_LABELS) {
+      context.addIssue({
+        code: "custom",
+        message: `must contain at most ${MAX_PLUGIN_HOST_CHILD_LABELS} plugin-supplied labels`,
+      });
+    }
+    for (const key of keys) {
+      const normalizedKey = key.toLowerCase();
+      if (
+        PLUGIN_HOST_CHILD_RESERVED_NAMESPACES.some((namespace) =>
+          normalizedKey.startsWith(namespace),
+        )
+      ) {
+        context.addIssue({
+          code: "custom",
+          path: [key],
+          message: "uses a daemon-reserved namespace",
+        });
+      }
+      if (
+        normalizedKey
+          .split(".")
+          .some((segment) => pluginHostChildLabelAuthoritySegments.has(segment))
+      ) {
+        context.addIssue({
+          code: "custom",
+          path: [key],
+          message: "uses a daemon-owned authority field",
+        });
+      }
+    }
+  });
 
 export const PluginFilesystemSecurityCeilingSchema = z.enum([
   "none",
@@ -191,20 +295,21 @@ export const PluginHostDeliveryAcknowledgeRequestSchema = HostRequestBaseSchema.
   deliveryId: AuthorityStringSchema,
 }).strict();
 
+export const PluginHostChildCreateOptionsSchema = z
+  .object({
+    title: AuthorityStringSchema.optional(),
+    prompt: z
+      .string()
+      .max(16 * 1024)
+      .optional(),
+    worktreeId: WorktreeIdSchema.optional(),
+    labels: PluginHostChildLabelsSchema.optional(),
+  })
+  .strict();
+
 export const PluginHostChildCreateRequestSchema = HostRequestBaseSchema.extend({
   type: z.literal("plugin.host.child.create.request"),
-  options: z
-    .object({
-      title: AuthorityStringSchema.optional(),
-      prompt: z
-        .string()
-        .max(16 * 1024)
-        .optional(),
-      worktreeId: WorktreeIdSchema.optional(),
-      labels: PluginHostChildLabelsSchema.optional(),
-    })
-    .strict()
-    .optional(),
+  options: PluginHostChildCreateOptionsSchema.optional(),
 }).strict();
 
 export const PluginHostWorktreeCreateRequestSchema = HostRequestBaseSchema.extend({

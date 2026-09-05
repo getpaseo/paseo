@@ -6,9 +6,9 @@ Allow a trusted plugin to attach bounded metadata labels when it creates a child
 
 ## Contract
 
-`host.children.create(options)` accepts an optional `labels: Record<string, string>`. The plugin-process wire schema bounds plugin input to 127 labels so the daemon-owned parent label can be added within the 128-label authority limit; keys and values use the existing authority string byte limit. The map is strict and cannot contain non-string values or unknown option fields.
+`host.children.create(options)` accepts an optional `labels: Record<string, string>`. The plugin-process and server schemas bound plugin input to `MAX_PLUGIN_HOST_CHILD_LABELS` (32) labels; the daemon-owned parent label is added outside that cap. Keys use `MAX_PLUGIN_AUTHORITY_LABEL_KEY_BYTES` (128) UTF-8 bytes and the ASCII-safe pattern `[A-Za-z0-9][A-Za-z0-9._-]*`; values use `MAX_PLUGIN_AUTHORITY_LABEL_VALUE_BYTES` (512) UTF-8 bytes. Case-insensitive `paseo.`, `plugin.`, `system.`, `internal.`, and `security.` namespaces, exact or dot-separated authority names, and dangerous prototype keys are rejected. `subagents.*` is allowed. The map is strict and cannot contain non-string values or unknown option fields.
 
-The daemon copies the requested labels onto the child, then overwrites `paseo.parent-agent-id` with the live caller ID. A plugin cannot forge, omit, or replace parentage. Workspace, cwd, provider, model, thinking, mode, provider options, and tool policy remain inherited from the live caller as before.
+The daemon copies the requested labels onto the child and adds `paseo.parent-agent-id` with the live caller ID. A plugin cannot forge, omit, or replace parentage. Workspace, cwd, provider, model, thinking, mode, provider options, and tool policy remain inherited from the live caller as before.
 
 ## Surfaces
 

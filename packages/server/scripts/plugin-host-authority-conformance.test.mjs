@@ -134,9 +134,12 @@ describe("plugin host authority conformance executable", () => {
           details: {
             childLabels: {
               purpose: "conformance",
+              "subagents.role": "worker",
               "paseo.parent-agent-id": "00000000-0000-4000-8000-000000000001",
             },
-            childLabelCount: 128,
+            childLabelCount: 33,
+            tooManyLabelsRejected: true,
+            openTabSpoofRejected: true,
           },
         });
         expect(verifiedRuntime.cases.map((result) => result.ok)).toEqual(

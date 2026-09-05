@@ -130,11 +130,17 @@ without a selected agent and is fresh for every selected invocation. Its bounded
   durable tombstones;
 - `host.children.create(options)`, which fixes parent, workspace, and cwd to the caller, allowing an
   alternate cwd only through an opaque managed worktree. `options.labels` may add bounded string
-  metadata to the child (at most 127 plugin-supplied labels; the final child map allows 128 labels
-  including daemon parentage; each key and value is at most 512 UTF-8 bytes), but the daemon always
-  overwrites `paseo.parent-agent-id` with the live caller ID. The child inherits the freshly
-  resolved parent's provider, model, thinking, mode, provider options, and tool policy; it has no
-  override fields for security or tool policy;
+  metadata to the child: at most `MAX_PLUGIN_HOST_CHILD_LABELS` (32) plugin-supplied labels, with
+  the daemon's `PARENT_AGENT_ID_LABEL` added outside that cap. Keys are limited to
+  `MAX_PLUGIN_AUTHORITY_LABEL_KEY_BYTES` (128) UTF-8 bytes and must use the ASCII-safe pattern
+  `[A-Za-z0-9][A-Za-z0-9._-]*`; values are limited to
+  `MAX_PLUGIN_AUTHORITY_LABEL_VALUE_BYTES` (512) UTF-8 bytes. Case-insensitive `paseo.`, `plugin.`,
+  `system.`, `internal.`, and `security.` namespaces, the authority names `parent`, `parentAgentId`,
+  `workspace`, `workspaceId`, `provider`, `model`, `cwd`, `mode`, `toolPolicy`, and `options` as
+  exact or dot-separated segments, and dangerous prototype keys are rejected. `subagents.*` is
+  allowed. The daemon adds `paseo.parent-agent-id` with the live caller ID. The child inherits the
+  freshly resolved parent's provider, model, thinking, mode, provider options, and tool policy; it
+  has no override fields for security or tool policy;
 - `host.worktrees.create(options)` and `remove(id)`, with authoritative workspace/cwd results and
   plugin-session and caller ownership checks.
 
