@@ -54,6 +54,14 @@ readline.createInterface({ input: process.stdin, crlfDelay: Infinity }).on("line
 });
 `;
 
+const CLOSED_STDIN_CHILD_SOURCE = String.raw`
+const fs = require("node:fs");
+
+fs.closeSync(0);
+process.stdout.write(JSON.stringify({ type: "stdin_closed" }) + "\n");
+setInterval(() => {}, 1_000);
+`;
+
 interface InMemoryChildProcess extends ChildProcessWithoutNullStreams {
   stdin: PassThrough;
   stdout: PassThrough;
@@ -63,6 +71,7 @@ interface InMemoryChildProcess extends ChildProcessWithoutNullStreams {
 interface StartProcessOptions {
   child?: ChildProcessWithoutNullStreams;
   defaultRequestTimeoutMs?: number;
+  source?: string;
 }
 
 function createInMemoryChildProcess(): InMemoryChildProcess {
@@ -85,7 +94,7 @@ function startProcess(options: StartProcessOptions = {}): JsonlRpcProcess {
   return new JsonlRpcProcess({
     launch: {
       command: process.execPath,
-      args: ["-e", CHILD_SOURCE, "--", "resolved-arg"],
+      args: ["-e", options.source ?? CHILD_SOURCE, "--", "resolved-arg"],
       cwd: process.cwd(),
       env: { JSONL_RPC_TEST_VALUE: "resolved-env" },
     },
@@ -220,6 +229,70 @@ describe("JsonlRpcProcess", () => {
     await transport.close();
 
     await rejection;
+  });
+
+  test("closes the transport when a direct send synchronously throws EPIPE", async () => {
+    const child = createInMemoryChildProcess();
+    const transport = startProcess({ child });
+
+    child.stdin.write = () => {
+      throw Object.assign(new Error("write EPIPE"), { code: "EPIPE" });
+    };
+
+    expect(() => transport.send({ type: "notice" })).not.toThrow();
+    await expect(transport.request({ type: "echo", value: "after" })).rejects.toThrow(
+      "JSONL RPC process is closed",
+    );
+  });
+
+  // Closing fd 0 does not sever the inherited pipe on Windows, so this fixture cannot produce EPIPE.
+  test.skipIf(process.platform === "win32")(
+    "keeps the parent alive when a real child closes its stdin pipe",
+    async () => {
+      const transport = startProcess({ source: CLOSED_STDIN_CHILD_SOURCE });
+      const stdinClosed = new Promise<void>((resolve) => {
+        const unsubscribe = transport.onMessage((message) => {
+          if (message.type !== "stdin_closed") return;
+          unsubscribe();
+          resolve();
+        });
+      });
+
+      await stdinClosed;
+      await expect(transport.request({ type: "echo", value: "after" })).rejects.toThrow(
+        /EPIPE|stdin is not writable/,
+      );
+      await expect(transport.request({ type: "echo", value: "later" })).rejects.toThrow(
+        "JSONL RPC process is closed",
+      );
+    },
+  );
+
+  test("stdin error events close the transport instead of becoming uncaught exceptions", async () => {
+    const child = createInMemoryChildProcess();
+    const transport = startProcess({ child });
+    const request = transport.request({ type: "hang" });
+    const err = Object.assign(new Error("write EPIPE"), { code: "EPIPE" });
+
+    child.stdin.emit("error", err);
+
+    await expect(request).rejects.toThrow("write EPIPE");
+    await expect(transport.request({ type: "echo", value: "after" })).rejects.toThrow(
+      "JSONL RPC process is closed",
+    );
+  });
+
+  test("a non-writable stdin closes the transport instead of hanging the request", async () => {
+    const child = createInMemoryChildProcess();
+    const transport = startProcess({ child });
+    child.stdin.end();
+
+    await expect(transport.request({ type: "hang" })).rejects.toThrow(
+      "JSONL RPC stdin is not writable",
+    );
+    await expect(transport.request({ type: "echo", value: "after" })).rejects.toThrow(
+      "JSONL RPC process is closed",
+    );
   });
 
   test("reassembles protocol v2 chunked responses into the logical frame", async () => {

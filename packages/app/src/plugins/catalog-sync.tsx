@@ -3,7 +3,6 @@ import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { useHostFeature } from "@/runtime/host-features";
 import { useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import { pluginRegistry } from "./registry";
-import { useSessionStore } from "@/stores/session-store";
 
 export function PluginCatalogSync({
   serverId,
@@ -32,15 +31,10 @@ export function PluginCatalogSync({
           .getPluginCatalog()
           .then((catalog) => {
             if (!cancelled) {
-              const timelineChanged = pluginRegistry.installCatalog(serverId, catalog, {
+              pluginRegistry.installCatalog(serverId, catalog, {
                 replacePluginId,
                 client,
               });
-              if (timelineChanged) {
-                useSessionStore
-                  .getState()
-                  .sessions[serverId]?.viewedTimelineSync?.reprojectVisibleTimelines();
-              }
             }
             return undefined;
           })

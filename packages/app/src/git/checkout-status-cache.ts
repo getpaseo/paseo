@@ -8,7 +8,7 @@ import {
   invalidatePrPaneTimelineForCheckout,
 } from "@/git/query-keys";
 import { type CheckoutPrStatusPayload, normalizeCheckoutPrStatusPayload } from "@/git/pr-status";
-import { expireStaleDiffModeOverrides } from "@/review/store";
+import { expireWorkingDiffComparisons } from "@/git/working-diff-comparison";
 import { normalizeWorkspacePath } from "@/utils/workspace-identity";
 
 export type CheckoutStatusPayload = CheckoutStatusResponse["payload"];
@@ -37,7 +37,7 @@ export async function fetchCheckoutStatus({
   cwd: string;
 }): Promise<CheckoutStatusPayload> {
   const payload = normalizeCheckoutStatusPayload(await client.getCheckoutStatus(cwd));
-  expireStaleDiffModeOverrides({ serverId, cwd, isDirty: payload.isGit && payload.isDirty });
+  expireWorkingDiffComparisons({ serverId, cwd, isDirty: payload.isGit && payload.isDirty });
   return payload;
 }
 
@@ -78,7 +78,7 @@ export function applyCheckoutStatusUpdateFromEvent({
   void queryClient.invalidateQueries({
     queryKey: checkoutCommitsQueryKey(serverId, cwd),
   });
-  expireStaleDiffModeOverrides({
+  expireWorkingDiffComparisons({
     serverId,
     cwd,
     isDirty: cachePayload.isGit && cachePayload.isDirty,

@@ -10,11 +10,15 @@ export const PLUGIN_CLIENT_ONLY_SDK_SPECIFIERS = [
   "@paseo/plugin/react-native",
 ] as const;
 
+export const PLUGIN_SERVER_TYPES_SDK_SPECIFIERS = [
+  "@getpaseo/plugin/server",
+  "@paseo/plugin/server",
+] as const;
+
 export const PLUGIN_SDK_SPECIFIERS = [
   "@getpaseo/plugin",
-  "@getpaseo/plugin/server",
   "@paseo/plugin",
-  "@paseo/plugin/server",
+  ...PLUGIN_SERVER_TYPES_SDK_SPECIFIERS,
   ...PLUGIN_CLIENT_ONLY_SDK_SPECIFIERS,
 ] as const;
 
@@ -24,4 +28,8 @@ export function isPluginSdkSpecifier(name: string): boolean {
 
 export function isPluginClientOnlySdkSpecifier(name: string): boolean {
   return (PLUGIN_CLIENT_ONLY_SDK_SPECIFIERS as readonly string[]).includes(name);
+}
+
+export function isPluginServerTypesSdkSpecifier(name: string): boolean {
+  return (PLUGIN_SERVER_TYPES_SDK_SPECIFIERS as readonly string[]).includes(name);
 }

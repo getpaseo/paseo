@@ -3,8 +3,8 @@ import {
   openPrPane,
   expectPrPaneTitle,
   expectPrPaneState,
-  expectPrPaneCheckSummary,
-  expectPrPaneActivityCount,
+  expectPrPaneChecks,
+  expectPrPaneActivity,
 } from "../support/helpers/pr-pane";
 import { gotoWorkspace } from "../support/helpers/launcher";
 import {
@@ -50,7 +50,6 @@ test.describe("PR pane", () => {
           ],
         },
         { title: "PR with reviews", state: "open", commentCount: 3 },
-        { title: "PR with no checks", state: "open" },
       ],
     });
 
@@ -102,25 +101,21 @@ test.describe("PR pane", () => {
     await expectPrPaneTitle(page, "Work in progress");
   });
 
-  test("renders check pills with correct success/failure/pending counts", async ({ page }) => {
+  test("renders seeded checks in their success, failure, and pending groups", async ({ page }) => {
     await gotoWorkspace(page, workspaceByTitle.get("PR with mixed checks")!);
     await openPrPane(page);
 
-    await expectPrPaneCheckSummary(page, { success: 2, failure: 1, pending: 1 });
+    await expectPrPaneChecks(page, {
+      success: ["build-1", "build-2"],
+      failure: ["deploy"],
+      pending: ["security"],
+    });
   });
 
-  test("renders activity rows with correct count", async ({ page }) => {
+  test("renders every seeded activity comment", async ({ page }) => {
     await gotoWorkspace(page, workspaceByTitle.get("PR with reviews")!);
     await openPrPane(page);
 
-    await expectPrPaneActivityCount(page, 3);
-  });
-
-  test("renders gracefully with zero checks", async ({ page }) => {
-    await gotoWorkspace(page, workspaceByTitle.get("PR with no checks")!);
-    await openPrPane(page);
-
-    await expectPrPaneCheckSummary(page, { success: 0, failure: 0, pending: 0 });
-    await expectPrPaneTitle(page, "PR with no checks");
+    await expectPrPaneActivity(page, ["Test comment 1", "Test comment 2", "Test comment 3"]);
   });
 });

@@ -374,6 +374,54 @@ describe("DictationStreamManager (provider-agnostic provider)", () => {
     );
   });
 
+  it("does not wait for an abandoned partial after clearing mid-stream silence", async () => {
+    const session = new FakeRealtimeSession();
+    const emitted: Array<{ type: string; payload: unknown }> = [];
+    const manager = new DictationStreamManager({
+      logger: pino({ level: "silent" }),
+      emit: (message) => emitted.push(message),
+      sessionId: "s1",
+      stt: new FakeSttProvider(session),
+      autoCommitSeconds: 1,
+    });
+
+    await manager.handleStart("d-cleared-partial", "audio/pcm;rate=24000;bits=16");
+    await manager.handleChunk({
+      dictationId: "d-cleared-partial",
+      seq: 0,
+      audioBase64: buildPcmBase64(2000, 24000),
+      format: "audio/pcm;rate=24000;bits=16",
+    });
+    session.emitCommitted("seg-first");
+    session.emitTranscript("seg-first", "the beginning", true);
+
+    session.emitTranscript("seg-abandoned", "quiet partial", false);
+    await manager.handleChunk({
+      dictationId: "d-cleared-partial",
+      seq: 1,
+      audioBase64: buildPcmBase64(0, 24000),
+      format: "audio/pcm;rate=24000;bits=16",
+    });
+    expect(session.clearCalls).toBe(1);
+
+    await manager.handleChunk({
+      dictationId: "d-cleared-partial",
+      seq: 2,
+      audioBase64: buildPcmBase64(2000, 2400),
+      format: "audio/pcm;rate=24000;bits=16",
+    });
+    await manager.handleFinish("d-cleared-partial", 2);
+    session.emitCommitted("seg-final");
+    session.emitTranscript("seg-final", "the final words", true);
+    await tick();
+
+    const final = emitted.find((message) => message.type === "dictation_stream_final");
+    expect((final?.payload as { text?: string } | undefined)?.text).toBe(
+      "the beginning the final words",
+    );
+    expect(session.closed).toBe(true);
+  });
+
   it("adapts finish timeout based on pending committed segments", async () => {
     const session = new FakeRealtimeSession();
     const emitted: Array<{ type: string; payload: unknown }> = [];
@@ -405,7 +453,7 @@ describe("DictationStreamManager (provider-agnostic provider)", () => {
     ).toBeGreaterThan(5000);
   });
 
-  it("adapts finish timeout when only uncommitted non-final transcripts are pending", async () => {
+  it("does not extend the finish timeout for abandoned non-final transcripts", async () => {
     const session = new FakeRealtimeSession();
     const emitted: Array<{ type: string; payload: unknown }> = [];
     const manager = new DictationStreamManager({
@@ -432,9 +480,7 @@ describe("DictationStreamManager (provider-agnostic provider)", () => {
 
     const finishAccepted = emitted.find((msg) => msg.type === "dictation_stream_finish_accepted");
     expect(finishAccepted).toBeDefined();
-    expect(
-      (finishAccepted?.payload as { timeoutMs?: number } | undefined)?.timeoutMs,
-    ).toBeGreaterThan(5000);
+    expect((finishAccepted?.payload as { timeoutMs?: number } | undefined)?.timeoutMs).toBe(20_000);
   });
 
   it("drops dangling uncommitted non-final transcripts when finishing after silence tail clear", async () => {

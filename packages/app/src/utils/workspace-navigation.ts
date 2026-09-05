@@ -14,9 +14,9 @@ function layoutStoreDeps() {
       workspaceKey: string;
       target: WorkspaceTabTarget;
       intent: "reveal";
+      pin?: boolean;
       placement?: import("@/stores/workspace-layout-actions").WorkspaceTabPlacement;
     }) => store.openTab(input),
-    pinAgent: store.pinAgent,
   };
 }
 

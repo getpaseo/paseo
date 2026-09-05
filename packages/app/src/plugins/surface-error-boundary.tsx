@@ -5,6 +5,7 @@ import { StyleSheet } from "react-native-unistyles";
 interface SurfaceErrorBoundaryProps {
   children: ReactNode;
   installation: object;
+  resetKey?: unknown;
   Surface: unknown;
 }
 
@@ -29,7 +30,9 @@ export class SurfaceErrorBoundary extends Component<
   componentDidUpdate(previous: SurfaceErrorBoundaryProps): void {
     if (
       this.state.error &&
-      (previous.installation !== this.props.installation || previous.Surface !== this.props.Surface)
+      (previous.installation !== this.props.installation ||
+        previous.resetKey !== this.props.resetKey ||
+        previous.Surface !== this.props.Surface)
     ) {
       this.setState({ error: null });
     }

@@ -661,8 +661,8 @@ function ScheduleTargetFields({
     [],
   );
   const modelTriggerLeading = useMemo(
-    () => <ProviderGlyph provider={state.selectedProvider} />,
-    [state.selectedProvider],
+    () => <ProviderGlyph provider={state.selectedProvider} serverId={state.selectedServerId} />,
+    [state.selectedProvider, state.selectedServerId],
   );
   const renderModelTrigger = useCallback(
     ({
@@ -1019,11 +1019,17 @@ function ThinkingOptionItem({
   );
 }
 
-function ProviderGlyph({ provider }: { provider: string | null }): ReactElement | null {
+function ProviderGlyph({
+  provider,
+  serverId,
+}: {
+  provider: string | null;
+  serverId: string | null;
+}): ReactElement | null {
   if (!provider) {
     return null;
   }
-  const Icon = getProviderIcon(provider);
+  const Icon = getProviderIcon(provider, serverId);
   return <Icon size={16} color={styles.providerIcon.color} />;
 }
 
