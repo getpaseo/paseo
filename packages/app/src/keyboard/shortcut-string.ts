@@ -245,7 +245,9 @@ export function heldModifiersFromEvent(event: KeyboardEvent): string | null {
   return parts.length > 0 ? parts.join("+") : null;
 }
 
-export function keyboardEventToComboString(event: KeyboardEvent): string | null {
+export function keyboardEventToComboString(
+  event: Pick<KeyboardEvent, "key" | "code" | "ctrlKey" | "altKey" | "metaKey" | "shiftKey">,
+): string | null {
   if (MODIFIER_CODES.has(event.code)) {
     return null;
   }

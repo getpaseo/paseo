@@ -373,6 +373,8 @@ describe("translation resources", () => {
     expect(en.settings.shortcuts.dialogTitle).toBe("Shortcuts");
     expect(en.settings.shortcuts.sections.tabsPanes).toBe("Tabs & Panes");
     expect(en.settings.shortcuts.help.toggleCommandCenter).toBe("Toggle command center");
+    expect(en.settings.shortcuts.help.historyBack).toBe("History back");
+    expect(en.settings.shortcuts.help.historyForward).toBe("History forward");
     expect(en.settings.shortcuts.help.newWorkspace).toBe("New workspace");
     expect(en.settings.shortcuts.help.cycleAgentMode).toBe("Cycle agent mode");
     expect(en.settings.shortcuts.helpNotes.showKeyboardShortcuts).toBe(

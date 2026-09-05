@@ -2176,6 +2176,8 @@ export const zhCN: TranslationResources = {
         closePane: "关闭窗格",
         newTerminal: "新建终端",
         searchFiles: "搜索文件",
+        historyBack: "后退历史记录",
+        historyForward: "前进历史记录",
         toggleCommandCenter: "切换命令中心",
         showKeyboardShortcuts: "显示键盘快捷键",
         toggleLeftSidebar: "切换左侧边栏",
