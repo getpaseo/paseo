@@ -129,6 +129,8 @@ import { getFileTypeLabel } from "@/attachments/file-types";
 import { Combobox, ComboboxItem, type ComboboxOption } from "@/components/ui/combobox";
 import { AttachmentLabel, AttachmentPill, AttachmentThumbnail } from "@/components/attachment-pill";
 import { AttachmentLightbox, type ImageLightboxSource } from "@/components/attachment-lightbox";
+import { TextAttachmentModal } from "@/components/text-attachment-modal";
+import { formatPastedTextSummary } from "@/composer/attachments/pasted-text";
 import { openExternalUrl } from "@/utils/open-external-url";
 import { useIsDictationReady } from "@/hooks/use-is-dictation-ready";
 import { useForgeSearchQuery } from "@/git/use-forge-search-query";
@@ -417,6 +419,19 @@ function renderComposerAttachmentPill(args: RenderComposerAttachmentPillArgs): R
         onRemove={onRemove}
         openLabel={labels.openImage}
         removeLabel={labels.removeImage}
+      />
+    );
+  }
+  if (attachment.kind === "pasted_text") {
+    return (
+      <PastedTextAttachmentPill
+        key={attachment.id}
+        attachment={attachment}
+        index={index}
+        disabled={disabled}
+        onOpen={onOpen}
+        onRemove={onRemove}
+        removeLabel={labels.removeFile}
       />
     );
   }
@@ -827,6 +842,48 @@ function FileAttachmentPill({
         icon={filePillIcon}
         title={fileName}
         subtitle={getFileTypeLabel(fileName) ?? t("message.attachments.file")}
+      />
+    </AttachmentPill>
+  );
+}
+
+interface PastedTextAttachmentPillProps {
+  attachment: Extract<ComposerAttachment, { kind: "pasted_text" }>;
+  index: number;
+  disabled: boolean;
+  onOpen?: (attachment: ComposerAttachment) => void;
+  onRemove: (index: number) => void;
+  removeLabel: string;
+}
+
+function PastedTextAttachmentPill({
+  attachment,
+  index,
+  disabled,
+  onOpen,
+  onRemove,
+  removeLabel,
+}: PastedTextAttachmentPillProps) {
+  const handleOpen = useCallback(() => {
+    onOpen?.(attachment);
+  }, [onOpen, attachment]);
+  const handleRemove = useCallback(() => {
+    onRemove(index);
+  }, [onRemove, index]);
+  const subtitle = formatPastedTextSummary(attachment.lineCount, attachment.byteSize);
+  return (
+    <AttachmentPill
+      testID="composer-pasted-text-attachment-pill"
+      onOpen={handleOpen}
+      onRemove={handleRemove}
+      openAccessibilityLabel="Pasted text"
+      removeAccessibilityLabel={removeLabel}
+      disabled={disabled}
+    >
+      <AttachmentLabel
+        icon={filePillIcon}
+        title={attachment.title ?? "Pasted text"}
+        subtitle={subtitle}
       />
     </AttachmentPill>
   );
@@ -1262,6 +1319,19 @@ function ComposerContentImpl({
   const [isGithubPickerOpen, setIsGithubPickerOpen] = useState(false);
   const [githubSearchQuery, setGithubSearchQuery] = useState("");
   const [lightboxMetadata, setLightboxMetadata] = useState<AttachmentMetadata | null>(null);
+  const [textModalState, setTextModalState] = useState<{
+    visible: boolean;
+    title?: string;
+    text: string | null;
+  }>({
+    visible: false,
+    title: undefined,
+    text: null,
+  });
+
+  const handleCloseTextModal = useCallback(() => {
+    setTextModalState((prev) => ({ ...prev, visible: false }));
+  }, []);
   const attachButtonRef = useRef<View | null>(null);
   const messageInputRef = useRef<MessageInputRef>(null);
   const pluginAttachments = usePluginAttachmentPicker({
@@ -1790,6 +1860,14 @@ function ComposerContentImpl({
 
   const handleOpenAttachment = useCallback(
     (attachment: ComposerAttachment) => {
+      if (attachment.kind === "pasted_text") {
+        setTextModalState({
+          visible: true,
+          title: attachment.title ?? "Pasted text",
+          text: attachment.text,
+        });
+        return;
+      }
       openComposerAttachment({
         attachment,
         setLightboxMetadata,
@@ -2281,6 +2359,25 @@ function ComposerContentImpl({
     { disabled: isSubmitLoadingVisible },
   );
 
+  const handlePasteLargeText = useCallback(
+    (pastedText: string) => {
+      const lineCount = pastedText.split("\n").length;
+      const byteSize = new Blob([pastedText]).size;
+      const id = `pasted-text-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+      setSelectedAttachments((prev) => [
+        ...prev,
+        {
+          kind: "pasted_text",
+          id,
+          text: pastedText,
+          lineCount,
+          byteSize,
+        },
+      ]);
+    },
+    [setSelectedAttachments],
+  );
+
   const messageInputAutoFocus = autoFocus && isDesktopWebBreakpoint;
   const submitLoadingPressHandler = isAgentRunning ? handleCancelAgent : undefined;
   const sendErrorNode = useMemo(
@@ -2353,6 +2450,7 @@ function ComposerContentImpl({
                   attachmentMenuItems={attachmentMenuItems}
                   onAttachButtonRef={handleAttachButtonRef}
                   onAddImages={addImages}
+                  onAddPastedText={handlePasteLargeText}
                   onPasteImages={handleNativePasteImages}
                   client={client}
                   isReadyForDictation={isDictationReady}
@@ -2407,6 +2505,12 @@ function ComposerContentImpl({
           </View>
         </View>
       </KeyboardTranslateView>
+      <TextAttachmentModal
+        visible={textModalState.visible}
+        title={textModalState.title}
+        text={textModalState.text}
+        onClose={handleCloseTextModal}
+      />
     </>
   );
 }

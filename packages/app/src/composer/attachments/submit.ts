@@ -65,6 +65,16 @@ export function splitComposerAttachmentsForSubmit(
       continue;
     }
 
+    if (attachment.kind === "pasted_text") {
+      agentAttachments.push({
+        type: "text",
+        mimeType: "text/plain",
+        title: attachment.title ?? "Pasted text",
+        text: attachment.text,
+      });
+      continue;
+    }
+
     if (isWorkspaceAttachment(attachment)) {
       if (attachment.kind === "browser_element" && attachment.attachment.screenshot) {
         images.push(attachment.attachment.screenshot);

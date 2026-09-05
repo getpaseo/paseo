@@ -15,7 +15,8 @@ import { getFileTypeLabel } from "@/attachments/file-types";
 import { isPullRequestContextAttachment } from "@/attachments/workspace-attachment-utils";
 import { getForgePresentation } from "@/git/forge";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
-
+import { getUtf8ByteLength } from "@/components/assistant-message-render-limit";
+import { formatPastedTextSummary } from "@/components/collapsible-text";
 export interface AttachmentPillContent {
   icon: ReactNode;
   title: string;
@@ -44,14 +45,15 @@ function getPullRequestContextSubtitle(attachment: WorkspaceComposerAttachment):
   return "Review";
 }
 
-function getTextAttachmentSubtitle(
-  attachment: Extract<AgentAttachment, { type: "text" }>,
-  t: TFunction,
-): string {
+function getTextAttachmentSubtitle(attachment: Extract<AgentAttachment, { type: "text" }>): string {
   if (attachment.contextKind === "chat_history") {
     return "Previous conversation";
   }
-  return t("message.attachments.text");
+  const lines = attachment.text.split("\n").length;
+  const lineStr = lines === 1 ? "1 line" : `${lines} lines`;
+  const size = getUtf8ByteLength(attachment.text);
+  const sizeStr = size < 1024 ? `${size} B` : `${(size / 1024).toFixed(1)} KB`;
+  return `${lineStr} • ${sizeStr}`;
 }
 
 export function getAgentAttachmentPillContent(
@@ -97,7 +99,7 @@ export function getAgentAttachmentPillContent(
       return {
         icon: attachmentFileIcon,
         title: attachment.title ?? t("message.attachments.textAttachment"),
-        subtitle: getTextAttachmentSubtitle(attachment, t),
+        subtitle: getTextAttachmentSubtitle(attachment),
       };
     case "uploaded_file":
       return {
@@ -137,6 +139,17 @@ export function getWorkspaceAttachmentPillContent(
     icon: attachmentReviewIcon,
     title: t("message.attachments.review"),
     subtitle: getReviewSubtitle(attachment.commentCount, t),
+  };
+}
+
+export function getPastedTextAttachmentPillContent(
+  attachment: { text: string; lineCount: number; byteSize: number; title?: string },
+  _t?: TFunction,
+): AttachmentPillContent {
+  return {
+    icon: attachmentFileIcon,
+    title: attachment.title ?? "Pasted text",
+    subtitle: formatPastedTextSummary(attachment.lineCount, attachment.byteSize),
   };
 }
 
