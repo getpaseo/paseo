@@ -122,25 +122,25 @@ test("plugin handlers operate terminals through their host-owned Paseo API", asy
 import { defineRpc } from "@getpaseo/plugin";
 import { z } from "zod";
 const operate = defineRpc({ name: "operate", input: z.object({ workspaceId: z.string(), command: z.string() }), output: z.object({ workspaceIds: z.array(z.string()), lines: z.array(z.string()), remaining: z.number() }) });
+async function waitForTerminalOutput(terminal, text) {
+  const deadline = Date.now() + 10000;
+  while (Date.now() < deadline) {
+    const capture = await terminal.capture({ stripAnsi: true });
+    if (capture.lines.some(line => line.includes(text))) return capture.lines;
+    await new Promise(resolve => setTimeout(resolve, 20));
+  }
+  throw new Error("Timed out waiting for plugin terminal output: " + text);
+}
 export default function contribute(server) {
   server.handle(operate, async ({ workspaceId, command }, { paseo }) => {
     const workspace = paseo.workspaces.ref(workspaceId);
     const terminal = await workspace.terminals.create({ command, args: ["-e", "process.stdin.setRawMode(true); process.stdin.resume(); console.log('PLUGIN READY'); let hex = ''; process.stdin.on('data', data => { hex += data.toString('hex'); console.log('PLUGIN:' + hex); });"] });
     try {
-      const deadline = Date.now() + 10000;
-      async function waitFor(text) {
-        while (Date.now() < deadline) {
-          const capture = await terminal.capture({ stripAnsi: true });
-          if (capture.lines.some(line => line.includes(text))) return capture.lines;
-          await new Promise(resolve => setTimeout(resolve, 20));
-        }
-        throw new Error("Timed out waiting for plugin terminal output: " + text);
-      }
-      await waitFor("PLUGIN READY");
+      await waitForTerminalOutput(terminal, "PLUGIN READY");
       terminal.write("Enter");
-      await waitFor("PLUGIN:456e746572");
+      await waitForTerminalOutput(terminal, "PLUGIN:456e746572");
       terminal.sendKeys(["Enter"]);
-      const lines = await waitFor("PLUGIN:456e7465720d");
+      const lines = await waitForTerminalOutput(terminal, "PLUGIN:456e7465720d");
       const listed = await workspace.terminals.list();
       await paseo.terminals.ref(terminal.id).kill();
       return { workspaceIds: listed.entries.map(entry => entry.workspaceId), lines, remaining: (await workspace.terminals.list()).entries.length };

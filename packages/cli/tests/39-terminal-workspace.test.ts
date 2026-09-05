@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { createPaseoClient } from "@getpaseo/client";
 import { createE2ETestContext } from "./helpers/test-daemon.ts";
+import { waitForTerminalOutput } from "./helpers/terminal.ts";
 
 const ctx = await createE2ETestContext({ timeout: 30_000 });
 const sdk = createPaseoClient({ url: `${ctx.wsUrl}/ws`, reconnect: { enabled: false } });
@@ -54,26 +55,17 @@ try {
       "process.stdin.setRawMode(true); process.stdin.resume(); console.log('READY'); let hex = ''; process.stdin.on('data', data => { hex += data.toString('hex'); console.log('HEX:' + hex); });",
     ],
   });
-  async function waitFor(text: string) {
-    const deadline = Date.now() + 10_000;
-    while (Date.now() < deadline) {
-      const capture = await cli(["terminal", "capture", terminal.id]);
-      if (capture.lines.some((line: string) => line.includes(text))) return;
-      await new Promise((resolve) => setTimeout(resolve, 25));
-    }
-    throw new Error(`Missing terminal output: ${text}`);
-  }
-  await waitFor("READY");
+  await waitForTerminalOutput(ctx.paseo, terminal.id, "READY");
   assert.deepEqual(await cli(["terminal", "send-keys", terminal.id, "-l", "Enter"]), {
     terminalId: terminal.id,
     keysSent: 5,
   });
-  await waitFor("HEX:456e746572");
+  await waitForTerminalOutput(ctx.paseo, terminal.id, "HEX:456e746572");
   assert.deepEqual(await cli(["terminal", "send-keys", terminal.id, "Enter"]), {
     terminalId: terminal.id,
     keysSent: 1,
   });
-  await waitFor("HEX:456e7465720d");
+  await waitForTerminalOutput(ctx.paseo, terminal.id, "HEX:456e7465720d");
   assert.deepEqual(await cli(["terminal", "kill", terminal.id]), {
     terminalId: terminal.id,
     success: true,
