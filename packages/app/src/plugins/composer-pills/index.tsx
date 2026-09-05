@@ -9,6 +9,8 @@ import { useToast } from "@/contexts/toast-context";
 import { useHostRuntimeClient, useHosts } from "@/runtime/host-runtime";
 import type { Theme } from "@/styles/theme";
 import { createPluginClientStateSource } from "../client-state/source";
+import { createPluginAgentActionContext } from "../actions";
+import { createPluginNavigation } from "../navigation";
 import { PluginRuntimeBoundary } from "../runtime-boundary";
 import { createPluginSurfaceRuntime } from "../surface-runtime";
 import { SurfaceErrorBoundary } from "../surface-error-boundary";
@@ -46,7 +48,10 @@ function PluginComposerPill({
   const client = useHostRuntimeClient(serverId);
   const toast = useToast();
   const [pending, setPending] = useState(false);
-  const runtime = useMemo(() => createPluginSurfaceRuntime(client, plugin.id), [client, plugin.id]);
+  const runtime = useMemo(
+    () => createPluginSurfaceRuntime(client, plugin.id, agentId),
+    [agentId, client, plugin.id],
+  );
   const state = useMemo(() => createPluginClientStateSource(serverId), [serverId]);
   const props = useMemo<PluginComposerPillProps>(
     () => ({
@@ -58,17 +63,31 @@ function PluginComposerPill({
     }),
     [agentId, compact, hostLabel, serverId, theme, workspaceId],
   );
+  const actionContext = useMemo(
+    () =>
+      runtime
+        ? createPluginAgentActionContext({
+            plugin,
+            runtime,
+            navigation: createPluginNavigation({ serverId, workspaceId }),
+            state,
+            workspaceId,
+            agentId,
+          })
+        : null,
+    [agentId, plugin, runtime, serverId, state, workspaceId],
+  );
   const press = useCallback(async () => {
-    if (!runtime || pending) return;
+    if (!runtime || !actionContext || pending) return;
     setPending(true);
     try {
-      await contribution.onPress();
+      await contribution.onPress(actionContext);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : String(error));
     } finally {
       setPending(false);
     }
-  }, [contribution, pending, runtime, toast]);
+  }, [actionContext, contribution, pending, runtime, toast]);
   const pillStyle = useCallback(
     ({ hovered, pressed }: PressableStateCallbackType & { hovered?: boolean }) => [
       composerPillStyles.body,

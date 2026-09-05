@@ -95,6 +95,46 @@ test("session create forwards clientMessageId to the initial prompt run options"
   });
 });
 
+test("session create records the agent before post-create setup can fail", async () => {
+  const snapshot = {
+    id: "agent-setup-failure",
+    provider: "codex",
+    cwd: "/tmp/paseo-create-test",
+    runtimeInfo: null,
+  } as ManagedAgent;
+  const onCreated = vi.fn();
+  const startAfterAgentCreate = vi.fn(() => {
+    throw new Error("setup failed");
+  });
+  const dependencies: Parameters<typeof createAgentCommand>[0] = {
+    agentManager: {
+      createAgent: vi.fn(async () => snapshot),
+    } as unknown as Parameters<typeof createAgentCommand>[0]["agentManager"],
+    agentStorage: {} as Parameters<typeof createAgentCommand>[0]["agentStorage"],
+    logger: createTestLogger(),
+    providerSnapshotManager: createProviderSnapshotManagerStub().manager,
+  };
+
+  await expect(
+    createAgentCommand(dependencies, {
+      kind: "session",
+      config: { provider: "codex", cwd: snapshot.cwd },
+      workspaceId: "ws-create-test",
+      labels: {},
+      provisionalTitle: null,
+      firstAgentContext: { attachments: [] },
+      onCreated,
+      buildSessionConfig: async (config) => ({
+        sessionConfig: config,
+        createdWorkspaceId: "ws-create-test",
+        setupContinuation: { kind: "agent", startAfterAgentCreate },
+      }),
+    }),
+  ).rejects.toThrow("setup failed");
+  expect(onCreated).toHaveBeenCalledOnce();
+  expect(onCreated).toHaveBeenCalledWith({ agentId: snapshot.id });
+});
+
 test("session create validates the requested mode against the provider's modes", async () => {
   const snapshot = {
     id: "agent-1",

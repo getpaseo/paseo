@@ -120,8 +120,46 @@ export default function contribute(plugin: PluginContext) {
 });
 
 describe("plugin contribution targets", () => {
+  it("does not reject a direct registration in a nested function with a shadowing parameter", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "paseo-plugin-compiler-"));
+    temporaryDirectories.push(directory);
+    const entryPath = path.join(directory, "index.ts");
+    await writeFile(
+      entryPath,
+      `export default function contribute(plugin) {
+  function nested(plugin) {
+    plugin.addTool({});
+  }
+  nested(plugin);
+  return () => undefined;
+}
+`,
+    );
+
+    await expect(compilePlugin(entryPath)).resolves.toBeDefined();
+  });
+
+  it("does not reject unrelated local member helpers", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "paseo-plugin-compiler-"));
+    temporaryDirectories.push(directory);
+    const entryPath = path.join(directory, "index.ts");
+    await writeFile(
+      entryPath,
+      `export default function contribute(plugin) {
+  const object = { addTool() {} };
+  var register = object.addTool;
+  register({});
+  return () => undefined;
+}
+`,
+    );
+
+    await expect(compilePlugin(entryPath)).resolves.toBeDefined();
+  });
+
   it.each([
     "const alias = plugin;\nalias.addTool({});",
+    "let alias;\nalias = plugin;\nalias.addTool({});",
     "const register = plugin.addTool;\nregister({});",
     "const { addTool } = plugin;\naddTool({});",
     "const { addTool: register } = plugin;\nregister({});",
@@ -144,6 +182,25 @@ describe("plugin contribution targets", () => {
       await expect(compilePlugin(entryPath)).rejects.toThrow(/direct.*context|default context/i);
     },
   );
+
+  it("rejects a helper that closes over the default context", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "paseo-plugin-compiler-"));
+    temporaryDirectories.push(directory);
+    const entryPath = path.join(directory, "index.ts");
+    await writeFile(
+      entryPath,
+      `export default function contribute(plugin) {
+  function register() {
+    plugin.addTool({});
+  }
+  register();
+  return () => undefined;
+}
+`,
+    );
+
+    await expect(compilePlugin(entryPath)).rejects.toThrow(/helper|default context/i);
+  });
 
   it("keeps direct server and client imports aligned with each bundle", async () => {
     const directory = await mkdtemp(path.join(tmpdir(), "paseo-plugin-compiler-"));

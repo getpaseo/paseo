@@ -1,11 +1,12 @@
 import { z } from "zod";
 
-import { DeliveryRecordSchema, MAX_DELIVERY_PAGE_SIZE } from "./deliveries.js";
+import { DeliveryIdSchema, DeliveryRecordSchema, MAX_DELIVERY_PAGE_SIZE } from "./deliveries.js";
 
 /** Bounds applied to authority values crossing the plugin process boundary. */
 export const MAX_PLUGIN_AUTHORITY_STRING_BYTES = 512;
 export const MAX_PLUGIN_AUTHORITY_LABELS = 128;
 export const MAX_PLUGIN_HOST_WORKTREE_ID_BYTES = 256;
+export const MAX_PLUGIN_HOST_NONCE_BYTES = 128;
 
 const authorityTextEncoder = new TextEncoder();
 const AuthorityStringSchema = z
@@ -24,6 +25,15 @@ const WorktreeIdSchema = z
   .refine(
     (value) => authorityTextEncoder.encode(value).byteLength <= MAX_PLUGIN_HOST_WORKTREE_ID_BYTES,
     `must be at most ${MAX_PLUGIN_HOST_WORKTREE_ID_BYTES} UTF-8 bytes`,
+  )
+  .refine((value) => value.trim() === value, "must not have leading or trailing whitespace");
+const CapabilityNonceSchema = z
+  .string()
+  .min(1)
+  .max(MAX_PLUGIN_HOST_NONCE_BYTES)
+  .refine(
+    (value) => authorityTextEncoder.encode(value).byteLength <= MAX_PLUGIN_HOST_NONCE_BYTES,
+    `must be at most ${MAX_PLUGIN_HOST_NONCE_BYTES} UTF-8 bytes`,
   )
   .refine((value) => value.trim() === value, "must not have leading or trailing whitespace");
 const KnownStringSchema = z.discriminatedUnion("known", [
@@ -137,7 +147,9 @@ export const PluginHostDeliveryGetOptionsSchema = z
 
 export const PluginHostDeliverySendOptionsSchema = z
   .object({
-    deliveryId: AuthorityStringSchema.optional(),
+    // A plugin delivery is retried across reconnects, so its id is the
+    // bounded idempotency key rather than a daemon-generated per-attempt id.
+    deliveryId: DeliveryIdSchema,
     messageId: AuthorityStringSchema.optional(),
   })
   .strict();
@@ -148,13 +160,16 @@ const HostRequestBaseSchema = z
     invocationId: AuthorityStringSchema,
     generation: z.number().int().positive(),
     installationId: AuthorityStringSchema,
+    // COMPAT(pluginHostCapabilityNonce): optional for old private IPC peers;
+    // new runtimes populate it and reject responses without an exact match.
+    capabilityNonce: CapabilityNonceSchema.optional(),
   })
   .strict();
 
 export const PluginHostDeliverySendRequestSchema = HostRequestBaseSchema.extend({
   type: z.literal("plugin.host.delivery.send.request"),
   payload: z.unknown(),
-  options: PluginHostDeliverySendOptionsSchema.optional(),
+  options: PluginHostDeliverySendOptionsSchema,
 }).strict();
 
 export const PluginHostDeliveryGetRequestSchema = HostRequestBaseSchema.extend({
@@ -209,6 +224,8 @@ export const PluginHostCancelRequestSchema = z
     invocationId: AuthorityStringSchema,
     generation: z.number().int().positive(),
     installationId: AuthorityStringSchema,
+    capabilityNonce: CapabilityNonceSchema.optional(),
+    targetRequestId: AuthorityStringSchema.optional(),
   })
   .strict();
 
@@ -229,6 +246,7 @@ const HostResponseBaseSchema = z
     invocationId: AuthorityStringSchema,
     generation: z.number().int().positive(),
     installationId: AuthorityStringSchema,
+    capabilityNonce: CapabilityNonceSchema.optional(),
     ok: z.boolean(),
     result: z.unknown().optional(),
     error: z

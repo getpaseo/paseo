@@ -55,6 +55,39 @@ test("persists pending deliveries and recovers them after a new ledger instance"
   });
 });
 
+test("does not start a queued durable mutation after cancellation", async () => {
+  const { ledger } = await createLedger();
+  const sendController = new AbortController();
+  sendController.abort(new Error("send cancelled"));
+
+  await expect(
+    ledger.send("owner", {
+      deliveryId: "cancelled-delivery",
+      targetAgentId: "agent-test",
+      payload: "cancelled",
+      signal: sendController.signal,
+    }),
+  ).rejects.toThrow("send cancelled");
+  await expect(ledger.get("owner")).resolves.toMatchObject({ deliveries: [] });
+
+  await ledger.send("owner", {
+    deliveryId: "accepted-delivery",
+    targetAgentId: "agent-test",
+    payload: "accepted",
+  });
+  await ledger.markDispatching("owner", "accepted-delivery");
+  await ledger.markAccepted("owner", "accepted-delivery");
+  const acknowledgeController = new AbortController();
+  acknowledgeController.abort(new Error("acknowledge cancelled"));
+
+  await expect(
+    ledger.acknowledge("owner", "accepted-delivery", { signal: acknowledgeController.signal }),
+  ).rejects.toThrow("acknowledge cancelled");
+  await expect(
+    ledger.get("owner", { deliveryId: "accepted-delivery", includeAcknowledged: true }),
+  ).resolves.toMatchObject({ delivery: { status: "accepted" } });
+});
+
 test("loads legacy pull-only records and supplies native defaults in memory", async () => {
   const { home } = await createLedger();
   await writeFile(

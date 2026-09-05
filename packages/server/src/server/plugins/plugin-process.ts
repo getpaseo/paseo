@@ -75,6 +75,7 @@ const pendingHostRequests = new Map<
     readonly invocationId: string;
     readonly generation: number;
     readonly installationId: string;
+    readonly capabilityNonce: string;
     readonly resolve: (result: unknown) => void;
     readonly reject: (error: Error) => void;
     readonly signal: AbortSignal;
@@ -264,6 +265,7 @@ function requestHost(
     invocationId: string;
     generation: number;
     installationId: string;
+    capabilityNonce: string;
     signal: AbortSignal;
   },
 ): Promise<unknown> {
@@ -276,6 +278,7 @@ function requestHost(
     invocationId: state.invocationId,
     generation: state.generation,
     installationId: state.installationId,
+    capabilityNonce: state.capabilityNonce,
   } as PluginProcessMessage;
   return new Promise((resolve, reject) => {
     if (state.signal.aborted) {
@@ -295,6 +298,8 @@ function requestHost(
         invocationId: state.invocationId,
         generation: state.generation,
         installationId: state.installationId,
+        capabilityNonce: state.capabilityNonce,
+        targetRequestId: requestId,
       }).catch(() => undefined);
       reject(
         state.signal.reason instanceof Error
@@ -302,10 +307,15 @@ function requestHost(
           : new Error("Plugin host invocation cancelled"),
       );
     };
+    if (pendingHostRequests.has(requestId)) {
+      reject(new Error("Plugin host request id was reused"));
+      return;
+    }
     pendingHostRequests.set(requestId, {
       invocationId: state.invocationId,
       generation: state.generation,
       installationId: state.installationId,
+      capabilityNonce: state.capabilityNonce,
       resolve,
       reject,
       signal: state.signal,
@@ -324,9 +334,10 @@ function createHostCapability(
   invocationId: string,
   generation: number,
   installationId: string,
+  capabilityNonce: string,
   signal: AbortSignal,
 ): PluginHostCapability {
-  const state = { invocationId, generation, installationId, signal };
+  const state = { invocationId, generation, installationId, capabilityNonce, signal };
   const capability: PluginHostCapability = {
     deliveries: {
       send: (payload, options) =>
@@ -358,8 +369,10 @@ function createHostCapability(
       remove: (id) => requestHost("worktree.remove", { id }, state).then(() => undefined),
     },
   };
-  // The daemon resolves the caller from the invocation ID. The capability
-  // carries no target input, so a plugin cannot change the target between calls.
+  // The daemon resolves the caller from this exact invocation and nonce. The
+  // capability carries no target input, so a plugin cannot change the target
+  // between calls. Plugin code runs in a trusted, unsandboxed child process;
+  // the nonce prevents accidental cross-handler/cross-installation reuse.
   return freezeSnapshot(capability);
 }
 
@@ -370,12 +383,19 @@ function createToolContext(
   invocationId: string,
   generation: number,
   installationId: string,
+  capabilityNonce: string,
 ): PluginToolHandlerContext {
   if (!paseo) throw new Error("Plugin Paseo API is unavailable");
   return {
     paseo,
     caller: freezeSnapshot(message.caller ?? unknownCallerAuthority(message)),
-    host: createHostCapability(invocationId, generation, installationId, controller.signal),
+    host: createHostCapability(
+      invocationId,
+      generation,
+      installationId,
+      capabilityNonce,
+      controller.signal,
+    ),
     callerAgentId: message.callerAgentId,
     agent: freezeSnapshot(message.agent),
     workspace: freezeSnapshot(message.workspace),
@@ -385,6 +405,14 @@ function createToolContext(
 }
 
 function invokeTool(message: Extract<PluginProcessRequest, { type: "tool_invoke" }>): void {
+  if (activeTools.has(message.requestId)) {
+    send({
+      type: "tool_error",
+      requestId: message.requestId,
+      error: "Plugin tool request id was reused",
+    });
+    return;
+  }
   const registered = tools.get(message.name);
   if (!registered) {
     send({
@@ -424,6 +452,7 @@ function invokeTool(message: Extract<PluginProcessRequest, { type: "tool_invoke"
           message.requestId,
           message.generation ?? 1,
           message.installationId ?? "legacy",
+          message.capabilityNonce ?? randomUUID(),
         ),
       );
       const parsedOutput = registered.definition.output
@@ -449,6 +478,14 @@ function invokeTool(message: Extract<PluginProcessRequest, { type: "tool_invoke"
 }
 
 function invokeRpc(message: Extract<PluginProcessRequest, { type: "invoke" }>): void {
+  if (activeRpcs.has(message.requestId)) {
+    send({
+      type: "error",
+      requestId: message.requestId,
+      error: "Plugin RPC request id was reused",
+    });
+    return;
+  }
   const registered = handlers.get(message.method);
   if (!registered) {
     send({
@@ -472,6 +509,7 @@ function invokeRpc(message: Extract<PluginProcessRequest, { type: "invoke" }>): 
               message.requestId,
               message.generation ?? 1,
               message.installationId ?? "legacy",
+              message.capabilityNonce ?? randomUUID(),
               controller.signal,
             )
           : null,
@@ -583,7 +621,8 @@ process.on("message", (rawMessage: unknown) => {
     if (
       message.invocationId !== pending.invocationId ||
       message.generation !== pending.generation ||
-      message.installationId !== pending.installationId
+      message.installationId !== pending.installationId ||
+      message.capabilityNonce !== pending.capabilityNonce
     ) {
       pendingHostRequests.delete(message.requestId);
       pending.signal.removeEventListener("abort", pending.onAbort);

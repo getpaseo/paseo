@@ -90,6 +90,8 @@ interface PendingInvocation {
   onComplete?: () => void;
   caller: PluginCallerAuthority | null;
   hostController: AbortController;
+  capabilityNonce: string;
+  hostRequests: Map<string, string>;
 }
 
 interface LoadedPlugin {
@@ -113,7 +115,10 @@ interface PluginRuntimeDependencies {
   spawnChild?: () => PluginChild;
   terminateProcess?: ProcessTerminator;
   sessionHost?: PluginPaseoSessionHost;
-  resolveToolContext?: (callerAgentId: string) => Promise<PluginToolCallerContext>;
+  resolveToolContext?: (
+    callerAgentId: string,
+    signal?: AbortSignal,
+  ) => Promise<PluginToolCallerContext>;
 }
 
 interface PluginLogTail {
@@ -192,10 +197,16 @@ class PluginOutputCapture {
 export interface PluginPaseoSessionHost {
   /** Fence durable delivery dispatch before the plugin process is stopped. */
   beginPluginShutdown?(pluginId: string): void;
+  /** Purges the durable installation owner after process teardown. */
+  finishPluginShutdown?(pluginId: string, installationId: string): Promise<void>;
   /** Authorizes an invocation-scoped host request against the live session. */
   invokePluginHost?(input: {
     pluginId: string;
     caller: PluginCallerAuthority;
+    invocationId: string;
+    generation: number;
+    installationId: string;
+    capabilityNonce: string;
     operation: string;
     input: Record<string, unknown>;
     signal: AbortSignal;
@@ -203,6 +214,7 @@ export interface PluginPaseoSessionHost {
   attachPluginSocket(
     pluginId: string,
     socket: PluginSessionSocket,
+    installationId?: string,
   ): Promise<{ closed: Promise<void> }>;
 }
 
@@ -291,7 +303,9 @@ export class PluginRuntime {
   private readonly spawnChild: () => PluginChild;
   private readonly terminateProcess: ProcessTerminator;
   private sessionHost: PluginPaseoSessionHost | null;
-  private resolveToolContext: ((callerAgentId: string) => Promise<PluginToolCallerContext>) | null;
+  private resolveToolContext:
+    | ((callerAgentId: string, signal?: AbortSignal) => Promise<PluginToolCallerContext>)
+    | null;
   private readonly listeners = new Set<(pluginId: string, error?: string) => void>();
   private readonly nextGenerations = new Map<string, number>();
   private activeToolInvocations = 0;
@@ -315,7 +329,7 @@ export class PluginRuntime {
   }
 
   bindToolContextResolver(
-    resolver: (callerAgentId: string) => Promise<PluginToolCallerContext>,
+    resolver: (callerAgentId: string, signal?: AbortSignal) => Promise<PluginToolCallerContext>,
   ): void {
     this.resolveToolContext = resolver;
   }
@@ -344,13 +358,13 @@ export class PluginRuntime {
       throw error;
     });
     if (!canPublish()) {
-      await this.trackPluginClosing(loaded);
+      await this.closePluginInstallation(loaded);
       throw new Error(`Plugin start cancelled: ${pluginId}`);
     }
     try {
       this.assertAggregateToolCatalogWithinLimits([...this.plugins.values(), loaded]);
     } catch (error) {
-      await this.trackPluginClosing(loaded);
+      await this.closePluginInstallation(loaded);
       throw error;
     }
     this.plugins.set(pluginId, loaded);
@@ -367,10 +381,9 @@ export class PluginRuntime {
   async stopPluginById(pluginId: string): Promise<boolean> {
     const loaded = this.plugins.get(pluginId);
     if (!loaded) return false;
-    this.sessionHost?.beginPluginShutdown?.(pluginId);
     this.plugins.delete(pluginId);
     this.rejectPending(loaded, `Plugin stopped: ${pluginId}`);
-    await this.trackPluginClosing(loaded);
+    await this.closePluginInstallation(loaded);
     return true;
   }
 
@@ -419,6 +432,11 @@ export class PluginRuntime {
       callerAgentId?: string | null;
     } = {},
   ): Promise<unknown> {
+    const preflightCancellation = pluginInvocationAbortReason(
+      options.signal,
+      "Plugin RPC invocation cancelled",
+    );
+    if (preflightCancellation) throw preflightCancellation;
     const loaded = this.plugins.get(pluginId);
     if (!loaded) throw new Error(`Plugin is not available: ${pluginId}`);
     if (!loaded.methods.has(method))
@@ -426,12 +444,18 @@ export class PluginRuntime {
     let caller: PluginCallerAuthority | null = null;
     if (options.callerAgentId != null) {
       if (!this.resolveToolContext) throw new Error("Plugin caller context is unavailable");
-      const context = await this.resolveToolContext(options.callerAgentId);
+      const context = await this.resolveToolContext(options.callerAgentId, options.signal);
       caller = context.caller ?? null;
       if (!caller || caller.callerAgentId !== options.callerAgentId) {
         throw new Error("Plugin caller context did not match the requested agent");
       }
     }
+    this.assertCurrentPluginInvocation(loaded, pluginId);
+    const cancellation = pluginInvocationAbortReason(
+      options.signal,
+      "Plugin RPC invocation cancelled",
+    );
+    if (cancellation) throw cancellation;
     return this.invokeChild(
       loaded,
       {
@@ -497,7 +521,7 @@ export class PluginRuntime {
     let handedOff = false;
     try {
       assertSafeJson(input, "Plugin tool input", PLUGIN_TOOL_MAX_RESULT_BYTES);
-      const context = await this.resolveToolContext(options.callerAgentId);
+      const context = await this.resolveToolContext(options.callerAgentId, options.signal);
       if (
         this.plugins.get(pluginId) !== loaded ||
         (options.generation !== undefined && loaded.generation !== options.generation) ||
@@ -510,6 +534,7 @@ export class PluginRuntime {
         "Plugin tool invocation cancelled",
       );
       if (cancellation) throw cancellation;
+      this.assertCurrentPluginInvocation(loaded, pluginId);
       const result = this.invokeChild(
         loaded,
         {
@@ -544,7 +569,7 @@ export class PluginRuntime {
     for (const plugin of loaded) {
       this.rejectPending(plugin, `Plugin stopped: ${plugin.id}`);
     }
-    await Promise.all(loaded.map((plugin) => this.trackPluginClosing(plugin)));
+    await Promise.all(loaded.map((plugin) => this.closePluginInstallation(plugin)));
     await this.waitForAllPluginClosingsBounded(STOP_TIMEOUT_MS);
   }
 
@@ -564,6 +589,9 @@ export class PluginRuntime {
     });
     const sessionSocket = new PluginSessionSocket(child);
     const pending = new Map<string, PendingInvocation>();
+    const generation = (this.nextGenerations.get(pluginId) ?? 0) + 1;
+    this.nextGenerations.set(pluginId, generation);
+    const installationId = randomUUID();
     let loaded: LoadedPlugin | null = null;
     let childClosedObserved = false;
     let resolveChildClosed!: () => void;
@@ -583,14 +611,26 @@ export class PluginRuntime {
       }
     });
     const sessionAttachment = await sessionHost
-      .attachPluginSocket(pluginId, sessionSocket)
-      .catch((error) => {
+      .attachPluginSocket(pluginId, sessionSocket, installationId)
+      .catch(async (error) => {
         terminatePluginChild(child);
+        await sessionHost.finishPluginShutdown?.(pluginId, installationId).catch((cleanupError) => {
+          this.logger.warn(
+            { err: cleanupError, pluginId, installationId },
+            "Failed to clean up a plugin installation after session attach failed",
+          );
+        });
         throw error;
       });
-    const generation = (this.nextGenerations.get(pluginId) ?? 0) + 1;
-    this.nextGenerations.set(pluginId, generation);
-    const installationId = randomUUID();
+    const cleanupFailedInstallation = async (): Promise<void> => {
+      sessionSocket.close();
+      await Promise.race([
+        sessionAttachment.closed,
+        new Promise<void>((resolve) => setTimeout(resolve, STOP_TIMEOUT_MS)),
+      ]);
+      terminatePluginChild(child);
+      await sessionHost.finishPluginShutdown?.(pluginId, installationId);
+    };
     let ready: { methods: string[]; catalog: PluginToolCatalogEntry[] };
     try {
       ready = await new Promise<{ methods: string[]; catalog: PluginToolCatalogEntry[] }>(
@@ -657,12 +697,12 @@ export class PluginRuntime {
         },
       );
     } catch (error) {
-      sessionSocket.close();
-      await Promise.race([
-        sessionAttachment.closed,
-        new Promise<void>((resolve) => setTimeout(resolve, STOP_TIMEOUT_MS)),
-      ]);
-      terminatePluginChild(child);
+      await cleanupFailedInstallation().catch((cleanupError) => {
+        this.logger.warn(
+          { err: cleanupError, pluginId, installationId },
+          "Failed to clean up a plugin installation after initialization failed",
+        );
+      });
       throw error;
     }
     let tools: ReadonlyMap<string, PluginToolCatalogEntry>;
@@ -679,12 +719,12 @@ export class PluginRuntime {
         throw new Error(`Duplicate plugin tool name across plugins: ${conflict.name}`);
       }
     } catch (error) {
-      sessionSocket.close();
-      await Promise.race([
-        sessionAttachment.closed,
-        new Promise<void>((resolve) => setTimeout(resolve, STOP_TIMEOUT_MS)),
-      ]);
-      terminatePluginChild(child);
+      await cleanupFailedInstallation().catch((cleanupError) => {
+        this.logger.warn(
+          { err: cleanupError, pluginId, installationId },
+          "Failed to clean up a plugin installation after catalog validation failed",
+        );
+      });
       throw error;
     }
     loaded = {
@@ -763,6 +803,7 @@ export class PluginRuntime {
         invocationId: message.invocationId,
         generation: message.generation,
         installationId: loaded.installationId,
+        capabilityNonce: message.capabilityNonce,
         ok: error === undefined,
         ...(error === undefined ? { result } : { error: boundError(error) }),
       } as PluginProcessRequest).catch((sendError) => {
@@ -771,13 +812,18 @@ export class PluginRuntime {
     };
 
     if (message.type === "plugin.host.cancel.request") {
+      const targetRequestId = message.targetRequestId;
+      const target = targetRequestId && pending ? pending : undefined;
       if (
         message.generation !== loaded.generation ||
-        message.installationId !== loaded.installationId
+        message.installationId !== loaded.installationId ||
+        message.capabilityNonce === undefined ||
+        !target ||
+        target.hostRequests.get(targetRequestId!) !== message.capabilityNonce
       ) {
         reply(undefined, new Error("Plugin host cancellation generation is stale"));
       } else {
-        pending?.hostController.abort(new Error("Plugin host request cancelled"));
+        target!.hostController.abort(new Error("Plugin host request cancelled"));
         reply();
       }
       return;
@@ -788,9 +834,19 @@ export class PluginRuntime {
     }
     if (
       message.generation !== loaded.generation ||
-      message.installationId !== loaded.installationId
+      message.installationId !== loaded.installationId ||
+      message.capabilityNonce === undefined ||
+      message.capabilityNonce !== pending.capabilityNonce
     ) {
       reply(undefined, new Error("Plugin host invocation generation is stale"));
+      return;
+    }
+    if (
+      [...loaded.pending.values()].some((candidate) =>
+        candidate.hostRequests.has(message.requestId),
+      )
+    ) {
+      reply(undefined, new Error("Plugin host request id was reused"));
       return;
     }
     const host = this.sessionHost?.invokePluginHost;
@@ -805,16 +861,26 @@ export class PluginRuntime {
     delete input.invocationId;
     delete input.generation;
     delete input.installationId;
+    delete input.capabilityNonce;
+    pending.hostRequests.set(message.requestId, message.capabilityNonce);
     void host({
       pluginId: loaded.id,
       caller: pending.caller,
+      invocationId: message.invocationId,
+      generation: message.generation,
+      installationId: message.installationId,
+      capabilityNonce: message.capabilityNonce,
       operation,
       input,
       signal: pending.hostController.signal,
-    }).then(
-      (result) => reply(result),
-      (error) => reply(undefined, error),
-    );
+    })
+      .then(
+        (result) => reply(result),
+        (error) => reply(undefined, error),
+      )
+      .finally(() => {
+        pending.hostRequests.delete(message.requestId);
+      });
   }
 
   private handleToolUpdate(
@@ -854,6 +920,7 @@ export class PluginRuntime {
     const wasPublished = this.plugins.get(loaded.id) === loaded;
     if (wasPublished) {
       this.plugins.delete(loaded.id);
+      this.sessionHost?.beginPluginShutdown?.(loaded.id);
     }
     this.rejectPending(loaded, `Plugin process exited: ${loaded.id}`, true);
     await Promise.race([
@@ -861,6 +928,16 @@ export class PluginRuntime {
       new Promise<void>((resolve) => setTimeout(resolve, STOP_TIMEOUT_MS)),
     ]);
     if (wasPublished) this.notify(loaded.id, `Plugin process exited: ${loaded.id}`);
+    if (wasPublished) {
+      await this.sessionHost
+        ?.finishPluginShutdown?.(loaded.id, loaded.installationId)
+        .catch((error) => {
+          this.logger.warn(
+            { err: error, pluginId: loaded.id, installationId: loaded.installationId },
+            "Failed to finish plugin cleanup after process exit",
+          );
+        });
+    }
   }
 
   private async stopPlugin(loaded: LoadedPlugin): Promise<void> {
@@ -915,6 +992,12 @@ export class PluginRuntime {
       new Promise<void>((resolve) => setTimeout(resolve, STOP_TIMEOUT_MS)),
     ]);
     this.appendLog(loaded.id, "stdout", "[paseo] Plugin stopped");
+  }
+
+  private async closePluginInstallation(loaded: LoadedPlugin): Promise<void> {
+    this.sessionHost?.beginPluginShutdown?.(loaded.id);
+    await this.trackPluginClosing(loaded);
+    await this.sessionHost?.finishPluginShutdown?.(loaded.id, loaded.installationId);
   }
 
   private rejectPending(loaded: LoadedPlugin, message: string, childGone = false): void {
@@ -1006,7 +1089,12 @@ export class PluginRuntime {
       this.notify(loaded.id, reason);
     }
     this.rejectPending(loaded, reason);
-    void this.trackPluginClosing(loaded);
+    void this.closePluginInstallation(loaded).catch((error) => {
+      this.logger.warn(
+        { err: error, pluginId: loaded.id, installationId: loaded.installationId },
+        "Failed to finish quarantined plugin installation cleanup",
+      );
+    });
   }
 
   private async trackPluginClosing(loaded: LoadedPlugin): Promise<void> {
@@ -1054,6 +1142,15 @@ export class PluginRuntime {
     ]);
   }
 
+  private assertCurrentPluginInvocation(loaded: LoadedPlugin, pluginId: string): void {
+    if (this.plugins.get(pluginId) !== loaded) {
+      throw new Error(`Plugin is no longer available: ${pluginId}`);
+    }
+    if (loaded.quarantined || loaded.childClosedObserved()) {
+      throw new Error(`Plugin installation is no longer active: ${pluginId}`);
+    }
+  }
+
   private invokeChild(
     loaded: LoadedPlugin,
     request:
@@ -1064,6 +1161,7 @@ export class PluginRuntime {
           context: PluginCallerAuthority | null;
           generation: number;
           installationId: string;
+          capabilityNonce?: string;
         }
       | {
           type: "tool_invoke";
@@ -1072,6 +1170,7 @@ export class PluginRuntime {
           context: PluginToolCallerContext;
           generation: number;
           installationId: string;
+          capabilityNonce?: string;
         },
     timeoutMs: number = REQUEST_TIMEOUT_MS,
     options: {
@@ -1084,7 +1183,12 @@ export class PluginRuntime {
   ): Promise<unknown> {
     const kind = options.kind ?? "rpc";
     const requestId = randomUUID();
-    const validatedRequest = validatePluginProcessRequest({ ...request, requestId });
+    const capabilityNonce = request.capabilityNonce ?? randomUUID();
+    const validatedRequest = validatePluginProcessRequest({
+      ...request,
+      requestId,
+      capabilityNonce,
+    });
     return new Promise((resolve, reject) => {
       if (options.signal?.aborted) {
         reject(
@@ -1109,6 +1213,8 @@ export class PluginRuntime {
         onComplete: options.onComplete,
         caller: options.caller ?? null,
         hostController: new AbortController(),
+        capabilityNonce,
+        hostRequests: new Map(),
       };
       pending.cleanup = () => options.signal?.removeEventListener("abort", abort);
       pending.timeout = setTimeout(

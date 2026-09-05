@@ -5181,6 +5181,11 @@ export class DaemonClient {
     input: unknown,
     options: InvokePluginRpcOptions = {},
   ): Promise<unknown> {
+    if (options.signal?.aborted) {
+      throw options.signal.reason instanceof Error
+        ? options.signal.reason
+        : new Error("Plugin RPC invocation cancelled");
+    }
     const supportsCallerHostApis =
       this.lastServerInfoMessage?.features?.pluginCallerHostApis === true;
     if (typeof options.callerAgentId === "string" && !supportsCallerHostApis) {
@@ -6414,29 +6419,33 @@ export class DaemonClient {
     let waiter: Waiter<T> | null = null;
     let settled = false;
     let rejectFn: ((error: Error) => void) | null = null;
+    let removeAbortListener = (): void => undefined;
+
+    const cleanup = (): void => {
+      if (waiter) {
+        this.waiters.delete(waiter);
+        if (waiter.timeoutHandle) clearTimeout(waiter.timeoutHandle);
+      }
+      removeAbortListener();
+    };
 
     const promise = new Promise<T>((resolve, reject) => {
       const wrappedResolve = (value: T) => {
         if (settled) return;
         settled = true;
+        cleanup();
         resolve(value);
       };
       const wrappedReject = (error: Error) => {
         if (settled) return;
         settled = true;
+        cleanup();
         reject(error);
       };
       rejectFn = wrappedReject;
 
       const timeoutHandle =
-        timeout > 0
-          ? setTimeout(() => {
-              if (waiter) {
-                this.waiters.delete(waiter);
-              }
-              wrappedReject(timeoutError);
-            }, timeout)
-          : null;
+        timeout > 0 ? setTimeout(() => wrappedReject(timeoutError), timeout) : null;
 
       waiter = {
         predicate,
@@ -6475,7 +6484,6 @@ export class DaemonClient {
 
     if (options?.signal) {
       const abort = (): void => {
-        options.signal?.removeEventListener("abort", abort);
         cancel(
           options.signal?.reason instanceof Error
             ? options.signal.reason
@@ -6483,6 +6491,7 @@ export class DaemonClient {
         );
       };
       options.signal.addEventListener("abort", abort, { once: true });
+      removeAbortListener = () => options.signal?.removeEventListener("abort", abort);
       if (options.signal.aborted) abort();
     }
 

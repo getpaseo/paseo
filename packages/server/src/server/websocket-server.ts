@@ -133,6 +133,8 @@ export interface SessionAdmission {
   principalId: string;
   permissions: readonly DaemonPermission[];
   hubExecutionAgents?: HubExecutionAgents;
+  resourcePermissions?: SessionOptions["resourcePermissions"];
+  pluginIdentity?: SessionOptions["pluginIdentity"];
 }
 
 interface PluginDeliveryCleanupRetry {
@@ -502,6 +504,8 @@ interface SocketSessionOptions {
   hubRelationships?: HubRelationshipManagement;
   deliveryLedger: DeliveryLedger;
   deliveryDispatchCoordinator: DeliveryDispatchCoordinator;
+  resourcePermissions?: SessionOptions["resourcePermissions"];
+  pluginIdentity?: SessionOptions["pluginIdentity"];
 }
 
 interface ClosePhysicalSocketParams {
@@ -562,6 +566,7 @@ export class VoiceAssistantWebSocketServer {
   private readonly externalSessionsByKey: Map<string, ReconnectableSessionConnection> = new Map();
   private readonly pluginSocketIds = new WeakMap<WebSocketLike, string>();
   private readonly pluginSocketCleanup = new WeakMap<WebSocketLike, () => void>();
+  private readonly pluginSessionsByInstallation = new Map<string, Session>();
   private readonly pluginDeliveryOwners = new Map<string, Set<string>>();
   private readonly pluginDeliveryCleanupPromises = new Set<Promise<void>>();
   private readonly pluginDeliveryCleanupRetries = new Map<string, PluginDeliveryCleanupRetry>();
@@ -1023,6 +1028,7 @@ export class VoiceAssistantWebSocketServer {
   public async attachPluginSocket(
     pluginId: string,
     ws: WebSocketLike,
+    installationId?: string,
   ): Promise<{ closed: Promise<void> }> {
     if (this.connectionLifecycle === "stopping") {
       throw new Error(`Cannot attach plugin session while shutting down: ${pluginId}`);
@@ -1031,14 +1037,15 @@ export class VoiceAssistantWebSocketServer {
     const socketClosed = new Promise<void>((finish) => {
       resolveSocketClosed = finish;
     });
-    // Every process installation gets a fresh principal. A replacement with
-    // the same plugin id must never inherit an old installation's delivery
-    // ledger, even if teardown races with the next install.
-    const principalId = `plugin:${pluginId}:${randomUUID()}`;
+    // The runtime supplies one installation identity for the lifetime of a
+    // plugin installation. Reconnects reuse that principal; replacement and
+    // uninstall use the explicit finish hook to purge it.
+    const stableInstallationId = installationId ?? randomUUID();
+    const principalId = `plugin:${pluginId}:${stableInstallationId}`;
     const owners = this.pluginDeliveryOwners.get(pluginId) ?? new Set<string>();
     owners.add(principalId);
     this.pluginDeliveryOwners.set(pluginId, owners);
-    const closed = socketClosed.then(() => this.cleanupPluginDeliveryOwner(pluginId, principalId));
+    const closed = socketClosed.then(() => undefined);
     this.pluginDeliveryCleanupPromises.add(closed);
     void closed.then(
       () => this.pluginDeliveryCleanupPromises.delete(closed),
@@ -1052,6 +1059,7 @@ export class VoiceAssistantWebSocketServer {
         // durable deliveries belong to the plugin rather than the daemon owner.
         principalId,
         permissions: OWNER_PERMISSIONS,
+        pluginIdentity: { pluginId, installationId: stableInstallationId },
       });
     } catch (error) {
       this.pluginSocketIds.delete(ws);
@@ -1064,12 +1072,20 @@ export class VoiceAssistantWebSocketServer {
   public invokePluginHost(input: {
     pluginId: string;
     caller: PluginCallerAuthority;
+    invocationId: string;
+    generation: number;
+    installationId: string;
+    capabilityNonce: string;
     operation: string;
     input: Record<string, unknown>;
     signal: AbortSignal;
   }): Promise<unknown> {
     for (const connection of this.sessions.values()) {
-      if (connection.lifecycle !== "ephemeral-plugin" || connection.pluginId !== input.pluginId) {
+      if (
+        connection.lifecycle !== "ephemeral-plugin" ||
+        connection.pluginId !== input.pluginId ||
+        connection.session.getPluginIdentity()?.installationId !== input.installationId
+      ) {
         continue;
       }
       return connection.session.invokePluginHost(input);
@@ -1085,6 +1101,46 @@ export class VoiceAssistantWebSocketServer {
       this.deliveryDispatchCoordinator.beginOwnerClosing(principalId);
       this.deliveryLedger.beginOwnerClosing(principalId);
     }
+  }
+
+  /** Explicit uninstall/replacement cleanup for durable plugin state. */
+  public async finishPluginShutdown(pluginId: string, installationId: string): Promise<void> {
+    const key = `${pluginId}:${installationId}`;
+    let cleanupError: unknown = null;
+    const retainedSession = this.pluginSessionsByInstallation.get(key);
+    if (retainedSession) {
+      try {
+        await retainedSession.finishPluginShutdown(pluginId, installationId);
+        this.pluginSessionsByInstallation.delete(key);
+      } catch (error) {
+        cleanupError = error;
+        this.logger.warn(
+          { err: error, pluginId, installationId },
+          "Failed to clean up plugin-managed worktrees during explicit shutdown",
+        );
+      }
+    }
+    for (const connection of this.sessions.values()) {
+      if (
+        connection.lifecycle === "ephemeral-plugin" &&
+        connection.pluginId === pluginId &&
+        connection.session.getPluginIdentity()?.installationId === installationId
+      ) {
+        if (connection.session !== retainedSession) {
+          try {
+            await connection.session.finishPluginShutdown(pluginId, installationId);
+          } catch (error) {
+            cleanupError ??= error;
+            this.logger.warn(
+              { err: error, pluginId, installationId },
+              "Failed to clean up an attached plugin session during explicit shutdown",
+            );
+          }
+        }
+      }
+    }
+    await this.cleanupPluginDeliveryOwner(pluginId, `plugin:${pluginId}:${installationId}`);
+    if (cleanupError) throw cleanupError;
   }
 
   public updatePrincipalPermissions(
@@ -1209,6 +1265,7 @@ export class VoiceAssistantWebSocketServer {
     await this.workspaceGitService.dispose();
     this.pendingConnections.clear();
     this.sessions.clear();
+    this.pluginSessionsByInstallation.clear();
     this.socketIdentities.clear();
     this.externalSessionsByKey.clear();
     for (const clientId of this.browserToolsRegistrations.keys()) {
@@ -1445,6 +1502,8 @@ export class VoiceAssistantWebSocketServer {
       appVersion,
       clientCapabilities,
       permissions: admission.permissions,
+      resourcePermissions: admission.resourcePermissions,
+      pluginIdentity: admission.pluginIdentity,
       connectionLogger,
       onMessage: (msg) => {
         if (!connection) {
@@ -1520,6 +1579,8 @@ export class VoiceAssistantWebSocketServer {
       appVersion: options.appVersion,
       clientCapabilities: options.clientCapabilities,
       permissions: options.permissions,
+      resourcePermissions: options.resourcePermissions,
+      pluginIdentity: options.pluginIdentity,
       onMessage: options.onMessage,
       onMessageToSource: options.onMessageToSource,
       onBinaryMessage: options.onBinaryMessage,
@@ -1691,6 +1752,14 @@ export class VoiceAssistantWebSocketServer {
     this.sessions.set(ws, connection);
     if (connection.lifecycle === "reconnectable") {
       this.externalSessionsByKey.set(sessionKey, connection);
+    } else {
+      const installationId = connection.session.getPluginIdentity()?.installationId;
+      if (installationId) {
+        this.pluginSessionsByInstallation.set(
+          `${connection.pluginId}:${installationId}`,
+          connection.session,
+        );
+      }
     }
     pending.identity.sessionId = connection.session.getSessionId();
     this.syncBrowserToolsClientRegistration(connection);

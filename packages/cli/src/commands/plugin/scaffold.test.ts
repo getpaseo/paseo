@@ -1,11 +1,14 @@
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { tmpdir } from "node:os";
+import { promisify } from "node:util";
 import ts from "typescript";
 import { afterEach, describe, expect, it } from "vitest";
 import { scaffoldPluginDirectory } from "./scaffold.js";
 
 const directories: string[] = [];
+const execFileAsync = promisify(execFile);
 
 afterEach(async () => {
   await Promise.all(directories.splice(0).map((directory) => rm(directory, { recursive: true })));
@@ -190,6 +193,53 @@ export default function contribute(plugin: PluginContext) {
       ),
     ).toEqual([]);
   }, 20_000);
+
+  it("typechecks after installing the scaffold outside the workspace", async () => {
+    const parent = await mkdtemp(path.join(tmpdir(), "paseo-plugin-external-"));
+    directories.push(parent);
+    const directory = path.join(parent, "external-plugin");
+    await scaffoldPluginDirectory(directory);
+    await execFileAsync(
+      "npm",
+      ["pack", "--workspace=@getpaseo/protocol", `--pack-destination=${parent}`],
+      { cwd: process.cwd(), timeout: 120_000 },
+    );
+    await execFileAsync(
+      "npm",
+      ["pack", "--workspace=@getpaseo/client", `--pack-destination=${parent}`],
+      { cwd: process.cwd(), timeout: 120_000 },
+    );
+    await execFileAsync(
+      "npm",
+      ["pack", "--workspace=@getpaseo/relay", `--pack-destination=${parent}`],
+      { cwd: process.cwd(), timeout: 120_000 },
+    );
+    const tarballs = await readdir(parent);
+    const protocolTarball = tarballs.find((entry) => entry.startsWith("getpaseo-protocol-"));
+    const clientTarball = tarballs.find((entry) => entry.startsWith("getpaseo-client-"));
+    const relayTarball = tarballs.find((entry) => entry.startsWith("getpaseo-relay-"));
+    if (!protocolTarball || !clientTarball || !relayTarball) {
+      throw new Error("Local SDK tarballs were not created");
+    }
+    const packagePath = path.join(directory, "package.json");
+    const packageJson = JSON.parse(await readFile(packagePath, "utf8")) as {
+      dependencies?: Record<string, string>;
+      devDependencies: Record<string, string>;
+    };
+    packageJson.devDependencies["@getpaseo/client"] =
+      `file:${path.relative(directory, path.join(parent, clientTarball))}`;
+    packageJson.devDependencies["@getpaseo/protocol"] =
+      `file:${path.relative(directory, path.join(parent, protocolTarball))}`;
+    packageJson.devDependencies["@getpaseo/relay"] =
+      `file:${path.relative(directory, path.join(parent, relayTarball))}`;
+    await writeFile(packagePath, `${JSON.stringify(packageJson, null, 2)}\n`);
+    await execFileAsync(
+      "npm",
+      ["install", "--ignore-scripts", "--no-audit", "--no-fund", "--package-lock=false"],
+      { cwd: directory, timeout: 120_000 },
+    );
+    await execFileAsync("npm", ["run", "typecheck"], { cwd: directory, timeout: 120_000 });
+  }, 180_000);
 
   it("refuses to write into a non-empty directory", async () => {
     const directory = await mkdtemp(path.join(tmpdir(), "paseo-plugin-scaffold-"));

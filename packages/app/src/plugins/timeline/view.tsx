@@ -60,8 +60,8 @@ function PluginTimelineItemBody({
   const parsed = parseRendererData(renderer, item.data);
   const client = useHostRuntimeClient(serverId);
   const runtime = useMemo(
-    () => createPluginSurfaceRuntime(client, item.pluginId),
-    [client, item.pluginId],
+    () => createPluginSurfaceRuntime(client, item.pluginId, agentId),
+    [agentId, client, item.pluginId],
   );
   const compact = useIsCompactFormFactor();
   const hosts = useHosts();

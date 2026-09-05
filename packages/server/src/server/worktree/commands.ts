@@ -110,12 +110,14 @@ export type ArchiveCommandResult =
   | {
       ok: true;
       removedAgents: string[];
+      removedDirectory: boolean;
     }
   | {
       ok: false;
       code: "NOT_ALLOWED";
       message: string;
       removedAgents: [];
+      removedDirectory: false;
     };
 
 export async function archiveCommand(
@@ -136,6 +138,7 @@ export async function archiveCommand(
         code: "NOT_ALLOWED",
         message: "Worktree is not a Paseo-owned worktree",
         removedAgents: [],
+        removedDirectory: false,
       };
     }
 
@@ -147,6 +150,7 @@ export async function archiveCommand(
     return {
       ok: true,
       removedAgents: result.archivedAgentIds,
+      removedDirectory: result.removedDirectory,
     };
   }
 
@@ -161,6 +165,7 @@ export async function archiveCommand(
     return {
       ok: true,
       removedAgents: [],
+      removedDirectory: false,
     };
   }
 
@@ -172,6 +177,7 @@ export async function archiveCommand(
   return {
     ok: true,
     removedAgents: result.archivedAgentIds,
+    removedDirectory: result.removedDirectory,
   };
 }
 

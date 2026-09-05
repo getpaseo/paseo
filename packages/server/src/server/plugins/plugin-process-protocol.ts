@@ -26,8 +26,10 @@ import {
   PluginHostResponseSchema,
   type PluginHostResponse,
 } from "@getpaseo/protocol/plugin-host";
+import { DeliveryPayloadSchema } from "@getpaseo/protocol/deliveries";
 
 export const MAX_PLUGIN_PROCESS_MESSAGE_BYTES = 4 * 1024 * 1024;
+const PluginCapabilityNonceSchema = z.string().min(1).max(128);
 
 const JsonObjectSchema = z.record(z.string(), z.unknown());
 const BinaryFrameSchema = z.union([
@@ -72,6 +74,7 @@ export const PluginProcessRequestSchema = z.union([
       appVersion: z.string().min(1),
       generation: z.number().int().positive().optional(),
       installationId: z.string().min(1),
+      capabilityNonce: PluginCapabilityNonceSchema.optional(),
     })
     .strict(),
   z
@@ -83,6 +86,7 @@ export const PluginProcessRequestSchema = z.union([
       context: PluginCallerAuthoritySchema.nullable().optional(),
       generation: z.number().int().positive().optional(),
       installationId: z.string().min(1).optional(),
+      capabilityNonce: PluginCapabilityNonceSchema.optional(),
     })
     .strict(),
   z
@@ -94,6 +98,7 @@ export const PluginProcessRequestSchema = z.union([
       context: PluginToolCallerContextSchema,
       generation: z.number().int().positive().optional(),
       installationId: z.string().min(1).optional(),
+      capabilityNonce: PluginCapabilityNonceSchema.optional(),
     })
     .strict(),
   z.object({ type: z.literal("tool_cancel"), requestId: z.string().min(1) }).strict(),
@@ -208,7 +213,7 @@ function validateProcessEnvelope(message: PluginProcessRequest | PluginProcessMe
     assertSafeJson(message.result, "Plugin host result", PLUGIN_TOOL_MAX_RESULT_BYTES);
   }
   if (message.type.startsWith("plugin.host.") && "payload" in message) {
-    assertSafeJson(message.payload, "Plugin host delivery payload", PLUGIN_TOOL_MAX_RESULT_BYTES);
+    DeliveryPayloadSchema.parse(message.payload);
   }
   if (
     message.type.startsWith("plugin.host.") &&

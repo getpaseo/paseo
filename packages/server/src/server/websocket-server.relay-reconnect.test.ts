@@ -54,6 +54,8 @@ const sessionMock = vi.hoisted(() => {
       this.args.clientCapabilities = capabilities;
     });
     clearAgentTimelineSubscription = vi.fn();
+    getPluginIdentity = vi.fn(() => this.args.pluginIdentity);
+    finishPluginShutdown = vi.fn(async () => {});
     getClientActivity = vi.fn(() => null);
     getSessionId = vi.fn(() => "mock-session-id");
     getPermissions = vi.fn(() => this.args.permissions as string[]);
@@ -554,7 +556,7 @@ describe("relay external socket reconnect behavior", () => {
     await server.close();
   });
 
-  test("schedules failed owner cleanup and admits a new installation principal", async () => {
+  test("keeps durable owner state on socket close and purges on explicit shutdown", async () => {
     const server = createServer();
     const firstSocket = new MockSocket();
     const firstAttachment = await server.attachPluginSocket("retrying", firstSocket);
@@ -564,12 +566,29 @@ describe("relay external socket reconnect behavior", () => {
       .spyOn(ledger, "removeOwner")
       .mockRejectedValueOnce(new Error("disk full"));
 
-    server.beginPluginShutdown("retrying");
     firstSocket.emit("close", 1000, "plugin stopped");
     await firstAttachment.closed;
+    expect(removeOwner).not.toHaveBeenCalled();
 
-    const replacement = new MockSocket();
-    await expect(server.attachPluginSocket("retrying", replacement)).resolves.toBeDefined();
+    const firstSession = sessionMock.instances[0];
+    if (!firstSession) throw new Error("Plugin session was not created");
+    const installationId = (firstSession.args.pluginIdentity as { installationId: string })
+      .installationId;
+    const reconnect = new MockSocket();
+    const reconnectAttachment = await server.attachPluginSocket(
+      "retrying",
+      reconnect,
+      installationId,
+    );
+    reconnect.emit("message", JSON.stringify(createHelloMessage("plugin:retrying")));
+    expect(sessionMock.instances[1]?.args.principalId).toBe(
+      sessionMock.instances[0]?.args.principalId,
+    );
+    reconnect.emit("close", 1000, "plugin reconnect stopped");
+    await reconnectAttachment.closed;
+
+    server.beginPluginShutdown("retrying");
+    await server.finishPluginShutdown("retrying", installationId);
     expect(removeOwner).toHaveBeenCalledOnce();
 
     await server.close();
@@ -586,9 +605,14 @@ describe("relay external socket reconnect behavior", () => {
       "removeOwner",
     ).mockRejectedValue(new Error("disk still full"));
 
-    server.beginPluginShutdown("durable-retry");
     socket.emit("close", 1000, "plugin stopped");
     await attachment.closed;
+    expect(asInternals<WebSocketServerInternals>(server).pluginDeliveryCleanupRetries.size).toBe(0);
+    const firstSession = sessionMock.instances[0];
+    if (!firstSession) throw new Error("Plugin session was not created");
+    const installationId = (firstSession.args.pluginIdentity as { installationId: string })
+      .installationId;
+    await server.finishPluginShutdown("durable-retry", installationId);
     await server.close();
 
     expect(asInternals<WebSocketServerInternals>(server).pluginDeliveryCleanupRetries.size).toBe(1);

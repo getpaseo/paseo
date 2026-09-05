@@ -123,7 +123,8 @@ export interface PluginHostDeliveryGetOptions {
 }
 
 export interface PluginHostDeliverySendOptions {
-  readonly deliveryId?: string;
+  /** Stable, bounded idempotency key reused across retries and reconnects. */
+  readonly deliveryId: string;
   readonly messageId?: string;
 }
 
@@ -131,7 +132,7 @@ export interface PluginHostDeliveryActions {
   /** The daemon targets this invocation's exact caller agent. */
   readonly send: (
     payload: DeliveryPayload,
-    options?: PluginHostDeliverySendOptions,
+    options: PluginHostDeliverySendOptions,
   ) => Promise<DeliveryRecord>;
   readonly get: (options?: PluginHostDeliveryGetOptions) => Promise<{
     readonly delivery: DeliveryRecord | null;
@@ -221,7 +222,7 @@ export interface PluginComposerPillContribution {
   workspaceId: string;
   agentId: string;
   Component: ComponentType<PluginComposerPillProps>;
-  onPress(): void | Promise<void>;
+  onPress(context: PluginAgentCommandContext): void | Promise<void>;
 }
 
 export interface PluginClientOpenPanelOptions extends PluginOpenPanelOptions {

@@ -68,6 +68,7 @@ export interface CreateAgentFromSessionInput {
   env?: Record<string, string>;
   provisionalTitle: string | null;
   firstAgentContext: FirstAgentContext;
+  onCreated?: (created: { agentId: string }) => void;
   buildSessionConfig: (
     config: AgentSessionConfig,
     gitOptions?: GitSetupOptions,
@@ -185,6 +186,12 @@ export async function createAgentCommand(
     resolved.createOptions,
   );
 
+  // Let a transactional caller record the agent before any post-create hook
+  // can throw. The plugin child host uses this fence to archive a partially
+  // created child on cancellation or setup failure.
+  if (input.kind === "session") {
+    input.onCreated?.({ agentId: snapshot.id });
+  }
   resolved.setupContinuation?.startAfterAgentCreate({
     agentId: snapshot.id,
   });

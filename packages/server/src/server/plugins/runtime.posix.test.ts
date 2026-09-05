@@ -782,7 +782,10 @@ const send = defineRpc({
 
 export default function contribute(plugin: any) {
   plugin.handle(send, async (_input: unknown, context: any) => {
-    const delivery = await context.host.deliveries.send({ event: "host-test" });
+    const delivery = await context.host.deliveries.send(
+      { event: "host-test" },
+      { deliveryId: "host-test-delivery" },
+    );
     return { callerAgentId: context.caller.callerAgentId, targetAgentId: delivery.targetAgentId };
   });
   return () => undefined;
@@ -824,8 +827,19 @@ export default function contribute(plugin: any) {
     };
     const baseHost = createTrackedSessionHost().host;
     const invokePluginHost = vi.fn(
-      async (input: { caller: typeof authority; operation: string }) => {
+      async (input: {
+        caller: typeof authority;
+        operation: string;
+        invocationId: string;
+        generation: number;
+        installationId: string;
+        capabilityNonce: string;
+      }) => {
         expect(input.operation).toBe("delivery.send");
+        expect(input.invocationId).toMatch(/^[0-9a-f-]{36}$/u);
+        expect(input.generation).toBe(1);
+        expect(input.installationId).toMatch(/^[0-9a-f-]{36}$/u);
+        expect(input.capabilityNonce).toMatch(/^[0-9a-f-]{36}$/u);
         return {
           deliveryId: "delivery-host",
           targetAgentId: input.caller.callerAgentId,

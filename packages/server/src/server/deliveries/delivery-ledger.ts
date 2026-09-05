@@ -55,6 +55,8 @@ export interface DeliveryLedgerGetOptions {
   allowPayloadTombstones?: boolean;
   /** Exact target fence used by caller-scoped host delivery access. */
   targetAgentId?: string;
+  /** Internal cancellation fence for host operations. */
+  signal?: AbortSignal;
 }
 
 export interface DeliveryLedgerSendInput {
@@ -64,6 +66,8 @@ export interface DeliveryLedgerSendInput {
   payload: DeliveryPayload;
   /** Set only when the admitting client negotiated payload tombstones. */
   payloadTombstoneEligible?: boolean;
+  /** Internal cancellation fence for host operations. */
+  signal?: AbortSignal;
 }
 
 export interface DeliveryLedgerSendResult {
@@ -212,6 +216,11 @@ function cloneDelivery(record: DeliveryRecord): DeliveryRecord {
   if (record.payload === undefined) delete cloned.payload;
   else cloned.payload = clonePayload(record.payload);
   return cloned;
+}
+
+function throwIfAborted(signal: AbortSignal | undefined, message: string): void {
+  if (!signal?.aborted) return;
+  throw signal.reason instanceof Error ? signal.reason : new Error(message);
 }
 
 /** Rehydrate only the response copy for an idempotent retry of a tombstone. */
@@ -658,6 +667,7 @@ export class DeliveryLedger {
   async send(ownerId: string, input: DeliveryLedgerSendInput): Promise<DeliveryLedgerSendResult> {
     const normalizedOwnerId = validateOwnerId(ownerId);
     this.assertOwnerOpen(this.ownerState(normalizedOwnerId), normalizedOwnerId);
+    throwIfAborted(input.signal, "Delivery send cancelled");
     const deliveryId = DeliveryIdSchema.parse(input.deliveryId ?? randomUUID());
     const targetAgentId =
       input.targetAgentId === undefined
@@ -681,12 +691,14 @@ export class DeliveryLedger {
     const fingerprint = payloadFingerprint(payload);
 
     return this.enqueue(normalizedOwnerId, async (state) => {
+      throwIfAborted(input.signal, "Delivery send cancelled");
       this.assertOwnerOpen(state, normalizedOwnerId);
       const compacted = this.compactAcknowledged(
         state.records,
         input.payloadTombstoneEligible === true,
       );
       if (compacted.changed) {
+        throwIfAborted(input.signal, "Delivery send cancelled");
         await this.persist(normalizedOwnerId, compacted.records, state.nextSequence);
         state.records = compacted.records;
       }
@@ -731,6 +743,7 @@ export class DeliveryLedger {
       nextRecords.set(deliveryId, record);
       this.assertWithinQuota(nextRecords);
       const nextSequence = state.nextSequence + 1;
+      throwIfAborted(input.signal, "Delivery send cancelled");
       await this.persist(normalizedOwnerId, nextRecords, nextSequence);
       state.records = nextRecords;
       state.nextSequence = nextSequence;
@@ -743,11 +756,13 @@ export class DeliveryLedger {
     options: DeliveryLedgerGetOptions = {},
   ): Promise<DeliveryLedgerGetResult> {
     const normalizedOwnerId = validateOwnerId(ownerId);
+    throwIfAborted(options.signal, "Delivery read cancelled");
     const allowPayloadTombstones = options.allowPayloadTombstones === true;
-    await this.gc(normalizedOwnerId, allowPayloadTombstones);
+    await this.gc(normalizedOwnerId, allowPayloadTombstones, options.signal);
     const state = this.ownerState(normalizedOwnerId);
     await state.mutationTail;
     await this.ensureLoaded(state, normalizedOwnerId);
+    throwIfAborted(options.signal, "Delivery read cancelled");
     const requestId = options.responseRequestId ?? "delivery-request";
     const maxEncodedBytes = options.maxEncodedBytes ?? MAX_DELIVERY_RESPONSE_BYTES;
     if (options.deliveryId !== undefined) {
@@ -878,7 +893,11 @@ export class DeliveryLedger {
   async acknowledge(
     ownerId: string,
     deliveryId: string,
-    options: { allowPayloadTombstones?: boolean; targetAgentId?: string } = {},
+    options: {
+      allowPayloadTombstones?: boolean;
+      targetAgentId?: string;
+      signal?: AbortSignal;
+    } = {},
   ): Promise<DeliveryRecord> {
     return this.transition(ownerId, deliveryId, "acknowledged", undefined, options);
   }
@@ -904,9 +923,14 @@ export class DeliveryLedger {
     deliveryId: string,
     status: DeliveryStatus,
     error?: string,
-    options: { allowPayloadTombstones?: boolean; targetAgentId?: string } = {},
+    options: {
+      allowPayloadTombstones?: boolean;
+      targetAgentId?: string;
+      signal?: AbortSignal;
+    } = {},
   ): Promise<DeliveryRecord> {
     const normalizedOwnerId = validateOwnerId(ownerId);
+    throwIfAborted(options.signal, "Delivery transition cancelled");
     const nextStatus = DeliveryStatusSchema.parse(status);
     const normalizedId = DeliveryIdSchema.parse(deliveryId);
     return this.enqueue(normalizedOwnerId, (state) =>
@@ -920,8 +944,13 @@ export class DeliveryLedger {
     deliveryId: string,
     nextStatus: DeliveryStatus,
     error?: string,
-    options: { allowPayloadTombstones?: boolean; targetAgentId?: string } = {},
+    options: {
+      allowPayloadTombstones?: boolean;
+      targetAgentId?: string;
+      signal?: AbortSignal;
+    } = {},
   ): Promise<DeliveryRecord> {
+    throwIfAborted(options.signal, "Delivery transition cancelled");
     const candidate = state.records.get(deliveryId);
     if (
       options.targetAgentId !== undefined &&
@@ -963,6 +992,7 @@ export class DeliveryLedger {
       options.allowPayloadTombstones === true,
     );
     this.assertWithinQuota(compacted.records);
+    throwIfAborted(options.signal, "Delivery transition cancelled");
     await this.persist(ownerId, compacted.records, state.nextSequence);
     state.records = compacted.records;
     return cloneDelivery(nextRecord);
@@ -1048,11 +1078,14 @@ export class DeliveryLedger {
     }) as LedgerRecord;
   }
 
-  async gc(ownerId: string, allowPayloadTombstones = false): Promise<void> {
+  async gc(ownerId: string, allowPayloadTombstones = false, signal?: AbortSignal): Promise<void> {
     const normalizedOwnerId = validateOwnerId(ownerId);
+    throwIfAborted(signal, "Delivery cleanup cancelled");
     await this.enqueue(normalizedOwnerId, async (state) => {
+      throwIfAborted(signal, "Delivery cleanup cancelled");
       const compacted = this.compactAcknowledged(state.records, allowPayloadTombstones);
       if (!compacted.changed) return;
+      throwIfAborted(signal, "Delivery cleanup cancelled");
       await this.persist(normalizedOwnerId, compacted.records, state.nextSequence);
       state.records = compacted.records;
     });

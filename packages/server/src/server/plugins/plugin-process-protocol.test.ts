@@ -117,6 +117,7 @@ describe("plugin process tool protocol", () => {
         ...base,
         type: "plugin.host.delivery.send.request",
         payload: { event: "finished" },
+        options: { deliveryId: "delivery-one" },
       }),
     ).toMatchObject({ type: "plugin.host.delivery.send.request" });
     expect(() =>
@@ -124,8 +125,9 @@ describe("plugin process tool protocol", () => {
         ...base,
         type: "plugin.host.delivery.send.request",
         payload: JSON.parse('{"__proto__":{"unsafe":true}}'),
+        options: { deliveryId: "delivery-one" },
       }),
-    ).toThrow(/dangerous key/i);
+    ).toThrow(/dangerous key|bounded JSON/i);
     expect(() =>
       validatePluginProcessMessage({
         ...base,
@@ -140,5 +142,25 @@ describe("plugin process tool protocol", () => {
         ok: false,
       }),
     ).toThrow(/no error/i);
+  });
+
+  it("enforces the delivery payload budget at the process boundary", () => {
+    expect(() =>
+      validatePluginProcessMessage({
+        type: "plugin.host.delivery.send.request",
+        requestId: "host-request",
+        invocationId: "invocation-one",
+        generation: 3,
+        installationId: "installation-one",
+        payload: {
+          first: "x".repeat(16_000),
+          second: "x".repeat(16_000),
+          third: "x".repeat(16_000),
+          fourth: "x".repeat(16_000),
+          fifth: "x".repeat(16_000),
+        },
+        options: { deliveryId: "delivery-one" },
+      }),
+    ).toThrow(/payload|large|limit|bounded JSON/i);
   });
 });

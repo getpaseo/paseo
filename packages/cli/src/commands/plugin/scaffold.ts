@@ -71,11 +71,12 @@ const SDK_DECLARATIONS = `declare module "@getpaseo/plugin/server" {
     readonly limit?: number;
   }
   export interface PluginHostDeliverySendOptions {
-    readonly deliveryId?: string;
+    /** Stable, bounded idempotency key reused across retries and reconnects. */
+    readonly deliveryId: string;
     readonly messageId?: string;
   }
   export interface PluginHostDeliveryActions {
-    readonly send(payload: DeliveryPayload, options?: PluginHostDeliverySendOptions): Promise<DeliveryRecord>;
+    readonly send(payload: DeliveryPayload, options: PluginHostDeliverySendOptions): Promise<DeliveryRecord>;
     readonly get(options?: PluginHostDeliveryGetOptions): Promise<{
       readonly delivery: DeliveryRecord | null;
       readonly deliveries: DeliveryRecord[];
@@ -370,7 +371,7 @@ declare module "@getpaseo/plugin" {
     workspaceId: string;
     agentId: string;
     Component: ComponentType<PluginComposerPillProps>;
-    onPress(): void | Promise<void>;
+    onPress(context: PluginAgentCommandContext): void | Promise<void>;
   }
 
   export type PluginPanelLocation = "workspace" | "explorer";
@@ -610,8 +611,8 @@ export async function scaffoldPluginDirectory(
     version: "0.0.0",
     scripts: { typecheck: "tsc --noEmit" },
     devDependencies: {
-      "@getpaseo/client": "^0.4.0",
-      "@getpaseo/protocol": "^0.6.1",
+      "@getpaseo/client": ">=0.8.0-beta.1",
+      "@getpaseo/protocol": ">=0.8.0-beta.1",
       "@tanstack/react-query": "^5.90.11",
       "@types/react": "~19.2.0",
       react: "19.1.0",

@@ -50,7 +50,7 @@ interface PluginRuntimePort {
   subscribe(listener: (pluginId: string, error?: string) => void): () => void;
   bindPaseoSessionHost(sessionHost: Parameters<PluginRuntime["bindPaseoSessionHost"]>[0]): void;
   bindToolContextResolver?(
-    resolver: (callerAgentId: string) => Promise<PluginToolCallerContext>,
+    resolver: (callerAgentId: string, signal?: AbortSignal) => Promise<PluginToolCallerContext>,
   ): void;
 }
 
@@ -206,7 +206,7 @@ export class PluginService {
   }
 
   bindToolContextResolver(
-    resolver: (callerAgentId: string) => Promise<PluginToolCallerContext>,
+    resolver: (callerAgentId: string, signal?: AbortSignal) => Promise<PluginToolCallerContext>,
   ): void {
     this.runtime.bindToolContextResolver?.(resolver);
   }

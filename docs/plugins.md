@@ -2,8 +2,9 @@
 
 Local plugins contribute daemon RPCs, model-facing agent tools, native app surfaces, workspace panels, Command Center items,
 composer pills, app themes, and composer attachment sources from one `index.ts`. Paseo executes the server contribution in a
-subprocess and evaluates the client contribution in the app runtime. Plugin code is trusted code;
-Paseo does not sandbox it.
+trusted, unsandboxed subprocess and evaluates the client contribution in the app runtime. The subprocess can access the daemon
+machine with the permissions granted to the plugin installation; the process boundary protects protocol integrity, not the host
+from plugin code.
 
 ## Install a directory source
 
@@ -157,7 +158,8 @@ export default function contribute(plugin: PluginContext) {
 ```
 
 The contribution function must return cleanup. Server cleanup may be async; Paseo waits for it when
-the plugin is reloaded, disabled, removed, disconnected, or shut down. Cleanup is for resources
+the plugin is reloaded, disabled, removed, or shut down. A plugin socket can reconnect without
+destroying durable plugin state. Cleanup is for resources
 created by plugin code. Paseo removes registered contributions, unmounts surfaces, clears query
 state, rejects pending RPCs, closes the plugin's daemon session, and stops the subprocess. Cleanup
 errors are logged and do not interrupt host teardown.
@@ -227,8 +229,9 @@ missing, archived, or changed target.
 
 The host capability exposes only these bounded operations:
 
-- `host.deliveries.send(payload)` always targets the exact caller. `get` and `acknowledge` apply the
-  same target fence and retain acknowledgement tombstone semantics.
+- `host.deliveries.send(payload, { deliveryId })` always targets the exact caller. `deliveryId` is a
+  stable, bounded idempotency key that the plugin reuses across retries and reconnects. `get` and
+  `acknowledge` apply the same target fence and retain acknowledgement tombstone semantics.
 - `host.children.create(options)` creates a child with the caller as parent. Workspace and cwd come
   from the caller, except for a cwd supplied by an opaque managed worktree returned by this host.
   Requested model, thinking, tool policy, and security values cannot widen caller authority; an
@@ -236,9 +239,12 @@ The host capability exposes only these bounded operations:
 - `host.worktrees.create(options)` returns an authoritative workspace, cwd, and opaque ID.
   `remove(id)` accepts only an ID created by the same plugin session and caller.
 
-Host calls use a fresh process capability for every invocation. The daemon does not keep caller
-identity in global plugin state. Aborting an invocation cancels pending host IPC; unloading a
-plugin rejects calls and drains its process before the installation session is closed.
+Host calls use a fresh random capability nonce for every invocation. The parent binds every host
+request and result to the exact installation, generation, invocation, request ID, and nonce. The
+daemon re-resolves the caller immediately before each operation, including provider, model,
+thinking, mode, security, project, and path facts. The daemon does not keep caller identity in
+global plugin state. Aborting an invocation cancels pending host IPC and compensates partial child,
+worktree, and delivery mutations where the operation has not committed.
 
 Tools use the same transport-neutral `PaseoToolCatalog` as MCP, OMP, and OpenCode/native provider
 paths. A tool is published only after its plugin is ready. Stopping or reloading a plugin removes
@@ -257,26 +263,31 @@ screen's host changes both `usePaseo()` and
 installation. A server handler owns an IPC-backed daemon session for the life of its subprocess.
 Use plugin RPC for plugin-specific backend behavior that is not a normal Paseo operation.
 
-Each subprocess gets an exclusively owned session with a fresh `plugin:<id>:<installation>`
-principal. The principal is reserved from normal clients and never resumes another session. On
-uninstall, reload, disable, or shutdown, Paseo closes the owner before draining dispatch and ledger
-mutations, reconciles the outcome, then purges its ledger. The exact principal remains tombstoned in
-memory after purge, so queued or late work cannot reopen it. A replacement gets a new installation
-principal and never inherits the old ledger. During daemon startup, plugin sessions may connect while
-application WebSockets remain paused; the daemon accepts clients only after configured plugins have
-settled and the initial catalog is complete.
+Each subprocess gets an exclusively owned session with a stable
+`plugin:<id>:<installation>` principal. Reconnecting the same installation reuses its durable
+delivery records; the socket closing does not delete them. On uninstall, replacement, reload,
+disable, or shutdown, Paseo uses an explicit installation cleanup policy: it fences the owner,
+drains dispatch and ledger mutations, reconciles managed worktrees, then purges the delivery ledger.
+The exact principal remains tombstoned in memory after purge, so queued or late work cannot reopen
+it. A replacement gets a new installation principal and never inherits the old ledger. Managed
+worktree ownership is persisted atomically under `$PASEO_HOME`, reconciled on the next installation,
+and retained for retry when physical removal cannot be confirmed. During daemon startup, plugin
+sessions may connect while application WebSockets remain paused; the daemon accepts clients only
+after configured plugins have settled and the initial catalog is complete.
 
 When the same plugin contribution exists on multiple hosts, Paseo shows it once in the sidebar and
 adds a host picker to the screen header. The selected host supplies the bundle, RPC transport, and
 query cache. Plugin code cannot address another host.
 
-Workspace panels and Command Center items remain client contributions. The daemon transports their
-compiled bundle without interpreting placement or callbacks. Panel props contain workspace and agent
-IDs. Required-selector hooks read normalized client state synchronously and use shallow equality, so a
-panel does not subscribe to fields it does not render. Command callbacks materialize their snapshots
-only when invoked. Contribution discovery and panel opening never fetch active context through plugin
-RPC. Snapshot DTOs are deeply readonly and frozen at runtime so plugin code cannot mutate normalized
-app state or a memoized selection. Panels use one persisted
+Workspace panels, Command Center items, timeline renderers, and composer pills remain client
+contributions. The daemon transports their compiled bundle without interpreting placement or
+callbacks. Timeline renderers and composer-pill callbacks receive the active agent scope; their
+caller-scoped RPC and Paseo API use that agent rather than UI focus. Panel props contain workspace
+and agent IDs. Required-selector hooks read normalized client state synchronously and use shallow
+equality, so a panel does not subscribe to fields it does not render. Command callbacks materialize
+their snapshots only when invoked. Contribution discovery and panel opening never fetch active
+context through plugin RPC. Snapshot DTOs are deeply readonly and frozen at runtime so plugin code
+cannot mutate normalized app state or a memoized selection. Panels use one persisted
 `plugin` workspace-tab target, so reload, disable, removal, and restoration resolve through the
 current installed-plugin catalog. A missing contribution renders unavailable inside the tab.
 Panels declare `locations: ["workspace", "explorer"]` to opt into Explorer hosting; omission means

@@ -247,11 +247,17 @@ function resolvePluginWorkspaceStatus(
 // oxlint-disable-next-line complexity -- this assembles the immutable live-agent authority snapshot.
 async function resolvePluginToolCallerContext(input: {
   callerAgentId: string;
+  signal?: AbortSignal;
   agentManager: AgentManager;
   workspaceRegistry: Pick<FileBackedWorkspaceRegistry, "get">;
   projectRegistry: Pick<FileBackedProjectRegistry, "get">;
   workspaceGitService: Pick<WorkspaceGitServiceImpl, "peekSnapshot">;
 }): Promise<PluginToolCallerContext> {
+  if (input.signal?.aborted) {
+    throw input.signal.reason instanceof Error
+      ? input.signal.reason
+      : new Error("Plugin caller context resolution cancelled");
+  }
   const agent = input.agentManager.getAgent(input.callerAgentId);
   if (!agent || agent.lifecycle === "closed") {
     throw new Error(`Caller agent is not active: ${input.callerAgentId}`);
@@ -264,6 +270,11 @@ async function resolvePluginToolCallerContext(input: {
     projectRegistry: input.projectRegistry,
     workspaceGitService: input.workspaceGitService,
   });
+  if (input.signal?.aborted) {
+    throw input.signal.reason instanceof Error
+      ? input.signal.reason
+      : new Error("Plugin caller context resolution cancelled");
+  }
   if (agent.workspaceId && !workspace) {
     throw new Error(`Caller workspace is not active: ${agent.workspaceId}`);
   }
@@ -1470,9 +1481,10 @@ export async function createPaseoDaemon(
   );
   logger.info({ elapsed: elapsed() }, "Preparing voice and MCP runtime");
 
-  pluginRuntime.bindToolContextResolver((callerAgentId) =>
+  pluginRuntime.bindToolContextResolver((callerAgentId, signal) =>
     resolvePluginToolCallerContext({
       callerAgentId,
+      signal,
       agentManager,
       workspaceRegistry,
       projectRegistry,

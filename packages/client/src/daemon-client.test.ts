@@ -4997,6 +4997,55 @@ test("cancels waiters when send fails (no leaked timeouts)", async () => {
   vi.useRealTimers();
 });
 
+test("cleans waitForWithCancel listeners on abort and timeout", async () => {
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_waiter_cleanup",
+    logger: createMockLogger(),
+    reconnect: { enabled: false },
+    transportFactory: () => createMockTransport().transport,
+  });
+  clients.push(client);
+  const internal = client as unknown as {
+    waiters: Set<unknown>;
+    waitForWithCancel<T>(
+      predicate: (message: unknown) => T | null,
+      timeout: number,
+      options?: { signal?: AbortSignal; requestId?: string },
+    ): { promise: Promise<T>; cancel(error: Error): void };
+  };
+
+  const controller = new AbortController();
+  const aborted = internal.waitForWithCancel(() => null, 10_000, { signal: controller.signal });
+  expect(internal.waiters.size).toBe(1);
+  controller.abort(new Error("cancelled"));
+  await expect(aborted.promise).rejects.toThrow("cancelled");
+  expect(internal.waiters.size).toBe(0);
+
+  const timedOut = internal.waitForWithCancel(() => null, 1);
+  await expect(timedOut.promise).rejects.toThrow("Timeout waiting for message");
+  expect(internal.waiters.size).toBe(0);
+});
+
+test("does not send an already-cancelled plugin RPC", async () => {
+  const transport = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_plugin_rpc_preabort",
+    logger: createMockLogger(),
+    reconnect: { enabled: false },
+    transportFactory: () => transport.transport,
+  });
+  clients.push(client);
+  const controller = new AbortController();
+  controller.abort(new Error("cancelled before send"));
+
+  await expect(
+    client.invokePluginRpc("plugin", "method", {}, { signal: controller.signal }),
+  ).rejects.toThrow("cancelled before send");
+  expect(transport.sent).toEqual([]);
+});
+
 test("lists available providers via RPC", async () => {
   const logger = createMockLogger();
   const mock = createMockTransport();

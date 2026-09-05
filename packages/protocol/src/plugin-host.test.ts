@@ -76,9 +76,22 @@ describe("plugin caller host wire contract", () => {
         invocationId: "invocation-one",
         generation: 1,
         installationId: "installation-one",
+        capabilityNonce: "nonce-one",
         payload: JSON.parse('{"__proto__":"unsafe"}'),
+        options: { deliveryId: "delivery-one" },
       }).success,
     ).toBe(true);
+    expect(
+      PluginHostDeliverySendRequestSchema.safeParse({
+        type: "plugin.host.delivery.send.request",
+        requestId: "request-one",
+        invocationId: "invocation-one",
+        generation: 1,
+        installationId: "installation-one",
+        capabilityNonce: "nonce-one",
+        payload: { event: "finished" },
+      }).success,
+    ).toBe(false);
     expect(
       PluginHostDeliverySendRequestSchema.safeParse({
         type: "plugin.host.worktree.remove.request",

@@ -1,6 +1,7 @@
 import equal from "fast-deep-equal";
 import { v4 as uuidv4 } from "uuid";
-import { lstat, mkdir, mkdtemp, rename, rm, stat } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { lstat, mkdir, mkdtemp, readFile, rename, rm, stat } from "node:fs/promises";
 import { basename, resolve, sep } from "path";
 import { homedir } from "node:os";
 import { CLIENT_CAPS, type ClientCapability } from "@getpaseo/protocol/client-capabilities";
@@ -267,6 +268,7 @@ import {
   DeliveryMessageIdSchema,
   DeliveryTargetAgentIdSchema,
   MAX_DELIVERY_RESPONSE_BYTES,
+  DeliveryPayloadSchema,
   type DeliveryRecord,
 } from "@getpaseo/protocol/deliveries";
 import {
@@ -343,6 +345,7 @@ import {
 import { runGitCommand } from "../utils/run-git-command.js";
 import { CreateAgentLifecycleDispatch } from "./agent/create-agent-lifecycle-dispatch.js";
 import { resolveWorktreeSourceCwd } from "./workspace-source.js";
+import { writeJsonFileAtomic } from "./atomic-file.js";
 
 type ProviderSubagentManagerEvent = Extract<
   AgentManagerEvent,
@@ -359,6 +362,10 @@ function errorToFriendlyMessage(error: unknown): string {
   if (error instanceof Error) return error.message;
   if (typeof error === "string") return error;
   return "Unknown error";
+}
+
+function toError(error: unknown): Error {
+  return error instanceof Error ? error : new Error(String(error));
 }
 
 function resolveSubscriptionId(
@@ -520,6 +527,10 @@ export interface SessionOptions {
   clientId: string;
   /** Authenticated principal used to scope durable deliveries. */
   principalId?: string;
+  /** Stable identity for a trusted plugin installation, retained across reconnects. */
+  pluginIdentity?: { pluginId: string; installationId: string };
+  /** Optional resource fence supplied by the authenticated session admission. */
+  resourcePermissions?: { agentIds?: readonly string[]; workspaceIds?: readonly string[] };
   permissions: readonly DaemonPermission[];
   appVersion?: string | null;
   clientCapabilities?: Record<string, unknown> | null;
@@ -689,12 +700,37 @@ interface AgentTimelineProjectionSelection {
 }
 
 interface PluginManagedWorktreeRecord {
+  id: string;
   pluginId: string;
+  installationId: string;
   callerAgentId: string;
   workspaceId: string;
   cwd: string;
   worktreePath: string;
   repoRoot: string;
+}
+
+interface PersistedPluginManagedWorktrees {
+  version: 1;
+  records: PluginManagedWorktreeRecord[];
+}
+
+let pluginManagedWorktreePersistenceTail: Promise<void> = Promise.resolve();
+
+function legacyPluginManagedWorktreeId(record: Omit<PluginManagedWorktreeRecord, "id">): string {
+  const fingerprint = createHash("sha256")
+    .update(
+      [
+        record.pluginId,
+        record.installationId,
+        record.callerAgentId,
+        record.workspaceId,
+        record.worktreePath,
+      ].join("\u0000"),
+      "utf8",
+    )
+    .digest("hex");
+  return `managed:legacy:${fingerprint}`;
 }
 
 type RegistryTransition = "created" | "unarchived" | "existing";
@@ -745,6 +781,9 @@ function workspaceLabelErrorCode(error: unknown): string {
 export class Session {
   private readonly clientId: string;
   private readonly principalId: string;
+  private readonly pluginIdentity: SessionOptions["pluginIdentity"];
+  private readonly resourceAgentIds: ReadonlySet<string> | null;
+  private readonly resourceWorkspaceIds: ReadonlySet<string> | null;
   private readonly authorization: SessionAuthorization;
   private appVersion: string | null;
   private clientCapabilities: ReadonlySet<ClientCapability>;
@@ -768,6 +807,10 @@ export class Session {
   private readonly deliveryDispatchCoordinator: DeliveryDispatchCoordinator;
   private readonly deliveryAgentDispatcher: DeliveryAgentDispatcher;
   private readonly pluginManagedWorktrees = new Map<string, PluginManagedWorktreeRecord>();
+  private readonly pluginManagedWorktreesPath: string;
+  private readonly pluginManagedWorktreesReady: Promise<void>;
+  private readonly pluginManagedWorktreesReconciled: Promise<void>;
+  private pluginManagedWorktreesLoadError: Error | null = null;
   private readonly projectIcons: ProjectIconReader;
   private readonly worktreesRoot: string | undefined;
   private readonly rewindInitiators = new Map<string, object | undefined>();
@@ -788,7 +831,10 @@ export class Session {
   private readonly daemonConfigStore: DaemonConfigStore;
   private readonly pushNotifications: PushNotifications;
   private readonly pluginRuntime: SessionOptions["pluginRuntime"];
-  private readonly pluginRpcInvocations = new Map<string, AbortController>();
+  private readonly pluginRpcInvocations = new Map<
+    string,
+    { controller: AbortController; source?: object }
+  >();
   private readonly orchestrationSkills: SessionOptions["orchestrationSkills"];
   private unsubscribeAgentEvents: (() => void) | null = null;
   private unsubscribeProjectMutations: (() => void) | null = null;
@@ -848,10 +894,13 @@ export class Session {
   private readonly workspaceScripts: WorkspaceScriptsService;
   private readonly createAgentLifecycleDispatch: CreateAgentLifecycleDispatch;
 
+  // oxlint-disable-next-line complexity -- constructor wires the session's independent subsystems.
   constructor(options: SessionOptions) {
     const {
       clientId,
       principalId,
+      pluginIdentity,
+      resourcePermissions,
       permissions,
       appVersion,
       clientCapabilities,
@@ -911,6 +960,13 @@ export class Session {
     } = options;
     this.clientId = clientId;
     this.principalId = resolvePrincipalId(principalId);
+    this.pluginIdentity = pluginIdentity;
+    this.resourceAgentIds = resourcePermissions?.agentIds
+      ? new Set(resourcePermissions.agentIds)
+      : null;
+    this.resourceWorkspaceIds = resourcePermissions?.workspaceIds
+      ? new Set(resourcePermissions.workspaceIds)
+      : null;
     this.authorization = new SessionAuthorization(permissions);
     this.appVersion = appVersion ?? null;
     this.clientCapabilities = parseClientCapabilities(clientCapabilities);
@@ -924,6 +980,14 @@ export class Session {
     this.onWorkspaceRecovered = onWorkspaceRecovered ?? null;
     this.pushNotifications = pushNotifications;
     this.paseoHome = paseoHome;
+    this.pluginManagedWorktreesPath = resolve(paseoHome, "plugin-managed-worktrees.json");
+    this.pluginManagedWorktreesReady = this.loadPluginManagedWorktrees().catch((error) => {
+      this.pluginManagedWorktreesLoadError = toError(error);
+      this.sessionLogger.warn(
+        { err: error },
+        "Could not load plugin-managed worktree records; keeping host mutations fenced",
+      );
+    });
     this.deliveryLedger = resolveDeliveryLedger(deliveryLedger, paseoHome);
     this.projectIcons = new ProjectIconReader(paseoHome);
     this.worktreesRoot = worktreesRoot;
@@ -1226,6 +1290,16 @@ export class Session {
 
     this.subscribeToAgentEvents();
     this.subscribeToRegistryMutations();
+
+    this.pluginManagedWorktreesReconciled = this.pluginManagedWorktreesReady.then(() =>
+      this.reconcilePluginManagedWorktrees().catch((error) => {
+        this.pluginManagedWorktreesLoadError = toError(error);
+        this.sessionLogger.warn(
+          { err: error },
+          "Failed to reconcile plugin-managed worktrees during startup",
+        );
+      }),
+    );
 
     this.sessionLogger.trace({}, "agent.session.lifecycle.created");
   }
@@ -1977,7 +2051,10 @@ export class Session {
         },
         "agent.session.inbound",
       );
-      if (!this.authorization.allowsInbound(msg)) {
+      if (
+        !this.authorization.allowsInbound(msg) &&
+        !this.allowsCallerScopedPluginRpc(msg, source)
+      ) {
         const requestId = sessionRequestId(msg);
         if (requestId) {
           this.emitForSource(
@@ -2045,6 +2122,10 @@ export class Session {
     return this.authorization.listPermissions();
   }
 
+  public getPluginIdentity(): SessionOptions["pluginIdentity"] {
+    return this.pluginIdentity;
+  }
+
   public allowsInbound(message: SessionInboundMessage): boolean {
     return this.authorization.allowsInbound(message);
   }
@@ -2077,61 +2158,129 @@ export class Session {
   public async invokePluginHost(input: {
     pluginId: string;
     caller: PluginCallerAuthority;
+    invocationId: string;
+    generation: number;
+    installationId: string;
+    capabilityNonce: string;
     operation: string;
     input: Record<string, unknown>;
     signal: AbortSignal;
   }): Promise<unknown> {
+    this.throwIfPluginHostCancelled(input.signal);
     if (this.isCleanedUp) throw new Error("Plugin host session is closed");
-    const caller = this.agentManager.getAgent(input.caller.callerAgentId);
-    if (!caller || caller.lifecycle === "closed") {
-      throw new Error(`Caller agent is no longer active: ${input.caller.callerAgentId}`);
-    }
     if (
-      caller.id !== input.caller.agent.id ||
-      caller.cwd !== input.caller.agent.cwd ||
-      (caller.workspaceId ?? "") !== input.caller.agent.workspaceId
+      !this.pluginIdentity ||
+      input.pluginId !== this.pluginIdentity.pluginId ||
+      input.installationId !== this.pluginIdentity.installationId
     ) {
-      throw new Error("Caller authority is stale; retry the invocation");
+      throw new Error("Plugin host installation is not authorized for this session");
     }
-    const callerWorkspaceId = caller.workspaceId || null;
+    if (input.caller.callerAgentId.trim() === "") {
+      throw new Error("Plugin host operations require an authenticated caller agent");
+    }
+    await this.pluginManagedWorktreesReady;
+    await this.pluginManagedWorktreesReconciled;
+    this.assertPluginManagedWorktreesHealthy();
+    const caller = await this.resolveLivePluginCallerAuthority(input.caller.callerAgentId);
+    this.throwIfPluginHostCancelled(input.signal);
+
+    switch (input.operation) {
+      case "delivery.send":
+        return this.invokePluginHostDeliverySend({ ...input, caller });
+      case "delivery.get":
+        return this.invokePluginHostDeliveryGet({ ...input, caller });
+      case "delivery.acknowledge":
+        return this.invokePluginHostDeliveryAcknowledge({ ...input, caller });
+      case "child.create":
+        return this.invokePluginHostChildCreate({ ...input, caller });
+      case "worktree.create":
+        return this.invokePluginHostWorktreeCreate({ ...input, caller });
+      case "worktree.remove":
+        return this.invokePluginHostWorktreeRemove({ ...input, caller });
+      default:
+        throw new Error(`Unknown plugin host operation: ${input.operation}`);
+    }
+  }
+
+  private throwIfPluginHostCancelled(signal: AbortSignal | undefined): void {
+    if (!signal?.aborted) return;
+    throw signal.reason instanceof Error
+      ? signal.reason
+      : new Error("Plugin host request cancelled");
+  }
+
+  // oxlint-disable-next-line complexity -- this assembles every live authority dimension.
+  private async resolveLivePluginCallerAuthority(
+    callerAgentId: string,
+  ): Promise<PluginCallerAuthority> {
+    const agent = this.agentManager.getAgent(callerAgentId);
+    if (!agent || agent.lifecycle === "closed") {
+      throw new Error(`Caller agent is no longer active: ${callerAgentId}`);
+    }
+    const payload = toAgentPayload(agent);
+    const workspaceRecord = agent.workspaceId
+      ? await this.workspaceRegistry.get(agent.workspaceId)
+      : null;
     if (
-      (input.caller.agent.workspaceId || null) !== callerWorkspaceId ||
-      (input.caller.workspace?.id ?? null) !== callerWorkspaceId
+      agent.workspaceId &&
+      (!workspaceRecord || workspaceRecord.archivedAt || workspaceRecord.cwd !== agent.cwd)
     ) {
-      throw new Error("Caller workspace authority is stale; retry the invocation");
+      throw new Error("Caller workspace is no longer active");
     }
-    if (caller.workspaceId) {
-      const workspace = await this.workspaceRegistry.get(caller.workspaceId);
-      if (!workspace || workspace.archivedAt || workspace.cwd !== caller.cwd) {
-        throw new Error("Caller workspace is no longer active");
-      }
-      const project = await this.projectRegistry.get(workspace.projectId);
+    if (workspaceRecord) {
+      const project = await this.projectRegistry.get(workspaceRecord.projectId);
       if (!project || project.archivedAt) {
         throw new Error("Caller project is no longer active");
       }
     }
-    if (input.signal.aborted) {
-      throw input.signal.reason instanceof Error
-        ? input.signal.reason
-        : new Error("Plugin host request cancelled");
-    }
-
-    switch (input.operation) {
-      case "delivery.send":
-        return this.invokePluginHostDeliverySend(input);
-      case "delivery.get":
-        return this.invokePluginHostDeliveryGet(input);
-      case "delivery.acknowledge":
-        return this.invokePluginHostDeliveryAcknowledge(input);
-      case "child.create":
-        return this.invokePluginHostChildCreate(input);
-      case "worktree.create":
-        return this.invokePluginHostWorktreeCreate(input);
-      case "worktree.remove":
-        return this.invokePluginHostWorktreeRemove(input);
-      default:
-        throw new Error(`Unknown plugin host operation: ${input.operation}`);
-    }
+    const workspace = workspaceRecord
+      ? await this.buildPluginWorkspaceSnapshot(workspaceRecord, agent)
+      : null;
+    const effectiveModel = payload.runtimeInfo?.model ?? payload.model;
+    const effectiveThinking =
+      payload.effectiveThinkingOptionId ??
+      payload.runtimeInfo?.thinkingOptionId ??
+      payload.thinkingOptionId;
+    const mode = agent.availableModes.find((candidate) => candidate.id === agent.currentModeId);
+    let unattended: PluginCallerAuthority["securityCeiling"]["unattended"] = "unknown";
+    if (mode) unattended = mode.isUnattended ? "allowed" : "forbidden";
+    const agentSnapshot: PluginCallerAuthority["agent"] = {
+      id: payload.id,
+      workspaceId: payload.workspaceId ?? "",
+      provider: payload.provider,
+      status: payload.status,
+      createdAt: payload.createdAt,
+      updatedAt: payload.updatedAt,
+      lastActivityAt: payload.lastUserMessageAt ?? payload.updatedAt,
+      title: payload.title,
+      cwd: payload.cwd,
+      model: payload.model,
+      currentModeId: payload.currentModeId,
+      thinkingOptionId: payload.thinkingOptionId ?? null,
+      requiresAttention: payload.requiresAttention ?? false,
+      attentionReason: payload.attentionReason ?? null,
+      parentAgentId: getParentAgentIdFromLabels(payload.labels) ?? null,
+      labels: payload.labels,
+    };
+    return {
+      callerAgentId,
+      agent: agentSnapshot,
+      workspace,
+      effective: {
+        provider: { known: true, value: payload.runtimeInfo?.provider ?? payload.provider },
+        model: effectiveModel ? { known: true, value: effectiveModel } : { known: false },
+        thinking: effectiveThinking ? { known: true, value: effectiveThinking } : { known: false },
+        providerSessionId: payload.runtimeInfo?.sessionId
+          ? { known: true, value: payload.runtimeInfo.sessionId }
+          : { known: false },
+      },
+      securityCeiling: {
+        filesystem: "unknown",
+        network: "unknown",
+        approvals: agent.config.toolPolicy ? "preapproved" : "unknown",
+        unattended,
+      },
+    };
   }
 
   private async invokePluginHostDeliverySend(input: {
@@ -2140,7 +2289,11 @@ export class Session {
     input: Record<string, unknown>;
     signal: AbortSignal;
   }): Promise<DeliveryRecord> {
-    if (input.signal.aborted) throw new Error("Plugin host request cancelled");
+    input = {
+      ...input,
+      caller: await this.resolveLivePluginCallerAuthority(input.caller.callerAgentId),
+    };
+    this.throwIfPluginHostCancelled(input.signal);
     if (this.principalId === "anonymous") {
       throw new Error("Durable delivery requires an authenticated principal");
     }
@@ -2149,22 +2302,58 @@ export class Session {
       deliveryId?: string;
       messageId?: string;
     };
-    const result = await this.deliveryLedger.send(this.principalId, {
-      targetAgentId: input.caller.callerAgentId,
-      payload: payload as never,
-      ...(options.deliveryId ? { deliveryId: options.deliveryId } : {}),
-      ...(options.messageId ? { messageId: options.messageId } : {}),
-      payloadTombstoneEligible: true,
-    });
-    let delivery = result.delivery;
-    if (delivery.status === "recorded") {
-      delivery = await this.deliveryDispatchCoordinator.run(
-        JSON.stringify([this.principalId, delivery.deliveryId]),
-        () => this.dispatchStoredDelivery(delivery),
-        this.principalId,
-      );
+    const deliveryId = DeliveryIdSchema.parse(options.deliveryId);
+    const validatedPayload = DeliveryPayloadSchema.parse(payload);
+    this.throwIfPluginHostCancelled(input.signal);
+    await this.resolveLivePluginCallerAuthority(input.caller.callerAgentId);
+    this.throwIfPluginHostCancelled(input.signal);
+    let result: Awaited<ReturnType<DeliveryLedger["send"]>> | null = null;
+    let nativeDispatchStarted = false;
+    try {
+      result = await this.deliveryLedger.send(this.principalId, {
+        targetAgentId: input.caller.callerAgentId,
+        payload: validatedPayload,
+        deliveryId,
+        ...(options.messageId ? { messageId: options.messageId } : {}),
+        payloadTombstoneEligible: true,
+        signal: input.signal,
+      });
+      let delivery = result.delivery;
+      if (delivery.status === "recorded") {
+        this.throwIfPluginHostCancelled(input.signal);
+        delivery = await this.deliveryDispatchCoordinator.run(
+          JSON.stringify([this.principalId, delivery.deliveryId]),
+          async () => {
+            this.throwIfPluginHostCancelled(input.signal);
+            await this.resolveLivePluginCallerAuthority(input.caller.callerAgentId);
+            this.throwIfPluginHostCancelled(input.signal);
+            nativeDispatchStarted = true;
+            return this.dispatchStoredDelivery(delivery);
+          },
+          this.principalId,
+        );
+      }
+      this.throwIfPluginHostCancelled(input.signal);
+      return delivery;
+    } catch (error) {
+      if (result?.created && result.delivery.status === "recorded" && !nativeDispatchStarted) {
+        await this.deliveryLedger
+          .markFailed(
+            this.principalId,
+            result.delivery.deliveryId,
+            input.signal.aborted
+              ? "Plugin host request cancelled"
+              : "Plugin host delivery dispatch was rejected before native send",
+          )
+          .catch((rollbackError) =>
+            this.sessionLogger.warn(
+              { err: rollbackError, deliveryId: result?.delivery.deliveryId },
+              "Failed to compensate a cancelled plugin delivery",
+            ),
+          );
+      }
+      throw error;
     }
-    return delivery;
   }
 
   private async invokePluginHostDeliveryGet(input: {
@@ -2172,12 +2361,19 @@ export class Session {
     input: Record<string, unknown>;
     signal: AbortSignal;
   }): Promise<unknown> {
-    if (input.signal.aborted) throw new Error("Plugin host request cancelled");
+    input = {
+      ...input,
+      caller: await this.resolveLivePluginCallerAuthority(input.caller.callerAgentId),
+    };
+    this.throwIfPluginHostCancelled(input.signal);
+    await this.resolveLivePluginCallerAuthority(input.caller.callerAgentId);
+    this.throwIfPluginHostCancelled(input.signal);
     const options = (input.input.options ?? {}) as DeliveryLedgerGetOptions;
     return this.deliveryLedger.get(this.principalId, {
       ...options,
       targetAgentId: input.caller.callerAgentId,
       allowPayloadTombstones: true,
+      signal: input.signal,
     });
   }
 
@@ -2186,11 +2382,18 @@ export class Session {
     input: Record<string, unknown>;
     signal: AbortSignal;
   }): Promise<DeliveryRecord> {
-    if (input.signal.aborted) throw new Error("Plugin host request cancelled");
+    input = {
+      ...input,
+      caller: await this.resolveLivePluginCallerAuthority(input.caller.callerAgentId),
+    };
+    this.throwIfPluginHostCancelled(input.signal);
+    await this.resolveLivePluginCallerAuthority(input.caller.callerAgentId);
+    this.throwIfPluginHostCancelled(input.signal);
     const deliveryId = String(input.input.deliveryId ?? "");
     return this.deliveryLedger.acknowledge(this.principalId, deliveryId, {
       targetAgentId: input.caller.callerAgentId,
       allowPayloadTombstones: true,
+      signal: input.signal,
     });
   }
 
@@ -2201,7 +2404,12 @@ export class Session {
     input: Record<string, unknown>;
     signal: AbortSignal;
   }): Promise<PluginHostedChild> {
-    if (input.signal.aborted) throw new Error("Plugin host request cancelled");
+    await this.pluginManagedWorktreesReady;
+    this.throwIfPluginHostCancelled(input.signal);
+    input = {
+      ...input,
+      caller: await this.resolveLivePluginCallerAuthority(input.caller.callerAgentId),
+    };
     if (!input.caller.agent.workspaceId) {
       throw new Error("Caller agent has no workspace for child creation");
     }
@@ -2228,6 +2436,7 @@ export class Session {
       if (
         !worktree ||
         worktree.pluginId !== input.pluginId ||
+        worktree.installationId !== this.pluginIdentity?.installationId ||
         worktree.callerAgentId !== input.caller.callerAgentId
       ) {
         throw new Error("Managed worktree is not owned by this plugin session and caller");
@@ -2236,86 +2445,131 @@ export class Session {
     const managedWorktree = options.worktreeId
       ? this.pluginManagedWorktrees.get(options.worktreeId)
       : undefined;
-    const livePayload = toAgentPayload(this.agentManager.getAgent(input.caller.callerAgentId)!);
-    const model = options.model ?? livePayload.runtimeInfo?.model ?? livePayload.model;
-    const thinking =
-      options.thinking ??
-      livePayload.effectiveThinkingOptionId ??
-      livePayload.runtimeInfo?.thinkingOptionId ??
-      livePayload.thinkingOptionId;
-    if (options.model) {
-      if (
-        !input.caller.effective.model.known ||
-        options.model !== input.caller.effective.model.value
-      ) {
-        throw new Error("Child model is outside the caller authority");
-      }
-    }
-    if (options.thinking) {
-      if (
-        !input.caller.effective.thinking.known ||
-        options.thinking !== input.caller.effective.thinking.value
-      ) {
-        throw new Error("Child thinking option is outside the caller authority");
-      }
-    }
-    const config: AgentSessionConfig = {
-      provider: livePayload.provider,
-      cwd: options.worktreeId ? managedWorktree!.cwd : input.caller.agent.cwd,
-      ...(model ? { model } : {}),
-      ...(thinking ? { thinkingOptionId: thinking } : {}),
-      modeId: input.caller.agent.currentModeId ?? undefined,
-      ...(options.toolPolicy === "none" ? { toolPolicy: { preapproved: [] } } : {}),
-    };
     const firstAgentContext = options.prompt?.trim() ? { prompt: options.prompt.trim() } : {};
     const { provisionalTitle } = resolveCreateAgentTitles({
       configTitle: options.title,
       initialPrompt: options.prompt?.trim(),
     });
-    const result = await createAgentCommand(
-      {
-        agentManager: this.agentManager,
-        agentStorage: this.agentStorage,
-        logger: this.sessionLogger,
-        paseoHome: this.paseoHome,
-        worktreesRoot: this.worktreesRoot,
-        providerSnapshotManager: this.providerSnapshotManager,
-      },
-      {
-        kind: "session",
-        config,
-        workspaceId: managedWorktree?.workspaceId ?? input.caller.agent.workspaceId,
-        initialPrompt: options.prompt,
-        labels: { ["paseo.parentAgentId"]: input.caller.callerAgentId },
-        provisionalTitle,
-        firstAgentContext,
-        buildSessionConfig: (sessionConfig, gitOptions, legacyWorktreeName, context) =>
-          this.buildAgentSessionConfig(sessionConfig, gitOptions, legacyWorktreeName, context),
-      },
-    );
-    if (input.signal.aborted) {
-      await archiveAgentCommand(
+    let createdAgentId: string | null = null;
+    try {
+      this.throwIfPluginHostCancelled(input.signal);
+      const dispatchCaller = await this.resolveLivePluginCallerAuthority(
+        input.caller.callerAgentId,
+      );
+      this.throwIfPluginHostCancelled(input.signal);
+      if (
+        dispatchCaller.agent.workspaceId !== input.caller.agent.workspaceId ||
+        dispatchCaller.workspace?.projectId !== input.caller.workspace?.projectId
+      ) {
+        throw new Error("Caller workspace authority changed during child creation");
+      }
+      if (
+        options.security &&
+        !isPluginSecurityRequestAllowed(dispatchCaller.securityCeiling, options.security)
+      ) {
+        throw new Error("Child security request exceeds the caller security ceiling");
+      }
+      const dispatchManagedWorktree = options.worktreeId
+        ? this.pluginManagedWorktrees.get(options.worktreeId)
+        : undefined;
+      if (
+        options.worktreeId &&
+        (!dispatchManagedWorktree ||
+          dispatchManagedWorktree !== managedWorktree ||
+          dispatchManagedWorktree.pluginId !== input.pluginId ||
+          dispatchManagedWorktree.installationId !== this.pluginIdentity?.installationId ||
+          dispatchManagedWorktree.callerAgentId !== dispatchCaller.callerAgentId)
+      ) {
+        throw new Error("Managed worktree authority changed during child creation");
+      }
+      const dispatchModel =
+        options.model ??
+        (dispatchCaller.effective.model.known ? dispatchCaller.effective.model.value : undefined);
+      const dispatchThinking =
+        options.thinking ??
+        (dispatchCaller.effective.thinking.known
+          ? dispatchCaller.effective.thinking.value
+          : undefined);
+      if (
+        (options.model &&
+          (!dispatchCaller.effective.model.known ||
+            options.model !== dispatchCaller.effective.model.value)) ||
+        (options.thinking &&
+          (!dispatchCaller.effective.thinking.known ||
+            options.thinking !== dispatchCaller.effective.thinking.value))
+      ) {
+        throw new Error("Child runtime option is outside the caller authority");
+      }
+      const dispatchConfig: AgentSessionConfig = {
+        provider: dispatchCaller.effective.provider.known
+          ? dispatchCaller.effective.provider.value
+          : dispatchCaller.agent.provider,
+        cwd: options.worktreeId ? dispatchManagedWorktree!.cwd : dispatchCaller.agent.cwd,
+        ...(dispatchModel ? { model: dispatchModel } : {}),
+        ...(dispatchThinking ? { thinkingOptionId: dispatchThinking } : {}),
+        modeId: dispatchCaller.agent.currentModeId ?? undefined,
+        ...(options.toolPolicy === "none" ? { toolPolicy: { preapproved: [] } } : {}),
+      };
+      const result = await createAgentCommand(
         {
           agentManager: this.agentManager,
           agentStorage: this.agentStorage,
           logger: this.sessionLogger,
+          paseoHome: this.paseoHome,
+          worktreesRoot: this.worktreesRoot,
+          providerSnapshotManager: this.providerSnapshotManager,
         },
-        result.liveSnapshot.id,
-      ).catch(() => undefined);
-      throw new Error("Plugin host request cancelled");
+        {
+          kind: "session",
+          config: dispatchConfig,
+          workspaceId: dispatchManagedWorktree?.workspaceId ?? dispatchCaller.agent.workspaceId,
+          initialPrompt: options.prompt,
+          labels: { ["paseo.parentAgentId"]: input.caller.callerAgentId },
+          provisionalTitle,
+          firstAgentContext,
+          onCreated: ({ agentId }) => {
+            createdAgentId = agentId;
+          },
+          buildSessionConfig: (sessionConfig, gitOptions, legacyWorktreeName, context) =>
+            this.buildAgentSessionConfig(sessionConfig, gitOptions, legacyWorktreeName, context),
+        },
+      );
+      this.throwIfPluginHostCancelled(input.signal);
+      await this.resolveLivePluginCallerAuthority(input.caller.callerAgentId);
+      await this.agentUpdates.forwardLiveAgent(result.liveSnapshot);
+      this.throwIfPluginHostCancelled(input.signal);
+      const finalCaller = await this.resolveLivePluginCallerAuthority(input.caller.callerAgentId);
+      const child = toAgentPayload(result.liveSnapshot);
+      return {
+        agentId: child.id,
+        parentAgentId: finalCaller.callerAgentId,
+        workspaceId:
+          child.workspaceId ?? managedWorktree?.workspaceId ?? finalCaller.agent.workspaceId,
+        cwd: child.cwd,
+        provider: child.provider,
+        model: child.model,
+        thinking: child.effectiveThinkingOptionId ?? child.thinkingOptionId ?? null,
+      };
+    } catch (error) {
+      if (createdAgentId) {
+        try {
+          await archiveAgentCommand(
+            {
+              agentManager: this.agentManager,
+              agentStorage: this.agentStorage,
+              logger: this.sessionLogger,
+            },
+            createdAgentId,
+          );
+        } catch (rollbackError) {
+          throw new Error(
+            `Plugin child creation failed and rollback failed: ${error instanceof Error ? error.message : String(error)}; ${rollbackError instanceof Error ? rollbackError.message : String(rollbackError)}`,
+            { cause: rollbackError },
+          );
+        }
+      }
+      throw error;
     }
-    await this.agentUpdates.forwardLiveAgent(result.liveSnapshot);
-    const child = toAgentPayload(result.liveSnapshot);
-    return {
-      agentId: child.id,
-      parentAgentId: input.caller.callerAgentId,
-      workspaceId:
-        child.workspaceId ?? managedWorktree?.workspaceId ?? input.caller.agent.workspaceId,
-      cwd: child.cwd,
-      provider: child.provider,
-      model: child.model,
-      thinking: child.effectiveThinkingOptionId ?? child.thinkingOptionId ?? null,
-    };
   }
 
   private async invokePluginHostWorktreeCreate(input: {
@@ -2324,70 +2578,89 @@ export class Session {
     input: Record<string, unknown>;
     signal: AbortSignal;
   }): Promise<PluginManagedWorktree> {
-    if (input.signal.aborted) throw new Error("Plugin host request cancelled");
+    await this.pluginManagedWorktreesReconciled;
+    input = {
+      ...input,
+      caller: await this.resolveLivePluginCallerAuthority(input.caller.callerAgentId),
+    };
+    this.throwIfPluginHostCancelled(input.signal);
     const options = (input.input.options ?? {}) as { name?: string; branch?: string };
-    const workspace = input.caller.workspace;
+    const dispatchCaller = await this.resolveLivePluginCallerAuthority(input.caller.callerAgentId);
+    this.throwIfPluginHostCancelled(input.signal);
+    const workspace = dispatchCaller.workspace;
     if (!workspace) throw new Error("Caller agent has no workspace for worktree creation");
+    const id = `managed:${uuidv4()}`;
     const result = await this.createPaseoWorktreeWorkflow({
-      cwd: input.caller.agent.cwd,
+      cwd: dispatchCaller.agent.cwd,
       projectId: workspace.projectId,
       worktreeSlug: options.name,
       branchName: options.branch,
       runSetup: false,
     });
-    if (input.signal.aborted) {
-      await archiveCommand(
-        {
-          paseoHome: this.paseoHome,
-          paseoWorktreesBaseRoot: this.worktreesRoot,
-          github: this.github,
-          workspaceGitService: this.workspaceGitService,
-          agentManager: this.agentManager,
-          agentStorage: this.agentStorage,
-          findWorkspaceIdForCwd: (cwd) => this.findWorkspaceIdForCwd(cwd),
-          listActiveWorkspaces: () => this.listActiveWorkspaceRefs(),
-          archiveWorkspaceRecord: (workspaceId) => this.archiveWorkspaceRecord(workspaceId),
-          emitWorkspaceUpdatesForWorkspaceIds: (workspaceIds) =>
-            this.emitWorkspaceUpdatesForWorkspaceIds(workspaceIds),
-          markWorkspaceArchiving: (workspaceIds, archivingAt) =>
-            this.markWorkspaceArchiving(workspaceIds, archivingAt),
-          clearWorkspaceArchiving: (workspaceIds) => this.clearWorkspaceArchiving(workspaceIds),
-          killTerminalsForWorkspace: (workspaceId) =>
-            this.terminalController.killTerminalsForWorkspace(workspaceId),
-          sessionLogger: this.sessionLogger,
-        },
-        {
-          requestId: uuidv4(),
-          worktreePath: result.worktree.worktreePath,
-          repoRoot: result.repoRoot,
-          scope: "worktree",
-        },
-      ).catch(() => undefined);
-      throw new Error("Plugin host request cancelled");
-    }
-    const managed: PluginManagedWorktreeRecord = {
+    const createdWorktree: PluginManagedWorktreeRecord = {
+      id,
       pluginId: input.pluginId,
+      installationId: this.pluginIdentity?.installationId ?? "",
       callerAgentId: input.caller.callerAgentId,
       workspaceId: result.workspace.workspaceId,
       cwd: result.workspace.cwd,
       worktreePath: result.worktree.worktreePath,
       repoRoot: result.repoRoot,
     };
+    let ownershipRecorded = false;
     try {
-      const workspaceSnapshot = (await this.buildPluginWorkspaceSnapshot(
+      this.throwIfPluginHostCancelled(input.signal);
+      const liveCaller = await this.resolveLivePluginCallerAuthority(input.caller.callerAgentId);
+      if (!liveCaller.workspace || liveCaller.workspace.projectId !== workspace.projectId) {
+        throw new Error("Caller workspace authority changed during worktree creation");
+      }
+      const liveAgent = this.agentManager.getAgent(input.caller.callerAgentId);
+      if (!liveAgent || liveAgent.lifecycle === "closed") {
+        throw new Error("Caller agent is no longer active");
+      }
+      const workspaceSnapshot = await this.buildPluginWorkspaceSnapshot(
         result.workspace,
-        this.agentManager.getAgent(input.caller.callerAgentId)!,
-      )) as PluginWorkspaceSnapshot;
-      const id = `managed:${uuidv4()}`;
-      this.pluginManagedWorktrees.set(id, managed);
+        liveAgent,
+      );
+      this.throwIfPluginHostCancelled(input.signal);
+      await this.resolveLivePluginCallerAuthority(input.caller.callerAgentId);
+      this.pluginManagedWorktrees.set(id, createdWorktree);
+      await this.persistPluginManagedWorktrees(input.signal);
+      ownershipRecorded = true;
+      this.throwIfPluginHostCancelled(input.signal);
       return { id, workspace: workspaceSnapshot, cwd: result.workspace.cwd };
     } catch (error) {
-      await this.archivePluginManagedWorktree(managed).catch((cleanupError) => {
-        this.sessionLogger.warn(
-          { err: cleanupError, workspaceId: managed.workspaceId },
-          "Failed to clean up a partially created plugin worktree",
+      try {
+        const cleanup = await this.archivePluginManagedWorktree(createdWorktree);
+        if (!cleanup.ok || cleanup.removedDirectory !== true) {
+          // The workflow has created a physical resource even if authority
+          // validation or ownership persistence failed afterward. Retain its
+          // record before persisting so an unconfirmed rollback is recoverable.
+          this.pluginManagedWorktrees.set(id, createdWorktree);
+          await this.persistPluginManagedWorktrees().catch((persistenceError) => {
+            this.sessionLogger.warn(
+              { err: persistenceError, worktreePath: createdWorktree.worktreePath },
+              "Failed to persist plugin worktree ownership after an unconfirmed rollback",
+            );
+          });
+          throw new Error(
+            cleanup.ok ? "physical worktree removal was not confirmed" : cleanup.message,
+            { cause: error },
+          );
+        }
+        this.pluginManagedWorktrees.delete(id);
+        try {
+          await this.persistPluginManagedWorktrees();
+        } catch (persistenceError) {
+          this.pluginManagedWorktrees.set(id, createdWorktree);
+          throw persistenceError;
+        }
+      } catch (cleanupError) {
+        throw new Error(
+          `Plugin worktree creation failed and rollback failed: ${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}${ownershipRecorded ? "; durable ownership was retained for recovery" : ""}`,
+          { cause: cleanupError },
         );
-      });
+      }
       throw error;
     }
   }
@@ -2398,19 +2671,194 @@ export class Session {
     input: Record<string, unknown>;
     signal: AbortSignal;
   }): Promise<void> {
-    if (input.signal.aborted) throw new Error("Plugin host request cancelled");
+    await this.pluginManagedWorktreesReconciled;
+    input = {
+      ...input,
+      caller: await this.resolveLivePluginCallerAuthority(input.caller.callerAgentId),
+    };
+    this.throwIfPluginHostCancelled(input.signal);
     const id = String(input.input.id ?? "");
     const managed = this.pluginManagedWorktrees.get(id);
     if (
       !managed ||
       managed.pluginId !== input.pluginId ||
+      managed.installationId !== this.pluginIdentity?.installationId ||
       managed.callerAgentId !== input.caller.callerAgentId
     ) {
       throw new Error("Managed worktree is not owned by this plugin session and caller");
     }
     const result = await this.archivePluginManagedWorktree(managed);
     if (!result.ok) throw new Error(result.message);
+    if (result.removedDirectory !== true) {
+      throw new Error("Managed worktree physical removal was not confirmed");
+    }
     this.pluginManagedWorktrees.delete(id);
+    try {
+      await this.persistPluginManagedWorktrees(input.signal);
+      this.throwIfPluginHostCancelled(input.signal);
+    } catch (error) {
+      this.pluginManagedWorktrees.set(id, managed);
+      throw error;
+    }
+  }
+
+  private async readPersistedPluginManagedWorktrees(): Promise<PluginManagedWorktreeRecord[]> {
+    let raw: string;
+    try {
+      raw = await readFile(this.pluginManagedWorktreesPath, "utf8");
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+      throw error;
+    }
+    const parsed = JSON.parse(raw) as Partial<PersistedPluginManagedWorktrees>;
+    if (parsed.version !== 1 || !Array.isArray(parsed.records)) {
+      throw new Error("Invalid plugin-managed worktree record envelope");
+    }
+    const seenIds = new Set<string>();
+    return parsed.records.map((record, index) => {
+      if (!record || typeof record !== "object") {
+        throw new Error(`Invalid plugin-managed worktree record at index ${index}`);
+      }
+      const requiredKeys = [
+        "pluginId",
+        "installationId",
+        "callerAgentId",
+        "workspaceId",
+        "cwd",
+        "worktreePath",
+        "repoRoot",
+      ] as const;
+      if (
+        !requiredKeys.every(
+          (key) => typeof record[key as keyof PluginManagedWorktreeRecord] === "string",
+        )
+      ) {
+        throw new Error(`Invalid plugin-managed worktree record at index ${index}`);
+      }
+      const legacyRecord = record as Omit<PluginManagedWorktreeRecord, "id">;
+      const id =
+        typeof record.id === "string" &&
+        record.id.trim() === record.id &&
+        record.id.length > 0 &&
+        record.id.length <= 256
+          ? record.id
+          : legacyPluginManagedWorktreeId(legacyRecord);
+      if (seenIds.has(id)) throw new Error(`Duplicate plugin-managed worktree id: ${id}`);
+      seenIds.add(id);
+      return Object.assign({}, legacyRecord, { id });
+    });
+  }
+
+  private async loadPluginManagedWorktrees(): Promise<void> {
+    if (!this.pluginIdentity) return;
+    const records = await this.readPersistedPluginManagedWorktrees();
+    for (const record of records) {
+      if (
+        record.pluginId === this.pluginIdentity.pluginId &&
+        record.installationId === this.pluginIdentity.installationId
+      ) {
+        this.pluginManagedWorktrees.set(record.id, record);
+      }
+    }
+  }
+
+  private assertPluginManagedWorktreesHealthy(): void {
+    if (this.pluginManagedWorktreesLoadError) {
+      throw new Error("Plugin-managed worktree state is unavailable; refusing a host mutation", {
+        cause: this.pluginManagedWorktreesLoadError,
+      });
+    }
+  }
+
+  private async reconcilePluginManagedWorktrees(): Promise<void> {
+    if (!this.pluginIdentity) return;
+    const records = await this.readPersistedPluginManagedWorktrees();
+    const stale = records.filter(
+      (record) =>
+        record.pluginId === this.pluginIdentity?.pluginId &&
+        record.installationId !== this.pluginIdentity.installationId,
+    );
+    if (stale.length === 0) return;
+    const retained: PluginManagedWorktreeRecord[] = [];
+    for (const record of stale) {
+      try {
+        const result = await this.archivePluginManagedWorktree(record);
+        if (!result.ok || result.removedDirectory !== true) retained.push(record);
+      } catch (error) {
+        retained.push(record);
+        this.sessionLogger.warn(
+          { err: error, worktreePath: record.worktreePath },
+          "Failed to reconcile a stale plugin-managed worktree",
+        );
+      }
+    }
+    await this.persistPluginManagedWorktreesRecords(retained, true);
+  }
+
+  private async persistPluginManagedWorktreesRecords(
+    retainedForPlugin: readonly PluginManagedWorktreeRecord[] = [],
+    replacePluginRecords = false,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    if (!this.pluginIdentity) return;
+    this.throwIfPluginHostCancelled(signal);
+    this.assertPluginManagedWorktreesHealthy();
+    const current = [...this.pluginManagedWorktrees.values()];
+    const operation = pluginManagedWorktreePersistenceTail
+      .catch(() => undefined)
+      .then(async () => {
+        this.throwIfPluginHostCancelled(signal);
+        const records = await this.readPersistedPluginManagedWorktrees();
+        this.throwIfPluginHostCancelled(signal);
+        const pluginId = this.pluginIdentity!.pluginId;
+        const installationId = this.pluginIdentity!.installationId;
+        const otherRecords = records.filter((record) =>
+          replacePluginRecords
+            ? record.pluginId !== pluginId
+            : !(record.pluginId === pluginId && record.installationId === installationId),
+        );
+        const next = [...otherRecords, ...retainedForPlugin, ...current];
+        await writeJsonFileAtomic(this.pluginManagedWorktreesPath, {
+          version: 1,
+          records: next,
+        } satisfies PersistedPluginManagedWorktrees);
+        return undefined;
+      });
+    pluginManagedWorktreePersistenceTail = operation.then(
+      () => undefined,
+      () => undefined,
+    );
+    await operation;
+  }
+
+  private async persistPluginManagedWorktrees(signal?: AbortSignal): Promise<void> {
+    await this.persistPluginManagedWorktreesRecords([], false, signal);
+  }
+
+  /** Explicit uninstall/replacement hook. Socket closure does not call this. */
+  public async finishPluginShutdown(pluginId: string, installationId: string): Promise<void> {
+    if (
+      !this.pluginIdentity ||
+      pluginId !== this.pluginIdentity.pluginId ||
+      installationId !== this.pluginIdentity.installationId
+    ) {
+      return;
+    }
+    await this.pluginManagedWorktreesReconciled;
+    const records = [...this.pluginManagedWorktrees.entries()];
+    for (const [id, record] of records) {
+      try {
+        const result = await this.archivePluginManagedWorktree(record);
+        if (!result.ok || result.removedDirectory !== true) continue;
+        this.pluginManagedWorktrees.delete(id);
+      } catch (error) {
+        this.sessionLogger.warn(
+          { err: error, worktreePath: record.worktreePath },
+          "Failed to clean up plugin-managed worktree during explicit shutdown",
+        );
+      }
+    }
+    await this.persistPluginManagedWorktrees();
   }
 
   private async archivePluginManagedWorktree(
@@ -2446,8 +2894,11 @@ export class Session {
   }
 
   private async cleanupPluginManagedWorktrees(): Promise<void> {
+    // Plugin-owned worktrees are durable installation records. The websocket
+    // may close for a reconnect, so only the explicit runtime shutdown hook
+    // is allowed to delete them.
+    if (this.pluginIdentity) return;
     const managed = [...this.pluginManagedWorktrees.values()];
-    this.pluginManagedWorktrees.clear();
     await Promise.all(
       managed.map(async (worktree) => {
         const result = await this.archivePluginManagedWorktree(worktree).catch((error) => ({
@@ -2459,6 +2910,11 @@ export class Session {
             { workspaceId: worktree.workspaceId, error: result.message },
             "Failed to clean up a plugin-managed worktree during session cleanup",
           );
+        } else if (result.removedDirectory === true) {
+          for (const [id, candidate] of this.pluginManagedWorktrees) {
+            if (candidate.worktreePath === worktree.worktreePath)
+              this.pluginManagedWorktrees.delete(id);
+          }
         }
       }),
     );
@@ -2481,7 +2937,7 @@ export class Session {
       this.dispatchProviderMessage(msg) ??
       this.dispatchOrchestrationSkillsMessage(msg) ??
       this.dispatchPluginDirectoryMessage(msg) ??
-      this.dispatchPluginMessage(msg) ??
+      this.dispatchPluginMessage(msg, source) ??
       this.dispatchTerminalMessage(msg) ??
       this.dispatchScheduleMessage(msg) ??
       this.dispatchMiscMessage(msg, source);
@@ -2733,7 +3189,10 @@ export class Session {
   }
 
   // oxlint-disable-next-line complexity -- this is the session's exhaustive plugin message dispatcher.
-  private dispatchPluginMessage(msg: SessionInboundMessage): Promise<void> | undefined {
+  private dispatchPluginMessage(
+    msg: SessionInboundMessage,
+    source?: object,
+  ): Promise<void> | undefined {
     if (msg.type === "plugin.list.request") {
       this.emit({
         type: "plugin.list.response",
@@ -2802,40 +3261,97 @@ export class Session {
     }
     if (msg.type === "plugin.rpc.invoke.request") {
       if (!this.pluginRuntime) throw new Error("Plugin service is unavailable");
+      if (msg.callerAgentId !== undefined && msg.callerAgentId !== null) {
+        this.assertPluginCallerRpcAdmission(msg.callerAgentId, source);
+      }
       const controller = new AbortController();
-      this.pluginRpcInvocations.set(msg.requestId, controller);
+      if (this.pluginRpcInvocations.has(msg.requestId)) {
+        throw new Error("Plugin RPC request id was reused");
+      }
+      this.pluginRpcInvocations.set(msg.requestId, { controller, source });
       return this.pluginRuntime
         .invokePluginRpc(msg.pluginId, msg.method, msg.input, {
           callerAgentId: msg.callerAgentId ?? null,
           signal: controller.signal,
         })
         .then((output) => {
-          this.emit({
-            type: "plugin.rpc.invoke.response",
-            payload: { requestId: msg.requestId, output },
-          });
+          this.emitForSource(
+            {
+              type: "plugin.rpc.invoke.response",
+              payload: { requestId: msg.requestId, output },
+            },
+            source,
+          );
           return undefined;
         })
         .finally(() => {
-          if (this.pluginRpcInvocations.get(msg.requestId) === controller) {
+          if (this.pluginRpcInvocations.get(msg.requestId)?.controller === controller) {
             this.pluginRpcInvocations.delete(msg.requestId);
           }
         });
     }
     if (msg.type === "plugin.rpc.cancel.request") {
-      const controller = this.pluginRpcInvocations.get(msg.invocationId);
-      controller?.abort(new Error("Plugin RPC invocation cancelled"));
-      this.emit({
-        type: "plugin.rpc.cancel.response",
-        payload: {
-          requestId: msg.requestId,
-          invocationId: msg.invocationId,
-          cancelled: controller !== undefined,
+      const invocation = this.pluginRpcInvocations.get(msg.invocationId);
+      if (invocation && invocation.source !== source) {
+        throw new Error("Plugin RPC cancellation source does not match invocation");
+      }
+      invocation?.controller.abort(new Error("Plugin RPC invocation cancelled"));
+      this.emitForSource(
+        {
+          type: "plugin.rpc.cancel.response",
+          payload: {
+            requestId: msg.requestId,
+            invocationId: msg.invocationId,
+            cancelled: invocation !== undefined,
+          },
         },
-      });
+        source,
+      );
       return undefined;
     }
     return undefined;
+  }
+
+  private allowsCallerScopedPluginRpc(msg: SessionInboundMessage, source?: object): boolean {
+    if (msg.type === "plugin.rpc.invoke.request") {
+      return (
+        msg.callerAgentId != null &&
+        source !== undefined &&
+        this.principalId !== "anonymous" &&
+        this.authorization.allowsPermission("workspace.read") &&
+        this.authorization.allowsPermission("workspace.write")
+      );
+    }
+    if (msg.type === "plugin.rpc.cancel.request") {
+      return (
+        source !== undefined && this.pluginRpcInvocations.get(msg.invocationId)?.source === source
+      );
+    }
+    return false;
+  }
+
+  private assertPluginCallerRpcAdmission(callerAgentId: string, source?: object): void {
+    if (
+      !source ||
+      this.principalId === "anonymous" ||
+      !this.authorization.allowsPermission("workspace.read") ||
+      !this.authorization.allowsPermission("workspace.write")
+    ) {
+      throw new Error("Caller-scoped plugin RPC requires an authenticated workspace session");
+    }
+    if (this.resourceAgentIds && !this.resourceAgentIds.has(callerAgentId)) {
+      throw new Error("Caller agent is outside this session's resource permissions");
+    }
+    const agent = this.agentManager.getAgent(callerAgentId);
+    if (!agent || agent.lifecycle === "closed") {
+      throw new Error(`Caller agent is not active: ${callerAgentId}`);
+    }
+    if (
+      this.resourceWorkspaceIds &&
+      (!agent.workspaceId || !this.resourceWorkspaceIds.has(agent.workspaceId))
+    ) {
+      throw new Error("Caller workspace is outside this session's resource permissions");
+    }
   }
 
   private dispatchPluginDirectoryMessage(msg: SessionInboundMessage): Promise<void> | undefined {
@@ -8390,7 +8906,7 @@ export class Session {
     this.sessionLogger.trace({}, "agent.session.lifecycle.cleanup");
     this.isCleanedUp = true;
 
-    for (const controller of this.pluginRpcInvocations.values()) {
+    for (const { controller } of this.pluginRpcInvocations.values()) {
       controller.abort(new Error("Session is closing"));
     }
     this.pluginRpcInvocations.clear();
