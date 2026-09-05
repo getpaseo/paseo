@@ -129,6 +129,46 @@ Creation options include `config`, `cwd`, `parent`, `title`, `prompt`, `env`, `o
 
 A workspace handle exposes `id`, `projectId`, `directory`, `name`, `status`, `current()`, `refresh()`, `setTitle(title)`, `archive()`, and `subscribe()`. Pass `null` to `setTitle` to restore the derived workspace name. Use `workspace.agents.create(options)` to create an agent without repeating the workspace ID or directory.
 
+## `client.terminals`
+
+Terminal operations require a host that supports workspace terminals. An older host receives no terminal request; the SDK throws an update-host error.
+
+| Method              | Result                             | Behavior                                                                           |
+| ------------------- | ---------------------------------- | ---------------------------------------------------------------------------------- |
+| `create(options)`   | `Promise<PaseoTerminalHandle>`     | Creates a terminal owned by the required `workspaceId`.                            |
+| `list(options?)`    | `Promise<PaseoTerminalListResult>` | Returns `{ entries, requestId }`. Omit filters to list all terminals on this host. |
+| `ref(terminalOrId)` | `PaseoTerminalHandle`              | Creates a local handle without fetching or attaching a terminal stream.            |
+
+Creation options:
+
+| Field             | Meaning                                                                                                                  |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| `workspaceId`     | Required active workspace ID. Unknown and archived IDs fail.                                                             |
+| `cwd`             | Optional absolute process working directory. Defaults to the workspace directory; changing it does not change ownership. |
+| `name`            | Optional terminal name.                                                                                                  |
+| `command`, `args` | Optional executable and argument array. Omit them to start the default shell.                                            |
+| `size`            | Optional initial viewport: `{ rows, cols }`.                                                                             |
+| `requestId`       | Optional request correlation ID.                                                                                         |
+
+List options are `workspaceId`, `cwd`, and `requestId`. `workspaceId` selects ownership, including terminals started outside the workspace directory. When it is present, `cwd` does not restrict the results. Without an ID, `cwd` filters by workspace root directory. Each entry contains `id`, `workspaceId`, `cwd`, and `name`; `cwd` is the terminal's actual starting directory.
+
+Terminal handles expose:
+
+| Method              | Result                                | Behavior                                                                                         |
+| ------------------- | ------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| `current()`         | `PaseoTerminal \| null`               | Last snapshot from creation, `ref(snapshot)`, or refresh. A handle made from an ID starts empty. |
+| `refresh(options?)` | `Promise<PaseoTerminal \| null>`      | Fetches the terminal snapshot, or `null` when it no longer exists. Accepts `requestId`.          |
+| `write(data)`       | `number`                              | Sends literal text without interpreting key names. Returns the input's UTF-16 length.            |
+| `sendKeys(keys)`    | `number`                              | Expands key tokens and sends the combined input. Returns its UTF-16 length.                      |
+| `capture(options?)` | `Promise<PaseoTerminalCaptureResult>` | Returns `{ terminalId, lines, totalLines, requestId }`.                                          |
+| `kill(requestId?)`  | `Promise<void>`                       | Waits for terminal teardown. Killing an already-removed terminal succeeds.                       |
+
+`sendKeys()` recognizes `Enter`, `Tab`, `Escape`, `Space`, `BSpace`, `C-c`, `C-d`, `C-z`, `C-l`, `C-a`, and `C-e`. Other strings pass through literally. Input methods send without waiting for command execution or acknowledging that the terminal consumed the input.
+
+Capture accepts optional `start`, `end`, `stripAnsi`, and `requestId`. Line bounds are zero-based and inclusive across scrollback and the viewport. Negative bounds count from the end; omitted bounds capture all lines. `stripAnsi` defaults to `true`. A missing terminal returns empty lines.
+
+Use `workspace.terminals.create(options?)` and `workspace.terminals.list(options?)` to supply the workspace ID from a handle. Creation accepts the same options except `workspaceId`; listing accepts only `requestId`. Plugins get these methods through `usePaseo()` and the handler's `paseo` context.
+
 ## `client.providers`
 
 | Method                           | Result                        | Behavior                                                                                                                                                 |

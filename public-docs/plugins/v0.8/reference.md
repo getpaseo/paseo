@@ -843,7 +843,7 @@ function PullRequestAction() {
 }
 ```
 
-The returned API covers projects, workspaces, agents, providers, and daemon config. See the [SDK API reference](/docs/sdk/reference) for its methods. Connection lifecycle methods are intentionally absent because Paseo owns the connection.
+The returned API covers projects, workspaces, agents, terminals, providers, and daemon config. See the [SDK API reference](/docs/sdk/reference) for its methods. Connection lifecycle methods are intentionally absent because Paseo owns the connection.
 
 ## Add plugin-specific backend behavior
 

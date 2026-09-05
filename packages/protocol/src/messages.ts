@@ -3408,6 +3408,8 @@ export const ServerInfoStatusPayloadSchema = z
         workspaceLabels: z.boolean().optional(),
         // COMPAT(workspaceSetupRun): added in v0.7.3, remove gate after 2027-09-02.
         workspaceSetupRun: z.boolean().optional(),
+        // COMPAT(workspaceTerminals): added in v0.7.3, remove gate after 2027-09-05.
+        workspaceTerminals: z.boolean().optional(),
         // COMPAT(checkoutForgeSetAutoMerge): added in v0.2.0-beta.1. Remove the
         // feature gate and checkoutGithubSetAutoMerge fallback after 2027-01-17
         // once the supported daemon floor is >= v0.2.0.
@@ -6024,7 +6026,7 @@ export const ListTerminalsResponseSchema = z.object({
   type: z.literal("list_terminals_response"),
   payload: z.object({
     cwd: z.string().optional(),
-    terminals: z.array(TerminalInfoSchema.omit({ cwd: true })),
+    terminals: z.array(TerminalInfoSchema.partial({ cwd: true })),
     requestId: z.string(),
   }),
 });

@@ -5,11 +5,10 @@ import {
   toTerminalCommandError,
   type TerminalCommandOptions,
 } from "./shared.js";
-import { terminalSchema, type TerminalRow, toTerminalRow } from "./schema.js";
-
-type TerminalListEntry = Parameters<typeof toTerminalRow>[0];
+import { terminalSchema, type TerminalRow } from "./schema.js";
 
 export interface TerminalLsOptions extends TerminalCommandOptions {
+  workspace?: string;
   all?: boolean;
   cwd?: string;
 }
@@ -18,22 +17,19 @@ export async function runLsCommand(
   options: TerminalLsOptions,
   _command: Command,
 ): Promise<ListResult<TerminalRow>> {
-  const { client } = await connectTerminalClient(options.host);
-  const cwd = options.all ? undefined : (options.cwd ?? process.cwd());
+  const { client, close } = await connectTerminalClient(options.host);
+  const cwd = options.all || options.workspace ? undefined : (options.cwd ?? process.cwd());
 
   try {
-    const payload =
-      cwd === undefined ? await client.listTerminals() : await client.listTerminals(cwd);
+    const payload = await client.terminals.list({ cwd, workspaceId: options.workspace });
     return {
       type: "list",
-      data: payload.terminals.map((terminal: TerminalListEntry) =>
-        toTerminalRow(terminal, payload.cwd ?? cwd),
-      ),
+      data: payload.entries,
       schema: terminalSchema,
     };
   } catch (err) {
     throw toTerminalCommandError("TERMINAL_LIST_FAILED", "list terminals", err);
   } finally {
-    await client.close().catch(() => {});
+    await close().catch(() => {});
   }
 }
