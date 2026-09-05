@@ -34,6 +34,13 @@ import { getShortcutOs } from "@/utils/shortcut-platform";
 import { getIsElectronRuntime } from "@/constants/layout";
 import { isNative } from "@/constants/platform";
 import { getDesktopHost } from "@/desktop/host";
+import { formatShortcut } from "@/utils/format-shortcut";
+import { buildNativeShortcutCaptureCommands } from "@/keyboard/native-history-shortcuts";
+import {
+  addNativeHistoryShortcutListener,
+  nativeHistoryShortcutsAvailable,
+  setNativeShortcutCaptureCommands,
+} from "@/native/history-shortcuts";
 
 const EMPTY_CAPTURED_COMBOS: string[] = [];
 
@@ -69,6 +76,12 @@ function ShortcutSequence({
     return <Text style={styles.capturingText}>{t("settings.shortcuts.capturePrompt")}</Text>;
   }
 
+  if (isNative)
+    return (
+      <Text style={styles.capturingText}>
+        {displayChord.map((keys) => formatShortcut(keys, getShortcutOs())).join(" ")}
+      </Text>
+    );
   return <Shortcut chord={displayChord} />;
 }
 
@@ -153,6 +166,12 @@ function ShortcutRowKeys({
   if (displayChord === null) {
     return <Text style={styles.unassignedText}>{t("settings.shortcuts.unassigned")}</Text>;
   }
+  if (isNative)
+    return (
+      <Text style={styles.capturingText}>
+        {displayChord.map((keys) => formatShortcut(keys, getShortcutOs())).join(" ")}
+      </Text>
+    );
   return <Shortcut chord={displayChord} />;
 }
 
@@ -336,7 +355,17 @@ export function KeyboardShortcutsSection() {
   const isFocused = useIsFocused();
   const isMac = getShortcutOs() === "mac";
   const isDesktopApp = getIsElectronRuntime();
-  const sections = buildKeyboardShortcutHelpSections({ isMac, isDesktop: isDesktopApp });
+  const allSections = buildKeyboardShortcutHelpSections({ isMac, isDesktop: isDesktopApp });
+  const sections = isNative
+    ? allSections
+        .map((section) => ({
+          ...section,
+          rows: section.rows.filter(
+            (row) => row.id === "history-back" || row.id === "history-forward",
+          ),
+        }))
+        .filter((section) => section.rows.length > 0)
+    : allSections;
 
   const cancelCapture = useCallback(() => {
     setCapturedCombos([]);
@@ -400,6 +429,23 @@ export function KeyboardShortcutsSection() {
   }, [capturingBindingId]);
 
   useEffect(() => {
+    if (!nativeHistoryShortcutsAvailable || capturingBindingId === null) return;
+    const listener = addNativeHistoryShortcutListener((event) => {
+      if (event.key === "Backspace") {
+        setCapturedCombos((current) => current.slice(0, -1));
+        return;
+      }
+      const combo = keyboardEventToComboString(event);
+      if (combo !== null) setCapturedCombos((current) => [...current, combo]);
+    });
+    setNativeShortcutCaptureCommands(buildNativeShortcutCaptureCommands());
+    return () => {
+      listener.remove();
+      setNativeShortcutCaptureCommands(null);
+    };
+  }, [capturingBindingId]);
+
+  useEffect(() => {
     return () => {
       setCapturingShortcut(false);
     };
@@ -426,7 +472,7 @@ export function KeyboardShortcutsSection() {
     [removeOverride],
   );
 
-  if (isNative) {
+  if (isNative && !nativeHistoryShortcutsAvailable) {
     return (
       <SettingsSection title={t("settings.sections.shortcuts")}>
         <View style={[settingsStyles.card, styles.mobileCard]}>
@@ -436,11 +482,12 @@ export function KeyboardShortcutsSection() {
     );
   }
 
-  const resetAllButton = hasOverrides ? (
-    <Button variant="ghost" size="sm" onPress={handleResetAll}>
-      {t("settings.shortcuts.actions.resetAll")}
-    </Button>
-  ) : undefined;
+  const resetAllButton =
+    hasOverrides && !isNative ? (
+      <Button variant="ghost" size="sm" onPress={handleResetAll}>
+        {t("settings.shortcuts.actions.resetAll")}
+      </Button>
+    ) : undefined;
 
   return (
     <>

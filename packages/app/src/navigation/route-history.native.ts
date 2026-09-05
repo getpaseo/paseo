@@ -1,12 +1,15 @@
-import type { RouteHistoryDirection } from "./route-history-state";
+import { useCallback } from "react";
+import { useNavigationContainerRef, usePathname } from "expo-router";
+import { useApplicationRouteHistory } from "./route-history-shared";
+import { buildNativeRouteHistoryHref } from "./route-history-native-href";
 export type { RouteHistoryDirection } from "./route-history-state";
 
-// Native does not activate the keyboard shortcut dispatcher or show shortcut
-// settings. Keep the platform fallback inert if that contract changes.
-function navigateRouteHistory(_direction: RouteHistoryDirection): boolean {
-  return false;
-}
-
-export function useRouteHistory(): (direction: RouteHistoryDirection) => boolean {
-  return navigateRouteHistory;
+export function useRouteHistory() {
+  const pathname = usePathname();
+  const navigation = useNavigationContainerRef();
+  const readHref = useCallback(
+    () => buildNativeRouteHistoryHref(pathname, navigation.getCurrentRoute()?.params),
+    [pathname, navigation],
+  );
+  return useApplicationRouteHistory(readHref);
 }
