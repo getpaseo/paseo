@@ -661,7 +661,7 @@ describe("WorkspaceLaunchManager", () => {
     }
   });
 
-  it("classifies TCP listeners once until they disappear, then detects replacements", async () => {
+  it("backs off HTTP retries, discovers slow servers, and resets after disappearance", async () => {
     const directory = mkdtempSync(join(tmpdir(), "paseo-launch-probe-"));
     tempDirs.push(directory);
     const port = await getFreePort();
@@ -673,6 +673,7 @@ describe("WorkspaceLaunchManager", () => {
       }),
     );
     let listening = true;
+    const clock = vi.spyOn(Date, "now").mockReturnValue(1_000);
     const probeHttp = vi.fn().mockResolvedValue(false);
     const manager = new WorkspaceLaunchManager({
       terminalManager: createTerminalManager().manager,
@@ -703,6 +704,26 @@ describe("WorkspaceLaunchManager", () => {
       await flushAsyncWork();
       expect(probeHttp).toHaveBeenCalledTimes(1);
 
+      // Failed classifications retry at 5, 10, 20, 40, then at most 60 seconds.
+      for (const [index, retryAt] of [6_000, 16_000, 36_000, 76_000, 136_000].entries()) {
+        clock.mockReturnValue(retryAt - 1);
+        manager.updateWorkspaceBranch(context.workspaceId, context.branchName);
+        await flushAsyncWork();
+        expect(probeHttp).toHaveBeenCalledTimes(index + 1);
+        clock.mockReturnValue(retryAt);
+        manager.updateWorkspaceBranch(context.workspaceId, context.branchName);
+        await flushAsyncWork();
+        expect(probeHttp).toHaveBeenCalledTimes(index + 2);
+      }
+      probeHttp.mockResolvedValue(true);
+      clock.mockReturnValue(196_000);
+      manager.updateWorkspaceBranch(context.workspaceId, context.branchName);
+      await flushAsyncWork();
+      expect(probeHttp).toHaveBeenCalledTimes(7);
+      expect(manager.buildSnapshot(context)[0]?.endpoints).toEqual([
+        expect.objectContaining({ port, protocol: "http", proxyUrl: expect.any(String) }),
+      ]);
+
       listening = false;
       manager.updateWorkspaceBranch(context.workspaceId, context.branchName);
       await flushAsyncWork();
@@ -711,11 +732,12 @@ describe("WorkspaceLaunchManager", () => {
       probeHttp.mockResolvedValue(true);
       manager.updateWorkspaceBranch(context.workspaceId, context.branchName);
       await flushAsyncWork();
-      expect(probeHttp).toHaveBeenCalledTimes(2);
+      expect(probeHttp).toHaveBeenCalledTimes(8);
       expect(manager.buildSnapshot(context)[0]?.endpoints).toEqual([
         expect.objectContaining({ port, protocol: "http", proxyUrl: expect.any(String) }),
       ]);
     } finally {
+      clock.mockRestore();
       await manager.disposeWorkspace(context.workspaceId);
     }
   });
