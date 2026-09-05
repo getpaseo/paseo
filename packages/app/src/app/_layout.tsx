@@ -71,6 +71,7 @@ import {
   startHostRuntimeBootstrap,
   type StartupBlocker,
 } from "@/navigation/host-runtime-bootstrap";
+import { resolveOfferLinkNavigationRoute } from "@/navigation/offer-link-navigation";
 import { registerWorkspaceRouteNavigationRef } from "@/navigation/workspace-route-navigation";
 import { ThemedStack } from "@/navigation/themed-stack";
 import { shouldUseDesktopDaemon } from "@/desktop/daemon/desktop-daemon";
@@ -127,7 +128,6 @@ import {
   WindowChromeSafeArea,
 } from "@/utils/desktop-window";
 import {
-  buildOpenProjectRoute,
   parseHostWorkspaceRouteFromPathname,
   parseServerIdFromPathname,
 } from "@/utils/host-routes";
@@ -705,9 +705,9 @@ function OfferLinkListener({
       void upsertDaemonFromOfferUrl(url)
         .then((profile) => {
           if (cancelled) return;
-          const serverId = (profile as { serverId?: unknown } | null)?.serverId;
-          if (typeof serverId !== "string" || !serverId) return;
-          router.replace(buildOpenProjectRoute());
+          const route = resolveOfferLinkNavigationRoute(profile);
+          if (!route) return;
+          router.replace(route);
           return;
         })
         .catch((error) => {
