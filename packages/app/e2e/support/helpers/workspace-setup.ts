@@ -276,9 +276,9 @@ export async function navigateToWorkspaceViaSidebar(
   });
 }
 
-export async function returnHomeFromWorkspace(page: Page): Promise<void> {
-  await page.getByRole("button", { name: "Home" }).click();
-  await expect(page).not.toHaveURL(/\/workspace\//, { timeout: 30_000 });
+export async function leaveWorkspaceViaHistory(page: Page): Promise<void> {
+  await page.getByRole("button", { name: "History", exact: true }).click();
+  await expect(page).toHaveURL(/\/sessions$/, { timeout: 30_000 });
 }
 
 export async function openWorkspaceScriptsMenu(page: Page): Promise<void> {

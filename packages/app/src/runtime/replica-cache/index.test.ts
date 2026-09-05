@@ -302,6 +302,7 @@ describe("ReplicaCache", () => {
       kind: "plugin",
       id: "reports/test-report/1",
       pluginId: "reports",
+      pluginItemId: "test-report/1",
       itemKind: "test-report",
       version: 1,
       data: { passed: 4, failed: 0 },
@@ -318,6 +319,38 @@ describe("ReplicaCache", () => {
 
     const reader = createCache(storage);
     expect((await reader.readTimeline(SERVER_ID, "agent-1"))?.items).toEqual([pluginItem]);
+  });
+
+  it("drops cached plugin timeline items without a plugin-local id", async () => {
+    const storage = new MemoryStorage();
+    const writer = createCache(storage);
+    const pluginItem = {
+      kind: "plugin",
+      id: "reports/test-report/1",
+      pluginId: "reports",
+      pluginItemId: "test-report/1",
+      itemKind: "test-report",
+      version: 1,
+      data: { passed: 4 },
+      timestamp: new Date("2026-07-18T08:02:00.000Z"),
+    } satisfies StreamItem;
+    writer.commitTimeline(SERVER_ID, "agent-1", {
+      agentId: "agent-1",
+      items: [pluginItem],
+      range: { epoch: "epoch-1", startSeq: 12, endSeq: 12 },
+      hasOlder: true,
+    });
+    await writer.flush();
+    const row = [...storage.rows.values()].find((candidate) => candidate.kind === "timeline");
+    if (!row) throw new Error("timeline row was not written");
+    const payload = JSON.parse(row.payload) as { items: Array<Record<string, unknown>> };
+    delete payload.items[0]?.pluginItemId;
+    storage.rows.set(`${row.serverId}:${row.kind}:${row.id}`, {
+      ...row,
+      payload: JSON.stringify(payload),
+    });
+
+    expect(await createCache(storage).readTimeline(SERVER_ID, "agent-1")).toBeUndefined();
   });
 
   it("reads one requested agent and the focused timeline without scanning directory rows", async () => {

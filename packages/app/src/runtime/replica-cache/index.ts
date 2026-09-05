@@ -1,4 +1,3 @@
-import { Buffer } from "buffer";
 import { z } from "zod";
 import {
   AgentStatusSchema,
@@ -105,8 +104,9 @@ const StoredTimelineItemSchema = z.discriminatedUnion("kind", [
   }),
   z.strictObject({
     ...TimelineItemBaseShape,
-    kind: z.literal("activity_log"),
-    activityType: z.enum(["system", "info", "success", "error"]),
+    kind: z.literal("notification"),
+    sourceType: z.enum(["error", "notification"]),
+    level: z.enum(["info", "warning", "error"]),
     message: z.string(),
   }),
   z.strictObject({
@@ -126,6 +126,7 @@ const StoredTimelineItemSchema = z.discriminatedUnion("kind", [
     ...TimelineItemBaseShape,
     kind: z.literal("plugin"),
     pluginId: z.string(),
+    pluginItemId: z.string(),
     itemKind: z.string(),
     version: z.number().int().positive(),
     data: PluginTimelineDataSchema,
@@ -422,11 +423,12 @@ function serializeTimelineItem(item: StreamItem): StoredTimelineItem | null {
         items: item.items,
         activity: item.activity,
       };
-    case "activity_log":
+    case "notification":
       return {
         ...base,
         kind: item.kind,
-        activityType: item.activityType,
+        sourceType: item.sourceType,
+        level: item.level,
         message: item.message,
       };
     case "compaction":
@@ -450,6 +452,7 @@ function serializeTimelineItem(item: StreamItem): StoredTimelineItem | null {
         ...base,
         kind: item.kind,
         pluginId: item.pluginId,
+        pluginItemId: item.pluginItemId,
         itemKind: item.itemKind,
         version: item.version,
         data: item.data,
@@ -458,6 +461,26 @@ function serializeTimelineItem(item: StreamItem): StoredTimelineItem | null {
 }
 
 function deserializeTimelineItem(item: StoredTimelineItem): StreamItem {
+  if (item.kind === "plugin") {
+    return {
+      id: item.id,
+      ...(item.timelineCursor ? { timelineCursor: item.timelineCursor } : {}),
+      ...(item.turnId ? { turnId: item.turnId } : {}),
+      timestamp: new Date(item.timestamp),
+      kind: item.kind,
+      pluginId: item.pluginId,
+      pluginItemId: item.pluginItemId,
+      itemKind: item.itemKind,
+      version: item.version,
+      data: item.data,
+    };
+  }
+  return deserializeBuiltinTimelineItem(item);
+}
+
+function deserializeBuiltinTimelineItem(
+  item: Exclude<StoredTimelineItem, { kind: "plugin" }>,
+): StreamItem {
   const base = {
     id: item.id,
     ...(item.timelineCursor ? { timelineCursor: item.timelineCursor } : {}),
@@ -492,11 +515,12 @@ function deserializeTimelineItem(item: StoredTimelineItem): StreamItem {
         items: item.items,
         activity: item.activity,
       };
-    case "activity_log":
+    case "notification":
       return {
         ...base,
         kind: item.kind,
-        activityType: item.activityType,
+        sourceType: item.sourceType,
+        level: item.level,
         message: item.message,
       };
     case "compaction":
@@ -529,15 +553,6 @@ function deserializeTimelineItem(item: StoredTimelineItem): StreamItem {
         },
       };
     }
-    case "plugin":
-      return {
-        ...base,
-        kind: item.kind,
-        pluginId: item.pluginId,
-        itemKind: item.itemKind,
-        version: item.version,
-        data: item.data,
-      };
   }
 }
 
@@ -669,8 +684,6 @@ function isTimelineItemStoredLosslessly(item: StreamItem): boolean {
   switch (item.kind) {
     case "user_message":
       return (item.images?.length ?? 0) === 0 && (item.attachments?.length ?? 0) === 0;
-    case "activity_log":
-      return item.metadata === undefined;
     case "tool_call":
       return item.payload.source === "agent";
     default:
@@ -715,8 +728,32 @@ function pendingRowKey(key: ReplicaRowKey): string {
   return `${key.serverId}\u0000${rowKey(key)}`;
 }
 
-function payloadBytes(payload: string): number {
-  return Buffer.byteLength(payload, "utf8");
+// Budget accounting runs over every stored row of a touched host on each persist. Rows are
+// immutable once stored, so their size is computed once. The count itself avoids the JS Buffer
+// polyfill, which materialises the whole byte array just to measure it.
+const rowBytesCache = new WeakMap<ReplicaRow, number>();
+
+function utf8ByteLength(text: string): number {
+  let bytes = 0;
+  for (let index = 0; index < text.length; index += 1) {
+    const code = text.charCodeAt(index);
+    if (code < 0x80) bytes += 1;
+    else if (code < 0x800) bytes += 2;
+    else if (code >= 0xd800 && code <= 0xdbff) {
+      bytes += 4;
+      index += 1;
+    } else bytes += 3;
+  }
+  return bytes;
+}
+
+function rowBytes(row: ReplicaRow): number {
+  let bytes = rowBytesCache.get(row);
+  if (bytes === undefined) {
+    bytes = utf8ByteLength(row.payload);
+    rowBytesCache.set(row, bytes);
+  }
+  return bytes;
 }
 
 function parseJsonPayload(payload: string): unknown {
@@ -1053,7 +1090,7 @@ export class ReplicaCache {
       this.storedRows.delete(oldServerId);
       for (const [key, row] of rows) newRows.set(key, { ...row, serverId: newServerId });
       this.storedRows.set(newServerId, newRows);
-      const bytes = [...newRows.values()].reduce((sum, row) => sum + payloadBytes(row.payload), 0);
+      const bytes = [...newRows.values()].reduce((sum, row) => sum + rowBytes(row), 0);
       this.hostBytes.delete(oldServerId);
       this.hostBytes.set(newServerId, bytes);
       this.totalBytes += bytes;
@@ -1237,17 +1274,17 @@ export class ReplicaCache {
       const previous = rows?.get(rowKey(key));
       if (previous) {
         rows?.delete(rowKey(key));
-        this.adjustHostBytes(key.serverId, -payloadBytes(previous.payload));
+        this.adjustHostBytes(key.serverId, -rowBytes(previous));
       }
       touchedServerIds.add(key.serverId);
     }
     for (const row of changes.upserts) {
       const rows = this.storedRows.get(row.serverId) ?? new Map<string, ReplicaRow>();
       const previous = rows.get(rowKey(row));
-      const previousBytes = previous ? payloadBytes(previous.payload) : 0;
+      const previousBytes = previous ? rowBytes(previous) : 0;
       rows.set(rowKey(row), row);
       this.storedRows.set(row.serverId, rows);
-      this.adjustHostBytes(row.serverId, payloadBytes(row.payload) - previousBytes);
+      this.adjustHostBytes(row.serverId, rowBytes(row) - previousBytes);
       touchedServerIds.add(row.serverId);
     }
     for (const serverId of touchedServerIds) {
@@ -1288,7 +1325,7 @@ export class ReplicaCache {
     for (const [serverId, rows] of projectedRows) {
       projectedBytes.set(
         serverId,
-        [...rows.values()].reduce((sum, row) => sum + payloadBytes(row.payload), 0),
+        [...rows.values()].reduce((sum, row) => sum + rowBytes(row), 0),
       );
     }
 
@@ -1371,7 +1408,7 @@ export class ReplicaCache {
           continue;
         }
         const rows = new Map(host.rows.map((row) => [rowKey(row), row]));
-        const bytes = host.rows.reduce((sum, row) => sum + payloadBytes(row.payload), 0);
+        const bytes = host.rows.reduce((sum, row) => sum + rowBytes(row), 0);
         this.storedRows.set(host.serverId, rows);
         this.hostBytes.set(host.serverId, bytes);
         this.totalBytes += bytes;
