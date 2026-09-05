@@ -117,6 +117,8 @@ Daemon bootstrap reconciles that ledger in the background, without blocking star
 
 The daemon keeps provider snapshots per resolved working directory, with a separate semantic global scope for settings/provider management and requests that do not carry a cwd. Provider catalog probes receive a discriminated `FetchCatalogOptions`: `{ scope: "global", force }` for global catalog refreshes, or `{ scope: "workspace", cwd, force }` for project-scoped refreshes. Providers decide what global means for their runtime; do not infer global by comparing a cwd to the user's home directory.
 
+A provider whose catalog does not depend on the working directory sets `hasGlobalCatalog: true` in its capability flags; Claude and Codex do. The manager never probes such a provider per workspace: workspace entries mirror the global entry, a cold workspace read waits on the in-flight global load, and a workspace refresh re-probes the global scope once.
+
 `ProviderSnapshotManager` owns one refresh deadline per provider. The deadline starts before the
 availability check and covers that check plus the complete catalog probe. Providers that make
 multiple catalog requests must not apply this deadline separately to each request. The manager

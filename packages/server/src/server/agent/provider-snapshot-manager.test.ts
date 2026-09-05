@@ -16,10 +16,12 @@ import type {
 import type { ManagedAgent } from "./agent-manager.js";
 import {
   GLOBAL_PROVIDER_SNAPSHOT_KEY,
+  ProviderCatalogInvariantError,
   ProviderSnapshotManager,
   resolveSnapshotCwd,
 } from "./provider-snapshot-manager.js";
 import { OpenCodeAgentClient } from "./providers/opencode-agent.js";
+import { BUILTIN_PROVIDER_IDS } from "@getpaseo/protocol/provider-manifest";
 
 const TEST_CAPABILITIES = {
   supportsStreaming: false,
@@ -54,6 +56,12 @@ function createExtraClient(
     },
     ...overrides,
   } satisfies AgentClient;
+}
+
+function disableBuiltinsExcept(provider: AgentProvider): Record<string, { enabled: false }> {
+  return Object.fromEntries(
+    BUILTIN_PROVIDER_IDS.filter((id) => id !== provider).map((id) => [id, { enabled: false }]),
+  );
 }
 
 async function withEnv(key: string, value: string, run: () => Promise<void>): Promise<void> {
@@ -1937,5 +1945,206 @@ describe("ProviderSnapshotManager cwd routing", () => {
     } else {
       expect(resolved).toBeDefined();
     }
+  });
+  test("hasGlobalCatalog providers probe once and mirror the global entry into workspace snapshots", async () => {
+    const isAvailable = vi.fn(async () => true);
+    const fetchCatalog = vi.fn(async (_options: FetchCatalogOptions) => {
+      await waitForDelay(20);
+      return {
+        models: [
+          { provider: "codex", id: "gpt-5.4-mini", label: "GPT 5.4 Mini" },
+        ] as AgentModelDefinition[],
+        modes: [] as AgentMode[],
+      };
+    });
+    const manager = new ProviderSnapshotManager({
+      logger: createTestLogger(),
+      providerOverrides: disableBuiltinsExcept("codex"),
+      extraClients: {
+        codex: createExtraClient("codex", {
+          capabilities: { ...TEST_CAPABILITIES, hasGlobalCatalog: true },
+          isAvailable,
+          fetchCatalog,
+        }),
+      },
+    });
+    try {
+      const [[first], [second]] = await Promise.all([
+        manager.listProviders({ cwd: "/tmp/project-a", providers: ["codex"], wait: true }),
+        manager.listProviders({ cwd: "/tmp/project-b", providers: ["codex"], wait: true }),
+      ]);
+      expect(first).toMatchObject({
+        provider: "codex",
+        status: "ready",
+        models: [expect.objectContaining({ id: "gpt-5.4-mini" })],
+      });
+      expect(second).toEqual(first);
+      const global = await manager.getProvider({ provider: "codex", wait: true });
+      expect(global).toEqual(first);
+      expect(fetchCatalog).toHaveBeenCalledTimes(1);
+      expect(fetchCatalog.mock.calls[0]?.[0]).toEqual({ scope: "global", force: false });
+    } finally {
+      manager.destroy();
+    }
+  });
+
+  test("workspace refresh of a hasGlobalCatalog provider re-probes the global scope once", async () => {
+    let catalogVersion = 0;
+    const isAvailable = vi.fn(async () => true);
+    const fetchCatalog = vi.fn(async (_options: FetchCatalogOptions) => {
+      catalogVersion += 1;
+      return {
+        models: [
+          {
+            provider: "codex",
+            id: `gpt-5.4-mini-${catalogVersion}`,
+            label: `GPT 5.4 Mini ${catalogVersion}`,
+          },
+        ] as AgentModelDefinition[],
+        modes: [] as AgentMode[],
+      };
+    });
+    const manager = new ProviderSnapshotManager({
+      logger: createTestLogger(),
+      providerOverrides: disableBuiltinsExcept("codex"),
+      extraClients: {
+        codex: createExtraClient("codex", {
+          capabilities: { ...TEST_CAPABILITIES, hasGlobalCatalog: true },
+          isAvailable,
+          fetchCatalog,
+        }),
+      },
+    });
+    try {
+      await manager.listProviders({ cwd: "/tmp/project-a", providers: ["codex"], wait: true });
+      await manager.listProviders({ cwd: "/tmp/project-b", providers: ["codex"], wait: true });
+      await manager.refreshSnapshotForCwd({ cwd: "/tmp/project-a", providers: ["codex"] });
+
+      expect(fetchCatalog).toHaveBeenCalledTimes(2);
+      expect(fetchCatalog.mock.calls[1]?.[0]).toEqual({ scope: "global", force: true });
+      const [entry] = await manager.listProviders({
+        cwd: "/tmp/project-a",
+        providers: ["codex"],
+        wait: true,
+      });
+      const global = await manager.getProvider({ provider: "codex", wait: true });
+      const sibling = manager
+        .getSnapshot("/tmp/project-b")
+        .find((candidate) => candidate.provider === "codex");
+      expect(entry).toMatchObject({
+        status: "ready",
+        models: [expect.objectContaining({ id: "gpt-5.4-mini-2" })],
+      });
+      expect(sibling).toEqual(entry);
+      expect(global.fetchedAt).toBe(entry.fetchedAt);
+      expect(fetchCatalog).toHaveBeenCalledTimes(2);
+    } finally {
+      manager.destroy();
+    }
+  });
+
+  test("overlapping forced global catalog refreshes share one provider load", async () => {
+    let releaseRefresh: (() => void) | undefined;
+    const refreshStarted = Promise.withResolvers<void>();
+    const refreshReleased = new Promise<void>((finish) => {
+      releaseRefresh = finish;
+    });
+    const fetchCatalog = vi.fn(async (_options: FetchCatalogOptions) => {
+      refreshStarted.resolve();
+      await refreshReleased;
+      return {
+        models: [{ provider: "codex", id: "gpt-5.4-mini", label: "GPT 5.4 Mini" }],
+        modes: [],
+      };
+    });
+    const manager = new ProviderSnapshotManager({
+      logger: createTestLogger(),
+      providerOverrides: disableBuiltinsExcept("codex"),
+      extraClients: {
+        codex: createExtraClient("codex", {
+          capabilities: { ...TEST_CAPABILITIES, hasGlobalCatalog: true },
+          isAvailable: async () => true,
+          fetchCatalog,
+        }),
+      },
+    });
+    try {
+      const first = manager.refreshSettingsSnapshot({ providers: ["codex"] });
+      await refreshStarted.promise;
+      const second = manager.refreshSettingsSnapshot({ providers: ["codex"] });
+      releaseRefresh?.();
+      await Promise.all([first, second]);
+
+      expect(fetchCatalog).toHaveBeenCalledTimes(1);
+      expect(await manager.getProvider({ provider: "codex", wait: false })).toMatchObject({
+        status: "ready",
+      });
+    } finally {
+      manager.destroy();
+    }
+  });
+
+  test("forced global catalog refreshes share one follow-up to an overlapping warm-up", async () => {
+    let releaseWarmUp: (() => void) | undefined;
+    const warmUpStarted = Promise.withResolvers<void>();
+    const warmUpReleased = new Promise<void>((finish) => {
+      releaseWarmUp = finish;
+    });
+    const fetchCatalog = vi.fn(async (options: FetchCatalogOptions) => {
+      if (!options.force) {
+        warmUpStarted.resolve();
+        await warmUpReleased;
+      }
+      return {
+        models: [
+          {
+            provider: "codex",
+            id: options.force ? "gpt-5.4-mini-forced" : "gpt-5.4-mini-warm",
+            label: "GPT 5.4 Mini",
+          },
+        ],
+        modes: [],
+      };
+    });
+    const manager = new ProviderSnapshotManager({
+      logger: createTestLogger(),
+      providerOverrides: disableBuiltinsExcept("codex"),
+      extraClients: {
+        codex: createExtraClient("codex", {
+          capabilities: { ...TEST_CAPABILITIES, hasGlobalCatalog: true },
+          isAvailable: async () => true,
+          fetchCatalog,
+        }),
+      },
+    });
+    try {
+      const warmUp = manager.getProvider({ provider: "codex", wait: true });
+      await warmUpStarted.promise;
+      const firstForced = manager.refreshSettingsSnapshot({ providers: ["codex"] });
+      const secondForced = manager.refreshSettingsSnapshot({ providers: ["codex"] });
+      releaseWarmUp?.();
+      await Promise.all([warmUp, firstForced, secondForced]);
+
+      expect(fetchCatalog).toHaveBeenCalledTimes(2);
+      expect(fetchCatalog.mock.calls.map(([options]) => options)).toEqual([
+        { scope: "global", force: false },
+        { scope: "global", force: true },
+      ]);
+      expect(await manager.getProvider({ provider: "codex", wait: false })).toMatchObject({
+        status: "ready",
+        models: [expect.objectContaining({ id: "gpt-5.4-mini-forced" })],
+      });
+    } finally {
+      manager.destroy();
+    }
+  });
+
+  test("global catalog invariant errors expose provider and scope metadata", () => {
+    expect(new ProviderCatalogInvariantError("codex")).toMatchObject({
+      name: "ProviderCatalogInvariantError",
+      provider: "codex",
+      scope: "global",
+      message: "Global catalog for provider 'codex' did not settle",
+    });
   });
 });

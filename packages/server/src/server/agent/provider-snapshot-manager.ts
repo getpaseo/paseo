@@ -55,6 +55,15 @@ const DEFAULT_DIAGNOSTIC_TIMEOUT_MS = 120_000;
 const PROVIDER_REFRESH_DEADLINE_ENV = "PASEO_PROVIDER_REFRESH_TIMEOUT_MS";
 export const GLOBAL_PROVIDER_SNAPSHOT_KEY = "paseo:global";
 
+export class ProviderCatalogInvariantError extends Error {
+  readonly scope = "global";
+
+  constructor(readonly provider: AgentProvider) {
+    super(`Global catalog for provider '${provider}' did not settle`);
+    this.name = "ProviderCatalogInvariantError";
+  }
+}
+
 function validRefreshDeadline(value: unknown): number | undefined {
   return typeof value === "number" &&
     Number.isSafeInteger(value) &&
@@ -184,6 +193,7 @@ interface ProviderLoadOptions {
 }
 interface ProviderLoad {
   promise: Promise<void>;
+  force: boolean;
 }
 
 interface MutableProviderState {
@@ -910,20 +920,6 @@ export class ProviderSnapshotManager {
     const providerSet = providers ? new Set(providers) : null;
     const loadingEntries = this.createLoadingEntries();
 
-    for (const [cwd, providerLoads] of Array.from(this.providerLoads.entries())) {
-      if (!providerSet) {
-        this.providerLoads.delete(cwd);
-        continue;
-      }
-
-      for (const provider of providerSet) {
-        providerLoads.delete(provider);
-      }
-      if (providerLoads.size === 0) {
-        this.providerLoads.delete(cwd);
-      }
-    }
-
     for (const [cwd, snapshot] of this.snapshots.entries()) {
       if (!providerSet) {
         snapshot.clear();
@@ -960,7 +956,10 @@ export class ProviderSnapshotManager {
     }
 
     const existingLoad = this.getProviderLoad(options.snapshotCwd, options.provider);
-    if (existingLoad && !options.force) {
+    if (existingLoad) {
+      if (options.force && !existingLoad.force) {
+        return existingLoad.promise.then(() => this.loadProvider(options));
+      }
       return existingLoad.promise;
     }
     const existingEntry = this.snapshots.get(options.snapshotCwd)?.get(options.provider);
@@ -970,6 +969,7 @@ export class ProviderSnapshotManager {
 
     const load: ProviderLoad = {
       promise: Promise.resolve(),
+      force: options.force,
     };
     this.setProviderLoad(options.snapshotCwd, options.provider, load);
     load.promise = Promise.resolve()
@@ -1012,6 +1012,7 @@ export class ProviderSnapshotManager {
       iconSvg: definition.iconSvg,
       defaultModeId: definition.defaultModeId,
     };
+    let mirrorsGlobalCatalog = false;
     const setEntry = (entry: ProviderSnapshotEntry) => {
       if (!this.isCurrentProviderLoad(snapshotCwd, provider, load)) {
         return false;
@@ -1019,6 +1020,9 @@ export class ProviderSnapshotManager {
       // A config transaction may replace the map while this unchanged provider is loading.
       this.getOrCreateSnapshot(snapshotCwd).set(provider, entry);
       this.emitChange(snapshotCwd);
+      if (catalogScope.scope === "global" && mirrorsGlobalCatalog) {
+        this.mirrorGlobalCatalogEntry(provider, entry);
+      }
       return true;
     };
 
@@ -1029,6 +1033,12 @@ export class ProviderSnapshotManager {
       }
 
       const client = this.ensureClient(provider, definition);
+      mirrorsGlobalCatalog = client.capabilities.hasGlobalCatalog === true;
+      if (catalogScope.scope === "workspace" && client.capabilities.hasGlobalCatalog === true) {
+        setEntry(cloneEntry(await this.loadGlobalEntry(provider, force)));
+        return;
+      }
+
       const catalog = await runProviderRefreshWithDeadline({
         label: definition.label,
         timeoutMs: this.refreshTimeoutMs,
@@ -1072,6 +1082,41 @@ export class ProviderSnapshotManager {
           "Failed to refresh provider snapshot",
         );
       }
+    }
+  }
+
+  // Workspace entries for providers with a global catalog wait on the shared
+  // global load, so a burst of new workspaces costs one probe instead of one per cwd.
+  private async loadGlobalEntry(
+    provider: AgentProvider,
+    force: boolean,
+  ): Promise<ProviderSnapshotEntry> {
+    const target = createGlobalSnapshotTarget();
+    if (force) {
+      this.resetSnapshotToLoading(target.snapshotCwd, [provider]);
+      this.emitChange(target.snapshotCwd);
+    }
+    await this.loadProvider({
+      snapshotCwd: target.snapshotCwd,
+      catalogScope: target.catalogScope,
+      providers: [provider],
+      provider,
+      force,
+    });
+    const entry = this.snapshots.get(target.snapshotCwd)?.get(provider);
+    if (!entry || entry.status === "loading") {
+      throw new ProviderCatalogInvariantError(provider);
+    }
+    return entry;
+  }
+
+  private mirrorGlobalCatalogEntry(provider: AgentProvider, entry: ProviderSnapshotEntry): void {
+    for (const [cwd, snapshot] of this.snapshots) {
+      if (cwd === GLOBAL_PROVIDER_SNAPSHOT_KEY || !snapshot.has(provider)) {
+        continue;
+      }
+      snapshot.set(provider, cloneEntry(entry));
+      this.emitChange(cwd);
     }
   }
 
