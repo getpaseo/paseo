@@ -967,6 +967,7 @@ export const zhCN: TranslationResources = {
         },
         states: {
           draft: "Draft",
+          queued: "等待合并",
           merged: "已 merge",
           closed: "已关闭",
           open: "Open",

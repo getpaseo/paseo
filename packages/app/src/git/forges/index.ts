@@ -32,3 +32,9 @@ export function parseClientForgeFacts(facts: unknown): ForgeSpecificEnvelope | n
   }
   return null;
 }
+
+export function deriveIsQueuedForMerge(facts: unknown): boolean {
+  return CLIENT_FORGE_LOGIC_MODULES.some(
+    (module) => module.facts?.deriveIsQueuedForMerge(facts) === true,
+  );
+}

@@ -35,6 +35,48 @@ describe("selectPrHintFromStatus", () => {
     expect(hint?.forge).toBe("bitbucket");
   });
 
+  it("marks an open GitHub pull request in the merge queue as queued", () => {
+    const hint = selectPrHintFromStatus({
+      ...githubStatus,
+      forgeSpecific: { forge: "github", isInMergeQueue: true },
+    });
+
+    expect(hint?.state).toBe("queued");
+  });
+
+  it("does not call a pull request queued just because its repository uses a merge queue", () => {
+    const hint = selectPrHintFromStatus({
+      ...githubStatus,
+      forgeSpecific: {
+        forge: "github",
+        isMergeQueueEnabled: true,
+        isInMergeQueue: false,
+      },
+    });
+
+    expect(hint?.state).toBe("open");
+  });
+
+  it("reads merge-queue facts from an older daemon's GitHub envelope", () => {
+    const hint = selectPrHintFromStatus({
+      ...githubStatus,
+      github: { isInMergeQueue: true },
+    });
+
+    expect(hint?.state).toBe("queued");
+  });
+
+  it("keeps merged and closed states terminal even if queue facts are stale", () => {
+    const forgeSpecific = { forge: "github", isInMergeQueue: true };
+
+    expect(selectPrHintFromStatus({ ...githubStatus, isMerged: true, forgeSpecific })?.state).toBe(
+      "merged",
+    );
+    expect(selectPrHintFromStatus({ ...githubStatus, state: "closed", forgeSpecific })?.state).toBe(
+      "closed",
+    );
+  });
+
   it("returns null when the url has no parseable change-request number", () => {
     expect(
       selectPrHintFromStatus({ url: "https://example.com/x", state: "open", isMerged: false }),

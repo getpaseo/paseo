@@ -122,6 +122,7 @@ export interface ClientForgeFactsEntry<TFacts extends ForgeSpecificEnvelope> {
   readonly family: TFacts["forge"];
   parse: (facts: unknown) => TFacts | null;
   deriveMergeCapability: (facts: unknown) => MergeCapability | null;
+  deriveIsQueuedForMerge: (facts: unknown) => boolean;
   readonly nativeFallbackChecks: readonly NativeFallbackCheckEntry[];
 }
 
@@ -129,6 +130,7 @@ export interface ClientForgeFactsRegistration<TFacts extends ForgeSpecificEnvelo
   readonly family: TFacts["forge"];
   readonly schema: z.ZodType<TFacts>;
   readonly deriveMergeCapability?: (facts: TFacts) => MergeCapability;
+  readonly deriveIsQueuedForMerge?: (facts: TFacts) => boolean;
   readonly nativeFallbackChecks?: readonly NativeFallbackCheckEntry[];
 }
 
@@ -186,6 +188,13 @@ export function defineForgeFacts<TFacts extends ForgeSpecificEnvelope>(
       }
       const parsed = parseFacts(registration.schema, facts);
       return parsed ? registration.deriveMergeCapability(parsed) : null;
+    },
+    deriveIsQueuedForMerge: (facts) => {
+      if (!registration.deriveIsQueuedForMerge) {
+        return false;
+      }
+      const parsed = parseFacts(registration.schema, facts);
+      return parsed ? registration.deriveIsQueuedForMerge(parsed) : false;
     },
     nativeFallbackChecks: registration.nativeFallbackChecks ?? [],
   };

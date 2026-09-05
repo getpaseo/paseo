@@ -1,10 +1,11 @@
 import { normalizeForge, type Forge } from "@/git/forge";
 import type { PresentableCheck } from "@/git/check-presentation";
+import { deriveIsQueuedForMerge } from "@/git/forges";
 
 export interface PrHint {
   url: string;
   number: number;
-  state: "open" | "merged" | "closed";
+  state: "open" | "queued" | "merged" | "closed";
   /** Forge backing this change request, so badges render the right brand mark. */
   forge: Forge;
   checks?: PrHintCheck[];
@@ -25,6 +26,21 @@ interface PrStatusLike {
   checksStatus?: string;
   reviewDecision?: string | null;
   forge?: string;
+  forgeSpecific?: unknown;
+  github?: unknown;
+}
+
+function queueFacts(status: PrStatusLike): unknown {
+  if (status.forgeSpecific !== null && status.forgeSpecific !== undefined) {
+    return status.forgeSpecific;
+  }
+  // COMPAT(forgeSpecific): forgeSpecific shipped in v0.2.0-beta.1. A daemon
+  // predating it emits GitHub facts only through `status.github`. Remove after
+  // 2027-01-17 once the supported daemon floor is >= v0.2.0.
+  if (typeof status.github === "object" && status.github !== null) {
+    return { forge: "github", ...status.github };
+  }
+  return null;
 }
 
 function parsePullRequestNumber(url: string): number | null {
@@ -57,10 +73,11 @@ export function selectPrHintFromStatus(
     return null;
   }
 
-  let state: "merged" | "open" | "closed";
+  let state: PrHint["state"];
   if (status.isMerged || status.state === "merged") state = "merged";
-  else if (status.state === "open") state = "open";
-  else state = "closed";
+  else if (status.state === "open") {
+    state = deriveIsQueuedForMerge(queueFacts(status)) ? "queued" : "open";
+  } else state = "closed";
 
   return {
     url: status.url,

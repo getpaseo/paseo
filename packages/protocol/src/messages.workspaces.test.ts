@@ -990,6 +990,10 @@ describe("workspace message schemas", () => {
                 headRefName: "workspace-git-service",
                 isMerged: false,
                 checks,
+                forgeSpecific: {
+                  forge: "github",
+                  isInMergeQueue: true,
+                },
               },
               error: null,
               refreshedAt: "2026-04-12T00:00:00.000Z",
@@ -1012,6 +1016,10 @@ describe("workspace message schemas", () => {
     });
     expect(parsed.payload.entries[0]?.githubRuntime?.pullRequest?.title).toBe("Runtime payloads");
     expect(parsed.payload.entries[0]?.githubRuntime?.pullRequest?.checks).toEqual(checks);
+    expect(parsed.payload.entries[0]?.githubRuntime?.pullRequest?.forgeSpecific).toEqual({
+      forge: "github",
+      isInMergeQueue: true,
+    });
   });
 
   test("older workspace parsers ignore additive runtime fields", () => {

@@ -1006,6 +1006,7 @@ export const es: TranslationResources = {
         },
         states: {
           draft: "Borrador",
+          queued: "En cola para fusionar",
           merged: "Fusionado",
           closed: "Cerrado",
           open: "Abierto",

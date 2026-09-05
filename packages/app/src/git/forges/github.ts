@@ -96,5 +96,6 @@ export const githubForgeLogic = {
     family: "github",
     schema: GithubMergeFactsSchema,
     deriveMergeCapability: deriveGithubMergeCapability,
+    deriveIsQueuedForMerge: (facts) => facts.isInMergeQueue,
   }),
 } satisfies ClientForgeLogicModule<GithubMergeFacts>;

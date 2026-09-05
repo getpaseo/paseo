@@ -222,8 +222,7 @@ function PullRequestItem({ hint }: { hint: PrHint }) {
       )}
       <Text style={isHovered ? styles.prTextHovered : styles.prText} numberOfLines={1}>
         {hint.number}
-        {/* An open change request is the unremarkable case and says nothing extra; a merged
-            or closed one is why the row still looks like it has work in it. */}
+        {/* An open change request is the unremarkable case and says nothing extra. */}
         {hint.state === "open" ? "" : ` ${t(PR_STATE_LABEL_KEYS[hint.state])}`}
       </Text>
     </Pressable>
@@ -301,6 +300,7 @@ function ServiceItem({ summary }: { summary: WorkspaceServiceSummary }) {
 const successMapping = (theme: Theme) => ({ color: theme.colors.statusSuccess });
 
 const PR_STATE_LABEL_KEYS = {
+  queued: "workspace.git.pr.states.queued",
   merged: "workspace.git.pr.states.merged",
   closed: "workspace.git.pr.states.closed",
 } as const;

@@ -975,6 +975,7 @@ export const ar: TranslationResources = {
         },
         states: {
           draft: "مسودة",
+          queued: "في قائمة انتظار الدمج",
           merged: "تم الدمج",
           closed: "مغلق",
           open: "يفتح",

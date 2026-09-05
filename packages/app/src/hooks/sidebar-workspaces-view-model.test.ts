@@ -66,6 +66,18 @@ describe("createSidebarWorkspaceEntry forge threading", () => {
     });
     expect(entry.prHint).toMatchObject({ number: 42, forge: "github" });
   });
+
+  it("surfaces a GitHub pull request queued for merge", () => {
+    const descriptor = workspaceWithForge("github", "https://github.com/acme/repo/pull/42");
+    descriptor.githubRuntime!.pullRequest!.forgeSpecific = {
+      forge: "github",
+      isInMergeQueue: true,
+    };
+
+    const entry = createSidebarWorkspaceEntry({ serverId: "srv", workspace: descriptor });
+
+    expect(entry.prHint).toMatchObject({ number: 42, forge: "github", state: "queued" });
+  });
 });
 
 describe("createSidebarWorkspaceEntry workspace directory label", () => {

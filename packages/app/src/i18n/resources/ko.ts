@@ -982,6 +982,7 @@ export const ko: TranslationResources = {
         },
         states: {
           draft: "초안",
+          queued: "병합 대기 중",
           merged: "병합됨",
           closed: "닫힘",
           open: "열림",
