@@ -1442,6 +1442,36 @@ test("resolves an agent reference from retained history without loading the prov
   });
 });
 
+test.each([
+  ["workspace.write", ["workspace.write"]],
+  ["workspace.manage", ["workspace.manage"]],
+] as const)(
+  "requires workspace.read before resolving agent context for a %s session",
+  async (_permission, permissions) => {
+    const sourceAgentId = "source-agent";
+    const getAgent = vi.fn(() => null);
+    const getStoredAgent = vi.fn(async () =>
+      createStoredAgentRecord({ id: sourceAgentId, cwd: "/tmp/source" }),
+    );
+    const fetchRetainedTimeline = vi.fn(() => retainedTimelineWithAssistant("Should not be read."));
+    const session = createSessionForTest({
+      permissions,
+      agentManager: { getAgent, fetchRetainedTimeline },
+      agentStorage: { get: getStoredAgent },
+    });
+
+    await expect(
+      asSessionInternals(session).resolveAgentContextAttachments([
+        { type: "agent_context", agentId: sourceAgentId },
+      ]),
+    ).rejects.toThrow("not authorized to read agent context");
+
+    expect(getAgent).not.toHaveBeenCalled();
+    expect(getStoredAgent).not.toHaveBeenCalled();
+    expect(fetchRetainedTimeline).not.toHaveBeenCalled();
+  },
+);
+
 test("rejects unsafe agent context references before reading retained history", async () => {
   const sourceAgentId = "source-agent";
   const fetchRetainedTimeline = vi.fn(() => retainedTimelineWithAssistant("Should not be read."));

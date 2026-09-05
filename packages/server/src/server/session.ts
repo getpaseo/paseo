@@ -3508,6 +3508,11 @@ export class Session {
     if (!attachments?.some((attachment) => attachment.type === "agent_context")) {
       return attachments;
     }
+    // A write or manage operation can carry an agent context reference, but it
+    // does not grant access to the referenced agent's retained timeline.
+    if (!this.allowsPermission("workspace.read")) {
+      throw new Error("Session is not authorized to read agent context.");
+    }
 
     const uniqueReferences: Extract<AgentAttachment, { type: "agent_context" }>[] = [];
     const seenAgentIds = new Set<string>();
