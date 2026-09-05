@@ -26,8 +26,11 @@ function installation(
     })),
     workspacePanels: [],
     commandCenterItems: [],
+    clientSlashCommands: [],
     attachmentSources: [],
     themes: [],
+    timelineTransformers: [],
+    timelineRenderers: [],
   };
 }
 

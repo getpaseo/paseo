@@ -234,9 +234,12 @@ try {
     `restart should log lifecycle restart reason from daemon worker, logs:\n${capturedSupervisorLogs}`,
   );
   assert(
-    capturedSupervisorLogs.includes('"msg":"Supervisor sending signal to worker"') &&
-      capturedSupervisorLogs.includes('"signal":"SIGTERM"'),
-    `restart should log supervisor signal dispatch, logs:\n${capturedSupervisorLogs}`,
+    capturedSupervisorLogs.includes('"msg":"Supervisor requesting graceful worker shutdown"'),
+    `restart should log the graceful worker shutdown request, logs:\n${capturedSupervisorLogs}`,
+  );
+  assert(
+    capturedSupervisorLogs.includes("Server closed"),
+    `restart should run daemon cleanup before replacing the worker, logs:\n${capturedSupervisorLogs}`,
   );
   console.log("✓ app-style restart keeps daemon healthy and restarts worker\n");
 } finally {

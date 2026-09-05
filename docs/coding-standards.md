@@ -98,6 +98,14 @@ For testing rules, see [testing.md](testing.md).
 - Use stable ids for `key`, never array index for reorderable/filterable lists.
 - Context for stable values (theme, auth). Store with selectors for state that changes.
 
+### Retained panel measurements
+
+Inactive retained panels use `display: none`, so DOM and layout APIs report zero width and height. A non-positive measurement means the surface is not rendered; it is never a valid compact layout.
+
+- Suspend geometry-derived updates while either measured dimension is non-positive. Preserve the last valid state until the surface reports positive geometry again.
+- Enforce the rule at the measurement boundary shared by every trigger. Guarding only an `onLayout` or `ResizeObserver` callback still lets effects, content changes, and imperative remeasurement publish hidden geometry.
+- Test the hide-and-reveal path through a real retained surface. Settled assertions do not catch stale geometry painted during the first returned frames.
+
 ## Naming
 
 - Names describe meaning, not mechanics. `submitForm` over `handleOnClickButtonSubmit`. `running` over `filteredArrayOfRunningAgents`.

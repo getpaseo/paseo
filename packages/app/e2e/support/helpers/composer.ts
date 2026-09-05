@@ -38,6 +38,10 @@ export async function expectComposerEditable(page: Page): Promise<void> {
   await expect(composerInput(page)).toBeEditable({ timeout: 15_000 });
 }
 
+export async function expectComposerFocused(page: Page): Promise<void> {
+  await expect(composerInput(page)).toBeFocused();
+}
+
 export async function submitMessage(page: Page, text: string): Promise<void> {
   const input = composerInput(page);
   await expect(input).toBeEditable({ timeout: 30_000 });
@@ -47,6 +51,10 @@ export async function submitMessage(page: Page, text: string): Promise<void> {
 
 export async function fillComposerDraft(page: Page, text: string): Promise<void> {
   await composerInput(page).fill(text);
+}
+
+export async function typeIntoFocusedComposer(page: Page, text: string): Promise<void> {
+  await page.keyboard.type(text);
 }
 
 export async function sendDraftToQueue(page: Page): Promise<void> {

@@ -23,10 +23,6 @@ type SupervisorLifecycleMessage =
       reason?: string;
     };
 
-interface SupervisorHeartbeatMessage {
-  type: "paseo:supervisor-heartbeat";
-}
-
 interface BootstrapResult {
   paseoHome: string;
   logger: ReturnType<typeof createRootLogger>;
@@ -272,13 +268,19 @@ async function main() {
     };
 
     process.on("message", (message: unknown) => {
-      if (
-        typeof message === "object" &&
-        message !== null &&
-        "type" in message &&
-        (message as SupervisorHeartbeatMessage).type === "paseo:supervisor-heartbeat"
-      ) {
+      if (typeof message !== "object" || message === null || !("type" in message)) {
+        return;
+      }
+      const type = (message as { type?: unknown }).type;
+      if (type === "paseo:supervisor-heartbeat") {
         lastSupervisorHeartbeatAt = Date.now();
+        return;
+      }
+      if (type === "paseo:graceful-shutdown") {
+        const reason = (message as { reason?: unknown }).reason;
+        beginShutdown("Supervisor shutdown request", {
+          reason: typeof reason === "string" ? reason : "supervisor_requested_shutdown",
+        });
       }
     });
     process.on("disconnect", () => exitAfterSupervisorLoss("ipc_disconnect_event"));

@@ -18,12 +18,16 @@ function installed(): InstalledPlugin {
         title: "Details",
         icon: "Scan",
         context: "workspace",
+        locations: ["workspace"],
         Component: () => null,
       },
     ],
     commandCenterItems: [],
+    clientSlashCommands: [],
     attachmentSources: [],
     themes: [],
+    timelineTransformers: [],
+    timelineRenderers: [],
   };
 }
 

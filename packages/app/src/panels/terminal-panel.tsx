@@ -8,7 +8,7 @@ import type { ListTerminalsResponse } from "@getpaseo/protocol/messages";
 import { deriveTerminalActivityStatusBucket } from "@getpaseo/protocol/terminal-activity";
 import { TerminalPane } from "@/components/terminal-pane";
 import { usePaneContext, usePaneFocus } from "@/panels/pane-context";
-import type { PanelDescriptor, PanelRegistration } from "@/panels/panel-registry";
+import { definePanel, type PanelDescriptor } from "@/panels/panel-registry";
 import { queryClient } from "@/data/query-client";
 import { buildTerminalsQueryKey } from "@/screens/workspace/terminals/state";
 import { usePanelStore } from "@/stores/panel-store";
@@ -114,9 +114,7 @@ function TerminalPanel() {
   );
 }
 
-export const terminalPanelRegistration: PanelRegistration<"terminal"> = {
-  kind: "terminal",
-  resourceKey: (target) => target.terminalId,
+export const terminalPanelRegistration = definePanel("terminal", {
   component: TerminalPanel,
   useDescriptor: useTerminalPanelDescriptor,
-};
+});
