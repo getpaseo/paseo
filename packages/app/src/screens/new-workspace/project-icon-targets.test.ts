@@ -6,6 +6,7 @@ const project: HostProjectListItem = {
   viewKey: "project-view",
   projectKey: "remote:github.com/acme/app",
   projectName: "app",
+  group: null,
   projectKind: "git",
   iconWorkingDir: "/work/app",
   hosts: [

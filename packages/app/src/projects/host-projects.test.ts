@@ -16,6 +16,7 @@ function project(): HostProjectListItem {
     viewKey: "view:acme/app",
     projectKey: "remote:github.com/acme/app",
     projectName: "acme/app",
+    group: null,
     projectKind: "git",
     iconWorkingDir: "/repo/a",
     hosts: [

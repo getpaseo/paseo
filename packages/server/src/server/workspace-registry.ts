@@ -37,6 +37,12 @@ const PersistedProjectRecordSchema = z.object({
     .nullable()
     .optional()
     .transform((value) => value ?? null),
+  // User-set group name shown as a sidebar header. Null means ungrouped.
+  group: z
+    .string()
+    .nullable()
+    .optional()
+    .transform((value) => value ?? null),
   // Identifies the project's stored custom icon; null means automatic.
   customIconRevision: z
     .string()
@@ -646,6 +652,7 @@ export function createPersistedProjectRecord(input: {
   kind: PersistedProjectKind;
   displayName: string;
   customName?: string | null;
+  group?: string | null;
   projectKey?: string | null;
   customIconRevision?: string | null;
   createdAt: string;
@@ -655,6 +662,7 @@ export function createPersistedProjectRecord(input: {
   return PersistedProjectRecordSchema.parse({
     ...input,
     customName: input.customName ?? null,
+    group: input.group ?? null,
     projectKey: input.projectKey ?? null,
     customIconRevision: input.customIconRevision ?? null,
     archivedAt: input.archivedAt ?? null,
@@ -663,6 +671,23 @@ export function createPersistedProjectRecord(input: {
 
 export function resolveProjectDisplayName(record: PersistedProjectRecord): string {
   return record.customName ?? record.displayName;
+}
+
+/**
+ * The trio of user-set project overrides carried on every workspace/project
+ * descriptor. Centralized so call sites that resolve them don't each pay the
+ * branching cost of three independent `?? null` fallbacks.
+ */
+export function resolveProjectOverrideFields(record: PersistedProjectRecord | null | undefined): {
+  projectCustomName: string | null;
+  projectGroup: string | null;
+  projectCustomIconRevision: string | null;
+} {
+  return {
+    projectCustomName: record?.customName ?? null,
+    projectGroup: record?.group ?? null,
+    projectCustomIconRevision: record?.customIconRevision ?? null,
+  };
 }
 
 export function createPersistedWorkspaceRecord(input: {

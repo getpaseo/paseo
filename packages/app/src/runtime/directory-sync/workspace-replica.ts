@@ -69,6 +69,7 @@ function applyProjectDelta(
       ...workspace,
       projectDisplayName: project.projectDisplayName,
       projectCustomName: project.projectCustomName,
+      projectGroup: project.projectGroup,
       projectCustomIconRevision: project.projectCustomIconRevision,
       projectRootPath: project.projectRootPath,
       projectKind: project.projectKind,

@@ -224,6 +224,7 @@ function legacyProjectDescriptorFromWorkspace(workspace: WorkspaceDescriptor): P
     projectKey: null,
     projectDisplayName: workspace.projectDisplayName,
     projectCustomName: workspace.projectCustomName ?? null,
+    projectGroup: workspace.projectGroup ?? null,
     projectRootPath: workspace.projectRootPath,
     projectKind: workspace.projectKind,
   };
@@ -320,6 +321,7 @@ function createLegacyWorkspace(
     projectId: entry.project.projectKey,
     projectDisplayName: entry.project.projectName,
     projectCustomName: null,
+    projectGroup: null,
     projectRootPath,
     workspaceDirectory,
     projectKind: checkout.isGit ? "git" : "non_git",

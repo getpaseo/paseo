@@ -1,9 +1,13 @@
 import { afterEach, describe, expect, it } from "vitest";
 
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
-import type { WorkspaceDescriptorPayload } from "@getpaseo/protocol/messages";
+import type {
+  WorkspaceDescriptorPayload,
+  WorkspaceProjectDescriptorPayload,
+} from "@getpaseo/protocol/messages";
 
 import {
+  normalizeProjectDescriptor,
   normalizeWorkspaceDescriptor,
   selectAgentTurnPresentation,
   selectAgentTimelineState,
@@ -608,6 +612,75 @@ describe("normalizeWorkspaceDescriptor", () => {
         mainRepoRoot: null,
       },
     });
+  });
+
+  it("defaults projectGroup to null when the payload omits it", () => {
+    const workspace = normalizeWorkspaceDescriptor({
+      id: "1",
+      projectId: "1",
+      projectDisplayName: "Project 1",
+      projectRootPath: "/repo",
+      workspaceDirectory: "/repo",
+      projectKind: "git",
+      workspaceKind: "checkout",
+      name: "main",
+      archivingAt: null,
+      status: "done",
+      statusEnteredAt: null,
+      activityAt: null,
+      diffStat: null,
+      scripts: [],
+    });
+
+    expect(workspace.projectGroup).toBeNull();
+  });
+
+  it("carries a non-null projectGroup through", () => {
+    const workspace = normalizeWorkspaceDescriptor({
+      id: "1",
+      projectId: "1",
+      projectDisplayName: "Project 1",
+      projectRootPath: "/repo",
+      workspaceDirectory: "/repo",
+      projectKind: "git",
+      workspaceKind: "checkout",
+      name: "main",
+      archivingAt: null,
+      status: "done",
+      statusEnteredAt: null,
+      activityAt: null,
+      diffStat: null,
+      scripts: [],
+      projectGroup: "Client X",
+    });
+
+    expect(workspace.projectGroup).toBe("Client X");
+  });
+});
+
+describe("normalizeProjectDescriptor", () => {
+  function payload(
+    overrides: Partial<WorkspaceProjectDescriptorPayload> = {},
+  ): WorkspaceProjectDescriptorPayload {
+    return {
+      projectId: "1",
+      projectDisplayName: "Project 1",
+      projectRootPath: "/repo",
+      projectKind: "git",
+      ...overrides,
+    };
+  }
+
+  it("defaults projectGroup to null when the payload omits it", () => {
+    const project = normalizeProjectDescriptor(payload());
+
+    expect(project.projectGroup).toBeNull();
+  });
+
+  it("carries a non-null projectGroup through", () => {
+    const project = normalizeProjectDescriptor(payload({ projectGroup: "Client X" }));
+
+    expect(project.projectGroup).toBe("Client X");
   });
 });
 

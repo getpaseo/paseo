@@ -23,7 +23,7 @@ Freedom and flexibility. Every design decision follows from this:
 
 ### Projects and workspaces
 
-Projects are grouped in the sidebar, detected automatically from your filesystem and tagged by git remote when available.
+Projects are grouped in the sidebar, detected automatically from your filesystem and tagged by git remote when available. Users can put projects into a named group, such as a client or an area, which the sidebar shows as a collapsible header above the ungrouped projects.
 
 Each project opens as a workspace. For git projects, the default workspace is the main checkout. Users can create additional workspaces, which are isolated copies (git worktrees) where agents work without affecting main.
 

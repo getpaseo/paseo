@@ -64,4 +64,11 @@ export interface DraggableListProps<T> {
    * lists coordinated by a shared NestableScrollContainer.
    */
   nestable?: boolean;
+  /**
+   * Web-only: render just the SortableContext under a caller-owned DndContext. The active id
+   * then comes from that context, and `onDragEnd` is never called; the owner resolves drops.
+   */
+  externalDndContext?: boolean;
+  /** Web-only: per-item dnd-kit `data` for the sortable (drag payload). */
+  getItemData?: (item: T, index: number) => Record<string, unknown>;
 }
