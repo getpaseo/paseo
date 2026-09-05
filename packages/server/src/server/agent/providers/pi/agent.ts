@@ -63,6 +63,7 @@ import {
   streamPiHistory,
   type PiCapturedUserMessageEntry,
 } from "./history-mapper.js";
+import { shouldProjectPiCustomMessage } from "./message-projection.js";
 import { materializeProviderImage } from "../provider-image-output.js";
 import { PiCliRuntime } from "./cli-runtime.js";
 import { revertPiConversation } from "./rewind.js";
@@ -2407,7 +2408,7 @@ export class PiRpcAgentSession implements AgentSession {
     }
     if (event.message.role === "custom") {
       const text = getUserMessageText(event.message.content);
-      if (text) {
+      if (text && shouldProjectPiCustomMessage(event.message, text)) {
         this.emit({
           type: "timeline",
           provider: this.provider,

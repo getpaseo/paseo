@@ -179,6 +179,124 @@ test("keeps normal Pi agent sessions persisted", async () => {
   await session.close();
 });
 
+test("keeps pi-subagents live control reports in Pi context without projecting chat bubbles", async () => {
+  const { pi, session, events } = await createSession();
+  const runtime = pi.latestSession();
+  const controlMessages = [
+    {
+      role: "custom" as const,
+      customType: "subagent-notify",
+      content: "Background task completed: **worker**\n\nDone",
+    },
+    {
+      role: "custom" as const,
+      customType: "subagent-notify",
+      content: "Background task failed: **worker**\n\nFailed",
+    },
+    {
+      role: "custom" as const,
+      customType: "subagent_supervisor_request",
+      content: "Subagent progress update.\nRun: run-1",
+    },
+    {
+      role: "custom" as const,
+      customType: "subagent_control_notice",
+      content: "Subagent needs attention: worker\nRun: run-1",
+    },
+    {
+      role: "custom" as const,
+      customType: "subagent_supervisor_request",
+      content: "Subagent needs a supervisor decision.\nRun: run-1",
+    },
+    {
+      role: "custom" as const,
+      customType: "subagent_steering_notice",
+      content: "Subagent steering failed: run-1",
+    },
+    {
+      role: "custom" as const,
+      customType: "subagent_watchdog_warning",
+      content: "<subagent_watchdog><summary>warning</summary></subagent_watchdog>",
+    },
+  ];
+  runtime.messages = [...controlMessages];
+  const userSpoof = "Background task completed: **worker**\n\nThis is a real user prompt";
+
+  await session.startTurn(userSpoof);
+  expect(runtime.prompts).toContainEqual({ message: userSpoof, imageCount: 0 });
+  for (const message of controlMessages) {
+    runtime.emit({ type: "message_end", message });
+  }
+  runtime.emit({
+    type: "message_end",
+    message: {
+      role: "custom",
+      customType: "extension-result",
+      content: "Ordinary extension notification",
+    },
+  });
+  runtime.emit({
+    type: "message_end",
+    message: {
+      role: "custom",
+      customType: "extension-result",
+      content: "Background task completed: ordinary prose without a bold agent",
+    },
+  });
+
+  expect(events.timelineItems()).toEqual([
+    { type: "assistant_message", text: "Ordinary extension notification" },
+    {
+      type: "assistant_message",
+      text: "Background task completed: ordinary prose without a bold agent",
+    },
+  ]);
+  expect(runtime.messages).toEqual(controlMessages);
+
+  await session.close();
+});
+
+test("filters pi-subagents reports during resumed history replay without removing native context", async () => {
+  const pi = new FakePi();
+  const nativeMessages = [
+    {
+      role: "custom" as const,
+      customType: "subagent_supervisor_request",
+      content: "Subagent progress update.\nRun: run-1",
+    },
+    {
+      role: "custom" as const,
+      customType: "extension-result",
+      content: "Ordinary extension notification",
+    },
+  ];
+  pi.queueSessionSetup((runtime) => {
+    runtime.messages = [...nativeMessages];
+  });
+  const session = (await createClient(pi).resumeSession({
+    provider: "pi",
+    sessionId: "pi-session-1",
+    nativeHandle: "/tmp/native-pi-session",
+    metadata: { cwd: "/workspace/project" },
+  })) as PiRpcAgentSession;
+  const replayed: AgentStreamEvent[] = [];
+
+  for await (const event of session.streamHistory()) {
+    replayed.push(event);
+  }
+
+  expect(replayed).toEqual([
+    {
+      type: "timeline",
+      provider: "pi",
+      item: { type: "assistant_message", text: "Ordinary extension notification" },
+    },
+  ]);
+  expect(pi.latestSession().messages).toEqual(nativeMessages);
+
+  await session.close();
+});
+
 class SessionEvents {
   private readonly events: AgentStreamEvent[] = [];
   private readonly waiters: Array<{

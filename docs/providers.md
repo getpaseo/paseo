@@ -73,6 +73,14 @@ Pi control-plane RPCs wait 60 seconds by default. Override `params.rpcTimeoutMs`
 
 Pi import discovery reads Pi's persisted JSONL session files because Pi RPC does not expose a recent-session listing command. Resume and full history hydration still go through `pi --mode rpc` using the session file as `nativeHandle`.
 
+Pi extension custom messages remain in Pi's native session and model context, but not every custom
+message belongs in Paseo's transcript. The Pi provider suppresses pi-subagents completion, failure,
+progress, attention, and supervisor-decision control reports from both live projection and history
+replay. Prefer the `subagent-notify`, `subagent_control_notice`, `subagent_steering_notice`,
+`subagent_supervisor_request`, and `subagent_watchdog_warning` custom types; use the exact report
+opener only when Pi RPC omits that metadata. Other extension custom messages and user messages
+remain visible.
+
 OMP is a first-class built-in provider, disabled by default. Its launch contract, typed runtime, agent/session behavior, history, permissions, imports, and test fake live under `providers/omp/`; only the provider-neutral JSONL child-process transport is shared with Pi. It launches `omp --mode rpc-ui`, uses OMP's `get_available_commands` RPC for slash-command discovery, bridges OMP `rpc-ui` approval dialogs into Paseo permissions, and imports terminal-started sessions from `~/.omp/agent/sessions` when enabled.
 
 OMP supports native Paseo host tools. The adapter registers the full caller-scoped Paseo tool catalog directly with OMP, matching providers such as Claude that expose the full catalog through MCP. Serialize every OMP host definition with `loadMode: "essential"` so `create_agent`, `send_agent_prompt`, `wait_for_agent`, and related tools remain direct calls; omitting the field makes OMP mount non-built-in names under `xd://` instead. OMP's provider-managed task subagents are surfaced as Paseo subagents through `child_session` imports; the parent keeps the subagents track while the child runtime stays owned by OMP. Custom OMP profiles should extend `omp`; other Pi-compatible forks can still extend `pi`, override `command`, and set `params.sessionDir` to their JSONL session directory.

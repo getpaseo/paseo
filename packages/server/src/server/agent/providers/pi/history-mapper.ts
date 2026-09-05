@@ -1,5 +1,6 @@
 import type { AgentStreamEvent, AgentTimelineItem, ToolCallDetail } from "../../agent-sdk-types.js";
 import type { PiAgentMessage, PiImageContent, PiTextContent } from "./rpc-types.js";
+import { shouldProjectPiCustomMessage } from "./message-projection.js";
 import {
   extractTextFromToolResult,
   mapToolDetail,
@@ -117,19 +118,20 @@ export class PiHistoryMapper {
     message: Extract<PiAgentMessage, { role: "custom" }>,
   ): AgentStreamEvent[] {
     const text = getUserMessageText(message.content);
-    const mappedEvent = text ? this.hooks.mapCustomMessage?.(text, this.provider) : null;
+    if (!text || !shouldProjectPiCustomMessage(message, text)) {
+      return [];
+    }
+    const mappedEvent = this.hooks.mapCustomMessage?.(text, this.provider) ?? null;
     if (mappedEvent) {
       return [mappedEvent];
     }
-    return text
-      ? [
-          {
-            type: "timeline",
-            provider: this.provider,
-            item: { type: "assistant_message", text },
-          },
-        ]
-      : [];
+    return [
+      {
+        type: "timeline",
+        provider: this.provider,
+        item: { type: "assistant_message", text },
+      },
+    ];
   }
 
   private mapAssistantMessage(

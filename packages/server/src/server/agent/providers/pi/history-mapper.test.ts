@@ -128,16 +128,51 @@ describe("Pi history mapper", () => {
     ]);
   });
 
-  test("replays non-notice custom messages as assistant text, matching the live path", async () => {
-    await expect(
-      collectHistory([{ role: "custom", content: "Extension command output" }]),
-    ).resolves.toEqual([
+  test("replays ordinary user and extension messages while omitting pi-subagents control reports", async () => {
+    const messages: PiAgentMessage[] = [
+      { role: "user", content: "Background task completed: this is my real prompt" },
+      {
+        role: "custom",
+        customType: "subagent-notify",
+        content: "Background task completed: **worker**\n\nDone",
+      },
+      {
+        role: "custom",
+        customType: "subagent-notify",
+        content: "Background task failed: **worker**\n\nFailed",
+      },
+      {
+        role: "custom",
+        customType: "subagent_supervisor_request",
+        content: "Subagent progress update.\nRun: run-1",
+      },
+      {
+        role: "custom",
+        customType: "subagent_control_notice",
+        content: "Subagent needs attention: worker\nRun: run-1",
+      },
+      {
+        role: "custom",
+        customType: "subagent_supervisor_request",
+        content: "Subagent needs a supervisor decision.\nRun: run-1",
+      },
+      { role: "custom", customType: "extension-result", content: "Extension command output" },
+    ];
+    const originalMessages = structuredClone(messages);
+
+    await expect(collectHistory(messages)).resolves.toEqual([
+      {
+        type: "timeline",
+        provider: "pi",
+        item: { type: "user_message", text: "Background task completed: this is my real prompt" },
+      },
       {
         type: "timeline",
         provider: "pi",
         item: { type: "assistant_message", text: "Extension command output" },
       },
     ]);
+    expect(messages).toEqual(originalMessages);
   });
 
   test("uses Pi tree entry ids for replayed user messages", async () => {
