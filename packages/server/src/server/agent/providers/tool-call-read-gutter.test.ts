@@ -14,6 +14,11 @@ describe("stripReadLineNumberGutter", () => {
     });
   });
 
+  it("does not strip legitimate sequential colon-prefixed file content", () => {
+    const source = ["1: import a from 'a';", "2: ", "3: const x = 1;"].join("\n");
+    expect(stripReadLineNumberGutter(source)).toBeUndefined();
+  });
+
   it("handles right-aligned numbers and a non-1 start offset", () => {
     const result = stripReadLineNumberGutter(["  41\tconst y = 2;", "  42\treturn y;"].join("\n"));
     expect(result).toEqual({

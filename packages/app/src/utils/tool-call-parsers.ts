@@ -9,6 +9,8 @@ export interface DiffSegment {
 export interface DiffLine {
   type: "add" | "remove" | "context" | "header";
   content: string;
+  oldLineNumber?: number;
+  newLineNumber?: number;
   segments?: DiffSegment[];
   // Syntax-highlight tokens for the code on this line (prefix char excluded),
   // attached by highlightDiffLines when the file's language is supported.
@@ -161,28 +163,57 @@ export function buildLineDiff(originalText: string, updatedText: string): DiffLi
 
   let i = 0;
   let j = 0;
+  let oldLine = 1;
+  let newLine = 1;
   while (i < m && j < n) {
     if (originalLines[i] === updatedLines[j]) {
-      diff.push({ type: "context", content: ` ${originalLines[i]}` });
+      diff.push({
+        type: "context",
+        content: ` ${originalLines[i]}`,
+        oldLineNumber: oldLine,
+        newLineNumber: newLine,
+      });
       i += 1;
       j += 1;
+      oldLine += 1;
+      newLine += 1;
     } else if (dp[i + 1][j] >= dp[i][j + 1]) {
-      diff.push({ type: "remove", content: `-${originalLines[i]}` });
+      diff.push({
+        type: "remove",
+        content: `-${originalLines[i]}`,
+        oldLineNumber: oldLine,
+      });
       i += 1;
+      oldLine += 1;
     } else {
-      diff.push({ type: "add", content: `+${updatedLines[j]}` });
+      diff.push({
+        type: "add",
+        content: `+${updatedLines[j]}`,
+        newLineNumber: newLine,
+      });
       j += 1;
+      newLine += 1;
     }
   }
 
   while (i < m) {
-    diff.push({ type: "remove", content: `-${originalLines[i]}` });
+    diff.push({
+      type: "remove",
+      content: `-${originalLines[i]}`,
+      oldLineNumber: oldLine,
+    });
     i += 1;
+    oldLine += 1;
   }
 
   while (j < n) {
-    diff.push({ type: "add", content: `+${updatedLines[j]}` });
+    diff.push({
+      type: "add",
+      content: `+${updatedLines[j]}`,
+      newLineNumber: newLine,
+    });
     j += 1;
+    newLine += 1;
   }
 
   // Post-process to add word-level segments for adjacent remove/add pairs
@@ -212,27 +243,39 @@ export function parseUnifiedDiff(diffText?: string): DiffLine[] {
   const lines = splitIntoLines(diffText);
   const diff: DiffLine[] = [];
 
+  let oldLine = 1;
+  let newLine = 1;
+
   for (const line of lines) {
     if (!line.length) {
-      diff.push({ type: "context", content: line });
+      diff.push({ type: "context", content: line, oldLineNumber: oldLine, newLineNumber: newLine });
+      oldLine += 1;
+      newLine += 1;
       continue;
     }
 
     if (line.startsWith("@@")) {
       diff.push({ type: "header", content: line });
+      const match = line.match(/@@\s*-(\d+)(?:,\d+)?\s+\+(\d+)(?:,\d+)?\s*@@/);
+      if (match) {
+        oldLine = Number.parseInt(match[1], 10);
+        newLine = Number.parseInt(match[2], 10);
+      }
       continue;
     }
 
     if (line.startsWith("+")) {
       if (!line.startsWith("+++")) {
-        diff.push({ type: "add", content: line });
+        diff.push({ type: "add", content: line, newLineNumber: newLine });
+        newLine += 1;
       }
       continue;
     }
 
     if (line.startsWith("-")) {
       if (!line.startsWith("---")) {
-        diff.push({ type: "remove", content: line });
+        diff.push({ type: "remove", content: line, oldLineNumber: oldLine });
+        oldLine += 1;
       }
       continue;
     }
@@ -251,7 +294,9 @@ export function parseUnifiedDiff(diffText?: string): DiffLine[] {
       continue;
     }
 
-    diff.push({ type: "context", content: line });
+    diff.push({ type: "context", content: line, oldLineNumber: oldLine, newLineNumber: newLine });
+    oldLine += 1;
+    newLine += 1;
   }
 
   return diff;

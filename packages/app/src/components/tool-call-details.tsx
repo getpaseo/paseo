@@ -713,6 +713,7 @@ function buildDetailSections(
             ds={ds}
             wrapInSectionFill={false}
             filePath={detail.filePath}
+            startLine={1}
           />
         ) : null}
       </View>,
@@ -720,13 +721,15 @@ function buildDetailSections(
   }
   if (detail.type === "read") {
     if (!detail.content) return [];
+    const content = detail.content;
+    const startLine = detail.offset ?? 1;
     return [
       <ScrollableTextSection
         key="read"
-        content={detail.content}
+        content={content}
         ds={ds}
         filePath={detail.filePath}
-        startLine={detail.offset ?? 1}
+        startLine={startLine}
       />,
     ];
   }
