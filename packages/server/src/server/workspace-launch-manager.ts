@@ -460,6 +460,9 @@ export class WorkspaceLaunchManager {
 
   private async probeHttpEndpoint(runtime: WorkspaceLaunchRuntime, port: number): Promise<boolean> {
     const existing = runtime.endpoints.get(port);
+    // Classification lasts until the TCP listener disappears. The proxy health
+    // monitor tracks transient HTTP failures without withdrawing its URL.
+    if (existing?.protocol === "http") return true;
     const retry = existing?.httpRetry;
     // A bound socket may be an HTTP server still starting. Retry classification,
     // but back off so raw TCP services do not receive malformed HTTP every scan.

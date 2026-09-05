@@ -797,6 +797,13 @@ describe("WorkspaceLaunchManager", () => {
         expect.objectContaining({ port, protocol: "http", proxyUrl: expect.any(String) }),
       ]);
 
+      const httpEndpoints = manager.buildSnapshot(context)[0]?.endpoints;
+      probeHttp.mockResolvedValue(false);
+      manager.updateWorkspaceBranch(context.workspaceId, context.branchName);
+      await flushAsyncWork();
+      expect(manager.buildSnapshot(context)[0]?.endpoints).toEqual(httpEndpoints);
+      expect(probeHttp).toHaveBeenCalledTimes(7);
+
       listening = false;
       manager.updateWorkspaceBranch(context.workspaceId, context.branchName);
       await flushAsyncWork();

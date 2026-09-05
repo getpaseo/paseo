@@ -211,6 +211,21 @@ describe("applyDraftToConfig", () => {
     });
   });
 
+  it("preserves unsupported launch entries while saving unrelated settings", () => {
+    const base: PaseoConfigRaw = {
+      launches: {
+        dev: { futureCommand: ["npm", "run", "dev"] },
+        " dev ": { command: "" },
+      },
+    };
+    const draft = configToDraft(base);
+    expect(draft.launches.map((launch) => launch.commandText)).toEqual(["", ""]);
+    draft.setupText = "npm ci";
+    const next = applyDraftToConfig({ draft, base, editLaunches: false });
+    expect(next.launches).toEqual(base.launches);
+    expect(next.worktree?.setup).toBe("npm ci");
+  });
+
   it("rejects duplicate launch names after trimming", () => {
     const draft = emptyDraft();
     draft.launches = [
