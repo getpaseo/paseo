@@ -611,6 +611,7 @@ export const zhCN: TranslationResources = {
         close: "关闭",
         renameTerminal: "重命名 Terminal",
         renameAgent: "重命名 Agent",
+        scheduleMessage: "定时发送消息...",
       },
       actions: {
         newTab: "新建标签页",

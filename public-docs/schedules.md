@@ -15,7 +15,7 @@ Paseo also has **heartbeats**. A heartbeat sends a recurring prompt back into on
 Both concepts use the same cron engine, but their product surfaces stay separate:
 
 - **Schedules** create a new agent each run. You can inspect, pause, resume, run once, update, or delete them.
-- **Heartbeats** target one existing agent. They are intentionally lightweight: create or delete them over MCP; from the CLI you can also update only their cron period.
+- **Heartbeats** target one existing agent. They stay lightweight: create them, change their cron period, or delete them — from the app, the CLI, or MCP. They have no pause, resume, or run-once.
 
 Cron is the canonical cadence. The CLI accepts simple presets such as `5m` or `1h`, but compiles them to cron rather than storing a separate interval type.
 
@@ -31,7 +31,7 @@ Both run on a cadence you set. To start an agent from an external event instead 
 
 ## Ways to create one
 
-- **In the app** — open the Schedules view and create one with agent settings, a cron cadence, a repo, and a prompt. This is the main way to create and manage schedules.
+- **In the app** — open the Schedules view and create one with agent settings, a cron cadence, a repo, and a prompt. This is the main way to create and manage schedules. Switch **Type** to **Heartbeat** to send the prompt into an agent that is already running instead, or start from that agent's tab menu with **Schedule a message...**. To fire once and stop — say, when your session limit resets — set **Max runs** to 1.
 - **[From chat](/docs/schedules-chat)** — ask the agent in a chat and it sets the schedule up for you.
 - **[From the CLI](/docs/schedules-cli)** — `paseo schedule create`, for headless boxes and scripts.
 - **[Over MCP](/docs/mcp)** — agents create and manage schedules programmatically.

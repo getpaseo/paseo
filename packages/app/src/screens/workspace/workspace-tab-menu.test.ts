@@ -366,3 +366,71 @@ describe("buildWorkspaceTabMenuEntries", () => {
     expect(terminalSeparator?.key).toBe("rename-separator");
   });
 });
+
+describe("scheduling a message to a tab's agent", () => {
+  function baseInput() {
+    return {
+      surface: "desktop" as const,
+      index: 0,
+      tabCount: 1,
+      menuTestIDBase: "workspace-tab-context-agent_123",
+      onCopyResumeCommand: vi.fn(),
+      onCopyAgentId: vi.fn(),
+      onCopyTerminalId: vi.fn(),
+      onCopyFilePath: vi.fn(),
+      onReloadAgent: vi.fn(),
+      onRenameTab: vi.fn(),
+      onCloseTab: vi.fn(),
+      onCloseTabsBefore: vi.fn(),
+      onCloseTabsAfter: vi.fn(),
+      onCloseOtherTabs: vi.fn(),
+    };
+  }
+
+  it("offers the entry on an agent tab, just above Rename", () => {
+    const onScheduleAgentMessage = vi.fn();
+    const entries = buildWorkspaceTabMenuEntries({
+      ...baseInput(),
+      tab: createAgentTab(),
+      onScheduleAgentMessage,
+    });
+    const items = entries.filter((entry) => entry.kind === "item");
+    const scheduleIndex = items.findIndex((entry) => entry.key === "schedule-message");
+    const renameIndex = items.findIndex((entry) => entry.key === "rename");
+
+    expect(scheduleIndex).toBeGreaterThan(-1);
+    expect(scheduleIndex).toBe(renameIndex - 1);
+    expect(items[scheduleIndex]).toMatchObject({
+      label: "Schedule a message...",
+      testID: "workspace-tab-context-agent_123-schedule-message",
+    });
+
+    items[scheduleIndex]?.onSelect();
+    expect(onScheduleAgentMessage).toHaveBeenCalledWith("agent-123");
+  });
+
+  it("omits the entry on a terminal tab", () => {
+    const entries = buildWorkspaceTabMenuEntries({
+      ...baseInput(),
+      tab: {
+        key: "terminal_1",
+        tabId: "terminal_1",
+        kind: "terminal",
+        target: { kind: "terminal", terminalId: "terminal-1" },
+      },
+      onScheduleAgentMessage: vi.fn(),
+    });
+
+    expect(entries.some((entry) => entry.kind === "item" && entry.key === "schedule-message")).toBe(
+      false,
+    );
+  });
+
+  it("omits the entry when no host can receive the schedule", () => {
+    const entries = buildWorkspaceTabMenuEntries({ ...baseInput(), tab: createAgentTab() });
+
+    expect(entries.some((entry) => entry.kind === "item" && entry.key === "schedule-message")).toBe(
+      false,
+    );
+  });
+});

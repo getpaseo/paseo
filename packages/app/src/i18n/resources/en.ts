@@ -609,6 +609,7 @@ export const en = {
         close: "Close",
         renameTerminal: "Rename terminal",
         renameAgent: "Rename agent",
+        scheduleMessage: "Schedule a message...",
       },
       actions: {
         newTab: "New tab",

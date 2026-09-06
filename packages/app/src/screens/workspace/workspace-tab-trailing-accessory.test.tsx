@@ -32,6 +32,7 @@ vi.mock("lucide-react-native", () => {
   return {
     ArrowLeftToLine: StubIcon,
     ArrowRightToLine: StubIcon,
+    CalendarClock: StubIcon,
     Copy: StubIcon,
     CopyX: StubIcon,
     Ellipsis: StubIcon,

@@ -11,6 +11,7 @@ export interface WorkspaceTabMenuLabels {
   copyTerminalId: string;
   copyFilePath: string;
   rename: string;
+  scheduleMessage: string;
   closeAbove: string;
   closeBelow: string;
   closeLeft: string;
@@ -27,6 +28,7 @@ export const DEFAULT_WORKSPACE_TAB_MENU_LABELS: WorkspaceTabMenuLabels = {
   copyTerminalId: i18n.t("workspace.tabs.menu.copyTerminalId"),
   copyFilePath: i18n.t("workspace.tabs.menu.copyFilePath"),
   rename: i18n.t("workspace.tabs.menu.rename"),
+  scheduleMessage: i18n.t("workspace.tabs.menu.scheduleMessage"),
   closeAbove: i18n.t("workspace.tabs.menu.closeAbove"),
   closeBelow: i18n.t("workspace.tabs.menu.closeBelow"),
   closeLeft: i18n.t("workspace.tabs.menu.closeLeft"),
@@ -49,6 +51,7 @@ export type WorkspaceTabMenuEntry =
         | "arrow-right-to-line"
         | "copy-x"
         | "pencil"
+        | "calendar-clock"
         | "x";
       hint?: string;
       tooltip?: string;
@@ -73,6 +76,7 @@ interface BuildWorkspaceTabMenuEntriesInput {
   onCopyTerminalId: (terminalId: string) => Promise<void> | void;
   onCopyFilePath: (path: string) => Promise<void> | void;
   onReloadAgent: (agentId: string) => Promise<void> | void;
+  onScheduleAgentMessage?: (agentId: string) => void;
   onRenameTab: (tab: WorkspaceTabDescriptor) => void;
   onCloseTab: (tabId: string) => Promise<void> | void;
   onCloseTabsBefore: (tabId: string) => Promise<void> | void;
@@ -85,6 +89,7 @@ interface BuildWorkspaceDesktopTabActionsInput {
   tab: WorkspaceTabDescriptor;
   index: number;
   tabCount: number;
+  onScheduleAgentMessage?: (agentId: string) => void;
   onCopyResumeCommand: (agentId: string) => Promise<void> | void;
   onCopyAgentId: (agentId: string) => Promise<void> | void;
   onCopyTerminalId: (terminalId: string) => Promise<void> | void;
@@ -177,6 +182,7 @@ export function buildWorkspaceTabMenuEntries(
     onCopyTerminalId,
     onCopyFilePath,
     onReloadAgent,
+    onScheduleAgentMessage,
     onRenameTab,
     onCloseTab,
     onCloseTabsBefore,
@@ -239,6 +245,20 @@ export function buildWorkspaceTabMenuEntries(
       testID: `${menuTestIDBase}-copy-file-path`,
       onSelect: () => {
         void onCopyFilePath(filePath);
+      },
+    });
+  }
+
+  if (tab.target.kind === "agent" && onScheduleAgentMessage) {
+    const { agentId } = tab.target;
+    entries.push({
+      kind: "item",
+      key: "schedule-message",
+      label: labels.scheduleMessage,
+      icon: "calendar-clock",
+      testID: `${menuTestIDBase}-schedule-message`,
+      onSelect: () => {
+        onScheduleAgentMessage(agentId);
       },
     });
   }
@@ -338,6 +358,7 @@ export function buildWorkspaceDesktopTabActions(
       onCopyTerminalId: input.onCopyTerminalId,
       onCopyFilePath: input.onCopyFilePath,
       onReloadAgent: input.onReloadAgent,
+      onScheduleAgentMessage: input.onScheduleAgentMessage,
       onRenameTab: input.onRenameTab,
       onCloseTab: input.onCloseTab,
       onCloseTabsBefore: input.onCloseTabsToLeft,

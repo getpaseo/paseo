@@ -33,7 +33,10 @@ import {
   type ScheduleBucket,
   type ScheduleTargetAgent,
 } from "@/schedules/schedule-derivation";
-import { resolveSchedulesScreenBodyState } from "./schedules-screen-state";
+import {
+  resolveSchedulesCreateIntent,
+  resolveSchedulesScreenBodyState,
+} from "./schedules-screen-state";
 import {
   buildProjectNameByCwd,
   buildScheduleProjectTargets,
@@ -42,8 +45,15 @@ import type { ScheduleSummary } from "@getpaseo/protocol/schedule/types";
 
 type FormState =
   | { mode: "closed" }
-  | { mode: "create" }
+  | { mode: "create"; serverId?: string; agentId?: string }
   | { mode: "edit"; serverId: string; schedule: ScheduleSummary };
+
+export interface SchedulesScreenProps {
+  /** Route-supplied host for a prefilled create form. */
+  createServerId?: string;
+  /** Route-supplied agent to aim a new heartbeat at. */
+  createAgentId?: string;
+}
 
 const STATUS_FILTER_OPTIONS: { value: ScheduleBucket; label: string; testID: string }[] = [
   { value: "runnable", label: "Active", testID: "schedules-filter-active" },
@@ -52,17 +62,20 @@ const STATUS_FILTER_OPTIONS: { value: ScheduleBucket; label: string; testID: str
 
 const EMPTY_SCHEDULES: AggregatedSchedule[] = [];
 
-export function SchedulesScreen(): ReactElement {
+export function SchedulesScreen(props: SchedulesScreenProps = {}): ReactElement {
   const isFocused = useIsFocused();
 
   if (!isFocused) {
     return <View style={styles.container} />;
   }
 
-  return <SchedulesScreenContent />;
+  return <SchedulesScreenContent {...props} />;
 }
 
-function SchedulesScreenContent(): ReactElement {
+function SchedulesScreenContent({
+  createServerId,
+  createAgentId,
+}: SchedulesScreenProps): ReactElement {
   const { loadState, hostErrors, isError, refetch } = useSchedules();
   const schedules = loadState.status === "loaded" ? loadState.data : EMPTY_SCHEDULES;
   const { agents } = useAggregatedAgents({ includeArchived: true });
@@ -91,7 +104,16 @@ function SchedulesScreenContent(): ReactElement {
     return ready;
   }, [hosts, runtime, runtimeVersion]);
 
-  const [form, setForm] = useState<FormState>({ mode: "closed" });
+  const [form, setForm] = useState<FormState>(() => {
+    const intent = resolveSchedulesCreateIntent({
+      serverId: createServerId,
+      agentId: createAgentId,
+    });
+    if (intent.kind === "agent") {
+      return { mode: "create", serverId: intent.serverId, agentId: intent.agentId };
+    }
+    return { mode: "closed" };
+  });
   const [selectedHost, setSelectedHost] = useState(ALL_HOSTS_OPTION_ID);
   const [statusFilter, setStatusFilter] = useState<ScheduleBucket>("runnable");
 
@@ -182,11 +204,12 @@ function SchedulesScreenContent(): ReactElement {
         onEdit={openEdit}
       />
       <ScheduleFormSheet
-        serverId={form.mode === "edit" ? form.serverId : undefined}
+        serverId={form.mode === "closed" ? undefined : form.serverId}
         visible={form.mode === "create" || form.mode === "edit"}
         onClose={closeForm}
         mode={form.mode === "edit" ? "edit" : "create"}
         schedule={form.mode === "edit" ? form.schedule : undefined}
+        createAgentId={form.mode === "create" ? form.agentId : undefined}
       />
     </View>
   );

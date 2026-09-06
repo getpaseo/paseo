@@ -424,8 +424,36 @@ export function buildSessionsRoute() {
   return "/sessions" as const;
 }
 
-export function buildSchedulesRoute() {
-  return "/schedules" as const;
+export interface SchedulesRouteOptions {
+  serverId?: string;
+  /** Opens the create form aimed at this running agent. */
+  agentId?: string;
+  /** Nonce so the same agent can be re-targeted after the form was closed. */
+  intentId?: string;
+}
+
+function buildSchedulesSearch(options: SchedulesRouteOptions): string {
+  const params = new URLSearchParams();
+  const serverId = trimNonEmpty(options.serverId);
+  const agentId = trimNonEmpty(options.agentId);
+  if (serverId) {
+    params.set("serverId", serverId);
+  }
+  if (agentId) {
+    params.set("agentId", agentId);
+  }
+  if (options.intentId) {
+    params.set("intentId", options.intentId);
+  }
+  return params.toString();
+}
+
+export function buildSchedulesRoute(options: SchedulesRouteOptions = {}) {
+  const query = buildSchedulesSearch(options);
+  if (!query) {
+    return "/schedules" as const;
+  }
+  return `/schedules?${query}` as const;
 }
 
 export function buildOpenProjectRoute() {

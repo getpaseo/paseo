@@ -134,6 +134,7 @@ import {
   buildWorkspaceTabMenuEntries,
   type WorkspaceTabMenuLabels,
 } from "@/screens/workspace/workspace-tab-menu";
+import { useScheduleAgentMessageAction } from "@/schedules/use-schedule-agent-message-action";
 import { useDesktopBrowserNewTabRequests } from "@/desktop/browser/new-tab-requests";
 import type { WorkspaceTabDescriptor } from "@/screens/workspace/workspace-tabs-types";
 import {
@@ -556,6 +557,7 @@ function MobileWorkspaceTabOption({
       copyTerminalId: t("workspace.tabs.menu.copyTerminalId"),
       copyFilePath: t("workspace.tabs.menu.copyFilePath"),
       rename: t("workspace.tabs.menu.rename"),
+      scheduleMessage: t("workspace.tabs.menu.scheduleMessage"),
       closeAbove: t("workspace.tabs.menu.closeAbove"),
       closeBelow: t("workspace.tabs.menu.closeBelow"),
       closeLeft: t("workspace.tabs.menu.closeLeft"),
@@ -568,6 +570,7 @@ function MobileWorkspaceTabOption({
     [t],
   );
   const menuTestIDBase = `workspace-tab-menu-${tab.tabId}`;
+  const scheduleAgentMessage = useScheduleAgentMessageAction(normalizedServerId);
   const menuEntries = buildWorkspaceTabMenuEntries({
     surface: "mobile",
     tab,
@@ -579,6 +582,7 @@ function MobileWorkspaceTabOption({
     onCopyTerminalId,
     onCopyFilePath,
     onReloadAgent,
+    onScheduleAgentMessage: scheduleAgentMessage,
     onRenameTab,
     onCloseTab,
     onCloseTabsBefore: onCloseTabsAbove,
