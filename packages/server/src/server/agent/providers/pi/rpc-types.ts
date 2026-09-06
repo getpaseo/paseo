@@ -1,4 +1,5 @@
 export type PiThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
+export type PiThinkingLevelMap = Partial<Record<PiThinkingLevel, string | null>>;
 
 export interface PiImageContent {
   type: "image";
@@ -74,6 +75,7 @@ export interface PiModel {
   id: string;
   name?: string;
   reasoning?: boolean;
+  thinkingLevelMap?: PiThinkingLevelMap;
   contextWindow?: number;
   maxTokens?: number;
   api?: string;
