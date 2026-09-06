@@ -24,6 +24,7 @@ import { extensionFromPath, highlightToKeyedLines } from "@/utils/highlight-cach
 import { HighlightedLines } from "./highlighted-content";
 import { DiffViewer } from "./diff-viewer";
 import { getCodeInsets } from "./code-insets";
+import { MarkdownRenderer } from "@/components/markdown/renderer";
 import { isWeb } from "@/constants/platform";
 
 const ScrollView = isWeb ? RNScrollView : GHScrollView;
@@ -503,9 +504,7 @@ function ScrollablePlainTextSection({ text, ds }: { text: string; ds: DetailStyl
         nestedScrollEnabled
         showsVerticalScrollIndicator
       >
-        <Text selectable style={styles.plainText}>
-          {text}
-        </Text>
+        <MarkdownRenderer text={text} compact />
       </ScrollView>
     </View>
   );
