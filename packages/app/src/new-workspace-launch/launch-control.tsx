@@ -2,7 +2,7 @@ import { useCallback, useMemo, useState, type ReactElement } from "react";
 import { Pressable, Text, View } from "react-native";
 import { useTranslation } from "react-i18next";
 import { useRouter } from "expo-router";
-import { ChevronDown, MessageCircle, SquareTerminal } from "lucide-react-native";
+import { ChevronDown, Inbox, MessageCircle, SquareTerminal } from "lucide-react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import {
   DropdownMenu,
@@ -33,6 +33,7 @@ import {
 } from "./target";
 
 const ThemedMessageCircle = withUnistyles(MessageCircle);
+const ThemedInbox = withUnistyles(Inbox);
 const ThemedSquareTerminal = withUnistyles(SquareTerminal);
 const ThemedChevronDown = withUnistyles(ChevronDown);
 
@@ -40,6 +41,7 @@ const mutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMut
 const extraMutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundExtraMuted });
 
 const chatIcon = <ThemedMessageCircle size={ICON_SIZE.sm} uniProps={mutedColorMapping} />;
+const importIcon = <ThemedInbox size={ICON_SIZE.sm} uniProps={mutedColorMapping} />;
 const blankTerminalIcon = <ThemedSquareTerminal size={ICON_SIZE.sm} uniProps={mutedColorMapping} />;
 
 /** Owns its own leading icon and select callback so neither is rebuilt per render of the menu. */
@@ -81,6 +83,8 @@ export interface LaunchControlProps {
   serverId: string;
   target: LaunchTarget;
   onChange: (target: LaunchTarget) => void;
+  onImportSession: () => void;
+  showImportSession: boolean;
   profiles: readonly TerminalProfile[];
   disabled?: boolean;
   /**
@@ -117,6 +121,8 @@ export function LaunchControl({
   serverId,
   target,
   onChange,
+  onImportSession,
+  showImportSession,
   profiles,
   disabled = false,
   badgePressableStyle,
@@ -201,6 +207,15 @@ export function LaunchControl({
         >
           {t("newWorkspace.launch.chat")}
         </DropdownMenuItem>
+        {showImportSession ? (
+          <DropdownMenuItem
+            testID="new-workspace-launch-import-session"
+            onSelect={onImportSession}
+            leading={importIcon}
+          >
+            {t("importSession.title")}
+          </DropdownMenuItem>
+        ) : null}
         <DropdownMenuLabel>{t("newWorkspace.launch.terminal")}</DropdownMenuLabel>
         <DropdownMenuItem
           testID="new-workspace-launch-option-blank"

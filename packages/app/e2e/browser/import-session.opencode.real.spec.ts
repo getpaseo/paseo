@@ -3,8 +3,15 @@ import path from "node:path";
 import { spawn } from "node:child_process";
 import { buildHostWorkspaceRoute } from "@/utils/host-routes";
 import { expect, test, type Page } from "../support/fixtures";
+import { gotoAppShell } from "../support/helpers/app";
+import {
+  openNewWorkspaceComposer,
+  selectWorkspaceIsolation,
+} from "../support/helpers/new-workspace";
+import { importSessionOption, openLaunchMenu } from "../support/helpers/new-workspace-launch";
 import { connectSeedClient, type SeededWorkspace } from "../support/helpers/seed-client";
 import { getServerId } from "../support/helpers/server-id";
+import { waitForSidebarHydration } from "../support/helpers/workspace-ui";
 import { waitForWorkspaceTabsVisible } from "../support/helpers/workspace-tabs";
 
 const OPENCODE_REAL_MODEL = "openrouter/google/gemini-2.5-flash-lite";
@@ -27,6 +34,7 @@ interface OpenCodeImportScenario {
   workspace: SeededWorkspace;
   prompt: string;
   promptPreview: string;
+  providerHandleId: string;
   response: string;
 }
 
@@ -51,11 +59,33 @@ test("imports a real OpenCode session from the workspace import sheet", async ({
   await expectImportedSessionOpen(page, scenario);
 });
 
+test("imports a real OpenCode session from New workspace", async ({ page }) => {
+  const scenario = await seedPaseoWorkspaceWithOpenCodeSession();
+  workspace = scenario.workspace;
+  const importableSession = await waitForImportableOpenCodeSession(scenario);
+  await openNewWorkspace(page, scenario.workspace);
+
+  await importOpenCodeSessionFromNewWorkspace(page, importableSession);
+
+  await expectImportSheetClosed(page);
+  await expectImportedSessionOpen(page, scenario);
+  await expect
+    .poll(
+      async () =>
+        (
+          await scenario.workspace.client.fetchWorkspaces({
+            filter: { projectId: scenario.workspace.projectId },
+          })
+        ).entries.length,
+    )
+    .toBe(2);
+});
+
 async function seedPaseoWorkspaceWithOpenCodeSession(): Promise<OpenCodeImportScenario> {
   const response = `PASEO_OPENCODE_IMPORT_E2E_OK_${randomUUID().slice(0, 8)}`;
   const prompt = `Do not use tools. Reply with exactly: ${response}`;
   const promptPreview = JSON.stringify(prompt);
-  await launchOpenCodeSessionInWorkspace(PASEO_REPO_PATH, prompt);
+  const providerHandleId = await launchOpenCodeSessionInWorkspace(PASEO_REPO_PATH, prompt);
   const client = await connectSeedClient();
   try {
     const createdWorkspace = await client.createWorkspace({
@@ -74,6 +104,7 @@ async function seedPaseoWorkspaceWithOpenCodeSession(): Promise<OpenCodeImportSc
     return {
       prompt,
       promptPreview,
+      providerHandleId,
       response,
       workspace: {
         client,
@@ -95,11 +126,16 @@ async function seedPaseoWorkspaceWithOpenCodeSession(): Promise<OpenCodeImportSc
   }
 }
 
-async function launchOpenCodeSessionInWorkspace(repoPath: string, prompt: string): Promise<void> {
+async function launchOpenCodeSessionInWorkspace(repoPath: string, prompt: string): Promise<string> {
   const result = await runOpenCodeSeed(repoPath, prompt);
   if (result.code !== 0 || result.timedOut) {
     throw new Error(formatOpenCodeLaunchError(result, prompt));
   }
+  const sessionId = parseOpenCodeSessionId(result.stdout);
+  if (!sessionId) {
+    throw new Error(`${formatOpenCodeLaunchError(result, prompt)}\n\nMissing sessionID in output`);
+  }
+  return sessionId;
 }
 
 function openCodeSeedArgs(repoPath: string, prompt: string): string[] {
@@ -150,6 +186,28 @@ function runOpenCodeSeed(repoPath: string, prompt: string): Promise<OpenCodeSeed
   });
 }
 
+function parseOpenCodeSessionId(stdout: string): string | null {
+  for (const line of stdout.split(/\r?\n/u)) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    try {
+      const event: unknown = JSON.parse(trimmed);
+      if (
+        typeof event === "object" &&
+        event !== null &&
+        "sessionID" in event &&
+        typeof event.sessionID === "string" &&
+        event.sessionID
+      ) {
+        return event.sessionID;
+      }
+    } catch {
+      continue;
+    }
+  }
+  return null;
+}
+
 function formatOpenCodeLaunchError(result: OpenCodeSeedResult, prompt: string): string {
   return [
     "OpenCode launch failed",
@@ -168,6 +226,16 @@ async function openWorkspace(page: Page, seed: SeededWorkspace): Promise<void> {
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto(buildHostWorkspaceRoute(getServerId(), seed.workspaceId));
   await waitForWorkspaceTabsVisible(page);
+}
+
+async function openNewWorkspace(page: Page, seed: SeededWorkspace): Promise<void> {
+  await gotoAppShell(page);
+  await waitForSidebarHydration(page);
+  await openNewWorkspaceComposer(page, {
+    projectKey: seed.projectKey,
+    projectDisplayName: seed.projectDisplayName,
+  });
+  await selectWorkspaceIsolation(page, "local");
 }
 
 async function waitForImportableOpenCodeSession(
@@ -199,7 +267,7 @@ async function findImportableOpenCodeSession(
   });
   const entry = sessions.entries.find(
     (session) =>
-      session.providerId === "opencode" && session.firstPromptPreview === scenario.promptPreview,
+      session.providerId === "opencode" && session.providerHandleId === scenario.providerHandleId,
   );
   if (!entry) {
     return null;
@@ -219,6 +287,21 @@ async function importOpenCodeSession(
   const sessionRow = importSheet.getByTestId(
     `import-session-session-opencode-${session.providerHandleId}`,
   );
+  await expect(sessionRow).toBeVisible({ timeout: 60_000 });
+  await sessionRow.click();
+}
+
+async function importOpenCodeSessionFromNewWorkspace(
+  page: Page,
+  session: ImportableOpenCodeSession,
+): Promise<void> {
+  await openLaunchMenu(page);
+  await importSessionOption(page).click();
+  await expect(page.getByTestId("import-session-sheet")).toBeVisible({ timeout: 15_000 });
+
+  const sessionRow = page
+    .getByTestId("import-session-sheet")
+    .getByTestId(`import-session-session-opencode-${session.providerHandleId}`);
   await expect(sessionRow).toBeVisible({ timeout: 60_000 });
   await sessionRow.click();
 }
