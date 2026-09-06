@@ -1634,11 +1634,17 @@ export class ClaudeAgentClient implements AgentClient {
   }
 
   async importSession(input: ImportProviderSessionInput, context: ImportProviderSessionContext) {
+    // Carry a `/rename` onto the imported agent so the name chosen in the CLI
+    // survives the import. Only an explicit rename counts: agents are named
+    // after their first prompt line since #1563, so adopting the generated
+    // `ai-title` here would put that LLM summary back.
+    const renamedTitle = await readClaudeRenamedSessionTitle(input);
     return importSessionFromPersistence({
       provider: "claude",
       request: input,
       context,
       resumeSession: this.resumeSession.bind(this),
+      ...(renamedTitle ? { config: { title: renamedTitle } } : {}),
     });
   }
 
@@ -6289,6 +6295,62 @@ async function parseClaudeSessionDescriptor(
 function normalizeClaudeSessionTitle(title: string | null): string | null {
   const normalized = title?.trim();
   return normalized ? normalized : null;
+}
+
+/**
+ * A title record is re-emitted every time the session is saved, so the current
+ * name is the last usable one in the file. Searching backwards finds it without
+ * walking the transcript, which matters because sessions reach tens of
+ * megabytes.
+ */
+function readLastClaudeTitle(content: string, type: string, field: string): string | null {
+  const needle = `"${type}"`;
+  let at = content.lastIndexOf(needle);
+  while (at >= 0) {
+    const lineStart = content.lastIndexOf("\n", at) + 1;
+    const lineEnd = content.indexOf("\n", at);
+    const line = lineEnd === -1 ? content.slice(lineStart) : content.slice(lineStart, lineEnd);
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(line.trim());
+    } catch {
+      parsed = undefined;
+    }
+    const entry = toObjectRecord(parsed);
+    if (entry && !entry.isSidechain && entry.type === type) {
+      const value = entry[field];
+      const title = normalizeClaudeSessionTitle(typeof value === "string" ? value : null);
+      if (title) {
+        return title;
+      }
+    }
+    // The needle also matches a prompt that quotes it, and a record can carry no
+    // usable name, so keep looking backwards for one that does.
+    at = at <= 0 ? -1 : content.lastIndexOf(needle, at - 1);
+  }
+  return null;
+}
+
+async function readClaudeRenamedSessionTitle(
+  input: ImportProviderSessionInput,
+): Promise<string | null> {
+  const configDir = process.env.CLAUDE_CONFIG_DIR ?? path.join(os.homedir(), ".claude");
+  const projectDir = claudeProjectDirSync(input.cwd, { configDir });
+  let content: string;
+  try {
+    content = await fsPromises.readFile(
+      path.join(projectDir, `${input.providerHandleId}.jsonl`),
+      "utf8",
+    );
+  } catch (error) {
+    // A session with no transcript on disk has no rename to carry over. Every
+    // other read failure is a real fault and stays explicit.
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return null;
+    }
+    throw error;
+  }
+  return readLastClaudeTitle(content, "custom-title", "customTitle");
 }
 
 function normalizeImportablePromptPreview(text: string): string | null {
