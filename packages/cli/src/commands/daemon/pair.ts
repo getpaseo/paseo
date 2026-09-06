@@ -8,7 +8,7 @@ import {
   resolvePaseoHome,
 } from "@getpaseo/server";
 import { tryConnectToDaemon } from "../../utils/client.js";
-import { resolveLocalDaemonState } from "./local-daemon.js";
+import { resolveLocalDaemonState, startLocalDaemonDetached } from "./local-daemon.js";
 import { addJsonOption } from "../../utils/command-options.js";
 import { formatPairingInstructions } from "../../output/pairing.js";
 
@@ -87,7 +87,20 @@ export async function resolveLocalPairingOffer(options: {
 
   const config = loadConfig(options.paseoHome);
   if (options.enableRelay && !config.relayEnabled) {
-    throw new Error("Start the daemon before enabling relay for pairing.");
+    await startLocalDaemonDetached({
+      home: options.paseoHome,
+      relay: true,
+    });
+
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      const offer = await resolveDaemonPairingOffer(state.listen, serverId, true);
+      if (offer) return offer;
+      await new Promise((resolve) => setTimeout(resolve, 200));
+    }
+
+    throw new Error(
+      "The daemon started but did not provide a relay pairing offer. Check the daemon logs.",
+    );
   }
 
   return generateLocalPairingOffer({
