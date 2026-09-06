@@ -708,6 +708,10 @@ export const es: TranslationResources = {
           "Preparando el espacio de trabajo, abriendo la terminal cuando esté listo...",
         workspacePathCopiedLabel: "RutaWorkspace",
         branchNameCopiedLabel: "Nombre de la sucursal",
+        changeRequestLinkCopiedLabel: "enlace del PR",
+        changeRequestLinkCopiedLabel_mr: "enlace del MR",
+        changeRequestLinkUnavailable:
+          "Este espacio de trabajo no tiene ninguna solicitud de cambios",
       },
     },
     scripts: {
@@ -2233,6 +2237,7 @@ export const es: TranslationResources = {
         newWorkspace: "Nuevo espacio de trabajo",
         newWorktree: "Nuevo árbol de trabajo",
         archiveWorkspace: "Archivar espacio de trabajo",
+        copyChangeRequestLink: "Copiar enlace del PR",
         newTab: "Nueva pestaña",
         closeCurrentTab: "Cerrar pestaña actual",
         jumpToWorkspace: "Saltar al espacio de trabajo",

@@ -295,6 +295,18 @@ describe("keyboard-shortcuts", () => {
       action: "workspace.pane.close",
     },
     {
+      name: "matches Cmd+Shift+C to copy change request link on macOS",
+      event: { key: "C", code: "KeyC", metaKey: true, shiftKey: true },
+      context: { isMac: true, commandCenterOpen: false },
+      action: "workspace.pr.copy",
+    },
+    {
+      name: "matches Ctrl+Shift+C to copy change request link on non-mac",
+      event: { key: "C", code: "KeyC", ctrlKey: true, shiftKey: true },
+      context: { isMac: false, commandCenterOpen: false, focusScope: "other" },
+      action: "workspace.pr.copy",
+    },
+    {
       name: "matches Cmd+B sidebar toggle on macOS",
       event: { key: "b", code: "KeyB", metaKey: true },
       context: { isMac: true },
@@ -661,6 +673,7 @@ describe("keyboard-shortcut help sections", () => {
         "workspace-tab-close-current": ["mod", "W"],
         "workspace-pane-split-right": ["mod", "\\"],
         "workspace-pane-close": ["mod", "shift", "W"],
+        "copy-pr-link": ["mod", "shift", "C"],
       },
     },
     {
@@ -669,6 +682,7 @@ describe("keyboard-shortcut help sections", () => {
       expectedKeys: {
         "workspace-tab-jump-index": ["alt", "1-9"],
         "workspace-tab-close-current": ["ctrl", "W"],
+        "copy-pr-link": ["ctrl", "shift", "C"],
       },
     },
     {

@@ -705,6 +705,10 @@ export const ptBR: TranslationResources = {
         terminalQueued: "Preparando workspace, abrindo terminal quando estiver pronto...",
         workspacePathCopiedLabel: "Caminho do workspace",
         branchNameCopiedLabel: "Nome da branch",
+        changeRequestLinkCopiedLabel: "link do PR",
+        changeRequestLinkCopiedLabel_mr: "link do MR",
+        changeRequestLinkUnavailable:
+          "Nenhuma solicitação de alteração encontrada para este workspace",
       },
     },
     scripts: {
@@ -2215,6 +2219,7 @@ export const ptBR: TranslationResources = {
         newWorkspace: "Novo workspace",
         newWorktree: "Novo worktree",
         archiveWorkspace: "Arquivar workspace",
+        copyChangeRequestLink: "Copiar link do PR",
         newTab: "Nova aba",
         closeCurrentTab: "Fechar aba atual",
         jumpToWorkspace: "Ir para workspace",

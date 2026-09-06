@@ -698,6 +698,9 @@ export const zhCN: TranslationResources = {
         terminalQueued: "正在准备 workspace，Terminal 准备好后会打开...",
         workspacePathCopiedLabel: "Workspace 路径",
         branchNameCopiedLabel: "分支名称",
+        changeRequestLinkCopiedLabel: "PR 链接",
+        changeRequestLinkCopiedLabel_mr: "MR 链接",
+        changeRequestLinkUnavailable: "此工作区没有变更请求",
       },
     },
     scripts: {
@@ -2155,6 +2158,7 @@ export const zhCN: TranslationResources = {
         newWorkspace: "新建 workspace",
         newWorktree: "新建 worktree",
         archiveWorkspace: "归档工作区",
+        copyChangeRequestLink: "复制 PR 链接",
         newTab: "新建标签",
         closeCurrentTab: "关闭当前标签",
         jumpToWorkspace: "跳转到 workspace",
