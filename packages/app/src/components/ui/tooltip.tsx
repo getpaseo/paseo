@@ -28,7 +28,7 @@ import { FadeIn, FadeOut } from "react-native-reanimated";
 import { StyleSheet } from "react-native-unistyles";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { FloatingSurface } from "@/components/ui/floating";
-import { isWeb } from "@/constants/platform";
+import { isNative, isWeb } from "@/constants/platform";
 import { getOverlayRoot, OVERLAY_Z } from "@/lib/overlay-root";
 
 type Side = "top" | "bottom" | "left" | "right";
@@ -248,7 +248,12 @@ export function Tooltip({
   });
 
   const isCompact = useIsCompactFormFactor();
-  const enabled = isCompact ? enabledOnMobile : enabledOnDesktop;
+  // Native never fires hover, and a narrow web window is treated as touch. In both
+  // a press has to be able to open the tooltip, and the mobile enablement flag is
+  // the one that governs. Bucketing native with desktop is what left the tooltip
+  // unreachable on touch — no hover to open it, and press wired to close only.
+  const isTouchContext = isNative || isCompact;
+  const enabled = isTouchContext ? enabledOnMobile : enabledOnDesktop;
 
   const value = useMemo<TooltipContextValue>(
     () => ({
@@ -256,10 +261,10 @@ export function Tooltip({
       setOpen: setIsOpen,
       triggerRef,
       enabled,
-      openOnPress: isCompact,
+      openOnPress: isTouchContext,
       delayDuration,
     }),
-    [isOpen, setIsOpen, enabled, isCompact, delayDuration],
+    [isOpen, setIsOpen, enabled, isTouchContext, delayDuration],
   );
 
   return <TooltipContext.Provider value={value}>{children}</TooltipContext.Provider>;
@@ -357,7 +362,8 @@ export function TooltipTrigger({
       }
       if (ctx.openOnPress) {
         clearOpenTimer();
-        ctx.setOpen(true);
+        // Toggle: on touch the trigger is the only affordance to close again.
+        ctx.setOpen(!ctx.open);
         return;
       }
       close();

@@ -178,7 +178,10 @@ export function ContextWindowMeter({
         <Pressable
           style={containerStyle}
           testID="context-window-meter"
-          accessibilityRole="image"
+          // The visible ring is ~14px inside a 28px box; widen the tap target so
+          // the reveal is reachable by thumb on touch, where hover doesn't exist.
+          hitSlop={8}
+          accessibilityRole="button"
           accessibilityLabel={t("contextWindow.accessibility", {
             percentage: roundedPercentage,
           })}
