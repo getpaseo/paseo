@@ -3,6 +3,12 @@ import type {
   AudioEngineCallbacks,
   AudioPlaybackSource,
 } from "@/voice/audio-engine-types";
+import { loadNativeAudioModule } from "@/voice/native-audio-module";
+import {
+  createNativeAudioSession,
+  type NativeAudioSession,
+  type NativeAudioSessionModule,
+} from "@/voice/native-audio-session";
 
 interface QueuedAudio {
   audio: AudioPlaybackSource;
@@ -66,14 +72,23 @@ function resamplePcm16(pcm: Uint8Array, fromRate: number, toRate: number): Uint8
   return out;
 }
 
+let sharedSession: NativeAudioSession | null = null;
+
+function getSharedSession(native: NativeAudioSessionModule): NativeAudioSession {
+  if (!sharedSession) {
+    sharedSession = createNativeAudioSession(native);
+  }
+  return sharedSession;
+}
+
 export function createAudioEngine(
   callbacks: AudioEngineCallbacks,
   _options?: AudioEngineTraceOptions,
 ): AudioEngine {
-  const native = require("@getpaseo/expo-two-way-audio");
+  const native = loadNativeAudioModule();
+  const session = getSharedSession(native).createOwner();
 
   const refs: {
-    initialized: boolean;
     captureActive: boolean;
     muted: boolean;
     queue: QueuedAudio[];
@@ -86,7 +101,6 @@ export function createAudioEngine(
     } | null;
     destroyed: boolean;
   } = {
-    initialized: false,
     captureActive: false,
     muted: false,
     queue: [],
@@ -133,14 +147,7 @@ export function createAudioEngine(
   );
 
   async function ensureInitialized(): Promise<void> {
-    if (refs.initialized) {
-      return;
-    }
-    const success = await native.initialize();
-    if (!success) {
-      throw new Error("expo-two-way-audio: native initialize() returned false");
-    }
-    refs.initialized = true;
+    await session.ensureReady();
   }
 
   /**
@@ -150,7 +157,7 @@ export function createAudioEngine(
    * foreground, so an unreleased session means their music never comes back.
    */
   function releaseSessionIfIdle(): void {
-    if (!refs.initialized || refs.destroyed) {
+    if (refs.destroyed || !session.isHolding()) {
       return;
     }
     if (refs.captureActive || refs.activePlayback || refs.queue.length > 0) {
@@ -255,16 +262,13 @@ export function createAudioEngine(
       this.stop();
       this.clearQueue();
       if (refs.captureActive) {
-        native.toggleRecording(false);
+        session.stopRecording();
         refs.captureActive = false;
       }
       clearPlaybackTimeout();
       refs.muted = false;
       callbacks.onVolumeLevel(0);
-      if (refs.initialized) {
-        native.tearDown();
-        refs.initialized = false;
-      }
+      session.release();
       microphoneSubscription.remove();
       volumeSubscription.remove();
       interruptionSubscription.remove();
@@ -277,13 +281,7 @@ export function createAudioEngine(
 
       try {
         await ensureMicrophonePermission();
-        await ensureInitialized();
-        const isRecording = native.toggleRecording(true);
-        if (!isRecording) {
-          throw new Error(
-            "Microphone capture could not start because Android audio focus is unavailable.",
-          );
-        }
+        await session.startRecording();
         refs.captureActive = true;
       } catch (error) {
         const wrapped = error instanceof Error ? error : new Error(String(error));
@@ -294,7 +292,7 @@ export function createAudioEngine(
 
     async stopCapture() {
       if (refs.captureActive) {
-        native.toggleRecording(false);
+        session.stopRecording();
       }
       refs.captureActive = false;
       refs.muted = false;
