@@ -21,6 +21,18 @@ describe("resolveAndValidateCreateAgentMode", () => {
     expect(resolved).toBe("plan");
   });
 
+  it("throws for an explicit requested mode when the target provider has no modes", () => {
+    expect(() =>
+      resolveAndValidateCreateAgentMode({
+        requestedMode: "auto",
+        targetProvider: "traecli",
+        parent: null,
+        unattended: false,
+        availableModes: [],
+      }),
+    ).toThrow("Invalid mode 'auto' for provider 'traecli'. Available modes: (none)");
+  });
+
   it("throws when the requested mode is invalid for the target provider", () => {
     expect(() =>
       resolveAndValidateCreateAgentMode({
