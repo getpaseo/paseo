@@ -1,4 +1,4 @@
-import { mkdtemp, open, rm, utimes, writeFile } from "node:fs/promises";
+import { mkdtemp, open, readFile, rm, stat, unlink, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test } from "vitest";
@@ -250,6 +250,120 @@ describe("pid-lock ownership", () => {
       const lock = await getPidLockInfo(paseoHome);
       expect(lock?.pid).toBe(process.pid);
       expect(lock?.listen).toBe("127.0.0.1:6767");
+    } finally {
+      await rm(paseoHome, { recursive: true, force: true });
+    }
+  });
+
+  test("keeps a recently heartbeating lock when the recorded pid is not visible", async () => {
+    const paseoHome = await mkdtemp(join(tmpdir(), "paseo-pid-lock-fresh-unseen-owner-"));
+    const unseenOwnerPid = 2_147_483_647;
+
+    try {
+      await writeFile(
+        join(paseoHome, "paseo.pid"),
+        JSON.stringify({
+          pid: unseenOwnerPid,
+          startedAt: new Date().toISOString(),
+          hostname: "shared-host",
+          uid: process.getuid?.() ?? 0,
+          listen: "127.0.0.1:6767",
+          heartbeat: true,
+        }),
+      );
+
+      await expect(isLocked(paseoHome)).resolves.toMatchObject({
+        locked: true,
+        info: { pid: unseenOwnerPid },
+      });
+      await expect(acquirePidLock(paseoHome, null, { ownerPid: process.pid })).rejects.toThrow(
+        "Another Paseo daemon is already running",
+      );
+
+      const lock = await getPidLockInfo(paseoHome);
+      expect(lock?.pid).toBe(unseenOwnerPid);
+      expect(lock?.listen).toBe("127.0.0.1:6767");
+    } finally {
+      await rm(paseoHome, { recursive: true, force: true });
+    }
+  });
+
+  test("reclaims an unseen owner after its heartbeat grace period expires", async () => {
+    const paseoHome = await mkdtemp(join(tmpdir(), "paseo-pid-lock-stale-unseen-owner-"));
+    const unseenOwnerPid = 2_147_483_647;
+    const replacementOwnerPid = process.pid;
+
+    try {
+      const pidPath = join(paseoHome, "paseo.pid");
+      await writeFile(
+        pidPath,
+        JSON.stringify({
+          pid: unseenOwnerPid,
+          startedAt: "2026-01-01T00:00:00.000Z",
+          hostname: "shared-host",
+          uid: process.getuid?.() ?? 0,
+          listen: "127.0.0.1:6767",
+          heartbeat: true,
+        }),
+      );
+      const staleTime = new Date(Date.now() - 2 * 60_000);
+      await utimes(pidPath, staleTime, staleTime);
+
+      await expect(isLocked(paseoHome)).resolves.toMatchObject({ locked: false });
+      await acquirePidLock(paseoHome, null, { ownerPid: replacementOwnerPid });
+
+      const lock = await getPidLockInfo(paseoHome);
+      expect(lock?.pid).toBe(replacementOwnerPid);
+      expect(lock?.heartbeat).toBe(true);
+    } finally {
+      await rm(paseoHome, { recursive: true, force: true });
+    }
+  });
+
+  test("keeps an unseen owner that refreshes its heartbeat during stale-lock recovery", async () => {
+    const paseoHome = await mkdtemp(join(tmpdir(), "paseo-pid-lock-racing-heartbeat-"));
+    const unseenOwnerPid = 2_147_483_647;
+    const pidPath = join(paseoHome, "paseo.pid");
+    let statCalls = 0;
+
+    try {
+      await writeFile(
+        pidPath,
+        JSON.stringify({
+          pid: unseenOwnerPid,
+          startedAt: "2026-01-01T00:00:00.000Z",
+          hostname: "shared-host",
+          uid: process.getuid?.() ?? 0,
+          listen: "127.0.0.1:6767",
+          heartbeat: true,
+        }),
+      );
+      const staleTime = new Date(Date.now() - 2 * 60_000);
+      await utimes(pidPath, staleTime, staleTime);
+
+      await expect(
+        acquirePidLock(paseoHome, null, {
+          ownerPid: process.pid,
+          filesystem: {
+            async readTextFile(path) {
+              return readFile(path, "utf-8");
+            },
+            async statMtimeMs(path) {
+              const mtimeMs = (await stat(path)).mtimeMs;
+              statCalls += 1;
+              if (statCalls === 1) {
+                const refreshedAt = new Date();
+                await utimes(path, refreshedAt, refreshedAt);
+              }
+              return mtimeMs;
+            },
+            unlink,
+          },
+        }),
+      ).rejects.toThrow("PID lock changed while checking whether it was abandoned");
+
+      const lock = await getPidLockInfo(paseoHome);
+      expect(lock?.pid).toBe(unseenOwnerPid);
     } finally {
       await rm(paseoHome, { recursive: true, force: true });
     }
