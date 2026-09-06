@@ -574,6 +574,126 @@ describe("real provider usage fetchers", () => {
     );
   });
 
+  it("renders enterprise spend-metered Claude usage from the spend block", async () => {
+    // Enterprise usage-based orgs return null rolling windows; the `spend` block
+    // carries the dollar meter (used/limit in minor units + exponent).
+    writeClaudeCredentials(
+      claudeHome,
+      "at_enterprise",
+      "rt_enterprise",
+      "enterprise",
+      "default_claude_zero",
+    );
+    fetchApi = mockFetch(
+      new Map([
+        [
+          "https://api.anthropic.com/api/oauth/usage",
+          () =>
+            jsonResponse({
+              five_hour: null,
+              seven_day: null,
+              spend: {
+                used: { amount_minor: 64913, currency: "USD", exponent: 2 },
+                limit: { amount_minor: 100000, currency: "USD", exponent: 2 },
+                percent: 65,
+              },
+            }),
+        ],
+      ]),
+    );
+
+    const result = await service().listUsage();
+    const claude = findProvider(result, "claude");
+
+    expect(claude).toMatchObject({
+      status: "available",
+      planLabel: "Enterprise",
+      windows: [expect.objectContaining({ id: "spend", usedPct: 64.913 })],
+      balances: [
+        expect.objectContaining({
+          id: "spend",
+          used: 649.13,
+          remaining: 350.87,
+          limit: 1000,
+          unit: "usd",
+        }),
+      ],
+    });
+  });
+
+  it("falls back to extra_usage when the Claude spend block is absent", async () => {
+    writeClaudeCredentials(
+      claudeHome,
+      "at_enterprise",
+      "rt_enterprise",
+      "enterprise",
+      "default_claude_zero",
+    );
+    fetchApi = mockFetch(
+      new Map([
+        [
+          "https://api.anthropic.com/api/oauth/usage",
+          () =>
+            jsonResponse({
+              five_hour: null,
+              seven_day: null,
+              extra_usage: {
+                is_enabled: true,
+                monthly_limit: 100000,
+                used_credits: 25000,
+                utilization: 25,
+                currency: "USD",
+                decimal_places: 2,
+              },
+            }),
+        ],
+      ]),
+    );
+
+    const claude = findProvider(await service().listUsage(), "claude");
+
+    expect(claude).toMatchObject({
+      status: "available",
+      planLabel: "Enterprise",
+      windows: [expect.objectContaining({ id: "spend", usedPct: 25 })],
+      balances: [expect.objectContaining({ id: "spend", remaining: 750, unit: "usd" })],
+    });
+  });
+
+  it("keeps window-metered Claude usage even when a spend block is present", async () => {
+    // Pro/Max accounts carry a spend block too, but it is their extra-usage cap —
+    // live session/weekly windows must stay the primary meter.
+    writeClaudeCredentials(claudeHome, "at_valid");
+    fetchApi = mockFetch(
+      new Map([
+        [
+          "https://api.anthropic.com/api/oauth/usage",
+          () =>
+            jsonResponse({
+              five_hour: { utilization: 30, resets_at: "2026-06-01T21:00:00Z" },
+              seven_day: { utilization: 10, resets_at: "2026-06-04T00:00:00Z" },
+              spend: {
+                used: { amount_minor: 1000, currency: "USD", exponent: 2 },
+                limit: { amount_minor: 50000, currency: "USD", exponent: 2 },
+                percent: 2,
+              },
+            }),
+        ],
+      ]),
+    );
+
+    const claude = findProvider(await service().listUsage(), "claude");
+
+    expect(claude).toMatchObject({
+      windows: expect.arrayContaining([
+        expect.objectContaining({ id: "five_hour", usedPct: 30 }),
+        expect.objectContaining({ id: "weekly", usedPct: 10 }),
+      ]),
+    });
+    // The spend cap must not become a window for window-metered accounts.
+    expect(claude.windows?.some((window: { id?: string }) => window.id === "spend")).toBe(false);
+  });
+
   it("fetches Codex windows and coerces string credit balances", async () => {
     writeCodexAuth(codexHome, "at_codex_valid");
     fetchApi = mockFetch(
@@ -602,6 +722,82 @@ describe("real provider usage fetchers", () => {
         expect.objectContaining({ id: "weekly", usedPct: 8 }),
       ]),
       balances: [expect.objectContaining({ id: "credits", remaining: 0 })],
+    });
+  });
+
+  it("renders ChatGPT Business Codex usage from additional rate limits and spend control", async () => {
+    // Business/Enterprise plans return plan_type "business", a null top-level
+    // rate_limit, per-feature rate limits, and a monthly spend-control budget.
+    writeCodexAuth(codexHome, "at_codex_business");
+    fetchApi = mockFetch(
+      new Map([
+        [
+          "https://chatgpt.com/backend-api/wham/usage",
+          () =>
+            jsonResponse({
+              plan_type: "business",
+              email: "bofan@example.com",
+              rate_limit: null,
+              code_review_rate_limit: null,
+              additional_rate_limits: [
+                {
+                  limit_name: "GPT-5.3-Codex-Spark-Preview",
+                  metered_feature: "codex_bengalfox",
+                  rate_limit: {
+                    allowed: true,
+                    limit_reached: false,
+                    primary_window: { used_percent: 5, reset_at: 1_748_812_800 },
+                    secondary_window: { used_percent: 12, reset_at: 1_749_072_000 },
+                  },
+                },
+              ],
+              spend_control: {
+                reached: false,
+                individual_limit: {
+                  source: "individual_limit",
+                  limit: "32500",
+                  used: "3947.67",
+                  remaining: "28552.33",
+                  used_percent: 12,
+                  remaining_percent: 88,
+                  reset_after_seconds: 2_133_422,
+                  reset_at: 1_790_812_800,
+                },
+              },
+              credits: { has_credits: true, unlimited: false, balance: null },
+            }),
+        ],
+      ]),
+    );
+
+    const result = await service().listUsage();
+    const codex = findProvider(result, "codex");
+
+    expect(codex).toMatchObject({
+      status: "available",
+      planLabel: "business",
+      windows: [
+        expect.objectContaining({
+          id: "session_0",
+          label: "Session · GPT-5.3-Codex-Spark-Preview",
+          usedPct: 5,
+        }),
+        expect.objectContaining({
+          id: "weekly_0",
+          label: "Weekly · GPT-5.3-Codex-Spark-Preview",
+          usedPct: 12,
+        }),
+      ],
+      balances: [
+        expect.objectContaining({
+          id: "spend",
+          label: "Spend",
+          used: 3947.67,
+          remaining: 28552.33,
+          limit: 32500,
+          unit: "credits",
+        }),
+      ],
     });
   });
 
