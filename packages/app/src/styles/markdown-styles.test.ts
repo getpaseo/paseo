@@ -1,4 +1,9 @@
 import { describe, expect, it } from "vitest";
+// The package entrypoint contains JSX in a .js file that Vitest cannot transform.
+// Import the JSX-free renderer implementation directly for the cascade regression.
+// @ts-expect-error react-native-markdown-display does not publish declarations for internal modules.
+import AstRenderer from "react-native-markdown-display/src/lib/AstRenderer";
+import type { RenderRules } from "react-native-markdown-display";
 import { createCompactMarkdownStyles, createMarkdownStyles } from "./markdown-styles";
 import { darkTheme } from "./theme";
 
@@ -117,11 +122,84 @@ describe("createMarkdownStyles", () => {
       ...darkTheme,
       fontSize: { ...darkTheme.fontSize, content: 21 },
     };
-    const styles = createMarkdownStyles(largeContentTheme);
+    const styles = createMarkdownStyles(largeContentTheme, "web");
 
-    expect(styles.heading1.lineHeight).toBeGreaterThan(styles.heading1.fontSize);
-    expect(styles.heading2.lineHeight).toBeGreaterThan(styles.heading2.fontSize);
-    expect(styles.heading3.lineHeight).toBeGreaterThan(styles.heading3.fontSize);
+    expect(styles.heading1.lineHeight).toBe(Math.round(styles.heading1.fontSize * 1.3));
+    expect(styles.heading2.lineHeight).toBe(Math.round(styles.heading2.fontSize * 1.3));
+    expect(styles.heading3.lineHeight).toBe(Math.round(styles.heading3.fontSize * 1.3));
+  });
+
+  it("resets Android heading line heights without changing prose metrics", () => {
+    const styles = createMarkdownStyles(darkTheme, "android");
+    const compactStyles = createCompactMarkdownStyles(darkTheme, "android");
+    const proseLineHeight = Math.round(darkTheme.fontSize.content * 1.4);
+
+    for (const heading of [
+      styles.heading1,
+      styles.heading2,
+      styles.heading3,
+      styles.heading4,
+      styles.heading5,
+      styles.heading6,
+    ]) {
+      expect(Object.prototype.hasOwnProperty.call(heading, "lineHeight")).toBe(true);
+      expect(heading.lineHeight).toBeUndefined();
+    }
+
+    for (const heading of [
+      compactStyles.heading1,
+      compactStyles.heading2,
+      compactStyles.heading3,
+    ]) {
+      expect(Object.prototype.hasOwnProperty.call(heading, "lineHeight")).toBe(true);
+      expect(heading.lineHeight).toBeUndefined();
+    }
+
+    for (const prose of [
+      styles.body,
+      styles.bullet_list_icon,
+      styles.ordered_list_icon,
+      compactStyles.body,
+      compactStyles.bullet_list_icon,
+      compactStyles.ordered_list_icon,
+    ]) {
+      expect(prose.lineHeight).toBe(proseLineHeight);
+    }
+  });
+
+  it("resets Android heading lineHeight in RNMD inherited text styles", () => {
+    const styles = createMarkdownStyles(darkTheme, "android");
+    let leafInheritedStyles: Record<string, unknown> | undefined;
+    const renderRules: RenderRules = {
+      body: (_node, children) => children,
+      heading1: (_node, children) => children,
+      text: (_node, _children, _parentNodes, _styles, inheritedStyles) => {
+        leafInheritedStyles = inheritedStyles;
+        return null;
+      },
+    };
+
+    const renderer = new AstRenderer(renderRules, styles);
+    renderer.renderNode(
+      {
+        type: "body",
+        key: "body",
+        children: [
+          {
+            type: "heading1",
+            key: "heading1",
+            children: [{ type: "text", key: "text", children: [] }],
+          },
+        ],
+      },
+      [],
+    );
+
+    expect(
+      leafInheritedStyles &&
+        Object.prototype.hasOwnProperty.call(leafInheritedStyles, "lineHeight"),
+    ).toBe(true);
+    expect(leafInheritedStyles?.lineHeight).toBeUndefined();
   });
 
   it("keeps blockquotes quiet with a square left edge", () => {
