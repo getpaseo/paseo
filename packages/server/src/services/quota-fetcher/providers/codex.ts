@@ -145,19 +145,31 @@ export class CodexQuotaProvider implements ProviderUsageFetcher {
 
   private toUsage(resp: CodexUsageResponse): ProviderUsage {
     const windows: ProviderUsageWindow[] = [];
-    this.pushWindow(windows, "session", "Session", codexWindow(resp.rate_limit?.primary_window));
-    this.pushWindow(windows, "weekly", "Weekly", codexWindow(resp.rate_limit?.secondary_window));
-    this.pushWindow(
+    this.pushWindow({
       windows,
-      "code_review",
-      "Code review",
-      codexWindow(resp.code_review_rate_limit?.primary_window),
-    );
+      id: "session",
+      label: "Session",
+      window: codexWindow(resp.rate_limit?.primary_window),
+    });
+    this.pushWindow({
+      windows,
+      id: "weekly",
+      label: "Weekly",
+      window: codexWindow(resp.rate_limit?.secondary_window),
+    });
+    this.pushWindow({
+      windows,
+      id: "code_review",
+      label: "Code review",
+      window: codexWindow(resp.code_review_rate_limit?.primary_window),
+    });
 
     // ChatGPT Business/Enterprise omit the top-level rate_limit entirely and
     // rate-limit each metered feature (e.g. codex_bengalfox) instead. Without
-    // this, a business account renders with no windows at all.
-    if (windows.length === 0 && resp.additional_rate_limits?.length) {
+    // this, a business account renders with no windows at all. Keyed on the
+    // absent top-level limit rather than `windows.length === 0` so an
+    // independent code_review_rate_limit cannot suppress these windows.
+    if (resp.rate_limit == null && resp.additional_rate_limits?.length) {
       windows.push(...this.additionalRateLimitWindows(resp.additional_rate_limits));
     }
 
@@ -204,20 +216,20 @@ export class CodexQuotaProvider implements ProviderUsageFetcher {
   /**
    * Append one window built from a parsed API window, when present.
    */
-  private pushWindow(
-    windows: ProviderUsageWindow[],
-    id: string,
-    label: string,
-    window: { usedPct: number; resetsAt: string | null } | null,
-  ): void {
-    if (!window) return;
-    windows.push(
+  private pushWindow(input: {
+    windows: ProviderUsageWindow[];
+    id: string;
+    label: string;
+    window: { usedPct: number; resetsAt: string | null } | null;
+  }): void {
+    if (!input.window) return;
+    input.windows.push(
       windowFromUsedPct({
-        id,
-        label,
-        utilizationPct: window.usedPct,
-        resetsAt: window.resetsAt,
-        tone: toneFromUsedPct(window.usedPct),
+        id: input.id,
+        label: input.label,
+        utilizationPct: input.window.usedPct,
+        resetsAt: input.window.resetsAt,
+        tone: toneFromUsedPct(input.window.usedPct),
       }),
     );
   }

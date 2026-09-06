@@ -801,6 +801,45 @@ describe("real provider usage fetchers", () => {
     });
   });
 
+  it("keeps additional rate-limit windows when business has a code-review limit", async () => {
+    // A Business response with its own code_review_rate_limit must not suppress
+    // the per-feature windows from additional_rate_limits (regression for the
+    // windows.length === 0 gate).
+    writeCodexAuth(codexHome, "at_codex_business");
+    fetchApi = mockFetch(
+      new Map([
+        [
+          "https://chatgpt.com/backend-api/wham/usage",
+          () =>
+            jsonResponse({
+              plan_type: "business",
+              rate_limit: null,
+              code_review_rate_limit: {
+                primary_window: { used_percent: 40, reset_at: 1_748_812_800 },
+              },
+              additional_rate_limits: [
+                {
+                  limit_name: "GPT-5.3-Codex-Spark-Preview",
+                  rate_limit: {
+                    primary_window: { used_percent: 3, reset_at: 1_748_812_800 },
+                    secondary_window: { used_percent: 7, reset_at: 1_749_072_000 },
+                  },
+                },
+              ],
+            }),
+        ],
+      ]),
+    );
+
+    const codex = findProvider(await service().listUsage(), "codex");
+
+    expect(codex.windows?.map((window) => window.id)).toEqual([
+      "code_review",
+      "session_0",
+      "weekly_0",
+    ]);
+  });
+
   it("treats a Codex HTML usage response as auth failure", async () => {
     writeCodexAuth(codexHome, "at_codex_stale");
     fetchApi = mockFetch(

@@ -361,7 +361,11 @@ function spendUsageFromResponse(resp: ClaudeUsageResponse): ClaudeSpendUsage | n
   const amounts = spendAmountsFromResponse(resp);
   if (!amounts) return null;
 
-  const percent = spendPercent(amounts.usedMinor, amounts.limitMinor, amounts.reportedPercent);
+  const percent = spendPercent({
+    usedMinor: amounts.usedMinor,
+    limitMinor: amounts.limitMinor,
+    reportedPercent: amounts.reportedPercent,
+  });
   const resetsAt = nextMonthlyResetUtc().toISOString();
 
   const window: ProviderUsageWindow = windowFromUsedPct({
@@ -438,14 +442,14 @@ function spendHasAmounts(spend: NonNullable<ClaudeUsageResponse["spend"]>): bool
  * limit means UNLIMITED and a zero limit means included-only — both yield 0%
  * and are never "exhausted".
  */
-function spendPercent(
-  usedMinor: number | null,
-  limitMinor: number | null,
-  reportedPercent: number | null,
-): number {
-  if (limitMinor == null || limitMinor === 0) return 0;
-  if (usedMinor != null) return Math.min(100, (usedMinor / limitMinor) * 100);
-  return reportedPercent ?? 0;
+function spendPercent(input: {
+  usedMinor: number | null;
+  limitMinor: number | null;
+  reportedPercent: number | null;
+}): number {
+  if (input.limitMinor == null || input.limitMinor === 0) return 0;
+  if (input.usedMinor != null) return Math.min(100, (input.usedMinor / input.limitMinor) * 100);
+  return input.reportedPercent ?? 0;
 }
 
 type ClaudeKeychainCommandRunner = (args: string[]) => Promise<string | null>;
