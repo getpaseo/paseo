@@ -48,6 +48,12 @@ export const ClaudeProviderOptionsSchema = z
     allowedTools: z.array(z.string()).optional(),
     disallowedTools: z.array(z.string()).optional(),
     additionalDirectories: z.array(z.string()).optional(),
+    // Native SDK skill context filter. `string[]` enables only the listed
+    // skills (by SKILL.md name / dir, or `plugin:skill`); `"all"` enables every
+    // discovered skill. Unlisted skills are hidden from the model's listing and
+    // rejected by the Skill tool. Restrictive-only, so it fits the fail-closed
+    // policy — flows through the `...providerOptions` spread in agent.ts.
+    skills: z.union([z.array(z.string()), z.literal("all")]).optional(),
     sandbox: z
       .object({
         enabled: z.boolean().optional(),
