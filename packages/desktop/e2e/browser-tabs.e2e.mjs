@@ -198,7 +198,18 @@ async function startTargetPage() {
     response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
     response.end(`<!doctype html>
       <html>
-        <head><title>Desktop browser target</title></head>
+        <head>
+          <title>Desktop browser target</title>
+          <style>
+            body { margin: 24px; }
+            #bridge-target {
+              color: rgb(34, 68, 102) !important;
+              background: rgb(238, 242, 246);
+              font: 600 18px Arial, sans-serif;
+              opacity: 0.8;
+            }
+          </style>
+        </head>
         <body>
           <button id="bridge-target" onclick="this.textContent = 'Clicked'">Bridge target</button>
           <label for="typing-target">Typing target</label>
@@ -371,6 +382,20 @@ async function readViewport(client, browserId) {
   return JSON.parse(evaluated.resultJson);
 }
 
+async function waitForViewport(client, browserId, expected) {
+  const deadline = Date.now() + 5_000;
+  let actual;
+  // Electron applies host webview dimensions to the guest asynchronously.
+  do {
+    actual = await readViewport(client, browserId);
+    if (actual.width === expected.width && actual.height === expected.height) {
+      return actual;
+    }
+    await delay(50);
+  } while (Date.now() < deadline);
+  return actual;
+}
+
 async function clickGuestElement(page, client, browserId, selector) {
   const evaluated = await callBrowserTool(client, "browser_evaluate", {
     browserId,
@@ -420,14 +445,25 @@ async function selectDeviceSize(page, label) {
   return !openPixels.equals(closedPixels);
 }
 
-async function selectElementAndReadAnnotationPaint({ page, client, browserId, artifactDir }) {
-  await clickGuestElement(page, client, browserId, "#bridge-target");
+async function verifyCompactAnnotation({ page, browserId, artifactDir, deck }) {
   const comment = page.getByRole("textbox", {
-    name: "Message to the agent about this element…",
+    name: "Describe another change for the agent…",
   });
   await comment.waitFor({ state: "visible", timeout: timeoutMs });
   const bounds = await comment.boundingBox();
   assert(bounds, "Element annotation comment box had no bounds");
+  const clipBounds = await deck
+    .getByTestId(`browser-webview-clip-${browserId}`)
+    .last()
+    .boundingBox();
+  assert(clipBounds, "Browser webview clip had no bounds");
+  assert(
+    bounds.x >= clipBounds.x &&
+      bounds.y >= clipBounds.y &&
+      bounds.x + bounds.width <= clipBounds.x + clipBounds.width &&
+      bounds.y + bounds.height <= clipBounds.y + clipBounds.height,
+    `Element annotation escaped its browser pane: ${JSON.stringify({ bounds, clipBounds })}`,
+  );
   const receivesInput = await comment.evaluate((element) => {
     const elementBounds = element.getBoundingClientRect();
     const target = document.elementFromPoint(
@@ -446,13 +482,218 @@ async function selectElementAndReadAnnotationPaint({ page, client, browserId, ar
     clip,
     path: path.join(artifactDir, "element-annotation-open.png"),
   });
+  return { comment, clip, openPixels, receivesInput };
+}
+
+async function readFixtureElement(client, browserId) {
+  const evaluated = await callBrowserTool(client, "browser_evaluate", {
+    browserId,
+    function: `() => {
+      const element = document.querySelector('#bridge-target');
+      if (!(element instanceof HTMLElement)) return null;
+      const style = getComputedStyle(element);
+      return {
+        text: element.textContent,
+        color: style.color,
+        fontSize: style.fontSize,
+        selected: element.classList.contains('__paseo-selected')
+      };
+    }`,
+  });
+  return JSON.parse(evaluated.resultJson);
+}
+
+async function editElementProperties({ page, client, browserId, artifactDir }) {
+  await page.getByRole("button", { name: "Adjust properties" }).click();
+  const textField = page.getByRole("textbox", { name: "Text", exact: true });
+  const colorPicker = page.getByLabel("Text color picker", { exact: true });
+  const fontSize = page.getByLabel("Font size", { exact: true });
+  const font = page.getByRole("textbox", { name: "Font", exact: true });
+  await textField.waitFor({ state: "visible", timeout: timeoutMs });
+  assert(await colorPicker.isVisible(), "Expanded inspector did not expose a color picker");
+  assert(await font.isVisible(), "Expanded inspector did not expose a font selector");
+  assert(
+    await page.getByRole("slider", { name: "Opacity", exact: true }).isVisible(),
+    "Expanded inspector did not expose an opacity slider",
+  );
+  await textField.fill("Edited target");
+  await colorPicker.fill("#ff0000");
+  await fontSize.fill("20");
+  const textColor = await textField.evaluate((element) => getComputedStyle(element).color);
+  const numberColor = await fontSize.evaluate((element) => getComputedStyle(element).color);
+  assert(numberColor === textColor, `Numeric input lost the theme foreground: ${numberColor}`);
+  await font.fill('"Courier New", monospace');
+  const liveFont = await callBrowserTool(client, "browser_evaluate", {
+    browserId,
+    function: `() => getComputedStyle(document.querySelector('#bridge-target')).fontFamily`,
+  });
+  assert(
+    JSON.parse(liveFont.resultJson) === '"Courier New", monospace',
+    "Typed font did not preview immediately",
+  );
+  await page.getByRole("button", { name: "Font: Select", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Serif", exact: true }).click();
+  assert((await font.inputValue()) === "serif", "Font preset did not update the input");
+  await page.getByRole("button", { name: "Font: Select", exact: true }).click();
+  const fontOption = page.getByText("System UI", { exact: true });
+  await fontOption.waitFor({ state: "visible", timeout: timeoutMs });
   await page.keyboard.press("Escape");
-  await comment.waitFor({ state: "hidden", timeout: timeoutMs });
+  await fontOption.waitFor({ state: "hidden", timeout: timeoutMs });
+  assert(await textField.isVisible(), "Dismissing the font menu discarded the annotation");
+  await textField.evaluate((element) => {
+    element.dispatchEvent(
+      new KeyboardEvent("keydown", {
+        key: "Enter",
+        ctrlKey: true,
+        isComposing: true,
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+  });
+  assert(await textField.isVisible(), "IME confirmation submitted the annotation");
+  const commentBounds = await page
+    .getByRole("textbox", { name: "Describe another change for the agent…" })
+    .boundingBox();
+  const textBounds = await textField.boundingBox();
+  const cancelBounds = await page
+    .getByRole("button", { name: "Cancel", exact: true })
+    .boundingBox();
+  assert(commentBounds && textBounds && cancelBounds, "Annotation controls have no bounds");
+  assert(
+    commentBounds.y > textBounds.y &&
+      Math.abs(
+        commentBounds.y + commentBounds.height / 2 - cancelBounds.y - cancelBounds.height / 2,
+      ) < 3,
+    "Comment and actions are not together below properties",
+  );
+  await callBrowserTool(client, "browser_wait", {
+    browserId,
+    text: "Edited target",
+    timeoutMs: 5_000,
+  });
+  const previewResult = await callBrowserTool(client, "browser_evaluate", {
+    browserId,
+    function: `() => {
+      const element = document.querySelector('#bridge-target');
+      if (!(element instanceof HTMLElement)) return null;
+      const style = getComputedStyle(element);
+      return { text: element.textContent, color: style.color, fontSize: style.fontSize };
+    }`,
+  });
+  const preview = JSON.parse(previewResult.resultJson);
+  assert(
+    preview?.text === "Edited target" &&
+      preview.color === "rgb(255, 0, 0)" &&
+      preview.fontSize === "20px",
+    `Element preview did not apply all changes: ${JSON.stringify(preview)}`,
+  );
+  await page.screenshot({ path: path.join(artifactDir, "element-annotation-expanded.png") });
+}
+
+async function restoreElementProperties({ page, client, browserId, original }) {
+  await page.getByRole("button", { name: "Restore original" }).click();
+  await verifyRestoredElement({ client, browserId, original });
+}
+
+async function verifyRestoredElement({ client, browserId, original }) {
+  await callBrowserTool(client, "browser_wait", {
+    browserId,
+    text: original.text,
+    timeoutMs: 5_000,
+  });
+  const restoredResult = await callBrowserTool(client, "browser_evaluate", {
+    browserId,
+    function: `() => {
+      const element = document.querySelector('#bridge-target');
+      if (!(element instanceof HTMLElement)) return null;
+      const style = getComputedStyle(element);
+      return { text: element.textContent, color: style.color, fontSize: style.fontSize };
+    }`,
+  });
+  const restored = JSON.parse(restoredResult.resultJson);
+  assert(
+    restored?.text === original.text &&
+      restored.color === original.color &&
+      restored.fontSize === original.fontSize,
+    `Element restore did not recover the original state: ${JSON.stringify({ original, restored })}`,
+  );
+}
+
+async function switchBrowserTabAndVerifyCleanup({
+  page,
+  client,
+  browserId,
+  targetUrl,
+  deck,
+  paint,
+  artifactDir,
+  original,
+}) {
+  const otherTab = await callBrowserTool(client, "browser_new_tab", { url: targetUrl });
+  await deck.getByTestId(`workspace-tab-browser_${otherTab.browserId}`).last().click();
+  await paint.comment.waitFor({ state: "hidden", timeout: timeoutMs });
+  await verifyRestoredElement({ client, browserId, original });
+  const staleSelection = await callBrowserTool(client, "browser_evaluate", {
+    browserId,
+    function:
+      "() => Boolean(document.querySelector('#bridge-target')?.classList.contains('__paseo-selected'))",
+  });
+  assert(
+    JSON.parse(staleSelection.resultJson) === false,
+    "Switching browser tabs left a stale element highlight in the previous tab",
+  );
   const closedPixels = await page.screenshot({
-    clip,
+    clip: paint.clip,
     path: path.join(artifactDir, "element-annotation-closed.png"),
   });
-  return receivesInput && !openPixels.equals(closedPixels);
+  return paint.receivesInput && !paint.openPixels.equals(closedPixels);
+}
+
+async function createPendingElementPreview({ page, client, browserId }) {
+  await page.getByRole("textbox", { name: "Text", exact: true }).fill("Pending preview");
+  await callBrowserTool(client, "browser_wait", {
+    browserId,
+    text: "Pending preview",
+    timeoutMs: 5_000,
+  });
+}
+
+async function restartSelectorAndVerifyRestoration({
+  page,
+  client,
+  browserId,
+  deck,
+  paint,
+  original,
+  mode,
+}) {
+  await createPendingElementPreview({ page, client, browserId });
+  await deck.getByRole("button", { name: mode, exact: true }).click();
+  assert(await waitForGuestSelector(client, browserId), `${mode} did not restart the selector`);
+  await verifyRestoredElement({ client, browserId, original });
+  if (mode === "Screenshot element") {
+    await deck.getByRole("button", { name: "Cancel element selector" }).click();
+    await deck.getByRole("button", { name: "Edit element", exact: true }).click();
+    assert(await waitForGuestSelector(client, browserId));
+  }
+  await clickGuestElement(page, client, browserId, "#bridge-target");
+  await paint.comment.waitFor({ state: "visible", timeout: timeoutMs });
+  await page.getByRole("button", { name: "Adjust properties" }).click();
+}
+
+async function selectElementAndVerifyAnnotation(input) {
+  await clickGuestElement(input.page, input.client, input.browserId, "#bridge-target");
+  const paint = await verifyCompactAnnotation(input);
+  const original = await readFixtureElement(input.client, input.browserId);
+  assert(original?.selected === true, "Selected guest element had no persistent highlight");
+  await editElementProperties(input);
+  await restoreElementProperties({ ...input, original });
+  for (const mode of ["Edit element", "Screenshot element"]) {
+    await restartSelectorAndVerifyRestoration({ ...input, paint, original, mode });
+  }
+  await createPendingElementPreview(input);
+  return await switchBrowserTabAndVerifyCleanup({ ...input, paint, original });
 }
 
 function recordViewportMismatch(failures, label, actual, expected) {
@@ -536,7 +777,7 @@ async function runRegression({ page, client, serverId, targetUrl, callerAgentId,
   recordViewportMismatch(
     failures,
     "browser_resize updates the visible shared viewport",
-    await readViewport(client, browserId),
+    await waitForViewport(client, browserId, requestedViewport),
     requestedViewport,
   );
 
@@ -545,7 +786,7 @@ async function runRegression({ page, client, serverId, targetUrl, callerAgentId,
   recordViewportMismatch(
     failures,
     "oversized preset preserves the requested guest viewport",
-    await readViewport(client, browserId),
+    await waitForViewport(client, browserId, oversizedViewport),
     oversizedViewport,
   );
   await page.waitForFunction(
@@ -761,7 +1002,7 @@ async function runRegression({ page, client, serverId, targetUrl, callerAgentId,
     responsiveViewport,
   );
 
-  const annotateButton = originalDeck.getByRole("button", { name: "Annotate element" });
+  const annotateButton = originalDeck.getByRole("button", { name: "Edit element" });
   await page.evaluate((id) => {
     const webview = document.querySelector(`[data-paseo-browser-id="${id}"]`);
     if (!(webview instanceof HTMLElement)) throw new Error(`Browser webview ${id} was unavailable`);
@@ -858,18 +1099,20 @@ async function runRegression({ page, client, serverId, targetUrl, callerAgentId,
     .getByTestId(`browser-webview-clip-${browserId}`)
     .waitFor({ state: "visible", timeout: timeoutMs });
 
-  const splitAnnotateButton = originalDeck.getByRole("button", { name: "Annotate element" });
+  const splitAnnotateButton = originalDeck.getByRole("button", { name: "Edit element" });
   await splitAnnotateButton.click();
   assert(
     await waitForGuestSelector(client, browserId),
     "Element selector did not start in the split browser pane",
   );
   assert(
-    await selectElementAndReadAnnotationPaint({
+    await selectElementAndVerifyAnnotation({
       page,
       client,
       browserId,
       artifactDir,
+      deck: originalDeck,
+      targetUrl,
     }),
     "Element annotation comment box did not paint or receive input above the browser surface",
   );

@@ -136,6 +136,21 @@ function browserElementWorkspaceAttachment(): Extract<
       reactSource: null,
       parentChain: ["form.settings"],
       children: [],
+      elementContext: {
+        version: 1,
+        provider: { id: "cj-cloud-ui", label: "CJ Cloud" },
+        target: { id: "button-42", label: "Primary button", kind: "CButton" },
+        fields: [
+          {
+            id: "disabled",
+            path: "props.disabled",
+            label: "Disabled",
+            editor: "boolean",
+            value: false,
+          },
+        ],
+      },
+      requestedChanges: [{ fieldId: "disabled", path: "props.disabled", from: false, to: true }],
       formatted: '<browser-element url="https://example.com/page">button.primary</browser-element>',
     },
   };
@@ -699,7 +714,7 @@ describe("dispatchComposerAgentMessage", () => {
       {
         type: "text",
         mimeType: "text/plain",
-        title: "Browser element · button",
+        title: "Browser element · Primary button",
         text: browserElement.attachment.formatted,
       },
     ]);

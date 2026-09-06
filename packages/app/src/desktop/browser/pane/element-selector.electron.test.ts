@@ -81,13 +81,7 @@ describe("element selector owner", () => {
     };
     harness.select(selection);
 
-    expect(outcomes).toEqual([
-      {
-        type: "selected",
-        mode: "annotate",
-        selection,
-      },
-    ]);
+    expect(outcomes).toEqual([{ type: "selected", mode: "annotate", selection }]);
     expect(harness.stopped).toEqual(["session-1"]);
     expect(harness.cancelledTimeouts).toEqual([7]);
   });

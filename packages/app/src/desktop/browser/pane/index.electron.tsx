@@ -27,13 +27,11 @@ import {
   Smartphone,
   Tablet,
   Wrench,
-  X,
   type LucideIcon,
 } from "lucide-react-native";
 import { StyleSheet, useUnistyles, withUnistyles } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
 import * as Clipboard from "expo-clipboard";
-import { Button } from "@/components/ui/button";
 import { useRetainedPanelActive } from "@/components/retained-panel";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useToast } from "@/contexts/toast-context";
@@ -49,6 +47,13 @@ import {
   useWorkspaceAttachmentsStore,
 } from "@/attachments/workspace-attachments-store";
 import type { AttachmentMetadata, BrowserElementAttachment } from "@/attachments/types";
+import { ElementContextPanel } from "@/desktop/browser/element-context-panel.electron";
+import {
+  createGenericBrowserElementContext,
+  formatBrowserElementContext,
+  type BrowserElementChange,
+  type BrowserElementContext,
+} from "@/desktop/browser/element-context";
 import { persistAttachmentFromDataUrl } from "@/attachments/service";
 import { WORKSPACE_SECONDARY_HEADER_HEIGHT } from "@/constants/layout";
 import { getOverlayRoot } from "@/lib/overlay-root";
@@ -74,10 +79,12 @@ import {
   takeResidentBrowserWebview,
 } from "../resident-webviews";
 import {
+  clearElementSelection,
   createElementSelectorController,
   type BrowserElementSelection,
   type ElementSelectorOutcome,
 } from "./element-selector.electron";
+import { previewElementChanges, restoreElementPreview } from "./element-preview.electron";
 
 type ElectronWebview = HTMLElement & {
   canGoBack?: () => boolean;
@@ -97,6 +104,16 @@ type ElectronWebview = HTMLElement & {
 
 interface BrowserElementAnnotation {
   comment: string;
+  changes: BrowserElementChange[];
+}
+
+type PendingBrowserElementSelection = BrowserElementSelection & {
+  elementContext: BrowserElementContext;
+};
+
+interface PendingElementScreenshot {
+  selection: PendingBrowserElementSelection;
+  dataUrl: Promise<string | undefined>;
 }
 
 type DeviceSizeId =
@@ -260,6 +277,10 @@ function formatElementAttachment(
     parts.push(`feedback: ${comment}`);
   }
 
+  if (selection.elementContext) {
+    parts.push(formatBrowserElementContext(selection.elementContext, annotation?.changes ?? []));
+  }
+
   return [
     `<browser-element url="${selection.url}">`,
     parts.map((part) => `  ${part}`).join("\n"),
@@ -285,6 +306,8 @@ function buildBrowserElementAttachment(
     reactSource: selection.reactSource,
     parentChain: selection.parentChain,
     children: selection.children,
+    ...(selection.elementContext ? { elementContext: selection.elementContext } : {}),
+    ...(annotation?.changes.length ? { requestedChanges: annotation.changes } : {}),
     ...(comment ? { comment } : {}),
     ...(screenshot ? { screenshot } : {}),
     formatted: formatElementAttachment(selection, annotation),
@@ -627,18 +650,21 @@ export function BrowserPane({
   const toast = useToast();
   const toastRef = useRef(toast);
   toastRef.current = toast;
-  const [pendingSelection, setPendingSelection] = useState<BrowserElementSelection | null>(null);
+  const [pendingSelection, setPendingSelection] = useState<PendingBrowserElementSelection | null>(
+    null,
+  );
   // Screenshot is captured at selection time (overlay already torn down, no
   // scroll drift) and reused when the annotation card is submitted.
-  const pendingScreenshotRef = useRef<AttachmentMetadata | undefined>(undefined);
+  const pendingScreenshotRef = useRef<PendingElementScreenshot | null>(null);
+  const previewFailureShownRef = useRef(false);
   const [draftUrl, setDraftUrl] = useState(browser?.url ?? "https://example.com");
   const workspaceAttachmentScopeKey = useMemo(
     () => buildBrowserAttachmentScopeKey({ cwd, serverId, workspaceId }),
     [cwd, serverId, workspaceId],
   );
   const workspaceAttachments = useWorkspaceAttachments(workspaceAttachmentScopeKey ?? "");
-  const setWorkspaceAttachments = useWorkspaceAttachmentsStore(
-    (state) => state.setWorkspaceAttachments,
+  const addWorkspaceAttachment = useWorkspaceAttachmentsStore(
+    (state) => state.addWorkspaceAttachment,
   );
   const titleStyle = useMemo(
     () => [styles.unavailableTitle, { color: theme.colors.foreground }],
@@ -682,6 +708,8 @@ export function BrowserPane({
 
   const updateBrowserRef = useRef(updateBrowser);
   updateBrowserRef.current = updateBrowser;
+  const onFocusPaneRef = useRef(onFocusPane);
+  onFocusPaneRef.current = onFocusPane;
 
   const selectUrlBar = useCallback(() => {
     window.setTimeout(() => {
@@ -771,6 +799,9 @@ export function BrowserPane({
 
     const handleStartLoading = () => {
       selectorControllerRef.current?.stopForWebview(webview);
+      restoreElementPreview(webview);
+      setPendingSelection(null);
+      pendingScreenshotRef.current = null;
       updateBrowser(browserId, { isLoading: true, lastError: null });
       syncNavigationState({ syncUrl: false });
     };
@@ -846,7 +877,7 @@ export function BrowserPane({
       }
     };
     const handleWebviewFocus = () => {
-      onFocusPane?.();
+      onFocusPaneRef.current?.();
       webview.focus?.();
       const focusBrowser = getDesktopHost()?.browser?.focus;
       if (typeof focusBrowser === "function") {
@@ -893,6 +924,8 @@ export function BrowserPane({
       webview.removeEventListener("dom-ready", handleDomReady);
       webview.removeEventListener("focus", handleWebviewFocus);
       webview.removeEventListener("mousedown", handleWebviewFocus);
+      void restoreElementPreview(webview);
+      clearElementSelection(webview);
       const browserStillExists = Boolean(
         useBrowserStore.getState().browsersById[browserIdRef.current],
       );
@@ -907,7 +940,7 @@ export function BrowserPane({
       }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [browserId, onFocusPane]);
+  }, [browserId]);
 
   useEffect(() => {
     const webview = webviewRef.current;
@@ -915,6 +948,12 @@ export function BrowserPane({
       return;
     }
     if (!isPresented) {
+      selectorControllerRef.current?.stopForWebview(webview);
+      restoreElementPreview(webview);
+      clearElementSelection(webview);
+      setSelectorMode(null);
+      setPendingSelection(null);
+      pendingScreenshotRef.current = null;
       releaseResidentBrowserWebview(browserId, webview);
       return;
     }
@@ -1063,22 +1102,19 @@ export function BrowserPane({
       if (!workspaceAttachmentScopeKey) {
         return;
       }
-      setWorkspaceAttachments({
+      addWorkspaceAttachment({
         scopeKey: workspaceAttachmentScopeKey,
-        attachments: [
-          ...workspaceAttachments,
-          {
-            kind: "browser_element",
-            attachment: buildBrowserElementAttachment(selection, annotation, screenshot),
-          },
-        ],
+        attachment: {
+          kind: "browser_element",
+          attachment: buildBrowserElementAttachment(selection, annotation, screenshot),
+        },
       });
     },
-    [setWorkspaceAttachments, workspaceAttachmentScopeKey, workspaceAttachments],
+    [addWorkspaceAttachment, workspaceAttachmentScopeKey],
   );
 
   const captureElementScreenshot = useCallback(
-    async (selection: BrowserElementSelection): Promise<AttachmentMetadata | undefined> => {
+    async (selection: BrowserElementSelection): Promise<string | undefined> => {
       const captureElement = getDesktopHost()?.browser?.captureElement;
       if (typeof captureElement !== "function") {
         return undefined;
@@ -1092,11 +1128,7 @@ export function BrowserPane({
         if (!dataUrl) {
           return undefined;
         }
-        return await persistAttachmentFromDataUrl({
-          dataUrl,
-          mimeType: "image/png",
-          fileName: `element-${selection.tag}.png`,
-        });
+        return dataUrl;
       } catch (error) {
         console.warn("[browser-pane] captureElement failed", error);
         return undefined;
@@ -1159,15 +1191,19 @@ export function BrowserPane({
   const handleSelectorResult = useCallback(
     (selection: BrowserElementSelection, mode: "annotate" | "screenshot") => {
       if (mode === "screenshot") {
+        const webview = webviewRef.current;
+        if (webview) clearElementSelection(webview);
         void screenshotElementToClipboard(selection);
         return;
       }
-      pendingScreenshotRef.current = undefined;
-      setPendingSelection(selection);
-      void captureElementScreenshot(selection).then((screenshot) => {
-        pendingScreenshotRef.current = screenshot;
-        return undefined;
-      });
+      const elementContext = createGenericBrowserElementContext(selection);
+      const pending = { ...selection, elementContext };
+      previewFailureShownRef.current = false;
+      pendingScreenshotRef.current = {
+        selection: pending,
+        dataUrl: captureElementScreenshot(pending),
+      };
+      setPendingSelection(pending);
     },
     [captureElementScreenshot, screenshotElementToClipboard],
   );
@@ -1175,21 +1211,68 @@ export function BrowserPane({
   const submitAnnotation = useCallback(
     (annotation: BrowserElementAnnotation) => {
       const selection = pendingSelection;
-      const screenshot = pendingScreenshotRef.current;
-      pendingScreenshotRef.current = undefined;
+      const screenshotRequest = pendingScreenshotRef.current;
+      pendingScreenshotRef.current = null;
       setPendingSelection(null);
+      const webview = webviewRef.current;
+      if (webview) {
+        void restoreElementPreview(webview).then((restored) => {
+          if (!restored) toastRef.current?.error(t("workspace.browser.annotate.previewFailed"));
+          return undefined;
+        });
+        clearElementSelection(webview);
+      }
       if (!selection) {
         return;
       }
-      addElementAttachment(selection, annotation, screenshot);
+      void (async () => {
+        const dataUrl =
+          screenshotRequest?.selection === selection ? await screenshotRequest.dataUrl : undefined;
+        let screenshot: AttachmentMetadata | undefined;
+        try {
+          screenshot = dataUrl
+            ? await persistAttachmentFromDataUrl({
+                dataUrl,
+                mimeType: "image/png",
+                fileName: `element-${selection.tag}.png`,
+              })
+            : undefined;
+        } catch (error) {
+          console.warn("[browser-pane] persist element screenshot failed", error);
+        }
+        addElementAttachment(selection, annotation, screenshot);
+      })();
     },
-    [addElementAttachment, pendingSelection],
+    [addElementAttachment, pendingSelection, t],
   );
 
   const cancelAnnotation = useCallback(() => {
-    pendingScreenshotRef.current = undefined;
+    pendingScreenshotRef.current = null;
     setPendingSelection(null);
-  }, []);
+    const webview = webviewRef.current;
+    if (webview) {
+      void restoreElementPreview(webview).then((restored) => {
+        if (!restored) toastRef.current?.error(t("workspace.browser.annotate.previewFailed"));
+        return undefined;
+      });
+      clearElementSelection(webview);
+    }
+  }, [t]);
+
+  const previewAnnotationChanges = useCallback(
+    (changes: BrowserElementChange[]) => {
+      const webview = webviewRef.current;
+      if (webview && pendingSelection) {
+        void previewElementChanges(webview, pendingSelection, changes).then((previewed) => {
+          if (previewed || previewFailureShownRef.current) return;
+          previewFailureShownRef.current = true;
+          toastRef.current?.error(t("workspace.browser.annotate.previewFailed"));
+          return undefined;
+        });
+      }
+    },
+    [pendingSelection, t],
+  );
 
   const showSelectorFailure = useCallback(
     (reason: "loading" | "timeout" | "unavailable") => {
@@ -1227,6 +1310,8 @@ export function BrowserPane({
         return;
       }
 
+      void restoreElementPreview(webview);
+      clearElementSelection(webview);
       const startResult = controller.start({
         webview,
         mode,
@@ -1237,7 +1322,7 @@ export function BrowserPane({
         return;
       }
 
-      pendingScreenshotRef.current = undefined;
+      pendingScreenshotRef.current = null;
       setPendingSelection(null);
       setSelectorMode(mode);
     },
@@ -1544,12 +1629,14 @@ export function BrowserPane({
           ref: setWebviewHostNode,
           style: webviewHostStyle,
         })}
-        {pendingSelection ? (
+        {pendingSelection && isPresented ? (
           <BrowserElementAnnotationCard
-            anchor={webviewClipRef.current}
+            anchor={webviewHostRef.current}
             selection={pendingSelection}
             onSubmit={submitAnnotation}
             onCancel={cancelAnnotation}
+            onPreview={previewAnnotationChanges}
+            resetLabel={t("workspace.browser.annotate.reset")}
           />
         ) : null}
       </View>
@@ -1562,88 +1649,37 @@ function BrowserElementAnnotationCard({
   selection,
   onSubmit,
   onCancel,
+  onPreview,
+  resetLabel,
 }: {
   anchor: HTMLElement | null;
-  selection: BrowserElementSelection;
+  selection: PendingBrowserElementSelection;
   onSubmit: (annotation: BrowserElementAnnotation) => void;
   onCancel: () => void;
+  onPreview: (changes: BrowserElementChange[]) => void;
+  resetLabel: string;
 }) {
   const { t } = useTranslation();
   const bounds = useElementBounds(anchor);
-  const [comment, setComment] = useState("");
-  const commentRef = useRef(comment);
-  commentRef.current = comment;
-
-  const handleSubmit = useCallback(() => {
-    onSubmit({ comment: commentRef.current });
-  }, [onSubmit]);
-
-  useEffect(() => {
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        event.stopPropagation();
-        onCancel();
-        return;
-      }
-      if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
-        event.preventDefault();
-        event.stopPropagation();
-        handleSubmit();
-      }
-    };
-    window.addEventListener("keydown", handleKeyDown, true);
-    return () => {
-      window.removeEventListener("keydown", handleKeyDown, true);
-    };
-  }, [handleSubmit, onCancel]);
-
-  const elementText = truncateText(selection.text.trim().replace(/\s+/g, " "), 60);
-  const elementLabel = elementText ? `${selection.tag} · ${elementText}` : selection.tag;
 
   if (!bounds) {
     return null;
   }
 
   return createPortal(
-    <View style={[styles.annotationOverlay, bounds]} pointerEvents="box-none">
-      <View style={styles.annotationCard}>
-        <View style={styles.annotationHeader}>
-          <Text numberOfLines={1} style={styles.annotationTitle}>
-            {t("workspace.browser.annotate.title")}
-          </Text>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel={t("workspace.browser.annotate.cancel")}
-            onPress={onCancel}
-            style={styles.annotationCloseButton}
-          >
-            <ThemedCloseIcon size={16} uniProps={iconForegroundMutedMapping} />
-          </Pressable>
-        </View>
-        <Text numberOfLines={1} style={styles.annotationElement}>
-          {elementLabel}
-        </Text>
-        <ThemedAnnotationInput
-          accessibilityLabel={t("workspace.browser.annotate.placeholder")}
-          autoFocus
-          multiline
-          onChangeText={setComment}
-          placeholder={t("workspace.browser.annotate.placeholder")}
-          style={styles.annotationInput}
-          uniProps={annotationInputMapping}
-          initialValue={comment}
-        />
-        <View style={styles.annotationActions}>
-          <Button variant="ghost" size="sm" onPress={onCancel}>
-            {t("workspace.browser.annotate.cancel")}
-          </Button>
-          <Button variant="default" size="sm" onPress={handleSubmit}>
-            {t("workspace.browser.annotate.submit")}
-          </Button>
-        </View>
-      </View>
-    </View>,
+    <ElementContextPanel
+      adjustLabel={t("workspace.browser.annotate.adjust")}
+      cancelLabel={t("workspace.browser.annotate.cancel")}
+      commentPlaceholder={t("workspace.browser.annotate.placeholder")}
+      context={selection.elementContext}
+      elementText={selection.text}
+      onCancel={onCancel}
+      onSubmit={onSubmit}
+      onPreview={onPreview}
+      resetLabel={resetLabel}
+      overlayStyle={bounds}
+      submitLabel={t("workspace.browser.annotate.submit")}
+    />,
     getOverlayRoot(),
   );
 }
@@ -1663,6 +1699,9 @@ function useElementBounds(element: HTMLElement | null): ViewStyle | null {
     update();
     const observer = new ResizeObserver(update);
     observer.observe(element);
+    if (element.parentElement) {
+      observer.observe(element.parentElement);
+    }
     window.addEventListener("resize", update);
     return () => {
       observer.disconnect();
@@ -1672,15 +1711,6 @@ function useElementBounds(element: HTMLElement | null): ViewStyle | null {
 
   return bounds;
 }
-
-const ThemedCloseIcon = withUnistyles(X);
-const ThemedAnnotationInput = withUnistyles(TextInput);
-const iconForegroundMutedMapping = (theme: { colors: { foregroundMuted: string } }) => ({
-  color: theme.colors.foregroundMuted,
-});
-const annotationInputMapping = (theme: { colors: { foregroundMuted: string } }) => ({
-  placeholderTextColor: theme.colors.foregroundMuted,
-});
 
 const styles = StyleSheet.create((theme) => ({
   container: {
@@ -1776,68 +1806,6 @@ const styles = StyleSheet.create((theme) => ({
   toolbarTooltipText: {
     fontSize: theme.fontSize.sm,
     color: theme.colors.popoverForeground,
-  },
-  annotationOverlay: {
-    position: "absolute",
-    zIndex: 1,
-    padding: theme.spacing[3],
-    alignItems: "center",
-    justifyContent: "flex-end",
-  },
-  annotationCard: {
-    width: "100%",
-    maxWidth: 420,
-    gap: theme.spacing[2],
-    padding: theme.spacing[3],
-    borderRadius: theme.borderRadius.lg,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-    backgroundColor: theme.colors.surface0,
-    shadowColor: "#000",
-    shadowOpacity: 0.18,
-    shadowRadius: 16,
-    shadowOffset: { width: 0, height: 6 },
-  },
-  annotationHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: theme.spacing[2],
-  },
-  annotationTitle: {
-    flex: 1,
-    fontSize: theme.fontSize.base,
-    fontWeight: "600",
-    color: theme.colors.foreground,
-  },
-  annotationCloseButton: {
-    width: 24,
-    height: 24,
-    alignItems: "center",
-    justifyContent: "center",
-    borderRadius: theme.borderRadius.md,
-  },
-  annotationElement: {
-    fontSize: theme.fontSize.sm,
-    color: theme.colors.foregroundMuted,
-    marginBottom: theme.spacing[2],
-  },
-  annotationInput: {
-    minHeight: 64,
-    fontSize: theme.fontSize.base,
-    color: theme.colors.foreground,
-    borderRadius: theme.borderRadius.md,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-    backgroundColor: theme.colors.surface1,
-    paddingHorizontal: theme.spacing[2],
-    paddingVertical: theme.spacing[2],
-    textAlignVertical: "top",
-  },
-  annotationActions: {
-    flexDirection: "row",
-    justifyContent: "flex-end",
-    gap: theme.spacing[2],
   },
   unavailableState: {
     flex: 1,

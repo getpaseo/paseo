@@ -46,10 +46,11 @@ export function workspaceAttachmentToSubmitAttachment(
   attachment: ComposerAttachment,
 ): AgentAttachment | null {
   if (attachment.kind === "browser_element") {
+    const targetLabel = attachment.attachment.elementContext?.target.label;
     return {
       type: "text",
       mimeType: "text/plain",
-      title: `Browser element · ${attachment.attachment.tag}`,
+      title: `Browser element · ${targetLabel ?? attachment.attachment.tag}`,
       text: attachment.attachment.formatted,
     };
   }

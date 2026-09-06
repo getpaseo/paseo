@@ -113,10 +113,12 @@ export function getWorkspaceAttachmentPillContent(
   t: TFunction,
 ): AttachmentPillContent {
   if (attachment.kind === "browser_element") {
+    const context = attachment.attachment.elementContext;
     return {
       icon: attachmentBrowserIcon,
-      title: attachment.attachment.tag,
-      subtitle: t("composer.attachments.element"),
+      title: context?.target.label ?? attachment.attachment.tag,
+      subtitle:
+        context?.provider.label ?? context?.provider.id ?? t("composer.attachments.element"),
     };
   }
   if (isPullRequestContextAttachment(attachment)) {
