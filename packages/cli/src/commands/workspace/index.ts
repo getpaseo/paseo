@@ -1,6 +1,6 @@
 import { Command } from "commander";
 import { withOutput } from "../../output/index.js";
-import { addJsonAndDaemonHostOptions } from "../../utils/command-options.js";
+import { addJsonAndDaemonHostOptions, collectMultiple } from "../../utils/command-options.js";
 import { runArchiveCommand } from "./archive.js";
 import { runCreateCommand } from "./create.js";
 import { runLsCommand } from "./ls.js";
@@ -37,9 +37,17 @@ export function createWorkspaceCommand(): Command {
       .option("--forge <forge>", "Forge for --mode checkout-pr (default: source checkout)"),
   ).action(withOutput(runCreateCommand));
 
-  addJsonAndDaemonHostOptions(workspace.command("ls").description("List active workspaces")).action(
-    withOutput(runLsCommand),
-  );
+  addJsonAndDaemonHostOptions(
+    workspace
+      .command("ls")
+      .description("List active workspaces")
+      .option(
+        "--label <name>",
+        "Filter by label (can be used multiple times)",
+        collectMultiple,
+        [],
+      ),
+  ).action(withOutput(runLsCommand));
 
   addJsonAndDaemonHostOptions(
     workspace
