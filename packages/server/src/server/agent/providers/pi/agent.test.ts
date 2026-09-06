@@ -859,6 +859,7 @@ describe("PiRpcAgentSession", () => {
     const fakeSession = pi.latestSession();
 
     fakeSession.emit({ type: "agent_start" });
+    fakeSession.emit({ type: "turn_start" });
     fakeSession.emit({
       type: "message_end",
       message: {
@@ -866,7 +867,6 @@ describe("PiRpcAgentSession", () => {
         content: [{ type: "text", text: "Background process completed" }],
       },
     });
-    fakeSession.emit({ type: "turn_start" });
     fakeSession.finishAgentRun({
       message: {
         role: "assistant",
@@ -944,6 +944,86 @@ describe("PiRpcAgentSession", () => {
       provider: "pi",
       reason: "interrupted",
       turnId,
+    });
+  });
+
+  test.each(["aborted", "error"])(
+    "canceling autonomous work with Pi stopReason=%s waits for abort and allows a follow-up",
+    async (stopReason) => {
+      const { pi, session, events } = await createSession();
+      const fakeSession = pi.latestSession();
+      const abortFinished = Promise.withResolvers<void>();
+      fakeSession.abort = async () => {
+        fakeSession.finishTurn({
+          role: "assistant",
+          stopReason,
+          errorMessage: "This operation was aborted",
+          content: [],
+        });
+        await abortFinished.promise;
+      };
+      fakeSession.emit({ type: "agent_start" });
+      fakeSession.emit({ type: "turn_start" });
+
+      const stopping = session.interrupt();
+      expect(events.turnLifecycleEvents()).toEqual([{ type: "turn_started", turnId: undefined }]);
+      abortFinished.resolve();
+      await stopping;
+      expect(events.turnLifecycleEvents()).toEqual([
+        { type: "turn_started", turnId: undefined },
+        { type: "turn_canceled", turnId: undefined },
+      ]);
+
+      const { turnId } = await session.startTurn("follow-up");
+      fakeSession.finishTurn({ role: "assistant", stopReason: "stop", content: [] });
+      expect(events.turnLifecycleEvents().at(-1)).toEqual({ type: "turn_completed", turnId });
+    },
+  );
+
+  test("a natural completion during Stop does not cancel the next autonomous run", async () => {
+    const { pi, session, events } = await createSession();
+    const fakeSession = pi.latestSession();
+    const abortFinished = Promise.withResolvers<void>();
+    fakeSession.abort = async () => {
+      fakeSession.finishTurn({ role: "assistant", stopReason: "stop", content: [] });
+      await abortFinished.promise;
+    };
+    fakeSession.emit({ type: "agent_start" });
+    fakeSession.emit({ type: "turn_start" });
+    const stopping = session.interrupt();
+    fakeSession.emit({ type: "agent_start" });
+    fakeSession.emit({ type: "turn_start" });
+    abortFinished.resolve();
+    await stopping;
+    fakeSession.finishTurn({ role: "assistant", stopReason: "stop", content: [] });
+
+    expect(events.turnLifecycleEvents()).toEqual([
+      { type: "turn_started", turnId: undefined },
+      { type: "turn_completed", turnId: undefined },
+      { type: "turn_started", turnId: undefined },
+      { type: "turn_completed", turnId: undefined },
+    ]);
+  });
+
+  test("preserves the autonomous terminal error when abort rejects", async () => {
+    const { pi, session, events } = await createSession();
+    const fakeSession = pi.latestSession();
+    fakeSession.abort = async () => {
+      fakeSession.finishTurn({
+        role: "assistant",
+        stopReason: "error",
+        errorMessage: "Provider disconnected",
+        content: [],
+      });
+      throw new Error("Abort failed");
+    };
+    fakeSession.emit({ type: "agent_start" });
+    fakeSession.emit({ type: "turn_start" });
+
+    await expect(session.interrupt()).rejects.toThrow("Abort failed");
+    await expect(events.nextTurnFailure()).resolves.toMatchObject({
+      turnId: undefined,
+      error: expect.stringContaining("Provider disconnected"),
     });
   });
 
