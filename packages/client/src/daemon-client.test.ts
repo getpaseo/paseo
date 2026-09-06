@@ -721,7 +721,36 @@ test("passes password as HTTP bearer header and WebSocket subprotocol", async ()
   expect(transportFactory).toHaveBeenCalledWith({
     url: "ws://test",
     headers: { Authorization: "Bearer shared-secret" },
-    protocols: ["paseo.bearer.shared-secret"],
+    protocols: ["paseo.bearer-hex.7368617265642d736563726574", "paseo.bearer.shared-secret"],
+  });
+});
+
+test("offers only the encoded subprotocol when the password is not a legal token", async () => {
+  const logger = createMockLogger();
+  const mock = createMockTransport();
+  const transportFactory = vi.fn(() => mock.transport);
+
+  // `@`, `/`, `=` and the space each make the WebSocket constructor throw when
+  // the password is used verbatim as a subprotocol.
+  const password = "corr@ct/horse=battery staple";
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_unit_test",
+    password,
+    logger,
+    reconnect: { enabled: false },
+    transportFactory,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+
+  expect(transportFactory).toHaveBeenCalledWith({
+    url: "ws://test",
+    headers: { Authorization: `Bearer ${password}` },
+    protocols: ["paseo.bearer-hex.636f72724063742f686f7273653d6261747465727920737461706c65"],
   });
 });
 

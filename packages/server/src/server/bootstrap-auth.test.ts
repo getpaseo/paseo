@@ -1,10 +1,15 @@
 import { WebSocket } from "ws";
 import { beforeEach, describe, expect, test, vi } from "vitest";
 
+import { buildBearerSubprotocols } from "@getpaseo/protocol/daemon-bearer";
+
 import { createTestPaseoDaemon } from "./test-utils/paseo-daemon.js";
 
 const originalEnv = { ...process.env };
 const CORRECT_PASSWORD_HASH = "$2b$12$OLxyuuP9uLK30Uzc4wQX0O6liuU/Q1t5P2b0Ebf36mULvpVK3DRZW";
+// `@`, `/`, `=` and the space are all illegal in a WebSocket subprotocol.
+const AWKWARD_PASSWORD = "corr@ct/horse=battery staple";
+const AWKWARD_PASSWORD_HASH = "$2b$12$EvTObmPq.JuhrAYjevGwDeDXVH38Ddui4aCGW23Vfup3OKD40T/Pu";
 
 function connectWebSocket(params: {
   port: number;
@@ -146,6 +151,32 @@ describe("daemon bearer auth", () => {
         protocol: "paseo.bearer.correct-password",
       });
       expect(protocol).toBe("paseo.bearer.correct-password");
+      ws.close();
+    } finally {
+      await daemonHandle.close();
+    }
+  });
+
+  test("authenticates a password that cannot travel as a verbatim subprotocol", async () => {
+    const daemonHandle = await createTestPaseoDaemon({
+      auth: { password: AWKWARD_PASSWORD_HASH },
+    });
+    try {
+      // The verbatim form never reaches the daemon: the WebSocket constructor
+      // rejects the subprotocol before opening a connection.
+      expect(
+        () =>
+          new WebSocket(`ws://127.0.0.1:${daemonHandle.port}/ws`, [
+            `paseo.bearer.${AWKWARD_PASSWORD}`,
+          ]),
+      ).toThrow(SyntaxError);
+
+      const [encoded] = buildBearerSubprotocols(AWKWARD_PASSWORD);
+      const { ws, protocol } = await connectWebSocket({
+        port: daemonHandle.port,
+        protocol: encoded,
+      });
+      expect(protocol).toBe(encoded);
       ws.close();
     } finally {
       await daemonHandle.close();
