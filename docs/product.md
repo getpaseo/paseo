@@ -68,6 +68,67 @@ Anyone who builds software:
 3. **The daemon as infrastructure.** Server/client architecture enables deployment anywhere.
 4. **Open source outlasts funding.** Open source communities are resilient. Contributors become advocates.
 
+## Proposed: Local files for worktrees
+
+Status: design agreed; implementation and validation are outstanding.
+
+A remote project may be missing ignored files such as `.env.local` that exist only
+on your laptop. Add **Local files** to Project Settings so you can import them
+without installing a local daemon or making Paseo a secrets vault.
+
+### Import flow
+
+1. Open Local files on the destination host. Keep its name and exact project path
+   visible throughout the flow.
+2. Choose files from this device or another connected host and project. Project
+   grouping can suggest sources; it never authorizes a transfer.
+3. Review filenames, sizes, destination status, and the selected total. Preselect
+   small new files. Leave existing files unchecked and label selection as
+   replacement. Show unsupported and oversized files with a reason.
+4. Optionally select **Include in future worktrees**. Preview the file-list change
+   to `paseo.json` before importing. Keep this separate from updating existing files.
+5. Select **Import files**. Report each result and let you retry failed transfers
+   without repeating successful ones. If files arrive but the configuration write
+   fails, report those outcomes separately and provide configuration-only recovery.
+
+Use explicit regular-file paths for the first version. Proposed limits are
+10 MiB per file, 25 MiB per import, and 100 files; preselection stays within
+1 MiB per file and 10 MiB total. Directory transfer and automatic synchronization
+are deferred. During workspace creation, surface missing configured files with
+**Import files** and **Continue without files**; heuristic guesses must not block
+creation.
+
+### Ownership and behavior
+
+Repository configuration records the paths to include. File contents belong to
+each host's project root, identified by its host and project IDs. The client
+coordinates transfers and keeps file contents transient. Different hosts can
+intentionally use different credentials for the same repository.
+
+Import opaque bytes without parsing or displaying values. Require Git-ignored,
+untracked destinations; reject symlinks and paths outside the selected project.
+Use protected connections, bounded transfers, restrictive destination permissions,
+atomic file publication, and revision checks before replacement. File contents
+must stay out of client caches, logs, telemetry, and transcripts. Explain that
+agents and scripts on the destination host can read imported files.
+
+New worktrees receive configured files through the existing setup trust gate,
+before setup commands run. Preserve files already present in a worktree.
+Inclusion must work for projects rooted in repository subdirectories and must
+not bypass the trust gate for external contributions.
+
+Updates are manual initially. A later one-way update feature needs an explicit
+source, revision-based conflict detection, and truthful source-availability
+status. Linking projects must never imply sharing credentials.
+
+### Before release
+
+Implement the capability-gated UI and daemon operations, then verify device and
+host imports, interrupted transfers, concurrent writes, source changes, path
+containment, configuration-only recovery, and worktree setup. Add focused tests
+and browser/mobile QA evidence. Update the worktree guide and security model
+before advertising the feature.
+
 ## Current state (May 2026)
 
 - Desktop (Electron), mobile (iOS/Android), web, CLI
