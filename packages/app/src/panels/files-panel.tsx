@@ -5,6 +5,7 @@ import { useCallback } from "react";
 import { useTranslation } from "react-i18next";
 import invariant from "tiny-invariant";
 import { FileExplorerPane } from "@/components/file-explorer-pane";
+import { createWorkspaceFileTabTarget } from "@/workspace/file-open";
 import { usePaneContext } from "@/panels/pane-context";
 import { definePanel, type PanelPresentation } from "@/panels/panel-registry";
 import { useAddFileToChat } from "@/panels/use-add-file-to-chat";
@@ -25,7 +26,11 @@ function FilesPanel() {
   const { addFile, canAddToChat } = useAddFileToChat({ serverId, workspaceId });
   invariant(target.kind === "files", "FilesPanel requires files target");
   const onOpenFile = useCallback(
-    (path: string) => openPreferredTarget({ kind: "file", path }, "explorerFiles"),
+    (path: string, lineStart?: number, lineEnd?: number) =>
+      openPreferredTarget(
+        createWorkspaceFileTabTarget({ path, lineStart, lineEnd }),
+        "explorerFiles",
+      ),
     [openPreferredTarget],
   );
   const onOpenFileToSide = useCallback(

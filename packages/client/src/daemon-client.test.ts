@@ -2053,6 +2053,94 @@ test("a connection loss rejects an in-flight file context action", async () => {
   await expect(pending).rejects.toThrow(/network lost|disconnected|closed/i);
 });
 
+test("workspace content search is capability-gated and correlates grouped results", async () => {
+  const unsupportedTransport = createMockTransport();
+  const unsupportedClient = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_search_unsupported",
+    logger: createMockLogger(),
+    reconnect: { enabled: false },
+    transportFactory: () => unsupportedTransport.transport,
+  });
+  clients.push(unsupportedClient);
+  const unsupportedConnect = unsupportedClient.connect();
+  unsupportedTransport.triggerOpen();
+  await unsupportedConnect;
+
+  await expect(
+    unsupportedClient.searchFiles({ cwd: "/tmp/project", query: "needle" }),
+  ).rejects.toThrow("Workspace content search requires a newer Paseo host");
+  expect(unsupportedTransport.sent).toEqual([]);
+
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_search",
+    logger: createMockLogger(),
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+  const connectPromise = client.connect();
+  mock.triggerOpen({ features: { fileContentSearch: true } });
+  await connectPromise;
+  expect(client.getLastServerInfoMessage()?.features).toEqual({ fileContentSearch: true });
+
+  const search = client.searchFiles({
+    cwd: "/tmp/project",
+    query: "needle",
+    caseSensitive: true,
+    wholeWord: true,
+    useRegex: false,
+    includePattern: "*.ts",
+    excludePattern: "*.test.ts",
+    maxResults: 250,
+  });
+  const request = parseSentFrame(mock.sent.at(-1));
+  expect(request).toEqual({
+    type: "fs.search.request",
+    cwd: "/tmp/project",
+    query: "needle",
+    caseSensitive: true,
+    wholeWord: true,
+    useRegex: false,
+    includePattern: "*.ts",
+    excludePattern: "*.test.ts",
+    maxResults: 250,
+    requestId: expect.any(String),
+  });
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "fs.search.response",
+      payload: {
+        cwd: "/tmp/project",
+        files: [
+          {
+            path: "src/search.ts",
+            matches: [{ line: 4, column: 3, matchLength: 6, lineContent: "  needle();" }],
+          },
+        ],
+        totalMatches: 1,
+        truncated: false,
+        requestId: request.requestId,
+      },
+    }),
+  );
+
+  await expect(search).resolves.toEqual({
+    cwd: "/tmp/project",
+    files: [
+      {
+        path: "src/search.ts",
+        matches: [{ line: 4, column: 3, matchLength: 6, lineContent: "  needle();" }],
+      },
+    ],
+    totalMatches: 1,
+    truncated: false,
+    requestId: request.requestId,
+  });
+});
+
 test("listDirectory sends a list file explorer request and returns directory entries", async () => {
   const logger = createMockLogger();
   const mock = createMockTransport();
