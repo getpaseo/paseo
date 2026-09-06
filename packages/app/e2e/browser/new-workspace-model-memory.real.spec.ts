@@ -4,6 +4,8 @@ import { connectDaemonClient } from "../support/helpers/daemon-client-loader";
 import { gotoWorkspace } from "../support/helpers/launcher";
 import {
   chooseModel,
+  reselectModel,
+  startWithoutRememberedModel,
   expectCreatedModelAgents,
   expectRememberedModel,
   expectSavedSelection,
@@ -37,12 +39,14 @@ test("remembers real Codex GPT-6 Astra after repeated successful workspace creat
     const astra = codex?.models?.find((model) => model.id === "gpt-6-astra");
     expect(astra?.id).toBe("gpt-6-astra");
     const label = astra!.label;
+    await startWithoutRememberedModel(page);
     await gotoWorkspace(page, workspace.workspaceId);
     await waitForSidebarHydration(page);
     await openGlobalNewWorkspaceComposer(page);
-    for (const count of [1, 2]) {
+    for (const [index, select] of [chooseModel, reselectModel].entries()) {
+      const count = index + 1;
       await test.step(`create workspace ${count} and return`, async () => {
-        await chooseModel(page, "codex", label);
+        await select(page, "codex", label);
         await expectSavedSelection(page, "codex", "gpt-6-astra");
         await submitNewWorkspacePrompt(page, "Reply with OK. Do not use tools or change files.");
         await expect(page).toHaveURL(/\/workspace\//);

@@ -2,16 +2,10 @@ import { describe, expect, it } from "vitest";
 import { Buffer } from "buffer";
 import type { ProviderSnapshotEntry } from "@getpaseo/protocol/agent-types";
 import { compactProviderSnapshot } from "@getpaseo/protocol/provider-snapshot-codec";
-import { z } from "zod";
 import { createProviderSnapshotCache, type ProviderSnapshotCache } from "./provider-snapshot-cache";
 
 const SNAPSHOT_KEY_PREFIX = "@paseo/provider-snapshot/v2:";
 const SNAPSHOT_INDEX_KEY = "@paseo/provider-snapshot-index/v2";
-const SnapshotIndexSchema = z.object({
-  version: z.literal(1),
-  entries: z.array(z.object({ key: z.string(), bytes: z.number(), writtenAt: z.string() })),
-});
-
 function createStorage(maxSnapshotBytes = Number.POSITIVE_INFINITY) {
   const values = new Map<string, string>();
   const stats = { getAllKeysCalls: 0 };
@@ -109,21 +103,17 @@ function snapshotBytes(values: Map<string, string>): number {
     );
 }
 
-function expectIndexMatchesSnapshots(values: Map<string, string>): void {
-  const storedIndex = values.get(SNAPSHOT_INDEX_KEY);
-  if (!storedIndex) throw new Error("Expected provider snapshot index");
-  const index = SnapshotIndexSchema.parse(JSON.parse(storedIndex));
-  const storedSnapshots = [...values]
-    .filter(([key]) => key.startsWith(SNAPSHOT_KEY_PREFIX))
-    .map(([key, value]) => ({
-      key,
-      bytes: Buffer.byteLength(key, "utf8") + Buffer.byteLength(value, "utf8"),
-    }))
-    .toSorted((left, right) => left.key.localeCompare(right.key));
-  const indexedSnapshots = index.entries
-    .map(({ key, bytes }) => ({ key, bytes }))
-    .toSorted((left, right) => left.key.localeCompare(right.key));
-  expect(indexedSnapshots).toEqual(storedSnapshots);
+function expectConsistentSnapshots(values: Map<string, string>): void {
+  expect(values.has(SNAPSHOT_INDEX_KEY)).toBe(false);
+  for (const [key, value] of values) {
+    if (!key.startsWith(SNAPSHOT_KEY_PREFIX)) continue;
+    const [serverId, kind] = JSON.parse(key.slice(SNAPSHOT_KEY_PREFIX.length));
+    if (kind !== "cwd") continue;
+    const { hash } = JSON.parse(value);
+    expect(values.has(`${SNAPSHOT_KEY_PREFIX}${JSON.stringify([serverId, "hash", hash])}`)).toBe(
+      true,
+    );
+  }
 }
 
 function writeSnapshot(
@@ -140,6 +130,94 @@ function writeSnapshot(
 }
 
 describe("provider snapshot cache", () => {
+  it("removes externally lost body references and retains independent orphan bodies on reconciliation", async () => {
+    const storage = createStorage();
+    const cache = createProviderSnapshotCache(storage);
+    await writeSnapshot(cache, {
+      cwd: "/lost",
+      label: "lost",
+      generatedAt: "2026-09-01T00:00:00.000Z",
+    });
+    await writeSnapshot(cache, {
+      cwd: "/orphan",
+      label: "orphan",
+      generatedAt: "2026-09-02T00:00:00.000Z",
+    });
+    storage.values.delete(`${SNAPSHOT_KEY_PREFIX}["server-1","hash","lost"]`);
+    storage.values.delete(`${SNAPSHOT_KEY_PREFIX}["server-1","cwd","/orphan"]`);
+
+    await expect(cache.read("server-1", "/lost")).resolves.toBeNull();
+    expect(storage.values.has(`${SNAPSHOT_KEY_PREFIX}["server-1","cwd","/lost"]`)).toBe(false);
+    const restarted = createProviderSnapshotCache(storage);
+    await expect(restarted.readHash("server-1", "orphan")).resolves.not.toBeNull();
+    expectConsistentSnapshots(storage.values);
+  });
+
+  it.each(["live", "restart", "late association"])(
+    "retains recently reused bodies under pressure (%s)",
+    async (variant) => {
+      const storage = createStorage();
+      const seed = async (cache: ProviderSnapshotCache) => {
+        await writeSnapshot(cache, {
+          cwd: "/a",
+          label: "aaa",
+          generatedAt: "2026-09-01T00:00:00.000Z",
+        });
+        await writeSnapshot(cache, {
+          cwd: "/b",
+          label: "bbb",
+          generatedAt: "2026-09-02T00:00:00.000Z",
+        });
+      };
+      await seed(createProviderSnapshotCache(storage));
+      const maxBytes = snapshotBytes(storage.values);
+      let cache = createProviderSnapshotCache(storage, { maxBytes });
+      await writeSnapshot(cache, {
+        cwd: "/c",
+        label: "aaa",
+        generatedAt: "2026-09-03T00:00:00.000Z",
+      });
+      if (variant === "restart") cache = createProviderSnapshotCache(storage, { maxBytes });
+      if (variant === "late association") {
+        await writeSnapshot(cache, {
+          cwd: "/a",
+          label: "aaa",
+          generatedAt: "2026-09-01T00:00:00.000Z",
+        });
+      }
+      await writeSnapshot(cache, {
+        cwd: "/d",
+        label: "ccc",
+        generatedAt: "2026-09-04T00:00:00.000Z",
+      });
+
+      await expect(cache.read("server-1", "/c")).resolves.toMatchObject({ hash: "aaa" });
+      await expect(cache.read("server-1", "/d")).resolves.toMatchObject({ hash: "ccc" });
+      await expect(cache.readHash("server-1", "bbb")).resolves.toBeNull();
+      expect(snapshotBytes(storage.values)).toBeLessThanOrEqual(maxBytes);
+      expectConsistentSnapshots(storage.values);
+    },
+  );
+
+  it("keeps a reusable body when its directory association cannot fit beside it", async () => {
+    const input = { cwd: "/repo", label: "shared", generatedAt: "2026-09-06T12:00:00.000Z" };
+    const stagingStorage = createStorage();
+    await writeSnapshot(createProviderSnapshotCache(stagingStorage), input);
+    const maxBytes = snapshotBytes(stagingStorage.values) - 1;
+    const storage = createStorage(maxBytes);
+    const cache = createProviderSnapshotCache(storage, { maxBytes });
+
+    await writeSnapshot(cache, input);
+
+    await expect(cache.readHash("server-1", "shared")).resolves.not.toBeNull();
+    await expect(cache.read("server-1", "/repo")).resolves.toBeNull();
+    expect([...storage.values.keys()].filter((key) => key.includes('"cwd"'))).toEqual([]);
+    expect(snapshotBytes(storage.values)).toBeLessThanOrEqual(maxBytes);
+    expectConsistentSnapshots(storage.values);
+    const restarted = createProviderSnapshotCache(storage, { maxBytes });
+    await expect(restarted.readHash("server-1", "shared")).resolves.not.toBeNull();
+  });
+
   it("round-trips compact snapshots with shared thinking option references", async () => {
     const thinkingOptions = [{ id: "high", label: "High", isDefault: true }];
     const entries: ProviderSnapshotEntry[] = [
@@ -217,7 +295,7 @@ describe("provider snapshot cache", () => {
     await expect(cache.read("server-1", "/oldest")).resolves.toBeNull();
     await expect(cache.read("server-1", "/newest")).resolves.not.toBeNull();
     expect(snapshotBytes(storage.values)).toBeLessThanOrEqual(maxBytes);
-    expectIndexMatchesSnapshots(storage.values);
+    expectConsistentSnapshots(storage.values);
     expect(storage.stats.getAllKeysCalls).toBe(1);
   });
 
@@ -236,7 +314,7 @@ describe("provider snapshot cache", () => {
 
     expect(storage.values.has('@paseo/provider-snapshot/v1:["server-1","/legacy"]')).toBe(false);
     await expect(cache.read("server-1", "/current")).resolves.not.toBeNull();
-    expectIndexMatchesSnapshots(storage.values);
+    expectConsistentSnapshots(storage.values);
   });
 
   it("clears unindexed snapshots on the first read", async () => {
@@ -247,7 +325,7 @@ describe("provider snapshot cache", () => {
     await expect(cache.read("server-1", "/legacy")).resolves.toBeNull();
 
     expect(storage.values.has('@paseo/provider-snapshot/v1:["server-1","/legacy"]')).toBe(false);
-    expectIndexMatchesSnapshots(storage.values);
+    expectConsistentSnapshots(storage.values);
     expect(storage.stats.getAllKeysCalls).toBe(1);
   });
 
@@ -266,7 +344,7 @@ describe("provider snapshot cache", () => {
     ]);
 
     await expect(cache.read("server-1", "/current")).resolves.not.toBeNull();
-    expectIndexMatchesSnapshots(storage.values);
+    expectConsistentSnapshots(storage.values);
     expect(storage.stats.getAllKeysCalls).toBe(1);
   });
 
@@ -293,7 +371,7 @@ describe("provider snapshot cache", () => {
     expect(
       [...storage.values.keys()].filter((key) => key.startsWith(SNAPSHOT_KEY_PREFIX)),
     ).toHaveLength(2);
-    expectIndexMatchesSnapshots(storage.values);
+    expectConsistentSnapshots(storage.values);
   });
 
   it("removes the previous value when a replacement exceeds the entire budget", async () => {
@@ -314,10 +392,10 @@ describe("provider snapshot cache", () => {
 
     await expect(tinyCache.read("server-1", "/repo")).resolves.toBeNull();
     expect(snapshotBytes(storage.values)).toBe(0);
-    expectIndexMatchesSnapshots(storage.values);
+    expectConsistentSnapshots(storage.values);
   });
 
-  it("resets corrupted index state before accepting another snapshot", async () => {
+  it("removes obsolete index data before accepting another snapshot", async () => {
     const storage = createStorage();
     storage.values.set(SNAPSHOT_INDEX_KEY, "corrupt");
     storage.values.set(`${SNAPSHOT_KEY_PREFIX}legacy`, "legacy");
@@ -331,7 +409,7 @@ describe("provider snapshot cache", () => {
 
     expect(storage.values.has(`${SNAPSHOT_KEY_PREFIX}legacy`)).toBe(false);
     await expect(cache.read("server-1", "/current")).resolves.not.toBeNull();
-    expectIndexMatchesSnapshots(storage.values);
+    expectConsistentSnapshots(storage.values);
     expect(storage.stats.getAllKeysCalls).toBe(1);
   });
 
@@ -361,7 +439,7 @@ describe("provider snapshot cache", () => {
     });
 
     await expect(cache.read("server-1", "/emoji")).resolves.toBeNull();
-    expectIndexMatchesSnapshots(storage.values);
+    expectConsistentSnapshots(storage.values);
   });
 
   it("keeps hundreds of concurrent writes bounded without rescanning snapshots", async () => {
@@ -380,7 +458,7 @@ describe("provider snapshot cache", () => {
 
     expect(snapshotBytes(storage.values)).toBeLessThanOrEqual(maxBytes);
     await expect(cache.read("server-1", "/repo-249")).resolves.not.toBeNull();
-    expectIndexMatchesSnapshots(storage.values);
+    expectConsistentSnapshots(storage.values);
     expect(storage.stats.getAllKeysCalls).toBe(1);
   });
 
@@ -412,32 +490,7 @@ describe("provider snapshot cache", () => {
       await expect(restarted.read("server-1", "/stable")).resolves.not.toBeNull();
       await expect(restarted.read("server-1", "/next")).resolves.not.toBeNull();
       expect(snapshotBytes(storage.values)).toBeLessThanOrEqual(2_000);
-      expectIndexMatchesSnapshots(storage.values);
-    },
-  );
-
-  it.each(["before", "after"] as const)(
-    "reconciles snapshot records when the derived index write fails %s its side effect",
-    async (timing) => {
-      const storage = createStorage();
-      const cache = createProviderSnapshotCache(storage, { maxBytes: 2_000 });
-      await writeSnapshot(cache, {
-        cwd: "/stable",
-        label: "stable",
-        generatedAt: "2026-08-01T00:00:00.000Z",
-      });
-      storage.failNext("setItem", timing, SNAPSHOT_INDEX_KEY);
-
-      await writeSnapshot(cache, {
-        cwd: "/orphan-after-index-failure",
-        label: "orphan",
-        generatedAt: "2026-08-02T00:00:00.000Z",
-      });
-
-      const restarted = createProviderSnapshotCache(storage, { maxBytes: 2_000 });
-      await expect(restarted.readHash("server-1", "orphan")).resolves.not.toBeNull();
-      expectIndexMatchesSnapshots(storage.values);
-      expect(storage.stats.getAllKeysCalls).toBe(2);
+      expectConsistentSnapshots(storage.values);
     },
   );
 
@@ -479,7 +532,7 @@ describe("provider snapshot cache", () => {
 
     expect(storage.values.get("@paseo/unrelated")).toBe("keep-me");
     expect(snapshotBytes(storage.values)).toBeLessThanOrEqual(maxBytes);
-    expectIndexMatchesSnapshots(storage.values);
+    expectConsistentSnapshots(storage.values);
     await expect(restarted.read("server-1", "/final")).resolves.not.toBeNull();
   });
 
@@ -506,7 +559,7 @@ describe("provider snapshot cache", () => {
 
     await expect(cache.read("server-1", "/newest")).resolves.not.toBeNull();
     expect(snapshotBytes(storage.values)).toBeLessThanOrEqual(maxBytes);
-    expectIndexMatchesSnapshots(storage.values);
+    expectConsistentSnapshots(storage.values);
   });
 
   it.each(["before", "after"] as const)(
@@ -527,7 +580,7 @@ describe("provider snapshot cache", () => {
 
       expect(storage.values.has(key)).toBe(false);
       await expect(cache.read("server-1", "/recovered")).resolves.not.toBeNull();
-      expectIndexMatchesSnapshots(storage.values);
+      expectConsistentSnapshots(storage.values);
     },
   );
 });

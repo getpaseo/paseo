@@ -2562,6 +2562,61 @@ test("late key resolution cannot restore an old identity and concurrent readers 
   }
 });
 
+test("settings refresh starts independent workspace discoveries together and shares equivalent catalogues", async () => {
+  let release!: () => void;
+  const pending = new Promise<void>((finish) => {
+    release = finish;
+  });
+  let refreshing = false;
+  const started: string[] = [];
+  let sharedFetches = 0;
+  const cwds = [resolveSnapshotCwd("/refresh-a"), resolveSnapshotCwd("/refresh-b")];
+  const manager = new ProviderSnapshotManager({
+    logger: createTestLogger(),
+    extraClients: {
+      pi: createExtraClient("pi", {
+        async isAvailable() {
+          return true;
+        },
+        async fetchCatalog(options) {
+          if (refreshing && options.scope === "workspace") {
+            started.push(options.cwd);
+            await pending;
+          }
+          return { models: [], modes: [] };
+        },
+      }),
+      codex: createExtraClient("codex", {
+        async isAvailable() {
+          return true;
+        },
+        async fetchCatalog() {
+          sharedFetches++;
+          return { models: [], modes: [] };
+        },
+      }),
+    },
+  });
+  let refresh: Promise<void> | undefined;
+  try {
+    await Promise.all(
+      cwds.map((cwd) => manager.warmUpSnapshotForCwd({ cwd, providers: ["pi", "codex"] })),
+    );
+    expect(sharedFetches).toBe(1);
+    refreshing = true;
+    refresh = manager.refreshSettingsSnapshot({ providers: ["pi", "codex"] });
+    await expect.poll(() => [...started].sort()).toEqual([...cwds].sort());
+    expect(sharedFetches).toBe(2);
+    release();
+    await refresh;
+  } finally {
+    release();
+    await refresh;
+    await manager.shutdown();
+    manager.destroy();
+  }
+});
+
 test("settings invalidation discards pending discovery even when the provider returns the same key", async () => {
   let release!: () => void;
   let started!: () => void;

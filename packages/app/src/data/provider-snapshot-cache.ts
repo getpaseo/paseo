@@ -13,7 +13,6 @@ type SnapshotPayload = GetProvidersSnapshotResponseMessage["payload"];
 const CACHE_VERSION = 2;
 const CACHE_KEY_PREFIX = "@paseo/provider-snapshot/v2";
 const CACHE_INDEX_KEY = "@paseo/provider-snapshot-index/v2";
-const CACHE_INDEX_VERSION = 1;
 const DEFAULT_MAX_CACHE_BYTES = 4 * 1024 * 1024;
 
 interface ProviderSnapshotStorage {
@@ -41,11 +40,6 @@ interface ProviderSnapshotIndexEntry {
   key: string;
   bytes: number;
   writtenAt: string;
-}
-
-interface ProviderSnapshotIndex {
-  version: typeof CACHE_INDEX_VERSION;
-  entries: ProviderSnapshotIndexEntry[];
 }
 
 const StoredProviderSnapshotSchema: z.ZodType<StoredProviderSnapshot> = z.strictObject({
@@ -95,15 +89,30 @@ function storedBytes(key: string, value: string): number {
   return Buffer.byteLength(key, "utf8") + Buffer.byteLength(value, "utf8");
 }
 
-function oldestFirst(left: ProviderSnapshotIndexEntry, right: ProviderSnapshotIndexEntry): number {
-  const writtenAtOrder = left.writtenAt.localeCompare(right.writtenAt);
-  return writtenAtOrder !== 0 ? writtenAtOrder : left.key.localeCompare(right.key);
+const CacheKeySchema = z.tuple([z.string(), z.enum(["cwd", "hash"]), z.string().nullable()]);
+
+function decodeCacheKey(key: string) {
+  return CacheKeySchema.parse(JSON.parse(key.slice(CACHE_KEY_PREFIX.length + 1)));
 }
 
-function parseStoredProviderSnapshot(value: string): StoredProviderSnapshot | null {
+function oldestFirst(left: ProviderSnapshotIndexEntry, right: ProviderSnapshotIndexEntry): number {
+  const writtenAtOrder = left.writtenAt.localeCompare(right.writtenAt);
+  if (writtenAtOrder !== 0) return writtenAtOrder;
+  // References must be evicted before equally recent bodies, regardless of key encoding.
+  const leftKind = decodeCacheKey(left.key)[1];
+  const rightKind = decodeCacheKey(right.key)[1];
+  if (leftKind !== rightKind) return leftKind === "cwd" ? -1 : 1;
+  return left.key.localeCompare(right.key);
+}
+
+function parseStoredProviderSnapshot(key: string, value: string): StoredProviderSnapshot | null {
   const parsed: unknown = JSON.parse(value);
   const result = StoredProviderSnapshotSchema.safeParse(parsed);
-  return result.success ? result.data : null;
+  if (!result.success) return null;
+  const [, kind, identity] = decodeCacheKey(key);
+  const stored = result.data;
+  if (kind === "hash") return stored.compactSnapshot && identity === stored.hash ? stored : null;
+  return stored.compactSnapshot ? null : stored;
 }
 
 export function createProviderSnapshotCache(
@@ -111,46 +120,62 @@ export function createProviderSnapshotCache(
   options: ProviderSnapshotCacheOptions = {},
 ): ProviderSnapshotCache {
   const maxBytes = options.maxBytes ?? DEFAULT_MAX_CACHE_BYTES;
-  let index: ProviderSnapshotIndex | null = null;
+  let index: ProviderSnapshotIndexEntry[] | null = null;
   let operationQueue = Promise.resolve();
   const bodies = new Map<string, CachedProviderSnapshot>();
 
-  async function persistIndex(entries: ProviderSnapshotIndexEntry[]): Promise<void> {
-    const nextIndex: ProviderSnapshotIndex = { version: CACHE_INDEX_VERSION, entries };
-    await storage.setItem(CACHE_INDEX_KEY, JSON.stringify(nextIndex));
-    index = nextIndex;
-  }
-
   async function reconcileCache(): Promise<void> {
     const allKeys = await storage.getAllKeys();
-    // COMPAT(providerSnapshotCache): added in v0.7.2, remove v1 cleanup after 2027-03-06.
+    // COMPAT(providerSnapshotCache): added in v0.7.2, remove legacy cleanup after 2027-03-06.
     const legacyKeys = allKeys.filter(
       (key) =>
         key.startsWith("@paseo/provider-snapshot/v1:") ||
-        key === "@paseo/provider-snapshot-index/v1",
+        key === "@paseo/provider-snapshot-index/v1" ||
+        key === CACHE_INDEX_KEY,
     );
     if (legacyKeys.length) await storage.multiRemove(legacyKeys);
     const keys = allKeys.filter((key) => key.startsWith(`${CACHE_KEY_PREFIX}:`));
     const values = await storage.multiGet(keys);
     const keysToRemove: string[] = [];
     const entries: ProviderSnapshotIndexEntry[] = [];
+    const references: Array<{ key: string; body: string; writtenAt: string }> = [];
     for (const [key, value] of values) {
       if (value === null) continue;
       try {
-        const stored = parseStoredProviderSnapshot(value);
+        const stored = parseStoredProviderSnapshot(key, value);
         if (!stored) {
           keysToRemove.push(key);
           continue;
         }
+        const [serverId, kind] = decodeCacheKey(key);
         entries.push({ key, bytes: storedBytes(key, value), writtenAt: stored.generatedAt });
+        if (kind === "cwd")
+          references.push({
+            key,
+            body: bodyKey(serverId, stored.hash),
+            writtenAt: stored.generatedAt,
+          });
       } catch (error) {
-        if (!(error instanceof SyntaxError) && !(error instanceof RangeError)) throw error;
+        if (
+          !(error instanceof SyntaxError) &&
+          !(error instanceof RangeError) &&
+          !(error instanceof z.ZodError)
+        )
+          throw error;
         keysToRemove.push(key);
       }
     }
 
-    let totalBytes = entries.reduce((total, entry) => total + entry.bytes, 0);
-    const retainedEntries = [...entries].sort(oldestFirst);
+    // Reconstruct the dependency ordering before applying a possibly smaller budget.
+    for (const reference of references) {
+      const body = entries.find((entry) => entry.key === reference.body);
+      if (!body) keysToRemove.push(reference.key);
+      else if (body.writtenAt < reference.writtenAt) body.writtenAt = reference.writtenAt;
+    }
+    const retainedEntries = entries
+      .filter((entry) => !keysToRemove.includes(entry.key))
+      .sort(oldestFirst);
+    let totalBytes = retainedEntries.reduce((total, entry) => total + entry.bytes, 0);
     while (totalBytes > maxBytes) {
       const evicted = retainedEntries.shift();
       if (!evicted) break;
@@ -161,10 +186,10 @@ export function createProviderSnapshotCache(
       for (const removedKey of keysToRemove) bodies.delete(removedKey);
       await storage.multiRemove(keysToRemove);
     }
-    await persistIndex(retainedEntries);
+    index = retainedEntries;
   }
 
-  async function ensureCacheIndex(): Promise<ProviderSnapshotIndex> {
+  async function ensureCacheIndex(): Promise<ProviderSnapshotIndexEntry[]> {
     if (index === null) await reconcileCache();
     if (index === null) throw new Error("Provider snapshot cache reconciliation failed");
     return index;
@@ -181,48 +206,74 @@ export function createProviderSnapshotCache(
     return result;
   }
 
-  async function writeRecord(key: string, input: StoredProviderSnapshot): Promise<void> {
+  async function writeRecord(
+    key: string,
+    input: StoredProviderSnapshot,
+    requiredBody?: { key: string; input: StoredProviderSnapshot },
+  ): Promise<void> {
     const currentIndex = await ensureCacheIndex();
-    const stored = StoredProviderSnapshotSchema.safeParse({
-      version: CACHE_VERSION,
-      hash: input.hash,
-      generatedAt: input.generatedAt,
-      compactSnapshot: input.compactSnapshot,
-      fetchedAt: input.fetchedAt,
-    });
-    if (!stored.success) {
-      await storage.removeItem(key);
-      await persistIndex(currentIndex.entries.filter((entry) => entry.key !== key));
-      return;
+    function prepare(recordKey: string, record: StoredProviderSnapshot) {
+      const value = JSON.stringify(record);
+      return {
+        key: recordKey,
+        bytes: storedBytes(recordKey, value),
+        writtenAt: record.generatedAt,
+        value,
+      };
     }
-    const value = JSON.stringify(stored.data);
-    const incomingBytes = storedBytes(key, value);
-    const canStoreIncoming = incomingBytes <= maxBytes;
-    const retainedEntries = currentIndex.entries.filter((entry) => entry.key !== key);
-    let projectedBytes = retainedEntries.reduce((total, entry) => total + entry.bytes, 0);
-    if (canStoreIncoming) projectedBytes += incomingBytes;
-
-    const keysToRemove: string[] = [];
+    const incoming = prepare(key, input);
+    // The index is committed last: membership proves a body was stored. Reusing it
+    // needs only its byte count, not another parse, expansion, or storage write.
+    const body = requiredBody
+      ? (currentIndex.find((entry) => entry.key === requiredBody.key) ??
+        prepare(requiredBody.key, requiredBody.input))
+      : undefined;
+    let admitted: Array<ProviderSnapshotIndexEntry & { value?: string }> = body
+      ? [body, incoming]
+      : [incoming];
+    if (admitted.reduce((bytes, entry) => bytes + entry.bytes, 0) > maxBytes) {
+      admitted = body && body.bytes <= maxBytes ? [body] : [];
+    } else if (body) {
+      admitted = [
+        {
+          ...body,
+          writtenAt: body.writtenAt > input.generatedAt ? body.writtenAt : input.generatedAt,
+        },
+        incoming,
+      ];
+    }
+    const replacedKeys = new Set([key, ...(requiredBody ? [requiredBody.key] : [])]);
+    const retainedEntries = currentIndex.filter((entry) => !replacedKeys.has(entry.key));
+    let projectedBytes = [...retainedEntries, ...admitted].reduce(
+      (total, entry) => total + entry.bytes,
+      0,
+    );
+    const keysToRemove = [...replacedKeys].filter(
+      (replaced) => !admitted.some((entry) => entry.key === replaced),
+    );
     for (const candidate of [...retainedEntries].sort(oldestFirst)) {
       if (projectedBytes <= maxBytes) break;
       projectedBytes -= candidate.bytes;
       keysToRemove.push(candidate.key);
     }
     const removedKeys = new Set(keysToRemove);
-    const nextEntries = retainedEntries.filter((entry) => !removedKeys.has(entry.key));
-
-    if (!canStoreIncoming && currentIndex.entries.some((entry) => entry.key === key)) {
-      keysToRemove.push(key);
-    }
     if (keysToRemove.length > 0) {
       for (const removedKey of keysToRemove) bodies.delete(removedKey);
       await storage.multiRemove(keysToRemove);
     }
-    if (canStoreIncoming) {
-      await storage.setItem(key, value);
-      nextEntries.push({ key, bytes: incomingBytes, writtenAt: input.generatedAt });
+    // Body, then reference, then in-memory index. A failed write can leave a reusable
+    // orphan body; reconciliation never retains a reference without its body.
+    for (const entry of admitted) {
+      if (entry.value !== undefined) await storage.setItem(entry.key, entry.value);
     }
-    await persistIndex(nextEntries);
+    index = [
+      ...retainedEntries.filter((entry) => !removedKeys.has(entry.key)),
+      ...admitted.map(({ key: recordKey, bytes, writtenAt }) => ({
+        key: recordKey,
+        bytes,
+        writtenAt,
+      })),
+    ];
   }
 
   async function readRecord(key: string): Promise<StoredProviderSnapshot | null> {
@@ -230,14 +281,14 @@ export function createProviderSnapshotCache(
     const value = await storage.getItem(key);
     if (value === null) return null;
     try {
-      const stored = parseStoredProviderSnapshot(value);
+      const stored = parseStoredProviderSnapshot(key, value);
       if (!stored) throw new SyntaxError("Invalid provider snapshot");
       return stored;
     } catch (error) {
       if (!(error instanceof SyntaxError) && !(error instanceof RangeError)) throw error;
       bodies.delete(key);
       await storage.removeItem(key);
-      await persistIndex(currentIndex.entries.filter((entry) => entry.key !== key));
+      index = currentIndex.filter((entry) => entry.key !== key);
       return null;
     }
   }
@@ -319,7 +370,11 @@ export function createProviderSnapshotCache(
         const association = await readRecord(cacheKey(serverId, cwd));
         if (!association) return null;
         const body = await readBody(serverId, association.hash);
-        if (!body) return null;
+        if (!body) {
+          // Storage may be removed or corrupted outside this owner's write queue.
+          await reconcileCache();
+          return null;
+        }
         return {
           ...body,
           ...association,
@@ -336,21 +391,24 @@ export function createProviderSnapshotCache(
     write(input) {
       return safely(async () => {
         if (input.signal?.aborted) return;
-        if (!(await readBody(input.serverId, input.hash))) {
-          await writeRecord(bodyKey(input.serverId, input.hash), {
+        await writeRecord(
+          cacheKey(input.serverId, input.cwd),
+          {
             version: CACHE_VERSION,
             hash: input.hash,
             generatedAt: input.generatedAt,
-            compactSnapshot: input.compactSnapshot,
-          });
-        }
-        if (input.signal?.aborted) return;
-        await writeRecord(cacheKey(input.serverId, input.cwd), {
-          version: CACHE_VERSION,
-          hash: input.hash,
-          generatedAt: input.generatedAt,
-          fetchedAt: input.fetchedAt,
-        });
+            fetchedAt: input.fetchedAt,
+          },
+          {
+            key: bodyKey(input.serverId, input.hash),
+            input: {
+              version: CACHE_VERSION,
+              hash: input.hash,
+              generatedAt: input.generatedAt,
+              compactSnapshot: input.compactSnapshot,
+            },
+          },
+        );
       }, undefined);
     },
   };

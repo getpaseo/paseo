@@ -311,10 +311,11 @@ export class ProviderSnapshotManager {
     // Refresh each known target: provider keys coalesce reads, while target-scoped
     // providers must discover again in their own execution context.
     await this.refreshProviders(target, providersToRefresh);
-    for (const cwd of this.targets.keys()) {
-      if (cwd === homeCwd) continue;
-      await this.warmUp(createWorkspaceSnapshotTarget(cwd), providersToRefresh);
-    }
+    await Promise.all(
+      [...this.targets.keys()]
+        .filter((cwd) => cwd !== homeCwd)
+        .map((cwd) => this.warmUp(createWorkspaceSnapshotTarget(cwd), providersToRefresh)),
+    );
   }
 
   async warmUpSnapshotForCwd(options: ProviderSnapshotWarmUpOptions): Promise<void> {

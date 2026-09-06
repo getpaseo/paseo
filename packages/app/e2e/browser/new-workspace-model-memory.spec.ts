@@ -16,6 +16,8 @@ import { waitForSidebarHydration } from "../support/helpers/workspace-ui";
 
 import {
   chooseModel,
+  reselectModel,
+  startWithoutRememberedModel,
   expectSavedSelection,
   expectCreatedModelAgents,
   expectRememberedModel,
@@ -75,12 +77,14 @@ for (const hostStatus of ["ready", "unavailable"] as const) {
     try {
       await prepareCatalogState(client, executable, workspace.repoPath, hostStatus);
 
+      await startWithoutRememberedModel(page);
       await gotoWorkspace(page, workspace.workspaceId);
       await waitForSidebarHydration(page);
       await openGlobalNewWorkspaceComposer(page);
-      for (const count of [1, 2]) {
+      for (const [index, select] of [chooseModel, reselectModel].entries()) {
+        const count = index + 1;
         await test.step(`create workspace ${count} and return`, async () => {
-          await chooseModel(page, PROVIDER, LABEL);
+          await select(page, PROVIDER, LABEL);
           await expectSavedSelection(page, PROVIDER, MODEL);
           await submitNewWorkspacePrompt(page, "Remember this model on the next workspace");
           await expect(page).toHaveURL(/\/workspace\//);
