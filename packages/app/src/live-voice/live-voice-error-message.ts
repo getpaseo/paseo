@@ -5,13 +5,17 @@ import type { LiveVoiceErrorInfo } from "@/live-voice/live-voice-runtime";
  * translation table rather than an exhaustive switch: an unknown code from a newer
  * daemon falls back to the server-supplied message, and only then to a generic
  * failure string.
+ *
+ * `start_failed` is deliberately absent. It is the daemon's catch-all for a
+ * startup the client cannot classify, and its message carries the only usable
+ * detail (provider quota, auth, model availability). Mapping it here would
+ * replace every one of those with the same generic sentence.
  */
 const ERROR_MESSAGE_KEYS: Record<string, string> = {
   // Daemon rejections (voice.live.start.response.errorCode).
   busy: "liveVoice.errors.busy",
   unsupported: "liveVoice.errors.unsupported",
   paseo_tools_disabled: "liveVoice.unavailable.toolsDisabled",
-  start_failed: "liveVoice.errors.startFailed",
   // Local runtime refusals.
   mic_busy: "liveVoice.errors.micBusy",
   not_connected: "liveVoice.errors.notConnected",

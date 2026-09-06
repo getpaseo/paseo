@@ -1036,7 +1036,11 @@ export class LiveVoiceCoordinator {
       this.publish(call, { kind: "closed", cause, ...(detail ? { detail } : {}) });
     }
 
-    waiter?.reject(new Error(`Live voice call closed (${cause})`));
+    // `detail` is the provider's own words (quota, auth, model availability) and
+    // is the only part of this the user can act on. A call that closes before it
+    // goes active sends no `closed` update, so this rejection is the sole path
+    // that reaches them.
+    waiter?.reject(new Error(detail ?? `Live voice call closed (${cause})`));
 
     this.logger.info(
       { liveSessionId: call.liveSessionId, hostAgentId, cause, detail },

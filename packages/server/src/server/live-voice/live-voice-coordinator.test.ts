@@ -750,6 +750,30 @@ describe("LiveVoiceCoordinator", () => {
     expect(harness.closedHostIds).toEqual(["host-1"]);
   });
 
+  it("surfaces the provider's reason when it fails before the answer SDP", async () => {
+    const harness = createHarness({
+      makeProvider: () =>
+        createFakeProviderSession({
+          onStart: (emit) => {
+            emit({
+              kind: "error",
+              code: "usage_limit",
+              message: "You've hit your usage limit. Try again at 9:04 PM.",
+              fatal: true,
+            });
+          },
+        }),
+    });
+
+    // The reason only reaches the user through the start response: a call that
+    // never went active gets no `closed` update.
+    expect(await startCall(harness)).toMatchObject({
+      accepted: false,
+      errorCode: "start_failed",
+      errorMessage: "You've hit your usage limit. Try again at 9:04 PM.",
+    });
+  });
+
   it("does not resurrect a call closed while the handshake was in flight", async () => {
     const harness = createHarness({
       makeProvider: () =>
