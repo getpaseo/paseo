@@ -101,6 +101,7 @@
     "sherpa-onnx-node": "1.12.28",
     "strip-ansi": "^7.1.2",
     "tree-kill": "^1.2.2",
+    "undici": "^7.24.8",
     "uuid": "^9.0.1",
     "which": "^5.0.0",
     "ws": "^8.14.2",

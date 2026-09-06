@@ -1,0 +1,22 @@
+import { EnvHttpProxyAgent, setGlobalDispatcher } from "undici";
+
+let installed = false;
+
+/**
+ * Node's built-in fetch (undici) never reads HTTP_PROXY/HTTPS_PROXY/NO_PROXY on its own;
+ * without an explicit dispatcher every daemon-issued fetch (provider usage lookups, Hub
+ * enrollment, push delivery, speech model downloads) silently bypasses the user's proxy.
+ * Agent CLI subprocesses are unaffected either way — they read these vars directly from
+ * their own spawned env — and the relay transport is unaffected because it talks to `ws`
+ * directly, never through this dispatcher.
+ *
+ * Called from bootstrap.ts, gated by `PaseoDaemonConfig.globalProxyDispatcher` (default true).
+ * This mutates the process-wide undici dispatcher, so a host embedding `createPaseoDaemon`
+ * alongside its own fetch consumers should pass `globalProxyDispatcher: false` and manage
+ * proxying itself rather than have it installed underneath it.
+ */
+export function installGlobalProxyDispatcher(enabled = true): void {
+  if (!enabled || installed) return;
+  installed = true;
+  setGlobalDispatcher(new EnvHttpProxyAgent());
+}

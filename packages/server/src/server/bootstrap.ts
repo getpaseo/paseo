@@ -9,6 +9,7 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import type { Logger } from "pino";
 import { z } from "zod";
 import { createBranchChangeRouteHandler } from "./script-route-branch-handler.js";
+import { installGlobalProxyDispatcher } from "./global-proxy-dispatcher.js";
 
 export type ListenTarget =
   | { type: "tcp"; host: string; port: number }
@@ -395,6 +396,13 @@ export interface PaseoDaemonConfig {
   mcpEnabled?: boolean;
   mcpInjectIntoAgents?: boolean;
   browserToolsEnabled?: boolean;
+  /**
+   * Installs undici's EnvHttpProxyAgent as the process-global fetch dispatcher so daemon-issued
+   * fetch() calls honor HTTP_PROXY/HTTPS_PROXY/NO_PROXY. Defaults to true. Set false when
+   * embedding the daemon in a process that manages its own global dispatcher — installing here
+   * would silently reroute that host's other fetch traffic too.
+   */
+  globalProxyDispatcher?: boolean;
   git?: {
     maxProcessesPerSecond: number;
     maxProcessConcurrency: number;
@@ -569,6 +577,7 @@ export async function createPaseoDaemon(
   rootLogger: Logger,
   dependencies: PaseoDaemonDependencies = {},
 ): Promise<PaseoDaemon> {
+  installGlobalProxyDispatcher(config.globalProxyDispatcher);
   configureGitProcessPolicy(config.git ?? resolveGitProcessPolicy({ env: process.env }));
   const logger = rootLogger.child({ module: "bootstrap" });
   const obsoleteTimelineDirectory = path.join(config.paseoHome, "agent-timelines");
