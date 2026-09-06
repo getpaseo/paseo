@@ -3806,6 +3806,127 @@ describe("send_agent_prompt MCP tool", () => {
       expect.objectContaining({ waitForActive: true }),
     );
   });
+
+  function blockingPromptDeps(childLifecycleAfterTimeout: ManagedAgent["lifecycle"]) {
+    const { agentManager, agentStorage, spies } = createTestDeps();
+    const parentAgent = {
+      id: "parent-agent",
+      cwd: existingCwd,
+      workspaceId: "wks_parent",
+      provider: "codex",
+      currentModeId: "full-access",
+    } as ManagedAgent;
+    const childAgent = {
+      id: "child-agent",
+      cwd: existingCwd,
+      lifecycle: "running",
+      currentModeId: null,
+      availableModes: [],
+      config: { title: "Child" },
+    } as ManagedAgent;
+    spies.agentManager.getAgent.mockImplementation((agentId: string) => {
+      if (agentId === "parent-agent") return parentAgent;
+      if (agentId === "child-agent") return childAgent;
+      return null;
+    });
+    // The real wait: pending until the caller's abort signal (the 30s timeout) fires.
+    spies.agentManager.waitForAgentEvent.mockImplementationOnce(
+      (_agentId: string, options?: { signal?: AbortSignal }) =>
+        new Promise((_resolve, reject) => {
+          options?.signal?.addEventListener(
+            "abort",
+            () => {
+              childAgent.lifecycle = childLifecycleAfterTimeout;
+              reject(options.signal?.reason);
+            },
+            { once: true },
+          );
+        }),
+    );
+    return { agentManager, agentStorage, spies };
+  }
+
+  it("arms a finish notification when a blocking agent-scoped prompt times out while the child is still running", async () => {
+    vi.useFakeTimers();
+    try {
+      const { agentManager, agentStorage, spies } = blockingPromptDeps("running");
+      const server = await createAgentMcpServer({
+        agentManager,
+        agentStorage,
+        providerSnapshotManager: createOpenCodeManager().manager,
+        callerAgentId: "parent-agent",
+        logger,
+      });
+
+      const tool = registeredTool(server, "send_agent_prompt");
+      const pending = invokeToolWithParsedInput(tool, {
+        agentId: "child-agent",
+        prompt: "Follow up",
+        background: false,
+      });
+      await vi.advanceTimersByTimeAsync(30_000);
+      const response = await pending;
+
+      expect(spies.agentManager.subscribe).toHaveBeenCalledTimes(1);
+      expect(spies.agentManager.subscribe).toHaveBeenCalledWith(
+        expect.any(Function),
+        expect.objectContaining({ agentId: "child-agent" }),
+      );
+      expect(response.structuredContent).toMatchObject({
+        success: true,
+        status: "running",
+        guidance:
+          "You will get notified when the prompted agent finishes, errors, or needs permission. Do not poll for status; continue with other work until the notification arrives.",
+      });
+      expect(response.structuredContent.lastMessage).toContain("timed out after 30s");
+      expect(response.structuredContent.lastMessage).not.toContain(
+        "if you will receive a finish notification",
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("returns the settled result instead of arming when the child finished during the timed-out wait", async () => {
+    vi.useFakeTimers();
+    try {
+      const { agentManager, agentStorage, spies } = blockingPromptDeps("idle");
+      spies.agentManager.waitForAgentEvent.mockResolvedValueOnce({
+        status: "idle",
+        permission: null,
+        lastMessage: "Done.",
+      });
+      const server = await createAgentMcpServer({
+        agentManager,
+        agentStorage,
+        providerSnapshotManager: createOpenCodeManager().manager,
+        callerAgentId: "parent-agent",
+        logger,
+      });
+
+      const tool = registeredTool(server, "send_agent_prompt");
+      const pending = invokeToolWithParsedInput(tool, {
+        agentId: "child-agent",
+        prompt: "Follow up",
+        background: false,
+      });
+      await vi.advanceTimersByTimeAsync(30_000);
+      const response = await pending;
+
+      expect(spies.agentManager.subscribe).not.toHaveBeenCalled();
+      expect(spies.agentManager.waitForAgentEvent).toHaveBeenLastCalledWith("child-agent", {
+        waitForActive: false,
+      });
+      expect(response.structuredContent).toEqual({
+        success: true,
+        status: "idle",
+        lastMessage: "Done.",
+        permission: null,
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
 
 describe("update_agent MCP tool", () => {
