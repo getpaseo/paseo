@@ -1475,7 +1475,378 @@ function fakeCodexEmitting(args: FakeCodexEmitterArgs): AgentClient {
   };
 }
 
+function scriptedCodexEmitting(
+  turns: readonly (readonly AgentTimelineItem[])[],
+  historyItems: readonly AgentTimelineItem[] = [],
+): AgentClient {
+  class ScriptedCodexSession extends TestAgentSession {
+    private turnIndex = 0;
+
+    override async startTurn(): Promise<{ turnId: string }> {
+      const turnId = `turn-scripted-${this.turnIndex + 1}`;
+      const items = turns[this.turnIndex] ?? [];
+      this.turnIndex += 1;
+      setTimeout(() => {
+        this.pushEvent({ type: "turn_started", provider: this.provider, turnId });
+        for (const item of items) {
+          this.pushEvent({ type: "timeline", provider: this.provider, item, turnId });
+        }
+        this.pushEvent({ type: "turn_completed", provider: this.provider, turnId });
+      }, 0);
+      return { turnId };
+    }
+
+    override async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
+      for (const item of historyItems) {
+        yield { type: "timeline", provider: this.provider, item };
+      }
+    }
+  }
+
+  return {
+    provider: "codex",
+    capabilities: TEST_CAPABILITIES,
+    async isAvailable() {
+      return true;
+    },
+    async createSession(config: AgentSessionConfig) {
+      return new ScriptedCodexSession(config);
+    },
+    async resumeSession() {
+      throw new Error("unused");
+    },
+  };
+}
+
+function heldResponseHeadingCodex(): {
+  client: AgentClient;
+  headingStarted: Promise<void>;
+  releaseHeading: () => void;
+} {
+  const headingStarted = deferred<void>();
+  const release = deferred<void>();
+
+  class HeldResponseHeadingSession extends TestAgentSession {
+    override async startTurn(): Promise<{ turnId: string }> {
+      const turnId = "turn-held-response-heading";
+      setTimeout(() => {
+        void (async () => {
+          this.pushEvent({ type: "turn_started", provider: this.provider, turnId });
+          this.pushEvent({
+            type: "timeline",
+            provider: this.provider,
+            turnId,
+            item: { type: "assistant_message", text: "# Paseo: naprawa " },
+          });
+          headingStarted.resolve();
+          await release.promise;
+          this.pushEvent({
+            type: "timeline",
+            provider: this.provider,
+            turnId,
+            item: { type: "assistant_message", text: "synchronizacji tytułu sesji\n" },
+          });
+          this.pushEvent({ type: "turn_completed", provider: this.provider, turnId });
+        })();
+      }, 0);
+      return { turnId };
+    }
+  }
+
+  return {
+    client: {
+      provider: "codex",
+      capabilities: TEST_CAPABILITIES,
+      async isAvailable() {
+        return true;
+      },
+      async createSession(config: AgentSessionConfig) {
+        return new HeldResponseHeadingSession(config);
+      },
+      async resumeSession() {
+        throw new Error("unused");
+      },
+    },
+    headingStarted: headingStarted.promise,
+    releaseHeading: () => release.resolve(),
+  };
+}
+
 const logger = createTestLogger();
+
+test("synchronizes titles only from the first valid H1 of each live turn", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-response-title-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const manager = new AgentManager({
+    clients: {
+      codex: scriptedCodexEmitting([
+        [
+          { type: "assistant_message", text: "# Paseo: naprawa synchronizacji " },
+          { type: "assistant_message", text: "tytułu sesji\nTreść" },
+        ],
+        [
+          { type: "assistant_message", text: "Status pozostaje bez zmian.\n" },
+          { type: "assistant_message", text: "# Paseo: błędny późniejszy nagłówek sesji\n" },
+        ],
+        [
+          {
+            type: "assistant_message",
+            text: "# Foundation: doprecyzowanie reguły tytułów sesji\n",
+          },
+        ],
+      ]),
+    },
+    registry: storage,
+    titleFromResponseHeading: true,
+    logger,
+  });
+
+  try {
+    const snapshot = await manager.createAgent(
+      { provider: "codex", cwd: workdir, title: "Provisional prompt title" },
+      undefined,
+      { workspaceId: undefined },
+    );
+
+    await manager.runAgent(snapshot.id, "first goal");
+    await manager.flush();
+    expect((await storage.get(snapshot.id))?.title).toBe(
+      "Paseo: naprawa synchronizacji tytułu sesji",
+    );
+
+    await manager.runAgent(snapshot.id, "ordinary follow-up");
+    await manager.flush();
+    expect((await storage.get(snapshot.id))?.title).toBe(
+      "Paseo: naprawa synchronizacji tytułu sesji",
+    );
+
+    await manager.runAgent(snapshot.id, "new main goal");
+    await manager.flush();
+    expect((await storage.get(snapshot.id))?.title).toBe(
+      "Foundation: doprecyzowanie reguły tytułów sesji",
+    );
+  } finally {
+    for (const agent of manager.listAgents()) {
+      await manager.closeAgent(agent.id);
+    }
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test.each([
+  {
+    name: "fragmented LF heading",
+    chunks: ["# Paseo: naprawa ", "synchronizacji tytułu sesji\nTreść"],
+    expected: "Paseo: naprawa synchronizacji tytułu sesji",
+  },
+  {
+    name: "fragmented CRLF heading",
+    chunks: ["# Paseo: naprawa ", "synchronizacji tytułu sesji\r\nTreść"],
+    expected: "Paseo: naprawa synchronizacji tytułu sesji",
+  },
+  {
+    name: "four-word heading",
+    chunks: ["# Paseo: jeden dwa trzy\n"],
+    expected: "Paseo: jeden dwa trzy",
+  },
+  {
+    name: "seven-word heading",
+    chunks: ["# Paseo: jeden dwa trzy cztery pięć sześć\n"],
+    expected: "Paseo: jeden dwa trzy cztery pięć sześć",
+  },
+  {
+    name: "60-character heading",
+    chunks: [`# Paseo: jeden dwa trzy ${"x".repeat(38)}\n`],
+    expected: `Paseo: jeden dwa trzy ${"x".repeat(38)}`,
+  },
+  {
+    name: "heading finalized by turn completion",
+    chunks: ["# Paseo: naprawa synchronizacji tytułu sesji"],
+    expected: "Paseo: naprawa synchronizacji tytułu sesji",
+  },
+  {
+    name: "second-level heading",
+    chunks: ["## Paseo: naprawa synchronizacji tytułu sesji\n"],
+    expected: "Existing session title",
+  },
+  {
+    name: "text before H1",
+    chunks: ["Wstęp\n# Paseo: naprawa synchronizacji tytułu sesji\n"],
+    expected: "Existing session title",
+  },
+  {
+    name: "empty title",
+    chunks: ["# \n"],
+    expected: "Existing session title",
+  },
+  {
+    name: "too few words",
+    chunks: ["# Paseo: naprawa tytułu\n"],
+    expected: "Existing session title",
+  },
+  {
+    name: "too many words",
+    chunks: ["# Paseo: jeden dwa trzy cztery pięć sześć siedem\n"],
+    expected: "Existing session title",
+  },
+  {
+    name: "more than 60 characters",
+    chunks: [`# Paseo: jeden dwa trzy ${"x".repeat(39)}\n`],
+    expected: "Existing session title",
+  },
+])("validates response heading through AgentManager: $name", async ({ chunks, expected }) => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-response-heading-boundary-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const manager = new AgentManager({
+    clients: {
+      codex: scriptedCodexEmitting([
+        chunks.map((text) => ({ type: "assistant_message" as const, text })),
+      ]),
+    },
+    registry: storage,
+    titleFromResponseHeading: true,
+    logger,
+  });
+
+  try {
+    const snapshot = await manager.createAgent(
+      { provider: "codex", cwd: workdir, title: "Existing session title" },
+      undefined,
+      { workspaceId: undefined },
+    );
+    await manager.runAgent(snapshot.id, "test heading boundary");
+    await manager.flush();
+    expect((await storage.get(snapshot.id))?.title).toBe(expected);
+  } finally {
+    for (const agent of manager.listAgents()) {
+      await manager.closeAgent(agent.id);
+    }
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("does not overwrite a manual title changed during a streaming heading", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-response-title-manual-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const held = heldResponseHeadingCodex();
+  const manager = new AgentManager({
+    clients: { codex: held.client },
+    registry: storage,
+    titleFromResponseHeading: true,
+    logger,
+  });
+
+  try {
+    const snapshot = await manager.createAgent(
+      { provider: "codex", cwd: workdir, title: "Existing session title" },
+      undefined,
+      { workspaceId: undefined },
+    );
+    const run = manager.runAgent(snapshot.id, "new main goal");
+    await held.headingStarted;
+    await manager.updateAgentMetadata(snapshot.id, { title: "Manual session title" });
+    held.releaseHeading();
+    await run;
+    await manager.flush();
+
+    expect((await storage.get(snapshot.id))?.title).toBe("Manual session title");
+  } finally {
+    held.releaseHeading();
+    for (const agent of manager.listAgents()) {
+      await manager.closeAgent(agent.id);
+    }
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("does not derive a title from provider history", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-history-title-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const manager = new AgentManager({
+    clients: {
+      codex: scriptedCodexEmitting(
+        [],
+        [{ type: "assistant_message", text: "# Paseo: historyczny nagłówek odpowiedzi agenta\n" }],
+      ),
+    },
+    registry: storage,
+    titleFromResponseHeading: true,
+    logger,
+  });
+
+  try {
+    const snapshot = await manager.createAgent(
+      { provider: "codex", cwd: workdir, title: "Existing session title" },
+      undefined,
+      { workspaceId: undefined },
+    );
+    await manager.hydrateTimelineFromProvider(snapshot.id);
+    await manager.flush();
+
+    expect((await storage.get(snapshot.id))?.title).toBe("Existing session title");
+  } finally {
+    for (const agent of manager.listAgents()) {
+      await manager.closeAgent(agent.id);
+    }
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("reports title persistence failures without failing the agent turn", async () => {
+  class FailingTitleStorage extends AgentStorage {
+    failTitleWrites = false;
+
+    override async applySnapshot(
+      agent: ManagedAgent,
+      options?: { title?: string | null; internal?: boolean },
+    ): Promise<void> {
+      if (
+        this.failTitleWrites &&
+        options !== undefined &&
+        Object.prototype.hasOwnProperty.call(options, "title")
+      ) {
+        throw new Error("title storage unavailable");
+      }
+      await super.applySnapshot(agent, options);
+    }
+  }
+
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-response-title-error-"));
+  const storage = new FailingTitleStorage(join(workdir, "agents"), logger);
+  const manager = new AgentManager({
+    clients: {
+      codex: scriptedCodexEmitting([
+        [{ type: "assistant_message", text: "# Paseo: naprawa synchronizacji tytułu sesji\n" }],
+      ]),
+    },
+    registry: storage,
+    titleFromResponseHeading: true,
+    logger,
+  });
+
+  try {
+    const snapshot = await manager.createAgent(
+      { provider: "codex", cwd: workdir, title: "Existing session title" },
+      undefined,
+      { workspaceId: undefined },
+    );
+    storage.failTitleWrites = true;
+
+    await expect(manager.runAgent(snapshot.id, "new main goal")).resolves.toBeDefined();
+    await manager.flush();
+
+    expect((await storage.get(snapshot.id))?.title).toBe("Existing session title");
+    expect(manager.getTimeline(snapshot.id)).toContainEqual({
+      type: "assistant_message",
+      text: "[System Error] Failed to synchronize the session title from the response heading. The previous title was kept.",
+    });
+  } finally {
+    for (const agent of manager.listAgents()) {
+      await manager.closeAgent(agent.id);
+    }
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
 
 test("does not register a session that finishes starting after shutdown begins", async () => {
   const client = new HeldAgentCreationClient();
@@ -4405,6 +4776,33 @@ test("setTitle bumps updatedAt and persists title in the same snapshot write", a
   const live = manager.getAgent(snapshot.id);
   expect(live).not.toBeNull();
   expect(live!.updatedAt.getTime()).toBeGreaterThan(Date.parse(before!.updatedAt));
+});
+
+test("setTitle is a no-op when the persisted title is identical", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-set-title-no-op-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const manager = new AgentManager({
+    clients: { codex: new TestAgentClient() },
+    registry: storage,
+    logger,
+  });
+  const snapshot = await manager.createAgent(
+    { provider: "codex", cwd: workdir, title: "Paseo: istniejący tytuł sesji agenta" },
+    undefined,
+    { workspaceId: undefined },
+  );
+  const stateEvents: AgentManagerEvent[] = [];
+  manager.subscribe((event) => stateEvents.push(event), {
+    agentId: snapshot.id,
+    replayState: false,
+  });
+
+  const before = await storage.get(snapshot.id);
+  await manager.setTitle(snapshot.id, "Paseo: istniejący tytuł sesji agenta");
+  const after = await storage.get(snapshot.id);
+
+  expect(after).toEqual(before);
+  expect(stateEvents).toEqual([]);
 });
 
 test("updateAgentMetadata bumps updatedAt for stored agents", async () => {
