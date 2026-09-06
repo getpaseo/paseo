@@ -1005,6 +1005,25 @@ describe("ACPAgentSession Zed parity", () => {
     });
   });
 
+  test("routes usage_update into context window usage", () => {
+    const session = createSession();
+    const internals = asInternals<ACPSessionInternals>(session);
+
+    const events = internals.translateSessionUpdate({
+      sessionUpdate: "usage_update",
+      size: 200_000,
+      used: 12_345,
+    });
+
+    expect(events).toEqual([
+      {
+        type: "usage_updated",
+        provider: "claude-acp",
+        usage: { contextWindowMaxTokens: 200_000, contextWindowUsedTokens: 12_345 },
+      },
+    ]);
+  });
+
   test("keeps pushed mode when a later config_option_update has no mode payload", async () => {
     const session = createSession();
     const internals = asInternals<ACPSessionInternals>(session);
