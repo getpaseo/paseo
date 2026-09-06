@@ -1885,6 +1885,36 @@ export const zhCN: TranslationResources = {
       hostLoadFailed: "无法从 Host {{hostName}} 加载 projects：{{message}}",
       editProject: "编辑 {{projectName}}",
     },
+    projectLinks: {
+      banner: {
+        matchesTitle: "可能的项目链接",
+        linkedTitle: "项目链接",
+        description: "查看存储在此设备上的、已由 Git 验证的项目链接。",
+        review: "查看链接",
+      },
+      sheet: {
+        title: "项目链接",
+        deviceOnly: "链接仅存储在此设备上，不会移动工作区、设置或文件。",
+        matchesTitle: "已验证的匹配项",
+        matchesDescription: "这些条目具有相同的 Git 远程仓库和项目子目录，但仍然是分开的。",
+        linkedTitle: "已链接的项目",
+        noMatchesTitle: "没有要查看的项目链接",
+        noMatchesDescription:
+          "请在每台主机上打开一个工作区，以便 Paseo 验证 Git 远程仓库和项目子目录。",
+        linkProjects: "链接 {{count}} 个项目",
+        remote: "Git 远程仓库",
+        subdirectory: "项目子目录",
+        path: "路径",
+        needsReviewTitle: "需要查看",
+        needsReviewDescription: "最新的 Git 信息已无法确认此链接，因此 Paseo 会保持这些项目分开。",
+        projectUnavailable: "此项目当前不可用。",
+        unlink: "取消链接",
+      },
+      toasts: {
+        linked: "已在此设备上链接项目",
+        unlinked: "已移除项目链接",
+      },
+    },
     groupInfo: "关于 {{title}}",
     sections: {
       general: "通用",

@@ -1906,6 +1906,38 @@ export const ar: TranslationResources = {
       hostLoadFailed: "تعذر تحميل المشاريع من المضيف{{hostName}}:{{message}}",
       editProject: "تحرير{{projectName}}",
     },
+    projectLinks: {
+      banner: {
+        matchesTitle: "روابط محتملة للمشاريع",
+        linkedTitle: "روابط المشاريع",
+        description: "راجع روابط المشاريع التي تحقّق منها Git والمحفوظة على هذا الجهاز.",
+        review: "مراجعة الروابط",
+      },
+      sheet: {
+        title: "روابط المشاريع",
+        deviceOnly: "تُخزَّن الروابط على هذا الجهاز فقط. لا تنقل مساحات العمل أو الإعدادات أو الملفات.",
+        matchesTitle: "تطابقات تم التحقق منها",
+        matchesDescription:
+          "تمتلك هذه الإدخالات نفس مستودع Git البعيد والدليل الفرعي للمشروع، لكنها ما زالت منفصلة.",
+        linkedTitle: "المشاريع المرتبطة",
+        noMatchesTitle: "لا توجد روابط مشاريع لمراجعتها",
+        noMatchesDescription:
+          "افتح مساحة عمل على كل مضيف لكي يتمكن Paseo من التحقق من مستودع Git البعيد والدليل الفرعي للمشروع.",
+        linkProjects: "ربط {{count}} مشاريع",
+        remote: "مستودع Git البعيد",
+        subdirectory: "الدليل الفرعي للمشروع",
+        path: "المسار",
+        needsReviewTitle: "تحتاج إلى مراجعة",
+        needsReviewDescription:
+          "لم تعد أحدث معلومات Git تؤكد هذا الرابط، لذلك يبقي Paseo هذه المشاريع منفصلة.",
+        projectUnavailable: "هذا المشروع غير متاح حاليًا.",
+        unlink: "إلغاء الربط",
+      },
+      toasts: {
+        linked: "تم ربط المشاريع على هذا الجهاز",
+        unlinked: "تمت إزالة رابط المشروع",
+      },
+    },
     groupInfo: "حول{{title}}",
     sections: {
       general: "عام",

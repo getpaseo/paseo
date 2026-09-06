@@ -1916,6 +1916,39 @@ export const en = {
       hostLoadFailed: "Couldn't load projects from host {{hostName}}: {{message}}",
       editProject: "Edit {{projectName}}",
     },
+    projectLinks: {
+      banner: {
+        matchesTitle: "Possible project links",
+        linkedTitle: "Project links",
+        description: "Review Git-verified project links stored on this device.",
+        review: "Review links",
+      },
+      sheet: {
+        title: "Project links",
+        deviceOnly:
+          "Links are stored only on this device. They do not move workspaces, settings, or files.",
+        matchesTitle: "Verified matches",
+        matchesDescription:
+          "These entries have the same Git remote and project subdirectory, but are still separate.",
+        linkedTitle: "Linked projects",
+        noMatchesTitle: "No project links to review",
+        noMatchesDescription:
+          "Open a workspace on each host so Paseo can verify its Git remote and project subdirectory.",
+        linkProjects: "Link {{count}} projects",
+        remote: "Git remote",
+        subdirectory: "Project subdirectory",
+        path: "Path",
+        needsReviewTitle: "Needs review",
+        needsReviewDescription:
+          "The latest Git facts no longer confirm this link, so Paseo keeps these projects separate.",
+        projectUnavailable: "This project is not currently available.",
+        unlink: "Unlink",
+      },
+      toasts: {
+        linked: "Projects linked on this device",
+        unlinked: "Project link removed",
+      },
+    },
     groupInfo: "About {{title}}",
     sections: {
       general: "General",

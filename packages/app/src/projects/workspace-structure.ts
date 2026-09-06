@@ -1,5 +1,13 @@
 import type { ProjectDescriptor, WorkspaceDescriptor } from "@/stores/session-store";
 import { projectDisplayNameFromProjectId } from "@/utils/project-display-name";
+import {
+  buildProjectLinkGroupingOverrides,
+  buildProjectLinkPlacements,
+  localProjectLinkViewKey,
+  projectLinkPlacementKey,
+  type LocalProjectLink,
+  type ProjectLinkGroupingOverride,
+} from "./local-project-links";
 
 export interface WorkspaceStructureHostPlacement {
   serverId: string;
@@ -44,13 +52,23 @@ interface ProjectDraft {
 /** The single app boundary that turns host-local projects into grouped display projects. */
 export function buildWorkspaceStructureProjects(input: {
   sessions: WorkspaceStructureSession[];
+  localProjectLinks?: Iterable<LocalProjectLink>;
+  unhydratedProjectLinkServerIds?: Iterable<string>;
 }): WorkspaceStructureProject[] {
+  // Selectors may pass one-shot Map iterators. Materialize once because local-link verification
+  // reads the same project/workspace facts that the structural projection consumes below.
+  const sessions = input.sessions.map((session) => ({
+    ...session,
+    projects: Array.from(session.projects),
+    workspaces: Array.from(session.workspaces),
+  }));
+  const localProjectLinks = Array.from(input.localProjectLinks ?? []);
   const byProject = new Map<string, ProjectDraft>();
   const projectEntries: Array<{ serverId: string; project: ProjectDescriptor }> = [];
   const keyCountsByServer = new Map<string, Map<string, number>>();
   const viewKeyByServerProjectId = new Map<string, Map<string, string>>();
 
-  for (const session of input.sessions) {
+  for (const session of sessions) {
     for (const project of session.projects) {
       projectEntries.push({ serverId: session.serverId, project });
       const sharedKey = project.projectKey ?? null;
@@ -64,14 +82,35 @@ export function buildWorkspaceStructureProjects(input: {
   const allocatedViewKeys = new Set(
     projectEntries.flatMap(({ project }) => (project.projectKey ? [project.projectKey] : [])),
   );
+  const projectLinkOverrides = buildProjectLinkGroupingOverrides({
+    placements: buildProjectLinkPlacements({
+      hosts: sessions.map((session) => ({
+        serverId: session.serverId,
+        serverName: "",
+        projects: session.projects,
+        workspaces: session.workspaces,
+      })),
+    }),
+    links: localProjectLinks,
+    unhydratedServerIds: input.unhydratedProjectLinkServerIds,
+  });
+  const localLinkViewKeys = allocateLocalLinkViewKeys({
+    overrides: projectLinkOverrides,
+    allocatedViewKeys,
+  });
 
   for (const { serverId, project } of projectEntries) {
+    const projectLinkOverride = projectLinkOverrides.get(
+      projectLinkPlacementKey({ serverId, projectId: project.projectId }),
+    );
     const viewKey = addProjectToView({
       byProject,
       keyCountsByServer,
       allocatedViewKeys,
       serverId,
       project,
+      projectLinkOverride,
+      localLinkViewKeys,
     });
     getOrCreate(viewKeyByServerProjectId, serverId, () => new Map()).set(
       project.projectId,
@@ -79,7 +118,7 @@ export function buildWorkspaceStructureProjects(input: {
     );
   }
 
-  for (const session of input.sessions) {
+  for (const session of sessions) {
     for (const workspace of session.workspaces) {
       const viewKey = viewKeyByServerProjectId.get(session.serverId)?.get(workspace.projectId);
       if (!viewKey) continue;
@@ -147,14 +186,26 @@ function addProjectToView(input: {
   allocatedViewKeys: Set<string>;
   serverId: string;
   project: ProjectDescriptor;
+  projectLinkOverride: ProjectLinkGroupingOverride | undefined;
+  localLinkViewKeys: ReadonlyMap<string, string>;
 }): string {
-  const { byProject, keyCountsByServer, serverId, project } = input;
+  const { byProject, keyCountsByServer, serverId, project, projectLinkOverride } = input;
   const sharedKey = project.projectKey ?? null;
   const canUseSharedKey =
-    sharedKey !== null && keyCountsByServer.get(serverId)?.get(sharedKey) === 1;
-  const viewKey = canUseSharedKey
-    ? createProjectViewKey({ kind: "equivalence", projectKey: sharedKey })
-    : allocatePlacementViewKey(input.allocatedViewKeys, serverId, project.projectId);
+    projectLinkOverride === undefined &&
+    sharedKey !== null &&
+    keyCountsByServer.get(serverId)?.get(sharedKey) === 1;
+  let viewKey: string;
+  if (projectLinkOverride?.kind === "linked") {
+    viewKey =
+      input.localLinkViewKeys.get(projectLinkOverride.linkId) ??
+      allocatePlacementViewKey(input.allocatedViewKeys, serverId, project.projectId);
+  } else if (canUseSharedKey) {
+    viewKey = createProjectViewKey({ kind: "equivalence", projectKey: sharedKey });
+  } else {
+    viewKey = allocatePlacementViewKey(input.allocatedViewKeys, serverId, project.projectId);
+  }
+  const effectiveProjectKey = projectLinkOverride?.kind === "linked" ? null : sharedKey;
   const placement: WorkspaceStructureHostPlacement = {
     serverId,
     projectId: project.projectId,
@@ -167,7 +218,7 @@ function addProjectToView(input: {
   if (!draft) {
     byProject.set(viewKey, {
       viewKey,
-      projectKey: sharedKey,
+      projectKey: effectiveProjectKey,
       projectName:
         project.projectCustomName ??
         project.projectDisplayName ??
@@ -186,6 +237,30 @@ function addProjectToView(input: {
     draft.hosts.set(serverId, placement);
   }
   return viewKey;
+}
+
+function allocateLocalLinkViewKeys(input: {
+  overrides: ReadonlyMap<string, ProjectLinkGroupingOverride>;
+  allocatedViewKeys: Set<string>;
+}): Map<string, string> {
+  const linkIds = Array.from(
+    new Set(
+      Array.from(input.overrides.values()).flatMap((override) =>
+        override.kind === "linked" ? [override.linkId] : [],
+      ),
+    ),
+  ).sort();
+  const viewKeys = new Map<string, string>();
+  for (const linkId of linkIds) {
+    const baseViewKey = localProjectLinkViewKey(linkId);
+    let viewKey = baseViewKey;
+    for (let suffix = 0; input.allocatedViewKeys.has(viewKey); suffix += 1) {
+      viewKey = JSON.stringify(["local-project-link", linkId, suffix]);
+    }
+    input.allocatedViewKeys.add(viewKey);
+    viewKeys.set(linkId, viewKey);
+  }
+  return viewKeys;
 }
 
 function getOrCreate<K, V>(map: Map<K, V>, key: K, create: () => V): V {

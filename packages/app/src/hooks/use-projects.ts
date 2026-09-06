@@ -12,6 +12,14 @@ import {
   type ProjectDescriptor,
   type WorkspaceDescriptor,
 } from "@/stores/session-store";
+import {
+  buildProjectLinkPlacements,
+  buildProjectLinkSuggestions,
+  type LocalProjectLink,
+  type ProjectLinkPlacement,
+  type ProjectLinkSuggestion,
+} from "@/projects/local-project-links";
+import { useLocalProjectLinksStore } from "@/projects/local-project-links-store";
 import { buildProjects, type ProjectHost, type ProjectSummary } from "@/utils/projects";
 
 export interface ProjectHostError {
@@ -23,6 +31,7 @@ export interface ProjectHostError {
 export interface ProjectHostReplica {
   serverId: string;
   serverName: string;
+  hasHydratedWorkspaces?: boolean;
   workspaces: WorkspaceDescriptor[];
   projects: ProjectDescriptor[];
 }
@@ -37,6 +46,8 @@ export interface ProjectHostRuntimeState {
 
 export interface DerivedProjectsResult {
   projects: ProjectSummary[];
+  projectLinkPlacements: ProjectLinkPlacement[];
+  projectLinkSuggestions: ProjectLinkSuggestion[];
   hostErrors: ProjectHostError[];
   isLoading: boolean;
   isFetching: boolean;
@@ -44,6 +55,9 @@ export interface DerivedProjectsResult {
 
 export interface UseProjectsResult {
   projects: ProjectSummary[];
+  /** Optional so legacy consumers can continue using the project list without local-link data. */
+  projectLinkPlacements?: ProjectLinkPlacement[];
+  projectLinkSuggestions?: ProjectLinkSuggestion[];
   hostErrors: ProjectHostError[];
   isLoading: boolean;
   isFetching: boolean;
@@ -86,6 +100,7 @@ function selectProjectHostReplicas(
       return {
         serverId: host.serverId,
         serverName: host.label,
+        hasHydratedWorkspaces: session?.hasHydratedWorkspaces ?? false,
         workspaces: Array.from(session?.workspaces.values() ?? []),
         projects: Array.from(session?.projects.values() ?? []),
       };
@@ -95,6 +110,7 @@ function selectProjectHostReplicas(
 export function deriveProjectsFromReplica(input: {
   replicas: readonly ProjectHostReplica[];
   runtimeStates: readonly ProjectHostRuntimeState[];
+  localProjectLinks?: Iterable<LocalProjectLink>;
 }): DerivedProjectsResult {
   const runtimeByServerId = new Map(
     input.runtimeStates.map((state) => [state.serverId, state] as const),
@@ -122,8 +138,18 @@ export function deriveProjectsFromReplica(input: {
       : [];
   });
 
+  const localProjectLinks = Array.from(input.localProjectLinks ?? []);
+  const unhydratedProjectLinkServerIds = input.replicas
+    .filter((replica) => replica.hasHydratedWorkspaces === false)
+    .map((replica) => replica.serverId);
+  const projectLinkPlacements = buildProjectLinkPlacements({ hosts });
   return {
-    ...buildProjects({ hosts }),
+    ...buildProjects({ hosts, localProjectLinks, unhydratedProjectLinkServerIds }),
+    projectLinkPlacements,
+    projectLinkSuggestions: buildProjectLinkSuggestions({
+      placements: projectLinkPlacements,
+      links: localProjectLinks,
+    }),
     hostErrors,
     isLoading: input.runtimeStates.some((state) => state.isLoading),
     isFetching: input.runtimeStates.some((state) => state.isFetching),
@@ -178,9 +204,10 @@ export function useProjects(options: UseProjectsOptions = {}): UseProjectsResult
   );
   const replicas = useStoreWithEqualityFn(useSessionStore, replicaSelector, equal);
   const runtimeStates = useProjectHostRuntimeStates(serverIds, enabled);
+  const localProjectLinks = useLocalProjectLinksStore((state) => state.links);
   const derived = useMemo(
-    () => deriveProjectsFromReplica({ replicas, runtimeStates }),
-    [replicas, runtimeStates],
+    () => deriveProjectsFromReplica({ replicas, runtimeStates, localProjectLinks }),
+    [localProjectLinks, replicas, runtimeStates],
   );
   const refetch = useCallback(() => {
     if (!enabled) return;
