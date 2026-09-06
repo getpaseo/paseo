@@ -2,6 +2,7 @@ import { expect, test, type Page } from "../support/fixtures";
 import { gotoAppShell } from "../support/helpers/app";
 import { openCommandCenter } from "../support/helpers/command-center";
 import { seedWorkspace, type SeededWorkspace } from "../support/helpers/seed-client";
+import { openSidebarDisplayPage } from "../support/helpers/sidebar";
 
 const GROUP_BY_STATUS = "Group by status";
 const GROUP_BY_PROJECT = "Group by project";
@@ -42,21 +43,55 @@ test.describe("Command center sidebar grouping", () => {
 
     await expect(projectList).toBeVisible({ timeout: 30_000 });
     await expect(toggle).toHaveAttribute("aria-label", GROUP_BY_STATUS);
-    await expect(statusIcon).toBeVisible();
+    await expect(projectIcon).toBeVisible();
 
     await page.keyboard.press("ControlOrMeta+;");
     await expect(statusList).toBeVisible({ timeout: 30_000 });
     await expect(projectList).toHaveCount(0);
     await expect(toggle).toHaveAttribute("aria-label", GROUP_BY_PROJECT);
-    await expect(projectIcon).toBeVisible();
-    await expect(statusIcon).toHaveCount(0);
+    await expect(statusIcon).toBeVisible();
+    await expect(projectIcon).toHaveCount(0);
 
     await page.keyboard.press("ControlOrMeta+;");
     await expect(projectList).toBeVisible({ timeout: 30_000 });
     await expect(statusList).toHaveCount(0);
     await expect(toggle).toHaveAttribute("aria-label", GROUP_BY_STATUS);
-    await expect(statusIcon).toBeVisible();
-    await expect(projectIcon).toHaveCount(0);
+    await expect(projectIcon).toBeVisible();
+    await expect(statusIcon).toHaveCount(0);
+  });
+
+  test("keeps grouping in Display preferences and syncs it with the quick toggle", async ({
+    page,
+  }) => {
+    shortcutWorkspace = await seedWorkspace({ repoPrefix: "menu-grouping-" });
+
+    await gotoAppShell(page);
+    const toggle = page.getByTestId("sidebar-grouping-toggle");
+    const grouping = page.getByTestId("sidebar-display-grouping");
+
+    await openSidebarDisplayPage(page, "sidebar-display-grouping");
+    await expect(page.getByTestId("sidebar-grouping-project")).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
+    await expect(page.getByTestId("sidebar-grouping-status")).toHaveAttribute(
+      "aria-checked",
+      "false",
+    );
+    await page.getByTestId("sidebar-grouping-status").click();
+
+    await expect(toggle).toHaveAttribute("aria-label", GROUP_BY_PROJECT);
+    await expect(
+      toggle.locator('svg[data-testid="sidebar-grouping-toggle-icon-status"]'),
+    ).toBeVisible();
+
+    await page.getByTestId("sidebar-display-preferences-menu").click();
+    await expect(grouping).toContainText("Status");
+    await grouping.click();
+    await expect(page.getByTestId("sidebar-grouping-status")).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
   });
 
   test("flips sidebar grouping and persists the choice across a reload", async ({ page }) => {

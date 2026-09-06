@@ -47,6 +47,7 @@ test.describe("Sidebar project filter", () => {
       // array, so a filter applied in only one of the two places passes every check above and
       // silently fails right here.
       await selectSidebarStatusGrouping(page);
+      await closeSidebarDisplayPreferences(page);
       await expect(alphaRow).toBeVisible({ timeout: 15_000 });
       await expect(betaRow).toHaveCount(0);
 
