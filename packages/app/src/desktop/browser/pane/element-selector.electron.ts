@@ -298,14 +298,19 @@ export function buildElementSelectorScript(sessionToken: string): string {
         showTarget(resolveTarget(e), e);
       }
       function buildSelector(el) {
-        if (el.id) return '#' + el.id;
         var path = [];
         while (el && el.nodeType === 1) {
-          var seg = el.tagName.toLowerCase();
-          if (el.id) { path.unshift('#' + el.id); break; }
+          var seg = CSS.escape(el.tagName.toLowerCase());
+          if (el.id) {
+            var idSelector = '#' + CSS.escape(el.id);
+            if (document.querySelectorAll(idSelector).length === 1) {
+              path.unshift(idSelector);
+              break;
+            }
+          }
           var sib = el, nth = 1;
           while (sib = sib.previousElementSibling) { if (sib.tagName === el.tagName) nth++; }
-          if (nth > 1) seg += ':nth-of-type(' + nth + ')';
+          seg += ':nth-of-type(' + nth + ')';
           path.unshift(seg);
           el = el.parentElement;
         }
@@ -425,6 +430,12 @@ export function buildElementSelectorScript(sessionToken: string): string {
           children: getChildSummary(el, 8)
         };
         deactivate();
+        if (e.type === 'click' && (el.type === 'checkbox' || el.type === 'radio')) {
+          // Click cancellation restores checked state after native preactivation.
+          await new Promise(function(resolve) { window.setTimeout(resolve, 0); });
+          if (!window.__paseoSelector || window.__paseoSelector.sessionToken !== sessionToken) return;
+          result.runtimeProperties = getRuntimeProperties(el);
+        }
         window.__paseoSelectorResult = result;
       }
       function onClick(e) {

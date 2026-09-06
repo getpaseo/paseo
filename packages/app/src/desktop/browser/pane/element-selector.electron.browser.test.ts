@@ -36,6 +36,67 @@ afterEach(() => {
 });
 
 describe("element selector guest script", () => {
+  it.each([":r0:", "123", "panel.title"])("escapes the selected ID %s", (id) => {
+    const guest = mountFixture(
+      `<button id="${id}" data-hit style="width:100px;height:40px">Target</button>`,
+    );
+    const button = document.getElementById(id);
+    if (!button) throw new Error("Expected target");
+
+    button.click();
+
+    const selector = guest.__paseoSelectorResult?.selector;
+    if (!selector) throw new Error("Expected selector");
+    expect(document.querySelectorAll(selector)).toHaveLength(1);
+    expect(document.querySelector(selector)).toBe(button);
+  });
+
+  it("uniquely locates a first child under a duplicated ancestor ID", () => {
+    const guest = mountFixture(`
+      <section id="duplicate"><button id="same" data-hit>Target</button><button>Other</button></section>
+      <section id="duplicate"><button id="same">Elsewhere</button></section>
+    `);
+    const button = document.querySelector<HTMLButtonElement>("[data-hit]");
+    if (!button) throw new Error("Expected target");
+
+    button.click();
+
+    const selector = guest.__paseoSelectorResult?.selector;
+    if (!selector) throw new Error("Expected selector");
+    expect(document.querySelectorAll(selector)).toHaveLength(1);
+    expect(document.querySelector(selector)).toBe(button);
+  });
+
+  it.each([false, true])("captures the original checkbox state %s", async (checked) => {
+    const guest = mountFixture('<input type="checkbox" data-hit>');
+    const checkbox = document.querySelector<HTMLInputElement>("input");
+    if (!checkbox) throw new Error("Expected checkbox");
+    checkbox.checked = checked;
+
+    checkbox.click();
+    await new Promise((resolve) => window.setTimeout(resolve, 0));
+
+    expect(checkbox.checked).toBe(checked);
+    expect(guest.__paseoSelectorResult?.runtimeProperties?.checked).toBe(checked);
+  });
+
+  it("captures an unchecked radio without changing its group selection", async () => {
+    const guest = mountFixture(`
+      <input id="original" type="radio" name="choice" checked>
+      <input id="target" type="radio" name="choice" data-hit>
+    `);
+    const original = document.querySelector<HTMLInputElement>("#original");
+    const target = document.querySelector<HTMLInputElement>("#target");
+    if (!original || !target) throw new Error("Expected radios");
+
+    target.click();
+    await new Promise((resolve) => window.setTimeout(resolve, 0));
+
+    expect(original.checked).toBe(true);
+    expect(target.checked).toBe(false);
+    expect(guest.__paseoSelectorResult?.runtimeProperties?.checked).toBe(false);
+  });
+
   it("skips invisible targets and keeps the selected element highlighted", async () => {
     const guest = mountFixture(`
       <button id="repair" data-hit style="width:120px;height:40px">Repair</button>

@@ -22,6 +22,7 @@ import {
 } from "@/desktop/browser/element-context-fields.electron";
 import { elementContextPanelStyles as styles } from "@/desktop/browser/element-context-panel.styles.electron";
 import type { Theme } from "@/styles/theme";
+import { dispatchTopWebOverlayKeyDown } from "@/lib/overlay-root";
 
 interface ElementContextPanelProps {
   context: BrowserElementContext;
@@ -193,6 +194,8 @@ export function ElementContextPanel({
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.isComposing || event.key === "Process") return;
+      if (event.defaultPrevented || dispatchTopWebOverlayKeyDown(event)) return;
       if (event.key === "Escape") {
         event.preventDefault();
         event.stopPropagation();

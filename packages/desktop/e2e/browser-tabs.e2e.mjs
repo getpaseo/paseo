@@ -507,6 +507,27 @@ async function editElementProperties({ page, client, browserId, artifactDir }) {
   await textField.fill("Edited target");
   await colorPicker.fill("#ff0000");
   await fontSize.fill("20");
+  const textColor = await textField.evaluate((element) => getComputedStyle(element).color);
+  const numberColor = await fontSize.evaluate((element) => getComputedStyle(element).color);
+  assert(numberColor === textColor, `Numeric input lost the theme foreground: ${numberColor}`);
+  await page.getByRole("button", { name: /^Font \(/ }).click();
+  const fontOption = page.getByText("System UI", { exact: true });
+  await fontOption.waitFor({ state: "visible", timeout: timeoutMs });
+  await page.keyboard.press("Escape");
+  await fontOption.waitFor({ state: "hidden", timeout: timeoutMs });
+  assert(await textField.isVisible(), "Dismissing the font menu discarded the annotation");
+  await textField.evaluate((element) => {
+    element.dispatchEvent(
+      new KeyboardEvent("keydown", {
+        key: "Enter",
+        ctrlKey: true,
+        isComposing: true,
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+  });
+  assert(await textField.isVisible(), "IME confirmation submitted the annotation");
   await callBrowserTool(client, "browser_wait", {
     browserId,
     text: "Edited target",
@@ -533,6 +554,10 @@ async function editElementProperties({ page, client, browserId, artifactDir }) {
 
 async function restoreElementProperties({ page, client, browserId, original }) {
   await page.getByRole("button", { name: "Restore original" }).click();
+  await verifyRestoredElement({ client, browserId, original });
+}
+
+async function verifyRestoredElement({ client, browserId, original }) {
   await callBrowserTool(client, "browser_wait", {
     browserId,
     text: original.text,
@@ -564,10 +589,12 @@ async function switchBrowserTabAndVerifyCleanup({
   deck,
   paint,
   artifactDir,
+  original,
 }) {
   const otherTab = await callBrowserTool(client, "browser_new_tab", { url: targetUrl });
   await deck.getByTestId(`workspace-tab-browser_${otherTab.browserId}`).last().click();
   await paint.comment.waitFor({ state: "hidden", timeout: timeoutMs });
+  await verifyRestoredElement({ client, browserId, original });
   const staleSelection = await callBrowserTool(client, "browser_evaluate", {
     browserId,
     function:
@@ -584,6 +611,38 @@ async function switchBrowserTabAndVerifyCleanup({
   return paint.receivesInput && !paint.openPixels.equals(closedPixels);
 }
 
+async function createPendingElementPreview({ page, client, browserId }) {
+  await page.getByRole("textbox", { name: "Text", exact: true }).fill("Pending preview");
+  await callBrowserTool(client, "browser_wait", {
+    browserId,
+    text: "Pending preview",
+    timeoutMs: 5_000,
+  });
+}
+
+async function restartSelectorAndVerifyRestoration({
+  page,
+  client,
+  browserId,
+  deck,
+  paint,
+  original,
+  mode,
+}) {
+  await createPendingElementPreview({ page, client, browserId });
+  await deck.getByRole("button", { name: mode, exact: true }).click();
+  assert(await waitForGuestSelector(client, browserId), `${mode} did not restart the selector`);
+  await verifyRestoredElement({ client, browserId, original });
+  if (mode === "Screenshot element") {
+    await deck.getByRole("button", { name: "Cancel element selector" }).click();
+    await deck.getByRole("button", { name: "Edit element", exact: true }).click();
+    assert(await waitForGuestSelector(client, browserId));
+  }
+  await clickGuestElement(page, client, browserId, "#bridge-target");
+  await paint.comment.waitFor({ state: "visible", timeout: timeoutMs });
+  await page.getByRole("button", { name: "Adjust properties" }).click();
+}
+
 async function selectElementAndVerifyAnnotation(input) {
   await clickGuestElement(input.page, input.client, input.browserId, "#bridge-target");
   const paint = await verifyCompactAnnotation(input);
@@ -591,7 +650,11 @@ async function selectElementAndVerifyAnnotation(input) {
   assert(original?.selected === true, "Selected guest element had no persistent highlight");
   await editElementProperties(input);
   await restoreElementProperties({ ...input, original });
-  return await switchBrowserTabAndVerifyCleanup({ ...input, paint });
+  for (const mode of ["Edit element", "Screenshot element"]) {
+    await restartSelectorAndVerifyRestoration({ ...input, paint, original, mode });
+  }
+  await createPendingElementPreview(input);
+  return await switchBrowserTabAndVerifyCleanup({ ...input, paint, original });
 }
 
 function recordViewportMismatch(failures, label, actual, expected) {

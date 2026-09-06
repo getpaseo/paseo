@@ -1,5 +1,6 @@
-import { createElement, useCallback, type ChangeEvent } from "react";
+import { createElement, useCallback, type ChangeEvent, type CSSProperties } from "react";
 import { Text } from "react-native";
+import { withUnistyles } from "react-native-unistyles";
 import type { BrowserElementField, BrowserElementJson } from "@/desktop/browser/element-context";
 import { toColorPickerValue } from "@/desktop/browser/element-context-field-value";
 import {
@@ -9,16 +10,18 @@ import {
   nativeRangeInputStyle,
 } from "@/desktop/browser/element-context-fields.styles.electron";
 
-export function NativeElementContextField({
+function ElementContextNativeField({
   field,
   value,
   disabled,
   onChange,
+  inputTheme,
 }: {
   field: BrowserElementField;
   value: string;
   disabled: boolean;
   onChange: (value: BrowserElementJson) => void;
+  inputTheme: CSSProperties;
 }) {
   const handleChange = useCallback(
     (event: ChangeEvent<HTMLInputElement>) => {
@@ -67,7 +70,7 @@ export function NativeElementContextField({
       min: field.min,
       onChange: handleChange,
       step: field.step,
-      style: nativeDateInputStyle,
+      style: { ...nativeDateInputStyle, ...inputTheme },
       type: "number",
       value,
     });
@@ -78,8 +81,17 @@ export function NativeElementContextField({
     "aria-label": field.label,
     disabled,
     onChange: handleChange,
-    style: nativeDateInputStyle,
+    style: { ...nativeDateInputStyle, ...inputTheme },
     type,
     value,
   });
 }
+
+export const NativeElementContextField = withUnistyles(ElementContextNativeField, (theme) => ({
+  inputTheme: {
+    color: theme.colors.foreground,
+    fontFamily: theme.fontFamily.ui,
+    fontSize: theme.fontSize.sm,
+    colorScheme: theme.colorScheme,
+  },
+}));

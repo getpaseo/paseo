@@ -922,6 +922,8 @@ export function BrowserPane({
       webview.removeEventListener("dom-ready", handleDomReady);
       webview.removeEventListener("focus", handleWebviewFocus);
       webview.removeEventListener("mousedown", handleWebviewFocus);
+      void restoreElementPreview(webview);
+      clearElementSelection(webview);
       const browserStillExists = Boolean(
         useBrowserStore.getState().browsersById[browserIdRef.current],
       );
@@ -1306,6 +1308,7 @@ export function BrowserPane({
         return;
       }
 
+      void restoreElementPreview(webview);
       clearElementSelection(webview);
       const startResult = controller.start({
         webview,
