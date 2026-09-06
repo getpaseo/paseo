@@ -9,8 +9,11 @@ import {
   expectHostBadgeName,
   expectHostBadgeTinted,
   expectNoHostBadge,
+  expectWorkspaceHeaderHostBadge,
+  expectWorkspaceHeaderWithoutHostBadge,
   leaveHostAppearanceSettings,
   openHostAppearanceSettings,
+  readHostBadgeLabelColor,
   reloadPreservingHostRegistry,
   renameHostFromSettings,
   waitForConnectedHost,
@@ -19,9 +22,18 @@ import {
   type IsolatedHostDaemon,
   startIsolatedHostDaemon,
 } from "../support/helpers/isolated-host-daemon";
+import {
+  expectNewWorkspaceHostPillColor,
+  openGlobalNewWorkspaceComposer,
+  readNewWorkspaceHostPillColor,
+  selectNewWorkspaceHost,
+} from "../support/helpers/new-workspace";
 import { seedWorkspace, type SeededWorkspace } from "../support/helpers/seed-client";
 import { getServerId } from "../support/helpers/server-id";
-import { waitForSidebarHydration } from "../support/helpers/workspace-ui";
+import {
+  switchWorkspaceViaSidebar,
+  waitForSidebarHydration,
+} from "../support/helpers/workspace-ui";
 
 const PRIMARY_HOST_LABEL = "Primary Host";
 const SECONDARY_HOST_LABEL = "Secondary Host";
@@ -197,6 +209,55 @@ test.describe("Host appearance", () => {
       serverId: twoHostSidebar.secondaryServerId,
       hostName: "Build Box",
       color: "emerald",
+    });
+  });
+
+  // The wide layout keeps the sidebar open, but the header still names the host: it follows the
+  // host's display mode alone, so Hidden removes it while the project name stays.
+  test("the workspace header names the host on the wide layout", async ({
+    page,
+    twoHostSidebar,
+  }) => {
+    const host = {
+      serverId: twoHostSidebar.secondaryServerId,
+      workspaceId: twoHostSidebar.secondaryWorkspaceId,
+    };
+
+    await openHostAppearanceSettings(page, host.serverId);
+    await chooseHostColor(page, "Teal");
+    await leaveHostAppearanceSettings(page);
+    await switchWorkspaceViaSidebar({ page, ...host });
+    await expectWorkspaceHeaderHostBadge(page, {
+      serverId: host.serverId,
+      hostName: SECONDARY_HOST_LABEL,
+      color: "teal",
+    });
+
+    await openHostAppearanceSettings(page, host.serverId);
+    await chooseHostBadgeDisplay(page, "Hidden");
+    await leaveHostAppearanceSettings(page);
+    await switchWorkspaceViaSidebar({ page, ...host });
+    await expectWorkspaceHeaderWithoutHostBadge(page, host.serverId);
+  });
+
+  test("the new-workspace host pill wears the host color", async ({ page, twoHostSidebar }) => {
+    await openHostAppearanceSettings(page, twoHostSidebar.secondaryServerId);
+    await chooseHostColor(page, "Teal");
+    await leaveHostAppearanceSettings(page);
+
+    await openGlobalNewWorkspaceComposer(page);
+    await selectNewWorkspaceHost(page, PRIMARY_HOST_LABEL);
+    const mutedColor = await readNewWorkspaceHostPillColor(page, PRIMARY_HOST_LABEL);
+    await selectNewWorkspaceHost(page, SECONDARY_HOST_LABEL);
+    const badgeColor = await readHostBadgeLabelColor(page, {
+      serverId: twoHostSidebar.secondaryServerId,
+      workspaceId: twoHostSidebar.secondaryWorkspaceId,
+      hostName: SECONDARY_HOST_LABEL,
+    });
+    expect(badgeColor).not.toBe(mutedColor);
+    await expectNewWorkspaceHostPillColor(page, {
+      hostLabel: SECONDARY_HOST_LABEL,
+      color: badgeColor,
     });
   });
 });

@@ -285,6 +285,26 @@ export async function selectNewWorkspaceHost(page: Page, hostLabel: string): Pro
   await expect(trigger).toContainText(hostLabel);
 }
 
+function newWorkspaceHostPillLabel(page: Page, hostLabel: string) {
+  return page.getByTestId("host-picker-trigger").getByText(hostLabel, { exact: true });
+}
+
+export async function readNewWorkspaceHostPillColor(
+  page: Page,
+  hostLabel: string,
+): Promise<string> {
+  const label = newWorkspaceHostPillLabel(page, hostLabel);
+  await expect(label).toBeVisible();
+  return label.evaluate((element) => getComputedStyle(element).color);
+}
+
+export async function expectNewWorkspaceHostPillColor(
+  page: Page,
+  input: { hostLabel: string; color: string },
+): Promise<void> {
+  await expect(newWorkspaceHostPillLabel(page, input.hostLabel)).toHaveCSS("color", input.color);
+}
+
 export async function submitNewWorkspacePrompt(
   page: Page,
   prompt = "Hello from e2e",
