@@ -106,6 +106,7 @@ export function registerNotificationHandlers(): void {
     if (rawInput?.presentedInApp === true) {
       return true;
     }
+
     const body = toTrimmedString(rawInput?.body) ?? undefined;
     const data = toRecord(rawInput?.data);
     const icon = getNotificationIcon();
@@ -113,54 +114,42 @@ export function registerNotificationHandlers(): void {
     // (app/src/utils/notification-sound) so audio still fires when the OS
     // suppresses the notification entirely (e.g. Windows with notifications
     // disabled), and so the playSound setting has a single sound source.
-    // Determine if the app window is currently focused.
-    // If the app is in focus, the user sees the in-app toast notification.
-    // If the app is minimized / in background / out of focus, show the native OS notification and floating screen popup.
-    const senderWin =
-      BrowserWindow.fromWebContents(event.sender) ??
-      BrowserWindow.getAllWindows().find((w) => !w.isDestroyed() && w.isResizable());
-    const isAppFocused = senderWin
-      ? senderWin.isFocused() && !senderWin.isMinimized() && senderWin.isVisible()
-      : false;
+    const notification = new Notification({
+      title,
+      ...(body ? { body } : {}),
+      ...(icon ? { icon } : {}),
+      silent: true,
+    });
 
-    if (!isAppFocused) {
-      const notification = new Notification({
-        title,
-        ...(body ? { body } : {}),
-        ...(icon ? { icon } : {}),
-        silent: true,
-      });
+    activeNotifications.add(notification);
 
-      activeNotifications.add(notification);
+    notification.on("click", () => {
+      const win = focusSenderWindow(event.sender);
+      if (win && data && Object.keys(data).length > 0) {
+        const payload: NotificationClickPayload = { data };
+        win.webContents.send("paseo:event:notification-click", payload);
+      }
+      activeNotifications.delete(notification);
+    });
 
-      notification.on("click", () => {
+    notification.on("close", () => {
+      activeNotifications.delete(notification);
+    });
+
+    notification.show();
+
+    showScreenFloatingNotification({
+      title,
+      body,
+      data,
+      onOpenTarget: (clickData) => {
         const win = focusSenderWindow(event.sender);
-        if (win && data && Object.keys(data).length > 0) {
-          const payload: NotificationClickPayload = { data };
+        if (win && clickData && Object.keys(clickData).length > 0) {
+          const payload: NotificationClickPayload = { data: clickData };
           win.webContents.send("paseo:event:notification-click", payload);
         }
-        activeNotifications.delete(notification);
-      });
-
-      notification.on("close", () => {
-        activeNotifications.delete(notification);
-      });
-
-      notification.show();
-
-      showScreenFloatingNotification({
-        title,
-        body,
-        data,
-        onOpenTarget: (clickData) => {
-          const win = focusSenderWindow(event.sender);
-          if (win && clickData && Object.keys(clickData).length > 0) {
-            const payload: NotificationClickPayload = { data: clickData };
-            win.webContents.send("paseo:event:notification-click", payload);
-          }
-        },
-      });
-    }
+      },
+    });
 
     return true;
   });
