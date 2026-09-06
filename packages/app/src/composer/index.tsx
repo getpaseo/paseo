@@ -1,3 +1,4 @@
+import { getHostRuntimeStore } from "@/runtime/host-runtime";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import {
   View,
@@ -34,7 +35,6 @@ import {
   Paperclip,
 } from "lucide-react-native";
 import * as Clipboard from "expo-clipboard";
-import Animated from "react-native-reanimated";
 import { FOOTER_HEIGHT, MAX_CONTENT_WIDTH } from "@/constants/layout";
 import {
   AgentControls,
@@ -42,6 +42,7 @@ import {
   type DraftAgentControlsProps,
 } from "@/composer/agent-controls";
 import { ContextWindowMeter } from "@/components/context-window-meter";
+import { KeyboardTranslateView } from "@/components/keyboard-translate-view";
 import { useImageAttachmentPicker } from "@/hooks/use-image-attachment-picker";
 import { selectAgentTurnPresentation, useSessionStore } from "@/stores/session-store";
 import { useFilePicker } from "@/hooks/use-file-picker";
@@ -83,6 +84,11 @@ import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
 import { AutocompletePopover } from "@/components/ui/autocomplete-popover";
 import type { AutocompleteOption } from "@/components/ui/autocomplete";
 import { useAgentAutocomplete } from "@/hooks/use-agent-autocomplete";
+import { usePluginClientSlashCommands } from "@/plugins/client-slash-commands";
+import {
+  executePluginClientSlashCommand,
+  resolvePluginClientSlashCommand,
+} from "@/plugins/client-slash-commands/model";
 import {
   useHostRuntimeAgentDirectoryStatus,
   useHostRuntimeClient,
@@ -97,7 +103,6 @@ import {
 import { resolveAgentControlsMode } from "@/composer/agent-controls/mode";
 import { resolveComposerInputMode, type ComposerInputMode } from "@/composer/input-mode";
 import { resolveActiveSendBehavior } from "./input/state";
-import { useKeyboardShiftStyle } from "@/hooks/use-keyboard-shift-style";
 import { useKeyboardActionHandler } from "@/hooks/use-keyboard-action-handler";
 import type { KeyboardActionDefinition } from "@/keyboard/keyboard-action-dispatcher";
 import type { MessageInputKeyboardActionKind } from "@/keyboard/actions";
@@ -124,7 +129,7 @@ import { droppedItemsToPickedFiles } from "@/composer/attachments/drop";
 import { getFileTypeLabel } from "@/attachments/file-types";
 import { Combobox, ComboboxItem, type ComboboxOption } from "@/components/ui/combobox";
 import { AttachmentLabel, AttachmentPill, AttachmentThumbnail } from "@/components/attachment-pill";
-import { AttachmentLightbox } from "@/components/attachment-lightbox";
+import { AttachmentLightbox, type ImageLightboxSource } from "@/components/attachment-lightbox";
 import { openExternalUrl } from "@/utils/open-external-url";
 import { useIsDictationReady } from "@/hooks/use-is-dictation-ready";
 import { useForgeSearchQuery } from "@/git/use-forge-search-query";
@@ -1268,6 +1273,11 @@ function ComposerContentImpl({
     onChangeAttachments: setSelectedAttachments,
     anchorRef: attachButtonRef,
   });
+  const pluginClientSlashCommands = usePluginClientSlashCommands({
+    serverId,
+    workspaceId,
+    agentId,
+  });
   const isComposerLocked = resolveIsComposerLocked(submitBehavior, isSubmitLoading);
   const keyboardHandlerIdRef = useRef(
     `message-input:${serverId}:${agentId}:${Math.random().toString(36).slice(2)}`,
@@ -1319,6 +1329,27 @@ function ComposerContentImpl({
     ],
   );
 
+  const runPluginClientSlashCommand = useCallback(
+    (resolved: { command: (typeof pluginClientSlashCommands)[number]; args: string }): boolean => {
+      if (blurOnSubmit) messageInputRef.current?.blur();
+      clearDraft("sent");
+      replaceUserInput("");
+      setSelectedAttachments([]);
+      resetSuppression();
+      setSendError(null);
+      executePluginClientSlashCommand({
+        command: resolved.command,
+        args: resolved.args,
+        onError(error) {
+          console.error("[Composer] Failed to run plugin client slash command:", error);
+          toastErrorRef.current(error instanceof Error ? error.message : String(error));
+        },
+      });
+      return true;
+    },
+    [blurOnSubmit, clearDraft, replaceUserInput, resetSuppression, setSelectedAttachments],
+  );
+
   const autocomplete = useAgentAutocomplete({
     userInput,
     cursorIndex,
@@ -1328,6 +1359,7 @@ function ComposerContentImpl({
     draftConfig: commandDraftConfig,
     canExecuteClientSlashCommand: buildOutgoingAttachments(attachments).length === 0,
     onClientSlashCommand: runClientSlashCommand,
+    pluginClientSlashCommands,
     onAutocompleteApplied: () => {
       messageInputRef.current?.focus();
     },
@@ -1456,8 +1488,10 @@ function ComposerContentImpl({
         activeTurnBehavior,
         activeTurnId:
           activeTurnBehavior === "steer"
-            ? (useSessionStore.getState().sessions[serverId]?.agents.get(targetAgentId)?.activeTurn
-                ?.turnId ?? undefined)
+            ? (selectAgentTurnPresentation(
+                useSessionStore.getState().sessions[serverId],
+                targetAgentId,
+              ).turnId ?? undefined)
             : undefined,
       });
       onAttentionPromptSend?.();
@@ -1474,8 +1508,6 @@ function ComposerContentImpl({
   const isCancellingAgent = useSessionStore(
     (state) => selectAgentTurnPresentation(state.sessions[serverId], agentId).isCancelling,
   );
-  const beginAgentCancellation = useSessionStore((state) => state.beginAgentCancellation);
-  const settleAgentCancellation = useSessionStore((state) => state.settleAgentCancellation);
   const isAgentRunning = hasActiveTurn;
   // Queueing behind a permission prompt would strand the message: the turn is
   // parked until the request is answered.
@@ -1595,6 +1627,12 @@ function ComposerContentImpl({
       if (clientSlashCommand && runClientSlashCommand(clientSlashCommand)) {
         return;
       }
+      const pluginSlashCommand = resolvePluginClientSlashCommand({
+        text: payload.text,
+        hasAttachments: outgoingAttachments.length > 0,
+        commands: pluginClientSlashCommands,
+      });
+      if (pluginSlashCommand && runPluginClientSlashCommand(pluginSlashCommand)) return;
 
       if (blurOnSubmit) {
         messageInputRef.current?.blur();
@@ -1606,6 +1644,8 @@ function ComposerContentImpl({
       blurOnSubmit,
       buildOutgoingAttachments,
       runClientSlashCommand,
+      pluginClientSlashCommands,
+      runPluginClientSlashCommand,
       sendMessageWithContent,
     ],
   );
@@ -1773,7 +1813,7 @@ function ComposerContentImpl({
       isConnected,
     });
     if (!cancellation) return;
-    const requestId = beginAgentCancellation(serverId, targetAgentId);
+    const requestId = getHostRuntimeStore().beginAgentCancellation(serverId, targetAgentId);
     void cancellation
       .catch((error) => {
         const message = resolveErrorMessage(error);
@@ -1782,27 +1822,14 @@ function ComposerContentImpl({
         }
       })
       .finally(() => {
-        settleAgentCancellation(serverId, targetAgentId, requestId);
+        getHostRuntimeStore().settleAgentCancellation(serverId, targetAgentId, requestId);
       });
     messageInputRef.current?.focus();
-  }, [
-    beginAgentCancellation,
-    client,
-    isAgentRunning,
-    isCancellingAgent,
-    isConnected,
-    serverId,
-    settleAgentCancellation,
-  ]);
+  }, [client, isAgentRunning, isCancellingAgent, isConnected, serverId]);
 
   const focusMessageInputForKeyboardAction = useCallback(() => {
     focusMessageInputWithPlatformStrategy(messageInputRef);
   }, []);
-
-  const { style: keyboardAnimatedStyle } = useKeyboardShiftStyle({
-    mode: "translate",
-    enabled: !externalKeyboardShift,
-  });
 
   const isVoiceModeForAgent = resolveIsVoiceModeForAgent(voice, serverId, agentId);
 
@@ -1860,9 +1887,22 @@ function ComposerContentImpl({
       if (clientSlashCommand && runClientSlashCommand(clientSlashCommand)) {
         return;
       }
+      const pluginSlashCommand = resolvePluginClientSlashCommand({
+        text: payload.text,
+        hasAttachments: outgoingAttachments.length > 0,
+        commands: pluginClientSlashCommands,
+      });
+      if (pluginSlashCommand && runPluginClientSlashCommand(pluginSlashCommand)) return;
       queueMessage(payload.text, outgoingAttachments);
     },
-    [attachments, buildOutgoingAttachments, queueMessage, runClientSlashCommand],
+    [
+      attachments,
+      buildOutgoingAttachments,
+      pluginClientSlashCommands,
+      queueMessage,
+      runClientSlashCommand,
+      runPluginClientSlashCommand,
+    ],
   );
 
   const hasSendableContent = userInput.trim().length > 0 || selectedAttachments.length > 0;
@@ -2141,6 +2181,10 @@ function ComposerContentImpl({
   const handleLightboxClose = useCallback(() => {
     setLightboxMetadata(null);
   }, []);
+  const lightboxSource = useMemo<ImageLightboxSource | null>(
+    () => (lightboxMetadata ? { type: "attachment", metadata: lightboxMetadata } : null),
+    [lightboxMetadata],
+  );
 
   const handleGithubPickerOpenChange = useCallback(
     (open: boolean) => {
@@ -2174,10 +2218,6 @@ function ComposerContentImpl({
     [githubSearchItems, selectedAttachments, handleToggleGithubItem],
   );
 
-  const composerContainerStyle = useMemo(
-    () => [animatedStaticStyles.container, keyboardAnimatedStyle],
-    [keyboardAnimatedStyle],
-  );
   const inputAreaContainerStyle = useMemo(
     () => [styles.inputAreaContainer, isComposerLocked && styles.inputAreaLocked],
     [isComposerLocked],
@@ -2262,8 +2302,11 @@ function ComposerContentImpl({
         focusMessageInputForKeyboardAction={focusMessageInputForKeyboardAction}
         isMessageInputFocused={isMessageInputFocused}
       />
-      <Animated.View style={composerContainerStyle}>
-        <AttachmentLightbox metadata={lightboxMetadata} onClose={handleLightboxClose} />
+      <KeyboardTranslateView
+        style={animatedStaticStyles.container}
+        enabled={!externalKeyboardShift}
+      >
+        <AttachmentLightbox source={lightboxSource} onClose={handleLightboxClose} />
         {/* Input area */}
         <View style={inputAreaContainerStyle}>
           <View style={styles.inputAreaContent}>
@@ -2356,7 +2399,7 @@ function ComposerContentImpl({
             </View>
           </View>
         </View>
-      </Animated.View>
+      </KeyboardTranslateView>
     </>
   );
 }
@@ -2364,6 +2407,9 @@ function ComposerContentImpl({
 const animatedStaticStyles = RNStyleSheet.create({
   container: {
     flexDirection: "column",
+    // KeyboardDock reduces the available column height with bottom padding.
+    // Keep the composer's constraint chain shrinkable down to its scrolling input.
+    flexShrink: 1,
     position: "relative",
   },
 });
@@ -2374,6 +2420,7 @@ const styles = StyleSheet.create((theme: Theme) => ({
     backgroundColor: theme.colors.border,
   },
   inputAreaContainer: {
+    flexShrink: 1,
     position: "relative",
     minHeight: FOOTER_HEIGHT,
     marginHorizontal: "auto",
@@ -2387,11 +2434,13 @@ const styles = StyleSheet.create((theme: Theme) => ({
     opacity: 0.6,
   },
   inputAreaContent: {
+    flexShrink: 1,
     width: "100%",
     maxWidth: MAX_CONTENT_WIDTH,
     gap: theme.spacing[3],
   },
   messageInputContainer: {
+    flexShrink: 1,
     position: "relative",
     width: "100%",
     gap: theme.spacing[3],

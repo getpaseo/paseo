@@ -300,7 +300,7 @@ describe("terminal-session-controller legacy terminal creation", () => {
       hasBinaryChannel: () => true,
       isPathWithinRoot: isSameOrDescendantPath,
       sessionLogger: createLogger(),
-      listTerminalWorkspaceRefs: async () => [],
+      listTerminalWorkspaceRefs: async () => [{ workspaceId: "ws-1", cwd: "/work/repo" }],
     });
 
     await controller.dispatch({
@@ -548,7 +548,13 @@ describe("terminal-session-controller subdirectory aggregation", () => {
         payload: {
           cwd: rootCwd,
           terminals: [
-            { id: "root-term", name: "Terminal 1", workspaceId: "ws-test", activity: null },
+            {
+              id: "root-term",
+              name: "Terminal 1",
+              cwd: rootCwd,
+              workspaceId: "ws-test",
+              activity: null,
+            },
           ],
           requestId: "req-root",
         },
@@ -558,7 +564,13 @@ describe("terminal-session-controller subdirectory aggregation", () => {
         payload: {
           cwd: worktreeCwd,
           terminals: [
-            { id: "worktree-term", name: "Feature", workspaceId: "ws-test", activity: null },
+            {
+              id: "worktree-term",
+              name: "Feature",
+              cwd: worktreeCwd,
+              workspaceId: "ws-test",
+              activity: null,
+            },
           ],
           requestId: "req-worktree",
         },
@@ -617,11 +629,23 @@ describe("terminal-session-controller workspace-scoped subscriptions", () => {
 
     controller.dispatch({ type: "subscribe_terminals_request", cwd, workspaceId: "ws-a" });
     controller.dispatch({ type: "subscribe_terminals_request", cwd, workspaceId: "ws-b" });
+    await expect(controller.hasDirectorySubscription({ cwd, workspaceId: "ws-a" })).resolves.toBe(
+      true,
+    );
+    await expect(controller.hasDirectorySubscription({ cwd, workspaceId: "ws-b" })).resolves.toBe(
+      true,
+    );
     await flushMicrotasks();
     outboundMessages.length = 0;
 
     // Tearing down workspace B must not drop workspace A's live subscription.
     controller.dispatch({ type: "unsubscribe_terminals_request", cwd, workspaceId: "ws-b" });
+    await expect(controller.hasDirectorySubscription({ cwd, workspaceId: "ws-a" })).resolves.toBe(
+      true,
+    );
+    await expect(controller.hasDirectorySubscription({ cwd, workspaceId: "ws-b" })).resolves.toBe(
+      false,
+    );
 
     changedListener?.({ cwd, terminals: [{ id: "a", name: "A", cwd, workspaceId: "ws-a" }] });
     await flushMicrotasks();

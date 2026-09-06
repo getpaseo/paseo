@@ -148,7 +148,7 @@ function CheckGroup({
 }) {
   const handlePress = useCallback(() => onToggle(group.status), [group.status, onToggle]);
   return (
-    <View>
+    <View testID={`pr-pane-check-group-${group.status}`}>
       <Pressable onPress={handlePress} style={styles.groupHeader} accessibilityRole="button">
         <Text style={styles.groupLabel}>{group.label}</Text>
         {collapsed ? (

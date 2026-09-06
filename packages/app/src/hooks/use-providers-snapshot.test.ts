@@ -6,6 +6,7 @@ import type { ProviderSnapshotEntry } from "@getpaseo/protocol/agent-types";
 import { compactProviderSnapshot } from "@getpaseo/protocol/provider-snapshot-codec";
 import type { CachedProviderSnapshot, ProviderSnapshotCache } from "@/data/provider-snapshot-cache";
 import { draftAgentCommandsQueryKey } from "@/hooks/agent-commands-query";
+import { resolveProviderIconName } from "@/components/provider-icon-name";
 import { applyProvidersSnapshotUpdate, type ProvidersSnapshotUpdate } from "@/data/push-router";
 import {
   fetchProvidersSnapshot,
@@ -109,6 +110,24 @@ describe("providersSnapshotQueryKey", () => {
 });
 
 describe("fetchProvidersSnapshot", () => {
+  it("registers provider icons from the applied snapshot", async () => {
+    const svg = '<svg viewBox="0 0 24 24"><path d="M4 4h16v16H4z" /></svg>';
+    const client = createClient({
+      snapshots: [
+        providersSnapshot([
+          { provider: "snapshot-icon-provider", status: "ready", enabled: true, iconSvg: svg },
+        ]),
+      ],
+    });
+
+    await fetchProvidersSnapshot({ client, serverId, cwd: null, cache: createCache() });
+
+    expect(resolveProviderIconName("snapshot-icon-provider", serverId)).toEqual({
+      kind: "svg",
+      svg,
+    });
+  });
+
   it("sends no cwd for the home scope", async () => {
     const client = createClient({ snapshots: [providersSnapshot([])] });
 

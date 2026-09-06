@@ -1,3 +1,4 @@
+import { createAgentRequestsStub } from "./test-utils/session-stubs.js";
 import pino from "pino";
 import { z } from "zod";
 import { describe, expect, test } from "vitest";
@@ -11,6 +12,7 @@ import {
   type SessionOutboundMessage,
 } from "@getpaseo/protocol/messages";
 import { Session, type SessionOptions } from "./session.js";
+import { OWNER_PERMISSIONS } from "./authorization/index.js";
 import { DirectorySyncService } from "./directory-sync/index.js";
 import { createProviderSnapshotManagerStub } from "./test-utils/session-stubs.js";
 import type { AgentTimelineRow } from "./agent/agent-manager.js";
@@ -205,8 +207,9 @@ function createSessionForWireCompatTest(options?: {
   ];
 
   const session = new Session({
+    agentRequests: createAgentRequestsStub(),
     clientId: "wire-compat-client",
-    scopes: ["*"],
+    permissions: OWNER_PERMISSIONS,
     clientCapabilities: options?.clientCapabilities ?? null,
     onMessage: (message) => messages.push(message),
     logger: pino({ level: "silent" }),

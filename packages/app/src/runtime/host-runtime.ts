@@ -9,6 +9,7 @@ import {
 } from "@getpaseo/client/internal/daemon-client";
 import {
   connectionFromListen,
+  createRemoteSshHostConnection,
   normalizeStoredHostProfile,
   upsertHostConnectionInProfiles,
   registryHasConnection,
@@ -38,13 +39,19 @@ import {
   type ConnectionProbeState,
 } from "@/utils/connection-selection";
 import {
-  buildLocalDaemonTransportUrl,
-  createDesktopLocalDaemonTransportFactory,
+  buildDesktopDaemonTransportUrl,
+  createDesktopDaemonTransportFactory,
 } from "@/desktop/daemon/desktop-daemon-transport";
 import { getDesktopHost } from "@/desktop/host";
 import { CLIENT_CAPS } from "@getpaseo/protocol/client-capabilities";
 import { BROWSER_AUTOMATION_COMMAND_NAMES } from "@getpaseo/protocol/browser-automation/rpc-schemas";
-import { useSessionStore } from "@/stores/session-store";
+import {
+  useSessionStore,
+  type Agent,
+  type WorkspaceDescriptor,
+  type ProjectDescriptor,
+} from "@/stores/session-store";
+import type { TurnLivenessTransition } from "@/timeline/turn-liveness";
 import { useWorkspaceSetupStore } from "@/stores/workspace-setup-store";
 import { invalidateCheckoutGitQueriesForServer } from "@/git/query-keys";
 import { queryClient } from "@/data/query-client";
@@ -81,6 +88,7 @@ export type ActiveConnection =
   | { type: "directTcp"; endpoint: string; display: string }
   | { type: "directSocket"; endpoint: string; display: "socket" }
   | { type: "directPipe"; endpoint: string; display: "pipe" }
+  | { type: "remoteSsh"; endpoint: string; display: string }
   | { type: "relay"; endpoint: string; display: "relay" };
 
 export type HostRuntimeAgentDirectoryStatus =
@@ -209,6 +217,13 @@ function toActiveConnection(connection: HostConnection): ActiveConnection {
       type: "directPipe",
       endpoint: connection.path,
       display: "pipe",
+    };
+  }
+  if (connection.type === "remoteSsh") {
+    return {
+      type: "remoteSsh",
+      endpoint: connection.host,
+      display: connection.host,
     };
   }
   if (connection.type === "directTcp") {
@@ -493,7 +508,7 @@ function createDefaultDeps(): HostRuntimeControllerDeps {
 
   return {
     createClient: ({ host, connection, clientId, runtimeGeneration }) => {
-      const localTransportFactory = createDesktopLocalDaemonTransportFactory();
+      const desktopTransportFactory = createDesktopDaemonTransportFactory();
       const webSocketConfig = { webSocketFactory: createAppWebSocketFactory() };
       const base = {
         suppressSendErrors: true,
@@ -507,10 +522,25 @@ function createDefaultDeps(): HostRuntimeControllerDeps {
       if (connection.type === "directSocket" || connection.type === "directPipe") {
         return new DaemonClient({
           ...base,
-          ...(localTransportFactory ? { transportFactory: localTransportFactory } : {}),
-          url: buildLocalDaemonTransportUrl({
+          ...(desktopTransportFactory ? { transportFactory: desktopTransportFactory } : {}),
+          url: buildDesktopDaemonTransportUrl({
             transportType: connection.type === "directSocket" ? "socket" : "pipe",
             transportPath: connection.path,
+          }),
+        });
+      }
+      if (connection.type === "remoteSsh") {
+        if (!desktopTransportFactory) {
+          throw new Error("Remote SSH is only available in the desktop app.");
+        }
+        return new DaemonClient({
+          ...base,
+          transportFactory: desktopTransportFactory,
+          url: buildDesktopDaemonTransportUrl({
+            transportType: "ssh",
+            host: connection.host,
+            ...(connection.sshPort !== undefined ? { sshPort: connection.sshPort } : {}),
+            ...(connection.daemonPort !== undefined ? { daemonPort: connection.daemonPort } : {}),
           }),
         });
       }
@@ -588,6 +618,7 @@ export class HostRuntimeController {
   private switchRequestVersion = 0;
   private probeRequestVersion = 0;
   private probeCycleInFlight: Promise<void> | null = null;
+  private reconnectEnabled = true;
 
   constructor(input: {
     host: HostProfile;
@@ -695,6 +726,11 @@ export class HostRuntimeController {
 
   ensureConnected(): void {
     this.activeClient?.ensureConnected();
+  }
+
+  setReconnectEnabled(enabled: boolean): void {
+    this.reconnectEnabled = enabled;
+    this.activeClient?.setReconnectEnabled(enabled);
   }
 
   markAgentDirectorySyncLoading(): void {
@@ -946,10 +982,7 @@ export class HostRuntimeController {
           let shouldCloseClient = false;
           try {
             const activeClient =
-              this.snapshot.connectionStatus === "online" &&
-              this.snapshot.activeConnectionId === connection.id
-                ? this.snapshot.client
-                : null;
+              this.snapshot.activeConnectionId === connection.id ? this.snapshot.client : null;
 
             if (activeClient) {
               connectedClient = activeClient;
@@ -1202,9 +1235,6 @@ export class HostRuntimeController {
     }
 
     const nextGeneration = this.snapshot.clientGeneration + 1;
-    if (existingClient) {
-      existingClient.setReconnectEnabled(true);
-    }
     const client =
       existingClient ??
       this.deps.createClient({
@@ -1213,6 +1243,7 @@ export class HostRuntimeController {
         clientId,
         runtimeGeneration: nextGeneration,
       });
+    client.setReconnectEnabled(this.reconnectEnabled);
 
     if (!this.isSwitchStillValid(requestVersion, expectedProbeVersion)) {
       await client.close().catch(() => undefined);
@@ -1370,9 +1401,11 @@ export class HostRuntimeStore {
   private connectionStatusStartedAtByServer = new Map<string, number>();
   private queuedAgentDrainInFlight = new Set<string>();
   private directorySyncByServer = new Map<string, DirectorySync>();
+  private nextCancellationRequestId = 0;
   private timelineReplicaByServer = new Map<string, TimelineReplica>();
   private configuredOverrideBootstrapInFlight: Promise<void> | null = null;
   private bootPromise: Promise<void> | null = null;
+  private appVisible = true;
   private storage: HostRuntimeStorage;
   private replicaCache: ReplicaCache;
   private readonly revokePushNotifications: typeof revokePushNotifications;
@@ -1487,6 +1520,12 @@ export class HostRuntimeStore {
       projectIconCache.setHosts(profiles.map((profile) => profile.serverId));
       await projectIconCache.restore();
       this.syncHosts(profiles);
+      for (const profile of profiles) {
+        void this.directorySyncByServer
+          .get(profile.serverId)
+          ?.restoreCachedDirectory()
+          .catch(() => undefined);
+      }
     } catch (error) {
       console.error("[HostRuntime] Failed to load host registry from storage", error);
     } finally {
@@ -1751,6 +1790,18 @@ export class HostRuntimeStore {
         useTls: input.useTls ?? false,
         ...(password ? { password } : {}),
       },
+    });
+  }
+
+  async probeAndUpsertRemoteSshConnection(input: {
+    host: string;
+    sshPort?: number;
+    daemonPort?: number;
+    label?: string;
+  }): Promise<{ profile: HostProfile; serverId: string; hostname: string | null }> {
+    return this.probeAndUpsertConnection({
+      label: input.label,
+      connection: createRemoteSshHostConnection(input),
     });
   }
 
@@ -2028,6 +2079,7 @@ export class HostRuntimeStore {
         deps: this.deps,
         onReconcileServerId: (oldId, newId) => this.reconcileServerId(oldId, newId),
       });
+      controller.setReconnectEnabled(this.appVisible);
       this.controllers.set(host.serverId, controller);
       useSessionStore.getState().initializeSession(host.serverId, null);
       const directory = new DirectorySync(
@@ -2179,6 +2231,56 @@ export class HostRuntimeStore {
       });
   }
 
+  applyAgentTurnLiveness(
+    serverId: string,
+    agentId: string,
+    transition: TurnLivenessTransition | readonly TurnLivenessTransition[],
+  ): void {
+    this.directorySyncByServer.get(serverId)?.applyAgentTurnLiveness(agentId, transition);
+  }
+
+  beginAgentCancellation(serverId: string, agentId: string): number {
+    const requestId = ++this.nextCancellationRequestId;
+    this.applyAgentTurnLiveness(serverId, agentId, { type: "cancellation_started", requestId });
+    return requestId;
+  }
+
+  settleAgentCancellation(serverId: string, agentId: string, requestId: number): void {
+    this.applyAgentTurnLiveness(serverId, agentId, { type: "cancellation_settled", requestId });
+  }
+
+  acceptAgentSnapshot(serverId: string, agent: Agent): Agent {
+    return this.requireDirectory(serverId).acceptAgent(agent);
+  }
+
+  archiveAgentSnapshot(serverId: string, agentId: string, archivedAt: string): void {
+    this.requireDirectory(serverId).archiveAgent(agentId, archivedAt);
+  }
+
+  restoreAgentSnapshot(serverId: string, agentId: string, agent: Agent | undefined): void {
+    const directory = this.requireDirectory(serverId);
+    if (agent) directory.acceptAgent(agent);
+    else directory.removeAgent(agentId);
+  }
+
+  acceptWorkspaceSnapshots(serverId: string, workspaces: readonly WorkspaceDescriptor[]): void {
+    this.requireDirectory(serverId).acceptWorkspaces(workspaces);
+  }
+
+  acceptProjectSnapshot(serverId: string, project: ProjectDescriptor): void {
+    this.requireDirectory(serverId).acceptProject(project);
+  }
+
+  removeWorkspaceSnapshot(serverId: string, workspaceId: string): void {
+    this.requireDirectory(serverId).removeWorkspace(workspaceId);
+  }
+
+  private requireDirectory(serverId: string): DirectorySync {
+    const directory = this.directorySyncByServer.get(serverId);
+    if (!directory) throw new Error(`Unknown host runtime for serverId ${serverId}`);
+    return directory;
+  }
+
   getSnapshot(serverId: string): HostRuntimeSnapshot | null {
     return this.controllers.get(serverId)?.getSnapshot() ?? null;
   }
@@ -2236,6 +2338,19 @@ export class HostRuntimeStore {
     for (const controller of this.controllers.values()) {
       controller.ensureConnected();
     }
+  }
+
+  setAppVisible(visible: boolean): void {
+    this.appVisible = visible;
+    for (const controller of this.controllers.values()) {
+      controller.setReconnectEnabled(visible);
+    }
+    if (!visible) {
+      void this.replicaCache.flush();
+      return;
+    }
+
+    this.ensureConnectedAll();
   }
 
   runProbeCycleNow(serverId?: string): Promise<void> {
@@ -2488,6 +2603,12 @@ export interface HostMutations {
     password?: string;
     label?: string;
   }) => Promise<{ profile: HostProfile; serverId: string; hostname: string | null }>;
+  probeAndUpsertRemoteSshConnection: (input: {
+    host: string;
+    sshPort?: number;
+    daemonPort?: number;
+    label?: string;
+  }) => Promise<{ profile: HostProfile; serverId: string; hostname: string | null }>;
   upsertRelayConnection: (input: {
     serverId: string;
     relayEndpoint: string;
@@ -2513,6 +2634,7 @@ export function useHostMutations(): HostMutations {
     () => ({
       upsertDirectConnection: (input) => store.upsertDirectConnection(input),
       probeAndUpsertDirectConnection: (input) => store.probeAndUpsertDirectConnection(input),
+      probeAndUpsertRemoteSshConnection: (input) => store.probeAndUpsertRemoteSshConnection(input),
       upsertRelayConnection: (input) => store.upsertRelayConnection(input),
       upsertConnectionFromOffer: (offer, label) => store.upsertConnectionFromOffer(offer, label),
       upsertConnectionFromOfferUrl: (url, label) => store.upsertConnectionFromOfferUrl(url, label),

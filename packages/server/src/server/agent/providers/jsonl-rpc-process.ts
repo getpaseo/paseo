@@ -50,6 +50,7 @@ export interface JsonlRpcProcessOptions {
   launch: JsonlRpcLaunch;
   logger: Logger;
   diagnosticName?: string;
+  defaultRequestTimeoutMs?: number;
   spawn?: (launch: JsonlRpcLaunch) => ChildProcessWithoutNullStreams;
 }
 
@@ -103,6 +104,9 @@ export class JsonlRpcProcess {
         this.stderrBuffer = this.stderrBuffer.slice(-STDERR_BUFFER_LIMIT);
       }
     });
+    this.child.stdin.on("error", (error) => {
+      this.handleStdinError(error);
+    });
     this.child.on("error", (error) => {
       this.failAll(error instanceof Error ? error : new Error(String(error)));
     });
@@ -134,7 +138,7 @@ export class JsonlRpcProcess {
 
   startRequest(
     command: { type: string; [key: string]: unknown },
-    timeoutMs: number | null = JSONL_RPC_DEFAULT_TIMEOUT_MS,
+    timeoutMs?: number | null,
   ): { id: string; promise: Promise<unknown> } {
     if (this.disposed) {
       return {
@@ -144,12 +148,17 @@ export class JsonlRpcProcess {
     }
     const id = `req_${this.nextRequestId}`;
     this.nextRequestId += 1;
+    const requestTimeoutMs =
+      timeoutMs === undefined
+        ? (this.options.defaultRequestTimeoutMs ?? JSONL_RPC_DEFAULT_TIMEOUT_MS)
+        : timeoutMs;
+    const startedAt = Date.now();
     const promise = new Promise<unknown>((resolve, reject) => {
-      const timer = createRequestTimeout(timeoutMs, () => {
+      const timer = createRequestTimeout(requestTimeoutMs, () => {
         this.pending.delete(id);
         reject(
           new Error(
-            `${this.diagnosticName} request timed out for ${command.type}\n${this.stderrBuffer}`.trim(),
+            `${this.diagnosticName} request timed out phase=${command.type} elapsedMs=${Date.now() - startedAt} timeoutMs=${requestTimeoutMs}\n${this.stderrBuffer}`.trim(),
           ),
         );
       });
@@ -161,16 +170,24 @@ export class JsonlRpcProcess {
 
   request(
     command: { type: string; [key: string]: unknown },
-    timeoutMs: number | null = JSONL_RPC_DEFAULT_TIMEOUT_MS,
+    timeoutMs?: number | null,
   ): Promise<unknown> {
     return this.startRequest(command, timeoutMs).promise;
   }
 
   send(message: Record<string, unknown>): void {
-    if (this.disposed || this.child.stdin.destroyed || !this.child.stdin.writable) {
+    if (this.disposed) {
       return;
     }
-    this.child.stdin.write(`${JSON.stringify(message)}\n`);
+    if (this.child.stdin.destroyed || !this.child.stdin.writable) {
+      this.handleStdinError(new Error(`${this.diagnosticName} stdin is not writable`));
+      return;
+    }
+    try {
+      this.child.stdin.write(`${JSON.stringify(message)}\n`);
+    } catch (error) {
+      this.handleStdinError(error);
+    }
   }
 
   async close(error = new Error(`${this.diagnosticName} process is closed`)): Promise<void> {
@@ -235,6 +252,15 @@ export class JsonlRpcProcess {
       return;
     }
     pending.resolve(response.data);
+  }
+
+  private handleStdinError(error: unknown): void {
+    if (this.disposed) {
+      return;
+    }
+    const err = error instanceof Error ? error : new Error(String(error));
+    this.options.logger.warn({ err }, `${this.diagnosticName} stdin write failed`);
+    void this.close(err);
   }
 
   private failAll(error: Error): void {

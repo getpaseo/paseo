@@ -9,6 +9,9 @@ export interface PluginRpcContract<
   output: OutputSchema;
 }
 
+export type RpcInput<Contract extends PluginRpcContract> = ZodOutput<Contract["input"]>;
+export type RpcOutput<Contract extends PluginRpcContract> = ZodInput<Contract["output"]>;
+
 interface RpcDefinition<InputSchema extends ZodType, OutputSchema extends ZodType> {
   name: string;
   input: InputSchema;

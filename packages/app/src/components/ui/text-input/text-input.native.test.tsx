@@ -2,7 +2,7 @@
 import React, { act, createRef } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { BottomSheetTextInputScope } from "./bottom-sheet-scope";
+import { BottomSheetScope } from "@/components/ui/bottom-sheet-scope";
 import { EditingTextInput } from "./text-input.native";
 import type { EditingTextInputHandle } from "./types";
 
@@ -62,9 +62,9 @@ describe("EditingTextInputNative", () => {
       root?.render(
         <>
           <EditingTextInput testID="outside" />
-          <BottomSheetTextInputScope>
+          <BottomSheetScope>
             <EditingTextInput testID="inside" />
-          </BottomSheetTextInputScope>
+          </BottomSheetScope>
         </>,
       );
     });
@@ -90,6 +90,85 @@ describe("EditingTextInputNative", () => {
     });
 
     expect(handleRef.current?.getText()).toBe("");
+  });
+
+  it("replaces the native input when clearing text", () => {
+    const handleRef = createRef<EditingTextInputHandle>();
+
+    act(() => {
+      root?.render(
+        <EditingTextInput
+          ref={handleRef}
+          initialValue="line one\nline two\nline three"
+          onChangeText={noop}
+        />,
+      );
+    });
+    const grownInput = container?.querySelector("input");
+
+    act(() => {
+      handleRef.current?.replaceText("");
+    });
+
+    expect(container?.querySelector("input")).not.toBe(grownInput);
+  });
+
+  it("restores focus after replacing a cleared native input", () => {
+    const handleRef = createRef<EditingTextInputHandle>();
+
+    act(() => {
+      root?.render(<EditingTextInput ref={handleRef} initialValue="message" />);
+    });
+    const originalInput = container?.querySelector("input");
+    if (!originalInput) throw new Error("Expected native input");
+    Object.assign(originalInput, { isFocused: () => true });
+    originalInput.focus();
+
+    act(() => {
+      handleRef.current?.replaceText("");
+    });
+
+    expect(document.activeElement).toBe(container?.querySelector("input"));
+  });
+
+  it("focuses the replacement input when focus is requested before a cleared input remounts", () => {
+    const handleRef = createRef<EditingTextInputHandle>();
+
+    act(() => {
+      root?.render(<EditingTextInput ref={handleRef} initialValue="stale" />);
+    });
+    const originalInput = container?.querySelector("input");
+    if (!originalInput) throw new Error("Expected native input");
+    const originalFocus = vi.spyOn(originalInput, "focus");
+
+    act(() => {
+      handleRef.current?.replaceText("");
+      handleRef.current?.focus();
+    });
+
+    const replacementInput = container?.querySelector("input");
+    expect(replacementInput).not.toBe(originalInput);
+    expect(originalFocus).not.toHaveBeenCalled();
+    expect(document.activeElement).toBe(replacementInput);
+  });
+
+  it("drops a pending focus restore when blur is requested before a cleared input remounts", () => {
+    const handleRef = createRef<EditingTextInputHandle>();
+
+    act(() => {
+      root?.render(<EditingTextInput ref={handleRef} initialValue="stale" />);
+    });
+    const originalInput = container?.querySelector("input");
+    if (!originalInput) throw new Error("Expected native input");
+    Object.assign(originalInput, { isFocused: () => true });
+    originalInput.focus();
+
+    act(() => {
+      handleRef.current?.replaceText("");
+      handleRef.current?.blur();
+    });
+
+    expect(document.activeElement).not.toBe(container?.querySelector("input"));
   });
 
   it("updates textRef and text when replaceText receives non-empty text", () => {

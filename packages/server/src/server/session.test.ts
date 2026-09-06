@@ -1,3 +1,4 @@
+import { createAgentRequestsStub } from "./test-utils/session-stubs.js";
 import { execSync } from "child_process";
 import { existsSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
@@ -18,7 +19,8 @@ import {
   FileTransferOpcode,
   type FileTransferFrame,
 } from "@getpaseo/protocol/binary-frames/index";
-import { isSessionRpcAllowed, Session } from "./session.js";
+import { Session } from "./session.js";
+import { OWNER_PERMISSIONS, type DaemonPermission } from "./authorization/index.js";
 import { DownloadTokenStore } from "./file-download/token-store.js";
 import { StructuredAgentFallbackError } from "./agent/agent-response-loop.js";
 import type { StoredAgentRecord } from "./agent/agent-storage.js";
@@ -281,7 +283,8 @@ vi.mock("./worktree-bootstrap.js", async (importOriginal) => {
 });
 
 interface SessionForTestOptions {
-  scopes?: readonly string[];
+  clientId?: string;
+  permissions?: readonly DaemonPermission[];
   agentManager?: { [K in keyof SessionOptions["agentManager"]]?: unknown };
   agentStorage?: { [K in keyof SessionOptions["agentStorage"]]?: unknown };
   github?: Partial<ForgeService & GitHubService>;
@@ -359,7 +362,8 @@ function createSessionForTest(options: SessionForTestOptions = {}): Session {
   const messages = options.messages ?? [];
 
   const sessionOptions: SessionOptions = {
-    clientId: "test-client",
+    agentRequests: createAgentRequestsStub(),
+    clientId: options.clientId ?? "test-client",
     onMessage: (message) => messages.push(message),
     ...(options.targetedMessages
       ? {
@@ -426,7 +430,7 @@ function createSessionForTest(options: SessionForTestOptions = {}): Session {
     serverId: options.serverId,
     daemonVersion: options.daemonVersion,
     daemonRuntimeConfig: options.daemonRuntimeConfig,
-    scopes: options.scopes ?? ["*"],
+    permissions: options.permissions ?? OWNER_PERMISSIONS,
   };
   return new Session(sessionOptions);
 }
@@ -721,7 +725,7 @@ describe("workspace label editing", () => {
   });
 });
 
-describe("session authorization scopes", () => {
+describe("session authorization permissions", () => {
   test("routes named-agent validation through the session source", async () => {
     const messages: SessionOutboundMessage[] = [];
     const providers = createProviderSnapshotManagerStub();
@@ -760,10 +764,10 @@ describe("session authorization scopes", () => {
     });
   });
 
-  test("rejects an RPC outside an exact grant with the generic RPC error", async () => {
+  test("rejects an operation without its semantic permission", async () => {
     const messages: SessionOutboundMessage[] = [];
     const session = createSessionForTest({
-      scopes: ["hub.execution.agent.create.request"],
+      permissions: ["hub.execute"],
       messages,
     });
 
@@ -782,32 +786,16 @@ describe("session authorization scopes", () => {
     ]);
   });
 
-  test.each([
-    ["*", "ping"],
-    ["hub.execution.*", "hub.execution.agent.create.request"],
-    ["hub.execution.agent.create.request", "hub.execution.agent.create.request"],
-  ])("scope %s authorizes %s", (scope, requestType) => {
-    expect(isSessionRpcAllowed([scope], requestType)).toBe(true);
-  });
-
-  test.each([
-    ["hub.execution.*", "hub.management.daemon.get_status.request"],
-    ["hub.execution.agent.create.request", "hub.execution.agent.update"],
-    ["hub.execution.*", "hub.executions.agent.create.request"],
-  ])("scope %s rejects %s", (scope, requestType) => {
-    expect(isSessionRpcAllowed([scope], requestType)).toBe(false);
-  });
-
-  test("replaces a session's scopes without reconstructing the session", async () => {
+  test("replaces a session's permissions without reconstructing the session", async () => {
     const messages: SessionOutboundMessage[] = [];
-    const session = createSessionForTest({ scopes: ["hub.execution.*"], messages });
+    const session = createSessionForTest({ permissions: ["hub.execute"], messages });
 
     await session.handleMessage({
       type: "ping",
       requestId: "before-scope-change",
       clientSentAt: 1,
     });
-    session.setScopes(["*"]);
+    session.setPermissions(["daemon.read"]);
     await session.handleMessage({ type: "ping", requestId: "after-scope-change", clientSentAt: 2 });
 
     expect(messages).toEqual([
@@ -1389,6 +1377,100 @@ function createStoredAgentRecord(
     archivedAt: overrides.archivedAt ?? null,
   };
 }
+
+describe("plugin timeline append RPC", () => {
+  test("stamps the plugin identity and returns the timeline position", async () => {
+    const messages: SessionOutboundMessage[] = [];
+    const appendTimelineItem = vi.fn().mockResolvedValue({ seq: 7, epoch: "epoch-1" });
+    const session = createSessionForTest({
+      clientId: "plugin:review",
+      messages,
+      agentManager: { appendTimelineItem },
+    });
+
+    await session.handleMessage({
+      type: "agent.timeline.append.request",
+      requestId: "append-1",
+      agentId: "agent-1",
+      item: {
+        type: "plugin",
+        id: "review-1",
+        kind: "review",
+        version: 1,
+        data: { status: "running" },
+      },
+    });
+
+    expect(appendTimelineItem).toHaveBeenCalledWith("agent-1", {
+      type: "plugin",
+      id: "review-1",
+      pluginId: "review",
+      kind: "review",
+      version: 1,
+      data: { status: "running" },
+    });
+    expect(messages).toContainEqual({
+      type: "agent.timeline.append.response",
+      payload: { requestId: "append-1", seq: 7, epoch: "epoch-1" },
+    });
+  });
+
+  test("rejects append requests from non-plugin sessions", async () => {
+    const messages: SessionOutboundMessage[] = [];
+    const appendTimelineItem = vi.fn();
+    const session = createSessionForTest({ messages, agentManager: { appendTimelineItem } });
+
+    await session.handleMessage({
+      type: "agent.timeline.append.request",
+      requestId: "append-1",
+      agentId: "agent-1",
+      item: { type: "plugin", id: "review-1", kind: "review", version: 1, data: {} },
+    });
+
+    expect(appendTimelineItem).not.toHaveBeenCalled();
+    expect(messages).toContainEqual(
+      expect.objectContaining({
+        type: "rpc_error",
+        payload: expect.objectContaining({ requestId: "append-1", code: "handler_error" }),
+      }),
+    );
+  });
+
+  test("rejects plugin data larger than the append budget", async () => {
+    const messages: SessionOutboundMessage[] = [];
+    const appendTimelineItem = vi.fn();
+    const session = createSessionForTest({
+      clientId: "plugin:review",
+      messages,
+      agentManager: { appendTimelineItem },
+    });
+
+    await session.handleMessage({
+      type: "agent.timeline.append.request",
+      requestId: "append-large",
+      agentId: "agent-1",
+      item: {
+        type: "plugin",
+        id: "review-1",
+        kind: "review",
+        version: 1,
+        data: { text: "x".repeat(64 * 1024) },
+      },
+    });
+
+    expect(appendTimelineItem).not.toHaveBeenCalled();
+    expect(messages).toContainEqual(
+      expect.objectContaining({
+        type: "rpc_error",
+        payload: expect.objectContaining({
+          requestId: "append-large",
+          code: "handler_error",
+          error: expect.stringContaining("65536 bytes"),
+        }),
+      }),
+    );
+  });
+});
 
 describe("agent detach RPC", () => {
   test("detaches a stored subagent and emits the updated standalone agent", async () => {

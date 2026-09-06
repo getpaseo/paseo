@@ -43,9 +43,13 @@ class FakeDaemonProbe {
       return "cid_shared_probe_test";
     },
     resolveAppVersion: () => null,
-    createLocalTransportFactory: () => null,
-    buildLocalTransportUrl: ({ transportType, transportPath }) =>
-      `paseo+local://${transportType}?path=${encodeURIComponent(transportPath)}`,
+    createDesktopTransportFactory: () => null,
+    buildDesktopTransportUrl: (target) => {
+      if (target.transportType === "ssh") {
+        return `paseo+desktop://ssh?host=${encodeURIComponent(target.host)}`;
+      }
+      return `paseo+desktop://${target.transportType}?path=${encodeURIComponent(target.transportPath)}`;
+    },
     createClient: (config) => {
       const client = new FakeDaemonClient(this, config);
       this.createdClients.push(client);
@@ -137,7 +141,32 @@ describe("test-daemon-connection connectToDaemon", () => {
     );
     await result.client.close();
 
-    expect(probe.createdConfigs()[0]?.url).toBe("paseo+local://socket?path=%2Ftmp%2Fpaseo.sock");
+    expect(probe.createdConfigs()[0]?.url).toBe("paseo+desktop://socket?path=%2Ftmp%2Fpaseo.sock");
+  });
+
+  it("uses the desktop transport for Remote SSH connections", async () => {
+    const { connectToDaemon } = await import("./test-daemon-connection");
+    const transportFactory = vi.fn();
+    const result = await connectToDaemon(
+      {
+        id: "ssh:deploy%40example.com:2222:%2Fkeys%2Fpaseo",
+        type: "remoteSsh",
+        host: "deploy@example.com",
+        sshPort: 2222,
+        daemonPort: 7777,
+      },
+      undefined,
+      {
+        ...probe.deps,
+        createDesktopTransportFactory: () => transportFactory,
+      },
+    );
+    await result.client.close();
+
+    expect(probe.createdConfigs()[0]).toMatchObject({
+      url: "paseo+desktop://ssh?host=deploy%40example.com",
+      transportFactory,
+    });
   });
 
   it("passes direct TCP connection passwords into the client config", async () => {

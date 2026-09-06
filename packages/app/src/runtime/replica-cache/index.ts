@@ -1,4 +1,3 @@
-import { Buffer } from "buffer";
 import { z } from "zod";
 import {
   AgentStatusSchema,
@@ -31,7 +30,45 @@ import {
   type ReplicaRowStore,
 } from "./row-store";
 
-const PERSIST_DELAY_MS = 5_000;
+export type DirectoryReplicaMutation =
+  | { kind: "agent"; type: "upsert"; id: string; value: Agent }
+  | { kind: "agent"; type: "delete"; id: string }
+  | { kind: "workspace"; type: "upsert"; id: string; value: WorkspaceDescriptor }
+  | { kind: "workspace"; type: "delete"; id: string }
+  | { kind: "project"; type: "upsert"; id: string; value: ProjectDescriptor }
+  | { kind: "project"; type: "delete"; id: string };
+
+export interface CachedDirectory {
+  agents: Map<string, Agent>;
+  workspaces: Map<string, WorkspaceDescriptor>;
+  projects: Map<string, ProjectDescriptor>;
+  checkpoint?: DirectoryCheckpoint;
+}
+
+export interface CachedWorkspace {
+  workspace: WorkspaceDescriptor;
+  project?: ProjectDescriptor;
+}
+
+export interface DirectoryCursor {
+  generation: string;
+  afterSeq: number;
+}
+
+export interface DirectoryCheckpoint {
+  projects?: DirectoryCursor;
+  workspaces?: DirectoryCursor;
+  agents?: DirectoryCursor;
+}
+
+export interface CachedTimeline {
+  agentId: string;
+  items: StreamItem[];
+  range: AgentTimelineCursorState | null;
+  hasOlder: boolean;
+}
+
+const PERSIST_DELAY_MS = 1_000;
 const MAX_TIMELINE_ITEMS = 50;
 const MAX_CACHE_BYTES = 32 * 1024 * 1024;
 const IsoDateSchema = z.iso.datetime();
@@ -69,7 +106,7 @@ const TodoEntrySchema = z.strictObject({
 const TaskActivitySchema = z.discriminatedUnion("type", [
   z.strictObject({ type: z.literal("created"), count: z.number().int().nonnegative() }),
   z.strictObject({
-    type: z.enum(["added", "started", "completed", "reopened"]),
+    type: z.enum(["added", "started", "completed"]),
     task: z.string(),
   }),
 ]);
@@ -105,8 +142,9 @@ const StoredTimelineItemSchema = z.discriminatedUnion("kind", [
   }),
   z.strictObject({
     ...TimelineItemBaseShape,
-    kind: z.literal("activity_log"),
-    activityType: z.enum(["system", "info", "success", "error"]),
+    kind: z.literal("notification"),
+    sourceType: z.enum(["error", "notification"]),
+    level: z.enum(["info", "warning", "error"]),
     message: z.string(),
   }),
   z.strictObject({
@@ -126,6 +164,7 @@ const StoredTimelineItemSchema = z.discriminatedUnion("kind", [
     ...TimelineItemBaseShape,
     kind: z.literal("plugin"),
     pluginId: z.string(),
+    pluginItemId: z.string(),
     itemKind: z.string(),
     version: z.number().int().positive(),
     data: PluginTimelineDataSchema,
@@ -216,6 +255,16 @@ const StoredAgentSnapshotSchema = z.strictObject({
 
 const StoredAgentSchema = z.strictObject({
   snapshot: StoredAgentSnapshotSchema,
+  turn: z
+    .discriminatedUnion("phase", [
+      z.strictObject({ phase: z.literal("idle") }),
+      z.strictObject({
+        phase: z.literal("open"),
+        turnId: z.string().nullable(),
+        startedAt: IsoDateSchema.nullable(),
+      }),
+    ])
+    .optional(),
   projectPlacement: StoredProjectPlacementSchema.nullable(),
   lastActivityAt: IsoDateSchema,
 });
@@ -312,28 +361,12 @@ interface ReplicaCacheOptions {
   clearLegacyCache?: () => Promise<void>;
 }
 
-export interface CachedDirectory {
-  agents: Map<string, Agent>;
-  workspaces: Map<string, WorkspaceDescriptor>;
-  projects: Map<string, ProjectDescriptor>;
-  checkpoint?: DirectoryCheckpoint;
-}
-
-export interface CachedWorkspace {
-  workspace: WorkspaceDescriptor;
-  project?: ProjectDescriptor;
-}
-
-export interface DirectoryCursor {
-  generation: string;
-  afterSeq: number;
-}
-
-export interface DirectoryCheckpoint {
-  projects?: DirectoryCursor;
-  workspaces?: DirectoryCursor;
-  agents?: DirectoryCursor;
-}
+type StructuredReplicaUpsert =
+  | { serverId: string; kind: "agent"; id: string; value: Agent }
+  | { serverId: string; kind: "workspace"; id: string; value: WorkspaceDescriptor }
+  | { serverId: string; kind: "project"; id: string; value: ProjectDescriptor }
+  | { serverId: string; kind: "timeline"; id: string; value: CachedTimeline }
+  | { serverId: string; kind: "checkpoint"; id: string; value: DirectoryCheckpoint };
 
 const DirectoryCursorSchema = z.strictObject({
   generation: z.string(),
@@ -345,13 +378,6 @@ const DirectoryCheckpointSchema = z.strictObject({
   workspaces: DirectoryCursorSchema.optional(),
   agents: DirectoryCursorSchema.optional(),
 });
-
-export interface CachedTimeline {
-  agentId: string;
-  items: StreamItem[];
-  range: AgentTimelineCursorState | null;
-  hasOlder: boolean;
-}
 
 function deserializeTimeline(stored: StoredTimeline | null): CachedTimeline | null {
   if (!stored) {
@@ -422,11 +448,12 @@ function serializeTimelineItem(item: StreamItem): StoredTimelineItem | null {
         items: item.items,
         activity: item.activity,
       };
-    case "activity_log":
+    case "notification":
       return {
         ...base,
         kind: item.kind,
-        activityType: item.activityType,
+        sourceType: item.sourceType,
+        level: item.level,
         message: item.message,
       };
     case "compaction":
@@ -450,6 +477,7 @@ function serializeTimelineItem(item: StreamItem): StoredTimelineItem | null {
         ...base,
         kind: item.kind,
         pluginId: item.pluginId,
+        pluginItemId: item.pluginItemId,
         itemKind: item.itemKind,
         version: item.version,
         data: item.data,
@@ -458,6 +486,26 @@ function serializeTimelineItem(item: StreamItem): StoredTimelineItem | null {
 }
 
 function deserializeTimelineItem(item: StoredTimelineItem): StreamItem {
+  if (item.kind === "plugin") {
+    return {
+      id: item.id,
+      ...(item.timelineCursor ? { timelineCursor: item.timelineCursor } : {}),
+      ...(item.turnId ? { turnId: item.turnId } : {}),
+      timestamp: new Date(item.timestamp),
+      kind: item.kind,
+      pluginId: item.pluginId,
+      pluginItemId: item.pluginItemId,
+      itemKind: item.itemKind,
+      version: item.version,
+      data: item.data,
+    };
+  }
+  return deserializeBuiltinTimelineItem(item);
+}
+
+function deserializeBuiltinTimelineItem(
+  item: Exclude<StoredTimelineItem, { kind: "plugin" }>,
+): StreamItem {
   const base = {
     id: item.id,
     ...(item.timelineCursor ? { timelineCursor: item.timelineCursor } : {}),
@@ -492,11 +540,12 @@ function deserializeTimelineItem(item: StoredTimelineItem): StreamItem {
         items: item.items,
         activity: item.activity,
       };
-    case "activity_log":
+    case "notification":
       return {
         ...base,
         kind: item.kind,
-        activityType: item.activityType,
+        sourceType: item.sourceType,
+        level: item.level,
         message: item.message,
       };
     case "compaction":
@@ -529,20 +578,20 @@ function deserializeTimelineItem(item: StoredTimelineItem): StreamItem {
         },
       };
     }
-    case "plugin":
-      return {
-        ...base,
-        kind: item.kind,
-        pluginId: item.pluginId,
-        itemKind: item.itemKind,
-        version: item.version,
-        data: item.data,
-      };
   }
 }
 
 function serializeProjectPlacement(agent: Agent): StoredAgent["projectPlacement"] {
   return agent.projectPlacement ?? null;
+}
+
+function serializeAgentTurn(agent: Agent): NonNullable<StoredAgent["turn"]> {
+  if (agent.turn.phase === "idle") return { phase: "idle" };
+  return {
+    phase: "open",
+    turnId: agent.turn.turnId,
+    startedAt: agent.turn.startedAt?.toISOString() ?? null,
+  };
 }
 
 function serializeAgent(agent: Agent): StoredAgent {
@@ -557,11 +606,11 @@ function serializeAgent(agent: Agent): StoredAgent {
     updatedAt: agent.updatedAt.toISOString(),
     lastUserMessageAt: agent.lastUserMessageAt?.toISOString() ?? null,
     status: agent.status,
-    ...(agent.activeTurn?.turnId
+    ...(agent.turn.phase === "open" && agent.turn.turnId
       ? {
           activeTurn: {
-            turnId: agent.activeTurn.turnId,
-            startedAt: agent.activeTurn.startedAt?.toISOString() ?? null,
+            turnId: agent.turn.turnId,
+            startedAt: agent.turn.startedAt?.toISOString() ?? null,
           },
         }
       : {}),
@@ -599,14 +648,27 @@ function serializeAgent(agent: Agent): StoredAgent {
   };
   return {
     snapshot,
+    turn: serializeAgentTurn(agent),
     projectPlacement: serializeProjectPlacement(agent),
     lastActivityAt: agent.lastActivityAt.toISOString(),
   };
 }
 
 function deserializeAgent(serverId: string, stored: StoredAgent): Agent {
+  const normalized = normalizeAgentSnapshot(stored.snapshot, serverId);
+  let turn = normalized.turn;
+  if (stored.turn?.phase === "idle") turn = { phase: "idle", cancellationRequestId: null };
+  if (stored.turn?.phase === "open") {
+    turn = {
+      phase: "open",
+      turnId: stored.turn.turnId,
+      startedAt: stored.turn.startedAt ? new Date(stored.turn.startedAt) : null,
+      cancellationRequestId: null,
+    };
+  }
   return {
-    ...normalizeAgentSnapshot(stored.snapshot, serverId),
+    ...normalized,
+    turn,
     lastActivityAt: new Date(stored.lastActivityAt),
     projectPlacement: stored.projectPlacement,
   };
@@ -669,8 +731,6 @@ function isTimelineItemStoredLosslessly(item: StreamItem): boolean {
   switch (item.kind) {
     case "user_message":
       return (item.images?.length ?? 0) === 0 && (item.attachments?.length ?? 0) === 0;
-    case "activity_log":
-      return item.metadata === undefined;
     case "tool_call":
       return item.payload.source === "agent";
     default:
@@ -715,8 +775,32 @@ function pendingRowKey(key: ReplicaRowKey): string {
   return `${key.serverId}\u0000${rowKey(key)}`;
 }
 
-function payloadBytes(payload: string): number {
-  return Buffer.byteLength(payload, "utf8");
+// Budget accounting runs over every stored row of a touched host on each persist. Rows are
+// immutable once stored, so their size is computed once. The count itself avoids the JS Buffer
+// polyfill, which materialises the whole byte array just to measure it.
+const rowBytesCache = new WeakMap<ReplicaRow, number>();
+
+function utf8ByteLength(text: string): number {
+  let bytes = 0;
+  for (let index = 0; index < text.length; index += 1) {
+    const code = text.charCodeAt(index);
+    if (code < 0x80) bytes += 1;
+    else if (code < 0x800) bytes += 2;
+    else if (code >= 0xd800 && code <= 0xdbff) {
+      bytes += 4;
+      index += 1;
+    } else bytes += 3;
+  }
+  return bytes;
+}
+
+function rowBytes(row: ReplicaRow): number {
+  let bytes = rowBytesCache.get(row);
+  if (bytes === undefined) {
+    bytes = utf8ByteLength(row.payload);
+    rowBytesCache.set(row, bytes);
+  }
+  return bytes;
 }
 
 function parseJsonPayload(payload: string): unknown {
@@ -736,8 +820,10 @@ interface DirectoryReadAccumulator {
   checkpoint?: DirectoryCheckpoint;
 }
 
-interface PendingReplicaChanges extends ReplicaRowChanges {
-  directoryReplacements: Map<string, Set<string>>;
+interface PendingReplicaChanges {
+  upserts: StructuredReplicaUpsert[];
+  deletes: ReplicaRowKey[];
+  baselines: Set<string>;
 }
 
 function applyDirectoryRow(
@@ -788,9 +874,10 @@ export class ReplicaCache {
   private readonly storedRows = new Map<string, Map<string, ReplicaRow>>();
   private readonly hostBytes = new Map<string, number>();
   private readonly hostWriteOrder = new Map<string, true>();
-  private pendingUpserts = new Map<string, ReplicaRow>();
+  private pendingUpserts = new Map<string, StructuredReplicaUpsert>();
   private pendingDeletes = new Map<string, ReplicaRowKey>();
-  private pendingDirectoryReplacements = new Map<string, Set<string>>();
+  private pendingBaselines = new Set<string>();
+  private readonly invalidatedHosts = new Set<string>();
   private readonly maxBytes: number;
   private totalBytes = 0;
   private persistTimer: ReturnType<typeof setTimeout> | null = null;
@@ -898,13 +985,15 @@ export class ReplicaCache {
     ids?: readonly string[],
   ): Promise<ReplicaRow[]> {
     if (!this.activeServerIds.has(serverId)) return [];
-    const revision = this.hostRevisions.get(serverId) ?? 0;
     try {
       await this.prepareStore();
-      await this.flush();
-      if (!this.canReadHostRevision(serverId, revision)) return [];
-      const rows = await this.rowStore.read(serverId, kinds, ids);
-      return this.canReadHostRevision(serverId, revision) ? rows : [];
+      while (this.activeServerIds.has(serverId)) {
+        await this.flush();
+        const revision = this.hostRevisions.get(serverId) ?? 0;
+        const rows = await this.rowStore.read(serverId, kinds, ids);
+        if (this.canReadHostRevision(serverId, revision)) return rows;
+      }
+      return [];
     } catch {
       return [];
     }
@@ -980,39 +1069,65 @@ export class ReplicaCache {
     });
   }
 
-  commitDirectory(
+  commitDirectoryMutations(
     serverId: string,
-    directory: {
-      agents: Map<string, Agent>;
-      workspaces: Map<string, WorkspaceDescriptor>;
-      projects: Map<string, ProjectDescriptor>;
-      checkpoint?: DirectoryCheckpoint;
-    },
+    mutations: readonly DirectoryReplicaMutation[],
+    checkpoint?: DirectoryCheckpoint,
   ): void {
     if (!this.activeServerIds.has(serverId)) return;
+    if (this.invalidatedHosts.has(serverId)) return;
     this.advanceHostRevision(serverId);
-    this.clearPendingDirectoryChanges(serverId);
-    const desiredRows: ReplicaRow[] = [];
-    for (const agent of directory.agents.values()) {
-      desiredRows.push(this.entityRow(serverId, "agent", agent.id, serializeAgent(agent)));
+    for (const mutation of mutations) {
+      if (mutation.type === "delete") {
+        this.queueEntityDelete(serverId, mutation.kind, mutation.id);
+      } else {
+        this.queueUpsert({
+          serverId,
+          kind: mutation.kind,
+          id: mutation.id,
+          value: mutation.value,
+        } as StructuredReplicaUpsert);
+      }
     }
-    for (const workspace of directory.workspaces.values()) {
-      desiredRows.push(
-        this.entityRow(serverId, "workspace", workspace.id, serializeWorkspace(workspace)),
-      );
+    if (checkpoint) {
+      this.queueUpsert({
+        serverId,
+        kind: "checkpoint",
+        id: REPLICA_SINGLETON_ROW_ID,
+        value: checkpoint,
+      });
     }
-    for (const project of directory.projects.values()) {
-      desiredRows.push(
-        this.entityRow(serverId, "project", project.projectId, serializeProject(project)),
-      );
+    this.schedulePersist();
+  }
+
+  replaceDirectoryBaseline(serverId: string, directory: CachedDirectory): void {
+    if (!this.activeServerIds.has(serverId)) return;
+    this.advanceHostRevision(serverId);
+    // Replacing the directory must not discard independently accepted timeline changes.
+    for (const [key, row] of this.pendingUpserts) {
+      if (row.serverId === serverId && row.kind !== "timeline") this.pendingUpserts.delete(key);
+    }
+    for (const [key, row] of this.pendingDeletes) {
+      if (row.serverId === serverId && row.kind !== "timeline") this.pendingDeletes.delete(key);
+    }
+    this.pendingBaselines.add(serverId);
+    for (const [id, value] of directory.agents) {
+      this.queueUpsert({ serverId, kind: "agent", id, value });
+    }
+    for (const [id, value] of directory.workspaces) {
+      this.queueUpsert({ serverId, kind: "workspace", id, value });
+    }
+    for (const [id, value] of directory.projects) {
+      this.queueUpsert({ serverId, kind: "project", id, value });
     }
     if (directory.checkpoint) {
-      desiredRows.push(
-        this.entityRow(serverId, "checkpoint", REPLICA_SINGLETON_ROW_ID, directory.checkpoint),
-      );
+      this.queueUpsert({
+        serverId,
+        kind: "checkpoint",
+        id: REPLICA_SINGLETON_ROW_ID,
+        value: directory.checkpoint,
+      });
     }
-    for (const row of desiredRows) this.queueUpsert(row);
-    this.pendingDirectoryReplacements.set(serverId, new Set(desiredRows.map((row) => rowKey(row))));
     this.schedulePersist();
   }
 
@@ -1020,9 +1135,7 @@ export class ReplicaCache {
     if (!this.activeServerIds.has(serverId)) return;
     if (timeline.agentId !== agentId) throw new Error("Timeline cache key does not match payload");
     this.advanceHostRevision(serverId);
-    const stored = serializeTimeline(timeline);
-    if (stored) this.queueEntityUpsert(serverId, "timeline", agentId, stored);
-    else this.queueEntityDelete(serverId, "timeline", agentId);
+    this.queueUpsert({ serverId, kind: "timeline", id: agentId, value: timeline });
     this.schedulePersist();
   }
 
@@ -1036,6 +1149,7 @@ export class ReplicaCache {
     for (const serverId of removed) {
       this.removeStoredHost(serverId);
       this.dropPendingHostChanges(serverId);
+      this.invalidatedHosts.delete(serverId);
       this.queueOperation(() => this.rowStore.deleteHost(serverId));
     }
   }
@@ -1051,7 +1165,7 @@ export class ReplicaCache {
       this.storedRows.delete(oldServerId);
       for (const [key, row] of rows) newRows.set(key, { ...row, serverId: newServerId });
       this.storedRows.set(newServerId, newRows);
-      const bytes = [...newRows.values()].reduce((sum, row) => sum + payloadBytes(row.payload), 0);
+      const bytes = [...newRows.values()].reduce((sum, row) => sum + rowBytes(row), 0);
       this.hostBytes.delete(oldServerId);
       this.hostBytes.set(newServerId, bytes);
       this.totalBytes += bytes;
@@ -1085,11 +1199,14 @@ export class ReplicaCache {
         try {
           await this.prepareStore();
           await this.ensureStoredIndex();
-          const changes = this.materializeDirectoryReplacements(pending);
-          const boundedChanges = await this.fitChangesToBudget(changes);
+          const changes = this.materializePendingChanges(pending);
+          const { changes: boundedChanges, evicted } = await this.fitChangesToBudget(changes);
           if (boundedChanges.upserts.length > 0 || boundedChanges.deletes.length > 0) {
             await this.rowStore.apply(boundedChanges);
             this.applyStoredChanges(boundedChanges);
+          }
+          for (const serverId of pending.baselines) {
+            if (!evicted.has(serverId)) this.invalidatedHosts.delete(serverId);
           }
         } catch {
           this.restorePendingChanges(pending);
@@ -1101,39 +1218,11 @@ export class ReplicaCache {
     await write;
   }
 
-  private queueEntityUpsert(
-    serverId: string,
-    kind: ReplicaRowKind,
-    id: string,
-    value: unknown,
-  ): void {
-    this.queueUpsert(this.entityRow(serverId, kind, id, value));
-  }
-
-  private entityRow(
-    serverId: string,
-    kind: ReplicaRowKind,
-    id: string,
-    value: unknown,
-  ): ReplicaRow {
-    return { serverId, kind, id, payload: JSON.stringify(value) };
-  }
-
-  private clearPendingDirectoryChanges(serverId: string): void {
-    const isDirectoryRow = (row: ReplicaRowKey) => row.kind !== "timeline";
-    for (const [key, row] of this.pendingUpserts) {
-      if (row.serverId === serverId && isDirectoryRow(row)) this.pendingUpserts.delete(key);
-    }
-    for (const [key, row] of this.pendingDeletes) {
-      if (row.serverId === serverId && isDirectoryRow(row)) this.pendingDeletes.delete(key);
-    }
-  }
-
   private queueEntityDelete(serverId: string, kind: ReplicaRowKind, id: string): void {
     this.queueDelete({ serverId, kind, id });
   }
 
-  private queueUpsert(row: ReplicaRow): void {
+  private queueUpsert(row: StructuredReplicaUpsert): void {
     const key = pendingRowKey(row);
     this.pendingDeletes.delete(key);
     this.pendingUpserts.set(key, row);
@@ -1147,9 +1236,7 @@ export class ReplicaCache {
 
   private hasPendingChanges(): boolean {
     return (
-      this.pendingUpserts.size > 0 ||
-      this.pendingDeletes.size > 0 ||
-      this.pendingDirectoryReplacements.size > 0
+      this.pendingUpserts.size > 0 || this.pendingDeletes.size > 0 || this.pendingBaselines.size > 0
     );
   }
 
@@ -1162,7 +1249,7 @@ export class ReplicaCache {
   }
 
   private hasPendingHostChanges(serverId: string): boolean {
-    if (this.pendingDirectoryReplacements.has(serverId)) return true;
+    if (this.pendingBaselines.has(serverId)) return true;
     for (const row of this.pendingUpserts.values()) {
       if (row.serverId === serverId) return true;
     }
@@ -1180,31 +1267,66 @@ export class ReplicaCache {
     const changes = {
       upserts: [...this.pendingUpserts.values()],
       deletes: [...this.pendingDeletes.values()],
-      directoryReplacements: this.pendingDirectoryReplacements,
+      baselines: this.pendingBaselines,
     };
     this.pendingUpserts = new Map();
     this.pendingDeletes = new Map();
-    this.pendingDirectoryReplacements = new Map();
+    this.pendingBaselines = new Set();
     return changes;
   }
 
-  private materializeDirectoryReplacements(pending: PendingReplicaChanges): ReplicaRowChanges {
+  private materializePendingChanges(pending: PendingReplicaChanges): ReplicaRowChanges {
     const deletes = new Map(pending.deletes.map((row) => [pendingRowKey(row), row]));
-    for (const [serverId, desiredRows] of pending.directoryReplacements) {
+    const upserts: ReplicaRow[] = [];
+    for (const upsert of pending.upserts) {
+      const row = this.materializeUpsert(upsert);
+      if (row) upserts.push(row);
+      else deletes.set(pendingRowKey(upsert), upsert);
+    }
+    for (const serverId of pending.baselines) {
+      const replacementKeys = new Set(
+        upserts.filter((row) => row.serverId === serverId && row.kind !== "timeline").map(rowKey),
+      );
       for (const row of this.storedRows.get(serverId)?.values() ?? []) {
-        if (row.kind !== "timeline" && !desiredRows.has(rowKey(row))) {
+        if (row.kind !== "timeline" && !replacementKeys.has(rowKey(row))) {
           deletes.set(pendingRowKey(row), row);
         }
       }
     }
-    return { upserts: pending.upserts, deletes: [...deletes.values()] };
+    return { upserts, deletes: [...deletes.values()] };
+  }
+
+  private materializeUpsert(upsert: StructuredReplicaUpsert): ReplicaRow | null {
+    let value: unknown;
+    switch (upsert.kind) {
+      case "agent":
+        value = serializeAgent(upsert.value);
+        break;
+      case "workspace":
+        value = serializeWorkspace(upsert.value);
+        break;
+      case "project":
+        value = serializeProject(upsert.value);
+        break;
+      case "timeline":
+        value = serializeTimeline(upsert.value);
+        if (!value) return null;
+        break;
+      case "checkpoint":
+        value = upsert.value;
+        break;
+    }
+    return {
+      serverId: upsert.serverId,
+      kind: upsert.kind,
+      id: upsert.id,
+      payload: JSON.stringify(value),
+    };
   }
 
   private restorePendingChanges(changes: PendingReplicaChanges): void {
-    for (const [serverId, desiredRows] of changes.directoryReplacements) {
-      if (this.activeServerIds.has(serverId) && !this.pendingDirectoryReplacements.has(serverId)) {
-        this.pendingDirectoryReplacements.set(serverId, desiredRows);
-      }
+    for (const serverId of changes.baselines) {
+      if (this.activeServerIds.has(serverId)) this.pendingBaselines.add(serverId);
     }
     for (const key of changes.deletes) {
       const pendingKey = pendingRowKey(key);
@@ -1235,17 +1357,17 @@ export class ReplicaCache {
       const previous = rows?.get(rowKey(key));
       if (previous) {
         rows?.delete(rowKey(key));
-        this.adjustHostBytes(key.serverId, -payloadBytes(previous.payload));
+        this.adjustHostBytes(key.serverId, -rowBytes(previous));
       }
       touchedServerIds.add(key.serverId);
     }
     for (const row of changes.upserts) {
       const rows = this.storedRows.get(row.serverId) ?? new Map<string, ReplicaRow>();
       const previous = rows.get(rowKey(row));
-      const previousBytes = previous ? payloadBytes(previous.payload) : 0;
+      const previousBytes = previous ? rowBytes(previous) : 0;
       rows.set(rowKey(row), row);
       this.storedRows.set(row.serverId, rows);
-      this.adjustHostBytes(row.serverId, payloadBytes(row.payload) - previousBytes);
+      this.adjustHostBytes(row.serverId, rowBytes(row) - previousBytes);
       touchedServerIds.add(row.serverId);
     }
     for (const serverId of touchedServerIds) {
@@ -1267,7 +1389,9 @@ export class ReplicaCache {
     this.hostWriteOrder.set(serverId, true);
   }
 
-  private async fitChangesToBudget(changes: ReplicaRowChanges): Promise<ReplicaRowChanges> {
+  private async fitChangesToBudget(
+    changes: ReplicaRowChanges,
+  ): Promise<{ changes: ReplicaRowChanges; evicted: Set<string> }> {
     const touchedServerIds = new Set<string>();
     for (const key of changes.deletes) touchedServerIds.add(key.serverId);
     for (const row of changes.upserts) touchedServerIds.add(row.serverId);
@@ -1286,7 +1410,7 @@ export class ReplicaCache {
     for (const [serverId, rows] of projectedRows) {
       projectedBytes.set(
         serverId,
-        [...rows.values()].reduce((sum, row) => sum + payloadBytes(row.payload), 0),
+        [...rows.values()].reduce((sum, row) => sum + rowBytes(row), 0),
       );
     }
 
@@ -1303,15 +1427,17 @@ export class ReplicaCache {
       projectedTotal -= bytes;
       projectedBytes.delete(serverId);
       evicted.add(serverId);
+      this.invalidatedHosts.add(serverId);
       if (this.storedRows.has(serverId)) await this.rowStore.deleteHost(serverId);
       this.removeStoredHost(serverId);
-      // The next accepted owner commit must rebuild the complete host replica. Retaining the
-      // directory replacement marker ensures its checkpoint and rows stay atomic.
     }
 
     return {
-      upserts: changes.upserts.filter((row) => !evicted.has(row.serverId)),
-      deletes: changes.deletes.filter((key) => !evicted.has(key.serverId)),
+      changes: {
+        upserts: changes.upserts.filter((row) => !evicted.has(row.serverId)),
+        deletes: changes.deletes.filter((key) => !evicted.has(key.serverId)),
+      },
+      evicted,
     };
   }
 
@@ -1323,7 +1449,7 @@ export class ReplicaCache {
   }
 
   private dropPendingHostChanges(serverId: string): void {
-    this.pendingDirectoryReplacements.delete(serverId);
+    this.pendingBaselines.delete(serverId);
     for (const [key, row] of this.pendingUpserts) {
       if (row.serverId === serverId) this.pendingUpserts.delete(key);
     }
@@ -1334,18 +1460,16 @@ export class ReplicaCache {
 
   private renamePendingHostChanges(oldServerId: string, newServerId: string): void {
     const changes = this.drainPendingChanges();
-    for (const [serverId, desiredRows] of changes.directoryReplacements) {
-      this.pendingDirectoryReplacements.set(
-        serverId === oldServerId ? newServerId : serverId,
-        desiredRows,
-      );
-    }
     for (const key of changes.deletes) {
       this.queueDelete(key.serverId === oldServerId ? { ...key, serverId: newServerId } : key);
     }
     for (const row of changes.upserts) {
       this.queueUpsert(row.serverId === oldServerId ? { ...row, serverId: newServerId } : row);
     }
+    for (const serverId of changes.baselines) {
+      this.pendingBaselines.add(serverId === oldServerId ? newServerId : serverId);
+    }
+    if (this.invalidatedHosts.delete(oldServerId)) this.invalidatedHosts.add(newServerId);
   }
 
   private prepareStore(): Promise<void> {
@@ -1369,7 +1493,7 @@ export class ReplicaCache {
           continue;
         }
         const rows = new Map(host.rows.map((row) => [rowKey(row), row]));
-        const bytes = host.rows.reduce((sum, row) => sum + payloadBytes(row.payload), 0);
+        const bytes = host.rows.reduce((sum, row) => sum + rowBytes(row), 0);
         this.storedRows.set(host.serverId, rows);
         this.hostBytes.set(host.serverId, bytes);
         this.totalBytes += bytes;

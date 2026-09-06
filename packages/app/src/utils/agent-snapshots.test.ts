@@ -57,15 +57,25 @@ describe("normalizeAgentSnapshot", () => {
           activeTurn: { turnId: "turn-1", startedAt },
         }),
         "server-1",
-      ).activeTurn,
-    ).toEqual({ turnId: "turn-1", startedAt: new Date(startedAt) });
+      ).turn,
+    ).toEqual({
+      phase: "open",
+      turnId: "turn-1",
+      startedAt: new Date(startedAt),
+      cancellationRequestId: null,
+    });
 
     expect(
       normalizeAgentSnapshot(
         createSnapshot({ status: "running", lastUserMessageAt: startedAt }),
         "server-1",
-      ).activeTurn,
-    ).toEqual({ turnId: null, startedAt: new Date(startedAt) });
+      ).turn,
+    ).toEqual({
+      phase: "open",
+      turnId: null,
+      startedAt: new Date(startedAt),
+      cancellationRequestId: null,
+    });
   });
 
   it("derives parentAgentId from the parent label while preserving labels", () => {
