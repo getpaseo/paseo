@@ -66,6 +66,7 @@ import {
 import { materializeProviderImage } from "../provider-image-output.js";
 import { PiCliRuntime } from "./cli-runtime.js";
 import { revertPiConversation } from "./rewind.js";
+import { PiSubagentTracker } from "./subagent-tracker.js";
 import { listPiImportableSessions, readPiImportSessionConfig } from "./session-descriptor.js";
 import type { PiRuntime, PiRuntimeSession, PiStartSessionInput } from "./runtime.js";
 import type {
@@ -1257,6 +1258,7 @@ export class PiRpcAgentSession implements AgentSession {
   private readonly currentModeId: string | null;
   private readonly logger: Logger;
   private readonly usagePoller: PiUsagePoller;
+  private readonly subagentTracker: PiSubagentTracker;
   private closed = false;
   // Pi reports an aborted OpenAI Responses stream before the abort RPC resolves.
   // Keep the turn active until that RPC acknowledges the user-requested cancellation.
@@ -1278,6 +1280,7 @@ export class PiRpcAgentSession implements AgentSession {
       null;
     this.extensionTimeoutMs = options.extensionTimeoutMs ?? DEFAULT_PI_EXTENSION_RESULT_TIMEOUT_MS;
     this.logger = options.logger;
+    this.subagentTracker = new PiSubagentTracker(options.logger);
     this.usagePoller = new PiUsagePoller({
       scheduler: options.usagePollScheduler,
       readStats: () => this.runtimeSession.getSessionStats(),
@@ -1463,6 +1466,14 @@ export class PiRpcAgentSession implements AgentSession {
       this.provider,
       await this.runtimeSession.getMessages(),
       this.capturedUserEntries,
+      {
+        onSubagentReplayError: (error, sessionFile) => {
+          this.logger.debug(
+            { err: error, sessionFile },
+            "Failed to read Pi subagent child session",
+          );
+        },
+      },
     );
   }
 
@@ -1601,6 +1612,9 @@ export class PiRpcAgentSession implements AgentSession {
     if (this.interruptedTerminalError?.turnId === turnId) {
       this.interruptedTerminalError = null;
     }
+    for (const subagentEvent of this.subagentTracker.cancelAll()) {
+      this.emit(subagentEvent);
+    }
   }
 
   async revertConversation(input: { messageId: string }): Promise<void> {
@@ -1637,6 +1651,9 @@ export class PiRpcAgentSession implements AgentSession {
     }
     this.closed = true;
     this.usagePoller.close();
+    for (const subagentEvent of this.subagentTracker.cancelAll()) {
+      this.emit(subagentEvent);
+    }
     try {
       await this.runtimeSession.close();
     } finally {
@@ -2231,6 +2248,9 @@ export class PiRpcAgentSession implements AgentSession {
         this.activeToolCalls.set(event.toolCallId, toolCall);
         this.activeAskUserDialog = readActiveAskUserDialog(event.toolName, event.args);
         this.emitToolCallEvent(event.toolCallId, toolCall, "running", null, null);
+        if (event.toolName === "subagent") {
+          this.handleSubagentStart(event.toolCallId, event.args);
+        }
         return;
       }
       case "tool_execution_update": {
@@ -2241,6 +2261,9 @@ export class PiRpcAgentSession implements AgentSession {
 
         const partialResult = parseToolResult(event.partialResult);
         this.emitToolCallEvent(event.toolCallId, toolCall, "running", partialResult, null);
+        if (event.toolName === "subagent") {
+          this.handleSubagentUpdate(event.toolCallId, event.partialResult);
+        }
         return;
       }
       case "tool_execution_end": {
@@ -2310,6 +2333,9 @@ export class PiRpcAgentSession implements AgentSession {
   private handleToolExecutionEnd(
     event: Extract<PiAgentSessionEvent, { type: "tool_execution_end" }>,
   ): void {
+    if (event.toolName === "subagent") {
+      this.finalizeSubagent(event.toolCallId, event.result, event.isError === true);
+    }
     const toolCall =
       this.activeToolCalls.get(event.toolCallId) ?? parseToolArgs(event.toolName, null);
     this.activeToolCalls.delete(event.toolCallId);
@@ -2418,6 +2444,36 @@ export class PiRpcAgentSession implements AgentSession {
       this.completeTurn(turnId, []);
       return;
     }
+  }
+
+  private handleSubagentStart(toolCallId: string, args: unknown): void {
+    for (const subagentEvent of this.subagentTracker.start(toolCallId, args)) {
+      this.emit(subagentEvent);
+    }
+  }
+
+  private handleSubagentUpdate(toolCallId: string, partialResult: unknown): void {
+    for (const subagentEvent of this.subagentTracker.update(toolCallId, partialResult)) {
+      this.emit(subagentEvent);
+    }
+  }
+
+  private finalizeSubagent(toolCallId: string, result: unknown, isError: boolean): void {
+    void this.subagentTracker
+      .end(toolCallId, result, isError)
+      .then((subagentEvents) => {
+        // null: the tracked call was canceled (interrupt/close) while end() was
+        // reading the child transcript. Emit nothing so the canceled status
+        // sticks instead of resurrecting the run as completed.
+        for (const subagentEvent of subagentEvents ?? []) {
+          this.emit(subagentEvent);
+        }
+        return subagentEvents === null ? 0 : subagentEvents.length;
+      })
+      .catch((error) => {
+        this.logger.warn({ err: error }, "Failed to finalize Pi subagent tracking");
+        return 0;
+      });
   }
 
   private emitToolCallEvent(

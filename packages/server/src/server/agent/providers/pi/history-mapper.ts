@@ -9,6 +9,15 @@ import {
   type PiToolResult,
   type PiTrackedToolCall,
 } from "./tool-call-mapper.js";
+import {
+  MAX_SUBAGENT_TIMELINE_ROWS,
+  findPiSubagentCallArgs,
+  piSubagentDescriptorId,
+  readPiSubagentInlineOutput,
+  readPiSubagentLaunchArgs,
+  readPiSubagentRunPayload,
+  streamPiChildSessionItems,
+} from "./subagent-run.js";
 
 export interface PiCapturedUserMessageEntry {
   id: string;
@@ -26,6 +35,8 @@ export interface PiHistoryMapperHooks {
     result: PiToolResult,
     context: { toolCallId: string },
   ) => ToolCallDetail | null;
+  /** Invoked when a child session file fails to read during subagent replay. */
+  onSubagentReplayError?: (error: unknown, sessionFile: string) => void;
 }
 
 function isTextContentBlock(block: unknown): block is PiTextContent {
@@ -253,6 +264,7 @@ export async function* streamPiHistory(
       yield event;
     }
   }
+  yield* streamPiSubagentHistory(provider, messages, hooks);
 }
 
 function toToolResultTimelineItem(input: {
@@ -280,4 +292,203 @@ function toToolResultTimelineItem(input: {
     detail: input.detail,
     error: null,
   };
+}
+
+const MAX_REPLAYED_SUBAGENT_ROWS = MAX_SUBAGENT_TIMELINE_ROWS;
+
+/**
+ * Replay pi-subagents runs recorded in parent history. Each completed
+ * `subagent` tool result carries its run payload in `details` with child
+ * session files; those replays become provider subagent descriptors plus
+ * timeline rows so restored sessions keep their Subagents Track. Results with
+ * no run payload (details stripped) still get a descriptor backed by the
+ * inline tool output.
+ */
+async function* streamPiSubagentHistory(
+  provider: string,
+  messages: readonly PiAgentMessage[],
+  hooks: PiHistoryMapperHooks,
+): AsyncGenerator<AgentStreamEvent> {
+  for (const message of messages) {
+    if (message.role !== "toolResult" || message.toolName !== "subagent") {
+      continue;
+    }
+    const run = readPiSubagentRunPayload(
+      message.details === undefined
+        ? { content: message.content }
+        : { content: message.content, details: message.details },
+    );
+    if (run) {
+      const presentation = subagentPresentation(messages, message, run);
+      yield subagentUpsertEvent(provider, presentation, "running", message.toolCallId);
+
+      yield* replaySubagentRows(provider, presentation.descriptorId, run, message, hooks);
+
+      yield subagentUpsertEvent(provider, presentation, presentation.status, message.toolCallId);
+      continue;
+    }
+    // No run payload (details stripped by pi-subagents). Still surface the run
+    // as a descriptor backed by the inline output so the track does not lose
+    // subagents that are visible in the transcript.
+    const text = readPiSubagentInlineOutput({
+      content: message.content,
+      ...(message.details === undefined ? {} : { details: message.details }),
+    });
+    if (!text) {
+      continue;
+    }
+    const failed = message.isError === true;
+    yield {
+      type: "provider_subagent",
+      provider,
+      event: {
+        type: "upsert",
+        id: message.toolCallId,
+        title: "Pi subagent",
+        description: null,
+        status: "running",
+        toolCallId: message.toolCallId,
+      },
+    };
+    yield {
+      type: "provider_subagent",
+      provider,
+      event: {
+        type: "timeline",
+        id: message.toolCallId,
+        item: { type: "assistant_message", text },
+      },
+    };
+    yield {
+      type: "provider_subagent",
+      provider,
+      event: {
+        type: "upsert",
+        id: message.toolCallId,
+        title: "Pi subagent",
+        description: null,
+        status: failed ? "failed" : "completed",
+        toolCallId: message.toolCallId,
+      },
+    };
+  }
+}
+
+function subagentUpsertEvent(
+  provider: string,
+  presentation: {
+    descriptorId: string;
+    title: string;
+    description: string | null;
+    status: "completed" | "failed" | "running";
+  },
+  status: "completed" | "failed" | "running",
+  toolCallId: string,
+): AgentStreamEvent {
+  return {
+    type: "provider_subagent",
+    provider,
+    event: {
+      type: "upsert",
+      id: presentation.descriptorId,
+      title: presentation.title,
+      description: presentation.description,
+      status,
+      toolCallId,
+    },
+  };
+}
+
+function subagentPresentation(
+  messages: readonly PiAgentMessage[],
+  message: Extract<PiAgentMessage, { role: "toolResult" }>,
+  run: {
+    runId?: string;
+    asyncId?: string;
+    results: Array<{ agent?: string; task?: string; exitCode?: number; error?: string }>;
+  },
+): {
+  descriptorId: string;
+  title: string;
+  description: string | null;
+  status: "completed" | "failed";
+} {
+  const launchArgs = findPiSubagentCallArgs(messages, message.toolCallId);
+  const launch = readPiSubagentLaunchArgs(launchArgs);
+  const failed =
+    message.isError === true ||
+    run.results.some(
+      (entry) => Boolean(entry.error) || (entry.exitCode !== undefined && entry.exitCode !== 0),
+    );
+  return {
+    descriptorId: piSubagentDescriptorId(message.toolCallId, run),
+    title: firstText(launch?.agent, ...run.results.map((entry) => entry.agent)) ?? "Pi subagent",
+    description: firstText(launch?.task, ...run.results.map((entry) => entry.task)) ?? null,
+    status: failed ? "failed" : "completed",
+  };
+}
+
+async function* replaySubagentRows(
+  provider: string,
+  descriptorId: string,
+  run: { results: Array<{ sessionFile?: string }> },
+  message: Extract<PiAgentMessage, { role: "toolResult" }>,
+  hooks: PiHistoryMapperHooks,
+): AsyncGenerator<AgentStreamEvent> {
+  let rows = 0;
+  for (const entry of run.results) {
+    if (!entry.sessionFile || rows >= MAX_REPLAYED_SUBAGENT_ROWS) {
+      continue;
+    }
+    try {
+      for await (const { item, timestamp: rowTimestamp } of streamPiChildSessionItems(
+        entry.sessionFile,
+      )) {
+        if (rows >= MAX_REPLAYED_SUBAGENT_ROWS) {
+          break;
+        }
+        rows += 1;
+        yield {
+          type: "provider_subagent",
+          provider,
+          event: {
+            type: "timeline",
+            id: descriptorId,
+            item,
+            ...(rowTimestamp ? { timestamp: rowTimestamp } : {}),
+          },
+        };
+      }
+    } catch (error) {
+      // Child transcripts are best-effort replay data; a missing or corrupt
+      // file must not fail the whole history stream.
+      hooks.onSubagentReplayError?.(error, entry.sessionFile!);
+    }
+  }
+  if (rows === 0) {
+    const text = readPiSubagentInlineOutput({
+      content: message.content,
+      ...(message.details === undefined ? {} : { details: message.details }),
+    });
+    if (text) {
+      yield {
+        type: "provider_subagent",
+        provider,
+        event: {
+          type: "timeline",
+          id: descriptorId,
+          item: { type: "assistant_message", text },
+        },
+      };
+    }
+  }
+}
+
+function firstText(...values: (string | undefined)[]): string | undefined {
+  for (const value of values) {
+    if (typeof value === "string" && value.trim().length > 0) {
+      return value;
+    }
+  }
+  return undefined;
 }
