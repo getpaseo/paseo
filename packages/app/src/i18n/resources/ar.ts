@@ -1048,6 +1048,8 @@ export const ar: TranslationResources = {
       heading: "العرض",
       grouping: {
         label: "التجميع",
+        currentLabel: "التجميع الحالي: {{current}}",
+        toggleLabel: "التجميع الحالي: {{current}}. تبديل التجميع",
         project: "المشروع",
         status: "الحالة",
         labels: "التسميات",

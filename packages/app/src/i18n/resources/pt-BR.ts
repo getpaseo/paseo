@@ -1073,6 +1073,8 @@ export const ptBR: TranslationResources = {
       heading: "Exibição",
       grouping: {
         label: "Agrupamento",
+        currentLabel: "Agrupamento atual: {{current}}",
+        toggleLabel: "Agrupamento atual: {{current}}. Alternar agrupamento",
         project: "Projeto",
         status: "Status",
         labels: "Etiquetas",

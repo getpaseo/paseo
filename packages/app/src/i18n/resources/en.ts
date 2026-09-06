@@ -1057,6 +1057,8 @@ export const en = {
       heading: "Display",
       grouping: {
         label: "Grouping",
+        currentLabel: "Current grouping: {{current}}",
+        toggleLabel: "Current grouping: {{current}}. Switch grouping",
         project: "Project",
         status: "Status",
         labels: "Labels",

@@ -1082,6 +1082,8 @@ export const es: TranslationResources = {
       heading: "Visualización",
       grouping: {
         label: "Agrupación",
+        currentLabel: "Agrupación actual: {{current}}",
+        toggleLabel: "Agrupación actual: {{current}}. Cambiar agrupación",
         project: "Proyecto",
         status: "Estado",
         labels: "Etiquetas",
