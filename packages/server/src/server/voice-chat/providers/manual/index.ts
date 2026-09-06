@@ -2,25 +2,25 @@ import { v4 as uuidv4 } from "uuid";
 import { z } from "zod";
 import type pino from "pino";
 import { getErrorMessage } from "@getpaseo/protocol/error-utils";
-import type { SessionInboundMessage, SessionOutboundMessage } from "../../messages.js";
-import { TTSManager } from "../../agent/tts-manager.js";
-import { STTManager } from "../../agent/stt-manager.js";
-import type { SpeechToTextProvider, TextToSpeechProvider } from "../../speech/speech-provider.js";
-import type { TurnDetectionProvider } from "../../speech/turn-detection-provider.js";
-import { maybePersistTtsDebugAudio } from "../../agent/tts-debug.js";
-import { isPaseoDictationDebugEnabled } from "../../agent/recordings-debug.js";
-import {
-  DictationStreamManager,
-  type DictationStreamOutboundMessage,
-} from "../../dictation/dictation-stream-manager.js";
-import { createVoiceTurnController, type VoiceTurnController } from "./voice-turn-controller.js";
-import { buildVoiceModeSystemPrompt, stripVoiceModeSystemPrompt } from "../../voice-config.js";
-import type { VoiceCallerContext, VoiceSpeakHandler } from "../../voice-types.js";
-import type { ManagedAgent } from "../../agent/agent-manager.js";
-import type { AgentSessionConfig } from "../../agent/agent-sdk-types.js";
-import type { LocalSpeechModelId } from "../../speech/providers/local/models.js";
-import { toResolver, type Resolvable } from "../../speech/provider-resolver.js";
-import type { SpeechReadinessSnapshot, SpeechReadinessState } from "../../speech/speech-runtime.js";
+import type { SessionInboundMessage, SessionOutboundMessage } from "../../../messages.js";
+import { TTSManager } from "./synthesis.js";
+import { STTManager } from "./transcription.js";
+import type {
+  SpeechToTextProvider,
+  TextToSpeechProvider,
+} from "../../../speech/speech-provider.js";
+import type { TurnDetectionProvider } from "../../../speech/turn-detection-provider.js";
+import { maybePersistTtsDebugAudio } from "../../../agent/tts-debug.js";
+import { isPaseoDictationDebugEnabled } from "../../../agent/recordings-debug.js";
+import { createVoiceTurnController, type VoiceTurnController } from "./turn.js";
+import type { VoiceSpeakHandler } from "./speak.js";
+import type { ManagedAgent } from "../../../agent/agent-manager.js";
+import type { LocalSpeechModelId } from "../../../speech/providers/local/models.js";
+import { toResolver, type Resolvable } from "../../../speech/provider-resolver.js";
+import type {
+  SpeechReadinessSnapshot,
+  SpeechReadinessState,
+} from "../../../speech/speech-runtime.js";
 
 const PCM_SAMPLE_RATE = 16000;
 const PCM_CHANNELS = 1;
@@ -33,10 +33,6 @@ const MIN_STREAMING_SEGMENT_BYTES = Math.round(
 const AgentIdSchema = z.guid();
 
 type ProcessingPhase = "idle" | "transcribing";
-
-interface VoiceModeBaseConfig {
-  systemPrompt?: string;
-}
 
 interface AudioBufferState {
   chunks: Buffer[];
@@ -62,26 +58,6 @@ interface VoiceFeatureUnavailableContext {
   message: string;
   retryable: boolean;
   missingModelIds: LocalSpeechModelId[];
-}
-
-interface VoiceFeatureUnavailableResponseMetadata {
-  reasonCode?: SpeechReadinessSnapshot["voiceFeature"]["reasonCode"];
-  retryable?: boolean;
-  missingModelIds?: LocalSpeechModelId[];
-}
-
-class VoiceFeatureUnavailableError extends Error {
-  readonly reasonCode: SpeechReadinessSnapshot["voiceFeature"]["reasonCode"];
-  readonly retryable: boolean;
-  readonly missingModelIds: LocalSpeechModelId[];
-
-  constructor(context: VoiceFeatureUnavailableContext) {
-    super(context.message);
-    this.name = "VoiceFeatureUnavailableError";
-    this.reasonCode = context.reasonCode;
-    this.retryable = context.retryable;
-    this.missingModelIds = [...context.missingModelIds];
-  }
 }
 
 function convertPCMToWavBuffer(
@@ -114,25 +90,21 @@ function convertPCMToWavBuffer(
 }
 
 /**
- * The agent-facing operations VoiceSession needs from the session that owns it.
- * VoiceSession owns all voice/audio state; it reaches back through this narrow
+ * The agent-facing operations the manual call needs from its owner.
+ * ManualVoiceCall owns all voice/audio state; it reaches back through this narrow
  * seam only to deliver transcripts to the agent, drive TTS playback, and
  * abort/inspect the active agent run.
  */
-export interface VoiceSessionHost {
+export interface ManualVoiceCallHost {
   emit(msg: SessionOutboundMessage): void;
   loadAgent(agentId: string): Promise<ManagedAgent>;
-  reloadAgentSession(
-    agentId: string,
-    overrides: Partial<AgentSessionConfig>,
-  ): Promise<ManagedAgent>;
   sendSpokenInput(agentId: string, text: string): Promise<void>;
   interruptAgentIfRunning(agentId: string): Promise<void>;
   hasActiveAgentRun(agentId: string | null): boolean;
 }
 
-export interface VoiceSessionOptions {
-  host: VoiceSessionHost;
+export interface ManualVoiceCallOptions {
+  host: ManualVoiceCallHost;
   logger: pino.Logger;
   sessionId: string;
   sttLanguage?: string;
@@ -144,26 +116,20 @@ export interface VoiceSessionOptions {
   voiceBridge?: {
     registerVoiceSpeakHandler?: (agentId: string, handler: VoiceSpeakHandler) => void;
     unregisterVoiceSpeakHandler?: (agentId: string) => void;
-    registerVoiceCallerContext?: (agentId: string, context: VoiceCallerContext) => void;
-    unregisterVoiceCallerContext?: (agentId: string) => void;
   };
-  dictation?: {
-    finalTimeoutMs?: number;
-    stt?: Resolvable<SpeechToTextProvider | null>;
-    sttLanguage?: string;
-    getSpeechReadiness?: () => SpeechReadinessSnapshot;
-  };
+  getSpeechReadiness?: () => SpeechReadinessSnapshot;
+  onFatalError?: (error: Error) => void;
 }
 
 /**
  * Owns the voice half of a client session: speech-to-text/text-to-speech
- * managers, dictation streaming, the barge-in audio-buffering state machine,
+ * managers, the barge-in audio-buffering state machine,
  * voice-turn detection, and the MCP voice bridge. The session delegates the
- * voice/dictation/abort message types here and otherwise knows nothing about
+ * voice/abort message types here and otherwise knows nothing about
  * audio buffering or processing phases.
  */
-export class VoiceSession {
-  private readonly host: VoiceSessionHost;
+export class ManualVoiceCall {
+  private readonly host: ManualVoiceCallHost;
   private readonly sessionLogger: pino.Logger;
   private readonly sessionId: string;
   private readonly sttLanguage: string;
@@ -174,7 +140,6 @@ export class VoiceSession {
   private isVoiceMode = false;
   private speechInProgress = false;
 
-  private readonly dictationStreamManager: DictationStreamManager;
   private readonly resolveVoiceTurnDetection: () => TurnDetectionProvider | null;
   private voiceTurnController: VoiceTurnController | null = null;
   private voiceInputChunkCount = 0;
@@ -197,19 +162,13 @@ export class VoiceSession {
     handler: VoiceSpeakHandler,
   ) => void;
   private readonly unregisterVoiceSpeakHandler?: (agentId: string) => void;
-  private readonly registerVoiceCallerContext?: (
-    agentId: string,
-    context: VoiceCallerContext,
-  ) => void;
-  private readonly unregisterVoiceCallerContext?: (agentId: string) => void;
   private readonly getSpeechReadiness?: () => SpeechReadinessSnapshot;
+  private readonly onFatalError?: (error: Error) => void;
 
   private voiceModeAgentId: string | null = null;
-  private voiceModeBaseConfig: VoiceModeBaseConfig | null = null;
 
-  constructor(options: VoiceSessionOptions) {
-    const { host, logger, sessionId, sttLanguage, tts, stt, voice, voiceBridge, dictation } =
-      options;
+  constructor(options: ManualVoiceCallOptions) {
+    const { host, logger, sessionId, sttLanguage, tts, stt, voice, voiceBridge } = options;
     this.host = host;
     this.sessionLogger = logger;
     this.sessionId = sessionId;
@@ -219,63 +178,13 @@ export class VoiceSession {
     this.resolveVoiceTurnDetection = toResolver(voice?.turnDetection ?? null);
     this.registerVoiceSpeakHandler = voiceBridge?.registerVoiceSpeakHandler;
     this.unregisterVoiceSpeakHandler = voiceBridge?.unregisterVoiceSpeakHandler;
-    this.registerVoiceCallerContext = voiceBridge?.registerVoiceCallerContext;
-    this.unregisterVoiceCallerContext = voiceBridge?.unregisterVoiceCallerContext;
-    this.getSpeechReadiness = dictation?.getSpeechReadiness;
+    this.getSpeechReadiness = options.getSpeechReadiness;
+    this.onFatalError = options.onFatalError;
 
     this.ttsManager = new TTSManager(this.sessionId, this.sessionLogger, tts);
     this.sttManager = new STTManager(this.sessionId, this.sessionLogger, stt, {
       language: sttLanguage,
     });
-    this.dictationStreamManager = new DictationStreamManager({
-      logger: this.sessionLogger,
-      sessionId: this.sessionId,
-      emit: (msg) => this.handleDictationManagerMessage(msg),
-      stt: dictation?.stt ?? null,
-      language: dictation?.sttLanguage,
-      finalTimeoutMs: dictation?.finalTimeoutMs,
-    });
-  }
-
-  isActiveForAgent(agentId: string): boolean {
-    return this.isVoiceMode && this.voiceModeAgentId === agentId;
-  }
-
-  handleDictationChunk(params: {
-    dictationId: string;
-    seq: number;
-    audioBase64: string;
-    format: string;
-  }): Promise<void> {
-    return this.dictationStreamManager.handleChunk(params);
-  }
-
-  handleDictationFinish(dictationId: string, finalSeq: number): Promise<void> {
-    return this.dictationStreamManager.handleFinish(dictationId, finalSeq);
-  }
-
-  handleDictationCancel(dictationId: string): void {
-    this.dictationStreamManager.handleCancel(dictationId);
-  }
-
-  async handleDictationStreamStart(
-    msg: Extract<SessionInboundMessage, { type: "dictation_stream_start" }>,
-  ): Promise<void> {
-    const unavailable = this.resolveVoiceFeatureUnavailableContext("dictation");
-    if (unavailable) {
-      this.emit({
-        type: "dictation_stream_error",
-        payload: {
-          dictationId: msg.dictationId,
-          error: unavailable.message,
-          retryable: unavailable.retryable,
-          reasonCode: unavailable.reasonCode,
-          missingModelIds: unavailable.missingModelIds,
-        },
-      });
-      return;
-    }
-    await this.dictationStreamManager.handleStart(msg.dictationId, msg.format);
   }
 
   private toVoiceFeatureUnavailableContext(
@@ -289,38 +198,13 @@ export class VoiceSession {
     };
   }
 
-  private resolveModeReadinessState(
-    readiness: SpeechReadinessSnapshot,
-    mode: "voice_mode" | "dictation",
-  ): SpeechReadinessState {
-    if (mode === "voice_mode") {
-      return readiness.realtimeVoice;
-    }
-    return readiness.dictation;
-  }
-
-  private getVoiceFeatureUnavailableResponseMetadata(
-    error: unknown,
-  ): VoiceFeatureUnavailableResponseMetadata {
-    if (!(error instanceof VoiceFeatureUnavailableError)) {
-      return {};
-    }
-    return {
-      reasonCode: error.reasonCode,
-      retryable: error.retryable,
-      missingModelIds: error.missingModelIds,
-    };
-  }
-
-  private resolveVoiceFeatureUnavailableContext(
-    mode: "voice_mode" | "dictation",
-  ): VoiceFeatureUnavailableContext | null {
+  private resolveVoiceFeatureUnavailableContext(): VoiceFeatureUnavailableContext | null {
     const readiness = this.getSpeechReadiness?.();
     if (!readiness) {
       return null;
     }
 
-    const modeReadiness = this.resolveModeReadinessState(readiness, mode);
+    const modeReadiness = readiness.realtimeVoice;
     if (!modeReadiness.enabled) {
       return this.toVoiceFeatureUnavailableContext(modeReadiness);
     }
@@ -333,132 +217,25 @@ export class VoiceSession {
     return null;
   }
 
-  /**
-   * Handle voice mode toggle
-   */
-  async handleSetVoiceMode(enabled: boolean, agentId?: string, requestId?: string): Promise<void> {
-    const startedAt = Date.now();
+  async start(agentId: string): Promise<void> {
+    if (this.isVoiceMode) return;
+    const unavailable = this.resolveVoiceFeatureUnavailableContext();
+    if (unavailable) throw new Error(unavailable.message);
+    const normalizedAgentId = this.parseVoiceTargetAgentId(agentId, "manual voice call");
+    this.voiceModeAgentId = await this.enableVoiceModeForAgent(normalizedAgentId);
     try {
-      this.sessionLogger.info(
-        { enabled, requestedAgentId: agentId ?? null, requestId: requestId ?? null },
-        "set_voice_mode started",
-      );
-      if (enabled) {
-        const unavailable = this.resolveVoiceFeatureUnavailableContext("voice_mode");
-        if (unavailable) {
-          throw new VoiceFeatureUnavailableError(unavailable);
-        }
-
-        const normalizedAgentId = this.parseVoiceTargetAgentId(agentId ?? "", "set_voice_mode");
-
-        if (
-          this.isVoiceMode &&
-          this.voiceModeAgentId &&
-          this.voiceModeAgentId !== normalizedAgentId
-        ) {
-          this.sessionLogger.info(
-            {
-              previousAgentId: this.voiceModeAgentId,
-              nextAgentId: normalizedAgentId,
-              elapsedMs: Date.now() - startedAt,
-            },
-            "set_voice_mode disabling previous active voice agent",
-          );
-          await this.disableVoiceModeForActiveAgent(true);
-        }
-
-        if (!this.isVoiceMode || this.voiceModeAgentId !== normalizedAgentId) {
-          this.sessionLogger.info(
-            { agentId: normalizedAgentId, elapsedMs: Date.now() - startedAt },
-            "set_voice_mode enabling voice for agent",
-          );
-          const refreshedAgentId = await this.enableVoiceModeForAgent(normalizedAgentId);
-          this.voiceModeAgentId = refreshedAgentId;
-          this.sessionLogger.info(
-            { agentId: refreshedAgentId, elapsedMs: Date.now() - startedAt },
-            "set_voice_mode agent enable complete",
-          );
-        }
-
-        this.sessionLogger.info(
-          { agentId: this.voiceModeAgentId, elapsedMs: Date.now() - startedAt },
-          "set_voice_mode starting voice turn controller",
-        );
-        await this.startVoiceTurnController();
-        this.sessionLogger.info(
-          { agentId: this.voiceModeAgentId, elapsedMs: Date.now() - startedAt },
-          "set_voice_mode voice turn controller started",
-        );
-        this.isVoiceMode = true;
-        this.sessionLogger.info(
-          {
-            agentId: this.voiceModeAgentId,
-            elapsedMs: Date.now() - startedAt,
-          },
-          "Voice mode enabled for existing agent",
-        );
-        if (requestId) {
-          this.emit({
-            type: "set_voice_mode_response",
-            payload: {
-              requestId,
-              enabled: true,
-              agentId: this.voiceModeAgentId,
-              accepted: true,
-              error: null,
-            },
-          });
-        }
-        return;
-      }
-
-      this.sessionLogger.info(
-        { agentId: this.voiceModeAgentId, elapsedMs: Date.now() - startedAt },
-        "set_voice_mode disabling active voice mode",
-      );
-      await this.disableVoiceModeForActiveAgent(true);
-      this.isVoiceMode = false;
-      this.sessionLogger.info({ elapsedMs: Date.now() - startedAt }, "Voice mode disabled");
-      if (requestId) {
-        this.emit({
-          type: "set_voice_mode_response",
-          payload: {
-            requestId,
-            enabled: false,
-            agentId: null,
-            accepted: true,
-            error: null,
-          },
-        });
-      }
+      await this.startVoiceTurnController();
+      this.isVoiceMode = true;
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : "Failed to set voice mode";
-      const unavailable = this.getVoiceFeatureUnavailableResponseMetadata(error);
-      this.sessionLogger.error(
-        {
-          err: error,
-          enabled,
-          requestedAgentId: agentId ?? null,
-          elapsedMs: Date.now() - startedAt,
-        },
-        "set_voice_mode failed",
-      );
-      if (requestId) {
-        this.emit({
-          type: "set_voice_mode_response",
-          payload: {
-            requestId,
-            enabled: this.isVoiceMode,
-            agentId: this.voiceModeAgentId,
-            accepted: false,
-            error: errorMessage,
-            ...unavailable,
-          },
-        });
-        return;
-      }
+      await this.disableVoiceModeForActiveAgent();
       throw error;
     }
+  }
+
+  async stop(): Promise<void> {
+    if (!this.isVoiceMode && !this.voiceModeAgentId) return;
+    await this.disableVoiceModeForActiveAgent();
+    this.isVoiceMode = false;
   }
 
   private parseVoiceTargetAgentId(rawId: string, source: string): string {
@@ -480,65 +257,19 @@ export class VoiceSession {
 
     this.registerVoiceBridgeForAgent(agentId);
 
-    const baseConfig: VoiceModeBaseConfig = {
-      systemPrompt: stripVoiceModeSystemPrompt(existing.config.systemPrompt),
-    };
-    this.voiceModeBaseConfig = baseConfig;
-    const refreshOverrides: Partial<AgentSessionConfig> = {
-      systemPrompt: buildVoiceModeSystemPrompt(baseConfig.systemPrompt, true),
-    };
-
-    try {
-      this.sessionLogger.info(
-        { agentId, elapsedMs: Date.now() - startedAt },
-        "enableVoiceModeForAgent.reloadAgentSession.start",
-      );
-      const refreshed = await this.host.reloadAgentSession(agentId, refreshOverrides);
-      this.sessionLogger.info(
-        { agentId, refreshedAgentId: refreshed.id, elapsedMs: Date.now() - startedAt },
-        "enableVoiceModeForAgent.reloadAgentSession.done",
-      );
-      return refreshed.id;
-    } catch (error) {
-      this.unregisterVoiceSpeakHandler?.(agentId);
-      this.unregisterVoiceCallerContext?.(agentId);
-      this.voiceModeBaseConfig = null;
-      throw error;
-    }
+    return existing.id;
   }
 
-  private async disableVoiceModeForActiveAgent(restoreAgentConfig: boolean): Promise<void> {
+  private async disableVoiceModeForActiveAgent(): Promise<void> {
     await this.stopVoiceTurnController();
 
     const agentId = this.voiceModeAgentId;
     if (!agentId) {
-      this.voiceModeBaseConfig = null;
       return;
     }
 
     this.unregisterVoiceSpeakHandler?.(agentId);
-    this.unregisterVoiceCallerContext?.(agentId);
-
-    if (restoreAgentConfig && this.voiceModeBaseConfig) {
-      const baseConfig = this.voiceModeBaseConfig;
-      try {
-        await this.host.reloadAgentSession(agentId, {
-          systemPrompt: buildVoiceModeSystemPrompt(baseConfig.systemPrompt, false),
-        });
-      } catch (error) {
-        this.sessionLogger.warn(
-          { err: error, agentId },
-          "Failed to restore agent config while disabling voice mode",
-        );
-      }
-    }
-
-    this.voiceModeBaseConfig = null;
     this.voiceModeAgentId = null;
-  }
-
-  private handleDictationManagerMessage(msg: DictationStreamOutboundMessage): void {
-    this.emit(msg as unknown as SessionOutboundMessage);
   }
 
   private async startVoiceTurnController(): Promise<void> {
@@ -631,6 +362,7 @@ export class VoiceSession {
         },
         onError: (error) => {
           this.sessionLogger.error({ err: error }, "Voice turn controller failed");
+          this.onFatalError?.(error);
         },
       },
     });
@@ -1059,12 +791,6 @@ export class VoiceSession {
         },
       });
     });
-
-    this.registerVoiceCallerContext?.(agentId, {
-      childAgentDefaultLabels: {},
-      allowCustomCwd: false,
-      enableVoiceTools: true,
-    });
   }
 
   /**
@@ -1301,9 +1027,7 @@ export class VoiceSession {
 
     this.ttsManager.cleanup();
     this.sttManager.cleanup();
-    this.dictationStreamManager.cleanupAll();
-
-    await this.disableVoiceModeForActiveAgent(true);
+    await this.disableVoiceModeForActiveAgent();
     this.isVoiceMode = false;
   }
 }

@@ -65,12 +65,6 @@ function buildFeatureProviderInputs(params: {
   env: NodeJS.ProcessEnv;
   persisted: PersistedConfig;
 }): Record<keyof RequestedSpeechProviders, FeatureProviderInputs> {
-  const voiceModeEnabled = resolveOptionalBooleanFlag(
-    firstSpeechDefinedValue<string | boolean>([
-      params.env.PASEO_VOICE_MODE_ENABLED,
-      params.persisted.features?.voiceMode?.enabled,
-    ]),
-  );
   return {
     dictationStt: {
       configuredValue: firstSpeechDefinedValue<string>([
@@ -85,25 +79,16 @@ function buildFeatureProviderInputs(params: {
       ),
     },
     voiceTurnDetection: {
-      configuredValue: firstSpeechDefinedValue<string>([
-        params.env.PASEO_VOICE_TURN_DETECTION_PROVIDER,
-        params.persisted.features?.voiceMode?.turnDetection?.provider,
-      ]),
-      enabled: voiceModeEnabled,
+      configuredValue: undefined,
+      enabled: false,
     },
     voiceStt: {
-      configuredValue: firstSpeechDefinedValue<string>([
-        params.env.PASEO_VOICE_STT_PROVIDER,
-        params.persisted.features?.voiceMode?.stt?.provider,
-      ]),
-      enabled: voiceModeEnabled,
+      configuredValue: undefined,
+      enabled: false,
     },
     voiceTts: {
-      configuredValue: firstSpeechDefinedValue<string>([
-        params.env.PASEO_VOICE_TTS_PROVIDER,
-        params.persisted.features?.voiceMode?.tts?.provider,
-      ]),
-      enabled: voiceModeEnabled,
+      configuredValue: undefined,
+      enabled: false,
     },
   };
 }

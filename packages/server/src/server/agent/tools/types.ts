@@ -35,11 +35,19 @@ export interface PaseoToolCatalog {
   ): Promise<PaseoToolResult>;
 }
 
+export interface PaseoCallerContext {
+  childAgentDefaultLabels?: Record<string, string>;
+  lockedCwd?: string;
+  allowCustomCwd?: boolean;
+}
+
+export interface PaseoToolExtension {
+  tools: readonly PaseoToolDefinition[];
+}
+
 export interface PaseoToolRuntimeContext {
   callerAgentId?: string;
   paseoToolPolicy?: ProviderPaseoToolsPolicy;
-  enableVoiceTools?: boolean;
-  voiceOnly?: boolean;
 }
 
 export type PaseoToolCatalogFactory = (

@@ -3,24 +3,26 @@ import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { Pressable, View } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
-import { Mic, MicOff, Square } from "lucide-react-native";
-import { FOOTER_HEIGHT } from "@/constants/layout";
+import { MessageCircle, Mic, MicOff, Square } from "lucide-react-native";
 import { useVoiceTelemetry } from "@/contexts/voice-context";
 import { VolumeMeter } from "./volume-meter";
 
 interface RealtimeVoiceOverlayProps {
   isMuted: boolean;
   isSwitching: boolean;
+  isTranscriptOpen: boolean;
+  onToggleTranscript: () => void;
   onToggleMute: () => void;
   onStop: () => void;
 }
 
-const OVERLAY_BUTTON_SIZE = 44;
-const OVERLAY_VERTICAL_PADDING = (FOOTER_HEIGHT - OVERLAY_BUTTON_SIZE) / 2;
+const OVERLAY_BUTTON_SIZE = 28;
 
 export function RealtimeVoiceOverlay({
   isMuted,
   isSwitching,
+  isTranscriptOpen,
+  onToggleTranscript,
   onToggleMute,
   onStop,
 }: RealtimeVoiceOverlayProps) {
@@ -42,12 +44,26 @@ export function RealtimeVoiceOverlay({
   );
   return (
     <View style={styles.container}>
+      <Pressable
+        onPress={onToggleTranscript}
+        accessibilityRole="button"
+        accessibilityLabel={isTranscriptOpen ? "Hide voice transcript" : "Show voice transcript"}
+        style={[
+          styles.actionButton,
+          styles.transcriptButton,
+          isTranscriptOpen && styles.transcriptButtonOpen,
+        ]}
+      >
+        <MessageCircle size={theme.iconSize.md} color={theme.colors.foreground} strokeWidth={2.5} />
+      </Pressable>
+
       <View style={styles.meterContainer}>
         <VolumeMeter
           volume={volume}
           isMuted={isMuted}
           isSpeaking={isSpeaking}
           orientation="horizontal"
+          variant="compact"
         />
       </View>
 
@@ -62,9 +78,9 @@ export function RealtimeVoiceOverlay({
           style={muteButtonStyle}
         >
           {isMuted ? (
-            <MicOff size={theme.iconSize.lg} color={theme.colors.palette.white} strokeWidth={2.5} />
+            <MicOff size={theme.iconSize.md} color={theme.colors.palette.white} strokeWidth={2.5} />
           ) : (
-            <Mic size={theme.iconSize.lg} color={theme.colors.foreground} strokeWidth={2.5} />
+            <Mic size={theme.iconSize.md} color={theme.colors.foreground} strokeWidth={2.5} />
           )}
         </Pressable>
 
@@ -79,7 +95,7 @@ export function RealtimeVoiceOverlay({
             <LoadingSpinner size="small" color={theme.colors.palette.white} />
           ) : (
             <Square
-              size={theme.iconSize.lg}
+              size={theme.iconSize.md}
               color={theme.colors.palette.white}
               fill={theme.colors.palette.white}
               strokeWidth={2.5}
@@ -96,24 +112,25 @@ const styles = StyleSheet.create((theme) => ({
     flexDirection: "row",
     alignItems: "center",
     width: "100%",
-    height: FOOTER_HEIGHT,
-    borderRadius: theme.borderRadius["2xl"],
+    minHeight: 40,
+    borderRadius: theme.borderRadius.xl,
     justifyContent: "space-between",
-    paddingHorizontal: theme.spacing[4],
-    paddingVertical: OVERLAY_VERTICAL_PADDING,
+    paddingHorizontal: theme.spacing[2],
+    paddingVertical: theme.spacing[1.5],
     backgroundColor: theme.colors.surface1,
     borderWidth: theme.borderWidth[1],
     borderColor: theme.colors.border,
   },
   meterContainer: {
     flex: 1,
+    minWidth: 0,
     alignItems: "center",
     justifyContent: "center",
   },
   actionsContainer: {
     flexDirection: "row",
     alignItems: "center",
-    gap: theme.spacing[2],
+    gap: theme.spacing[1],
   },
   actionButton: {
     width: OVERLAY_BUTTON_SIZE,
@@ -126,6 +143,14 @@ const styles = StyleSheet.create((theme) => ({
     backgroundColor: theme.colors.surface0,
     borderWidth: theme.borderWidth[1],
     borderColor: theme.colors.border,
+  },
+  transcriptButton: {
+    backgroundColor: theme.colors.surface0,
+    borderWidth: theme.borderWidth[1],
+    borderColor: theme.colors.border,
+  },
+  transcriptButtonOpen: {
+    backgroundColor: theme.colors.interactionHighlight,
   },
   muteButtonMuted: {
     backgroundColor: theme.colors.palette.red[600],

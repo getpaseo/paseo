@@ -1944,6 +1944,7 @@ export const ar: TranslationResources = {
       projects: "المشاريع",
       connections: "اتصالات",
       agents: "Agents",
+      voice: "الصوت",
       metadata: "البيانات الوصفية",
       workspaces: "Workspaces",
       providers: "مقدمي الخدمات",

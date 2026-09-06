@@ -625,39 +625,55 @@ describe("PersistedConfigSchema logging config", () => {
   });
 });
 
-describe("PersistedConfigSchema voice mode config", () => {
-  test("accepts a dedicated turn detection provider", () => {
+describe("PersistedConfigSchema manual voice config", () => {
+  test("accepts the provider-owned manual voice configuration", () => {
     const parsed = PersistedConfigSchema.parse({
+      manualVoice: {
+        orchestrator: {
+          provider: "codex",
+          model: "gpt-5.4",
+          modeId: "full-access",
+          thinkingOptionId: "high",
+        },
+        stt: { provider: "openai", model: "gpt-4o-mini-transcribe", language: " de " },
+        turnDetection: { provider: "local" },
+        tts: { provider: "openai", model: "tts-1-hd", voice: "nova" },
+      },
+    });
+
+    expect(parsed.manualVoice).toEqual({
+      orchestrator: {
+        provider: "codex",
+        model: "gpt-5.4",
+        modeId: "full-access",
+        thinkingOptionId: "high",
+      },
+      stt: { provider: "openai", model: "gpt-4o-mini-transcribe", language: "de" },
+      turnDetection: { provider: "local" },
+      tts: { provider: "openai", model: "tts-1-hd", voice: "nova" },
+    });
+  });
+
+  test("rejects the removed feature voice-mode path", () => {
+    const parsed = PersistedConfigSchema.safeParse({
       features: {
         voiceMode: {
-          turnDetection: {
-            provider: "local",
-          },
+          llm: { provider: "codex", modeId: "full-access" },
         },
       },
     });
 
-    expect(parsed.features?.voiceMode?.turnDetection?.provider).toBe("local");
+    expect(parsed.success).toBe(false);
   });
+});
 
-  test("accepts trimmed STT language fields", () => {
+describe("PersistedConfigSchema dictation language", () => {
+  test("accepts a trimmed STT language", () => {
     const parsed = PersistedConfigSchema.parse({
-      features: {
-        dictation: {
-          stt: {
-            language: " fr ",
-          },
-        },
-        voiceMode: {
-          stt: {
-            language: " de ",
-          },
-        },
-      },
+      features: { dictation: { stt: { language: " fr " } } },
     });
 
     expect(parsed.features?.dictation?.stt?.language).toBe("fr");
-    expect(parsed.features?.voiceMode?.stt?.language).toBe("de");
   });
 });
 
@@ -730,6 +746,37 @@ describe("loadPersistedConfig", () => {
       expect((config.providers?.openai as Record<string, unknown>)?.voice).toBeUndefined();
       expect(config.providers?.openai?.stt).toBeUndefined();
       expect(config.providers?.openai?.tts).toBeUndefined();
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  test("loads a config that still contains the removed feature voice-mode block", () => {
+    const home = createTempHome();
+    const configPath = path.join(home, "config.json");
+    try {
+      writeFileSync(
+        configPath,
+        `${JSON.stringify(
+          {
+            version: 1,
+            features: {
+              dictation: { enabled: true },
+              voiceMode: {
+                enabled: true,
+                llm: { provider: "codex", modeId: "full-access" },
+              },
+            },
+          },
+          null,
+          2,
+        )}\n`,
+      );
+
+      const config = loadPersistedConfig(home);
+
+      expect(config.features?.dictation?.enabled).toBe(true);
+      expect((config.features as Record<string, unknown>)?.voiceMode).toBeUndefined();
     } finally {
       rmSync(home, { recursive: true, force: true });
     }

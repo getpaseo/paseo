@@ -2,9 +2,9 @@ import { describe, expect, it, vi } from "vitest";
 import pino from "pino";
 import { Readable } from "node:stream";
 
-import { TTSManager } from "./tts-manager.js";
-import type { TextToSpeechProvider } from "../speech/speech-provider.js";
-import type { SessionOutboundMessage } from "../messages.js";
+import { TTSManager } from "./synthesis.js";
+import type { TextToSpeechProvider } from "../../../speech/speech-provider.js";
+import type { SessionOutboundMessage } from "../../../messages.js";
 
 type AudioOutputMessage = Extract<SessionOutboundMessage, { type: "audio_output" }>;
 

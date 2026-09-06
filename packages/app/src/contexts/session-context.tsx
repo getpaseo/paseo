@@ -1,5 +1,4 @@
 import { useRef, ReactNode, useCallback, useEffect } from "react";
-import { Buffer } from "buffer";
 import { AppState } from "react-native";
 import { useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
@@ -34,8 +33,7 @@ import type { AgentSessionConfig } from "@getpaseo/protocol/agent-types";
 import type { GitSetupOptions } from "@getpaseo/protocol/messages";
 import type { AgentPermissionResponse } from "@getpaseo/protocol/agent-types";
 import { getHostRuntimeStore, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
-import { useVoiceAudioEngineOptional, useVoiceRuntimeOptional } from "@/contexts/voice-context";
-import type { AudioPlaybackSource } from "@/voice/audio-engine-types";
+import { useVoiceRuntimeOptional } from "@/contexts/voice-context";
 import {
   selectAgentTimelineState,
   useSessionStore,
@@ -72,48 +70,9 @@ export type {
   AgentFileExplorerState,
 } from "@/stores/session-store";
 
-type AudioOutputPayload = Extract<SessionOutboundMessage, { type: "audio_output" }>["payload"];
-
-interface BufferedAudioChunk {
-  chunkIndex: number;
-  audio: string;
-  format: string;
-  id: string;
-}
-
 // COMPAT(selectiveAgentTimeline): added in v0.1.106, remove after 2027-01-12.
 function getTimelineDeliveryMode(selectiveAgentTimeline?: boolean): TimelineDeliveryMode {
   return selectiveAgentTimeline ? "selective" : "legacy";
-}
-
-function decodeBase64Chunk(base64: string): Uint8Array {
-  return Buffer.from(base64, "base64");
-}
-
-function buildAudioPlaybackSource(chunks: BufferedAudioChunk[]): AudioPlaybackSource {
-  const decodedChunks = chunks.map((chunk) => decodeBase64Chunk(chunk.audio));
-  const totalSize = decodedChunks.reduce((sum, chunk) => sum + chunk.length, 0);
-  const output = new Uint8Array(totalSize);
-  let offset = 0;
-  for (const chunk of decodedChunks) {
-    output.set(chunk, offset);
-    offset += chunk.length;
-  }
-
-  const format = chunks[0]?.format ?? "pcm";
-  let mimeType: string;
-  if (format === "pcm") mimeType = "audio/pcm;rate=24000;bits=16";
-  else if (format === "mp3") mimeType = "audio/mpeg";
-  else mimeType = `audio/${format}`;
-
-  const bytes = output.slice();
-  return {
-    size: bytes.byteLength,
-    type: mimeType,
-    async arrayBuffer() {
-      return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
-    },
-  };
 }
 
 const findLatestAssistantMessageText = (items: StreamItem[]): string | null => {
@@ -186,15 +145,6 @@ type WorkspaceSetupProgressPayload = Extract<
   { type: "workspace_setup_progress" }
 >["payload"];
 
-function notifyVoiceAbortFailure(
-  data: Extract<SessionOutboundMessage, { type: "activity_log" }>["payload"],
-  notifyError: (message: string) => void,
-): void {
-  if (data.type === "error" && data.metadata?.voiceAbortFailed === true) {
-    notifyError(data.content);
-  }
-}
-
 interface SessionProviderSharedProps {
   children: ReactNode;
   serverId: string;
@@ -222,7 +172,6 @@ export function SessionProvider(props: SessionProviderProps) {
 function SessionProviderInternal({ children, serverId, client }: SessionProviderClientProps) {
   const { t } = useTranslation();
   const voiceRuntime = useVoiceRuntimeOptional();
-  const voiceAudioEngine = useVoiceAudioEngineOptional();
   const queryClient = useQueryClient();
   const isConnected = useHostRuntimeIsConnected(serverId);
   const toast = useToast();
@@ -253,8 +202,6 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
   const appStateRef = useRef(AppState.currentState);
   const forcedTimelineTailReplacements = useRef(new Set<string>());
   const viewedTimelineSyncRef = useRef<ViewedTimelineOwner | null>(null);
-  const audioOutputBuffersRef = useRef<Map<string, BufferedAudioChunk[]>>(new Map());
-  const activeAudioGroupsRef = useRef<Set<string>>(new Set());
   const isAppVisible = useAppVisible();
 
   useEffect(() => {
@@ -367,29 +314,29 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
   useEffect(() => {
     const unregister = voiceRuntime?.registerSession({
       serverId,
-      setVoiceMode: async (enabled, agentId) => {
+      startCall: async (context, transports) => {
         if (!client) {
           throw new Error(t("common.errors.daemonUnavailable"));
         }
-        await client.setVoiceMode(enabled, agentId);
+        return client.startVoiceCall(context, transports);
       },
-      sendVoiceAudioChunk: async (audioData, mimeType) => {
+      stopCall: async (callId) => {
         if (!client) {
           throw new Error(t("common.errors.daemonUnavailable"));
         }
-        await client.sendVoiceAudioChunk(audioData, mimeType);
+        await client.stopVoiceCall(callId);
       },
-      audioPlayed: async (chunkId) => {
+      updateCallContext: async (callId, context) => {
         if (!client) {
           throw new Error(t("common.errors.daemonUnavailable"));
         }
-        await client.audioPlayed(chunkId);
+        await client.updateVoiceCallContext(callId, context);
       },
-      abortRequest: async () => {
+      sendTransportMessage: (callId, data) => {
         if (!client) {
           throw new Error(t("common.errors.daemonUnavailable"));
         }
-        await client.abortRequest();
+        client.sendVoiceCallTransportMessage(callId, data);
       },
       setAssistantAudioPlaying: (isPlaying) => {
         setIsPlayingAudio(serverId, isPlaying);
@@ -521,14 +468,6 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
       const { agentId, event, timestamp, seq, epoch } = message.payload;
       const parsedTimestamp = new Date(timestamp);
       const streamEvent = event;
-      if (
-        event.type === "turn_started" ||
-        event.type === "turn_completed" ||
-        event.type === "turn_failed" ||
-        event.type === "turn_canceled"
-      ) {
-        voiceRuntime?.onTurnEvent(serverId, agentId, event.type);
-      }
       const turnLiveness = deriveAgentStreamTurnLiveness([
         { event: streamEvent, seq, epoch, timestamp: parsedTimestamp },
       ]);
@@ -650,94 +589,19 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
       });
     });
 
-    const unsubAudioOutput = client.on("audio_output", async (message) => {
-      if (message.type !== "audio_output") return;
-      if (!voiceAudioEngine) {
-        return;
-      }
-
-      const payload: AudioOutputPayload = message.payload;
-      if (payload.isVoiceMode && voiceRuntime) {
-        voiceRuntime.handleAudioOutput(serverId, payload);
-        return;
-      }
-
-      const playbackGroupId = payload.groupId ?? payload.id;
-      const chunkIndex = payload.chunkIndex ?? 0;
-      const isFinalChunk = payload.isLastChunk ?? true;
-
-      if (!audioOutputBuffersRef.current.has(playbackGroupId)) {
-        audioOutputBuffersRef.current.set(playbackGroupId, []);
-      }
-
-      const bufferedChunks = audioOutputBuffersRef.current.get(playbackGroupId)!;
-      bufferedChunks.push({
-        chunkIndex,
-        audio: payload.audio,
-        format: payload.format,
-        id: payload.id,
-      });
-
-      activeAudioGroupsRef.current.add(playbackGroupId);
-      setIsPlayingAudio(serverId, true);
-
-      if (!isFinalChunk) {
-        return;
-      }
-
-      bufferedChunks.sort((left, right) => left.chunkIndex - right.chunkIndex);
-      const chunkIds = bufferedChunks.map((chunk) => chunk.id);
-      const shouldPlay =
-        !payload.isVoiceMode || (voiceRuntime?.shouldPlayVoiceAudio(serverId) ?? false);
-      const audioBlob = buildAudioPlaybackSource(bufferedChunks);
-      function logAudioPlayedError(error: unknown): void {
-        console.warn("[Session] Failed to confirm audio playback:", error);
-      }
-      const confirmAudioPlayed = async () => {
-        await Promise.all(
-          chunkIds.map((chunkId) => client.audioPlayed(chunkId).catch(logAudioPlayedError)),
-        );
-      };
-
-      let startedVoicePlayback = false;
-      try {
-        if (shouldPlay) {
-          if (payload.isVoiceMode) {
-            startedVoicePlayback = true;
-            voiceRuntime?.onAssistantAudioStarted(serverId);
-          }
-          await voiceAudioEngine.play(audioBlob);
-        }
-        await confirmAudioPlayed();
-      } catch (error) {
-        console.error("[Session] Audio playback error:", error);
-        await confirmAudioPlayed();
-      } finally {
-        audioOutputBuffersRef.current.delete(playbackGroupId);
-        activeAudioGroupsRef.current.delete(playbackGroupId);
-        setIsPlayingAudio(serverId, activeAudioGroupsRef.current.size > 0);
-
-        if (startedVoicePlayback) {
-          voiceRuntime?.onAssistantAudioFinished(serverId);
-        }
-      }
+    const unsubVoiceCallTransport = client.on("voice.call.transport.server", (message) => {
+      if (message.type !== "voice.call.transport.server" || !voiceRuntime) return;
+      voiceRuntime.handleTransportMessage(serverId, message.payload.callId, message.payload.data);
     });
 
-    const unsubActivity = client.on("activity_log", (message) => {
-      if (message.type !== "activity_log") return;
-      notifyVoiceAbortFailure(message.payload, toast.error);
+    const unsubVoiceCallState = client.on("voice.call.state", (message) => {
+      if (message.type !== "voice.call.state") return;
+      voiceRuntime?.handleCallState(serverId, message.payload);
     });
 
-    const unsubTranscription = client.on("transcription_result", (message) => {
-      if (message.type !== "transcription_result") return;
-
-      const transcriptText = message.payload.text.trim();
-      voiceRuntime?.onTranscriptionResult(serverId, transcriptText);
-    });
-
-    const unsubVoiceInputState = client.on("voice_input_state", (message) => {
-      if (message.type !== "voice_input_state") return;
-      voiceRuntime?.onServerSpeechStateChanged(serverId, message.payload.isSpeaking);
+    const unsubVoiceCallEvent = client.on("voice.call.event", (message) => {
+      if (message.type !== "voice.call.event") return;
+      voiceRuntime?.handleCallEvent(serverId, message.payload.callId, message.payload.event);
     });
 
     const unsubTerminalAttention = client.on("terminal_attention_required", (message) => {
@@ -773,10 +637,9 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
       unsubStatus();
       unsubPermissionRequest();
       unsubPermissionResolved();
-      unsubAudioOutput();
-      unsubActivity();
-      unsubTranscription();
-      unsubVoiceInputState();
+      unsubVoiceCallTransport();
+      unsubVoiceCallState();
+      unsubVoiceCallEvent();
       unsubTerminalAttention();
     };
   }, [
@@ -796,7 +659,6 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
     updateSessionServerInfo,
     toast,
     voiceRuntime,
-    voiceAudioEngine,
   ]);
 
   const _cancelAgentRun = useCallback(

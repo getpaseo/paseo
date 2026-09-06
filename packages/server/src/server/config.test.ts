@@ -69,7 +69,6 @@ describe("server config", () => {
         PASEO_TRUSTED_PROXIES: "true",
         PASEO_WEB_UI_ENABLED: "true",
         PASEO_LOG_FILE_PATH: "custom.log",
-        PASEO_VOICE_LLM_PROVIDER: "codex",
       },
       cli: { relayUseTls: false },
     });
@@ -80,67 +79,73 @@ describe("server config", () => {
       "daemon.relay.endpoint",
       "daemon.relay.useTls",
       "daemon.trustedProxies",
-      "features.voiceMode.llm.provider",
       "features.webUi.enabled",
       "log.file.path",
     ]);
     expect(config.listen).toBe("127.0.0.1:7000");
     expect(config.trustedProxies).toBe(true);
     expect(config.log?.file?.path).toBe("custom.log");
-    expect(config.voiceLlmProvider).toBe("codex");
   });
 
-  test.each([
-    {
-      name: "local speech providers",
-      providers: { dictation: "local", voiceStt: "local", voiceTts: "local" },
-      expected: [
-        "features.dictation.stt.model",
-        "features.voiceMode.stt.model",
-        "features.voiceMode.tts.model",
-      ],
-    },
-    {
-      name: "OpenAI speech providers",
-      providers: { dictation: "openai", voiceStt: "openai", voiceTts: "openai" },
-      expected: [
-        "features.dictation.stt.confidenceThreshold",
-        "features.dictation.stt.model",
-        "features.voiceMode.stt.model",
-        "features.voiceMode.tts.model",
-        "features.voiceMode.tts.voice",
-      ],
-    },
-    {
-      name: "mixed local and OpenAI speech providers",
-      providers: { dictation: "local", voiceStt: "openai", voiceTts: "local" },
-      expected: [
-        "features.dictation.stt.confidenceThreshold",
-        "features.dictation.stt.model",
-        "features.voiceMode.stt.model",
-        "features.voiceMode.tts.model",
-      ],
-    },
-  ])("classifies speech overrides for $name", ({ providers, expected }) => {
+  test("resolves the complete manual voice orchestrator selection", async () => {
+    const paseoHome = await mkdtemp(path.join(os.tmpdir(), "paseo-config-voice-agent-"));
+    roots.push(paseoHome);
+    await writeFile(
+      path.join(paseoHome, "config.json"),
+      JSON.stringify({
+        manualVoice: {
+          orchestrator: {
+            provider: "codex",
+            model: "gpt-5.4",
+            modeId: "full-access",
+            thinkingOptionId: "high",
+          },
+          stt: { provider: "openai", model: "gpt-4o-mini-transcribe", language: "de" },
+          turnDetection: { provider: "local" },
+          tts: { provider: "openai", model: "tts-1-hd", voice: "nova" },
+        },
+        providers: {
+          openai: { apiKey: "manual-speech-key" },
+        },
+      }),
+    );
+
+    const config = loadConfig(paseoHome, { env: {} });
+
+    expect(config.manualVoice.orchestrator).toEqual({
+      provider: "codex",
+      model: "gpt-5.4",
+      modeId: "full-access",
+      thinkingOptionId: "high",
+    });
+    expect(config.manualVoice.speech.providers.voiceStt.provider).toBe("openai");
+    expect(config.manualVoice.speech.providers.voiceTurnDetection.provider).toBe("local");
+    expect(config.manualVoice.speech.providers.voiceTts.provider).toBe("openai");
+    expect(config.manualVoice.speech.sttLanguages.voice).toBe("de");
+    expect(config.manualVoice.openai?.stt).toMatchObject({
+      apiKey: "manual-speech-key",
+      model: "gpt-4o-mini-transcribe",
+    });
+    expect(config.manualVoice.openai?.tts).toMatchObject({
+      apiKey: "manual-speech-key",
+      model: "tts-1-hd",
+      voice: "nova",
+    });
+  });
+
+  test("classifies only dictation speech overrides in shared config", () => {
     const config = resolveConfigFromPersisted(
       "/tmp/paseo-speech-override-classification",
       {
         version: 1,
         features: {
-          dictation: { enabled: true, stt: { provider: providers.dictation } },
-          voiceMode: {
-            enabled: true,
-            stt: { provider: providers.voiceStt },
-            tts: { provider: providers.voiceTts },
-          },
+          dictation: { enabled: true, stt: { provider: "local" } },
         },
       },
       {
         env: {
           OPENAI_API_KEY: "test-api-key",
           PASEO_DICTATION_LOCAL_STT_MODEL: "parakeet-tdt-0.6b-v2-int8",
-          PASEO_VOICE_LOCAL_STT_MODEL: "parakeet-tdt-0.6b-v2-int8",
-          PASEO_VOICE_LOCAL_TTS_MODEL: "kokoro-en-v0_19",
           STT_CONFIDENCE_THRESHOLD: "0.5",
           STT_MODEL: "whisper-1",
           TTS_MODEL: "tts-1",
@@ -149,7 +154,7 @@ describe("server config", () => {
       },
     );
 
-    expect(config.configReload?.overrideControlledPaths).toEqual(expected);
+    expect(config.configReload?.overrideControlledPaths).toEqual(["features.dictation.stt.model"]);
   });
 
   test("resolves bundled web UI path from source-tree modules", () => {

@@ -126,9 +126,7 @@ function buildLocalSpeechLanguageResolutionInput(params: {
       DEFAULT_STT_LANGUAGE,
     ]),
     voiceLanguage: firstNonEmptyString([
-      env.PASEO_VOICE_LANGUAGE,
       env.PASEO_DICTATION_LANGUAGE,
-      persisted.features?.voiceMode?.stt?.language,
       persisted.features?.dictation?.stt?.language,
       DEFAULT_STT_LANGUAGE,
     ]),
@@ -159,33 +157,11 @@ function buildLocalSpeechResolutionInput(params: {
       ),
       DEFAULT_LOCAL_STT_MODEL,
     ]),
-    voiceLocalSttModel: firstDefinedValue<string>([
-      env.PASEO_VOICE_LOCAL_STT_MODEL,
-      persistedLocalFeatureModel(
-        providers.voiceStt.provider,
-        providers.voiceStt.enabled,
-        persisted.features?.voiceMode?.stt?.model,
-      ),
-      DEFAULT_LOCAL_STT_MODEL,
-    ]),
-    voiceLocalTtsModel: firstDefinedValue<string>([
-      env.PASEO_VOICE_LOCAL_TTS_MODEL,
-      persistedLocalFeatureModel(
-        providers.voiceTts.provider,
-        providers.voiceTts.enabled,
-        persisted.features?.voiceMode?.tts?.model,
-      ),
-      DEFAULT_LOCAL_TTS_MODEL,
-    ]),
+    voiceLocalSttModel: firstDefinedValue<string>([DEFAULT_LOCAL_STT_MODEL]),
+    voiceLocalTtsModel: firstDefinedValue<string>([DEFAULT_LOCAL_TTS_MODEL]),
     ...buildLocalSpeechLanguageResolutionInput({ env, persisted }),
-    voiceLocalTtsSpeakerId: firstDefinedValue<string | number>([
-      env.PASEO_VOICE_LOCAL_TTS_SPEAKER_ID,
-      persisted.features?.voiceMode?.tts?.speakerId,
-    ]),
-    voiceLocalTtsSpeed: firstDefinedValue<string | number>([
-      env.PASEO_VOICE_LOCAL_TTS_SPEED,
-      persisted.features?.voiceMode?.tts?.speed,
-    ]),
+    voiceLocalTtsSpeakerId: firstDefinedValue<string | number>([]),
+    voiceLocalTtsSpeed: firstDefinedValue<string | number>([]),
   };
 }
 

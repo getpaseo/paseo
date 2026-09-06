@@ -8,7 +8,9 @@ import {
   type ReactNode,
 } from "react";
 import { activateKeepAwakeAsync, deactivateKeepAwake } from "expo-keep-awake";
+import type { VoiceAppContext } from "@getpaseo/protocol/messages";
 import { useSessionStore } from "@/stores/session-store";
+import { useToast } from "@/contexts/toast-context";
 import { createAudioEngine } from "@/voice/audio-engine";
 import type { AudioEngine } from "@/voice/audio-engine-types";
 import {
@@ -16,12 +18,18 @@ import {
   type VoiceRuntime,
   type VoiceRuntimeSnapshot,
   type VoiceRuntimeTelemetrySnapshot,
-} from "@/voice/voice-runtime";
+} from "@/voice-chat/runtime";
+import {
+  createDaemonAudioTransportFactory,
+  type DaemonAudioTransportFactory,
+} from "@/voice-chat/transports/daemon-audio";
 
 interface VoiceContextValue extends VoiceRuntimeSnapshot {
-  startVoice: (serverId: string, agentId: string) => Promise<void>;
+  startCall: (serverId: string, context: VoiceAppContext) => Promise<void>;
   stopVoice: () => Promise<void>;
-  isVoiceModeForAgent: (serverId: string, agentId: string) => boolean;
+  updateCallContext: (context: VoiceAppContext) => Promise<void>;
+  dismissTranscript: () => void;
+  isCallActiveOnServer: (serverId: string) => boolean;
   toggleMute: () => void;
 }
 
@@ -31,7 +39,8 @@ const EMPTY_SNAPSHOT: VoiceRuntimeSnapshot = {
   isVoiceSwitching: false,
   isMuted: false,
   activeServerId: null,
-  activeAgentId: null,
+  activeCallId: null,
+  events: [],
 };
 
 const EMPTY_TELEMETRY: VoiceRuntimeTelemetrySnapshot = {
@@ -73,9 +82,11 @@ export function useVoiceOptional(): VoiceContextValue | null {
     }
     return {
       ...snapshot,
-      startVoice: runtime.startVoice,
+      startCall: runtime.startCall,
       stopVoice: runtime.stopVoice,
-      isVoiceModeForAgent: runtime.isVoiceModeForAgent,
+      updateCallContext: runtime.updateCallContext,
+      dismissTranscript: runtime.dismissTranscript,
+      isCallActiveOnServer: runtime.isCallActiveOnServer,
       toggleMute: runtime.toggleMute,
     };
   }, [snapshot, runtime]);
@@ -113,17 +124,24 @@ interface VoiceProviderProps {
 }
 
 export function VoiceProvider({ children }: VoiceProviderProps) {
+  const toast = useToast();
   const engineRef = useRef<AudioEngine | null>(null);
   const runtimeRef = useRef<VoiceRuntime | null>(null);
 
   if (!engineRef.current) {
     let runtime: VoiceRuntime | null = null;
+    let daemonAudio: DaemonAudioTransportFactory | null = null;
+    const reportMediaError = (error: unknown) => {
+      const message = error instanceof Error ? error.message : "Voice media failed";
+      toast.error(message);
+      void runtime?.reportError(message);
+    };
     const engine = createAudioEngine({
       onCaptureData: (pcm) => {
-        runtime?.handleCapturePcm(pcm);
+        daemonAudio?.handleCapturePcm(pcm);
       },
       onVolumeLevel: (level) => {
-        runtime?.handleCaptureVolume(level);
+        daemonAudio?.handleCaptureVolume(level);
       },
       onInterruption: () => {
         void runtime?.stopVoice().catch((error) => {
@@ -131,12 +149,13 @@ export function VoiceProvider({ children }: VoiceProviderProps) {
         });
       },
       onError: (error) => {
-        console.error("[VoiceEngine] Capture error:", error);
+        reportMediaError(error);
       },
     });
+    daemonAudio = createDaemonAudioTransportFactory({ engine, onError: reportMediaError });
 
     runtime = createVoiceRuntime({
-      engine,
+      transports: [daemonAudio],
       getServerInfo: (serverId) =>
         useSessionStore.getState().getSession(serverId)?.serverInfo ?? null,
       activateKeepAwake: async (tag) => {
@@ -156,11 +175,14 @@ export function VoiceProvider({ children }: VoiceProviderProps) {
 
   useEffect(() => {
     return () => {
-      void runtime.destroy().catch((error) => {
-        console.error("[VoiceProvider] Failed to destroy voice runtime", error);
-      });
+      void runtime
+        .destroy()
+        .then(() => engine.destroy())
+        .catch((error) => {
+          console.error("[VoiceProvider] Failed to destroy voice runtime", error);
+        });
     };
-  }, [runtime]);
+  }, [engine, runtime]);
 
   return (
     <VoiceAudioEngineContext.Provider value={engine}>

@@ -1,9 +1,9 @@
 import type pino from "pino";
 import type { Readable } from "node:stream";
 import { v4 as uuidv4 } from "uuid";
-import type { TextToSpeechProvider } from "../speech/speech-provider.js";
-import { toResolver, type Resolvable } from "../speech/provider-resolver.js";
-import type { SessionOutboundMessage } from "../messages.js";
+import type { TextToSpeechProvider } from "../../../speech/speech-provider.js";
+import { toResolver, type Resolvable } from "../../../speech/provider-resolver.js";
+import type { SessionOutboundMessage } from "../../../messages.js";
 
 interface PendingPlayback {
   resolve: () => void;

@@ -120,6 +120,55 @@ describe("DaemonConfigStore", () => {
     expect(loadPersistedConfig(paseoHome).daemon?.relay?.enabled).toBe(true);
   });
 
+  test("patch persists and emits the complete voice orchestrator selection", () => {
+    const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-daemon-config-store-"));
+    tempDirs.push(paseoHome);
+    const store = new DaemonConfigStore(paseoHome, {
+      mcp: { injectIntoAgents: false },
+      browserTools: { enabled: false },
+      providers: {},
+      metadataGeneration: { providers: [] },
+      autoArchiveAfterMerge: false,
+      enableTerminalAgentHooks: false,
+      appendSystemPrompt: "",
+      manualVoice: {
+        orchestrator: {
+          provider: null,
+          model: null,
+          modeId: null,
+          thinkingOptionId: null,
+        },
+      },
+    });
+    const changes: unknown[] = [];
+    store.onFieldChange("manualVoice.orchestrator", (value) => changes.push(value));
+
+    const next = store.patch({
+      manualVoice: {
+        orchestrator: {
+          provider: "codex",
+          model: "gpt-5.4",
+          modeId: "full-access",
+          thinkingOptionId: "high",
+        },
+      },
+    });
+
+    expect(next.manualVoice?.orchestrator).toEqual({
+      provider: "codex",
+      model: "gpt-5.4",
+      modeId: "full-access",
+      thinkingOptionId: "high",
+    });
+    expect(changes).toEqual([next.manualVoice?.orchestrator]);
+    expect(loadPersistedConfig(paseoHome).manualVoice?.orchestrator).toEqual({
+      provider: "codex",
+      model: "gpt-5.4",
+      modeId: "full-access",
+      thinkingOptionId: "high",
+    });
+  });
+
   test("patch round-trips agent profiles through the strictly-parsed persisted config", () => {
     const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-daemon-config-store-"));
     tempDirs.push(paseoHome);

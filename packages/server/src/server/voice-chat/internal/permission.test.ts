@@ -1,7 +1,7 @@
 import { describe, expect, test } from "vitest";
 
-import type { AgentPermissionRequest } from "./agent/agent-sdk-types.js";
-import { isVoicePermissionAllowed } from "./voice-permission-policy.js";
+import type { AgentPermissionRequest } from "../../agent/agent-sdk-types.js";
+import { isManualVoicePermissionAllowed } from "../providers/manual/permission.js";
 
 function buildRequest(partial: Partial<AgentPermissionRequest>): AgentPermissionRequest {
   return {
@@ -13,30 +13,34 @@ function buildRequest(partial: Partial<AgentPermissionRequest>): AgentPermission
   };
 }
 
-describe("isVoicePermissionAllowed", () => {
+describe("isManualVoicePermissionAllowed", () => {
   test("allows direct speak tool names across provider conventions", () => {
-    const result = isVoicePermissionAllowed(buildRequest({ name: "speak" }));
+    const result = isManualVoicePermissionAllowed(buildRequest({ name: "speak" }));
     expect(result).toBe(true);
-    expect(isVoicePermissionAllowed(buildRequest({ name: "paseo_voice.speak" }))).toBe(true);
-    expect(isVoicePermissionAllowed(buildRequest({ name: "mcp__paseo_voice__speak" }))).toBe(true);
+    expect(isManualVoicePermissionAllowed(buildRequest({ name: "paseo_voice.speak" }))).toBe(true);
+    expect(isManualVoicePermissionAllowed(buildRequest({ name: "mcp__paseo_voice__speak" }))).toBe(
+      true,
+    );
   });
 
   test("denies non-speak tool names", () => {
-    expect(isVoicePermissionAllowed(buildRequest({ name: "mcp__paseo__create_agent" }))).toBe(
+    expect(isManualVoicePermissionAllowed(buildRequest({ name: "mcp__paseo__create_agent" }))).toBe(
       false,
     );
-    expect(isVoicePermissionAllowed(buildRequest({ name: "paseo_create_agent" }))).toBe(false);
+    expect(isManualVoicePermissionAllowed(buildRequest({ name: "paseo_create_agent" }))).toBe(
+      false,
+    );
   });
 
   test("denies non-tool permission kinds", () => {
-    const result = isVoicePermissionAllowed(
+    const result = isManualVoicePermissionAllowed(
       buildRequest({ kind: "mode", name: "mcp__paseo__create_agent" }),
     );
     expect(result).toBe(false);
   });
 
   test("denies wrapper tools even when metadata references speak", () => {
-    const denied = isVoicePermissionAllowed(
+    const denied = isManualVoicePermissionAllowed(
       buildRequest({
         name: "codextool",
         metadata: {
