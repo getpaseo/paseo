@@ -115,7 +115,7 @@ Creation options include `config`, `cwd`, `parent`, `title`, `prompt`, `env`, `o
 | Method               | Result                   | Behavior                                                                      |
 | -------------------- | ------------------------ | ----------------------------------------------------------------------------- |
 | `list(options?)`     | `PaseoProjectListResult` | Lists every registered project, including projects with no active workspaces. |
-| `subscribe(handler)` | Unsubscribe function     | Listens for project upserts and removals on this connection.                  |
+| `subscribe(handler)` | Unsubscribe function     | Listens for future project upserts and removals. Call `list()` first.         |
 
 ## `client.workspaces`
 
