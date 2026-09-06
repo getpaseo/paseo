@@ -79,6 +79,7 @@ export interface DesktopRuntimeConfig {
    */
   confirmShouldAccept?: boolean;
   dialogOpenResult?: string | string[] | null;
+  pendingOpenProjectPath?: string;
   editorTargets?: DesktopEditorTargetConfig[];
   editorRecordPath?: string;
 }
@@ -141,6 +142,7 @@ export async function installDesktopRuntime(
     let currentPid: number | null = cfg.daemonPid ?? null;
     let startCount = 0;
     let manualUpdateAdmitted = false;
+    let pendingOpenProjectPath = cfg.pendingOpenProjectPath ?? null;
     window.__desktopDaemonStartRequested = false;
 
     function buildDaemonStatus() {
@@ -292,7 +294,11 @@ export async function installDesktopRuntime(
           return cfg.dialogOpenResult ?? null;
         },
       },
-      getPendingOpenProject: async () => null,
+      getPendingOpenProject: async () => {
+        const pending = pendingOpenProjectPath;
+        pendingOpenProjectPath = null;
+        return pending;
+      },
       events: { on: async () => () => undefined },
     };
 
