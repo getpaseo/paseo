@@ -265,6 +265,7 @@ export class FakePiSession implements PiRuntimeSession {
     if (!this.setModelResult) {
       throw new Error("FakePi setModel requires setModelResult to be scripted");
     }
+    this.state = { ...this.state, model: this.setModelResult };
     return this.setModelResult;
   }
 
