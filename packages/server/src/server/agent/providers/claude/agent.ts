@@ -1874,6 +1874,18 @@ function readLegacyResultUsageTokens(usage: unknown): number | undefined {
   return usageRecord ? readUsageTokenTotal(usageRecord) : undefined;
 }
 
+function readFinalizedFlatUsageTokens(usage: unknown): number | undefined {
+  const usageRecord = toObjectRecord(usage);
+  if (!usageRecord || !Array.isArray(usageRecord.iterations) || usageRecord.iterations.length > 0) {
+    return undefined;
+  }
+
+  // Some Anthropic-compatible backends emit an explicit empty iterations array
+  // with finalized per-turn usage. Missing iterations remains unsafe after turn one
+  // because legacy Claude results can contain aggregate totals.
+  return readUsageTokenTotal(usageRecord);
+}
+
 function isClaudeSubagentToolName(name: string | undefined): boolean {
   return name === "Task" || name === "Agent" || name === "Workflow";
 }
@@ -1968,7 +1980,10 @@ class ClaudeContextUsageState {
         readActiveUsageTokens(message.usage) ??
         (this.completedResultTurns === 0 ? readLegacyResultUsageTokens(message.usage) : undefined);
       const usedTokens =
-        this.streamUsedTokens() ?? activeResultUsageTokens ?? this.compactedContextWindowUsedTokens;
+        readFinalizedFlatUsageTokens(message.usage) ??
+        this.streamUsedTokens() ??
+        activeResultUsageTokens ??
+        this.compactedContextWindowUsedTokens;
       if (usedTokens !== undefined) {
         usage.contextWindowUsedTokens = usedTokens;
       }

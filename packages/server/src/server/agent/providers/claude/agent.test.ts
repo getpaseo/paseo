@@ -2559,6 +2559,55 @@ describe("ClaudeAgentSession context window usage", () => {
     }
   });
 
+  test("uses finalized flat usage when a later result has an empty iterations array", async () => {
+    const session = await createSessionForTurns([
+      [
+        createInitMessage(),
+        createMessageStartEvent(),
+        createMessageDeltaEvent(25),
+        createSuccessResult(),
+      ],
+      [
+        createMessageStartEvent({
+          input_tokens: 0,
+          cache_creation_input_tokens: 0,
+          cache_read_input_tokens: 0,
+        }),
+        createMessageDeltaEvent(4_790),
+        createSuccessResult({
+          total_cost_usd: 0.1,
+          usage: {
+            input_tokens: 61_489,
+            cache_creation_input_tokens: 0,
+            cache_read_input_tokens: 266_816,
+            output_tokens: 4_790,
+            iterations: [],
+          },
+          modelUsage: {
+            "glm-5.2": { contextWindow: 1_000_000 },
+          },
+          uuid: "result-2",
+        }),
+      ],
+    ]);
+
+    try {
+      await session.run("turn 1");
+      const secondTurn = await session.run("turn 2");
+
+      expect(secondTurn.usage).toEqual({
+        inputTokens: 61_489,
+        cachedInputTokens: 266_816,
+        outputTokens: 4_790,
+        totalCostUsd: 0.1,
+        contextWindowMaxTokens: 1_000_000,
+        contextWindowUsedTokens: 333_095,
+      });
+    } finally {
+      await session.close();
+    }
+  });
+
   test("message_start stream events emit usage_updated with per-request usage", async () => {
     const session = await createSessionForTurns([
       [createInitMessage(), createMessageStartEvent(), createSuccessResult()],
