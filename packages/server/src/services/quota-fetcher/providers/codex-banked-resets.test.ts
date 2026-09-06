@@ -186,3 +186,52 @@ test("a failed POST invalidates usage because the reset may have happened", asyn
   ).rejects.toThrow("Network connection lost");
   expect((await service.listUsage()).providers[0].windows[0].usedPct).toBe(0);
 });
+
+test.each([
+  new TypeError("Unexpected reset adapter defect"),
+  new SyntaxError("Invalid reset response JSON"),
+])("unexpected reset detail errors propagate: %s", async (error) => {
+  const fetchApi: typeof fetch = async (url) => {
+    if (url.toString().endsWith("/usage")) {
+      return Response.json({ rate_limit_reset_credits: { available_count: 1 } });
+    }
+    throw error;
+  };
+  const provider = new CodexQuotaProvider({ logger: pino({ enabled: false }), fetch: fetchApi });
+  await expect(provider.fetchUsage()).rejects.toBe(error);
+});
+
+test("invalid reset details propagate the schema error", async () => {
+  const fetchApi: typeof fetch = async (url) => {
+    if (url.toString().endsWith("/usage")) {
+      return Response.json({ rate_limit_reset_credits: { available_count: 1 } });
+    }
+    return Response.json({ available_count: 1, credits: "invalid" });
+  };
+  const provider = new CodexQuotaProvider({ logger: pino({ enabled: false }), fetch: fetchApi });
+  await expect(provider.fetchUsage()).rejects.toThrow("Invalid input: expected array");
+});
+
+test.each([
+  new TypeError("fetch failed"),
+  new DOMException("Request timed out", "TimeoutError"),
+  new DOMException("Request aborted", "AbortError"),
+])("expected reset transport failures preserve quota: %s", async (error) => {
+  const fetchApi: typeof fetch = async (url) => {
+    if (url.toString().endsWith("/usage")) {
+      return Response.json({
+        rate_limit: { primary_window: { used_percent: 75 } },
+        rate_limit_reset_credits: { available_count: 1 },
+      });
+    }
+    throw error;
+  };
+  const provider = new CodexQuotaProvider({ logger: pino({ enabled: false }), fetch: fetchApi });
+  const usage = await provider.fetchUsage();
+  expect(usage.windows[0].usedPct).toBe(75);
+  expect(usage.bankedResets).toEqual({
+    availableCount: 1,
+    credits: null,
+    error: "Could not load banked reset details. Refresh usage to try again.",
+  });
+});
