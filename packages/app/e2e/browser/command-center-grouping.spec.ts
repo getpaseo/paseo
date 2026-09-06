@@ -6,6 +6,10 @@ import { openSidebarDisplayPage } from "../support/helpers/sidebar";
 
 const GROUP_BY_STATUS = "Group by status";
 const GROUP_BY_PROJECT = "Group by project";
+const PROJECT_GROUPING_TOOLTIP = "Current grouping: Project";
+const STATUS_GROUPING_TOOLTIP = "Current grouping: Status";
+const PROJECT_GROUPING_TOGGLE = `${PROJECT_GROUPING_TOOLTIP}. Switch grouping`;
+const STATUS_GROUPING_TOGGLE = `${STATUS_GROUPING_TOOLTIP}. Switch grouping`;
 
 // Result rows carry no testID of their own, so the entries are addressed by their visible label.
 async function runGroupingEntry(page: Page, label: string, absent: string): Promise<void> {
@@ -42,20 +46,23 @@ test.describe("Command center sidebar grouping", () => {
     const statusIcon = toggle.locator('svg[data-testid="sidebar-grouping-toggle-icon-status"]');
 
     await expect(projectList).toBeVisible({ timeout: 30_000 });
-    await expect(toggle).toHaveAttribute("aria-label", GROUP_BY_STATUS);
+    await expect(toggle).toHaveAttribute("aria-label", PROJECT_GROUPING_TOGGLE);
     await expect(projectIcon).toBeVisible();
+    await toggle.hover();
+    await expect(page.getByText(PROJECT_GROUPING_TOOLTIP, { exact: true })).toBeVisible();
 
     await page.keyboard.press("ControlOrMeta+;");
     await expect(statusList).toBeVisible({ timeout: 30_000 });
     await expect(projectList).toHaveCount(0);
-    await expect(toggle).toHaveAttribute("aria-label", GROUP_BY_PROJECT);
+    await expect(toggle).toHaveAttribute("aria-label", STATUS_GROUPING_TOGGLE);
     await expect(statusIcon).toBeVisible();
     await expect(projectIcon).toHaveCount(0);
+    await expect(page.getByText(STATUS_GROUPING_TOOLTIP, { exact: true })).toBeVisible();
 
     await page.keyboard.press("ControlOrMeta+;");
     await expect(projectList).toBeVisible({ timeout: 30_000 });
     await expect(statusList).toHaveCount(0);
-    await expect(toggle).toHaveAttribute("aria-label", GROUP_BY_STATUS);
+    await expect(toggle).toHaveAttribute("aria-label", PROJECT_GROUPING_TOGGLE);
     await expect(projectIcon).toBeVisible();
     await expect(statusIcon).toHaveCount(0);
   });
@@ -80,7 +87,7 @@ test.describe("Command center sidebar grouping", () => {
     );
     await page.getByTestId("sidebar-grouping-status").click();
 
-    await expect(toggle).toHaveAttribute("aria-label", GROUP_BY_PROJECT);
+    await expect(toggle).toHaveAttribute("aria-label", STATUS_GROUPING_TOGGLE);
     await expect(
       toggle.locator('svg[data-testid="sidebar-grouping-toggle-icon-status"]'),
     ).toBeVisible();

@@ -1043,6 +1043,8 @@ export const zhCN: TranslationResources = {
       heading: "显示",
       grouping: {
         label: "分组",
+        currentLabel: "当前分组：{{current}}",
+        toggleLabel: "当前分组：{{current}}。切换分组方式",
         project: "项目",
         status: "状态",
         labels: "标签",

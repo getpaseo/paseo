@@ -856,6 +856,7 @@ function workspacesSectionActionStyle({
 interface WorkspacesSectionIconActionProps {
   icon: typeof FolderPlus;
   label: string;
+  accessibilityLabel?: string;
   onPress: () => void;
   testID: string;
   iconTestID?: string;
@@ -865,6 +866,7 @@ interface WorkspacesSectionIconActionProps {
 function WorkspacesSectionIconAction({
   icon: Icon,
   label,
+  accessibilityLabel = label,
   onPress,
   testID,
   iconTestID,
@@ -878,7 +880,7 @@ function WorkspacesSectionIconAction({
           style={workspacesSectionActionStyle}
           testID={testID}
           accessible
-          accessibilityLabel={label}
+          accessibilityLabel={accessibilityLabel}
           accessibilityRole="button"
           onPress={onPress}
         >
@@ -933,11 +935,17 @@ function SidebarGroupingToggle() {
   const groupMode = useSidebarViewStore((state) => state.groupMode);
   const setGroupMode = useSidebarViewStore((state) => state.setGroupMode);
   const targetMode = nextSidebarGroupMode(groupMode);
-  const label = t(
-    targetMode === "project"
-      ? "shell.commandCenter.groupByProject"
-      : "shell.commandCenter.groupByStatus",
+  const currentModeLabel = t(
+    groupMode === "project"
+      ? "sidebar.display.grouping.project"
+      : "sidebar.display.grouping.status",
   );
+  const label = t("sidebar.display.grouping.currentLabel", {
+    current: currentModeLabel,
+  });
+  const accessibilityLabel = t("sidebar.display.grouping.toggleLabel", {
+    current: currentModeLabel,
+  });
   const Icon = groupMode === "project" ? Folder : CircleDashed;
   const handlePress = useCallback(() => setGroupMode(targetMode), [setGroupMode, targetMode]);
 
@@ -945,6 +953,7 @@ function SidebarGroupingToggle() {
     <WorkspacesSectionIconAction
       icon={Icon}
       label={label}
+      accessibilityLabel={accessibilityLabel}
       onPress={handlePress}
       testID="sidebar-grouping-toggle"
       iconTestID={`sidebar-grouping-toggle-icon-${groupMode}`}

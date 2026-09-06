@@ -1062,6 +1062,8 @@ export const ja: TranslationResources = {
       heading: "表示",
       grouping: {
         label: "グループ化",
+        currentLabel: "現在のグループ化: {{current}}",
+        toggleLabel: "現在のグループ化: {{current}}。グループ化を切り替え",
         project: "プロジェクト",
         status: "ステータス",
         labels: "ラベル",

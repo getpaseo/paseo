@@ -1058,6 +1058,8 @@ export const ko: TranslationResources = {
       heading: "표시",
       grouping: {
         label: "그룹화",
+        currentLabel: "현재 그룹화: {{current}}",
+        toggleLabel: "현재 그룹화: {{current}}. 그룹화 전환",
         project: "프로젝트",
         status: "상태",
         labels: "레이블",
