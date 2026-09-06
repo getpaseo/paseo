@@ -164,6 +164,9 @@ describe("Claude tool_result image rendering", () => {
       .map((event) => (event as { item: AgentTimelineItem }).item);
     const [imageMessage, ...extraImages] = imageMessages(timelineItems);
     expect(extraImages).toEqual([]);
+    expect(timelineItems.find((item) => item.type === "assistant_message")).toMatchObject({
+      imagePurpose: "inspection",
+    });
 
     let source: string | undefined;
     try {
@@ -185,6 +188,9 @@ describe("Claude tool_result image rendering", () => {
 
     const [imageMessage, ...extraImages] = imageMessages(items);
     expect(extraImages).toEqual([]);
+    expect(items.find((item) => item.type === "assistant_message")).toMatchObject({
+      imagePurpose: "inspection",
+    });
 
     let source: string | undefined;
     try {

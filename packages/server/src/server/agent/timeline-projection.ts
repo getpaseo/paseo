@@ -243,7 +243,8 @@ function mergeAssistantChunks(entries: readonly WorkingEntry[]): WorkingEntry[] 
       previous.item.type === "assistant_message" &&
       entry.item.type === "assistant_message" &&
       previous.seqEnd + 1 === entry.seqStart &&
-      previous.turnId === entry.turnId;
+      previous.turnId === entry.turnId &&
+      previous.item.imagePurpose === entry.item.imagePurpose;
 
     if (!shouldMerge || !previous) {
       output.push(entry);
@@ -274,6 +275,7 @@ function mergeAssistantChunks(entries: readonly WorkingEntry[]): WorkingEntry[] 
         type: "assistant_message",
         text: `${previousAssistant.text}${entryAssistant.text}`,
         ...(previousAssistant.messageId ? { messageId: previousAssistant.messageId } : {}),
+        ...(previousAssistant.imagePurpose ? { imagePurpose: previousAssistant.imagePurpose } : {}),
       },
       timestamp: entry.timestamp,
       seqEnd: entry.seqEnd,

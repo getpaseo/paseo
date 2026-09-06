@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import {
   clearAssistantImageMetadataCache,
   estimateAssistantMessageHeightFromCache,
+  extractAssistantImageReferences,
   extractAssistantImageSources,
   getAssistantImageMetadata,
   setAssistantImageMetadata,
@@ -18,6 +19,18 @@ describe("assistant image metadata", () => {
         'Before\n\n![local](/tmp/paseo.png)\n\n![remote](https://example.com/test.png "Remote")',
       ),
     ).toEqual(["/tmp/paseo.png", "https://example.com/test.png"]);
+  });
+
+  it("extracts image alt text with its source", () => {
+    expect(extractAssistantImageReferences("![Inspected screenshot](screenshots/app.png)")).toEqual(
+      [
+        {
+          alt: "Inspected screenshot",
+          key: "0:screenshots/app.png",
+          source: "screenshots/app.png",
+        },
+      ],
+    );
   });
 
   it("reuses cached metadata across canonical and raw source keys", () => {
@@ -65,5 +78,12 @@ describe("assistant image metadata", () => {
 
     expect(imageOnlyHeight).toBeGreaterThan(220);
     expect(mixedHeight).toBeGreaterThan(imageOnlyHeight ?? 0);
+  });
+
+  it("uses the viewport-aware preview geometry for tall images", () => {
+    const source = "https://example.com/tall-result.png";
+    setAssistantImageMetadata({ source }, { width: 1080, height: 2400 });
+
+    expect(estimateAssistantMessageHeightFromCache(`![Screenshot](${source})`, 800)).toBe(424);
   });
 });

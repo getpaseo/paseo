@@ -1,4 +1,5 @@
 import type {
+  AssistantImagePurpose,
   AgentProviderNotice,
   AgentTaskItem,
   JsonValue,
@@ -8,7 +9,7 @@ import type {
 import type { AgentAttachment } from "@getpaseo/protocol/messages";
 import type { PaseoToolCatalog } from "./tools/types.js";
 
-export type { AgentProviderNotice, AgentTaskItem };
+export type { AgentProviderNotice, AgentTaskItem, AssistantImagePurpose };
 
 export type AgentProvider = string;
 
@@ -403,7 +404,12 @@ export interface PluginTimelineItem {
 
 export type AgentTimelineItem =
   | { type: "user_message"; text: string; messageId?: string; clientMessageId?: string }
-  | { type: "assistant_message"; text: string; messageId?: string }
+  | {
+      type: "assistant_message";
+      text: string;
+      messageId?: string;
+      imagePurpose?: AssistantImagePurpose;
+    }
   | { type: "reasoning"; text: string }
   | ToolCallTimelineItem
   | { type: "todo"; items: AgentTaskItem[] }

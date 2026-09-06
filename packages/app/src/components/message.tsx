@@ -7,6 +7,7 @@ import {
   Pressable,
   type GestureResponderEvent,
   type LayoutChangeEvent,
+  useWindowDimensions,
   StyleProp,
   ViewStyle,
   type TextStyle,
@@ -44,8 +45,8 @@ import {
   FileSymlink,
 } from "lucide-react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
-import { ICON_SIZE, type Theme } from "@/styles/theme";
-import { useIsCompactFormFactor } from "@/constants/layout";
+import { ICON_SIZE, SPACING, type Theme } from "@/styles/theme";
+import { MAX_CONTENT_WIDTH, useIsCompactFormFactor } from "@/constants/layout";
 import Animated, {
   Easing,
   cancelAnimation,
@@ -60,6 +61,7 @@ import { MarkdownRenderer, type MarkdownStyles } from "@/components/markdown/ren
 import type { TaskActivity, TodoEntry, UserMessageImageAttachment } from "@/types/stream";
 import type { AgentAttachment } from "@getpaseo/protocol/messages";
 import type { ToolCallDetail } from "@getpaseo/protocol/agent-types";
+import type { AssistantImagePurpose } from "@getpaseo/protocol/agent-types";
 import { buildToolCallPresentation } from "@/tool-calls/presentation";
 import { resolveToolCallIcon } from "@/utils/tool-call-icon";
 import { getMarkdownListMarker, getMarkdownListSpacing } from "@/utils/markdown-list";
@@ -76,6 +78,7 @@ import { formatDuration, formatMessageTimestamp } from "@/utils/time";
 import { writeMarkdownToRichClipboard } from "@/utils/rich-clipboard";
 import { getDefaultMarkdownClipboardEnvironment } from "@/utils/rich-clipboard-default-environment";
 import { setAssistantMarkdownBlockHeight } from "@/utils/assistant-message-height-estimate";
+import { extractAssistantImageReferences } from "@/utils/assistant-image-metadata";
 import { isRenderProfileEnabled } from "@/utils/render-profiler";
 import { getAgentAttachmentPillContent } from "@/attachments/attachment-pill-content";
 import { PlanCard } from "./plan-card";
@@ -92,6 +95,7 @@ import {
 } from "@/assistant-file-links";
 import { getCompactionMarkerLabel } from "./message-compaction-label";
 import { useAssistantImage } from "@/assistant-image/use-assistant-image";
+import { fitAssistantImagePreview } from "@/assistant-image/preview-layout";
 import {
   AttachmentFrame,
   AttachmentLabel,
@@ -167,6 +171,7 @@ const ThemedMicVocal = withUnistyles(MicVocal);
 const ThemedFileSymlinkIcon = withUnistyles(FileSymlink);
 const ThemedTriangleAlertIcon = withUnistyles(TriangleAlertIcon);
 const ThemedChevronRightIcon = withUnistyles(ChevronRight);
+const ThemedChevronDownIcon = withUnistyles(ChevronDown);
 const ThemedLoadingSpinner = withUnistyles(LoadingSpinner);
 const ThemedNotificationInfo = withUnistyles(Info);
 const ThemedNotificationWarning = withUnistyles(TriangleAlertIcon);
@@ -754,6 +759,7 @@ interface AssistantMessageProps {
   client?: DaemonClient | null;
   spacing?: "default" | "compactTop" | "compactBottom" | "compactBoth";
   phase: MarkdownPhase;
+  imagePurpose?: AssistantImagePurpose;
 }
 
 export const assistantMessageStylesheet = StyleSheet.create((theme) => ({
@@ -776,11 +782,14 @@ export const assistantMessageStylesheet = StyleSheet.create((theme) => ({
   },
   imageFrame: {
     width: "100%",
-    minHeight: 160,
     marginHorizontal: -theme.spacing[1],
   },
+  inspectionImageFrame: {
+    width: theme.spacing[20],
+    height: theme.spacing[20],
+    marginHorizontal: 0,
+  },
   imageSurface: {
-    width: "100%",
     overflow: "hidden",
     position: "relative",
   },
@@ -809,9 +818,27 @@ export const assistantMessageStylesheet = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.base,
     textAlign: "center",
   },
+  inspectionSummary: {
+    alignSelf: "flex-start",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[1],
+    paddingVertical: theme.spacing[1],
+  },
+  inspectionSummaryText: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.sm,
+  },
+  inspectionBody: {
+    marginTop: theme.spacing[2],
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: theme.spacing[2],
+  },
 }));
 
 const ASSISTANT_IMAGE_MIN_HEIGHT = 160;
+const INSPECTION_IMAGE_SIZE = SPACING[20];
 
 function AssistantMarkdownImage({
   source,
@@ -821,6 +848,7 @@ function AssistantMarkdownImage({
   client,
   workspaceRoot,
   serverId,
+  display = "result",
 }: {
   source: string;
   occurrenceKey: string;
@@ -829,8 +857,11 @@ function AssistantMarkdownImage({
   client?: DaemonClient | null;
   workspaceRoot?: string;
   serverId?: string;
+  display?: AssistantImagePurpose;
 }) {
   const { t } = useTranslation();
+  const { height: viewportHeight, width: viewportWidth } = useWindowDimensions();
+  const [containerWidth, setContainerWidth] = useState(0);
   const [viewerOpen, setViewerOpen] = useState(false);
   const openViewer = useCallback(() => setViewerOpen(true), []);
   const closeViewer = useCallback(() => setViewerOpen(false), []);
@@ -850,18 +881,36 @@ function AssistantMarkdownImage({
   });
   const binding = image.status === "failed" ? null : image.binding;
   const aspectRatio = image.status === "failed" ? null : image.aspectRatio;
+  const dimensions = image.status === "failed" ? null : image.dimensions;
   const imageUri = binding?.uri ?? "";
   const imageSource = useMemo(() => ({ uri: imageUri }), [imageUri]);
+  const handleContainerLayout = useCallback((event: LayoutChangeEvent) => {
+    setContainerWidth(event.nativeEvent.layout.width);
+  }, []);
   const frameStyle = useMemo<StyleProp<ViewStyle>>(
-    () => [assistantMessageStylesheet.imageFrame, containerStyle],
-    [containerStyle],
+    () => [
+      assistantMessageStylesheet.imageFrame,
+      display === "inspection" && assistantMessageStylesheet.inspectionImageFrame,
+      containerStyle,
+    ],
+    [containerStyle, display],
   );
   const imageSizeStyle = useMemo<ViewStyle>(() => {
-    if (aspectRatio) {
-      return { aspectRatio };
+    if (display === "inspection") {
+      return { width: INSPECTION_IMAGE_SIZE, height: INSPECTION_IMAGE_SIZE };
     }
-    return { height: ASSISTANT_IMAGE_MIN_HEIGHT };
-  }, [aspectRatio]);
+    if (aspectRatio) {
+      const estimatedContainerWidth = Math.min(MAX_CONTENT_WIDTH - 8, viewportWidth);
+      return fitAssistantImagePreview({
+        intrinsicWidth: dimensions?.width,
+        intrinsicHeight: dimensions?.height,
+        aspectRatio,
+        containerWidth: containerWidth || estimatedContainerWidth,
+        viewportHeight,
+      });
+    }
+    return { width: "100%", height: ASSISTANT_IMAGE_MIN_HEIGHT };
+  }, [aspectRatio, containerWidth, dimensions, display, viewportHeight, viewportWidth]);
   const surfaceStyle = useMemo<StyleProp<ViewStyle>>(
     () => [assistantMessageStylesheet.imageSurface, imageSizeStyle],
     [imageSizeStyle],
@@ -878,11 +927,12 @@ function AssistantMarkdownImage({
   const stateFrameStyle = useMemo<StyleProp<ViewStyle>>(
     () => [
       assistantMessageStylesheet.imageFrame,
+      display === "inspection" && assistantMessageStylesheet.inspectionImageFrame,
       containerStyle,
-      { height: ASSISTANT_IMAGE_MIN_HEIGHT },
+      { height: display === "inspection" ? INSPECTION_IMAGE_SIZE : ASSISTANT_IMAGE_MIN_HEIGHT },
       assistantMessageStylesheet.imageState,
     ],
-    [containerStyle],
+    [containerStyle, display],
   );
 
   if (image.status === "failed") {
@@ -902,7 +952,7 @@ function AssistantMarkdownImage({
   }
 
   return (
-    <View style={frameStyle}>
+    <View style={frameStyle} onLayout={handleContainerLayout}>
       <Pressable
         accessibilityLabel={t("composer.attachments.openImage")}
         accessibilityRole="button"
@@ -919,7 +969,7 @@ function AssistantMarkdownImage({
             ref={binding.onRef}
             source={imageSource}
             style={assistantMessageStylesheet.image}
-            resizeMode="contain"
+            resizeMode={display === "inspection" ? "cover" : "contain"}
             onLoad={binding.onLoad}
             onError={binding.onError}
           />
@@ -1489,7 +1539,7 @@ function MarkdownListView({
   );
 }
 
-export const AssistantMessage = memo(function AssistantMessage({
+function AssistantMessageContent({
   occurrenceKey,
   message,
   timestamp: _timestamp,
@@ -1498,6 +1548,7 @@ export const AssistantMessage = memo(function AssistantMessage({
   client,
   spacing = "default",
   phase,
+  imagePurpose,
 }: AssistantMessageProps) {
   const { t } = useTranslation();
   const markdownParser = useMemo(createAssistantMarkdownParser, []);
@@ -1941,11 +1992,21 @@ export const AssistantMessage = memo(function AssistantMessage({
             client={client}
             workspaceRoot={workspaceRoot}
             serverId={serverId}
+            display={imagePurpose}
           />
         );
       },
     };
-  }, [client, fileLinkActions, markdownParser, occurrenceKey, phase, serverId, workspaceRoot]);
+  }, [
+    client,
+    fileLinkActions,
+    imagePurpose,
+    markdownParser,
+    occurrenceKey,
+    phase,
+    serverId,
+    workspaceRoot,
+  ]);
 
   const blocks = useMemo(() => splitMarkdownBlocks(revealedMessage), [revealedMessage]);
   const keyedBlocks = useMemo(
@@ -1996,6 +2057,82 @@ export const AssistantMessage = memo(function AssistantMessage({
         </Text>
       ) : null}
     </View>
+  );
+}
+
+function AssistantImageInspection({
+  message,
+  occurrenceKey,
+  client,
+  workspaceRoot,
+  serverId,
+}: {
+  message: string;
+  occurrenceKey: string;
+  client?: DaemonClient | null;
+  workspaceRoot?: string;
+  serverId?: string;
+}) {
+  const { t } = useTranslation();
+  const [expanded, setExpanded] = useState(false);
+  const images = useMemo(() => extractAssistantImageReferences(message), [message]);
+  const accessibilityState = useMemo(() => ({ expanded }), [expanded]);
+  const ariaExpanded = useMemo(
+    () => (isWeb ? ({ "aria-expanded": expanded } as const) : null),
+    [expanded],
+  );
+  const toggleExpanded = useCallback(() => setExpanded((current) => !current), []);
+  return (
+    <View testID="assistant-image-inspection">
+      <Pressable
+        accessibilityRole="button"
+        accessibilityState={accessibilityState}
+        {...ariaExpanded}
+        onPress={toggleExpanded}
+        style={assistantMessageStylesheet.inspectionSummary}
+      >
+        {expanded ? (
+          <ThemedChevronDownIcon size={12} uniProps={foregroundMutedColorMapping} />
+        ) : (
+          <ThemedChevronRightIcon size={12} uniProps={foregroundMutedColorMapping} />
+        )}
+        <Text style={assistantMessageStylesheet.inspectionSummaryText}>
+          {t("message.attachments.inspectedImages", { count: images.length })}
+        </Text>
+      </Pressable>
+      {expanded ? (
+        <View style={assistantMessageStylesheet.inspectionBody}>
+          {images.map((image, index) => (
+            <AssistantMarkdownImage
+              key={image.key}
+              source={image.source}
+              occurrenceKey={`${occurrenceKey}:inspection:${index}`}
+              alt={image.alt || t("message.attachments.inspectedImageAlt")}
+              hasLeadingContent={false}
+              client={client}
+              workspaceRoot={workspaceRoot}
+              serverId={serverId}
+              display="inspection"
+            />
+          ))}
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
+export const AssistantMessage = memo(function AssistantMessage(props: AssistantMessageProps) {
+  if (props.imagePurpose !== "inspection") {
+    return <AssistantMessageContent {...props} />;
+  }
+  return (
+    <AssistantImageInspection
+      message={props.message}
+      occurrenceKey={props.occurrenceKey}
+      client={props.client}
+      workspaceRoot={props.workspaceRoot}
+      serverId={props.serverId}
+    />
   );
 });
 

@@ -167,6 +167,35 @@ describe("estimateStreamItemHeight", () => {
 
     expect(estimateStreamItemHeight(item)).toBeGreaterThan(220);
   });
+
+  it("uses the current viewport for rich assistant image estimates", () => {
+    clearAssistantImageMetadataCache();
+    setAssistantImageMetadata(
+      { source: "https://example.com/tall-result.png" },
+      { width: 1080, height: 2400 },
+    );
+    const item: StreamItem = {
+      kind: "assistant_message",
+      id: "a-result",
+      text: "![Screenshot](https://example.com/tall-result.png)",
+      imagePurpose: "result",
+      timestamp: createTimestamp(3),
+    };
+
+    expect(estimateStreamItemHeight(item, 800)).toBe(424);
+  });
+
+  it("keeps collapsed inspected images at activity-row height", () => {
+    const item: StreamItem = {
+      kind: "assistant_message",
+      id: "a-inspection",
+      text: "![Screenshot](https://example.com/tall.png)",
+      imagePurpose: "inspection",
+      timestamp: createTimestamp(3),
+    };
+
+    expect(estimateStreamItemHeight(item)).toBe(40);
+  });
 });
 
 describe("virtual row resize anchoring", () => {

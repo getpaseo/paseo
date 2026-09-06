@@ -482,6 +482,42 @@ describe("MockLoadTestAgentClient", () => {
     unsubscribe();
   });
 
+  test("emits a settled inspected image with compact display intent", async () => {
+    vi.useFakeTimers();
+    const client = new MockLoadTestAgentClient();
+    const session = await client.createSession({
+      provider: "mock",
+      cwd: process.cwd(),
+      model: "ten-second-stream",
+    });
+    const events: AgentStreamEvent[] = [];
+    const unsubscribe = session.subscribe((event) => events.push(event));
+    const markdown = "![Inspected fixture](screenshots/fixture.png)";
+
+    const resultPromise = session.run(
+      `Emit settled inspected assistant image Markdown: ${markdown}`,
+    );
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(
+      events.flatMap((event): AgentTimelineItem[] =>
+        event.type === "timeline" && event.item.type === "assistant_message" ? [event.item] : [],
+      ),
+    ).toEqual([
+      expect.objectContaining({
+        type: "assistant_message",
+        text: markdown,
+        imagePurpose: "inspection",
+      }),
+    ]);
+    await expect(resultPromise).resolves.toMatchObject({
+      sessionId: session.id,
+      finalText: markdown,
+      canceled: false,
+    });
+    unsubscribe();
+  });
+
   test("agent manager coalesces adjacent assistant tokens into fewer messages", async () => {
     vi.useFakeTimers();
     const workdir = mkdtempSync(join(tmpdir(), "paseo-mock-load-test-"));

@@ -357,9 +357,16 @@ export interface AgentTaskItem {
   activeForm?: string;
 }
 
+export type AssistantImagePurpose = "inspection" | "result";
+
 export type AgentTimelineItem =
   | { type: "user_message"; text: string; messageId?: string; clientMessageId?: string }
-  | { type: "assistant_message"; text: string; messageId?: string }
+  | {
+      type: "assistant_message";
+      text: string;
+      messageId?: string;
+      imagePurpose?: AssistantImagePurpose;
+    }
   | { type: "reasoning"; text: string }
   | ToolCallTimelineItem
   | { type: "todo"; items: AgentTaskItem[] }

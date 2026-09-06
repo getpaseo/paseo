@@ -200,6 +200,7 @@ function matchesProjectedRow(existing: StreamItem, incoming: StreamItem): boolea
   if (existing.kind === "assistant_message" && incoming.kind === "assistant_message") {
     return (
       existing.messageId === incoming.messageId &&
+      existing.imagePurpose === incoming.imagePurpose &&
       existing.text === incoming.text &&
       existing.timestamp.getTime() === incoming.timestamp.getTime()
     );
@@ -698,7 +699,11 @@ function mergePrependedCanonicalTail(olderTail: StreamItem[], currentTail: Strea
   const identityMerge = mergeTimelineIdentityBoundary(olderTail, currentTail);
   if (identityMerge) return identityMerge;
 
-  if (olderLast?.kind !== "assistant_message" || currentFirst?.kind !== "assistant_message") {
+  if (
+    olderLast?.kind !== "assistant_message" ||
+    currentFirst?.kind !== "assistant_message" ||
+    olderLast.imagePurpose !== currentFirst.imagePurpose
+  ) {
     return [...olderTail, ...currentTail];
   }
 
@@ -772,13 +777,17 @@ function replaceLiveAssistantWithProjectedText(params: {
   if (!current || current.kind !== "assistant_message") {
     return null;
   }
-  if (!event.item.text.startsWith(current.text)) {
+  if (
+    current.imagePurpose !== event.item.imagePurpose ||
+    !event.item.text.startsWith(current.text)
+  ) {
     return null;
   }
   const next = [...head];
   next[index] = {
     ...current,
     text: event.item.text,
+    imagePurpose: event.item.imagePurpose,
     timestamp,
     timelineCursor,
   };
@@ -829,6 +838,7 @@ function reconcileOverlappingProjectedAssistant(params: {
     kind: "assistant_message",
     id: blockGroupId ?? match.current.id,
     ...(messageId !== undefined ? { messageId } : {}),
+    ...(unit.event.item.imagePurpose ? { imagePurpose: unit.event.item.imagePurpose } : {}),
     text: projectedText,
     timestamp: unit.timestamp,
     timelineCursor: { epoch: params.epoch, seq: unit.seqEnd },

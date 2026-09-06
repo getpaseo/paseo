@@ -104,10 +104,13 @@ function estimateAssistantMarkdownBlockHeightFromCache(markdown: string): number
   );
 }
 
-export function estimateAssistantMessageHeightFromCache(markdown: string): number | null {
+export function estimateAssistantMessageHeightFromCache(
+  markdown: string,
+  viewportHeight?: number,
+): number | null {
   return (
     estimateAssistantMarkdownBlockHeightFromCache(markdown) ??
-    estimateAssistantImageMessageHeightFromCache(markdown)
+    estimateAssistantImageMessageHeightFromCache(markdown, viewportHeight)
   );
 }
 

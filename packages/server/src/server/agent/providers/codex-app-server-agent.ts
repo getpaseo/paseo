@@ -1827,9 +1827,10 @@ function mapCodexThreadImageItem(
   normalizedItem: Record<string, unknown>,
 ): AgentTimelineItem | null {
   if (normalizedType === "imageView") {
-    return renderProviderImageOutputAsAssistantMarkdown({
-      path: firstStringField(normalizedItem, ["path"]),
-    });
+    return renderProviderImageOutputAsAssistantMarkdown(
+      { path: firstStringField(normalizedItem, ["path"]) },
+      { imagePurpose: "inspection" },
+    );
   }
 
   const savedPath = firstStringField(normalizedItem, ["savedPath", "saved_path"]);
@@ -1841,7 +1842,7 @@ function mapCodexThreadImageItem(
       data: result?.data ?? null,
       mimeType: result?.mimeType ?? null,
     },
-    { materialize: materializeProviderImage },
+    { materialize: materializeProviderImage, imagePurpose: "result" },
   );
 }
 
@@ -1910,6 +1911,7 @@ function mcpToolResultImagesToTimeline(item: unknown): AgentTimelineItem[] {
     .map((image) =>
       renderProviderImageOutputAsAssistantMarkdown(image, {
         materialize: materializeProviderImage,
+        imagePurpose: "inspection",
       }),
     )
     .filter((timelineItem): timelineItem is AgentTimelineItem => timelineItem !== null);

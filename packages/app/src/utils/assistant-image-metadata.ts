@@ -1,11 +1,18 @@
 import { MAX_CONTENT_WIDTH } from "@/constants/layout";
 import { resolveAssistantImageSource } from "@/utils/assistant-image-source";
 import { createImageSourceCacheKey } from "@/attachments/utils";
+import { fitAssistantImagePreview } from "@/assistant-image/preview-layout";
 
 export interface AssistantImageMetadata {
   width: number;
   height: number;
   aspectRatio: number;
+}
+
+export interface AssistantImageReference {
+  alt: string;
+  key: string;
+  source: string;
 }
 
 const assistantImageMetadataCache = new Map<string, AssistantImageMetadata>();
@@ -15,7 +22,6 @@ const ASSISTANT_IMAGE_PARSE_CACHE_LIMIT = 500;
 
 const MARKDOWN_IMAGE_PATTERN = /!\[[^\]]*]\((<[^>]+>|[^)\n]+)\)/g;
 const ASSISTANT_IMAGE_ESTIMATE_WIDTH = MAX_CONTENT_WIDTH - 8;
-const ASSISTANT_IMAGE_MIN_HEIGHT = 160;
 const ASSISTANT_IMAGE_BLOCK_GAP = 24;
 const ASSISTANT_MESSAGE_BASE_HEIGHT = 96;
 const ASSISTANT_MESSAGE_MIN_HEIGHT = 220;
@@ -177,7 +183,26 @@ export function extractAssistantImageSources(markdown: string): string[] {
   return parsed.sources;
 }
 
-export function estimateAssistantMessageHeightFromCache(markdown: string): number | null {
+export function extractAssistantImageReferences(markdown: string): AssistantImageReference[] {
+  const references: AssistantImageReference[] = [];
+  for (const match of markdown.matchAll(MARKDOWN_IMAGE_PATTERN)) {
+    const source = normalizeAssistantImageSourceToken(match[1] ?? "");
+    if (source) {
+      const altMatch = /^!\[([^\]]*)]/.exec(match[0]);
+      references.push({
+        alt: altMatch?.[1] ?? "",
+        key: `${match.index ?? 0}:${source}`,
+        source,
+      });
+    }
+  }
+  return references;
+}
+
+export function estimateAssistantMessageHeightFromCache(
+  markdown: string,
+  viewportHeight = ASSISTANT_IMAGE_ESTIMATE_WIDTH,
+): number | null {
   const parsed = assistantImageParseCache.get(markdown) ?? parseAssistantImageMarkdown(markdown);
   if (parsed.sources.length === 0) {
     return null;
@@ -186,11 +211,14 @@ export function estimateAssistantMessageHeightFromCache(markdown: string): numbe
   const knownHeights = parsed.sources
     .map((source) => getAssistantImageMetadata({ source }))
     .filter((metadata): metadata is AssistantImageMetadata => metadata !== null)
-    .map((metadata) =>
-      Math.max(
-        ASSISTANT_IMAGE_MIN_HEIGHT,
-        Math.round(ASSISTANT_IMAGE_ESTIMATE_WIDTH / metadata.aspectRatio),
-      ),
+    .map(
+      (metadata) =>
+        fitAssistantImagePreview({
+          intrinsicWidth: metadata.width,
+          intrinsicHeight: metadata.height,
+          containerWidth: ASSISTANT_IMAGE_ESTIMATE_WIDTH,
+          viewportHeight,
+        }).height,
     );
 
   if (knownHeights.length === 0) {

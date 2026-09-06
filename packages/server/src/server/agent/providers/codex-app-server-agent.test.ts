@@ -2826,7 +2826,10 @@ describe("Codex app-server provider", () => {
     );
     expect(childItems).toHaveLength(2);
     expect(childItems[0]).toMatchObject({ type: "tool_call", callId: "child-mcp-image" });
-    expect(childItems[1]).toMatchObject({ type: "assistant_message" });
+    expect(childItems[1]).toMatchObject({
+      type: "assistant_message",
+      imagePurpose: "inspection",
+    });
     if (childItems[1]?.type !== "assistant_message") {
       throw new Error("Expected child image markdown");
     }
@@ -5341,6 +5344,7 @@ describe("Codex app-server provider", () => {
         item: {
           type: "assistant_message",
           text: "![Image](file:///tmp/paseo%20image.png)",
+          imagePurpose: "inspection",
         },
       },
     ]);
@@ -5373,6 +5377,7 @@ describe("Codex app-server provider", () => {
           item: {
             type: "assistant_message",
             text: `![Image](${expectedPath})`,
+            imagePurpose: "result",
           },
         },
       ]);
@@ -5514,13 +5519,17 @@ describe("Codex app-server provider", () => {
           type: "timeline",
           provider: "codex",
           turnId,
-          item: expect.objectContaining({ type: "assistant_message" }),
+          item: expect.objectContaining({
+            type: "assistant_message",
+            imagePurpose: "inspection",
+          }),
         },
       ]);
       const imageEvent = timelineEvents[1];
       if (imageEvent.item.type !== "assistant_message") {
         throw new Error("Expected assistant image timeline event");
       }
+      expect(imageEvent.item.imagePurpose).toBe("inspection");
       expect(JSON.stringify(events)).not.toContain(ONE_BY_ONE_PNG_BASE64);
       const source = markdownImageSource(imageEvent.item.text);
       expect(source).toMatch(/paseo-attachments(?:-[^\\/]+)?[\\/].+\.png$/);

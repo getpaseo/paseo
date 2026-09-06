@@ -713,6 +713,7 @@ export const AgentTimelineItemPayloadSchema: z.ZodType<AgentTimelineItem, unknow
     type: z.literal("assistant_message"),
     text: z.string(),
     messageId: z.string().optional(),
+    imagePurpose: z.enum(["inspection", "result"]).optional(),
   }),
   z.object({
     type: z.literal("reasoning"),

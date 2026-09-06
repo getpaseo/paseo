@@ -59,6 +59,12 @@ const LegacyAgentCapabilityFlagsSchema = z.object({
   supportsToolInvocations: z.boolean(),
 });
 
+const LegacyAssistantTimelineItemSchema = z.object({
+  type: z.literal("assistant_message"),
+  text: z.string(),
+  messageId: z.string().optional(),
+});
+
 const LegacyAgentSnapshotPayloadSchema = AgentSnapshotPayloadSchema.extend({
   capabilities: LegacyAgentCapabilityFlagsSchema,
 });
@@ -157,6 +163,30 @@ describe("wire schema compatibility", () => {
       type: "assistant_message",
       text: "new daemon shape",
       messageId: "msg-1",
+    });
+  });
+
+  test("assistant image display intent is optional on the wire", () => {
+    expect(
+      AgentTimelineItemPayloadSchema.parse({
+        type: "assistant_message",
+        text: "![Image](file:///tmp/inspected.png)",
+        imagePurpose: "inspection",
+      }),
+    ).toEqual({
+      type: "assistant_message",
+      text: "![Image](file:///tmp/inspected.png)",
+      imagePurpose: "inspection",
+    });
+    expect(
+      LegacyAssistantTimelineItemSchema.parse({
+        type: "assistant_message",
+        text: "![Image](file:///tmp/inspected.png)",
+        imagePurpose: "inspection",
+      }),
+    ).toEqual({
+      type: "assistant_message",
+      text: "![Image](file:///tmp/inspected.png)",
     });
   });
 

@@ -408,6 +408,9 @@ describe("translation resources", () => {
     expect(en.message.attachments.closeImage).toBe("Close image");
     expect(en.message.attachments.imageLoadFailed).toBe("Couldn't load image");
     expect(en.message.attachments.imageUnavailable).toBe("Image unavailable");
+    expect(en.message.attachments.inspectedImages_one).toBe("Viewed an image");
+    expect(en.message.attachments.inspectedImages_other).toBe("Viewed {{count}} images");
+    expect(en.message.attachments.inspectedImageAlt).toBe("Inspected image");
     expect(en.message.dictation.start).toBe("Start voice dictation");
     expect(en.message.dictation.cancel).toBe("Cancel dictation");
     expect(en.message.dictation.retry).toBe("Retry dictation");

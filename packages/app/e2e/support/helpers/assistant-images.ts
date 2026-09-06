@@ -38,6 +38,21 @@ export async function createSmallAssistantPng(
   };
 }
 
+export async function createSizedAssistantPng(
+  workspace: SeededWorkspace,
+  input: { alt: string; fileName: string; width: number; height: number },
+): Promise<AssistantImageFixture> {
+  const bytes = encodeSolidPng(input.width, input.height);
+  await writeFile(path.join(workspace.repoPath, input.fileName), bytes);
+  return {
+    alt: input.alt,
+    height: input.height,
+    relativePath: input.fileName,
+    size: bytes.byteLength,
+    width: input.width,
+  };
+}
+
 export async function createNearTenMegabyteAssistantPng(
   workspace: SeededWorkspace,
   input: { alt: string; fileName: string },
@@ -96,6 +111,23 @@ export async function emitSettledAssistantImage(
   if (result.status !== "idle" || result.final?.lastError) {
     throw new Error(
       `Assistant image agent did not settle: ${result.final?.lastError ?? result.status}`,
+    );
+  }
+}
+
+export async function emitSettledInspectedImage(
+  client: SeedDaemonClient,
+  agent: ArchiveTabAgent,
+  image: AssistantImageFixture,
+): Promise<void> {
+  await client.sendAgentMessage(
+    agent.id,
+    `Emit settled inspected assistant image Markdown: ![${image.alt}](${image.relativePath})`,
+  );
+  const result = await client.waitForFinish(agent.id, 30_000);
+  if (result.status !== "idle" || result.final?.lastError) {
+    throw new Error(
+      `Inspected image agent did not settle: ${result.final?.lastError ?? result.status}`,
     );
   }
 }
@@ -317,6 +349,34 @@ function encodeDeterministicPng(width: number, height: number): Buffer {
     Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
     pngChunk("IHDR", header),
     pngChunk("IDAT", deflateSync(scanlines, { level: 0 })),
+    pngChunk("IEND", Buffer.alloc(0)),
+  ]);
+}
+
+function encodeSolidPng(width: number, height: number): Buffer {
+  const stride = width * 4 + 1;
+  const scanlines = Buffer.alloc(stride * height);
+  for (let row = 0; row < height; row += 1) {
+    const rowOffset = row * stride;
+    scanlines[rowOffset] = 0;
+    for (let column = 0; column < width; column += 1) {
+      const pixelOffset = rowOffset + 1 + column * 4;
+      scanlines[pixelOffset] = 39;
+      scanlines[pixelOffset + 1] = 109;
+      scanlines[pixelOffset + 2] = 226;
+      scanlines[pixelOffset + 3] = 255;
+    }
+  }
+
+  const header = Buffer.alloc(13);
+  header.writeUInt32BE(width, 0);
+  header.writeUInt32BE(height, 4);
+  header[8] = 8;
+  header[9] = 6;
+  return Buffer.concat([
+    Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
+    pngChunk("IHDR", header),
+    pngChunk("IDAT", deflateSync(scanlines)),
     pngChunk("IEND", Buffer.alloc(0)),
   ]);
 }

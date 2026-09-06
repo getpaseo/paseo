@@ -252,11 +252,21 @@ function parseSteeringReplayShape(prompt: AgentPromptInput): SteeringReplayShape
   return match?.[1] === "claude" || match?.[1] === "codex" ? match[1] : null;
 }
 
-function parseSettledAssistantImageMarkdown(prompt: AgentPromptInput): string | null {
-  const match = /^emit settled assistant image markdown:\s*(!\[[^\]\r\n]*\]\(.+\))\s*$/i.exec(
-    promptToText(prompt),
-  );
-  return match?.[1] ?? null;
+function parseSettledAssistantImageMarkdown(prompt: AgentPromptInput): {
+  markdown: string;
+  imagePurpose?: "inspection";
+} | null {
+  const match =
+    /^emit settled (inspected )?assistant image markdown:\s*(!\[[^\]\r\n]*\]\(.+\))\s*$/i.exec(
+      promptToText(prompt),
+    );
+  if (!match?.[2]) {
+    return null;
+  }
+  return {
+    markdown: match[2],
+    ...(match[1] ? { imagePurpose: "inspection" as const } : {}),
+  };
 }
 
 function parseMockQuestionPrompt(prompt: AgentPromptInput): MockQuestionPromptRequest | null {
@@ -834,7 +844,11 @@ export class MockLoadTestAgentSession implements AgentSession {
       } else if (structuredBranchName) {
         this.scheduleSettledAssistantTurn(turn, JSON.stringify(structuredBranchName));
       } else if (settledAssistantImageMarkdown) {
-        this.scheduleSettledAssistantTurn(turn, settledAssistantImageMarkdown);
+        this.scheduleSettledAssistantTurn(
+          turn,
+          settledAssistantImageMarkdown.markdown,
+          settledAssistantImageMarkdown.imagePurpose,
+        );
       } else if (shouldEmitPlanApprovalPrompt(prompt)) {
         this.schedulePlanApprovalTurn(turn);
       } else if (questionPrompt) {
@@ -1201,9 +1215,13 @@ export class MockLoadTestAgentSession implements AgentSession {
     turn.timer.unref?.();
   }
 
-  private scheduleSettledAssistantTurn(turn: ActiveTurn, finalText: string): void {
+  private scheduleSettledAssistantTurn(
+    turn: ActiveTurn,
+    finalText: string,
+    imagePurpose?: "inspection",
+  ): void {
     turn.timer = setTimeout(() => {
-      this.emitSettledAssistantTurn(turn, finalText);
+      this.emitSettledAssistantTurn(turn, finalText, imagePurpose);
     }, 0);
     turn.timer.unref?.();
   }
@@ -1234,7 +1252,11 @@ export class MockLoadTestAgentSession implements AgentSession {
     turn.timer.unref?.();
   }
 
-  private emitSettledAssistantTurn(turn: ActiveTurn, finalText: string): void {
+  private emitSettledAssistantTurn(
+    turn: ActiveTurn,
+    finalText: string,
+    imagePurpose?: "inspection",
+  ): void {
     if (this.activeTurn !== turn) {
       return;
     }
@@ -1246,6 +1268,7 @@ export class MockLoadTestAgentSession implements AgentSession {
       type: "assistant_message",
       text: finalText,
       messageId: turn.assistantMessageId,
+      ...(imagePurpose ? { imagePurpose } : {}),
     });
     this.activeTurn = null;
     this.emit({
@@ -1261,6 +1284,7 @@ export class MockLoadTestAgentSession implements AgentSession {
           type: "assistant_message",
           text: finalText,
           messageId: turn.assistantMessageId,
+          ...(imagePurpose ? { imagePurpose } : {}),
         },
       ],
       canceled: false,

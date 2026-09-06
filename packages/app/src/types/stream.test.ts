@@ -23,6 +23,59 @@ import { timelineItemIdentity } from "@getpaseo/protocol/timeline-identity";
 
 type CanonicalToolStatus = "running" | "completed" | "failed" | "canceled";
 
+describe("assistant image display intent", () => {
+  it("keeps display intent on canonical assistant messages", () => {
+    const state = reduceStreamUpdate(
+      [],
+      {
+        type: "timeline",
+        provider: "codex",
+        item: {
+          type: "assistant_message",
+          text: "![Image](file:///tmp/inspected.png)",
+          imagePurpose: "inspection",
+        },
+      },
+      new Date("2026-09-01T00:00:00.000Z"),
+    );
+
+    expect(state).toEqual([
+      expect.objectContaining({
+        kind: "assistant_message",
+        imagePurpose: "inspection",
+      }),
+    ]);
+  });
+
+  it("does not merge assistant messages with different display intent", () => {
+    const timestamp = new Date("2026-09-01T00:00:00.000Z");
+    const text = reduceStreamUpdate(
+      [],
+      {
+        type: "timeline",
+        provider: "codex",
+        item: { type: "assistant_message", text: "Done" },
+      },
+      timestamp,
+    );
+    const withInspection = reduceStreamUpdate(
+      text,
+      {
+        type: "timeline",
+        provider: "codex",
+        item: {
+          type: "assistant_message",
+          text: "![Image](file:///tmp/inspected.png)",
+          imagePurpose: "inspection",
+        },
+      },
+      timestamp,
+    );
+
+    expect(withInspection).toHaveLength(2);
+  });
+});
+
 describe("plugin timeline rows", () => {
   it("uses the protocol identity format for stream tool and plugin rows", () => {
     const tool = {

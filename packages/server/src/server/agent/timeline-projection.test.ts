@@ -93,6 +93,56 @@ describe("projectTimelineRows", () => {
     });
   });
 
+  test("keeps assistant messages with different image purposes separate", () => {
+    const rows: AgentTimelineRow[] = [
+      {
+        seq: 1,
+        timestamp: "2026-02-13T00:00:00.000Z",
+        item: { type: "assistant_message", text: "Done" },
+      },
+      {
+        seq: 2,
+        timestamp: "2026-02-13T00:00:00.100Z",
+        item: {
+          type: "assistant_message",
+          text: "![Image](file:///tmp/inspected.png)",
+          imagePurpose: "inspection",
+        },
+      },
+    ];
+
+    expect(projectTimelineRows({ rows, mode: "projected" })).toHaveLength(2);
+  });
+
+  test("keeps image purpose when matching assistant chunks merge", () => {
+    const rows: AgentTimelineRow[] = [
+      {
+        seq: 1,
+        timestamp: "2026-02-13T00:00:00.000Z",
+        item: {
+          type: "assistant_message",
+          text: "![First](file:///tmp/first.png)",
+          imagePurpose: "inspection",
+        },
+      },
+      {
+        seq: 2,
+        timestamp: "2026-02-13T00:00:00.100Z",
+        item: {
+          type: "assistant_message",
+          text: "![Second](file:///tmp/second.png)",
+          imagePurpose: "inspection",
+        },
+      },
+    ];
+
+    expect(projectTimelineRows({ rows, mode: "projected" })[0]?.item).toEqual({
+      type: "assistant_message",
+      text: "![First](file:///tmp/first.png)![Second](file:///tmp/second.png)",
+      imagePurpose: "inspection",
+    });
+  });
+
   test("merges adjacent reasoning chunks in projected mode", () => {
     const rows: AgentTimelineRow[] = [
       {

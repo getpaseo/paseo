@@ -168,6 +168,7 @@ function timelineItem(text = "Cached"): StreamItem {
     kind: "assistant_message",
     id: "message-1",
     text,
+    imagePurpose: "inspection",
     timestamp: new Date("2026-07-18T08:02:00.000Z"),
     timelineCursor: { epoch: "epoch-1", seq: 12 },
   };

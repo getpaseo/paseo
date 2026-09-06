@@ -3,7 +3,7 @@ import * as fsSync from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import type { AgentTimelineItem } from "../agent-sdk-types.js";
+import type { AgentTimelineItem, AssistantImagePurpose } from "../agent-sdk-types.js";
 
 export interface ProviderImageOutput {
   path?: string | null;
@@ -113,6 +113,7 @@ export function isProviderImageMarkdown(text: string): boolean {
 
 interface RenderProviderImageOutputOptions {
   materialize?: (image: { data: string; mimeType: string | null }) => MaterializedProviderImage;
+  imagePurpose?: AssistantImagePurpose;
 }
 
 function nonEmptyString(value: string | null | undefined): string | null {
@@ -179,6 +180,7 @@ export function renderProviderImageOutputAsAssistantMarkdown(
     return {
       type: "assistant_message",
       text: `![${altText}](${escapeMarkdownImageSource(source)})`,
+      ...(options.imagePurpose ? { imagePurpose: options.imagePurpose } : {}),
     };
   }
 
@@ -209,5 +211,6 @@ export function renderProviderImageOutputAsAssistantMarkdown(
   return {
     type: "assistant_message",
     text: `![${altText}](${escapeMarkdownImageSource(materialized.path)})`,
+    ...(options.imagePurpose ? { imagePurpose: options.imagePurpose } : {}),
   };
 }

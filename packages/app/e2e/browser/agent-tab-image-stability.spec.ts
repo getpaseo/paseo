@@ -3,8 +3,10 @@ import {
   appendSettledTimelineTurns,
   createNearTenMegabyteAssistantPng,
   createSettledMockAgent,
+  createSizedAssistantPng,
   createSmallAssistantPng,
   emitSettledAssistantImage,
+  emitSettledInspectedImage,
   expectAssistantImageNotMounted,
   expectAssistantImageRendered,
   openAssistantImageTimeline,
@@ -26,6 +28,57 @@ const test = base.extend<{ imageWorkspace: SeededWorkspace }>({
       await workspace.cleanup();
     }
   },
+});
+
+test("fits a portrait result to the viewport without stretching it full width", async ({
+  imageWorkspace: workspace,
+  page,
+}) => {
+  const image = await createSizedAssistantPng(workspace, {
+    alt: "Portrait result image",
+    fileName: "portrait-result-image.png",
+    width: 540,
+    height: 1200,
+  });
+  const imageAgent = await createSettledMockAgent(workspace, "Portrait result timeline");
+  await emitSettledAssistantImage(workspace.client, imageAgent, image);
+  await openAssistantImageTimeline(page, imageAgent);
+  await expectAssistantImageRendered(page, image);
+
+  const box = await page.getByRole("img", { name: image.alt }).boundingBox();
+  const viewport = page.viewportSize();
+  expect(box).not.toBeNull();
+  expect(viewport).not.toBeNull();
+  expect(box!.height).toBeLessThanOrEqual(viewport!.height * 0.45 + 1);
+  expect(box!.width / box!.height).toBeCloseTo(image.width / image.height, 2);
+});
+
+test("keeps inspected images collapsed until the user asks to see them", async ({
+  imageWorkspace: workspace,
+  page,
+}) => {
+  const image = await createSmallAssistantPng(workspace, {
+    alt: "Inspected timeline image",
+    fileName: "inspected-timeline-image.png",
+  });
+  const imageAgent = await createSettledMockAgent(workspace, "Inspected image timeline");
+  await emitSettledInspectedImage(workspace.client, imageAgent, image);
+  await openAssistantImageTimeline(page, imageAgent);
+
+  const disclosure = page.getByRole("button", { name: "Viewed an image" });
+  await expect(disclosure).toHaveAttribute("aria-expanded", "false");
+  await expect(page.getByRole("img", { name: image.alt })).toHaveCount(0);
+
+  await disclosure.click();
+  await expect(disclosure).toHaveAttribute("aria-expanded", "true");
+  await expectAssistantImageRendered(page, image);
+  const box = await page.getByRole("img", { name: image.alt }).boundingBox();
+  expect(box).not.toBeNull();
+  expect(box!.width).toBeLessThanOrEqual(80);
+  expect(box!.height).toBeLessThanOrEqual(80);
+
+  await page.getByRole("button", { name: "Open image attachment" }).click();
+  await expect(page.getByTestId("attachment-lightbox-image")).toBeVisible();
 });
 
 test("switching between settled agent tabs keeps a real assistant PNG rendered", async ({
@@ -96,7 +149,7 @@ test("opens a timeline image in a zoomable lightbox", async ({
   await expectAgentReadyToInterrupt(page);
 });
 
-test("reloading a timeline anchors near-tail assistant image growth", async ({
+test("reloading a timeline anchors near-tail assistant image resize", async ({
   imageWorkspace: workspace,
   page,
 }) => {
@@ -213,12 +266,11 @@ test("reloading a timeline anchors near-tail assistant image growth", async ({
   const initialGeometry = geometryEvents.find((event) => event.height > 0);
   if (!initialGeometry)
     throw new Error(`Image geometry was never measurable: ${JSON.stringify(events)}`);
-  const expandedGeometry = geometryEvents.find((event) => event.height > initialGeometry.height);
-  if (!expandedGeometry)
-    throw new Error(`Image geometry never expanded: ${JSON.stringify(events)}`);
-  expect(expandedGeometry.scrollTop, JSON.stringify(events)).toBeGreaterThan(
-    initialGeometry.scrollTop,
+  const settledGeometry = geometryEvents.find(
+    (event) => event.height !== initialGeometry.height && event.height > 0,
   );
+  if (!settledGeometry) throw new Error(`Image geometry never settled: ${JSON.stringify(events)}`);
+  expect(settledGeometry.scrollTop, JSON.stringify(events)).not.toBe(initialGeometry.scrollTop);
 });
 
 test("a real assistant PNG remains reachable through pagination and remount", async ({
@@ -232,7 +284,7 @@ test("a real assistant PNG remains reachable through pagination and remount", as
   });
   const imageAgent = await createSettledMockAgent(workspace, "Paginated image timeline");
   await emitSettledAssistantImage(workspace.client, imageAgent, image);
-  await appendSettledTimelineTurns(workspace.client, imageAgent, 40);
+  await appendSettledTimelineTurns(workspace.client, imageAgent, 80);
 
   await openAssistantImageTimeline(page, imageAgent);
   await expectAssistantImageNotMounted(page, image);

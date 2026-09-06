@@ -68,11 +68,13 @@ export type AssistantImageResult =
       status: "loading";
       binding: AssistantImageRenderBinding | null;
       aspectRatio: number | null;
+      dimensions: { width: number; height: number } | null;
     }
   | {
       status: "loaded";
       binding: AssistantImageRenderBinding;
       aspectRatio: number;
+      dimensions: { width: number; height: number } | null;
     }
   | { status: "failed"; message: string };
 
@@ -531,6 +533,7 @@ export function useAssistantImage({
         onError: handleImageError,
       },
       aspectRatio: lifecycle.aspectRatio,
+      dimensions: getAssistantImageMetadata({ source, workspaceRoot, serverId }),
     };
   }
   if (lifecycle.status === "failed") {
@@ -540,5 +543,6 @@ export function useAssistantImage({
     status: "loading",
     binding,
     aspectRatio: hasCurrentLifecycleUri ? lifecycle.aspectRatio : null,
+    dimensions: cachedMetadata,
   };
 }

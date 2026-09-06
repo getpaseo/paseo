@@ -64,6 +64,7 @@ function assistant(
     provider?: AgentProvider;
     turnId?: string;
     messageId?: string;
+    imagePurpose?: "inspection" | "result";
   },
 ): Extract<AgentStreamEvent, { type: "timeline" }> {
   return timeline(
@@ -71,6 +72,7 @@ function assistant(
       type: "assistant_message",
       text,
       ...(options?.messageId !== undefined ? { messageId: options.messageId } : {}),
+      ...(options?.imagePurpose !== undefined ? { imagePurpose: options.imagePurpose } : {}),
     },
     options,
   );
@@ -116,6 +118,30 @@ function toolCall(options?: {
 describe("AgentStreamCoalescer", () => {
   beforeEach(() => {
     vi.useFakeTimers();
+  });
+
+  test("does not coalesce assistant text with a different image purpose", async () => {
+    const { coalescer, flushes } = createHarness();
+    primeLeadingEdge(coalescer, flushes);
+
+    coalescer.handle("agent-1", assistant("Done", { turnId: "turn-1" }));
+    coalescer.handle(
+      "agent-1",
+      assistant("![Image](file:///tmp/inspected.png)", {
+        turnId: "turn-1",
+        imagePurpose: "inspection",
+      }),
+    );
+    await vi.advanceTimersByTimeAsync(AGENT_STREAM_COALESCE_DEFAULT_WINDOW_MS);
+
+    expect(flushes.map((flush) => flush.item)).toEqual([
+      { type: "assistant_message", text: "Done" },
+      {
+        type: "assistant_message",
+        text: "![Image](file:///tmp/inspected.png)",
+        imagePurpose: "inspection",
+      },
+    ]);
   });
 
   afterEach(() => {
