@@ -13,6 +13,8 @@ import { CursorQuotaProvider } from "./providers/cursor.js";
 import { GrokQuotaProvider } from "./providers/grok.js";
 import { KimiQuotaProvider } from "./providers/kimi.js";
 import { MiniMaxQuotaProvider } from "./providers/minimax.js";
+import { OpencodeGoQuotaProvider } from "./providers/opencode-go.js";
+import type { OmpUsageExec } from "./providers/omp-usage.js";
 import { ZaiQuotaProvider } from "./providers/zai.js";
 import { ProviderUsageService } from "./service.js";
 
@@ -173,6 +175,9 @@ function usageFetcher(usage: ProviderUsage): ProviderUsageFetcher {
     fetchUsage: async () => usage,
   };
 }
+const failingOmpExec: OmpUsageExec = async () => {
+  throw new Error("omp is not available in tests");
+};
 
 function findProvider(result: { providers: ProviderUsage[] }, providerId: string): ProviderUsage {
   const provider = result.providers.find((candidate) => candidate.providerId === providerId);
@@ -422,14 +427,19 @@ describe("real provider usage fetchers", () => {
           platform: options.platform,
           fetch: fetchThroughTestDouble,
         }),
-        new CodexQuotaProvider({ logger, codexHome, fetch: fetchThroughTestDouble }),
+        new CodexQuotaProvider({
+          logger,
+          codexHome,
+          fetch: fetchThroughTestDouble,
+          exec: failingOmpExec,
+        }),
         new CopilotQuotaProvider({ logger, fetch: fetchThroughTestDouble }),
         new CursorQuotaProvider({
           logger,
           fetch: fetchThroughTestDouble,
           homeDir: options.cursorHomeDir,
         }),
-        new ZaiQuotaProvider({ logger, fetch: fetchThroughTestDouble }),
+        new ZaiQuotaProvider({ logger, fetch: fetchThroughTestDouble, exec: failingOmpExec }),
         new GrokQuotaProvider({
           logger,
           fetch: fetchThroughTestDouble,
@@ -451,6 +461,7 @@ describe("real provider usage fetchers", () => {
           credentialsPath:
             options.miniMaxCredentialsPath ?? join(homeDir, ".mmx", "credentials.json"),
         }),
+        new OpencodeGoQuotaProvider({ logger, exec: failingOmpExec }),
       ],
       cacheTtlMs: 0,
     });
@@ -1363,6 +1374,7 @@ describe("usage bars escalate as they fill", () => {
     const usage = await new CodexQuotaProvider({
       logger: createLogger(),
       codexHome,
+      exec: failingOmpExec,
       fetch: mockFetch(
         new Map([
           [

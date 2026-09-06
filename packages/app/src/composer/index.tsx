@@ -276,6 +276,7 @@ function renderContextWindowMeter(
   showPercentage: boolean,
   serverId: string,
   provider: string | null,
+  modelProviderId: string | null,
   pending: boolean,
   glyphSize: number,
 ): ReactElement | null {
@@ -291,6 +292,7 @@ function renderContextWindowMeter(
       showPercentage={showPercentage}
       serverId={serverId}
       provider={provider}
+      modelProviderId={modelProviderId}
       pending={pending}
       glyphSize={glyphSize}
     />
@@ -1992,6 +1994,10 @@ function ComposerContentImpl({
   const contextWindowPending = agentState.status === "initializing" || isAgentRunning;
   const contextWindowMeterGlyphSize = isCompactLayout ? ICON_SIZE.md : buttonIconSize;
 
+  const modelProviderId =
+    agentState.provider === "pi" || agentState.provider === "omp"
+      ? (agentState.model?.split("/", 1)[0] ?? null)
+      : null;
   const contextWindowMeter = useMemo(
     () =>
       renderContextWindowMeter(
@@ -2001,6 +2007,7 @@ function ComposerContentImpl({
         false,
         serverId,
         agentState.provider,
+        modelProviderId,
         contextWindowPending,
         contextWindowMeterGlyphSize,
       ),
@@ -2010,6 +2017,7 @@ function ComposerContentImpl({
       agentState.totalCostUsd,
       serverId,
       agentState.provider,
+      modelProviderId,
       contextWindowPending,
       contextWindowMeterGlyphSize,
     ],

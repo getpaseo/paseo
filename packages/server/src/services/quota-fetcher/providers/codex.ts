@@ -17,6 +17,7 @@ import {
   unavailableUsage,
   windowFromUsedPct,
 } from "../usage.js";
+import { OmpUsageRunner, providerUsageFromOmpReport, type OmpUsageExec } from "./omp-usage.js";
 
 const CodexAuthSchema = z.object({
   tokens: z
@@ -64,6 +65,8 @@ interface CodexQuotaProviderOptions {
   logger: Logger;
   codexHome?: string;
   fetch?: ProviderApiFetch;
+  exec?: OmpUsageExec;
+  ompCommand?: [string, ...string[]];
 }
 
 function codexWindow(
@@ -81,29 +84,61 @@ export class CodexQuotaProvider implements ProviderUsageFetcher {
   readonly displayName = "Codex";
 
   private readonly codexHome: string;
+  private readonly logger: Logger;
+
   private readonly fetchApi: ProviderApiFetch;
+  private readonly omp: OmpUsageRunner;
 
   constructor(options: CodexQuotaProviderOptions) {
+    this.logger = options.logger;
     this.codexHome = options.codexHome || process.env["CODEX_HOME"] || join(homedir(), ".codex");
     this.fetchApi = options.fetch ?? fetch;
+    this.omp = new OmpUsageRunner({
+      logger: options.logger,
+      command: options.ompCommand,
+      exec: options.exec,
+    });
   }
 
   async fetchUsage(): Promise<ProviderUsage> {
     const auth = await this.readCodexAuth();
     const accessToken = auth?.tokens?.access_token;
     if (!auth || !accessToken) {
-      return unavailableUsage(this);
+      // No native credentials: OMP may still carry the active account.
+      return this.fetchOmpUsage();
     }
 
-    const { account_id } = auth.tokens ?? {};
-    const resp = await this.callCodexApi(accessToken, account_id);
-
-    if (resp === "NEEDS_AUTH") {
-      // Read-only on credentials; the Codex CLI owns refresh. See docs/providers.md.
-      return unavailableUsage(this);
+    try {
+      const { account_id } = auth.tokens ?? {};
+      const resp = await this.callCodexApi(accessToken, account_id);
+      if (resp === "NEEDS_AUTH") {
+        // Read-only on credentials; the Codex CLI owns refresh. OMP may hold
+        // a different, valid account.
+        return this.fetchOmpUsage();
+      }
+      return this.toUsage(resp);
+    } catch (error) {
+      // Native credentials exist but the fetch itself failed: surface the
+      // error instead of silently substituting another account's quota.
+      this.logger.debug({ err: error }, "Codex usage fetch failed");
+      return unavailableUsage({
+        providerId: this.providerId,
+        displayName: this.displayName,
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
+  }
 
-    return this.toUsage(resp);
+  private async fetchOmpUsage(): Promise<ProviderUsage> {
+    const report = await this.omp.fetchReport("openai-codex");
+    const fromOmp = report
+      ? providerUsageFromOmpReport({
+          report,
+          providerId: this.providerId,
+          displayName: this.displayName,
+        })
+      : null;
+    return fromOmp ?? unavailableUsage(this);
   }
 
   private toUsage(resp: CodexUsageResponse): ProviderUsage {

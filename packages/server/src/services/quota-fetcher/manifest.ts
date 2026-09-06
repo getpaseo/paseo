@@ -6,6 +6,7 @@ import type {
 import { ClaudeQuotaProvider } from "./providers/claude.js";
 import { CodexQuotaProvider } from "./providers/codex.js";
 import { CopilotQuotaProvider } from "./providers/copilot.js";
+import { OpencodeGoQuotaProvider } from "./providers/opencode-go.js";
 import { CursorQuotaProvider } from "./providers/cursor.js";
 import { GrokQuotaProvider } from "./providers/grok.js";
 import { KimiQuotaProvider } from "./providers/kimi.js";
@@ -48,6 +49,10 @@ export const PROVIDER_USAGE_FETCHERS: readonly ProviderUsageFetcherManifestEntry
   {
     providerId: "kimi",
     create: (options) => new KimiQuotaProvider({ logger: options.logger, fetch: options.fetch }),
+  },
+  {
+    providerId: "opencode-go",
+    create: (options) => new OpencodeGoQuotaProvider({ logger: options.logger }),
   },
   {
     providerId: "minimax",

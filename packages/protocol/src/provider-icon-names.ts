@@ -5,8 +5,11 @@ export const BUILTIN_PROVIDER_ICON_NAMES = [
   "kiro",
   "minimax",
   "omp",
-  "opencode",
   "pi",
+
+  "opencode",
+  "opencode-go",
+  "zai",
 ];
 
 export const ACP_PROVIDER_ICON_NAMES = [

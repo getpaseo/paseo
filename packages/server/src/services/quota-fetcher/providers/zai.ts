@@ -3,6 +3,7 @@ import { z } from "zod";
 import type { ProviderUsage, ProviderUsageDetail } from "../../../server/messages.js";
 import type { ProviderApiFetch, ProviderUsageFetcher } from "../provider.js";
 import { ApiOptionalStringSchema, fetchProviderApi, unavailableUsage } from "../usage.js";
+import { OmpUsageRunner, providerUsageFromOmpReport, type OmpUsageExec } from "./omp-usage.js";
 
 const ZaiUsageResponseSchema = z.object({
   data: z
@@ -20,6 +21,8 @@ const ZaiUsageResponseSchema = z.object({
 interface ZaiQuotaProviderOptions {
   logger: Logger;
   fetch?: ProviderApiFetch;
+  exec?: OmpUsageExec;
+  ompCommand?: [string, ...string[]];
 }
 
 export class ZaiQuotaProvider implements ProviderUsageFetcher {
@@ -28,13 +31,36 @@ export class ZaiQuotaProvider implements ProviderUsageFetcher {
 
   private readonly logger: Logger;
   private readonly fetchApi: ProviderApiFetch;
+  private readonly omp: OmpUsageRunner;
 
   constructor(options: ZaiQuotaProviderOptions) {
     this.logger = options.logger;
     this.fetchApi = options.fetch ?? fetch;
+    this.omp = new OmpUsageRunner({
+      logger: options.logger,
+      command: options.ompCommand,
+      exec: options.exec,
+    });
   }
 
   async fetchUsage(): Promise<ProviderUsage> {
+    // OMP owns the Z.AI coding-plan OAuth flow and knows the 5h/weekly credit
+    // quota windows; its report wins whenever it has one. The legacy env-key
+    // subscription listing below only identifies the plan, no usage.
+    const report = await this.omp.fetchReport(this.providerId);
+    const fromOmp = report
+      ? providerUsageFromOmpReport({
+          report,
+          providerId: this.providerId,
+          displayName: this.displayName,
+        })
+      : null;
+    if (fromOmp) return fromOmp;
+
+    return this.fetchSubscriptionStatus();
+  }
+
+  private async fetchSubscriptionStatus(): Promise<ProviderUsage> {
     const token = process.env["ZAI_API_KEY"] || process.env["GLM_API_KEY"];
     if (!token) return unavailableUsage(this);
 
