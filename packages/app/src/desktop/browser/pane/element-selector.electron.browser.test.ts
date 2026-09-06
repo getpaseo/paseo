@@ -36,12 +36,54 @@ afterEach(() => {
 });
 
 describe("element selector guest script", () => {
-  it.each([":r0:", "123", "panel.title"])("escapes the selected ID %s", (id) => {
-    const guest = mountFixture(
-      `<button id="${id}" data-hit style="width:100px;height:40px">Target</button>`,
-    );
-    const button = document.getElementById(id);
+  it.each([
+    ["missing CSS", undefined],
+    ["missing escape", {}],
+    ["replaced escape", { escape: () => "wrong-selector" }],
+    [
+      "throwing escape",
+      {
+        escape: () => {
+          throw new Error("Page replaced CSS.escape");
+        },
+      },
+    ],
+  ])("selects a special ID with %s", (_label, pageCss) => {
+    const originalCss = Object.getOwnPropertyDescriptor(window, "CSS");
+    try {
+      Object.defineProperty(window, "CSS", { configurable: true, value: pageCss });
+      const guest = mountFixture(
+        '<button id=":r0:" data-hit style="width:100px;height:40px">Target</button>',
+      );
+      const button = document.getElementById(":r0:");
+      if (!button) throw new Error("Expected target");
+
+      button.click();
+
+      const selector = guest.__paseoSelectorResult?.selector;
+      if (!selector) throw new Error("Expected selector");
+      expect(document.querySelectorAll(selector)).toHaveLength(1);
+      expect(document.querySelector(selector)).toBe(button);
+    } finally {
+      if (originalCss) Object.defineProperty(window, "CSS", originalCss);
+    }
+  });
+
+  it.each([
+    ":r0:",
+    "123",
+    "panel.title",
+    "-",
+    "-1",
+    'quoted"id',
+    "space id",
+    "slash\\id",
+    "\u{1f600}",
+  ])("escapes the selected ID %s", (id) => {
+    const guest = mountFixture('<button data-hit style="width:100px;height:40px">Target</button>');
+    const button = document.querySelector("button");
     if (!button) throw new Error("Expected target");
+    button.id = id;
 
     button.click();
 

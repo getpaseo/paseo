@@ -297,13 +297,24 @@ export function buildElementSelectorScript(sessionToken: string): string {
         e.stopPropagation();
         showTarget(resolveTarget(e), e);
       }
+      // Guest pages can replace window.CSS, so escaping must not depend on that global.
+      function escapeIdentifier(value) {
+        return Array.from(value).map(function(character, index) {
+          var ordinary = /[a-zA-Z_]/.test(character) || (character === '-' && value.length > 1);
+          var nonLeadingDigit = /[0-9]/.test(character) && index > 0 && !(index === 1 && value[0] === '-');
+          if (ordinary || nonLeadingDigit) return character;
+          var code = character.codePointAt(0) || 0xfffd;
+          return String.fromCharCode(92) + code.toString(16) + ' ';
+        }).join('');
+      }
       function buildSelector(el) {
         var path = [];
         while (el && el.nodeType === 1) {
-          var seg = CSS.escape(el.tagName.toLowerCase());
+          var seg = escapeIdentifier(el.tagName.toLowerCase());
           if (el.id) {
-            var idSelector = '#' + CSS.escape(el.id);
-            if (document.querySelectorAll(idSelector).length === 1) {
+            var idSelector = '#' + escapeIdentifier(el.id);
+            var matches = document.querySelectorAll(idSelector);
+            if (matches.length === 1 && matches[0] === el) {
               path.unshift(idSelector);
               break;
             }

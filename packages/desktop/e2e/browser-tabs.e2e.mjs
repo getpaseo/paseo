@@ -382,6 +382,20 @@ async function readViewport(client, browserId) {
   return JSON.parse(evaluated.resultJson);
 }
 
+async function waitForViewport(client, browserId, expected) {
+  const deadline = Date.now() + 5_000;
+  let actual;
+  // Electron applies host webview dimensions to the guest asynchronously.
+  do {
+    actual = await readViewport(client, browserId);
+    if (actual.width === expected.width && actual.height === expected.height) {
+      return actual;
+    }
+    await delay(50);
+  } while (Date.now() < deadline);
+  return actual;
+}
+
 async function clickGuestElement(page, client, browserId, selector) {
   const evaluated = await callBrowserTool(client, "browser_evaluate", {
     browserId,
@@ -763,7 +777,7 @@ async function runRegression({ page, client, serverId, targetUrl, callerAgentId,
   recordViewportMismatch(
     failures,
     "browser_resize updates the visible shared viewport",
-    await readViewport(client, browserId),
+    await waitForViewport(client, browserId, requestedViewport),
     requestedViewport,
   );
 
@@ -772,7 +786,7 @@ async function runRegression({ page, client, serverId, targetUrl, callerAgentId,
   recordViewportMismatch(
     failures,
     "oversized preset preserves the requested guest viewport",
-    await readViewport(client, browserId),
+    await waitForViewport(client, browserId, oversizedViewport),
     oversizedViewport,
   );
   await page.waitForFunction(
