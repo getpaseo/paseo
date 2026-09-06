@@ -1408,6 +1408,7 @@ export async function createPaseoDaemon(
     paseoHome: config.paseoHome,
     worktreesRoot: config.worktreesRoot,
     callerAgentId: runtime.callerAgentId,
+    ...(runtime.toolScope !== undefined ? { toolScope: runtime.toolScope } : {}),
     enableVoiceTools: runtime.enableVoiceTools,
     voiceOnly: runtime.voiceOnly,
     resolveSpeakHandler: (agentId) => wsServer?.resolveVoiceSpeakHandler(agentId) ?? null,
@@ -1417,7 +1418,14 @@ export async function createPaseoDaemon(
   const createAgentToolCatalog = (runtime: PaseoToolRuntimeContext) =>
     createPaseoToolCatalog(createAgentToolHostDependencies(runtime));
   const setAgentProviderToolsEnabled = (enabled: boolean) => {
-    agentProviderRuntime.setPaseoToolCatalog(enabled ? createAgentToolCatalog({}) : null);
+    // The bridge manifest is served globally without a caller, but every session
+    // that executes bridge tools is bound to one. Advertise agent-scoped
+    // definitions so the manifest matches agent-scoped validation; a top-level
+    // manifest advertises keys (e.g. create_agent.background) that execution
+    // rejects with "Unrecognized key".
+    agentProviderRuntime.setPaseoToolCatalog(
+      enabled ? createAgentToolCatalog({ toolScope: "agent" }) : null,
+    );
   };
   agentManager.setPaseoToolCatalogFactory(createAgentToolCatalog);
   agentManager.setPaseoToolsEnabled(config.mcpInjectIntoAgents !== false);
