@@ -278,3 +278,10 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.statusDanger,
   },
 }));
+
+export function resolveCallLabel(
+  hostLabel: string | null,
+  assistantName: string | null,
+): string | null {
+  return [assistantName, hostLabel].filter(Boolean).join(" · ") || null;
+}

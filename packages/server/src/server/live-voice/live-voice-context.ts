@@ -70,6 +70,8 @@ export interface LiveVoiceContextSnapshot {
 export interface LiveVoiceContextLimits {
   /** Snapshot budget, in the provider's own token estimate. */
   contextTokenBudget: number;
+  /** Additional saved assistant history, separate from the daemon snapshot. */
+  historyTokenBudget?: number;
   /** The provider's estimator, so our accounting matches the limit checked against. */
   bytesPerToken: number;
 }

@@ -26,6 +26,8 @@ const { HOME_INDICATOR_INSET, liveVoice } = vi.hoisted(() => ({
   },
 }));
 
+vi.mock("@/assistants/assistant-queries", () => ({ useAssistantName: () => null }));
+
 vi.mock("@/contexts/live-voice-context", () => ({
   useLiveVoiceOptional: () => liveVoice,
 }));

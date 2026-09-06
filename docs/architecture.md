@@ -134,9 +134,37 @@ generation. The daemon retains only the latest projection per entity and bounded
 event log. A missing, expired, or previous-generation cursor receives a full snapshot. Projects are
 independent records; a project with no workspaces does not need a workspace placeholder.
 
+#### Durable assistants
+
+Assistants are their own principal-scoped records, independent of projects and
+workspaces. A template supplies a copy of the initial configuration; editing or
+deleting it never changes an existing assistant. The launcher selects an instance
+on a host, and its settings override per-call voice, instructions, and backend
+model settings. The backend thinking setting is not a control for the realtime
+speaking model's reasoning effort.
+
+Each call still creates an ephemeral provider host. The daemon saves finalized
+speech and call boundaries, then seeds a fresh realtime conversation from the
+assistant's configured context, user-written summary, and recent unsummarized
+history. Speech keeps its original role. This restores text context, not the
+provider's internal session or audio state. A disconnected call can have an
+incomplete final utterance. History outside the startup budget remains readable;
+see [data-model.md](data-model.md#assistant-records-and-history) for retention.
+
+One assistant can have one active call across its owner's devices. Configuration
+edits and compaction affect the next call. Deleting an assistant closes its call
+and removes its local history; independently delegated project work keeps running.
+Provider-owned rollouts are outside that deletion boundary.
+
+Subscription-backed fire-and-forget execution is not implemented. The inspected
+Codex WebSocket realtime path requires API-key authentication; WebRTC uses the
+subscription path. The isolated `assistant-realtime-smoke.ts` script probes text
+input, journal seeding, and provider restart without relying on an ordinary
+executor turn as a replacement for the speaking model.
+
 #### Live Voice ownership and cross-host routing
 
-Live Voice is one daemon-global call per owning client socket. The daemon creates
+Live Voice is one daemon-global call per owning reconnectable client session. The daemon creates
 a hidden host session for the realtime conversation; it is not attached to a
 project or ordinary visible agent. Which agent provider hosts it comes from a
 host profile (`agent/providers/live-voice-host-profiles.ts`) — the coordinator
@@ -155,9 +183,9 @@ that advertise the setting as off, and the daemon rejects the start request as
 the authority. Do not offer a talk-only fallback: the hidden session exists to
 inspect and control Paseo, and without those tools it cannot fulfill that role.
 
-The exact source socket owns the call. The app pins that host connection so
-adaptive direct/relay selection cannot replace it mid-call, and a socket loss
-still tears the call down immediately. Native background audio keeps the peer and
+The authenticated client session owns the call across physical socket replacement.
+The app pins that host connection during the call. A lost control connection
+gets the existing bounded reconnect grace; it cannot retain a hidden host forever. Native background audio keeps the peer and
 socket alive across Home/screen lock; the physical-device checks and platform
 constraints are in [mobile-testing.md](mobile-testing.md).
 

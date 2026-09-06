@@ -13,6 +13,7 @@ import { useSessionStore } from "@/stores/session-store";
 import {
   createDefaultLiveVoiceRuntimeDeps,
   createLiveVoiceRuntime,
+  LiveVoiceStartError,
   type LiveVoiceDaemonClient,
   type LiveVoiceRuntime,
   type LiveVoiceSnapshot,
@@ -31,6 +32,8 @@ import {
   getLiveVoiceVoice,
 } from "@/stores/live-voice-settings-store";
 import { handleClientObservedLiveVoiceAgentStopped } from "@/live-voice/live-voice-cross-host-router";
+import { getSelectedAssistantId } from "@/assistants/assistant-selection-store";
+import { hostSupportsAssistants } from "@/assistants/assistant-queries";
 
 /**
  * Every host the app holds a connection to, read on demand. A call can outlive
@@ -57,6 +60,7 @@ interface LiveVoiceContextValue extends LiveVoiceSnapshot {
 const EMPTY_SNAPSHOT: LiveVoiceSnapshot = {
   phase: "idle",
   serverId: null,
+  assistantId: null,
   liveSessionId: null,
   isMuted: false,
   isAudioBlocked: false,
@@ -165,6 +169,15 @@ export function LiveVoiceProvider({ children }: LiveVoiceProviderProps) {
         },
         { read: getLiveVoiceVoice },
         { read: getLiveVoiceCallSettings },
+        {
+          read: (serverId) => {
+            const assistantId = getSelectedAssistantId(serverId) ?? undefined;
+            if (assistantId && !hostSupportsAssistants(serverId)) {
+              throw new LiveVoiceStartError({ code: "unsupported", message: null });
+            }
+            return assistantId;
+          },
+        },
       ),
     );
   }

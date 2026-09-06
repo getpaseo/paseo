@@ -56,6 +56,8 @@ export interface LiveVoiceErrorInfo {
 export interface LiveVoiceSnapshot {
   phase: LiveVoicePhase;
   serverId: string | null;
+  /** The durable assistant this call attached to; null for a legacy ephemeral call. */
+  assistantId: string | null;
   liveSessionId: string | null;
   isMuted: boolean;
   /** Autoplay policy blocked remote audio; the UI must offer "tap to enable audio". */
@@ -78,6 +80,7 @@ export interface LiveVoiceSnapshot {
 export interface LiveVoiceDaemonClient {
   startLiveVoice(input: {
     negotiation: { kind: "webrtc_sdp"; offerSdp: string };
+    assistantId?: string;
     voice?: string;
     ambientAgentReports?: boolean;
     ambientAgentGuidance?: string;
@@ -133,6 +136,15 @@ export interface LiveVoiceRuntimeDeps {
       backendModel: string | undefined;
       backendThinkingOptionId: string | undefined;
     };
+  };
+  /**
+   * The durable assistant a new call on this host attaches to, read once at
+   * start. When it names one, the assistant's own voice, instructions, and
+   * backend settings replace the per-call values above; the daemon ignores
+   * them anyway, so they are not sent.
+   */
+  assistant?: {
+    read(serverId: string): string | undefined;
   };
 }
 
@@ -239,6 +251,7 @@ function beginAmbientAgentReports(
 const IDLE_SNAPSHOT: LiveVoiceSnapshot = {
   phase: "idle",
   serverId: null,
+  assistantId: null,
   liveSessionId: null,
   isMuted: false,
   isAudioBlocked: false,
@@ -253,6 +266,7 @@ export function createDefaultLiveVoiceRuntimeDeps(
   ambientAgentReports?: LiveVoiceRuntimeDeps["ambientAgentReports"],
   voice?: LiveVoiceRuntimeDeps["voice"],
   callSettings?: LiveVoiceRuntimeDeps["callSettings"],
+  assistant?: LiveVoiceRuntimeDeps["assistant"],
 ): LiveVoiceRuntimeDeps {
   return {
     getClient,
@@ -260,6 +274,7 @@ export function createDefaultLiveVoiceRuntimeDeps(
     ...(ambientAgentReports ? { ambientAgentReports } : {}),
     ...(voice ? { voice } : {}),
     ...(callSettings ? { callSettings } : {}),
+    ...(assistant ? { assistant } : {}),
     startSession: startLiveVoiceSession,
     isSessionSupported: isLiveVoiceSessionSupported,
     lease: audioSessionLease,
@@ -269,6 +284,7 @@ export function createDefaultLiveVoiceRuntimeDeps(
 interface LiveVoiceCall {
   client: LiveVoiceDaemonClient;
   pin: LiveVoiceConnectionPin | null;
+  assistantId: string | null;
   leaseToken: AudioSessionLeaseToken | null;
   session: LiveVoiceSession | null;
   unsubscribe: (() => void) | null;
@@ -460,7 +476,11 @@ export function createLiveVoiceRuntime(deps: LiveVoiceRuntimeDeps): LiveVoiceRun
       call.unsubscribe = call.client.subscribeUpdates((message) => handleUpdate(call, message));
       const ambientStartFields = toAmbientStartFields(deps.ambientAgentReports?.read());
       const callSettings = deps.callSettings?.read();
-      const voice = await resolveSelectedLiveVoice(deps.voice?.read(), call.client);
+      // An assistant carries its own voice; only a legacy call resolves one here.
+      const assistantId = call.assistantId;
+      const voice = assistantId
+        ? undefined
+        : await resolveSelectedLiveVoice(deps.voice?.read(), call.client);
       if (!isCurrent(call)) return;
 
       const started = await deps.startSession({
@@ -468,19 +488,23 @@ export function createLiveVoiceRuntime(deps: LiveVoiceRuntimeDeps): LiveVoiceRun
           if (!isCurrent(call)) throw new Error("Live Voice startup was cancelled");
           const result = await call.client.startLiveVoice({
             negotiation: { kind: "webrtc_sdp", offerSdp },
+            ...(assistantId ? { assistantId } : {}),
             ...(voice ? { voice } : {}),
             ...ambientStartFields,
             ...(callSettings?.disabledPromptComponents?.length
               ? { disabledPromptComponents: callSettings.disabledPromptComponents }
               : {}),
-            ...(callSettings?.customVoiceInstructions
-              ? { customVoiceInstructions: callSettings.customVoiceInstructions }
-              : {}),
             ...(callSettings?.defaultWorkspaceDirectory
               ? { defaultWorkspaceDirectory: callSettings.defaultWorkspaceDirectory }
               : {}),
-            ...(callSettings?.backendModel ? { backendModel: callSettings.backendModel } : {}),
-            ...(callSettings?.backendThinkingOptionId
+            // The assistant record owns these; sending them would only invite drift.
+            ...(!assistantId && callSettings?.customVoiceInstructions
+              ? { customVoiceInstructions: callSettings.customVoiceInstructions }
+              : {}),
+            ...(!assistantId && callSettings?.backendModel
+              ? { backendModel: callSettings.backendModel }
+              : {}),
+            ...(!assistantId && callSettings?.backendThinkingOptionId
               ? { backendThinkingOptionId: callSettings.backendThinkingOptionId }
               : {}),
           });
@@ -554,6 +578,12 @@ export function createLiveVoiceRuntime(deps: LiveVoiceRuntimeDeps): LiveVoiceRun
         throw new LiveVoiceStartError({ code: "stopping", message: null });
       }
       if (!deps.isSessionSupported) failStart(serverId, { code: "unsupported", message: null });
+      let assistantId: string | null;
+      try {
+        assistantId = deps.assistant?.read(serverId) ?? null;
+      } catch (error) {
+        failStart(serverId, error instanceof LiveVoiceStartError ? error.info : toErrorInfo(error));
+      }
       const pin = deps.pinConnection?.(serverId) ?? null;
       const client = resolveLiveVoiceClient(deps, serverId, pin);
       if (!client) {
@@ -573,6 +603,7 @@ export function createLiveVoiceRuntime(deps: LiveVoiceRuntimeDeps): LiveVoiceRun
       const call: LiveVoiceCall = {
         client,
         pin,
+        assistantId,
         leaseToken: token,
         session: null,
         unsubscribe: null,
@@ -586,7 +617,7 @@ export function createLiveVoiceRuntime(deps: LiveVoiceRuntimeDeps): LiveVoiceRun
         closePromise: null,
       };
       currentCall = call;
-      publish({ ...IDLE_SNAPSHOT, phase: "starting", serverId });
+      publish({ ...IDLE_SNAPSHOT, phase: "starting", serverId, assistantId });
       await startCall(call, serverId);
     },
     async stop() {
