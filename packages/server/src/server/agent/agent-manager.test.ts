@@ -4605,6 +4605,8 @@ test("session config drift events update state through the stream channel", asyn
   const agent = manager.getAgent(snapshot.id);
   expect(agent?.currentModeId).toBe("build");
   expect(agent?.config.thinkingOptionId).toBe("high");
+  expect(agent?.config.model).toBe("gpt-5.4");
+
   expect(agent?.availableModes).toEqual([
     { id: "plan", label: "Plan" },
     { id: "build", label: "Build" },
