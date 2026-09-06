@@ -414,6 +414,12 @@ export class OmpHarness {
     return this.events.flatMap((event) => (event.type === "usage_updated" ? [event.usage] : []));
   }
 
+  promptCacheUpdates() {
+    return this.events.flatMap((event) =>
+      event.type === "usage_updated" && event.promptCache ? [event.promptCache] : [],
+    );
+  }
+
   requestToolApproval(input: {
     id: string;
     tool: "bash" | "edit" | "write";

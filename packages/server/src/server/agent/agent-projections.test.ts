@@ -277,6 +277,30 @@ describe("toAgentPayload", () => {
     expect(permissionA.title).toBe("Run command");
   });
 
+  it("copies prompt cache status and omits it when absent", () => {
+    const promptCache = {
+      observedAt: "2026-09-03T10:00:00.000Z",
+      ttlSeconds: 300,
+      lastRequest: { inputTokens: 40, cachedInputTokens: 2300, cacheWriteTokens: 0 },
+      session: {
+        inputTokens: 1240,
+        cachedInputTokens: 2300,
+        cacheWriteTokens: 1100,
+        requestCount: 2,
+      },
+    };
+    const agent = createManagedAgent({ promptCache });
+
+    const payload = toAgentPayload(agent);
+    expect(payload.promptCache).toEqual(promptCache);
+    expect(payload.promptCache).not.toBe(promptCache);
+    expect(payload.promptCache?.session).not.toBe(promptCache.session);
+
+    expect(toAgentPayload(createManagedAgent({ promptCache: undefined }))).not.toHaveProperty(
+      "promptCache",
+    );
+  });
+
   it("omits usage when any numeric usage field is NaN", () => {
     const fields = [
       "inputTokens",

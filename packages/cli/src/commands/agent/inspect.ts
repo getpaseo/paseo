@@ -30,6 +30,16 @@ interface AgentInspect {
     CachedTokens: number;
     CostUsd: number;
   } | null;
+  PromptCache: {
+    ObservedAt: string;
+    TtlSeconds: number | null;
+    LastRequestCachedPercent: number;
+    LastRequestInputTokens: number;
+    LastRequestCachedTokens: number;
+    LastRequestWrittenTokens: number | null;
+    SessionCachedPercent: number;
+    SessionRequests: number;
+  } | null;
   Capabilities: {
     Streaming: boolean;
     Persistence: boolean;
@@ -115,6 +125,30 @@ function buildLastUsage(snapshot: AgentSnapshotPayload): AgentInspect["LastUsage
   };
 }
 
+function cachedPercent(tokens: {
+  inputTokens: number;
+  cachedInputTokens: number;
+  cacheWriteTokens?: number;
+}): number {
+  const total = tokens.inputTokens + tokens.cachedInputTokens + (tokens.cacheWriteTokens ?? 0);
+  return total === 0 ? 0 : Math.round((tokens.cachedInputTokens / total) * 100);
+}
+
+function buildPromptCache(snapshot: AgentSnapshotPayload): AgentInspect["PromptCache"] {
+  const status = snapshot.promptCache;
+  if (!status) return null;
+  return {
+    ObservedAt: status.observedAt,
+    TtlSeconds: status.ttlSeconds ?? null,
+    LastRequestCachedPercent: cachedPercent(status.lastRequest),
+    LastRequestInputTokens: status.lastRequest.inputTokens,
+    LastRequestCachedTokens: status.lastRequest.cachedInputTokens,
+    LastRequestWrittenTokens: status.lastRequest.cacheWriteTokens ?? null,
+    SessionCachedPercent: cachedPercent(status.session),
+    SessionRequests: status.session.requestCount,
+  };
+}
+
 function buildCapabilities(snapshot: AgentSnapshotPayload): AgentInspect["Capabilities"] {
   if (!snapshot.capabilities) return null;
   return {
@@ -141,6 +175,7 @@ function toInspectData(snapshot: AgentSnapshotPayload): AgentInspect {
     CreatedAt: snapshot.createdAt,
     UpdatedAt: snapshot.updatedAt,
     LastUsage: buildLastUsage(snapshot),
+    PromptCache: buildPromptCache(snapshot),
     Capabilities: buildCapabilities(snapshot),
     AvailableModes: snapshot.availableModes
       ? snapshot.availableModes.map((m) => ({ id: m.id, label: m.label }))
@@ -175,6 +210,17 @@ function toInspectRows(agent: AgentInspect): InspectRow[] {
     rows.push({
       key: "LastUsage",
       value: `InputTokens: ${agent.LastUsage.InputTokens}, OutputTokens: ${agent.LastUsage.OutputTokens}, CachedTokens: ${agent.LastUsage.CachedTokens}, CostUsd: ${formatCost(agent.LastUsage.CostUsd)}`,
+    });
+  }
+
+  if (agent.PromptCache) {
+    const cache = agent.PromptCache;
+    const written =
+      cache.LastRequestWrittenTokens === null ? "" : `, Written: ${cache.LastRequestWrittenTokens}`;
+    const ttl = cache.TtlSeconds === null ? "unknown" : `${cache.TtlSeconds}s`;
+    rows.push({
+      key: "PromptCache",
+      value: `LastRequest: ${cache.LastRequestCachedPercent}% cached (Cached: ${cache.LastRequestCachedTokens}, New: ${cache.LastRequestInputTokens}${written}), Session: ${cache.SessionCachedPercent}% cached over ${cache.SessionRequests} requests, ObservedAt: ${cache.ObservedAt}, Ttl: ${ttl}`,
     });
   }
 

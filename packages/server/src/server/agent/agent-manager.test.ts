@@ -939,6 +939,44 @@ test("orders a concurrent replacement after a pending accepted steer", async () 
   }
 });
 
+test("reject active-turn behavior leaves the running turn untouched", async () => {
+  const session = new UnsupportedSteeringSession({ provider: "codex", cwd: process.cwd() });
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-reject-active-"));
+  const client = new (class extends TestAgentClient {
+    override async createSession(): Promise<AgentSession> {
+      return session;
+    }
+  })();
+  const manager = new AgentManager({ clients: { codex: client }, logger });
+  let agentId: string | null = null;
+  try {
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    agentId = agent.id;
+    const initial = manager.streamAgent(agent.id, "initial");
+    void (async () => {
+      for await (const _event of initial) {
+      }
+    })();
+    await manager.waitForAgentRunStart(agent.id);
+
+    await expect(
+      startAgentRun(manager, agent.id, "must not replace", logger, {
+        replaceRunning: true,
+        activeTurnBehavior: "reject",
+        runOptions: { clientMessageId: "reject-client" },
+      }),
+    ).rejects.toThrow("already has an active run");
+
+    expect(session.interruptCount).toBe(0);
+    expect(session.startCount).toBe(1);
+  } finally {
+    if (agentId) await manager.closeAgent(agentId).catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
 test("does not replace a newer foreground turn after unavailable steer fallback is admitted", async () => {
   const entered = deferred<void>();
   const release = deferred<void>();
@@ -6330,6 +6368,7 @@ test("applies live autonomous events and preserves usage omitted from completion
       contextWindowMaxTokens: 200_000,
       contextWindowUsedTokens: 175,
     },
+    promptCache: { kind: "request", inputTokens: 10, cachedInputTokens: 165, ttlSeconds: 300 },
     turnId: autonomousTurnId,
   });
   capturedSession!.pushEvent({
@@ -6353,6 +6392,13 @@ test("applies live autonomous events and preserves usage omitted from completion
     contextWindowMaxTokens: 200_000,
     contextWindowUsedTokens: 175,
   });
+  expect(updated?.promptCache).toEqual({
+    observedAt: expect.any(String),
+    ttlSeconds: 300,
+    lastRequest: { inputTokens: 10, cachedInputTokens: 165 },
+    session: { inputTokens: 10, cachedInputTokens: 165, requestCount: 1 },
+  });
+  expect(updated ? toAgentPayload(updated).promptCache : null).toEqual(updated?.promptCache);
   expect(manager.getTimeline(snapshot.id)).toContainEqual({
     type: "assistant_message",
     text: "AUTONOMOUS_PUMP_MESSAGE",

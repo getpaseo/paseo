@@ -196,6 +196,19 @@ A fetcher reads the provider's credential file and never writes it. On a 401 or 
 
 ---
 
+## Prompt Cache Samples
+
+Each agent snapshot carries `promptCache`: how much of the last model request was served from the provider's prompt cache, session totals, when that request happened, and the provider's cache lifetime when it documents one. The app derives warm/expiring/expired from `observedAt` plus `ttlSeconds`; the daemon never polls a provider for cache state because no provider exposes one. The only way to learn the cache is warm is to send a request, which is what the app's Ping action does.
+
+Adapters report a `PromptCacheSample` (`packages/server/src/server/agent/agent-sdk-types.ts`) on the `usage_updated` or `turn_completed` events they already emit. The manager folds samples with `applyPromptCacheSample` (`packages/server/src/server/agent/prompt-cache-status.ts`). Rules for a new adapter:
+
+- `inputTokens` is the uncached count. Anthropic-style backends already exclude cache reads from `input_tokens`; OpenAI-style backends include `cached_input_tokens` in `input_tokens`, so subtract.
+- Pick the sample kind from what the backend gives you. `request` is figures for one model request: emit it once per request and never re-send turn totals, which would double count. `cumulative` is running session totals: the manager derives the request from the delta, ignores samples that did not move, and treats totals going backwards as a counter reset, so re-sending is safe.
+- Omit `cacheWriteTokens` when the backend does not report writes. Omit `ttlSeconds` unless the backend documents a lifetime; a guessed TTL turns into a wrong countdown in the UI.
+- Subagent and sidechain requests are not the parent's cache status.
+
+---
+
 ## ACP Provider Checklist
 
 ### 1. Create the provider class

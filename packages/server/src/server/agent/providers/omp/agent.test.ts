@@ -250,6 +250,7 @@ describe("OMP agent client and session", () => {
     const omp = new OmpHarness({ usagePollScheduler: scheduler });
     await omp.start();
     omp.runtime().stats = {
+      tokens: { input: 100, output: 20, cacheRead: 10, cacheWrite: 5, total: 135 },
       contextUsage: { tokens: 130, contextWindow: 200_000 },
     };
     omp.runtime().state.contextUsage = { tokens: 99, contextWindow: 100_000 };
@@ -259,12 +260,20 @@ describe("OMP agent client and session", () => {
     await waitForImmediate();
     expect(omp.usageUpdates()).toEqual([
       {
-        inputTokens: 0,
-        cachedInputTokens: 0,
-        outputTokens: 0,
+        inputTokens: 100,
+        cachedInputTokens: 10,
+        outputTokens: 20,
         totalCostUsd: 0,
         contextWindowMaxTokens: 200_000,
         contextWindowUsedTokens: 130,
+      },
+    ]);
+    expect(omp.promptCacheUpdates()).toEqual([
+      {
+        kind: "cumulative",
+        inputTokens: 100,
+        cachedInputTokens: 10,
+        cacheWriteTokens: 5,
       },
     ]);
     expect(scheduler.activePollCount()).toBe(1);

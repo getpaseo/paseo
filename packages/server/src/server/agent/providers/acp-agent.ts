@@ -75,6 +75,7 @@ import {
   type AgentPersistenceHandle,
   type AgentPromptContentBlock,
   type AgentPromptInput,
+  type PromptCacheSample,
   type AgentRunOptions,
   type AgentRunResult,
   type AgentRuntimeInfo,
@@ -683,6 +684,19 @@ export function mapACPUsage(usage: Usage | null | undefined): AgentUsage | undef
     inputTokens: usage.inputTokens ?? undefined,
     outputTokens: usage.outputTokens ?? undefined,
     cachedInputTokens: usage.cachedReadTokens ?? undefined,
+  };
+}
+
+function toPromptCacheSample(usage: Usage | null | undefined): PromptCacheSample | undefined {
+  if (!usage || (usage.cachedReadTokens == null && usage.cachedWriteTokens == null)) {
+    return undefined;
+  }
+  // ACP usage separates uncached input from cached read and write totals.
+  return {
+    kind: "cumulative",
+    inputTokens: usage.inputTokens,
+    cachedInputTokens: usage.cachedReadTokens ?? 0,
+    ...(usage.cachedWriteTokens == null ? {} : { cacheWriteTokens: usage.cachedWriteTokens }),
   };
 }
 
@@ -3090,14 +3104,17 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       case "max_tokens":
       case "max_turn_requests":
       case "refusal":
-      default:
+      default: {
+        const promptCache = toPromptCacheSample(response.usage);
         this.finishTurn({
           type: "turn_completed",
           provider: this.provider,
           usage: this.currentTurnUsage,
+          ...(promptCache ? { promptCache } : {}),
           turnId,
         });
         break;
+      }
     }
   }
 

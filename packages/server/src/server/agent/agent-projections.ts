@@ -17,6 +17,7 @@ import type {
   AgentUsage,
   ImportableProviderSession,
 } from "./agent-sdk-types.js";
+import type { AgentPromptCacheStatus } from "@getpaseo/protocol/agent-types";
 import type { ManagedAgent } from "./agent-manager.js";
 import type { JsonValue } from "../json-utils.js";
 import { isStoredAgentProviderAvailable, toAgentPersistenceHandle } from "../persistence-hooks.js";
@@ -140,6 +141,11 @@ export function toAgentPayload(
   const usage = sanitizeUsage(agent.lastUsage);
   if (usage !== undefined) {
     payload.lastUsage = usage;
+  }
+
+  const promptCache = sanitizePromptCache(agent.promptCache);
+  if (promptCache !== undefined) {
+    payload.promptCache = promptCache;
   }
 
   if (agent.lastError !== undefined) {
@@ -489,6 +495,33 @@ function sanitizeUsage(value: unknown): AgentUsage | undefined {
     }
   }
   return Object.keys(result).length ? result : undefined;
+}
+
+function sanitizePromptCache(
+  value: AgentPromptCacheStatus | undefined,
+): AgentPromptCacheStatus | undefined {
+  if (!value) {
+    return undefined;
+  }
+  const numbers = [
+    value.ttlSeconds ?? 0,
+    value.lastRequest.inputTokens,
+    value.lastRequest.cachedInputTokens,
+    value.lastRequest.cacheWriteTokens ?? 0,
+    value.session.inputTokens,
+    value.session.cachedInputTokens,
+    value.session.cacheWriteTokens ?? 0,
+    value.session.requestCount,
+  ];
+  if (!numbers.every((entry) => Number.isFinite(entry))) {
+    return undefined;
+  }
+  return {
+    observedAt: value.observedAt,
+    ...(value.ttlSeconds === undefined ? {} : { ttlSeconds: value.ttlSeconds }),
+    lastRequest: { ...value.lastRequest },
+    session: { ...value.session },
+  };
 }
 
 function sanitizeRuntimeInfo(

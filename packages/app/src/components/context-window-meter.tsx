@@ -1,12 +1,16 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Pressable, Text, View } from "react-native";
 import Svg, { Circle } from "react-native-svg";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
+import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
+import type { AgentPromptCacheStatus } from "@getpaseo/protocol/agent-types";
+import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { ProviderUsageTooltipSection } from "@/provider-usage/tooltip-section";
 import { useProviderUsage } from "@/provider-usage/use-provider-usage";
 import { formatTokenCount } from "./context-window-meter.utils";
+import { derivePromptCacheView, type PromptCacheLifetime } from "./prompt-cache-view";
 
 interface ContextWindowMeterProps {
   maxTokens: number | null;
@@ -20,7 +24,15 @@ interface ContextWindowMeterProps {
   pending?: boolean;
   /** Optional glyph envelope for icon-toolbar alignment. */
   glyphSize?: number;
+  /** Absent on daemons that do not report prompt cache figures. */
+  promptCache?: AgentPromptCacheStatus | null;
+  /** Sends a short message to the agent to re-warm its prompt cache. */
+  onPingPromptCache?: () => Promise<void>;
+  /** The agent is busy, so a ping would only queue behind its turn. */
+  pingDisabled?: boolean;
 }
+
+type PingState = "idle" | "pending" | "failed";
 
 const SVG_SIZE = 14;
 const COMPACT_SVG_SIZE = 12;
@@ -96,6 +108,141 @@ function getMeterGeometry(showPercentage: boolean, glyphSize?: number) {
   };
 }
 
+function promptCacheDotStyle(lifetime: PromptCacheLifetime) {
+  if (lifetime === "warm") return styles.promptCacheDotWarm;
+  if (lifetime === "expiring") return styles.promptCacheDotExpiring;
+  if (lifetime === "expired") return styles.promptCacheDotExpired;
+  return styles.promptCacheDotUnknown;
+}
+
+function promptCacheStatusLabel(t: TFunction, lifetime: PromptCacheLifetime): string {
+  if (lifetime === "warm") return t("contextWindow.promptCache.statusWarm");
+  if (lifetime === "expiring") return t("contextWindow.promptCache.statusExpiring");
+  if (lifetime === "expired") return t("contextWindow.promptCache.statusExpired");
+  return t("contextWindow.promptCache.statusUnknown");
+}
+
+function formatCacheDuration(t: TFunction, seconds: number): string {
+  const safeSeconds = Math.max(0, Math.round(seconds));
+  if (safeSeconds < 60) {
+    return t("contextWindow.promptCache.durationSeconds", { value: safeSeconds });
+  }
+  return t("contextWindow.promptCache.durationMinutes", { value: Math.round(safeSeconds / 60) });
+}
+
+function promptCacheTiming(t: TFunction, view: ReturnType<typeof derivePromptCacheView>): string {
+  if (view.lifetime === "expired") {
+    return t("contextWindow.promptCache.expiredAgo", {
+      duration: formatCacheDuration(t, view.expiredForSeconds ?? 0),
+    });
+  }
+  if (view.remainingSeconds === null) {
+    return t("contextWindow.promptCache.lastRequestAgo", {
+      duration: formatCacheDuration(t, view.elapsedSeconds),
+    });
+  }
+  return t("contextWindow.promptCache.warmFor", {
+    duration: formatCacheDuration(t, view.remainingSeconds),
+  });
+}
+
+function promptCacheSplit(
+  t: TFunction,
+  split: ReturnType<typeof derivePromptCacheView>["lastRequest"],
+): string {
+  const cached = formatTokenCount(split.cachedTokens);
+  const fresh = formatTokenCount(split.freshTokens);
+  if (split.writtenTokens === null) {
+    return t("contextWindow.promptCache.split", { cached, fresh });
+  }
+  return t("contextWindow.promptCache.splitWithWrite", {
+    cached,
+    fresh,
+    written: formatTokenCount(split.writtenTokens),
+  });
+}
+
+interface PromptCacheTooltipSectionProps {
+  status: AgentPromptCacheStatus;
+  pingState: PingState;
+  onPing: (() => void) | null;
+  pingDisabled: boolean;
+}
+
+// Rendered only while the tooltip is open, so the once-a-second countdown starts and
+// stops with the surface the user is reading.
+function PromptCacheTooltipSection({
+  status,
+  pingState,
+  onPing,
+  pingDisabled,
+}: PromptCacheTooltipSectionProps) {
+  const { t } = useTranslation();
+  const [nowMs, setNowMs] = useState(() => Date.now());
+
+  useEffect(() => {
+    const interval = setInterval(() => setNowMs(Date.now()), 1000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const view = useMemo(() => derivePromptCacheView(status, nowMs), [status, nowMs]);
+
+  return (
+    <>
+      <View style={styles.tooltipDivider} />
+      <Text style={styles.tooltipTitle}>{t("contextWindow.promptCache.title")}</Text>
+      <View style={styles.promptCacheStatusRow}>
+        <View style={[styles.promptCacheDot, promptCacheDotStyle(view.lifetime)]} />
+        <Text style={styles.tooltipText}>{promptCacheStatusLabel(t, view.lifetime)}</Text>
+        <Text style={styles.tooltipDetail} numberOfLines={1}>
+          {promptCacheTiming(t, view)}
+        </Text>
+      </View>
+      <Text style={styles.tooltipDetail}>
+        {t("contextWindow.promptCache.lastRequest", {
+          percent: view.lastRequest.hitPercent,
+          split: promptCacheSplit(t, view.lastRequest),
+        })}
+      </Text>
+      <Text style={styles.tooltipDetail}>
+        {t(
+          view.session.requestCount === 1
+            ? "contextWindow.promptCache.sessionSingular"
+            : "contextWindow.promptCache.sessionPlural",
+          { percent: view.session.hitPercent, count: view.session.requestCount },
+        )}
+      </Text>
+      {onPing ? (
+        <>
+          <View style={styles.promptCachePingRow}>
+            <Button
+              variant="outline"
+              size="sm"
+              onPress={onPing}
+              disabled={pingDisabled || pingState === "pending"}
+            >
+              {pingState === "pending"
+                ? t("contextWindow.promptCache.pinging")
+                : t("contextWindow.promptCache.ping")}
+            </Button>
+          </View>
+          {/* The hint slot doubles as the failure slot so the section keeps its height. */}
+          <Text
+            style={
+              pingState === "failed" ? styles.promptCachePingError : styles.promptCachePingHint
+            }
+            numberOfLines={2}
+          >
+            {pingState === "failed"
+              ? t("contextWindow.promptCache.pingError")
+              : t("contextWindow.promptCache.pingHint")}
+          </Text>
+        </>
+      ) : null}
+    </>
+  );
+}
+
 export function ContextWindowMeter({
   maxTokens,
   usedTokens,
@@ -105,10 +252,16 @@ export function ContextWindowMeter({
   provider,
   pending = false,
   glyphSize,
+  promptCache,
+  onPingPromptCache,
+  pingDisabled = false,
 }: ContextWindowMeterProps) {
   const { theme } = useUnistyles();
   const { t } = useTranslation();
   const [isTooltipOpen, setIsTooltipOpen] = useState(false);
+  // Ping state lives here, not in the section: the section unmounts every time the
+  // tooltip closes, and a failure has to survive until the user tries again.
+  const [pingState, setPingState] = useState<PingState>("idle");
   const { view: providerUsageView, refresh: refreshProviderUsage } = useProviderUsage(
     serverId ?? null,
     { enabled: isTooltipOpen },
@@ -124,6 +277,15 @@ export function ContextWindowMeter({
     },
     [refreshProviderUsage],
   );
+
+  const handlePing = useCallback(() => {
+    if (!onPingPromptCache) return;
+    setPingState("pending");
+    void onPingPromptCache().then(
+      () => setPingState("idle"),
+      () => setPingState("failed"),
+    );
+  }, [onPingPromptCache]);
 
   const geometry = getMeterGeometry(showPercentage, glyphSize);
 
@@ -173,6 +335,7 @@ export function ContextWindowMeter({
       delayDuration={0}
       enabledOnDesktop
       enabledOnMobile
+      interactive={Boolean(promptCache && onPingPromptCache)}
     >
       <TooltipTrigger asChild triggerRefProp="ref">
         <Pressable
@@ -233,6 +396,14 @@ export function ContextWindowMeter({
               {t("contextWindow.sessionCost", { cost: formattedSessionCost })}
             </Text>
           ) : null}
+          {promptCache ? (
+            <PromptCacheTooltipSection
+              status={promptCache}
+              pingState={pingState}
+              onPing={onPingPromptCache ? handlePing : null}
+              pingDisabled={pingDisabled}
+            />
+          ) : null}
           <ProviderUsageTooltipSection view={providerUsageView} activeProviderId={provider} />
         </View>
       </TooltipContent>
@@ -287,5 +458,54 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.sm,
     lineHeight: theme.fontSize.sm * 1.4,
+  },
+  tooltipDivider: {
+    height: 1,
+    backgroundColor: theme.colors.borderAccent,
+    marginVertical: theme.spacing[1],
+    // Cancel the tooltip content's horizontal padding so the rule spans edge to edge.
+    marginHorizontal: -theme.spacing[2],
+  },
+  promptCacheStatusRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[1.5],
+    // Pin the row so swapping Warm for Likely expired cannot move the lines below it.
+    minHeight: theme.fontSize.base * 1.4,
+  },
+  promptCacheDot: {
+    width: theme.spacing[1.5],
+    height: theme.spacing[1.5],
+    borderRadius: theme.borderRadius.full,
+  },
+  promptCacheDotWarm: {
+    backgroundColor: theme.colors.statusSuccess,
+  },
+  promptCacheDotExpiring: {
+    backgroundColor: theme.colors.statusWarning,
+  },
+  promptCacheDotExpired: {
+    backgroundColor: theme.colors.statusDanger,
+  },
+  promptCacheDotUnknown: {
+    backgroundColor: theme.colors.foregroundMuted,
+  },
+  promptCachePingRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginTop: theme.spacing[0.5],
+  },
+  promptCachePingHint: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.sm,
+    lineHeight: theme.fontSize.sm * 1.4,
+    // Two lines either way, so swapping the hint for the failure keeps the height.
+    minHeight: theme.fontSize.sm * 1.4 * 2,
+  },
+  promptCachePingError: {
+    color: theme.colors.palette.red[300],
+    fontSize: theme.fontSize.sm,
+    lineHeight: theme.fontSize.sm * 1.4,
+    minHeight: theme.fontSize.sm * 1.4 * 2,
   },
 }));

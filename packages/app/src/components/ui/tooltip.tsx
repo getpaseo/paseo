@@ -29,6 +29,7 @@ import { StyleSheet } from "react-native-unistyles";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { FloatingSurface } from "@/components/ui/floating";
 import { isWeb } from "@/constants/platform";
+import { useHoverSafeZone } from "@/hooks/use-hover-safe-zone";
 import { getOverlayRoot, OVERLAY_Z } from "@/lib/overlay-root";
 
 type Side = "top" | "bottom" | "left" | "right";
@@ -45,9 +46,14 @@ interface TooltipContextValue {
   open: boolean;
   setOpen: (open: boolean) => void;
   triggerRef: React.RefObject<View | null>;
+  contentRef: React.RefObject<View | null>;
   enabled: boolean;
   openOnPress: boolean;
   delayDuration: number;
+  /** Content takes pointer events and survives the pointer leaving the trigger. */
+  interactive: boolean;
+  /** Leaving the trigger. A no-op while interactive: the hover safe zone owns closing. */
+  requestClose: () => void;
 }
 
 const TooltipContext = createContext<TooltipContextValue | null>(null);
@@ -231,6 +237,7 @@ export function Tooltip({
   delayDuration = 0,
   enabledOnDesktop = true,
   enabledOnMobile = false,
+  interactive = false,
   children,
 }: PropsWithChildren<{
   open?: boolean;
@@ -239,8 +246,10 @@ export function Tooltip({
   delayDuration?: number;
   enabledOnDesktop?: boolean;
   enabledOnMobile?: boolean;
+  interactive?: boolean;
 }>): ReactElement {
   const triggerRef = useRef<View>(null);
+  const contentRef = useRef<View>(null);
   const [isOpen, setIsOpen] = useControllableOpenState({
     open,
     defaultOpen,
@@ -250,16 +259,36 @@ export function Tooltip({
   const isCompact = useIsCompactFormFactor();
   const enabled = isCompact ? enabledOnMobile : enabledOnDesktop;
 
+  const close = useCallback(() => setIsOpen(false), [setIsOpen]);
+  const keepOpen = useCallback(() => {}, []);
+  const requestClose = useCallback(() => {
+    if (interactive) return;
+    setIsOpen(false);
+  }, [interactive, setIsOpen]);
+
+  // An interactive tooltip has to survive the pointer crossing the gap into its own
+  // content, so the trigger stops owning the close and the safe zone takes over.
+  useHoverSafeZone({
+    enabled: interactive && enabled && isOpen,
+    triggerRef,
+    contentRef,
+    onEnterSafeZone: keepOpen,
+    onLeaveSafeZone: close,
+  });
+
   const value = useMemo<TooltipContextValue>(
     () => ({
       open: isOpen,
       setOpen: setIsOpen,
       triggerRef,
+      contentRef,
       enabled,
       openOnPress: isCompact,
       delayDuration,
+      interactive,
+      requestClose,
     }),
-    [isOpen, setIsOpen, enabled, isCompact, delayDuration],
+    [isOpen, setIsOpen, enabled, isCompact, delayDuration, interactive, requestClose],
   );
 
   return <TooltipContext.Provider value={value}>{children}</TooltipContext.Provider>;
@@ -308,6 +337,11 @@ export function TooltipTrigger({
     ctx.setOpen(false);
   }, [clearOpenTimer, ctx]);
 
+  const leave = useCallback(() => {
+    clearOpenTimer();
+    ctx.requestClose();
+  }, [clearOpenTimer, ctx]);
+
   useEffect(() => {
     return () => {
       clearOpenTimer();
@@ -325,9 +359,9 @@ export function TooltipTrigger({
   const handleHoverOut = useCallback(
     (e?: unknown) => {
       if (isCallable(onHoverOut)) onHoverOut(e);
-      close();
+      leave();
     },
-    [onHoverOut, close],
+    [onHoverOut, leave],
   );
 
   const handleFocus = useCallback(
@@ -446,6 +480,11 @@ export function TooltipContent({
   maxWidth?: number;
 }>): ReactElement | null {
   const ctx = useTooltipContext("TooltipContent");
+  // An interactive tooltip trades the positioning offset for transparent padding of the
+  // same size: the surface looks identical but its box reaches the trigger, so the hover
+  // safe zone has no gap to bridge and the pointer can reach the content's controls.
+  const hitPadding = ctx.interactive ? offset : 0;
+  const gap = ctx.interactive ? 0 : offset;
   const [triggerRect, setTriggerRect] = useState<Rect | null>(null);
   const [contentSize, setContentSize] = useState<{ width: number; height: number } | null>(null);
   const [position, setPosition] = useState<{ x: number; y: number } | null>(null);
@@ -481,10 +520,10 @@ export function TooltipContent({
       displayArea,
       side,
       align,
-      offset,
+      offset: gap,
     });
     setPosition({ x: result.x, y: result.y });
-  }, [triggerRect, contentSize, side, align, offset]);
+  }, [triggerRect, contentSize, side, align, gap]);
 
   const handleLayout = useCallback(
     (event: { nativeEvent: { layout: { width: number; height: number } } }) => {
@@ -500,10 +539,11 @@ export function TooltipContent({
         position: "absolute" as const,
         top: position?.y ?? -9999,
         left: position?.x ?? -9999,
-        maxWidth,
+        maxWidth: maxWidth + hitPadding * 2,
+        padding: hitPadding,
       },
     ],
-    [maxWidth, position?.x, position?.y],
+    [hitPadding, maxWidth, position?.x, position?.y],
   );
   const contentStyle = useMemo(() => [styles.content, style], [style]);
 
@@ -511,24 +551,29 @@ export function TooltipContent({
 
   if (!ctx.open || !ctx.enabled) return null;
 
+  const surface = (
+    <FloatingSurface
+      ref={ctx.contentRef}
+      pointerEvents={ctx.interactive ? "box-none" : "none"}
+      entering={FadeIn.duration(80)}
+      exiting={FadeOut.duration(80)}
+      collapsable={false}
+      testID={testID}
+      onLayout={handleLayout}
+      style={ctx.interactive ? undefined : contentStyle}
+      frameStyle={frameStyle}
+    >
+      {ctx.interactive ? <View style={contentStyle}>{children}</View> : children}
+    </FloatingSurface>
+  );
+
   // On web, avoid React Native's <Modal/> implementation (it uses <dialog> and can
   // steal focus / disrupt hover). Rendering via Portal + position:fixed keeps the
   // exact same positioning math as DropdownMenu, without hover feedback loops.
   if (isWeb) {
     return createPortal(
-      <View pointerEvents="none" style={styles.portalOverlay}>
-        <FloatingSurface
-          pointerEvents="none"
-          entering={FadeIn.duration(80)}
-          exiting={FadeOut.duration(80)}
-          collapsable={false}
-          testID={testID}
-          onLayout={handleLayout}
-          style={contentStyle}
-          frameStyle={frameStyle}
-        >
-          {children}
-        </FloatingSurface>
+      <View pointerEvents={ctx.interactive ? "box-none" : "none"} style={styles.portalOverlay}>
+        {surface}
       </View>,
       getOverlayRoot(),
     );
@@ -543,18 +588,7 @@ export function TooltipContent({
       onRequestClose={handleDismiss}
     >
       <Pressable style={styles.overlay} onPress={handleDismiss}>
-        <FloatingSurface
-          pointerEvents="none"
-          entering={FadeIn.duration(80)}
-          exiting={FadeOut.duration(80)}
-          collapsable={false}
-          testID={testID}
-          onLayout={handleLayout}
-          style={contentStyle}
-          frameStyle={frameStyle}
-        >
-          {children}
-        </FloatingSurface>
+        {surface}
       </Pressable>
     </Modal>
   );

@@ -658,7 +658,7 @@ describe("translateOpenCodeEvent", () => {
     ]);
   });
 
-  it("emits usage_updated after step-finish parts", () => {
+  it("emits usage and prompt cache figures after step-finish parts", () => {
     const state = createState();
     state.accumulatedUsage.contextWindowMaxTokens = 400_000;
 
@@ -701,6 +701,12 @@ describe("translateOpenCodeEvent", () => {
           outputTokens: 12_000,
           totalCostUsd: 0.25,
         },
+        promptCache: {
+          kind: "request",
+          inputTokens: 30_000,
+          cachedInputTokens: 2_000,
+          cacheWriteTokens: 1_000,
+        },
       },
     ]);
     expect(state.accumulatedUsage).toEqual({
@@ -711,6 +717,49 @@ describe("translateOpenCodeEvent", () => {
       outputTokens: 12_000,
       totalCostUsd: 0.25,
     });
+  });
+
+  it("preserves prompt cache reads when OpenCode omits cache writes", () => {
+    const state = createState();
+
+    const events = translateOpenCodeEvent(
+      {
+        type: "message.part.updated",
+        properties: {
+          part: {
+            id: "step-finish-without-write",
+            sessionID: "session-1",
+            messageID: "message-usage-1",
+            type: "step-finish",
+            reason: "stop",
+            tokens: {
+              input: 30_000,
+              output: 12_000,
+              cache: { read: 2_000 },
+            },
+          },
+        },
+      },
+      state,
+    );
+
+    expect(events).toEqual([
+      {
+        type: "usage_updated",
+        provider: "opencode",
+        usage: {
+          contextWindowUsedTokens: 44_000,
+          cachedInputTokens: 2_000,
+          inputTokens: 30_000,
+          outputTokens: 12_000,
+        },
+        promptCache: {
+          kind: "request",
+          inputTokens: 30_000,
+          cachedInputTokens: 2_000,
+        },
+      },
+    ]);
   });
 
   it("reports totalCostUsd as cumulative session cost across turns", () => {
@@ -752,6 +801,12 @@ describe("translateOpenCodeEvent", () => {
         usage: expect.objectContaining({
           totalCostUsd: 0.75,
         }),
+        promptCache: {
+          kind: "request",
+          inputTokens: 30_000,
+          cachedInputTokens: 2_000,
+          cacheWriteTokens: 1_000,
+        },
       },
     ]);
     expect(state.sessionTotalCostUsd).toBe(0.75);

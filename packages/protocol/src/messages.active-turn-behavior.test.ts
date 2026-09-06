@@ -21,6 +21,16 @@ describe("send_agent_message_request active-turn behavior", () => {
     expect(
       SendAgentMessageRequestSchema.parse({
         type: "send_agent_message_request",
+        requestId: "request-reject",
+        agentId: "agent-1",
+        text: "Only start while idle",
+        activeTurnBehavior: "reject",
+      }).activeTurnBehavior,
+    ).toBe("reject");
+
+    expect(
+      SendAgentMessageRequestSchema.parse({
+        type: "send_agent_message_request",
         requestId: "request-2",
         agentId: "agent-1",
         text: "Keep the old behavior",
@@ -83,5 +93,21 @@ describe("legacy daemon send request schema compatibility", () => {
       text: "replace the turn",
     });
     expect("activeTurnBehavior" in legacyRequest).toBe(false);
+  });
+
+  it("fails closed when a previous daemon receives reject-active behavior", () => {
+    const PreviousSendAgentMessageRequestSchema = LegacySendAgentMessageRequestSchema.extend({
+      activeTurnBehavior: z.enum(["interrupt", "steer"]).optional(),
+    });
+
+    expect(
+      PreviousSendAgentMessageRequestSchema.safeParse({
+        type: "send_agent_message_request",
+        requestId: "request-reject-legacy",
+        agentId: "agent-1",
+        text: "Only start while idle",
+        activeTurnBehavior: "reject",
+      }).success,
+    ).toBe(false);
   });
 });

@@ -78,14 +78,13 @@ async function startOrReplaceRun(
   return { iterator, replaced };
 }
 
-export async function startAgentRun(
-  agentManager: AgentRunController,
-  agentId: string,
-  prompt: AgentPromptInput,
+function traceAgentRunRequest(
   logger: Logger,
-  options?: StartAgentRunOptions,
-): Promise<{ disposition: PromptDispatchDisposition }> {
-  const snapshot = agentManager.getAgent(agentId);
+  agentId: string,
+  snapshot: ReturnType<AgentRunController["getAgent"]>,
+  prompt: AgentPromptInput,
+  options: StartAgentRunOptions | undefined,
+): void {
   logger.trace(
     {
       agentId,
@@ -98,13 +97,30 @@ export async function startAgentRun(
     },
     "agent.session.start_stream.request",
   );
+}
+
+export async function startAgentRun(
+  agentManager: AgentRunController,
+  agentId: string,
+  prompt: AgentPromptInput,
+  logger: Logger,
+  options?: StartAgentRunOptions,
+): Promise<{ disposition: PromptDispatchDisposition }> {
+  const snapshot = agentManager.getAgent(agentId);
+  traceAgentRunRequest(logger, agentId, snapshot, prompt, options);
   // Out-of-band commands (e.g. /goal pause) must run WITHOUT canceling an
   // in-flight turn — replaceAgentRun would interrupt the running turn. The
   // intercept lives at this layer so it covers every prompt entrypoint.
   if (agentManager.tryRunOutOfBand(agentId, prompt, options?.runOptions)) {
     return { disposition: "out_of_band" };
   }
-  const steered = await steerOrReplaceActiveRun(agentManager, agentId, prompt, options);
+  if (options?.activeTurnBehavior === "reject" && agentManager.hasInFlightRun(agentId)) {
+    throw new Error(`Agent ${agentId} already has an active run`);
+  }
+  const steered =
+    options?.activeTurnBehavior === "reject"
+      ? null
+      : await steerOrReplaceActiveRun(agentManager, agentId, prompt, options);
   if (steered?.disposition === "steered") {
     return steered;
   }

@@ -2764,7 +2764,7 @@ describe("ACPAgentSession", () => {
 
   test("startTurn returns before the ACP prompt settles and completes later via subscribers", async () => {
     const session = createSession();
-    const events: Array<{ type: string; turnId?: string }> = [];
+    const events: AgentStreamEvent[] = [];
     let resolvePrompt!: (value: PromptResponse) => void;
     const prompt = vi.fn(
       () =>
@@ -2777,7 +2777,7 @@ describe("ACPAgentSession", () => {
     asInternals<ACPSessionInternals>(session).connection = { prompt };
 
     session.subscribe((event) => {
-      events.push(event as { type: string; turnId?: string });
+      events.push(event);
     });
 
     const { turnId } = await session.startTurn("hello");
@@ -2789,13 +2789,28 @@ describe("ACPAgentSession", () => {
     });
     expect(asInternals<ACPSessionInternals>(session).activeForegroundTurnId).toBe(turnId);
 
-    resolvePrompt({ stopReason: "end_turn", usage: { outputTokens: 3 } });
+    resolvePrompt({
+      stopReason: "end_turn",
+      usage: {
+        inputTokens: 120,
+        outputTokens: 3,
+        totalTokens: 1_103,
+        cachedReadTokens: 900,
+        cachedWriteTokens: 80,
+      },
+    });
     await Promise.resolve();
     await Promise.resolve();
 
     expect(events.find((event) => event.type === "turn_completed")).toMatchObject({
       type: "turn_completed",
       turnId,
+      promptCache: {
+        kind: "cumulative",
+        inputTokens: 120,
+        cachedInputTokens: 900,
+        cacheWriteTokens: 80,
+      },
     });
     expect(asInternals<ACPSessionInternals>(session).activeForegroundTurnId).toBeNull();
   });

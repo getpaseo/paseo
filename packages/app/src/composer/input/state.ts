@@ -1,9 +1,8 @@
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
-import type { ActiveTurnBehavior } from "@getpaseo/protocol/messages";
 import type { MessagePayload } from "@/composer/types";
 import type { MessageInputKeyboardActionKind } from "@/keyboard/actions";
 
-export type SendBehavior = ActiveTurnBehavior | "queue";
+export type SendBehavior = "interrupt" | "steer" | "queue";
 
 export function resolveActiveSendBehavior(
   sendBehavior: SendBehavior,

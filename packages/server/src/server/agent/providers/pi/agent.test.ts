@@ -260,6 +260,13 @@ class SessionEvents {
     );
   }
 
+  nextUsageUpdate(): Promise<Extract<AgentStreamEvent, { type: "usage_updated" }>> {
+    return this.nextEvent(
+      (event): event is Extract<AgentStreamEvent, { type: "usage_updated" }> =>
+        event.type === "usage_updated",
+    );
+  }
+
   nextTurnFailure(): Promise<Extract<AgentStreamEvent, { type: "turn_failed" }>> {
     return this.nextEvent(
       (event): event is Extract<AgentStreamEvent, { type: "turn_failed" }> =>
@@ -312,6 +319,36 @@ class SessionEvents {
 }
 
 describe("PiRpcAgentSession", () => {
+  test("emits cumulative prompt cache figures after a turn", async () => {
+    const { pi, session, events } = await createSession();
+    const fakeSession = pi.latestSession();
+    fakeSession.stats = {
+      tokens: { input: 120, output: 30, cacheRead: 900, cacheWrite: 80, total: 1_130 },
+      cost: 0.04,
+    };
+
+    await session.startTurn("measure cache usage");
+    const usageUpdate = events.nextUsageUpdate();
+    fakeSession.finishTurn();
+
+    await expect(usageUpdate).resolves.toMatchObject({
+      type: "usage_updated",
+      provider: "pi",
+      usage: {
+        inputTokens: 120,
+        cachedInputTokens: 900,
+        outputTokens: 30,
+        totalCostUsd: 0.04,
+      },
+      promptCache: {
+        kind: "cumulative",
+        inputTokens: 120,
+        cachedInputTokens: 900,
+        cacheWriteTokens: 80,
+      },
+    });
+  });
+
   test("bridges Pi RPC select extension UI requests through question permissions", async () => {
     const { pi, session, events } = await createSession();
     const fakeSession = pi.latestSession();

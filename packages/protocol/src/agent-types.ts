@@ -184,6 +184,31 @@ export interface AgentUsage {
   contextWindowUsedTokens?: number;
 }
 
+/**
+ * Token accounting for one or more model requests, split by how the prompt was
+ * served. `inputTokens` counts only uncached prompt tokens; the full prompt is
+ * the sum of all three.
+ */
+export interface AgentPromptCacheTokens {
+  inputTokens: number;
+  cachedInputTokens: number;
+  /** Omitted when the provider does not report cache writes. */
+  cacheWriteTokens?: number;
+}
+
+export interface AgentPromptCacheSessionTokens extends AgentPromptCacheTokens {
+  requestCount: number;
+}
+
+export interface AgentPromptCacheStatus {
+  /** When the most recent model request with cache figures was observed. */
+  observedAt: string;
+  /** Provider cache lifetime after the last request, when the provider documents one. */
+  ttlSeconds?: number;
+  lastRequest: AgentPromptCacheTokens;
+  session: AgentPromptCacheSessionTokens;
+}
+
 export const TOOL_CALL_ICON_NAMES = [
   "wrench",
   "square_terminal",

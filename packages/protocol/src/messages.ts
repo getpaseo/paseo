@@ -287,6 +287,7 @@ import type {
   AgentProviderNotice,
   ToolCallDetail,
   ToolCallTimelineItem,
+  AgentPromptCacheStatus,
   AgentUsage,
   JsonValue,
 } from "./agent-types.js";
@@ -429,6 +430,19 @@ const AgentUsageSchema: z.ZodType<AgentUsage> = z.object({
   totalCostUsd: z.number().optional(),
   contextWindowMaxTokens: z.number().optional(),
   contextWindowUsedTokens: z.number().optional(),
+});
+
+const AgentPromptCacheTokensSchema = z.object({
+  inputTokens: z.number(),
+  cachedInputTokens: z.number(),
+  cacheWriteTokens: z.number().optional(),
+});
+
+const AgentPromptCacheStatusSchema: z.ZodType<AgentPromptCacheStatus> = z.object({
+  observedAt: z.string(),
+  ttlSeconds: z.number().optional(),
+  lastRequest: AgentPromptCacheTokensSchema,
+  session: AgentPromptCacheTokensSchema.extend({ requestCount: z.number() }),
 });
 
 const McpStdioServerConfigSchema = z.object({
@@ -869,6 +883,7 @@ export const AgentSnapshotPayloadSchema = z.object({
   persistence: AgentPersistenceHandleSchema.nullable(),
   runtimeInfo: AgentRuntimeInfoSchema.optional(),
   lastUsage: AgentUsageSchema.optional(),
+  promptCache: AgentPromptCacheStatusSchema.optional(),
   lastError: z.string().optional(),
   title: z.string().nullable(),
   labels: z.record(z.string(), z.string()).default({}),
@@ -1234,7 +1249,7 @@ const ImageAttachmentSchema = z.object({
   mimeType: z.string(), // e.g., "image/jpeg", "image/png"
 });
 
-export const ActiveTurnBehaviorSchema = z.enum(["interrupt", "steer"]);
+export const ActiveTurnBehaviorSchema = z.enum(["interrupt", "steer", "reject"]);
 export type ActiveTurnBehavior = z.infer<typeof ActiveTurnBehaviorSchema>;
 
 export const SendAgentMessageSchema = z.object({
@@ -3492,6 +3507,8 @@ export const ServerInfoStatusPayloadSchema = z
         agentDetach: z.boolean().optional(),
         // COMPAT(agentThinkingUpdate): added in v0.2.4, remove gate after 2027-01-28.
         agentThinkingUpdate: z.boolean().optional(),
+        // COMPAT(activeTurnReject): added in v0.7.3, remove gate after 2027-09-04.
+        activeTurnReject: z.boolean().optional(),
         // COMPAT(daemonDiagnostics): added in v0.1.100, remove gate after 2026-12-25 once daemon floor >= v0.1.100.
         daemonDiagnostics: z.boolean().optional(),
         // COMPAT(daemonSelfUpdate): added in v0.1.93, remove gate after 2026-12-13.

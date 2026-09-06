@@ -208,4 +208,96 @@ describe("agent directory reconciliation", () => {
 
     expect(result[0]?.agent.lastUsage).toEqual({ inputTokens: 10, outputTokens: 5 });
   });
+
+  it("accepts prompt cache status from a stale buffered upsert without regressing metadata", () => {
+    const result = reconcileAgentDirectory({
+      previous: new Map(),
+      snapshot: [
+        {
+          ...entry("agent", "idle"),
+          agent: {
+            ...snapshot("agent", "idle"),
+            title: "newer page",
+            updatedAt: "2026-07-12T12:00:00.000Z",
+            promptCache: {
+              observedAt: "2026-07-12T11:30:00.000Z",
+              ttlSeconds: 300,
+              lastRequest: { inputTokens: 10, cachedInputTokens: 90 },
+              session: { inputTokens: 10, cachedInputTokens: 90, requestCount: 1 },
+            },
+          },
+        },
+      ],
+      deltas: [
+        {
+          kind: "upsert",
+          agent: {
+            ...snapshot("agent", "running"),
+            title: "stale live",
+            updatedAt: "2026-07-12T11:00:00.000Z",
+            promptCache: {
+              observedAt: "2026-07-12T11:45:00.000Z",
+              ttlSeconds: 300,
+              lastRequest: { inputTokens: 20, cachedInputTokens: 180 },
+              session: { inputTokens: 30, cachedInputTokens: 270, requestCount: 2 },
+            },
+          },
+          project: entry("agent", "idle").project,
+        },
+      ],
+    });
+
+    expect({
+      title: result.entries[0]?.agent.title,
+      status: result.entries[0]?.agent.status,
+      promptCache: result.entries[0]?.agent.promptCache,
+    }).toEqual({
+      title: "newer page",
+      status: "idle",
+      promptCache: {
+        observedAt: "2026-07-12T11:45:00.000Z",
+        ttlSeconds: 300,
+        lastRequest: { inputTokens: 20, cachedInputTokens: 180 },
+        session: { inputTokens: 30, cachedInputTokens: 270, requestCount: 2 },
+      },
+    });
+  });
+
+  it("preserves prompt cache status when a stale buffered upsert omits it", () => {
+    const result = reconcileAgentDirectory({
+      previous: new Map(),
+      snapshot: [
+        {
+          ...entry("agent", "idle"),
+          agent: {
+            ...snapshot("agent", "idle"),
+            updatedAt: "2026-07-12T12:00:00.000Z",
+            promptCache: {
+              observedAt: "2026-07-12T11:30:00.000Z",
+              ttlSeconds: 300,
+              lastRequest: { inputTokens: 10, cachedInputTokens: 90 },
+              session: { inputTokens: 10, cachedInputTokens: 90, requestCount: 1 },
+            },
+          },
+        },
+      ],
+      deltas: [
+        {
+          kind: "upsert",
+          agent: {
+            ...snapshot("agent", "running"),
+            updatedAt: "2026-07-12T11:00:00.000Z",
+          },
+          project: entry("agent", "idle").project,
+        },
+      ],
+    });
+
+    expect(result.entries[0]?.agent.promptCache).toEqual({
+      observedAt: "2026-07-12T11:30:00.000Z",
+      ttlSeconds: 300,
+      lastRequest: { inputTokens: 10, cachedInputTokens: 90 },
+      session: { inputTokens: 10, cachedInputTokens: 90, requestCount: 1 },
+    });
+  });
 });

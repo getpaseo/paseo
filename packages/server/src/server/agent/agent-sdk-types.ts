@@ -236,6 +236,24 @@ export interface AgentUsage {
   contextWindowUsedTokens?: number;
 }
 
+/**
+ * Prompt-cache figures a provider observed, in the provider-neutral shape the
+ * manager folds into `AgentPromptCacheStatus`. `inputTokens` is uncached input
+ * only; adapters subtract cached tokens when their backend reports totals.
+ *
+ * - `request`: figures for a single model request.
+ * - `cumulative`: running totals for the whole session; the manager derives the
+ *   per-request figures from the delta since the previous sample.
+ */
+export interface PromptCacheSample {
+  kind: "request" | "cumulative";
+  inputTokens: number;
+  cachedInputTokens: number;
+  cacheWriteTokens?: number;
+  /** Cache lifetime after a request, when the provider documents one. */
+  ttlSeconds?: number;
+}
+
 export const TOOL_CALL_ICON_NAMES = [
   "wrench",
   "square_terminal",
@@ -419,8 +437,20 @@ export type AgentTimelineItem =
 export type AgentStreamEvent =
   | { type: "thread_started"; sessionId: string; provider: AgentProvider }
   | { type: "turn_started"; provider: AgentProvider; turnId?: string }
-  | { type: "turn_completed"; provider: AgentProvider; usage?: AgentUsage; turnId?: string }
-  | { type: "usage_updated"; provider: AgentProvider; usage: AgentUsage; turnId?: string }
+  | {
+      type: "turn_completed";
+      provider: AgentProvider;
+      usage?: AgentUsage;
+      promptCache?: PromptCacheSample;
+      turnId?: string;
+    }
+  | {
+      type: "usage_updated";
+      provider: AgentProvider;
+      usage: AgentUsage;
+      promptCache?: PromptCacheSample;
+      turnId?: string;
+    }
   | {
       type: "mode_changed";
       provider: AgentProvider;

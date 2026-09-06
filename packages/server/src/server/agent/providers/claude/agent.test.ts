@@ -2574,8 +2574,30 @@ describe("ClaudeAgentSession context window usage", () => {
           usage: {
             contextWindowUsedTokens: 150,
           },
+          promptCache: {
+            kind: "request",
+            inputTokens: 100,
+            cachedInputTokens: 30,
+            cacheWriteTokens: 20,
+            ttlSeconds: 300,
+          },
         }),
       );
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("does not report sidechain message_start cache usage on the parent", async () => {
+    const session = await createSessionForTest();
+
+    try {
+      const events = (session as unknown as TestClaudeSession).translateMessageToEvents({
+        ...createMessageStartEvent(),
+        parent_tool_use_id: "toolu-agent-1",
+      } as SDKMessage);
+
+      expect(events.some((event) => event.type === "usage_updated")).toBe(false);
     } finally {
       await session.close();
     }

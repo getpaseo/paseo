@@ -17,6 +17,7 @@ import {
   type AgentProviderNotice,
   type AgentPromptContentBlock,
   type AgentPromptInput,
+  type PromptCacheSample,
   type AgentRunOptions,
   type AgentRunResult,
   type AgentRuntimeInfo,
@@ -946,6 +947,25 @@ export function toAgentUsage(tokenUsage: unknown): AgentUsage | undefined {
     outputTokens: typeof last?.outputTokens === "number" ? last.outputTokens : undefined,
     ...(contextWindowMaxTokens !== undefined ? { contextWindowMaxTokens } : {}),
     ...(contextWindowUsedTokens !== undefined ? { contextWindowUsedTokens } : {}),
+  };
+}
+
+function toPromptCacheSample(tokenUsage: unknown): PromptCacheSample | undefined {
+  const usage = toObjectRecord(tokenUsage);
+  const total = toObjectRecord(usage?.total);
+  if (!total) {
+    return undefined;
+  }
+  const inputTokens = total.inputTokens;
+  const cachedInputTokens = total.cachedInputTokens;
+  if (typeof inputTokens !== "number" || typeof cachedInputTokens !== "number") {
+    return undefined;
+  }
+  return {
+    kind: "cumulative",
+    inputTokens: inputTokens - cachedInputTokens,
+    cachedInputTokens,
+    ttlSeconds: 300,
   };
 }
 
@@ -5975,10 +5995,12 @@ export class CodexAppServerAgentSession implements AgentSession {
   ): void {
     this.latestUsage = toAgentUsage(parsed.tokenUsage);
     if (this.latestUsage) {
+      const promptCache = toPromptCacheSample(parsed.tokenUsage);
       this.notifySubscribers({
         type: "usage_updated",
         provider: CODEX_PROVIDER,
         usage: this.latestUsage,
+        ...(promptCache ? { promptCache } : {}),
       });
     }
   }
