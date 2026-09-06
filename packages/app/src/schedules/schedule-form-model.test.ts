@@ -991,6 +991,58 @@ describe("schedule form heartbeat target", () => {
     });
   });
 
+  it("cannot submit a prefilled agent until its host confirms the agent is there", () => {
+    const form = open({
+      mode: "create",
+      defaults: {
+        serverId: "host-a",
+        projectTargets: PROJECT_TARGETS,
+        createTarget: { type: "agent", agentId: "agent-1" },
+      },
+    });
+    form.setPrompt("continue where you left off");
+
+    // The route handed us an id we have not verified: the daemon accepts any
+    // agent id at create time, so submitting now could schedule a dead target.
+    expect(form.getState()).toMatchObject({
+      selectedAgentConfirmed: false,
+      selectedAgentUnavailable: false,
+      canSubmit: false,
+    });
+    expect(form.buildSubmitPlan()).toEqual({
+      kind: "blocked",
+      reason: "Waiting for the agent list on this host",
+    });
+
+    loadAgents(form, [directoryAgent()]);
+
+    expect(form.getState()).toMatchObject({ selectedAgentConfirmed: true, canSubmit: true });
+    expect(form.buildSubmitPlan()).toMatchObject({ kind: "create" });
+  });
+
+  it("blocks a prefilled agent that the host no longer lists", () => {
+    const form = open({
+      mode: "create",
+      defaults: {
+        serverId: "host-a",
+        projectTargets: PROJECT_TARGETS,
+        createTarget: { type: "agent", agentId: "agent-1" },
+      },
+    });
+    form.setPrompt("continue where you left off");
+    loadAgents(form, [directoryAgent({ id: "someone-else" })]);
+
+    expect(form.getState()).toMatchObject({
+      selectedAgentUnavailable: true,
+      selectedAgentConfirmed: false,
+      canSubmit: false,
+    });
+    expect(form.buildSubmitPlan()).toEqual({
+      kind: "blocked",
+      reason: "That agent is no longer running on this host",
+    });
+  });
+
   it("keeps editing an existing heartbeat cadence-only", () => {
     const form = open({
       mode: "edit",

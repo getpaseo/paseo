@@ -7,6 +7,7 @@ import {
 } from "../support/helpers/schedule-fake-host";
 import { seedMockAgentWorkspace } from "../support/helpers/mock-agent";
 import { seedWorkspace } from "../support/helpers/seed-client";
+import { fakeHostPort } from "../support/helpers/daemon-port";
 import { getServerId } from "../support/helpers/server-id";
 import { waitForWorkspaceTabsVisible } from "../support/helpers/workspace-tabs";
 import { buildHostAgentDetailRoute } from "../../src/utils/host-routes";
@@ -112,11 +113,13 @@ test.describe("Schedules targeting an existing agent", () => {
     }).toPass({ timeout: 30_000 });
   });
 
-  test("distinguishes a still-loading agent directory from an empty one", async ({ page }) => {
+  test("distinguishes a still-loading agent directory from an empty one", async ({
+    page,
+  }, testInfo) => {
     const workspace = await seedWorkspace({ repoPrefix: "schedule-agent-empty-", git: false });
     cleanupTasks.push(() => workspace.cleanup());
     const fakeHost = await buildFakeScheduleHostWorkspace(workspace);
-    const fakePort = String(59_000 + Math.floor(Math.random() * 900));
+    const fakePort = fakeHostPort({ parallelIndex: testInfo.parallelIndex, slot: 0 });
 
     await installFakeScheduleHost({
       page,
@@ -146,11 +149,13 @@ test.describe("Schedules targeting an existing agent", () => {
     await expect(page.getByTestId("schedule-form-submit")).toBeDisabled();
   });
 
-  test("reads as loading while a host has not answered its agent directory", async ({ page }) => {
+  test("reads as loading while a host has not answered its agent directory", async ({
+    page,
+  }, testInfo) => {
     const workspace = await seedWorkspace({ repoPrefix: "schedule-agent-hold-", git: false });
     cleanupTasks.push(() => workspace.cleanup());
     const fakeHost = await buildFakeScheduleHostWorkspace(workspace);
-    const fakePort = String(59_000 + Math.floor(Math.random() * 900));
+    const fakePort = fakeHostPort({ parallelIndex: testInfo.parallelIndex, slot: 1 });
 
     await installFakeScheduleHost({
       page,

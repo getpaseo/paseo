@@ -135,6 +135,12 @@ export interface ScheduleFormState {
   agentLoadState: AggregateLoadState<ScheduleFormAgent>;
   agentOptions: ScheduleFormAgentOption[];
   selectedAgentUnavailable: boolean;
+  /**
+   * True only once the host's directory has answered and still lists the
+   * selected agent. A route prefill hands us an id we have not verified, so
+   * until this flips the form must not build an agent target.
+   */
+  selectedAgentConfirmed: boolean;
   agentTargetLabel: string;
   agentDirectoryRequest: ScheduleAgentDirectoryRequest | null;
   disclosure: ScheduleDisclosureState;
@@ -644,8 +650,7 @@ function resolveCanSubmit(state: ScheduleFormState): boolean {
     }
     return (
       state.prompt.trim().length > 0 &&
-      state.selectedAgentId.trim().length > 0 &&
-      !state.selectedAgentUnavailable &&
+      state.selectedAgentConfirmed &&
       state.submitCadence !== undefined
     );
   }
@@ -750,6 +755,11 @@ function updateDerivedState(input: {
       input.state.selectedAgentId.length > 0 &&
       agentLoadState.status === "loaded" &&
       !agentOptions.some((option) => option.value === input.state.selectedAgentId),
+    selectedAgentConfirmed:
+      input.state.targetKind === "agent" &&
+      input.state.selectedAgentId.length > 0 &&
+      agentLoadState.status === "loaded" &&
+      agentOptions.some((option) => option.value === input.state.selectedAgentId),
     agentTargetLabel: resolveAgentTargetLabel({
       display: agentDisplay,
       directory: agentLoadState,
@@ -826,6 +836,7 @@ function buildInitialState(snapshot: ScheduleFormSnapshot): ScheduleFormState {
     agentLoadState: { status: "connecting" },
     agentOptions: [],
     selectedAgentUnavailable: false,
+    selectedAgentConfirmed: false,
     agentTargetLabel: "Loading agents...",
     agentDirectoryRequest: null,
     disclosure: {
@@ -1049,6 +1060,16 @@ function buildAgentTargetPlan(input: {
   }
   if (!state.selectedAgentId) {
     return { kind: "blocked", reason: "Choose an agent before creating this heartbeat" };
+  }
+  if (!state.selectedAgentConfirmed) {
+    // The daemon does not validate the agent id at create time, so an
+    // unconfirmed target would produce a heartbeat that only fails when it runs.
+    return {
+      kind: "blocked",
+      reason: state.selectedAgentUnavailable
+        ? "That agent is no longer running on this host"
+        : "Waiting for the agent list on this host",
+    };
   }
   if (!state.submitCadence) {
     return { kind: "blocked", reason: "Choose a cron cadence before creating this heartbeat" };

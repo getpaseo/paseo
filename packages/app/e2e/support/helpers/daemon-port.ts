@@ -36,3 +36,24 @@ export function wsRoutePatternForPort(port: string): RegExp {
 export function daemonWsRoutePattern(): RegExp {
   return wsRoutePatternForPort(getE2EDaemonPort());
 }
+
+const FAKE_HOST_PORT_BASE = 59_000;
+const FAKE_HOST_PORTS_PER_WORKER = 20;
+
+/**
+ * A port for a fake host that never listens, derived from the Playwright
+ * worker index and a caller-chosen slot. Random ports make a failure
+ * impossible to reproduce and can collide between parallel workers; this keeps
+ * every run identical while still isolating workers from each other.
+ */
+export function fakeHostPort(input: { parallelIndex: number; slot?: number }): string {
+  const slot = input.slot ?? 0;
+  if (slot < 0 || slot >= FAKE_HOST_PORTS_PER_WORKER) {
+    throw new Error(`fake host slot must be 0..${FAKE_HOST_PORTS_PER_WORKER - 1}, got ${slot}`);
+  }
+  const port = FAKE_HOST_PORT_BASE + input.parallelIndex * FAKE_HOST_PORTS_PER_WORKER + slot;
+  if (String(port) === process.env.E2E_DAEMON_PORT) {
+    throw new Error(`fake host port ${port} collides with the E2E daemon port`);
+  }
+  return String(port);
+}
