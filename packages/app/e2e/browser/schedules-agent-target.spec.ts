@@ -27,10 +27,20 @@ test.describe("Schedules targeting an existing agent", () => {
   const cleanupTasks: Array<() => Promise<void>> = [];
 
   test.afterEach(async () => {
-    for (const cleanup of cleanupTasks.toReversed()) {
-      await cleanup();
-    }
+    const tasks = cleanupTasks.toReversed();
     cleanupTasks.length = 0;
+    // Every task runs even if an earlier one fails, then the failures surface.
+    const failures: unknown[] = [];
+    for (const cleanup of tasks) {
+      try {
+        await cleanup();
+      } catch (error) {
+        failures.push(error);
+      }
+    }
+    if (failures.length > 0) {
+      throw new AggregateError(failures, "Schedule cleanup failed");
+    }
   });
 
   test("creates a heartbeat aimed at a running agent", async ({ page }) => {

@@ -153,14 +153,18 @@ export async function expectStoredSchedule(
   }).toPass({ timeout: 30_000 });
 }
 
+/**
+ * Cleanup failures surface. A daemon that cannot list or delete leaves the
+ * schedule behind, and the next spec inherits it.
+ */
 export async function deleteScheduleByName(
   client: ScheduleReadbackClient,
   name: string,
 ): Promise<void> {
-  const list = await client.scheduleList().catch(() => null);
-  const schedule = list?.schedules.find((candidate) => candidate.name === name);
+  const list = await client.scheduleList();
+  const schedule = list.schedules.find((candidate) => candidate.name === name);
   if (schedule) {
-    await client.scheduleDelete({ id: schedule.id }).catch(() => undefined);
+    await client.scheduleDelete({ id: schedule.id });
   }
 }
 
