@@ -29,8 +29,7 @@ function getDesktopNotificationSender():
       title: string;
       body?: string;
       data?: Record<string, unknown>;
-      presentedInApp?: boolean;
-    }) => Promise<boolean>)
+    }) => Promise<boolean | { surface: "in_app" | "os" }>)
   | null {
   const sendNotification = getDesktopHost()?.notification?.sendNotification;
   return typeof sendNotification === "function"
@@ -38,8 +37,7 @@ function getDesktopNotificationSender():
         title: string;
         body?: string;
         data?: Record<string, unknown>;
-        presentedInApp?: boolean;
-      }) => Promise<boolean>)
+      }) => Promise<boolean | { surface: "in_app" | "os" }>)
     : null;
 }
 
@@ -173,8 +171,28 @@ export async function sendOsNotification(payload: OsNotificationPayload): Promis
     return false;
   }
 
-  // Push to the in-app notification toast system (Zed style) only if the app window is currently focused.
-  // When minimized or in the background, the user receives the floating screen popup instead.
+  const desktopNotificationSender = getDesktopNotificationSender();
+  if (desktopNotificationSender) {
+    const result = await desktopNotificationSender({
+      title: payload.title,
+      body: payload.body,
+      data: payload.data,
+    });
+    if (result) {
+      if (typeof result === "object" && result.surface === "in_app") {
+        inAppNotificationStore.push({
+          title: payload.title,
+          body: payload.body,
+          data: payload.data,
+        });
+      }
+      await playNotificationSound();
+      return true;
+    }
+    return false;
+  }
+
+  // Web fallback (non-Electron browser tab)
   const isAppFocused =
     typeof document !== "undefined" &&
     !document.hidden &&
@@ -186,22 +204,9 @@ export async function sendOsNotification(payload: OsNotificationPayload): Promis
       body: payload.body,
       data: payload.data,
     });
+    await playNotificationSound();
+    return true;
   }
-
-  const desktopNotificationSender = getDesktopNotificationSender();
-  if (desktopNotificationSender) {
-    const sent = await desktopNotificationSender({
-      ...payload,
-      presentedInApp: isAppFocused,
-    });
-    if (sent) {
-      // Played here rather than by the OS notification so audio still fires
-      // when the OS suppresses the notification entirely.
-      await playNotificationSound();
-    }
-    return sent;
-  }
-
   const NotificationConstructor = getWebNotificationConstructor();
   if (NotificationConstructor) {
     const granted = await ensureNotificationPermission();

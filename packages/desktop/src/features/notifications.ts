@@ -7,7 +7,6 @@ interface NotificationInput {
   title?: unknown;
   body?: unknown;
   data?: unknown;
-  presentedInApp?: unknown;
 }
 
 interface NotificationClickPayload {
@@ -102,9 +101,15 @@ export function registerNotificationHandlers(): void {
       return false;
     }
 
-    // If already presented as an in-app toast by the focused renderer, do not show OS or floating notifications.
-    if (rawInput?.presentedInApp === true) {
-      return true;
+    const senderWin =
+      BrowserWindow.fromWebContents(event.sender) ??
+      BrowserWindow.getAllWindows().find((w) => !w.isDestroyed() && w.isResizable());
+    const isAppFocused = senderWin
+      ? senderWin.isFocused() && !senderWin.isMinimized() && senderWin.isVisible()
+      : false;
+
+    if (isAppFocused) {
+      return { surface: "in_app" };
     }
 
     const body = toTrimmedString(rawInput?.body) ?? undefined;
@@ -151,6 +156,6 @@ export function registerNotificationHandlers(): void {
       },
     });
 
-    return true;
+    return { surface: "os" };
   });
 }
