@@ -49,6 +49,7 @@ import {
   registerNotificationHandlers,
   ensureNotificationCenterRegistration,
 } from "./features/notifications.js";
+import type { NotificationRoute } from "./features/notification-click.js";
 import { createExternalUrlOpener } from "./features/opener.js";
 import { createBrowserCaptureService } from "./features/browser-capture.js";
 import { registerEditorTargetHandlers } from "./features/editor-targets/ipc.js";
@@ -105,7 +106,12 @@ import {
   parseAgentDeepLink,
   type AgentDeepLinkTarget,
 } from "@getpaseo/protocol/agent-deep-link";
-import { AgentNavigationInbox, parseAgentDeepLinkFromArgv } from "./agent-navigation.js";
+import {
+  AgentNavigationInbox,
+  parseAgentDeepLinkFromArgv,
+  type WindowNavigationTarget,
+  type WindowView,
+} from "./agent-navigation.js";
 
 const DEV_SERVER_URL = process.env.EXPO_DEV_URL ?? "http://localhost:8081";
 const APP_SCHEME = "paseo";
@@ -382,6 +388,58 @@ ipcMain.handle("paseo:get-pending-open-project", (event) => {
 ipcMain.handle("paseo:agent-navigation:ready", (event) => {
   return agentNavigationInbox.windowReady(event.sender.id);
 });
+
+// Bounded so a malformed or runaway renderer report cannot grow unbounded main-process
+// state. Comfortably above any real sidebar (this machine's dev home has ~70 workspaces).
+const MAX_REPORTED_WINDOW_VIEW_ENTRIES = 2_000;
+
+function readReportedWindowView(rawInput: unknown): WindowView | null {
+  if (typeof rawInput !== "object" || rawInput === null) {
+    return null;
+  }
+  const { visibleAgentIds, visibleWorkspaceKeys } = rawInput as Record<string, unknown>;
+  if (!isBoundedStringArray(visibleAgentIds) || !isBoundedStringArray(visibleWorkspaceKeys)) {
+    return null;
+  }
+  return { visibleAgentIds, visibleWorkspaceKeys };
+}
+
+function isBoundedStringArray(value: unknown): value is string[] {
+  return (
+    Array.isArray(value) &&
+    value.length <= MAX_REPORTED_WINDOW_VIEW_ENTRIES &&
+    value.every((entry) => typeof entry === "string")
+  );
+}
+
+ipcMain.handle("paseo:window:reportView", (event, rawInput: unknown) => {
+  const view = readReportedWindowView(rawInput);
+  if (!view) {
+    log.warn("[window-view] dropped malformed report", { webContentsId: event.sender.id });
+    return;
+  }
+  agentNavigationInbox.setWindowView(event.sender.id, view);
+});
+
+function getNotificationClickCandidateWindows(route: NotificationRoute): BrowserWindow[] {
+  if (route.kind !== "target") {
+    return [];
+  }
+  const target: WindowNavigationTarget = {
+    serverId: route.serverId,
+    workspaceId: route.workspaceId,
+    agentId: route.agentId,
+  };
+  const windows = BrowserWindow.getAllWindows();
+  const rankedIds = agentNavigationInbox.windowsShowingTarget(
+    windows.map((win) => win.webContents.id),
+    target,
+    (webContentsId) => webContents.fromId(webContentsId)?.getURL() ?? null,
+  );
+  return rankedIds
+    .map((webContentsId) => windows.find((win) => win.webContents.id === webContentsId))
+    .filter((win): win is BrowserWindow => win !== undefined && !win.isDestroyed());
+}
 
 ipcMain.handle("paseo:browser:register-attached", (event, rawInput: unknown) => {
   const input = readAttachedBrowserInput(rawInput);
@@ -710,6 +768,9 @@ async function createWindow(
       agentNavigationInbox.windowLoading(webContentsId);
     }
   });
+  mainWindow.on("focus", () => {
+    agentNavigationInbox.noteWindowFocused(webContentsId);
+  });
   mainWindow.on("closed", () => {
     options.onClosed?.(webContentsId);
     agentNavigationInbox.removeWindow(webContentsId);
@@ -819,6 +880,16 @@ desktopWindowOwner = createDesktopWindowOwner<AgentDeepLinkTarget>({
   agentRoute: buildAgentDeepLinkRoute,
   deliverAgent: (webContentsId, target) =>
     agentNavigationInbox.deliverOrQueue(webContentsId, target),
+  preferredWindow: (target) => {
+    const windows = BrowserWindow.getAllWindows();
+    const [bestId] = agentNavigationInbox.windowsShowingTarget(
+      windows.map((win) => win.webContents.id),
+      { serverId: target.serverId, workspaceId: null, agentId: target.agentId },
+      (webContentsId) => webContents.fromId(webContentsId)?.getURL() ?? null,
+    );
+    const win = windows.find((candidate) => candidate.webContents.id === bestId);
+    return win ? ownedDesktopWindow(win) : null;
+  },
 });
 
 // ---------------------------------------------------------------------------
@@ -960,7 +1031,7 @@ async function bootstrap(): Promise<void> {
   registerDaemonManager();
   registerWindowManager({ mode: DESKTOP_WINDOW_CHROME_MODE });
   registerDialogHandlers();
-  registerNotificationHandlers();
+  registerNotificationHandlers(getNotificationClickCandidateWindows);
   const openExternalUrl = createExternalUrlOpener({ open: shell.openExternal });
   ipcMain.handle("paseo:opener:openUrl", (_event, value: unknown) => openExternalUrl(value));
   registerEditorTargetHandlers();
