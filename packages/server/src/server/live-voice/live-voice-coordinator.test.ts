@@ -1,4 +1,7 @@
 import os from "node:os";
+import { mkdtemp, rm } from "node:fs/promises";
+import { join } from "node:path";
+import { AssistantStore } from "../assistants/assistant-store.js";
 import { describe, expect, it, vi } from "vitest";
 
 import { createTestLogger } from "../../test-utils/test-logger.js";
@@ -157,6 +160,7 @@ interface Harness {
 }
 
 function createHarness(options?: {
+  assistantStore?: AssistantStore;
   makeProvider?: () => FakeProviderSession;
   capabilities?: { readonly [capability: string]: boolean | undefined };
   availability?: { available: boolean; error?: string | null };
@@ -233,6 +237,7 @@ function createHarness(options?: {
         return () => closingListeners.delete(callback);
       },
     },
+    ...(options?.assistantStore ? { assistantStore: options.assistantStore } : {}),
     logger: createTestLogger(),
     hostProfile: TEST_HOST_PROFILE,
     routeBroker,
@@ -293,6 +298,7 @@ describe("LiveVoiceCoordinator", () => {
         cwd: HOST_CWD,
         title: "Live Voice host",
         internal: true,
+        inheritMcpServers: false,
         providerOptions: { host_policy: "routing-only" },
         toolPolicy: {
           preapproved: [
@@ -418,9 +424,7 @@ describe("LiveVoiceCoordinator", () => {
 
     const pending = startCall(harness);
     // Let the host spawn and realtimeStart settle, then deliver the notification.
-    await Promise.resolve();
-    await Promise.resolve();
-    await Promise.resolve();
+    await vi.waitFor(() => expect(harness.hosts[0]?.provider.startCalls).toHaveLength(1));
     harness.provider().emit({ kind: "sdp", sdp: ANSWER_SDP });
 
     expect(await pending).toEqual({
@@ -772,8 +776,7 @@ describe("LiveVoiceCoordinator", () => {
     const harness = createHarness({ createAgentGate: gate });
 
     const pending = startCall(harness);
-    await Promise.resolve();
-    expect(harness.routingRegisteredDuringCreate).toEqual([true]);
+    await vi.waitFor(() => expect(harness.routingRegisteredDuringCreate).toEqual([true]));
     // The call exists from the moment it is accepted, so the detach lands while
     // the host is still spawning.
     harness.coordinator.closeForSession(harness.owner.sessionKey);
@@ -995,5 +998,115 @@ describe("LiveVoiceCoordinator", () => {
         text: "The session finished.",
       }),
     ).resolves.toMatchObject({ delivered: false, errorCode: "append_failed" });
+  });
+});
+
+describe("durable assistant calls", () => {
+  it("restores history on a fresh host and applies instance configuration over call overrides", async () => {
+    const directory = await mkdtemp(join(os.tmpdir(), "paseo-assistant-call-"));
+    const store = new AssistantStore(directory);
+    const context: LiveVoiceContextProvider = {
+      build: async () => ({ prompt: "Paseo routing", initialItems: [] }),
+    };
+    const harness = createHarness({ assistantStore: store, context });
+    try {
+      const assistant = await store.create("alice", {
+        name: "Work",
+        configuration: {
+          context: "Project Iris",
+          instructions: "Be concise",
+          voice: "saved-voice",
+          backendModel: "saved-model",
+          backendThinkingOptionId: "high",
+        },
+      });
+      const owner = { sessionKey: {}, principalId: "alice" };
+      const request = {
+        owner,
+        assistantId: assistant.id,
+        offerSdp: OFFER_SDP,
+        emit: (update: LiveVoiceUpdate) => harness.updates.push(update),
+        voice: "ignored-voice",
+        backendModel: "ignored-model",
+      };
+      const first = await harness.coordinator.start(request);
+      expect(first.accepted).toBe(true);
+      expect(harness.createConfigs[0]?.model).toBe("saved-model");
+      expect(harness.provider().startCalls[0]?.voice).toBe("saved-voice");
+      expect(
+        await harness.coordinator.start({
+          ...request,
+          owner: { sessionKey: {}, principalId: "alice" },
+        }),
+      ).toMatchObject({ accepted: false, errorCode: "assistant_busy" });
+      expect(
+        await harness.coordinator.start({
+          ...request,
+          owner: { sessionKey: {}, principalId: "bob" },
+        }),
+      ).toMatchObject({ accepted: false, errorCode: "not_found" });
+      harness
+        .provider()
+        .emit({ kind: "transcript", role: "user", text: "Remember the release is Monday" });
+      harness
+        .provider()
+        .emit({ kind: "transcript", role: "assistant", text: "Monday, understood" });
+      if (!first.accepted) throw new Error("start failed");
+      harness.coordinator.stop({
+        liveSessionId: first.liveSessionId,
+        sessionKey: owner.sessionKey,
+      });
+      await store.flush();
+      const restoredStore = new AssistantStore(directory);
+      const restored = createHarness({ assistantStore: restoredStore, context });
+      try {
+        const second = await restored.coordinator.start(request);
+        expect(second.accepted).toBe(true);
+        expect(restored.provider().startCalls[0]?.initialItems).toEqual(
+          expect.arrayContaining([
+            { role: "user", text: "Remember the release is Monday" },
+            { role: "assistant", text: "Monday, understood" },
+          ]),
+        );
+        await restoredStore.delete("alice", assistant.id);
+      } finally {
+        restored.coordinator.dispose();
+        await restoredStore.flush();
+      }
+    } finally {
+      harness.coordinator.dispose();
+      await store.flush();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("deleting an active assistant closes its call before removing history", async () => {
+    const directory = await mkdtemp(join(os.tmpdir(), "paseo-assistant-delete-"));
+    const store = new AssistantStore(directory);
+    const harness = createHarness({
+      assistantStore: store,
+      context: { build: async () => ({ prompt: "Paseo", initialItems: [] }) },
+    });
+    try {
+      const assistant = await store.create("owner", { name: "Work" });
+      const result = await harness.coordinator.start({
+        owner: { sessionKey: {}, principalId: "owner" },
+        assistantId: assistant.id,
+        offerSdp: OFFER_SDP,
+        emit: (update) => harness.updates.push(update),
+      });
+      expect(result.accepted).toBe(true);
+      await store.delete("owner", assistant.id);
+      expect(harness.updates.at(-1)?.event).toMatchObject({
+        kind: "closed",
+        cause: "assistant_deleted",
+      });
+      expect(harness.provider().stopCalls).toHaveLength(1);
+      expect(await store.list("owner")).toEqual([]);
+    } finally {
+      harness.coordinator.dispose();
+      await store.flush();
+      await rm(directory, { recursive: true, force: true });
+    }
   });
 });

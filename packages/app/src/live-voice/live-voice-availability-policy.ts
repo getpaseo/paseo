@@ -9,6 +9,8 @@ export interface LiveVoiceHostAvailability {
   supportsVoiceCatalog: boolean;
   /** Missing on older compatible daemons, which the policy continues to admit. */
   paseoToolsEnabled: boolean | null;
+  /** Durable assistants; older daemons only place legacy ephemeral calls. */
+  supportsAssistants?: boolean;
 }
 
 export type LiveVoiceUnavailableReason =

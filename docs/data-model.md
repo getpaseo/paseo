@@ -166,6 +166,32 @@ Each agent is stored as a separate JSON file, grouped by project directory.
 
 ---
 
+## Assistant records and history
+
+Assistant instances and templates belong to the admitted principal. Their files
+live under `$PASEO_HOME/assistants/{principal-hash}/`; the principal comes from
+connection admission, never a request field. They have no workspace ownership
+or agent parentage.
+
+An instance stores copied configuration, a revision, a monotonically sequenced
+journal, and a user-written summary checkpoint. Revisions protect configuration
+and summary edits from stale saves; transcript arrival does not change them.
+A template id records provenance only.
+
+The record file is an atomic manifest with recent entries and references to
+immutable history segments. Compaction and the active-history bound move older
+entries into segments before replacing the manifest. Original speech remains
+readable through paginated history; compaction changes only what a future call
+receives. Deletion removes the manifest and segments after draining its active
+call's writes. A call left open by a daemon restart is marked interrupted when
+the assistant is next called.
+
+Startup context has a separate bounded history budget beside the daemon snapshot
+budget. The summary and configured context are labelled developer material;
+recorded speech stays in user or assistant roles and is never resubmitted as a
+new command. Missing or unreadable history fails the start rather than silently
+starting an assistant with no memory.
+
 ## Runtime-only Terminal Sessions
 
 Terminals are live daemon state, not persisted JSON records. A terminal carries a `workspaceId` while it is running; workspace-scoped terminal lists include only terminals with the matching `workspaceId`. Legacy live terminals without an owner remain visible to unscoped terminal reads but contribute to no workspace status.

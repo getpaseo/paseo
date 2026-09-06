@@ -1870,6 +1870,118 @@ export const ja: TranslationResources = {
       connectionLost: "ライブ音声の接続が切断されました。",
     },
   },
+  assistants: {
+    menu: {
+      label: "アシスタント",
+      none: "アシスタントなし",
+      manage: "アシスタントを管理…",
+    },
+    settings: {
+      title: "アシスタント",
+      description:
+        "名前付きの音声アシスタント。独自の指示、声、アクションモデル、記憶した会話を持ちます。ライブ音声メニューで選んだアシスタントは、下の通話設定より優先されます。",
+      manage: "管理",
+    },
+    manage: {
+      title: "アシスタント",
+      noHosts: "アシスタントに対応した接続中のホストがありません。デーモンを更新してください。",
+      assistants: "アシスタント",
+      empty: "アシスタントはまだありません。作成すると通話に名前と記憶が付きます。",
+      templates: "テンプレート",
+      templatesEmpty:
+        "テンプレートはありません。アシスタントをテンプレートとして保存すると設定を再利用できます。",
+      selectedForCalls: "ライブ音声通話で使用中",
+      fromTemplate: "{{name}} から作成",
+      entries: "履歴 {{n}} 件",
+    },
+    actions: {
+      newAssistant: "新しいアシスタント",
+      newTemplate: "新しいテンプレート",
+      menu: "{{name}} の操作",
+      useForCalls: "通話で使用",
+      stopUsing: "通話での使用をやめる",
+      openHistory: "履歴を開く",
+      edit: "編集",
+      saveAsTemplate: "テンプレートとして保存",
+      newFromTemplate: "テンプレートから新しいアシスタント",
+      delete: "削除",
+      deleteAssistantTitle: "{{name}} を削除しますか？",
+      deleteAssistantMessage:
+        "会話履歴と要約が削除されます。エージェントに委任した作業は続行されます。",
+      deleteTemplateTitle: "テンプレート {{name}} を削除しますか？",
+      deleteTemplateMessage:
+        "このテンプレートから作成したアシスタントは、設定のコピーをそのまま保持します。",
+    },
+    form: {
+      createAssistantTitle: "新しいアシスタント",
+      editAssistantTitle: "アシスタントを編集",
+      createTemplateTitle: "新しいテンプレート",
+      editTemplateTitle: "テンプレートを編集",
+      create: "作成",
+      save: "変更を保存",
+      name: {
+        label: "名前",
+        placeholder: "首席補佐",
+      },
+      startFrom: {
+        label: "テンプレート",
+        hint: "テンプレートの設定をコピーします。以降の編集はこのアシスタントにだけ残ります。",
+        none: "空白",
+        empty: "テンプレートなし",
+      },
+      instructions: {
+        label: "指示",
+        hint: "{{length}} / {{max}}。毎回の通話で音声エージェントにそのまま渡されます。",
+        placeholder: "作業はエージェントに任せ、自分でコードを書かないこと。",
+      },
+      context: {
+        label: "コンテキスト",
+        hint: "{{length}} / {{max}}。毎回の通話開始時にアシスタントが知っている前提情報。",
+        placeholder: "音声プロジェクトをリリース中。paseo リポジトリを優先。",
+      },
+      voice: {
+        label: "声",
+        hint: "新しい通話で使われます。",
+        default: "デフォルト",
+      },
+      backendModel: {
+        label: "アクションモデル",
+        hint: "アシスタントの操作を裏で実行するモデルです。話すモデルではありません。",
+        default: "デフォルト（高速）",
+      },
+      backendThinking: {
+        label: "アクションの思考",
+        hint: "アクションモデルの推論の深さ。",
+        default: "デフォルト",
+      },
+      errors: {
+        nameRequired: "名前は必須です",
+        nameTooLong: "名前が長すぎます",
+        tooLong: "長すぎます",
+      },
+    },
+    history: {
+      title: "履歴",
+      empty: "まだ何も記憶していません。通話を開始してください。",
+      loadOlder: "以前の履歴を読み込む",
+      callStarted: "通話開始",
+      callEnded: "通話終了 · {{cause}}",
+      delegationOk: "委任: {{description}}",
+      delegationFailed: "委任に失敗 ({{code}}): {{description}}",
+      user: "あなた",
+      assistant: "アシスタント",
+      limits:
+        "新しい通話は要約と、プロバイダーのコンテキスト上限に収まる最近の履歴から始まります。ライブ音声は再開されません。",
+      summary: {
+        label: "要約",
+        hint: "あなたが書きます。新しい通話は古い履歴の代わりにこれを読みます。",
+        coversThrough: "履歴の #{{seq}} までを対象。",
+        placeholder: "アシスタントに引き継がせたい内容。",
+        willCover: "保存すると履歴の #{{seq}} までが対象になります。",
+        save: "要約を保存",
+      },
+    },
+  },
   realtimeVoice: {
     actions: {
       mute: "リアルタイム音声をミュート",

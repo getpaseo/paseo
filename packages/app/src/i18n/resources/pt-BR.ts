@@ -1888,6 +1888,118 @@ export const ptBR: TranslationResources = {
       connectionLost: "A conexão de voz ao vivo caiu.",
     },
   },
+  assistants: {
+    menu: {
+      label: "Assistente",
+      none: "Sem assistente",
+      manage: "Gerenciar assistentes…",
+    },
+    settings: {
+      title: "Assistentes",
+      description:
+        "Assistentes de voz nomeados, com suas próprias instruções, voz, modelo de ações e conversa memorizada. Um assistente escolhido no menu Voz ao vivo substitui as configurações de chamada abaixo.",
+      manage: "Gerenciar",
+    },
+    manage: {
+      title: "Assistentes",
+      noHosts: "Nenhum host conectado oferece suporte a assistentes. Atualize o daemon dele.",
+      assistants: "Assistentes",
+      empty: "Ainda não há assistentes. Crie um para dar às chamadas um nome e uma memória.",
+      templates: "Modelos",
+      templatesEmpty:
+        "Nenhum modelo. Salve um assistente como modelo para reutilizar sua configuração.",
+      selectedForCalls: "Usado em chamadas de voz ao vivo",
+      fromTemplate: "De {{name}}",
+      entries: "{{n}} entradas de histórico",
+    },
+    actions: {
+      newAssistant: "Novo assistente",
+      newTemplate: "Novo modelo",
+      menu: "Ações para {{name}}",
+      useForCalls: "Usar em chamadas",
+      stopUsing: "Parar de usar em chamadas",
+      openHistory: "Abrir histórico",
+      edit: "Editar",
+      saveAsTemplate: "Salvar como modelo",
+      newFromTemplate: "Novo assistente a partir do modelo",
+      delete: "Excluir",
+      deleteAssistantTitle: "Excluir {{name}}?",
+      deleteAssistantMessage:
+        "O histórico de conversa e o resumo são removidos. O trabalho delegado a agentes continua em execução.",
+      deleteTemplateTitle: "Excluir o modelo {{name}}?",
+      deleteTemplateMessage:
+        "Os assistentes criados a partir dele mantêm sua própria cópia da configuração.",
+    },
+    form: {
+      createAssistantTitle: "Novo assistente",
+      editAssistantTitle: "Editar assistente",
+      createTemplateTitle: "Novo modelo",
+      editTemplateTitle: "Editar modelo",
+      create: "Criar",
+      save: "Salvar alterações",
+      name: {
+        label: "Nome",
+        placeholder: "Chefe de gabinete",
+      },
+      startFrom: {
+        label: "Começar de",
+        hint: "Copia a configuração do modelo. Edições posteriores ficam neste assistente.",
+        none: "Em branco",
+        empty: "Nenhum modelo",
+      },
+      instructions: {
+        label: "Instruções",
+        hint: "{{length}} / {{max}}. Passadas ao agente de voz como escritas, em todas as chamadas.",
+        placeholder: "Delegue o trabalho a agentes; nunca escreva código você mesmo.",
+      },
+      context: {
+        label: "Contexto",
+        hint: "{{length}} / {{max}}. Contexto permanente que o assistente conhece no início de cada chamada.",
+        placeholder: "Estamos entregando o projeto de voz. Prefira o repositório paseo.",
+      },
+      voice: {
+        label: "Voz",
+        hint: "Usada em novas chamadas.",
+        default: "Padrão",
+      },
+      backendModel: {
+        label: "Modelo de ações",
+        hint: "Executa as ações do assistente em segundo plano; não é o modelo que fala.",
+        default: "Padrão (rápido)",
+      },
+      backendThinking: {
+        label: "Raciocínio das ações",
+        hint: "Profundidade de raciocínio do modelo de ações.",
+        default: "Padrão",
+      },
+      errors: {
+        nameRequired: "O nome é obrigatório",
+        nameTooLong: "O nome é muito longo",
+        tooLong: "Muito longo",
+      },
+    },
+    history: {
+      title: "Histórico",
+      empty: "Nada memorizado ainda. Inicie uma chamada para começar.",
+      loadOlder: "Carregar anteriores",
+      callStarted: "Chamada iniciada",
+      callEnded: "Chamada encerrada · {{cause}}",
+      delegationOk: "Delegado: {{description}}",
+      delegationFailed: "Falha na delegação ({{code}}): {{description}}",
+      user: "Você",
+      assistant: "Assistente",
+      limits:
+        "Novas chamadas começam pelo resumo mais o histórico recente que cabe no limite de contexto do provedor. A fala ao vivo não é retomada.",
+      summary: {
+        label: "Resumo",
+        hint: "Escrito por você. Novas chamadas o leem no lugar do histórico antigo.",
+        coversThrough: "Cobre o histórico até a entrada nº {{seq}}.",
+        placeholder: "O que o assistente deve levar adiante.",
+        willCover: "Salvar cobre o histórico até a entrada nº {{seq}}.",
+        save: "Salvar resumo",
+      },
+    },
+  },
   realtimeVoice: {
     actions: {
       mute: "Silenciar voz em tempo real",

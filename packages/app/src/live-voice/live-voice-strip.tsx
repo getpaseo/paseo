@@ -1,3 +1,4 @@
+import { useAssistantName } from "@/assistants/assistant-queries";
 import { useCallback, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Text, View } from "react-native";
@@ -11,6 +12,7 @@ import {
   LiveVoiceStatusDot,
   LiveVoiceTranscript,
   resolveLiveVoiceStatusLabel,
+  resolveCallLabel,
 } from "@/live-voice/live-voice-call-ui";
 import { useIsLiveVoiceStripDocked } from "@/live-voice/live-voice-placement";
 import { resolveLiveVoiceErrorMessage } from "@/live-voice/live-voice-error-message";
@@ -33,6 +35,10 @@ export function LiveVoiceStrip() {
   const isDocked = useIsLiveVoiceStripDocked();
   const liveVoice = useLiveVoiceOptional();
   const hosts = useHosts();
+  const assistantName = useAssistantName(
+    liveVoice?.serverId ?? null,
+    liveVoice?.assistantId ?? null,
+  );
   const insets = useSafeAreaInsets();
   const { style: keyboardShiftStyle } = useKeyboardShiftStyle({ mode: "translate" });
   const { t } = useTranslation();
@@ -49,7 +55,10 @@ export function LiveVoiceStrip() {
   }
   const { phase, serverId, transcripts, isAudioBlocked, error } = liveVoice;
 
-  const hostLabel = hosts.find((host) => host.serverId === serverId)?.label ?? null;
+  const hostLabel = resolveCallLabel(
+    hosts.find((host) => host.serverId === serverId)?.label ?? null,
+    assistantName,
+  );
   const statusLabel = resolveLiveVoiceStatusLabel({ phase, isAudioBlocked, t });
   const errorText = error ? resolveLiveVoiceErrorMessage(error, t) : null;
   const latestTranscript = transcripts.length > 0 ? transcripts[transcripts.length - 1] : null;

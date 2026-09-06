@@ -22,6 +22,12 @@ import {
   type LiveVoiceRouteRegistration,
 } from "./live-voice-route-broker.js";
 import { LIVE_VOICE_ROUTING_TOOLS } from "./live-voice-routing-tools.js";
+import {
+  AssistantStoreError,
+  type AssistantStore,
+  type AssistantCallHandle,
+} from "../assistants/assistant-store.js";
+import { buildAssistantContext } from "../assistants/assistant-context.js";
 
 /** How long to wait for the provider's async answer-SDP notification before giving up. */
 const START_SDP_TIMEOUT_MS = 30_000;
@@ -46,11 +52,14 @@ const BACKEND_EXECUTOR_INSTRUCTIONS = [
 
 export type LiveVoiceStartErrorCode =
   | "busy"
+  | "assistant_busy"
+  | "not_found"
   | "unsupported"
   | "paseo_tools_disabled"
   | "start_failed";
 
 export type LiveVoiceCloseCause =
+  | "assistant_deleted"
   | "requested"
   | "owner_disconnected"
   | "error"
@@ -70,6 +79,7 @@ export type LiveVoiceCloseCause =
  * `realtimeStop()` there would respawn the provider process.
  */
 const CAUSES_REQUIRING_PROVIDER_STOP: ReadonlySet<LiveVoiceCloseCause> = new Set([
+  "assistant_deleted",
   "requested",
   "owner_disconnected",
   "error",
@@ -97,9 +107,11 @@ export interface LiveVoiceUpdate {
  */
 export interface LiveVoiceOwner {
   readonly sessionKey: object;
+  readonly principalId?: string;
 }
 
 export interface LiveVoiceStartRequest {
+  assistantId?: string;
   offerSdp: string;
   voice?: string;
   owner: LiveVoiceOwner;
@@ -201,6 +213,7 @@ export interface LiveVoiceAgentSource {
 }
 
 interface LiveVoiceCall {
+  assistant: AssistantCallHandle | null;
   readonly liveSessionId: string;
   readonly owner: LiveVoiceOwner;
   readonly emit: (update: LiveVoiceUpdate) => void;
@@ -243,6 +256,7 @@ export interface LiveVoiceContextProvider {
 }
 
 export interface LiveVoiceCoordinatorOptions {
+  assistantStore?: AssistantStore;
   agents: LiveVoiceAgentSource;
   logger: Logger;
   /** The provider adapter that hosts calls on this daemon. */
@@ -266,6 +280,11 @@ class LiveVoicePaseoToolsDisabledError extends Error {
 }
 
 function resolveStartErrorCode(error: unknown): LiveVoiceStartErrorCode {
+  if (
+    error instanceof AssistantStoreError &&
+    (error.code === "assistant_busy" || error.code === "not_found")
+  )
+    return error.code;
   if (error instanceof LiveVoiceUnsupportedError) return "unsupported";
   if (error instanceof LiveVoicePaseoToolsDisabledError) return "paseo_tools_disabled";
   return "start_failed";
@@ -279,6 +298,7 @@ function resolveStartErrorCode(error: unknown): LiveVoiceStartErrorCode {
  * `realtimeStart` lands on the same thread). One call per client session.
  */
 export class LiveVoiceCoordinator {
+  private readonly assistantStore: AssistantStore | undefined;
   private readonly calls = new Map<string, LiveVoiceCall>();
   private readonly agents: LiveVoiceAgentSource;
   private readonly logger: Logger;
@@ -291,6 +311,7 @@ export class LiveVoiceCoordinator {
   private readonly unsubscribeAgentClosing: () => void;
 
   constructor(options: LiveVoiceCoordinatorOptions) {
+    this.assistantStore = options.assistantStore;
     this.agents = options.agents;
     this.logger = options.logger.child({ module: "live-voice" });
     this.hostProfile = options.hostProfile;
@@ -317,6 +338,7 @@ export class LiveVoiceCoordinator {
     // from the same client session can interleave before the map entry exists, and a
     // close arriving while the host spawns finds a call to close.
     const call: LiveVoiceCall = {
+      assistant: null,
       liveSessionId: randomUUID(),
       owner: request.owner,
       emit: request.emit,
@@ -338,6 +360,37 @@ export class LiveVoiceCoordinator {
     this.calls.set(call.liveSessionId, call);
 
     try {
+      if (request.assistantId) {
+        if (!this.assistantStore || !request.owner.principalId)
+          throw new AssistantStoreError("not_found", "Assistant ownership is unavailable");
+        call.assistant = await this.assistantStore.openCall(
+          request.owner.principalId,
+          request.assistantId,
+          call.liveSessionId,
+          () => this.close(call, "assistant_deleted"),
+        );
+        if (call.state !== "starting") {
+          await call.assistant.close("start_failed");
+          throw new Error("Live voice call closed while loading assistant");
+        }
+        const configuration = call.assistant.assistant.configuration;
+        const {
+          voice: _voice,
+          backendModel: _model,
+          backendThinkingOptionId: _thinking,
+          customVoiceInstructions: _instructions,
+          ...rest
+        } = request;
+        request = {
+          ...rest,
+          ...(configuration.voice ? { voice: configuration.voice } : {}),
+          ...(configuration.backendModel ? { backendModel: configuration.backendModel } : {}),
+          ...(configuration.backendThinkingOptionId
+            ? { backendThinkingOptionId: configuration.backendThinkingOptionId }
+            : {}),
+          customVoiceInstructions: configuration.instructions,
+        };
+      }
       const host = await this.spawnHostSession(call, request);
       if (call.state !== "starting" || this.calls.get(call.liveSessionId) !== call) {
         // The call was torn down while the host was still spawning; the host is
@@ -478,6 +531,27 @@ export class LiveVoiceCoordinator {
     return null;
   }
 
+  private async buildCallContext(
+    call: LiveVoiceCall,
+    request: LiveVoiceStartRequest,
+  ): Promise<LiveVoiceStartContext | null> {
+    const context = this.context
+      ? await this.buildContext(toContextBuildOptions(request, this.hostProfile.contextLimits))
+      : null;
+    if (call.assistant) {
+      if (!context)
+        throw new Error("Could not prepare assistant context. Try starting the call again.");
+      return {
+        ...context,
+        initialItems: [
+          ...buildAssistantContext(call.assistant, this.hostProfile.contextLimits),
+          ...context.initialItems,
+        ],
+      };
+    }
+    return context;
+  }
+
   /**
    * Spawns the hidden session that hosts the realtime conversation. It is
    * internal (never listed, never persisted, no notifications) and lives in a
@@ -508,9 +582,7 @@ export class LiveVoiceCoordinator {
       throw new Error("Live voice call closed while checking host availability");
     }
 
-    const context = this.context
-      ? await this.buildContext(toContextBuildOptions(request, this.hostProfile.contextLimits))
-      : null;
+    const context = await this.buildCallContext(call, request);
     if (call.state !== "starting" || this.calls.get(call.liveSessionId) !== call) {
       throw new Error("Live voice call closed while building context");
     }
@@ -522,6 +594,7 @@ export class LiveVoiceCoordinator {
       cwd: this.hostCwd,
       title: HOST_TITLE,
       internal: true,
+      inheritMcpServers: false,
       ...(this.hostProfile.providerOptions
         ? { providerOptions: this.hostProfile.providerOptions }
         : {}),
@@ -690,6 +763,13 @@ export class LiveVoiceCoordinator {
       return;
     }
     call.lastRoutedToolEndAt = now;
+    this.appendHistory(call, {
+      kind: "delegation",
+      requestId: observation.requestId,
+      description: `${toolName}${targetServerId ? ` on ${targetServerId}` : ""}`,
+      ok: observation.ok === true,
+      ...(observation.errorCode ? { errorCode: observation.errorCode } : {}),
+    });
     this.logger.info(
       {
         liveSessionId: call.liveSessionId,
@@ -697,7 +777,7 @@ export class LiveVoiceCoordinator {
         toolName,
         ...(targetServerId ? { targetServerId } : {}),
         durationMs: observation.durationMs,
-        ok: observation.ok,
+        ok: observation.ok === true,
         ...(observation.errorCode ? { errorCode: observation.errorCode } : {}),
       },
       "live_voice.timing.tool_end",
@@ -814,6 +894,7 @@ export class LiveVoiceCoordinator {
         );
         return;
       case "transcript":
+        this.appendHistory(call, { kind: "transcript", role: event.role, text: event.text });
         if (event.role === "user") {
           call.lastUserTranscriptAt = Date.now();
         } else {
@@ -858,6 +939,27 @@ export class LiveVoiceCoordinator {
     const waiter = call.sdpWaiter;
     call.sdpWaiter = null;
     waiter?.resolve(sdp);
+  }
+
+  private appendHistory(
+    call: LiveVoiceCall,
+    entry: Parameters<AssistantCallHandle["append"]>[0],
+  ): void {
+    if (!call.assistant) return;
+    void call.assistant.append(entry).catch((error) => {
+      this.logger.error(
+        { err: error, liveSessionId: call.liveSessionId },
+        "assistant.history.write_failed",
+      );
+      if (call.state === "closed" || call.state === "stopping") return;
+      this.publish(call, {
+        kind: "error",
+        code: "history_write_failed",
+        message: "Could not save assistant history. The call has ended.",
+        fatal: true,
+      });
+      this.close(call, "error");
+    });
   }
 
   private publish(call: LiveVoiceCall, event: LiveVoiceUpdateEvent): void {
@@ -921,6 +1023,12 @@ export class LiveVoiceCoordinator {
     }
 
     call.state = "closed";
+    void call.assistant?.close(cause).catch((error) => {
+      this.logger.error(
+        { err: error, liveSessionId: call.liveSessionId },
+        "assistant.history.close_failed",
+      );
+    });
 
     // A call that never went active has no `closed` update to send: the client
     // learns the outcome from the start response instead.

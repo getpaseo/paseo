@@ -3528,6 +3528,7 @@ export class CodexAppServerAgentSession implements AgentSession, AgentRealtimeVo
   private resolvedWorkspaceWrite: NonNullable<
     CodexProviderOptions["sandbox_workspace_write"]
   > | null = null;
+  private inheritedMcpServerNames: string[] | null = null;
   private resolvedSandboxPolicy: Record<string, unknown> | null = null;
   private currentThreadId: string | null = null;
   private currentTurnId: string | null = null;
@@ -3761,7 +3762,11 @@ export class CodexAppServerAgentSession implements AgentSession, AgentRealtimeVo
       );
       const config = toObjectRecord(response?.config);
       this.resolvedWorkspaceWrite = readSandboxWorkspaceWrite(config?.sandbox_workspace_write);
+      if (!config && this.config.inheritMcpServers === false)
+        throw new Error("Codex did not return its effective MCP configuration");
+      this.inheritedMcpServerNames = Object.keys(toObjectRecord(config?.mcp_servers) ?? {});
     } catch (error) {
+      if (this.config.inheritMcpServers === false) throw error;
       this.logger.debug({ error }, "Failed to read resolved Codex workspace-write config");
     }
   }
@@ -5474,6 +5479,19 @@ export class CodexAppServerAgentSession implements AgentSession, AgentRealtimeVo
         mcpServers[name] = toCodexMcpConfig(serverConfig);
       }
       innerConfig.mcp_servers = mcpServers;
+    }
+    if (this.config.inheritMcpServers === false) {
+      if (this.inheritedMcpServerNames === null)
+        throw new Error("Codex MCP isolation requires resolved configuration");
+      const servers = { ...toObjectRecord(innerConfig.mcp_servers) };
+      const allowed = new Set(Object.keys(this.config.mcpServers ?? {}));
+      // Codex merges per-thread maps into user configuration; an empty map does
+      // not remove inherited servers. Each inherited server must be disabled.
+      for (const name of new Set([...this.inheritedMcpServerNames, ...Object.keys(servers)])) {
+        if (!allowed.has(name))
+          servers[name] = { ...toObjectRecord(servers[name]), enabled: false };
+      }
+      innerConfig.mcp_servers = servers;
     }
     const configured = applyCodexToolPolicy(innerConfig, this.config.toolPolicy);
     return Object.keys(configured).length > 0 ? configured : null;

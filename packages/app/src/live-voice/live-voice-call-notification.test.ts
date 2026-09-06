@@ -105,6 +105,7 @@ function createHarness(): Harness {
 
 describe("live voice notification state", () => {
   const activeSnapshot: LiveVoiceSnapshot = {
+    assistantId: null,
     phase: "active",
     serverId: SERVER_ID,
     liveSessionId: LIVE_SESSION_ID,

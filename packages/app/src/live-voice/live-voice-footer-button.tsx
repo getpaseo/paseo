@@ -5,7 +5,7 @@
  * host can't take a call live in Settings → Diagnostics, not here.
  */
 
-import { useCallback, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Text, View } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
@@ -17,10 +17,15 @@ import {
   DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuSeparator,
+  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
   useDropdownMenuClose,
+  type MenuPageDefinition,
 } from "@/components/ui/dropdown-menu";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { useAssistants } from "@/assistants/assistant-queries";
+import { useAssistantSelectionStore } from "@/assistants/assistant-selection-store";
+import { AssistantsSheet } from "@/assistants/assistants-sheet";
 import { useLiveVoiceOptional } from "@/contexts/live-voice-context";
 import { useLiveVoiceAvailability } from "@/live-voice/live-voice-availability";
 import type { LiveVoiceHostAvailability } from "@/live-voice/live-voice-availability-policy";
@@ -165,20 +170,98 @@ function LiveVoiceCallMenuItems({
   );
 }
 
+const ASSISTANT_PAGE_ID = "live-voice-assistant";
+
+/**
+ * The submenu page that picks which assistant the call attaches to. Selecting
+ * a row chooses and returns; the menu stays open so the next press is Start.
+ */
+function LiveVoiceAssistantPage({ serverId }: { serverId: string }) {
+  const { t } = useTranslation();
+  const { assistants } = useAssistants(serverId);
+  const selectedAssistantId = useAssistantSelectionStore(
+    (state) => state.selectedByServerId[serverId] ?? null,
+  );
+  const select = useAssistantSelectionStore((state) => state.select);
+
+  const selectNone = useCallback(() => select(serverId, null), [select, serverId]);
+
+  return (
+    <>
+      <DropdownMenuItem
+        selected={selectedAssistantId === null}
+        showSelectedCheck
+        closeOnSelect={false}
+        onSelect={selectNone}
+        testID="live-voice-menu-assistant-none"
+      >
+        {t("assistants.menu.none")}
+      </DropdownMenuItem>
+      {assistants.map((assistant) => (
+        <LiveVoiceAssistantMenuItem
+          key={assistant.id}
+          serverId={serverId}
+          id={assistant.id}
+          name={assistant.name}
+          selected={assistant.id === selectedAssistantId}
+        />
+      ))}
+    </>
+  );
+}
+
+function LiveVoiceAssistantMenuItem({
+  serverId,
+  id,
+  name,
+  selected,
+}: {
+  serverId: string;
+  id: string;
+  name: string;
+  selected: boolean;
+}) {
+  const select = useAssistantSelectionStore((state) => state.select);
+  const handleSelect = useCallback(() => select(serverId, id), [select, serverId, id]);
+  return (
+    <DropdownMenuItem
+      selected={selected}
+      showSelectedCheck
+      closeOnSelect={false}
+      onSelect={handleSelect}
+      testID={`live-voice-menu-assistant-${id}`}
+    >
+      {name}
+    </DropdownMenuItem>
+  );
+}
+
 /** Idle menu body: pick a host when there is a choice, then start the call. */
 function LiveVoiceStartMenuItems({
   hosts,
   selectedHost,
   onSelectHost,
+  onManageAssistants,
 }: {
   hosts: LiveVoiceHostAvailability[];
   selectedHost: LiveVoiceHostAvailability;
   onSelectHost: (serverId: string) => void;
+  onManageAssistants: () => void;
 }) {
   const liveVoice = useLiveVoiceOptional();
   const { t } = useTranslation();
   const closeMenu = useDropdownMenuClose();
   const { serverId } = selectedHost;
+  const supportsAssistants = selectedHost.supportsAssistants === true;
+  const { assistants } = useAssistants(supportsAssistants ? serverId : null);
+  const selectedAssistantId = useAssistantSelectionStore(
+    (state) => state.selectedByServerId[serverId] ?? null,
+  );
+  const selectedAssistant =
+    assistants.find((assistant) => assistant.id === selectedAssistantId) ?? null;
+  const callDescription = selectedAssistant
+    ? `${selectedAssistant.name} · ${selectedHost.label}`
+    : selectedHost.label;
 
   const handleStart = useCallback(() => {
     if (!liveVoice) {
@@ -191,6 +274,24 @@ function LiveVoiceStartMenuItems({
 
   return (
     <>
+      {supportsAssistants ? (
+        <>
+          <DropdownMenuSubTrigger
+            id={ASSISTANT_PAGE_ID}
+            value={selectedAssistant?.name ?? t("assistants.menu.none")}
+            testID="live-voice-menu-assistant"
+          >
+            {t("assistants.menu.label")}
+          </DropdownMenuSubTrigger>
+          <DropdownMenuItem
+            onSelect={onManageAssistants}
+            testID="live-voice-menu-manage-assistants"
+          >
+            {t("assistants.menu.manage")}
+          </DropdownMenuItem>
+          <DropdownMenuSeparator />
+        </>
+      ) : null}
       {hasHostChoice ? (
         <>
           <DropdownMenuLabel>{t("liveVoice.menu.hosts")}</DropdownMenuLabel>
@@ -208,7 +309,7 @@ function LiveVoiceStartMenuItems({
       <DropdownMenuItem
         closeOnSelect={false}
         onSelect={handleStart}
-        description={hasHostChoice ? undefined : selectedHost.label}
+        description={hasHostChoice ? undefined : callDescription}
         testID="live-voice-menu-start"
       >
         {t("liveVoice.actions.start")}
@@ -223,69 +324,107 @@ export function LiveVoiceFooterButton() {
   const { t } = useTranslation();
   const [isOpen, setIsOpen] = useState(false);
   const [selectedServerId, setSelectedServerId] = useState<string | null>(null);
-
-  if (!liveVoice) {
-    return null;
-  }
+  const [isManagingAssistants, setIsManagingAssistants] = useState(false);
 
   const availableHosts = availability.kind === "available" ? availability.hosts : [];
   const selectedHost =
     availableHosts.find((host) => host.serverId === selectedServerId) ?? availableHosts[0] ?? null;
+
+  const handleManageAssistants = useCallback(() => {
+    setIsOpen(false);
+    setIsManagingAssistants(true);
+  }, []);
+  const handleCloseAssistants = useCallback(() => {
+    setIsManagingAssistants(false);
+  }, []);
+
+  const assistantPages = useMemo<MenuPageDefinition[]>(
+    () =>
+      selectedHost?.supportsAssistants
+        ? [
+            {
+              id: ASSISTANT_PAGE_ID,
+              title: t("assistants.menu.label"),
+              content: <LiveVoiceAssistantPage serverId={selectedHost.serverId} />,
+            },
+          ]
+        : [],
+    [selectedHost?.serverId, selectedHost?.supportsAssistants, t],
+  );
+
+  if (!liveVoice) {
+    return null;
+  }
 
   const { phase, serverId, isAudioBlocked, error, closedCause } = liveVoice;
   const hasCall = phase !== "idle" || closedCause !== null;
   const iconMappings = resolveIconMappings({ phase, hasCall });
 
   return (
-    <DropdownMenu open={isOpen} onOpenChange={setIsOpen}>
-      <Tooltip delayDuration={300} enabledOnDesktop={!isOpen}>
-        <TooltipTrigger asChild>
-          <View>
-            <DropdownMenuTrigger
-              style={styles.trigger}
-              testID="sidebar-live-voice-trigger"
-              nativeID="sidebar-live-voice-trigger"
-              accessibilityRole="button"
-              accessibilityLabel={t("liveVoice.label")}
-            >
-              {({ hovered }) => (
-                <ThemedAudioLines
-                  size={ICON_SIZE.md}
-                  uniProps={hovered ? iconMappings.hovered : iconMappings.resting}
-                />
-              )}
-            </DropdownMenuTrigger>
-          </View>
-        </TooltipTrigger>
-        <TooltipContent side="top" align="center" offset={8}>
-          <Text style={styles.tooltipText}>{t("liveVoice.label")}</Text>
-        </TooltipContent>
-      </Tooltip>
-      <DropdownMenuContent side="top" align="end" offset={8} width={260} testID="live-voice-menu">
-        {hasCall ? (
-          <LiveVoiceCallMenuItems
-            phase={phase}
-            isAudioBlocked={isAudioBlocked}
-            serverId={serverId}
-            error={error}
-          />
-        ) : null}
-        {!hasCall && selectedHost ? (
-          <LiveVoiceStartMenuItems
-            hosts={availableHosts}
-            selectedHost={selectedHost}
-            onSelectHost={setSelectedServerId}
-          />
-        ) : null}
-        {!hasCall && !selectedHost ? (
-          <DropdownMenuHint testID="live-voice-menu-unavailable">
-            {availability.kind === "unavailable"
-              ? resolveLiveVoiceUnavailableMessage(availability.reason, t)
-              : t("liveVoice.actions.unavailable")}
-          </DropdownMenuHint>
-        ) : null}
-      </DropdownMenuContent>
-    </DropdownMenu>
+    <>
+      <AssistantsSheet
+        visible={isManagingAssistants}
+        onClose={handleCloseAssistants}
+        initialServerId={selectedHost?.serverId ?? null}
+      />
+      <DropdownMenu open={isOpen} onOpenChange={setIsOpen}>
+        <Tooltip delayDuration={300} enabledOnDesktop={!isOpen}>
+          <TooltipTrigger asChild>
+            <View>
+              <DropdownMenuTrigger
+                style={styles.trigger}
+                testID="sidebar-live-voice-trigger"
+                nativeID="sidebar-live-voice-trigger"
+                accessibilityRole="button"
+                accessibilityLabel={t("liveVoice.label")}
+              >
+                {({ hovered }) => (
+                  <ThemedAudioLines
+                    size={ICON_SIZE.md}
+                    uniProps={hovered ? iconMappings.hovered : iconMappings.resting}
+                  />
+                )}
+              </DropdownMenuTrigger>
+            </View>
+          </TooltipTrigger>
+          <TooltipContent side="top" align="center" offset={8}>
+            <Text style={styles.tooltipText}>{t("liveVoice.label")}</Text>
+          </TooltipContent>
+        </Tooltip>
+        <DropdownMenuContent
+          side="top"
+          align="end"
+          offset={8}
+          width={260}
+          pages={assistantPages}
+          testID="live-voice-menu"
+        >
+          {hasCall ? (
+            <LiveVoiceCallMenuItems
+              phase={phase}
+              isAudioBlocked={isAudioBlocked}
+              serverId={serverId}
+              error={error}
+            />
+          ) : null}
+          {!hasCall && selectedHost ? (
+            <LiveVoiceStartMenuItems
+              hosts={availableHosts}
+              selectedHost={selectedHost}
+              onSelectHost={setSelectedServerId}
+              onManageAssistants={handleManageAssistants}
+            />
+          ) : null}
+          {!hasCall && !selectedHost ? (
+            <DropdownMenuHint testID="live-voice-menu-unavailable">
+              {availability.kind === "unavailable"
+                ? resolveLiveVoiceUnavailableMessage(availability.reason, t)
+                : t("liveVoice.actions.unavailable")}
+            </DropdownMenuHint>
+          ) : null}
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </>
   );
 }
 

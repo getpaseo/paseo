@@ -20,6 +20,7 @@ import {
 } from "@getpaseo/protocol/binary-frames/index";
 import { Session } from "./session.js";
 import { OWNER_PERMISSIONS, type DaemonPermission } from "./authorization/index.js";
+import { AssistantStoreError } from "./assistants/assistant-store.js";
 import { DownloadTokenStore } from "./file-download/token-store.js";
 import { StructuredAgentFallbackError } from "./agent/agent-response-loop.js";
 import type { StoredAgentRecord } from "./agent/agent-storage.js";
@@ -327,6 +328,8 @@ interface SessionForTestOptions {
   liveVoiceRouteBroker?: LiveVoiceRouteBroker;
   liveVoiceToolExecutor?: LiveVoiceToolExecutor;
   liveVoiceAgentNotifier?: LiveVoiceAgentNotifier;
+  principalId?: string;
+  assistantStore?: SessionOptions["assistantStore"];
   downloadTokenStore?: SessionOptions["downloadTokenStore"];
   pushNotifications?: SessionOptions["pushNotifications"];
   messages?: unknown[];
@@ -439,6 +442,8 @@ function createSessionForTest(options: SessionForTestOptions = {}): Session {
     liveVoiceRouteBroker: options.liveVoiceRouteBroker,
     liveVoiceToolExecutor: options.liveVoiceToolExecutor,
     liveVoiceAgentNotifier: options.liveVoiceAgentNotifier,
+    principalId: options.principalId,
+    assistantStore: options.assistantStore,
     serverId: options.serverId,
     daemonVersion: options.daemonVersion,
     daemonRuntimeConfig: options.daemonRuntimeConfig,
@@ -6109,6 +6114,181 @@ describe("agent config setters", () => {
         accepted: false,
         error: "thinking boom",
       },
+    });
+  });
+});
+
+describe("assistant RPCs", () => {
+  const assistantId = `ast_${"a".repeat(32)}`;
+
+  function createAssistantStoreStub() {
+    return {
+      list: vi.fn().mockResolvedValue([]),
+      get: vi.fn(),
+      create: vi.fn(),
+      update: vi.fn(),
+      delete: vi.fn(),
+      compact: vi.fn(),
+      listTemplates: vi.fn(),
+      saveTemplate: vi.fn(),
+      deleteTemplate: vi.fn(),
+    };
+  }
+
+  function asAssistantStore(
+    stub: ReturnType<typeof createAssistantStoreStub>,
+  ): NonNullable<SessionOptions["assistantStore"]> {
+    return stub as unknown as NonNullable<SessionOptions["assistantStore"]>;
+  }
+
+  test("scopes the store to the admitted principal and replies only to the source", async () => {
+    const source = {};
+    const messages: SessionOutboundMessage[] = [];
+    const targetedMessages: Array<{ source: object; message: SessionOutboundMessage }> = [];
+    const store = createAssistantStoreStub();
+    const session = createSessionForTest({
+      principalId: "device-a",
+      assistantStore: asAssistantStore(store),
+      messages,
+      targetedMessages,
+    });
+
+    // A principal named on the wire must never win over admission.
+    await session.handleMessage(
+      {
+        type: "assistant.list.request",
+        requestId: "list-1",
+        principalId: "owner",
+      } as unknown as SessionInboundMessage,
+      source,
+    );
+
+    expect(store.list).toHaveBeenCalledWith("device-a");
+    expect(messages).toEqual([]);
+    expect(targetedMessages).toEqual([
+      {
+        source,
+        message: {
+          type: "assistant.list.response",
+          payload: { requestId: "list-1", assistants: [] },
+        },
+      },
+    ]);
+  });
+
+  test("surfaces store errors as correlated rpc_error with the store's code", async () => {
+    const source = {};
+    const targetedMessages: Array<{ source: object; message: SessionOutboundMessage }> = [];
+    const store = createAssistantStoreStub();
+    store.get.mockRejectedValue(new AssistantStoreError("not_found", "Assistant not found"));
+    const session = createSessionForTest({
+      principalId: "device-a",
+      assistantStore: asAssistantStore(store),
+      targetedMessages,
+    });
+
+    await session.handleMessage(
+      { type: "assistant.get.request", requestId: "get-1", assistantId, limit: 20 },
+      source,
+    );
+
+    expect(store.get).toHaveBeenCalledWith("device-a", assistantId, { limit: 20 });
+    expect(targetedMessages).toEqual([
+      {
+        source,
+        message: {
+          type: "rpc_error",
+          payload: {
+            requestId: "get-1",
+            requestType: "assistant.get.request",
+            error: "Assistant not found",
+            code: "not_found",
+          },
+        },
+      },
+    ]);
+  });
+
+  test("fails closed when the session has no admitted principal", async () => {
+    const messages: SessionOutboundMessage[] = [];
+    const store = createAssistantStoreStub();
+    const session = createSessionForTest({ assistantStore: asAssistantStore(store), messages });
+
+    await session.handleMessage({
+      type: "assistant.create.request",
+      requestId: "create-1",
+      name: "Work",
+    });
+
+    expect(store.create).not.toHaveBeenCalled();
+    expect(messages).toEqual([
+      {
+        type: "rpc_error",
+        payload: {
+          requestId: "create-1",
+          requestType: "assistant.create.request",
+          error: "Assistant ownership is unavailable.",
+          code: "unauthorized",
+        },
+      },
+    ]);
+  });
+
+  test("lets a read-only principal list assistants but not mutate them", async () => {
+    const messages: SessionOutboundMessage[] = [];
+    const store = createAssistantStoreStub();
+    const session = createSessionForTest({
+      principalId: "viewer",
+      permissions: ["workspace.read"],
+      assistantStore: asAssistantStore(store),
+      messages,
+    });
+
+    await session.handleMessage({
+      type: "assistant.delete.request",
+      requestId: "delete-1",
+      assistantId,
+    });
+    await session.handleMessage({ type: "assistant.list.request", requestId: "list-2" });
+
+    expect(store.delete).not.toHaveBeenCalled();
+    expect(store.list).toHaveBeenCalledWith("viewer");
+    expect(messages).toEqual([
+      {
+        type: "rpc_error",
+        payload: {
+          requestId: "delete-1",
+          requestType: "assistant.delete.request",
+          error: "Session is not authorized for assistant.delete.request",
+          code: "access_denied",
+        },
+      },
+      { type: "assistant.list.response", payload: { requestId: "list-2", assistants: [] } },
+    ]);
+  });
+
+  test("hands the coordinator the assistant id and the trusted principal", async () => {
+    const start = vi.fn().mockResolvedValue({
+      accepted: true,
+      liveSessionId: "live-session-1",
+      answerSdp: "answer-sdp",
+    });
+    const session = createSessionForTest({
+      principalId: "device-a",
+      liveVoiceCoordinator: { start } as unknown as LiveVoiceCoordinator,
+    });
+
+    await session.handleMessage({
+      type: "voice.live.start.request",
+      requestId: "start-1",
+      negotiation: { kind: "webrtc_sdp", offerSdp: "offer-sdp" },
+      assistantId,
+    });
+
+    expect(start).toHaveBeenCalledTimes(1);
+    expect(start.mock.calls[0]?.[0]).toMatchObject({
+      assistantId,
+      owner: { principalId: "device-a" },
     });
   });
 });

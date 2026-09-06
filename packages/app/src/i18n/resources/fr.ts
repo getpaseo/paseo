@@ -1906,6 +1906,119 @@ export const fr: TranslationResources = {
       connectionLost: "La connexion vocale en direct a été perdue.",
     },
   },
+  assistants: {
+    menu: {
+      label: "Assistant",
+      none: "Aucun assistant",
+      manage: "Gérer les assistants…",
+    },
+    settings: {
+      title: "Assistants",
+      description:
+        "Des assistants vocaux nommés, avec leurs propres instructions, voix, modèle d'actions et conversation mémorisée. Un assistant choisi dans le menu Voix en direct remplace les réglages d'appel ci-dessous.",
+      manage: "Gérer",
+    },
+    manage: {
+      title: "Assistants",
+      noHosts: "Aucun hôte connecté ne prend en charge les assistants. Mettez à jour son daemon.",
+      assistants: "Assistants",
+      empty:
+        "Aucun assistant pour l'instant. Créez-en un pour donner aux appels un nom et une mémoire.",
+      templates: "Modèles",
+      templatesEmpty:
+        "Aucun modèle. Enregistrez un assistant comme modèle pour réutiliser sa configuration.",
+      selectedForCalls: "Utilisé pour les appels vocaux en direct",
+      fromTemplate: "D'après {{name}}",
+      entries: "{{n}} entrées d'historique",
+    },
+    actions: {
+      newAssistant: "Nouvel assistant",
+      newTemplate: "Nouveau modèle",
+      menu: "Actions pour {{name}}",
+      useForCalls: "Utiliser pour les appels",
+      stopUsing: "Ne plus utiliser pour les appels",
+      openHistory: "Ouvrir l'historique",
+      edit: "Modifier",
+      saveAsTemplate: "Enregistrer comme modèle",
+      newFromTemplate: "Nouvel assistant depuis ce modèle",
+      delete: "Supprimer",
+      deleteAssistantTitle: "Supprimer {{name}} ?",
+      deleteAssistantMessage:
+        "Son historique de conversation et son résumé sont supprimés. Le travail délégué aux agents continue.",
+      deleteTemplateTitle: "Supprimer le modèle {{name}} ?",
+      deleteTemplateMessage:
+        "Les assistants créés à partir de ce modèle gardent leur propre copie de la configuration.",
+    },
+    form: {
+      createAssistantTitle: "Nouvel assistant",
+      editAssistantTitle: "Modifier l'assistant",
+      createTemplateTitle: "Nouveau modèle",
+      editTemplateTitle: "Modifier le modèle",
+      create: "Créer",
+      save: "Enregistrer",
+      name: {
+        label: "Nom",
+        placeholder: "Chef de cabinet",
+      },
+      startFrom: {
+        label: "Partir de",
+        hint: "Copie la configuration du modèle. Les modifications ultérieures restent propres à cet assistant.",
+        none: "Vide",
+        empty: "Aucun modèle",
+      },
+      instructions: {
+        label: "Instructions",
+        hint: "{{length}} / {{max}}. Transmises telles quelles à l'agent vocal, à chaque appel.",
+        placeholder: "Délègue le travail aux agents ; n'écris jamais de code toi-même.",
+      },
+      context: {
+        label: "Contexte",
+        hint: "{{length}} / {{max}}. Contexte permanent connu de l'assistant au début de chaque appel.",
+        placeholder: "Nous livrons le projet vocal. Privilégie le dépôt paseo.",
+      },
+      voice: {
+        label: "Voix",
+        hint: "Utilisée pour les nouveaux appels.",
+        default: "Par défaut",
+      },
+      backendModel: {
+        label: "Modèle d'actions",
+        hint: "Exécute les actions de l'assistant en arrière-plan ; ce n'est pas le modèle qui parle.",
+        default: "Par défaut (rapide)",
+      },
+      backendThinking: {
+        label: "Réflexion des actions",
+        hint: "Profondeur de raisonnement du modèle d'actions.",
+        default: "Par défaut",
+      },
+      errors: {
+        nameRequired: "Le nom est obligatoire",
+        nameTooLong: "Le nom est trop long",
+        tooLong: "Trop long",
+      },
+    },
+    history: {
+      title: "Historique",
+      empty: "Rien de mémorisé pour l'instant. Lancez un appel pour commencer.",
+      loadOlder: "Charger les plus anciens",
+      callStarted: "Appel démarré",
+      callEnded: "Appel terminé · {{cause}}",
+      delegationOk: "Délégué : {{description}}",
+      delegationFailed: "Échec de la délégation ({{code}}) : {{description}}",
+      user: "Vous",
+      assistant: "Assistant",
+      limits:
+        "Les nouveaux appels partent du résumé et de l'historique récent qui tient dans la limite de contexte du fournisseur. La parole en direct n'est pas reprise.",
+      summary: {
+        label: "Résumé",
+        hint: "Rédigé par vous. Les nouveaux appels le lisent à la place de l'historique ancien.",
+        coversThrough: "Couvre l'historique jusqu'à l'entrée nº {{seq}}.",
+        placeholder: "Ce que l'assistant doit retenir.",
+        willCover: "L'enregistrement couvre l'historique jusqu'à l'entrée nº {{seq}}.",
+        save: "Enregistrer le résumé",
+      },
+    },
+  },
   realtimeVoice: {
     actions: {
       mute: "Couper la voix en temps réel",

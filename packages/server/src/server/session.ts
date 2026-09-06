@@ -53,6 +53,12 @@ import {
 import { respondToAgentPermission } from "./agent/permission-response.js";
 import type { VoiceCallerContext, VoiceSpeakHandler } from "./voice-types.js";
 import type { LiveVoiceCoordinator } from "./live-voice/live-voice-coordinator.js";
+import type { AssistantStore } from "./assistants/assistant-store.js";
+import type { AssistantRequest } from "@getpaseo/protocol/assistants";
+import {
+  AssistantRequestError,
+  handleAssistantRequest,
+} from "./assistants/assistant-session-rpc.js";
 import type { LiveVoiceRouteBroker } from "./live-voice/live-voice-route-broker.js";
 import type {
   LiveVoiceToolExecutionContext,
@@ -461,6 +467,12 @@ type AgentMcpTransportFactory = () => Promise<unknown>;
 
 export interface SessionOptions {
   clientId: string;
+  /**
+   * The admitted principal this session acts for. Set by the socket layer from
+   * admission, never from anything the client sends. Absent means no principal
+   * is known and principal-scoped features fail closed.
+   */
+  principalId?: string;
   permissions: readonly DaemonPermission[];
   appVersion?: string | null;
   clientCapabilities?: Record<string, unknown> | null;
@@ -548,6 +560,8 @@ export interface SessionOptions {
   };
   /** Daemon-global; shared by every session so call ownership is socket-exact. */
   liveVoiceCoordinator?: LiveVoiceCoordinator;
+  /** Daemon-global, principal-scoped; every call goes through the trusted principal above. */
+  assistantStore?: AssistantStore;
   liveVoiceRouteBroker?: LiveVoiceRouteBroker;
   liveVoiceToolExecutor?: LiveVoiceToolExecutor;
   liveVoiceAgentNotifier?: LiveVoiceAgentNotifier;
@@ -759,6 +773,8 @@ export class Session {
   private readonly workspaceDirectory: WorkspaceDirectory;
   private readonly voiceSession: VoiceSession;
   private readonly liveVoice: LiveVoiceCoordinator | undefined;
+  private readonly principalId: string | null;
+  private readonly assistantStore: AssistantStore | null;
   private readonly liveVoiceRouteBroker: LiveVoiceRouteBroker | null;
   private readonly liveVoiceToolExecutor: LiveVoiceToolExecutor | null;
   private readonly liveVoiceAgentNotifier: LiveVoiceAgentNotifier | null;
@@ -828,6 +844,8 @@ export class Session {
       liveVoiceRouteBroker,
       liveVoiceToolExecutor,
       liveVoiceAgentNotifier,
+      assistantStore,
+      principalId,
       dictation,
       serverId,
       daemonVersion,
@@ -1140,6 +1158,8 @@ export class Session {
       dictation,
     });
     this.liveVoice = liveVoiceCoordinator;
+    this.principalId = optionalService(principalId);
+    this.assistantStore = optionalService(assistantStore);
     this.liveVoiceRouteBroker = optionalService(liveVoiceRouteBroker);
     this.liveVoiceToolExecutor = optionalService(liveVoiceToolExecutor);
     this.liveVoiceAgentNotifier = optionalService(liveVoiceAgentNotifier);
@@ -2015,7 +2035,11 @@ export class Session {
     msg: SessionInboundMessage,
     source?: object,
   ): Promise<void> | undefined {
-    return this.dispatchVoiceAndControlMessage(msg) ?? this.dispatchLiveVoiceMessage(msg, source);
+    return (
+      this.dispatchVoiceAndControlMessage(msg) ??
+      this.dispatchLiveVoiceMessage(msg, source) ??
+      this.dispatchAssistantMessage(msg, source)
+    );
   }
 
   private async dispatchInboundMessage(msg: SessionInboundMessage, source?: object): Promise<void> {
@@ -2338,6 +2362,49 @@ export class Session {
     }
   }
 
+  private dispatchAssistantMessage(
+    msg: SessionInboundMessage,
+    source?: object,
+  ): Promise<void> | undefined {
+    switch (msg.type) {
+      case "assistant.list.request":
+      case "assistant.get.request":
+      case "assistant.create.request":
+      case "assistant.update.request":
+      case "assistant.delete.request":
+      case "assistant.compact.request":
+      case "assistant.template.list.request":
+      case "assistant.template.save.request":
+      case "assistant.template.delete.request":
+        return this.handleAssistantRpc(msg, source);
+      default:
+        return undefined;
+    }
+  }
+
+  private async handleAssistantRpc(msg: AssistantRequest, source?: object): Promise<void> {
+    try {
+      const response = await handleAssistantRequest(
+        { store: this.assistantStore, principalId: this.principalId },
+        msg,
+      );
+      this.emitForSource(response, source);
+    } catch (error) {
+      const code = error instanceof AssistantRequestError ? error.code : "assistant_request_failed";
+      const message = error instanceof Error ? error.message : "Assistant request failed";
+      if (!(error instanceof AssistantRequestError)) {
+        this.sessionLogger.error({ err: error, requestType: msg.type }, "assistant.rpc.failed");
+      }
+      this.emitForSource(
+        {
+          type: "rpc_error",
+          payload: { requestId: msg.requestId, requestType: msg.type, error: message, code },
+        },
+        source,
+      );
+    }
+  }
+
   private async handleLiveVoiceVoicesRequest(
     msg: Extract<SessionInboundMessage, { type: "voice.live.voices.request" }>,
     source?: object,
@@ -2425,7 +2492,10 @@ export class Session {
     const result = await coordinator.start({
       offerSdp: msg.negotiation.offerSdp,
       ...(voice ? { voice } : {}),
-      owner: { sessionKey: this },
+      owner: { sessionKey: this, ...(this.principalId ? { principalId: this.principalId } : {}) },
+      // The coordinator resolves the instance's configuration server-side and
+      // ignores the per-call overrides below when an assistant is named.
+      ...(msg.assistantId ? { assistantId: msg.assistantId } : {}),
       emit: (update) => {
         this.emit({ type: "voice.live.update", payload: update });
       },

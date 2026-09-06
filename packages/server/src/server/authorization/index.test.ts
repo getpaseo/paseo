@@ -69,6 +69,32 @@ describe("SessionAuthorization", () => {
     ).toBe(false);
   });
 
+  test("assistant reads need workspace.read and assistant mutations need workspace.write", () => {
+    const viewer = new SessionAuthorization(["workspace.read"]);
+    const writer = new SessionAuthorization(["workspace.write"]);
+
+    for (const type of [
+      "assistant.list.request",
+      "assistant.get.request",
+      "assistant.template.list.request",
+    ] as const) {
+      expect(viewer.allowsInbound(inboundMessage(type))).toBe(true);
+    }
+    for (const type of [
+      "assistant.create.request",
+      "assistant.update.request",
+      "assistant.delete.request",
+      "assistant.compact.request",
+      "assistant.template.save.request",
+      "assistant.template.delete.request",
+    ] as const) {
+      expect(viewer.allowsInbound(inboundMessage(type))).toBe(false);
+      expect(writer.allowsInbound(inboundMessage(type))).toBe(true);
+    }
+    expect(viewer.allowsOutbound(outboundMessage("assistant.list.response"))).toBe(true);
+    expect(viewer.allowsOutbound(outboundMessage("assistant.create.response"))).toBe(false);
+  });
+
   test("correlated authorization errors can always be emitted", () => {
     const authorization = new SessionAuthorization([]);
 

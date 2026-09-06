@@ -217,3 +217,65 @@ describe("DaemonClient Live Voice cross-host routing", () => {
     unsubscribe();
   });
 });
+
+describe("DaemonClient assistants", () => {
+  test("correlates assistant pages without mixing simultaneous requests", async () => {
+    const { client, harness } = await createConnectedClient();
+    const assistantId = `ast_${"a".repeat(32)}`;
+    const first = client.getAssistant({
+      assistantId,
+      beforeSeq: 8,
+      limit: 2,
+      requestId: "page-old",
+    });
+    const second = client.listAssistants({ requestId: "list-current" });
+    expect(parseSentMessage(harness.sent[0])).toEqual({
+      type: "assistant.get.request",
+      requestId: "page-old",
+      assistantId,
+      beforeSeq: 8,
+      limit: 2,
+    });
+    const assistant = {
+      id: assistantId,
+      name: "Work",
+      templateId: null,
+      configuration: {
+        instructions: "",
+        context: "",
+        voice: null,
+        backendModel: null,
+        backendThinkingOptionId: null,
+      },
+      revision: 1,
+      createdAt: "now",
+      updatedAt: "now",
+      summary: "",
+      summaryThroughSeq: 0,
+      lastSeq: 8,
+    };
+    harness.receive({
+      type: "assistant.list.response",
+      payload: { requestId: "list-current", assistants: [assistant] },
+    });
+    harness.receive({
+      type: "assistant.get.response",
+      payload: {
+        requestId: "page-old",
+        assistant,
+        history: [
+          {
+            kind: "call_ended",
+            seq: 7,
+            callId: "old-call",
+            createdAt: "now",
+            cause: "provider_exit",
+          },
+        ],
+        hasMore: true,
+      },
+    });
+    await expect(second).resolves.toEqual([assistant]);
+    await expect(first).resolves.toMatchObject({ assistant, history: [{ seq: 7 }], hasMore: true });
+  });
+});

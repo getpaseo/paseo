@@ -1902,6 +1902,118 @@ export const es: TranslationResources = {
       connectionLost: "Se perdió la conexión de voz en directo.",
     },
   },
+  assistants: {
+    menu: {
+      label: "Asistente",
+      none: "Sin asistente",
+      manage: "Gestionar asistentes…",
+    },
+    settings: {
+      title: "Asistentes",
+      description:
+        "Asistentes de voz con nombre, con sus propias instrucciones, voz, modelo de acciones y conversación recordada. Un asistente elegido en el menú de Voz en directo sustituye los ajustes de llamada de abajo.",
+      manage: "Gestionar",
+    },
+    manage: {
+      title: "Asistentes",
+      noHosts: "Ningún host conectado admite asistentes. Actualiza su daemon.",
+      assistants: "Asistentes",
+      empty: "Aún no hay asistentes. Crea uno para dar a las llamadas un nombre y una memoria.",
+      templates: "Plantillas",
+      templatesEmpty:
+        "No hay plantillas. Guarda un asistente como plantilla para reutilizar su configuración.",
+      selectedForCalls: "Usado en llamadas de voz en directo",
+      fromTemplate: "De {{name}}",
+      entries: "{{n}} entradas de historial",
+    },
+    actions: {
+      newAssistant: "Nuevo asistente",
+      newTemplate: "Nueva plantilla",
+      menu: "Acciones para {{name}}",
+      useForCalls: "Usar en llamadas",
+      stopUsing: "Dejar de usar en llamadas",
+      openHistory: "Abrir historial",
+      edit: "Editar",
+      saveAsTemplate: "Guardar como plantilla",
+      newFromTemplate: "Nuevo asistente desde plantilla",
+      delete: "Eliminar",
+      deleteAssistantTitle: "¿Eliminar {{name}}?",
+      deleteAssistantMessage:
+        "Se eliminan su historial de conversación y su resumen. El trabajo delegado a agentes sigue en marcha.",
+      deleteTemplateTitle: "¿Eliminar la plantilla {{name}}?",
+      deleteTemplateMessage:
+        "Los asistentes creados a partir de ella conservan su propia copia de la configuración.",
+    },
+    form: {
+      createAssistantTitle: "Nuevo asistente",
+      editAssistantTitle: "Editar asistente",
+      createTemplateTitle: "Nueva plantilla",
+      editTemplateTitle: "Editar plantilla",
+      create: "Crear",
+      save: "Guardar cambios",
+      name: {
+        label: "Nombre",
+        placeholder: "Jefe de gabinete",
+      },
+      startFrom: {
+        label: "Empezar desde",
+        hint: "Copia la configuración de la plantilla. Los cambios posteriores se quedan en este asistente.",
+        none: "En blanco",
+        empty: "No hay plantillas",
+      },
+      instructions: {
+        label: "Instrucciones",
+        hint: "{{length}} / {{max}}. Se pasan al agente de voz tal cual, en cada llamada.",
+        placeholder: "Delega el trabajo a agentes; nunca escribas código tú mismo.",
+      },
+      context: {
+        label: "Contexto",
+        hint: "{{length}} / {{max}}. Antecedentes permanentes que el asistente conoce al inicio de cada llamada.",
+        placeholder: "Estamos lanzando el proyecto de voz. Prefiere el repositorio paseo.",
+      },
+      voice: {
+        label: "Voz",
+        hint: "Se usa en las llamadas nuevas.",
+        default: "Predeterminada",
+      },
+      backendModel: {
+        label: "Modelo de acciones",
+        hint: "Ejecuta las acciones del asistente en segundo plano; no es el modelo que habla.",
+        default: "Predeterminado (rápido)",
+      },
+      backendThinking: {
+        label: "Razonamiento de acciones",
+        hint: "Profundidad de razonamiento del modelo de acciones.",
+        default: "Predeterminado",
+      },
+      errors: {
+        nameRequired: "El nombre es obligatorio",
+        nameTooLong: "El nombre es demasiado largo",
+        tooLong: "Demasiado largo",
+      },
+    },
+    history: {
+      title: "Historial",
+      empty: "Aún no hay nada recordado. Inicia una llamada para empezar.",
+      loadOlder: "Cargar anteriores",
+      callStarted: "Llamada iniciada",
+      callEnded: "Llamada finalizada · {{cause}}",
+      delegationOk: "Delegado: {{description}}",
+      delegationFailed: "La delegación falló ({{code}}): {{description}}",
+      user: "Tú",
+      assistant: "Asistente",
+      limits:
+        "Las llamadas nuevas parten del resumen más el historial reciente que cabe en el límite de contexto del proveedor. El habla en directo no se reanuda.",
+      summary: {
+        label: "Resumen",
+        hint: "Escrito por ti. Las llamadas nuevas lo leen en lugar del historial antiguo.",
+        coversThrough: "Cubre el historial hasta la entrada n.º {{seq}}.",
+        placeholder: "Lo que el asistente debe tener presente.",
+        willCover: "Al guardar se cubre el historial hasta la entrada n.º {{seq}}.",
+        save: "Guardar resumen",
+      },
+    },
+  },
   realtimeVoice: {
     actions: {
       mute: "Silenciar voz en tiempo real",

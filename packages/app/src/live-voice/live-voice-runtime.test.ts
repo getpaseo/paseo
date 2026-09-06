@@ -48,6 +48,7 @@ function createHarness(
     voice?: string;
     callSettings?: LiveVoiceRuntimeDeps["callSettings"];
     ambientAgentReports?: LiveVoiceRuntimeDeps["ambientAgentReports"];
+    assistant?: LiveVoiceRuntimeDeps["assistant"];
   } = {},
 ): Harness {
   const lease = createAudioSessionLease();
@@ -105,6 +106,7 @@ function createHarness(
     lease,
     ...(overrides.voice ? { voice: { read: () => overrides.voice } } : {}),
     ...(overrides.callSettings ? { callSettings: overrides.callSettings } : {}),
+    ...(overrides.assistant ? { assistant: overrides.assistant } : {}),
     ...(overrides.ambientAgentReports
       ? { ambientAgentReports: overrides.ambientAgentReports }
       : {}),
@@ -910,5 +912,105 @@ describe("live voice runtime", () => {
     unsubscribe();
     harness.push({ kind: "transcript", role: "user", transcriptId: "t1", text: "hello" });
     expect(listener.mock.calls.length).toBe(beforeUnsubscribe);
+  });
+});
+
+describe("Live Voice runtime assistants", () => {
+  const ASSISTANT_ID = "ast_" + "a".repeat(32);
+  const callSettings: LiveVoiceRuntimeDeps["callSettings"] = {
+    read: () => ({
+      disabledPromptComponents: ["recipes"],
+      customVoiceInstructions: "Be brief.",
+      defaultWorkspaceDirectory: "~/Projects",
+      backendModel: "gpt-5",
+      backendThinkingOptionId: "high",
+    }),
+  };
+
+  it("rejects unavailable assistants before acquiring call resources", async () => {
+    const harness = createHarness({
+      pinConnection: "active",
+      assistant: {
+        read: () => {
+          throw new LiveVoiceStartError({ code: "unsupported", message: null });
+        },
+      },
+    });
+    await expect(harness.runtime.start(SERVER_ID)).rejects.toMatchObject({
+      info: { code: "unsupported" },
+    });
+    expect(harness.lease.current()).toBeNull();
+    expect(harness.pinConnection).not.toHaveBeenCalled();
+    expect(harness.startSession).not.toHaveBeenCalled();
+    expect(harness.client.startLiveVoice).not.toHaveBeenCalled();
+    expect(harness.runtime.getSnapshot()).toMatchObject({
+      phase: "error",
+      error: { code: "unsupported" },
+    });
+  });
+
+  it("attaches the selected assistant and leaves its settings to the record", async () => {
+    const listVoices = vi.fn(async () => ["juniper"]);
+    const harness = createHarness({
+      voice: "juniper",
+      callSettings,
+      assistant: { read: (serverId) => (serverId === SERVER_ID ? ASSISTANT_ID : undefined) },
+    });
+    harness.client.listLiveVoiceVoices = listVoices;
+
+    await harness.runtime.start(SERVER_ID);
+
+    expect(harness.client.startLiveVoice).toHaveBeenCalledTimes(1);
+    const input = harness.client.startLiveVoice.mock.calls[0]?.[0];
+    expect(input).toMatchObject({
+      assistantId: ASSISTANT_ID,
+      disabledPromptComponents: ["recipes"],
+      defaultWorkspaceDirectory: "~/Projects",
+    });
+    // Voice, instructions, and backend settings are the assistant's own.
+    expect(input).not.toHaveProperty("voice");
+    expect(input).not.toHaveProperty("customVoiceInstructions");
+    expect(input).not.toHaveProperty("backendModel");
+    expect(input).not.toHaveProperty("backendThinkingOptionId");
+    expect(listVoices).not.toHaveBeenCalled();
+    expect(harness.runtime.getSnapshot()).toMatchObject({
+      phase: "active",
+      assistantId: ASSISTANT_ID,
+    });
+  });
+
+  it("keeps the legacy per-call fields when no assistant is selected", async () => {
+    const harness = createHarness({
+      voice: "juniper",
+      callSettings,
+      assistant: { read: () => undefined },
+    });
+
+    await harness.runtime.start(SERVER_ID);
+
+    const input = harness.client.startLiveVoice.mock.calls[0]?.[0];
+    expect(input).not.toHaveProperty("assistantId");
+    expect(input).toMatchObject({
+      voice: "juniper",
+      customVoiceInstructions: "Be brief.",
+      backendModel: "gpt-5",
+      backendThinkingOptionId: "high",
+    });
+    expect(harness.runtime.getSnapshot().assistantId).toBeNull();
+  });
+
+  it("reads the selection once per start, not from the snapshot of an earlier call", async () => {
+    let selected: string | undefined = ASSISTANT_ID;
+    const harness = createHarness({ assistant: { read: () => selected } });
+
+    await harness.runtime.start(SERVER_ID);
+    expect(harness.runtime.getSnapshot().assistantId).toBe(ASSISTANT_ID);
+    await harness.runtime.stop();
+    expect(harness.runtime.getSnapshot().assistantId).toBeNull();
+
+    selected = undefined;
+    await harness.runtime.start(SERVER_ID);
+    expect(harness.client.startLiveVoice.mock.calls[1]?.[0]).not.toHaveProperty("assistantId");
+    expect(harness.runtime.getSnapshot().assistantId).toBeNull();
   });
 });

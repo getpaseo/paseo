@@ -617,6 +617,8 @@ export interface AgentSessionConfig {
   providerOptions?: ProviderOptions;
   toolPolicy?: ToolPolicy;
   mcpServers?: Record<string, McpServerConfig>;
+  /** Runtime-only host isolation; not accepted from client agent configuration. */
+  inheritMcpServers?: boolean;
   /**
    * Internal agents are hidden from listings and don't trigger notifications.
    * They are used for ephemeral system tasks like commit/PR generation.

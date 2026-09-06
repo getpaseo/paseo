@@ -103,6 +103,7 @@ import {
 import type { LiveVoiceHostAvailability } from "@/live-voice/live-voice-availability-policy";
 import { resolveLiveVoiceUnavailableMessage } from "@/live-voice/live-voice-unavailable-message";
 import { useLiveVoiceVoiceOptions } from "@/hooks/use-live-voice-voice-options";
+import { AssistantsSheet } from "@/assistants/assistants-sheet";
 import { useLiveVoiceBackendModelOptions } from "@/live-voice/live-voice-backend-model-catalog";
 import {
   LIVE_VOICE_OPTIONAL_PROMPT_COMPONENTS,
@@ -540,8 +541,52 @@ function VoiceSection() {
   const { t } = useTranslation();
   return (
     <SettingsSection title={t("settings.sections.voice")}>
+      <AssistantsSettingsCard />
       <LiveVoiceSettingsCard />
     </SettingsSection>
+  );
+}
+
+/**
+ * Entry to the assistants manager. The per-call settings in the card below
+ * remain the defaults for legacy calls; an assistant selected in the Live
+ * voice menu brings its own voice, instructions, and action model.
+ */
+function AssistantsSettingsCard() {
+  const { t } = useTranslation();
+  const hosts = useLiveVoiceHostAvailability();
+  const [isManaging, setIsManaging] = useState(false);
+  const capableHost = hosts.find(
+    (host) => host.connectionStatus === "online" && host.supportsAssistants === true,
+  );
+  const handleOpen = useCallback(() => setIsManaging(true), []);
+  const handleClose = useCallback(() => setIsManaging(false), []);
+
+  if (!capableHost) {
+    return null;
+  }
+  return (
+    <View style={[settingsStyles.card, styles.assistantsCard]}>
+      <AssistantsSheet
+        visible={isManaging}
+        onClose={handleClose}
+        initialServerId={capableHost.serverId}
+      />
+      <View style={settingsStyles.row}>
+        <View style={settingsStyles.rowContent}>
+          <Text style={settingsStyles.rowTitle}>{t("assistants.settings.title")}</Text>
+          <Text style={settingsStyles.rowHint}>{t("assistants.settings.description")}</Text>
+        </View>
+        <Button
+          variant="secondary"
+          size="sm"
+          onPress={handleOpen}
+          testID="settings-manage-assistants"
+        >
+          {t("assistants.settings.manage")}
+        </Button>
+      </View>
+    </View>
   );
 }
 
@@ -2106,6 +2151,9 @@ export default function SettingsScreen({ view, openAddHostIntent = null }: Setti
 // ---------------------------------------------------------------------------
 
 const styles = StyleSheet.create((theme) => ({
+  assistantsCard: {
+    marginBottom: theme.spacing[3],
+  },
   loadingContainer: {
     flex: 1,
     backgroundColor: theme.colors.surface0,

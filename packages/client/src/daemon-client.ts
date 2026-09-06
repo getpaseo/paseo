@@ -1,3 +1,4 @@
+import type { AssistantRequest } from "@getpaseo/protocol/assistants";
 import type { z } from "zod";
 import { CLIENT_CAPS, type ClientCapability } from "@getpaseo/protocol/client-capabilities";
 import type { AgentAttentionNotificationPayload } from "@getpaseo/protocol/agent-attention-notification";
@@ -320,6 +321,11 @@ export type DaemonEvent =
 export type DaemonEventHandler = (event: DaemonEvent) => void;
 export type BrowserAutomationExecuteRequestMessage = BrowserAutomationExecuteRequest;
 export type BrowserAutomationExecuteResponseMessage = BrowserAutomationExecuteResponse;
+type AssistantRequestInput<T extends AssistantRequest["type"]> = Omit<
+  Extract<AssistantRequest, { type: T }>,
+  "type" | "requestId"
+> & { requestId?: string };
+
 export type LiveVoiceRouteRequestMessage = VoiceLiveRouteRequest;
 export type LiveVoiceRouteResponseMessage = VoiceLiveRouteResponse;
 
@@ -3485,6 +3491,91 @@ export class DaemonClient {
     return response;
   }
 
+  async listAssistants(input: AssistantRequestInput<"assistant.list.request"> = {}) {
+    const { requestId, ...fields } = input;
+    const payload = await this.sendNamespacedCorrelatedSessionRequest<"assistant.list.response">({
+      ...(requestId ? { requestId } : {}),
+      message: { type: "assistant.list.request", ...fields },
+    });
+    return payload.assistants;
+  }
+
+  async getAssistant(input: AssistantRequestInput<"assistant.get.request">) {
+    const { requestId, ...fields } = input;
+    const payload = await this.sendNamespacedCorrelatedSessionRequest<"assistant.get.response">({
+      ...(requestId ? { requestId } : {}),
+      message: { type: "assistant.get.request", ...fields },
+    });
+    return payload;
+  }
+
+  async createAssistant(input: AssistantRequestInput<"assistant.create.request">) {
+    const { requestId, ...fields } = input;
+    const payload = await this.sendNamespacedCorrelatedSessionRequest<"assistant.create.response">({
+      ...(requestId ? { requestId } : {}),
+      message: { type: "assistant.create.request", ...fields },
+    });
+    return payload.assistant;
+  }
+
+  async updateAssistant(input: AssistantRequestInput<"assistant.update.request">) {
+    const { requestId, ...fields } = input;
+    const payload = await this.sendNamespacedCorrelatedSessionRequest<"assistant.update.response">({
+      ...(requestId ? { requestId } : {}),
+      message: { type: "assistant.update.request", ...fields },
+    });
+    return payload.assistant;
+  }
+
+  async deleteAssistant(input: AssistantRequestInput<"assistant.delete.request">) {
+    const { requestId, ...fields } = input;
+    await this.sendNamespacedCorrelatedSessionRequest<"assistant.delete.response">({
+      ...(requestId ? { requestId } : {}),
+      message: { type: "assistant.delete.request", ...fields },
+    });
+  }
+
+  async compactAssistant(input: AssistantRequestInput<"assistant.compact.request">) {
+    const { requestId, ...fields } = input;
+    const payload = await this.sendNamespacedCorrelatedSessionRequest<"assistant.compact.response">(
+      {
+        ...(requestId ? { requestId } : {}),
+        message: { type: "assistant.compact.request", ...fields },
+      },
+    );
+    return payload.assistant;
+  }
+
+  async listAssistantTemplates(
+    input: AssistantRequestInput<"assistant.template.list.request"> = {},
+  ) {
+    const { requestId, ...fields } = input;
+    const payload =
+      await this.sendNamespacedCorrelatedSessionRequest<"assistant.template.list.response">({
+        ...(requestId ? { requestId } : {}),
+        message: { type: "assistant.template.list.request", ...fields },
+      });
+    return payload.templates;
+  }
+
+  async saveAssistantTemplate(input: AssistantRequestInput<"assistant.template.save.request">) {
+    const { requestId, ...fields } = input;
+    const payload =
+      await this.sendNamespacedCorrelatedSessionRequest<"assistant.template.save.response">({
+        ...(requestId ? { requestId } : {}),
+        message: { type: "assistant.template.save.request", ...fields },
+      });
+    return payload.template;
+  }
+
+  async deleteAssistantTemplate(input: AssistantRequestInput<"assistant.template.delete.request">) {
+    const { requestId, ...fields } = input;
+    await this.sendNamespacedCorrelatedSessionRequest<"assistant.template.delete.response">({
+      ...(requestId ? { requestId } : {}),
+      message: { type: "assistant.template.delete.request", ...fields },
+    });
+  }
+
   /**
    * Open a Live Voice call with this daemon.
    *
@@ -3500,6 +3591,7 @@ export class DaemonClient {
    */
   async startLiveVoice(input: {
     negotiation: { kind: "webrtc_sdp"; offerSdp: string };
+    assistantId?: string;
     voice?: string;
     requestId?: string;
     /** This client will report agents the call did not start. */
@@ -3521,6 +3613,7 @@ export class DaemonClient {
       message: {
         type: "voice.live.start.request",
         negotiation: input.negotiation,
+        ...(input.assistantId ? { assistantId: input.assistantId } : {}),
         ...(input.voice ? { voice: input.voice } : {}),
         ...(input.ambientAgentReports ? { ambientAgentReports: true } : {}),
         ...(input.ambientAgentGuidance ? { ambientAgentGuidance: input.ambientAgentGuidance } : {}),

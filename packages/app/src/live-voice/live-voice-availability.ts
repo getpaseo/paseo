@@ -40,6 +40,8 @@ export function useLiveVoiceHostAvailability(): LiveVoiceHostAvailability[] {
           // COMPAT(agentPaseoTools): added in v0.2.6. Missing means an older
           // Live Voice daemon whose start response remains authoritative.
           paseoToolsEnabled: serverInfo ? serverInfo.features?.agentPaseoTools !== false : null,
+          // COMPAT(assistants): added in v0.7.2, drop the gate when floor >= v0.7.2.
+          supportsAssistants: serverInfo?.features?.assistants === true,
         };
       }),
     [connectionStatuses, hosts, serverInfos],
