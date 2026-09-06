@@ -446,6 +446,44 @@ test("does not unarchive either record when checkout refresh fails", async () =>
   expect(await workspaceRegistry.get(created.workspaceId)).toEqual(archivedWorkspace);
 });
 
+test("rolls back the project and workspace when workspace activation fails", async () => {
+  const repo = path.join(tmpDir, "repo");
+  gitRoots.add(repo);
+  const created = await provisioning.findOrCreateWorkspaceForDirectory(repo);
+  await projectRegistry.archive(created.projectId, ARCHIVED_AT);
+  await workspaceRegistry.archive(created.workspaceId, ARCHIVED_AT);
+  const archivedProject = await projectRegistry.get(created.projectId);
+  const archivedWorkspace = await workspaceRegistry.get(created.workspaceId);
+  const failingWorkspaceRegistry: WorkspaceRegistry = {
+    initialize: () => workspaceRegistry.initialize(),
+    existsOnDisk: () => workspaceRegistry.existsOnDisk(),
+    list: () => workspaceRegistry.list(),
+    get: (workspaceId) => workspaceRegistry.get(workspaceId),
+    update: (workspaceId, updater) => workspaceRegistry.update(workspaceId, updater),
+    upsert: async (workspace, context) => {
+      if (!workspace.archivedAt) throw new Error("workspace activation failed");
+      await workspaceRegistry.upsert(workspace, context);
+    },
+    archive: (workspaceId, archivedAt, context) =>
+      workspaceRegistry.archive(workspaceId, archivedAt, context),
+    remove: (workspaceId) => workspaceRegistry.remove(workspaceId),
+    subscribeToMutations: (listener) => workspaceRegistry.subscribeToMutations(listener),
+  };
+  const failingProvisioning = createWorkspaceProvisioningService({
+    workspaceRegistry: failingWorkspaceRegistry,
+    projectRegistry,
+    workspaceGitService: gitService(),
+    logger,
+  });
+
+  await expect(
+    failingProvisioning.ensureWorkspaceRecordUnarchived(archivedWorkspace!),
+  ).rejects.toThrow("workspace activation failed");
+
+  expect(await projectRegistry.get(created.projectId)).toEqual(archivedProject);
+  expect(await workspaceRegistry.get(created.workspaceId)).toEqual(archivedWorkspace);
+});
+
 test("resolveOrCreateWorkspaceIdForCreateAgent returns a created worktree's id without touching the registry", async () => {
   // The branch only reads workspace.workspaceId off the worktree result.
   const createdWorktree = {

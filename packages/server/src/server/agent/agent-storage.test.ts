@@ -299,6 +299,78 @@ describe("AgentStorage", () => {
     expect(recordAfterSnapshot?.archivedAt).toBe(archivedAt);
   });
 
+  test("applySnapshot preserves the workspace-archive cascade stamp", async () => {
+    const agentId = "agent-workspace-archived";
+    await storage.applySnapshot(
+      createManagedAgent({
+        id: agentId,
+        lifecycle: "idle",
+      }),
+    );
+
+    const recordBeforeArchive = await storage.get(agentId);
+    expect(recordBeforeArchive).not.toBeNull();
+    await storage.upsert({
+      ...recordBeforeArchive!,
+      archivedAt: "2025-01-03T00:00:00.000Z",
+      archivedWithWorkspaceId: "ws-stamp",
+    });
+
+    await storage.applySnapshot(
+      createManagedAgent({
+        id: agentId,
+        lifecycle: "running",
+        updatedAt: new Date("2025-01-04T00:00:00.000Z"),
+      }),
+    );
+
+    const recordAfterSnapshot = await storage.get(agentId);
+    expect(recordAfterSnapshot?.archivedWithWorkspaceId).toBe("ws-stamp");
+  });
+
+  test("updateRecord mutates the record written by a concurrent in-flight write", async () => {
+    const agentId = "agent-concurrent-write";
+    await storage.applySnapshot(createManagedAgent({ id: agentId, lifecycle: "idle" }));
+    const initial = await storage.get(agentId);
+    expect(initial).not.toBeNull();
+
+    // Queue a write and, without awaiting it, stamp the same agent. The cache is
+    // only updated once the write's file I/O resolves, so a read-modify-write from
+    // outside the queue would read the pre-write record and clobber `title`.
+    const pendingWrite = storage.upsert({
+      ...initial!,
+      title: "written concurrently",
+      archivedAt: "2025-01-05T00:00:00.000Z",
+    });
+    const stamped = await storage.updateRecord(agentId, (record) => ({
+      ...record,
+      archivedWithWorkspaceId: "ws-race",
+    }));
+    await pendingWrite;
+
+    expect(stamped?.title).toBe("written concurrently");
+    const final = await storage.get(agentId);
+    expect(final?.title).toBe("written concurrently");
+    expect(final?.archivedAt).toBe("2025-01-05T00:00:00.000Z");
+    expect(final?.archivedWithWorkspaceId).toBe("ws-race");
+  });
+
+  test("updateRecord skips the write when the mutator declines", async () => {
+    const agentId = "agent-decline-update";
+    await storage.applySnapshot(createManagedAgent({ id: agentId, lifecycle: "idle" }));
+
+    const result = await storage.updateRecord(agentId, () => null);
+
+    expect(result).toBeNull();
+    const record = await storage.get(agentId);
+    expect(record?.archivedWithWorkspaceId ?? null).toBeNull();
+  });
+
+  test("updateRecord returns null for an unknown agent", async () => {
+    const result = await storage.updateRecord("agent-does-not-exist", (record) => record);
+    expect(result).toBeNull();
+  });
+
   test("stores titles independently of snapshots", async () => {
     await storage.applySnapshot(
       createManagedAgent({

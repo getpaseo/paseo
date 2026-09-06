@@ -48,6 +48,10 @@ import type {
 } from "./agent-sdk-types.js";
 import type { PaseoToolCatalog } from "./tools/types.js";
 import type { ProviderDefinition } from "./provider-registry.js";
+import {
+  archiveWorkspaceContents,
+  unarchiveWorkspaceContents,
+} from "../workspace-archive-service.js";
 
 const DESKTOP_OPEN_AGENT_TAB_LABEL = getOpenAgentTabLabel("desktop-client");
 const MOBILE_OPEN_AGENT_TAB_LABEL = getOpenAgentTabLabel("mobile-client");
@@ -373,10 +377,14 @@ class NativeArchiveRecordingClient extends TestAgentClient {
   readonly unarchivedHandles: AgentPersistenceHandle[] = [];
   readArchivedAtDuringUnarchive: (() => Promise<string | null | undefined>) | null = null;
   archivedAtDuringUnarchive: string | null | undefined;
+  archiveFailure: Error | null = null;
   unarchiveFailure: Error | null = null;
 
   async archiveNativeSession(handle: AgentPersistenceHandle): Promise<void> {
     this.archivedHandles.push(handle);
+    if (this.archiveFailure) {
+      throw this.archiveFailure;
+    }
   }
 
   async unarchiveNativeSession(handle: AgentPersistenceHandle): Promise<void> {
@@ -7763,6 +7771,39 @@ test("fires onAgentArchived for stored-only snapshot archives", async () => {
   expect(archivedIds).toEqual([storedOnly.id]);
 });
 
+test("archiveSnapshot keeps the stored record active when required native archive fails", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-native-archive-failure-"));
+  const storagePath = join(workdir, "agents");
+  const storage = new AgentStorage(storagePath, logger);
+  const client = new NativeArchiveRecordingClient();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: storage,
+    logger,
+  });
+
+  const agent = await manager.createAgent(
+    {
+      provider: "codex",
+      cwd: workdir,
+      title: "Required native archive target",
+    },
+    undefined,
+    { workspaceId: undefined },
+  );
+  await manager.closeAgent(agent.id);
+  client.archiveFailure = new Error("provider archive failed");
+
+  await expect(
+    manager.archiveSnapshot(agent.id, new Date().toISOString(), {
+      nativeArchiveMode: "required",
+    }),
+  ).rejects.toThrow("provider archive failed");
+
+  expect((await storage.get(agent.id))?.archivedAt).toBeUndefined();
+  expect(client.archivedHandles).toHaveLength(1);
+});
+
 test("unarchiveSnapshot skips native provider unarchive for active records", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-unarchive-active-"));
   const storagePath = join(workdir, "agents");
@@ -10645,4 +10686,189 @@ test("onWorkspaceStateMayHaveChanged is not called for running shell tool calls"
   await manager.runAgent(snapshot.id, { text: "merge it" });
 
   expect(onWorkspaceStateMayHaveChanged).not.toHaveBeenCalled();
+});
+
+// eslint-disable-next-line complexity
+test("workspace archive stamps its agents and workspace unarchive restores exactly those", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-workspace-unarchive-"));
+  const storagePath = join(workdir, "agents");
+  const storage = new AgentStorage(storagePath, logger);
+  const client = new NativeArchiveRecordingClient();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: storage,
+    logger,
+  });
+
+  const workspaceId = "ws-cascade";
+  const agentA = await manager.createAgent(
+    { provider: "codex", cwd: workdir, title: "Cascade A" },
+    undefined,
+    { workspaceId },
+  );
+  const agentB = await manager.createAgent(
+    { provider: "codex", cwd: workdir, title: "Cascade B" },
+    undefined,
+    { workspaceId },
+  );
+  const crossWorkspaceChild = await manager.createAgent(
+    { provider: "codex", cwd: workdir, title: "Cross-workspace child" },
+    undefined,
+    {
+      workspaceId: "ws-other",
+      labels: { [PARENT_AGENT_ID_LABEL]: agentA.id },
+    },
+  );
+  const crossWorkspaceGrandchild = await manager.createAgent(
+    { provider: "codex", cwd: workdir, title: "Cross-workspace grandchild" },
+    undefined,
+    {
+      workspaceId: "ws-third",
+      labels: { [PARENT_AGENT_ID_LABEL]: crossWorkspaceChild.id },
+    },
+  );
+  const individuallyArchived = await manager.createAgent(
+    { provider: "codex", cwd: workdir, title: "Archived by hand" },
+    undefined,
+    { workspaceId },
+  );
+  const otherWorkspaceAgent = await manager.createAgent(
+    { provider: "codex", cwd: workdir, title: "Other workspace" },
+    undefined,
+    { workspaceId: "ws-other" },
+  );
+
+  // The user archived this agent before the workspace archive gesture: a later
+  // workspace restore must leave it archived.
+  await manager.archiveAgent(individuallyArchived.id);
+  const individuallyArchivedAt = (await storage.get(individuallyArchived.id))?.archivedAt;
+  expect(individuallyArchivedAt).toEqual(expect.any(String));
+
+  const archivedAgentIds = await archiveWorkspaceContents(
+    {
+      agentManager: manager,
+      agentStorage: storage,
+      killTerminalsForWorkspace: async () => {},
+      sessionLogger: logger,
+    },
+    workspaceId,
+  );
+
+  // The archive result includes children reached through the recursive cascade,
+  // even when those children belong to another workspace.
+  expect([...archivedAgentIds]).toEqual(
+    expect.arrayContaining([crossWorkspaceChild.id, crossWorkspaceGrandchild.id]),
+  );
+
+  const storedA = await storage.get(agentA.id);
+  const storedB = await storage.get(agentB.id);
+  const storedChild = await storage.get(crossWorkspaceChild.id);
+  const storedGrandchild = await storage.get(crossWorkspaceGrandchild.id);
+  const storedIndividual = await storage.get(individuallyArchived.id);
+  const storedOther = await storage.get(otherWorkspaceAgent.id);
+  expect(storedA?.archivedAt).toEqual(expect.any(String));
+  expect(storedA?.archivedWithWorkspaceId).toBe(workspaceId);
+  expect(storedB?.archivedAt).toEqual(expect.any(String));
+  expect(storedB?.archivedWithWorkspaceId).toBe(workspaceId);
+  expect(storedChild?.archivedAt).toEqual(expect.any(String));
+  expect(storedChild?.archivedWithWorkspaceId).toBe(workspaceId);
+  expect(storedGrandchild?.archivedAt).toEqual(expect.any(String));
+  expect(storedGrandchild?.archivedWithWorkspaceId).toBe(workspaceId);
+  expect(storedIndividual?.archivedAt).toBe(individuallyArchivedAt);
+  expect(storedIndividual?.archivedWithWorkspaceId ?? null).toBeNull();
+  expect(storedOther?.archivedAt ?? null).toBeNull();
+
+  const dispatchedAgentIds: string[] = [];
+  const unsubscribe = manager.subscribe(
+    (event) => {
+      if (event.type === "agent_state") {
+        dispatchedAgentIds.push(event.agent.id);
+      }
+    },
+    { replayState: false },
+  );
+  const unarchivedNativeCountBefore = client.unarchivedHandles.length;
+
+  const restored = await unarchiveWorkspaceContents(
+    {
+      agentManager: manager,
+      agentStorage: storage,
+      sessionLogger: logger,
+    },
+    workspaceId,
+  );
+  unsubscribe();
+
+  expect(new Set(restored.map((record) => record.id))).toEqual(
+    new Set([agentA.id, agentB.id, crossWorkspaceChild.id, crossWorkspaceGrandchild.id]),
+  );
+  const restoredA = await storage.get(agentA.id);
+  const restoredB = await storage.get(agentB.id);
+  const restoredChild = await storage.get(crossWorkspaceChild.id);
+  const restoredGrandchild = await storage.get(crossWorkspaceGrandchild.id);
+  expect(restoredA?.archivedAt).toBeNull();
+  expect(restoredA?.archivedWithWorkspaceId).toBeNull();
+  expect(restoredB?.archivedAt).toBeNull();
+  expect(restoredB?.archivedWithWorkspaceId).toBeNull();
+  expect(restoredChild?.archivedAt).toBeNull();
+  expect(restoredChild?.archivedWithWorkspaceId).toBeNull();
+  expect(restoredGrandchild?.archivedAt).toBeNull();
+  expect(restoredGrandchild?.archivedWithWorkspaceId).toBeNull();
+
+  // The individually archived agent stays where the user put it.
+  const untouchedIndividual = await storage.get(individuallyArchived.id);
+  expect(untouchedIndividual?.archivedAt).toBe(individuallyArchivedAt);
+
+  // Provider-native unarchive ran for exactly the restored agents.
+  expect(client.unarchivedHandles.length - unarchivedNativeCountBefore).toBe(4);
+
+  // Restored stored agents are dispatched so connected clients see them return.
+  expect(dispatchedAgentIds).toContain(agentA.id);
+  expect(dispatchedAgentIds).toContain(agentB.id);
+  expect(dispatchedAgentIds).toContain(crossWorkspaceChild.id);
+  expect(dispatchedAgentIds).toContain(crossWorkspaceGrandchild.id);
+  expect(dispatchedAgentIds).not.toContain(individuallyArchived.id);
+});
+
+test("workspace unarchive propagates provider failures so recovery can be retried", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-workspace-unarchive-failure-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const client = new NativeArchiveRecordingClient();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: storage,
+    logger,
+  });
+
+  const workspaceId = "ws-provider-failure";
+  const agent = await manager.createAgent(
+    { provider: "codex", cwd: workdir, title: "Provider failure" },
+    undefined,
+    { workspaceId },
+  );
+  await archiveWorkspaceContents(
+    {
+      agentManager: manager,
+      agentStorage: storage,
+      killTerminalsForWorkspace: async () => {},
+      sessionLogger: logger,
+    },
+    workspaceId,
+  );
+
+  client.unarchiveFailure = new Error("native unarchive failed");
+  await expect(
+    unarchiveWorkspaceContents(
+      {
+        agentManager: manager,
+        agentStorage: storage,
+        sessionLogger: logger,
+      },
+      workspaceId,
+    ),
+  ).rejects.toThrow("native unarchive failed");
+
+  const stillArchived = await storage.get(agent.id);
+  expect(stillArchived?.archivedAt).toEqual(expect.any(String));
+  expect(stillArchived?.archivedWithWorkspaceId).toBe(workspaceId);
 });

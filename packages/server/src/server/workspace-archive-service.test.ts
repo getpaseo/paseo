@@ -17,6 +17,7 @@ import {
   type ArchiveDependencies,
   type ArchiveResult,
   resolveWorkspaceIdAtPath,
+  unarchiveWorkspaceContentsAndActivate,
 } from "./workspace-archive-service.js";
 import { WorkspaceAutomationBlockedError } from "./workspace-automation-gate.js";
 
@@ -155,7 +156,10 @@ function createArchiveDeps(input: ArchiveDepsInput): ArchiveTestDependencies {
     },
     agentStorage: {
       listByWorkspace: async (): Promise<StoredAgentRecord[]> => [],
-    } as Pick<AgentStorage, "listByWorkspace">,
+      listDescendants: async (): Promise<StoredAgentRecord[]> => [],
+      get: async () => null,
+      updateRecord: async () => null,
+    } as Pick<AgentStorage, "listByWorkspace" | "listDescendants" | "get" | "updateRecord">,
     findWorkspaceIdForCwd: input.findWorkspaceIdForCwd ?? vi.fn(async () => null),
     listActiveWorkspaces: async () =>
       active.filter((workspace) => !archivedWorkspaceIds.has(workspace.workspaceId)),
@@ -762,7 +766,10 @@ describe("archiveByScope", () => {
           : ([
               { id: otherStoredAgentId, workspaceId: otherWorkspaceId, archivedAt: null },
             ] as StoredAgentRecord[]),
-    } as Pick<AgentStorage, "listByWorkspace">;
+      listDescendants: async () => [],
+      get: async () => null,
+      updateRecord: async () => null,
+    } as Pick<AgentStorage, "listByWorkspace" | "listDescendants" | "get" | "updateRecord">;
 
     const result = await archiveByScope(deps, {
       scope: { kind: "workspace", workspaceId: targetWorkspaceId },
@@ -799,8 +806,12 @@ describe("archiveByScope", () => {
       }),
     };
     deps.agentStorage = {
-      list: async () => [{ id: agentId, workspaceId, archivedAt: null }] as StoredAgentRecord[],
-    } as Pick<AgentStorage, "list">;
+      listByWorkspace: async () =>
+        [{ id: agentId, workspaceId, archivedAt: null }] as StoredAgentRecord[],
+      listDescendants: async () => [],
+      get: async () => null,
+      updateRecord: async () => null,
+    } as Pick<AgentStorage, "listByWorkspace" | "listDescendants" | "get" | "updateRecord">;
 
     const result = await archiveByScope(deps, {
       scope: { kind: "workspace", workspaceId },
@@ -876,5 +887,132 @@ describe("resolveWorkspaceIdAtPath", () => {
     );
 
     expect(result).toBe("ws-nested");
+  });
+});
+
+describe("workspace unarchive consistency", () => {
+  function createRestoreHarness(options?: { failUnarchiveId?: string; failArchiveId?: string }) {
+    const workspaceId = "ws-restore";
+    const records = new Map<string, StoredAgentRecord>(
+      ["agent-a", "agent-b"].map((id) => [
+        id,
+        {
+          id,
+          workspaceId,
+          archivedAt: "2026-08-01T00:00:00.000Z",
+          archivedWithWorkspaceId: workspaceId,
+        } as StoredAgentRecord,
+      ]),
+    );
+    const unarchived: string[] = [];
+    const archived: string[] = [];
+    const dependencies = {
+      agentManager: {
+        unarchiveSnapshot: async (agentId: string) => {
+          if (agentId === options?.failUnarchiveId) throw new Error("provider restore failed");
+          const record = records.get(agentId)!;
+          records.set(agentId, {
+            ...record,
+            archivedAt: null,
+            archivedWithWorkspaceId: null,
+          });
+          unarchived.push(agentId);
+          return true;
+        },
+        archiveSnapshot: async (agentId: string, archivedAt: string) => {
+          if (agentId === options?.failArchiveId) throw new Error("rollback write failed");
+          const record = records.get(agentId)!;
+          const archivedRecord = { ...record, archivedAt };
+          records.set(agentId, archivedRecord);
+          archived.push(agentId);
+          return archivedRecord;
+        },
+      },
+      agentStorage: {
+        listByArchivedWorkspace: async (archivedWorkspaceId: string) =>
+          [...records.values()].filter(
+            (record) => record.archivedWithWorkspaceId === archivedWorkspaceId,
+          ),
+        get: async (agentId: string) => records.get(agentId) ?? null,
+        updateRecord: async (
+          agentId: string,
+          update: (record: StoredAgentRecord) => StoredAgentRecord | null,
+        ) => {
+          const current = records.get(agentId)!;
+          const next = update(current);
+          if (next) records.set(agentId, next);
+          return next;
+        },
+      },
+      sessionLogger: createLogger(),
+    };
+    return { workspaceId, records, unarchived, archived, dependencies };
+  }
+
+  test("rolls back agents restored before a provider restore failure", async () => {
+    const harness = createRestoreHarness({ failUnarchiveId: "agent-b" });
+
+    await expect(
+      unarchiveWorkspaceContentsAndActivate(
+        harness.dependencies,
+        harness.workspaceId,
+        async () => {},
+      ),
+    ).rejects.toThrow("provider restore failed");
+
+    expect(harness.unarchived).toEqual(["agent-a"]);
+    expect(harness.archived).toEqual(["agent-a"]);
+    expect(harness.records.get("agent-a")).toMatchObject({
+      archivedAt: expect.any(String),
+      archivedWithWorkspaceId: harness.workspaceId,
+    });
+    expect(harness.records.get("agent-b")).toMatchObject({
+      archivedAt: expect.any(String),
+      archivedWithWorkspaceId: harness.workspaceId,
+    });
+  });
+
+  test("reports rollback failure and preserves its retry stamp", async () => {
+    const harness = createRestoreHarness({
+      failUnarchiveId: "agent-b",
+      failArchiveId: "agent-a",
+    });
+
+    await expect(
+      unarchiveWorkspaceContentsAndActivate(
+        harness.dependencies,
+        harness.workspaceId,
+        async () => {},
+      ),
+    ).rejects.toThrow("rollback also failed: Failed to roll back 1 agent(s)");
+
+    expect(harness.records.get("agent-a")).toMatchObject({
+      archivedAt: null,
+      archivedWithWorkspaceId: harness.workspaceId,
+    });
+  });
+
+  test("rolls restored agents back when workspace activation fails", async () => {
+    const harness = createRestoreHarness();
+
+    await expect(
+      unarchiveWorkspaceContentsAndActivate(harness.dependencies, harness.workspaceId, async () => {
+        throw new Error("workspace activation failed");
+      }),
+    ).rejects.toThrow("workspace activation failed");
+
+    expect(harness.archived).toEqual(["agent-a", "agent-b"]);
+    expect([...harness.records.values()]).toEqual([
+      expect.objectContaining({
+        id: "agent-a",
+        archivedAt: expect.any(String),
+        archivedWithWorkspaceId: harness.workspaceId,
+      }),
+      expect.objectContaining({
+        id: "agent-b",
+        archivedAt: expect.any(String),
+        archivedWithWorkspaceId: harness.workspaceId,
+      }),
+    ]);
   });
 });

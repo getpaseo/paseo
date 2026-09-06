@@ -86,6 +86,28 @@ export class WorkspaceProvisioningError extends Error {
   }
 }
 
+async function rollbackWorkspaceActivation(
+  steps: ReadonlyArray<() => Promise<void>>,
+  cause: unknown,
+  workspaceId: string,
+): Promise<void> {
+  const rollbackErrors: unknown[] = [];
+  for (const step of steps.toReversed()) {
+    try {
+      await step();
+    } catch (error) {
+      rollbackErrors.push(error);
+    }
+  }
+  if (rollbackErrors.length > 0) {
+    throw new AggregateError(
+      [cause, ...rollbackErrors],
+      `Failed to unarchive workspace ${workspaceId}; rollback also failed`,
+      { cause },
+    );
+  }
+}
+
 export function createWorkspaceProvisioningService(deps: {
   serverId?: string;
   workspaceRegistry: WorkspaceRegistry;
@@ -365,6 +387,7 @@ export function createWorkspaceProvisioningService(deps: {
     const autoArchivedChangeRequestUrl =
       await resolveRestoredAutoArchiveChangeRequestUrl(workspace);
     let next: PersistedWorkspaceRecord | null = null;
+    let nextProject: PersistedProjectRecord | null = null;
     if (workspace.archivedAt && checkout) {
       const placementUpdate = reconcileWorkspacePlacement({
         workspace,
@@ -391,18 +414,31 @@ export function createWorkspaceProvisioningService(deps: {
         serverId,
       });
       if (project.archivedAt || project.kind !== kind || project.projectKey !== projectKey) {
-        await projectRegistry.upsert({
+        nextProject = {
           ...project,
           kind,
           projectKey,
           archivedAt: null,
           updatedAt: timestamp,
-        });
+        };
       }
     }
-    if (!next) return workspace;
-    await workspaceRegistry.upsert(next);
-    return next;
+
+    const rollbackSteps: Array<() => Promise<void>> = [];
+    try {
+      if (nextProject) {
+        rollbackSteps.push(() => projectRegistry.upsert(project));
+        await projectRegistry.upsert(nextProject);
+      }
+      if (next) {
+        rollbackSteps.push(() => workspaceRegistry.upsert(workspace));
+        await workspaceRegistry.upsert(next);
+      }
+      return next ?? workspace;
+    } catch (cause) {
+      await rollbackWorkspaceActivation(rollbackSteps, cause, workspace.workspaceId);
+      throw cause;
+    }
   }
 
   async function refreshWorkspaceRecord(

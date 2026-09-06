@@ -14,13 +14,6 @@ import type { SeedDaemonClient } from "../support/helpers/seed-client";
 import { getServerId } from "../support/helpers/server-id";
 import { waitForSidebarHydration } from "../support/helpers/workspace-ui";
 
-interface TimelineClient extends SeedDaemonClient {
-  fetchAgentTimeline(
-    agentId: string,
-    options: { direction: "tail"; projection: "projected"; limit: number },
-  ): Promise<unknown>;
-}
-
 const INITIAL_PROMPT = "Reply with exactly CODEX_ARCHIVE_TIMELINE_SENTINEL and nothing else.";
 const INITIAL_REPLY = "CODEX_ARCHIVE_TIMELINE_SENTINEL";
 const FOLLOW_UP_PROMPT = "Reply with exactly CODEX_UNARCHIVED_SENTINEL and nothing else.";
@@ -34,7 +27,7 @@ async function historyContainsAgent(client: SeedDaemonClient, agentId: string): 
 test.describe("archived Codex agent recovery", () => {
   test.setTimeout(600_000);
 
-  test("cold-opens without provider history, then unarchives and restores the conversation", async ({
+  test("cold-opens with its conversation, then unarchives and continues the thread", async ({
     page,
   }) => {
     const cwd = realpathSync(mkdtempSync(path.join(tmpdir(), "paseo-archived-codex-")));
@@ -63,14 +56,6 @@ test.describe("archived Codex agent recovery", () => {
         )
         .not.toBeNull();
 
-      const timelineClient = handle.client as TimelineClient;
-      await expect(
-        timelineClient.fetchAgentTimeline(handle.agentId, {
-          direction: "tail",
-          projection: "projected",
-          limit: 100,
-        }),
-      ).rejects.toThrow(/archiv/i);
       await expect
         .poll(async () => (handle ? historyContainsAgent(handle.client, handle.agentId) : false), {
           timeout: 30_000,
@@ -90,7 +75,10 @@ test.describe("archived Codex agent recovery", () => {
       });
       await expect(page.getByTestId("agent-load-error")).toHaveCount(0);
       await expect(page.getByTestId("agent-timeline-sync-error")).toHaveCount(0);
-      await expect(page.getByTestId("user-message")).toHaveCount(0);
+      await assertChatTranscript(handle, [
+        { role: "user", text: INITIAL_PROMPT },
+        { role: "assistant", text: INITIAL_REPLY },
+      ]);
 
       await page.getByRole("button", { name: "Unarchive" }).click();
       await expect(page.getByRole("button", { name: "Unarchive" })).toHaveCount(0, {

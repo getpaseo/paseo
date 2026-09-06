@@ -1,6 +1,7 @@
 import { resolve } from "node:path";
 
 import type { Logger } from "pino";
+import { PARENT_AGENT_ID_LABEL } from "@getpaseo/protocol/agent-labels";
 
 import type { AgentManager } from "./agent/agent-manager.js";
 import type { AgentStorage, StoredAgentRecord } from "./agent/agent-storage.js";
@@ -34,7 +35,7 @@ export interface ArchiveDependencies {
   github: ForgeService;
   workspaceGitService: Pick<WorkspaceGitService, "getSnapshot">;
   agentManager: Pick<AgentManager, "listAgents" | "getAgent" | "archiveAgent" | "archiveSnapshot">;
-  agentStorage: Pick<AgentStorage, "listByWorkspace">;
+  agentStorage: Pick<AgentStorage, "listByWorkspace" | "listDescendants" | "get" | "updateRecord">;
   // Resolves the worktree at a path to its workspaceId for archive-by-path. The
   // path uniquely identifies a worktree workspace; this is a directory lookup for
   // the archive target, not status/ownership.
@@ -472,24 +473,49 @@ export async function archiveWorkspaceContents(
     archivedAgents.add(agent.id);
   }
 
+  let matchingStoredRecords: StoredAgentRecord[] = [];
   let storedRecords: StoredAgentRecord[] = [];
   try {
-    storedRecords = await dependencies.agentStorage.listByWorkspace(workspaceId);
+    matchingStoredRecords = await dependencies.agentStorage.listByWorkspace(workspaceId);
+    const descendants = await dependencies.agentStorage.listDescendants([
+      ...liveAgents.map((agent) => agent.id),
+      ...matchingStoredRecords.map((record) => record.id),
+    ]);
+    storedRecords = [...matchingStoredRecords, ...descendants];
   } catch (error) {
     dependencies.sessionLogger?.warn(
       { err: error, workspaceId },
       "Failed to list stored agents during workspace archive; continuing",
     );
   }
-  const matchingStoredRecords = storedRecords;
+  const liveAgentIds = new Set(liveAgents.map((agent) => agent.id));
+  const storedRecordsById = new Map(storedRecords.map((record) => [record.id, record]));
   for (const record of matchingStoredRecords) {
     archivedAgents.add(record.id);
+  }
+
+  const snapshotsToArchive = matchingStoredRecords.filter(
+    (record) => !liveAgentIds.has(record.id) && !record.archivedAt,
+  );
+  // Exactly the agents this gesture takes from unarchived to archived. Agents the
+  // user archived individually beforehand are excluded so workspace restore leaves
+  // them where the user put them.
+  const cascadedAgentIds = findWorkspaceCascadeAgentIds(
+    storedRecords,
+    liveAgents
+      .filter((agent) => !storedRecordsById.get(agent.id)?.archivedAt)
+      .map((agent) => agent.id),
+    snapshotsToArchive.map((record) => record.id),
+  );
+  for (const agentId of cascadedAgentIds) {
+    archivedAgents.add(agentId);
   }
 
   const archivedAt = new Date().toISOString();
   const agentIdsToArchive = new Set([
     ...liveAgents.map((agent) => agent.id),
     ...matchingStoredRecords.filter((record) => !record.archivedAt).map((record) => record.id),
+    ...cascadedAgentIds,
   ]);
   const archiveResults = await Promise.allSettled([
     ...[...agentIdsToArchive].map((agentId) =>
@@ -509,7 +535,242 @@ export async function archiveWorkspaceContents(
     }
   }
 
+  await stampCascadeArchivedAgents(dependencies, cascadedAgentIds, workspaceId);
+
   return archivedAgents;
+}
+
+function findWorkspaceCascadeAgentIds(
+  storedRecords: readonly StoredAgentRecord[],
+  ...rootIdGroups: ReadonlyArray<readonly string[]>
+): string[] {
+  const initiallyUnarchivedIds = new Set(
+    storedRecords.filter((record) => !record.archivedAt).map((record) => record.id),
+  );
+  const childrenByParent = new Map<string, string[]>();
+  for (const record of storedRecords) {
+    const parentId = record.labels?.[PARENT_AGENT_ID_LABEL];
+    if (!parentId) continue;
+    const children = childrenByParent.get(parentId) ?? [];
+    children.push(record.id);
+    childrenByParent.set(parentId, children);
+  }
+
+  const archivedByWorkspace = new Set(rootIdGroups.flat());
+  const pending = [...archivedByWorkspace];
+  while (pending.length > 0) {
+    const parentId = pending.pop();
+    if (!parentId) continue;
+    for (const childId of childrenByParent.get(parentId) ?? []) {
+      // AgentManager's cascade skips an already-archived child and therefore does
+      // not reach descendants beneath that child either.
+      if (!initiallyUnarchivedIds.has(childId) || archivedByWorkspace.has(childId)) {
+        continue;
+      }
+      archivedByWorkspace.add(childId);
+      pending.push(childId);
+    }
+  }
+
+  return [...archivedByWorkspace];
+}
+
+// Marks the records this gesture archived so `unarchiveWorkspaceContents` can find
+// them again. Runs AFTER the archive fan-out on purpose: `archiveAgent` rebuilds the
+// record (and cascade-archives children concurrently), so a stamp written inline
+// would be overwritten by the archive projection.
+async function stampCascadeArchivedAgents(
+  dependencies: ArchiveWorkspaceContentsDependencies,
+  agentIds: readonly string[],
+  workspaceId: string,
+): Promise<void> {
+  const results = await Promise.allSettled(
+    agentIds.map(async (agentId) =>
+      // Read-modify-write inside the storage write queue: `archiveAgent` closes the
+      // agent, which fires an un-awaited background persist, so reading the record
+      // out here could hand us a stale copy and clobber that persist on write-back.
+      dependencies.agentStorage.updateRecord(agentId, (record) => {
+        // Only stamp what actually ended up archived; a failed archive step must not
+        // leave a stamp that a later restore would act on.
+        if (!record.archivedAt || record.archivedWithWorkspaceId === workspaceId) {
+          return null;
+        }
+        return { ...record, archivedWithWorkspaceId: workspaceId };
+      }),
+    ),
+  );
+
+  for (const result of results) {
+    if (result.status === "rejected") {
+      dependencies.sessionLogger?.warn(
+        { err: result.reason, workspaceId },
+        "Failed to stamp workspace-archived agent; workspace restore will skip it",
+      );
+    }
+  }
+}
+
+export interface UnarchiveWorkspaceContentsDependencies {
+  agentManager: Pick<AgentManager, "archiveSnapshot" | "unarchiveSnapshot">;
+  agentStorage: Pick<AgentStorage, "listByArchivedWorkspace" | "get" | "updateRecord">;
+  sessionLogger?: Logger;
+}
+
+async function rollbackWorkspaceContents(
+  dependencies: UnarchiveWorkspaceContentsDependencies,
+  workspaceId: string,
+  records: readonly StoredAgentRecord[],
+): Promise<void> {
+  const archivedAt = new Date().toISOString();
+  const failures: unknown[] = [];
+
+  for (const record of records) {
+    const runRollbackStep = async (step: () => Promise<unknown>): Promise<void> => {
+      try {
+        await step();
+      } catch (error) {
+        failures.push(error);
+        dependencies.sessionLogger?.error(
+          { err: error, workspaceId, agentId: record.id },
+          "Failed to roll back agent during workspace restore",
+        );
+      }
+    };
+
+    // Stamp both before and after archiving. Either successful write preserves
+    // the retry marker, including when the archive step itself fails.
+    await runRollbackStep(() =>
+      dependencies.agentStorage.updateRecord(record.id, (current) => ({
+        ...current,
+        archivedWithWorkspaceId: workspaceId,
+      })),
+    );
+    await runRollbackStep(() =>
+      dependencies.agentManager.archiveSnapshot(record.id, archivedAt, {
+        nativeArchiveMode: "required",
+      }),
+    );
+    await runRollbackStep(() =>
+      dependencies.agentStorage.updateRecord(record.id, (current) => ({
+        ...current,
+        archivedWithWorkspaceId: workspaceId,
+      })),
+    );
+  }
+
+  if (failures.length > 0) {
+    throw new AggregateError(
+      failures,
+      `Failed to roll back ${failures.length} agent(s) for workspace ${workspaceId}`,
+    );
+  }
+}
+
+function workspaceRestoreError(
+  workspaceId: string,
+  cause: unknown,
+  rollbackError?: unknown,
+): Error {
+  const detail = cause instanceof Error ? `: ${cause.message}` : "";
+  if (!rollbackError) {
+    return new Error(`Failed to restore workspace ${workspaceId}${detail}`, { cause });
+  }
+  const rollbackDetail = rollbackError instanceof Error ? `: ${rollbackError.message}` : "";
+  return new AggregateError(
+    [cause, rollbackError],
+    `Failed to restore workspace ${workspaceId}${detail}; rollback also failed${rollbackDetail}`,
+  );
+}
+
+// Inverse of `archiveWorkspaceContents`: restores exactly the agents that were
+// archived as part of archiving this workspace (stamped with
+// `archivedWithWorkspaceId`). Agents archived individually before the workspace was
+// archived carry no stamp and stay archived. Goes through
+// `AgentManager.unarchiveSnapshot` so the provider's native unarchive hook (e.g.
+// Codex `thread/unarchive`) runs, and so the stamp is cleared.
+// Returns the restored records so the caller can publish them to clients.
+export async function unarchiveWorkspaceContents(
+  dependencies: UnarchiveWorkspaceContentsDependencies,
+  workspaceId: string,
+): Promise<StoredAgentRecord[]> {
+  let storedRecords: StoredAgentRecord[] = [];
+  try {
+    storedRecords = await dependencies.agentStorage.listByArchivedWorkspace(workspaceId);
+  } catch (error) {
+    dependencies.sessionLogger?.warn(
+      { err: error, workspaceId },
+      "Failed to list stored agents during workspace unarchive",
+    );
+    throw error;
+  }
+
+  // A stamped active record means a previous rollback failed after preserving
+  // its retry marker. Treat it as already restored so this attempt can converge
+  // by activating the workspace or rolling the record back again.
+  const candidates = storedRecords;
+  if (candidates.length === 0) {
+    return [];
+  }
+
+  const restored: StoredAgentRecord[] = [];
+  try {
+    for (const candidate of candidates) {
+      if (candidate.archivedAt) {
+        const unarchived = await dependencies.agentManager.unarchiveSnapshot(candidate.id);
+        if (!unarchived) {
+          throw new Error(`Stamped agent was not archived: ${candidate.id}`);
+        }
+        restored.push(candidate);
+      } else {
+        restored.push(candidate);
+        await dependencies.agentStorage.updateRecord(candidate.id, (current) => ({
+          ...current,
+          archivedWithWorkspaceId: null,
+        }));
+      }
+      const record = await dependencies.agentStorage.get(candidate.id);
+      if (!record) {
+        throw new Error(`Restored agent disappeared from storage: ${candidate.id}`);
+      }
+      restored[restored.length - 1] = record;
+    }
+  } catch (cause) {
+    dependencies.sessionLogger?.warn(
+      { err: cause, workspaceId },
+      "Failed to unarchive agent during workspace restore; rolling back restored agents",
+    );
+    try {
+      await rollbackWorkspaceContents(dependencies, workspaceId, restored);
+    } catch (rollbackError) {
+      throw workspaceRestoreError(workspaceId, cause, rollbackError);
+    }
+    throw workspaceRestoreError(workspaceId, cause);
+  }
+
+  return restored;
+}
+
+export async function unarchiveWorkspaceContentsAndActivate(
+  dependencies: UnarchiveWorkspaceContentsDependencies,
+  workspaceId: string,
+  activateWorkspace: () => Promise<void>,
+): Promise<StoredAgentRecord[]> {
+  const restored = await unarchiveWorkspaceContents(dependencies, workspaceId);
+  try {
+    await activateWorkspace();
+    return restored;
+  } catch (cause) {
+    dependencies.sessionLogger?.warn(
+      { err: cause, workspaceId },
+      "Failed to activate workspace after restoring agents; rolling back restored agents",
+    );
+    try {
+      await rollbackWorkspaceContents(dependencies, workspaceId, restored);
+    } catch (rollbackError) {
+      throw workspaceRestoreError(workspaceId, cause, rollbackError);
+    }
+    throw workspaceRestoreError(workspaceId, cause);
+  }
 }
 
 // True when, after archiving

@@ -175,9 +175,6 @@ function resolveAgentScreenSync(args: {
   hadInitialSyncFailure: boolean;
 }): AgentScreenReadySyncState {
   const { input, hadInitialSyncFailure } = args;
-  if (input.isArchived) {
-    return { status: "idle" };
-  }
   if (!input.isConnected) {
     return { status: "reconnecting" };
   }

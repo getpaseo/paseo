@@ -109,16 +109,27 @@ archived workspace. History navigation must not infer workspace lifecycle from `
 or mutate either lifecycle. The workspace route asks the daemon for authoritative recovery state;
 only the route's explicit Unarchive or Restore action changes the archived workspace.
 
+**Workspace unarchive restores the workspace's agents.** Archiving a workspace archives every agent
+that belongs to it (`archiveWorkspaceContents`), and each agent taken from unarchived to archived by
+that gesture is stamped with `archivedWithWorkspaceId` on its stored record. The stamp is
+storage-only — it never crosses the wire. Unarchiving the workspace
+(`unarchiveWorkspaceContents`) restores exactly the stamped agents — running each one's
+provider-native unarchive hook and clearing the stamp — so the workspace comes back with the threads
+it had when it was archived. Agents the user archived individually before the workspace archive
+carry no stamp and stay archived; they remain recoverable from History. Unarchiving an agent
+individually also clears its stamp, so a later workspace restore leaves it alone.
+
 History navigation preserves the selected agent as an explicit recovery target. If both that agent
-and its workspace are archived, the workspace recovery action restores the workspace and unarchives
-the selected agent as one user action. Other archived agents in the restored workspace remain
+and its workspace are archived, the workspace recovery action restores the workspace along with the
+agents stamped by its archive gesture. Individually-archived agents in the restored workspace remain
 recoverable from History. Opening one pins its tab and renders the archived-agent callout. Authoritative
-timeline catch-up may load provider history with a runtime-only `history` resume purpose, which must
-leave both Paseo's `archivedAt` and the provider's native archive state unchanged. **Unarchive** remains
-the only transition back to an interactive runtime: it runs the provider's native unarchive hook
-(including Codex `thread/unarchive`) before the normal agent resume and timeline hydration flow. A
-provider session can be archived outside Paseo while its Paseo agent remains active. Interactive
-resume repairs that drift through the provider's native unarchive hook; history resume does not.
+timeline catch-up restores its conversation read-only. It may load provider history with a runtime-only
+`history` resume purpose, which must leave both Paseo's `archivedAt` and the provider's native archive
+state unchanged. **Unarchive** remains the only transition back to an interactive runtime: it runs the
+provider's native unarchive hook (including Codex `thread/unarchive`) before the normal agent resume and
+timeline hydration flow. A provider session can be archived outside Paseo while its Paseo agent remains
+active. Interactive resume repairs that drift through the provider's native unarchive hook; history
+resume does not.
 
 Provider session connection owns every process it spawns until the session is registered with
 `AgentManager`. If initialization, persisted-session resume, or initial history hydration fails,
