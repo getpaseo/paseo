@@ -22,6 +22,8 @@ const CREATE_AGENT_PREFERENCES_KEY = "@paseo:create-agent-preferences";
 const MODELESS_PROVIDER = "modeless-profile-e2e";
 const MODELESS_MODEL = "pi-profile-model";
 
+test.use({ e2eForkProviders: ["opencode"] });
+
 type WebSocketMessage = string | Buffer;
 
 interface CreateAgentRequestMessage {
@@ -30,6 +32,7 @@ interface CreateAgentRequestMessage {
     provider?: unknown;
     modeId?: unknown;
     featureValues?: unknown;
+    model?: unknown;
   };
 }
 

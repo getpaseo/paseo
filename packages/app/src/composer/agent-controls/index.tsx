@@ -101,6 +101,14 @@ type AgentControlSelector = "provider" | "mode" | "model" | "thinking" | `featur
 
 const EMPTY_AGENT_PROVIDER_DEFINITIONS: AgentProviderDefinition[] = [];
 
+function isAgentModelEnabled(features: AgentFeature[] | undefined): boolean {
+  return (
+    features?.some(
+      (feature) => feature.type === "toggle" && feature.id === "agent_model" && feature.value,
+    ) === true
+  );
+}
+
 interface ControlledAgentControlsProps {
   provider: string;
   providerOptions?: AgentControlOption[];
@@ -520,7 +528,7 @@ function ControlledAgentControls({
   const canSelectProvider = Boolean(
     onSelectProvider && providerOptions && providerOptions.length > 0,
   );
-  const canSelectModel = Boolean(onSelectModel);
+  const canSelectModel = Boolean(onSelectModel) && !isAgentModelEnabled(features);
   const canSelectThinking = Boolean(
     onSelectThinkingOption && thinkingOptions && thinkingOptions.length > 0,
   );

@@ -95,9 +95,15 @@ function buildModelSelection(
   }
   const selectableModels = filterSelectableModels(models) ?? [];
   if (selectableModels.length === 0) {
-    return { kind: "models", rows: [buildSyntheticDefaultRow(provider, providerLabel)] };
+    return {
+      kind: "models",
+      rows: [buildSyntheticDefaultRow(provider, providerLabel)],
+    };
   }
-  return { kind: "models", rows: buildModelRows(provider, providerLabel, selectableModels) };
+  return {
+    kind: "models",
+    rows: buildModelRows(provider, providerLabel, selectableModels),
+  };
 }
 
 function buildEntryModelSelection(

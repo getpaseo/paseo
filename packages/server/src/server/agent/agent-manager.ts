@@ -4838,15 +4838,19 @@ export class AgentManager {
       normalized.model = trimmed.length > 0 && trimmed !== "default" ? trimmed : undefined;
     }
 
-    const shouldResolveDefaultModel = options.resolveDefaultModel ?? true;
-    if (shouldResolveDefaultModel && !normalized.model) {
-      const defaultModelId = await this.resolveDefaultModelId(normalized);
-      if (defaultModelId) {
-        normalized.model = defaultModelId;
-      }
-    }
+    normalized.model = await this.resolveImplicitModel(normalized, options);
 
     return this.applyProviderConfiguration(normalized);
+  }
+
+  private async resolveImplicitModel(
+    config: AgentSessionConfig,
+    options: NormalizeConfigOptions,
+  ): Promise<string | undefined> {
+    if (config.model || !(options.resolveDefaultModel ?? true)) return config.model;
+
+    const resolved = await this.resolveDefaultModelId(config);
+    return resolved?.id;
   }
 
   private applyProviderConfiguration(config: AgentSessionConfig): AgentSessionConfig {
@@ -4881,7 +4885,9 @@ export class AgentManager {
     }
   }
 
-  private async resolveDefaultModelId(config: AgentSessionConfig): Promise<string | undefined> {
+  private async resolveDefaultModelId(
+    config: AgentSessionConfig,
+  ): Promise<{ id: string; isConfigured: boolean } | undefined> {
     const client = this.clients.get(config.provider);
     if (!client) {
       return undefined;
@@ -4892,7 +4898,9 @@ export class AgentManager {
         cwd: config.cwd,
         force: false,
       });
-      return (catalog.models.find((model) => model.isDefault) ?? catalog.models[0])?.id;
+      const configuredDefault = catalog.models.find((model) => model.isDefault);
+      const model = configuredDefault ?? catalog.models[0];
+      return model ? { id: model.id, isConfigured: Boolean(configuredDefault) } : undefined;
     } catch {
       // Provider may not support model listing — leave model undefined.
       return undefined;

@@ -1708,6 +1708,49 @@ test("normalizeConfig injects the provider default model while leaving mode omit
   expect(snapshot.config.modeId).toBeUndefined();
 });
 
+test("normalizeConfig honors configured default models", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-provider-configured-default-test-"));
+  class ProviderDefaultClient extends TestAgentClient {
+    override async fetchCatalog() {
+      return {
+        models: [
+          {
+            provider: this.provider,
+            id: "configured-default",
+            label: "Configured default",
+            isDefault: true,
+          },
+          {
+            provider: this.provider,
+            id: "provider-model",
+            label: "Provider model",
+          },
+        ],
+        modes: [],
+      };
+    }
+  }
+  const client = new ProviderDefaultClient();
+  const manager = new AgentManager({ clients: { codex: client }, logger });
+
+  try {
+    const snapshot = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+
+    expect({
+      storedModel: snapshot.config.model,
+      createModel: client.createdConfigs[0]?.model,
+    }).toEqual({
+      storedModel: "configured-default",
+      createModel: "configured-default",
+    });
+  } finally {
+    await manager.flushForShutdown();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
 test("normalizeConfig leaves Claude mode omitted", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-claude-default-test-"));
   const manager = new AgentManager({
