@@ -528,7 +528,7 @@ describe("normalizeWorkspaceDescriptor", () => {
     expect(workspace.archivingAt).toBeNull();
   });
 
-  it("normalizes statusEnteredAt strings to Date and missing or null values to null", () => {
+  it("normalizes workspace timestamps and rejects invalid dates", () => {
     const basePayload = {
       id: "1",
       projectId: "1",
@@ -539,7 +539,7 @@ describe("normalizeWorkspaceDescriptor", () => {
       workspaceKind: "checkout",
       name: "main",
       status: "running",
-      activityAt: null,
+      activityAt: "2026-05-12T10:30:00.000Z",
       diffStat: null,
       scripts: [],
     } satisfies Omit<WorkspaceDescriptorPayload, "statusEnteredAt" | "archivingAt">;
@@ -560,8 +560,18 @@ describe("normalizeWorkspaceDescriptor", () => {
     } as unknown as WorkspaceDescriptorPayload);
 
     expect(withString.statusEnteredAt).toEqual(new Date("2026-05-12T09:30:00.000Z"));
+    expect(withString.activityAt).toEqual(new Date("2026-05-12T10:30:00.000Z"));
     expect(withNull.statusEnteredAt).toBeNull();
     expect(missing.statusEnteredAt).toBeNull();
+
+    const invalid = normalizeWorkspaceDescriptor({
+      ...basePayload,
+      archivingAt: null,
+      statusEnteredAt: "not-a-date",
+      activityAt: "not-a-date",
+    });
+    expect(invalid.statusEnteredAt).toBeNull();
+    expect(invalid.activityAt).toBeNull();
   });
 
   it("preserves project placement from workspace descriptor payloads", () => {
