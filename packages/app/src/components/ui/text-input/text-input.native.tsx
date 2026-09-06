@@ -5,7 +5,7 @@ import PasteInput, {
   type PastedFile,
   type PasteTextInputInstance,
 } from "@mattermost/react-native-paste-input";
-import { useIsInsideBottomSheet } from "./bottom-sheet-scope";
+import { useIsInsideBottomSheet } from "@/components/ui/bottom-sheet-scope";
 import type { EditingTextInputHandle, EditingTextInputProps } from "./types";
 
 type NativeInput = (TextInput | PasteTextInputInstance) & {

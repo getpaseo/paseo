@@ -30,7 +30,12 @@ function useModalContext(): ModalContextValue {
   return context;
 }
 
-function ModalContent({ children }: ModalContentProps) {
+function ModalContent({
+  children,
+  style,
+  contentContainerStyle,
+  scrollable = true,
+}: ModalContentProps) {
   const modal = useModalContext();
   const queryClient = useQueryClient();
   const toast = useAppToast();
@@ -52,6 +57,10 @@ function ModalContent({ children }: ModalContentProps) {
       onClose={modal.dismiss}
       header={modal.header}
       contextBridge={contextBridge}
+      bodyStyle={style}
+      contentStyle={contentContainerStyle}
+      scrollable={scrollable}
+      desktopHeight={scrollable ? undefined : "85%"}
     >
       {children}
     </AdaptiveModalSheet>

@@ -65,6 +65,7 @@
     "@types/node": "^20.9.0",
     "@types/react": "~19.2.0",
     "react": "19.1.0",
+    "react-native": "0.81.5",
     "typescript": "^5.9.3",
     "vitest": "^4.1.6",
     "zod": "^4.4.3"
@@ -73,6 +74,12 @@
     "@getpaseo/client": "0.7.2",
     "@getpaseo/protocol": "0.7.2",
     "react": "19.1.0",
+    "react-native": ">=0.81.5",
     "zod": "^4.4.3"
+  },
+  "peerDependenciesMeta": {
+    "react-native": {
+      "optional": true
+    }
   }
 }
