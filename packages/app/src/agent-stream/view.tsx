@@ -23,6 +23,8 @@ import {
 } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { MAX_CONTENT_WIDTH, useIsCompactFormFactor } from "@/constants/layout";
+import { useContainerWidth } from "@/hooks/use-container-width";
+import { isNative } from "@/constants/platform";
 import { useMutation } from "@tanstack/react-query";
 import Animated, { FadeIn, FadeOut } from "react-native-reanimated";
 import { Check, ChevronDown, X } from "lucide-react-native";
@@ -1759,9 +1761,14 @@ interface StreamItemWrapperProps {
 }
 
 function StreamItemWrapper({ gapBelow, children }: StreamItemWrapperProps) {
+  const { onLayout, width } = useContainerWidth();
   const wrapperStyle = useMemo(
     () => [stylesheet.streamItemWrapper, { marginBottom: gapBelow }],
     [gapBelow],
   );
-  return <View style={wrapperStyle}>{children}</View>;
+  return (
+    <View style={wrapperStyle} onLayout={isNative ? onLayout : undefined}>
+      <React.Fragment key={isNative ? width : 0}>{children}</React.Fragment>
+    </View>
+  );
 }
