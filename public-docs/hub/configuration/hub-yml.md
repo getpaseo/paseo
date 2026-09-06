@@ -219,9 +219,32 @@ An expression-valued `agent` selects a named agent. Dynamic provider fields insi
 
 ### Workspace affinity
 
-`workspace_affinity` is an explicit step-level lease for a daemon workspace. It is useful when
-multiple events from one Slack thread, Discord thread, GitHub issue, or pull request should use the
-same workspace:
+Set `run.workspace_affinity.key` in a self-contained trigger, or open **Workspace affinity** under
+**Where it runs** in the trigger form. Leave the key empty in the form to disable reuse. For example,
+this complete trigger shares a workspace across comments on the same Linear issue:
+
+```yaml
+name: linear-triage
+on:
+  linear.comment_created:
+    connection: company-linear
+    filters:
+      from_users: [your-linear-user-id]
+run:
+  target: { daemon: build-server, cwd: /workspace/project }
+  agent: { provider: codex, mode: full-access }
+  max_runtime: 2h
+  idle_timeout: 10m
+  auto_archive: true
+  workspace_affinity:
+    key: "triage:${{ paseo.trigger.conversation_key }}"
+  prompt: |
+    Handle this request: ${{ paseo.prompt }}
+    Use hub.reply for your response, then call hub.finish_execution.
+```
+
+Existing workflow bundles use the same `workspace_affinity` object on a step. A one-step legacy
+workflow can migrate to the single-run format without losing its key or timeout/archive policy:
 
 ```yaml
 steps:
@@ -240,16 +263,25 @@ steps:
 `paseo.trigger.conversation_key` is available only in `workspace_affinity.key`. It is generated
 from provider-authenticated event identifiers: Slack uses its connection, workspace, channel, and
 root thread; Discord uses its connection, guild, channel, and thread or starter message; GitHub
-uses its connection, repository, issue or pull-request type, and number. A literal key is also
-valid when intentionally sharing a workspace, and finite declared inputs, values, and step outputs
-may be composed into a key. Prompt text, ambient context, execution IDs, and unbounded values are
-rejected so an event cannot steer itself into a pre-existing workspace.
+uses its connection, repository, issue or pull-request type, and number. Linear uses its connection,
+organization, and stable issue UUID for `linear.issue_entered_scope`, `linear.issue_assigned`, and
+`linear.comment_created`. Renaming or moving an issue within its organization does not change its key. Other events, including
+`manual.run` and `github.push`, do not expose a conversation key.
+
+A literal key is valid when intentionally sharing a workspace. Finite declared inputs can be
+composed into a key; workflow bundles also support finite values and earlier step outputs. Prompt
+text, ambient context, execution IDs, and unbounded values are rejected so an event cannot steer
+itself into a pre-existing workspace. Rendered keys must be nonblank and 1–512 characters long.
+Whitespace is preserved exactly. Prefix the key when different automations should keep separate
+workspaces; Hub does not add a workflow prefix for you.
 
 Hub passes the opaque key and the workflow's `max_runtime` deadline to the daemon. The daemon hashes
 and persists the mapping, reuses an active workspace, and restores an archived workspace when a
-matching event arrives. Each matching event extends retention through its own workflow deadline.
-With `auto_archive: true`, the daemon archives the workspace at that retained deadline; it does not
-use `idle_timeout`, which remains a liveness deadline for the current execution. With
+matching event arrives. Each matching event extends retention through its own workflow deadline,
+including gaps after individual agents finish. For a single-run trigger, that is the top-level
+`max_runtime` when authored, otherwise `run.max_runtime`. With `auto_archive: true`, the daemon
+archives the workspace when safe at or after that retained deadline; it does not use `idle_timeout`,
+which remains a liveness deadline for the current execution. With
 `auto_archive: false`, the daemon does not perform affinity-driven workspace archiving.
 Disconnecting or revoking the Hub relationship does not cancel a deadline the daemon already
 acknowledged; persisted affinity cleanup resumes after daemon restart. If a crash interrupts the
@@ -264,13 +296,25 @@ the workspace archive exclusion begins.
 Workspace affinity is a progressive daemon capability. Older daemons ignore the optional lease and
 continue using their existing fresh-workspace behavior; Hub still runs the workflow and does not
 require an immediate daemon upgrade. Exact reuse, retention, and archived-workspace restoration take
-effect after the daemon is updated to a version that acknowledges workspace affinity.
+effect after the daemon is updated to a version that acknowledges workspace affinity. A successful
+Hub execution alone does not prove that the daemon applied affinity. Hub's restricted execution
+permission cannot select or restore existing workspaces on older daemons; Hub does not request
+broader workspace-management permissions to emulate this feature.
 
 Affinity shares a workspace, not an agent or a queue: matching executions may run concurrently.
 Every use of the same key must use the same daemon environment target, cwd, worktree target, and
 auto-archive policy. A target mismatch is rejected. In particular, a worktree branch containing
 `${{ paseo.execution.id }}` is unique per execution, so Hub rejects that combination during
 configuration validation.
+
+For the in-progress Linear Agent Sessions integration, use issue identity for workspace sharing and
+keep Linear's session ID for replies and stop signals. Separate sessions on one issue can then use
+the same files without sharing provider-agent history. Session events need their own integration
+tests and support before they can use the conversation-key expression; they are not enabled by this
+issue/comment implementation. Resuming a provider agent or serializing writers is a separate policy.
+
+Restoring an archived worktree recreates it from its recorded branch; it does not recover arbitrary
+uncommitted files deleted during archival. Commit or export results that must survive expiry.
 
 ### Prompt semantics
 
