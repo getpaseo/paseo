@@ -311,8 +311,8 @@ test("an empty Changes comparison links to the populated comparison", async ({ p
   await mode.click();
   await page.getByTestId("changes-diff-mode-uncommitted").click();
 
-  await expect(tree.getByText("No uncommitted changes", { exact: true })).toBeVisible();
-  await expect(panel.getByText("No uncommitted changes", { exact: true })).toBeVisible();
+  await expect(tree.getByText("No changes to display", { exact: true })).toBeVisible();
+  await expect(panel.getByText("No changes to display", { exact: true })).toBeVisible();
   const seeCommitted = tree.getByRole("button", { name: "See committed changes" });
   await expect(seeCommitted).toBeVisible();
   await seeCommitted.click();
