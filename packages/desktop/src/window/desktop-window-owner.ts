@@ -29,7 +29,10 @@ export interface DesktopWindowOwner<TAgentTarget> {
     initialRoute?: string | null;
     pendingProjectPath?: string | null;
   }): Promise<void>;
-  openAdditional(input?: { pendingProjectPath?: string | null }): Promise<void>;
+  openAdditional(input?: {
+    initialRoute?: string | null;
+    pendingProjectPath?: string | null;
+  }): Promise<void>;
   openOrFocusAgent(target: TAgentTarget): Promise<void>;
   restoreWhenActivated(): Promise<void>;
   takePendingProject(webContentsId: number): string | null;
@@ -63,7 +66,7 @@ export function createDesktopWindowOwner<TAgentTarget>(
       }),
     openAdditional: (input = {}) =>
       open({
-        initialRoute: null,
+        initialRoute: input.initialRoute ?? null,
         pendingProjectPath: input.pendingProjectPath ?? null,
         restoreWindowState: false,
       }),

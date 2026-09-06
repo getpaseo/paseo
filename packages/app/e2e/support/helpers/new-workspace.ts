@@ -215,6 +215,23 @@ export async function openMissingProjectNewWorkspaceComposer(
   await expect(page).toHaveURL(/\/new\?.*projectId=/u, { timeout: 30_000 });
 }
 
+export async function openNewWorkspacePromptDeepLink(
+  page: Page,
+  input: { serverId: string; name: string; prompt: string },
+): Promise<void> {
+  const query = new URLSearchParams({
+    serverId: input.serverId,
+    name: input.name,
+    q: input.prompt,
+  });
+  const route = `/new?${query.toString()}`;
+
+  await page.goto(route);
+  await expect(page).toHaveURL((url) => `${url.pathname}${url.search}${url.hash}` === route, {
+    timeout: 30_000,
+  });
+}
+
 export async function expectNewWorkspaceControlsEnabled(page: Page): Promise<void> {
   await expect(page.getByRole("button", { name: "Workspace project" })).toBeEnabled({
     timeout: 30_000,

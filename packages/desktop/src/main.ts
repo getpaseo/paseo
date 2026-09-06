@@ -106,6 +106,11 @@ import {
   type AgentDeepLinkTarget,
 } from "@getpaseo/protocol/agent-deep-link";
 import { AgentNavigationInbox, parseAgentDeepLinkFromArgv } from "./agent-navigation.js";
+import {
+  parseNewWorkspaceDeepLink,
+  parseNewWorkspaceDeepLinkFromArgv,
+  redactNewWorkspacePromptFromArgv,
+} from "./new-workspace-navigation.js";
 
 const DEV_SERVER_URL = process.env.EXPO_DEV_URL ?? "http://localhost:8081";
 const APP_SCHEME = "paseo";
@@ -354,6 +359,7 @@ let pendingOpenProjectPath = parseOpenProjectPathFromArgv({
   isDefaultApp: process.defaultApp,
 });
 let pendingAgentNavigation = parseAgentDeepLinkFromArgv(process.argv);
+let pendingNewWorkspaceRoute = parseNewWorkspaceDeepLinkFromArgv(process.argv);
 
 // Each window pulls its own pending open-project path on mount, keyed by
 // webContents id, so deep-linked windows (second-instance launches, the
@@ -362,7 +368,7 @@ let pendingAgentNavigation = parseAgentDeepLinkFromArgv(process.argv);
 let desktopWindowOwner: DesktopWindowOwner<AgentDeepLinkTarget>;
 
 if (PASEO_DEBUG) {
-  log.info("[open-project] argv:", process.argv);
+  log.info("[open-project] argv:", redactNewWorkspacePromptFromArgv(process.argv));
   log.info("[open-project] isDefaultApp:", process.defaultApp);
   log.info("[open-project] pendingOpenProjectPath:", pendingOpenProjectPath);
 }
@@ -851,8 +857,38 @@ function receiveAgentDeepLink(input: string): void {
   });
 }
 
+function receiveNewWorkspaceDeepLink(input: string): boolean {
+  const route = parseNewWorkspaceDeepLink(input);
+  if (!route) {
+    return false;
+  }
+
+  if (bootstrapIsComplete) {
+    void desktopWindowOwner
+      .openAdditional({ initialRoute: route })
+      .catch((error) => log.error("[window] failed to route new workspace link", error));
+    return true;
+  }
+
+  pendingNewWorkspaceRoute = route;
+  void bootstrapComplete.then(() => {
+    if (pendingNewWorkspaceRoute !== route) {
+      return undefined;
+    }
+    pendingNewWorkspaceRoute = null;
+    void desktopWindowOwner
+      .openAdditional({ initialRoute: route })
+      .catch((error) => log.error("[window] failed to route queued new workspace link", error));
+    return undefined;
+  });
+  return true;
+}
+
 app.on("open-url", (event, url) => {
   event.preventDefault();
+  if (receiveNewWorkspaceDeepLink(url)) {
+    return;
+  }
   receiveAgentDeepLink(url);
 });
 
@@ -869,6 +905,16 @@ function setupSingleInstanceLock(): boolean {
   }
 
   app.on("second-instance", (_event, commandLine) => {
+    const newWorkspaceRoute = parseNewWorkspaceDeepLinkFromArgv(commandLine);
+    if (newWorkspaceRoute) {
+      void bootstrapComplete
+        .then(() => desktopWindowOwner.openAdditional({ initialRoute: newWorkspaceRoute }))
+        .catch((error) =>
+          log.error("[window] failed to route second-instance new workspace link", error),
+        );
+      return;
+    }
+
     const agentTarget = parseAgentDeepLinkFromArgv(commandLine);
     if (agentTarget) {
       void bootstrapComplete
@@ -980,9 +1026,13 @@ async function bootstrap(): Promise<void> {
 
   // The first window of the session restores and persists saved geometry.
   const initialAgentNavigation = pendingAgentNavigation;
+  const initialNewWorkspaceRoute = pendingNewWorkspaceRoute;
   pendingAgentNavigation = null;
+  pendingNewWorkspaceRoute = null;
   await desktopWindowOwner.openPrimary({
-    initialRoute: initialAgentNavigation ? buildAgentDeepLinkRoute(initialAgentNavigation) : null,
+    initialRoute: initialAgentNavigation
+      ? buildAgentDeepLinkRoute(initialAgentNavigation)
+      : initialNewWorkspaceRoute,
     pendingProjectPath: pendingOpenProjectPath,
   });
   pendingOpenProjectPath = null;
@@ -998,6 +1048,12 @@ async function bootstrap(): Promise<void> {
     await desktopWindowOwner.openOrFocusAgent(target);
   }
 
+  if (pendingNewWorkspaceRoute) {
+    const route = pendingNewWorkspaceRoute;
+    pendingNewWorkspaceRoute = null;
+    await desktopWindowOwner.openAdditional({ initialRoute: route });
+  }
+
   app.on("activate", () => {
     void desktopWindowOwner.restoreWhenActivated().catch((error) => {
       console.error("Failed to restore a desktop window after activation", error);
@@ -1006,7 +1062,9 @@ async function bootstrap(): Promise<void> {
 }
 
 void runDesktopStartup({
-  hasPendingGuiLaunchRequest: Boolean(pendingOpenProjectPath || pendingAgentNavigation),
+  hasPendingGuiLaunchRequest: Boolean(
+    pendingOpenProjectPath || pendingAgentNavigation || pendingNewWorkspaceRoute,
+  ),
   runCliPassthroughIfRequested,
   inheritLoginShellEnv,
   bootstrapGui: bootstrap,
