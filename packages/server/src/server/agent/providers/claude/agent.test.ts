@@ -24,6 +24,12 @@ interface TestClaudeSession {
   close(): Promise<void>;
 }
 
+function isLoadingCompactionEvent(event: AgentStreamEvent): boolean {
+  return (
+    event.type === "timeline" && event.item.type === "compaction" && event.item.status === "loading"
+  );
+}
+
 function isPermissionResolvedEvent(
   event: AgentStreamEvent,
 ): event is Extract<AgentStreamEvent, { type: "permission_resolved" }> {
@@ -1981,6 +1987,15 @@ describe("ClaudeAgentSession context window usage", () => {
     };
   }
 
+  function createCompactingStatus(): Record<string, unknown> {
+    return {
+      type: "system",
+      subtype: "status",
+      status: "compacting",
+      session_id: "session-1",
+    };
+  }
+
   test("emits turn_started before the submitted user message", async () => {
     const session = await createSessionForTurns([[]]);
     const events: AgentStreamEvent[] = [];
@@ -2852,6 +2867,108 @@ describe("ClaudeAgentSession context window usage", () => {
             event.type === "turn_completed" && event.usage.contextWindowUsedTokens !== undefined,
         ),
       ).toBe(false);
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("repeated compacting statuses open a single compaction marker", async () => {
+    const session = await createSessionForTest();
+
+    try {
+      function markersOpenedBy(message: Record<string, unknown>): number {
+        return session
+          .translateMessageToEvents(message as unknown as SDKMessage)
+          .filter(isLoadingCompactionEvent).length;
+      }
+
+      expect(markersOpenedBy(createCompactingStatus())).toBe(1);
+      // Claude Code repeats the status every 30 seconds until the compaction ends.
+      expect(markersOpenedBy(createCompactingStatus())).toBe(0);
+      expect(markersOpenedBy(createCompactingStatus())).toBe(0);
+
+      session.translateMessageToEvents(createCompactBoundary() as unknown as SDKMessage);
+
+      expect(markersOpenedBy(createCompactingStatus())).toBe(1);
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("a compaction abandoned mid-turn does not suppress the next compaction marker", async () => {
+    // The first turn starts compacting and then ends without ever reaching a
+    // compact_boundary, so the marker it opened is never resolved.
+    const session = await createSessionForTurns([
+      [createCompactingStatus(), createSuccessResult()],
+      [createCompactingStatus(), createSuccessResult()],
+    ]);
+
+    try {
+      const abandonedTurn = await collectStreamEvents(session, "abandoned compaction");
+      expect(abandonedTurn.filter(isLoadingCompactionEvent)).toHaveLength(1);
+
+      const nextTurn = await collectStreamEvents(session, "next compaction");
+      expect(nextTurn.filter(isLoadingCompactionEvent)).toHaveLength(1);
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("an interrupted compaction does not suppress the next compaction marker", async () => {
+    // The first turn starts compacting and is then interrupted, so it never reaches a
+    // compact_boundary and the marker it opened is never resolved.
+    const session = await createSessionForTurns([
+      [createCompactingStatus()],
+      [createCompactingStatus(), createSuccessResult()],
+    ]);
+
+    try {
+      const interruptedTurn: AgentStreamEvent[] = [];
+      const streaming = (async () => {
+        for await (const event of streamSession(session, "interrupted compaction")) {
+          interruptedTurn.push(event);
+        }
+      })();
+
+      await vi.waitFor(() => {
+        expect(interruptedTurn.filter(isLoadingCompactionEvent)).toHaveLength(1);
+      });
+      await session.interrupt();
+      await streaming;
+
+      expect(interruptedTurn).toContainEqual(
+        expect.objectContaining({ type: "turn_canceled", provider: "claude" }),
+      );
+
+      const nextTurn = await collectStreamEvents(session, "next compaction");
+      expect(nextTurn.filter(isLoadingCompactionEvent)).toHaveLength(1);
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("a compaction abandoned in an autonomous turn does not suppress the next marker", async () => {
+    // Trailing output after the foreground result opens an autonomous turn, which starts
+    // compacting and is then ended by the next foreground turn, never reaching a boundary.
+    const session = await createSessionForTurns([
+      [createSuccessResult(), createMessageStartEvent(), createCompactingStatus()],
+      [createCompactingStatus(), createSuccessResult()],
+    ]);
+
+    try {
+      const observed: AgentStreamEvent[] = [];
+      const unsubscribe = session.subscribe((event) => {
+        observed.push(event);
+      });
+
+      await collectStreamEvents(session, "foreground turn");
+      await vi.waitFor(() => {
+        expect(observed.filter(isLoadingCompactionEvent)).toHaveLength(1);
+      });
+      unsubscribe();
+
+      const nextTurn = await collectStreamEvents(session, "next compaction");
+      expect(nextTurn.filter(isLoadingCompactionEvent)).toHaveLength(1);
     } finally {
       await session.close();
     }
