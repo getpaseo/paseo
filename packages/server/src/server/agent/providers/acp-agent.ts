@@ -1683,6 +1683,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   private readonly extensionCommandsParser?: ACPExtensionCommandsParser;
   private currentTurnUsage: AgentUsage | undefined;
   private activeForegroundTurnId: string | null = null;
+  #externalTurnId: string | null = null;
   private fallbackAssistantMessageId: string | null = null;
   private closed = false;
   private historyPending = false;
@@ -1845,6 +1846,9 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     if (this.activeForegroundTurnId) {
       throw new Error("A foreground turn is already active");
     }
+    if (this.#externalTurnId) {
+      throw new Error("An external turn is already active");
+    }
 
     this.deliverTranslatedEvents(this.flushPendingUserMessage());
     const turnId = randomUUID();
@@ -1889,6 +1893,9 @@ export class ACPAgentSession implements AgentSession, ACPClient {
         provider: this.provider,
         sessionId: this.sessionId,
       });
+    }
+    if (this.#externalTurnId) {
+      callback({ type: "turn_started", provider: this.provider, turnId: this.#externalTurnId });
     }
     return () => {
       this.subscribers.delete(callback);
@@ -2403,7 +2410,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     }
     this.pendingPermissions.clear();
 
-    if (this.activeForegroundTurnId) {
+    if (this.activeForegroundTurnId || this.#externalTurnId) {
       await this.connection.cancel({ sessionId: this.sessionId });
     }
   }
@@ -2455,6 +2462,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     this.connection = null;
     this.child = null;
     this.activeForegroundTurnId = null;
+    this.#externalTurnId = null;
   }
 
   async requestPermission(params: RequestPermissionRequest): Promise<RequestPermissionResponse> {
@@ -2738,6 +2746,16 @@ export class ACPAgentSession implements AgentSession, ACPClient {
           turnId: this.activeForegroundTurnId,
         });
       }
+      if (this.#externalTurnId) {
+        const turnId = this.#externalTurnId;
+        this.#externalTurnId = null;
+        this.pushEvent({
+          type: "turn_failed",
+          provider: this.provider,
+          turnId,
+          error: "ACP connection closed during an external turn",
+        });
+      }
     });
 
     const stream = createLoggedNdJsonStream(
@@ -2905,8 +2923,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       case "config_option_update":
         return [...pendingUserEvents, ...this.handleConfigOptionUpdate(update)];
       case "session_info_update":
-        this.handleSessionInfoUpdate(update);
-        return pendingUserEvents;
+        return [...pendingUserEvents, ...this.handleSessionInfoUpdate(update)];
       case "usage_update":
         this.handleUsageUpdate(update);
         return pendingUserEvents;
@@ -3060,13 +3077,29 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     return events;
   }
 
-  private handleSessionInfoUpdate(update: SessionInfoUpdate): void {
+  private handleSessionInfoUpdate(update: SessionInfoUpdate): AgentStreamEvent[] {
     if ("title" in update) {
       this.currentTitle = update.title ?? null;
     }
     if ("updatedAt" in update) {
       this.lastActivityAt = update.updatedAt ?? null;
     }
+    // Optional provider metadata describes external work, not an ACP prompt response.
+    // Never let it finish a foreground turn whose response is still pending.
+    const ignoreActivity =
+      this.closed || this.replayingHistory || this.activeForegroundTurnId !== null;
+    if (ignoreActivity) return [];
+    const running = update._meta?.running;
+    if (typeof running !== "boolean") return [];
+    if (running) {
+      if (this.#externalTurnId) return [];
+      this.#externalTurnId = randomUUID();
+      return [{ type: "turn_started", provider: this.provider, turnId: this.#externalTurnId }];
+    }
+    if (!this.#externalTurnId) return [];
+    const turnId = this.#externalTurnId;
+    this.#externalTurnId = null;
+    return [{ type: "turn_completed", provider: this.provider, turnId }];
   }
 
   private handleUsageUpdate(update: UsageUpdate): void {

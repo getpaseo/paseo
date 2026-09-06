@@ -2762,6 +2762,125 @@ describe("ACPAgentSession", () => {
     ]);
   });
 
+  test("resumed ACP sessions report external turns without creating prompts or duplicate starts", async () => {
+    const session = createSession();
+    const internals = asInternals<ACPSessionInternals>(session);
+    internals.sessionId = "resumed-session";
+    const prompt = vi.fn(async (): Promise<PromptResponse> => ({ stopReason: "end_turn" }));
+    internals.connection = { prompt };
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+    const report = async (running: boolean) => {
+      await session.sessionUpdate({
+        sessionId: "resumed-session",
+        update: {
+          sessionUpdate: "session_info_update",
+          title: "Resumed work",
+          updatedAt: "2026-09-06T00:00:00Z",
+          _meta: { running },
+        },
+      });
+    };
+    await report(true);
+    await report(true);
+    await expect(session.startTurn("overlapping prompt")).rejects.toThrow(
+      "An external turn is already active",
+    );
+    expect(prompt).not.toHaveBeenCalled();
+    const started = events.filter((event) => event.type === "turn_started");
+    expect(started).toHaveLength(1);
+    expect(started[0].turnId).toEqual(expect.any(String));
+    const lateEvents: AgentStreamEvent[] = [];
+    const unsubscribe = session.subscribe((event) => lateEvents.push(event));
+    expect(lateEvents).toContainEqual(started[0]);
+    unsubscribe();
+    await report(false);
+    await report(false);
+    expect(events.filter((event) => event.type === "turn_completed")).toEqual([
+      { type: "turn_completed", provider: "claude-acp", turnId: started[0].turnId },
+    ]);
+    await report(true);
+    const starts = events.filter((event) => event.type === "turn_started");
+    expect(starts).toHaveLength(2);
+    expect(starts[1].turnId).not.toBe(starts[0].turnId);
+    expect(events.some((event) => event.type === "timeline")).toBe(false);
+    expect(await session.getRuntimeInfo()).toMatchObject({
+      sessionId: "resumed-session",
+      extra: { title: "Resumed work", updatedAt: "2026-09-06T00:00:00Z" },
+    });
+    await report(false);
+  });
+
+  test("external activity ignores malformed metadata and other sessions", async () => {
+    const session = createSession();
+    asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+    for (const metadata of [
+      {},
+      { unrelatedRunning: true },
+      { running: "true" },
+      { running: null },
+    ]) {
+      await session.sessionUpdate({
+        sessionId: "session-1",
+        update: { sessionUpdate: "session_info_update", _meta: metadata },
+      });
+    }
+    await session.sessionUpdate({
+      sessionId: "another-session",
+      update: { sessionUpdate: "session_info_update", _meta: { running: true } },
+    });
+    expect(events.map((event) => event.type)).toEqual(["thread_started"]);
+  });
+
+  test("historical activity and updates after close cannot start an external turn", async () => {
+    const session = createSession();
+    const internals = asInternals<ACPSessionInternals & { replayingHistory: boolean }>(session);
+    internals.sessionId = "session-1";
+    internals.replayingHistory = true;
+    await session.sessionUpdate({
+      sessionId: "session-1",
+      update: { sessionUpdate: "session_info_update", _meta: { running: true } },
+    });
+    internals.replayingHistory = false;
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+    expect(events.map((event) => event.type)).toEqual(["thread_started"]);
+    await session.close();
+    await session.sessionUpdate({
+      sessionId: "session-1",
+      update: { sessionUpdate: "session_info_update", _meta: { running: true } },
+    });
+    const lateEvents: AgentStreamEvent[] = [];
+    session.subscribe((event) => lateEvents.push(event));
+    expect(lateEvents.map((event) => event.type)).toEqual(["thread_started"]);
+  });
+
+  test("external idle metadata cannot settle a Paseo-owned foreground prompt", async () => {
+    const session = createSession();
+    const pending = Promise.withResolvers<PromptResponse>();
+    const internals = asInternals<ACPSessionInternals>(session);
+    internals.sessionId = "session-1";
+    internals.connection = { prompt: () => pending.promise };
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+    const { turnId } = await session.startTurn("owned prompt");
+    for (const running of [true, false]) {
+      await session.sessionUpdate({
+        sessionId: "session-1",
+        update: { sessionUpdate: "session_info_update", _meta: { running } },
+      });
+    }
+    expect(events.filter((event) => event.type === "turn_started")).toHaveLength(1);
+    expect(events.some((event) => event.type === "turn_completed")).toBe(false);
+    expect(internals.activeForegroundTurnId).toBe(turnId);
+    pending.resolve({ stopReason: "end_turn" });
+    await vi.waitFor(() => {
+      expect(events).toContainEqual(expect.objectContaining({ type: "turn_completed", turnId }));
+    });
+  });
+
   test("startTurn returns before the ACP prompt settles and completes later via subscribers", async () => {
     const session = createSession();
     const events: Array<{ type: string; turnId?: string }> = [];
