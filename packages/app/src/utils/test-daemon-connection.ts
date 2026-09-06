@@ -13,6 +13,7 @@ import {
   createDesktopDaemonTransportFactory,
 } from "@/desktop/daemon/desktop-daemon-transport";
 import type { DesktopDaemonTransportTarget } from "@/desktop/daemon/desktop-daemon";
+import { createAppWebSocketFactory } from "@/runtime/websocket-factory";
 
 export interface DaemonProbeClient {
   readonly lastError: string | null;
@@ -166,8 +167,13 @@ export async function buildClientConfig(
   if (connection.type === "directTcp") {
     return {
       ...base,
+      // Same factory the live host runtime uses. On iOS/Android it is the
+      // React Native WebSocket, which is the only path that can attach custom
+      // handshake headers; on web and Electron it is the plain browser socket.
+      webSocketFactory: createAppWebSocketFactory(),
       url: buildDaemonWebSocketUrl(connection.endpoint, { useTls: connection.useTls ?? false }),
       ...(connection.password ? { password: connection.password } : {}),
+      ...(connection.headers ? { headers: connection.headers } : {}),
     };
   }
 

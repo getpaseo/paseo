@@ -16,6 +16,7 @@ import {
   defaultHostAppearance,
   HostAppearanceSchema,
 } from "@/hosts/appearance";
+import { normalizeConnectionHeadersRecord } from "@/utils/connection-headers";
 import { z } from "zod";
 
 export { DirectTcpHostConnectionSchema, type DirectTcpHostConnection };
@@ -119,6 +120,18 @@ export function resolveActiveHostServerId(params: {
   );
 }
 
+function stringRecordEquals(
+  left: Record<string, string> | undefined,
+  right: Record<string, string> | undefined,
+): boolean {
+  const leftEntries = Object.entries(left ?? {});
+  const rightRecord = right ?? {};
+  return (
+    leftEntries.length === Object.keys(rightRecord).length &&
+    leftEntries.every(([key, value]) => rightRecord[key] === value)
+  );
+}
+
 function hostConnectionEquals(left: HostConnection, right: HostConnection): boolean {
   if (left.type !== right.type || left.id !== right.id) {
     return false;
@@ -128,7 +141,8 @@ function hostConnectionEquals(left: HostConnection, right: HostConnection): bool
     return (
       left.endpoint === right.endpoint &&
       (left.useTls ?? false) === (right.useTls ?? false) &&
-      left.password === right.password
+      left.password === right.password &&
+      stringRecordEquals(left.headers, right.headers)
     );
   }
   if (left.type === "directSocket" && right.type === "directSocket") {
@@ -358,6 +372,9 @@ const StoredHostConnectionSchema = z.discriminatedUnion("type", [
     endpoint: z.string(),
     useTls: z.boolean().optional(),
     password: z.string().optional(),
+    // Validated leniently here so a malformed header record drops the headers,
+    // not the whole stored connection; see normalizeStoredHeaders.
+    headers: z.unknown().optional(),
   }),
   z.strictObject({
     id: z.string().optional(),
@@ -397,6 +414,11 @@ const StoredHostProfileSchema = z.strictObject({
 export const StoredHostRegistrySchema = z.array(StoredHostProfileSchema);
 type StoredHostConnection = z.infer<typeof StoredHostConnectionSchema>;
 
+function normalizeStoredHeaders(value: unknown): { headers?: Record<string, string> } {
+  const headers = normalizeConnectionHeadersRecord(value);
+  return headers ? { headers } : {};
+}
+
 function normalizeStoredConnection(connection: StoredHostConnection): HostConnection | null {
   if (connection.type === "directTcp") {
     try {
@@ -407,6 +429,7 @@ function normalizeStoredConnection(connection: StoredHostConnection): HostConnec
         endpoint,
         useTls: connection.useTls,
         ...(connection.password !== undefined ? { password: connection.password } : {}),
+        ...normalizeStoredHeaders(connection.headers),
       });
     } catch {
       return null;

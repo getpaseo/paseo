@@ -5,39 +5,49 @@ import type {
 } from "./daemon-client-transport-types.js";
 import { extractRelayMessage } from "./daemon-client-transport-utils.js";
 
-type GlobalWebSocketConstructor = new (
+export type WebSocketConstructor = new (
   url: string,
   protocols?: string | string[],
   options?: { headers?: Record<string, string> },
 ) => WebSocketLike;
 
-function getGlobalWebSocket(): GlobalWebSocketConstructor {
-  const globalWs = (globalThis as { WebSocket?: GlobalWebSocketConstructor }).WebSocket;
+function getGlobalWebSocket(): WebSocketConstructor {
+  const globalWs = (globalThis as { WebSocket?: WebSocketConstructor }).WebSocket;
   if (!globalWs) {
     throw new Error("WebSocket is not available in this runtime");
   }
   return globalWs;
 }
 
-export function defaultWebSocketFactory(
-  url: string,
-  options?: { headers?: Record<string, string>; protocols?: string[] },
-): WebSocketLike {
-  const globalWs = getGlobalWebSocket();
-  if (options?.protocols === undefined) {
-    return new globalWs(url);
-  }
-  return new globalWs(url, options.protocols);
+/**
+ * Builds the two handshake factories on top of an injected constructor resolver.
+ * Production uses the runtime global; tests pass a fake so nothing patches globals.
+ * The resolver runs per call so the global is looked up lazily, as before.
+ */
+export function createWebSocketFactories(resolveConstructor: () => WebSocketConstructor): {
+  defaultWebSocketFactory: WebSocketFactory;
+  nativeWebSocketFactory: WebSocketFactory;
+} {
+  return {
+    defaultWebSocketFactory: (url, options) => {
+      const WebSocketImpl = resolveConstructor();
+      if (options?.protocols === undefined) {
+        return new WebSocketImpl(url);
+      }
+      return new WebSocketImpl(url, options.protocols);
+    },
+    // React Native and Node-compatible WebSocket implementations accept this extra
+    // options object. Keep it out of the standard browser factory above.
+    nativeWebSocketFactory: (url, options) =>
+      new (resolveConstructor())(url, options?.protocols, { headers: options?.headers }),
+  };
 }
 
-// React Native and Node-compatible WebSocket implementations accept this extra options object.
-// Keep it out of the standard browser factory above.
-export function nativeWebSocketFactory(
-  url: string,
-  options?: { headers?: Record<string, string>; protocols?: string[] },
-): WebSocketLike {
-  return new (getGlobalWebSocket())(url, options?.protocols, { headers: options?.headers });
-}
+const globalWebSocketFactories = createWebSocketFactories(getGlobalWebSocket);
+export const defaultWebSocketFactory: WebSocketFactory =
+  globalWebSocketFactories.defaultWebSocketFactory;
+export const nativeWebSocketFactory: WebSocketFactory =
+  globalWebSocketFactories.nativeWebSocketFactory;
 
 export function createWebSocketTransportFactory(factory: WebSocketFactory): DaemonTransportFactory {
   return ({ url, headers, protocols }) => {

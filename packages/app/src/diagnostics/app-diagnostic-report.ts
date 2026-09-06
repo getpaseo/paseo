@@ -122,6 +122,16 @@ export function redactAppDiagnosticReport(report: string, hosts: HostProfile[]):
     );
 }
 
+// Header values are redacted by substring, so a short common value such as "on"
+// would corrupt unrelated text. Shorter values are not credentials.
+const MIN_REDACTED_HEADER_VALUE_LENGTH = 8;
+
+function redactableHeaderValues(headers: Record<string, string> | undefined): string[] {
+  return Object.values(headers ?? {}).filter(
+    (value) => value.length >= MIN_REDACTED_HEADER_VALUE_LENGTH,
+  );
+}
+
 function collectSensitiveHostValues(hosts: HostProfile[]): string[] {
   const values = new Set<string>();
   for (const host of hosts) {
@@ -130,6 +140,7 @@ function collectSensitiveHostValues(hosts: HostProfile[]): string[] {
       if (connection.type === "directTcp") {
         values.add(connection.endpoint);
         if (connection.password) values.add(connection.password);
+        for (const value of redactableHeaderValues(connection.headers)) values.add(value);
       } else if (connection.type === "relay") {
         values.add(connection.relayEndpoint);
         values.add(connection.daemonPublicKeyB64);

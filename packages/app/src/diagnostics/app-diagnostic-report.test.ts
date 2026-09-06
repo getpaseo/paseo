@@ -24,6 +24,7 @@ function makeHost(): HostProfile {
         endpoint: "secret.example.test:6767",
         useTls: true,
         password: "tcp-password",
+        headers: { "CF-Access-Client-Secret": "header-secret-value", "X-Feature": "on" },
       },
       {
         id: "relay:relay.secret.test:443",
@@ -95,6 +96,7 @@ describe("app diagnostics report", () => {
     expect(report).not.toContain("daemon-public-key-secret");
     expect(report).not.toContain("/tmp/paseo-secret.sock");
     expect(report).not.toContain("tcp-password");
+    expect(report).not.toContain("header-secret-value");
   });
 
   test("redacts saved connection secrets from collected daemon and desktop text", () => {
@@ -108,6 +110,7 @@ describe("app diagnostics report", () => {
         "/tmp/paseo-secret.sock",
         "\\\\.\\pipe\\paseo-secret",
         "password=tcp-password",
+        "CF-Access-Client-Secret: header-secret-value",
         "paseo://pairing-secret",
       ].join("\n"),
       [host],
@@ -119,6 +122,13 @@ describe("app diagnostics report", () => {
     expect(redacted).not.toContain("/tmp/paseo-secret.sock");
     expect(redacted).not.toContain("\\\\.\\pipe\\paseo-secret");
     expect(redacted).not.toContain("tcp-password");
+    expect(redacted).not.toContain("header-secret-value");
     expect(redacted).not.toContain("pairing-secret");
+  });
+
+  test("leaves short header values alone so they cannot corrupt unrelated text", () => {
+    const redacted = redactAppDiagnosticReport("connection status: online", [makeHost()]);
+
+    expect(redacted).toBe("connection status: online");
   });
 });

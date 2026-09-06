@@ -1608,6 +1608,20 @@ export const ar: TranslationResources = {
         show: "عرض متقدم",
         hide: "إخفاء المتقدمة",
       },
+      headers: {
+        title: "رؤوس مخصصة",
+        helper: "تُرسل مع كل مصافحة اتصال، مثل رمز خدمة Cloudflare Access.",
+        add: "إضافة رأس",
+        name: "الاسم",
+        value: "القيمة",
+        remove: "إزالة الرأس",
+        errors: {
+          missingName: "أدخل اسمًا لكل رأس",
+          invalidName: "{{name}} ليس اسم رأس صالحًا",
+          invalidValue: "يحتوي {{name}} على فاصل أسطر غير صالح",
+          duplicateName: "تم إدخال {{name}} أكثر من مرة",
+        },
+      },
       passwordVisibility: {
         show: "إظهار كلمة المرور",
         hide: "إخفاء كلمة المرور",

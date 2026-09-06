@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { DaemonClientConfig } from "@getpaseo/client/internal/daemon-client";
 import type { DaemonConnectionDependencies, DaemonProbeClient } from "./test-daemon-connection";
+import { createAppWebSocketFactory } from "@/runtime/websocket-factory";
 
 class FakeDaemonClient implements DaemonProbeClient {
   readonly lastError: string | null;
@@ -184,6 +185,46 @@ describe("test-daemon-connection connectToDaemon", () => {
     await result.client.close();
 
     expect(probe.createdConfigs()[0]?.password).toBe("shared-secret");
+  });
+
+  it("passes direct TCP custom headers into the probe client config", async () => {
+    const { connectToDaemon } = await import("./test-daemon-connection");
+    const result = await connectToDaemon(
+      {
+        id: "direct:lan:6767",
+        type: "directTcp",
+        endpoint: "lan:6767",
+        headers: { "CF-Access-Client-Id": "token-id.access" },
+      },
+      undefined,
+      probe.deps,
+    );
+    await result.client.close();
+
+    expect(probe.createdConfigs()[0]?.headers).toEqual({
+      "CF-Access-Client-Id": "token-id.access",
+    });
+  });
+
+  it("probes direct TCP hosts with the app WebSocket factory so headers reach the handshake", async () => {
+    // Regression for getpaseo/paseo#3151: the Add Host probe used to fall back to
+    // the header-less browser factory, so headers never reached the socket on
+    // Android even though the live connection path was correct.
+    const { connectToDaemon } = await import("./test-daemon-connection");
+    const result = await connectToDaemon(
+      {
+        id: "direct:lan:6767",
+        type: "directTcp",
+        endpoint: "lan:6767",
+        headers: { "CF-Access-Client-Id": "token-id.access" },
+      },
+      undefined,
+      probe.deps,
+    );
+    await result.client.close();
+
+    expect(probe.createdConfigs()[0]?.webSocketFactory).toBe(createAppWebSocketFactory());
+    expect(probe.createdConfigs()[0]?.transportFactory).toBeUndefined();
   });
 
   it("passes performance tracing into the connected client", async () => {

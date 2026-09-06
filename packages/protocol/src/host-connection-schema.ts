@@ -6,6 +6,7 @@ export const DirectTcpHostConnectionSchema = z.object({
   endpoint: z.string(),
   useTls: z.boolean().optional().default(false),
   password: z.string().optional(),
+  headers: z.record(z.string(), z.string()).optional(),
 });
 
 export type DirectTcpHostConnection = z.input<typeof DirectTcpHostConnectionSchema>;

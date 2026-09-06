@@ -76,6 +76,49 @@ describe("normalizeStoredHostProfile", () => {
     expect(profile?.connections[0]).not.toHaveProperty("password");
   });
 
+  it("preserves custom headers on stored direct TCP connections", () => {
+    const profile = normalizeStoredHostProfile({
+      serverId: "srv_headers",
+      connections: [
+        {
+          id: "direct:example.test:6767",
+          type: "directTcp",
+          endpoint: "example.test:6767",
+          headers: { "CF-Access-Client-Id": "token-id.access" },
+        },
+      ],
+    });
+
+    expect(profile?.connections[0]).toEqual({
+      id: "direct:example.test:6767",
+      type: "directTcp",
+      endpoint: "example.test:6767",
+      useTls: false,
+      headers: { "CF-Access-Client-Id": "token-id.access" },
+    });
+  });
+
+  it("keeps the connection but discards malformed stored custom headers", () => {
+    const profile = normalizeStoredHostProfile({
+      serverId: "srv_malformed_headers",
+      connections: [
+        {
+          id: "direct:example.test:6767",
+          type: "directTcp",
+          endpoint: "example.test:6767",
+          headers: { "X-Tenant": 42 },
+        },
+      ],
+    });
+
+    expect(profile?.connections[0]).toEqual({
+      id: "direct:example.test:6767",
+      type: "directTcp",
+      endpoint: "example.test:6767",
+      useTls: false,
+    });
+  });
+
   it("preserves legacy relay ids when TLS is absent", () => {
     const profile = normalizeStoredHostProfile({
       serverId: "srv_relay",
@@ -249,6 +292,63 @@ describe("upsertHostConnectionInProfiles", () => {
 
     expect(profile.connections).toEqual([replacement]);
     expect(profile.preferredConnectionId).toBe(replacement.id);
+  });
+});
+
+describe("upsertHostConnectionInProfiles custom headers", () => {
+  it("treats matching custom headers as the same connection regardless of key order", () => {
+    const firstConnection: HostConnection = {
+      id: "direct:example.test:6767",
+      type: "directTcp",
+      endpoint: "example.test:6767",
+      headers: { "X-One": "1", "X-Two": "2" },
+    };
+    const existing = {
+      ...makeHost("srv_known"),
+      connections: [firstConnection],
+    };
+
+    const [profile] = upsertHostConnectionInProfiles({
+      profiles: [existing],
+      serverId: "srv_known",
+      connection: {
+        ...firstConnection,
+        headers: { "X-Two": "2", "X-One": "1" },
+      },
+    });
+
+    expect(profile.connections).toEqual([firstConnection]);
+  });
+
+  it("replaces a direct connection when its custom headers change", () => {
+    const existingConnection: HostConnection = {
+      id: "direct:example.test:6767",
+      type: "directTcp",
+      endpoint: "example.test:6767",
+      headers: { "CF-Access-Client-Secret": "old" },
+    };
+    const existing = {
+      ...makeHost("srv_known"),
+      connections: [existingConnection],
+      preferredConnectionId: existingConnection.id,
+    };
+
+    const [profile] = upsertHostConnectionInProfiles({
+      profiles: [existing],
+      serverId: "srv_known",
+      connection: {
+        ...existingConnection,
+        headers: { "CF-Access-Client-Secret": "new" },
+      },
+    });
+
+    expect(profile.connections).toEqual([
+      {
+        ...existingConnection,
+        headers: { "CF-Access-Client-Secret": "new" },
+      },
+    ]);
+    expect(profile.preferredConnectionId).toBe(existingConnection.id);
   });
 });
 
