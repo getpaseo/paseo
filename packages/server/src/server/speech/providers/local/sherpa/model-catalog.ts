@@ -135,6 +135,7 @@ export const SHERPA_ONNX_MODEL_CATALOG = {
     description: "OpenAI Whisper Large v3 Turbo (multilingual, 99 languages, 8× faster than large-v3).",
     languages: ["multi"],
     sizeMB: 538,
+    sha256: "b11acbbcd660b44a8e0df33724feb5aaa709cf65668f2823d59f656312544f22",
     runtimeSupported: true,
   },
 
@@ -252,7 +253,7 @@ export type SherpaOnnxModelSpec = SherpaOnnxCatalogEntry & {
 };
 
 export function listSherpaOnnxModels(): SherpaOnnxModelSpec[] {
-  return ALL_MODEL_IDS.map((id) => ({ ...SHERPA_ONNX_MODEL_CATALOG[id] } as SherpaOnnxModelSpec));
+  return ALL_MODEL_IDS.map((id) => Object.assign({}, SHERPA_ONNX_MODEL_CATALOG[id]) as SherpaOnnxModelSpec);
 }
 
 export function getSherpaOnnxModelSpec(id: SherpaOnnxModelId): SherpaOnnxModelSpec {

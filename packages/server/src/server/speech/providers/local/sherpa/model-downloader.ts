@@ -312,12 +312,46 @@ async function downloadToFile(options: DownloadToFileOptions): Promise<void> {
   }
 }
 
+async function validateTarArchiveEntries(
+  archivePath: string,
+  destDir: string,
+  signal?: AbortSignal,
+): Promise<void> {
+  const listingOutput = await new Promise<string>((resolve, reject) => {
+    let stdout = "";
+    const child = spawnProcess("tar", ["tf", archivePath], { signal });
+    child.stdout?.on("data", (chunk: Buffer) => {
+      stdout += chunk.toString("utf8");
+    });
+    child.on("error", reject);
+    child.on("exit", (code) => {
+      if (code === 0) resolve(stdout);
+      else reject(new Error(`tar listing exited with code ${code}`));
+    });
+  });
+
+  const resolvedDest = path.resolve(destDir);
+  const entries = listingOutput.split(/\r?\n/).filter((line) => line.trim().length > 0);
+  for (const entry of entries) {
+    const trimmed = entry.trim();
+    if (path.isAbsolute(trimmed) || /^[a-zA-Z]:/.test(trimmed)) {
+      throw new Error(`Archive contains unsafe absolute entry: ${trimmed}`);
+    }
+    const targetPath = path.resolve(resolvedDest, trimmed);
+    const relative = path.relative(resolvedDest, targetPath);
+    if (relative.startsWith("..") || path.isAbsolute(relative)) {
+      throw new Error(`Archive contains path traversal entry: ${trimmed}`);
+    }
+  }
+}
+
 async function extractTarArchive(
   archivePath: string,
   destDir: string,
   signal?: AbortSignal,
 ): Promise<void> {
   await mkdir(destDir, { recursive: true });
+  await validateTarArchiveEntries(archivePath, destDir, signal);
 
   await new Promise<void>((resolve, reject) => {
     const child = spawnProcess("tar", ["xf", archivePath, "-C", destDir], {
@@ -381,7 +415,10 @@ export async function ensureSherpaOnnxModel(
     });
   }
 
-  if (spec.sha256) {
+  if (spec.archiveUrl) {
+    if (!spec.sha256) {
+      throw new Error(`Model archive for ${options.modelId} requires a verified sha256 checksum`);
+    }
     emitProgress?.({ receivedBytes: 0, totalBytes: null, percent: null, stage: "verifying" });
     const valid = await verifyFileSha256(archivePath, spec.sha256);
     if (!valid) {

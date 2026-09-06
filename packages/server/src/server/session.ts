@@ -2486,6 +2486,7 @@ export class Session {
   ): Promise<void> {
     try {
       await this.speechModelManager.deleteModel(msg.modelId);
+      this.onSpeechPreferencesChanged?.();
       this.emit({
         type: "speech.model.delete.response",
         payload: {

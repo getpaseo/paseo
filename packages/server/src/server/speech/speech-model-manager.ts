@@ -47,27 +47,25 @@ export class SpeechModelManager {
   }
 
   getPreferences(): SpeechModelPreferences {
-    const persisted = loadPersistedConfig(this.requirePaseoHome(), this.logger);
-    const sttModel = persisted.features?.dictation?.stt?.model;
-    const ttsModel = persisted.features?.voiceMode?.tts?.model;
-    const language = persisted.features?.dictation?.stt?.language;
-    const ttsSpeakerId = persisted.features?.voiceMode?.tts?.speakerId;
+    const features = loadPersistedConfig(this.requirePaseoHome(), this.logger).features;
+    const stt = features?.dictation?.stt;
+    const tts = features?.voiceMode?.tts;
 
     const activeSttModelId =
-      sttModel && sttModel in SHERPA_ONNX_MODEL_CATALOG ? sttModel : DEFAULT_LOCAL_STT_MODEL;
+      stt?.model && stt.model in SHERPA_ONNX_MODEL_CATALOG ? stt.model : DEFAULT_LOCAL_STT_MODEL;
     const activeTtsModelId =
-      ttsModel && ttsModel in SHERPA_ONNX_MODEL_CATALOG ? ttsModel : DEFAULT_LOCAL_TTS_MODEL;
+      tts?.model && tts.model in SHERPA_ONNX_MODEL_CATALOG ? tts.model : DEFAULT_LOCAL_TTS_MODEL;
+
+    const modelLanguages =
+      stt?.language && activeSttModelId ? { [activeSttModelId]: stt.language } : {};
 
     return {
       activeSttModelId,
       activeTtsModelId,
-      modelLanguages:
-        language && activeSttModelId
-          ? { [activeSttModelId]: language }
-          : {},
-      ttsSpeakerId: typeof ttsSpeakerId === "number" ? ttsSpeakerId : null,
-      dictationEnabled: persisted.features?.dictation?.enabled !== false,
-      voiceModeEnabled: persisted.features?.voiceMode?.enabled !== false,
+      modelLanguages,
+      ttsSpeakerId: typeof tts?.speakerId === "number" ? tts.speakerId : null,
+      dictationEnabled: features?.dictation?.enabled !== false,
+      voiceModeEnabled: features?.voiceMode?.enabled !== false,
     };
   }
 
@@ -225,13 +223,12 @@ export class SpeechModelManager {
         isInstalled = await hasRequiredFiles(modelDir, spec.requiredFiles);
       }
 
-      const isDownloading = this.activeDownloads.has(id);
-      const status = isDownloading
-        ? "downloading"
-        : isInstalled
-          ? "installed"
-          : "not_installed";
-
+      let status: SpeechModelItem["status"] = "not_installed";
+      if (isDownloading) {
+        status = "downloading";
+      } else if (isInstalled) {
+        status = "installed";
+      }
       items.push({
         id,
         name: spec.displayName,
@@ -244,7 +241,7 @@ export class SpeechModelManager {
         runtimeSupported: Boolean(spec.runtimeSupported),
         sha256: spec.sha256,
         storagePath: isInstalled ? modelDir : undefined,
-        voices: spec.voices?.map((voice) => ({ ...voice })),
+        voices: spec.voices ? spec.voices.map((voice) => Object.assign({}, voice)) : undefined,
       });
     }
 
@@ -294,5 +291,27 @@ export class SpeechModelManager {
 
     const modelDir = path.join(this.modelsDir, spec.extractedDir);
     await rm(modelDir, { recursive: true, force: true });
+
+    // Reconcile active model selection if the deleted model was currently active
+    const prefs = this.getPreferences();
+    const isSttActive = prefs.activeSttModelId === modelId;
+    const isTtsActive = prefs.activeTtsModelId === modelId;
+
+    if (isSttActive || isTtsActive) {
+      this.writeFeatureModels({
+        ...(isSttActive
+          ? {
+              dictationSttModel: DEFAULT_LOCAL_STT_MODEL,
+              voiceSttModel: DEFAULT_LOCAL_STT_MODEL,
+            }
+          : {}),
+        ...(isTtsActive
+          ? {
+              voiceTtsModel: DEFAULT_LOCAL_TTS_MODEL,
+              voiceTtsSpeakerId: undefined,
+            }
+          : {}),
+      });
+    }
   }
 }
