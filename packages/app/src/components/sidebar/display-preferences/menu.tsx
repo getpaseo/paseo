@@ -84,7 +84,7 @@ type OptionIcon = ComponentType<{
   uniProps: (theme: Theme) => { color: string };
 }>;
 
-// Options carry icons; the root rows deliberately do not. The root is labels with their
+// Options carry icons; the root rows deliberately do not. The root is four labels with their
 // current values, and a column of icons there would be decoration competing with the values.
 const GROUPING_ICONS: Record<SidebarGroupMode, OptionIcon> = {
   project: withUnistyles(Folder),
