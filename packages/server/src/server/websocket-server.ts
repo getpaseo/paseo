@@ -2021,10 +2021,6 @@ export class VoiceAssistantWebSocketServer {
         return;
       }
       connection.externalDisconnectCleanupTimeout = null;
-      if (connection.session.hasActiveLiveVoiceCall()) {
-        this.scheduleExternalDisconnectCleanup(connection);
-        return;
-      }
       void this.cleanupConnection(connection, "Client disconnected (grace timeout)");
     }, EXTERNAL_SESSION_DISCONNECT_GRACE_MS);
     connection.externalDisconnectCleanupTimeout = timeout;

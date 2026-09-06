@@ -21,6 +21,7 @@ function createFakeAgents(initialLifecycle: Lifecycle = "running") {
         subscribers.delete(callback);
       };
     },
+    listAgents: () => [{ id: "agent-1", lifecycle }] as ManagedAgent[],
     getAgent: () =>
       ({
         id: "agent-1",
@@ -81,11 +82,11 @@ function createFakeAgents(initialLifecycle: Lifecycle = "running") {
         } as never);
       }
     },
-    requestAmbientPermission() {
+    requestAmbientPermission(agentId = "agent-1") {
       for (const subscriber of Array.from(subscribers)) {
         subscriber({
           type: "agent_stream",
-          agentId: "agent-1",
+          agentId,
           event: {
             type: "permission_requested",
             request: { id: "permission-1" },
@@ -125,6 +126,31 @@ function watch(
 }
 
 describe("LiveVoiceAgentNotifier", () => {
+  it.each([true, false])(
+    "suppresses ambient duplicates regardless of subscription order (%s)",
+    async (ambientFirst) => {
+      const agents = createFakeAgents();
+      const notifier = createNotifier(agents);
+      const updates: VoiceLiveAgentUpdate[] = [];
+      const sourceKey = {};
+      const ambient = () =>
+        notifier.watchAll({ sourceKey, emit: (update) => updates.push(update) });
+      if (ambientFirst) ambient();
+      watch(notifier, sourceKey, updates);
+      if (!ambientFirst) ambient();
+      agents.requestPermission();
+      agents.resolvePermission();
+      agents.transition("idle");
+      await vi.waitFor(() => expect(updates).toHaveLength(2));
+      expect(updates.map((update) => update.payload.requestId)).toEqual(["execute-1", "execute-1"]);
+      agents.transition("running");
+      agents.transition("idle");
+      await vi.waitFor(() => expect(updates).toHaveLength(3));
+      expect(updates[2]?.payload.requestId).toMatch(/^ambient-/);
+      notifier.dispose();
+    },
+  );
+
   it("reports a finished agent to the socket that started it", async () => {
     const agents = createFakeAgents();
     const notifier = createNotifier(agents);
@@ -347,6 +373,18 @@ describe("LiveVoiceAgentNotifier", () => {
 });
 
 describe("LiveVoiceAgentNotifier ambient watch", () => {
+  it("reports an agent that was already running when the watch began", async () => {
+    const agents = createFakeAgents("running");
+    const notifier = createNotifier(agents);
+    const updates: VoiceLiveAgentUpdate[] = [];
+    notifier.watchAll({ sourceKey: {}, emit: (update) => updates.push(update) });
+
+    agents.transition("idle");
+
+    await vi.waitFor(() => expect(updates).toHaveLength(1));
+    expect(updates[0]?.payload.notification.reason).toBe("turn_completed");
+  });
+
   it("reports an agent nobody asked it to watch, marked unsolicited", async () => {
     const agents = createFakeAgents();
     const notifier = createNotifier(agents);
@@ -415,6 +453,37 @@ describe("LiveVoiceAgentNotifier ambient watch", () => {
     });
   });
 
+  it("deduplicates permission ids per agent rather than across the daemon", async () => {
+    const agents = createFakeAgents();
+    const notifier = createNotifier(agents);
+    const updates: VoiceLiveAgentUpdate[] = [];
+    notifier.watchAll({ sourceKey: {}, emit: (update) => updates.push(update) });
+
+    agents.requestAmbientPermission("agent-1");
+    agents.requestAmbientPermission("agent-2");
+
+    await vi.waitFor(() => expect(updates).toHaveLength(2));
+    expect(updates.map((update) => update.payload.notification.agentId)).toEqual([
+      "agent-1",
+      "agent-2",
+    ]);
+  });
+
+  it("reports one error per transition into the error lifecycle", async () => {
+    const agents = createFakeAgents();
+    const notifier = createNotifier(agents);
+    const updates: VoiceLiveAgentUpdate[] = [];
+    notifier.watchAll({ sourceKey: {}, emit: (update) => updates.push(update) });
+
+    agents.transition("error");
+    agents.transition("error");
+    await vi.waitFor(() => expect(updates).toHaveLength(1));
+
+    agents.transition("running");
+    agents.transition("error");
+    await vi.waitFor(() => expect(updates).toHaveLength(2));
+  });
+
   it("stops when the socket that asked for it goes away", async () => {
     const agents = createFakeAgents();
     const notifier = createNotifier(agents);
@@ -431,6 +500,41 @@ describe("LiveVoiceAgentNotifier ambient watch", () => {
     agents.transition("idle");
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(updates).toHaveLength(0);
+  });
+
+  it("does not emit a slow report after its watch is stopped and replaced", async () => {
+    const agents = createFakeAgents("running");
+    let releaseOldRead: () => void = () => undefined;
+    const oldRead = new Promise<void>((resolve) => {
+      releaseOldRead = resolve;
+    });
+    let storageReads = 0;
+    const notifier = new LiveVoiceAgentNotifier({
+      agentManager: agents.agentManager,
+      agentStorage: {
+        get: async () => {
+          storageReads += 1;
+          if (storageReads === 1) await oldRead;
+          return { title: "Rebase main" } as never;
+        },
+      },
+      logger: createTestLogger(),
+    });
+    const source = {};
+    const oldUpdates: VoiceLiveAgentUpdate[] = [];
+    const newUpdates: VoiceLiveAgentUpdate[] = [];
+    notifier.watchAll({ sourceKey: source, emit: (update) => oldUpdates.push(update) });
+
+    agents.transition("idle");
+    await vi.waitFor(() => expect(storageReads).toBe(1));
+    notifier.stopWatchingAll(source);
+    notifier.watchAll({ sourceKey: source, emit: (update) => newUpdates.push(update) });
+    agents.transition("running");
+    agents.transition("idle");
+    releaseOldRead();
+
+    await vi.waitFor(() => expect(newUpdates).toHaveLength(1));
+    expect(oldUpdates).toEqual([]);
   });
 
   it("does not stack subscriptions when asked twice", () => {

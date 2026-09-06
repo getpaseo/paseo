@@ -13,6 +13,7 @@ import {
 } from "@getpaseo/client/internal/daemon-client";
 import {
   handleClientObservedLiveVoiceAgentStopped,
+  handleLiveVoiceAgentUpdate,
   mountLiveVoiceCrossHostRouter,
   type LiveVoiceCrossHostRouterDeps,
 } from "./live-voice-cross-host-router";
@@ -879,6 +880,33 @@ describe("Live Voice cross-host router", () => {
     expect(notifyLiveVoiceAgentUpdate).toHaveBeenCalledTimes(1);
   });
 
+  test("delivers successive permission requests before the routed work completes", async () => {
+    const { deps, notifyLiveVoiceAgentUpdate } = await routeBackgroundWork();
+    const notification = {
+      ...AGENT_UPDATE.payload.notification,
+      reason: "needs_permission",
+    };
+    for (const summary of ["Approve the build", "Approve the deployment"]) {
+      await handleLiveVoiceAgentUpdate({
+        targetServerId: "target",
+        deps,
+        message: {
+          ...AGENT_UPDATE,
+          payload: { ...AGENT_UPDATE.payload, notification: { ...notification, summary } },
+        },
+      });
+    }
+
+    expect(notifyLiveVoiceAgentUpdate).toHaveBeenCalledTimes(2);
+    expect(notifyLiveVoiceAgentUpdate).toHaveBeenLastCalledWith({
+      liveSessionId: "live-1",
+      notification: { ...notification, summary: "Approve the deployment", hostLabel: "Desktop" },
+    });
+
+    await handleLiveVoiceAgentUpdate({ targetServerId: "target", deps, message: AGENT_UPDATE });
+    expect(notifyLiveVoiceAgentUpdate).toHaveBeenCalledTimes(3);
+  });
+
   test("deduplicates the target-specific and normal client completion paths", async () => {
     const { target, notifyLiveVoiceAgentUpdate } = await routeBackgroundWork();
 
@@ -903,6 +931,29 @@ describe("Live Voice cross-host router", () => {
     await vi.waitFor(() => expect(notifyLiveVoiceAgentUpdate).toHaveBeenCalledTimes(1));
     await Promise.resolve();
     expect(notifyLiveVoiceAgentUpdate).toHaveBeenCalledTimes(1);
+  });
+
+  test("claims terminal delivery across different error reasons", async () => {
+    const { deps, notifyLiveVoiceAgentUpdate } = await routeBackgroundWork();
+    const delivery = Promise.withResolvers<{ delivered: boolean }>();
+    notifyLiveVoiceAgentUpdate.mockImplementationOnce(() => delivery.promise);
+    const pending = ["authentication_required", "errored"].map((reason) =>
+      handleLiveVoiceAgentUpdate({
+        targetServerId: "target",
+        deps,
+        message: {
+          ...AGENT_UPDATE,
+          payload: {
+            ...AGENT_UPDATE.payload,
+            notification: { ...AGENT_UPDATE.payload.notification, reason },
+          },
+        },
+      }),
+    );
+
+    expect(notifyLiveVoiceAgentUpdate).toHaveBeenCalledTimes(1);
+    delivery.resolve({ delivered: true });
+    await Promise.all(pending);
   });
 });
 

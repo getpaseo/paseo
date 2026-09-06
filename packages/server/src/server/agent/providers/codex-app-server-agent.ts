@@ -5141,6 +5141,20 @@ export class CodexAppServerAgentSession implements AgentSession, AgentRealtimeVo
 
   /** Returns true when the notification was a realtime-voice one and is handled. */
   private dispatchRealtimeNotification(parsed: ParsedCodexNotification): boolean {
+    const isRealtime =
+      parsed.kind === "realtime_started" ||
+      parsed.kind === "realtime_sdp" ||
+      parsed.kind === "realtime_transcript_done" ||
+      parsed.kind === "realtime_error" ||
+      parsed.kind === "realtime_closed" ||
+      parsed.kind === "realtime_ignored";
+    if (!isRealtime) {
+      return false;
+    }
+    const threadId = getCodexNotificationThreadId(parsed);
+    if (threadId && this.currentThreadId && threadId !== this.currentThreadId) {
+      return true;
+    }
     switch (parsed.kind) {
       case "realtime_started":
         this.notifyRealtimeSubscribers({
@@ -5174,7 +5188,7 @@ export class CodexAppServerAgentSession implements AgentSession, AgentRealtimeVo
       case "realtime_ignored":
         return true;
       default:
-        return false;
+        return true;
     }
   }
 

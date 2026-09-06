@@ -1,5 +1,5 @@
 import os from "node:os";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { createTestLogger } from "../../test-utils/test-logger.js";
 import type { AgentRealtimeVoiceEvent } from "../agent/agent-realtime-voice.js";
@@ -70,6 +70,7 @@ interface FakeProviderSession {
  */
 function createFakeProviderSession(options?: {
   onStart?: (emit: (event: AgentRealtimeVoiceEvent) => void) => void;
+  startGate?: Promise<unknown>;
   startError?: Error;
   appendTextError?: Error;
   permissionResponseError?: Error;
@@ -102,6 +103,7 @@ function createFakeProviderSession(options?: {
       startCalls.push(params);
       if (options?.startError) throw options.startError;
       options?.onStart?.(emit);
+      await options?.startGate;
     },
     async realtimeStop() {
       stopCalls.push(stopCalls.length);
@@ -159,10 +161,15 @@ function createHarness(options?: {
   capabilities?: { readonly [capability: string]: boolean | undefined };
   availability?: { available: boolean; error?: string | null };
   availabilityGate?: Promise<unknown>;
-  paseoToolsAvailable?: boolean;
+  paseoToolsAvailable?:
+    | boolean
+    | ((provider: AgentProvider, requiredTools: readonly string[]) => boolean);
   createAgentError?: Error;
   /** Resolves before `createAgent` returns, so tests can close mid-spawn. */
   createAgentGate?: Promise<unknown>;
+  /** Resolves before `closeAgent` completes, so tests can inspect teardown. */
+  closeAgentGate?: Promise<unknown>;
+  closeAgentError?: Error;
   startSdpTimeoutMs?: number;
   context?: LiveVoiceContextProvider;
   /** `null` omits the option so the coordinator's own default applies. */
@@ -182,7 +189,10 @@ function createHarness(options?: {
   };
   const coordinator = new LiveVoiceCoordinator({
     agents: {
-      hasPaseoMcpInjection: () => options?.paseoToolsAvailable ?? true,
+      hasPaseoMcpInjection: (provider, requiredTools = []) =>
+        typeof options?.paseoToolsAvailable === "function"
+          ? options.paseoToolsAvailable(provider ?? TEST_HOST_PROFILE.provider, requiredTools)
+          : (options?.paseoToolsAvailable ?? true),
       getProviderAvailability: async () => {
         if (options?.availabilityGate) {
           await options.availabilityGate;
@@ -215,6 +225,8 @@ function createHarness(options?: {
       closeAgent: async (agentId) => {
         closedHostIds.push(agentId);
         notifyClosing(agentId);
+        await options?.closeAgentGate;
+        if (options?.closeAgentError) throw options.closeAgentError;
       },
       onAgentClosing: (callback) => {
         closingListeners.add(callback);
@@ -380,15 +392,25 @@ describe("LiveVoiceCoordinator", () => {
     expect(harness.closedHostIds).toEqual(["host-1"]);
   });
 
-  it("preserves the legacy local catalog when the owner cannot route across hosts", async () => {
-    const harness = createHarness();
+  it("restricts the hidden host even when the owner cannot route across hosts", async () => {
+    const requiredToolChecks: (readonly string[])[] = [];
+    const harness = createHarness({
+      paseoToolsAvailable: (_provider, requiredTools) => {
+        requiredToolChecks.push(requiredTools);
+        return true;
+      },
+    });
 
     const result = await startCall(harness, harness.owner, false);
 
     expect(result).toMatchObject({ accepted: true });
-    expect(harness.routingRegisteredDuringCreate).toEqual([false]);
-    expect(harness.routeBroker.isRegisteredHost("host-1")).toBe(false);
+    expect(harness.routingRegisteredDuringCreate).toEqual([true]);
+    expect(harness.routeBroker.isRegisteredHost("host-1")).toBe(true);
+    await expect(harness.routeBroker.execute("host-1", { kind: "list_hosts" })).rejects.toThrow(
+      "Update the Paseo app",
+    );
     expect(harness.routeRequests).toEqual([]);
+    expect(requiredToolChecks).toEqual([[]]);
   });
 
   it("accepts a call when the answer SDP arrives after the start response resolves", async () => {
@@ -494,7 +516,10 @@ describe("LiveVoiceCoordinator", () => {
     const result = await startCall(harness);
     if (!result.accepted) throw new Error("expected the call to be accepted");
 
-    harness.coordinator.stop({ liveSessionId: "not-the-live-session" });
+    harness.coordinator.stop({
+      liveSessionId: "not-the-live-session",
+      sessionKey: harness.owner.sessionKey,
+    });
 
     expect(harness.coordinator.hasActiveCall(result.liveSessionId)).toBe(true);
     expect(harness.provider().stopCalls).toHaveLength(0);
@@ -502,14 +527,32 @@ describe("LiveVoiceCoordinator", () => {
     expect(harness.updates.map((update) => update.event.kind)).toEqual(["started"]);
   });
 
+  it("ignores a stop from a different reconnectable session", async () => {
+    const harness = createHarness();
+    const result = await startCall(harness);
+    if (!result.accepted) throw new Error("expected the call to be accepted");
+
+    harness.coordinator.stop({ liveSessionId: result.liveSessionId, sessionKey: {} });
+
+    expect(harness.coordinator.hasActiveCall(result.liveSessionId)).toBe(true);
+    expect(harness.provider().stopCalls).toHaveLength(0);
+    expect(harness.closedHostIds).toEqual([]);
+  });
+
   it("closes with cause requested on a matching stop and tears the host session down", async () => {
     const harness = createHarness();
     const result = await startCall(harness);
     if (!result.accepted) throw new Error("expected the call to be accepted");
 
-    harness.coordinator.stop({ liveSessionId: result.liveSessionId });
+    harness.coordinator.stop({
+      liveSessionId: result.liveSessionId,
+      sessionKey: harness.owner.sessionKey,
+    });
     // A second stop must not produce a second closed update or a second teardown.
-    harness.coordinator.stop({ liveSessionId: result.liveSessionId });
+    harness.coordinator.stop({
+      liveSessionId: result.liveSessionId,
+      sessionKey: harness.owner.sessionKey,
+    });
 
     expect(harness.updates.at(-1)?.event).toMatchObject({ kind: "closed", cause: "requested" });
     expect(harness.updates.filter((update) => update.event.kind === "closed")).toHaveLength(1);
@@ -518,7 +561,48 @@ describe("LiveVoiceCoordinator", () => {
     expect(harness.provider().hostSubscriberCount()).toBe(0);
     expect(harness.closedHostIds).toEqual(["host-1"]);
     expect(harness.coordinator.hasActiveCall(result.liveSessionId)).toBe(false);
-    expect(harness.routeBroker.isRegisteredHost("host-1")).toBe(false);
+    await vi.waitFor(() => expect(harness.routeBroker.isRegisteredHost("host-1")).toBe(false));
+  });
+
+  it("keeps a closing host restricted while rejecting new routed work", async () => {
+    let releaseClose: () => void = () => undefined;
+    const closeGate = new Promise<void>((resolve) => {
+      releaseClose = resolve;
+    });
+    const harness = createHarness({ closeAgentGate: closeGate });
+    const result = await startCall(harness);
+    if (!result.accepted) throw new Error("expected the call to be accepted");
+
+    harness.coordinator.stop({
+      liveSessionId: result.liveSessionId,
+      sessionKey: harness.owner.sessionKey,
+    });
+
+    expect(harness.routeBroker.isRegisteredHost("host-1")).toBe(true);
+    await expect(harness.routeBroker.execute("host-1", { kind: "list_hosts" })).rejects.toThrow(
+      "no longer connected",
+    );
+
+    releaseClose();
+    await vi.waitFor(() => expect(harness.routeBroker.isRegisteredHost("host-1")).toBe(false));
+  });
+
+  it("retains an inactive hidden-host tombstone when teardown fails", async () => {
+    const harness = createHarness({ closeAgentError: new Error("provider would not close") });
+    const result = await startCall(harness);
+    if (!result.accepted) throw new Error("expected the call to be accepted");
+
+    harness.coordinator.stop({
+      liveSessionId: result.liveSessionId,
+      sessionKey: harness.owner.sessionKey,
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(harness.routeBroker.isRegisteredHost("host-1")).toBe(true);
+    await expect(harness.routeBroker.execute("host-1", { kind: "list_hosts" })).rejects.toThrow(
+      "no longer connected",
+    );
   });
 
   it("tears every call of a session down when the whole client session goes away", async () => {
@@ -628,6 +712,25 @@ describe("LiveVoiceCoordinator", () => {
     const retry = await startCall(harness);
     expect(retry).toMatchObject({ accepted: false, errorCode: "start_failed" });
     expect(harness.hosts).toHaveLength(2);
+  });
+
+  it("bounds startup when the provider emits SDP but never resolves realtimeStart", async () => {
+    const never = new Promise<never>(() => undefined);
+    const harness = createHarness({
+      makeProvider: () =>
+        createFakeProviderSession({
+          onStart: (emit) => emit({ kind: "sdp", sdp: ANSWER_SDP }),
+          startGate: never,
+        }),
+      startSdpTimeoutMs: 5,
+    });
+
+    await expect(startCall(harness)).resolves.toMatchObject({
+      accepted: false,
+      errorCode: "start_failed",
+    });
+    expect(harness.coordinator.hasActiveCallForSession(harness.owner.sessionKey)).toBe(false);
+    expect(harness.closedHostIds).toEqual(["host-1"]);
   });
 
   it("fails with start_failed when the provider rejects the start request", async () => {
@@ -860,7 +963,10 @@ describe("LiveVoiceCoordinator", () => {
     const harness = createHarness();
     const result = await startCall(harness);
     if (!result.accepted) throw new Error("call was not accepted");
-    harness.coordinator.stop({ liveSessionId: result.liveSessionId });
+    harness.coordinator.stop({
+      liveSessionId: result.liveSessionId,
+      sessionKey: harness.owner.sessionKey,
+    });
 
     await expect(
       harness.coordinator.say({

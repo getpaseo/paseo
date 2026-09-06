@@ -2477,7 +2477,7 @@ export class Session {
   ): void {
     // Stop is idempotent: a stale or unknown liveSessionId is a no-op that still
     // gets a response.
-    this.liveVoice?.stop({ liveSessionId: msg.liveSessionId });
+    this.liveVoice?.stop({ liveSessionId: msg.liveSessionId, sessionKey: this });
     this.emitForSource(
       { type: "voice.live.stop.response", payload: { requestId: msg.requestId } },
       source,

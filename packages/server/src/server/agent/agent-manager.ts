@@ -84,7 +84,7 @@ import {
 } from "./runtime-mcp-config.js";
 import { resolveCreateAgentTitles } from "./create-agent-title.js";
 import type { PaseoToolCatalogFactory } from "./tools/types.js";
-import { isPaseoToolPolicyEnabled } from "./paseo-tool-policy.js";
+import { isPaseoToolEnabled, isPaseoToolPolicyEnabled } from "./paseo-tool-policy.js";
 import {
   ProviderSubagentStore,
   type ProviderSubagentDescriptor,
@@ -863,8 +863,18 @@ export class AgentManager {
    * whether an agent can act on Paseo itself. False when MCP is disabled or
    * `mcpInjectIntoAgents` is off.
    */
-  hasPaseoMcpInjection(): boolean {
-    return this.mcpBaseUrl !== null;
+  hasPaseoMcpInjection(provider?: AgentProvider, requiredTools: readonly string[] = []): boolean {
+    if (this.mcpBaseUrl === null || !this.paseoToolsEnabled) {
+      return false;
+    }
+    if (!provider) {
+      return true;
+    }
+    const policy = this.resolvePaseoToolPolicy(provider);
+    return (
+      isPaseoToolPolicyEnabled(policy) &&
+      requiredTools.every((toolName) => isPaseoToolEnabled(policy, toolName))
+    );
   }
 
   prepareForShutdown(): void {

@@ -16,7 +16,7 @@ interface RoutedWorkEntry {
   targetServerId: string;
   liveSessionId: string;
   agentId?: string;
-  claimedReasons?: Set<string>;
+  terminalClaimed?: boolean;
   createdAt: number;
 }
 
@@ -132,16 +132,23 @@ export function claimRoutedLiveVoiceNotification(requestId: string, reason: stri
   if (!entry) {
     return false;
   }
-  entry.claimedReasons ??= new Set();
-  if (entry.claimedReasons.has(reason)) {
+  // Permission events are already deduplicated by request id on the daemon.
+  // One turn can need several approvals before it completes.
+  if (reason === "needs_permission") {
+    return true;
+  }
+  if (entry.terminalClaimed) {
     return false;
   }
-  entry.claimedReasons.add(reason);
+  entry.terminalClaimed = true;
   return true;
 }
 
 export function releaseRoutedLiveVoiceNotificationClaim(requestId: string, reason: string): void {
-  entriesByRequestId.get(requestId)?.claimedReasons?.delete(reason);
+  const entry = entriesByRequestId.get(requestId);
+  if (entry && reason !== "needs_permission") {
+    entry.terminalClaimed = false;
+  }
 }
 
 /**

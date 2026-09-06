@@ -12,6 +12,7 @@ interface FakeHost {
   connected?: boolean;
   result?: { enabled: boolean };
   error?: Error;
+  enableGate?: Promise<void>;
 }
 
 function createDeps(hosts: FakeHost[]) {
@@ -34,6 +35,7 @@ function createDeps(hosts: FakeHost[]) {
         client: {
           setLiveVoiceAgentWatch: async (input) => {
             calls.push({ serverId, enabled: input.enabled });
+            if (input.enabled) await host.enableGate;
             if (host.error) {
               throw host.error;
             }
@@ -50,6 +52,21 @@ function createDeps(hosts: FakeHost[]) {
 describe("Live Voice ambient watch", () => {
   beforeEach(() => {
     resetRoutedLiveVoiceWork();
+  });
+
+  test("disables an enable that finishes after its call ended", async () => {
+    const gate = Promise.withResolvers<void>();
+    const { deps, calls } = createDeps([{ serverId: "source", enableGate: gate.promise }]);
+    const enabling = enableAmbientLiveVoiceWatches({
+      sourceServerId: "source",
+      liveSessionId: "live-1",
+      deps,
+    });
+    await disableAmbientLiveVoiceWatches({ liveSessionId: "live-1", deps });
+    gate.resolve();
+    expect(await enabling).toEqual([]);
+    expect(calls.map((call) => call.enabled)).toEqual([true, false, false]);
+    expect(getAmbientLiveVoiceWatch("source")).toBeNull();
   });
 
   test("watches every capable host, including the one hosting the call", async () => {

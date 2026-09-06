@@ -43,6 +43,6 @@ export interface LiveVoiceSession {
   setMuted(muted: boolean): void;
   /** Retry browser playback after autoplay blocking; a no-op on native. */
   resumeAudio(): Promise<void>;
-  /** Idempotent local teardown. Does not invoke `onTerminal`. */
-  close(): void;
+  /** Idempotent local teardown, including native audio deactivation. Does not invoke `onTerminal`. */
+  close(): void | Promise<void>;
 }

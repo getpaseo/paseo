@@ -1,5 +1,7 @@
 import { useRef, ReactNode, useCallback, useEffect } from "react";
 import { Buffer } from "buffer";
+import { playAudioWithLease } from "@/audio/leased-playback";
+import { AudioCaptureBusyError } from "@/audio/capture-lifetime";
 import { AppState } from "react-native";
 import { useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
@@ -717,11 +719,13 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
             startedVoicePlayback = true;
             voiceRuntime?.onAssistantAudioStarted(serverId);
           }
-          await voiceAudioEngine.play(audioBlob);
+          await playAudioWithLease(voiceAudioEngine, audioBlob);
         }
         await confirmAudioPlayed();
       } catch (error) {
-        console.error("[Session] Audio playback error:", error);
+        if (!(error instanceof AudioCaptureBusyError)) {
+          console.error("[Session] Audio playback error:", error);
+        }
         await confirmAudioPlayed();
       } finally {
         audioOutputBuffersRef.current.delete(playbackGroupId);

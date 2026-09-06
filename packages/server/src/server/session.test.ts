@@ -738,6 +738,37 @@ describe("workspace label editing", () => {
 });
 
 describe("Live Voice routing session boundary", () => {
+  test("stops a call using the stable reconnectable session authority", async () => {
+    const source = {};
+    const targetedMessages: Array<{ source: object; message: SessionOutboundMessage }> = [];
+    const stop = vi.fn();
+    const session = createSessionForTest({
+      targetedMessages,
+      liveVoiceCoordinator: { stop } as unknown as LiveVoiceCoordinator,
+    });
+
+    await session.handleMessage(
+      {
+        type: "voice.live.stop.request",
+        requestId: "stop-request-1",
+        liveSessionId: "live-session-1",
+      },
+      source,
+    );
+
+    expect(stop).toHaveBeenCalledExactlyOnceWith({
+      liveSessionId: "live-session-1",
+      sessionKey: session,
+    });
+    expect(targetedMessages).toContainEqual({
+      source,
+      message: {
+        type: "voice.live.stop.response",
+        payload: { requestId: "stop-request-1" },
+      },
+    });
+  });
+
   test("returns the host's upstream Live Voice catalog", async () => {
     const source = {};
     const targetedMessages: Array<{ source: object; message: SessionOutboundMessage }> = [];

@@ -32,7 +32,7 @@ interface Harness {
   /** Options the session module was constructed with, for driving its callbacks. */
   sessionOptions(): StartLiveVoiceSessionOptions;
   /** Push a `voice.live.update` as if it came off the socket. */
-  push(event: VoiceLiveEvent, overrides?: { liveSessionId?: string }): void;
+  push(event: VoiceLiveEvent, overrides?: { liveSessionId?: string; seq?: number }): void;
   subscriberCount(): number;
   startSession: Mock<LiveVoiceRuntimeDeps["startSession"]>;
   pinConnection: Mock<NonNullable<LiveVoiceRuntimeDeps["pinConnection"]>> | null;
@@ -47,6 +47,7 @@ function createHarness(
     pinConnection?: "active" | LiveVoiceRuntimeDeps["pinConnection"];
     voice?: string;
     callSettings?: LiveVoiceRuntimeDeps["callSettings"];
+    ambientAgentReports?: LiveVoiceRuntimeDeps["ambientAgentReports"];
   } = {},
 ): Harness {
   const lease = createAudioSessionLease();
@@ -104,6 +105,9 @@ function createHarness(
     lease,
     ...(overrides.voice ? { voice: { read: () => overrides.voice } } : {}),
     ...(overrides.callSettings ? { callSettings: overrides.callSettings } : {}),
+    ...(overrides.ambientAgentReports
+      ? { ambientAgentReports: overrides.ambientAgentReports }
+      : {}),
   });
 
   return {
@@ -125,7 +129,7 @@ function createHarness(
         type: "voice.live.update",
         payload: {
           liveSessionId: options?.liveSessionId ?? LIVE_SESSION_ID,
-          seq: seq++,
+          seq: options?.seq ?? seq++,
           event,
         },
       };
@@ -160,6 +164,39 @@ describe("live voice runtime", () => {
     expect(harness.lease.current()).toBe("liveVoice");
     expect(harness.runtime.isActiveForServer(SERVER_ID)).toBe(true);
     expect(harness.runtime.isActiveForServer("other-host")).toBe(false);
+  });
+
+  it("does not create a daemon call when stopped before negotiation", async () => {
+    const entered = Promise.withResolvers<void>();
+    const gathered = Promise.withResolvers<void>();
+    harness.startSession.mockImplementationOnce(async (options) => {
+      entered.resolve();
+      await gathered.promise;
+      const result = await options.negotiate(OFFER_SDP);
+      return {
+        ...harness.session,
+        liveSessionId: result.liveSessionId,
+        resumeAudio: async () => undefined,
+      };
+    });
+    const starting = harness.runtime.start(SERVER_ID);
+    await entered.promise;
+    await harness.runtime.stop();
+    gathered.resolve();
+    await expect(starting).resolves.toBeUndefined();
+    expect(harness.client.startLiveVoice).not.toHaveBeenCalled();
+    expect(harness.lease.current()).toBeNull();
+  });
+
+  it("stops the retained daemon call through a replacement client", async () => {
+    const stopReplacement = vi.fn(async () => undefined);
+    let replacement: LiveVoiceDaemonClient | null = null;
+    harness = createHarness({ getClient: () => replacement ?? harness.client });
+    await harness.runtime.start(SERVER_ID);
+    replacement = { ...harness.client, stopLiveVoice: stopReplacement };
+    harness.runtime.handleConnectionLost(SERVER_ID);
+    expect(stopReplacement).toHaveBeenCalledWith({ liveSessionId: LIVE_SESSION_ID });
+    expect(harness.client.stopLiveVoice).not.toHaveBeenCalled();
   });
 
   it("applies the selected voice when starting a new call", async () => {
@@ -277,6 +314,197 @@ describe("live voice runtime", () => {
     // Everything the runtime owns is handed back on the failure path.
     expect(harness.lease.current()).toBeNull();
     expect(harness.subscriberCount()).toBe(0);
+  });
+
+  it("stops the negotiated daemon call when applying its answer fails", async () => {
+    harness = createHarness({ pinConnection: "active" });
+    harness.startSession.mockImplementationOnce(async (options) => {
+      await options.negotiate(OFFER_SDP);
+      throw new Error("Invalid remote description");
+    });
+
+    await expect(harness.runtime.start(SERVER_ID)).rejects.toMatchObject({
+      info: { code: "start_failed", message: "Invalid remote description" },
+    });
+
+    expect(harness.client.stopLiveVoice).toHaveBeenCalledExactlyOnceWith({
+      liveSessionId: LIVE_SESSION_ID,
+    });
+    expect(harness.pinRelease).toHaveBeenCalledOnce();
+    expect(harness.lease.current()).toBeNull();
+    expect(harness.subscriberCount()).toBe(0);
+  });
+
+  it("does not revive a transport that terminates before startup resolves", async () => {
+    harness.startSession.mockImplementationOnce(async (options) => {
+      const result = await options.negotiate(OFFER_SDP);
+      options.onTerminal({ code: "webrtc_failed", message: "Peer failed during startup" });
+      options.onAudioBlocked();
+      return { ...result, ...harness.session, resumeAudio: async () => undefined };
+    });
+
+    await harness.runtime.start(SERVER_ID);
+
+    expect(harness.runtime.getSnapshot()).toMatchObject({
+      phase: "error",
+      liveSessionId: null,
+      isAudioBlocked: false,
+      error: { code: "webrtc_failed", message: "Peer failed during startup" },
+    });
+    expect(harness.session.close).toHaveBeenCalledOnce();
+    expect(harness.client.stopLiveVoice).toHaveBeenCalledExactlyOnceWith({
+      liveSessionId: LIVE_SESSION_ID,
+    });
+    expect(harness.lease.current()).toBeNull();
+  });
+
+  it("ignores late transport callbacks after a daemon closes the call", async () => {
+    await harness.runtime.start(SERVER_ID);
+    harness.push({ kind: "closed", cause: "provider_closed" });
+    const ended = harness.runtime.getSnapshot();
+
+    harness.sessionOptions().onAudioBlocked();
+    harness.sessionOptions().onTerminal({ code: "webrtc_failed", message: "Late callback" });
+
+    expect(harness.runtime.getSnapshot()).toBe(ended);
+    expect(harness.client.stopLiveVoice).not.toHaveBeenCalled();
+  });
+
+  it("releases startup resources if reading call settings fails", async () => {
+    harness = createHarness({
+      pinConnection: "active",
+      callSettings: {
+        read: () => {
+          throw new Error("Settings unavailable");
+        },
+      },
+    });
+
+    await expect(harness.runtime.start(SERVER_ID)).rejects.toMatchObject({
+      info: { code: "start_failed", message: "Settings unavailable" },
+    });
+
+    expect(harness.startSession).not.toHaveBeenCalled();
+    expect(harness.lease.current()).toBeNull();
+    expect(harness.pinRelease).toHaveBeenCalledOnce();
+    expect(harness.subscriberCount()).toBe(0);
+  });
+
+  it("releases a refused retry's pin without losing the cancelling call's resources", async () => {
+    const negotiated = Promise.withResolvers<void>();
+    const finishTransport = Promise.withResolvers<void>();
+    harness = createHarness({ pinConnection: "active" });
+    harness.startSession.mockImplementationOnce(async (options) => {
+      const result = await options.negotiate(OFFER_SDP);
+      negotiated.resolve();
+      await finishTransport.promise;
+      return { ...result, ...harness.session, resumeAudio: async () => undefined };
+    });
+    const start = harness.runtime.start(SERVER_ID);
+    await negotiated.promise;
+    await harness.runtime.stop();
+
+    await expect(harness.runtime.start(SERVER_ID)).rejects.toMatchObject({
+      info: { code: "mic_busy", owner: "liveVoice" },
+    });
+    expect(harness.pinRelease).toHaveBeenCalledTimes(1);
+    expect(harness.lease.current()).toBe("liveVoice");
+
+    finishTransport.resolve();
+    await start;
+
+    expect(harness.pinRelease).toHaveBeenCalledTimes(2);
+    expect(harness.session.close).toHaveBeenCalledOnce();
+    expect(harness.lease.current()).toBeNull();
+    expect(harness.client.stopLiveVoice).toHaveBeenCalledOnce();
+  });
+
+  it("keeps the connection pinned until the daemon acknowledges stop", async () => {
+    harness = createHarness({ pinConnection: "active" });
+    const stopped = Promise.withResolvers<void>();
+    harness.client.stopLiveVoice.mockReturnValueOnce(stopped.promise);
+    await harness.runtime.start(SERVER_ID);
+
+    const stop = harness.runtime.stop();
+    expect(harness.session.close).toHaveBeenCalledOnce();
+    expect(harness.lease.current()).toBeNull();
+    expect(harness.pinRelease).not.toHaveBeenCalled();
+    stopped.resolve();
+    await stop;
+
+    expect(harness.pinRelease).toHaveBeenCalledOnce();
+  });
+
+  it("retains the microphone lease until native audio teardown completes", async () => {
+    const closed = Promise.withResolvers<void>();
+    harness.session.close.mockImplementationOnce(() => closed.promise);
+    await harness.runtime.start(SERVER_ID);
+
+    const stop = harness.runtime.stop();
+
+    expect(harness.runtime.getSnapshot().phase).toBe("idle");
+    expect(harness.lease.current()).toBe("liveVoice");
+    expect(harness.lease.acquire("dictation")).toBeNull();
+
+    closed.resolve();
+    await stop;
+
+    expect(harness.lease.current()).toBeNull();
+  });
+
+  it("still releases the lease and ends the call when local teardown throws", async () => {
+    harness.session.close.mockImplementationOnce(() => {
+      throw new Error("Native peer already disposed");
+    });
+    await harness.runtime.start(SERVER_ID);
+
+    await harness.runtime.stop();
+
+    expect(harness.runtime.getSnapshot().phase).toBe("idle");
+    expect(harness.lease.current()).toBeNull();
+    expect(harness.subscriberCount()).toBe(0);
+    expect(harness.client.stopLiveVoice).toHaveBeenCalledOnce();
+  });
+
+  it("does not enable ambient reports when a closed push preceded the start response", async () => {
+    const enable = vi.fn(async () => undefined);
+    harness = createHarness({
+      ambientAgentReports: {
+        read: () => ({ enabled: true, guidance: undefined }),
+        enable,
+        disable: async () => undefined,
+      },
+      startLiveVoice: vi.fn(async () => {
+        harness.push({ kind: "closed", cause: "provider_closed" });
+        return {
+          liveSessionId: LIVE_SESSION_ID,
+          negotiation: { kind: "webrtc_sdp", answerSdp: ANSWER_SDP },
+        };
+      }),
+    });
+
+    await harness.runtime.start(SERVER_ID);
+
+    expect(enable).not.toHaveBeenCalled();
+    expect(harness.runtime.getSnapshot().phase).toBe("idle");
+  });
+
+  it("ignores repeated and out-of-order updates within the same call", async () => {
+    await harness.runtime.start(SERVER_ID);
+    harness.push(
+      { kind: "transcript", role: "user", transcriptId: "t1", text: "latest" },
+      { seq: 5 },
+    );
+    harness.push(
+      { kind: "transcript", role: "user", transcriptId: "t1", text: "older" },
+      { seq: 4 },
+    );
+    harness.push({ kind: "closed", cause: "provider_closed" }, { seq: 5 });
+
+    expect(harness.runtime.getSnapshot()).toMatchObject({
+      phase: "active",
+      transcripts: [{ id: "t1", role: "user", text: "latest" }],
+    });
   });
 
   it("refuses to start while another owner holds the mic lease", async () => {
@@ -549,8 +777,7 @@ describe("live voice runtime", () => {
     expect(harness.session.close).toHaveBeenCalledTimes(1);
     // The whole point: the microphone must not stay locked out.
     expect(harness.lease.current()).toBeNull();
-    // The socket is gone and the daemon already released its side.
-    expect(harness.client.stopLiveVoice).not.toHaveBeenCalled();
+    expect(harness.client.stopLiveVoice).toHaveBeenCalledWith({ liveSessionId: LIVE_SESSION_ID });
   });
 
   it("ignores a connection loss for a different host", async () => {

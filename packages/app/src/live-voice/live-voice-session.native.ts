@@ -64,6 +64,7 @@ export async function startLiveVoiceSession(
   let backgroundCallActive = false;
   let closed = false;
   let terminalReported = false;
+  let cleanupPromise: Promise<void> | null = null;
 
   function clearDisconnectTimer(): void {
     if (disconnectTimer === null) {
@@ -71,10 +72,6 @@ export async function startLiveVoiceSession(
     }
     clearTimeout(disconnectTimer);
     disconnectTimer = null;
-  }
-
-  function handleChannelMessage(event: { data: unknown }): void {
-    console.debug("[LiveVoice] oai-events message", event.data);
   }
 
   function handleChannelError(event: unknown): void {
@@ -93,9 +90,9 @@ export async function startLiveVoiceSession(
     handleConnectionState(state);
   }
 
-  function cleanup(): void {
-    if (closed) {
-      return;
+  function cleanup(): Promise<void> {
+    if (cleanupPromise) {
+      return cleanupPromise;
     }
     closed = true;
     clearDisconnectTimer();
@@ -109,15 +106,21 @@ export async function startLiveVoiceSession(
       pc.oniceconnectionstatechange = null;
     }
 
-    channel?.close();
-    channel = null;
-    pc?.close();
-    pc = null;
-
-    for (const track of stream?.getTracks() ?? []) {
-      track.stop();
+    const releases = [
+      ...(stream?.getTracks() ?? []).map((track) => () => track.stop()),
+      () => channel?.close(),
+      () => pc?.close(),
+      () => stream?.release(),
+    ];
+    for (const release of releases) {
+      try {
+        release();
+      } catch (error) {
+        console.warn("[LiveVoice] Failed to release native media resource", error);
+      }
     }
-    stream?.release();
+    channel = null;
+    pc = null;
     stream = null;
 
     // WebRTC must release the shared iOS audio session before the lifetime
@@ -125,10 +128,13 @@ export async function startLiveVoiceSession(
     // microphone service once capture has stopped.
     if (backgroundCallActive) {
       backgroundCallActive = false;
-      void endLiveVoiceBackgroundCall().catch((error) => {
+      cleanupPromise = endLiveVoiceBackgroundCall().catch((error) => {
         console.warn("[LiveVoice] Failed to end background call lifetime", error);
       });
+    } else {
+      cleanupPromise = Promise.resolve();
     }
+    return cleanupPromise;
   }
 
   function reportTerminal(code: string, message: string): void {
@@ -137,7 +143,7 @@ export async function startLiveVoiceSession(
     }
     terminalReported = true;
     console.warn("[LiveVoice] Native session ended", { code, message });
-    cleanup();
+    void cleanup();
     options.onTerminal({ code, message });
   }
 
@@ -188,7 +194,6 @@ export async function startLiveVoiceSession(
     pc.addTrack(micTrack, stream);
 
     channel = pc.createDataChannel(EVENT_CHANNEL_LABEL);
-    channel.onmessage = handleChannelMessage;
     channel.onerror = handleChannelError;
     pc.onconnectionstatechange = handleConnectionStateChange;
     pc.oniceconnectionstatechange = handleIceConnectionStateChange;
@@ -218,11 +223,11 @@ export async function startLiveVoiceSession(
       },
       async resumeAudio() {},
       close() {
-        cleanup();
+        return cleanup();
       },
     };
   } catch (error) {
-    cleanup();
+    await cleanup();
     throw error;
   }
 }

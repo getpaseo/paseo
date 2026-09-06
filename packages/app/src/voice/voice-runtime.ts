@@ -1,7 +1,8 @@
 import { Buffer } from "buffer";
 import type { AgentStreamEventPayload, SessionOutboundMessage } from "@getpaseo/protocol/messages";
 import { resolveAudioSessionBusyMessage } from "@/audio/audio-session-busy-message";
-import { audioSessionLease, type AudioSessionLeaseToken } from "@/audio/audio-session-lease";
+import { audioSessionLease } from "@/audio/audio-session-lease";
+import { AudioCaptureBusyError, createAudioCaptureLifetime } from "@/audio/capture-lifetime";
 import { resolveVoiceUnavailableMessage } from "@/utils/server-info-capabilities";
 import type { DaemonServerInfo } from "@/stores/session-store";
 import type { AudioEngine } from "@/voice/audio-engine-types";
@@ -518,33 +519,24 @@ export function createVoiceRuntime(deps: VoiceRuntimeDeps): VoiceRuntime {
     },
   };
 
-  // Voice mode is one of three microphone owners; the app-global lease keeps
-  // dictation and live voice from talking over it (and vice versa).
-  let micLeaseToken: AudioSessionLeaseToken | null = null;
-
-  /**
-   * Reused across agent switches: `startVoice` on a new agent while voice mode is
-   * already running must not have to give the mic up and take it back.
-   */
-  function acquireMicLease(): void {
-    if (audioSessionLease.isHeldBy(micLeaseToken)) {
-      return;
-    }
-    const token = audioSessionLease.acquire("voiceMode");
-    if (!token) {
-      throw new Error(resolveAudioSessionBusyMessage(audioSessionLease.current()));
-    }
-    micLeaseToken = token;
-  }
-
-  function releaseMicLease(): void {
-    const token = micLeaseToken;
-    micLeaseToken = null;
-    audioSessionLease.release(token);
-  }
+  let destroying = false;
+  const capture = createAudioCaptureLifetime({
+    owner: "voiceMode",
+    lease: audioSessionLease,
+    async stop() {
+      stopCue();
+      uploader.reset();
+      resetPlaybackState();
+      deps.engine.stop();
+      deps.engine.clearQueue();
+      if (destroying) await deps.engine.destroy();
+      else await deps.engine.stopCapture();
+      await deps.deactivateKeepAwake(KEEP_AWAKE_TAG).catch(() => undefined);
+      getActiveSession()?.adapter.setAssistantAudioPlaying(false);
+    },
+  });
 
   function resetToDisabledState(): void {
-    releaseMicLease();
     state.transportReady = false;
     state.turnInProgress = false;
     state.serverSpeechDetected = false;
@@ -577,15 +569,9 @@ export function createVoiceRuntime(deps: VoiceRuntimeDeps): VoiceRuntime {
   }
 
   async function performLocalStop(): Promise<void> {
-    stopCue();
-    uploader.reset();
-    resetPlaybackState();
-    deps.engine.stop();
-    deps.engine.clearQueue();
-    await deps.engine.stopCapture().catch(() => undefined);
-    await deps.deactivateKeepAwake(KEEP_AWAKE_TAG).catch(() => undefined);
-    getActiveSession()?.adapter.setAssistantAudioPlaying(false);
-    resetToDisabledState();
+    const generation = ++state.generation;
+    await capture.stop();
+    if (state.generation === generation) resetToDisabledState();
   }
 
   async function resyncVoiceMode(serverId: string): Promise<void> {
@@ -644,7 +630,9 @@ export function createVoiceRuntime(deps: VoiceRuntimeDeps): VoiceRuntime {
         const activeServerId = state.snapshot.activeServerId;
         sessions.delete(adapter.serverId);
         if (activeServerId === adapter.serverId) {
-          void performLocalStop();
+          void performLocalStop().catch((error) => {
+            console.error("[VoiceRuntime] Failed to stop after session removal:", error);
+          });
         }
       };
     },
@@ -755,48 +743,48 @@ export function createVoiceRuntime(deps: VoiceRuntimeDeps): VoiceRuntime {
         throw new Error(unavailableMessage);
       }
 
-      // Refuse rather than interrupt: throws before any state churn, so a busy
-      // microphone leaves the runtime exactly as it was.
-      acquireMicLease();
-
-      const previousServerId = state.snapshot.activeServerId;
-      const previousAgentId = state.snapshot.activeAgentId;
-      const generation = state.generation + 1;
+      let generation = state.generation;
       let enabledCurrentVoiceMode = false;
-      state.generation = generation;
-      state.transportReady = false;
-      patchSnapshot((prev) => ({
-        ...prev,
-        isVoiceSwitching: true,
-        phase: "starting",
-        activeServerId: serverId,
-        activeAgentId: agentId,
-      }));
-
       try {
-        if (
-          state.snapshot.isVoiceMode &&
-          previousServerId &&
-          (previousServerId !== serverId || previousAgentId !== agentId)
-        ) {
-          const previousSession = sessions.get(previousServerId);
-          if (previousSession) {
-            previousSession.adapter.setAssistantAudioPlaying(false);
-            await previousSession.adapter.setVoiceMode(false);
+        const started = await capture.start(async (signal) => {
+          const previousServerId = state.snapshot.activeServerId;
+          const previousAgentId = state.snapshot.activeAgentId;
+          generation = ++state.generation;
+          state.transportReady = false;
+          patchSnapshot((prev) => ({
+            ...prev,
+            isVoiceSwitching: true,
+            phase: "starting",
+            activeServerId: serverId,
+            activeAgentId: agentId,
+          }));
+
+          if (
+            state.snapshot.isVoiceMode &&
+            previousServerId &&
+            (previousServerId !== serverId || previousAgentId !== agentId)
+          ) {
+            const previousSession = sessions.get(previousServerId);
+            if (previousSession) {
+              previousSession.adapter.setAssistantAudioPlaying(false);
+              await previousSession.adapter.setVoiceMode(false);
+            }
           }
-        }
-
-        await deps.activateKeepAwake(KEEP_AWAKE_TAG).catch((error) => {
-          console.warn("[VoiceRuntime] Failed to activate keep-awake:", error);
+          if (signal.aborted) return;
+          await deps.activateKeepAwake(KEEP_AWAKE_TAG).catch((error) => {
+            console.warn("[VoiceRuntime] Failed to activate keep-awake:", error);
+          });
+          if (signal.aborted) return;
+          await deps.engine.initialize();
+          if (signal.aborted) return;
+          await session.adapter.setVoiceMode(true, agentId);
+          enabledCurrentVoiceMode = true;
+          if (!signal.aborted) await deps.engine.startCapture();
+          if (signal.aborted) {
+            await session.adapter.setVoiceMode(false).catch(() => undefined);
+          }
         });
-
-        await deps.engine.initialize();
-        await session.adapter.setVoiceMode(true, agentId);
-        enabledCurrentVoiceMode = true;
-        await deps.engine.startCapture();
-        if (state.generation !== generation) {
-          return;
-        }
+        if (!started || state.generation !== generation) return;
 
         state.transportReady = true;
         state.turnInProgress = false;
@@ -810,10 +798,14 @@ export function createVoiceRuntime(deps: VoiceRuntimeDeps): VoiceRuntime {
           isMuted: deps.engine.isMuted(),
         }));
       } catch (error) {
+        if (error instanceof AudioCaptureBusyError) {
+          throw new Error(resolveAudioSessionBusyMessage(error.owner), { cause: error });
+        }
+        if (state.generation !== generation) return;
         if (enabledCurrentVoiceMode) {
           await session.adapter.setVoiceMode(false).catch(() => undefined);
         }
-        await performLocalStop();
+        if (state.generation === generation) await performLocalStop();
         throw error;
       }
     },
@@ -822,6 +814,8 @@ export function createVoiceRuntime(deps: VoiceRuntimeDeps): VoiceRuntime {
       const activeSession = getActiveSession();
       const generation = state.generation + 1;
       state.generation = generation;
+      const stopping = capture.stop();
+      void stopping.catch(() => undefined);
       patchSnapshot((prev) => ({
         ...prev,
         isVoiceSwitching: true,
@@ -829,19 +823,13 @@ export function createVoiceRuntime(deps: VoiceRuntimeDeps): VoiceRuntime {
       }));
 
       try {
-        stopCue();
-        uploader.reset();
         state.transportReady = false;
-        resetPlaybackState();
-        deps.engine.stop();
-        deps.engine.clearQueue();
         activeSession?.adapter.setAssistantAudioPlaying(false);
         if (activeSession) {
           await activeSession.adapter.setVoiceMode(false);
         }
-        await deps.engine.stopCapture();
-        await deps.deactivateKeepAwake(KEEP_AWAKE_TAG).catch(() => undefined);
       } finally {
+        await stopping;
         if (state.generation === generation) {
           resetToDisabledState();
         }
@@ -849,7 +837,9 @@ export function createVoiceRuntime(deps: VoiceRuntimeDeps): VoiceRuntime {
     },
 
     async destroy() {
+      destroying = true;
       await this.stopVoice().catch(() => undefined);
+      await capture.stop();
       await deps.engine.destroy();
       listeners.clear();
       telemetryListeners.clear();

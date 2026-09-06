@@ -75,6 +75,22 @@ describe("SessionAuthorization", () => {
     expect(authorization.allowsOutbound(outboundMessage("rpc_error"))).toBe(true);
   });
 
+  test("routed Live Voice tools require every authority in the unrestricted catalog", () => {
+    const request = inboundMessage("voice.live.tool.execute.request");
+
+    expect(new SessionAuthorization(["workspace.write"]).allowsInbound(request)).toBe(false);
+    expect(
+      new SessionAuthorization(["workspace.write", "workspace.manage"]).allowsInbound(request),
+    ).toBe(false);
+    expect(
+      new SessionAuthorization([
+        "workspace.write",
+        "workspace.manage",
+        "automation.manage",
+      ]).allowsInbound(request),
+    ).toBe(true);
+  });
+
   test("legacy Hub authority is translated at one compatibility boundary", () => {
     expect(permissionsForLegacyHubScopes(["hub.execution.*"])).toEqual(["hub.execute"]);
     expect(permissionsForLegacyHubScopes(["*"])).toEqual([]);

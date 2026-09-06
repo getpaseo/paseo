@@ -51,16 +51,10 @@ export function useDictationAudioSource(config: DictationAudioSourceConfig): Dic
   }, [getOrCreateEngine]);
 
   const stop = useCallback(async () => {
-    await engineRef.current?.stopCapture();
+    const engine = engineRef.current;
+    await engine?.destroy();
+    engineRef.current = null;
     setVolume(0);
-  }, []);
-
-  useEffect(() => {
-    return () => {
-      const engine = engineRef.current;
-      engineRef.current = null;
-      void engine?.destroy().catch(() => undefined);
-    };
   }, []);
 
   return {

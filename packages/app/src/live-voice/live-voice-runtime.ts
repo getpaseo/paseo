@@ -5,17 +5,18 @@
  * a stable snapshot, so React can consume it through `useSyncExternalStore`
  * without the runtime knowing React exists.
  *
- * It owns exactly four things, and nothing else in the app owns any of them:
+ * Each call owns its resources independently of later start attempts:
  *   - the WebRTC session handle,
  *   - the `voice.live.update` subscription (and the stale-update filter),
  *   - the finalized transcript list,
  *   - the microphone lease token.
+ *   - the connection pin, retained until the daemon acknowledges stop.
  *
  * Errors are reported structurally (`code` + optional server message) rather
  * than as prose, so the UI owns all translation.
  */
 
-import type { SessionOutboundMessage, VoiceLiveEvent } from "@getpaseo/protocol/messages";
+import type { SessionOutboundMessage } from "@getpaseo/protocol/messages";
 import {
   audioSessionLease,
   type AudioSessionLease,
@@ -139,6 +140,7 @@ export interface LiveVoiceRuntime {
   subscribe(listener: () => void): () => void;
   getSnapshot(): LiveVoiceSnapshot;
   start(serverId: string): Promise<void>;
+  /** Pending platform startup cannot be cancelled; its lease survives until it settles. */
   stop(): Promise<void>;
   /** Drive mute to an absolute value. No-op unless a call is active. */
   setMuted(muted: boolean): void;
@@ -153,8 +155,8 @@ export interface LiveVoiceRuntime {
   isActiveForServer(serverId: string): boolean;
   /**
    * The host replaced the exact pinned client this call was placed over. Tears
-   * the local half down because the replacement cannot address the retained
-   * daemon session. A transient socket disconnect on the same client is handled
+   * the local half down and asks the replacement to stop the retained daemon
+   * session. A transient socket disconnect on the same client is handled
    * by that client's reconnect loop and must not call this method.
    */
   handleConnectionLost(serverId: string): void;
@@ -264,31 +266,29 @@ export function createDefaultLiveVoiceRuntimeDeps(
   };
 }
 
+interface LiveVoiceCall {
+  client: LiveVoiceDaemonClient;
+  pin: LiveVoiceConnectionPin | null;
+  leaseToken: AudioSessionLeaseToken | null;
+  session: LiveVoiceSession | null;
+  unsubscribe: (() => void) | null;
+  pendingUpdates: VoiceLiveUpdateMessage[];
+  liveSessionId: string | null;
+  lastSequence: number;
+  starting: boolean;
+  ended: boolean;
+  stopRequested: boolean;
+  stopPromise: Promise<void> | null;
+  closePromise: Promise<void> | null;
+}
+
 export function createLiveVoiceRuntime(deps: LiveVoiceRuntimeDeps): LiveVoiceRuntime {
   const listeners = new Set<() => void>();
   let snapshot: LiveVoiceSnapshot = IDLE_SNAPSHOT;
-
-  // Live call resources. All cleared together by `cleanupLocal`.
-  let session: LiveVoiceSession | null = null;
-  let unsubscribeUpdates: (() => void) | null = null;
-  let leaseToken: AudioSessionLeaseToken | null = null;
-  let connectionPin: LiveVoiceConnectionPin | null = null;
-  let daemonClient: LiveVoiceDaemonClient | null = null;
-  // Updates that arrived before the start response told us our liveSessionId.
-  // The daemon may push `started` (or even `closed`) before it answers, so they
-  // are buffered and replayed once the id is known.
-  let pendingUpdates: VoiceLiveUpdateMessage[] = [];
-  // Invalidates in-flight async work from a superseded start/stop.
-  let generation = 0;
-  // While `deps.startSession` is in flight the microphone is physically open even
-  // though `session` is still null, so a superseding stop() must not release the
-  // lease — the start's settlement path does, after closing the real session.
-  let startInFlight = false;
+  let currentCall: LiveVoiceCall | null = null;
 
   function publish(next: LiveVoiceSnapshot): void {
-    if (next === snapshot) {
-      return;
-    }
+    if (next === snapshot) return;
     snapshot = next;
     for (const listener of listeners) {
       try {
@@ -303,62 +303,82 @@ export function createLiveVoiceRuntime(deps: LiveVoiceRuntimeDeps): LiveVoiceRun
     publish({ ...snapshot, ...update });
   }
 
-  function setMuted(muted: boolean): void {
-    if (!session || snapshot.phase !== "active") {
-      return;
-    }
-    if (snapshot.isMuted === muted) {
-      return;
-    }
-    session.setMuted(muted);
-    patch({ isMuted: muted });
+  function isCurrent(call: LiveVoiceCall): boolean {
+    return currentCall === call && !call.ended;
   }
 
-  /**
-   * Idempotent teardown of everything the runtime owns locally. Deliberately does
-   * not touch the daemon: callers decide whether a stop RPC is warranted.
-   */
-  function cleanupLocal(): void {
-    // Every way a call can end converges here, so this is the one place the
-    // ambient watches have to be dropped — client stop, provider error, lost
-    // connection, and runtime teardown alike. Reads the id before the snapshot
-    // is cleared; callers publish the idle snapshot after this returns.
-    if (snapshot.liveSessionId) {
-      const endedLiveSessionId = snapshot.liveSessionId;
-      void deps.ambientAgentReports
-        ?.disable({ liveSessionId: endedLiveSessionId })
-        .catch(() => undefined);
-    }
-    pendingUpdates = [];
-    if (unsubscribeUpdates) {
-      const unsubscribe = unsubscribeUpdates;
-      unsubscribeUpdates = null;
-      unsubscribe();
-    }
-    if (session) {
-      const active = session;
-      session = null;
-      active.close();
-    }
-    if (!startInFlight) {
-      if (leaseToken) {
-        const token = leaseToken;
-        leaseToken = null;
-        deps.lease.release(token);
-      }
-      if (connectionPin) {
-        const pin = connectionPin;
-        connectionPin = null;
-        pin.release();
-      }
-      daemonClient = null;
+  function releasePin(call: LiveVoiceCall): void {
+    const pin = call.pin;
+    call.pin = null;
+    pin?.release();
+  }
+
+  function stopDaemon(call: LiveVoiceCall): void {
+    if (!call.stopRequested || !call.liveSessionId || call.stopPromise) return;
+    call.stopPromise = call.client
+      .stopLiveVoice({ liveSessionId: call.liveSessionId })
+      .catch(() => undefined);
+  }
+
+  function releaseResources(call: LiveVoiceCall): void {
+    // A pending transport still owns its microphone until startSession settles.
+    if (!call.ended || call.starting || call.closePromise) return;
+    deps.lease.release(call.leaseToken);
+    call.leaseToken = null;
+    if (call.stopPromise) {
+      void call.stopPromise.then(() => releasePin(call));
+    } else {
+      releasePin(call);
     }
   }
 
-  function applyEvent(event: VoiceLiveEvent): void {
+  function reportCloseFailure(error: unknown): void {
+    console.warn("[LiveVoice] Failed to close local audio session", error);
+  }
+
+  function closeSession(session: LiveVoiceSession): void | Promise<void> {
+    try {
+      return session.close()?.catch(reportCloseFailure);
+    } catch (error) {
+      reportCloseFailure(error);
+    }
+  }
+
+  function endCall(call: LiveVoiceCall, requestStop: boolean): void {
+    call.stopRequested ||= requestStop;
+    stopDaemon(call);
+    if (!call.ended) {
+      call.ended = true;
+      if (currentCall === call) currentCall = null;
+      call.unsubscribe?.();
+      call.unsubscribe = null;
+      call.pendingUpdates = [];
+      const session = call.session;
+      call.session = null;
+      const closing = session ? closeSession(session) : undefined;
+      if (closing) {
+        call.closePromise = closing.then(() => {
+          call.closePromise = null;
+          return releaseResources(call);
+        });
+      }
+      if (call.liveSessionId) {
+        void deps.ambientAgentReports
+          ?.disable({ liveSessionId: call.liveSessionId })
+          .catch(() => undefined);
+      }
+    }
+    releaseResources(call);
+  }
+
+  function applyUpdate(call: LiveVoiceCall, message: VoiceLiveUpdateMessage): void {
+    const { liveSessionId, seq, event } = message.payload;
+    if (!isCurrent(call) || liveSessionId !== call.liveSessionId || seq <= call.lastSequence) {
+      return;
+    }
+    call.lastSequence = seq;
     switch (event.kind) {
       case "started":
-        // The handshake already put us in `active`; nothing to reconcile.
         return;
       case "transcript": {
         const entry: LiveVoiceTranscriptEntry = {
@@ -375,62 +395,37 @@ export function createLiveVoiceRuntime(deps: LiveVoiceRuntimeDeps): LiveVoiceRun
         return;
       }
       case "error": {
-        const info: LiveVoiceErrorInfo = { code: event.code, message: event.message };
+        const error: LiveVoiceErrorInfo = { code: event.code, message: event.message };
         if (!event.fatal) {
-          // Non-fatal: surface it but keep the call up.
-          patch({ error: info });
+          patch({ error });
           return;
         }
-        cleanupLocal();
-        publish({ ...snapshot, phase: "error", error: info, liveSessionId: null });
+        endCall(call, false);
+        patch({ phase: "error", error, liveSessionId: null, isAudioBlocked: false });
         return;
       }
-      case "closed": {
-        cleanupLocal();
-        // A fatal error already explains the closure; don't overwrite it with a
-        // bare cause. Otherwise a close is just the end of the call.
-        const keepError = snapshot.phase === "error" && snapshot.error !== null;
-        publish({
-          ...snapshot,
-          phase: keepError ? "error" : "idle",
+      case "closed":
+        endCall(call, false);
+        patch({
+          phase: "idle",
           liveSessionId: null,
           isAudioBlocked: false,
           closedCause: event.cause,
         });
         return;
-      }
     }
   }
 
-  function handleUpdate(message: VoiceLiveUpdateMessage): void {
-    if (snapshot.liveSessionId === null) {
-      // Still handshaking: we can't tell ours from a stale call's yet.
-      pendingUpdates.push(message);
+  function handleUpdate(call: LiveVoiceCall, message: VoiceLiveUpdateMessage): void {
+    if (!isCurrent(call)) return;
+    if (call.session === null) {
+      call.pendingUpdates.push(message);
       return;
     }
-    if (message.payload.liveSessionId !== snapshot.liveSessionId) {
-      return;
-    }
-    applyEvent(message.payload.event);
-  }
-
-  function flushPendingUpdates(liveSessionId: string): void {
-    const buffered = pendingUpdates;
-    pendingUpdates = [];
-    for (const message of buffered) {
-      if (message.payload.liveSessionId !== liveSessionId) {
-        continue;
-      }
-      if (snapshot.liveSessionId !== liveSessionId) {
-        // A buffered terminal event already tore the call down.
-        return;
-      }
-      applyEvent(message.payload.event);
-    }
+    applyUpdate(call, message);
   }
 
   function failStart(serverId: string, info: LiveVoiceErrorInfo): never {
-    cleanupLocal();
     publish({ ...IDLE_SNAPSHOT, phase: "error", serverId, error: info });
     throw new LiveVoiceStartError(info);
   }
@@ -452,76 +447,26 @@ export function createLiveVoiceRuntime(deps: LiveVoiceRuntimeDeps): LiveVoiceRun
     };
   }
 
-  const runtime: LiveVoiceRuntime = {
-    subscribe(listener) {
-      listeners.add(listener);
-      return () => {
-        listeners.delete(listener);
-      };
-    },
+  function setMuted(muted: boolean): void {
+    const session = currentCall?.session;
+    if (!session || snapshot.phase !== "active" || snapshot.isMuted === muted) return;
+    session.setMuted(muted);
+    patch({ isMuted: muted });
+  }
 
-    getSnapshot() {
-      return snapshot;
-    },
-
-    async start(serverId) {
-      if (snapshot.phase === "starting" || snapshot.phase === "active") {
-        throw new LiveVoiceStartError({ code: "already_active", message: null });
-      }
-      if (snapshot.phase === "stopping") {
-        throw new LiveVoiceStartError({ code: "stopping", message: null });
-      }
-      if (!deps.isSessionSupported) {
-        failStart(serverId, { code: "unsupported", message: null });
-      }
-      const pin = deps.pinConnection?.(serverId) ?? null;
-      // When pinning is available, never silently fall back to an unpinned
-      // client: a probe-driven transport swap would orphan the daemon-owned
-      // call immediately after negotiation.
-      const client = resolveLiveVoiceClient(deps, serverId, pin);
-      if (!client) {
-        failStart(serverId, { code: "not_connected", message: null });
-      }
-      connectionPin = pin;
-      daemonClient = client;
-
-      // Take the mic before any state churn so a refusal leaves us untouched.
-      const token = deps.lease.acquire("liveVoice");
-      if (!token) {
-        const owner = deps.lease.current();
-        failStart(serverId, {
-          code: "mic_busy",
-          message: null,
-          ...(owner ? { owner } : {}),
-        });
-      }
-      leaseToken = token;
-
-      const startGeneration = ++generation;
-      pendingUpdates = [];
-      publish({ ...IDLE_SNAPSHOT, phase: "starting", serverId });
-
-      // Subscribe before negotiating: the daemon can push `started` (or a
-      // terminal event) before it answers the start request.
-      unsubscribeUpdates = client.subscribeUpdates((message) => {
-        if (generation !== startGeneration) {
-          return;
-        }
-        handleUpdate(message);
-      });
-
-      // Read once, before negotiating: the prompt the model gets is fixed at
-      // start, so a switch flipped mid-call must not leave the two disagreeing.
+  async function startCall(call: LiveVoiceCall, serverId: string): Promise<void> {
+    try {
+      if (!isCurrent(call)) return;
+      call.unsubscribe = call.client.subscribeUpdates((message) => handleUpdate(call, message));
       const ambientStartFields = toAmbientStartFields(deps.ambientAgentReports?.read());
       const callSettings = deps.callSettings?.read();
-      const voice = await resolveSelectedLiveVoice(deps.voice?.read(), client);
-      if (generation !== startGeneration) {
-        return;
-      }
+      const voice = await resolveSelectedLiveVoice(deps.voice?.read(), call.client);
+      if (!isCurrent(call)) return;
 
-      const sessionOptions: StartLiveVoiceSessionOptions = {
+      const started = await deps.startSession({
         negotiate: async (offerSdp) => {
-          const started = await client.startLiveVoice({
+          if (!isCurrent(call)) throw new Error("Live Voice startup was cancelled");
+          const result = await call.client.startLiveVoice({
             negotiation: { kind: "webrtc_sdp", offerSdp },
             ...(voice ? { voice } : {}),
             ...ambientStartFields,
@@ -539,164 +484,157 @@ export function createLiveVoiceRuntime(deps: LiveVoiceRuntimeDeps): LiveVoiceRun
               ? { backendThinkingOptionId: callSettings.backendThinkingOptionId }
               : {}),
           });
+          // The daemon exists before the transport applies its answer. Retain
+          // its id even if setRemoteDescription fails or this start was stopped.
+          call.liveSessionId = result.liveSessionId;
+          stopDaemon(call);
           return {
-            liveSessionId: started.liveSessionId,
-            answerSdp: started.negotiation.answerSdp,
+            liveSessionId: result.liveSessionId,
+            answerSdp: result.negotiation.answerSdp,
           };
         },
         onAudioBlocked: () => {
-          if (generation !== startGeneration) return;
-          patch({ isAudioBlocked: true });
+          if (isCurrent(call)) patch({ isAudioBlocked: true });
         },
         onAudioResumed: () => {
-          if (generation !== startGeneration) return;
-          patch({ isAudioBlocked: false });
+          if (isCurrent(call)) patch({ isAudioBlocked: false });
         },
         onTerminal: (info) => {
-          if (generation !== startGeneration) return;
-          const liveSessionId = snapshot.liveSessionId;
-          cleanupLocal();
-          publish({
-            ...snapshot,
+          if (!isCurrent(call)) return;
+          endCall(call, true);
+          patch({
             phase: "error",
             liveSessionId: null,
             isAudioBlocked: false,
             error: { code: info.code, message: info.message },
           });
-          // Best effort: tell the daemon the local half is gone.
-          if (liveSessionId) {
-            void client.stopLiveVoice({ liveSessionId }).catch(() => undefined);
-          }
         },
-      };
-
-      // Frees the lease for a start that was superseded mid-negotiation: the
-      // superseding stop()'s cleanup deliberately left it held (the mic was
-      // still physically open) and it is only safe to release here, once the
-      // in-flight session is actually closed.
-      const releaseSupersededResources = () => {
-        if (leaseToken === token) {
-          leaseToken = null;
-        }
-        deps.lease.release(token);
-        if (connectionPin === pin) {
-          connectionPin = null;
-        }
-        pin?.release();
-        if (daemonClient === client) {
-          daemonClient = null;
-        }
-      };
-
-      let started: LiveVoiceSession;
-      startInFlight = true;
-      try {
-        started = await deps.startSession(sessionOptions);
-      } catch (error) {
-        startInFlight = false;
-        if (generation !== startGeneration) {
-          releaseSupersededResources();
-          throw error instanceof Error ? error : new Error(String(error));
-        }
-        failStart(serverId, toErrorInfo(error));
-      } finally {
-        startInFlight = false;
-      }
-
-      if (generation !== startGeneration) {
-        // A stop() or a newer start() superseded us while negotiating.
-        started.close();
-        releaseSupersededResources();
-        void client.stopLiveVoice({ liveSessionId: started.liveSessionId }).catch(() => undefined);
-        return;
-      }
-
-      session = started;
-      publish({
-        ...snapshot,
-        phase: "active",
-        liveSessionId: started.liveSessionId,
-        isMuted: false,
       });
-      flushPendingUpdates(started.liveSessionId);
 
-      beginAmbientAgentReports(deps, ambientStartFields, serverId, started.liveSessionId);
+      if (!isCurrent(call)) {
+        await closeSession(started);
+        return;
+      }
+      call.session = started;
+      call.liveSessionId = started.liveSessionId;
+      patch({ liveSessionId: started.liveSessionId });
+      const buffered = call.pendingUpdates;
+      call.pendingUpdates = [];
+      for (const message of buffered) applyUpdate(call, message);
+      if (!isCurrent(call)) return;
+      patch({ phase: "active", isMuted: false });
+      if (isCurrent(call)) {
+        beginAmbientAgentReports(deps, ambientStartFields, serverId, started.liveSessionId);
+      }
+    } catch (error) {
+      if (!isCurrent(call)) return;
+      endCall(call, true);
+      failStart(serverId, toErrorInfo(error));
+    } finally {
+      call.starting = false;
+      releaseResources(call);
+    }
+  }
+
+  const runtime: LiveVoiceRuntime = {
+    subscribe(listener) {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
     },
-
+    getSnapshot() {
+      return snapshot;
+    },
+    async start(serverId) {
+      if (snapshot.phase === "starting" || snapshot.phase === "active") {
+        throw new LiveVoiceStartError({ code: "already_active", message: null });
+      }
+      if (snapshot.phase === "stopping") {
+        throw new LiveVoiceStartError({ code: "stopping", message: null });
+      }
+      if (!deps.isSessionSupported) failStart(serverId, { code: "unsupported", message: null });
+      const pin = deps.pinConnection?.(serverId) ?? null;
+      const client = resolveLiveVoiceClient(deps, serverId, pin);
+      if (!client) {
+        pin?.release();
+        failStart(serverId, { code: "not_connected", message: null });
+      }
+      const token = deps.lease.acquire("liveVoice");
+      if (!token) {
+        pin?.release();
+        const owner = deps.lease.current();
+        failStart(serverId, {
+          code: "mic_busy",
+          message: null,
+          ...(owner ? { owner } : {}),
+        });
+      }
+      const call: LiveVoiceCall = {
+        client,
+        pin,
+        leaseToken: token,
+        session: null,
+        unsubscribe: null,
+        pendingUpdates: [],
+        liveSessionId: null,
+        lastSequence: -1,
+        starting: true,
+        ended: false,
+        stopRequested: false,
+        stopPromise: null,
+        closePromise: null,
+      };
+      currentCall = call;
+      publish({ ...IDLE_SNAPSHOT, phase: "starting", serverId });
+      await startCall(call, serverId);
+    },
     async stop() {
-      const { serverId, liveSessionId, phase } = snapshot;
-      const client = daemonClient;
-      generation += 1;
-      if (phase === "idle") {
-        cleanupLocal();
-        return;
-      }
-      patch({ phase: "stopping" });
-      cleanupLocal();
-      publish({ ...IDLE_SNAPSHOT, serverId, transcripts: snapshot.transcripts });
-
-      if (!serverId || !liveSessionId) {
-        return;
-      }
-      // Best effort: the daemon's stop is idempotent and it has its own terminal
-      // causes, so a failure here must not leave the UI stuck in `stopping`.
-      await client?.stopLiveVoice({ liveSessionId }).catch(() => undefined);
+      const call = currentCall;
+      if (call) endCall(call, true);
+      publish({ ...IDLE_SNAPSHOT, serverId: snapshot.serverId, transcripts: snapshot.transcripts });
+      await Promise.all([call?.stopPromise, call?.closePromise]);
     },
-
-    setMuted(muted) {
-      setMuted(muted);
-    },
-
+    setMuted,
     toggleMute() {
-      if (snapshot.phase !== "active") {
-        return;
-      }
       setMuted(!snapshot.isMuted);
     },
-
     async resumeAudio() {
-      await session?.resumeAudio();
+      await currentCall?.session?.resumeAudio();
     },
-
     dismiss() {
-      if (snapshot.phase !== "idle" && snapshot.phase !== "error") {
-        return;
-      }
-      publish(IDLE_SNAPSHOT);
+      if (snapshot.phase === "idle" || snapshot.phase === "error") publish(IDLE_SNAPSHOT);
     },
-
     isActiveForServer(serverId) {
       return (
         (snapshot.phase === "active" || snapshot.phase === "starting") &&
         snapshot.serverId === serverId
       );
     },
-
     handleConnectionLost(serverId) {
-      if (
-        (snapshot.phase !== "active" && snapshot.phase !== "starting") ||
-        snapshot.serverId !== serverId
-      ) {
-        return;
+      if (!currentCall || snapshot.serverId !== serverId) return;
+      const call = currentCall;
+      const replacementPin = deps.pinConnection?.(serverId) ?? null;
+      const replacement = replacementPin?.client ?? deps.getClient(serverId);
+      if (replacement) {
+        if (replacementPin) {
+          releasePin(call);
+          call.pin = replacementPin;
+        }
+        call.client = replacement;
       }
-      // Invalidate any in-flight start so its continuation can't revive the call.
-      generation += 1;
-      const { transcripts } = snapshot;
-      cleanupLocal();
+      endCall(call, true);
       publish({
         ...IDLE_SNAPSHOT,
         serverId,
-        transcripts,
-        // The old client session eventually reports the same cause when it expires.
+        transcripts: snapshot.transcripts,
         closedCause: "owner_disconnected",
       });
     },
-
     async destroy() {
-      await runtime.stop().catch(() => undefined);
+      await runtime.stop();
       listeners.clear();
     },
   };
-
   return runtime;
 }

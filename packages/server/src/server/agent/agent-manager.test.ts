@@ -3088,6 +3088,8 @@ test("keeps the global Paseo-tools gate outside provider policy and MCP injectio
     type: "http",
     url: `http://127.0.0.1:6767/mcp/agents?callerAgentId=${enabledAgent.id}`,
   });
+  expect(enabledManager.hasPaseoMcpInjection("codex", ["create_agent"])).toBe(true);
+  expect(enabledManager.hasPaseoMcpInjection("codex", ["list_agents"])).toBe(false);
 
   const disabledClient = new McpClient();
   let catalogFactoryCalls = 0;
@@ -3110,6 +3112,7 @@ test("keeps the global Paseo-tools gate outside provider policy and MCP injectio
   );
 
   expect(disabledClient.lastConfig?.mcpServers).toBeUndefined();
+  expect(disabledManager.hasPaseoMcpInjection("codex", ["create_agent"])).toBe(false);
   expect(catalogFactoryCalls).toBe(0);
   expect(disabledManager.getPaseoToolPolicy(disabledAgent.id)).toEqual({ enabled: false });
 

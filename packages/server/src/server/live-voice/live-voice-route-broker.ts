@@ -71,6 +71,7 @@ export interface LiveVoiceRouteBrokerOptions {
 interface RegisteredLiveVoiceRoute extends LiveVoiceRouteRegistration {
   registrationId: number;
   circuitOpenUntil: number;
+  active: boolean;
 }
 
 interface PendingLiveVoiceRoute {
@@ -83,9 +84,9 @@ interface PendingLiveVoiceRoute {
 }
 
 /**
- * Routes the hidden Live Voice host's MCP tools back through the exact app
- * socket that owns the call. A logical client session can have multiple sockets,
- * so neither clientId nor the shared Session object is a sufficient authority.
+ * Routes the hidden Live Voice host's MCP tools back through the authenticated,
+ * reconnectable app session that owns the call. Socket replacement preserves
+ * the route during the bounded reconnect grace.
  */
 export class LiveVoiceRouteBroker {
   private readonly defaultTimeoutMs: number;
@@ -113,13 +114,19 @@ export class LiveVoiceRouteBroker {
       ...registration,
       registrationId: ++this.registrationSequence,
       circuitOpenUntil: 0,
+      active: true,
     };
     this.routesByHostAgentId.set(registration.hostAgentId, registered);
-    return () => this.unregister(registration.hostAgentId, registered.registrationId);
+    return () => this.deactivate(registration.hostAgentId, registered.registrationId);
   }
 
   isRegisteredHost(hostAgentId: string): boolean {
     return this.routesByHostAgentId.has(hostAgentId);
+  }
+
+  /** Remove the hidden-host classification after its agent is fully disposed. */
+  releaseHost(hostAgentId: string): void {
+    this.routesByHostAgentId.delete(hostAgentId);
   }
 
   async execute(
@@ -128,7 +135,7 @@ export class LiveVoiceRouteBroker {
     options: { timeoutMs?: number } = {},
   ): Promise<LiveVoiceRouteResult> {
     const route = this.routesByHostAgentId.get(hostAgentId);
-    if (!route) {
+    if (!route || !route.active) {
       throw new Error("This Live Voice call is no longer connected to its owning client.");
     }
     if (route.circuitOpenUntil > this.now()) {
@@ -282,12 +289,12 @@ export class LiveVoiceRouteBroker {
     throw new Error("Could not allocate a unique Live Voice route request id.");
   }
 
-  private unregister(hostAgentId: string, registrationId: number): void {
+  private deactivate(hostAgentId: string, registrationId: number): void {
     const current = this.routesByHostAgentId.get(hostAgentId);
     if (!current || current.registrationId !== registrationId) {
       return;
     }
-    this.routesByHostAgentId.delete(hostAgentId);
+    current.active = false;
     for (const [requestId, pending] of this.pendingByRequestId) {
       if (pending.hostAgentId === hostAgentId) {
         this.rejectPending(

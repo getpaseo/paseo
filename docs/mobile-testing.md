@@ -314,6 +314,9 @@ On a physical device, verify:
   remain scheduled in addition to native WebRTC media
 - returning to Paseo shows the same active call and Stop releases the microphone,
   peer connection, connection pin, audio session/foreground service, and daemon call
+- switching immediately between Live Voice, dictation, and ordinary voice mode
+  never silences the new recording or leaves the microphone permanently busy;
+  repeat while the previous recording is still starting
 - killing the app or losing the source transport ends the call cleanly; it is not resumed
 
 ## Unistyles + Reanimated

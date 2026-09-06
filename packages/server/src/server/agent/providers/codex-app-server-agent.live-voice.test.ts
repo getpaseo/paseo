@@ -221,6 +221,24 @@ describe("codex live voice", () => {
     expect(streamEvents).toEqual([]);
   });
 
+  test("ignores realtime notifications for a different thread", () => {
+    const { session } = createSession(true);
+    const realtimeEvents: AgentRealtimeVoiceEvent[] = [];
+    session.subscribeRealtimeEvents((event) => realtimeEvents.push(event));
+
+    session.handleNotification("thread/realtime/sdp", {
+      threadId: "another-thread",
+      sdp: "wrong-answer-sdp",
+    });
+    session.handleNotification("thread/realtime/transcript/done", {
+      threadId: "another-thread",
+      role: "assistant",
+      text: "wrong call",
+    });
+
+    expect(realtimeEvents).toEqual([]);
+  });
+
   test("drops realtime deltas and item additions in phase 1", () => {
     const { session } = createSession(true);
     const realtimeEvents: AgentRealtimeVoiceEvent[] = [];

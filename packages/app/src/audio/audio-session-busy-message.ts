@@ -5,6 +5,7 @@ const BUSY_MESSAGE_KEYS: Record<AudioSessionOwner, string> = {
   voiceMode: "audioSession.busy.voiceMode",
   dictation: "audioSession.busy.dictation",
   liveVoice: "audioSession.busy.liveVoice",
+  playback: "audioSession.busy.unknown",
 };
 
 /**

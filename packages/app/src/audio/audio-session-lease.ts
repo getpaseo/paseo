@@ -1,8 +1,8 @@
 /**
- * App-global microphone lease.
+ * App-global audio session lease.
  *
- * Three features want the microphone — provider-agnostic voice mode, dictation,
- * and Live Voice — and on every platform only one of them can hold it at a time.
+ * Voice mode, dictation, Live Voice, and standalone playback share the OS audio
+ * session. Only one feature can hold it at a time.
  * Rather than have each feature probe the others, they all acquire this lease
  * first. Phase 1 policy is strict rejection: `acquire` returns `null` while
  * another owner holds the lease and never interrupts the incumbent.
@@ -11,7 +11,7 @@
  * respect to any interleaved async work in the callers.
  */
 
-export type AudioSessionOwner = "voiceMode" | "dictation" | "liveVoice";
+export type AudioSessionOwner = "voiceMode" | "dictation" | "liveVoice" | "playback";
 
 /**
  * Opaque proof of ownership. Holding a stale token is harmless: `release` only
