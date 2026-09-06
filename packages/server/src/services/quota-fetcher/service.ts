@@ -1,7 +1,8 @@
 import type { Logger } from "pino";
-import type { ProviderUsage } from "../../server/messages.js";
+import type { CodexBankedResetOutcome, ProviderUsage } from "../../server/messages.js";
 import { createProviderUsageFetchers } from "./manifest.js";
 import type { ProviderApiFetch, ProviderUsageFetcher } from "./provider.js";
+import { CodexQuotaProvider } from "./providers/codex.js";
 import { unavailableUsage } from "./usage.js";
 
 export interface ProviderUsageServiceOptions {
@@ -24,6 +25,7 @@ export class ProviderUsageService {
   private readonly fetchers: ProviderUsageFetcher[];
   private readonly cacheTtlMs: number;
   private readonly now: () => number;
+  private cacheGeneration = 0;
   private cached: { fetchedAtMs: number; result: ProviderUsageListResult } | null = null;
   private inFlight: Promise<ProviderUsageListResult> | null = null;
 
@@ -37,6 +39,29 @@ export class ProviderUsageService {
       });
     this.cacheTtlMs = options.cacheTtlMs ?? DEFAULT_PROVIDER_USAGE_CACHE_TTL_MS;
     this.now = options.now ?? Date.now;
+  }
+
+  get supportsCodexBankedResets(): boolean {
+    return this.fetchers.some((fetcher) => fetcher instanceof CodexQuotaProvider);
+  }
+
+  async consumeCodexBankedReset(input: {
+    creditId: string;
+    idempotencyKey: string;
+  }): Promise<CodexBankedResetOutcome> {
+    const provider = this.fetchers.find((fetcher) => fetcher instanceof CodexQuotaProvider);
+    if (!provider)
+      throw new CodexBankedResetsUnavailableError(
+        "Codex banked resets are unavailable on this host.",
+      );
+    try {
+      return await provider.consumeBankedReset(input);
+    } finally {
+      // A timed-out POST may still have spent the credit. Discard pre-reset reads too.
+      this.cacheGeneration += 1;
+      this.cached = null;
+      this.inFlight = null;
+    }
   }
 
   async listUsage(options?: { forceRefresh?: boolean }): Promise<ProviderUsageListResult> {
@@ -65,6 +90,7 @@ export class ProviderUsageService {
   }
 
   private async fetchFreshUsage(nowMs: number): Promise<ProviderUsageListResult> {
+    const generation = this.cacheGeneration;
     const settled = await Promise.allSettled(this.fetchers.map((fetcher) => fetcher.fetchUsage()));
     const providers = settled.map((result, index) => {
       const fetcher = this.fetchers[index];
@@ -83,7 +109,11 @@ export class ProviderUsageService {
     });
 
     const result = { fetchedAt: new Date(nowMs).toISOString(), providers };
-    this.cached = { fetchedAtMs: nowMs, result };
+    if (generation === this.cacheGeneration) {
+      this.cached = { fetchedAtMs: nowMs, result };
+    }
     return result;
   }
 }
+
+class CodexBankedResetsUnavailableError extends Error {}

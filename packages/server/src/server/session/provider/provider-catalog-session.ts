@@ -480,11 +480,37 @@ export class ProviderCatalogSession {
     }
   }
 
+  async handleCodexBankedResetConsumeRequest(
+    msg: Extract<SessionInboundMessage, { type: "provider.codex.consume_banked_reset.request" }>,
+  ): Promise<void> {
+    try {
+      const outcome = await this.providerUsageService.consumeCodexBankedReset({
+        creditId: msg.creditId,
+        idempotencyKey: msg.idempotencyKey,
+      });
+      this.host.emit({
+        type: "provider.codex.consume_banked_reset.response",
+        payload: { requestId: msg.requestId, outcome },
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.host.emit({
+        type: "rpc_error",
+        payload: {
+          requestId: msg.requestId,
+          requestType: msg.type,
+          error: `Could not use banked reset: ${message}`,
+          code: "codex_banked_reset_failed",
+        },
+      });
+    }
+  }
+
   async handleProviderUsageListRequest(
     msg: Extract<SessionInboundMessage, { type: "provider.usage.list.request" }>,
   ): Promise<void> {
     try {
-      const usage = await this.providerUsageService.listUsage();
+      const usage = await this.providerUsageService.listUsage({ forceRefresh: msg.forceRefresh });
       this.host.emit({
         type: "provider.usage.list.response",
         payload: {

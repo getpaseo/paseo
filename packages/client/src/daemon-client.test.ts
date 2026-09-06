@@ -6169,3 +6169,39 @@ test("waitForFinish with timeout=0 omits timeoutMs and has no client deadline", 
     vi.useRealTimers();
   }
 });
+
+test("correlates banked reset redemption and preserves the idempotency key", async () => {
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_unit_test",
+    logger: createMockLogger(),
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+  const connected = client.connect();
+  mock.triggerOpen();
+  await connected;
+  const result = client.consumeCodexBankedReset({
+    requestId: "reset-request",
+    creditId: "reset-1",
+    idempotencyKey: "attempt-1",
+  });
+  expect(JSON.parse(assertStr(mock.sent[0]))).toEqual({
+    type: "session",
+    message: {
+      type: "provider.codex.consume_banked_reset.request",
+      requestId: "reset-request",
+      creditId: "reset-1",
+      idempotencyKey: "attempt-1",
+    },
+  });
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "provider.codex.consume_banked_reset.response",
+      payload: { requestId: "reset-request", outcome: "reset" },
+    }),
+  );
+  await expect(result).resolves.toEqual({ requestId: "reset-request", outcome: "reset" });
+});

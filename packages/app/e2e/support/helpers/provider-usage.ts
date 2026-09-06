@@ -1,5 +1,5 @@
 import type { Page } from "@playwright/test";
-import type { ProviderUsage } from "@getpaseo/protocol/messages";
+import type { CodexBankedResetOutcome, ProviderUsage } from "@getpaseo/protocol/messages";
 import { daemonWsRoutePattern } from "./daemon-port";
 
 interface ProviderUsageFixturePayload {
@@ -38,7 +38,10 @@ function getSessionMessage(message: WebSocketMessage): Record<string, unknown> |
   return maybeEnvelope.message as Record<string, unknown>;
 }
 
-function withProviderUsageFeature(message: WebSocketMessage): string | null {
+function withProviderUsageFeature(
+  message: WebSocketMessage,
+  supportsBankedResets: boolean,
+): string | null {
   const envelope = parseJson(message);
   if (!envelope || typeof envelope !== "object") {
     return null;
@@ -69,15 +72,29 @@ function withProviderUsageFeature(message: WebSocketMessage): string | null {
             ? payload.features
             : {}),
           providerUsageList: true,
+          codexBankedResets: supportsBankedResets,
         },
       },
     },
   });
 }
 
+interface ResetConsumeRequest {
+  creditId: string;
+  idempotencyKey: string;
+}
+
+type ResetConsumeResult = { outcome: CodexBankedResetOutcome } | { error: string };
+
+interface ProviderUsageFixtureOptions {
+  supportsBankedResets?: boolean;
+  consume?: (request: ResetConsumeRequest) => Promise<ResetConsumeResult>;
+}
+
 export async function installProviderUsageFixture(
   page: Page,
   payloads: ProviderUsageFixturePayload[],
+  options: ProviderUsageFixtureOptions = {},
 ): Promise<ProviderUsageFixture> {
   let requests = 0;
   const waiters: Array<{ count: number; resolve: () => void }> = [];
@@ -104,8 +121,37 @@ export async function installProviderUsageFixture(
   await page.routeWebSocket(daemonWsRoutePattern(), (ws) => {
     const server = ws.connectToServer();
 
-    ws.onMessage((message) => {
+    ws.onMessage(async (message) => {
       const sessionMessage = getSessionMessage(message);
+      if (sessionMessage?.type === "provider.codex.consume_banked_reset.request") {
+        const { creditId, idempotencyKey, requestId } = sessionMessage;
+        if (
+          typeof creditId !== "string" ||
+          typeof idempotencyKey !== "string" ||
+          typeof requestId !== "string" ||
+          !options.consume
+        ) {
+          throw new Error("Unexpected banked reset request");
+        }
+        const result = await options.consume({ creditId, idempotencyKey });
+        const response =
+          "error" in result
+            ? {
+                type: "rpc_error",
+                payload: {
+                  requestId,
+                  requestType: sessionMessage.type,
+                  error: result.error,
+                  code: "codex_banked_reset_failed",
+                },
+              }
+            : {
+                type: "provider.codex.consume_banked_reset.response",
+                payload: { requestId, outcome: result.outcome },
+              };
+        ws.send(JSON.stringify({ type: "session", message: response }));
+        return;
+      }
       if (sessionMessage?.type === "provider.usage.list.request") {
         requests += 1;
         const requestId = sessionMessage.requestId;
@@ -133,7 +179,10 @@ export async function installProviderUsageFixture(
     });
 
     server.onMessage((message) => {
-      const serverInfo = typeof message === "string" ? withProviderUsageFeature(message) : null;
+      const serverInfo =
+        typeof message === "string"
+          ? withProviderUsageFeature(message, options.supportsBankedResets ?? true)
+          : null;
       ws.send(serverInfo ?? message);
     });
   });

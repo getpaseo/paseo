@@ -4867,11 +4867,32 @@ export class DaemonClient {
     });
   }
 
-  async listProviderUsage(options?: { requestId?: string }): Promise<ProviderUsageListPayload> {
+  async consumeCodexBankedReset(options: {
+    creditId: string;
+    idempotencyKey: string;
+    requestId?: string;
+  }) {
+    return this.sendNamespacedCorrelatedSessionRequest<"provider.codex.consume_banked_reset.response">(
+      {
+        requestId: options.requestId,
+        message: {
+          type: "provider.codex.consume_banked_reset.request",
+          creditId: options.creditId,
+          idempotencyKey: options.idempotencyKey,
+        },
+      },
+    );
+  }
+
+  async listProviderUsage(options?: {
+    requestId?: string;
+    forceRefresh?: boolean;
+  }): Promise<ProviderUsageListPayload> {
     return this.sendNamespacedCorrelatedSessionRequest({
       requestId: options?.requestId,
       message: {
         type: "provider.usage.list.request",
+        ...(options?.forceRefresh ? { forceRefresh: true } : {}),
       },
     });
   }

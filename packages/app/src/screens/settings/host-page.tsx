@@ -341,7 +341,11 @@ export function HostUsagePage({ serverId }: { serverId: string }) {
 
   return (
     <View>
-      <ProviderUsageSettingsSection view={providerUsageView} onRefresh={handleRefresh} />
+      <ProviderUsageSettingsSection
+        serverId={serverId}
+        view={providerUsageView}
+        onRefresh={handleRefresh}
+      />
     </View>
   );
 }

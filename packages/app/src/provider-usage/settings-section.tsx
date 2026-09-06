@@ -13,7 +13,9 @@ import type { ProviderUsageView } from "./types";
 export function ProviderUsageSettingsSection({
   view,
   onRefresh,
+  serverId,
 }: {
+  serverId: string;
   view: ProviderUsageView;
   onRefresh: () => void;
 }) {
@@ -41,7 +43,7 @@ export function ProviderUsageSettingsSection({
       testID="provider-usage-card"
       trailing={refreshButton}
     >
-      <ProviderUsageBody view={view} onRefresh={onRefresh} />
+      <ProviderUsageBody view={view} onRefresh={onRefresh} serverId={serverId} />
     </SettingsSection>
   );
 }
@@ -49,7 +51,9 @@ export function ProviderUsageSettingsSection({
 function ProviderUsageBody({
   view,
   onRefresh,
+  serverId,
 }: {
+  serverId: string;
   view: ProviderUsageView;
   onRefresh: () => void;
 }) {
@@ -79,7 +83,7 @@ function ProviderUsageBody({
     );
   }
 
-  return <ProviderUsageList providers={view.payload.providers} />;
+  return <ProviderUsageList providers={view.payload.providers} serverId={serverId} />;
 }
 
 const styles = StyleSheet.create((theme) => ({

@@ -59,13 +59,13 @@ export function useProviderUsage(
 
   const refresh = useCallback(async () => {
     if (!canFetch) return;
-    await queryClient.invalidateQueries({ queryKey });
+    if (!client) return;
     await queryClient.fetchQuery({
       queryKey,
-      queryFn,
-      staleTime: PROVIDER_USAGE_STALE_TIME_MS,
+      queryFn: () => client.listProviderUsage({ forceRefresh: true }),
+      staleTime: 0,
     });
-  }, [canFetch, queryClient, queryFn, queryKey]);
+  }, [canFetch, client, queryClient, queryKey]);
 
   const view = useMemo<ProviderUsageView>(() => {
     if (!serverId || !client || !isConnected) {

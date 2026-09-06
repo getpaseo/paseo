@@ -147,7 +147,9 @@ To add plan usage for a provider, add `packages/server/src/services/quota-fetche
 - optional `balances` for credits, USD, requests, or tokens
 - optional `details` for provider-specific rows
 
-Keep the protocol shape provider-agnostic. Do not add provider-specific renderers for new limit windows; labels and generic bars should carry the UI. API responses should be parsed and normalized with Zod inside the fetcher, while the protocol boundary stays strict so old/new client compatibility is explicit.
+Keep limit windows and balances provider-agnostic; labels and generic bars carry their UI. Account actions such as Codex banked resets need their own capability-gated controls. Parse and normalize API responses with Zod inside the fetcher, while keeping the protocol boundary compatible across versions.
+
+Codex reset redemption spends an account resource. Confirm the selected reset, reuse its idempotency key on retry, and never automatically retry the POST. A timeout can arrive after the credit was spent, so invalidate pre-redemption usage reads even on failure. Keep reset-detail failures separate from quota-window availability, and honor the backend’s per-credit plan eligibility.
 
 Kimi Code usage follows the CLI-managed credential file at `KIMI_CODE_HOME` or `~/.kimi-code/credentials/kimi-code.json`; do not probe the legacy `~/.kimi` path as the primary source for current Kimi Code installs.
 
