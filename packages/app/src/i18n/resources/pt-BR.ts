@@ -1739,6 +1739,264 @@ export const ptBR: TranslationResources = {
       copied: "Copiado",
     },
   },
+  audioSession: {
+    busy: {
+      voiceMode: "O modo de voz está usando o microfone. Pare-o primeiro.",
+      dictation: "O ditado está usando o microfone. Pare-o primeiro.",
+      liveVoice: "A voz ao vivo está usando o microfone. Pare-a primeiro.",
+      unknown: "O microfone está em uso. Pare primeiro o outro recurso de áudio.",
+    },
+  },
+  liveVoice: {
+    label: "Voz ao vivo",
+    menu: {
+      hosts: "Host",
+    },
+    actions: {
+      start: "Iniciar voz ao vivo",
+      unavailable: "Voz ao vivo indisponível",
+      stop: "Parar voz ao vivo",
+      mute: "Silenciar microfone",
+      unmute: "Ativar microfone",
+      enableAudio: "Toque para ativar o áudio",
+      showTranscript: "Mostrar transcrição",
+      hideTranscript: "Ocultar transcrição",
+      dismiss: "Dispensar",
+    },
+    unavailable: {
+      platform: "A voz ao vivo não é compatível com este dispositivo.",
+      noHosts: "Adicione um host para usar a voz ao vivo.",
+      connecting: "Conectando aos hosts. A voz ao vivo aparecerá quando um estiver pronto.",
+      offline: "Nenhum host está online. Conecte-se a um host para usar a voz ao vivo.",
+      upgrade: "Os hosts conectados não anunciam voz ao vivo. Atualize seus daemons.",
+      toolsDisabled:
+        "Ative as ferramentas do Paseo nas configurações deste host para usar a voz ao vivo.",
+    },
+    settings: {
+      title: "Voz ao vivo",
+      voice: {
+        label: "Voz",
+        description: "Usada em novas chamadas. Uma chamada ativa mantém a voz atual.",
+        default: "Padrão",
+      },
+      backendModel: {
+        label: "Modelo de ações",
+        description:
+          "Executa as ações da chamada nos bastidores. O padrão é rápido e barato; escolha um modelo mais forte se as ações exigirem mais critério.",
+        default: "Padrão (rápido)",
+      },
+      backendThinking: {
+        label: "Raciocínio das ações",
+        description: "Profundidade de raciocínio do modelo de ações.",
+        default: "Padrão",
+      },
+      agentReports: {
+        label: "Avisar sobre atividade de agentes",
+        description:
+          "Durante uma chamada, saiba quando qualquer sessão de agente termina, falha ou precisa de permissão — inclusive as que você iniciou fora da chamada, em qualquer host conectado.",
+      },
+      agentReportGuidance: {
+        label: "Quando interromper",
+        description: "Repassado ao agente de voz como está. Deixe vazio para ele decidir.",
+        placeholder: "Só me interrompa para pedidos de permissão e falhas.",
+      },
+      promptComponents: {
+        "canonical-tools": {
+          label: "Cola de ferramentas",
+          description:
+            "Dá ao assistente os nomes exatos das ferramentas para pular turnos de descoberta.",
+        },
+        "delegation-brevity": {
+          label: "Delegações breves",
+          description:
+            "Mantém curtos os prompts às sessões de agente — sem ditar código nem listas de passos.",
+        },
+        "cross-host-reach": {
+          label: "Visão entre máquinas",
+          description:
+            "Ensina ao assistente quais leituras cobrem todas as máquinas em uma só chamada.",
+        },
+        recipes: {
+          label: "Receitas",
+          description:
+            "Os caminhos mais curtos conhecidos para pedidos comuns, como arquivar pelo nome.",
+        },
+        "speech-style": {
+          label: "Estilo de fala",
+          description: "Frases faladas, agir antes de narrar e vocabulário do Paseo.",
+        },
+      },
+      customInstructions: {
+        label: "Instruções permanentes",
+        description: "Repassadas ao agente de voz como estão, em toda chamada.",
+        placeholder: "Responda sempre em uma frase, a menos que eu peça mais.",
+      },
+      defaultWorkspaceDirectory: {
+        label: "Diretório padrão de espaço de trabalho",
+        description:
+          "Onde novos espaços de trabalho são criados quando uma solicitação não tem um óbvio. Deixe vazio e o agente de voz pergunta.",
+        placeholder: "~/Projects",
+      },
+    },
+    diagnostics: {
+      title: "Voz ao vivo",
+      statusTitle: "Status",
+      noHosts: "Nenhum host configurado.",
+      hostSummary: "{{version}} · {{support}}",
+      unknownVersion: "Versão desconhecida",
+      supported: "Voz ao vivo compatível",
+      unsupported: "Voz ao vivo incompatível",
+      supportUnknown: "Compatibilidade com voz ao vivo desconhecida",
+      connection: {
+        idle: "Ocioso",
+        connecting: "Conectando",
+        online: "Online",
+        offline: "Offline",
+        error: "Erro",
+      },
+    },
+    status: {
+      connecting: "Conectando...",
+      live: "Ao vivo",
+      audioBlocked: "Áudio bloqueado",
+      stopping: "Parando...",
+      ended: "Chamada encerrada",
+      error: "Falha",
+    },
+    transcript: {
+      empty: "Nada falado ainda.",
+      user: "Você:",
+      assistant: "Agente:",
+    },
+    errors: {
+      busy: "Já existe uma chamada de voz ao vivo ativa neste host.",
+      unsupported: "Este host não suporta voz ao vivo.",
+      startFailed: "Não foi possível iniciar a voz ao vivo.",
+      micBusy: "O microfone está sendo usado por outro recurso.",
+      notConnected: "Este host não está conectado.",
+      alreadyActive: "Já existe uma chamada de voz ao vivo em andamento.",
+      stopping: "A chamada de voz ao vivo anterior ainda está sendo encerrada.",
+      micDenied:
+        "O acesso ao microfone está bloqueado. Permita que o Paseo use o microfone e tente novamente.",
+      micUnavailable:
+        "Nenhum microfone disponível foi encontrado. Conecte ou selecione um nas configurações de áudio do dispositivo e tente novamente.",
+      backgroundUnavailable: "Não foi possível iniciar o áudio em segundo plano.",
+      iceTimeout: "Não foi possível negociar a conexão em tempo.",
+      connectionLost: "A conexão de voz ao vivo caiu.",
+    },
+  },
+  assistants: {
+    menu: {
+      label: "Assistente",
+      none: "Sem assistente",
+      manage: "Gerenciar assistentes…",
+    },
+    settings: {
+      title: "Assistentes",
+      description:
+        "Assistentes de voz nomeados, com suas próprias instruções, voz, modelo de ações e conversa memorizada. Um assistente escolhido no menu Voz ao vivo substitui as configurações de chamada abaixo.",
+      manage: "Gerenciar",
+    },
+    manage: {
+      title: "Assistentes",
+      noHosts: "Nenhum host conectado oferece suporte a assistentes. Atualize o daemon dele.",
+      assistants: "Assistentes",
+      empty: "Ainda não há assistentes. Crie um para dar às chamadas um nome e uma memória.",
+      templates: "Modelos",
+      templatesEmpty:
+        "Nenhum modelo. Salve um assistente como modelo para reutilizar sua configuração.",
+      selectedForCalls: "Usado em chamadas de voz ao vivo",
+      fromTemplate: "De {{name}}",
+      entries: "{{n}} entradas de histórico",
+    },
+    actions: {
+      newAssistant: "Novo assistente",
+      newTemplate: "Novo modelo",
+      menu: "Ações para {{name}}",
+      useForCalls: "Usar em chamadas",
+      stopUsing: "Parar de usar em chamadas",
+      openHistory: "Abrir histórico",
+      edit: "Editar",
+      saveAsTemplate: "Salvar como modelo",
+      newFromTemplate: "Novo assistente a partir do modelo",
+      delete: "Excluir",
+      deleteAssistantTitle: "Excluir {{name}}?",
+      deleteAssistantMessage:
+        "O histórico de conversa e o resumo são removidos. O trabalho delegado a agentes continua em execução.",
+      deleteTemplateTitle: "Excluir o modelo {{name}}?",
+      deleteTemplateMessage:
+        "Os assistentes criados a partir dele mantêm sua própria cópia da configuração.",
+    },
+    form: {
+      createAssistantTitle: "Novo assistente",
+      editAssistantTitle: "Editar assistente",
+      createTemplateTitle: "Novo modelo",
+      editTemplateTitle: "Editar modelo",
+      create: "Criar",
+      save: "Salvar alterações",
+      name: {
+        label: "Nome",
+        placeholder: "Chefe de gabinete",
+      },
+      startFrom: {
+        label: "Começar de",
+        hint: "Copia a configuração do modelo. Edições posteriores ficam neste assistente.",
+        none: "Em branco",
+        empty: "Nenhum modelo",
+      },
+      instructions: {
+        label: "Instruções",
+        hint: "{{length}} / {{max}}. Passadas ao agente de voz como escritas, em todas as chamadas.",
+        placeholder: "Delegue o trabalho a agentes; nunca escreva código você mesmo.",
+      },
+      context: {
+        label: "Contexto",
+        hint: "{{length}} / {{max}}. Contexto permanente que o assistente conhece no início de cada chamada.",
+        placeholder: "Estamos entregando o projeto de voz. Prefira o repositório paseo.",
+      },
+      voice: {
+        label: "Voz",
+        hint: "Usada em novas chamadas.",
+        default: "Padrão",
+      },
+      backendModel: {
+        label: "Modelo de ações",
+        hint: "Executa as ações do assistente em segundo plano; não é o modelo que fala.",
+        default: "Padrão (rápido)",
+      },
+      backendThinking: {
+        label: "Raciocínio das ações",
+        hint: "Profundidade de raciocínio do modelo de ações.",
+        default: "Padrão",
+      },
+      errors: {
+        nameRequired: "O nome é obrigatório",
+        nameTooLong: "O nome é muito longo",
+        tooLong: "Muito longo",
+      },
+    },
+    history: {
+      title: "Histórico",
+      empty: "Nada memorizado ainda. Inicie uma chamada para começar.",
+      loadOlder: "Carregar anteriores",
+      callStarted: "Chamada iniciada",
+      callEnded: "Chamada encerrada · {{cause}}",
+      delegationOk: "Delegado: {{description}}",
+      delegationFailed: "Falha na delegação ({{code}}): {{description}}",
+      user: "Você",
+      assistant: "Assistente",
+      limits:
+        "Novas chamadas começam pelo resumo mais o histórico recente que cabe no limite de contexto do provedor. A fala ao vivo não é retomada.",
+      summary: {
+        label: "Resumo",
+        hint: "Escrito por você. Novas chamadas o leem no lugar do histórico antigo.",
+        coversThrough: "Cobre o histórico até a entrada nº {{seq}}.",
+        placeholder: "O que o assistente deve levar adiante.",
+        willCover: "Salvar cobre o histórico até a entrada nº {{seq}}.",
+        save: "Salvar resumo",
+      },
+    },
+  },
   realtimeVoice: {
     actions: {
       mute: "Silenciar voz em tempo real",
@@ -1938,6 +2196,7 @@ export const ptBR: TranslationResources = {
     groupInfo: "Sobre {{title}}",
     sections: {
       general: "Geral",
+      voice: "Voz ao vivo",
       appearance: "Aparência",
       layout: en.settings.sections.layout,
       editor: "Editor",
@@ -2249,9 +2508,13 @@ export const ptBR: TranslationResources = {
         sendMessage: "Enviar mensagem",
         queueMessage: "Enfileirar mensagem",
         muteUnmuteVoiceMode: "Silenciar/ativar modo de voz",
+        muteUnmuteLiveVoice: "Silenciar/ativar voz ao vivo",
+        holdInvertLiveVoiceMute: "Segurar para inverter o silêncio da voz ao vivo",
         switchProject: "Trocar projeto",
       },
       helpNotes: {
+        holdInvertLiveVoiceMute:
+          "Aperte para falar quando silenciado; aperte para silenciar quando ativo.",
         showKeyboardShortcuts:
           "Disponível quando o foco não está em um campo de texto ou terminal.",
       },

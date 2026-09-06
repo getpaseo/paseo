@@ -87,6 +87,27 @@ describe("chat outline hover intent", () => {
     });
   });
 
+  it("resets activation for small horizontal movements", () => {
+    const scheduler = createFakeScheduler();
+    const activations: Array<number | null> = [];
+    const intent = createChatOutlineHoverIntent({
+      activate: (index) => activations.push(index),
+      schedule: scheduler.schedule,
+      cancel: scheduler.cancel,
+    });
+
+    intent.enter({ x: 36, y: 20 });
+    intent.pointAt(1);
+    intent.move({ x: 33, y: 20 });
+    intent.move({ x: 30, y: 20 });
+    scheduler.runPending();
+
+    expect({ activations, scheduleCount: scheduler.scheduleCount() }).toEqual({
+      activations: [1],
+      scheduleCount: 3,
+    });
+  });
+
   it("moves immediately between ticks after the rail activates", () => {
     const scheduler = createFakeScheduler();
     const activations: Array<number | null> = [];

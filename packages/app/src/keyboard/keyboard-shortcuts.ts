@@ -37,6 +37,11 @@ export interface KeyboardShortcutMatch {
   payload: KeyboardShortcutPayload;
   preventDefault: boolean;
   stopPropagation: boolean;
+  /**
+   * The binding is press-and-hold: the action stays in effect until the chord is
+   * released. The shortcut host is responsible for dispatching the release.
+   */
+  hold?: true;
 }
 
 export interface KeyboardShortcutHelpRow {
@@ -105,6 +110,8 @@ interface ShortcutBinding {
   action: KeyboardActionId;
   combo: string;
   repeat?: false;
+  /** See `KeyboardShortcutMatch.hold`. Implies `repeat: false`. */
+  hold?: true;
   when?: ShortcutWhen;
   payload?: ShortcutPayloadDef;
   preventDefault?: boolean;
@@ -200,6 +207,8 @@ export const SHORTCUT_HELP_ROW_ORDER: Record<ShortcutSectionId, readonly string[
     "dictation-toggle",
     "agent-interrupt",
     "voice-mute-toggle",
+    "live-voice-mute-toggle",
+    "live-voice-mute-hold-invert",
   ],
 };
 
@@ -247,10 +256,13 @@ const SHORTCUT_HELP_LABEL_KEYS: Record<string, string> = {
   "dictation-toggle": "settings.shortcuts.help.startStopDictation",
   "agent-interrupt": "settings.shortcuts.help.interruptAgent",
   "voice-mute-toggle": "settings.shortcuts.help.muteUnmuteVoiceMode",
+  "live-voice-mute-toggle": "settings.shortcuts.help.muteUnmuteLiveVoice",
+  "live-voice-mute-hold-invert": "settings.shortcuts.help.holdInvertLiveVoiceMute",
 };
 
 const SHORTCUT_HELP_NOTE_KEYS: Record<string, string> = {
   "show-shortcuts": "settings.shortcuts.helpNotes.showKeyboardShortcuts",
+  "live-voice-mute-hold-invert": "settings.shortcuts.helpNotes.holdInvertLiveVoiceMute",
 };
 
 // --- Binding definitions ---
@@ -1169,6 +1181,65 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
       label: "Mute/unmute voice mode",
     },
   },
+
+  // Live Voice mute works everywhere a call can follow you — including while
+  // typing — because muting is exactly what you reach for mid-keystroke when
+  // someone walks in. Terminal keeps first refusal on its own keys.
+  {
+    id: "live-voice-mute-toggle-cmd-shift-l-mac",
+    action: "live-voice.mute.toggle",
+    combo: "Cmd+Shift+L",
+    repeat: false,
+    when: { mac: true, commandCenter: false, terminal: false },
+    help: {
+      id: "live-voice-mute-toggle",
+      section: "agent-input",
+      label: "Mute/unmute live voice",
+    },
+  },
+  {
+    id: "live-voice-mute-toggle-ctrl-shift-l-non-mac",
+    action: "live-voice.mute.toggle",
+    combo: "Ctrl+Shift+L",
+    repeat: false,
+    when: { mac: false, commandCenter: false, terminal: false },
+    help: {
+      id: "live-voice-mute-toggle",
+      section: "agent-input",
+      label: "Mute/unmute live voice",
+    },
+  },
+
+  // Hold-to-invert rather than a second mute toggle: whichever state the call is
+  // in, holding the chord gives you the other one for exactly as long as you
+  // hold it. That is push-to-talk on a muted call and push-to-mute on a live one,
+  // without the user having to remember which mode they are in.
+  {
+    id: "live-voice-mute-hold-invert-cmd-shift-space-mac",
+    action: "live-voice.mute.hold-invert",
+    combo: "Cmd+Shift+Space",
+    hold: true,
+    when: { mac: true, commandCenter: false, terminal: false },
+    help: {
+      id: "live-voice-mute-hold-invert",
+      section: "agent-input",
+      label: "Hold to invert live voice mute",
+      note: "Push-to-talk while muted, push-to-mute while live.",
+    },
+  },
+  {
+    id: "live-voice-mute-hold-invert-ctrl-shift-space-non-mac",
+    action: "live-voice.mute.hold-invert",
+    combo: "Ctrl+Shift+Space",
+    hold: true,
+    when: { mac: false, commandCenter: false, terminal: false },
+    help: {
+      id: "live-voice-mute-hold-invert",
+      section: "agent-input",
+      label: "Hold to invert live voice mute",
+      note: "Push-to-talk while muted, push-to-mute while live.",
+    },
+  },
 ];
 
 // --- Parse bindings at module load ---
@@ -1195,10 +1266,16 @@ export function parseBindingChord(combo: string): KeyCombo[] {
   return parseChordString(combo);
 }
 
+// A hold binding must ignore auto-repeat: the key going down again while it is
+// already held is the OS repeating, not a second press.
+function ignoresRepeat(binding: ShortcutBinding): boolean {
+  return binding.repeat === false || binding.hold === true;
+}
+
 function parseBinding(binding: ShortcutBinding): ParsedShortcutBinding {
   const parsedChord = parseBindingChord(binding.combo);
   const lastCombo = parsedChord.at(-1);
-  if (binding.repeat === false && lastCombo) {
+  if (ignoresRepeat(binding) && lastCombo) {
     lastCombo.repeat = false;
   }
   return { ...binding, parsedChord };
@@ -1226,7 +1303,7 @@ export function buildEffectiveBindings(overrides: ShortcutOverrides): ParsedShor
       return binding;
     }
     const lastCombo = parsedChord.at(-1);
-    if (binding.repeat === false && lastCombo) {
+    if (ignoresRepeat(binding) && lastCombo) {
       lastCombo.repeat = false;
     }
     if (!binding.help?.defaultDisplayKeys) {
@@ -1383,6 +1460,7 @@ function buildMatchFromBinding(
     payload: resolvePayload(binding.payload, event),
     preventDefault: binding.preventDefault ?? true,
     stopPropagation: binding.stopPropagation ?? true,
+    ...(binding.hold ? { hold: binding.hold } : {}),
   };
 }
 

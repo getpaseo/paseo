@@ -1,3 +1,4 @@
+import type { AssistantRequest } from "@getpaseo/protocol/assistants";
 import type { z } from "zod";
 import { CLIENT_CAPS, type ClientCapability } from "@getpaseo/protocol/client-capabilities";
 import type { AgentAttentionNotificationPayload } from "@getpaseo/protocol/agent-attention-notification";
@@ -158,6 +159,15 @@ import type {
   BrowserAutomationExecuteRequest,
   BrowserAutomationExecuteResponse,
 } from "@getpaseo/protocol/browser-automation/rpc-schemas";
+import { encodeWebSocketBearerProtocol } from "@getpaseo/protocol/websocket-auth";
+import type {
+  LiveVoiceJsonObject,
+  VoiceLiveAgentNotification,
+  VoiceLiveRouteError,
+  VoiceLiveRouteRequest,
+  VoiceLiveRouteResponse,
+  VoiceLiveToolResult,
+} from "@getpaseo/protocol/live-voice-routing";
 
 export interface Logger {
   debug(obj: object, msg?: string): void;
@@ -179,6 +189,11 @@ const perfNow: () => number =
     : () => Date.now();
 
 const PROJECT_GITHUB_CLONE_TIMEOUT_MS = 5 * 60 * 1000;
+
+// The daemon holds `voice.live.start.request` open while the provider produces
+// the answer SDP, which is well past the default session RPC timeout.
+const LIVE_VOICE_START_TIMEOUT_MS = 45_000;
+const LIVE_VOICE_TOOL_EXECUTION_TIMEOUT_MS = 10 * 60 * 1000;
 
 interface ImportAgentInputBase {
   cwd?: string;
@@ -306,6 +321,13 @@ export type DaemonEvent =
 export type DaemonEventHandler = (event: DaemonEvent) => void;
 export type BrowserAutomationExecuteRequestMessage = BrowserAutomationExecuteRequest;
 export type BrowserAutomationExecuteResponseMessage = BrowserAutomationExecuteResponse;
+type AssistantRequestInput<T extends AssistantRequest["type"]> = Omit<
+  Extract<AssistantRequest, { type: T }>,
+  "type" | "requestId"
+> & { requestId?: string };
+
+export type LiveVoiceRouteRequestMessage = VoiceLiveRouteRequest;
+export type LiveVoiceRouteResponseMessage = VoiceLiveRouteResponse;
 
 export interface DaemonClientConfig {
   /** Deliver compact bodies/hash references to a caller-owned snapshot cache.
@@ -499,6 +521,11 @@ type SetVoiceModePayload = Extract<
   SessionOutboundMessage,
   { type: "set_voice_mode_response" }
 >["payload"];
+/** Resolved handshake for an accepted Live Voice call. */
+export interface AcceptedLiveVoiceStart {
+  liveSessionId: string;
+  negotiation: { kind: "webrtc_sdp"; answerSdp: string };
+}
 type DictationFinishAcceptedPayload = Extract<
   SessionOutboundMessage,
   { type: "dictation_stream_finish_accepted" }
@@ -903,6 +930,44 @@ class DaemonProtocolError extends Error {
   }
 }
 
+/**
+ * `voice.live.start.request` answered with `accepted: false`.
+ *
+ * `errorCode` stays a plain string on the wire so a newer daemon can introduce
+ * codes without breaking older clients; callers switch on the values they know
+ * (`busy`, `unsupported`, `start_failed`) and fall back to `errorMessage` for
+ * anything else.
+ */
+export class LiveVoiceStartRejectedError extends Error {
+  readonly name = "LiveVoiceStartRejectedError";
+  readonly errorCode: string;
+  readonly errorMessage: string | null;
+
+  constructor(params: { errorCode?: string; errorMessage?: string }) {
+    const errorCode = params.errorCode?.trim() || "start_failed";
+    const errorMessage = params.errorMessage?.trim() || null;
+    super(errorMessage ? `${errorMessage} (${errorCode})` : `Live voice rejected (${errorCode})`);
+    this.errorCode = errorCode;
+    this.errorMessage = errorMessage;
+  }
+}
+
+/**
+ * A target daemon understood `voice.live.tool.execute.request` but rejected the
+ * operation. Error codes stay open on the wire for forward compatibility.
+ */
+export class LiveVoiceToolExecutionRejectedError extends Error {
+  readonly name = "LiveVoiceToolExecutionRejectedError";
+  readonly errorCode: string;
+  readonly retryable: boolean;
+
+  constructor(params: { code: string; message: string; retryable?: boolean }) {
+    super(params.message);
+    this.errorCode = params.code;
+    this.retryable = params.retryable ?? false;
+  }
+}
+
 class PingTimeoutError extends Error {
   constructor(readonly timeoutMs: number) {
     super(`Ping timed out (${timeoutMs}ms)`);
@@ -1209,7 +1274,7 @@ export class DaemonClient {
     } else if (this.config.authHeader) {
       headers.Authorization = this.config.authHeader;
     }
-    const protocols = password ? [`paseo.bearer.${password}`] : undefined;
+    const protocols = password ? [encodeWebSocketBearerProtocol(password)] : undefined;
 
     try {
       // Reconnect can overlap with browser close/error delivery ordering.
@@ -3445,6 +3510,280 @@ export class DaemonClient {
       throw new Error((response.error ?? "Failed to set voice mode") + codeSuffix);
     }
     return response;
+  }
+
+  async listAssistants(input: AssistantRequestInput<"assistant.list.request"> = {}) {
+    const { requestId, ...fields } = input;
+    const payload = await this.sendNamespacedCorrelatedSessionRequest<"assistant.list.response">({
+      ...(requestId ? { requestId } : {}),
+      message: { type: "assistant.list.request", ...fields },
+    });
+    return payload.assistants;
+  }
+
+  async getAssistant(input: AssistantRequestInput<"assistant.get.request">) {
+    const { requestId, ...fields } = input;
+    const payload = await this.sendNamespacedCorrelatedSessionRequest<"assistant.get.response">({
+      ...(requestId ? { requestId } : {}),
+      message: { type: "assistant.get.request", ...fields },
+    });
+    return payload;
+  }
+
+  async createAssistant(input: AssistantRequestInput<"assistant.create.request">) {
+    const { requestId, ...fields } = input;
+    const payload = await this.sendNamespacedCorrelatedSessionRequest<"assistant.create.response">({
+      ...(requestId ? { requestId } : {}),
+      message: { type: "assistant.create.request", ...fields },
+    });
+    return payload.assistant;
+  }
+
+  async updateAssistant(input: AssistantRequestInput<"assistant.update.request">) {
+    const { requestId, ...fields } = input;
+    const payload = await this.sendNamespacedCorrelatedSessionRequest<"assistant.update.response">({
+      ...(requestId ? { requestId } : {}),
+      message: { type: "assistant.update.request", ...fields },
+    });
+    return payload.assistant;
+  }
+
+  async deleteAssistant(input: AssistantRequestInput<"assistant.delete.request">) {
+    const { requestId, ...fields } = input;
+    await this.sendNamespacedCorrelatedSessionRequest<"assistant.delete.response">({
+      ...(requestId ? { requestId } : {}),
+      message: { type: "assistant.delete.request", ...fields },
+    });
+  }
+
+  async compactAssistant(input: AssistantRequestInput<"assistant.compact.request">) {
+    const { requestId, ...fields } = input;
+    const payload = await this.sendNamespacedCorrelatedSessionRequest<"assistant.compact.response">(
+      {
+        ...(requestId ? { requestId } : {}),
+        message: { type: "assistant.compact.request", ...fields },
+      },
+    );
+    return payload.assistant;
+  }
+
+  async listAssistantTemplates(
+    input: AssistantRequestInput<"assistant.template.list.request"> = {},
+  ) {
+    const { requestId, ...fields } = input;
+    const payload =
+      await this.sendNamespacedCorrelatedSessionRequest<"assistant.template.list.response">({
+        ...(requestId ? { requestId } : {}),
+        message: { type: "assistant.template.list.request", ...fields },
+      });
+    return payload.templates;
+  }
+
+  async saveAssistantTemplate(input: AssistantRequestInput<"assistant.template.save.request">) {
+    const { requestId, ...fields } = input;
+    const payload =
+      await this.sendNamespacedCorrelatedSessionRequest<"assistant.template.save.response">({
+        ...(requestId ? { requestId } : {}),
+        message: { type: "assistant.template.save.request", ...fields },
+      });
+    return payload.template;
+  }
+
+  async deleteAssistantTemplate(input: AssistantRequestInput<"assistant.template.delete.request">) {
+    const { requestId, ...fields } = input;
+    await this.sendNamespacedCorrelatedSessionRequest<"assistant.template.delete.response">({
+      ...(requestId ? { requestId } : {}),
+      message: { type: "assistant.template.delete.request", ...fields },
+    });
+  }
+
+  /**
+   * Open a Live Voice call with this daemon.
+   *
+   * The call is daemon-global: the daemon hosts it on a hidden session of its
+   * own, so there is no agent to attach to. One call per client connection.
+   *
+   * The daemon relays the negotiation payload to the provider and waits for
+   * its answer before replying, so this request is much slower than a normal
+   * RPC — hence the dedicated timeout. Rejections arrive inside an accepted
+   * response (`accepted: false`) rather than as an RPC error; they are rethrown
+   * as a {@link LiveVoiceStartRejectedError} so callers can switch on
+   * `errorCode`.
+   */
+  async startLiveVoice(input: {
+    negotiation: { kind: "webrtc_sdp"; offerSdp: string };
+    assistantId?: string;
+    voice?: string;
+    requestId?: string;
+    /** This client will report agents the call did not start. */
+    ambientAgentReports?: boolean;
+    /** The user's standing instruction for those reports. */
+    ambientAgentGuidance?: string;
+    /** Prompt component ids the user turned off. The daemon ignores unknown and locked ids. */
+    disabledPromptComponents?: string[];
+    /** The user's standing instructions for the whole call, verbatim. */
+    customVoiceInstructions?: string;
+    /** Directory for a new workspace when the request names no workspace of its own. */
+    defaultWorkspaceDirectory?: string;
+    /** Backend-executor model override; the daemon defaults to its fast model. */
+    backendModel?: string;
+    backendThinkingOptionId?: string;
+  }): Promise<AcceptedLiveVoiceStart> {
+    const payload = await this.sendNamespacedCorrelatedSessionRequest<"voice.live.start.response">({
+      ...(input.requestId ? { requestId: input.requestId } : {}),
+      message: {
+        type: "voice.live.start.request",
+        negotiation: input.negotiation,
+        ...(input.assistantId ? { assistantId: input.assistantId } : {}),
+        ...(input.voice ? { voice: input.voice } : {}),
+        ...(input.ambientAgentReports ? { ambientAgentReports: true } : {}),
+        ...(input.ambientAgentGuidance ? { ambientAgentGuidance: input.ambientAgentGuidance } : {}),
+        ...(input.disabledPromptComponents?.length
+          ? { disabledPromptComponents: input.disabledPromptComponents }
+          : {}),
+        ...(input.customVoiceInstructions
+          ? { customVoiceInstructions: input.customVoiceInstructions }
+          : {}),
+        ...(input.defaultWorkspaceDirectory
+          ? { defaultWorkspaceDirectory: input.defaultWorkspaceDirectory }
+          : {}),
+        ...(input.backendModel ? { backendModel: input.backendModel } : {}),
+        ...(input.backendThinkingOptionId
+          ? { backendThinkingOptionId: input.backendThinkingOptionId }
+          : {}),
+      },
+      // The daemon awaits the provider's answer SDP before responding.
+      timeout: LIVE_VOICE_START_TIMEOUT_MS,
+    });
+    if (!payload.accepted || !payload.liveSessionId || !payload.negotiation) {
+      throw new LiveVoiceStartRejectedError({
+        ...(payload.errorCode ? { errorCode: payload.errorCode } : {}),
+        ...(payload.errorMessage ? { errorMessage: payload.errorMessage } : {}),
+      });
+    }
+    return {
+      liveSessionId: payload.liveSessionId,
+      negotiation: payload.negotiation,
+    };
+  }
+
+  /** Read the Live Voice choices from this host's realtime provider. */
+  async listLiveVoiceVoices(input: { requestId?: string } = {}): Promise<string[]> {
+    const payload = await this.sendNamespacedCorrelatedSessionRequest<"voice.live.voices.response">(
+      {
+        ...(input.requestId ? { requestId: input.requestId } : {}),
+        message: {
+          type: "voice.live.voices.request",
+        },
+      },
+    );
+    return payload.voices;
+  }
+
+  /** Close a Live Voice call. Idempotent on the daemon side. */
+  async stopLiveVoice(input: { liveSessionId: string; requestId?: string }): Promise<void> {
+    await this.sendNamespacedCorrelatedSessionRequest<"voice.live.stop.response">({
+      ...(input.requestId ? { requestId: input.requestId } : {}),
+      message: {
+        type: "voice.live.stop.request",
+        liveSessionId: input.liveSessionId,
+      },
+    });
+  }
+
+  /**
+   * Execute one Paseo tool on this daemon on behalf of a Live Voice router.
+   *
+   * Callers should pin this exact client connection for the duration so an
+   * adaptive host switch cannot move a privileged operation between sockets.
+   */
+  async executeLiveVoiceTool(input: {
+    toolName: string;
+    arguments: LiveVoiceJsonObject;
+    requestId?: string;
+    /**
+     * Ask this daemon to report how background work started by the tool ends.
+     * Reports arrive as `voice.live.agent.update` on this connection, carrying
+     * the same requestId.
+     */
+    notifyOnAgentFinish?: boolean;
+  }): Promise<{ toolResult: VoiceLiveToolResult; backgroundAgentId?: string }> {
+    const payload =
+      await this.sendNamespacedCorrelatedSessionRequest<"voice.live.tool.execute.response">({
+        ...(input.requestId ? { requestId: input.requestId } : {}),
+        message: {
+          type: "voice.live.tool.execute.request",
+          toolName: input.toolName,
+          arguments: input.arguments,
+          ...(input.notifyOnAgentFinish ? { notifyOnAgentFinish: true } : {}),
+        },
+        timeout: LIVE_VOICE_TOOL_EXECUTION_TIMEOUT_MS,
+      });
+    if (!payload.ok) {
+      throw new LiveVoiceToolExecutionRejectedError({
+        code: payload.error.code,
+        message: payload.error.message,
+        ...(payload.error.retryable !== undefined ? { retryable: payload.error.retryable } : {}),
+      });
+    }
+    return {
+      toolResult: payload.toolResult,
+      ...(payload.backgroundAgentId ? { backgroundAgentId: payload.backgroundAgentId } : {}),
+    };
+  }
+
+  /**
+   * Tell the daemon hosting a Live Voice call about work that just ended, so the
+   * voice model can say so. Only the client that owns the call may do this; the
+   * daemon rejects a liveSessionId this connection does not own.
+   */
+  async notifyLiveVoiceAgentUpdate(input: {
+    liveSessionId: string;
+    notification: VoiceLiveAgentNotification;
+    requestId?: string;
+  }): Promise<{ delivered: boolean }> {
+    const payload =
+      await this.sendNamespacedCorrelatedSessionRequest<"voice.live.agent.notify.response">({
+        ...(input.requestId ? { requestId: input.requestId } : {}),
+        message: {
+          type: "voice.live.agent.notify.request",
+          liveSessionId: input.liveSessionId,
+          notification: input.notification,
+        },
+      });
+    return { delivered: payload.delivered };
+  }
+
+  /**
+   * Ask this daemon to report every agent on it, not only work a routed Live
+   * Voice tool call started.
+   *
+   * The watch belongs to this connection and dies with it, so a caller that
+   * reconnects has to ask again. Reports arrive as `voice.live.agent.update`
+   * with `notification.unsolicited` set and a requestId that matches no routed
+   * call, because none of them came from one.
+   */
+  async setLiveVoiceAgentWatch(input: {
+    enabled: boolean;
+    requestId?: string;
+  }): Promise<{ enabled: boolean; error?: VoiceLiveRouteError }> {
+    const payload =
+      await this.sendNamespacedCorrelatedSessionRequest<"voice.live.agent.watch.response">({
+        ...(input.requestId ? { requestId: input.requestId } : {}),
+        message: {
+          type: "voice.live.agent.watch.request",
+          enabled: input.enabled,
+        },
+      });
+    return {
+      enabled: payload.enabled,
+      ...(payload.error ? { error: payload.error } : {}),
+    };
+  }
+
+  /** Reply to a server-initiated Live Voice route request on this exact client. */
+  sendLiveVoiceRouteResponse(response: VoiceLiveRouteResponse): void {
+    this.sendSessionMessageStrict(response);
   }
 
   async sendVoiceAudioChunk(audio: string, format: string, isLast = false): Promise<void> {

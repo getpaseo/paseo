@@ -127,3 +127,18 @@ Paseo uses these paths under the configured OpenAI base URL:
 ## Operational Notes
 
 Voice mode can launch and control agents. Treat voice prompts with the same care as direct agent instructions, especially when specifying working directories or destructive operations.
+
+Cross-host voice execution lists each host as ready, offline, or requiring an upgrade. Paseo
+discovers the target host's tool schema before execution and requires an explicit workspace when it
+creates a top-level agent.
+
+Background notifications describe an agent turn completing, failing, requiring authentication, or
+waiting for permission. A completed turn does not imply that external CI or deployment work has
+finished; ask Paseo to monitor that external work when you need a later completion update.
+
+By default a call only reports work you asked it to start. Settings → General → Live voice → Report
+agent activity extends that to every agent session on every connected host, including ones you
+started from the app or the CLI. Reports are not filtered or batched for you: the voice agent
+decides what is worth interrupting for and may say nothing. Use the guidance field to tell it how
+you want that handled — for example, "only interrupt me for permission requests and failures" — and
+it is followed over the agent's own judgement.

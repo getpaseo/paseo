@@ -3,6 +3,41 @@ export interface Pcm16Wav {
   samples: Int16Array;
 }
 
+const WAV_HEADER_BYTES = 44;
+
+/** Wraps mono PCM16 samples in a canonical 44-byte RIFF/WAVE header. */
+export function encodePcm16Wav(wav: Pcm16Wav): Uint8Array<ArrayBuffer> {
+  const dataSize = wav.samples.length * 2;
+  const bytes = new Uint8Array(WAV_HEADER_BYTES + dataSize);
+  const view = new DataView(bytes.buffer);
+
+  function writeAscii(offset: number, value: string): void {
+    for (let i = 0; i < value.length; i += 1) {
+      view.setUint8(offset + i, value.charCodeAt(i));
+    }
+  }
+
+  writeAscii(0, "RIFF");
+  view.setUint32(4, 36 + dataSize, true);
+  writeAscii(8, "WAVE");
+  writeAscii(12, "fmt ");
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true);
+  view.setUint32(24, wav.sampleRate, true);
+  view.setUint32(28, wav.sampleRate * 2, true);
+  view.setUint16(32, 2, true);
+  view.setUint16(34, 16, true);
+  writeAscii(36, "data");
+  view.setUint32(40, dataSize, true);
+
+  for (let i = 0; i < wav.samples.length; i += 1) {
+    view.setInt16(WAV_HEADER_BYTES + i * 2, wav.samples[i] ?? 0, true);
+  }
+
+  return bytes;
+}
+
 export function parsePcm16Wav(buffer: ArrayBuffer): Pcm16Wav | null {
   if (buffer.byteLength < 44) {
     return null;

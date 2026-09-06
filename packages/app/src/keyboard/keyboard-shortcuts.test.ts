@@ -860,6 +860,86 @@ describe("keyboard-shortcut help sections", () => {
   });
 });
 
+describe("live voice hold-to-invert mute binding", () => {
+  it("matches Ctrl+Shift+Space as a hold on non-mac", () => {
+    const result = resolveShortcut({
+      event: { key: " ", code: "Space", ctrlKey: true, shiftKey: true },
+      context: { isMac: false },
+    });
+
+    expect(result.match?.action).toBe("live-voice.mute.hold-invert");
+    expect(result.match?.hold).toBe(true);
+  });
+
+  it("matches Cmd+Shift+Space as a hold on mac", () => {
+    const result = resolveShortcut({
+      event: { key: " ", code: "Space", metaKey: true, shiftKey: true },
+      context: { isMac: true },
+    });
+
+    expect(result.match?.action).toBe("live-voice.mute.hold-invert");
+    expect(result.match?.hold).toBe(true);
+  });
+
+  it("ignores auto-repeat while the chord is held down", () => {
+    expectNoShortcutResolution({
+      event: { key: " ", code: "Space", ctrlKey: true, shiftKey: true, repeat: true },
+      context: { isMac: false },
+    });
+  });
+
+  it("keeps ignoring auto-repeat after the user rebinds it", () => {
+    const bindings = buildEffectiveBindings({
+      "live-voice-mute-hold-invert-ctrl-shift-space-non-mac": "Alt+Q",
+    });
+
+    const pressed = resolveShortcut({
+      event: { key: "q", code: "KeyQ", altKey: true },
+      context: { isMac: false },
+      bindings,
+    });
+    expect(pressed.match?.action).toBe("live-voice.mute.hold-invert");
+    expect(pressed.match?.hold).toBe(true);
+
+    const repeated = resolveShortcut({
+      event: { key: "q", code: "KeyQ", altKey: true, repeat: true },
+      context: { isMac: false },
+      bindings,
+    });
+    expect(repeated.match).toBeNull();
+  });
+
+  it("stays out of the terminal and the command center", () => {
+    expectNoShortcutResolution({
+      event: { key: " ", code: "Space", ctrlKey: true, shiftKey: true },
+      context: { isMac: false, focusScope: "terminal" },
+    });
+    expectNoShortcutResolution({
+      event: { key: " ", code: "Space", ctrlKey: true, shiftKey: true },
+      context: { isMac: false, commandCenterOpen: true },
+    });
+  });
+
+  it("leaves the mute toggle a non-hold action", () => {
+    const result = resolveShortcut({
+      event: { key: "l", code: "KeyL", ctrlKey: true, shiftKey: true },
+      context: { isMac: false },
+    });
+
+    expect(result.match?.action).toBe("live-voice.mute.toggle");
+    expect(result.match?.hold).toBeUndefined();
+  });
+
+  it("is rebindable from the shortcuts settings list", () => {
+    expect(
+      getBindingIdForAction("live-voice-mute-hold-invert", { isMac: false, isDesktop: true }),
+    ).toBe("live-voice-mute-hold-invert-ctrl-shift-space-non-mac");
+    expect(
+      getBindingIdForAction("live-voice-mute-hold-invert", { isMac: true, isDesktop: true }),
+    ).toBe("live-voice-mute-hold-invert-cmd-shift-space-mac");
+  });
+});
+
 describe("getWorkspaceIndexJumpModifierKey", () => {
   const MAC_INDEX_BINDING = "workspace-navigate-index-cmd-digit-mac";
 

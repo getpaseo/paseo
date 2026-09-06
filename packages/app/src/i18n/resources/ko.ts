@@ -1717,6 +1717,117 @@ export const ko: TranslationResources = {
       copied: "복사됨",
     },
   },
+  assistants: {
+    menu: {
+      label: "어시스턴트",
+      none: "어시스턴트 없음",
+      manage: "어시스턴트 관리…",
+    },
+    settings: {
+      title: "어시스턴트",
+      description:
+        "이름이 있는 음성 어시스턴트입니다. 각자 지시, 목소리, 작업 모델, 기억된 대화를 가집니다. 라이브 음성 메뉴에서 선택한 어시스턴트가 아래 통화 설정을 대체합니다.",
+      manage: "관리",
+    },
+    manage: {
+      title: "어시스턴트",
+      noHosts: "어시스턴트를 지원하는 연결된 호스트가 없습니다. 데몬을 업데이트하세요.",
+      assistants: "어시스턴트",
+      empty: "아직 어시스턴트가 없습니다. 하나 만들어 통화에 이름과 기억을 부여하세요.",
+      templates: "템플릿",
+      templatesEmpty:
+        "템플릿이 없습니다. 어시스턴트를 템플릿으로 저장하면 설정을 재사용할 수 있습니다.",
+      selectedForCalls: "라이브 음성 통화에 사용 중",
+      fromTemplate: "{{name}}에서 생성",
+      entries: "기록 {{n}}개",
+    },
+    actions: {
+      newAssistant: "새 어시스턴트",
+      newTemplate: "새 템플릿",
+      menu: "{{name}} 작업",
+      useForCalls: "통화에 사용",
+      stopUsing: "통화에 사용 중지",
+      openHistory: "기록 열기",
+      edit: "편집",
+      saveAsTemplate: "템플릿으로 저장",
+      newFromTemplate: "템플릿에서 새 어시스턴트",
+      delete: "삭제",
+      deleteAssistantTitle: "{{name}}을(를) 삭제할까요?",
+      deleteAssistantMessage:
+        "대화 기록과 요약이 삭제됩니다. 에이전트에 위임한 작업은 계속 실행됩니다.",
+      deleteTemplateTitle: "템플릿 {{name}}을(를) 삭제할까요?",
+      deleteTemplateMessage: "이 템플릿으로 만든 어시스턴트는 설정 사본을 그대로 유지합니다.",
+    },
+    form: {
+      createAssistantTitle: "새 어시스턴트",
+      editAssistantTitle: "어시스턴트 편집",
+      createTemplateTitle: "새 템플릿",
+      editTemplateTitle: "템플릿 편집",
+      create: "만들기",
+      save: "변경 사항 저장",
+      name: {
+        label: "이름",
+        placeholder: "비서실장",
+      },
+      startFrom: {
+        label: "시작 템플릿",
+        hint: "템플릿 설정을 복사합니다. 이후 편집은 이 어시스턴트에만 남습니다.",
+        none: "빈 상태",
+        empty: "템플릿 없음",
+      },
+      instructions: {
+        label: "지시",
+        hint: "{{length}} / {{max}}. 매 통화마다 음성 에이전트에 그대로 전달됩니다.",
+        placeholder: "작업은 에이전트에 넘기고 직접 코드를 작성하지 마세요.",
+      },
+      context: {
+        label: "컨텍스트",
+        hint: "{{length}} / {{max}}. 매 통화 시작 시 어시스턴트가 알고 있는 배경 정보입니다.",
+        placeholder: "음성 프로젝트를 출시 중입니다. paseo 저장소를 우선하세요.",
+      },
+      voice: {
+        label: "목소리",
+        hint: "새 통화에 사용됩니다.",
+        default: "기본값",
+      },
+      backendModel: {
+        label: "작업 모델",
+        hint: "어시스턴트의 작업을 뒤에서 실행하는 모델입니다. 말하는 모델이 아닙니다.",
+        default: "기본값(빠름)",
+      },
+      backendThinking: {
+        label: "작업 사고 깊이",
+        hint: "작업 모델의 추론 깊이입니다.",
+        default: "기본값",
+      },
+      errors: {
+        nameRequired: "이름은 필수입니다",
+        nameTooLong: "이름이 너무 깁니다",
+        tooLong: "너무 깁니다",
+      },
+    },
+    history: {
+      title: "기록",
+      empty: "아직 기억된 내용이 없습니다. 통화를 시작하세요.",
+      loadOlder: "이전 기록 불러오기",
+      callStarted: "통화 시작",
+      callEnded: "통화 종료 · {{cause}}",
+      delegationOk: "위임됨: {{description}}",
+      delegationFailed: "위임 실패 ({{code}}): {{description}}",
+      user: "나",
+      assistant: "어시스턴트",
+      limits:
+        "새 통화는 요약과 공급자의 컨텍스트 한도에 맞는 최근 기록에서 시작합니다. 라이브 음성은 재개되지 않습니다.",
+      summary: {
+        label: "요약",
+        hint: "직접 작성합니다. 새 통화는 오래된 기록 대신 이 요약을 읽습니다.",
+        coversThrough: "기록 #{{seq}}까지 포함합니다.",
+        placeholder: "어시스턴트가 이어서 기억해야 할 내용.",
+        willCover: "저장하면 기록 #{{seq}}까지 포함됩니다.",
+        save: "요약 저장",
+      },
+    },
+  },
   realtimeVoice: {
     actions: {
       mute: "실시간 음성 음소거",
@@ -1874,6 +1985,148 @@ export const ko: TranslationResources = {
   sidebarCallout: {
     dismiss: "닫기",
   },
+  audioSession: {
+    busy: {
+      voiceMode: "음성 모드가 마이크를 사용 중입니다. 먼저 중지하세요.",
+      dictation: "받아쓰기가 마이크를 사용 중입니다. 먼저 중지하세요.",
+      liveVoice: "라이브 음성이 마이크를 사용 중입니다. 먼저 중지하세요.",
+      unknown: "마이크가 사용 중입니다. 다른 오디오 기능을 먼저 중지하세요.",
+    },
+  },
+  liveVoice: {
+    label: "라이브 음성",
+    menu: {
+      hosts: "호스트",
+    },
+    actions: {
+      start: "라이브 음성 시작",
+      unavailable: "라이브 음성을 사용할 수 없음",
+      stop: "라이브 음성 중지",
+      mute: "마이크 음소거",
+      unmute: "마이크 음소거 해제",
+      enableAudio: "탭하여 오디오 활성화",
+      showTranscript: "대화 기록 표시",
+      hideTranscript: "대화 기록 숨기기",
+      dismiss: "닫기",
+    },
+    unavailable: {
+      platform: "이 기기에서는 라이브 음성을 지원하지 않습니다.",
+      noHosts: "라이브 음성을 사용하려면 호스트를 추가하세요.",
+      connecting: "호스트에 연결하는 중입니다. 준비되면 라이브 음성이 표시됩니다.",
+      offline: "온라인 호스트가 없습니다. 라이브 음성을 사용하려면 호스트에 연결하세요.",
+      upgrade: "연결된 호스트가 라이브 음성을 알리지 않습니다. 데몬을 업데이트하세요.",
+      toolsDisabled: "라이브 음성을 사용하려면 이 호스트의 설정에서 Paseo 도구를 활성화하세요.",
+    },
+    settings: {
+      title: "라이브 음성",
+      voice: {
+        label: "목소리",
+        description: "새 통화에 사용됩니다. 진행 중인 통화는 현재 목소리를 유지합니다.",
+        default: "기본값",
+      },
+      backendModel: {
+        label: "작업 모델",
+        description:
+          "통화의 작업을 뒤에서 실행합니다. 기본값은 빠르고 저렴합니다. 작업에 더 많은 판단이 필요하면 더 강력한 모델을 선택하세요.",
+        default: "기본값(빠름)",
+      },
+      backendThinking: {
+        label: "작업 사고 수준",
+        description: "작업 모델의 추론 깊이입니다.",
+        default: "기본값",
+      },
+      agentReports: {
+        label: "에이전트 활동 보고",
+        description:
+          "통화 중에 모든 에이전트 세션이 완료되거나 실패하거나 권한이 필요할 때 알려줍니다. 통화 밖에서, 연결된 모든 호스트에서 시작한 세션도 포함합니다.",
+      },
+      agentReportGuidance: {
+        label: "언제 방해할지",
+        description: "음성 에이전트에 작성한 그대로 전달됩니다. 비워 두면 에이전트가 판단합니다.",
+        placeholder: "권한 요청과 실패에 대해서만 알려주세요.",
+      },
+      promptComponents: {
+        "canonical-tools": {
+          label: "도구 요약표",
+          description: "정확한 도구 이름을 알려주어 탐색 턴을 건너뛰게 합니다.",
+        },
+        "delegation-brevity": {
+          label: "간결한 위임 프롬프트",
+          description:
+            "에이전트 세션에 보내는 프롬프트를 짧게 유지합니다. 받아쓴 코드나 단계 목록은 넣지 않습니다.",
+        },
+        "cross-host-reach": {
+          label: "여러 기기 인식",
+          description: "한 번의 호출로 모든 기기를 확인하는 방법을 알려줍니다.",
+        },
+        recipes: {
+          label: "레시피",
+          description: "이름으로 보관하기 같은 일반적인 요청의 가장 짧은 경로입니다.",
+        },
+        "speech-style": {
+          label: "말하기 스타일",
+          description: "구어체 문장 출력, 먼저 실행하고 설명하기, Paseo 용어입니다.",
+        },
+      },
+      customInstructions: {
+        label: "상시 지시사항",
+        description: "모든 통화에서 음성 에이전트에 작성한 그대로 전달됩니다.",
+        placeholder: "더 요청하지 않는 한 항상 한 문장으로 답하세요.",
+      },
+      defaultWorkspaceDirectory: {
+        label: "기본 워크스페이스 디렉터리",
+        description:
+          "요청에 명확한 위치가 없을 때 새 워크스페이스가 만들어지는 곳입니다. 비워 두면 음성 에이전트가 물어봅니다.",
+        placeholder: "~/Projects",
+      },
+    },
+    diagnostics: {
+      title: "라이브 음성",
+      statusTitle: "상태",
+      noHosts: "구성된 호스트가 없습니다.",
+      hostSummary: "{{version}} · {{support}}",
+      unknownVersion: "버전 알 수 없음",
+      supported: "라이브 음성 지원됨",
+      unsupported: "라이브 음성 지원되지 않음",
+      supportUnknown: "라이브 음성 지원 여부 알 수 없음",
+      connection: {
+        idle: "대기 중",
+        connecting: "연결 중",
+        online: "온라인",
+        offline: "오프라인",
+        error: "오류",
+      },
+    },
+    status: {
+      connecting: "연결 중...",
+      live: "라이브",
+      audioBlocked: "오디오 차단됨",
+      stopping: "중지하는 중...",
+      ended: "통화 종료됨",
+      error: "실패",
+    },
+    transcript: {
+      empty: "아직 발화가 없습니다.",
+      user: "나:",
+      assistant: "에이전트:",
+    },
+    errors: {
+      busy: "이 호스트에서 이미 라이브 음성 통화가 진행 중입니다.",
+      unsupported: "이 호스트는 라이브 음성을 지원하지 않습니다.",
+      startFailed: "라이브 음성을 시작할 수 없습니다.",
+      micBusy: "다른 기능이 마이크를 사용 중입니다.",
+      notConnected: "이 호스트는 연결되어 있지 않습니다.",
+      alreadyActive: "이미 라이브 음성 통화가 실행 중입니다.",
+      stopping: "이전 라이브 음성 통화가 아직 종료되는 중입니다.",
+      micDenied:
+        "마이크 접근이 차단되었습니다. Paseo가 마이크를 사용하도록 허용한 다음 다시 시도하세요.",
+      micUnavailable:
+        "사용 가능한 마이크를 찾을 수 없습니다. 마이크를 연결하거나 기기의 오디오 설정에서 선택한 다음 다시 시도하세요.",
+      backgroundUnavailable: "백그라운드 오디오를 시작할 수 없습니다.",
+      iceTimeout: "제한 시간 내에 연결을 협상하지 못했습니다.",
+      connectionLost: "라이브 음성 연결이 끊어졌습니다.",
+    },
+  },
   contextWindow: {
     title: "컨텍스트 윈도우",
     used: "{{percentage}}% 사용됨",
@@ -1916,6 +2169,7 @@ export const ko: TranslationResources = {
     groupInfo: "{{title}} 정보",
     sections: {
       general: "일반",
+      voice: "라이브 음성",
       appearance: "모양",
       layout: en.settings.sections.layout,
       editor: "편집기",
@@ -2225,9 +2479,13 @@ export const ko: TranslationResources = {
         sendMessage: "메시지 보내기",
         queueMessage: "메시지 대기열에 추가",
         muteUnmuteVoiceMode: "음성 모드 음소거/해제",
+        muteUnmuteLiveVoice: "라이브 음성 음소거/해제",
+        holdInvertLiveVoiceMute: "길게 눌러 라이브 음성 음소거 반전",
         switchProject: "프로젝트 전환",
       },
       helpNotes: {
+        holdInvertLiveVoiceMute:
+          "음소거 상태에서는 눌러서 말하고, 라이브 상태에서는 눌러서 음소거합니다.",
         showKeyboardShortcuts: "포커스가 텍스트 필드나 터미널에 있지 않을 때 사용할 수 있습니다.",
       },
     },

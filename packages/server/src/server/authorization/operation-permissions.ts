@@ -3,7 +3,11 @@ import type { DaemonPermission } from "./index.js";
 
 type InboundOperation = SessionInboundMessage["type"];
 type OutboundOperation = SessionOutboundMessage["type"];
-export type PermissionRequirement = DaemonPermission | readonly DaemonPermission[] | null;
+export type PermissionRequirement =
+  | DaemonPermission
+  | readonly DaemonPermission[]
+  | { readonly allOf: readonly DaemonPermission[] }
+  | null;
 
 const INBOUND_PERMISSION = {
   abort_request: "workspace.write",
@@ -22,6 +26,15 @@ const INBOUND_PERMISSION = {
   "agent.timeline.append.request": "workspace.write",
   "agent.timeline.set_subscription.request": ["workspace.read", "hub.execute"],
   agent_permission_response: "workspace.write",
+  "assistant.compact.request": "workspace.write",
+  "assistant.create.request": "workspace.write",
+  "assistant.delete.request": "workspace.write",
+  "assistant.get.request": "workspace.read",
+  "assistant.list.request": "workspace.read",
+  "assistant.template.delete.request": "workspace.write",
+  "assistant.template.list.request": "workspace.read",
+  "assistant.template.save.request": "workspace.write",
+  "assistant.update.request": "workspace.write",
   archive_agent_request: ["workspace.write", "hub.execute"],
   archive_workspace_request: ["workspace.manage", "hub.execute"],
   audio_played: "workspace.write",
@@ -181,6 +194,15 @@ const INBOUND_PERMISSION = {
   unsubscribe_terminals_request: "workspace.read",
   update_agent_request: "workspace.write",
   validate_branch_request: "workspace.read",
+  "voice.live.agent.notify.request": "workspace.write",
+  "voice.live.agent.watch.request": "workspace.read",
+  "voice.live.route.response": "workspace.write",
+  "voice.live.start.request": "workspace.write",
+  "voice.live.stop.request": "workspace.write",
+  "voice.live.tool.execute.request": {
+    allOf: ["workspace.write", "workspace.manage", "automation.manage"],
+  },
+  "voice.live.voices.request": "workspace.read",
   voice_audio_chunk: "workspace.write",
   wait_for_finish_request: "workspace.read",
   "workspace.clear_attention.request": "workspace.write",
@@ -231,6 +253,15 @@ const OUTBOUND_PERMISSION = {
   agent_update: ["workspace.read", "hub.execute"],
   archive_workspace_response: ["workspace.manage", "hub.execute"],
   artifact: "workspace.read",
+  "assistant.compact.response": "workspace.write",
+  "assistant.create.response": "workspace.write",
+  "assistant.delete.response": "workspace.write",
+  "assistant.get.response": "workspace.read",
+  "assistant.list.response": "workspace.read",
+  "assistant.template.delete.response": "workspace.write",
+  "assistant.template.list.response": "workspace.read",
+  "assistant.template.save.response": "workspace.write",
+  "assistant.update.response": "workspace.write",
   assistant_chunk: "workspace.read",
   audio_output: "workspace.write",
   branch_suggestions_response: "workspace.read",
@@ -391,6 +422,15 @@ const OUTBOUND_PERMISSION = {
   transcription_result: "workspace.write",
   update_agent_response: "workspace.write",
   validate_branch_response: "workspace.read",
+  "voice.live.agent.notify.response": "workspace.write",
+  "voice.live.agent.update": "workspace.read",
+  "voice.live.agent.watch.response": "workspace.read",
+  "voice.live.route.request": "workspace.write",
+  "voice.live.start.response": "workspace.write",
+  "voice.live.stop.response": "workspace.write",
+  "voice.live.tool.execute.response": "workspace.write",
+  "voice.live.update": "workspace.write",
+  "voice.live.voices.response": "workspace.read",
   voice_input_state: "workspace.write",
   wait_for_finish_response: "workspace.read",
   "workspace.clear_attention.response": "workspace.write",

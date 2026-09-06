@@ -87,6 +87,12 @@ export interface Agent {
   runtimeInfo?: AgentRuntimeInfo;
   lastUsage?: AgentUsage;
   lastError?: string | null;
+  lastFailure?: {
+    kind: "authentication_required" | "provider_error";
+    message: string;
+    code?: string;
+    diagnostic?: string;
+  } | null;
   title: string | null;
   cwd: string;
   workspaceId?: string;

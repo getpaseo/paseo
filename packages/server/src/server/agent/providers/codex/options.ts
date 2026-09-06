@@ -34,6 +34,8 @@ const NetworkPolicySchema = z
   })
   .strict();
 
+const ToggleSchema = z.object({ enabled: z.boolean() }).strict();
+
 // Codex config reference, maintained against Codex CLI 0.143+.
 export const CodexProviderOptionsSchema = z
   .object({
@@ -49,10 +51,44 @@ export const CodexProviderOptionsSchema = z
       .strict()
       .optional(),
     web_search: z.enum(["disabled", "cached", "indexed", "live"]).optional(),
+    project_doc_max_bytes: z.number().int().nonnegative().optional(),
+    tools: z
+      .object({
+        experimental_request_user_input: ToggleSchema.optional(),
+        update_plan: ToggleSchema.optional(),
+      })
+      .strict()
+      .optional(),
     features: z
       .object({
+        apps: z.boolean().optional(),
+        browser_use: z.boolean().optional(),
+        browser_use_external: z.boolean().optional(),
+        browser_use_full_cdp_access: z.boolean().optional(),
+        code_mode: z.boolean().optional(),
+        code_mode_only: z.boolean().optional(),
+        computer_use: z.boolean().optional(),
+        current_time_reminder: z.boolean().optional(),
+        deferred_executor: z.boolean().optional(),
+        goals: z.boolean().optional(),
+        hooks: z.boolean().optional(),
+        image_generation: z.boolean().optional(),
+        memories: z.boolean().optional(),
+        multi_agent: z.boolean().optional(),
         network_proxy: z.union([z.boolean(), NetworkPolicySchema]).optional(),
         multi_agent_v2: z.boolean().optional(),
+        plugins: z.boolean().optional(),
+        realtime_conversation: z.boolean().optional(),
+        recommended_plugins: z.boolean().optional(),
+        remote_plugin: z.boolean().optional(),
+        request_permissions_tool: z.boolean().optional(),
+        shell_tool: z.boolean().optional(),
+        skill_mcp_dependency_install: z.boolean().optional(),
+        skill_search: z.boolean().optional(),
+        token_budget: z.boolean().optional(),
+        tool_suggest: z.boolean().optional(),
+        view_image: z.boolean().optional(),
+        workspace_dependencies: z.boolean().optional(),
       })
       .strict()
       .optional(),

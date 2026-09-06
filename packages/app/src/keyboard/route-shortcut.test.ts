@@ -4,6 +4,7 @@ import {
   type ShortcutAction,
   type ShortcutRoutingContext,
 } from "./route-shortcut";
+import { holdReleaseAction } from "./keyboard-action-dispatcher";
 
 const SIDEBAR_TARGETS = [
   { serverId: "srv", workspaceId: "ws-1" },
@@ -426,6 +427,37 @@ describe("routeKeyboardShortcut — toggle dialogs", () => {
         makeCtx({ shortcutsDialogOpen: true }),
       ),
     ).toEqual<ShortcutAction>({ kind: "shortcuts-dialog-toggle", nextOpen: false });
+  });
+});
+
+describe("routeKeyboardShortcut — live voice hold-to-invert mute", () => {
+  it("routes the key-down to the press phase", () => {
+    expect(
+      routeKeyboardShortcut({ action: "live-voice.mute.hold-invert", payload: null }, makeCtx()),
+    ).toEqual<ShortcutAction>({
+      kind: "dispatch",
+      action: { id: "live-voice.mute-hold-invert", scope: "global", phase: "press" },
+    });
+  });
+
+  it("derives the release action from the press action", () => {
+    const press = routeKeyboardShortcut(
+      { action: "live-voice.mute.hold-invert", payload: null },
+      makeCtx(),
+    );
+    if (press.kind !== "dispatch") {
+      throw new Error("expected a dispatch action");
+    }
+
+    expect(holdReleaseAction(press.action)).toEqual({
+      id: "live-voice.mute-hold-invert",
+      scope: "global",
+      phase: "release",
+    });
+  });
+
+  it("has no release phase for a plain action", () => {
+    expect(holdReleaseAction({ id: "live-voice.mute-toggle", scope: "global" })).toBeNull();
   });
 });
 

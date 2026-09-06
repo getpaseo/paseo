@@ -83,6 +83,12 @@ definition, no longer eligible to begin.
   so its injected `collapsable={false}` reaches Android/Fabric.
 - Mobile sidebars render through `MobilePanelOverlay`; do not duplicate overlay lifecycle or motion
   styles in sidebar components.
+- Both compact panels mount inside the root layout's content row, never at the app surface root. The
+  row is what a panel is allowed to cover; anything the layout docks below it — today the Live Voice
+  strip — stays visible and interactive while a panel is open. A panel mounted at the surface root
+  covers that dock instead, which is how the strip once vanished whenever the agent list opened.
+  Panel content that pads for the home indicator reads `useScreenBottomInset`, since the docked
+  surface below already pays that inset.
 - The desktop left sidebar is retained too. App chrome owns separate mounted and visible decisions:
   closing it or yielding its width marks it inactive and applies `display: none` without conditionally
   removing the sidebar tree.

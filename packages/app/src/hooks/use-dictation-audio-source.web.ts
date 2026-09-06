@@ -277,8 +277,9 @@ export function useDictationAudioSource(config: DictationAudioSourceConfig): Dic
     });
 
     const stream = rawStream;
-
+    refs.current.stream = stream;
     const context = new AudioContextCtor();
+    refs.current.context = context;
 
     try {
       const source = context.createMediaStreamSource(stream);
@@ -454,14 +455,6 @@ export function useDictationAudioSource(config: DictationAudioSourceConfig): Dic
       },
     };
   }, [decodeAudioData, emitPcmSegments]);
-
-  useEffect(() => {
-    return () => {
-      void stop().catch((err) => {
-        onErrorRef.current?.(err instanceof Error ? err : new Error(String(err)));
-      });
-    };
-  }, [stop]);
 
   return useMemo(
     () => ({

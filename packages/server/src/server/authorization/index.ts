@@ -52,6 +52,9 @@ export class SessionAuthorization {
   private allows(requirement: PermissionRequirement): boolean {
     if (requirement === null) return true;
     if (typeof requirement === "string") return this.permissions.has(requirement);
+    if ("allOf" in requirement) {
+      return requirement.allOf.every((permission) => this.permissions.has(permission));
+    }
     return requirement.some((permission) => this.permissions.has(permission));
   }
 }

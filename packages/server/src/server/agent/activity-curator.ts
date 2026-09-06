@@ -4,6 +4,7 @@ import type { AgentTimelineRow } from "./agent-timeline-store-types.js";
 import { isLikelyExternalToolName } from "@getpaseo/protocol/tool-name-normalization";
 import { buildToolCallDisplayModel } from "@getpaseo/protocol/tool-call-display";
 import { projectTimelineRows } from "./timeline-projection.js";
+import { redactModelFacingValue } from "./model-facing-redaction.js";
 
 const DEFAULT_MAX_ITEMS = 0;
 const MAX_TOOL_INPUT_CHARS = 400;
@@ -59,7 +60,7 @@ function formatToolInputJson(input: unknown): string | null {
     return null;
   }
   try {
-    const encoded = JSON.stringify(input);
+    const encoded = JSON.stringify(redactModelFacingValue(input));
     if (!encoded) {
       return null;
     }

@@ -273,6 +273,52 @@ This cannot be validated by a JS test — verify on a device: play music through
 open Paseo, use dictation once, stop, and confirm the music resumes at full quality; then
 background/foreground the app and confirm it keeps playing at full quality.
 
+### Live Voice background-call support
+
+Live Voice uses `react-native-webrtc` directly on iOS and Android. Native call
+lifetime support keeps its audio session active after Home or screen lock: iOS
+uses the `audio` background mode with a `playAndRecord`/`voiceChat` audio session,
+and Android uses a microphone/media-playback foreground service with an ongoing
+notification. The service must start after microphone capture succeeds and while
+Paseo is still visible; Android rejects a background-origin microphone service.
+
+Every mobile call takes that lifetime. There is no foreground-only call to test
+and no menu entry to choose one — Android hands a backgrounded app silence
+without a microphone-typed foreground service, and on iOS the `audio` background
+mode is an Info.plist capability that is always declared, so the only thing a
+foreground-only call would drop is the `playAndRecord`/`voiceChat` session a call
+wants on screen too. Don't confuse this with Android's foreground _service_,
+which is the mechanism that makes the background call work.
+
+A binary without the `PaseoBackgroundCall` native module reports Live Voice as
+unsupported rather than placing a call that dies at the home button. Only a
+development bundle newer than its installed binary hits this; rebuild the dev
+client.
+
+The app pins the exact daemon connection for the life of the call. This prevents
+adaptive direct/relay probing from swapping out the socket that owns the daemon
+session. A real transport failure still ends the call; background support does
+not provide reconnect/resume or move a call to a replacement socket.
+
+On a physical device, verify:
+
+- the first microphone permission prompt can be accepted without cancelling startup
+- remote speech plays and mute disables only the outgoing microphone track
+- after pressing Home and after locking the screen, a quiet call remains connected
+  for more than 60 seconds (past the daemon's application-socket lease)
+- speech in both directions still works after that quiet interval
+- an Android foreground-service notification stays present for the call and
+  disappears after stop; the iOS microphone indicator behaves equivalently
+- a Live Voice request that acts on another connected host completes while the
+  app is backgrounded, proving the owning daemon socket and target request path
+  remain scheduled in addition to native WebRTC media
+- returning to Paseo shows the same active call and Stop releases the microphone,
+  peer connection, connection pin, audio session/foreground service, and daemon call
+- switching immediately between Live Voice, dictation, and ordinary voice mode
+  never silences the new recording or leaves the microphone permanently busy;
+  repeat while the previous recording is still starting
+- killing the app or losing the source transport ends the call cleanly; it is not resumed
+
 ## Unistyles + Reanimated
 
 ### The crash

@@ -17,6 +17,28 @@ export function expandTilde(path: string): string {
 }
 
 /**
+ * Resolve a filesystem path the user wrote in config.json or a PASEO_* env var.
+ *
+ * `~` and `~/...` expand to the home directory; anything still relative is
+ * anchored to `baseDir` (normally $PASEO_HOME) so it never depends on the
+ * daemon's cwd.
+ *
+ * An absolute path is returned exactly as written. `path.resolve` would rewrite
+ * one on Windows: it treats `/tmp/models` as absolute but anchors it to the
+ * current drive, so a config shared between machines comes back as
+ * `D:\tmp\models`. The path we were handed is already the answer.
+ */
+export function resolveConfiguredPath(baseDir: string, configured: string): string {
+  const trimmed = configured.trim();
+  const expanded = expandTilde(trimmed);
+  if (expanded !== trimmed) {
+    // We built this one out of the home directory, so ours to normalize.
+    return nodePath.resolve(expanded);
+  }
+  return nodePath.isAbsolute(expanded) ? expanded : nodePath.join(baseDir, expanded);
+}
+
+/**
  * Compare two path strings as filesystem-equivalent for cwd filtering.
  *
  * This is a string-only comparison: it normalizes separators and dot segments,

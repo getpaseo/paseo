@@ -4,6 +4,7 @@ import { createTestLogger } from "../../test-utils/test-logger.js";
 
 import { validateProviderOptions } from "./provider-options.js";
 import { applyClaudeToolPolicy, ClaudeProviderOptionsSchema } from "./providers/claude/options.js";
+import { CODEX_LIVE_VOICE_PROVIDER_OPTIONS } from "./providers/codex-live-voice-host-profile.js";
 import { applyCodexToolPolicy, CodexProviderOptionsSchema } from "./providers/codex/options.js";
 import {
   buildOpenCodePermissionRules,
@@ -35,6 +36,30 @@ describe("provider-owned option schemas", () => {
       }),
     ).toMatchObject({
       sandbox_workspace_write: { writable_roots: ["/var/cache/npm"] },
+    });
+  });
+
+  test("accepts the fail-closed routing-only Codex Live Voice host policy", () => {
+    expect(CodexProviderOptionsSchema.parse(CODEX_LIVE_VOICE_PROVIDER_OPTIONS)).toEqual(
+      CODEX_LIVE_VOICE_PROVIDER_OPTIONS,
+    );
+    expect(CODEX_LIVE_VOICE_PROVIDER_OPTIONS).toMatchObject({
+      approval_policy: "never",
+      sandbox_mode: "read-only",
+      web_search: "disabled",
+      project_doc_max_bytes: 0,
+      tools: {
+        experimental_request_user_input: { enabled: false },
+        update_plan: { enabled: false },
+      },
+      features: {
+        apps: false,
+        memories: false,
+        multi_agent: false,
+        recommended_plugins: false,
+        shell_tool: false,
+        view_image: false,
+      },
     });
   });
 

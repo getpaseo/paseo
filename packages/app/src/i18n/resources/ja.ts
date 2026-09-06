@@ -1724,6 +1724,261 @@ export const ja: TranslationResources = {
       copied: "コピーしました",
     },
   },
+  audioSession: {
+    busy: {
+      voiceMode: "音声モードがマイクを使用中です。先に停止してください。",
+      dictation: "音声入力がマイクを使用中です。先に停止してください。",
+      liveVoice: "ライブ音声がマイクを使用中です。先に停止してください。",
+      unknown: "マイクが使用中です。先に他の音声機能を停止してください。",
+    },
+  },
+  liveVoice: {
+    label: "ライブ音声",
+    menu: {
+      hosts: "ホスト",
+    },
+    actions: {
+      start: "ライブ音声を開始",
+      unavailable: "ライブ音声は利用できません",
+      stop: "ライブ音声を停止",
+      mute: "マイクをミュート",
+      unmute: "マイクのミュートを解除",
+      enableAudio: "タップして音声を有効化",
+      showTranscript: "文字起こしを表示",
+      hideTranscript: "文字起こしを非表示",
+      dismiss: "閉じる",
+    },
+    unavailable: {
+      platform: "このデバイスはライブ音声に対応していません。",
+      noHosts: "ライブ音声を使うにはホストを追加してください。",
+      connecting: "ホストに接続中です。準備ができるとライブ音声が表示されます。",
+      offline: "オンラインのホストがありません。ライブ音声を使うにはホストに接続してください。",
+      upgrade: "接続中のホストはライブ音声に対応していません。デーモンを更新してください。",
+      toolsDisabled:
+        "ライブ音声を使用するには、このホストの設定で Paseo ツールを有効にしてください。",
+    },
+    settings: {
+      title: "ライブ音声",
+      voice: {
+        label: "音声",
+        description: "新しい通話に使用されます。通話中の音声は変更されません。",
+        default: "デフォルト",
+      },
+      backendModel: {
+        label: "アクションモデル",
+        description:
+          "通話のアクションを裏で実行します。既定は高速で低コストです。より高い判断力が必要なら強力なモデルを選んでください。",
+        default: "既定（高速）",
+      },
+      backendThinking: {
+        label: "アクションの思考",
+        description: "アクションモデルの推論の深さです。",
+        default: "既定",
+      },
+      agentReports: {
+        label: "エージェントの動きを知らせる",
+        description:
+          "通話中、接続中のどのホストでも、エージェントセッションが完了・失敗・許可待ちになったときに知らせます。通話の外で開始したセッションも含みます。",
+      },
+      agentReportGuidance: {
+        label: "割り込みの基準",
+        description: "音声エージェントにそのまま伝えます。空欄にすると判断を任せます。",
+        placeholder: "許可の確認と失敗のときだけ知らせて。",
+      },
+      promptComponents: {
+        "canonical-tools": {
+          label: "ツール早見表",
+          description: "正確なツール名を渡し、探索のやり取りを省きます。",
+        },
+        "delegation-brevity": {
+          label: "簡潔な委任プロンプト",
+          description:
+            "エージェントセッションへのプロンプトを短く保ちます。コードや手順の口述はしません。",
+        },
+        "cross-host-reach": {
+          label: "マシン横断の把握",
+          description: "どの読み取りが一回の呼び出しで全マシンをカバーするかを教えます。",
+        },
+        recipes: {
+          label: "レシピ",
+          description: "名前でのアーカイブなど、よくある依頼の最短経路です。",
+        },
+        "speech-style": {
+          label: "話し方",
+          description: "話し言葉の文、先に実行してから報告、Paseo の用語を使います。",
+        },
+      },
+      customInstructions: {
+        label: "常設の指示",
+        description: "毎回の通話で音声エージェントにそのまま伝えます。",
+        placeholder: "求めない限り、常に一文で答えて。",
+      },
+      defaultWorkspaceDirectory: {
+        label: "デフォルトのワークスペースディレクトリ",
+        description:
+          "リクエストに明確なワークスペースがないときに新しいワークスペースを作成する場所。空にすると音声エージェントが確認します。",
+        placeholder: "~/Projects",
+      },
+    },
+    diagnostics: {
+      title: "ライブ音声",
+      statusTitle: "ステータス",
+      noHosts: "ホストが設定されていません。",
+      hostSummary: "{{version}} · {{support}}",
+      unknownVersion: "バージョン不明",
+      supported: "ライブ音声に対応",
+      unsupported: "ライブ音声に非対応",
+      supportUnknown: "ライブ音声の対応状況は不明",
+      connection: {
+        idle: "待機中",
+        connecting: "接続中",
+        online: "オンライン",
+        offline: "オフライン",
+        error: "エラー",
+      },
+    },
+    status: {
+      connecting: "接続中...",
+      live: "ライブ",
+      audioBlocked: "音声がブロックされています",
+      stopping: "停止中...",
+      ended: "通話終了",
+      error: "失敗",
+    },
+    transcript: {
+      empty: "まだ発話はありません。",
+      user: "あなた:",
+      assistant: "エージェント:",
+    },
+    errors: {
+      busy: "このホストではすでにライブ音声通話が進行中です。",
+      unsupported: "このホストはライブ音声に対応していません。",
+      startFailed: "ライブ音声を開始できませんでした。",
+      micBusy: "マイクは他の機能が使用中です。",
+      notConnected: "このホストは接続されていません。",
+      alreadyActive: "ライブ音声通話はすでに実行中です。",
+      stopping: "前回のライブ音声通話がまだ停止中です。",
+      micDenied:
+        "マイクへのアクセスがブロックされています。Paseo にマイクの使用を許可してから、再試行してください。",
+      micUnavailable:
+        "使用可能なマイクが見つかりません。マイクを接続するか、デバイスのオーディオ設定で選択してから、再試行してください。",
+      backgroundUnavailable: "バックグラウンド音声を開始できませんでした。",
+      iceTimeout: "時間内に接続を確立できませんでした。",
+      connectionLost: "ライブ音声の接続が切断されました。",
+    },
+  },
+  assistants: {
+    menu: {
+      label: "アシスタント",
+      none: "アシスタントなし",
+      manage: "アシスタントを管理…",
+    },
+    settings: {
+      title: "アシスタント",
+      description:
+        "名前付きの音声アシスタント。独自の指示、声、アクションモデル、記憶した会話を持ちます。ライブ音声メニューで選んだアシスタントは、下の通話設定より優先されます。",
+      manage: "管理",
+    },
+    manage: {
+      title: "アシスタント",
+      noHosts: "アシスタントに対応した接続中のホストがありません。デーモンを更新してください。",
+      assistants: "アシスタント",
+      empty: "アシスタントはまだありません。作成すると通話に名前と記憶が付きます。",
+      templates: "テンプレート",
+      templatesEmpty:
+        "テンプレートはありません。アシスタントをテンプレートとして保存すると設定を再利用できます。",
+      selectedForCalls: "ライブ音声通話で使用中",
+      fromTemplate: "{{name}} から作成",
+      entries: "履歴 {{n}} 件",
+    },
+    actions: {
+      newAssistant: "新しいアシスタント",
+      newTemplate: "新しいテンプレート",
+      menu: "{{name}} の操作",
+      useForCalls: "通話で使用",
+      stopUsing: "通話での使用をやめる",
+      openHistory: "履歴を開く",
+      edit: "編集",
+      saveAsTemplate: "テンプレートとして保存",
+      newFromTemplate: "テンプレートから新しいアシスタント",
+      delete: "削除",
+      deleteAssistantTitle: "{{name}} を削除しますか？",
+      deleteAssistantMessage:
+        "会話履歴と要約が削除されます。エージェントに委任した作業は続行されます。",
+      deleteTemplateTitle: "テンプレート {{name}} を削除しますか？",
+      deleteTemplateMessage:
+        "このテンプレートから作成したアシスタントは、設定のコピーをそのまま保持します。",
+    },
+    form: {
+      createAssistantTitle: "新しいアシスタント",
+      editAssistantTitle: "アシスタントを編集",
+      createTemplateTitle: "新しいテンプレート",
+      editTemplateTitle: "テンプレートを編集",
+      create: "作成",
+      save: "変更を保存",
+      name: {
+        label: "名前",
+        placeholder: "首席補佐",
+      },
+      startFrom: {
+        label: "テンプレート",
+        hint: "テンプレートの設定をコピーします。以降の編集はこのアシスタントにだけ残ります。",
+        none: "空白",
+        empty: "テンプレートなし",
+      },
+      instructions: {
+        label: "指示",
+        hint: "{{length}} / {{max}}。毎回の通話で音声エージェントにそのまま渡されます。",
+        placeholder: "作業はエージェントに任せ、自分でコードを書かないこと。",
+      },
+      context: {
+        label: "コンテキスト",
+        hint: "{{length}} / {{max}}。毎回の通話開始時にアシスタントが知っている前提情報。",
+        placeholder: "音声プロジェクトをリリース中。paseo リポジトリを優先。",
+      },
+      voice: {
+        label: "声",
+        hint: "新しい通話で使われます。",
+        default: "デフォルト",
+      },
+      backendModel: {
+        label: "アクションモデル",
+        hint: "アシスタントの操作を裏で実行するモデルです。話すモデルではありません。",
+        default: "デフォルト（高速）",
+      },
+      backendThinking: {
+        label: "アクションの思考",
+        hint: "アクションモデルの推論の深さ。",
+        default: "デフォルト",
+      },
+      errors: {
+        nameRequired: "名前は必須です",
+        nameTooLong: "名前が長すぎます",
+        tooLong: "長すぎます",
+      },
+    },
+    history: {
+      title: "履歴",
+      empty: "まだ何も記憶していません。通話を開始してください。",
+      loadOlder: "以前の履歴を読み込む",
+      callStarted: "通話開始",
+      callEnded: "通話終了 · {{cause}}",
+      delegationOk: "委任: {{description}}",
+      delegationFailed: "委任に失敗 ({{code}}): {{description}}",
+      user: "あなた",
+      assistant: "アシスタント",
+      limits:
+        "新しい通話は要約と、プロバイダーのコンテキスト上限に収まる最近の履歴から始まります。ライブ音声は再開されません。",
+      summary: {
+        label: "要約",
+        hint: "あなたが書きます。新しい通話は古い履歴の代わりにこれを読みます。",
+        coversThrough: "履歴の #{{seq}} までを対象。",
+        placeholder: "アシスタントに引き継がせたい内容。",
+        willCover: "保存すると履歴の #{{seq}} までが対象になります。",
+        save: "要約を保存",
+      },
+    },
+  },
   realtimeVoice: {
     actions: {
       mute: "リアルタイム音声をミュート",
@@ -1924,6 +2179,7 @@ export const ja: TranslationResources = {
     groupInfo: "{{title}}について",
     sections: {
       general: "一般",
+      voice: "ライブ音声",
       appearance: "外観",
       layout: en.settings.sections.layout,
       editor: "エディター",
@@ -2233,9 +2489,13 @@ export const ja: TranslationResources = {
         sendMessage: "メッセージを送信",
         queueMessage: "メッセージをキューに追加",
         muteUnmuteVoiceMode: "音声モードのミュートを切り替え",
+        muteUnmuteLiveVoice: "ライブ音声のミュートを切り替え",
+        holdInvertLiveVoiceMute: "長押しでライブ音声のミュートを反転",
         switchProject: "プロジェクトを切り替え",
       },
       helpNotes: {
+        holdInvertLiveVoiceMute:
+          "ミュート中は押している間だけ発話、通話中は押している間だけミュート。",
         showKeyboardShortcuts:
           "テキストフィールドまたはターミナルにフォーカスがない場合に利用できます。",
       },

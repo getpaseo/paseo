@@ -16,6 +16,7 @@ const discriminatedUnionPath = resolve(
   zodAotRoot,
   "dist/core/codegen/schemas/discriminated-union.js",
 );
+const lazyExtractorPath = resolve(zodAotRoot, "dist/core/extract/extractors/lazy.js");
 
 async function ensureZodAotRuntimeImportExtensionPatch() {
   const emitter = await readFile(emitterPath, "utf8");
@@ -67,10 +68,68 @@ async function ensureZodAotDiscriminatedUnionOutputPatch() {
   await writeFile(discriminatedUnionPath, discriminatedUnionEmitter);
 }
 
-await Promise.all([
-  ensureZodAotRuntimeImportExtensionPatch(),
-  ensureZodAotDiscriminatedUnionOutputPatch(),
-]);
+async function ensureZodAotDiscriminatedUnionLiteralPatch() {
+  let discriminatedUnionEmitter = await readFile(discriminatedUnionPath, "utf8");
+  if (discriminatedUnionEmitter.includes("function discriminatorLiteral(")) {
+    return;
+  }
+
+  const importBefore = 'import { invalidType } from "../emit-issue.js";';
+  const importAfter = `${importBefore}
+function discriminatorLiteral(option, discriminator, mappingValue) {
+    const field = option.type === "object" ? option.properties[discriminator] : undefined;
+    const value = field?.type === "literal"
+        ? field.values.find((candidate) => String(candidate) === mappingValue)
+        : undefined;
+    return JSON.stringify(value === undefined ? mappingValue : value);
+}`;
+  const slowCaseBefore = "case ${escapeString(value)}:";
+  const slowCaseAfter = "case ${discriminatorLiteral(option, ir.discriminator, value)}:";
+  const validValuesBefore =
+    'const validValues = Object.keys(ir.mapping)\n        .map((v) => escapeString(v))\n        .join(",");';
+  const validValuesAfter =
+    'const validValues = Object.entries(ir.mapping)\n        .map(([value, index]) => discriminatorLiteral(ir.options[index], ir.discriminator, value))\n        .join(",");';
+  const fastCaseBefore = "cases.push(`case ${escapeString(value)}:return ${check};`);";
+  const fastCaseAfter =
+    "cases.push(`case ${discriminatorLiteral(option, ir.discriminator, value)}:return ${check};`);";
+
+  if (
+    !discriminatedUnionEmitter.includes(importBefore) ||
+    !discriminatedUnionEmitter.includes(slowCaseBefore) ||
+    !discriminatedUnionEmitter.includes(validValuesBefore) ||
+    !discriminatedUnionEmitter.includes(fastCaseBefore)
+  ) {
+    throw new Error(
+      "zod-aot discriminated-union literal emitter shape changed; update the literal patch",
+    );
+  }
+
+  discriminatedUnionEmitter = discriminatedUnionEmitter
+    .replace(importBefore, importAfter)
+    .replace(slowCaseBefore, slowCaseAfter)
+    .replace(validValuesBefore, validValuesAfter)
+    .replace(fastCaseBefore, fastCaseAfter);
+  await writeFile(discriminatedUnionPath, discriminatedUnionEmitter);
+}
+
+async function ensureZodAotRecursiveLazyFallbackPatch() {
+  const lazyExtractor = await readFile(lazyExtractorPath, "utf8");
+  if (lazyExtractor.includes('return ctx.fallback("recursive_lazy");')) {
+    return;
+  }
+
+  const before = 'return { type: "recursiveRef" };';
+  const after = 'return ctx.fallback("recursive_lazy");';
+  if (!lazyExtractor.includes(before)) {
+    throw new Error("zod-aot lazy extractor shape changed; update the recursive fallback patch");
+  }
+  await writeFile(lazyExtractorPath, lazyExtractor.replace(before, after));
+}
+
+await ensureZodAotRuntimeImportExtensionPatch();
+await ensureZodAotDiscriminatedUnionOutputPatch();
+await ensureZodAotDiscriminatedUnionLiteralPatch();
+await ensureZodAotRecursiveLazyFallbackPatch();
 
 const [{ discoverSchemas }, { compileSchemas }, { generateCompiledFileContent }] =
   await Promise.all([

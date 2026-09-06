@@ -977,7 +977,7 @@ test("resume_agent rehydrates the newest private MCP config from a redacted pers
     if (!projectedHandle) {
       throw new Error("Expected a projected persistence handle");
     }
-    expect(projectedHandle.metadata).not.toHaveProperty("mcpServers");
+    expect(projectedHandle.metadata ?? {}).not.toHaveProperty("mcpServers");
     expect(JSON.stringify(projectedHandle)).not.toContain(bearerA);
 
     await localCtx.client.archiveAgent(created.id);
@@ -998,7 +998,7 @@ test("resume_agent rehydrates the newest private MCP config from a redacted pers
     expect(provider.resumeOverrides).toHaveLength(2);
     expect(provider.resumeOverrides[1]?.mcpServers?.hub).toEqual(externalMcpB.hub);
     expect(provider.resumeOverrides[1]?.mcpServers?.hub).not.toEqual(externalMcpA.hub);
-    expect(resumedNewest.persistence?.metadata).not.toHaveProperty("mcpServers");
+    expect(resumedNewest.persistence?.metadata ?? {}).not.toHaveProperty("mcpServers");
     expect(JSON.stringify(resumedNewest)).not.toContain(bearerA);
     expect(JSON.stringify(resumedNewest)).not.toContain(bearerB);
   } finally {
@@ -1238,6 +1238,7 @@ test("receives server_info on websocket connect", async () => {
   expect(serverInfo?.features?.hubRelationship).toBe(true);
   expect(serverInfo?.features?.commitsList).toBe(true);
   expect(serverInfo?.features?.commitBaseClassification).toBe(true);
+  expect(serverInfo?.features?.liveVoiceToolExecution).toBe(true);
   expect(serverInfo?.desktopManaged).toBe(false);
   expect(serverInfo?.features?.daemonSelfUpdate).toBe(true);
   expect(serverInfo?.features?.worktreeRestore).toBe(true);
@@ -1578,7 +1579,7 @@ test("creates agent and exercises lifecycle", async () => {
   expect(agentDeleted.payload.agentId).toBe(agent.id);
 
   if (persistence) {
-    const resumed = await ctx.client.resumeAgent(persistence);
+    const resumed = await ctx.client.resumeAgent(persistence, { cwd });
     expect(resumed.id).toBeTruthy();
     expect(resumed.status).toBe("idle");
     await ctx.client.deleteAgent(resumed.id);

@@ -74,6 +74,32 @@ describe("SessionAuthorization", () => {
     ).toBe(false);
   });
 
+  test("assistant reads need workspace.read and assistant mutations need workspace.write", () => {
+    const viewer = new SessionAuthorization(["workspace.read"]);
+    const writer = new SessionAuthorization(["workspace.write"]);
+
+    for (const type of [
+      "assistant.list.request",
+      "assistant.get.request",
+      "assistant.template.list.request",
+    ] as const) {
+      expect(viewer.allowsInbound(inboundMessage(type))).toBe(true);
+    }
+    for (const type of [
+      "assistant.create.request",
+      "assistant.update.request",
+      "assistant.delete.request",
+      "assistant.compact.request",
+      "assistant.template.save.request",
+      "assistant.template.delete.request",
+    ] as const) {
+      expect(viewer.allowsInbound(inboundMessage(type))).toBe(false);
+      expect(writer.allowsInbound(inboundMessage(type))).toBe(true);
+    }
+    expect(viewer.allowsOutbound(outboundMessage("assistant.list.response"))).toBe(true);
+    expect(viewer.allowsOutbound(outboundMessage("assistant.create.response"))).toBe(false);
+  });
+
   test("Hub can operate ordinary agents and recover workspaces without daemon administration", () => {
     const authorization = new SessionAuthorization(["hub.execute"]);
     for (const type of [
@@ -117,6 +143,22 @@ describe("SessionAuthorization", () => {
     const authorization = new SessionAuthorization([]);
 
     expect(authorization.allowsOutbound(outboundMessage("rpc_error"))).toBe(true);
+  });
+
+  test("routed Live Voice tools require every authority in the unrestricted catalog", () => {
+    const request = inboundMessage("voice.live.tool.execute.request");
+
+    expect(new SessionAuthorization(["workspace.write"]).allowsInbound(request)).toBe(false);
+    expect(
+      new SessionAuthorization(["workspace.write", "workspace.manage"]).allowsInbound(request),
+    ).toBe(false);
+    expect(
+      new SessionAuthorization([
+        "workspace.write",
+        "workspace.manage",
+        "automation.manage",
+      ]).allowsInbound(request),
+    ).toBe(true);
   });
 
   test("legacy Hub authority is translated at one compatibility boundary", () => {

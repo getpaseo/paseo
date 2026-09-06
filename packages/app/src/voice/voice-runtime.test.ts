@@ -3,6 +3,7 @@ import type { DaemonServerInfo } from "@/stores/session-store";
 import type { AudioEngine } from "@/voice/audio-engine-types";
 import { createVoiceRuntime, type VoiceSessionAdapter } from "@/voice/voice-runtime";
 import { REALTIME_VOICE_VAD_CONFIG } from "@/voice/realtime-voice-config";
+import { audioSessionLease } from "@/audio/audio-session-lease";
 
 function createAudioEngineMock(): AudioEngine {
   return {
@@ -62,6 +63,8 @@ function createServerInfo(): DaemonServerInfo {
   };
 }
 
+const activeRuntimes = new Set<ReturnType<typeof createVoiceRuntime>>();
+
 function createRuntime(options?: {
   engine?: AudioEngine;
   getServerInfo?: (serverId: string) => DaemonServerInfo | null;
@@ -73,6 +76,7 @@ function createRuntime(options?: {
     activateKeepAwake: vi.fn().mockResolvedValue(undefined),
     deactivateKeepAwake: vi.fn().mockResolvedValue(undefined),
   });
+  activeRuntimes.add(runtime);
 
   return { runtime, engine };
 }
@@ -82,7 +86,9 @@ describe("voice runtime", () => {
     vi.useFakeTimers();
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    await Promise.all([...activeRuntimes].map((runtime) => runtime.destroy()));
+    activeRuntimes.clear();
     vi.useRealTimers();
   });
 
@@ -102,6 +108,78 @@ describe("voice runtime", () => {
       activeServerId: "server-1",
       activeAgentId: "agent-1",
     });
+  });
+
+  it("holds the microphone lease until a cancelled capture start is stopped", async () => {
+    const opened = Promise.withResolvers<void>();
+    const entered = Promise.withResolvers<void>();
+    let capturing = false;
+    const engine: AudioEngine = {
+      ...createAudioEngineMock(),
+      async startCapture() {
+        entered.resolve();
+        await opened.promise;
+        capturing = true;
+      },
+      async stopCapture() {
+        capturing = false;
+      },
+    };
+    const { runtime } = createRuntime({ engine });
+    runtime.registerSession(createSessionAdapter());
+    const starting = runtime.startVoice("server-1", "agent-1");
+    await entered.promise;
+    const stopping = runtime.stopVoice();
+    expect(audioSessionLease.acquire("liveVoice")).toBeNull();
+    opened.resolve();
+    await Promise.all([starting, stopping]);
+    expect(capturing).toBe(false);
+    expect(audioSessionLease.current()).toBeNull();
+    expect(runtime.getSnapshot()).toMatchObject({ phase: "disabled", isVoiceMode: false });
+  });
+
+  it("stops local capture even if the daemon rejects voice shutdown", async () => {
+    const adapter = createSessionAdapter();
+    const { runtime, engine } = createRuntime();
+    runtime.registerSession(adapter);
+    await runtime.startVoice("server-1", "agent-1");
+    const failure = new Error("Daemon disconnected");
+    vi.mocked(adapter.setVoiceMode).mockRejectedValueOnce(failure);
+    await expect(runtime.stopVoice()).rejects.toBe(failure);
+    expect(engine.stopCapture).toHaveBeenCalledOnce();
+    expect(audioSessionLease.current()).toBeNull();
+    expect(runtime.getSnapshot()).toMatchObject({ phase: "disabled", isVoiceMode: false });
+  });
+
+  it("releases a failed-stop lease after successfully destroying the engine", async () => {
+    const { runtime, engine } = createRuntime();
+    runtime.registerSession(createSessionAdapter());
+    await runtime.startVoice("server-1", "agent-1");
+    const failure = new Error("Capture stop failed");
+    vi.mocked(engine.stopCapture).mockRejectedValueOnce(failure);
+    await expect(runtime.stopVoice()).rejects.toBe(failure);
+    expect(audioSessionLease.current()).toBe("voiceMode");
+
+    await runtime.destroy();
+
+    expect(engine.destroy).toHaveBeenCalled();
+    expect(audioSessionLease.current()).toBeNull();
+  });
+
+  it("handles early local shutdown rejection while waiting on the daemon", async () => {
+    const adapter = createSessionAdapter();
+    const { runtime, engine } = createRuntime();
+    runtime.registerSession(adapter);
+    await runtime.startVoice("server-1", "agent-1");
+    const remoteStopped = Promise.withResolvers<void>();
+    vi.mocked(adapter.setVoiceMode).mockReturnValueOnce(remoteStopped.promise);
+    const failure = new Error("Capture stop failed");
+    vi.mocked(engine.stopCapture).mockRejectedValueOnce(failure);
+    const stopping = runtime.stopVoice();
+    const rejected = expect(stopping).rejects.toBe(failure);
+    await vi.runAllTimersAsync();
+    remoteStopped.resolve();
+    await rejected;
   });
 
   it("streams continuous PCM chunks and waits after receiving a transcript", async () => {

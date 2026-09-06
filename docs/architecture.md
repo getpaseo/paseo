@@ -134,6 +134,297 @@ generation. The daemon retains only the latest projection per entity and bounded
 event log. A missing, expired, or previous-generation cursor receives a full snapshot. Projects are
 independent records; a project with no workspaces does not need a workspace placeholder.
 
+#### Durable assistants
+
+Assistants are their own principal-scoped records, independent of projects and
+workspaces. A template supplies a copy of the initial configuration; editing or
+deleting it never changes an existing assistant. The launcher selects an instance
+on a host, and its settings override per-call voice, instructions, and backend
+model settings. The backend thinking setting is not a control for the realtime
+speaking model's reasoning effort.
+
+Each call still creates an ephemeral provider host. The daemon saves finalized
+speech and call boundaries, then seeds a fresh realtime conversation from the
+assistant's configured context, user-written summary, and recent unsummarized
+history. Speech keeps its original role. This restores text context, not the
+provider's internal session or audio state. A disconnected call can have an
+incomplete final utterance. History outside the startup budget remains readable;
+see [data-model.md](data-model.md#assistant-records-and-history) for retention.
+
+One assistant can have one active call across its owner's devices. Configuration
+edits and compaction affect the next call. Deleting an assistant closes its call
+and removes its local history; independently delegated project work keeps running.
+Provider-owned rollouts are outside that deletion boundary.
+
+Subscription-backed fire-and-forget execution is not implemented. The inspected
+Codex WebSocket realtime path requires API-key authentication; WebRTC uses the
+subscription path. The isolated `assistant-realtime-smoke.ts` script probes text
+input, journal seeding, and provider restart without relying on an ordinary
+executor turn as a replacement for the speaking model.
+
+#### Live Voice ownership and cross-host routing
+
+Live Voice is one daemon-global call per owning reconnectable client session. The daemon creates
+a hidden host session for the realtime conversation; it is not attached to a
+project or ordinary visible agent. Which agent provider hosts it comes from a
+host profile (`agent/providers/live-voice-host-profiles.ts`) — the coordinator
+and everything under `server/live-voice/` are provider-neutral, and the daemon
+advertises the choice as `features.liveVoiceHostProvider`. Today the only
+profile is Codex, with a 0.147.0 minimum because the hidden host relies on that
+version's restricted tool configuration. Negotiation and control messages
+travel over the existing authenticated Paseo WebSocket, while microphone and
+remote speech media travel directly between the app's WebRTC peer and the
+realtime provider. The app never receives or stores a provider API key for this
+path: Codex uses its existing ChatGPT-subscription authentication to establish
+the realtime session.
+
+Live Voice requires **Enable Paseo tools** on its host. The app excludes hosts
+that advertise the setting as off, and the daemon rejects the start request as
+the authority. Do not offer a talk-only fallback: the hidden session exists to
+inspect and control Paseo, and without those tools it cannot fulfill that role.
+
+The authenticated client session owns the call across physical socket replacement.
+The app pins that host connection during the call. A lost control connection
+gets the existing bounded reconnect grace; it cannot retain a hidden host forever. Native background audio keeps the peer and
+socket alive across Home/screen lock; the physical-device checks and platform
+constraints are in [mobile-testing.md](mobile-testing.md).
+
+On Android the foreground service's ongoing notification is the call's only
+control surface once Paseo is backgrounded, so it carries Mute and End call. The
+service never changes call state itself: a button press travels back through the
+Expo module to the app runtime, which stays the only writer. iOS has no
+equivalent — its module manages the audio session and nothing else, and a pinned
+call presence there would mean a Live Activity.
+
+Only the app knows the user's other hosts — `getSavedHosts` lives there and
+nowhere in the daemon — so cross-host work exists only on this app-mediated
+route. A daemon-side Paseo tool has no connection to another machine and cannot
+grow one; anything "across all hosts" has to be a routing tool.
+
+For clients advertising `live_voice_cross_host_router`, the hidden session gets
+only routing tools: list compatible hosts, resolve a workspace by name, run one
+read on every host at once, describe the ordinary tools and schemas on one host,
+and execute one selected tool. The route is:
+
+```text
+hidden Live Voice host on A
+  -> exact owning socket on A
+  -> owning app (authorizes the active call, selects and pins B)
+  -> authenticated existing socket on B
+  -> B's top-level Paseo tool catalog
+```
+
+The hidden host is non-interactive and fail-closed. Its provider profile removes
+native shell, browser, computer, image-generation, app/plugin, and subagent tools,
+disables project instructions and web search, and runs with read-only sandboxing
+and no approval prompts. Any provider permission request that still reaches the
+host is denied immediately so it cannot hold the spoken conversation open. This
+does not auto-deny work on an ordinary Paseo agent: those permission requests are
+reported into the call, where the user can approve or deny them by voice through
+`respond_to_permission`.
+
+Each hop of that route is cheap; what is expensive is a model turn, because the
+user hears silence for the whole of it. So the tools are shaped to spend hops
+instead of turns — every one of them fans out concurrently rather than walking
+the hosts, and the routing layer caches the host list for thirty seconds so a
+fan-out does not pay a serial round trip through the owning app before its first
+target is contacted. `find_workspace` takes the name as the user said it, fans
+out `list_workspaces`, and returns the `serverId` and `workspaceId` to act on,
+turning "archive the Refresh Paseo assembly workspace" into two turns rather
+than one per host plus one per lookup. `run_paseo_tool_on_all_hosts` does the
+same for any read, so "what's running?" is one turn regardless of how many
+machines the user owns. The prompt hands the model the exact names of the common
+Paseo tools for the same reason, so discovery is a fallback rather than an
+opening move.
+
+An app-side fan-out operation — one route message the app expands against its
+own host connections — was considered and rejected. With the cached host list,
+the requests already travel in parallel, so the critical path is one app round
+trip plus the slowest target either way; what an app-side operation would save
+is per-host message count on the app link, at the price of a new protocol
+operation and a capability gate. Revisit only if measurement shows the app relay
+itself hurting.
+
+Only reads fan out, against an allowlist rather than a denylist, so a tool added
+later is not fannable until someone decides it should be. Mass mutation is what
+is being kept out: "archive it on all of them" is a sentence a user can say by
+accident, and one misheard word should not reach five machines. The allowlist is
+an ergonomic guard, not a privilege boundary — it is enforced on the requesting
+side, and the model gains no authority it did not already have against a single
+host. Read-ness itself is declared where each tool is written (`readOnly` on the
+tool config, surfaced to MCP clients as `readOnlyHint`), and tests hold the
+pieces together: the allowlist must equal the set of tools the catalog declares
+read-only, the prompt must offer exactly the names the fan-out accepts, and
+every tool the prompt calls "exact and stable" must exist in the catalog with
+the arguments the prompt names — the first draft of that list already named a
+tool this daemon does not have.
+
+The prompt carries what a tool description cannot. A description is read once the
+model is already considering that tool; the prompt shapes the decision before it
+— how many machines there are, that they are reachable only through these tools,
+that the user waits through every call in silence, and which reads answer the
+whole question at once. The reasoning behind the allowlist stays out of it: the
+model needs to know which reads fan out, not why the line was drawn there.
+
+The prompt is assembled from named components
+(`live-voice-context.ts`), each locked or optional. Locked components are the
+ones a call is broken or unsafe without: identity, Paseo-as-authority,
+Paseo-visible creation, and core routing. Optional ones — the tool cheat sheet,
+cross-machine awareness, recipes, brief-delegation, speaking style — can be
+turned off per user from the Live Voice settings, which also take free-text
+standing instructions passed to the model verbatim. The client sends component
+ids and instructions on `voice.live.start`; the daemon owns the registry and
+ignores unknown and locked ids, so a client can never talk a call out of its
+safety rules. A test walks every component and fails on a locked one whose
+disable changes the prompt or an optional one whose disable changes nothing — a
+dead toggle on the settings page.
+
+The prompt also orders narration after action: the model starts the tool call,
+then says what it started. The reverse — announce, then act — serialized a
+spoken sentence in front of every tool call's argument generation. And it keeps
+delegation prompts spoken-length: the model is told never to dictate code,
+diffs, or step lists into a prompt, because it composes arguments serially
+while the user hears silence, and the session it delegates to is the stronger
+coder.
+
+The hidden host session defaults to a fast, cheap model (`gpt-5.6-luna`). The
+Live Voice settings can override model and thinking per user, sent as optional
+fields on `voice.live.start`; the picker offers only models every eligible host
+reports, and codex resolves an unknown id to its default, so a stale selection
+or an older codex degrades to a working call rather than a failed one.
+
+Expect little latency from that choice. Codex executes each action on a
+_subagent_ thread it spawns off the host thread (`thread_source: subagent`,
+`parent_thread_id` pointing at the host), and it pins that thread to its own
+model and effort regardless of what the host thread is set to. Measured against
+codex's own rollouts for a real call — 15 actions, one session:
+
+| Stage                                                         | Median | Share |
+| ------------------------------------------------------------- | ------ | ----- |
+| Realtime model deciding, plus codex's handoff to the subagent | 9.5s   | 72%   |
+| Subagent turn: think and emit the tool call                   | 2.4s   | 18%   |
+| Paseo: routing, fan-out, and execution                        | 0.02s  | ~0%   |
+
+So the double hop is real but cheap, Paseo is free, and almost three quarters
+of the wait is inside the realtime API and codex's delegation, where nothing
+here has a lever. What _is_ a lever is the number of actions: at ~13s each,
+collapsing "archive the workspace I named" from ten calls to two is worth about
+100 seconds, which is why the fan-out tools and the recipes exist and why the
+prompt's job is to keep call counts down.
+
+Two things the same measurement ruled out, recorded so they are not
+re-litigated: argument size does not predict latency (Pearson r = +0.077 across
+20–720 characters; two identical 720-character calls took 13.7s and 5.8s), so
+verbose delegation prompts are a speech-quality problem rather than a speed
+one; and the subagent already runs fast and cheap on codex's own preset, so
+tuning the host model tier optimizes the 18% slice.
+
+Every routed tool call logs `live_voice.timing.tool_start` / `tool_end` lines
+to `daemon.log` (see `observeRoutedOperation` in `live-voice-coordinator.ts`).
+`tool_start` carries `msSinceUserSpoke` — the bracket around everything opaque
+on the model side: turn detection, thinking, argument generation, and any
+backend-executor turn — plus `argChars`, the generation-cost proxy. If a
+near-empty call shows the same gap as a 2,000-character one, the time is
+thinking, not typing. Everything between `tool_start` and `tool_end` is Paseo's
+own routing and execution. Transcript arrivals log at debug with sizes only;
+transcript text never enters the log.
+
+Resolution is classified, never decided: `find_workspace` returns
+`unique_exact`, `ambiguous_exact`, `unique_partial`, `ambiguous_partial`, or
+`none`, and the prompt permits action only on `unique_exact`. Two machines
+holding a workspace with the same name is a question for the user, not a coin
+flip, and the destructive tools still take a `workspaceId`. Matching folds case,
+punctuation, and hyphens because the name arrives through a transcriber, and it
+covers the directory name as well as the title.
+
+Resolving and acting stay two separate turns on purpose. A combined
+resolve-and-act tool would enforce the `unique_exact` rule mechanically instead
+of by prompt, but the beat between the turns is where the model says "found it
+on Desktop — archiving", which is the user's one interrupt window before a
+destructive act on transcribed input. Keeping that window is worth the turn;
+prompt-level enforcement of the ambiguous cases is the accepted residual risk.
+
+A host with no result lands in one of two buckets, because a voice call must
+narrate them differently: `unavailableHosts` could not be reached at all, while
+`erroredHosts` answered and the tool failed there — which is the expected shape
+when an agent-scoped read is fanned out to learn which machine owns the agent.
+Classification reads the route error's code, kept on the broker's rejection;
+unknown codes count as tool failures, because "that read failed on Desktop" is a
+mild miss where "I could not see Desktop" claims an outage that is not
+happening. A workspace listing that does not parse is reported the same way
+rather than counted as an empty host. Neither bucket is ever presented as the
+machine holding nothing.
+
+Routed discovery uses a 30-second timeout instead of the broker's ten-minute
+default. That default is sized for tools that wait on an agent turn; inherited
+here, one quiet host would hold the call silent for ten minutes.
+
+Work started that way runs longer than a sentence, so the route has a return
+leg. The app records the agent id returned by a routed tool call. Every host
+connection also feeds its normal agent-completion events into that registry, so
+completion learned from a live directory delta, a delegated agent, or a
+post-reconnect directory snapshot follows the same path. The app performs one
+event-triggered timeline-tail read when it needs the final response; it does not
+poll for status. A target-specific watcher remains a second event source for
+permission and completion reports. The two sources are deduplicated before the
+source daemon appends the news to the running conversation
+(`thread/realtime/appendText`).
+
+A fast agent can finish before the routed tool response returns its agent id.
+The app temporarily keeps completion events observed after the route began and
+claims one when the response supplies the id. Host and agent identity are keyed
+by the connection that delivered the event, and any embedded identity must
+match it. Replacing a target connection replaces its event handlers without
+discarding call correlation, so a later completion on the new connection still
+reaches the call.
+
+The target daemon is never told which call the work belongs to — it has no
+liveSessionId and can address no socket but the requesting one. The app holds the
+correlation, and the source daemon still checks that the socket asking it to
+speak owns the call it names. A report for a call that has ended is dropped
+rather than spoken into whatever call came after it. Completion text is bounded
+and credential-redacted before it crosses into the realtime conversation.
+
+A call can also report agents it did not start, gated on a user setting that is
+off by default. When it is on, the app turns on an ambient watch (`voice.live
+.agent.watch`) on every connected host that advertises
+`liveVoiceAmbientAgentReports`, and those hosts report every agent that finishes
+a turn, errors, or asks for permission. Two things differ from a routed report
+and both follow from nobody having asked for it:
+
+- **Correlation is by host, not requestId.** There is no routed call to match, so
+  the app resolves an unsolicited report through the host it armed the watch on.
+  A host reporting work the app never asked it to watch resolves to nothing. The
+  registration survives the whole call rather than retiring after one report.
+- **The model may stay silent.** A routed report is an answer the user is owed,
+  so its note says to speak. An unsolicited one says to use judgement and that
+  saying nothing is a valid outcome. There is no burst coalescing or filtering in
+  code; the user's own free-text guidance goes into the prompt verbatim and the
+  model decides.
+
+A turn-completed report does not claim that external work such as CI has
+finished. The spoken summary preserves any pending-work qualification from the
+agent. End-to-end monitoring remains an explicit heartbeat, schedule, monitoring
+agent, or service-specific check.
+
+The app is the authorization boundary because it already owns each saved host
+connection. Route messages contain only opaque server ids, sanitized host
+labels/status, tool names/arguments, and results. Passwords, relay keys, endpoint
+configuration, and OpenAI credentials never cross from one daemon to another.
+The target catalog is created without a caller agent id, so a routed request
+cannot claim an agent's workspace authority or recursively acquire the hidden
+Live Voice routing tools. Dropping the caller agent id also drops the
+agent-to-agent defaults that come with it, including background execution, so a
+routed call that asks for a report sets `defaultAgentWorkToBackground`. Without
+it the tool would block, the background-start hook would never fire, and the
+report the caller was promised would never be sent — a silence the model cannot
+detect or recover from. A paired source daemon also cannot use the app as a
+general cross-host bridge: the app accepts a route only while it owns the exact
+active Live Voice session id on that source host.
+
+Older clients that do not advertise the routing capability retain local-only
+Live Voice behavior and never receive the new server-initiated route messages.
+
 Workspace label definitions use a separate, explicitly subscribed sequence. The list request both
 fetches and grants live updates for that session. A current cursor receives an empty correlated
 catch-up response when nothing changed; idle sessions and unsubscribed sessions receive no label

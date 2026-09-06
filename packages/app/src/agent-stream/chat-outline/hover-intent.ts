@@ -12,7 +12,6 @@ interface PointerPoint {
 }
 
 const INITIAL_ACTIVATION_DELAY_MS = 150;
-const HORIZONTAL_TRANSIT_DISTANCE_PX = 4;
 
 export function createChatOutlineHoverIntent(input: {
   activate: (index: number | null) => void;
@@ -61,7 +60,6 @@ export function createChatOutlineHoverIntent(input: {
         motionAnchor = point;
         return;
       }
-      if (Math.abs(deltaX) < HORIZONTAL_TRANSIT_DISTANCE_PX) return;
       motionAnchor = point;
       scheduleActivation();
     },

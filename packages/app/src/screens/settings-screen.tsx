@@ -16,6 +16,9 @@ import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 import { Buffer } from "buffer";
+import { playAudioWithLease } from "@/audio/leased-playback";
+import { AudioCaptureBusyError } from "@/audio/capture-lifetime";
+import { resolveAudioSessionBusyMessage } from "@/audio/audio-session-busy-message";
 import {
   ArrowLeft,
   Settings,
@@ -37,6 +40,7 @@ import {
   Code2,
   Smartphone,
   Sparkles,
+  AudioLines,
   Blocks,
   PanelsTopLeft,
 } from "lucide-react-native";
@@ -92,6 +96,23 @@ import { useDesktopAppUpdater } from "@/desktop/updates/use-desktop-app-updater"
 import { formatVersionWithPrefix } from "@/desktop/updates/desktop-updates";
 import { resolveAppVersion } from "@/utils/app-version";
 import { useAppDiagnosticStore } from "@/diagnostics/store";
+import {
+  useLiveVoiceAvailability,
+  useLiveVoiceHostAvailability,
+} from "@/live-voice/live-voice-availability";
+import type { LiveVoiceHostAvailability } from "@/live-voice/live-voice-availability-policy";
+import { resolveLiveVoiceUnavailableMessage } from "@/live-voice/live-voice-unavailable-message";
+import { useLiveVoiceVoiceOptions } from "@/hooks/use-live-voice-voice-options";
+import { AssistantsSheet } from "@/assistants/assistants-sheet";
+import { useLiveVoiceBackendModelOptions } from "@/live-voice/live-voice-backend-model-catalog";
+import {
+  LIVE_VOICE_OPTIONAL_PROMPT_COMPONENTS,
+  MAX_AMBIENT_AGENT_GUIDANCE_LENGTH,
+  MAX_CUSTOM_VOICE_INSTRUCTIONS_LENGTH,
+  MAX_DEFAULT_WORKSPACE_DIRECTORY_LENGTH,
+  useLiveVoiceSettingsStore,
+  type LiveVoiceOptionalPromptComponent,
+} from "@/stores/live-voice-settings-store";
 import { settingsStyles } from "@/styles/settings";
 import { THINKING_TONE_NATIVE_PCM_BASE64 } from "@/utils/thinking-tone.native-pcm";
 import { useVoiceAudioEngineOptional } from "@/contexts/voice-context";
@@ -149,6 +170,7 @@ interface SidebarSectionItem {
 
 const SIDEBAR_SECTION_ITEMS: SidebarSectionItem[] = [
   { id: "general", labelKey: "settings.sections.general", icon: Settings },
+  { id: "voice", labelKey: "settings.sections.voice", icon: AudioLines },
   { id: "appearance", labelKey: "settings.sections.appearance", icon: Palette },
   {
     id: "layout",
@@ -270,6 +292,13 @@ function getServiceUrlBehaviorLabel(t: TFunction, value: ServiceUrlBehavior): st
 function getActiveLocale(language: string | undefined): SupportedLocale {
   const parsed = parseAppLanguage(language);
   return parsed && parsed !== "system" ? parsed : "en";
+}
+
+function getLiveVoiceVoiceLabel(t: TFunction, voice: string | null): string {
+  if (voice === null) {
+    return t("liveVoice.settings.voice.default");
+  }
+  return `${voice.charAt(0).toUpperCase()}${voice.slice(1)}`;
 }
 
 const SERVICE_URL_BEHAVIOR_VALUES: ServiceUrlBehavior[] = ["ask", "in-app", "external"];
@@ -511,6 +540,390 @@ function GeneralSection({
   );
 }
 
+function VoiceSection() {
+  const { t } = useTranslation();
+  return (
+    <SettingsSection title={t("settings.sections.voice")}>
+      <AssistantsSettingsCard />
+      <LiveVoiceSettingsCard />
+    </SettingsSection>
+  );
+}
+
+/**
+ * Entry to the assistants manager. The per-call settings in the card below
+ * remain the defaults for legacy calls; an assistant selected in the Live
+ * voice menu brings its own voice, instructions, and action model.
+ */
+function AssistantsSettingsCard() {
+  const { t } = useTranslation();
+  const hosts = useLiveVoiceHostAvailability();
+  const [isManaging, setIsManaging] = useState(false);
+  const capableHost = hosts.find(
+    (host) => host.connectionStatus === "online" && host.supportsAssistants === true,
+  );
+  const handleOpen = useCallback(() => setIsManaging(true), []);
+  const handleClose = useCallback(() => setIsManaging(false), []);
+
+  if (!capableHost) {
+    return null;
+  }
+  return (
+    <View style={[settingsStyles.card, styles.assistantsCard]}>
+      <AssistantsSheet
+        visible={isManaging}
+        onClose={handleClose}
+        initialServerId={capableHost.serverId}
+      />
+      <View style={settingsStyles.row}>
+        <View style={settingsStyles.rowContent}>
+          <Text style={settingsStyles.rowTitle}>{t("assistants.settings.title")}</Text>
+          <Text style={settingsStyles.rowHint}>{t("assistants.settings.description")}</Text>
+        </View>
+        <Button
+          variant="secondary"
+          size="sm"
+          onPress={handleOpen}
+          testID="settings-manage-assistants"
+        >
+          {t("assistants.settings.manage")}
+        </Button>
+      </View>
+    </View>
+  );
+}
+
+/**
+ * What a Live Voice call is allowed to interrupt with.
+ *
+ * The guidance field is free text on purpose: what is worth being told about
+ * mid-conversation depends on what the user is doing, and no set of checkboxes
+ * gets there. It goes to the model as written and only appears when reports are
+ * on, since it has nothing to shape otherwise.
+ */
+function LiveVoiceSettingsCard() {
+  const { t } = useTranslation();
+  const voiceOptions = useLiveVoiceVoiceOptions();
+  const storedVoice = useLiveVoiceSettingsStore((state) => state.voice);
+  const voice = storedVoice && voiceOptions.includes(storedVoice) ? storedVoice : null;
+  const ambientAgentReports = useLiveVoiceSettingsStore((state) => state.ambientAgentReports);
+  const ambientAgentGuidance = useLiveVoiceSettingsStore((state) => state.ambientAgentGuidance);
+  const setAmbientAgentReports = useLiveVoiceSettingsStore((state) => state.setAmbientAgentReports);
+  const setVoice = useLiveVoiceSettingsStore((state) => state.setVoice);
+  const setAmbientAgentGuidance = useLiveVoiceSettingsStore(
+    (state) => state.setAmbientAgentGuidance,
+  );
+  const disabledPromptComponents = useLiveVoiceSettingsStore(
+    (state) => state.disabledPromptComponents,
+  );
+  const setPromptComponentEnabled = useLiveVoiceSettingsStore(
+    (state) => state.setPromptComponentEnabled,
+  );
+  const customVoiceInstructions = useLiveVoiceSettingsStore(
+    (state) => state.customVoiceInstructions,
+  );
+  const setCustomVoiceInstructions = useLiveVoiceSettingsStore(
+    (state) => state.setCustomVoiceInstructions,
+  );
+  const defaultWorkspaceDirectory = useLiveVoiceSettingsStore(
+    (state) => state.defaultWorkspaceDirectory,
+  );
+  const setDefaultWorkspaceDirectory = useLiveVoiceSettingsStore(
+    (state) => state.setDefaultWorkspaceDirectory,
+  );
+  const backendModelOptions = useLiveVoiceBackendModelOptions();
+  const backendModel = useLiveVoiceSettingsStore((state) => state.backendModel);
+  const setBackendModel = useLiveVoiceSettingsStore((state) => state.setBackendModel);
+  const backendThinkingOptionId = useLiveVoiceSettingsStore(
+    (state) => state.backendThinkingOptionId,
+  );
+  const setBackendThinkingOptionId = useLiveVoiceSettingsStore(
+    (state) => state.setBackendThinkingOptionId,
+  );
+  const selectedBackendModel = backendModelOptions.find((option) => option.id === backendModel);
+  const backendModelLabel = backendModel
+    ? (selectedBackendModel?.label ?? backendModel)
+    : t("liveVoice.settings.backendModel.default");
+  // The daemon default carries its own thinking level, so a thinking override
+  // only makes sense once a model is chosen. Options come from that model's
+  // catalog entry; a stale selection falls back to the id itself.
+  const backendThinkingOptions = selectedBackendModel?.thinkingOptionIds ?? [];
+  const backendThinkingLabel =
+    backendThinkingOptionId ?? t("liveVoice.settings.backendThinking.default");
+
+  return (
+    <View style={settingsStyles.card}>
+      <View style={settingsStyles.row}>
+        <View style={settingsStyles.rowContent}>
+          <Text style={settingsStyles.rowTitle}>{t("liveVoice.settings.voice.label")}</Text>
+          <Text style={settingsStyles.rowHint}>{t("liveVoice.settings.voice.description")}</Text>
+        </View>
+        <DropdownMenu>
+          <DropdownTrigger
+            accessibilityRole="button"
+            accessibilityLabel={t("liveVoice.settings.voice.label")}
+            style={themeTriggerStyle}
+            testID="live-voice-voice-picker"
+          >
+            <Text style={styles.themeTriggerText}>{getLiveVoiceVoiceLabel(t, voice)}</Text>
+          </DropdownTrigger>
+          <DropdownMenuContent side="bottom" align="end" width={200}>
+            <LiveVoiceVoiceMenuItem value={null} selected={voice === null} onChange={setVoice} />
+            {voiceOptions.map((value) => (
+              <LiveVoiceVoiceMenuItem
+                key={value}
+                value={value}
+                selected={voice === value}
+                onChange={setVoice}
+              />
+            ))}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </View>
+      <View style={[settingsStyles.row, settingsStyles.rowBorder]}>
+        <View style={settingsStyles.rowContent}>
+          <Text style={settingsStyles.rowTitle}>{t("liveVoice.settings.agentReports.label")}</Text>
+          <Text style={settingsStyles.rowHint}>
+            {t("liveVoice.settings.agentReports.description")}
+          </Text>
+        </View>
+        <Switch
+          value={ambientAgentReports}
+          onValueChange={setAmbientAgentReports}
+          accessibilityLabel={t("liveVoice.settings.agentReports.label")}
+          testID="live-voice-agent-reports-toggle"
+        />
+      </View>
+      {ambientAgentReports ? (
+        <View style={[settingsStyles.row, settingsStyles.rowBorder, styles.liveVoiceGuidanceRow]}>
+          <View style={settingsStyles.rowContent}>
+            <Text style={settingsStyles.rowTitle}>
+              {t("liveVoice.settings.agentReportGuidance.label")}
+            </Text>
+            <Text style={settingsStyles.rowHint}>
+              {t("liveVoice.settings.agentReportGuidance.description")}
+            </Text>
+            <TextInput
+              initialValue={ambientAgentGuidance}
+              onChangeText={setAmbientAgentGuidance}
+              placeholder={t("liveVoice.settings.agentReportGuidance.placeholder")}
+              multiline
+              maxLength={MAX_AMBIENT_AGENT_GUIDANCE_LENGTH}
+              style={styles.liveVoiceGuidanceInput}
+              accessibilityLabel={t("liveVoice.settings.agentReportGuidance.label")}
+              testID="live-voice-agent-report-guidance"
+            />
+          </View>
+        </View>
+      ) : null}
+      <View style={[settingsStyles.row, settingsStyles.rowBorder]}>
+        <View style={settingsStyles.rowContent}>
+          <Text style={settingsStyles.rowTitle}>{t("liveVoice.settings.backendModel.label")}</Text>
+          <Text style={settingsStyles.rowHint}>
+            {t("liveVoice.settings.backendModel.description")}
+          </Text>
+        </View>
+        <DropdownMenu>
+          <DropdownTrigger
+            accessibilityRole="button"
+            accessibilityLabel={t("liveVoice.settings.backendModel.label")}
+            style={themeTriggerStyle}
+            testID="live-voice-backend-model-picker"
+          >
+            <Text style={styles.themeTriggerText}>{backendModelLabel}</Text>
+          </DropdownTrigger>
+          <DropdownMenuContent side="bottom" align="end" width={240}>
+            <LiveVoiceBackendOptionMenuItem
+              value={null}
+              label={t("liveVoice.settings.backendModel.default")}
+              selected={backendModel === null}
+              onChange={setBackendModel}
+            />
+            {backendModelOptions.map((option) => (
+              <LiveVoiceBackendOptionMenuItem
+                key={option.id}
+                value={option.id}
+                label={option.label}
+                selected={backendModel === option.id}
+                onChange={setBackendModel}
+              />
+            ))}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </View>
+      {backendModel !== null && backendThinkingOptions.length > 0 ? (
+        <View style={[settingsStyles.row, settingsStyles.rowBorder]}>
+          <View style={settingsStyles.rowContent}>
+            <Text style={settingsStyles.rowTitle}>
+              {t("liveVoice.settings.backendThinking.label")}
+            </Text>
+            <Text style={settingsStyles.rowHint}>
+              {t("liveVoice.settings.backendThinking.description")}
+            </Text>
+          </View>
+          <DropdownMenu>
+            <DropdownTrigger
+              accessibilityRole="button"
+              accessibilityLabel={t("liveVoice.settings.backendThinking.label")}
+              style={themeTriggerStyle}
+              testID="live-voice-backend-thinking-picker"
+            >
+              <Text style={styles.themeTriggerText}>{backendThinkingLabel}</Text>
+            </DropdownTrigger>
+            <DropdownMenuContent side="bottom" align="end" width={200}>
+              <LiveVoiceBackendOptionMenuItem
+                value={null}
+                label={t("liveVoice.settings.backendThinking.default")}
+                selected={backendThinkingOptionId === null}
+                onChange={setBackendThinkingOptionId}
+              />
+              {backendThinkingOptions.map((optionId) => (
+                <LiveVoiceBackendOptionMenuItem
+                  key={optionId}
+                  value={optionId}
+                  label={optionId}
+                  selected={backendThinkingOptionId === optionId}
+                  onChange={setBackendThinkingOptionId}
+                />
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </View>
+      ) : null}
+      {LIVE_VOICE_OPTIONAL_PROMPT_COMPONENTS.map((componentId) => (
+        <LiveVoicePromptComponentRow
+          key={componentId}
+          componentId={componentId}
+          enabled={!disabledPromptComponents.includes(componentId)}
+          onSetEnabled={setPromptComponentEnabled}
+        />
+      ))}
+      <View style={[settingsStyles.row, settingsStyles.rowBorder, styles.liveVoiceGuidanceRow]}>
+        <View style={settingsStyles.rowContent}>
+          <Text style={settingsStyles.rowTitle}>
+            {t("liveVoice.settings.customInstructions.label")}
+          </Text>
+          <Text style={settingsStyles.rowHint}>
+            {t("liveVoice.settings.customInstructions.description")}
+          </Text>
+          <TextInput
+            initialValue={customVoiceInstructions}
+            onChangeText={setCustomVoiceInstructions}
+            placeholder={t("liveVoice.settings.customInstructions.placeholder")}
+            multiline
+            maxLength={MAX_CUSTOM_VOICE_INSTRUCTIONS_LENGTH}
+            style={styles.liveVoiceGuidanceInput}
+            accessibilityLabel={t("liveVoice.settings.customInstructions.label")}
+            testID="live-voice-custom-instructions"
+          />
+        </View>
+      </View>
+      <View style={[settingsStyles.row, settingsStyles.rowBorder, styles.liveVoiceGuidanceRow]}>
+        <View style={settingsStyles.rowContent}>
+          <Text style={settingsStyles.rowTitle}>
+            {t("liveVoice.settings.defaultWorkspaceDirectory.label")}
+          </Text>
+          <Text style={settingsStyles.rowHint}>
+            {t("liveVoice.settings.defaultWorkspaceDirectory.description")}
+          </Text>
+          <TextInput
+            initialValue={defaultWorkspaceDirectory}
+            onChangeText={setDefaultWorkspaceDirectory}
+            placeholder={t("liveVoice.settings.defaultWorkspaceDirectory.placeholder")}
+            // A path, so the keyboard's writing aids only get in the way.
+            autoCapitalize="none"
+            autoCorrect={false}
+            maxLength={MAX_DEFAULT_WORKSPACE_DIRECTORY_LENGTH}
+            style={styles.liveVoicePathInput}
+            accessibilityLabel={t("liveVoice.settings.defaultWorkspaceDirectory.label")}
+            testID="live-voice-default-workspace-directory"
+          />
+        </View>
+      </View>
+    </View>
+  );
+}
+
+function LiveVoiceBackendOptionMenuItem({
+  value,
+  label,
+  selected,
+  onChange,
+}: {
+  value: string | null;
+  label: string;
+  selected: boolean;
+  onChange: (value: string | null) => void;
+}) {
+  const handleSelect = useCallback(() => {
+    onChange(value);
+  }, [onChange, value]);
+
+  return (
+    <DropdownMenuItem selected={selected} onSelect={handleSelect}>
+      {label}
+    </DropdownMenuItem>
+  );
+}
+
+function LiveVoicePromptComponentRow({
+  componentId,
+  enabled,
+  onSetEnabled,
+}: {
+  componentId: LiveVoiceOptionalPromptComponent;
+  enabled: boolean;
+  onSetEnabled: (id: LiveVoiceOptionalPromptComponent, enabled: boolean) => void;
+}) {
+  const { t } = useTranslation();
+  const handleToggle = useCallback(
+    (next: boolean) => {
+      onSetEnabled(componentId, next);
+    },
+    [onSetEnabled, componentId],
+  );
+
+  return (
+    <View style={[settingsStyles.row, settingsStyles.rowBorder]}>
+      <View style={settingsStyles.rowContent}>
+        <Text style={settingsStyles.rowTitle}>
+          {t(`liveVoice.settings.promptComponents.${componentId}.label`)}
+        </Text>
+        <Text style={settingsStyles.rowHint}>
+          {t(`liveVoice.settings.promptComponents.${componentId}.description`)}
+        </Text>
+      </View>
+      <Switch
+        value={enabled}
+        onValueChange={handleToggle}
+        accessibilityLabel={t(`liveVoice.settings.promptComponents.${componentId}.label`)}
+        testID={`live-voice-prompt-component-${componentId}`}
+      />
+    </View>
+  );
+}
+
+function LiveVoiceVoiceMenuItem({
+  value,
+  selected,
+  onChange,
+}: {
+  value: string | null;
+  selected: boolean;
+  onChange: (value: string | null) => void;
+}) {
+  const { t } = useTranslation();
+  const handleSelect = useCallback(() => {
+    onChange(value);
+  }, [onChange, value]);
+
+  return (
+    <DropdownMenuItem selected={selected} onSelect={handleSelect}>
+      {getLiveVoiceVoiceLabel(t, value)}
+    </DropdownMenuItem>
+  );
+}
+
 interface DiagnosticsSectionProps {
   useLegacyTerminalRenderer: boolean;
   onUseLegacyTerminalRendererChange: (value: boolean) => void;
@@ -584,7 +997,96 @@ function DiagnosticsSection({
           </Button>
         </View>
       </View>
+      <Text style={styles.diagnosticsGroupTitle}>{t("liveVoice.diagnostics.title")}</Text>
+      <LiveVoiceDiagnosticsCard />
     </SettingsSection>
+  );
+}
+
+/**
+ * Why live voice can or cannot start, per host. This is the only place the
+ * per-host facts are shown — the launcher menu stays a short human sentence.
+ */
+function LiveVoiceDiagnosticsCard() {
+  const { t } = useTranslation();
+  const availability = useLiveVoiceAvailability();
+  const hosts = useLiveVoiceHostAvailability();
+
+  const unavailableMessage =
+    availability.kind === "unavailable"
+      ? resolveLiveVoiceUnavailableMessage(availability.reason, t)
+      : null;
+
+  return (
+    <View style={settingsStyles.card} testID="live-voice-diagnostics">
+      {unavailableMessage ? (
+        <View style={settingsStyles.row}>
+          <View style={settingsStyles.rowContent}>
+            <Text style={settingsStyles.rowTitle}>{t("liveVoice.diagnostics.statusTitle")}</Text>
+            <Text style={settingsStyles.rowHint}>{unavailableMessage}</Text>
+          </View>
+        </View>
+      ) : null}
+      {hosts.length === 0 ? (
+        <View style={[settingsStyles.row, unavailableMessage && settingsStyles.rowBorder]}>
+          <View style={settingsStyles.rowContent}>
+            <Text style={settingsStyles.rowHint}>{t("liveVoice.diagnostics.noHosts")}</Text>
+          </View>
+        </View>
+      ) : (
+        hosts.map((host, index) => (
+          <LiveVoiceDiagnosticsRow
+            key={host.serverId}
+            host={host}
+            showBorder={index > 0 || unavailableMessage !== null}
+          />
+        ))
+      )}
+    </View>
+  );
+}
+
+function LiveVoiceDiagnosticsRow({
+  host,
+  showBorder,
+}: {
+  host: LiveVoiceHostAvailability;
+  showBorder: boolean;
+}) {
+  const { t } = useTranslation();
+  const rowStyle = useMemo(
+    () => [settingsStyles.row, showBorder && settingsStyles.rowBorder],
+    [showBorder],
+  );
+
+  let support: string;
+  if (host.supportsLiveVoice === true) {
+    support = t("liveVoice.diagnostics.supported");
+  } else if (host.supportsLiveVoice === false) {
+    support = t("liveVoice.diagnostics.unsupported");
+  } else {
+    support = t("liveVoice.diagnostics.supportUnknown");
+  }
+
+  return (
+    <View style={rowStyle} testID={`live-voice-diagnostics-${host.serverId}`}>
+      <View style={settingsStyles.rowContent}>
+        <Text style={settingsStyles.rowTitle} numberOfLines={1}>
+          {host.label}
+        </Text>
+        <Text style={settingsStyles.rowHint}>
+          {t("liveVoice.diagnostics.hostSummary", {
+            version: host.version
+              ? formatVersionWithPrefix(host.version)
+              : t("liveVoice.diagnostics.unknownVersion"),
+            support,
+          })}
+        </Text>
+      </View>
+      <Text style={styles.aboutValue}>
+        {t(`liveVoice.diagnostics.connection.${host.connectionStatus}`)}
+      </Text>
+    </View>
   );
 }
 
@@ -1280,9 +1782,7 @@ export default function SettingsScreen({ view, openAddHostIntent = null }: Setti
 
     try {
       const bytes = Buffer.from(THINKING_TONE_NATIVE_PCM_BASE64, "base64");
-      await voiceAudioEngine.initialize();
-      voiceAudioEngine.stop();
-      await voiceAudioEngine.play({
+      await playAudioWithLease(voiceAudioEngine, {
         type: "audio/pcm;rate=16000;bits=16",
         size: bytes.byteLength,
         async arrayBuffer() {
@@ -1291,6 +1791,10 @@ export default function SettingsScreen({ view, openAddHostIntent = null }: Setti
       });
       setPlaybackTestResult(null);
     } catch (error) {
+      if (error instanceof AudioCaptureBusyError) {
+        setPlaybackTestResult(resolveAudioSessionBusyMessage(error.owner));
+        return;
+      }
       const message = error instanceof Error ? error.message : String(error);
       console.error("[Settings] Playback test failed", error);
       setPlaybackTestResult(t("settings.diagnostics.playbackFailed", { message }));
@@ -1466,16 +1970,16 @@ export default function SettingsScreen({ view, openAddHostIntent = null }: Setti
   let content: ReactNode;
   if (view.kind === "section" && view.section === "layout") {
     content = isDesktopApp ? <LayoutSection /> : null;
+  } else if (view.kind === "plugin") {
+    content = (
+      <PluginSettingsContent
+        serverId={view.serverId}
+        pluginId={view.pluginId}
+        screenId={view.screenId}
+      />
+    );
   } else {
     content = (() => {
-      if (view.kind === "plugin")
-        return (
-          <PluginSettingsContent
-            serverId={view.serverId}
-            pluginId={view.pluginId}
-            screenId={view.screenId}
-          />
-        );
       if (view.kind === "host") {
         return renderHostSettingsContent(view, handleHostRemoved);
       }
@@ -1505,6 +2009,8 @@ export default function SettingsScreen({ view, openAddHostIntent = null }: Setti
                 {isDesktopApp ? <BrowserDataSection /> : null}
               </>
             );
+          case "voice":
+            return <VoiceSection />;
           case "appearance":
             return <AppearanceSection />;
           case "editor":
@@ -1670,6 +2176,9 @@ export default function SettingsScreen({ view, openAddHostIntent = null }: Setti
 // ---------------------------------------------------------------------------
 
 const styles = StyleSheet.create((theme) => ({
+  assistantsCard: {
+    marginBottom: theme.spacing[3],
+  },
   loadingContainer: {
     flex: 1,
     backgroundColor: theme.colors.surface0,
@@ -1697,6 +2206,13 @@ const styles = StyleSheet.create((theme) => ({
   aboutValue: {
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.base,
+  },
+  diagnosticsGroupTitle: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.sm,
+    marginTop: theme.spacing[4],
+    marginBottom: theme.spacing[2],
+    marginLeft: theme.spacing[1],
   },
   aboutVersionMismatch: {
     color: theme.colors.palette.amber[500],
@@ -1727,6 +2243,37 @@ const styles = StyleSheet.create((theme) => ({
   themeTriggerText: {
     color: theme.colors.foreground,
     fontSize: theme.fontSize.base,
+  },
+  liveVoiceGuidanceRow: {
+    // The input sits under its own label rather than beside it: this is a
+    // sentence the user writes, not a value they pick.
+    alignItems: "stretch",
+  },
+  // One line, because it holds a path rather than a sentence.
+  liveVoicePathInput: {
+    marginTop: theme.spacing[2],
+    minHeight: 36,
+    paddingVertical: theme.spacing[2],
+    paddingHorizontal: theme.spacing[3],
+    borderRadius: theme.borderRadius.md,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    backgroundColor: theme.colors.surface2,
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.sm,
+  },
+  liveVoiceGuidanceInput: {
+    marginTop: theme.spacing[2],
+    minHeight: 72,
+    paddingVertical: theme.spacing[2],
+    paddingHorizontal: theme.spacing[3],
+    borderRadius: theme.borderRadius.md,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    backgroundColor: theme.colors.surface2,
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.sm,
+    textAlignVertical: "top",
   },
   terminalScrollbackInput: {
     width: 112,

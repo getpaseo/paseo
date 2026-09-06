@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, readdir, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
@@ -51,7 +51,7 @@ async function runLoggerFixture(source: string): Promise<{ stdout: string; stder
 }
 
 describe("resolveLogConfig", () => {
-  const paseoHome = "/tmp/paseo-logger-tests";
+  const paseoHome = path.join(tmpdir(), "paseo-logger-tests");
 
   it("defaults to stdout JSON without file logging", () => {
     const result = resolveLogConfig(undefined, { paseoHome });
@@ -106,6 +106,16 @@ describe("resolveLogConfig", () => {
         path: path.resolve(paseoHome, "logs", "programmatic.log"),
       },
     });
+  });
+
+  it("expands ~ in log.file.path", () => {
+    const config: PersistedConfig = {
+      log: { file: { path: "~/paseo-logs/daemon.log" } },
+    };
+
+    expect(resolveLogConfig(config, { paseoHome }).file?.path).toBe(
+      path.resolve(process.env.HOME || homedir(), "paseo-logs", "daemon.log"),
+    );
   });
 
   it("defaults file output to info when log.file is present without a level", () => {

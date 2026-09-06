@@ -14,8 +14,11 @@ This Paseo version accepts these keys:
 
 - **Codex:** `approval_policy`, `sandbox_mode`,
   `sandbox_workspace_write.{writable_roots,network_access,exclude_slash_tmp,exclude_tmpdir_env_var}`,
-  `web_search`, `features.multi_agent_v2`, and `features.network_proxy`. A network proxy object may
-  contain `enabled`, `proxy_url`, `socks_url`, `enable_socks5`, `enable_socks5_udp`,
+  `web_search`, `project_doc_max_bytes`, `tools.{experimental_request_user_input,update_plan}`
+  enablement, and selected boolean `features` for apps, browser/computer tools, code mode, goals,
+  hooks, images, memories, multi-agent, plugins, permission requests, shell, skills, token budget,
+  tool suggestions, and workspace dependencies. `features.network_proxy` accepts a boolean or an
+  object containing `enabled`, `proxy_url`, `socks_url`, `enable_socks5`, `enable_socks5_udp`,
   `allow_local_binding`, `allow_upstream_proxy`, `dangerously_allow_all_unix_sockets`,
   `dangerously_allow_non_loopback_proxy`, `domains`, and `unix_sockets`. See the
   [Codex configuration reference](https://developers.openai.com/codex/config-reference).

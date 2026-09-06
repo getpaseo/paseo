@@ -5,6 +5,7 @@ import pretty from "pino-pretty";
 import { resolveDaemonVersion } from "./daemon-version.js";
 import type { PersistedConfig } from "./persisted-config.js";
 import { resolvePaseoHome } from "./paseo-home.js";
+import { resolveConfiguredPath } from "../utils/path.js";
 
 export type LogLevel = "trace" | "debug" | "info" | "warn" | "error" | "fatal";
 export type LogFormat = "pretty" | "json";
@@ -67,11 +68,7 @@ function resolveFilePath(paseoHome: string, configuredPath: string | undefined):
     return fallback;
   }
 
-  if (path.isAbsolute(configuredPath)) {
-    return configuredPath;
-  }
-
-  return path.resolve(paseoHome, configuredPath);
+  return resolveConfiguredPath(paseoHome, configuredPath);
 }
 
 function minLogLevel(levels: LogLevel[]): LogLevel {

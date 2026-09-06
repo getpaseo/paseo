@@ -54,7 +54,15 @@ export type KeyboardActionId =
   | "workspace.pin"
   // Command-center only: no keybind, so these are absent from route-shortcut.ts.
   | "workspace.rename"
-  | "workspace.setup.show";
+  | "workspace.setup.show"
+  | "live-voice.mute-toggle"
+  | "live-voice.mute-hold-invert";
+
+/**
+ * A press-and-hold action is dispatched twice: once when the chord goes down and
+ * once when it comes back up. Handlers own the state that spans the two phases.
+ */
+export type KeyboardActionPhase = "press" | "release";
 
 export type KeyboardActionDefinition =
   | { id: "agent.interrupt"; scope: KeyboardActionScope }
@@ -111,7 +119,27 @@ export type KeyboardActionDefinition =
   | { id: "workspace.archive"; scope: KeyboardActionScope }
   | { id: "workspace.pin"; scope: KeyboardActionScope }
   | { id: "workspace.rename"; scope: KeyboardActionScope }
-  | { id: "workspace.setup.show"; scope: KeyboardActionScope };
+  | { id: "workspace.setup.show"; scope: KeyboardActionScope }
+  | { id: "live-voice.mute-toggle"; scope: KeyboardActionScope }
+  | {
+      id: "live-voice.mute-hold-invert";
+      scope: KeyboardActionScope;
+      phase: KeyboardActionPhase;
+    };
+
+/**
+ * The release counterpart of a press-and-hold action, or null for an action that
+ * has no hold phases. Keeps the release derivable from the press so callers do
+ * not maintain a second table of action ids.
+ */
+export function holdReleaseAction(
+  action: KeyboardActionDefinition,
+): KeyboardActionDefinition | null {
+  if (!("phase" in action)) {
+    return null;
+  }
+  return { ...action, phase: "release" };
+}
 
 export interface KeyboardActionHandler {
   handlerId: string;

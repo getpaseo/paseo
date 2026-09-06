@@ -585,6 +585,10 @@ function serializeProjectPlacement(agent: Agent): StoredAgent["projectPlacement"
   return agent.projectPlacement ?? null;
 }
 
+function serializeAgentFailure(agent: Agent) {
+  return agent.lastFailure ? { lastFailure: agent.lastFailure } : {};
+}
+
 function serializeAgentTurn(agent: Agent): NonNullable<StoredAgent["turn"]> {
   if (agent.turn.phase === "idle") return { phase: "idle" };
   return {
@@ -639,6 +643,7 @@ function serializeAgent(agent: Agent): StoredAgent {
     pendingPermissions: [],
     persistence: null,
     ...(agent.lastError ? { lastError: agent.lastError } : {}),
+    ...serializeAgentFailure(agent),
     title: agent.title,
     labels: agent.labels,
     requiresAttention: agent.requiresAttention ?? false,
