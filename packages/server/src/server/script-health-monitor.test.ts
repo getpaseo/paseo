@@ -99,14 +99,15 @@ function createStubTerminalManager(
   };
 }
 
-async function startTcpServer(): Promise<TcpServerHandle> {
+async function startTcpServer(options: { host?: string } = {}): Promise<TcpServerHandle> {
+  const host = options.host ?? "127.0.0.1";
   const server = net.createServer((socket) => {
     socket.end();
   });
 
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject);
-    server.listen(0, "127.0.0.1", () => {
+    server.listen(0, host, () => {
       server.off("error", reject);
       resolve();
     });
@@ -143,6 +144,13 @@ async function advancePoll(ms: number): Promise<void> {
   }
 }
 
+function registerIpv4Route(
+  routeStore: ScriptRouteStore,
+  input: Parameters<ScriptRouteStore["registerRoute"]>[0],
+): void {
+  routeStore.registerRoute({ upstreamHost: "127.0.0.1", ...input });
+}
+
 describe("ScriptHealthMonitor", () => {
   const servers = new Set<net.Server>();
 
@@ -170,7 +178,7 @@ describe("ScriptHealthMonitor", () => {
     });
 
     monitor.start();
-    routeStore.registerRoute({
+    registerIpv4Route(routeStore, {
       hostname: "route-b.example.localhost",
       port: healthy.port,
       workspaceId: "workspace-a",
@@ -199,12 +207,52 @@ describe("ScriptHealthMonitor", () => {
     ]);
   });
 
+  it("probes service routes through their registered upstream host", async () => {
+    vi.useFakeTimers();
+
+    const healthy = await startTcpServer({ host: "::1" });
+    servers.add(healthy.server);
+
+    const routeStore = new ScriptRouteStore();
+    const onChange = vi.fn<(workspaceId: string, services: ScriptHealthEntry[]) => void>();
+    const monitor = new ScriptHealthMonitor({
+      serviceProxy: routeStore,
+      onChange,
+      pollIntervalMs: 1_000,
+      probeTimeoutMs: 100,
+      graceMs: 5_000,
+    });
+
+    monitor.start();
+    routeStore.registerRoute({
+      hostname: "route-ipv6.example.localhost",
+      upstreamHost: "::1",
+      port: healthy.port,
+      workspaceId: "workspace-a",
+      projectSlug: "repo",
+      scriptName: "api",
+    });
+
+    expect(monitor.getHealthForHostname("route-ipv6.example.localhost")).toBe("pending");
+    await advancePoll(5_000);
+
+    expect(monitor.getHealthForHostname("route-ipv6.example.localhost")).toBe("healthy");
+    expect(onChange).toHaveBeenCalledWith("workspace-a", [
+      {
+        scriptName: "api",
+        hostname: "route-ipv6.example.localhost",
+        port: healthy.port,
+        health: "healthy",
+      },
+    ]);
+  });
+
   it("transitions pending services to unhealthy after the grace period and required failures", async () => {
     vi.useFakeTimers();
 
     const deadPort = await findFreePort();
     const routeStore = new ScriptRouteStore();
-    routeStore.registerRoute({
+    registerIpv4Route(routeStore, {
       hostname: "route-b.example.localhost",
       port: deadPort,
       workspaceId: "workspace-a",
@@ -251,7 +299,7 @@ describe("ScriptHealthMonitor", () => {
     servers.add(healthy.server);
 
     const routeStore = new ScriptRouteStore();
-    routeStore.registerRoute({
+    registerIpv4Route(routeStore, {
       hostname: "route-b.example.localhost",
       port: healthy.port,
       workspaceId: "workspace-a",
@@ -282,7 +330,7 @@ describe("ScriptHealthMonitor", () => {
     servers.add(healthy.server);
 
     const routeStore = new ScriptRouteStore();
-    routeStore.registerRoute({
+    registerIpv4Route(routeStore, {
       hostname: "route-b.example.localhost",
       port: healthy.port,
       workspaceId: "workspace-a",
@@ -333,7 +381,7 @@ describe("ScriptHealthMonitor", () => {
     servers.add(healthy.server);
 
     const routeStore = new ScriptRouteStore();
-    routeStore.registerRoute({
+    registerIpv4Route(routeStore, {
       hostname: "route-b.example.localhost",
       port: healthy.port,
       workspaceId: "workspace-a",
@@ -376,14 +424,14 @@ describe("ScriptHealthMonitor", () => {
     servers.add(web.server);
 
     const routeStore = new ScriptRouteStore();
-    routeStore.registerRoute({
+    registerIpv4Route(routeStore, {
       hostname: "route-b.example.localhost",
       port: api.port,
       workspaceId: "workspace-a",
       projectSlug: "repo",
       scriptName: "api",
     });
-    routeStore.registerRoute({
+    registerIpv4Route(routeStore, {
       hostname: "route-c.example.localhost",
       port: web.port,
       workspaceId: "workspace-a",
@@ -463,12 +511,18 @@ describe("ScriptHealthMonitor", () => {
       expect(routeStore.listRoutes()).toEqual([
         {
           hostname: "api--repo.localhost",
+          upstreamHost: "localhost",
           port: service.port,
           workspaceId: workspace.repoDir,
           projectSlug: "repo",
           scriptName: "api",
         },
       ]);
+      const [serviceRoute] = routeStore.listRoutes();
+      if (!serviceRoute) {
+        throw new Error("Expected service route to be registered");
+      }
+      routeStore.registerRoute({ ...serviceRoute, upstreamHost: "127.0.0.1" });
 
       const onChange = vi.fn<(workspaceId: string, services: ScriptHealthEntry[]) => void>();
       const monitor = new ScriptHealthMonitor({
@@ -507,14 +561,14 @@ describe("ScriptHealthMonitor", () => {
     servers.add(web.server);
 
     const routeStore = new ScriptRouteStore();
-    routeStore.registerRoute({
+    registerIpv4Route(routeStore, {
       hostname: "route-b.example.localhost",
       port: api.port,
       workspaceId: "workspace-a",
       projectSlug: "repo",
       scriptName: "api",
     });
-    routeStore.registerRoute({
+    registerIpv4Route(routeStore, {
       hostname: "route-c.example.localhost",
       port: web.port,
       workspaceId: "workspace-a",

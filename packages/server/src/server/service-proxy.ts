@@ -13,6 +13,7 @@ export type ServiceProxyListenTarget =
 
 export interface ServiceProxyRoute {
   hostname: string;
+  upstreamHost: string;
   port: number;
 }
 
@@ -24,6 +25,10 @@ export interface ServiceProxyRouteEntry extends ServiceProxyRoute {
   publicHostname?: string | null;
   publicBaseUrl?: string | null;
 }
+
+type ServiceProxyRouteRegistration = Omit<ServiceProxyRouteEntry, "upstreamHost"> & {
+  upstreamHost?: string | null;
+};
 
 export interface ServiceProxyUrlProjection {
   localProxyUrl: string | null;
@@ -43,6 +48,7 @@ export interface ServiceProxyHealthTarget {
   workspaceId: string;
   scriptName: string;
   hostname: string;
+  upstreamHost: string;
   port: number;
 }
 
@@ -55,6 +61,7 @@ export interface WorkspaceServiceIdentity {
 
 export interface RegisterWorkspaceServiceInput extends WorkspaceServiceIdentity {
   port: number;
+  upstreamHost?: string | null;
   publicBaseUrl?: string | null;
 }
 
@@ -78,6 +85,7 @@ type HostClassification =
 
 const MAX_DNS_LABEL_LENGTH = 63;
 const HASH_SUFFIX_LENGTH = 8;
+const DEFAULT_SERVICE_UPSTREAM_HOST = "localhost";
 
 const HOP_BY_HOP_HEADERS = new Set([
   "connection",
@@ -240,6 +248,7 @@ function toHealthTarget(route: ServiceProxyRouteEntry): ServiceProxyHealthTarget
     workspaceId: route.workspaceId,
     scriptName: route.scriptName,
     hostname: route.hostname,
+    upstreamHost: route.upstreamHost,
     port: route.port,
   };
 }
@@ -330,7 +339,7 @@ function proxyHttpRequest({
 
   const proxyReq = http.request(
     {
-      hostname: "127.0.0.1",
+      hostname: route.upstreamHost,
       port: route.port,
       path: req.originalUrl,
       method: req.method,
@@ -344,7 +353,7 @@ function proxyHttpRequest({
   );
   proxyReq.on("error", (err) => {
     logger.warn(
-      { err, hostname: route.hostname, port: route.port },
+      { err, hostname: route.hostname, upstreamHost: route.upstreamHost, port: route.port },
       "Service proxy: upstream unreachable",
     );
     if (!res.headersSent) {
@@ -368,29 +377,32 @@ function proxyUpgradeRequest({
   route: ServiceProxyRoute;
   logger: Logger;
 }): void {
-  const targetSocket = net.connect({ host: "127.0.0.1", port: route.port }, () => {
-    const forwardedHeaders = buildForwardedHeaders({ req, route, protocol: "http" });
-    forwardedHeaders.connection = "Upgrade";
-    forwardedHeaders.upgrade = req.headers.upgrade ?? "websocket";
+  const targetSocket = net.connect(
+    { host: route.upstreamHost, port: route.port, autoSelectFamily: true },
+    () => {
+      const forwardedHeaders = buildForwardedHeaders({ req, route, protocol: "http" });
+      forwardedHeaders.connection = "Upgrade";
+      forwardedHeaders.upgrade = req.headers.upgrade ?? "websocket";
 
-    const headerLines: string[] = [];
-    headerLines.push(`${req.method ?? "GET"} ${req.url ?? "/"} HTTP/${req.httpVersion}`);
-    for (const [key, value] of Object.entries(forwardedHeaders)) {
-      if (Array.isArray(value)) {
-        for (const v of value) headerLines.push(`${key}: ${v}`);
-      } else {
-        headerLines.push(`${key}: ${value}`);
+      const headerLines: string[] = [];
+      headerLines.push(`${req.method ?? "GET"} ${req.url ?? "/"} HTTP/${req.httpVersion}`);
+      for (const [key, value] of Object.entries(forwardedHeaders)) {
+        if (Array.isArray(value)) {
+          for (const v of value) headerLines.push(`${key}: ${v}`);
+        } else {
+          headerLines.push(`${key}: ${value}`);
+        }
       }
-    }
-    headerLines.push("\r\n");
-    targetSocket.write(headerLines.join("\r\n"));
-    if (head.length > 0) targetSocket.write(head);
-    targetSocket.pipe(socket);
-    socket.pipe(targetSocket);
-  });
+      headerLines.push("\r\n");
+      targetSocket.write(headerLines.join("\r\n"));
+      if (head.length > 0) targetSocket.write(head);
+      targetSocket.pipe(socket);
+      socket.pipe(targetSocket);
+    },
+  );
   targetSocket.on("error", (err) => {
     logger.warn(
-      { err, hostname: route.hostname, port: route.port },
+      { err, hostname: route.hostname, upstreamHost: route.upstreamHost, port: route.port },
       "Service proxy: WebSocket upstream unreachable",
     );
     socket.end();
@@ -400,7 +412,10 @@ function proxyUpgradeRequest({
   });
 }
 
-function sameRouteOwner(left: ServiceProxyRouteEntry, right: ServiceProxyRouteEntry): boolean {
+function sameRouteOwner(
+  left: Pick<ServiceProxyRouteEntry, "workspaceId" | "scriptName">,
+  right: Pick<ServiceProxyRouteEntry, "workspaceId" | "scriptName">,
+): boolean {
   return left.workspaceId === right.workspaceId && left.scriptName === right.scriptName;
 }
 
@@ -439,6 +454,7 @@ export class ServiceProxyRouteRegistry {
       : null;
     const entry: ServiceProxyRouteEntry = {
       hostname: localHostname,
+      upstreamHost: input.upstreamHost ?? DEFAULT_SERVICE_UPSTREAM_HOST,
       ...(publicHostname ? { publicHostname } : {}),
       ...(input.publicBaseUrl ? { publicBaseUrl: input.publicBaseUrl } : {}),
       port: input.port,
@@ -450,7 +466,7 @@ export class ServiceProxyRouteRegistry {
     return { ...entry };
   }
 
-  registerRoute(entry: ServiceProxyRouteEntry): void {
+  registerRoute(entry: ServiceProxyRouteRegistration): void {
     this.assertCanRegister(entry);
     const previous = this.routes.get(entry.hostname);
     if (previous) {
@@ -628,7 +644,11 @@ export class ServiceProxyRouteRegistry {
     if (exactRoute) {
       return {
         type: "registered-service",
-        route: { hostname: exactRoute.hostname, port: exactRoute.port },
+        route: {
+          hostname: exactRoute.hostname,
+          upstreamHost: exactRoute.upstreamHost,
+          port: exactRoute.port,
+        },
       };
     }
     if (hostname.endsWith(".localhost") && hostname.split(".")[0]?.includes("--")) {
@@ -672,7 +692,7 @@ export class ServiceProxyRouteRegistry {
   }
 
   private assertCanRegister(
-    entry: ServiceProxyRouteEntry,
+    entry: ServiceProxyRouteRegistration,
     replacingHostnames = new Set<string>(),
   ): void {
     const incomingHostnames = this.getRouteHostnames(entry);
@@ -701,10 +721,11 @@ export class ServiceProxyRouteRegistry {
     }
   }
 
-  private toStoredEntry(entry: ServiceProxyRouteEntry): ServiceProxyRouteEntry {
-    const { publicHostname, publicBaseUrl, ...requiredEntry } = entry;
+  private toStoredEntry(entry: ServiceProxyRouteRegistration): ServiceProxyRouteEntry {
+    const { publicHostname, publicBaseUrl, upstreamHost, ...requiredEntry } = entry;
     return {
       ...requiredEntry,
+      upstreamHost: upstreamHost ?? DEFAULT_SERVICE_UPSTREAM_HOST,
       ...(publicHostname ? { publicHostname } : {}),
       ...(publicBaseUrl ? { publicBaseUrl } : {}),
     };

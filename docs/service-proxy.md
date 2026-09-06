@@ -4,7 +4,9 @@ Paseo proxies HTTP traffic to services running inside your workspaces. Localhost
 
 ## How it works
 
-When a `paseo.json` script of `"type": "service"` starts, Paseo assigns it a local port and registers a route in the service proxy. Incoming requests whose `Host` header matches the script's generated hostname are forwarded to that port.
+When a `paseo.json` script of `"type": "service"` starts, Paseo assigns it a local port and registers a route in the service proxy. Incoming requests whose `Host` header matches the script's generated hostname are forwarded to that route's upstream target.
+
+Workspace service routes store both the generated hostname and the upstream target. By default the upstream host is `localhost`, not a fixed loopback address. This lets services that bind only to IPv4 `127.0.0.1` or only to IPv6 `::1` work behind the same generated hostname, and keeps proxy forwarding and health checks pointed at the same target. Service commands should still bind to the injected `HOST` value when the framework supports it.
 
 The generated hostname is built from the script name, branch, and project:
 

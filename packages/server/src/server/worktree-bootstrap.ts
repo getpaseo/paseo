@@ -743,6 +743,7 @@ export interface SpawnWorkspaceScriptOptions {
 
 interface ServiceScriptSetupResult {
   hostname: string;
+  upstreamHost: string;
   port: number;
   env: Record<string, string>;
 }
@@ -847,7 +848,12 @@ async function setupServiceScriptRoute(params: {
     scriptName,
     publicBaseUrl: serviceProxyPublicBaseUrl ?? null,
   });
-  return { hostname: registeredRoute.hostname, port, env };
+  return {
+    hostname: registeredRoute.hostname,
+    upstreamHost: registeredRoute.upstreamHost,
+    port,
+    env,
+  };
 }
 
 async function acquireWorkspaceScriptTerminal(params: {
@@ -916,6 +922,7 @@ export async function spawnWorkspaceScript(
   const serviceScript = isServiceScript(config);
   const scriptType = serviceScript ? "service" : "script";
   let hostname: string | null = null;
+  let upstreamHost: string | null = null;
   let port: number | null = null;
   let runtimeRegistered = false;
   let routeRegistered = false;
@@ -945,6 +952,7 @@ export async function spawnWorkspaceScript(
         servicePortAllocation: configResult.config?.worktree?.servicePorts ?? globalServicePorts,
       });
       hostname = serviceSetup.hostname;
+      upstreamHost = serviceSetup.upstreamHost;
       port = serviceSetup.port;
       env = serviceSetup.env;
       routeRegistered = true;
@@ -1029,12 +1037,13 @@ export async function spawnWorkspaceScript(
       {
         scriptName,
         hostname,
+        upstreamHost,
         port,
         terminalId: terminal.id,
         type: scriptType,
       },
       serviceScript
-        ? `Registered script proxy: ${hostname} -> 127.0.0.1:${port}`
+        ? `Registered script proxy: ${hostname} -> ${upstreamHost}:${port}`
         : "Started workspace script",
     );
 

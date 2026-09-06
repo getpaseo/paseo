@@ -102,7 +102,7 @@ export class ScriptHealthMonitor {
         .map((route) => ({ route, state: this.getOrCreateState(route, now) }))
         .filter(({ state }) => now - state.registeredAt >= this.graceMs);
       const healthResults = await Promise.all(
-        probeTargets.map(({ route }) => this.probeRoute(route.port)),
+        probeTargets.map(({ route }) => this.probeRoute(route.upstreamHost, route.port)),
       );
       for (let i = 0; i < probeTargets.length; i += 1) {
         const { route, state } = probeTargets[i];
@@ -206,9 +206,9 @@ export class ScriptHealthMonitor {
     };
   }
 
-  private probeRoute(port: number): Promise<boolean> {
+  private probeRoute(upstreamHost: string, port: number): Promise<boolean> {
     return new Promise((resolve) => {
-      const socket = net.connect({ host: "127.0.0.1", port });
+      const socket = net.connect({ host: upstreamHost, port, autoSelectFamily: true });
       let settled = false;
 
       const finish = (healthy: boolean) => {
