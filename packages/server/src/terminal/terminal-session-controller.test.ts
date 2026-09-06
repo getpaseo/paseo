@@ -327,8 +327,11 @@ async function waitForCoalescerFlush(): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, 30));
 }
 
-describe("terminal-session-controller wrap-flag gating", () => {
-  function setup(clientSupportsWrapReflow?: () => boolean): {
+describe("terminal-session-controller snapshot field gating", () => {
+  function setup(capabilities?: {
+    clientSupportsWrapReflow?: () => boolean;
+    clientSupportsCellWidth?: () => boolean;
+  }): {
     controller: TerminalSessionController;
     getTerminalState: ReturnType<typeof vi.fn>;
   } {
@@ -386,7 +389,12 @@ describe("terminal-session-controller wrap-flag gating", () => {
       hasBinaryChannel: () => true,
       isPathWithinRoot: () => false,
       sessionLogger: createLogger(),
-      ...(clientSupportsWrapReflow ? { clientSupportsWrapReflow } : {}),
+      ...(capabilities?.clientSupportsWrapReflow
+        ? { clientSupportsWrapReflow: capabilities.clientSupportsWrapReflow }
+        : {}),
+      ...(capabilities?.clientSupportsCellWidth
+        ? { clientSupportsCellWidth: capabilities.clientSupportsCellWidth }
+        : {}),
     });
     return { controller, getTerminalState };
   }
@@ -402,7 +410,7 @@ describe("terminal-session-controller wrap-flag gating", () => {
   }
 
   test("requests wrap flags when the client supports reflowable snapshots", async () => {
-    const { controller, getTerminalState } = setup(() => true);
+    const { controller, getTerminalState } = setup({ clientSupportsWrapReflow: () => true });
     await subscribe(controller);
     expect(getTerminalState).toHaveBeenCalledWith(
       "term-1",
@@ -416,6 +424,24 @@ describe("terminal-session-controller wrap-flag gating", () => {
     expect(getTerminalState).toHaveBeenCalledWith(
       "term-1",
       expect.objectContaining({ includeWrapFlags: false }),
+    );
+  });
+
+  test("includes cell widths when the client advertises terminalCellWidth", async () => {
+    const { controller, getTerminalState } = setup({ clientSupportsCellWidth: () => true });
+    await subscribe(controller);
+    expect(getTerminalState).toHaveBeenCalledWith(
+      "term-1",
+      expect.objectContaining({ includeCellWidth: true }),
+    );
+  });
+
+  test("omits cell widths when the client does not advertise terminalCellWidth", async () => {
+    const { controller, getTerminalState } = setup();
+    await subscribe(controller);
+    expect(getTerminalState).toHaveBeenCalledWith(
+      "term-1",
+      expect.objectContaining({ includeCellWidth: false }),
     );
   });
 });

@@ -17,6 +17,12 @@ export const CLIENT_CAPS = {
   // Old clients use a strict TerminalState schema and would reject the extra fields.
   // Drop the gate (always send the flags) when floor >= v0.1.88.
   terminalReflowableSnapshot: "terminal_reflowable_snapshot",
+  // COMPAT(terminalCellWidth): added in v0.7.3. The daemon attaches per-cell
+  // display widths (TerminalCell.width) to terminal snapshots only when the
+  // client advertises this. Old clients use a strict TerminalState schema and
+  // would reject the extra field. Drop the gate (always send width) when the
+  // supported client floor is >= v0.7.3.
+  terminalCellWidth: "terminal_cell_width",
   // COMPAT(providerSubagents): added in v0.1.107. The daemon emits provider-owned
   // child descriptors and timelines only to clients that understand the new messages.
   providerSubagents: "provider_subagents",

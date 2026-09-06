@@ -87,6 +87,11 @@ function renderTerminalRow(row: TerminalCell[], padToCols?: number): string {
 
   for (let index = 0; index < length; index += 1) {
     const cell = row[index] ?? { char: " " };
+    // Wide-glyph placeholder cell: its column is already occupied by the
+    // preceding glyph, so emitting its char would add a phantom column.
+    if (cell.width === 0) {
+      continue;
+    }
     const nextStyle = getTerminalStyle(cell);
     if (!terminalStylesEqual(previousStyle, nextStyle)) {
       output.push(styleToAnsi(nextStyle));
@@ -106,6 +111,11 @@ function getTerminalRowLength(row: TerminalCell[]): number {
   for (let index = row.length - 1; index >= 0; index -= 1) {
     const cell = row[index];
     if (!cell) {
+      continue;
+    }
+    // Wide-glyph placeholders carry no content of their own; never let one
+    // extend the row length.
+    if (cell.width === 0) {
       continue;
     }
     if (cell.char !== " ") {

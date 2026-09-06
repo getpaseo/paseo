@@ -760,6 +760,7 @@ test("advertises client capabilities in hello", async () => {
       project_updates: true,
       provider_subagents: true,
       reasoning_merge_enum: true,
+      terminal_cell_width: true,
       terminal_reflowable_snapshot: true,
       timeline_notifications: true,
       browser_host: {

@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 
 import { createNativeHeadlessTerminal } from "./headless-terminal-state";
+import type {
+  NativeHeadlessTerminal,
+  TerminalBufferBounds,
+  TerminalBufferWindowInput,
+  TerminalCellRow,
+} from "./headless-terminal-state";
 import {
   copyTerminalSelection,
   createTerminalSelectionModel,
@@ -40,6 +46,33 @@ function rowWithText(
   return window.startRow + rowOffset;
 }
 
+// Orphan placeholders (a width-0 cell not preceded by a width-2 glyph, e.g.
+// from a snapshot clipped mid-glyph) never occur in a live xterm buffer, so
+// those cases drive the selection logic with a hand-built row window.
+function terminalFromRows(rows: TerminalCellRow[]): NativeHeadlessTerminal {
+  const lastRow = rows.length - 1;
+  const bounds: TerminalBufferBounds = {
+    rows: rows.length,
+    cols: Math.max(...rows.map((row) => row.length)),
+    oldestRow: 0,
+    newestRow: lastRow,
+    coordinateEpoch: 0,
+    currentViewport: { firstRow: 0, lastRow },
+    bottomViewport: { firstRow: 0, lastRow },
+    cursorRow: 0,
+    cursorCol: 0,
+  };
+  const terminal: Pick<NativeHeadlessTerminal, "getBufferBounds" | "getBufferWindow"> = {
+    getBufferBounds: () => bounds,
+    getBufferWindow: (input: TerminalBufferWindowInput) => ({
+      startRow: input.startRow,
+      rows: rows.slice(input.startRow, input.startRow + input.rowCount),
+      wrappedRows: rows.map(() => false),
+    }),
+  };
+  return terminal as NativeHeadlessTerminal;
+}
+
 describe("native terminal selection", () => {
   it("expands a long-press coordinate to the whole terminal word", async () => {
     const terminal = createNativeHeadlessTerminal({ rows: 4, cols: 32, scrollbackLines: 20 });
@@ -61,6 +94,58 @@ describe("native terminal selection", () => {
         coordinateEpoch: terminal.getBufferBounds().coordinateEpoch,
       },
       text: "PASEO_TARGET",
+    });
+  });
+
+  it("expands a long-press across a wide glyph without stopping at its placeholder", async () => {
+    const terminal = createNativeHeadlessTerminal({ rows: 4, cols: 32, scrollbackLines: 20 });
+    await terminal.write("before 中文 after\r\n");
+    // The raw char join includes each wide glyph's width-0 placeholder blank.
+    const row = rowWithText(terminal, "before 中 文  after");
+    const bounds = terminal.getBufferBounds();
+
+    // Long-press on 文 (col 9): the placeholder columns (8 and 10) are part of
+    // the glyphs, not word boundaries, so the whole CJK word is selected.
+    const selection = resolveTerminalWordSelection({
+      terminal,
+      coordinate: { row, col: 9 },
+    });
+
+    expect({
+      selection,
+      text: extractTerminalSelectedText({ terminal, selection }),
+    }).toEqual({
+      selection: {
+        start: { row, col: 7 },
+        end: { row, col: 10 },
+        coordinateEpoch: bounds.coordinateEpoch,
+      },
+      text: "中文",
+    });
+  });
+
+  it("resolves a long-press on a wide glyph's placeholder column to the glyph", async () => {
+    const terminal = createNativeHeadlessTerminal({ rows: 4, cols: 32, scrollbackLines: 20 });
+    await terminal.write("before 中文 after\r\n");
+    const row = rowWithText(terminal, "before 中 文  after");
+    const bounds = terminal.getBufferBounds();
+
+    // Col 8 is the placeholder half of 中 — the press belongs to the glyph.
+    const selection = resolveTerminalWordSelection({
+      terminal,
+      coordinate: { row, col: 8 },
+    });
+
+    expect({
+      selection,
+      text: extractTerminalSelectedText({ terminal, selection }),
+    }).toEqual({
+      selection: {
+        start: { row, col: 7 },
+        end: { row, col: 10 },
+        coordinateEpoch: bounds.coordinateEpoch,
+      },
+      text: "中文",
     });
   });
 
@@ -142,6 +227,110 @@ describe("native terminal selection", () => {
         },
       }),
     ).toEqual("beta\ngamma");
+  });
+
+  it("copies wide-glyph rows without the placeholder column", async () => {
+    const terminal = createNativeHeadlessTerminal({ rows: 4, cols: 16, scrollbackLines: 20 });
+    await terminal.write("A界B\r\n");
+    const bounds = terminal.getBufferBounds();
+    // The raw char join includes the width-0 placeholder blank after 界.
+    const row = rowWithText(terminal, "A界 B");
+
+    expect(
+      extractTerminalSelectedText({
+        terminal,
+        selection: {
+          start: { row, col: 0 },
+          end: { row, col: 3 },
+          coordinateEpoch: bounds.coordinateEpoch,
+        },
+      }),
+    ).toBe("A界B");
+  });
+
+  it("copies the whole glyph when a drag starts on its placeholder half", async () => {
+    const terminal = createNativeHeadlessTerminal({ rows: 4, cols: 16, scrollbackLines: 20 });
+    await terminal.write("A界B\r\n");
+    const bounds = terminal.getBufferBounds();
+    // The raw char join includes the width-0 placeholder blank after 界.
+    const row = rowWithText(terminal, "A界 B");
+
+    // Col 2 is the placeholder half of 界: the drag visibly selects 界B, so
+    // the copy must include the glyph.
+    expect(
+      extractTerminalSelectedText({
+        terminal,
+        selection: {
+          start: { row, col: 2 },
+          end: { row, col: 3 },
+          coordinateEpoch: bounds.coordinateEpoch,
+        },
+      }),
+    ).toBe("界B");
+  });
+
+  it("does not pull the previous cell into a drag that starts on an orphan placeholder", () => {
+    const terminal = terminalFromRows([
+      [
+        { char: "A", width: 1 },
+        { char: " ", width: 0 },
+        { char: "B", width: 1 },
+      ],
+    ]);
+    const bounds = terminal.getBufferBounds();
+
+    // The renderer skips the orphan placeholder, so the visible selection
+    // from col 1 is just B; copying must not add the preceding A.
+    expect(
+      extractTerminalSelectedText({
+        terminal,
+        selection: {
+          start: { row: 0, col: 1 },
+          end: { row: 0, col: 2 },
+          coordinateEpoch: bounds.coordinateEpoch,
+        },
+      }),
+    ).toBe("B");
+  });
+
+  it("treats a long-press on an orphan placeholder as a blank cell", () => {
+    const terminal = terminalFromRows([
+      [
+        { char: "a", width: 1 },
+        { char: "b", width: 1 },
+        { char: " ", width: 0 },
+        { char: "c", width: 1 },
+      ],
+    ]);
+    const bounds = terminal.getBufferBounds();
+
+    // The orphan belongs to no glyph, so the press must not resolve to the
+    // preceding word.
+    expect(resolveTerminalWordSelection({ terminal, coordinate: { row: 0, col: 2 } })).toEqual({
+      start: { row: 0, col: 2 },
+      end: { row: 0, col: 2 },
+      coordinateEpoch: bounds.coordinateEpoch,
+    });
+  });
+
+  it("treats an orphan placeholder as a word boundary", () => {
+    const terminal = terminalFromRows([
+      [
+        { char: "a", width: 1 },
+        { char: "b", width: 1 },
+        { char: " ", width: 0 },
+        { char: "c", width: 1 },
+      ],
+    ]);
+    const bounds = terminal.getBufferBounds();
+
+    // The renderer omits the orphan and the anchor treats it as a blank, so
+    // the scan must stop there too: long-pressing "ab" selects only "ab".
+    expect(resolveTerminalWordSelection({ terminal, coordinate: { row: 0, col: 0 } })).toEqual({
+      start: { row: 0, col: 0 },
+      end: { row: 0, col: 1 },
+      coordinateEpoch: bounds.coordinateEpoch,
+    });
   });
 
   it("copies soft-wrapped rows without fake line breaks", async () => {

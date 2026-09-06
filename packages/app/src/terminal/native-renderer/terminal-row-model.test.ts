@@ -41,6 +41,21 @@ describe("terminal row model", () => {
     ]);
   });
 
+  test("skips orphan width-0 placeholder cells instead of rendering a phantom space", () => {
+    const resolver = createTerminalCellStyleResolver(DEFAULT_TERMINAL_THEME);
+
+    // A width-0 cell not preceded by a width-2 glyph (e.g. a snapshot clipped
+    // mid-glyph) must not surface its blank char as a phantom column.
+    const rows = buildRows({
+      grid: [[cell("A", { width: 1 }), cell(" ", { width: 0 }), cell("B", { width: 1 })]],
+      resolver,
+    });
+
+    expect(rows[0].runs.map((run) => ({ text: run.text, cellCount: run.cellCount }))).toEqual([
+      { text: "AB", cellCount: 2 },
+    ]);
+  });
+
   test("redraws selected cells with the terminal selection colors", () => {
     const resolver = createTerminalCellStyleResolver(DEFAULT_TERMINAL_THEME);
     const grid = [[cell("a", { fg: 1, fgMode: 1 }), cell("b", { dim: true }), cell("c")]];

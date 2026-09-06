@@ -1,6 +1,8 @@
 // POSIX-only: node-pty + POSIX shell assertions
 /* eslint-disable max-nested-callbacks */
 import { describe, it, expect, afterEach } from "vitest";
+import { Terminal as HeadlessTerminal } from "@xterm/headless";
+import { renderTerminalSnapshotToAnsi } from "@getpaseo/protocol/terminal-snapshot";
 import { isPlatform } from "../test-utils/platform.js";
 import {
   buildTerminalEnvironment,
@@ -8,6 +10,7 @@ import {
   resolveZshShellIntegrationDir,
   type TerminalSession,
 } from "./terminal.js";
+import { captureTerminalLines } from "./terminal-capture.js";
 import {
   chmodSync,
   cpSync,
@@ -374,6 +377,89 @@ describe.skipIf(isPlatform("win32"))("terminal POSIX-only", () => {
       expect(getRowText(state, 0)).toBe("$ pwd");
       expect(getRowText(state, 1)).toBe("/tmp");
       expect(getRowText(state, 2)).toBe("$");
+    });
+  });
+
+  describe("wide characters", () => {
+    // The raw char join of a row containing a wide glyph includes the
+    // placeholder cell's char, so match on display text (placeholders filtered).
+    function rowDisplayText(row: TerminalRow): string {
+      return row
+        .filter((cell) => cell.width !== 0)
+        .map((cell) => cell.char)
+        .join("")
+        .trimEnd();
+    }
+
+    it("round-trips CJK rows through snapshot extraction and ANSI restore without phantom columns", async () => {
+      const session = trackSession(
+        await createTerminal({
+          workspaceId: "ws-test",
+          cwd: "/tmp",
+          shell: "/bin/sh",
+          env: { PS1: "$ " },
+        }),
+      );
+
+      await waitForLines(session, ["$"]);
+      session.send({ type: "input", data: "echo A界B\r" });
+
+      // Wait only for the glyph to appear; the row text is asserted below so
+      // buggy extraction fails with a diff ("A界 B") instead of a predicate
+      // timeout. The matched row is the echoed command line ("$ echo A界B"),
+      // so assert the tail rather than the whole row.
+      const state = await waitForState(session, (s) =>
+        s.grid.some((row) => rowDisplayText(row).includes("A界")),
+      );
+
+      // The wide glyph is a width-2 content cell followed by a width-0 placeholder.
+      const row = state.grid.find((candidate) => rowDisplayText(candidate).includes("A界")) ?? [];
+      expect(row.length).toBeGreaterThan(0);
+      expect(rowDisplayText(row)).toMatch(/A界B$/);
+      const wideIndex = row.findIndex((cell) => cell.char === "界");
+      expect(row[wideIndex]?.width).toBe(2);
+      expect(row[wideIndex + 1]?.width).toBe(0);
+
+      // Replay the restore frame into a fresh headless terminal: the row must
+      // read back exactly as displayed, with no inserted space after 界.
+      const replay = new HeadlessTerminal({
+        cols: state.cols,
+        rows: state.rows,
+        allowProposedApi: true,
+      });
+      await new Promise<void>((resolve) => {
+        replay.write(renderTerminalSnapshotToAnsi(state), () => resolve());
+      });
+      const replayedLines: string[] = [];
+      for (let index = 0; index < replay.buffer.active.length; index += 1) {
+        replayedLines.push(
+          replay.buffer.active.getLine(index)?.translateToString(true).trimEnd() ?? "",
+        );
+      }
+      replay.dispose();
+      expect(replayedLines).toContain("A界B");
+      expect(replayedLines).not.toContain("A界 B");
+    });
+
+    it("omits placeholder cells from plain-text capture of CJK rows", async () => {
+      const session = trackSession(
+        await createTerminal({
+          workspaceId: "ws-test",
+          cwd: "/tmp",
+          shell: "/bin/sh",
+          env: { PS1: "$ " },
+        }),
+      );
+
+      await waitForLines(session, ["$"]);
+      session.send({ type: "input", data: "echo A界B\r" });
+      await waitForState(session, (s) => s.grid.some((row) => rowDisplayText(row).includes("A界")));
+
+      // The capture path feeds WebSocket RPC, MCP capture_terminal and the CLI;
+      // the placeholder column must not surface as a space after 界.
+      const captured = captureTerminalLines(session);
+      expect(captured.lines).toContain("A界B");
+      expect(captured.lines).not.toContain("A界 B");
     });
   });
 
