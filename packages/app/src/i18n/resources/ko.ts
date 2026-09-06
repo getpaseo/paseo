@@ -1059,6 +1059,11 @@ export const ko: TranslationResources = {
         status: "상태",
         labels: "레이블",
       },
+      projectSort: {
+        label: "프로젝트 정렬",
+        manual: "수동",
+        recent: "최근 활동",
+      },
       titleSource: {
         label: "제목",
         title: "제목",

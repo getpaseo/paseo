@@ -1063,6 +1063,11 @@ export const ja: TranslationResources = {
         status: "ステータス",
         labels: "ラベル",
       },
+      projectSort: {
+        label: "プロジェクトの並び順",
+        manual: "手動",
+        recent: "最近のアクティビティ",
+      },
       titleSource: {
         label: "タイトル",
         title: "タイトル",

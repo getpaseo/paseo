@@ -480,6 +480,44 @@ export function shouldShowSidebarHostLabels(projects: SidebarProjectEntry[]): bo
   return serverIds.size >= 2;
 }
 
+/**
+ * Projects with the freshest workspace activity first, for the "recent" project sort.
+ *
+ * Recency is the latest `statusEnteredAt` among a project's hydrated workspace entries — the
+ * same timestamp the rows show, already merged with root-agent activity. Projects without a
+ * timestamp keep their incoming (manual) order after every dated one. Returns the input array
+ * when nothing moves, so memoized consumers don't churn.
+ */
+export function sortSidebarProjectsByRecentActivity(input: {
+  projects: SidebarProjectEntry[];
+  workspaceEntriesByKey: ReadonlyMap<string, SidebarWorkspaceEntry>;
+}): SidebarProjectEntry[] {
+  if (input.projects.length <= 1) {
+    return input.projects;
+  }
+
+  const keyed = input.projects.map((project, index) => {
+    let latest = Number.NEGATIVE_INFINITY;
+    for (const placement of project.workspaces) {
+      const enteredAt = input.workspaceEntriesByKey.get(placement.workspaceKey)?.statusEnteredAt;
+      const time = enteredAt?.getTime();
+      if (time !== undefined && Number.isFinite(time) && time > latest) {
+        latest = time;
+      }
+    }
+    return { project, index, latest };
+  });
+
+  keyed.sort((left, right) =>
+    left.latest === right.latest ? left.index - right.index : right.latest - left.latest,
+  );
+
+  if (keyed.every((entry, index) => entry.index === index)) {
+    return input.projects;
+  }
+  return keyed.map((entry) => entry.project);
+}
+
 export function applyStoredOrdering<T>(input: {
   items: T[];
   storedOrder: string[];
