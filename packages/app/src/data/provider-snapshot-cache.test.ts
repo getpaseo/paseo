@@ -5,8 +5,8 @@ import { compactProviderSnapshot } from "@getpaseo/protocol/provider-snapshot-co
 import { z } from "zod";
 import { createProviderSnapshotCache, type ProviderSnapshotCache } from "./provider-snapshot-cache";
 
-const SNAPSHOT_KEY_PREFIX = "@paseo/provider-snapshot/v1:";
-const SNAPSHOT_INDEX_KEY = "@paseo/provider-snapshot-index/v1";
+const SNAPSHOT_KEY_PREFIX = "@paseo/provider-snapshot/v2:";
+const SNAPSHOT_INDEX_KEY = "@paseo/provider-snapshot-index/v2";
 const SnapshotIndexSchema = z.object({
   version: z.literal(1),
   entries: z.array(z.object({ key: z.string(), bytes: z.number(), writtenAt: z.string() })),
@@ -292,7 +292,7 @@ describe("provider snapshot cache", () => {
     expect(snapshotBytes(storage.values)).toBeLessThanOrEqual(maxBytes);
     expect(
       [...storage.values.keys()].filter((key) => key.startsWith(SNAPSHOT_KEY_PREFIX)),
-    ).toHaveLength(1);
+    ).toHaveLength(2);
     expectIndexMatchesSnapshots(storage.values);
   });
 
@@ -394,7 +394,7 @@ describe("provider snapshot cache", () => {
         label: "stable",
         generatedAt: "2026-08-01T00:00:00.000Z",
       });
-      const failedKey = `${SNAPSHOT_KEY_PREFIX}["server-1","/failed"]`;
+      const failedKey = `${SNAPSHOT_KEY_PREFIX}["server-1","cwd","/failed"]`;
       storage.failNext("setItem", timing, failedKey);
 
       await writeSnapshot(cache, {
@@ -435,9 +435,7 @@ describe("provider snapshot cache", () => {
       });
 
       const restarted = createProviderSnapshotCache(storage, { maxBytes: 2_000 });
-      await expect(
-        restarted.read("server-1", "/orphan-after-index-failure"),
-      ).resolves.not.toBeNull();
+      await expect(restarted.readHash("server-1", "orphan")).resolves.not.toBeNull();
       expectIndexMatchesSnapshots(storage.values);
       expect(storage.stats.getAllKeysCalls).toBe(2);
     },
@@ -515,7 +513,7 @@ describe("provider snapshot cache", () => {
     "recovers when invalid-record cleanup fails %s deletion",
     async (timing) => {
       const storage = createStorage();
-      const key = `${SNAPSHOT_KEY_PREFIX}["server-1","/invalid"]`;
+      const key = `${SNAPSHOT_KEY_PREFIX}["server-1","cwd","/invalid"]`;
       storage.values.set(key, "invalid");
       storage.failNext("multiRemove", timing);
       const cache = createProviderSnapshotCache(storage);
@@ -532,4 +530,162 @@ describe("provider snapshot cache", () => {
       expectIndexMatchesSnapshots(storage.values);
     },
   );
+});
+
+it("stores and expands identical content once across directory associations", async () => {
+  const storage = createStorage();
+  const cache = createProviderSnapshotCache(storage);
+  for (const cwd of ["/a", "/b", "/c"]) {
+    await writeSnapshot(cache, { cwd, label: "shared", generatedAt: "2026-09-06T12:00:00.000Z" });
+  }
+  const a = await cache.read("server-1", "/a");
+  const b = await cache.read("server-1", "/b");
+  expect(a?.entries[0]?.models).toBe(b?.entries[0]?.models);
+  expect(
+    [...storage.values.values()].filter((value) => value.includes('"compactSnapshot"')),
+  ).toHaveLength(1);
+});
+
+it("coalesces missing bodies and keeps a newer pushed association when an older pull completes", async () => {
+  const { QueryClient } = await import("@tanstack/react-query");
+  const { applyProvidersSnapshotUpdate } = await import("./push-router");
+  const { fetchProvidersSnapshot, providersSnapshotQueryKey } =
+    await import("./providers-snapshot");
+  const storage = createStorage();
+  const cache = createProviderSnapshotCache(storage);
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const serverId = "shared-host";
+  const snapshot = (hash: string, fetchedAt = "2026-09-06T12:00:00.000Z") => ({
+    entries: [],
+    snapshotHash: hash,
+    compactSnapshot: compactProviderSnapshot(snapshotEntries(hash)),
+    generatedAt: fetchedAt,
+    fetchedAt: { pi: fetchedAt },
+    requestId: hash,
+  });
+  let transfers = 0;
+  const client = {
+    async getProvidersSnapshot() {
+      transfers++;
+      return snapshot("shared");
+    },
+  };
+  const announce = (cwd: string, hash: string, fetchedAt = "2026-09-06T12:00:00.000Z") =>
+    applyProvidersSnapshotUpdate({
+      serverId,
+      queryClient,
+      cache,
+      client,
+      message: {
+        type: "providers_snapshot_update",
+        payload: {
+          cwd,
+          entries: [],
+          snapshotHash: hash,
+          generatedAt: fetchedAt,
+          fetchedAt: { pi: fetchedAt },
+        },
+      },
+    });
+  try {
+    await Promise.all(["/a", "/b", "/c"].map((cwd) => announce(cwd, "shared")));
+    expect(transfers).toBe(1);
+    const first = await cache.read(serverId, "/a");
+    const second = await cache.read(serverId, "/b");
+    expect(first!.entries[0]!.models).toBe(second!.entries[0]!.models);
+    expect(
+      queryClient.getQueryData<{ compactSnapshot: unknown }>(
+        providersSnapshotQueryKey(serverId, "/a"),
+      )!.compactSnapshot,
+    ).toBe(first!.compactSnapshot);
+    expect(
+      [...storage.values.values()].filter((value) => value.includes('"compactSnapshot"')),
+    ).toHaveLength(1);
+    await Promise.all(
+      ["/a", "/b", "/c"].map((cwd) => announce(cwd, "shared", "2026-09-06T13:00:00.000Z")),
+    );
+    expect(transfers).toBe(1);
+    expect((await cache.read(serverId, "/a"))!.entries[0]!.fetchedAt).toBe(
+      "2026-09-06T13:00:00.000Z",
+    );
+
+    await queryClient.refetchQueries({
+      queryKey: providersSnapshotQueryKey(serverId, "/b"),
+      exact: true,
+    });
+    expect(transfers).toBe(2);
+
+    let release!: (value: ReturnType<typeof snapshot>) => void;
+    let began!: () => void;
+    const started = new Promise<void>((resolve) => {
+      began = resolve;
+    });
+    const oldClient = {
+      getProvidersSnapshot() {
+        began();
+        return new Promise<ReturnType<typeof snapshot>>((resolve) => {
+          release = resolve;
+        });
+      },
+    };
+    const queryKey = providersSnapshotQueryKey(serverId, "/a");
+    const old = queryClient.fetchQuery({
+      queryKey,
+      staleTime: 0,
+      queryFn: ({ signal }) =>
+        fetchProvidersSnapshot({
+          serverId,
+          cwd: "/a",
+          queryClient,
+          cache,
+          client: oldClient,
+          signal,
+        }),
+    });
+    const cancelled = old.catch(() => undefined);
+    await started;
+    await applyProvidersSnapshotUpdate({
+      serverId,
+      queryClient,
+      cache,
+      client,
+      message: { type: "providers_snapshot_update", payload: { ...snapshot("new"), cwd: "/a" } },
+    });
+    release(snapshot("old"));
+    await cancelled;
+    // Drain the same public cache queue after the old transport finishes.
+    await cache.read(serverId, "/a");
+    expect((await cache.read(serverId, "/a"))!.hash).toBe("new");
+    expect(queryClient.getQueryData(queryKey)).toMatchObject({
+      snapshotHash: "new",
+      entries: [{ models: [{ id: "new" }] }],
+    });
+    expect((await cache.read(serverId, "/b"))!.hash).toBe("shared");
+
+    const restarted = createProviderSnapshotCache(storage);
+    expect((await restarted.read(serverId, "/a"))!.hash).toBe("new");
+    const evicted = createProviderSnapshotCache(storage, { maxBytes: 1 });
+    expect(await evicted.read(serverId, "/b")).toBeNull();
+    await applyProvidersSnapshotUpdate({
+      serverId,
+      queryClient,
+      cache: evicted,
+      client,
+      message: {
+        type: "providers_snapshot_update",
+        payload: {
+          cwd: "/b",
+          entries: [],
+          snapshotHash: "shared",
+          generatedAt: "2026-09-06T14:00:00.000Z",
+        },
+      },
+    });
+    expect(transfers).toBe(3);
+    expect(queryClient.getQueryData(providersSnapshotQueryKey(serverId, "/b"))).toMatchObject({
+      entries: [{ models: [{ id: "shared" }] }],
+    });
+  } finally {
+    queryClient.clear();
+  }
 });

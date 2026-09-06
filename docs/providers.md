@@ -115,7 +115,18 @@ Daemon bootstrap reconciles that ledger in the background, without blocking star
 
 ## Provider Snapshot Refresh Contract
 
-The daemon keeps provider snapshots per resolved working directory, with a separate semantic global scope for settings/provider management and requests that do not carry a cwd. Provider catalog probes receive a discriminated `FetchCatalogOptions`: `{ scope: "global", force }` for global catalog refreshes, or `{ scope: "workspace", cwd, force }` for project-scoped refreshes. Providers decide what global means for their runtime; do not infer global by comparing a cwd to the user's home directory.
+Provider snapshots are views of the catalogues needed for a target. Before looking up cached
+results or discovery in flight, the manager calls optional `AgentClient.getCatalogCacheKey(options)`.
+The provider owns equivalence: equal keys must mean the same availability, models and modes,
+including the effective configuration and execution environment. `force` does not change identity.
+Omitting the method or returning `undefined` keeps target-specific caching. Codex and Claude's
+current host clients share across directories; configured provider identities remain isolated.
+
+The key chooses storage, never execution. Availability and catalogue discovery receive the actual
+`{ scope: "global", force }` or `{ scope: "workspace", cwd, force }` request, including when another
+target can share its result. Runtime-aware adapters must use that target for both probing and key
+resolution. An explicit home-directory workspace is distinct from a semantic global request.
+Plugin callbacks follow the same contract; see [plugin providers](plugins.md#contribute-a-provider).
 
 `ProviderSnapshotManager` owns one refresh deadline per provider. The deadline starts before the
 availability check and covers that check plus the complete catalog probe. Providers that make
@@ -124,15 +135,40 @@ aborts the shared refresh signal at the deadline. Providers name active catalog 
 finish subprocess, server, or session cleanup before rejecting. Timeout errors list the operations
 that were still active when the deadline expired.
 
-Snapshot reads may probe providers only while the requested cwd scope is cold. Once an entry is warm, its `ready`, `error`, or `unavailable` state stays cached until an explicit refresh. Do not add TTL revalidation, focus-triggered refreshes, selector-open refreshes, or config-reload refreshes. Selector-open refetches may read an already-loading or stale React Query, but they must not force provider probing on their own.
+Catalogue results stay cached by identity until explicit refresh or a change to that provider's configuration.
+Keys are resolved on each read so project configuration can select a different cached catalogue.
+Selector opening may read a loading or stale query, but does not force provider probing.
 
-Capable clients receive a compact, content-addressed snapshot. Model rows derive their provider from the containing entry and reference snapshot-level thinking sets. The app persists that compact shape per server and cwd, then sends its hash on the next pull; an unchanged response carries no catalog body. Keep the legacy encoding for clients without the capability. The hash covers the complete client-visible compact snapshot, including status and `fetchedAt`, so explicit refreshes invalidate it even when the discovered catalog is otherwise equal.
+Saved provider/model choices are user intent. Catalogue failure must not erase them or substitute
+another model. Creation reads the caller's host and directory directly; an earlier global snapshot
+must not settle a project form's initial selection.
 
-Settings refresh is the user-facing "forget stale provider knowledge everywhere" action. A settings refresh clears provider snapshot caches and in-flight loads across all cwd scopes, then immediately refreshes only the global snapshot with `force: true`. Workspace snapshots are re-probed lazily on the next scoped read; do not fan out a settings refresh across every known workspace.
+The server's provider keys never cross the wire. Clients advertising `provider_snapshot_references`
+receive directory-to-hash announcements; an unknown hash uses the existing snapshot request.
+The manager detaches each fresh result once and publishes its content identity with the entry;
+readers share these values read-only. Each target keeps its published snapshot until membership,
+content or discovery freshness changes. All affected targets commit before subscribers run;
+subscriber failures are logged without changing discovery or configuration outcomes.
+The session compares both sides of a committed transition under the client's current visibility
+policy and sends only visible changes. It combines result identities with the client's encoding
+and icon policy, without traversing models. Reference hashes exclude freshness;
+legacy embedded hashes include it. Only responses that send a body compact the catalogue.
+Per-provider `fetchedAt` travels separately for reference clients and still means when discovery succeeded. `generatedAt`
+remains the time the response or announcement was generated. Refresh keeps settled entries visible
+until the next result, so unchanged discovery sends freshness without another model body.
 
-Registry/config replacement may update visible metadata such as label, description, default mode, enabled state, and provider membership, but it must not spawn provider processes. If a provider needs to be re-probed after a config change, route that through the explicit settings refresh path.
+The app's snapshot cache owns compact expansion and stores one body per server/hash, with separate
+directory/hash/freshness records under the same byte budget. Missing bodies share a React Query
+request; directory queries cancel superseded pulls before accepting pushes. Default SDK clients
+keep expanded entries and full updates. Only callers that own materialization opt into wire snapshots.
+Keep the full encoding for older clients; compact-snapshot support alone does not imply reference support.
 
-Boundary tests should assert observable behavior: cold reads may call provider availability/model/mode discovery for that scope; warm reads and registry replacement must not; explicit workspace refreshes affect only one cwd; settings refresh wipes all scopes but immediately refreshes only global.
+Settings refresh invalidates requested providers across known targets and refreshes them in their
+actual execution context, sharing discovery by provider key. Configuration replacement invalidates
+only changed providers; unchanged entries, clients, and discovery in flight survive. Preparation
+leaves installed reads untouched until commit. Plugin replacement uses registration runtime
+identity, so unchanged registrations and builtins keep their results. Await the refresh or warmup
+promise for completion: equal results, including equal discovery timestamps, emit no transition.
 
 ---
 
