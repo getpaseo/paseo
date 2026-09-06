@@ -50,6 +50,15 @@ describe("buildScheduleAgentOptions", () => {
     expect(options.map((option) => option.value)).toEqual(["running", "recent", "older"]);
   });
 
+  it("shortens the working directory it shows under each agent", () => {
+    const [option] = buildScheduleAgentOptions([
+      agent({ cwd: "/Users/someone/Documents/Projects/paseo" }),
+    ]);
+
+    expect(option?.description).not.toContain("/Users/someone");
+    expect(option?.description).toContain("paseo");
+  });
+
   it("labels untitled agents the way the schedules list does", () => {
     const options = buildScheduleAgentOptions([
       agent({ id: "blank", title: "   " }),

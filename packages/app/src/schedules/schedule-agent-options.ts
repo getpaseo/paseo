@@ -3,6 +3,7 @@ import type {
   HostRuntimeAgentDirectoryStatus,
   HostRuntimeConnectionStatus,
 } from "@/runtime/host-runtime";
+import { shortenPath } from "@/utils/shorten-path";
 
 export const UNTITLED_AGENT_LABEL = "Untitled agent";
 
@@ -52,7 +53,7 @@ export function buildScheduleAgentOptions(
       id: agent.id,
       value: agent.id,
       label: scheduleAgentLabel(agent),
-      description: agent.cwd,
+      description: shortenPath(agent.cwd),
       testID: `schedule-agent-option-${agent.id}`,
     }));
 }
