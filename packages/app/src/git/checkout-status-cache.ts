@@ -9,12 +9,18 @@ import {
 } from "@/git/query-keys";
 import { type CheckoutPrStatusPayload, normalizeCheckoutPrStatusPayload } from "@/git/pr-status";
 import { expireWorkingDiffComparisons } from "@/git/working-diff-comparison";
+import { normalizeWorkspacePath } from "@/utils/workspace-identity";
 
 export type CheckoutStatusPayload = CheckoutStatusResponse["payload"];
 export type { CheckoutPrStatusPayload } from "@/git/pr-status";
 
 export interface CheckoutStatusClient {
   getCheckoutStatus: (cwd: string) => Promise<CheckoutStatusPayload>;
+}
+
+function normalizeCheckoutStatusPayload(payload: CheckoutStatusPayload): CheckoutStatusPayload {
+  const cwd = normalizeWorkspacePath(payload.cwd) ?? payload.cwd;
+  return cwd === payload.cwd ? payload : { ...payload, cwd };
 }
 
 // Checkout status enters the app through exactly two doors: daemon pushes
@@ -30,7 +36,7 @@ export async function fetchCheckoutStatus({
   serverId: string;
   cwd: string;
 }): Promise<CheckoutStatusPayload> {
-  const payload = await client.getCheckoutStatus(cwd);
+  const payload = normalizeCheckoutStatusPayload(await client.getCheckoutStatus(cwd));
   expireWorkingDiffComparisons({ serverId, cwd, isDirty: payload.isGit && payload.isDirty });
   return payload;
 }
@@ -63,18 +69,19 @@ export function applyCheckoutStatusUpdateFromEvent({
   message: CheckoutStatusUpdate;
 }): void {
   const { payload } = message;
+  const cwd = normalizeWorkspacePath(payload.cwd) ?? payload.cwd;
   const prStatus = payload.prStatus
     ? normalizeCheckoutPrStatusPayload(payload.prStatus)
     : undefined;
-  const cachePayload = prStatus ? { ...payload, prStatus } : payload;
-  queryClient.setQueryData(checkoutStatusQueryKey(serverId, payload.cwd), cachePayload);
+  const cachePayload = prStatus ? { ...payload, cwd, prStatus } : { ...payload, cwd };
+  queryClient.setQueryData(checkoutStatusQueryKey(serverId, cwd), cachePayload);
   void queryClient.invalidateQueries({
-    queryKey: checkoutCommitsQueryKey(serverId, payload.cwd),
+    queryKey: checkoutCommitsQueryKey(serverId, cwd),
   });
   expireWorkingDiffComparisons({
     serverId,
-    cwd: payload.cwd,
-    isDirty: payload.isGit && payload.isDirty,
+    cwd,
+    isDirty: cachePayload.isGit && cachePayload.isDirty,
   });
 
   if (!prStatus) {
