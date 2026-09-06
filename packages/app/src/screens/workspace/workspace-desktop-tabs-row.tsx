@@ -1,4 +1,5 @@
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
+import { InlineRenameInput, useDoubleClick } from "@/components/inline-rename-input";
 import React, {
   useCallback,
   useEffect,
@@ -111,6 +112,7 @@ const TAB_MAX_WIDTH = 160;
 const TAB_CLOSE_BUTTON_RESERVED_WIDTH = 0;
 const TAB_LABEL_LAYOUT_ALLOWANCE = 4;
 const AGENT_TOOLTIP_TITLE_MAX_LENGTH = 80;
+const INLINE_RENAMEABLE_TAB_KINDS = new Set(["agent", "terminal"]);
 
 const ThemedLoadingSpinner = withUnistyles(LoadingSpinner);
 const ThemedX = withUnistyles(X);
@@ -512,6 +514,7 @@ interface WorkspaceDesktopTabsRowProps {
   onCopyFilePath: (path: string) => Promise<void> | void;
   onReloadAgent: (agentId: string) => Promise<void> | void;
   onRenameTab: (tab: WorkspaceTabDescriptor) => void;
+  onInlineRenameTab: (tab: WorkspaceTabDescriptor, nextTitle: string) => Promise<void>;
   onCloseTabsToLeft: (tabId: string) => Promise<void> | void;
   onCloseTabsToRight: (tabId: string) => Promise<void> | void;
   onCloseOtherTabs: (tabId: string) => Promise<void> | void;
@@ -658,6 +661,7 @@ function TabHandleContent({
   backdrop,
   tabLabelSkeletonStyle,
   tabLabelStyle,
+  onLabelPointerUp,
   modifiedTestId,
 }: {
   presentation: WorkspaceTabPresentation;
@@ -666,6 +670,7 @@ function TabHandleContent({
   backdrop: SurfaceBackdrop;
   tabLabelSkeletonStyle: React.ComponentProps<typeof View>["style"];
   tabLabelStyle: React.ComponentProps<typeof Text>["style"];
+  onLabelPointerUp?: () => void;
   modifiedTestId: string;
 }) {
   const { t } = useTranslation();
@@ -683,9 +688,11 @@ function TabHandleContent({
         <View style={tabLabelSkeletonStyle} />
       ) : null}
       {showLabel && presentation.titleState !== "loading" ? (
-        <Text style={tabLabelStyle} selectable={false} numberOfLines={1} ellipsizeMode="tail">
-          {presentation.label}
-        </Text>
+        <View style={styles.tabLabelTarget} onPointerUp={onLabelPointerUp}>
+          <Text style={tabLabelStyle} selectable={false} numberOfLines={1} ellipsizeMode="tail">
+            {presentation.label}
+          </Text>
+        </View>
       ) : null}
       {/* The dot is a laid-out sibling of the label, not an overlay, so a truncated label ends
           before it instead of running underneath it. */}
@@ -700,6 +707,7 @@ function TabHandleContent({
   );
 }
 
+// oxlint-disable-next-line complexity -- this chip owns drag, hover, close, menu, and inline rename interactions.
 function TabChip({
   serverId,
   tab,
@@ -718,6 +726,7 @@ function TabChip({
   setHoveredCloseTabKey,
   onNavigateTab,
   onCloseTab,
+  onInlineRenameTab,
   dragHandleProps,
 }: {
   serverId: string;
@@ -737,6 +746,7 @@ function TabChip({
   setHoveredCloseTabKey: Dispatch<SetStateAction<string | null>>;
   onNavigateTab: (tabId: string) => void;
   onCloseTab: (tabId: string) => Promise<void> | void;
+  onInlineRenameTab: (tab: WorkspaceTabDescriptor, nextTitle: string) => Promise<void>;
   dragHandleProps: DraggableListDragHandleProps | undefined;
 }) {
   const { closeButtonTestId, contextMenuTestId, menuEntries } = resolvedTab;
@@ -744,7 +754,23 @@ function TabChip({
     useCallback(() => void onCloseTab(tab.tabId), [onCloseTab, tab.tabId]),
   );
   const isCompact = useIsCompactFormFactor();
+  const { t } = useTranslation();
   const [hovered, setHovered] = useState(false);
+  const [isRenaming, setIsRenaming] = useState(false);
+  const canRenameInline = INLINE_RENAMEABLE_TAB_KINDS.has(tab.target.kind);
+  const beginInlineRename = useCallback(() => {
+    setIsRenaming(true);
+  }, []);
+  const handleLabelPointerUp = useDoubleClick(beginInlineRename);
+  const handleInlineRenameSubmit = useCallback(
+    async (nextTitle: string) => {
+      await onInlineRenameTab(tab, nextTitle);
+    },
+    [onInlineRenameTab, tab],
+  );
+  const handleInlineRenameCancel = useCallback(() => {
+    setIsRenaming(false);
+  }, []);
   // An active tab in a pane that does not have focus stays legible but quiet: it keeps the fill of
   // a hovered chip and the muted label, so only one chip in the window reads as the live one.
   const isActiveFocused = isActive && isFocused;
@@ -831,53 +857,84 @@ function TabChip({
       onPointerLeave={handleTabPointerLeave}
     >
       <ContextMenu key={tab.key}>
-        <Tooltip delayDuration={400} enabledOnDesktop enabledOnMobile={false}>
-          <TooltipTrigger asChild triggerRefProp="triggerRef">
-            <ContextMenuTrigger
-              {...(dragHandleProps?.attributes as object | undefined)}
-              {...(dragHandleProps?.listeners as object | undefined)}
-              testID={`workspace-tab-${testIdentity}`}
-              triggerRef={dragHandleProps?.setActivatorNodeRef as unknown as undefined}
-              enabledOnMobile={false}
-              style={tabChipStyle}
-              onPressIn={handleNavigateTab}
-              onPress={handleNavigateTab}
-              accessibilityRole="button"
-              accessibilityLabel={accessibilityLabel}
-              accessibilityState={tabAccessibilityState}
-              aria-selected={isActive}
+        {isRenaming ? (
+          <View style={tabChipStyle()}>
+            <View style={styles.tabHandle}>
+              <View style={styles.tabIcon}>
+                <WorkspaceTabIcon
+                  presentation={presentation}
+                  active={isHighlighted}
+                  backdrop={chipBackdrop}
+                />
+              </View>
+              <InlineRenameInput
+                initialValue={presentation.label}
+                onSubmit={handleInlineRenameSubmit}
+                onCancel={handleInlineRenameCancel}
+                maxLength={200}
+                inputStyle={styles.tabRenameInput}
+                testID={`workspace-tab-inline-rename-${testIdentity}`}
+                accessibilityLabel={accessibilityLabel}
+              />
+              {presentation.modified ? (
+                <View
+                  style={styles.tabModifiedDot}
+                  accessibilityLabel={t("workspace.tabs.modified")}
+                  testID={`workspace-tab-modified-${testIdentity}`}
+                />
+              ) : null}
+            </View>
+          </View>
+        ) : (
+          <Tooltip delayDuration={400} enabledOnDesktop enabledOnMobile={false}>
+            <TooltipTrigger asChild triggerRefProp="triggerRef">
+              <ContextMenuTrigger
+                {...(dragHandleProps?.attributes as object | undefined)}
+                {...(dragHandleProps?.listeners as object | undefined)}
+                testID={`workspace-tab-${testIdentity}`}
+                triggerRef={dragHandleProps?.setActivatorNodeRef as unknown as undefined}
+                enabledOnMobile={false}
+                style={tabChipStyle}
+                onPressIn={handleNavigateTab}
+                onPress={handleNavigateTab}
+                accessibilityRole="button"
+                accessibilityLabel={accessibilityLabel}
+                accessibilityState={tabAccessibilityState}
+                aria-selected={isActive}
+              >
+                <TabHandleContent
+                  presentation={presentation}
+                  isHighlighted={isHighlighted}
+                  showLabel={showLabel}
+                  backdrop={chipBackdrop}
+                  tabLabelSkeletonStyle={tabLabelSkeletonStyle}
+                  tabLabelStyle={tabLabelStyle}
+                  onLabelPointerUp={canRenameInline ? handleLabelPointerUp : undefined}
+                  modifiedTestId={`workspace-tab-modified-${testIdentity}`}
+                />
+              </ContextMenuTrigger>
+            </TooltipTrigger>
+            <TooltipContent
+              side="bottom"
+              align="center"
+              offset={8}
+              maxWidth={720}
+              testID={`workspace-tab-tooltip-${testIdentity}`}
             >
-              <TabHandleContent
-                presentation={presentation}
-                isHighlighted={isHighlighted}
-                showLabel={showLabel}
-                backdrop={chipBackdrop}
-                tabLabelSkeletonStyle={tabLabelSkeletonStyle}
-                tabLabelStyle={tabLabelStyle}
-                modifiedTestId={`workspace-tab-modified-${testIdentity}`}
-              />
-            </ContextMenuTrigger>
-          </TooltipTrigger>
-          <TooltipContent
-            side="bottom"
-            align="center"
-            offset={8}
-            maxWidth={720}
-            testID={`workspace-tab-tooltip-${testIdentity}`}
-          >
-            {tab.target.kind === "agent" ? (
-              <AgentTabTooltipBody
-                serverId={serverId}
-                agentId={tab.target.agentId}
-                title={tooltipLabel}
-              />
-            ) : (
-              <Text style={styles.newTabTooltipText}>{tooltipLabel}</Text>
-            )}
-          </TooltipContent>
-        </Tooltip>
+              {tab.target.kind === "agent" ? (
+                <AgentTabTooltipBody
+                  serverId={serverId}
+                  agentId={tab.target.agentId}
+                  title={tooltipLabel}
+                />
+              ) : (
+                <Text style={styles.newTabTooltipText}>{tooltipLabel}</Text>
+              )}
+            </TooltipContent>
+          </Tooltip>
+        )}
 
-        {showCloseButton ? (
+        {showCloseButton && !isRenaming ? (
           <View
             pointerEvents={showCloseControl ? "box-none" : "none"}
             style={[
@@ -1005,6 +1062,7 @@ function ResolvedWorkspaceDesktopTabsRow({
   onCopyFilePath,
   onReloadAgent,
   onRenameTab,
+  onInlineRenameTab,
   onCloseTabsToLeft,
   onCloseTabsToRight,
   onCloseOtherTabs,
@@ -1261,6 +1319,7 @@ function ResolvedWorkspaceDesktopTabsRow({
           onCopyFilePath={onCopyFilePath}
           onReloadAgent={onReloadAgent}
           onRenameTab={onRenameTab}
+          onInlineRenameTab={onInlineRenameTab}
           onCloseTabsToLeft={onCloseTabsToLeft}
           onCloseTabsToRight={onCloseTabsToRight}
           onCloseOtherTabs={onCloseOtherTabs}
@@ -1294,6 +1353,7 @@ function ResolvedWorkspaceDesktopTabsRow({
       onNavigateTab,
       onReloadAgent,
       onRenameTab,
+      onInlineRenameTab,
       setHoveredCloseTabKey,
       tabMenuLabels,
       tabDropPreviewIndex,
@@ -1408,6 +1468,7 @@ function ResolvedDesktopTabChip({
   onCopyFilePath,
   onReloadAgent,
   onRenameTab,
+  onInlineRenameTab,
   onCloseTabsToLeft,
   onCloseTabsToRight,
   onCloseOtherTabs,
@@ -1434,6 +1495,7 @@ function ResolvedDesktopTabChip({
   onCopyFilePath: (path: string) => Promise<void> | void;
   onReloadAgent: (agentId: string) => Promise<void> | void;
   onRenameTab: (tab: WorkspaceTabDescriptor) => void;
+  onInlineRenameTab: (tab: WorkspaceTabDescriptor, nextTitle: string) => Promise<void>;
   onCloseTabsToLeft: (tabId: string) => Promise<void> | void;
   onCloseTabsToRight: (tabId: string) => Promise<void> | void;
   onCloseOtherTabs: (tabId: string) => Promise<void> | void;
@@ -1522,6 +1584,7 @@ function ResolvedDesktopTabChip({
         setHoveredCloseTabKey={setHoveredCloseTabKey}
         onNavigateTab={onNavigateTab}
         onCloseTab={onCloseTab}
+        onInlineRenameTab={onInlineRenameTab}
         dragHandleProps={dragHandleProps}
       />
       {showDropIndicatorAfter ? (
@@ -1615,6 +1678,22 @@ const styles = StyleSheet.create((theme) => ({
     flex: 1,
     minWidth: 0,
     userSelect: "none",
+  },
+  tabLabelTarget: {
+    flex: 1,
+    minWidth: 0,
+    userSelect: "none",
+  },
+  tabRenameInput: {
+    flex: 1,
+    minWidth: 0,
+    height: 24,
+    borderWidth: 0,
+    borderRadius: 0,
+    backgroundColor: "transparent",
+    paddingHorizontal: 0,
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.sm,
   },
   tabIcon: {
     width: TAB_ICON_WIDTH,

@@ -2273,14 +2273,19 @@ function WorkspaceScreenContent({
   });
 
   const [hoveredCloseTabKey, setHoveredCloseTabKey] = useState<string | null>(null);
-  const { handleRenameTab, renamingTab, handleRenameModalSubmit, handleRenameModalClose } =
-    useWorkspaceTabRename({
-      client,
-      normalizedServerId,
-      queryClient,
-      terminalsData: terminalsQuery.data,
-      terminalsQueryKey,
-    });
+  const {
+    handleRenameTab,
+    handleInlineRenameTab,
+    renamingTab,
+    handleRenameModalSubmit,
+    handleRenameModalClose,
+  } = useWorkspaceTabRename({
+    client,
+    normalizedServerId,
+    queryClient,
+    terminalsData: terminalsQuery.data,
+    terminalsQueryKey,
+  });
 
   const tabByKey = useMemo(() => {
     const map = new Map<string, WorkspaceTabDescriptor>();
@@ -3956,6 +3961,7 @@ function WorkspaceScreenContent({
         onCopyFilePath={handleCopyFilePath}
         onReloadAgent={handleReloadAgent}
         onRenameTab={handleRenameTab}
+        onInlineRenameTab={handleInlineRenameTab}
         onCloseTabsToLeft={handleCloseTabsToLeftInPane}
         onCloseTabsToRight={handleCloseTabsToRightInPane}
         onCloseOtherTabs={handleCloseOtherTabsInPane}
@@ -3992,6 +3998,7 @@ function WorkspaceScreenContent({
     handleCopyFilePath,
     handleReloadAgent,
     handleRenameTab,
+    handleInlineRenameTab,
     handleCloseTabsToLeftInPane,
     handleCloseTabsToRightInPane,
     handleCloseOtherTabsInPane,
@@ -4059,6 +4066,7 @@ function WorkspaceScreenContent({
             onCopyFilePath={handleCopyFilePath}
             onReloadAgent={handleReloadAgent}
             onRenameTab={handleRenameTab}
+            onInlineRenameTab={handleInlineRenameTab}
             onCloseTabsToLeft={handleCloseTabsToLeft}
             onCloseTabsToRight={handleCloseTabsToRight}
             onCloseOtherTabs={handleCloseOtherTabs}

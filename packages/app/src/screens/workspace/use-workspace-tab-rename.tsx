@@ -13,6 +13,8 @@ interface RenamingTabState {
   currentTitle: string;
 }
 
+type RenameTarget = Pick<RenamingTabState, "kind" | "id">;
+
 interface UseWorkspaceTabRenameInput {
   client: DaemonClient | null;
   normalizedServerId: string;
@@ -24,6 +26,7 @@ interface UseWorkspaceTabRenameInput {
 interface UseWorkspaceTabRenameResult {
   renamingTab: RenamingTabState | null;
   handleRenameTab: (tab: WorkspaceTabDescriptor) => void;
+  handleInlineRenameTab: (tab: WorkspaceTabDescriptor, nextTitle: string) => Promise<void>;
   handleRenameModalSubmit: (nextTitle: string) => Promise<void>;
   handleRenameModalClose: () => void;
 }
@@ -34,6 +37,34 @@ export function useWorkspaceTabRename(
   const { client, normalizedServerId, queryClient, terminalsData, terminalsQueryKey } = input;
   const { t } = useTranslation();
   const [renamingTab, setRenamingTab] = useState<RenamingTabState | null>(null);
+
+  const renameTabTarget = useCallback(
+    async (target: RenameTarget, nextTitle: string) => {
+      if (!client) {
+        throw new Error(t("workspace.terminal.hostDisconnected"));
+      }
+      const trimmed = nextTitle.trim();
+      if (target.kind === "terminal") {
+        const result = await client.renameTerminal({
+          terminalId: target.id,
+          title: trimmed,
+        });
+        if (!result.success) {
+          throw new Error(result.error ?? "Failed to rename terminal");
+        }
+        void queryClient.invalidateQueries({ queryKey: terminalsQueryKey });
+        return;
+      }
+      await client.updateAgent(target.id, { name: trimmed });
+      void queryClient.invalidateQueries({
+        queryKey: ["sidebarAgentsList", normalizedServerId],
+      });
+      void queryClient.invalidateQueries({
+        queryKey: ["allAgents", normalizedServerId],
+      });
+    },
+    [client, normalizedServerId, queryClient, t, terminalsQueryKey],
+  );
 
   const handleRenameTab = useCallback(
     (tab: WorkspaceTabDescriptor) => {
@@ -55,33 +86,25 @@ export function useWorkspaceTabRename(
     [normalizedServerId, terminalsData],
   );
 
+  const handleInlineRenameTab = useCallback(
+    async (tab: WorkspaceTabDescriptor, nextTitle: string) => {
+      if (tab.target.kind === "terminal") {
+        await renameTabTarget({ kind: "terminal", id: tab.target.terminalId }, nextTitle);
+        return;
+      }
+      if (tab.target.kind === "agent") {
+        await renameTabTarget({ kind: "agent", id: tab.target.agentId }, nextTitle);
+      }
+    },
+    [renameTabTarget],
+  );
+
   const handleRenameModalSubmit = useCallback(
     async (nextTitle: string) => {
       if (!renamingTab) return;
-      if (!client) {
-        throw new Error(t("workspace.terminal.hostDisconnected"));
-      }
-      const trimmed = nextTitle.trim();
-      if (renamingTab.kind === "terminal") {
-        const result = await client.renameTerminal({
-          terminalId: renamingTab.id,
-          title: trimmed,
-        });
-        if (!result.success) {
-          throw new Error(result.error ?? "Failed to rename terminal");
-        }
-        void queryClient.invalidateQueries({ queryKey: terminalsQueryKey });
-        return;
-      }
-      await client.updateAgent(renamingTab.id, { name: trimmed });
-      void queryClient.invalidateQueries({
-        queryKey: ["sidebarAgentsList", normalizedServerId],
-      });
-      void queryClient.invalidateQueries({
-        queryKey: ["allAgents", normalizedServerId],
-      });
+      await renameTabTarget(renamingTab, nextTitle);
     },
-    [client, normalizedServerId, queryClient, renamingTab, terminalsQueryKey, t],
+    [renameTabTarget, renamingTab],
   );
 
   const handleRenameModalClose = useCallback(() => {
@@ -91,6 +114,7 @@ export function useWorkspaceTabRename(
   return {
     renamingTab,
     handleRenameTab,
+    handleInlineRenameTab,
     handleRenameModalSubmit,
     handleRenameModalClose,
   };
