@@ -239,7 +239,12 @@ export function resolveDefaultTerminalShell(
   const env = options.env ?? process.env;
 
   if (platform === "win32") {
-    return env.ComSpec || env.COMSPEC || "C:\\Windows\\System32\\cmd.exe";
+    // Default new terminals to PowerShell rather than the legacy cmd.exe that
+    // ComSpec points at. Windows PowerShell 5.1 ships in System32 on every
+    // supported Windows, so this path is always present and keeps the resolver
+    // pure (no PATH probing). %SystemRoot% may be relocated, so honor it.
+    const systemRoot = env.SystemRoot || env.SYSTEMROOT || "C:\\Windows";
+    return `${systemRoot}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe`;
   }
 
   return env.SHELL || "/bin/sh";

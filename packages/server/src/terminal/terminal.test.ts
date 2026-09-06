@@ -230,16 +230,23 @@ describe("createTerminal", () => {
     expect(statSync(helperPath).mode & 0o111).toBe(0o111);
   });
 
-  it("uses cmd.exe-compatible default shell on Windows", () => {
+  it("defaults to Windows PowerShell on Windows, ignoring ComSpec", () => {
     expect(resolveDefaultTerminalShell({ platform: "win32", env: {} })).toBe(
-      "C:\\Windows\\System32\\cmd.exe",
+      "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
     );
+    // ComSpec (which Windows points at cmd.exe) must not pull us back to cmd.
     expect(
       resolveDefaultTerminalShell({
         platform: "win32",
-        env: { ComSpec: "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" },
+        env: { ComSpec: "C:\\Windows\\System32\\cmd.exe" },
       }),
     ).toBe("C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe");
+  });
+
+  it("honors a relocated %SystemRoot% on Windows", () => {
+    expect(
+      resolveDefaultTerminalShell({ platform: "win32", env: { SystemRoot: "D:\\Windows" } }),
+    ).toBe("D:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe");
   });
 
   it("passes profile commands through untouched on non-Windows", async () => {
