@@ -8,9 +8,10 @@ import React, {
   useState,
   useSyncExternalStore,
 } from "react";
+import type { EditorView } from "@codemirror/view";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { ScrollView as RNScrollView, Text, View } from "react-native";
-import { StyleSheet, UnistylesRuntime, withUnistyles } from "react-native-unistyles";
+import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { useSessionStore, type ExplorerFile } from "@/stores/session-store";
@@ -23,6 +24,10 @@ import { useRetainedPanelActive } from "@/components/retained-panel";
 import { useAppActivelyVisible } from "@/hooks/use-app-visible";
 import { isFileQueryEnabled } from "@/components/file-pane-enabled";
 import { isWeb } from "@/constants/platform";
+import { FindBar } from "@/find/bar";
+import { domElementOf } from "@/find/dom/element";
+import { FindHighlightColorsSync } from "@/find/dom/highlight-colors";
+import { useFileFind } from "@/find/file/use-file-find";
 import { useAppSettings } from "@/hooks/use-settings";
 import { useLiveFile } from "./live-file/hook";
 import { useFilePreview } from "./preview-lifecycle/hook";
@@ -32,6 +37,7 @@ import { FileHtmlPreview } from "./html-preview";
 import { FileMarkdownPreview } from "./markdown-preview";
 import { FileEditorModel, getFileConflictCallout, type FileConflictCallout } from "./editor/model";
 import { createFileObservationSource } from "./editor/observation-source";
+import type { EditorVisualTheme } from "./editor/extensions.web";
 import { FileEditorView } from "./editor/view";
 import { FileSourceView } from "./source/view";
 import type { FileConflictAlertState } from "./conflict-alert";
@@ -46,6 +52,47 @@ const foregroundMutedColorMapping = (theme: Theme) => ({
   color: theme.colors.foregroundMuted,
 });
 
+const editorVisualThemes = new WeakMap<Theme, EditorVisualTheme>();
+
+/**
+ * Cached per theme object so the wrapped views below hand CodeMirror one stable value:
+ * the editor reconfigures its theme compartment whenever this prop's identity changes.
+ */
+function editorVisualTheme(theme: Theme): EditorVisualTheme {
+  const cached = editorVisualThemes.get(theme);
+  if (cached) {
+    return cached;
+  }
+  const visual: EditorVisualTheme = {
+    colorScheme: theme.colorScheme,
+    background: theme.colors.surface0,
+    foreground: theme.colors.foreground,
+    cursor: theme.colors.terminal.cursor,
+    foregroundMuted: theme.colors.foregroundMuted,
+    border: theme.colors.border,
+    selection: theme.colors.terminal.selectionBackground,
+    monoFont: theme.fontFamily.mono,
+    codeFontSize: theme.fontSize.code,
+    syntax: theme.colors.syntax,
+    findMatch: theme.colors.findMatch,
+    findMatchActive: theme.colors.findMatchActive,
+  };
+  editorVisualThemes.set(theme, visual);
+  return visual;
+}
+
+/**
+ * A one-shot `UnistylesRuntime.getTheme()` read never re-renders (docs/unistyles.md), so
+ * the editors kept the previous scheme's colours — including the find marks — until
+ * something else re-rendered the pane. Wrapping the two views subscribes just them.
+ */
+const ThemedFileSourceView = withUnistyles(FileSourceView, (theme: Theme) => ({
+  theme: editorVisualTheme(theme),
+}));
+const ThemedFileEditorView = withUnistyles(FileEditorView, (theme: Theme) => ({
+  theme: editorVisualTheme(theme),
+}));
+
 interface FilePreviewBodyProps {
   preview: ExplorerFile | null;
   mode?: "preview" | "source";
@@ -54,6 +101,9 @@ interface FilePreviewBodyProps {
   location: WorkspaceFileLocation;
   navigationRevision: number;
   imagePreviewUri: string | null;
+  /** Both are stable setters: find swaps engines when the rendered mode changes. */
+  onEditorViewChange?: (view: EditorView | null) => void;
+  onPreviewScrollElementChange?: (element: HTMLElement | null) => void;
 }
 
 type TextExplorerFile = ExplorerFile & { kind: "text" };
@@ -81,38 +131,24 @@ function ReadonlySource({
   filename,
   location,
   navigationRevision,
+  onEditorViewChange,
 }: {
   preview: ExplorerFile;
   filename: string;
   location: WorkspaceFileLocation;
   navigationRevision: number;
+  onEditorViewChange?: (view: EditorView | null) => void;
 }) {
-  const theme = UnistylesRuntime.getTheme();
   const { t } = useTranslation();
-  const visualTheme = useMemo(
-    () => ({
-      colorScheme: theme.colorScheme,
-      background: theme.colors.surface0,
-      foreground: theme.colors.foreground,
-      cursor: theme.colors.terminal.cursor,
-      foregroundMuted: theme.colors.foregroundMuted,
-      border: theme.colors.border,
-      selection: theme.colors.terminal.selectionBackground,
-      monoFont: theme.fontFamily.mono,
-      codeFontSize: theme.fontSize.code,
-      syntax: theme.colors.syntax,
-    }),
-    [theme],
-  );
   return (
-    <FileSourceView
+    <ThemedFileSourceView
       content={preview.content ?? ""}
       filename={filename}
       location={location}
       navigationRevision={navigationRevision}
       size={preview.size}
-      theme={visualTheme}
       tooLargeMessage={t("panels.file.tooLargeToDisplay")}
+      onEditorViewChange={onEditorViewChange}
     />
   );
 }
@@ -135,6 +171,8 @@ function FilePreviewBody({
   location,
   navigationRevision,
   imagePreviewUri,
+  onEditorViewChange,
+  onPreviewScrollElementChange,
 }: FilePreviewBodyProps) {
   const { t } = useTranslation();
   const filePath = location.path;
@@ -145,7 +183,13 @@ function FilePreviewBody({
       ? filePreviewRenderKind(filePath)
       : null;
 
-  const previewScrollRef = useRef<RNScrollView>(null);
+  // On react-native-web the forwarded ScrollView ref is the scrolling DOM node, which
+  // is what the DOM find engine searches and scrolls. Memoized because a fresh ref
+  // callback would detach and re-attach on every render.
+  const previewScrollRef = useCallback(
+    (instance: RNScrollView | null) => onPreviewScrollElementChange?.(domElementOf(instance)),
+    [onPreviewScrollElementChange],
+  );
 
   if (isLoading && !preview) {
     return (
@@ -194,6 +238,7 @@ function FilePreviewBody({
         filename={filePath}
         location={location}
         navigationRevision={navigationRevision}
+        onEditorViewChange={onEditorViewChange}
       />
     );
   }
@@ -215,6 +260,51 @@ function FilePreviewBody({
     <View style={styles.centerState}>
       <Text style={styles.emptyText}>{t("panels.file.binaryPreviewUnavailable")}</Text>
       <Text style={styles.binaryMetaText}>{formatFileSize({ size: preview.size })}</Text>
+    </View>
+  );
+}
+
+/**
+ * The pane region below the file bar, and the find bar overlaid on top of it.
+ *
+ * The wrapper exists so find has one DOM root per file pane whatever mode is showing:
+ * the registry resolves Cmd+F by asking which surface contains the focused element or
+ * the last pointerdown, and the bar has to float inside the same box.
+ */
+function FilePaneContent({
+  editorView,
+  previewScrollElement,
+  children,
+}: {
+  editorView: EditorView | null;
+  previewScrollElement: HTMLElement | null;
+  children: React.ReactNode;
+}) {
+  const isPanelActive = useRetainedPanelActive();
+  const rootRef = useRef<View>(null);
+  const getRoot = useCallback(() => domElementOf(rootRef.current), []);
+  const find = useFileFind({
+    enabled: isWeb && isPanelActive,
+    editorView,
+    previewScrollElement,
+    getRoot,
+  });
+
+  return (
+    <View ref={rootRef} style={styles.content}>
+      <FindHighlightColorsSync />
+      {children}
+      {find?.isOpen ? (
+        <FindBar
+          query={find.query}
+          result={find.result}
+          inputRef={find.inputRef}
+          onChangeQuery={find.setQuery}
+          onNext={find.next}
+          onPrevious={find.previous}
+          onClose={find.close}
+        />
+      ) : null}
     </View>
   );
 }
@@ -379,6 +469,9 @@ function FilePanePresentation({
   navigationRevision: number;
   imagePreviewUri: string | null;
 }) {
+  const [editorView, setEditorView] = useState<EditorView | null>(null);
+  const [previewScrollElement, setPreviewScrollElement] = useState<HTMLElement | null>(null);
+
   if (!client && readTarget) {
     return (
       <View style={styles.container} testID="workspace-file-pane">
@@ -441,15 +534,19 @@ function FilePanePresentation({
           onModeChange={onPreviewModeChange}
         />
       ) : null}
-      <FilePreviewBody
-        preview={preview}
-        mode={previewMode}
-        isLoading={isLoading}
-        isMobile={isMobile}
-        location={location}
-        navigationRevision={navigationRevision}
-        imagePreviewUri={imagePreviewUri}
-      />
+      <FilePaneContent editorView={editorView} previewScrollElement={previewScrollElement}>
+        <FilePreviewBody
+          preview={preview}
+          mode={previewMode}
+          isLoading={isLoading}
+          isMobile={isMobile}
+          location={location}
+          navigationRevision={navigationRevision}
+          imagePreviewUri={imagePreviewUri}
+          onEditorViewChange={setEditorView}
+          onPreviewScrollElementChange={setPreviewScrollElement}
+        />
+      </FilePaneContent>
     </View>
   );
 }
@@ -487,6 +584,8 @@ function EditableFilePane({
 }) {
   const { settings } = useAppSettings();
   const { t } = useTranslation();
+  const [editorView, setEditorView] = useState<EditorView | null>(null);
+  const [previewScrollElement, setPreviewScrollElement] = useState<HTMLElement | null>(null);
   const [cursor, setCursor] = useState({ line: 1, column: 1 });
   const [vimMode, setVimMode] = useState<string | null>(settings.vimKeybindings ? "NORMAL" : null);
   const session = useMemo(
@@ -522,34 +621,6 @@ function EditableFilePane({
   const snapshot = useSyncExternalStore(model.subscribe, model.getSnapshot, model.getSnapshot);
   const suspendPendingSave = useCallback(() => model.suspendAutosave(), [model]);
   usePublishPanelInstanceAttributes({ modified: snapshot.modified, suspendPendingSave });
-  const theme = UnistylesRuntime.getTheme();
-  const visualTheme = useMemo(
-    () => ({
-      colorScheme: theme.colorScheme,
-      background: theme.colors.surface0,
-      foreground: theme.colors.foreground,
-      cursor: theme.colors.terminal.cursor,
-      foregroundMuted: theme.colors.foregroundMuted,
-      border: theme.colors.border,
-      selection: theme.colors.terminal.selectionBackground,
-      monoFont: theme.fontFamily.mono,
-      codeFontSize: theme.fontSize.code,
-      syntax: theme.colors.syntax,
-    }),
-    [
-      theme.colors.border,
-      theme.colors.foreground,
-      theme.colors.foregroundMuted,
-      theme.colors.surface0,
-      theme.colors.syntax,
-      theme.colors.terminal.cursor,
-      theme.colors.terminal.selectionBackground,
-      theme.colorScheme,
-      theme.fontFamily.mono,
-      theme.fontSize.code,
-    ],
-  );
-
   useEffect(() => () => model.dispose(), [model]);
 
   const handleReload = useCallback(() => {
@@ -602,28 +673,32 @@ function EditableFilePane({
         mode={mode}
         onModeChange={onModeChange}
       />
-      {showSource ? (
-        <FileEditorView
-          model={model}
-          filename={filename}
-          location={location}
-          navigationRevision={navigationRevision}
-          vimEnabled={settings.vimKeybindings}
-          theme={visualTheme}
-          onCursorChange={setCursor}
-          onVimModeChange={handleVimModeChange}
-        />
-      ) : (
-        <FilePreviewBody
-          preview={renderedPreview}
-          mode={mode}
-          isLoading={isLoading}
-          isMobile={isMobile}
-          location={location}
-          navigationRevision={navigationRevision}
-          imagePreviewUri={null}
-        />
-      )}
+      <FilePaneContent editorView={editorView} previewScrollElement={previewScrollElement}>
+        {showSource ? (
+          <ThemedFileEditorView
+            model={model}
+            filename={filename}
+            location={location}
+            navigationRevision={navigationRevision}
+            vimEnabled={settings.vimKeybindings}
+            onCursorChange={setCursor}
+            onVimModeChange={handleVimModeChange}
+            onEditorViewChange={setEditorView}
+          />
+        ) : (
+          <FilePreviewBody
+            preview={renderedPreview}
+            mode={mode}
+            isLoading={isLoading}
+            isMobile={isMobile}
+            location={location}
+            navigationRevision={navigationRevision}
+            imagePreviewUri={null}
+            onEditorViewChange={setEditorView}
+            onPreviewScrollElementChange={setPreviewScrollElement}
+          />
+        )}
+      </FilePaneContent>
     </View>
   );
 }
@@ -653,6 +728,10 @@ const styles = StyleSheet.create((theme) => ({
     flex: 1,
     minHeight: 0,
     backgroundColor: theme.colors.surface0,
+  },
+  content: {
+    flex: 1,
+    minHeight: 0,
   },
   centerState: {
     flex: 1,

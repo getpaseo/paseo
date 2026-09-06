@@ -203,6 +203,35 @@ const darkStatusDotColors = {
   statusDotRunning: "#5caaf6",
 };
 
+/**
+ * Flattens a translucent color onto an opaque one and returns the opaque result.
+ *
+ * xterm's renderers mask the alpha channel of decoration backgrounds (addon-webgl
+ * CellColorResolver, DomRendererRowFactory), so a translucent find mark would paint
+ * solid over the cell. Blending here keeps the terminal marks derived from the same
+ * palette entries as the DOM ones instead of hand-picked hexes.
+ */
+function blendOverBackground(top: string, background: string, alpha: number): string {
+  const [topRed, topGreen, topBlue] = hexChannels(top);
+  const [backgroundRed, backgroundGreen, backgroundBlue] = hexChannels(background);
+  const mix = (topChannel: number, backgroundChannel: number) =>
+    Math.round(topChannel * alpha + backgroundChannel * (1 - alpha))
+      .toString(16)
+      .padStart(2, "0");
+  return `#${mix(topRed, backgroundRed)}${mix(topGreen, backgroundGreen)}${mix(topBlue, backgroundBlue)}`;
+}
+
+/**
+ * Plugin themes may contribute `#rgb` and `#rrggbbaa`, so shorthand is expanded and a
+ * background alpha dropped — a terminal background is opaque by the time xterm sees it.
+ */
+function hexChannels(hex: string): [number, number, number] {
+  const digits = hex.slice(1);
+  const full = digits.length < 6 ? digits.replace(/./g, (digit) => digit + digit) : digits;
+  const channel = (offset: number) => Number.parseInt(full.slice(offset, offset + 2), 16);
+  return [channel(0), channel(2), channel(4)];
+}
+
 export interface LightThemeConfig {
   surface0: string;
   surface1: string;
@@ -258,6 +287,11 @@ export function buildLightSemanticColors(tint: LightThemeConfig) {
     surfaceWorkspace: tint.surface0,
     interactionHighlight: "rgba(0, 0, 0, 0.06)",
 
+    // Find-in-pane marks. Translucent so the text underneath stays readable and so
+    // an active mark sitting on top of the all-matches mark still reads as one color.
+    findMatch: "rgba(245, 158, 11, 0.4)",
+    findMatchActive: "rgba(249, 115, 22, 0.6)",
+
     foreground: tint.foreground,
     foregroundMuted: tint.foregroundMuted,
     foregroundExtraMuted: tint.foregroundExtraMuted,
@@ -298,6 +332,8 @@ export function buildLightSemanticColors(tint: LightThemeConfig) {
       cursorAccent: tint.surface0,
       selectionBackground: "rgba(0, 0, 0, 0.15)",
       selectionForeground: tint.foreground,
+      findMatch: blendOverBackground(baseColors.amber[500], tint.surface0, 0.4),
+      findMatchActive: blendOverBackground(baseColors.orange[500], tint.surface0, 0.6),
       black: tint.terminalBlack,
       ...lightTerminalAnsi,
       brightBlack: tint.terminalBrightBlack,
@@ -388,6 +424,9 @@ export function buildDarkSemanticColors(tint: DarkThemeConfig) {
     surfaceWorkspace: tint.surface1,
     interactionHighlight: "rgba(255, 255, 255, 0.08)",
 
+    findMatch: "rgba(251, 191, 36, 0.35)",
+    findMatchActive: "rgba(249, 115, 22, 0.65)",
+
     foreground,
     foregroundMuted: tint.foregroundMuted,
     foregroundExtraMuted: tint.foregroundExtraMuted,
@@ -429,6 +468,8 @@ export function buildDarkSemanticColors(tint: DarkThemeConfig) {
       cursorAccent: tint.surface0,
       selectionBackground: "rgba(255, 255, 255, 0.2)",
       selectionForeground: foreground,
+      findMatch: blendOverBackground(baseColors.yellow[400], tint.surface0, 0.35),
+      findMatchActive: blendOverBackground(baseColors.orange[500], tint.surface0, 0.65),
       black: tint.terminalBlack,
       ...darkTerminalAnsi,
       brightBlack: tint.terminalBrightBlack,

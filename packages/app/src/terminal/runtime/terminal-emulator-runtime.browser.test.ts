@@ -1,7 +1,11 @@
 import { page } from "@vitest/browser/context";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { TerminalInputModeState } from "@getpaseo/protocol/terminal-input-mode";
-import { encodeTerminalOutput, TerminalEmulatorRuntime } from "./terminal-emulator-runtime";
+import {
+  encodeTerminalOutput,
+  TerminalEmulatorRuntime,
+  type TerminalFindResults,
+} from "./terminal-emulator-runtime";
 
 vi.mock("@xterm/addon-webgl", () => ({
   WebglAddon: class WebglAddon {
@@ -30,6 +34,9 @@ type BrowserTerminal = TerminalSize & {
   input: (data: string, wasUserInput?: boolean) => void;
   refresh: (start: number, end: number) => void;
   reset: () => void;
+  buffer: { active: { viewportY: number } };
+  getSelectionPosition: () => { start: { x: number; y: number } } | undefined;
+  select: (column: number, row: number, length: number) => void;
 };
 
 interface MountedTerminal {
@@ -40,6 +47,8 @@ interface MountedTerminal {
   sizes: TerminalSize[];
   terminalKeys: TerminalKeyRecord[];
   inputModeChanges: TerminalInputModeState[];
+  findResults: TerminalFindResults[];
+  findBufferChanges: number;
 }
 
 const mountedTerminals: MountedTerminal[] = [];
@@ -95,7 +104,19 @@ function createTerminalHost(input: {
   const inputs: string[] = [];
   const terminalKeys: TerminalKeyRecord[] = [];
   const inputModeChanges: TerminalInputModeState[] = [];
-  const runtime = new TerminalEmulatorRuntime();
+  const findResults: TerminalFindResults[] = [];
+  const mounted: MountedTerminal = {
+    host,
+    root,
+    runtime: new TerminalEmulatorRuntime(),
+    inputs,
+    sizes,
+    terminalKeys,
+    inputModeChanges,
+    findResults,
+    findBufferChanges: 0,
+  };
+  const runtime = mounted.runtime;
   runtime.setCallbacks({
     callbacks: {
       onInput: (data) => {
@@ -110,6 +131,12 @@ function createTerminalHost(input: {
       onInputModeChange: (state) => {
         inputModeChanges.push(state);
       },
+      onFindResultsChange: (results) => {
+        findResults.push(results);
+      },
+      onFindBufferChange: () => {
+        mounted.findBufferChanges += 1;
+      },
     },
   });
   runtime.mount({
@@ -122,11 +149,17 @@ function createTerminalHost(input: {
       foreground: "#e6e6e6",
       cursor: "#e6e6e6",
     },
+    findColors: { match: "#7a5c1f", activeMatch: "#8a4014" },
   });
 
-  const mounted = { host, root, runtime, inputs, sizes, terminalKeys, inputModeChanges };
   mountedTerminals.push(mounted);
   return mounted;
+}
+
+function writeAndSettle(mounted: MountedTerminal, text: string): Promise<void> {
+  return new Promise((resolve) => {
+    mounted.runtime.write({ data: terminalOutput(text), onCommitted: () => resolve() });
+  });
 }
 
 function latestSize(sizes: TerminalSize[]): TerminalSize {
@@ -525,5 +558,116 @@ describe("terminal emulator runtime in a real browser", () => {
     await nextFrame();
 
     expect(reset).not.toHaveBeenCalled();
+  });
+
+  it("counts every match and reports the active one through the search addon", async () => {
+    await page.viewport(900, 600);
+    const mounted = createTerminalHost({ width: 720, height: 360 });
+    await waitFor({ predicate: () => mounted.sizes.length > 0 });
+    await writeAndSettle(mounted, "alpha beta\r\nbeta gamma\r\ndelta beta\r\n");
+
+    mounted.runtime.findNext({ term: "beta" });
+
+    await waitFor({ predicate: () => mounted.findResults.length > 0 });
+    expect(mounted.findResults.at(-1)).toEqual({
+      resultIndex: 0,
+      resultCount: 3,
+      countIsCapped: false,
+    });
+
+    mounted.runtime.findNext({ term: "beta" });
+    await waitFor({ predicate: () => mounted.findResults.at(-1)?.resultIndex === 1 });
+
+    mounted.runtime.findPrevious({ term: "beta" });
+    await waitFor({ predicate: () => mounted.findResults.at(-1)?.resultIndex === 0 });
+  });
+
+  it("starts a new term at the visible screen instead of the top of the scrollback", async () => {
+    await page.viewport(900, 600);
+    const mounted = createTerminalHost({ width: 720, height: 360 });
+    await waitFor({ predicate: () => mounted.sizes.length > 0 });
+
+    const terminal = getBrowserTerminal();
+    const filler = "filler\r\n".repeat(terminal.rows * 3);
+    await writeAndSettle(mounted, `needle\r\n${filler}needle\r\n`);
+
+    mounted.runtime.findNext({ term: "needle" });
+
+    const selection = terminal.getSelectionPosition();
+    expect(selection).toBeDefined();
+    expect(selection?.start.y).toBeGreaterThanOrEqual(terminal.buffer.active.viewportY);
+  });
+
+  // The addon tracks only the matches it highlighted, so a match found past its limit
+  // reports -1 forever: the bar has to say "1000+ matches", not "1 of 1000".
+  it("reports a capped count once the buffer holds more matches than the highlight limit", async () => {
+    await page.viewport(900, 600);
+    const mounted = createTerminalHost({ width: 720, height: 360 });
+    await waitFor({ predicate: () => mounted.sizes.length > 0 });
+    await writeAndSettle(mounted, "needle\r\n".repeat(1_200));
+
+    mounted.runtime.findNext({ term: "needle" });
+
+    await waitFor({ predicate: () => mounted.findResults.length > 0 });
+    expect(mounted.findResults.at(-1)).toEqual({
+      resultIndex: -1,
+      resultCount: 1_000,
+      countIsCapped: true,
+    });
+  });
+
+  it("repaints a running search in a new theme without stepping to the next match", async () => {
+    await page.viewport(900, 600);
+    const mounted = createTerminalHost({ width: 720, height: 360 });
+    await waitFor({ predicate: () => mounted.sizes.length > 0 });
+    await writeAndSettle(mounted, "alpha beta\r\nbeta gamma\r\ndelta beta\r\n");
+
+    mounted.runtime.findNext({ term: "beta" });
+    await waitFor({ predicate: () => mounted.findResults.at(-1)?.resultIndex === 0 });
+
+    // Decorations keep the colours they were created with, and the addon caches the
+    // options it last searched with, so nothing else repaints them.
+    mounted.runtime.setTheme({
+      theme: { background: "#101010", foreground: "#fafafa", cursor: "#fafafa" },
+      findColors: { match: "#1f5c7a", activeMatch: "#14408a" },
+    });
+
+    await nextFrame();
+    expect(mounted.findResults.at(-1)?.resultIndex).toBe(0);
+    expect(mounted.runtime.getSelectionText()).toBe("beta");
+  });
+
+  it("drops the decorations and the selection a search made, and nothing else", async () => {
+    await page.viewport(900, 600);
+    const mounted = createTerminalHost({ width: 720, height: 360 });
+    await waitFor({ predicate: () => mounted.sizes.length > 0 });
+    await writeAndSettle(mounted, "alpha beta\r\n");
+
+    getBrowserTerminal().select(0, 0, 5);
+    mounted.runtime.clearFind();
+    expect(mounted.runtime.getSelectionText()).toBe("alpha");
+
+    mounted.runtime.findNext({ term: "beta" });
+    expect(mounted.runtime.getSelectionText()).toBe("beta");
+
+    mounted.runtime.clearFind();
+    expect(mounted.runtime.getSelectionText()).toBe("");
+  });
+
+  it("drops the find when the app switches to the alternate screen", async () => {
+    await page.viewport(900, 600);
+    const mounted = createTerminalHost({ width: 720, height: 360 });
+    await waitFor({ predicate: () => mounted.sizes.length > 0 });
+    await writeAndSettle(mounted, "alpha beta\r\n");
+
+    mounted.runtime.findNext({ term: "beta" });
+    expect(mounted.runtime.getSelectionText()).toBe("beta");
+
+    // Decorations are markers on the buffer that was active when the search ran, so the
+    // alternate screen has to restart the search rather than inherit them.
+    await writeAndSettle(mounted, "\u001b[?1049h");
+
+    await waitFor({ predicate: () => mounted.findBufferChanges > 0 });
+    expect(mounted.runtime.getSelectionText()).toBe("");
   });
 });

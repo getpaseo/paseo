@@ -152,6 +152,8 @@ function buildBrowserShortcutPrefixes(input: BrowserShortcutPolicyInput): Browse
     isDesktop: input.isDesktop,
     focusScope: "browser" as const,
     commandCenterOpen: false,
+    // The browser webview owns Cmd+F itself, so no find binding may ever cross into it.
+    findOpen: false,
   };
 
   const candidates =

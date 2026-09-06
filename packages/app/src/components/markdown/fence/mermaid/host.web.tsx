@@ -5,6 +5,7 @@ import { useTranslation } from "react-i18next";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { HighlightedCodeBlock } from "@/components/highlighted-code-block";
 import { ZoomableViewport } from "@/components/zoomable-viewport";
+import { findIgnoreDataSet } from "@/find/dom/markers";
 import type { Theme } from "@/styles/theme";
 import type { MarkdownFenceRendererProps } from "../types";
 import { MermaidFullscreenViewer } from "./fullscreen-viewer.web";
@@ -97,7 +98,9 @@ function MermaidFenceHostImpl({
   return (
     <>
       {sourceVisible ? (
-        <View style={sourceContainer}>
+        // find/transcript/plain-text.ts projects a mermaid fence as empty text: which of
+        // the source and the diagram is painted is only decidable here, at runtime.
+        <View style={sourceContainer} dataSet={findIgnoreDataSet}>
           <HighlightedCodeBlock
             code={code}
             language="mermaid"

@@ -20,6 +20,8 @@ export interface KeyboardShortcutContext {
   isDesktop: boolean;
   focusScope: KeyboardFocusScope;
   commandCenterOpen: boolean;
+  /** Whether the find bar of the surface that owns Cmd+F right now is open. */
+  findOpen: boolean;
 }
 
 export interface KeyboardShortcutInput {
@@ -76,6 +78,8 @@ interface ShortcutWhen {
   terminal?: false;
   /** false = disabled when command center is open */
   commandCenter?: false;
+  /** true = enabled only while a find bar is open */
+  find?: true;
   /** Allowed focus scope or scopes */
   focusScope?: KeyboardFocusScope | readonly KeyboardFocusScope[];
 }
@@ -156,6 +160,9 @@ export const SHORTCUT_HELP_ROW_ORDER: Record<ShortcutSectionId, readonly string[
   general: [
     "toggle-command-center",
     "search-files",
+    "find-in-pane",
+    "find-next",
+    "find-previous",
     "show-shortcuts",
     "toggle-settings",
     "cycle-theme",
@@ -233,6 +240,9 @@ const SHORTCUT_HELP_LABEL_KEYS: Record<string, string> = {
   "workspace-pane-close": "settings.shortcuts.help.closePane",
   "workspace-terminal-new": "settings.shortcuts.help.newTerminal",
   "search-files": "settings.shortcuts.help.searchFiles",
+  "find-in-pane": "settings.shortcuts.help.findInPane",
+  "find-next": "settings.shortcuts.help.findNext",
+  "find-previous": "settings.shortcuts.help.findPrevious",
   "toggle-command-center": "settings.shortcuts.help.toggleCommandCenter",
   "show-shortcuts": "settings.shortcuts.help.showKeyboardShortcuts",
   "toggle-left-sidebar": "settings.shortcuts.help.toggleLeftSidebar",
@@ -251,6 +261,9 @@ const SHORTCUT_HELP_LABEL_KEYS: Record<string, string> = {
 
 const SHORTCUT_HELP_NOTE_KEYS: Record<string, string> = {
   "show-shortcuts": "settings.shortcuts.helpNotes.showKeyboardShortcuts",
+  // Find next / previous share ⌘⇧G with Changes; the note is what tells the two rows apart.
+  "find-next": "settings.shortcuts.helpNotes.findWhileOpen",
+  "find-previous": "settings.shortcuts.helpNotes.findWhileOpen",
 };
 
 // --- Binding definitions ---
@@ -451,6 +464,92 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
       label: "New browser",
     },
   },
+  // --- Find in pane ---
+  // These sit before the Changes bindings on purpose: `resolveInitialChordStep`
+  // takes the first matching single-combo binding in array order, and find
+  // previous shares ⌘⇧G / Ctrl+Shift+G with Changes. `find: true` keeps the
+  // Changes binding reachable whenever no find bar is open.
+  {
+    id: "find-open-cmd-f-mac",
+    action: "find.open",
+    combo: "Cmd+F",
+    // "browser" is absent: Cmd+F inside the Electron browser webview belongs to the page.
+    when: {
+      mac: true,
+      commandCenter: false,
+      focusScope: ["terminal", "message-input", "editable", "other"],
+    },
+    help: {
+      id: "find-in-pane",
+      section: "general",
+      label: "Find in pane",
+    },
+  },
+  {
+    // Claimed while the terminal is focused on purpose, matching VS Code. Rebindable.
+    id: "find-open-ctrl-f-non-mac",
+    action: "find.open",
+    combo: "Ctrl+F",
+    when: {
+      mac: false,
+      commandCenter: false,
+      focusScope: ["terminal", "message-input", "editable", "other"],
+    },
+    help: {
+      id: "find-in-pane",
+      section: "general",
+      label: "Find in pane",
+    },
+  },
+  {
+    id: "find-next-cmd-g-mac",
+    action: "find.next",
+    combo: "Cmd+G",
+    when: { mac: true, commandCenter: false, find: true },
+    help: {
+      id: "find-next",
+      section: "general",
+      label: "Find next",
+      note: "Only while the find bar is open.",
+    },
+  },
+  {
+    id: "find-next-ctrl-g-non-mac",
+    action: "find.next",
+    combo: "Ctrl+G",
+    when: { mac: false, commandCenter: false, find: true },
+    help: {
+      id: "find-next",
+      section: "general",
+      label: "Find next",
+      note: "Only while the find bar is open.",
+    },
+  },
+  {
+    id: "find-previous-cmd-shift-g-mac",
+    action: "find.previous",
+    combo: "Cmd+Shift+G",
+    when: { mac: true, commandCenter: false, find: true },
+    help: {
+      id: "find-previous",
+      section: "general",
+      label: "Find previous",
+      note: "Only while the find bar is open.",
+    },
+  },
+  {
+    id: "find-previous-ctrl-shift-g-non-mac",
+    action: "find.previous",
+    combo: "Ctrl+Shift+G",
+    when: { mac: false, commandCenter: false, find: true },
+    help: {
+      id: "find-previous",
+      section: "general",
+      label: "Find previous",
+      note: "Only while the find bar is open.",
+    },
+  },
+
   {
     // Keep the binding id stable so saved overrides from the former Cmd+Shift+C default survive.
     id: "workspace-tab-target-changes-cmd-shift-c-mac",
@@ -1152,7 +1251,9 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
     id: "message-input-dictation-confirm-enter",
     action: "message-input.action",
     combo: "Enter",
-    when: { commandCenter: false, terminal: false },
+    // Enumerated rather than `terminal: false` so Enter inside the find bar
+    // (focus scope "editable") is never claimed by dictation confirm.
+    when: { commandCenter: false, focusScope: ["message-input", "other"] },
     payload: { type: "message-input", kind: "dictation-confirm" },
   },
 
@@ -1312,6 +1413,7 @@ export function matchesKeyboardShortcutContext(
   }
   if (when.terminal === false && context.focusScope === "terminal") return false;
   if (when.commandCenter === false && context.commandCenterOpen) return false;
+  if (when.find === true && !context.findOpen) return false;
   if (
     when.focusScope !== undefined &&
     !(typeof when.focusScope === "string"

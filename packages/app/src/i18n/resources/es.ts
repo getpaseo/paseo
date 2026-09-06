@@ -1812,6 +1812,16 @@ export const es: TranslationResources = {
     archiveFinishedAction: "Archivar subagentes finalizados",
     archiveFinishedRetry: "Reintentar ({{failed}}/{{total}})",
   },
+  find: {
+    placeholder: "Buscar",
+    matchPosition: "{{current}} de {{count}}",
+    matchPositionCapped: "{{current}} de más de {{count}}",
+    noResults: "Sin resultados",
+    cappedCount: "Más de {{count}} coincidencias",
+    previous: "Coincidencia anterior",
+    next: "Coincidencia siguiente",
+    close: "Cerrar búsqueda",
+  },
   panels: {
     draft: {
       newAgent: "Nuevo agente",
@@ -2254,6 +2264,9 @@ export const es: TranslationResources = {
         closePane: "Cerrar panel",
         newTerminal: "Nueva terminal",
         searchFiles: "Buscar archivos",
+        findInPane: "Buscar en el panel",
+        findNext: "Buscar siguiente",
+        findPrevious: "Buscar anterior",
         toggleCommandCenter: "Alternar centro de comando",
         showKeyboardShortcuts: "Mostrar atajos de teclado",
         toggleLeftSidebar: "Alternar barra lateral izquierda",
@@ -2273,6 +2286,7 @@ export const es: TranslationResources = {
         switchProject: "Cambiar proyecto",
       },
       helpNotes: {
+        findWhileOpen: "Solo mientras la barra de búsqueda está abierta.",
         showKeyboardShortcuts: "Disponible cuando el foco no está en un campo de texto o terminal.",
       },
     },

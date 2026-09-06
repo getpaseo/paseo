@@ -1776,6 +1776,16 @@ export const ko: TranslationResources = {
     archiveFinishedAction: "완료된 하위 에이전트 보관",
     archiveFinishedRetry: "다시 시도 ({{failed}}/{{total}})",
   },
+  find: {
+    placeholder: "찾기",
+    matchPosition: "{{count}}개 중 {{current}}번째",
+    matchPositionCapped: "{{count}}개 이상 중 {{current}}번째",
+    noResults: "결과 없음",
+    cappedCount: "{{count}}개 이상",
+    previous: "이전 일치 항목",
+    next: "다음 일치 항목",
+    close: "찾기 닫기",
+  },
   panels: {
     draft: {
       newAgent: "새 에이전트",
@@ -2212,6 +2222,9 @@ export const ko: TranslationResources = {
         closePane: "창 닫기",
         newTerminal: "새 터미널",
         searchFiles: "파일 검색",
+        findInPane: "창에서 찾기",
+        findNext: "다음 찾기",
+        findPrevious: "이전 찾기",
         toggleCommandCenter: "명령 센터 토글",
         showKeyboardShortcuts: "키보드 단축키 표시",
         toggleLeftSidebar: "왼쪽 사이드바 토글",
@@ -2231,6 +2244,7 @@ export const ko: TranslationResources = {
         switchProject: "프로젝트 전환",
       },
       helpNotes: {
+        findWhileOpen: "찾기 표시줄이 열려 있을 때만 사용할 수 있습니다.",
         showKeyboardShortcuts: "포커스가 텍스트 필드나 터미널에 있지 않을 때 사용할 수 있습니다.",
       },
     },

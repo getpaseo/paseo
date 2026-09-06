@@ -10,26 +10,18 @@ import {
   type CSSProperties,
   type DragEvent as ReactDragEvent,
   type MouseEvent as ReactMouseEvent,
-  type Ref,
 } from "react";
-import type { DOMProps } from "expo/dom";
 import { useDOMImperativeHandle, type DOMImperativeFactory } from "expo/dom";
 import "@xterm/xterm/css/xterm.css";
 import type { ITheme } from "@xterm/xterm";
 import type { TerminalState } from "@getpaseo/protocol/messages";
-import type { TerminalInputModeState } from "@getpaseo/protocol/terminal-input-mode";
-import type { PendingTerminalModifiers } from "../utils/terminal-keys";
 import {
   TerminalEmulatorRuntime,
+  type TerminalFindColors,
   type TerminalOutputData,
 } from "../terminal/runtime/terminal-emulator-runtime";
 import { encodeTerminalPaste } from "../terminal/runtime/terminal-paste";
-import type {
-  TerminalLocalFileLinkSource,
-  TerminalLocalFileLinkTarget,
-} from "../terminal/local-links/terminal-local-link-provider";
-import type { TerminalClipboardWriter } from "../terminal/native-renderer/terminal-selection";
-import type { TerminalRendererReadyChange } from "../utils/terminal-renderer-readiness";
+import type { TerminalEmulatorHandle, TerminalEmulatorProps } from "./terminal-emulator-contract";
 import { openExternalUrl } from "../utils/open-external-url";
 import { focusWithRetries } from "../utils/web-focus";
 import {
@@ -40,17 +32,7 @@ import {
 } from "../terminal/drop/terminal-file-drop";
 import { getDesktopHost } from "@/desktop/host";
 
-export interface TerminalEmulatorHandle {
-  writeOutput: (data: TerminalOutputData) => void;
-  restoreOutput: (data: TerminalOutputData) => void;
-  renderSnapshot: (state: TerminalState | null) => void;
-  paste: (text: string) => void;
-  copySelection: (clipboard: TerminalClipboardWriter) => Promise<string>;
-  clear: () => void;
-  claimSize: () => void;
-  showKeyboard: () => void;
-  blur: () => void;
-}
+export type { TerminalEmulatorHandle } from "./terminal-emulator-contract";
 
 const HOST_DIV_STYLE: CSSProperties = {
   flex: 1,
@@ -66,7 +48,7 @@ const HOST_DIV_STYLE: CSSProperties = {
   paddingRight: 0,
 };
 
-function buildXtermThemeKey(theme: ITheme): string {
+function buildXtermThemeKey(theme: ITheme, findColors: TerminalFindColors | undefined): string {
   const values: Array<string> = [
     theme.background,
     theme.foreground,
@@ -90,56 +72,11 @@ function buildXtermThemeKey(theme: ITheme): string {
     theme.brightMagenta,
     theme.brightCyan,
     theme.brightWhite,
+    findColors?.match,
+    findColors?.activeMatch,
   ].map((value) => (typeof value === "string" ? value : ""));
 
   return values.join("|");
-}
-
-interface TerminalEmulatorProps {
-  dom?: DOMProps;
-  ref: Ref<TerminalEmulatorHandle>;
-  streamKey: string;
-  supportsTerminalInputModeReplay: boolean;
-  testId?: string;
-  xtermTheme?: ITheme;
-  scrollbackLines: number;
-  fontFamily?: string;
-  fontSize?: number;
-  keyboardInset?: number;
-  isKeyboardVisible?: boolean;
-  swipeGesturesEnabled?: boolean;
-  onSwipeLeft?: () => void;
-  onSwipeRight?: () => void;
-  initialSnapshot?: TerminalState | null;
-  onInput?: (data: string) => Promise<void> | void;
-  onFocus?: () => Promise<void> | void;
-  onResize?: (input: {
-    rows: number;
-    cols: number;
-    shouldClaim: boolean;
-    forceClaim?: boolean;
-  }) => Promise<void> | void;
-  onTerminalKey?: (input: {
-    key: string;
-    ctrl: boolean;
-    shift: boolean;
-    alt: boolean;
-    meta: boolean;
-  }) => Promise<void> | void;
-  onPendingModifiersConsumed?: () => Promise<void> | void;
-  onInputModeChange?: (state: TerminalInputModeState) => Promise<void> | void;
-  onSelectionChange?: (hasSelection: boolean) => void;
-  onResolveLocalFileLink?: (
-    source: TerminalLocalFileLinkSource,
-  ) => Promise<TerminalLocalFileLinkTarget | null> | TerminalLocalFileLinkTarget | null;
-  onOpenLocalFileLink?: (
-    target: TerminalLocalFileLinkTarget,
-    disposition: "main" | "side",
-  ) => Promise<void> | void;
-  onRendererReadyChange?: (change: TerminalRendererReadyChange) => void;
-  pendingModifiers?: PendingTerminalModifiers;
-  focusRequestToken?: number;
-  resizeRequestToken?: number;
 }
 
 declare global {
@@ -165,6 +102,7 @@ export default function TerminalEmulator({
     foreground: "#e6e6e6",
     cursor: "#e6e6e6",
   },
+  findColors,
   scrollbackLines,
   fontFamily,
   fontSize,
@@ -181,6 +119,8 @@ export default function TerminalEmulator({
   onResolveLocalFileLink,
   onOpenLocalFileLink,
   onRendererReadyChange,
+  onFindResultsChange,
+  onFindBufferChange,
   pendingModifiers = { ctrl: false, shift: false, alt: false },
   focusRequestToken = 0,
   resizeRequestToken = 0,
@@ -195,9 +135,14 @@ export default function TerminalEmulator({
   scrollbackLinesRef.current = scrollbackLines;
   fontFamilyRef.current = fontFamily;
   fontSizeRef.current = fontSize;
-  const themeKey = useMemo(() => buildXtermThemeKey(xtermTheme), [xtermTheme]);
+  const themeKey = useMemo(
+    () => buildXtermThemeKey(xtermTheme, findColors),
+    [findColors, xtermTheme],
+  );
   const xtermThemeRef = useRef(xtermTheme);
   xtermThemeRef.current = xtermTheme;
+  const findColorsRef = useRef(findColors);
+  findColorsRef.current = findColors;
   const onRendererReadyChangeRef = useRef(onRendererReadyChange);
   onRendererReadyChangeRef.current = onRendererReadyChange;
   const mountCallbacksRef = useRef({
@@ -208,6 +153,8 @@ export default function TerminalEmulator({
     onInputModeChange,
     onResolveLocalFileLink,
     onOpenLocalFileLink,
+    onFindResultsChange,
+    onFindBufferChange,
   });
   mountCallbacksRef.current = {
     onInput,
@@ -217,6 +164,8 @@ export default function TerminalEmulator({
     onInputModeChange,
     onResolveLocalFileLink,
     onOpenLocalFileLink,
+    onFindResultsChange,
+    onFindBufferChange,
   };
   const initialSnapshotRef = useRef(initialSnapshot);
   initialSnapshotRef.current = initialSnapshot;
@@ -309,6 +258,16 @@ export default function TerminalEmulator({
       blur: () => {
         runtimeRef.current?.blur();
       },
+      findNext: (term: string) => {
+        runtimeRef.current?.findNext({ term });
+      },
+      findPrevious: (term: string) => {
+        runtimeRef.current?.findPrevious({ term });
+      },
+      clearFind: () => {
+        runtimeRef.current?.clearFind();
+      },
+      getSelectionText: () => runtimeRef.current?.getSelectionText() ?? "",
     }),
     [pasteText],
   );
@@ -316,7 +275,7 @@ export default function TerminalEmulator({
   useEffect(() => {
     const nextTheme = xtermThemeRef.current;
     mountedThemeRef.current = nextTheme;
-    runtimeRef.current?.setTheme({ theme: nextTheme });
+    runtimeRef.current?.setTheme({ theme: nextTheme, findColors: findColorsRef.current });
   }, [themeKey]);
 
   useEffect(() => {
@@ -461,6 +420,7 @@ export default function TerminalEmulator({
       initialSnapshot: initialSnapshotRef.current,
       scrollback: scrollbackLinesRef.current,
       theme: mountedThemeRef.current,
+      findColors: findColorsRef.current,
       fontFamily: fontFamilyRef.current,
       fontSize: fontSizeRef.current,
     });
@@ -485,10 +445,14 @@ export default function TerminalEmulator({
         onInputModeChange,
         onResolveLocalFileLink,
         onOpenLocalFileLink,
+        onFindResultsChange,
+        onFindBufferChange,
         onOpenExternalUrl: openExternalUrl,
       },
     });
   }, [
+    onFindBufferChange,
+    onFindResultsChange,
     onInput,
     onInputModeChange,
     onOpenLocalFileLink,

@@ -1493,4 +1493,56 @@ describe("createWebStreamStrategy", () => {
     expect(container.querySelector('[data-testid="agent-chat-scroll"]')).toBe(scrollContainer);
     expect(scrollTo).toHaveBeenCalledWith({ top: 2200, behavior: "auto" });
   });
+  it("reports viewport readiness once, whatever the handle's callbacks do", () => {
+    const strategy = createWebStreamStrategy({ isMobileBreakpoint: false });
+    const viewportRef = React.createRef<StreamViewportHandle>();
+    const onViewportReady = vi.fn();
+    const renderInput: StreamRenderInput = {
+      agentId: "agent",
+      segments: {
+        historyVirtualized: [],
+        historyMounted: [userMessage(1)],
+        liveHead: [],
+      },
+      boundary: {
+        hasVirtualizedHistory: false,
+        hasMountedHistory: true,
+        hasLiveHead: false,
+      },
+      renderers: createRenderers(vi.fn()),
+      listEmptyComponent: null,
+      viewportRef,
+      onViewportReady,
+      routeBottomAnchorRequest: null,
+      isAuthoritativeHistoryReady: true,
+      onNearBottomChange: vi.fn(),
+      onNearHistoryStart: vi.fn().mockReturnValue(true),
+      isLoadingOlderHistory: false,
+      hasOlderHistory: false,
+      olderHistoryProgressKey: null,
+      scrollEnabled: true,
+      listStyle: null,
+      baseListContentContainerStyle: null,
+      forwardListContentContainerStyle: null,
+    };
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+
+    act(() => root?.render(strategy.render(renderInput)));
+    expect(onViewportReady.mock.calls).toEqual([[true]]);
+
+    // The handle is rebuilt on every render; a false/true pair per render would loop
+    // any consumer that turns readiness into state.
+    act(() => root?.render(strategy.render({ ...renderInput })));
+    expect(onViewportReady.mock.calls).toEqual([[true]]);
+
+    expect(viewportRef.current?.getScrollElement?.()).toBe(
+      container.querySelector('[data-testid="agent-chat-scroll"]'),
+    );
+
+    act(() => root?.unmount());
+    root = null;
+    expect(onViewportReady.mock.calls).toEqual([[true], [false]]);
+  });
 });

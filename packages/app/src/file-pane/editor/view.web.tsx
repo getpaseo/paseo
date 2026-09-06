@@ -17,6 +17,8 @@ interface FileEditorViewProps {
   theme: EditorVisualTheme;
   onCursorChange(position: { line: number; column: number }): void;
   onVimModeChange(mode: string | null): void;
+  /** Hands the live view to the file pane so find can search it. */
+  onEditorViewChange?(view: EditorView | null): void;
 }
 
 const languageCompartment = new Compartment();
@@ -37,6 +39,7 @@ export function FileEditorView({
   theme,
   onCursorChange,
   onVimModeChange,
+  onEditorViewChange,
 }: FileEditorViewProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
@@ -44,6 +47,8 @@ export function FileEditorView({
   const initial = useRef({ filename, model, theme, vimEnabled, content: snapshot.content });
   const onCursorChangeRef = useRef(onCursorChange);
   onCursorChangeRef.current = onCursorChange;
+  const onEditorViewChangeRef = useRef(onEditorViewChange);
+  onEditorViewChangeRef.current = onEditorViewChange;
 
   useEffect(() => {
     if (!hostRef.current) return;
@@ -77,7 +82,9 @@ export function FileEditorView({
     });
     viewRef.current = view;
     onCursorChangeRef.current({ line: 1, column: 1 });
+    onEditorViewChangeRef.current?.(view);
     return () => {
+      onEditorViewChangeRef.current?.(null);
       view.destroy();
       viewRef.current = null;
     };

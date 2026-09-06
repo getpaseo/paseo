@@ -1,9 +1,11 @@
 import { Text, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
+import type { EditorView } from "@codemirror/view";
 import type { HighlightStyle } from "@getpaseo/highlight";
 import type { WorkspaceFileLocation } from "@/workspace/file-open";
 import type { FileEditorModel } from "./model";
 
+/** Prop-compatible with the web view; there is no editor and no find surface here. */
 export function FileEditorView(_props: {
   model: FileEditorModel;
   filename: string;
@@ -22,6 +24,7 @@ export function FileEditorView(_props: {
   };
   onCursorChange(position: { line: number; column: number }): void;
   onVimModeChange(mode: string | null): void;
+  onEditorViewChange?(view: EditorView | null): void;
 }) {
   return (
     <View style={styles.container}>

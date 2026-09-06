@@ -1,0 +1,39 @@
+# Find in pane
+
+Cmd+F (Ctrl+F elsewhere) opens a find bar over the pane you are working in: an agent transcript, a terminal, or a file in source, editor, or Markdown preview mode. Cmd+G and Cmd+Shift+G step through matches while a bar is open; Enter and Shift+Enter do the same from the input; Escape closes. Web and desktop only: keyboard shortcuts are unavailable on native and compact layouts, and the surface hooks are inert in their base `.ts` files.
+
+## Canonical files
+
+- `packages/app/src/find/use-find-surface.ts` — the hook every surface uses: keyboard handler, open/close, query, focus restore.
+- `packages/app/src/find/surface-registry.web.ts` — which pane owns Cmd+F.
+- `packages/app/src/find/engine.ts` — the port each surface implements.
+- `packages/app/src/find/transcript/engine.web.ts`, `find/terminal/engine.web.ts`, `find/file/codemirror-engine.web.ts`, `find/dom/engine.web.ts` (Markdown preview) — the engines.
+- `packages/app/src/find/bar.tsx` — the bar.
+
+## Who owns Cmd+F
+
+Pane focus cannot answer this. The Explorer sidebar host reports its visible tab as focused at all times (`packages/app/src/screens/workspace/explorer-sidebar.tsx`), so that tab and the focused main pane are both "interactive" at once. The registry decides instead: the surface whose root contains DOM focus, else the surface that last received a pointerdown, else the interactive main-host pane. The pointerdown entry deliberately survives clicks on the chrome around a surface — a pane toolbar, the Explorer tab rail, a portaled menu — but is ignored once its own pane stops reporting itself interactive, so clicking into a pane that has no find surface falls through to the browser instead of opening the bar in the pane behind.
+
+The shortcut resolver's `findOpen` context flag comes from the same registry. That is what lets Cmd+Shift+G mean "previous match" while a bar is open and "Changes" otherwise: the find bindings carry `when: { find: true }` and sit before the Changes bindings in `SHORTCUT_BINDINGS`, because the resolver takes the first matching binding in array order. A test pins that order. In panes with no find surface, Cmd+F is left to the browser.
+
+## Why the transcript searches the model, not the DOM
+
+Desktop web virtualizes history once the loaded tail passes 100 items, so most rows have no DOM. The index is built from the loaded stream items, with assistant text projected to what the renderer paints (`packages/app/src/find/transcript/plain-text.ts` runs the same parser and block split). Only `[data-paseo-find-text]` subtrees are highlighted, so the counter and the marks count the same text. `data-paseo-find-ignore` (`find/dom/markers.ts`) carves out what is painted inside them but cannot be projected statically — today the mermaid fence's source view, which is on screen or not depending on a sandboxed iframe, the source policy, a render error and a toggle. It is a find-owned attribute rather than the markdown-copy one because copy _deletes_ the subtrees it ignores.
+
+Both sides case-fold one code point at a time (`foldFindText` in `find/dom/text-ranges.ts`). A whole-string `toLowerCase` is context-sensitive and the DOM walk sees the text split across arbitrary node boundaries, so only a per-code-point fold makes the index and the marks agree. Some folds change length — Turkish dotted capital İ becomes "i" plus a combining dot — so the walk carries a map from folded code units back to text-node offsets, and a match landing inside such a fold covers the whole source character.
+
+Rows are brought on screen with the viewport's `revealRow`, not `scrollToMessage`: prompt-jump's settle controller re-pins a row's top for up to 24 frames and would fight the engine centering the match.
+
+Not searched: the assistant message still streaming (its paced reveal has painted only a prefix), text past the assistant render cap, older history that is not loaded, tool calls, thoughts, and activity rows.
+
+## Gotchas
+
+- **CSS Custom Highlight API.** `CSS.highlights` is one registry per document, and retained panels plus split panes keep several engines alive. `find/dom/highlights.web.ts` merges every engine's ranges into two named highlights. Needs Chromium 105+, Safari 17.2+, or Firefox 140+.
+- **xterm decorations drop alpha.** Both the WebGL and DOM renderers mask the alpha channel of a decoration background, so `theme.colors.terminal.findMatch` and `findMatchActive` are opaque values blended in `theme.ts`; the translucent `findMatch` tokens are for CSS and CodeMirror.
+- **`@xterm/addon-search` in the bundled version:** `incremental` is inert; `findNext` advances only when the term is unchanged, so the runtime seeds the start at the viewport top for a new term (and makes both sides forget the term when it has to repaint decorations after a theme change, which would otherwise step forward); `clearDecorations` does not clear the selection; decorations paint by absolute line across buffer switches, so the runtime clears and re-applies on `onBufferChange`, and the alternate screen searches its visible screen only; while a term is set the addon rescans the buffer 200 ms after every write.
+- **Terminal counts stop at the addon's `highlightLimit` (1 000).** Past it the addon neither highlights nor tracks a match, and reports no position for the active one, so the bar shows `1000+ matches` rather than a position it cannot know. This is also why the terminal engine — alone among the four — debounces typing: every search walks the whole scrollback (settable to a million lines) and xterm throws away its line cache on each line feed, so a terminal producing output makes every keystroke a cold full pass on the render thread.
+- **CodeMirror's search highlighter paints only while its own panel is open,** and its `findNext` command cannot be used for incremental search. The command resumes from the END of the selection, so each typed character walked past the match the previous prefix found; and it re-anchors a cursor that may land on a match `SearchQuery.getCursor` skipped as overlapping, leaving the caret on a range the counter never counted (`==` inside `a === b`). So the engine keeps the counted, non-overlapping match list in a `StateField` and does its own navigation from it, anchored at the active match's start. `Mod-f`, `Mod-g`, `F3`, and `Escape` are removed from the editor keymap; `Mod-d` and the rest stay.
+- **A file pane mode switch can take the engine away.** One pane switches between source, editor, Markdown preview, HTML preview, images and binaries; the last three have no engine. `useFileFind` closes an open bar when it lands in one of those, because the surface also unregisters and a bar left up would answer neither Enter nor Cmd+G. The typed query survives, so Cmd+F back in a searchable mode reopens on the same term.
+- **CodeMirror counting stops at 10 000 matches.** Counting walks the whole document on every keystroke, so a one-letter query in a large file would otherwise collect millions. Matches past the cap are neither counted nor reachable, and stepping wraps within the counted prefix. Unlike the terminal the engine still knows which counted match is active, so the two caps read differently in the bar: `1000+ matches` when there is no position to name, `3 of 10000+` when there is. Both go through `countIsCapped`; without it the bar states the floor as a total.
+- **Editor find colors come through `withUnistyles`.** A one-shot `UnistylesRuntime.getTheme()` read never re-renders (docs/unistyles.md), so the file pane wraps the two CodeMirror views to make `EditorVisualTheme` follow a theme change; the wrapper caches one value per theme object because the view reconfigures its theme compartment on every identity change.
+- **Enter in the bar.** The dictation-confirm Enter binding is scoped to the message input and unfocused states so it never claims Enter inside the find input.

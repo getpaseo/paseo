@@ -44,6 +44,14 @@ export interface StreamViewportHandle {
   scrollToBottom: (reason?: BottomAnchorLocalRequest["reason"]) => void;
   prepareForViewportChange: () => void;
   scrollToMessage?: (itemId: string) => void;
+  /** The element find scrolls and observes. Only the web viewport has one. */
+  getScrollElement?: () => HTMLElement | null;
+  /**
+   * Brings a row into the mounted window without landing it anywhere in particular.
+   * Unlike `scrollToMessage` this starts no settle controller: find centers the match
+   * itself, and prompt-jump's re-pinning would fight it for 24 frames.
+   */
+  revealRow?: (itemId: string) => void;
 }
 
 export interface StreamSegmentRenderers {
@@ -68,6 +76,9 @@ export interface StreamRenderInput {
   renderers: StreamSegmentRenderers;
   listEmptyComponent: ReactNode;
   viewportRef: RefObject<StreamViewportHandle | null>;
+  // The handle object is replaced whenever its callbacks change identity, and the
+  // viewport remounts per agent, so anything holding on to it is told when to re-read.
+  onViewportReady?: (ready: boolean) => void;
   routeBottomAnchorRequest: BottomAnchorRouteRequest | null;
   isAuthoritativeHistoryReady: boolean;
   onNearBottomChange: (value: boolean) => void;

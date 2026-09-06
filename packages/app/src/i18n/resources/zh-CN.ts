@@ -1745,6 +1745,16 @@ export const zhCN: TranslationResources = {
     archiveFinishedAction: "归档已完成的 subagent",
     archiveFinishedRetry: "重试 ({{failed}}/{{total}})",
   },
+  find: {
+    placeholder: "查找",
+    matchPosition: "第 {{current}} 个，共 {{count}} 个",
+    matchPositionCapped: "第 {{current}} 个，共超过 {{count}} 个",
+    noResults: "无结果",
+    cappedCount: "超过 {{count}} 个匹配项",
+    previous: "上一个匹配项",
+    next: "下一个匹配项",
+    close: "关闭查找",
+  },
   panels: {
     draft: {
       newAgent: "新建 Agent",
@@ -2176,6 +2186,9 @@ export const zhCN: TranslationResources = {
         closePane: "关闭窗格",
         newTerminal: "新建终端",
         searchFiles: "搜索文件",
+        findInPane: "在窗格中查找",
+        findNext: "查找下一个",
+        findPrevious: "查找上一个",
         toggleCommandCenter: "切换命令中心",
         showKeyboardShortcuts: "显示键盘快捷键",
         toggleLeftSidebar: "切换左侧边栏",
@@ -2195,6 +2208,7 @@ export const zhCN: TranslationResources = {
         switchProject: "切换项目",
       },
       helpNotes: {
+        findWhileOpen: "仅在查找栏打开时可用。",
         showKeyboardShortcuts: "焦点不在文本输入框或终端内时可用。",
       },
     },
