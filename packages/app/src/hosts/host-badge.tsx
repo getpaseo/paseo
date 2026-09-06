@@ -1,8 +1,12 @@
 import { Text, View } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { Server } from "lucide-react-native";
-import { HOST_COLORS, type HostBadgeModel, type HostColor } from "@/hosts/appearance";
-import { identityForeground } from "@/styles/identity-colors";
+import type { HostBadgeModel } from "@/hosts/appearance";
+import {
+  IDENTITY_COLOR_NAMES,
+  identityForeground,
+  type IdentityColorName,
+} from "@/styles/identity-colors";
 import type { Theme } from "@/styles/theme";
 
 /**
@@ -13,21 +17,16 @@ export const HOST_BADGE_ICON_SIZE = 12;
 
 const ThemedServer = withUnistyles(Server);
 
-const mutedMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
-
 // One stable mapping per host color for the life of the module — a fresh `uniProps` identity
 // on every render makes withUnistyles re-subscribe each pass. The scheme is read inside the
 // mapping rather than baked in, so a theme change repaints the glyph without a React render.
 //
 // Glyph and label share one color, so a badge reads as one object rather than a colored icon
 // with an unrelated grey word beside it.
-const HOST_ICON_MAPPINGS: Record<HostColor, (theme: Theme) => { color: string }> = (() => {
-  const byColor = {} as Record<HostColor, (theme: Theme) => { color: string }>;
-  for (const color of HOST_COLORS) {
-    byColor[color] =
-      color === "none"
-        ? mutedMapping
-        : (theme: Theme) => ({ color: identityForeground(color, theme.colorScheme) });
+const HOST_ICON_MAPPINGS: Record<IdentityColorName, (theme: Theme) => { color: string }> = (() => {
+  const byColor = {} as Record<IdentityColorName, (theme: Theme) => { color: string }>;
+  for (const color of IDENTITY_COLOR_NAMES) {
+    byColor[color] = (theme: Theme) => ({ color: identityForeground(color, theme.colorScheme) });
   }
   return byColor;
 })();
@@ -60,10 +59,8 @@ export function HostBadge({ badge }: { badge: HostBadgeModel }) {
 // Text has no `color` prop, so the label cannot ride the icon's uniProps mapping — its color
 // has to come from a registered style. One entry per host color, picked at render time; a
 // module-level lookup table would read the style proxies before the persisted theme lands.
-function labelColorStyle(color: HostColor) {
+function labelColorStyle(color: IdentityColorName) {
   switch (color) {
-    case "none":
-      return null;
     case "violet":
       return styles.labelViolet;
     case "sky":

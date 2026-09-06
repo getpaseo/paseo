@@ -16,6 +16,7 @@ import {
   defaultHostAppearance,
   HostAppearanceSchema,
 } from "@/hosts/appearance";
+import { parseIdentityColorName, type IdentityColorName } from "@/styles/identity-colors";
 import { z } from "zod";
 
 export { DirectTcpHostConnectionSchema, type DirectTcpHostConnection };
@@ -61,6 +62,8 @@ export interface HostProfile {
   serverId: string;
   label: string;
   appearance: HostAppearance;
+  /** The color the daemon advertises for itself in `server_info`; `appearance.color` overrides it. */
+  declaredColor: IdentityColorName | null;
   lifecycle: HostLifecycle;
   connections: HostConnection[];
   preferredConnectionId: string | null;
@@ -217,6 +220,7 @@ export function upsertHostConnectionInProfiles(input: {
       serverId,
       label: derivedLabel,
       appearance: defaultHostAppearance(),
+      declaredColor: null,
       lifecycle: defaultLifecycle(),
       connections: [input.connection],
       preferredConnectionId: input.connection.id,
@@ -388,6 +392,7 @@ const StoredHostProfileSchema = z.strictObject({
   serverId: z.string().trim().min(1),
   label: z.string().optional(),
   appearance: HostAppearanceSchema.optional(),
+  declaredColor: z.string().nullable().optional(),
   lifecycle: z.strictObject({}).optional(),
   connections: z.array(StoredHostConnectionSchema).min(1),
   preferredConnectionId: z.string().nullable().optional(),
@@ -480,6 +485,7 @@ export function normalizeStoredHostProfile(entry: unknown): HostProfile | null {
     serverId,
     label,
     appearance: record.appearance ?? defaultHostAppearance(),
+    declaredColor: parseIdentityColorName(record.declaredColor),
     lifecycle: defaultLifecycle(),
     connections,
     preferredConnectionId,

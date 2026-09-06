@@ -147,6 +147,7 @@ function makeHost(): HostProfile {
     serverId: SERVER_ID,
     label: "Render Count Host",
     appearance: defaultHostAppearance(),
+    declaredColor: null,
     lifecycle: {},
     connections: [],
     preferredConnectionId: null,

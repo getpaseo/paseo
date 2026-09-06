@@ -2310,6 +2310,14 @@ export const ptBR: TranslationResources = {
             blue: "Azul",
           },
         },
+        hostColor: {
+          label: "Cor padrão",
+          hint: "Salva no host. Os dispositivos a usam a menos que escolham a própria cor.",
+          accessibilityLabel: "Cor padrão, {{value}}",
+          options: {
+            auto: "Automática",
+          },
+        },
         badge: {
           label: "Selo da barra lateral",
           accessibilityLabel: "Selo da barra lateral, {{value}}",

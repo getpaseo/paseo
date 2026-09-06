@@ -2331,6 +2331,14 @@ export const fr: TranslationResources = {
             blue: "Bleu",
           },
         },
+        hostColor: {
+          label: "Couleur par défaut",
+          hint: "Enregistrée sur l'hôte. Les appareils l'utilisent sauf s'ils choisissent leur propre couleur.",
+          accessibilityLabel: "Couleur par défaut, {{value}}",
+          options: {
+            auto: "Automatique",
+          },
+        },
         badge: {
           label: "Badge de la barre latérale",
           accessibilityLabel: "Badge de la barre latérale, {{value}}",

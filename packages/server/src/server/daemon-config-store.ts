@@ -8,7 +8,7 @@ import {
   MutableDaemonConfigSchema,
   MutableDaemonConfigPatchSchema,
 } from "@getpaseo/protocol/messages";
-import type { AgentSkillSelection } from "@getpaseo/protocol/messages";
+import type { AgentSkillSelection, IdentityColorName } from "@getpaseo/protocol/messages";
 
 export type { MutableDaemonConfig, MutableDaemonConfigPatch } from "@getpaseo/protocol/messages";
 
@@ -31,6 +31,7 @@ interface SupportedMutableConfigPatch {
   skills?: MutableDaemonConfig["skills"];
   pluginsEnabled?: boolean;
   plugins?: MutableDaemonConfig["plugins"];
+  appearance?: { color?: IdentityColorName | null };
 }
 
 interface LoggerLike {
@@ -183,6 +184,7 @@ const RELOADABLE_PATHS = [
   "daemon.appendSystemPrompt",
   "daemon.terminalProfiles",
   "daemon.agentProfiles",
+  "daemon.appearance.color",
   "app.baseUrl",
   "agents.providers",
   "agents.catalogRefreshTimeoutMs",
@@ -206,6 +208,7 @@ const PERSISTED_TO_MUTABLE_PATH = new Map<string, string>([
   ["daemon.appendSystemPrompt", "appendSystemPrompt"],
   ["daemon.terminalProfiles", "terminalProfiles"],
   ["daemon.agentProfiles", "agentProfiles"],
+  ["daemon.appearance.color", "appearance.color"],
   ["app.baseUrl", "app.baseUrl"],
   ["agents.providers", "providers"],
   ["agents.catalogRefreshTimeoutMs", "catalogRefreshTimeoutMs"],
@@ -276,6 +279,9 @@ function pickSupportedPatchFields(patch: MutableDaemonConfigPatch): SupportedMut
     ...(patch.agentProfiles !== undefined ? { agentProfiles: patch.agentProfiles } : {}),
     ...(patch.pluginsEnabled !== undefined ? { pluginsEnabled: patch.pluginsEnabled } : {}),
     ...(patch.plugins !== undefined ? { plugins: patch.plugins } : {}),
+    ...(patch.appearance?.color !== undefined
+      ? { appearance: { color: patch.appearance.color } }
+      : {}),
   };
 }
 
@@ -368,6 +374,7 @@ export class DaemonConfigStore {
       merged.skills = { selection: parsedPatch.skills.selection };
     }
     if (parsedPatch.plugins !== undefined) merged.plugins = parsedPatch.plugins;
+    if (parsedPatch.appearance?.color === null) delete merged.appearance;
     const next = MutableDaemonConfigSchema.parse(
       omitMetadataGenerationProvidersFromConfig(
         omitProvidersFromConfig(merged, removedProviders),
@@ -661,5 +668,10 @@ function mergeMutableDaemonPatch(
   if (patch.appendSystemPrompt !== undefined) next.appendSystemPrompt = patch.appendSystemPrompt;
   if (patch.terminalProfiles !== undefined) next.terminalProfiles = patch.terminalProfiles;
   if (patch.agentProfiles !== undefined) next.agentProfiles = patch.agentProfiles;
+  if (patch.appearance?.color === null) {
+    delete next.appearance;
+  } else if (patch.appearance?.color !== undefined) {
+    next.appearance = { color: patch.appearance.color };
+  }
   return Object.keys(next).length > 0 ? next : undefined;
 }

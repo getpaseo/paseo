@@ -611,6 +611,9 @@ export function resolveConfigFromPersisted(
     autoArchiveAfterMerge,
     enableTerminalAgentHooks: persisted.daemon?.enableTerminalAgentHooks ?? false,
     appendSystemPrompt,
+    ...(persisted.daemon?.appearance?.color !== undefined
+      ? { hostColor: persisted.daemon.appearance.color }
+      : {}),
     terminalProfiles,
     agentProfiles,
     skillSelection: persisted.agents?.skills?.selection,

@@ -2327,6 +2327,14 @@ export const es: TranslationResources = {
             blue: "Azul",
           },
         },
+        hostColor: {
+          label: "Color predeterminado",
+          hint: "Se guarda en el host. Los dispositivos lo usan salvo que elijan su propio color.",
+          accessibilityLabel: "Color predeterminado, {{value}}",
+          options: {
+            auto: "Automático",
+          },
+        },
         badge: {
           label: "Insignia de la barra lateral",
           accessibilityLabel: "Insignia de la barra lateral, {{value}}",

@@ -2249,6 +2249,14 @@ export const zhCN: TranslationResources = {
             blue: "蓝色",
           },
         },
+        hostColor: {
+          label: "默认颜色",
+          hint: "保存在主机上。设备未自行选择颜色时使用此颜色。",
+          accessibilityLabel: "默认颜色, {{value}}",
+          options: {
+            auto: "自动",
+          },
+        },
         badge: {
           label: "侧边栏徽章",
           accessibilityLabel: "侧边栏徽章，{{value}}",

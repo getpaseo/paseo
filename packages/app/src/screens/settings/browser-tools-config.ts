@@ -1,4 +1,4 @@
-import type { MutableDaemonConfig } from "@getpaseo/protocol/messages";
+import type { MutableDaemonConfig, MutableDaemonConfigPatch } from "@getpaseo/protocol/messages";
 
 export const BROWSER_TOOLS_TITLE = "Browser tools";
 export const BROWSER_TOOLS_WARNING =
@@ -29,7 +29,7 @@ export function getBrowserToolsCardState(input: {
   };
 }
 
-export function createBrowserToolsPatch(enabled: boolean): Partial<MutableDaemonConfig> {
+export function createBrowserToolsPatch(enabled: boolean): MutableDaemonConfigPatch {
   return { browserTools: { enabled } };
 }
 

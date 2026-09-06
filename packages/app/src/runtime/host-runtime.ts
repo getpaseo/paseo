@@ -18,6 +18,7 @@ import {
   type HostProfile,
 } from "@/types/host-connection";
 import { defaultHostAppearance, type HostBadgeDisplay, type HostColor } from "@/hosts/appearance";
+import type { IdentityColorName } from "@/styles/identity-colors";
 import {
   buildDaemonWebSocketUrl,
   buildRelayWebSocketUrl,
@@ -1738,6 +1739,7 @@ export class HostRuntimeStore {
       serverId: "",
       label: input.label ?? input.connection.id,
       appearance: defaultHostAppearance(),
+      declaredColor: null,
       lifecycle: {},
       connections: [input.connection],
       preferredConnectionId: input.connection.id,
@@ -1896,6 +1898,18 @@ export class HostRuntimeStore {
       ...host,
       appearance: { ...host.appearance, badgeDisplay },
     }));
+  }
+
+  /** Called on every `server_info`, so a host that stops declaring a color is cleared too. */
+  async recordDeclaredHostColor(
+    serverId: string,
+    declaredColor: IdentityColorName | null,
+  ): Promise<void> {
+    const host = this.hosts.find((candidate) => candidate.serverId === serverId);
+    if (!host || host.declaredColor === declaredColor) {
+      return;
+    }
+    await this.updateHostAppearance(serverId, (current) => ({ ...current, declaredColor }));
   }
 
   private updateHostAppearance(

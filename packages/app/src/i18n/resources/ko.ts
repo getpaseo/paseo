@@ -2285,6 +2285,14 @@ export const ko: TranslationResources = {
             blue: "파란색",
           },
         },
+        hostColor: {
+          label: "기본 색상",
+          hint: "호스트에 저장됩니다. 기기가 자체 색상을 고르지 않으면 이 색상을 사용합니다.",
+          accessibilityLabel: "기본 색상, {{value}}",
+          options: {
+            auto: "자동",
+          },
+        },
         badge: {
           label: "사이드바 배지",
           accessibilityLabel: "사이드바 배지, {{value}}",

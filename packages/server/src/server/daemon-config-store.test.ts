@@ -120,6 +120,34 @@ describe("DaemonConfigStore", () => {
     expect(loadPersistedConfig(paseoHome).daemon?.relay?.enabled).toBe(true);
   });
 
+  test("patch persists the host color and null clears it", () => {
+    const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-daemon-config-store-"));
+    tempDirs.push(paseoHome);
+    const store = new DaemonConfigStore(paseoHome, {
+      relay: { enabled: false },
+      mcp: { injectIntoAgents: false },
+      browserTools: { enabled: false },
+      providers: {},
+      metadataGeneration: { providers: [] },
+      autoArchiveAfterMerge: false,
+      enableTerminalAgentHooks: false,
+      appendSystemPrompt: "",
+    });
+    const changes: unknown[] = [];
+    store.onFieldChange("appearance.color", (value) => changes.push(value));
+
+    store.patch({ appearance: { color: "teal" } });
+    expect(store.get().appearance).toEqual({ color: "teal" });
+    expect(loadPersistedConfig(paseoHome).daemon?.appearance).toEqual({ color: "teal" });
+
+    store.patch({ appearance: { color: null } });
+    expect(store.get().appearance).toBeUndefined();
+    expect(loadPersistedConfig(paseoHome).daemon?.appearance).toBeUndefined();
+    expect(changes).toEqual(["teal", undefined]);
+
+    expect(() => store.patch({ appearance: { color: "chartreuse" } })).toThrow();
+  });
+
   test("patch round-trips agent profiles through the strictly-parsed persisted config", () => {
     const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-daemon-config-store-"));
     tempDirs.push(paseoHome);

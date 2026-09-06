@@ -10,22 +10,21 @@
 // Retune with the contrast band, not by eye — a hue nudged for looks quietly re-weights that
 // project against the other nine.
 //
-// Order is load-bearing: `deriveIdentityColorName` indexes into this array, so reordering
-// silently recolors every existing project icon.
-export const IDENTITY_COLOR_NAMES = [
-  "violet",
-  "sky",
-  "emerald",
-  "orange",
-  "pink",
-  "indigo",
-  "teal",
-  "red",
-  "amber",
-  "blue",
-] as const;
+// The name list lives in the protocol because hosts advertise one of these names in
+// `server_info`; `deriveIdentityColorName` indexes into it, so its order is load-bearing.
+import {
+  IDENTITY_COLOR_NAMES,
+  IdentityColorNameSchema,
+  type IdentityColorName,
+} from "@getpaseo/protocol/messages";
 
-export type IdentityColorName = (typeof IDENTITY_COLOR_NAMES)[number];
+export { IDENTITY_COLOR_NAMES, type IdentityColorName };
+
+/** Reads a color name off the wire or out of storage; anything unknown reads as no color. */
+export function parseIdentityColorName(value: unknown): IdentityColorName | null {
+  const result = IdentityColorNameSchema.safeParse(value);
+  return result.success ? result.data : null;
+}
 
 const IDENTITY_COLORS: Record<IdentityColorName, string> = {
   violet: "#7a6aa8",

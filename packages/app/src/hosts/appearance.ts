@@ -1,7 +1,12 @@
-import { IDENTITY_COLOR_NAMES, type IdentityColorName } from "@/styles/identity-colors";
+import {
+  IDENTITY_COLOR_NAMES,
+  deriveIdentityColorName,
+  type IdentityColorName,
+} from "@/styles/identity-colors";
 import type { HostProfile } from "@/types/host-connection";
 import { z } from "zod";
 
+/** `"none"` is "no choice on this device": the host's declared color, else a derived one. */
 export type HostColor = "none" | IdentityColorName;
 
 export const HOST_COLORS: readonly HostColor[] = ["none", ...IDENTITY_COLOR_NAMES];
@@ -34,6 +39,28 @@ export function normalizeStoredHostAppearance(value: unknown): HostAppearance {
   return result.success ? result.data : defaultHostAppearance();
 }
 
+/**
+ * The color a host has before any device chooses: what the host declares for itself, else one
+ * derived from the server id. Both are the same on every device, so hosts line up across
+ * clients without anyone configuring anything.
+ */
+export function resolveHostDefaultColor(input: {
+  serverId: string;
+  declaredColor: IdentityColorName | null;
+}): IdentityColorName {
+  return input.declaredColor ?? deriveIdentityColorName(input.serverId);
+}
+
+export function resolveHostColor(input: {
+  serverId: string;
+  appearance: HostAppearance;
+  declaredColor: IdentityColorName | null;
+}): IdentityColorName {
+  return input.appearance.color === "none"
+    ? resolveHostDefaultColor(input)
+    : input.appearance.color;
+}
+
 export function resolveHostBadgeDisplay(input: {
   appearance: HostAppearance;
   isLocalHost: boolean;
@@ -51,11 +78,14 @@ export function resolveHostBadgeDisplay(input: {
 export interface HostBadgeModel {
   serverId: string;
   label: string;
-  color: HostColor;
+  color: IdentityColorName;
   showLabel: boolean;
 }
 
-export type HostAppearanceSource = Pick<HostProfile, "serverId" | "label" | "appearance">;
+export type HostAppearanceSource = Pick<
+  HostProfile,
+  "serverId" | "label" | "appearance" | "declaredColor"
+>;
 
 /**
  * The sidebar's whole host-badge decision, resolved once per host list. Rows look their
@@ -84,7 +114,7 @@ export function selectHostBadges(input: {
     badges.set(host.serverId, {
       serverId: host.serverId,
       label: host.label.trim() || host.serverId,
-      color: host.appearance.color,
+      color: resolveHostColor(host),
       showLabel: display === "name",
     });
   }

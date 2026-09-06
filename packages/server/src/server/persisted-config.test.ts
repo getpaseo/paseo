@@ -46,6 +46,16 @@ describe("PersistedConfigSchema daemon append system prompt config", () => {
   });
 });
 
+describe("PersistedConfigSchema daemon appearance", () => {
+  test("accepts an identity color and rejects anything else", () => {
+    const parsed = PersistedConfigSchema.parse({ daemon: { appearance: { color: "teal" } } });
+    expect(parsed.daemon?.appearance?.color).toBe("teal");
+    expect(() =>
+      PersistedConfigSchema.parse({ daemon: { appearance: { color: "#ff0000" } } }),
+    ).toThrow();
+  });
+});
+
 describe("PersistedConfigSchema daemon browser tools config", () => {
   test("accepts optional browser tools opt-in", () => {
     const parsed = PersistedConfigSchema.parse({

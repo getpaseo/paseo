@@ -46,6 +46,7 @@ function makeRelayOnlyHost(serverId: string): HostProfile {
     serverId,
     label: "Relay host",
     appearance: defaultHostAppearance(),
+    declaredColor: null,
     lifecycle: {},
     connections: [
       {

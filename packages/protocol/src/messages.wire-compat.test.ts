@@ -117,6 +117,23 @@ describe("wire schema compatibility", () => {
     });
   });
 
+  test("server info carries a host color that older daemons omit", () => {
+    const withoutColor = ServerInfoStatusPayloadSchema.parse({
+      status: "server_info",
+      serverId: "legacy-server",
+    });
+    expect(withoutColor.appearance).toBeUndefined();
+
+    const withColor = ServerInfoStatusPayloadSchema.parse({
+      status: "server_info",
+      serverId: "new-server",
+      appearance: { color: "not-a-color-yet" },
+      features: { hostAppearance: true },
+    });
+    expect(withColor.appearance).toEqual({ color: "not-a-color-yet" });
+    expect(withColor.features?.hostAppearance).toBe(true);
+  });
+
   test("assistant timeline message ids are optional on the wire", () => {
     expect(
       AgentTimelineItemPayloadSchema.parse({

@@ -2275,6 +2275,14 @@ export const ar: TranslationResources = {
             blue: "أزرق",
           },
         },
+        hostColor: {
+          label: "اللون الافتراضي",
+          hint: "يُحفظ على المضيف. تستخدمه الأجهزة ما لم تختر لونًا خاصًا بها.",
+          accessibilityLabel: "اللون الافتراضي، {{value}}",
+          options: {
+            auto: "تلقائي",
+          },
+        },
         badge: {
           label: "شارة الشريط الجانبي",
           accessibilityLabel: "شارة الشريط الجانبي، {{value}}",

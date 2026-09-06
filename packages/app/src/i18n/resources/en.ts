@@ -2373,6 +2373,14 @@ export const en = {
             blue: "Blue",
           },
         },
+        hostColor: {
+          label: "Default color",
+          hint: "Stored on the host. Devices use it unless they pick their own color.",
+          accessibilityLabel: "Default color, {{value}}",
+          options: {
+            auto: "Automatic",
+          },
+        },
         badge: {
           label: "Sidebar badge",
           accessibilityLabel: "Sidebar badge, {{value}}",
