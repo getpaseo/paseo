@@ -6,6 +6,7 @@ import {
   chooseHeartbeatAgent,
   chooseHeartbeatType,
   chooseScheduleHost,
+  createScheduleCleanupQueue,
   deleteScheduleByName,
   expectAgentDirectoryUnresolved,
   expectHostHasNoAgents,
@@ -24,24 +25,9 @@ import {
 } from "../support/helpers/schedule-form";
 
 test.describe("Schedules targeting an existing agent", () => {
-  const cleanupTasks: Array<() => Promise<void>> = [];
+  const cleanup = createScheduleCleanupQueue();
 
-  test.afterEach(async () => {
-    const tasks = cleanupTasks.toReversed();
-    cleanupTasks.length = 0;
-    // Every task runs even if an earlier one fails, then the failures surface.
-    const failures: unknown[] = [];
-    for (const cleanup of tasks) {
-      try {
-        await cleanup();
-      } catch (error) {
-        failures.push(error);
-      }
-    }
-    if (failures.length > 0) {
-      throw new AggregateError(failures, "Schedule cleanup failed");
-    }
-  });
+  test.afterEach(() => cleanup.runAll());
 
   test("creates a heartbeat aimed at a running agent", async ({ page }) => {
     const name = `Heartbeat ${Date.now()}`;
@@ -50,8 +36,8 @@ test.describe("Schedules targeting an existing agent", () => {
       title: `Heartbeat target ${Date.now()}`,
     });
     const client = agent.client as unknown as ScheduleReadbackClient;
-    cleanupTasks.push(() => agent.cleanup());
-    cleanupTasks.push(() => deleteScheduleByName(client, name));
+    cleanup.add(() => agent.cleanup());
+    cleanup.add(() => deleteScheduleByName(client, name));
 
     await openSchedulesOnPhone(page);
     await openNewScheduleForm(page);
@@ -74,7 +60,7 @@ test.describe("Schedules targeting an existing agent", () => {
 
   test("reports a host that answered with no agents", async ({ page }, testInfo) => {
     const workspace = await seedWorkspace({ repoPrefix: "schedule-agent-empty-", git: false });
-    cleanupTasks.push(() => workspace.cleanup());
+    cleanup.add(() => workspace.cleanup());
 
     const host = await addHostWithAgentDirectory({
       page,
@@ -95,7 +81,7 @@ test.describe("Schedules targeting an existing agent", () => {
     page,
   }, testInfo) => {
     const workspace = await seedWorkspace({ repoPrefix: "schedule-agent-hold-", git: false });
-    cleanupTasks.push(() => workspace.cleanup());
+    cleanup.add(() => workspace.cleanup());
 
     const host = await addHostWithAgentDirectory({
       page,
@@ -118,7 +104,7 @@ test.describe("Schedules targeting an existing agent", () => {
       repoPrefix: "schedule-agent-entry-",
       title,
     });
-    cleanupTasks.push(() => agent.cleanup());
+    cleanup.add(() => agent.cleanup());
 
     await openAgentWorkspace(page, agent);
     await scheduleMessageFromAgentTab(page, agent.agentId);

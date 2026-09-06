@@ -154,6 +154,40 @@ export async function expectStoredSchedule(
 }
 
 /**
+ * Undo work a spec queued while it ran. Tasks run newest-first, every one of
+ * them runs even after an earlier failure, and the failures surface together —
+ * a daemon that cannot clean up leaves state the next spec inherits.
+ */
+export interface ScheduleCleanupQueue {
+  add(task: () => Promise<void>): void;
+  runAll(): Promise<void>;
+}
+
+export function createScheduleCleanupQueue(): ScheduleCleanupQueue {
+  const tasks: Array<() => Promise<void>> = [];
+  return {
+    add(task) {
+      tasks.push(task);
+    },
+    async runAll() {
+      const pending = tasks.toReversed();
+      tasks.length = 0;
+      const failures: unknown[] = [];
+      for (const task of pending) {
+        try {
+          await task();
+        } catch (error) {
+          failures.push(error);
+        }
+      }
+      if (failures.length > 0) {
+        throw new AggregateError(failures, "Schedule cleanup failed");
+      }
+    },
+  };
+}
+
+/**
  * Cleanup failures surface. A daemon that cannot list or delete leaves the
  * schedule behind, and the next spec inherits it.
  */
