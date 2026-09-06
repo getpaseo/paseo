@@ -54,9 +54,9 @@ const OptionalIntegerSchema = NumberLikeSchema.pipe(
 const LocalSpeechResolutionSchema = z.object({
   includeProviderConfig: z.boolean(),
   modelsDir: z.string().trim().min(1),
-  dictationLocalSttModel: LocalSttModelIdSchema.default(DEFAULT_LOCAL_STT_MODEL),
-  voiceLocalSttModel: LocalSttModelIdSchema.default(DEFAULT_LOCAL_STT_MODEL),
-  voiceLocalTtsModel: LocalTtsModelIdSchema.default(DEFAULT_LOCAL_TTS_MODEL),
+  dictationLocalSttModel: LocalSttModelIdSchema.optional(),
+  voiceLocalSttModel: LocalSttModelIdSchema.optional(),
+  voiceLocalTtsModel: LocalTtsModelIdSchema.optional(),
   dictationLanguage: LanguageSchema,
   voiceLanguage: LanguageSchema,
   voiceLocalTtsSpeakerId: OptionalIntegerSchema,
@@ -72,6 +72,10 @@ function persistedLocalFeatureModel(
     return undefined;
   }
   return model;
+}
+
+function defaultIfEnabled(enabled: boolean | undefined, defaultModel: string): string | undefined {
+  return enabled !== false ? defaultModel : undefined;
 }
 
 function shouldIncludeLocalProviderConfig(params: {
@@ -155,7 +159,7 @@ function buildLocalSpeechResolutionInput(params: {
         providers.dictationStt.enabled,
         persisted.features?.dictation?.stt?.model,
       ),
-      DEFAULT_LOCAL_STT_MODEL,
+      defaultIfEnabled(providers.dictationStt.enabled, DEFAULT_LOCAL_STT_MODEL),
     ]),
     voiceLocalSttModel: firstDefinedValue<string>([
       env.PASEO_VOICE_LOCAL_STT_MODEL,
@@ -164,7 +168,7 @@ function buildLocalSpeechResolutionInput(params: {
         providers.voiceStt.enabled,
         persisted.features?.voiceMode?.stt?.model,
       ),
-      DEFAULT_LOCAL_STT_MODEL,
+      defaultIfEnabled(providers.voiceStt.enabled, DEFAULT_LOCAL_STT_MODEL),
     ]),
     voiceLocalTtsModel: firstDefinedValue<string>([
       env.PASEO_VOICE_LOCAL_TTS_MODEL,
@@ -173,7 +177,7 @@ function buildLocalSpeechResolutionInput(params: {
         providers.voiceTts.enabled,
         persisted.features?.voiceMode?.tts?.model,
       ),
-      DEFAULT_LOCAL_TTS_MODEL,
+      defaultIfEnabled(providers.voiceTts.enabled, DEFAULT_LOCAL_TTS_MODEL),
     ]),
     ...buildLocalSpeechLanguageResolutionInput({ env, persisted }),
     voiceLocalTtsSpeakerId: firstDefinedValue<string | number>([

@@ -238,7 +238,7 @@ export class SpeechModelManager {
       } else {
         isInstalled = await hasRequiredFiles(modelDir, spec.requiredFiles);
       }
-
+      const isDownloading = this.activeDownloads.has(id);
       let status: SpeechModelItem["status"] = "not_installed";
       if (isDownloading) {
         status = "downloading";
@@ -327,12 +327,14 @@ export class SpeechModelManager {
           ? {
               dictationSttModel: fallbackStt ?? null,
               voiceSttModel: fallbackStt ?? null,
+              ...(fallbackStt ? {} : { dictationEnabled: false }),
             }
           : {}),
         ...(isTtsActive
           ? {
               voiceTtsModel: fallbackTts ?? null,
               voiceTtsSpeakerId: null,
+              ...(fallbackTts ? {} : { voiceModeEnabled: false }),
             }
           : {}),
       });

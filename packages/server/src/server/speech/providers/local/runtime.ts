@@ -76,25 +76,27 @@ function computeRequiredLocalModelIds(params: {
   const ids = new Set<LocalSpeechModelId>();
   if (
     params.providers.dictationStt.enabled !== false &&
-    params.providers.dictationStt.provider === "local"
+    params.providers.dictationStt.provider === "local" &&
+    params.models.dictationLocalSttModel
   ) {
     ids.add(params.models.dictationLocalSttModel);
   }
   if (
     params.providers.voiceStt.enabled !== false &&
-    params.providers.voiceStt.provider === "local"
+    params.providers.voiceStt.provider === "local" &&
+    params.models.voiceLocalSttModel
   ) {
     ids.add(params.models.voiceLocalSttModel);
   }
   if (
     params.providers.voiceTts.enabled !== false &&
-    params.providers.voiceTts.provider === "local"
+    params.providers.voiceTts.provider === "local" &&
+    params.models.voiceLocalTtsModel
   ) {
     ids.add(params.models.voiceLocalTtsModel);
   }
   return Array.from(ids);
 }
-
 function isLocalProviderEnabled(provider: { enabled?: boolean; provider: string }): boolean {
   return provider.enabled !== false && provider.provider === "local";
 }
