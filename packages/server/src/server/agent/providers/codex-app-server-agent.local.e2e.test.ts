@@ -1,10 +1,13 @@
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import { execFileSync } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
 import { createServer } from "node:http";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { once } from "node:events";
+
+import { AgentManager } from "../agent-manager.js";
+import { AgentStorage } from "../agent-storage.js";
 
 import { CodexAppServerAgentClient } from "./codex-app-server-agent.js";
 import { createTestLogger } from "../../../test-utils/test-logger.js";
@@ -173,7 +176,7 @@ function writeMockCodexConfig(codexHome: string, serverUrl: string): void {
     path.join(codexHome, "config.toml"),
     `
 model = "mock-model"
-approval_policy = "untrusted"
+approval_policy = "on-request"
 sandbox_mode = "read-only"
 
 model_provider = "mock_provider"
@@ -214,6 +217,53 @@ function waitForEvent<TEvent extends AgentStreamEvent>(params: {
 }
 
 describe("Codex app-server provider (local e2e)", () => {
+  test.runIf(isCodexInstalled())(
+    "reloads a persisted idle thread repeatedly without overlapping writers",
+    async () => {
+      const cwd = mkdtempSync(path.join(os.tmpdir(), "codex-reload-cwd-"));
+      const codexHome = mkdtempSync(path.join(os.tmpdir(), "codex-reload-home-"));
+      const mockServer = await startMockResponsesServer([assistantMessageSse("saved")]);
+      const logger = createTestLogger();
+      const storage = new AgentStorage(path.join(cwd, "agents"), logger);
+      const manager = new AgentManager({
+        clients: { codex: new CodexAppServerAgentClient(logger) },
+        registry: storage,
+        logger,
+      });
+      let agentId: string | undefined;
+      try {
+        writeMockCodexConfig(codexHome, mockServer.url);
+        vi.stubEnv("CODEX_HOME", codexHome);
+        const created = await manager.createAgent(
+          { provider: "codex", cwd, modeId: "auto", model: "mock-model" },
+          undefined,
+          { workspaceId: undefined },
+        );
+        agentId = created.id;
+        await manager.runAgent(agentId, "save this turn");
+        const threadId = manager.getAgent(agentId)?.persistence?.sessionId;
+        expect(threadId).toBeTruthy();
+        for (let i = 0; i < 3; i++) {
+          const reloaded = await manager.reloadAgentSession(agentId, undefined, {
+            rehydrateFromDisk: true,
+          });
+          expect(reloaded.persistence?.sessionId).toBe(threadId);
+          expect(reloaded.lifecycle).toBe("idle");
+        }
+        await manager.runAgent(agentId, "continue after reload");
+        expect(manager.getAgent(agentId)?.lifecycle).toBe("idle");
+      } finally {
+        if (agentId && manager.getAgent(agentId)) await manager.closeAgent(agentId);
+        await storage.flush();
+        vi.unstubAllEnvs();
+        await mockServer.close();
+        rmSync(cwd, { recursive: true, force: true });
+        rmSync(codexHome, { recursive: true, force: true });
+      }
+    },
+    30_000,
+  );
+
   test.runIf(isCodexInstalled())(
     "surfaces request_user_input from the app-server as question permissions and timeline tool calls",
     async () => {

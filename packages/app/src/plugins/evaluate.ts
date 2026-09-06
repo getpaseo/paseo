@@ -1,3 +1,6 @@
+import * as pluginUiRuntime from "./react-native/ui";
+import { useSettings } from "./settings/use-settings";
+import { defineSettings } from "@getpaseo/plugin";
 import * as React from "react";
 import * as ReactJsxRuntime from "react/jsx-runtime";
 // eslint-disable-next-line no-restricted-imports -- plugin client runtime injects host ReactNative.
@@ -70,7 +73,7 @@ function requireId(value: string, label: string): string {
 
 export type PluginClientRuntime = Pick<
   PluginClientContext,
-  "paseo" | "rpc" | "openSurface" | "openPanel" | "addComposerPill"
+  "paseo" | "rpc" | "openSettings" | "openSurface" | "openPanel" | "addComposerPill"
 >;
 
 export function runPluginClientBundle(
@@ -81,6 +84,7 @@ export function runPluginClientBundle(
 ): EvaluatedPlugin {
   const collector: Omit<EvaluatedPlugin, "id" | "cleanup"> = {
     surfaces: [],
+    settingsScreens: [],
     sidebarItems: [],
     workspacePanels: [],
     commandCenterItems: [],
@@ -91,6 +95,7 @@ export function runPluginClientBundle(
     timelineRenderers: [],
   };
   const surfaceIds = new Set<string>();
+  const settingsScreenIds = new Set<string>();
   const sidebarItemIds = new Set<string>();
   const workspacePanelIds = new Set<string>();
   const commandCenterItemIds = new Set<string>();
@@ -122,6 +127,17 @@ export function runPluginClientBundle(
   }
   const pluginContext: PluginClientContext = {
     ...runtime,
+    addSettingsScreen(contribution) {
+      const screenId = requireId(contribution.id, "settings screen id");
+      if (settingsScreenIds.has(screenId))
+        throw new Error(`Duplicate settings screen: ${screenId}`);
+      if (!contribution.title.trim()) throw new Error(`Invalid settings screen: ${screenId}`);
+      resolvePluginIcon(contribution.icon);
+      settingsScreenIds.add(screenId);
+      return register(collector.settingsScreens, { ...contribution, id: screenId }, () =>
+        settingsScreenIds.delete(screenId),
+      );
+    },
     addSurface(surfaceId: string, Component: ComponentType<PluginSurfaceProps>) {
       const normalizedId = requireId(surfaceId, "surface id");
       if (surfaceIds.has(normalizedId)) throw new Error(`Duplicate surface: ${normalizedId}`);
@@ -336,6 +352,7 @@ export function runPluginClientBundle(
     },
   };
   const runtimeRequire = (name: string): unknown => {
+    if (name === "@getpaseo/plugin/ui") return pluginUiRuntime;
     if (name === "react") return React;
     if (name === "react/jsx-runtime") return ReactJsxRuntime;
     if (name === "react-native") return ReactNative;
@@ -343,6 +360,8 @@ export function runPluginClientBundle(
       return {
         defineAttachmentSource,
         defineRpc,
+        defineSettings,
+        useSettings,
         Icon,
         usePaseo,
         useAgent,
@@ -406,6 +425,7 @@ export function runPluginClientBundle(
     id,
     cleanup,
     surfaces: collector.surfaces,
+    settingsScreens: collector.settingsScreens,
     sidebarItems: collector.sidebarItems,
     workspacePanels: collector.workspacePanels as EvaluatedPlugin["workspacePanels"],
     commandCenterItems: collector.commandCenterItems,

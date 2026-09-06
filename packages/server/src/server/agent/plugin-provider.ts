@@ -805,6 +805,7 @@ function createPluginProviderDefinition(
 ): ProviderDefinition {
   return {
     id: registration.id,
+    configuration: null,
     label: registration.label,
     description: registration.description ?? `Plugin provider ${registration.label}`,
     iconSvg: registration.icon,

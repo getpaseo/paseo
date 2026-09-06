@@ -1,7 +1,7 @@
 # Plugins
 
 Local plugins contribute daemon RPCs, native app surfaces, workspace panels, Command Center items,
-client slash commands, timeline items, composer pills, app themes, and composer attachment sources.
+client slash commands, timeline items, composer pills, app themes, composer attachment sources, and settings screens.
 Paseo executes `index.server.ts` in a subprocess and `index.client.tsx` in every connected app.
 
 > **Trust every plugin you add.** `paseo plugin add` and `paseo plugin install` mean “I trust this codebase.” Plugins are unsandboxed: server code and Git preparation commands run with the daemon user's access on the daemon host, and client contributions run inside Paseo. The repository's dependencies and future updates are part of that trust decision. With `--host`, preparation runs on that remote daemon host.
@@ -155,7 +155,8 @@ Shared files import contract helpers and types from `@getpaseo/plugin`. Server h
 `@getpaseo/plugin/react-native`. Its `Icon` resolves a Lucide name using the client's installed icon
 set; an unknown name renders nothing so it cannot break the plugin surface.
 Its controlled modal keeps presentation metadata on `<Modal title="…" icon={…}>` and body UI in
-`<Modal.Content>`.
+`<Modal.Content>`. Body layout, sheet-aware scrolling, and clipboard actions follow the
+[host UI contract](../public-docs/plugins/v0.8/reference.md#host-ui).
 Plugin UI runs on desktop and mobile across multiple themes: color every `Text` from
 `theme.colors.foreground` or `theme.colors.foregroundMuted`, and size layout from `layout.compact`.
 See `public-docs/plugins/v0.8/reference.md`.
@@ -219,7 +220,7 @@ typed async function. Use the host-provided `@tanstack/react-query` for request 
 Paseo gives each plugin installation its own query client.
 
 `usePaseo()` and the handler's `{ paseo }` context expose the same `PaseoApi`: projects,
-workspaces, agents, providers, and daemon config. They do not expose connection lifecycle. A surface borrows the
+workspaces, agents, terminals, providers, and daemon config. They do not expose connection lifecycle. A surface borrows the
 selected host's existing connection; switching the screen's host changes both `usePaseo()` and
 `useRpc()` to that host. An offline selected host fails there and never falls through to another
 installation. A server handler owns an IPC-backed daemon session for the life of its subprocess.
@@ -439,6 +440,18 @@ Attachment sources stay scoped to the composer's host. Unlike sidebar contributi
 on several hosts are not coalesced. The selected snapshot submits as a text attachment with neutral
 external-resource presentation, so it remains readable if the plugin is removed or an older peer
 drops the optional presentation fields.
+
+## Contribute settings
+
+Register ordinary components with `client.addSettingsScreen` and open them with `openSettings`.
+The host settings shell owns navigation and layout; plugin content must not add another page
+scroll view or header. See the [author contract](../public-docs/plugins/v0.8/reference.md#settings-screens)
+and `plugin-examples/settings` for the named UI components and persistence API.
+
+Settings storage is scoped to the runtime installation ID, never the source path or manifest ID.
+Its writer lives with the plugin subprocess, while its directory lives outside managed sources,
+so updates and reloads retain values. Settings-change notifications must not enter the catalog
+reload path: that path disposes the plugin and would destroy open drafts after every save.
 
 ## Contribute a theme
 
