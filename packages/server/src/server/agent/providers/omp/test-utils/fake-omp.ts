@@ -107,6 +107,11 @@ export class FakeOmpSession implements OmpRuntimeSession {
   readonly handoffRequests: Array<{ customInstructions?: string }> = [];
   readonly steerRequests: Array<{ message: string; imageCount: number }> = [];
   readonly followUpRequests: Array<{ message: string; imageCount: number }> = [];
+  readonly steerActiveTurnRequests: Array<{ message: string; imageCount: number }> = [];
+  readonly controlRequests: Array<{ type: "abort"; clearQueue?: true }> = [];
+  readonly capabilities = { activeTurnSteering: true };
+  steerAccepted = true;
+  steerActiveTurnError: Error | null = null;
   readonly hostToolSetRequests: OmpRpcHostToolDefinition[][] = [];
   readonly hostToolResults: OmpRpcHostToolResult[] = [];
   readonly hostToolUpdates: OmpRpcHostToolUpdate[] = [];
@@ -135,6 +140,7 @@ export class FakeOmpSession implements OmpRuntimeSession {
   branchResponse: { text?: string; cancelled?: boolean } = { text: "" };
   branchMessages: Array<{ entryId: string; text: string }> = [];
   readonly branchRequests: string[] = [];
+  getBranchMessagesRequestCount = 0;
   activeBranchEntryId?: string;
   closed = false;
   state: OmpSessionState;
@@ -146,6 +152,14 @@ export class FakeOmpSession implements OmpRuntimeSession {
   private readonly promptWaiters: Array<() => void> = [];
   private readonly subscriptionWaiters: Array<{ count: number; resolve: () => void }> = [];
   private readonly subagentMessageResults = new Map<string, FakeOmpSubagentMessagesResult[]>();
+  private readonly steerResponseHolds: Array<{
+    resolve: (result: { accepted: boolean }) => void;
+  }> = [];
+  private heldSteerResponseCount = 0;
+  private readonly branchMessageResponseHolds: Array<{
+    resolve: (messages: Array<{ entryId: string; text: string }>) => void;
+  }> = [];
+  private heldBranchMessageResponseCount = 0;
   private nextHeldPrompt: { promise: Promise<void>; reject: (error: Error) => void } | null = null;
   private activeHeldPrompt: { promise: Promise<void>; reject: (error: Error) => void } | null =
     null;
@@ -238,7 +252,10 @@ export class FakeOmpSession implements OmpRuntimeSession {
     };
   }
 
-  async abort(): Promise<void> {
+  async abort(input: { clearQueue?: boolean }): Promise<void> {
+    this.controlRequests.push(
+      input.clearQueue ? { type: "abort", clearQueue: true } : { type: "abort" },
+    );
     if (this.abortError) {
       throw this.abortError;
     }
@@ -329,7 +346,33 @@ export class FakeOmpSession implements OmpRuntimeSession {
   }
 
   async getBranchMessages(): Promise<Array<{ entryId: string; text: string }>> {
+    this.getBranchMessagesRequestCount += 1;
+    if (this.heldBranchMessageResponseCount > 0) {
+      this.heldBranchMessageResponseCount -= 1;
+      const { promise, resolve } =
+        Promise.withResolvers<Array<{ entryId: string; text: string }>>();
+      this.branchMessageResponseHolds.push({ resolve });
+      return await promise;
+    }
     return this.branchMessages;
+  }
+
+  holdNextBranchMessageResponses(count = 1): void {
+    this.heldBranchMessageResponseCount += count;
+  }
+
+  async releaseHeldBranchMessageResponse(
+    index: number,
+    messages: Array<{ entryId: string; text: string }> = this.branchMessages,
+  ): Promise<void> {
+    const [hold] = this.branchMessageResponseHolds.splice(index, 1);
+    if (!hold) {
+      throw new Error(`FakeOmp has no held branch-message response at index ${index}`);
+    }
+    hold.resolve(messages);
+    const { promise, resolve } = Promise.withResolvers<void>();
+    setImmediate(resolve);
+    await promise;
   }
 
   steer(message: string, images?: Array<{ type: "image"; data: string; mimeType: string }>): void {
@@ -341,6 +384,41 @@ export class FakeOmpSession implements OmpRuntimeSession {
     images?: Array<{ type: "image"; data: string; mimeType: string }>,
   ): void {
     this.followUpRequests.push({ message, imageCount: images?.length ?? 0 });
+  }
+
+  async steerActiveTurn(input: {
+    message: string;
+    images?: Array<{ type: "image"; data: string; mimeType: string }>;
+  }): Promise<{ accepted: boolean }> {
+    this.steerActiveTurnRequests.push({
+      message: input.message,
+      imageCount: input.images?.length ?? 0,
+    });
+    if (this.heldSteerResponseCount > 0) {
+      this.heldSteerResponseCount -= 1;
+      const { promise, resolve } = Promise.withResolvers<{ accepted: boolean }>();
+      this.steerResponseHolds.push({ resolve });
+      return await promise;
+    }
+    if (this.steerActiveTurnError) {
+      throw this.steerActiveTurnError;
+    }
+    return { accepted: this.steerAccepted };
+  }
+
+  holdNextSteerResponse(): void {
+    this.heldSteerResponseCount += 1;
+  }
+
+  async releaseHeldSteerResponse(result: { accepted: boolean }): Promise<void> {
+    const hold = this.steerResponseHolds.shift();
+    if (!hold) {
+      throw new Error("FakeOmp has no held steer response");
+    }
+    hold.resolve(result);
+    const { promise, resolve } = Promise.withResolvers<void>();
+    setImmediate(resolve);
+    await promise;
   }
 
   sendHostToolResult(result: OmpRpcHostToolResult): void {
@@ -438,6 +516,15 @@ export class FakeOmpSession implements OmpRuntimeSession {
     this.emit({
       type: "message_end",
       message: { role: "custom", content },
+    });
+  }
+
+  // Real OMP user message_end frames carry no id/entryId; the session resolves
+  // the native ID from getBranchMessages.
+  acceptPromptWithoutId(text: string): void {
+    this.emit({
+      type: "message_end",
+      message: { role: "user", content: text } as OmpAgentMessage,
     });
   }
 

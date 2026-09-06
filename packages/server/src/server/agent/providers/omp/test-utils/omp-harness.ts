@@ -7,9 +7,13 @@ import pino from "pino";
 import type {
   AgentPersistenceHandle,
   AgentPermissionResponse,
+  AgentPromptInput,
+  AgentRunOptions,
   AgentSessionConfig,
   AgentStreamEvent,
   AgentTimelineItem,
+  SteerActiveTurnOptions,
+  SteerResult,
 } from "../../../agent-sdk-types.js";
 import type { PaseoToolCatalog } from "../../../tools/types.js";
 import {
@@ -464,6 +468,27 @@ export class OmpHarness {
     const promptStarted = this.omp.latestSession().nextPrompt();
     await this.requireSession().startTurn(message);
     await promptStarted;
+  }
+
+  async startTrackedTurn(message: string, options?: AgentRunOptions): Promise<string> {
+    const promptStarted = this.omp.latestSession().nextPrompt();
+    const { turnId } = await this.requireSession().startTurn(message, options);
+    await promptStarted;
+    return turnId;
+  }
+
+  async steer(prompt: AgentPromptInput, options: SteerActiveTurnOptions): Promise<SteerResult> {
+    return await this.requireSession().steerActiveTurn(prompt, options);
+  }
+
+  async syncRuntimeState(): Promise<void> {
+    await this.requireSession().getRuntimeInfo();
+  }
+
+  async settleTurnCompletion(count = 1): Promise<void> {
+    for (let attempt = 0; attempt < 20 && this.completedTurnCount() < count; attempt++) {
+      await waitForImmediate();
+    }
   }
 
   async interrupt(): Promise<void> {

@@ -18,6 +18,7 @@ function createOmpChild(options?: {
   supportedProtocolVersions?: number[];
   emitReady?: boolean;
   maxFrameBytes?: number;
+  features?: Record<string, unknown>;
 }): OmpChild {
   const child = Object.assign(new EventEmitter(), {
     stdin: new PassThrough(),
@@ -43,6 +44,7 @@ function createOmpChild(options?: {
         supportedProtocolVersions: options?.supportedProtocolVersions ?? [1],
         maxFrameBytes: options?.maxFrameBytes ?? 1024 * 1024,
         maxReassembledFrameBytes: 64 * 1024 * 1024,
+        ...(options?.features ? { features: options.features } : {}),
       })}\n`,
     );
   }
@@ -417,5 +419,90 @@ describe("OMP CLI runtime", () => {
     const result = await session.getAvailableModels();
     expect(result).toHaveLength(2_000);
     expect(result[0]).toEqual(expect.objectContaining({ id: "model-0" }));
+  });
+
+  test("exposes the steering capability advertised by the ready frame", async () => {
+    const child = createOmpChild({ features: { activeTurnSteering: 1 } });
+    const session = await createRuntime(child).startSession({ cwd: "/workspace/project" });
+
+    expect(session.capabilities).toEqual({ activeTurnSteering: true });
+  });
+
+  test("reports no steering capability for an old ready frame", async () => {
+    const child = createOmpChild();
+    const session = await createRuntime(child).startSession({ cwd: "/workspace/project" });
+
+    expect(session.capabilities).toEqual({ activeTurnSteering: false });
+  });
+
+  test("sends active-only steer requests and returns the acceptance", async () => {
+    const child = createOmpChild({ features: { activeTurnSteering: 1 } });
+    const commands: Record<string, unknown>[] = [];
+    replyToCommands(child, (command) => {
+      commands.push(command);
+      return { accepted: true };
+    });
+    const session = await createRuntime(child).startSession({ cwd: "/workspace/project" });
+
+    await expect(
+      session.steerActiveTurn({
+        message: "focus on the tests",
+        images: [{ type: "image", data: "aGk=", mimeType: "image/png" }],
+      }),
+    ).resolves.toEqual({ accepted: true });
+    expect(commands.map(withoutRequestId)).toEqual([
+      {
+        type: "steer",
+        message: "focus on the tests",
+        images: [{ type: "image", data: "aGk=", mimeType: "image/png" }],
+        activeTurnOnly: true,
+      },
+    ]);
+  });
+
+  test("returns the authoritative steer rejection", async () => {
+    const child = createOmpChild({ features: { activeTurnSteering: 1 } });
+    replyToCommands(child, () => ({ accepted: false }));
+    const session = await createRuntime(child).startSession({ cwd: "/workspace/project" });
+
+    await expect(session.steerActiveTurn({ message: "focus" })).resolves.toEqual({
+      accepted: false,
+    });
+  });
+
+  test("rejects malformed steer acknowledgements", async () => {
+    const child = createOmpChild({ features: { activeTurnSteering: 1 } });
+    replyToCommands(child, () => ({}));
+    const session = await createRuntime(child).startSession({ cwd: "/workspace/project" });
+
+    await expect(session.steerActiveTurn({ message: "focus" })).rejects.toThrow();
+  });
+
+  test("sends one acknowledged atomic abort-with-clear request", async () => {
+    const child = createOmpChild({ features: { activeTurnSteering: 1 } });
+    const commands: Record<string, unknown>[] = [];
+    replyToCommands(child, (command) => {
+      commands.push(command);
+      return undefined;
+    });
+    const session = await createRuntime(child).startSession({ cwd: "/workspace/project" });
+
+    await session.abort({ clearQueue: true });
+
+    expect(commands.map(withoutRequestId)).toEqual([{ type: "abort", clearQueue: true }]);
+  });
+
+  test("sends plain abort for a legacy session", async () => {
+    const child = createOmpChild();
+    const commands: Record<string, unknown>[] = [];
+    replyToCommands(child, (command) => {
+      commands.push(command);
+      return undefined;
+    });
+    const session = await createRuntime(child).startSession({ cwd: "/workspace/project" });
+
+    await session.abort({});
+
+    expect(commands.map(withoutRequestId)).toEqual([{ type: "abort" }]);
   });
 });

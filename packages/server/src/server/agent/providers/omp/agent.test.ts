@@ -661,3 +661,587 @@ describe("OMP agent client and session", () => {
     ]);
   });
 });
+
+describe("OMP active-turn steering", () => {
+  function userMessages(omp: OmpHarness) {
+    return omp.timeline().filter((item) => item.type === "user_message");
+  }
+
+  test("steers the active turn and correlates the echoed user message", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    const runtime = omp.runtime();
+    const turnId = await omp.startTrackedTurn("fix the tests", {
+      clientMessageId: "client-prompt-1",
+    });
+    runtime.beginTurn();
+    runtime.acceptPrompt("fix the tests", "user-prompt-1");
+
+    const result = await omp.steer("steer this turn", {
+      expectedTurnId: turnId,
+      clientMessageId: "client-steer-1",
+    });
+    expect(result).toEqual({ status: "accepted" });
+    expect(runtime.steerActiveTurnRequests).toEqual([
+      { message: "steer this turn", imageCount: 0 },
+    ]);
+
+    runtime.acceptPrompt("steer this turn", "entry-steer-1");
+    expect(userMessages(omp)).toEqual([
+      {
+        type: "user_message",
+        text: "fix the tests",
+        messageId: "user-prompt-1",
+        clientMessageId: "client-prompt-1",
+      },
+      {
+        type: "user_message",
+        text: "steer this turn",
+        messageId: "entry-steer-1",
+        clientMessageId: "client-steer-1",
+      },
+    ]);
+  });
+
+  test("forwards steer images when the model supports image input", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    const runtime = omp.runtime();
+    runtime.state = {
+      ...runtime.state,
+      model: { provider: "anthropic", id: "claude", name: "claude", input: ["text", "image"] },
+    };
+    await omp.syncRuntimeState();
+    const turnId = await omp.startTrackedTurn("work");
+    runtime.beginTurn();
+
+    const result = await omp.steer(
+      [
+        { type: "text", text: "look at this" },
+        { type: "image", data: "aGk=", mimeType: "image/png" },
+      ],
+      { expectedTurnId: turnId },
+    );
+
+    expect(result).toEqual({ status: "accepted" });
+    expect(runtime.steerActiveTurnRequests).toEqual([{ message: "look at this", imageCount: 1 }]);
+  });
+
+  test("reports unavailable for stale and idle turns without sending a steer", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    const runtime = omp.runtime();
+    const turnId = await omp.startTrackedTurn("run");
+    runtime.beginTurn();
+    runtime.acceptPrompt("run", "user-1");
+
+    const stale = await omp.steer("steer", { expectedTurnId: "turn-that-ended" });
+    expect(stale).toEqual({ status: "unavailable" });
+
+    runtime.streamAssistantText("done");
+    runtime.finishTurn();
+    await omp.settleTurnCompletion();
+    const idle = await omp.steer("steer", { expectedTurnId: turnId });
+    expect(idle).toEqual({ status: "unavailable" });
+    expect(runtime.steerActiveTurnRequests).toEqual([]);
+  });
+
+  test("keeps slash-command steers on the interrupt fallback", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    const runtime = omp.runtime();
+    const turnId = await omp.startTrackedTurn("run");
+    runtime.beginTurn();
+
+    const result = await omp.steer("/model", { expectedTurnId: turnId });
+
+    expect(result).toEqual({ status: "unavailable" });
+    expect(runtime.steerActiveTurnRequests).toEqual([]);
+  });
+
+  test("reports unavailable when the ready frame did not advertise steering", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    const runtime = omp.runtime();
+    runtime.capabilities.activeTurnSteering = false;
+    const turnId = await omp.startTrackedTurn("run");
+    runtime.beginTurn();
+
+    const result = await omp.steer("steer", { expectedTurnId: turnId });
+
+    expect(result).toEqual({ status: "unavailable" });
+    expect(runtime.steerActiveTurnRequests).toEqual([]);
+  });
+
+  test("correlates a steered echo that arrives before the RPC response", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    const runtime = omp.runtime();
+    const turnId = await omp.startTrackedTurn("work", { clientMessageId: "client-prompt-1" });
+    runtime.beginTurn();
+    runtime.acceptPrompt("work", "user-prompt-1");
+
+    runtime.holdNextSteerResponse();
+    const steering = omp.steer("redirect", {
+      expectedTurnId: turnId,
+      clientMessageId: "client-steer-1",
+    });
+    runtime.acceptPrompt("redirect", "entry-steer-1");
+    await runtime.releaseHeldSteerResponse({ accepted: true });
+
+    await expect(steering).resolves.toEqual({ status: "accepted" });
+    expect(userMessages(omp)).toContainEqual({
+      type: "user_message",
+      text: "redirect",
+      messageId: "entry-steer-1",
+      clientMessageId: "client-steer-1",
+    });
+  });
+
+  test("orders foreground before steer when their texts are identical", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    const runtime = omp.runtime();
+    const turnId = await omp.startTrackedTurn("do it", { clientMessageId: "client-prompt-1" });
+    runtime.beginTurn();
+
+    // The steer is admitted before OMP has echoed the foreground prompt and
+    // carries the exact same text.
+    const result = await omp.steer("do it", {
+      expectedTurnId: turnId,
+      clientMessageId: "client-steer-1",
+    });
+    expect(result).toEqual({ status: "accepted" });
+
+    // OMP echoes in provider order: foreground prompt first, then the steer.
+    runtime.acceptPrompt("do it", "entry-foreground");
+    runtime.acceptPrompt("do it", "entry-steer");
+
+    expect(userMessages(omp)).toEqual([
+      {
+        type: "user_message",
+        text: "do it",
+        messageId: "entry-foreground",
+        clientMessageId: "client-prompt-1",
+      },
+      {
+        type: "user_message",
+        text: "do it",
+        messageId: "entry-steer",
+        clientMessageId: "client-steer-1",
+      },
+    ]);
+  });
+
+  test("correlates an expanded foreground echo and a following steer", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    const runtime = omp.runtime();
+    const turnId = await omp.startTrackedTurn("/plan ship it", {
+      clientMessageId: "client-prompt-1",
+    });
+    runtime.beginTurn();
+
+    // OMP expands slash/template prompts before echoing the user entry, so the
+    // foreground echo text differs from the submitted prompt.
+    runtime.acceptPrompt("Expanded plan instructions: ship it", "entry-foreground");
+
+    const result = await omp.steer("focus on tests", {
+      expectedTurnId: turnId,
+      clientMessageId: "client-steer-1",
+    });
+    expect(result).toEqual({ status: "accepted" });
+    runtime.acceptPrompt("focus on tests", "entry-steer");
+
+    expect(userMessages(omp)).toEqual([
+      {
+        type: "user_message",
+        text: "Expanded plan instructions: ship it",
+        messageId: "entry-foreground",
+        clientMessageId: "client-prompt-1",
+      },
+      {
+        type: "user_message",
+        text: "focus on tests",
+        messageId: "entry-steer",
+        clientMessageId: "client-steer-1",
+      },
+    ]);
+  });
+
+  test("a re-emitted no-ID echo does not consume a pending steer correlation", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    const runtime = omp.runtime();
+    const turnId = await omp.startTrackedTurn("work", { clientMessageId: "client-prompt-1" });
+    runtime.beginTurn();
+    runtime.branchMessages = [{ entryId: "entry-work", text: "work" }];
+    runtime.acceptPromptWithoutId("work");
+    await waitForImmediate();
+
+    // A steer with the same text as the already-surfaced foreground entry.
+    await omp.steer("work", { expectedTurnId: turnId, clientMessageId: "client-steer-1" });
+
+    // Hold the duplicate lookup while the genuine same-text echo arrives. The
+    // duplicate sees only the old entry and must not reserve the steer identity.
+    runtime.holdNextBranchMessageResponses(2);
+    runtime.acceptPromptWithoutId("work");
+    runtime.acceptPromptWithoutId("work");
+    expect(runtime.getBranchMessagesRequestCount).toBe(3);
+    await runtime.releaseHeldBranchMessageResponse(0, [{ entryId: "entry-work", text: "work" }]);
+    await runtime.releaseHeldBranchMessageResponse(0, [
+      { entryId: "entry-work", text: "work" },
+      { entryId: "entry-steer", text: "work" },
+    ]);
+    expect(userMessages(omp)).toEqual([
+      {
+        type: "user_message",
+        text: "work",
+        messageId: "entry-work",
+        clientMessageId: "client-prompt-1",
+      },
+      {
+        type: "user_message",
+        text: "work",
+        messageId: "entry-steer",
+        clientMessageId: "client-steer-1",
+      },
+    ]);
+  });
+
+  test("repeated identical steers resolve distinct native entries without IDs", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    const runtime = omp.runtime();
+    const turnId = await omp.startTrackedTurn("work", { clientMessageId: "client-prompt-1" });
+    runtime.beginTurn();
+    runtime.branchMessages = [{ entryId: "entry-work", text: "work" }];
+    runtime.acceptPromptWithoutId("work");
+    await waitForImmediate();
+
+    await omp.steer("again", { expectedTurnId: turnId, clientMessageId: "client-steer-1" });
+    await omp.steer("again", { expectedTurnId: turnId, clientMessageId: "client-steer-2" });
+    runtime.branchMessages = [
+      { entryId: "entry-work", text: "work" },
+      { entryId: "entry-again-1", text: "again" },
+      { entryId: "entry-again-2", text: "again" },
+    ];
+    // Resolve both native-ID lookups in reverse order. Emission still waits
+    // for the first echo so the provider/client identity pairs remain FIFO.
+    runtime.holdNextBranchMessageResponses(2);
+    runtime.acceptPromptWithoutId("again");
+    runtime.acceptPromptWithoutId("again");
+    expect(runtime.getBranchMessagesRequestCount).toBe(3);
+    await runtime.releaseHeldBranchMessageResponse(1);
+    await waitForImmediate();
+    expect(userMessages(omp).filter((row) => row.text === "again")).toEqual([]);
+    await runtime.releaseHeldBranchMessageResponse(0);
+
+    const again = userMessages(omp).filter((row) => row.text === "again");
+    expect(again).toEqual([
+      {
+        type: "user_message",
+        text: "again",
+        messageId: "entry-again-1",
+        clientMessageId: "client-steer-1",
+      },
+      {
+        type: "user_message",
+        text: "again",
+        messageId: "entry-again-2",
+        clientMessageId: "client-steer-2",
+      },
+    ]);
+  });
+
+  test("terminal cleanup drops pending no-ID echo resolution", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    const runtime = omp.runtime();
+    await omp.startTrackedTurn("work", { clientMessageId: "client-work" });
+    runtime.beginTurn();
+
+    runtime.holdNextBranchMessageResponses();
+    runtime.acceptPromptWithoutId("work");
+    expect(runtime.getBranchMessagesRequestCount).toBe(1);
+    runtime.finishTurn();
+
+    await omp.settleTurnCompletion();
+    await omp.startTrackedTurn("next", { clientMessageId: "client-next" });
+    runtime.beginTurn();
+    runtime.branchMessages = [{ entryId: "entry-next", text: "next" }];
+    runtime.acceptPromptWithoutId("next");
+    await waitForImmediate();
+    expect(userMessages(omp)).toEqual([
+      {
+        type: "user_message",
+        text: "next",
+        messageId: "entry-next",
+        clientMessageId: "client-next",
+      },
+    ]);
+
+    await runtime.releaseHeldBranchMessageResponse(0, [{ entryId: "entry-work", text: "work" }]);
+    expect(userMessages(omp)).toEqual([
+      {
+        type: "user_message",
+        text: "next",
+        messageId: "entry-next",
+        clientMessageId: "client-next",
+      },
+    ]);
+    runtime.finishTurn();
+  });
+
+  test("keeps identical steer texts correlated in admission order", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    const runtime = omp.runtime();
+    const turnId = await omp.startTrackedTurn("work");
+    runtime.beginTurn();
+    runtime.acceptPrompt("work", "user-prompt-1");
+
+    await omp.steer("again", { expectedTurnId: turnId, clientMessageId: "client-steer-1" });
+    await omp.steer("again", { expectedTurnId: turnId, clientMessageId: "client-steer-2" });
+    runtime.acceptPrompt("again", "entry-1");
+    runtime.acceptPrompt("again", "entry-2");
+
+    expect(userMessages(omp)).toEqual([
+      { type: "user_message", text: "work", messageId: "user-prompt-1" },
+      {
+        type: "user_message",
+        text: "again",
+        messageId: "entry-1",
+        clientMessageId: "client-steer-1",
+      },
+      {
+        type: "user_message",
+        text: "again",
+        messageId: "entry-2",
+        clientMessageId: "client-steer-2",
+      },
+    ]);
+  });
+
+  test("does not reuse the foreground client ID for a steer without one", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    const runtime = omp.runtime();
+    const turnId = await omp.startTrackedTurn("work", { clientMessageId: "client-prompt-1" });
+    runtime.beginTurn();
+    runtime.acceptPrompt("work", "user-prompt-1");
+
+    await omp.steer("steer without a client ID", { expectedTurnId: turnId });
+    runtime.acceptPrompt("steer without a client ID", "entry-steer-1");
+
+    expect(userMessages(omp)).toContainEqual({
+      type: "user_message",
+      text: "steer without a client ID",
+      messageId: "entry-steer-1",
+    });
+  });
+
+  test("removes exactly the rejected provisional entry on accepted:false", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    const runtime = omp.runtime();
+    const turnId = await omp.startTrackedTurn("work");
+    runtime.beginTurn();
+    runtime.acceptPrompt("work", "user-prompt-1");
+
+    runtime.steerAccepted = false;
+    const rejected = await omp.steer("dup", {
+      expectedTurnId: turnId,
+      clientMessageId: "client-steer-1",
+    });
+    expect(rejected).toEqual({ status: "unavailable" });
+
+    runtime.steerAccepted = true;
+    const accepted = await omp.steer("dup", {
+      expectedTurnId: turnId,
+      clientMessageId: "client-steer-2",
+    });
+    expect(accepted).toEqual({ status: "accepted" });
+
+    runtime.acceptPrompt("dup", "entry-1");
+    expect(userMessages(omp)).toContainEqual({
+      type: "user_message",
+      text: "dup",
+      messageId: "entry-1",
+      clientMessageId: "client-steer-2",
+    });
+  });
+
+  test("surfaces an ambiguous transport failure and keeps the correlation", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    const runtime = omp.runtime();
+    const turnId = await omp.startTrackedTurn("work");
+    runtime.beginTurn();
+    runtime.acceptPrompt("work", "user-prompt-1");
+
+    runtime.steerActiveTurnError = new Error("OMP RPC request timed out");
+    await expect(
+      omp.steer("maybe delivered", { expectedTurnId: turnId, clientMessageId: "client-steer-1" }),
+    ).rejects.toThrow("OMP RPC request timed out");
+
+    // If OMP did read the steer despite the transport failure, its echo still
+    // correlates because the provisional entry survives until terminal cleanup.
+    runtime.acceptPrompt("maybe delivered", "entry-steer-1");
+    expect(userMessages(omp)).toContainEqual({
+      type: "user_message",
+      text: "maybe delivered",
+      messageId: "entry-steer-1",
+      clientMessageId: "client-steer-1",
+    });
+  });
+
+  test("throws when OMP accepts a steer for a turn that ended meanwhile", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    const runtime = omp.runtime();
+    const turnId = await omp.startTrackedTurn("work");
+    runtime.beginTurn();
+    runtime.acceptPrompt("work", "user-prompt-1");
+
+    runtime.holdNextSteerResponse();
+    const steering = omp.steer("late steer", {
+      expectedTurnId: turnId,
+      clientMessageId: "client-steer-1",
+    });
+    // The steer's fate is ambiguous; unavailable would trigger the manager's
+    // interrupt-and-replace fallback and deliver the message twice.
+    const rejection = expect(steering).rejects.toThrow(
+      "OMP accepted a steer for a turn that is no longer active",
+    );
+    runtime.streamAssistantText("done");
+    runtime.finishTurn();
+    await omp.settleTurnCompletion();
+    await runtime.releaseHeldSteerResponse({ accepted: true });
+
+    await rejection;
+    expect(runtime.controlRequests).toEqual([]);
+  });
+
+  test("denies pending permissions only after the steer is accepted", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    const runtime = omp.runtime();
+    const turnId = await omp.startTrackedTurn("work");
+    runtime.beginTurn();
+    omp.requestToolApproval({ id: "perm-1", tool: "bash", detail: "rm -rf build" });
+    expect(omp.pendingPermissions()).toHaveLength(1);
+
+    runtime.holdNextSteerResponse();
+    const steering = omp.steer("answer instead", {
+      expectedTurnId: turnId,
+      clearPendingPermissions: true,
+    });
+    await waitForImmediate();
+    expect(omp.extensionUiResponses()).toEqual([]);
+
+    await runtime.releaseHeldSteerResponse({ accepted: true });
+    await expect(steering).resolves.toEqual({ status: "accepted" });
+    expect(omp.extensionUiResponses()).toEqual([{ id: "perm-1", response: { value: "Deny" } }]);
+    expect(omp.pendingPermissions()).toEqual([]);
+  });
+
+  test("leaves permissions open for a steer without the clearing flag", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    const runtime = omp.runtime();
+    const turnId = await omp.startTrackedTurn("work");
+    runtime.beginTurn();
+    omp.requestToolApproval({ id: "perm-1", tool: "bash", detail: "rm -rf build" });
+
+    const result = await omp.steer("answer instead", { expectedTurnId: turnId });
+
+    expect(result).toEqual({ status: "accepted" });
+    expect(omp.extensionUiResponses()).toEqual([]);
+    expect(omp.pendingPermissions()).toHaveLength(1);
+  });
+
+  test("atomically clears the OMP queue while aborting an active turn", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    const runtime = omp.runtime();
+    await omp.startTrackedTurn("work");
+    runtime.beginTurn();
+
+    await omp.interrupt();
+
+    expect(runtime.controlRequests).toEqual([{ type: "abort", clearQueue: true }]);
+    expect(omp.canceledTurnCount()).toBe(1);
+  });
+
+  test("does not terminalize locally when atomic abort-with-clear fails", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    const runtime = omp.runtime();
+    await omp.startTrackedTurn("work");
+    runtime.beginTurn();
+
+    runtime.abortError = new Error("atomic abort failed");
+    await expect(omp.interrupt()).rejects.toThrow("atomic abort failed");
+
+    expect(runtime.controlRequests).toEqual([{ type: "abort", clearQueue: true }]);
+    expect(runtime.abortRequested).toBe(false);
+    expect(omp.canceledTurnCount()).toBe(0);
+  });
+
+  test("sends plain abort when the binary lacks steering", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    const runtime = omp.runtime();
+    runtime.capabilities.activeTurnSteering = false;
+    await omp.startTrackedTurn("work");
+    runtime.beginTurn();
+
+    await omp.interrupt();
+
+    expect(runtime.controlRequests).toEqual([{ type: "abort" }]);
+    expect(omp.canceledTurnCount()).toBe(1);
+  });
+
+  test("drops pending steer correlation once the turn completes", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    const runtime = omp.runtime();
+    const first = await omp.startTrackedTurn("work");
+    runtime.beginTurn();
+    runtime.acceptPrompt("work", "user-1");
+    await omp.steer("stale steer", { expectedTurnId: first, clientMessageId: "client-steer-1" });
+    runtime.streamAssistantText("done");
+    runtime.finishTurn();
+    await omp.settleTurnCompletion();
+
+    await omp.startTrackedTurn("next");
+    runtime.beginTurn();
+    runtime.acceptPrompt("stale steer", "entry-late");
+
+    expect(userMessages(omp)).toContainEqual({
+      type: "user_message",
+      text: "stale steer",
+      messageId: "entry-late",
+    });
+  });
+
+  test("drops pending steer correlation when the OMP process exits", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    const runtime = omp.runtime();
+    const turnId = await omp.startTrackedTurn("work", { clientMessageId: "client-prompt-1" });
+    runtime.beginTurn();
+    runtime.acceptPrompt("work", "user-prompt-1");
+    await omp.steer("orphan steer", { expectedTurnId: turnId, clientMessageId: "client-steer-1" });
+
+    runtime.emit({ type: "process_exit", error: "omp crashed" });
+    runtime.acceptPrompt("orphan steer", "entry-late");
+
+    expect(userMessages(omp)).toContainEqual({
+      type: "user_message",
+      text: "orphan steer",
+      messageId: "entry-late",
+    });
+  });
+});

@@ -42,6 +42,11 @@ export interface OmpStartSessionInput {
   extraArgs?: string[];
 }
 
+export interface OmpRuntimeSessionCapabilities {
+  /** The OMP ready frame advertised `features.activeTurnSteering: 1`. */
+  activeTurnSteering: boolean;
+}
+
 export interface OmpRuntimeSession {
   onEvent(callback: (event: OmpRuntimeEvent) => void): () => void;
   prompt(
@@ -50,7 +55,7 @@ export interface OmpRuntimeSession {
   ): Promise<OmpPromptAck>;
   compact(customInstructions?: string): Promise<void>;
   setAutoCompaction(enabled: boolean): Promise<void>;
-  abort(): Promise<void>;
+  abort(input: { clearQueue?: boolean }): Promise<void>;
   getState(): Promise<OmpSessionState>;
   getMessages(): Promise<OmpAgentMessage[]>;
   getAvailableModels(timeoutMs?: number | null): Promise<OmpModel[]>;
@@ -65,11 +70,22 @@ export interface OmpRuntimeSession {
   branch(entryId: string): Promise<{ text: string }>;
   getBranchMessages(): Promise<Array<{ entryId: string; text: string }>>;
   activeBranchEntryId?: string;
+  /**
+   * Legacy fire-and-forget steering frames used by the explicit `/steer` and
+   * `/follow-up` commands. They work on every OMP binary and take no response;
+   * ordinary active-turn steering uses `steerActiveTurn` instead.
+   */
   steer(message: string, images?: Array<{ type: "image"; data: string; mimeType: string }>): void;
   followUp(
     message: string,
     images?: Array<{ type: "image"; data: string; mimeType: string }>,
   ): void;
+  /** Request-based active-only steer; requires `capabilities.activeTurnSteering`. */
+  steerActiveTurn(input: {
+    message: string;
+    images?: Array<{ type: "image"; data: string; mimeType: string }>;
+  }): Promise<{ accepted: boolean }>;
+  readonly capabilities: OmpRuntimeSessionCapabilities;
   handoff(customInstructions?: string): Promise<void>;
   respondToExtensionUiRequest(
     id: string,

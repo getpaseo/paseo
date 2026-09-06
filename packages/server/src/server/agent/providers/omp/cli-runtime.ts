@@ -9,6 +9,7 @@ import {
   type OmpRuntime,
   type OmpRuntimeLaunch,
   type OmpRuntimeSession,
+  type OmpRuntimeSessionCapabilities,
   type OmpStartSessionInput,
 } from "./runtime.js";
 import {
@@ -20,6 +21,7 @@ import {
   OmpModelSchema,
   OmpModelsResultSchema,
   OmpPromptAckSchema,
+  OmpSteerResultSchema,
   OmpRpcCommandSchema,
   OmpRuntimeEventSchema,
   OmpSessionStateSchema,
@@ -88,12 +90,14 @@ export class OmpCliRuntime implements OmpRuntime {
     const handleAbort = () => void process.close(input.signal?.reason).catch(() => undefined);
     input.signal?.addEventListener("abort", handleAbort, { once: true });
     try {
-      await establishOmpProtocol(process, this.options.logger, {
+      const handshake = await establishOmpProtocol(process, this.options.logger, {
         readyTimeoutMs: this.options.readyTimeoutMs,
         requestTimeoutMs: this.options.requestTimeoutMs,
       });
       input.signal?.throwIfAborted();
-      return new OmpCliRuntimeSession(process, this.commandsRpcName);
+      return new OmpCliRuntimeSession(process, this.commandsRpcName, {
+        activeTurnSteering: handshake.features.activeTurnSteering,
+      });
     } catch (error) {
       const startupError = error instanceof Error ? error : new Error(String(error));
       await process.close(startupError);
@@ -111,6 +115,7 @@ class OmpCliRuntimeSession implements OmpRuntimeSession {
   constructor(
     private readonly process: JsonlRpcProcess,
     private readonly commandsRpcName: "get_available_commands",
+    readonly capabilities: OmpRuntimeSessionCapabilities,
   ) {
     process.onMessage((message) => {
       const event = OmpRuntimeEventSchema.safeParse(message);
@@ -154,8 +159,11 @@ class OmpCliRuntimeSession implements OmpRuntimeSession {
     await this.request({ type: "set_auto_compaction", enabled });
   }
 
-  async abort(): Promise<void> {
-    await this.request({ type: "abort" });
+  async abort(input: { clearQueue?: boolean }): Promise<void> {
+    await this.request({
+      type: "abort",
+      ...(input.clearQueue ? { clearQueue: true } : {}),
+    });
   }
 
   async getState(): Promise<OmpSessionState> {
@@ -264,6 +272,21 @@ class OmpCliRuntimeSession implements OmpRuntimeSession {
     images?: Array<{ type: "image"; data: string; mimeType: string }>,
   ): void {
     this.process.send({ type: "follow_up", message, ...(images?.length ? { images } : {}) });
+  }
+
+  async steerActiveTurn(input: {
+    message: string;
+    images?: Array<{ type: "image"; data: string; mimeType: string }>;
+  }): Promise<{ accepted: boolean }> {
+    const data = OmpSteerResultSchema.parse(
+      await this.request({
+        type: "steer",
+        message: input.message,
+        ...(input.images?.length ? { images: input.images } : {}),
+        activeTurnOnly: true,
+      }),
+    );
+    return { accepted: data.accepted };
   }
 
   async handoff(customInstructions?: string): Promise<void> {
