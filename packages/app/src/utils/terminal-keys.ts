@@ -78,6 +78,74 @@ export function normalizeTerminalTransportKey(key: string): string {
   return key;
 }
 
+function resolveMacLineBoundaryTerminalKey(args: {
+  key: string;
+  ctrlKey: boolean;
+  shiftKey: boolean;
+  altKey: boolean;
+  metaKey: boolean;
+  isMacDesktop: boolean;
+}): {
+  key: "a" | "e";
+  ctrl: true;
+  shift: false;
+  alt: false;
+  meta: false;
+} | null {
+  if (!args.isMacDesktop || !args.metaKey || args.ctrlKey || args.shiftKey || args.altKey) {
+    return null;
+  }
+
+  if (args.key === "ArrowLeft") {
+    return { key: "a", ctrl: true, shift: false, alt: false, meta: false };
+  }
+  if (args.key === "ArrowRight") {
+    return { key: "e", ctrl: true, shift: false, alt: false, meta: false };
+  }
+  return null;
+}
+
+export function resolveDomTerminalKeyInput(args: {
+  key: string;
+  ctrlKey: boolean;
+  shiftKey: boolean;
+  altKey: boolean;
+  metaKey: boolean;
+  pendingModifiers: PendingTerminalModifiers;
+  enhancedInputActive?: boolean;
+  isAppleHandheld?: boolean;
+  isMacDesktop?: boolean;
+}): {
+  key: string;
+  ctrl: boolean;
+  shift: boolean;
+  alt: boolean;
+  meta: boolean;
+} | null {
+  const macLineBoundaryKey = hasPendingTerminalModifiers(args.pendingModifiers)
+    ? null
+    : resolveMacLineBoundaryTerminalKey({
+        key: args.key,
+        ctrlKey: args.ctrlKey,
+        shiftKey: args.shiftKey,
+        altKey: args.altKey,
+        metaKey: args.metaKey,
+        isMacDesktop: Boolean(args.isMacDesktop),
+      });
+  if (macLineBoundaryKey) {
+    return macLineBoundaryKey;
+  }
+
+  if (!shouldInterceptDomTerminalKey(args)) {
+    return null;
+  }
+
+  return {
+    key: normalizeTerminalTransportKey(args.key),
+    ...mergeTerminalModifiers(args),
+  };
+}
+
 export function hasPendingTerminalModifiers(modifiers: PendingTerminalModifiers): boolean {
   return modifiers.ctrl || modifiers.shift || modifiers.alt;
 }
