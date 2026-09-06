@@ -82,6 +82,21 @@ export function normalizeHostPort(input: string): string {
   return isIpv6 ? `[${host}]:${port}` : `${host}:${port}`;
 }
 
+export function normalizeRelayEndpoint(input: string): string {
+  const { host, port, isIpv6 } = parseHostPort(input);
+  const hostPart = isIpv6 ? `[${host}]` : host;
+  let url: URL;
+  try {
+    url = new URL(`ws://${hostPart}:${port}/`);
+  } catch {
+    throw new Error("Invalid relay endpoint host");
+  }
+  if (url.username || url.password || url.pathname !== "/" || url.search || url.hash) {
+    throw new Error("Invalid relay endpoint host");
+  }
+  return `${hostPart}:${port}`;
+}
+
 export function parseConnectionUri(input: string): ParsedConnectionUri {
   const trimmed = input.trim();
   if (!trimmed) {
@@ -185,7 +200,7 @@ export function buildRelayWebSocketUrl(params: {
   connectionId?: string;
   version?: RelayProtocolVersion | 1 | 2;
 }): string {
-  const { host, port, isIpv6 } = parseHostPort(params.endpoint);
+  const { host, port, isIpv6 } = parseHostPort(normalizeRelayEndpoint(params.endpoint));
   const protocol = params.useTls ? "wss" : "ws";
   const hostPart = isIpv6 ? `[${host}]` : host;
   const url = new URL(`${protocol}://${hostPart}:${port}/ws`);

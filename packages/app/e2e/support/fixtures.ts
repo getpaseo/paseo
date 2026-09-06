@@ -2,6 +2,7 @@ import { test as base, expect, type Page } from "@playwright/test";
 import { startOutdatedDaemon, type OutdatedDaemon } from "./helpers/daemon-update";
 import { startE2EWorker } from "./helpers/e2e-worker";
 import { getE2EDaemonPort } from "./helpers/daemon-port";
+import { startIsolatedHostDaemon, type IsolatedHostDaemon } from "./helpers/isolated-host-daemon";
 import { buildCreateAgentPreferences, buildSeededHost } from "./helpers/daemon-registry";
 import {
   createProjectPickerFixture,
@@ -110,6 +111,7 @@ const test = daemonTest.extend<{
   outdatedDaemon: OutdatedDaemon;
   desktopManagedOutdatedDaemon: OutdatedDaemon;
   relayConfigOutdatedDaemon: OutdatedDaemon;
+  relaySettingsDaemon: IsolatedHostDaemon;
   projectPickerFixture: TrackedProjectPickerFixture;
   withWorkspace: WithWorkspace;
 }>({
@@ -214,6 +216,16 @@ const test = daemonTest.extend<{
     });
     await provide(daemon);
     await daemon.close();
+  },
+  relaySettingsDaemon: async ({}, provide, testInfo) => {
+    const daemon = await startIsolatedHostDaemon(`srv_relay_settings_${testInfo.workerIndex}`, {
+      mutableRelay: { enabled: false, endpoint: "127.0.0.1:9" },
+    });
+    try {
+      await provide(daemon);
+    } finally {
+      await daemon.close();
+    }
   },
   projectPickerFixture: async ({}, provide) => {
     const resource = await createProjectPickerFixture();

@@ -451,6 +451,7 @@ export interface SessionOptions {
   onMessageToSource?: (source: object, msg: SessionOutboundMessage) => void;
   onBinaryMessage?: (frame: Uint8Array) => void;
   onBinaryMessageToSource?: (source: object, frame: Uint8Array) => Promise<void>;
+  getSourceTransport?: (source: object) => "direct" | "relay" | null;
   getTransportBufferedAmount?: () => number | null;
   onLifecycleIntent?: (intent: SessionLifecycleIntent) => void;
   onWorkspaceRecovered?: (workspace: PersistedWorkspaceRecord) => Promise<void>;
@@ -662,6 +663,7 @@ export class Session {
     | ((source: object, frame: Uint8Array) => Promise<void>)
     | null;
   private readonly getTransportBufferedAmount: () => number | null;
+  private readonly getSourceTransport?: (source: object) => "direct" | "relay" | null;
   private readonly onLifecycleIntent: ((intent: SessionLifecycleIntent) => void) | null;
   private readonly onWorkspaceRecovered:
     | ((workspace: PersistedWorkspaceRecord) => Promise<void>)
@@ -757,6 +759,7 @@ export class Session {
       onMessageToSource,
       onBinaryMessage,
       onBinaryMessageToSource,
+      getSourceTransport,
       getTransportBufferedAmount,
       onLifecycleIntent,
       onWorkspaceRecovered,
@@ -813,6 +816,7 @@ export class Session {
     this.onMessageToSource = onMessageToSource ?? null;
     this.onBinaryMessage = onBinaryMessage ?? null;
     this.onBinaryMessageToSource = onBinaryMessageToSource ?? null;
+    this.getSourceTransport = getSourceTransport;
     this.getTransportBufferedAmount = getTransportBufferedAmount ?? (() => 0);
     this.onLifecycleIntent = onLifecycleIntent ?? null;
     this.onWorkspaceRecovered = onWorkspaceRecovered ?? null;
@@ -1985,7 +1989,7 @@ export class Session {
       this.dispatchAgentTimelineMessage(msg, source) ??
       this.dispatchHubExecutionMessage(msg) ??
       this.dispatchAgentLifecycleMessage(msg) ??
-      this.dispatchAgentConfigMessage(msg) ??
+      this.dispatchAgentConfigMessage(msg, source) ??
       this.dispatchCheckoutMessage(msg) ??
       this.dispatchWorkspaceLifecycleMessage(msg) ??
       this.dispatchWorkspaceFileMessage(msg, source) ??
@@ -2388,7 +2392,10 @@ export class Session {
     }
   }
 
-  private dispatchAgentConfigMessage(msg: SessionInboundMessage): Promise<void> | undefined {
+  private dispatchAgentConfigMessage(
+    msg: SessionInboundMessage,
+    source?: object,
+  ): Promise<void> | undefined {
     switch (msg.type) {
       case "set_agent_mode_request":
         return this.agentConfigSession.handleSetAgentModeRequest(msg);
@@ -2403,7 +2410,11 @@ export class Session {
       case "get_daemon_config_request":
         this.emit({
           type: "get_daemon_config_response",
-          payload: { requestId: msg.requestId, config: this.daemonConfigStore.get() },
+          payload: {
+            requestId: msg.requestId,
+            config: this.daemonConfigStore.get(),
+            overrideControlledPaths: this.daemonConfigStore.getOverrideControlledPaths(),
+          },
         });
         return undefined;
       case "daemon.get_status.request":
@@ -2423,11 +2434,15 @@ export class Session {
       case "daemon.update.request":
         return this.daemonSession.handleUpdateRequest(msg);
       case "set_daemon_config_request":
+        this.assertRelayDisableTransport(msg.config.relay?.enabled, source);
+        const patchResult = this.daemonConfigStore.patchWithResult(msg.config);
         this.emit({
           type: "set_daemon_config_response",
           payload: {
             requestId: msg.requestId,
-            config: this.daemonConfigStore.patch(msg.config),
+            config: patchResult.config,
+            restartRequiredPaths: patchResult.restartRequiredPaths,
+            overrideControlledPaths: patchResult.overrideControlledPaths,
           },
         });
         return undefined;
@@ -2437,6 +2452,12 @@ export class Session {
         return this.projectConfigSession.handleWriteProjectConfigRequest(msg);
       default:
         return undefined;
+    }
+  }
+
+  private assertRelayDisableTransport(enabled: boolean | undefined, source?: object): void {
+    if (enabled === false && source && this.getSourceTransport?.(source) === "relay") {
+      throw new Error("Connect to this daemon directly before disabling relay.");
     }
   }
 

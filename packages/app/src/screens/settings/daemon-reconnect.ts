@@ -3,7 +3,7 @@ export interface DaemonConnectionMarker {
   lastOnlineAt: string | null;
 }
 
-interface DaemonConnectionSnapshot extends DaemonConnectionMarker {
+export interface DaemonConnectionSnapshot extends DaemonConnectionMarker {
   connectionStatus: "idle" | "connecting" | "online" | "offline" | "error";
 }
 

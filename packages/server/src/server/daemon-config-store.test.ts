@@ -120,6 +120,109 @@ describe("DaemonConfigStore", () => {
     expect(loadPersistedConfig(paseoHome).daemon?.relay?.enabled).toBe(true);
   });
 
+  test("patch persists self-hosted relay settings and reports a restart", () => {
+    const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-daemon-config-store-"));
+    tempDirs.push(paseoHome);
+    const store = new DaemonConfigStore(paseoHome, {
+      relay: {
+        enabled: false,
+        endpoint: "relay.paseo.sh:443",
+        publicEndpoint: "relay.paseo.sh:443",
+        useTls: true,
+        publicUseTls: false,
+      },
+      mcp: { injectIntoAgents: false },
+      browserTools: { enabled: false },
+      providers: {},
+      metadataGeneration: { providers: [] },
+      autoArchiveAfterMerge: false,
+      enableTerminalAgentHooks: false,
+      appendSystemPrompt: "",
+    });
+
+    const result = store.patchWithResult({
+      relay: {
+        enabled: true,
+        endpoint: "relay.internal.example:7443",
+        publicEndpoint: "relay.example.com:443",
+        useTls: false,
+        publicUseTls: true,
+      },
+    });
+
+    expect(loadPersistedConfig(paseoHome).daemon?.relay).toEqual({
+      enabled: true,
+      endpoint: "relay.internal.example:7443",
+      publicEndpoint: "relay.example.com:443",
+      useTls: false,
+      publicUseTls: true,
+    });
+    expect(result.restartRequiredPaths).toEqual([
+      "daemon.relay.endpoint",
+      "daemon.relay.publicEndpoint",
+      "daemon.relay.publicUseTls",
+      "daemon.relay.useTls",
+    ]);
+    expect(result.overrideControlledPaths).toEqual([]);
+  });
+
+  test("rejects a relay endpoint controlled by a launch override", () => {
+    const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-daemon-config-store-"));
+    tempDirs.push(paseoHome);
+    const store = new DaemonConfigStore(
+      paseoHome,
+      {
+        relay: {
+          enabled: true,
+          endpoint: "relay.override.example:443",
+          publicEndpoint: "relay.example.com:443",
+          useTls: true,
+          publicUseTls: true,
+        },
+        mcp: { injectIntoAgents: false },
+        browserTools: { enabled: false },
+        providers: {},
+        metadataGeneration: { providers: [] },
+        autoArchiveAfterMerge: false,
+        enableTerminalAgentHooks: false,
+        appendSystemPrompt: "",
+      },
+      undefined,
+      { overrideControlledPaths: ["daemon.relay.endpoint"] },
+    );
+
+    expect(() =>
+      store.patchWithResult({ relay: { endpoint: "relay.changed.example:443" } }),
+    ).toThrow("PASEO_RELAY_ENDPOINT");
+    expect(store.getOverrideControlledPaths()).toEqual(["daemon.relay.endpoint"]);
+  });
+
+  test("rejects malformed relay endpoints before persisting them", () => {
+    const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-daemon-config-store-"));
+    tempDirs.push(paseoHome);
+    const store = new DaemonConfigStore(paseoHome, {
+      relay: {
+        enabled: true,
+        endpoint: "relay.paseo.sh:443",
+        publicEndpoint: "relay.paseo.sh:443",
+        useTls: true,
+        publicUseTls: true,
+      },
+      mcp: { injectIntoAgents: false },
+      browserTools: { enabled: false },
+      providers: {},
+      metadataGeneration: { providers: [] },
+      autoArchiveAfterMerge: false,
+      enableTerminalAgentHooks: false,
+      appendSystemPrompt: "",
+    });
+
+    expect(() =>
+      store.patchWithResult({ relay: { endpoint: "relay.example.com/path:443" } }),
+    ).toThrow("Invalid relay endpoint host");
+    expect(store.get().relay?.endpoint).toBe("relay.paseo.sh:443");
+  });
+
   test("patch round-trips agent profiles through the strictly-parsed persisted config", () => {
     const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-daemon-config-store-"));
     tempDirs.push(paseoHome);

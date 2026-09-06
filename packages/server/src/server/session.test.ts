@@ -326,6 +326,8 @@ interface SessionForTestOptions {
   pluginRuntime?: SessionOptions["pluginRuntime"];
   orchestrationSkills?: SessionOptions["orchestrationSkills"];
   workspaceLabelService?: WorkspaceLabelService;
+  daemonConfigStore?: Partial<SessionOptions["daemonConfigStore"]>;
+  getSourceTransport?: SessionOptions["getSourceTransport"];
 }
 
 function createSessionForTest(options: SessionForTestOptions = {}): Session {
@@ -411,7 +413,9 @@ function createSessionForTest(options: SessionForTestOptions = {}): Session {
         providers: {},
       })),
       onChange: vi.fn(() => () => {}),
+      ...options.daemonConfigStore,
     }),
+    getSourceTransport: options.getSourceTransport,
     pluginRuntime: options.pluginRuntime,
     orchestrationSkills: options.orchestrationSkills,
     stt: options.stt ?? null,
@@ -432,6 +436,57 @@ function createSessionForTest(options: SessionForTestOptions = {}): Session {
   };
   return new Session(sessionOptions);
 }
+
+test("rejects disabling relay through relay without blocking a direct request", async () => {
+  const source = {};
+  const patchWithResult = vi.fn();
+  const messages: SessionOutboundMessage[] = [];
+  const session = createSessionForTest({
+    messages,
+    daemonConfigStore: { patchWithResult },
+    getSourceTransport: (candidate) => (candidate === source ? "relay" : "direct"),
+  });
+
+  await session.handleMessage(
+    {
+      type: "set_daemon_config_request",
+      requestId: "disable-relay",
+      config: { relay: { enabled: false } },
+    },
+    source,
+  );
+  expect(patchWithResult).not.toHaveBeenCalled();
+  expect(messages).toContainEqual({
+    type: "rpc_error",
+    payload: {
+      requestId: "disable-relay",
+      requestType: "set_daemon_config_request",
+      error: "Request failed: Connect to this daemon directly before disabling relay.",
+      code: "handler_error",
+    },
+  });
+
+  patchWithResult.mockReturnValue({
+    config: { relay: { enabled: false }, mcp: { injectIntoAgents: false }, providers: {} },
+    restartRequiredPaths: [],
+    overrideControlledPaths: [],
+  });
+  await session.handleMessage(
+    {
+      type: "set_daemon_config_request",
+      requestId: "disable-relay-direct",
+      config: { relay: { enabled: false } },
+    },
+    {},
+  );
+  expect(patchWithResult).toHaveBeenCalledOnce();
+  expect(messages).toContainEqual(
+    expect.objectContaining({
+      type: "set_daemon_config_response",
+      payload: expect.objectContaining({ requestId: "disable-relay-direct" }),
+    }),
+  );
+});
 
 test("routes host-scoped agent skills requests through the daemon owner", async () => {
   const messages: SessionOutboundMessage[] = [];

@@ -2350,6 +2350,35 @@ export const fr: TranslationResources = {
         local: "Locale",
         remoteSsh: "SSH distant",
       },
+      relay: {
+        title: "Relais",
+        enabledStatus: "Activé",
+        disabledStatus: "Désactivé",
+        updateRequired:
+          "Mettez à jour cet hôte pour configurer les points de terminaison du relais",
+        configure: "Configurer",
+        configureTitle: "Configurer le relais",
+        enabled: "Activer le relais",
+        endpoint: "Point de terminaison du daemon",
+        endpointHint: "Adresse utilisée par le daemon, au format host:port",
+        useTls: "Utiliser TLS pour la connexion du daemon",
+        publicEndpoint: "Point de terminaison public",
+        publicEndpointHint: "Adresse incluse dans les liens d'appairage, au format host:port",
+        publicUseTls: "Utiliser TLS pour la connexion publique",
+        controlledBy:
+          "Contrôlé par {{env}}. Supprimez la surcharge de lancement pour modifier ce réglage.",
+        hostPortError: "Saisissez une adresse au format host:port sans schéma d’URL",
+        save: "Enregistrer",
+        saveAndRestart: "Enregistrer et redémarrer",
+        retryRestart: "Réessayer le redémarrage",
+        disableRequiresDirect:
+          "Connectez-vous directement à cet hôte avant de désactiver le relais.",
+        saveFailed: "Impossible d’enregistrer les réglages du relais : {{error}}",
+        migrationFailed:
+          "Les réglages ont été enregistrés, mais la nouvelle connexion au relais n’a pas pu être ajoutée : {{error}}",
+        restartFailed:
+          "Les réglages ont été enregistrés, mais le daemon n’a pas pu redémarrer : {{error}}",
+      },
       connections: {
         title: "Relations",
         removeTitle: "Supprimer la connexion",

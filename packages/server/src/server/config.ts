@@ -19,6 +19,7 @@ import type {
 } from "./agent/provider-launch-config.js";
 import { ProviderOverrideSchema } from "./agent/provider-launch-config.js";
 import { AgentProviderSchema } from "@getpaseo/protocol/provider-manifest";
+import { RELAY_CONFIG_FIELDS } from "@getpaseo/protocol/relay-config";
 import { hashDaemonPassword } from "./auth.js";
 import { resolveSpeechConfig } from "./speech/speech-config-resolver.js";
 import type { RequestedSpeechProviders } from "./speech/speech-types.js";
@@ -723,18 +724,23 @@ function resolveRelayOverridePaths(
   cli: CliConfigOverrides | undefined,
 ): string[] {
   const paths: string[] = [];
-  if (cli?.relayEnabled !== undefined || parseBooleanEnv(env.PASEO_RELAY_ENABLED) !== undefined) {
-    paths.push("daemon.relay.enabled");
+  if (
+    cli?.relayEnabled !== undefined ||
+    parseBooleanEnv(env[RELAY_CONFIG_FIELDS.enabled.env]) !== undefined
+  ) {
+    paths.push(RELAY_CONFIG_FIELDS.enabled.persistedPath);
   }
-  if (env.PASEO_RELAY_ENDPOINT !== undefined) paths.push("daemon.relay.endpoint");
-  if (env.PASEO_RELAY_PUBLIC_ENDPOINT !== undefined) {
-    paths.push("daemon.relay.publicEndpoint");
+  if (env[RELAY_CONFIG_FIELDS.endpoint.env] !== undefined) {
+    paths.push(RELAY_CONFIG_FIELDS.endpoint.persistedPath);
   }
-  if (cli?.relayUseTls !== undefined || env.PASEO_RELAY_USE_TLS !== undefined) {
-    paths.push("daemon.relay.useTls");
+  if (env[RELAY_CONFIG_FIELDS.publicEndpoint.env] !== undefined) {
+    paths.push(RELAY_CONFIG_FIELDS.publicEndpoint.persistedPath);
   }
-  if (env.PASEO_RELAY_PUBLIC_USE_TLS !== undefined) {
-    paths.push("daemon.relay.publicUseTls");
+  if (cli?.relayUseTls !== undefined || env[RELAY_CONFIG_FIELDS.useTls.env] !== undefined) {
+    paths.push(RELAY_CONFIG_FIELDS.useTls.persistedPath);
+  }
+  if (env[RELAY_CONFIG_FIELDS.publicUseTls.env] !== undefined) {
+    paths.push(RELAY_CONFIG_FIELDS.publicUseTls.persistedPath);
   }
   return paths;
 }

@@ -566,6 +566,24 @@ describe("relay external socket reconnect behavior", () => {
     await server.close();
   });
 
+  test("exposes each request socket transport to the session", async () => {
+    const server = createServer();
+    const relaySocket = new MockSocket();
+    const directSocket = new MockSocket();
+
+    await attachRelayAndHello({ server, socket: relaySocket, clientId: "relay-transport" });
+    await attachDirectAndHello({ server, socket: directSocket, clientId: "direct-transport" });
+
+    const relayResolver = sessionMock.instances[0]?.args.getSourceTransport;
+    const directResolver = sessionMock.instances[1]?.args.getSourceTransport;
+    expect(relayResolver).toBeTypeOf("function");
+    expect(directResolver).toBeTypeOf("function");
+    expect((relayResolver as (source: object) => string | null)(relaySocket)).toBe("relay");
+    expect((directResolver as (source: object) => string | null)(directSocket)).toBe("direct");
+
+    await server.close();
+  });
+
   test("rejects sockets attached after shutdown begins", async () => {
     const server = createServer();
     const existingSocket = new MockSocket();

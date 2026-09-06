@@ -1,4 +1,5 @@
 import type { DesktopDaemonStatus } from "@/desktop/daemon/desktop-daemon";
+import { hasDaemonReconnectedAfter, type DaemonConnectionSnapshot } from "./daemon-reconnect";
 
 interface DesktopDaemonRestartStatus {
   desktopManaged: boolean;
@@ -54,4 +55,44 @@ export async function restartDaemonFromSettings(
   }
 
   await deps.restartServer(reason);
+}
+
+export async function restartDaemonAndWaitForReconnect(input: {
+  restart: () => Promise<unknown>;
+  getSnapshot: () => DaemonConnectionSnapshot | null;
+  subscribe: (listener: () => void) => () => void;
+  timeoutMs?: number;
+}): Promise<void> {
+  const start = input.getSnapshot();
+  const timeoutMs = input.timeoutMs ?? 60_000;
+  let unsubscribe: () => void = () => undefined;
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+
+  const reconnected = new Promise<void>((resolve, reject) => {
+    const check = () => {
+      if (!hasDaemonReconnectedAfter(input.getSnapshot(), start)) return;
+      if (timeout) clearTimeout(timeout);
+      unsubscribe();
+      resolve();
+    };
+    unsubscribe = input.subscribe(check);
+    timeout = setTimeout(() => {
+      unsubscribe();
+      reject(new Error("Daemon did not reconnect after restart"));
+    }, timeoutMs);
+    check();
+  });
+
+  try {
+    await input.restart();
+  } catch (error) {
+    const snapshot = input.getSnapshot();
+    if (snapshot?.connectionStatus === "online" && !hasDaemonReconnectedAfter(snapshot, start)) {
+      if (timeout) clearTimeout(timeout);
+      unsubscribe();
+      void reconnected.catch(() => undefined);
+      throw error;
+    }
+  }
+  await reconnected;
 }

@@ -6,6 +6,7 @@ import {
   CURRENT_RELAY_PROTOCOL_VERSION,
   extractHostPortFromWebSocketUrl,
   normalizeRelayProtocolVersion,
+  normalizeRelayEndpoint,
   parseConnectionUri,
   serializeConnectionUri,
   serializeConnectionUriForStorage,
@@ -150,6 +151,22 @@ describe("relay websocket URL versioning", () => {
 });
 
 describe("relay websocket URLs", () => {
+  test("normalizes valid relay host and port values", () => {
+    expect(normalizeRelayEndpoint(" relay.internal.example:7443 ")).toBe(
+      "relay.internal.example:7443",
+    );
+    expect(normalizeRelayEndpoint("[2001:db8::1]:443")).toBe("[2001:db8::1]:443");
+  });
+
+  test("rejects relay host values that become URL credentials or paths", () => {
+    expect(() => normalizeRelayEndpoint("relay user@example.com:443")).toThrow(
+      "Invalid relay endpoint host",
+    );
+    expect(() => normalizeRelayEndpoint("relay.example.com/path:443")).toThrow(
+      "Invalid relay endpoint host",
+    );
+  });
+
   test("uses ws for port 443 when TLS is disabled", () => {
     const url = new URL(
       buildRelayWebSocketUrl({

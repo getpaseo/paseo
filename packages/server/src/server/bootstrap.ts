@@ -479,6 +479,7 @@ export interface PaseoDaemonDependencies {
   serverFeatureOverrides?: {
     daemonStatusRpc?: boolean;
     relayConfig?: boolean;
+    relayEndpointConfig?: boolean;
   };
 }
 
@@ -523,11 +524,25 @@ function resolveExpressTrustProxySetting(config: PaseoDaemonConfig): true | stri
   return config.trustedProxies ?? ["loopback"];
 }
 
+function createInitialMutableRelayConfig(
+  config: PaseoDaemonConfig,
+): NonNullable<MutableDaemonConfig["relay"]> {
+  const relayEndpoint = config.relayEndpoint ?? "relay.paseo.sh:443";
+  const relayUseTls = config.relayUseTls ?? relayEndpoint === "relay.paseo.sh:443";
+  return {
+    enabled: config.relayEnabled ?? true,
+    endpoint: relayEndpoint,
+    publicEndpoint: config.relayPublicEndpoint ?? relayEndpoint,
+    useTls: relayUseTls,
+    publicUseTls: config.relayPublicUseTls ?? relayUseTls,
+  };
+}
+
 function createInitialMutableDaemonConfig(config: PaseoDaemonConfig): MutableDaemonConfig {
   const providers = config.providerOverrides ?? {};
 
   const initialConfig: MutableDaemonConfig = {
-    relay: { enabled: config.relayEnabled ?? true },
+    relay: createInitialMutableRelayConfig(config),
     mcp: {
       enabled: config.mcpEnabled ?? true,
       injectIntoAgents: config.mcpInjectIntoAgents ?? true,
@@ -584,6 +599,7 @@ export async function createPaseoDaemon(
   const initialMutableConfig = createInitialMutableDaemonConfig(config);
   const daemonConfigStore = new DaemonConfigStore(config.paseoHome, initialMutableConfig, logger, {
     relayEnabledMutable: config.relayEnabledMutable ?? true,
+    overrideControlledPaths: config.configReload?.overrideControlledPaths,
     startupPersisted: config.configReload?.startupPersisted,
     reloadSource: {
       resolve: (persisted) => {
@@ -1652,6 +1668,7 @@ export async function createPaseoDaemon(
                 getHostnames: () => configuredHostnames,
                 daemonStatusRpc: dependencies.serverFeatureOverrides?.daemonStatusRpc,
                 relayConfig: dependencies.serverFeatureOverrides?.relayConfig,
+                relayEndpointConfig: dependencies.serverFeatureOverrides?.relayEndpointConfig,
                 startPaused: true,
               },
               workspaceAutoName,

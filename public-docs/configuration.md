@@ -213,19 +213,29 @@ In the mobile app, enter the password in the direct connection setup screen.
 
 New homes write `daemon.relay.enabled: false`. Paseo asks before enabling relay when you pair a device; existing homes keep their saved value. See [Connectivity](/docs/connectivity) to choose and configure a connection method, and [Security](/docs/security) for the relay encryption model.
 
-Set the persisted value in `config.json`:
+Configure relay from **Settings → Host → Connections → Relay**. Endpoint and TLS changes are startup settings, so the app saves them and restarts the daemon. A setting controlled by an environment variable or CLI option is read-only until you remove that launch override.
+
+You can make the same changes in `config.json`:
 
 ```json
 {
   "daemon": {
     "relay": {
-      "enabled": true
+      "enabled": true,
+      "endpoint": "relay.internal.example:7443",
+      "publicEndpoint": "relay.example.com:443",
+      "useTls": false,
+      "publicUseTls": true
     }
   }
 }
 ```
 
-`PASEO_RELAY_ENABLED=true|false` overrides the persisted value for that daemon launch. The matching `paseo daemon start --relay` and `--no-relay` flags have the same authority. Remove the launch override before changing relay from Paseo Desktop or `paseo daemon pair --relay`.
+`endpoint` is the address the daemon uses to reach the relay. `publicEndpoint` is the address placed in pairing links for phones and other clients. Both use `host:port` without a URL scheme. `useTls` and `publicUseTls` control the corresponding connections independently.
+
+Pair the phone again after changing the public endpoint. The new pairing link carries the relay address and TLS setting; there is no relay configuration file on the phone to edit.
+
+The matching launch overrides are `PASEO_RELAY_ENABLED`, `PASEO_RELAY_ENDPOINT`, `PASEO_RELAY_PUBLIC_ENDPOINT`, `PASEO_RELAY_USE_TLS`, and `PASEO_RELAY_PUBLIC_USE_TLS`. The `paseo daemon start --relay` and `--no-relay` flags override enablement with the same authority. Remove a launch override before changing its field from the app or `paseo daemon pair --relay`.
 
 ## Common env vars
 
@@ -234,6 +244,10 @@ Set the persisted value in `config.json`:
 - `PASEO_PASSWORD`, on the daemon, the password to require (plaintext, hashed at startup); on the CLI, the password used to connect when the host URI doesn't include one
 - `PASEO_LISTEN`, override `daemon.listen`
 - `PASEO_RELAY_ENABLED`, enable or disable the outbound relay for this daemon launch
+- `PASEO_RELAY_ENDPOINT`, override the relay address used by the daemon
+- `PASEO_RELAY_PUBLIC_ENDPOINT`, override the relay address included in pairing links
+- `PASEO_RELAY_USE_TLS`, enable or disable TLS between the daemon and relay
+- `PASEO_RELAY_PUBLIC_USE_TLS`, enable or disable TLS for clients using pairing links
 - `PASEO_HOSTNAMES`, override/extend `daemon.hostnames`
 - `PASEO_ALLOWED_HOSTS`, deprecated alias for `PASEO_HOSTNAMES`
 - `PASEO_WEB_UI_ENABLED`, enable or disable the daemon-served web UI

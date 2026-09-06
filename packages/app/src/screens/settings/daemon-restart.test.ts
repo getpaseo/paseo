@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import type { DesktopDaemonStatus } from "@/desktop/daemon/desktop-daemon";
-import { restartDaemonFromSettings, type SettingsDaemonRestartDeps } from "./daemon-restart";
+import {
+  restartDaemonAndWaitForReconnect,
+  restartDaemonFromSettings,
+  type SettingsDaemonRestartDeps,
+} from "./daemon-restart";
 
 const runningDesktopDaemonStatus: DesktopDaemonStatus = {
   serverId: "local-desktop",
@@ -127,5 +131,128 @@ describe("restartDaemonFromSettings", () => {
     ).rejects.toThrow("Desktop restart failed.");
 
     expect(calls).toEqual(["desktop-status", "desktop-settings", "desktop-restart"]);
+  });
+});
+
+describe("restartDaemonAndWaitForReconnect", () => {
+  it("does not resolve when restart is only acknowledged", async () => {
+    let snapshot: {
+      connectionStatus: "online" | "offline";
+      clientGeneration: number;
+      lastOnlineAt: string | null;
+    } = {
+      connectionStatus: "online",
+      clientGeneration: 3,
+      lastOnlineAt: "2026-08-28T10:00:00.000Z",
+    };
+    const listeners = new Set<() => void>();
+    let resolved = false;
+
+    const operation = restartDaemonAndWaitForReconnect({
+      restart: async () => undefined,
+      getSnapshot: () => snapshot,
+      subscribe: (listener) => {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+      timeoutMs: 100,
+    }).then(() => {
+      resolved = true;
+      return undefined;
+    });
+
+    await Promise.resolve();
+    expect(resolved).toBe(false);
+
+    snapshot = { ...snapshot, connectionStatus: "offline" };
+    for (const listener of listeners) listener();
+    snapshot = {
+      connectionStatus: "online",
+      clientGeneration: 4,
+      lastOnlineAt: "2026-08-28T10:00:01.000Z",
+    };
+    for (const listener of listeners) listener();
+
+    await operation;
+    expect(resolved).toBe(true);
+  });
+
+  it("rejects when the daemon never reconnects", async () => {
+    const snapshot = {
+      connectionStatus: "online" as const,
+      clientGeneration: 3,
+      lastOnlineAt: "2026-08-28T10:00:00.000Z",
+    };
+
+    await expect(
+      restartDaemonAndWaitForReconnect({
+        restart: async () => undefined,
+        getSnapshot: () => snapshot,
+        subscribe: () => () => undefined,
+        timeoutMs: 5,
+      }),
+    ).rejects.toThrow("Daemon did not reconnect after restart");
+  });
+
+  it("keeps waiting when the restart request rejects because the daemon disconnected", async () => {
+    let snapshot = {
+      connectionStatus: "online" as "online" | "offline",
+      clientGeneration: 3,
+      lastOnlineAt: "2026-08-28T10:00:00.000Z",
+    };
+    const listeners = new Set<() => void>();
+
+    const operation = restartDaemonAndWaitForReconnect({
+      restart: async () => {
+        snapshot = { ...snapshot, connectionStatus: "offline" };
+        for (const listener of listeners) listener();
+        throw new Error("socket closed");
+      },
+      getSnapshot: () => snapshot,
+      subscribe: (listener) => {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+      timeoutMs: 100,
+    });
+
+    await Promise.resolve();
+    snapshot = {
+      connectionStatus: "online",
+      clientGeneration: 4,
+      lastOnlineAt: "2026-08-28T10:00:01.000Z",
+    };
+    for (const listener of listeners) listener();
+
+    await expect(operation).resolves.toBeUndefined();
+  });
+
+  it("accepts a reconnect that completes before the restart request rejects", async () => {
+    let snapshot = {
+      connectionStatus: "online" as const,
+      clientGeneration: 3,
+      lastOnlineAt: "2026-08-28T10:00:00.000Z",
+    };
+    const listeners = new Set<() => void>();
+
+    await expect(
+      restartDaemonAndWaitForReconnect({
+        restart: async () => {
+          snapshot = {
+            connectionStatus: "online",
+            clientGeneration: 4,
+            lastOnlineAt: "2026-08-28T10:00:01.000Z",
+          };
+          for (const listener of listeners) listener();
+          throw new Error("old socket closed");
+        },
+        getSnapshot: () => snapshot,
+        subscribe: (listener) => {
+          listeners.add(listener);
+          return () => listeners.delete(listener);
+        },
+        timeoutMs: 100,
+      }),
+    ).resolves.toBeUndefined();
   });
 });

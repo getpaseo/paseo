@@ -9,6 +9,12 @@ import {
   MutableDaemonConfigPatchSchema,
 } from "@getpaseo/protocol/messages";
 import type { AgentSkillSelection } from "@getpaseo/protocol/messages";
+import { normalizeRelayEndpoint } from "@getpaseo/protocol/daemon-endpoints";
+import {
+  RELAY_CONFIG_FIELDS,
+  RELAY_CONFIG_FIELD_KEYS,
+  type RelayConfigField,
+} from "@getpaseo/protocol/relay-config";
 
 export type { MutableDaemonConfig, MutableDaemonConfigPatch } from "@getpaseo/protocol/messages";
 
@@ -17,7 +23,13 @@ type MutableDaemonConfigPatch = import("@getpaseo/protocol/messages").MutableDae
 type ProviderOverride = import("./agent/provider-launch-config.js").ProviderOverride;
 
 interface SupportedMutableConfigPatch {
-  relay?: { enabled?: boolean };
+  relay?: {
+    enabled?: boolean;
+    endpoint?: string;
+    publicEndpoint?: string;
+    useTls?: boolean;
+    publicUseTls?: boolean;
+  };
   mcp?: { injectIntoAgents?: boolean };
   browserTools?: { enabled?: boolean };
   providers?: MutableDaemonConfig["providers"];
@@ -44,6 +56,12 @@ export interface DaemonConfigChangeDetails {
 
 export interface DaemonConfigReloadResult {
   appliedPaths: string[];
+  restartRequiredPaths: string[];
+  overrideControlledPaths: string[];
+}
+
+export interface DaemonConfigPatchResult {
+  config: MutableDaemonConfig;
   restartRequiredPaths: string[];
   overrideControlledPaths: string[];
 }
@@ -192,7 +210,7 @@ const RELOADABLE_PATHS = [
 ] as const;
 
 const PERSISTED_TO_MUTABLE_PATH = new Map<string, string>([
-  ["daemon.relay.enabled", "relay.enabled"],
+  [RELAY_CONFIG_FIELDS.enabled.persistedPath, RELAY_CONFIG_FIELDS.enabled.mutablePath],
   ["daemon.mcp.enabled", "mcp.enabled"],
   ["daemon.mcp.injectIntoAgents", "mcp.injectIntoAgents"],
   ["daemon.browserTools.enabled", "browserTools.enabled"],
@@ -213,6 +231,19 @@ const PERSISTED_TO_MUTABLE_PATH = new Map<string, string>([
   ["agents.skills.selection", "skills.selection"],
   ["pluginsEnabled", "pluginsEnabled"],
 ]);
+
+const RESTART_REQUIRED_MUTABLE_PATHS = new Map<string, string>(
+  RELAY_CONFIG_FIELD_KEYS.filter((field) => RELAY_CONFIG_FIELDS[field].restartRequired).map(
+    (field) => [RELAY_CONFIG_FIELDS[field].persistedPath, RELAY_CONFIG_FIELDS[field].mutablePath],
+  ),
+);
+
+const RELAY_OVERRIDE_ENV_BY_PATH = new Map<string, string>(
+  RELAY_CONFIG_FIELD_KEYS.map((field) => [
+    RELAY_CONFIG_FIELDS[field].persistedPath,
+    RELAY_CONFIG_FIELDS[field].env,
+  ]),
+);
 
 function pathBelongsTo(path: string, owner: string): boolean {
   return path === owner || path.startsWith(`${owner}.`);
@@ -249,9 +280,23 @@ function compactOwnedPaths(paths: readonly string[], owners: readonly string[]):
   return Array.from(compacted).sort();
 }
 
+function pickSupportedRelayPatch(
+  relay: MutableDaemonConfigPatch["relay"],
+): SupportedMutableConfigPatch["relay"] {
+  if (!relay) return undefined;
+  const supported: NonNullable<SupportedMutableConfigPatch["relay"]> = {};
+  if (relay.enabled !== undefined) supported.enabled = relay.enabled;
+  if (relay.endpoint !== undefined) supported.endpoint = relay.endpoint;
+  if (relay.publicEndpoint !== undefined) supported.publicEndpoint = relay.publicEndpoint;
+  if (relay.useTls !== undefined) supported.useTls = relay.useTls;
+  if (relay.publicUseTls !== undefined) supported.publicUseTls = relay.publicUseTls;
+  return Object.keys(supported).length > 0 ? supported : undefined;
+}
+
 function pickSupportedPatchFields(patch: MutableDaemonConfigPatch): SupportedMutableConfigPatch {
+  const relay = pickSupportedRelayPatch(patch.relay);
   return {
-    ...(patch.relay?.enabled !== undefined ? { relay: { enabled: patch.relay.enabled } } : {}),
+    ...(relay && Object.keys(relay).length > 0 ? { relay } : {}),
     ...(patch.mcp?.injectIntoAgents !== undefined
       ? { mcp: { injectIntoAgents: patch.mcp.injectIntoAgents } }
       : {}),
@@ -316,6 +361,7 @@ export class DaemonConfigStore {
   private readonly applyListeners = new Set<ConfigApplyListener>();
   private readonly fieldChangeHandlers = new Map<string, Set<FieldChangeHandler>>();
   private readonly relayEnabledMutable: boolean;
+  private readonly overrideControlledPaths: string[];
   private readonly reloadSource: DaemonConfigReloadSource | undefined;
   private readonly startupPersisted: PersistedConfig;
   private lastKnownPersisted: PersistedConfig;
@@ -326,6 +372,7 @@ export class DaemonConfigStore {
     logger?: LoggerLike,
     options: {
       relayEnabledMutable?: boolean;
+      overrideControlledPaths?: readonly string[];
       reloadSource?: DaemonConfigReloadSource;
       startupPersisted?: PersistedConfig;
     } = {},
@@ -337,6 +384,12 @@ export class DaemonConfigStore {
       relay: initial.relay ?? { enabled: true },
     });
     this.relayEnabledMutable = options.relayEnabledMutable ?? true;
+    this.overrideControlledPaths = Array.from(
+      new Set([
+        ...(options.overrideControlledPaths ?? []),
+        ...(!this.relayEnabledMutable ? ["daemon.relay.enabled"] : []),
+      ]),
+    ).sort();
     this.reloadSource = options.reloadSource;
     this.startupPersisted = options.startupPersisted ?? loadPersistedConfig(paseoHome, this.logger);
     this.lastKnownPersisted = this.startupPersisted;
@@ -347,8 +400,57 @@ export class DaemonConfigStore {
   }
 
   public patch(partial: MutableDaemonConfigPatch): MutableDaemonConfig {
+    return this.patchWithResult(partial).config;
+  }
+
+  public patchWithResult(partial: MutableDaemonConfigPatch): DaemonConfigPatchResult {
     const parsedPatch = pickSupportedPatchFields(MutableDaemonConfigPatchSchema.parse(partial));
-    return this.applySupportedPatch(parsedPatch);
+    this.assertPatchIsMutable(parsedPatch);
+    const previous = this.current;
+    const config = this.applySupportedPatch(parsedPatch);
+    const restartRequiredPaths = Array.from(RESTART_REQUIRED_MUTABLE_PATHS.entries())
+      .filter(([persistedPath, mutablePath]) => {
+        const patchPath = mutablePath.replace("relay.", "");
+        return (
+          parsedPatch.relay?.[
+            patchPath as keyof NonNullable<SupportedMutableConfigPatch["relay"]>
+          ] !== undefined &&
+          !isEqualValue(
+            getValueAtPath(previous, mutablePath),
+            getValueAtPath(config, mutablePath),
+          ) &&
+          !this.overrideControlledPaths.includes(persistedPath)
+        );
+      })
+      .map(([persistedPath]) => persistedPath)
+      .sort();
+    return {
+      config,
+      restartRequiredPaths,
+      overrideControlledPaths: this.getOverrideControlledPaths(),
+    };
+  }
+
+  public getOverrideControlledPaths(): string[] {
+    return [...this.overrideControlledPaths];
+  }
+
+  private assertPatchIsMutable(parsedPatch: SupportedMutableConfigPatch): void {
+    for (const [field, value] of Object.entries(parsedPatch.relay ?? {})) {
+      if (value === undefined) continue;
+      const path = RELAY_CONFIG_FIELDS[field as RelayConfigField].persistedPath;
+      if (!this.overrideControlledPaths.includes(path)) continue;
+      const env = RELAY_OVERRIDE_ENV_BY_PATH.get(path);
+      throw new Error(
+        `Relay is controlled by a daemon launch override. Remove ${env ?? path} or the corresponding CLI option before changing it here.`,
+      );
+    }
+    if (parsedPatch.relay?.endpoint !== undefined) {
+      normalizeRelayEndpoint(parsedPatch.relay.endpoint);
+    }
+    if (parsedPatch.relay?.publicEndpoint !== undefined) {
+      normalizeRelayEndpoint(parsedPatch.relay.publicEndpoint);
+    }
   }
 
   public setAgentSkillSelection(selection: AgentSkillSelection): MutableDaemonConfig {
@@ -356,11 +458,6 @@ export class DaemonConfigStore {
   }
 
   private applySupportedPatch(parsedPatch: SupportedMutableConfigPatch): MutableDaemonConfig {
-    if (parsedPatch.relay?.enabled !== undefined && !this.relayEnabledMutable) {
-      throw new Error(
-        "Relay is controlled by a daemon launch override. Remove PASEO_RELAY_ENABLED or the relay CLI flag before changing it here.",
-      );
-    }
     const { removeProviders = [], ...configPatch } = parsedPatch;
     const removedProviders = Array.from(new Set(removeProviders));
     const merged = deepMerge(this.current, configPatch);
@@ -643,9 +740,7 @@ function mergeMutableDaemonPatch(
   persistRelayEnabled: boolean,
 ): PersistedConfig["daemon"] {
   const next = { ...persistedDaemon } as NonNullable<PersistedConfig["daemon"]>;
-  if (persistRelayEnabled && patch.relay?.enabled !== undefined) {
-    next.relay = { ...next.relay, enabled: patch.relay.enabled };
-  }
+  next.relay = mergeMutableRelayPatch(next.relay, patch.relay, persistRelayEnabled);
   if (patch.mcp?.injectIntoAgents !== undefined) {
     next.mcp = { ...next.mcp, injectIntoAgents: patch.mcp.injectIntoAgents };
   }
@@ -662,4 +757,19 @@ function mergeMutableDaemonPatch(
   if (patch.terminalProfiles !== undefined) next.terminalProfiles = patch.terminalProfiles;
   if (patch.agentProfiles !== undefined) next.agentProfiles = patch.agentProfiles;
   return Object.keys(next).length > 0 ? next : undefined;
+}
+
+function mergeMutableRelayPatch(
+  persistedRelay: NonNullable<PersistedConfig["daemon"]>["relay"],
+  relayPatch: SupportedMutableConfigPatch["relay"],
+  persistEnabled: boolean,
+): NonNullable<PersistedConfig["daemon"]>["relay"] {
+  if (!relayPatch) return persistedRelay;
+  const next = { ...persistedRelay };
+  if (persistEnabled && relayPatch.enabled !== undefined) next.enabled = relayPatch.enabled;
+  if (relayPatch.endpoint !== undefined) next.endpoint = relayPatch.endpoint;
+  if (relayPatch.publicEndpoint !== undefined) next.publicEndpoint = relayPatch.publicEndpoint;
+  if (relayPatch.useTls !== undefined) next.useTls = relayPatch.useTls;
+  if (relayPatch.publicUseTls !== undefined) next.publicUseTls = relayPatch.publicUseTls;
+  return next;
 }

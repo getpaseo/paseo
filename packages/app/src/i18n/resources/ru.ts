@@ -2332,6 +2332,33 @@ export const ru: TranslationResources = {
         local: "Локальный",
         remoteSsh: "Удалённый SSH",
       },
+      relay: {
+        title: "Ретранслятор",
+        enabledStatus: "Включён",
+        disabledStatus: "Выключен",
+        updateRequired: "Обновите этот хост, чтобы настроить адреса ретранслятора",
+        configure: "Настроить",
+        configureTitle: "Настройка ретранслятора",
+        enabled: "Включить ретранслятор",
+        endpoint: "Адрес демона",
+        endpointHint: "Адрес подключения демона в формате host:port",
+        useTls: "Использовать TLS для подключения демона",
+        publicEndpoint: "Публичный адрес",
+        publicEndpointHint: "Адрес в ссылках сопряжения в формате host:port",
+        publicUseTls: "Использовать TLS для публичного подключения",
+        controlledBy:
+          "Управляется через {{env}}. Удалите переопределение запуска, чтобы изменить настройку.",
+        hostPortError: "Введите адрес в формате host:port без схемы URL",
+        save: "Сохранить",
+        saveAndRestart: "Сохранить и перезапустить",
+        retryRestart: "Повторить перезапуск",
+        disableRequiresDirect:
+          "Подключитесь к этому хосту напрямую перед отключением ретранслятора.",
+        saveFailed: "Не удалось сохранить настройки ретранслятора: {{error}}",
+        migrationFailed:
+          "Настройки сохранены, но не удалось добавить новое подключение к ретранслятору: {{error}}",
+        restartFailed: "Настройки сохранены, но демон не удалось перезапустить: {{error}}",
+      },
       connections: {
         title: "Подключения",
         removeTitle: "Удалить подключение",

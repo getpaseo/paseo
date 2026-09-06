@@ -74,6 +74,7 @@ import { getProviderIcon } from "@/components/provider-icons";
 import { BrowserToolsOptInCard } from "./browser-tools-card";
 import { hasDaemonReconnectedAfter, type DaemonConnectionMarker } from "./daemon-reconnect";
 import { restartDaemonFromSettings } from "./daemon-restart";
+import { RelaySettingsSection } from "./relay-settings-section";
 
 const ThemedArrowUp = withUnistyles(ArrowUp);
 const ThemedArrowDown = withUnistyles(ArrowDown);
@@ -242,6 +243,7 @@ export function HostConnectionsPage({ serverId }: { serverId: string }) {
   return (
     <View>
       <HostConnectionError serverId={serverId} />
+      <RelaySettingsSection serverId={serverId} />
       <ConnectionsSection host={host} />
     </View>
   );
