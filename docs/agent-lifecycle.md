@@ -12,6 +12,12 @@ initializing → idle → running → idle (or error → closed)
 
 Each live agent in `AgentManager` carries a `lastStatus` of `initializing`, `idle`, `running`, or `error`. `closed` is the persisted, resumable state for an agent record that has no live provider runtime. State transitions persist to disk and stream to subscribed clients via WebSocket.
 
+Imported ACP sessions can report external work through `session_info_update._meta.running`, a
+boolean extension rather than a standard ACP field. Any provider emitting this extension keeps
+its existing Paseo identity while reporting running/idle transitions without submitting prompts
+or copying terminal messages. Providers without the extension are unchanged. These notifications
+cannot complete a foreground prompt submitted by Paseo; its ACP response still owns completion.
+
 ## Runtime residency
 
 An unarchived agent may be `closed` without being deleted or archived. Closing releases its provider
