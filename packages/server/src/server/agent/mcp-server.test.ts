@@ -61,6 +61,7 @@ import { createWorkspaceProvisioningService } from "../session/workspace-provisi
 import { serializePaseoToolInputParameters } from "./tools/paseo-tool-serialization.js";
 import { createPaseoToolCatalog } from "./tools/paseo-tools.js";
 import type { PaseoToolCatalog } from "./tools/types.js";
+import { OpenCodeBridge } from "./providers/opencode/bridge.js";
 
 const REPO_CWD = resolvePath("/tmp/repo");
 const TARGET_CWD = resolvePath("/tmp/target");
@@ -157,6 +158,13 @@ function serializedInputSchema(catalog: PaseoToolCatalog, name: string): Seriali
   // OpenCodeBridge.serializeManifest), so asserting on it locks the advertised
   // contract, not just the zod validation behavior.
   return serializePaseoToolInputParameters(tool) as unknown as SerializedToolSchema;
+}
+
+function readBridgePluginOptions(bridge: OpenCodeBridge): { baseUrl: string; token: string } {
+  const config = JSON.parse(bridge.decorateServerEnv({}).OPENCODE_CONFIG_CONTENT as string) as {
+    plugin: Array<[string, { baseUrl: string; token: string }]>;
+  };
+  return config.plugin[0][1];
 }
 
 function agentsOf(response: {
@@ -3175,6 +3183,47 @@ describe("create_agent MCP tool", () => {
       workspace: { kind: "current" },
       notifyOnFinish: true,
     });
+  });
+
+  it("serves the agent-scoped manifest through the real bridge HTTP endpoint", async () => {
+    const { agentManager, agentStorage } = createTestDeps();
+    const providerSnapshotManager = createOpenCodeManager().manager;
+    const paseoHome = await mkdtemp(join(tmpdir(), "paseo-bridge-manifest-"));
+    const bridge = new OpenCodeBridge({ paseoHome, logger: createTestLogger() });
+    await bridge.start();
+    try {
+      // Install the catalog exactly as bootstrap does for the bridge manifest.
+      bridge.setManifestCatalog(
+        createPaseoToolCatalog({
+          agentManager,
+          agentStorage,
+          providerSnapshotManager,
+          toolScope: "agent",
+          logger,
+        }),
+      );
+      const { baseUrl, token } = readBridgePluginOptions(bridge);
+      const manifest = (await (
+        await fetch(`${baseUrl}/_internal/opencode/tools`, {
+          headers: { Authorization: `Bearer ${token}` },
+        })
+      ).json()) as { tools: Array<{ name: string; inputSchema: unknown }> };
+      const createAgent = manifest.tools.find((tool) => tool.name === "create_agent");
+      if (!createAgent) {
+        throw new Error("Bridge manifest is missing create_agent");
+      }
+      const properties = Object.keys(
+        ((createAgent.inputSchema ?? {}) as { properties?: Record<string, unknown> }).properties ??
+          {},
+      );
+      // The served manifest must not advertise keys that agent-scoped session
+      // bindings reject; `background` trapped models in a retry loop.
+      expect(properties).not.toContain("background");
+      expect(properties).toEqual(expect.arrayContaining(["title", "provider", "initialPrompt"]));
+    } finally {
+      await bridge.close();
+      await rm(paseoHome, { recursive: true, force: true });
+    }
   });
 
   it("advertises agent-scoped definitions from the caller-less bridge manifest scope", async () => {
