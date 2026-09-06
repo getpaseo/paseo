@@ -90,7 +90,10 @@ describe("buildACPClientCapabilities", () => {
 
 interface ACPSessionInternals {
   sessionId: string | null;
-  connection: { prompt: (...args: unknown[]) => Promise<PromptResponse> };
+  connection: {
+    prompt: (...args: unknown[]) => Promise<PromptResponse>;
+    cancel?: (...args: unknown[]) => Promise<void>;
+  };
   activeForegroundTurnId: string | null;
   configOptions: SessionConfigOption[];
   translateSessionUpdate(update: SessionUpdate): AgentStreamEvent[];
@@ -3153,6 +3156,137 @@ describe("ACPAgentSession", () => {
       error: "prompt failed",
     });
     expect(asInternals<ACPSessionInternals>(session).activeForegroundTurnId).toBeNull();
+  });
+
+  test("interrupt() settles the active turn so a replacement turn can start", async () => {
+    const session = createSession();
+    const events: Array<{ type: string; turnId?: string }> = [];
+    // A prompt() that never settles models an ACP agent that acknowledges
+    // session/cancel but never resolves the in-flight prompt with a
+    // "cancelled" stop reason.
+    const prompt = vi.fn(() => new Promise<PromptResponse>(() => {}));
+    const cancel = vi.fn(async () => {});
+
+    asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+    asInternals<ACPSessionInternals>(session).connection = { prompt, cancel };
+
+    session.subscribe((event) => {
+      events.push(event as { type: string; turnId?: string });
+    });
+
+    const { turnId } = await session.startTurn("hello");
+    expect(asInternals<ACPSessionInternals>(session).activeForegroundTurnId).toBe(turnId);
+
+    await session.interrupt();
+
+    expect(cancel).toHaveBeenCalledWith({ sessionId: "session-1" });
+    expect(events.find((event) => event.type === "turn_canceled")).toMatchObject({
+      type: "turn_canceled",
+      turnId,
+    });
+    expect(asInternals<ACPSessionInternals>(session).activeForegroundTurnId).toBeNull();
+
+    // The replacement turn must not trip the "already active" guard.
+    const replacement = await session.startTurn("second");
+    expect(replacement.turnId).not.toBe(turnId);
+    expect(asInternals<ACPSessionInternals>(session).activeForegroundTurnId).toBe(
+      replacement.turnId,
+    );
+  });
+
+  test("a late prompt settlement after interrupt does not clear the replacement turn", async () => {
+    const session = createSession();
+    const events: Array<{ type: string; turnId?: string }> = [];
+    let resolveFirstPrompt!: (value: PromptResponse) => void;
+    const prompt = vi
+      .fn()
+      .mockImplementationOnce(
+        () =>
+          new Promise<PromptResponse>((resolve) => {
+            resolveFirstPrompt = resolve;
+          }),
+      )
+      .mockImplementationOnce(() => new Promise<PromptResponse>(() => {}));
+    const cancel = vi.fn(async () => {});
+
+    asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+    asInternals<ACPSessionInternals>(session).connection = { prompt, cancel };
+
+    session.subscribe((event) => {
+      events.push(event as { type: string; turnId?: string });
+    });
+
+    const { turnId: firstTurnId } = await session.startTurn("hello");
+    await session.interrupt();
+    const { turnId: secondTurnId } = await session.startTurn("second");
+
+    // The original prompt finally settles after the replacement turn started.
+    resolveFirstPrompt({ stopReason: "end_turn" });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    // The stale settlement is dropped; the replacement turn stays active.
+    expect(events.filter((event) => event.type === "turn_completed")).toEqual([]);
+    expect(asInternals<ACPSessionInternals>(session).activeForegroundTurnId).toBe(secondTurnId);
+    expect(secondTurnId).not.toBe(firstTurnId);
+  });
+
+  test("a late cancelled response does not cancel the replacement turn's running tools", async () => {
+    const session = createSession();
+    const events: AgentStreamEvent[] = [];
+    let resolveFirstPrompt!: (value: PromptResponse) => void;
+    const prompt = vi
+      .fn()
+      .mockImplementationOnce(
+        () =>
+          new Promise<PromptResponse>((resolve) => {
+            resolveFirstPrompt = resolve;
+          }),
+      )
+      .mockImplementationOnce(() => new Promise<PromptResponse>(() => {}));
+    const cancel = vi.fn(async () => {});
+
+    asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+    asInternals<ACPSessionInternals>(session).connection = { prompt, cancel };
+
+    session.subscribe((event) => events.push(event));
+
+    const { turnId: firstTurnId } = await session.startTurn("hello");
+    await session.interrupt();
+    const { turnId: secondTurnId } = await session.startTurn("second");
+
+    // The replacement turn starts a tool call that is still running.
+    await session.sessionUpdate({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "tool_call",
+        toolCallId: "tool-replacement",
+        status: "in_progress",
+        title: "grep",
+      } as SessionUpdate,
+    });
+
+    events.length = 0;
+
+    // The interrupted prompt settles as cancelled after the replacement began.
+    resolveFirstPrompt({ stopReason: "cancelled" });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    // No synthesized cancellation leaks onto the replacement turn, and the
+    // replacement turn is neither completed nor cleared.
+    expect(
+      events.filter((event) => event.type === "turn_completed" || event.type === "turn_canceled"),
+    ).toEqual([]);
+    const canceledToolEvents = events.filter(
+      (event) =>
+        event.type === "timeline" &&
+        event.item.type === "tool_call" &&
+        event.item.status === "canceled",
+    );
+    expect(canceledToolEvents).toEqual([]);
+    expect(asInternals<ACPSessionInternals>(session).activeForegroundTurnId).toBe(secondTurnId);
+    expect(secondTurnId).not.toBe(firstTurnId);
   });
 
   test("flushes an image-only provider echo before a rejected turn finishes", async () => {
