@@ -1790,30 +1790,59 @@ function extractContextWindowSize(modelUsage: unknown): number | undefined {
   return maxContextWindow;
 }
 
-function readStreamRequestInputTokens(event: Record<string, unknown>): number | undefined {
-  const messageUsage = toObjectRecord(toObjectRecord(event.message)?.usage);
-  if (!messageUsage) {
+interface StreamRequestInputUsage {
+  inputTokens: number;
+  cacheCreationInputTokens: number;
+  cacheReadInputTokens: number;
+}
+
+function readUsageCount(usage: Record<string, unknown>, key: string): number | undefined {
+  const value = usage[key];
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
     return undefined;
   }
-  const usage = messageUsage;
-  const inputTokens =
-    typeof usage.input_tokens === "number" && Number.isFinite(usage.input_tokens)
-      ? usage.input_tokens
-      : undefined;
-  const cacheCreationInputTokens =
-    typeof usage.cache_creation_input_tokens === "number" &&
-    Number.isFinite(usage.cache_creation_input_tokens)
-      ? usage.cache_creation_input_tokens
-      : 0;
-  const cacheReadInputTokens =
-    typeof usage.cache_read_input_tokens === "number" &&
-    Number.isFinite(usage.cache_read_input_tokens)
-      ? usage.cache_read_input_tokens
-      : 0;
-  if (typeof inputTokens !== "number" || inputTokens < 0) {
+  return value;
+}
+
+function readStreamRequestInputUsage(
+  event: Record<string, unknown>,
+): StreamRequestInputUsage | undefined {
+  const usage = toObjectRecord(toObjectRecord(event.message)?.usage);
+  if (!usage) {
     return undefined;
   }
-  return inputTokens + cacheCreationInputTokens + cacheReadInputTokens;
+  const inputTokens = readUsageCount(usage, "input_tokens");
+  if (inputTokens === undefined) {
+    return undefined;
+  }
+  return {
+    inputTokens,
+    cacheCreationInputTokens: readUsageCount(usage, "cache_creation_input_tokens") ?? 0,
+    cacheReadInputTokens: readUsageCount(usage, "cache_read_input_tokens") ?? 0,
+  };
+}
+
+/**
+ * The input counters on `message_delta.usage` are cumulative whole-request totals and are
+ * optional. Mirror the Anthropic SDK's MessageStream: a counter present on the delta replaces
+ * the `message_start` value, a missing counter keeps it. Translating gateways report
+ * `input_tokens: 0` on `message_start` and only know the real count by `message_delta`.
+ */
+function mergeStreamDeltaInputUsage(
+  current: StreamRequestInputUsage,
+  event: Record<string, unknown>,
+): StreamRequestInputUsage {
+  const usage = toObjectRecord(event.usage);
+  if (!usage) {
+    return current;
+  }
+  return {
+    inputTokens: readUsageCount(usage, "input_tokens") ?? current.inputTokens,
+    cacheCreationInputTokens:
+      readUsageCount(usage, "cache_creation_input_tokens") ?? current.cacheCreationInputTokens,
+    cacheReadInputTokens:
+      readUsageCount(usage, "cache_read_input_tokens") ?? current.cacheReadInputTokens,
+  };
 }
 
 function readStreamRequestOutputTokens(event: Record<string, unknown>): number | undefined {
@@ -1888,7 +1917,7 @@ function readClaudeParentToolUseId(message: SDKMessage): string | null {
 
 class ClaudeContextUsageState {
   private contextWindowMaxTokens: number | undefined;
-  private streamRequestInputTokens: number | undefined;
+  private streamRequestInputUsage: StreamRequestInputUsage | undefined;
   private streamRequestOutputTokens: number | undefined;
   private compactedContextWindowUsedTokens: number | undefined;
   private completedResultTurns = 0;
@@ -1898,7 +1927,7 @@ class ClaudeContextUsageState {
   }
 
   beginTurn(): void {
-    this.streamRequestInputTokens = undefined;
+    this.streamRequestInputUsage = undefined;
     this.streamRequestOutputTokens = undefined;
     this.compactedContextWindowUsedTokens = undefined;
   }
@@ -1922,11 +1951,11 @@ class ClaudeContextUsageState {
     }
     const eventType = readTrimmedString(streamEvent.type);
     if (eventType === "message_start") {
-      const inputTokens = readStreamRequestInputTokens(streamEvent);
-      if (typeof inputTokens !== "number") {
+      const inputUsage = readStreamRequestInputUsage(streamEvent);
+      if (!inputUsage) {
         return null;
       }
-      this.streamRequestInputTokens = inputTokens;
+      this.streamRequestInputUsage = inputUsage;
       this.streamRequestOutputTokens = 0;
     } else if (eventType === "message_delta") {
       const outputTokens = readStreamRequestOutputTokens(streamEvent);
@@ -1934,6 +1963,12 @@ class ClaudeContextUsageState {
         return null;
       }
       this.streamRequestOutputTokens = outputTokens;
+      if (this.streamRequestInputUsage) {
+        this.streamRequestInputUsage = mergeStreamDeltaInputUsage(
+          this.streamRequestInputUsage,
+          streamEvent,
+        );
+      }
     } else {
       return null;
     }
@@ -1980,13 +2015,15 @@ class ClaudeContextUsageState {
   }
 
   private streamUsedTokens(): number | undefined {
-    if (
-      typeof this.streamRequestInputTokens !== "number" ||
-      typeof this.streamRequestOutputTokens !== "number"
-    ) {
+    const inputUsage = this.streamRequestInputUsage;
+    if (!inputUsage || typeof this.streamRequestOutputTokens !== "number") {
       return undefined;
     }
-    const usedTokens = this.streamRequestInputTokens + this.streamRequestOutputTokens;
+    const usedTokens =
+      inputUsage.inputTokens +
+      inputUsage.cacheCreationInputTokens +
+      inputUsage.cacheReadInputTokens +
+      this.streamRequestOutputTokens;
     return usedTokens > 0 ? usedTokens : undefined;
   }
 
@@ -2005,7 +2042,7 @@ class ClaudeContextUsageState {
   }
 
   buildCompactionUsageEvent(postTokens: number | undefined): AgentStreamEvent {
-    this.streamRequestInputTokens = undefined;
+    this.streamRequestInputUsage = undefined;
     this.streamRequestOutputTokens = undefined;
     this.compactedContextWindowUsedTokens = postTokens;
     const usage: AgentUsage = {};
