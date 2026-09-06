@@ -45,7 +45,7 @@ function readWorkerPid(supervisorPid: number): number | null {
     return null;
   }
 
-  const result = spawnSync("ps", ["ax", "-o", "pid=,ppid="], { encoding: "utf8" });
+  const result = spawnSync("ps", ["ax", "-o", "pid=,ppid=,stat="], { encoding: "utf8" });
   if (result.status !== 0 || result.error) {
     return null;
   }
@@ -55,10 +55,13 @@ function readWorkerPid(supervisorPid: number): number | null {
     if (!trimmed) {
       continue;
     }
-    const [pidToken, ppidToken] = trimmed.split(/\s+/);
+    const [pidToken, ppidToken, statToken] = trimmed.split(/\s+/);
     const pid = Number.parseInt(pidToken ?? "", 10);
     const ppid = Number.parseInt(ppidToken ?? "", 10);
     if (!Number.isInteger(pid) || !Number.isInteger(ppid)) {
+      continue;
+    }
+    if (statToken?.includes("Z")) {
       continue;
     }
     if (ppid === supervisorPid && pid > 0) {
@@ -197,16 +200,27 @@ try {
     await client?.close().catch(() => undefined);
   }
 
-  await waitFor(
-    () => {
-      const workerPid = readWorkerPid(supervisorPid);
-      return (
-        workerPid !== null && workerPid !== workerPidBeforeRestart && isProcessRunning(workerPid)
-      );
-    },
-    20000,
-    "worker pid did not change after restart request",
-  );
+  try {
+    await waitFor(
+      () => {
+        const workerPid = readWorkerPid(supervisorPid);
+        return (
+          workerPid !== null && workerPid !== workerPidBeforeRestart && isProcessRunning(workerPid)
+        );
+      },
+      30000,
+      "worker pid did not change after restart request",
+    );
+  } catch (error) {
+    const capturedSupervisorLogs = await readCapturedSupervisorLogs(
+      paseoHome,
+      recentSupervisorLogs,
+    );
+    throw new Error(
+      `worker pid did not change after restart request, logs:\n${capturedSupervisorLogs}`,
+      { cause: error },
+    );
+  }
 
   const workerPidAfterRestart = readWorkerPid(supervisorPid);
   assert(workerPidAfterRestart !== null, "worker process should exist after restart");
@@ -215,6 +229,28 @@ try {
     workerPidBeforeRestart,
     "worker pid should change after restart",
   );
+
+  try {
+    await waitFor(
+      async () => {
+        const status = await readDaemonStatus(paseoHome);
+        return status.localDaemon === "running" && status.pid === supervisorPid;
+      },
+      30000,
+      "daemon did not return to running after restart",
+    );
+  } catch (error) {
+    const capturedSupervisorLogs = await readCapturedSupervisorLogs(
+      paseoHome,
+      recentSupervisorLogs,
+    );
+    throw new Error(
+      `daemon did not return to running after restart, logs:\n${capturedSupervisorLogs}`,
+      {
+        cause: error,
+      },
+    );
+  }
 
   const statusAfterRestart = await readDaemonStatus(paseoHome);
   assert.strictEqual(

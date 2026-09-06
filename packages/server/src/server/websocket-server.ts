@@ -89,6 +89,7 @@ import { ProviderUsageService } from "../services/quota-fetcher/service.js";
 import { getProcessMemoryDiagnostics, getProcessUptimeSeconds } from "./process-diagnostics.js";
 import {
   CLIENT_SHUTDOWN_RPC_REASON,
+  DAEMON_UPDATE_RPC_REASON,
   normalizeClientRestartRpcReason,
 } from "./lifecycle-reasons.js";
 import { CLIENT_CAPS } from "@getpaseo/protocol/client-capabilities";
@@ -2929,7 +2930,7 @@ function getControlRpcLogInfo(
     return {
       requestType: message.type,
       requestId: message.requestId,
-      reason: "daemon_update",
+      reason: DAEMON_UPDATE_RPC_REASON,
     };
   }
   return null;
