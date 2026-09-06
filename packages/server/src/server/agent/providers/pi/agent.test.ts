@@ -1138,6 +1138,31 @@ describe("PiRpcAgentSession", () => {
     ]);
   });
 
+  test("completes autonomous Pi turns after settlement", async () => {
+    const { pi, events } = await createSession();
+    const fakeSession = pi.latestSession();
+
+    fakeSession.emit({ type: "agent_start" });
+    fakeSession.emit({ type: "turn_start" });
+    fakeSession.finishAgentRun({
+      message: {
+        role: "assistant",
+        stopReason: "stop",
+        content: [{ type: "text", text: "Autonomous response" }],
+      },
+      willRetry: false,
+    });
+
+    expect(events.turnLifecycleEvents()).toEqual([{ type: "turn_started", turnId: undefined }]);
+
+    fakeSession.settleTurn();
+
+    expect(events.turnLifecycleEvents()).toEqual([
+      { type: "turn_started", turnId: undefined },
+      { type: "turn_completed", turnId: undefined },
+    ]);
+  });
+
   test("completes legacy Pi turns that have no settlement metadata", async () => {
     const { pi, session, events } = await createSession();
     const fakeSession = pi.latestSession();

@@ -2297,12 +2297,12 @@ export class PiRpcAgentSession implements AgentSession {
         this.completeTurn(turnId, event.messages ?? []);
         return;
       }
-      if (this.activeTurnId) {
+      if (this.activeTurnId || this.activeTurnStarted) {
         this.pendingSettledMessages = event.messages ?? [];
       }
       return;
     }
-    if (this.activeTurnId) {
+    if (this.activeTurnId || this.activeTurnStarted) {
       this.completeTurn(turnId, this.pendingSettledMessages ?? []);
     }
   }
