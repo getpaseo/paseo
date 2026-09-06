@@ -255,8 +255,12 @@ function injectConnectionHint(
   req: Parameters<RequestHandler>[0],
   label: string,
 ): string {
-  const host = typeof req.headers.host === "string" ? req.headers.host : "";
+  const rawHost = typeof req.headers.host === "string" ? req.headers.host : "";
   const useTls = req.protocol === "https";
+  const bracketedHostHasPort = rawHost.includes("]:");
+  const unbracketedHostHasPort = !rawHost.startsWith("[") && rawHost.includes(":");
+  const hostHasPort = bracketedHostHasPort || unbracketedHostHasPort;
+  const host = hostHasPort ? rawHost : `${rawHost}:${useTls ? 443 : 80}`;
   const hint = {
     listen: host,
     useTls,

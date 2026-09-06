@@ -73,8 +73,12 @@ function createApp(options: {
   enabled: boolean;
   distDir: string | null;
   publicDir?: string;
+  trustProxy?: boolean;
 }): express.Application {
   const app = express();
+  if (options.trustProxy) {
+    app.set("trust proxy", true);
+  }
   app.use(
     createWebUiMiddleware({
       enabled: options.enabled,
@@ -175,6 +179,38 @@ describe("daemon web UI route module", () => {
     expect(res.status).toBe(200);
     expect(res.body).toContain("evil.test\\u003C/script\\u003E");
     expect(res.body).not.toContain("evil.test</script>");
+  });
+
+  test("appends default port 80 when host header omits port (HTTP)", async () => {
+    const app = createApp({ enabled: true, distDir, publicDir });
+
+    const res = await request(app, "GET", "/", { host: "paseo.example.com" });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toContain('"listen":"paseo.example.com:80"');
+    expect(res.body).toContain('"useTls":false');
+  });
+
+  test("appends default port 443 when host header omits port (HTTPS via trust proxy)", async () => {
+    const app = createApp({ enabled: true, distDir, publicDir, trustProxy: true });
+
+    const res = await request(app, "GET", "/", {
+      host: "paseo.example.com",
+      "x-forwarded-proto": "https",
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toContain('"listen":"paseo.example.com:443"');
+    expect(res.body).toContain('"useTls":true');
+  });
+
+  test("preserves explicit port in host header", async () => {
+    const app = createApp({ enabled: true, distDir, publicDir });
+
+    const res = await request(app, "GET", "/", { host: "paseo.example.com:8080" });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toContain('"listen":"paseo.example.com:8080"');
   });
 
   test("falls back to index.html for SPA deep links", async () => {
