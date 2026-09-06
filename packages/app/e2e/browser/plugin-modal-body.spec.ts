@@ -1,5 +1,5 @@
 import path from "node:path";
-import { expect, test, type Page } from "../support/fixtures";
+import { expect, test as base, type Page } from "../support/fixtures";
 import { gotoAppShell } from "../support/helpers/app";
 import { connectNewWorkspaceDaemonClient } from "../support/helpers/new-workspace";
 import {
@@ -91,56 +91,73 @@ async function exerciseBodies(page: Page) {
   await expect(page.getByText("Selected: System logs", { exact: true })).toBeVisible();
 }
 
-test("plugin bodies support padding, scroll ownership, horizontal tabs and clipboard on wide and compact layouts", async ({
-  page,
-  context,
-}) => {
-  const client = await connectNewWorkspaceDaemonClient({ ownProjects: false });
-  const previous = await client.getDaemonConfig();
+const test = base.extend<{ modalExample: Page }>({
+  modalExample: async ({ page, context }, provide) => {
+    const client = await connectNewWorkspaceDaemonClient({ ownProjects: false });
+    const previous = await client.getDaemonConfig();
+    try {
+      await client.patchDaemonConfig({ pluginsEnabled: true });
+      await client.installDirectoryPlugin(
+        path.resolve(__dirname, "../../../../plugin-examples/modal-ui"),
+      );
+      await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+      await provide(page);
+    } finally {
+      await client.removePlugin("modal-ui-example").catch(() => undefined);
+      await client
+        .patchDaemonConfig({ pluginsEnabled: previous.config.pluginsEnabled ?? false })
+        .catch(() => undefined);
+      await client.close().catch(() => undefined);
+    }
+  },
+});
+
+async function openWideExamples(page: Page) {
+  await page.setViewportSize({ width: 1100, height: 800 });
+  await gotoAppShell(page);
+  await page.getByRole("button", { name: "Modal examples", exact: true }).click();
+}
+
+async function openCompactExamples(page: Page) {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await openMobileAgentSidebar(page);
+  await expectMobileAgentSidebarVisible(page);
+  await page.getByRole("button", { name: "Modal examples", exact: true }).click();
+}
+
+async function expectDeniedCopyFeedback(page: Page) {
+  const cdp = await page.context().newCDPSession(page);
   try {
-    await client.patchDaemonConfig({ pluginsEnabled: true });
-    await client.installDirectoryPlugin(
-      path.resolve(__dirname, "../../../../plugin-examples/modal-ui"),
-    );
-    await context.grantPermissions(["clipboard-read", "clipboard-write"]);
-    await page.setViewportSize({ width: 1100, height: 800 });
-    await gotoAppShell(page);
-    await page.getByRole("button", { name: "Modal examples", exact: true }).click();
-    await test.step("wide dialogs", () => exerciseBodies(page));
-    await page.setViewportSize({ width: 390, height: 844 });
-    await openMobileAgentSidebar(page);
-    await expectMobileAgentSidebarVisible(page);
-    await page.getByRole("button", { name: "Modal examples", exact: true }).click();
-    await test.step("compact sheets", () => exerciseBodies(page));
-    await test.step("denied clipboard writes report failure", async () => {
-      const cdp = await context.newCDPSession(page);
-      const { targetInfo } = await cdp.send("Target.getTargetInfo");
-      await cdp.send("Browser.setPermission", {
-        browserContextId: targetInfo.browserContextId,
-        permission: { name: "clipboard-write" },
-        setting: "denied",
-        origin: new URL(page.url()).origin,
-      });
-      expect(
-        await page.evaluate(
-          async () =>
-            (await navigator.permissions.query({ name: "clipboard-write" as PermissionName }))
-              .state,
-        ),
-      ).toBe("denied");
-      await openExample(page, "Form");
-      await page.getByRole("button", { name: "Copy text", exact: true }).click();
-      await expect(
-        page.getByText("Could not copy text. Select the text and use Copy.", { exact: true }),
-      ).toBeVisible();
-      await closeExample(page);
-      await cdp.detach();
+    const { targetInfo } = await cdp.send("Target.getTargetInfo");
+    await cdp.send("Browser.setPermission", {
+      browserContextId: targetInfo.browserContextId,
+      permission: { name: "clipboard-write" },
+      setting: "denied",
+      origin: new URL(page.url()).origin,
     });
+    expect(
+      await page.evaluate(
+        async () =>
+          (await navigator.permissions.query({ name: "clipboard-write" as PermissionName })).state,
+      ),
+    ).toBe("denied");
+    await openExample(page, "Form");
+    await page.getByRole("button", { name: "Copy text", exact: true }).click();
+    await expect(
+      page.getByText("Could not copy text. Select the text and use Copy.", { exact: true }),
+    ).toBeVisible();
+    await closeExample(page);
   } finally {
-    await client.removePlugin("modal-ui-example").catch(() => undefined);
-    await client
-      .patchDaemonConfig({ pluginsEnabled: previous.config.pluginsEnabled ?? false })
-      .catch(() => undefined);
-    await client.close().catch(() => undefined);
+    await cdp.detach();
   }
+}
+
+test("plugin bodies support padding, scroll ownership, horizontal tabs and clipboard on wide and compact layouts", async ({
+  modalExample: page,
+}) => {
+  await openWideExamples(page);
+  await test.step("wide dialogs", () => exerciseBodies(page));
+  await openCompactExamples(page);
+  await test.step("compact sheets", () => exerciseBodies(page));
+  await test.step("denied clipboard writes report failure", () => expectDeniedCopyFeedback(page));
 });
