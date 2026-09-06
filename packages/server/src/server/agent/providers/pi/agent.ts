@@ -624,6 +624,14 @@ function createPiPaseoExtensionFile(systemPrompt?: string): PiTempFile {
 	  return JSON.parse(Buffer.from(encoded, "base64url").toString("utf8"));
 	}
 
+	function temporalContext(kind, durationMs) {
+	  const completedAt = new Date().toISOString();
+	  const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+	  const duration = durationMs === undefined ? "" : ' duration_ms="' + Math.max(0, Math.round(durationMs)) + '"';
+	  const timeAttribute = kind === "user_message" ? "received_at" : "completed_at";
+	  return '<paseo_temporal_context kind="' + kind + '" ' + timeAttribute + '="' + completedAt + '" timezone="' + timeZone + '"' + duration + ' />';
+	}
+
 	function readTextContent(content) {
 	  if (typeof content === "string") {
 	    return content;
@@ -669,6 +677,7 @@ function createPiPaseoExtensionFile(systemPrompt?: string): PiTempFile {
 
 	export default function paseoIntegration(pi) {
 	  const submittedUserMessages = [];
+	  const toolStartedAt = new Map();
 
 	  function emitSubmittedUserEntries(ctx) {
 	    const entries = ctx.sessionManager.getEntries();
@@ -692,13 +701,37 @@ function createPiPaseoExtensionFile(systemPrompt?: string): PiTempFile {
 	    }
 	  }
 
-	  ${
-      systemPrompt
-        ? `pi.on("before_agent_start", async (event) => ({
-	    systemPrompt: event.systemPrompt + "\\n\\n" + ${JSON.stringify(systemPrompt)},
-	  }));`
-        : ""
-    }
+	  pi.on("before_agent_start", async (event) => ({
+	    message: {
+	      customType: "paseo-temporal-context",
+	      content: temporalContext("user_message"),
+	      display: false,
+	    },${
+        systemPrompt
+          ? `
+	    systemPrompt: event.systemPrompt + "\\n\\n" + ${JSON.stringify(systemPrompt)},`
+          : ""
+      }
+	  }));
+
+	  pi.on("tool_call", async (event) => {
+	    toolStartedAt.set(event.toolCallId, performance.now());
+	  });
+
+	  pi.on("tool_result", async (event) => {
+	    const finishedAt = performance.now();
+	    const startedAt = toolStartedAt.get(event.toolCallId) ?? finishedAt;
+	    toolStartedAt.delete(event.toolCallId);
+	    return {
+	      content: [
+	        ...event.content,
+	        {
+	          type: "text",
+	          text: temporalContext("tool_result", finishedAt - startedAt),
+	        },
+	      ],
+	    };
+	  });
 
 	  pi.on("session_start", async (_event, ctx) => {
 	    emitEntryCapture(ctx, "session_start");

@@ -112,6 +112,8 @@ export interface FakeCodexAppServer {
     message: string;
     requestedSchema: Record<string, unknown>;
   }): void;
+  requestCurrentTime(params: { threadId: string }): void;
+  waitForCurrentTime(): Promise<unknown>;
   waitForMcpElicitationDecision(): Promise<unknown>;
   resolvesMcpElicitation(): void;
 }
@@ -193,6 +195,7 @@ export function createFakeCodexAppServer(
   const errors: Error[] = [];
   const approvalRequestIds = new Map<string, number>();
   let mcpElicitationRequestId: number | undefined;
+  let currentTimeRequestId: number | undefined;
   const waiters = new Set<{
     predicate: (message: JsonObject) => boolean;
     resolve: (message: JsonObject) => void;
@@ -585,6 +588,32 @@ export function createFakeCodexAppServer(
           },
         })}\n`,
       );
+    },
+    requestCurrentTime(params) {
+      const requestId = nextServerRequestId;
+      nextServerRequestId += 1;
+      currentTimeRequestId = requestId;
+      child.stdout.write(
+        `${JSON.stringify({
+          jsonrpc: "2.0",
+          id: requestId,
+          method: "currentTime/read",
+          params,
+        })}\n`,
+      );
+    },
+    async waitForCurrentTime() {
+      if (currentTimeRequestId === undefined) {
+        throw new Error("No pending fake Codex app-server current-time request");
+      }
+      const message = await waitForMessage(
+        (candidate) =>
+          candidate.id === currentTimeRequestId &&
+          !("method" in candidate) &&
+          "result" in candidate,
+        "current-time response",
+      );
+      return message.result;
     },
     async waitForMcpElicitationDecision() {
       if (mcpElicitationRequestId === undefined) {

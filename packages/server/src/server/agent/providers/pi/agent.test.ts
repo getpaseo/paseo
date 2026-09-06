@@ -14,7 +14,7 @@ import path from "node:path";
 import pino from "pino";
 import { setImmediate as waitForImmediate } from "node:timers/promises";
 import { pathToFileURL } from "node:url";
-import { describe, expect, onTestFinished, test } from "vitest";
+import { describe, expect, onTestFinished, test, vi } from "vitest";
 
 import type { AgentSession, AgentSessionConfig, AgentStreamEvent } from "../../agent-sdk-types.js";
 import {
@@ -120,6 +120,22 @@ async function applyPaseoExtensionSystemPrompt(
   const listeners = await loadPaseoExtensionListeners(extensionPath);
   const result = await listeners.get("before_agent_start")?.({ systemPrompt });
   return (result as { systemPrompt?: string } | undefined)?.systemPrompt;
+}
+
+function temporalContextText(content: unknown): string {
+  if (!Array.isArray(content)) throw new Error("Expected tool result content");
+  const temporal = content.find(
+    (part): part is { type: "text"; text: string } =>
+      typeof part === "object" &&
+      part !== null &&
+      "type" in part &&
+      part.type === "text" &&
+      "text" in part &&
+      typeof part.text === "string" &&
+      part.text.startsWith("<paseo_temporal_context"),
+  );
+  if (!temporal) throw new Error("Missing temporal context");
+  return temporal.text;
 }
 
 async function flushTurnScheduling(): Promise<void> {
@@ -1273,6 +1289,76 @@ describe("PiRpcAgentSession", () => {
     await expect(
       applyPaseoExtensionSystemPrompt(actualLaunch.extensionPaths[0]!, "Pi project prompt"),
     ).resolves.toBe("Pi project prompt\n\nAgent prompt\n\nDaemon prompt");
+
+    await session.close();
+  });
+
+  test("injects hidden timestamp context before each agent run", async () => {
+    const pi = new FakePi();
+    const session = await createClient(pi).createSession(createConfig());
+    const extensionPath = pi.recordedLaunches[0]?.extensionPaths[0];
+    expect(extensionPath).toBeDefined();
+    const listeners = await loadPaseoExtensionListeners(extensionPath!);
+
+    const output = await listeners.get("before_agent_start")?.({ systemPrompt: "Pi prompt" });
+
+    expect(output).toMatchObject({
+      message: {
+        customType: "paseo-temporal-context",
+        display: false,
+      },
+    });
+    expect((output as { message: { content: string } }).message.content).toMatch(
+      /^<paseo_temporal_context kind="user_message" received_at="\d{4}-\d{2}-\d{2}T[^"]+Z" timezone="[^"]+" \/>$/,
+    );
+
+    await session.close();
+  });
+
+  test("adds completion time and keeps concurrent tool durations paired with call IDs", async () => {
+    const pi = new FakePi();
+    const session = await createClient(pi).createSession(createConfig());
+    const extensionPath = pi.recordedLaunches[0]?.extensionPaths[0];
+    expect(extensionPath).toBeDefined();
+    const listeners = await loadPaseoExtensionListeners(extensionPath!);
+    const monotonicTime = vi
+      .spyOn(performance, "now")
+      .mockReturnValueOnce(100)
+      .mockReturnValueOnce(200)
+      .mockReturnValueOnce(260)
+      .mockReturnValueOnce(400);
+    onTestFinished(() => monotonicTime.mockRestore());
+
+    await listeners.get("tool_call")?.({ toolCallId: "tool-1" });
+    await listeners.get("tool_call")?.({ toolCallId: "tool-2" });
+    const failure = await listeners.get("tool_result")?.({
+      toolCallId: "tool-2",
+      content: [{ type: "text", text: "failed" }],
+      isError: true,
+    });
+    const success = await listeners.get("tool_result")?.({
+      toolCallId: "tool-1",
+      content: [{ type: "text", text: "done" }],
+      isError: false,
+    });
+
+    expect((success as { content: unknown[] }).content[0]).toEqual({ type: "text", text: "done" });
+    expect((failure as { content: unknown[] }).content[0]).toEqual({
+      type: "text",
+      text: "failed",
+    });
+    expect(temporalContextText((success as { content: unknown }).content)).toMatch(
+      /^<paseo_temporal_context kind="tool_result" completed_at="\d{4}-\d{2}-\d{2}T[^"]+Z" timezone="[^"]+" duration_ms="\d+" \/>$/,
+    );
+    expect(temporalContextText((failure as { content: unknown }).content)).toMatch(
+      /^<paseo_temporal_context kind="tool_result" completed_at="\d{4}-\d{2}-\d{2}T[^"]+Z" timezone="[^"]+" duration_ms="\d+" \/>$/,
+    );
+    expect(temporalContextText((failure as { content: unknown }).content)).toContain(
+      'duration_ms="60"',
+    );
+    expect(temporalContextText((success as { content: unknown }).content)).toContain(
+      'duration_ms="300"',
+    );
 
     await session.close();
   });

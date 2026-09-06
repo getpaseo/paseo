@@ -99,6 +99,26 @@ Submitted user-message wire items carry the same Paseo ID in `messageId` and `cl
 
 Provider adapters must terminalize every transient timeline row before emitting the turn's terminal event. Codex may omit the completed `contextCompaction` item when a turn ends during compaction, so its adapter closes any pending root compaction before forwarding `turn_completed`, `turn_failed`, or `turn_canceled`. A terminal turn must never leave the client showing an operation as still loading.
 
+### Temporal context
+
+Paseo gives supported agents trusted wall-clock context without changing the user's visible message.
+Claude receives a `paseo_temporal_context` block from `UserPromptSubmit` and after every successful
+or failed tool result. Pi receives the same blocks through the generated Paseo extension. Tool
+results include their completion timestamp, the daemon's IANA time zone, and an integer
+`duration_ms` measured with a monotonic clock (or the provider's execution duration when it
+supplies one). Keep start times keyed by tool-call ID because providers may execute sibling calls
+in parallel.
+
+Codex 0.153 and newer uses its native external current-time reminder, configured for every user or
+tool-output boundary. The app-server callback accepts Unix seconds only, so Codex receives the
+completion time but not a Paseo-measured duration. Do not label an elapsed turn or inference time as
+tool duration to fill that protocol gap.
+
+When adding temporal context to another provider, use a provider-native model-context hook. Timeline
+events happen after the provider has already assembled its next inference and therefore cannot make
+a tool-result annotation visible to the model. Providers without such a hook remain unsupported
+until their upstream protocol grows one.
+
 Draft metadata lookups should avoid creating provider sessions when the upstream provider has top-level APIs for that metadata. Prefer `AgentClient.fetchCatalog`, `listCommands`, or `listFeatures` over creating a scratch `AgentSession`; scratch sessions can show up as empty native sessions in provider import/history UIs. `fetchCatalog` is the single discovery API for models and modes — provider implementations may use one process, separate upstream calls, or static data internally, but callers outside the provider do not get separate runtime model/mode probes. Draft command listing and scratch-session feature listing require an explicit draft model. Do not resolve a default model through catalog discovery. A client-level `listFeatures` implementation may return features from an incomplete, model-less draft and owns which features are valid in that state.
 
 Provider session import has its own contract. The picker calls `listImportableSessions` and receives rows only: provider handle, cwd, title, prompt previews, and last activity. Import calls `importSession({ providerHandleId, cwd })` for the selected row and must not call listing again. The provider returns the resumed session, storage config, persistence handle, and hydrated timeline for that one native session; `AgentManager.importProviderSession` seeds the daemon timeline and publishes the Paseo agent only after it is ready.

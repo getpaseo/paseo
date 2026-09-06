@@ -80,12 +80,14 @@ import { realClaudeRewindSdk, revertClaudeConversation, revertClaudeFiles } from
 import { normalizeProviderReplayTimestamp } from "../../provider-history-timestamps.js";
 import { claudeProjectDirSync } from "./project-dir.js";
 import { THINKING_APPLIES_NEXT_TURN_NOTICE } from "../../provider-notices.js";
+import { createTemporalClock } from "../../temporal-context.js";
 import {
   isProviderImageMarkdown,
   materializeProviderImage,
   renderProviderImageOutputAsAssistantMarkdown,
   type ProviderImageOutput,
 } from "../provider-image-output.js";
+import { createClaudeTemporalHooks, mergeClaudeHooks } from "./hooks.js";
 
 import {
   getAgentStreamEventTurnId,
@@ -3303,7 +3305,10 @@ class ClaudeAgentSession implements AgentSession {
       ...settingsOptions,
       // Provider subagent panes render the child's nested transcript.
       forwardSubagentText: true,
-      hooks: this.buildSubagentEffortHooks(),
+      hooks: mergeClaudeHooks(
+        createClaudeTemporalHooks(createTemporalClock()),
+        this.buildSubagentEffortHooks(),
+      ),
       ...(this.persistSession === undefined ? {} : { persistSession: this.persistSession }),
       env: sdkEnv,
     };

@@ -168,6 +168,7 @@ const CODEX_PLAN_IMPLEMENTATION_PROMPT_PREFIX =
 // (and the /goal slash command) when the binary is too old.
 const CODEX_GOALS_MIN_VERSION: readonly [number, number, number] = [0, 128, 0];
 const CODEX_AUTO_REVIEW_MIN_VERSION: readonly [number, number, number] = [0, 115, 0];
+const CODEX_CURRENT_TIME_REMINDER_MIN_VERSION: readonly [number, number, number] = [0, 153, 0];
 
 function parseCodexVersion(versionOutput: string): [number, number, number] | null {
   const match = versionOutput.match(/(\d+)\.(\d+)\.(\d+)/);
@@ -267,6 +268,10 @@ interface CodexAppServerAgentDeps {
   resolveSlashCommandInvocation?: (
     prompt: AgentPromptInput,
   ) => Promise<{ commandName: string; args?: string } | null>;
+  currentTimeReminder?: {
+    enabled: boolean;
+    now: () => Date;
+  };
 }
 
 interface CodexModePreset {
@@ -3772,6 +3777,12 @@ export class CodexAppServerAgentSession implements AgentSession {
     this.client.setRequestHandler("tool/requestUserInput", (params) =>
       this.handleToolApprovalRequest(params),
     );
+    const currentTimeReminder = this.deps.currentTimeReminder;
+    if (currentTimeReminder?.enabled) {
+      this.client.setRequestHandler("currentTime/read", () => ({
+        currentTimeAt: Math.floor(currentTimeReminder.now().getTime() / 1_000),
+      }));
+    }
   }
 
   private async loadPersistedHistory(): Promise<void> {
@@ -5106,6 +5117,17 @@ export class CodexAppServerAgentSession implements AgentSession {
         mcpServers[name] = toCodexMcpConfig(serverConfig);
       }
       innerConfig.mcp_servers = mcpServers;
+    }
+    if (this.deps.currentTimeReminder?.enabled) {
+      innerConfig.features = {
+        ...toObjectRecord(innerConfig.features),
+        current_time_reminder: {
+          enabled: true,
+          reminder_interval_seconds: 0,
+          clock_source: "external",
+          delivery_mode: "after_user_or_tool_output",
+        },
+      };
     }
     const configured = applyCodexToolPolicy(innerConfig, this.config.toolPolicy);
     return Object.keys(configured).length > 0 ? configured : null;
@@ -6862,6 +6884,7 @@ export class CodexAppServerAgentClient implements AgentClient {
   readonly capabilities = CODEX_APP_SERVER_CAPABILITIES;
   private goalsEnabledPromise: Promise<boolean> | null = null;
   private autoReviewEnabledPromise: Promise<boolean> | null = null;
+  private currentTimeReminderEnabledPromise: Promise<boolean> | null = null;
 
   constructor(
     private readonly logger: Logger,
@@ -6869,14 +6892,34 @@ export class CodexAppServerAgentClient implements AgentClient {
     private readonly deps: CodexAppServerAgentDeps = {},
   ) {}
 
-  private sessionDeps(): CodexAppServerAgentDeps {
+  private sessionDeps(currentTimeReminderEnabled: boolean): CodexAppServerAgentDeps {
     return {
       ...this.deps,
       customCodexConfig: buildCodexCustomProviderConfig(
         this.runtimeSettings,
         this.deps.customProvider,
       ),
+      currentTimeReminder: {
+        enabled: currentTimeReminderEnabled,
+        now: () => new Date(),
+      },
     };
+  }
+
+  private resolveCurrentTimeReminderEnabled(): Promise<boolean> {
+    if (!this.currentTimeReminderEnabledPromise) {
+      this.currentTimeReminderEnabledPromise = (async () => {
+        try {
+          const launchPrefix = await resolveCodexLaunchPrefix(this.runtimeSettings);
+          const versionOutput = await resolveBinaryVersion(launchPrefix.command);
+          return codexVersionAtLeast(versionOutput, CODEX_CURRENT_TIME_REMINDER_MIN_VERSION);
+        } catch (error) {
+          this.logger.warn({ err: error }, "Failed to probe Codex current-time reminder support");
+          return false;
+        }
+      })();
+    }
+    return this.currentTimeReminderEnabledPromise;
   }
 
   private resolveGoalsEnabled(): Promise<boolean> {
@@ -6976,13 +7019,14 @@ export class CodexAppServerAgentClient implements AgentClient {
     const sessionConfig: AgentSessionConfig = { ...config, provider: CODEX_PROVIDER };
     const goalsEnabled = await this.resolveGoalsEnabled();
     const autoReviewEnabled = await this.resolveAutoReviewEnabled();
+    const currentTimeReminderEnabled = await this.resolveCurrentTimeReminderEnabled();
     const session = new CodexAppServerAgentSession(
       sessionConfig,
       null,
       this.logger,
       () =>
         this.spawnAppServer(launchContext?.env, { goalsEnabled, agentId: launchContext?.agentId }),
-      this.sessionDeps(),
+      this.sessionDeps(currentTimeReminderEnabled),
       options?.persistSession === false,
       goalsEnabled,
       autoReviewEnabled,
@@ -7007,13 +7051,14 @@ export class CodexAppServerAgentClient implements AgentClient {
     };
     const goalsEnabled = await this.resolveGoalsEnabled();
     const autoReviewEnabled = await this.resolveAutoReviewEnabled();
+    const currentTimeReminderEnabled = await this.resolveCurrentTimeReminderEnabled();
     const session = new CodexAppServerAgentSession(
       merged,
       handle,
       this.logger,
       () =>
         this.spawnAppServer(launchContext?.env, { goalsEnabled, agentId: launchContext?.agentId }),
-      this.sessionDeps(),
+      this.sessionDeps(currentTimeReminderEnabled),
       false,
       goalsEnabled,
       autoReviewEnabled,

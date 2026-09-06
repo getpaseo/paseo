@@ -176,13 +176,57 @@ function createProviderWithFakeAppServer(appServer: FakeCodexAppServer): CodexAp
   const internals = castInternals<{
     goalsEnabledPromise: Promise<boolean> | null;
     autoReviewEnabledPromise: Promise<boolean> | null;
+    currentTimeReminderEnabledPromise: Promise<boolean> | null;
     spawnAppServer: () => Promise<ChildProcessWithoutNullStreams>;
   }>(provider);
   internals.goalsEnabledPromise = Promise.resolve(false);
   internals.autoReviewEnabledPromise = Promise.resolve(false);
+  internals.currentTimeReminderEnabledPromise = Promise.resolve(false);
   internals.spawnAppServer = async () => appServer.child;
   return provider;
 }
+
+test("configures Codex time reads for every user and tool-result boundary", async () => {
+  const appServer = createFakeCodexAppServer();
+  const now = new Date("2026-09-06T18:32:18.421Z");
+  const session = new CodexAppServerAgentSession(
+    createConfig({ cwd: "/workspace/project" }),
+    null,
+    createTestLogger(),
+    async () => appServer.child,
+    {
+      currentTimeReminder: {
+        enabled: true,
+        now: () => now,
+      },
+    },
+  );
+
+  try {
+    await session.startTurn("what time is it?");
+    const threadStart = await appServer.waitForRequest("thread/start");
+    expect(threadStart).toMatchObject({
+      config: {
+        features: {
+          current_time_reminder: {
+            enabled: true,
+            reminder_interval_seconds: 0,
+            clock_source: "external",
+            delivery_mode: "after_user_or_tool_output",
+          },
+        },
+      },
+    });
+
+    appServer.requestCurrentTime({ threadId: "thread-1" });
+    await expect(appServer.waitForCurrentTime()).resolves.toEqual({
+      currentTimeAt: Math.floor(now.getTime() / 1_000),
+    });
+  } finally {
+    await session.close();
+    appServer.assertNoErrors();
+  }
+});
 
 async function startPublicSteeringSession(
   appServer: FakeCodexAppServer,
@@ -1779,6 +1823,14 @@ describe("Codex app-server provider", () => {
       OPENAI_BASE_URL: "https://custom-relay.example.com",
     });
     expect(capturedThreadStartConfig(capturedRequests)).toEqual({
+      features: {
+        current_time_reminder: {
+          enabled: true,
+          reminder_interval_seconds: 0,
+          clock_source: "external",
+          delivery_mode: "after_user_or_tool_output",
+        },
+      },
       model_provider: "codex-iisb",
       model_providers: {
         "codex-iisb": {
@@ -1799,6 +1851,14 @@ describe("Codex app-server provider", () => {
     );
 
     expect(capturedThreadStartConfig(capturedRequests)).toEqual({
+      features: {
+        current_time_reminder: {
+          enabled: true,
+          reminder_interval_seconds: 0,
+          clock_source: "external",
+          delivery_mode: "after_user_or_tool_output",
+        },
+      },
       model_provider: "codex-custom",
       model_providers: {
         "codex-custom": expect.objectContaining({
