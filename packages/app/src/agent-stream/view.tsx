@@ -23,6 +23,8 @@ import {
 } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { MAX_CONTENT_WIDTH, useIsCompactFormFactor } from "@/constants/layout";
+import { useContainerWidth } from "@/hooks/use-container-width";
+import { isNative } from "@/constants/platform";
 import { useMutation } from "@tanstack/react-query";
 import Animated, { FadeIn, FadeOut } from "react-native-reanimated";
 import { Check, ChevronDown, X } from "lucide-react-native";
@@ -666,23 +668,20 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       });
     }, [agentId, handleTimelineHistoryLoadError, isTimelineDetached, resolvedServerId]);
 
-    const setInlineDetailsExpanded = useCallback(
-      (itemId: string, expanded: boolean) => {
-        if (!streamRenderStrategy.shouldDisableParentScrollOnInlineDetailsExpansion()) {
-          return;
+    const setInlineDetailsExpanded = useCallback((itemId: string, expanded: boolean) => {
+      if (!isNative) {
+        return;
+      }
+      setExpandedInlineToolCallIds((previous) => {
+        const next = new Set(previous);
+        if (expanded) {
+          next.add(itemId);
+        } else {
+          next.delete(itemId);
         }
-        setExpandedInlineToolCallIds((previous) => {
-          const next = new Set(previous);
-          if (expanded) {
-            next.add(itemId);
-          } else {
-            next.delete(itemId);
-          }
-          return next;
-        });
-      },
-      [streamRenderStrategy],
-    );
+        return next;
+      });
+    }, []);
 
     const setToolCallGroupExpanded = useCallback((groupId: string, expanded: boolean) => {
       setExpandedToolCallGroupIds((previous) => {
@@ -756,11 +755,11 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
             text={item.text}
             status={item.status}
             isLastInSequence={layoutItem.isLastInToolSequence}
-            defaultExpanded={autoExpandReasoning}
+            defaultExpanded={autoExpandReasoning || expandedInlineToolCallIds.has(item.id)}
           />
         );
       },
-      [autoExpandReasoning, setInlineDetailsExpanded],
+      [autoExpandReasoning, expandedInlineToolCallIds, setInlineDetailsExpanded],
     );
 
     const renderSingleToolCallItem = useCallback(
@@ -789,6 +788,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
             <ToolCallSlot
               itemId={item.id}
               onInlineDetailsExpandedChangeByItemId={setInlineDetailsExpanded}
+              defaultExpanded={expandedInlineToolCallIds.has(item.id)}
               toolName={data.name}
               error={data.error}
               status={data.status}
@@ -807,6 +807,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
           <ToolCallSlot
             itemId={item.id}
             onInlineDetailsExpandedChangeByItemId={setInlineDetailsExpanded}
+            defaultExpanded={expandedInlineToolCallIds.has(item.id)}
             toolName={data.toolName}
             args={data.arguments}
             result={data.result}
@@ -817,7 +818,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
           />
         );
       },
-      [context.cwd, setInlineDetailsExpanded, handleToolCallOpenFile],
+      [context.cwd, expandedInlineToolCallIds, handleToolCallOpenFile, setInlineDetailsExpanded],
     );
 
     // Read through a stable event so live group updates do not change the renderer identity
@@ -1759,9 +1760,14 @@ interface StreamItemWrapperProps {
 }
 
 function StreamItemWrapper({ gapBelow, children }: StreamItemWrapperProps) {
+  const { onLayout, width } = useContainerWidth();
   const wrapperStyle = useMemo(
     () => [stylesheet.streamItemWrapper, { marginBottom: gapBelow }],
     [gapBelow],
   );
-  return <View style={wrapperStyle}>{children}</View>;
+  return (
+    <View style={wrapperStyle} onLayout={isNative ? onLayout : undefined}>
+      <React.Fragment key={isNative ? width : 0}>{children}</React.Fragment>
+    </View>
+  );
 }
