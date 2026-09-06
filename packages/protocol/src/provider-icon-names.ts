@@ -31,6 +31,7 @@ export const ACP_PROVIDER_ICON_NAMES = [
   "glm-acp-agent",
   "goose",
   "grok",
+  "jcode",
   "junie",
   "kilo",
   "kimi",

@@ -72,7 +72,7 @@ Anyone who builds software:
 
 - Desktop (Electron), mobile (iOS/Android), web, CLI
 - Built-in providers: Claude Code (Agent SDK), Codex (app-server), GitHub Copilot (ACP), OpenCode, Pi, OMP
-- One-click ACP provider catalog: CodeWhale, Cursor, Hermes, Qwen Coder, Kimi Code, and others — plus custom ACP providers
+- One-click ACP provider catalog: CodeWhale, Cursor, Hermes, Jcode, Qwen Coder, Kimi Code, and others — plus custom ACP providers
 - Voice mode: dictate prompts or talk through problems hands-free
 - MCP server exposes the daemon to other agents (workspaces, create/detach agent, schedules, heartbeats, terminals, workspace renaming)
 - Scheduled agents (cron-style triggers) via app, CLI, and MCP
