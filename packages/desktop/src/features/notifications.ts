@@ -7,7 +7,6 @@ interface NotificationInput {
   title?: unknown;
   body?: unknown;
   data?: unknown;
-  forceBackground?: unknown;
 }
 
 interface NotificationClickPayload {
@@ -101,12 +100,17 @@ export function registerNotificationHandlers(): void {
     const senderWin =
       BrowserWindow.fromWebContents(event.sender) ??
       BrowserWindow.getAllWindows().find((w) => !w.isDestroyed() && w.isResizable());
-    const isAppFocused = !rawInput?.forceBackground && senderWin
+    const isAppFocused = senderWin
       ? senderWin.isFocused() && !senderWin.isMinimized() && senderWin.isVisible()
       : false;
 
-    if (isAppFocused) {
-      return { surface: "in_app" };
+    if (isAppFocused && senderWin) {
+      senderWin.webContents.send("paseo:event:notification-in-app", {
+        title,
+        ...(body ? { body } : {}),
+        ...(data ? { data } : {}),
+      });
+      return true;
     }
 
     const body = toTrimmedString(rawInput?.body) ?? undefined;
@@ -154,7 +158,6 @@ export function registerNotificationHandlers(): void {
         },
       });
     }
-
-    return { surface: "os" };
+    return true;
   });
 }

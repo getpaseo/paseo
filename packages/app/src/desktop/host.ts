@@ -53,17 +53,11 @@ export interface DesktopDialogBridge {
   open?: (options?: DesktopDialogOpenOptions) => Promise<string | string[] | null>;
 }
 
-export interface DesktopNotificationSendResult {
-  surface: "in_app" | "os";
-}
-
 export interface DesktopNotificationBridge {
   isSupported?: () => Promise<boolean>;
   sendNotification?: (
-    payload:
-      | string
-      | { title: string; body?: string; data?: Record<string, unknown>; forceBackground?: boolean },
-  ) => Promise<boolean | DesktopNotificationSendResult>;
+    payload: string | { title: string; body?: string; data?: Record<string, unknown> },
+  ) => Promise<boolean>;
 }
 
 export interface DesktopOpenerBridge {

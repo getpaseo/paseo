@@ -29,8 +29,7 @@ function getDesktopNotificationSender():
       title: string;
       body?: string;
       data?: Record<string, unknown>;
-      forceBackground?: boolean;
-    }) => Promise<boolean | { surface: "in_app" | "os" }>)
+    }) => Promise<boolean>)
   | null {
   const sendNotification = getDesktopHost()?.notification?.sendNotification;
   return typeof sendNotification === "function"
@@ -38,8 +37,7 @@ function getDesktopNotificationSender():
         title: string;
         body?: string;
         data?: Record<string, unknown>;
-        forceBackground?: boolean;
-      }) => Promise<boolean | { surface: "in_app" | "os" }>)
+      }) => Promise<boolean>)
     : null;
 }
 
@@ -172,41 +170,17 @@ export async function sendOsNotification(payload: OsNotificationPayload): Promis
   if (isNative) {
     return false;
   }
-
   const desktopNotificationSender = getDesktopNotificationSender();
   if (desktopNotificationSender) {
-    const result = await desktopNotificationSender({
+    const sent = await desktopNotificationSender({
       title: payload.title,
       body: payload.body,
       data: payload.data,
     });
-    if (result) {
-      if (typeof result === "object" && result.surface === "in_app") {
-        const isAppStillFocused =
-          typeof document !== "undefined" &&
-          !document.hidden &&
-          (typeof document.hasFocus === "function" ? document.hasFocus() : true);
-
-        if (isAppStillFocused) {
-          inAppNotificationStore.push({
-            title: payload.title,
-            body: payload.body,
-            data: payload.data,
-          });
-        } else {
-          // Focus lost during IPC; re-route to background surface so notification is not obscured
-          await desktopNotificationSender({
-            title: payload.title,
-            body: payload.body,
-            data: payload.data,
-            forceBackground: true,
-          });
-        }
-      }
+    if (sent) {
       await playNotificationSound();
-      return true;
     }
-    return false;
+    return sent;
   }
 
   // Web fallback (non-Electron browser tab)

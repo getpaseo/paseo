@@ -64,6 +64,7 @@ import { SessionProvider } from "@/contexts/session-context";
 import { SidebarCalloutProvider } from "@/contexts/sidebar-callout-context";
 import { ToastProvider } from "@/contexts/toast-context";
 import { InAppNotificationHost } from "@/components/in-app-notifications/in-app-notification-host";
+import { inAppNotificationStore } from "@/components/in-app-notifications/in-app-notification-store";
 import { VoiceProvider } from "@/contexts/voice-context";
 import {
   resolveStartupBlocker,
@@ -198,16 +199,31 @@ function PushNotificationRouter() {
             openNotification(data);
           },
         );
+        const unlistenInAppResult = getDesktopHost()?.events?.on?.(
+          "notification-in-app",
+          (payload: unknown) => {
+            if (
+              typeof payload === "object" &&
+              payload !== null &&
+              "title" in payload &&
+              typeof (payload as { title: unknown }).title === "string"
+            ) {
+              const item = payload as { title: string; body?: string; data?: Record<string, unknown> };
+              inAppNotificationStore.push(item);
+            }
+          },
+        );
 
-        void Promise.resolve(unlistenResult).then((unlisten) => {
-          if (typeof unlisten !== "function") {
-            return;
-          }
+        void Promise.all([unlistenResult, unlistenInAppResult]).then(([unlistenClick, unlistenInApp]) => {
           if (cancelled) {
-            unlisten();
+            if (typeof unlistenClick === "function") unlistenClick();
+            if (typeof unlistenInApp === "function") unlistenInApp();
             return;
           }
-          removeDesktopNotificationListener = unlisten;
+          removeDesktopNotificationListener = () => {
+            if (typeof unlistenClick === "function") unlistenClick();
+            if (typeof unlistenInApp === "function") unlistenInApp();
+          };
           return;
         });
       }
