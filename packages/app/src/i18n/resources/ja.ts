@@ -609,6 +609,7 @@ export const ja: TranslationResources = {
         closeLeft: "左のタブを閉じる",
         closeRight: "右のタブを閉じる",
         closeOthers: "他のタブを閉じる",
+        closeEditorTabs: "エディタータブを閉じる",
         moveToMain: "メインパネルへ移動",
         reloadAgent: "エージェントを再読み込み",
         reloadAgentTooltip:
@@ -673,6 +674,7 @@ export const ja: TranslationResources = {
         closeTabsLeftTitle: "左のタブを閉じますか？",
         closeTabsRightTitle: "右のタブを閉じますか？",
         closeOtherTabsTitle: "他のタブを閉じますか？",
+        closeEditorTabsTitle: "エディタータブを閉じますか？",
         bulk: {
           all: "{{agents}}件のエージェントをアーカイブし、{{terminals}}件のターミナルを閉じ、{{tabs}}件のタブを閉じます。閉じたターミナルで実行中のプロセスはすぐに停止されます。",
           agentsAndTerminals:

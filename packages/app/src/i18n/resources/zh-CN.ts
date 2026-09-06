@@ -605,6 +605,7 @@ export const zhCN: TranslationResources = {
         closeLeft: "关闭左侧标签",
         closeRight: "关闭右侧标签",
         closeOthers: "关闭其他标签",
+        closeEditorTabs: "关闭编辑器标签",
         moveToMain: "移至主面板",
         reloadAgent: "重新加载 Agent",
         reloadAgentTooltip: "重新加载 Agent 以更新 skills、MCPs 或登录状态。",
@@ -667,6 +668,7 @@ export const zhCN: TranslationResources = {
         closeTabsLeftTitle: "关闭左侧标签？",
         closeTabsRightTitle: "关闭右侧标签？",
         closeOtherTabsTitle: "关闭其他标签？",
+        closeEditorTabsTitle: "关闭编辑器标签？",
         bulk: {
           all: "这会归档 {{agents}} 个 Agent，关闭 {{terminals}} 个 Terminal，并关闭 {{tabs}} 个标签。已关闭 Terminal 中任何正在运行的进程都会立即停止。",
           agentsAndTerminals:

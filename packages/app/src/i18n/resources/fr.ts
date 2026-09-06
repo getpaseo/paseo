@@ -609,6 +609,7 @@ export const fr: TranslationResources = {
         closeLeft: "Près de la gauche",
         closeRight: "Près de la droite",
         closeOthers: "Fermer les autres onglets",
+        closeEditorTabs: "Fermer les onglets de l’éditeur",
         moveToMain: "Déplacer vers le panneau principal",
         reloadAgent: "Agent de rechargement",
         reloadAgentTooltip:
@@ -676,6 +677,7 @@ export const fr: TranslationResources = {
         closeTabsLeftTitle: "Fermer les onglets à gauche?",
         closeTabsRightTitle: "Fermer les onglets à droite?",
         closeOtherTabsTitle: "Fermer les autres onglets?",
+        closeEditorTabsTitle: "Fermer les onglets de l’éditeur?",
         bulk: {
           all: "Cela archivera les agents{{agents}}, fermera les terminaux{{terminals}}et fermera les onglets{{tabs}}. Tout processus en cours d’exécution dans un terminal fermé sera immédiatement arrêté.",
           agentsAndTerminals:
