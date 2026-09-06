@@ -517,14 +517,27 @@ function createBootstrapManagedProcessRegistry(
  * ours, or one that is not a date at all, is left untouched: the SDK must keep rejecting what it
  * genuinely cannot speak.
  */
-export function clampAgentMcpProtocolVersion(headers: Record<string, unknown>): void {
-  const raw = headers["mcp-protocol-version"];
+export function clampAgentMcpProtocolVersion(request: {
+  headers: Record<string, unknown>;
+  rawHeaders?: string[];
+}): void {
+  const raw = request.headers["mcp-protocol-version"];
   const requested = Array.isArray(raw) ? raw[0] : raw;
   if (typeof requested !== "string") return;
   if (SUPPORTED_PROTOCOL_VERSIONS.includes(requested)) return;
   if (!/^\d{4}-\d{2}-\d{2}$/u.test(requested)) return;
   if (requested <= LATEST_PROTOCOL_VERSION) return;
-  headers["mcp-protocol-version"] = LATEST_PROTOCOL_VERSION;
+  request.headers["mcp-protocol-version"] = LATEST_PROTOCOL_VERSION;
+  // `@hono/node-server`, which the SDK transport uses, rebuilds the Web Request from `rawHeaders`
+  // and never reads `headers`. Rewriting only the parsed object changes nothing -- measured on
+  // cs8, where the 400 kept coming after the first attempt at this fix.
+  const rawList = request.rawHeaders;
+  if (rawList === undefined) return;
+  for (let i = 0; i < rawList.length; i += 2) {
+    if (rawList[i]?.toLowerCase() === "mcp-protocol-version") {
+      rawList[i + 1] = LATEST_PROTOCOL_VERSION;
+    }
+  }
 }
 
 async function reconcileManagedProcessLedger(
@@ -1542,7 +1555,7 @@ export async function createPaseoDaemon(
           void server.close();
         });
 
-        clampAgentMcpProtocolVersion(req.headers);
+        clampAgentMcpProtocolVersion(req as unknown as { headers: Record<string, unknown>; rawHeaders?: string[] });
         await transport.handleRequest(
           req as unknown as IncomingMessage,
           res as unknown as ServerResponse,
