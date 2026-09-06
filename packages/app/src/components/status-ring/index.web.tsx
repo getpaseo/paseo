@@ -7,6 +7,7 @@ import {
   styles,
 } from "@/components/status-ring/frame";
 import { useStatusRingAnimationRef } from "@/components/status-ring/clock.web";
+import { useRetainedPanelActive } from "@/components/retained-panel";
 
 /**
  * Web running indicator. A sidebar full of agents can hold dozens of these at once, so the browser
@@ -14,7 +15,8 @@ import { useStatusRingAnimationRef } from "@/components/status-ring/clock.web";
  * `clock.web.ts`.
  */
 export const StatusRing = memo(function StatusRing({ backdrop }: StatusRingProps) {
-  const rotatorRef = useStatusRingAnimationRef();
+  const active = useRetainedPanelActive();
+  const rotatorRef = useStatusRingAnimationRef(active);
 
   return (
     <StatusRingFrame backdrop={backdrop}>

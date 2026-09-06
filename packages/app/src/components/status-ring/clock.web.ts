@@ -12,7 +12,7 @@ const STATUS_RING_TIMING: KeyframeAnimationOptions = {
 };
 const STATUS_RING_TIMELINE_START_MS = 0;
 
-export function useStatusRingAnimationRef(): RefCallback<NativeView> {
+export function useStatusRingAnimationRef(active: boolean): RefCallback<NativeView> {
   const arcElement = useRef<HTMLElement | null>(null);
   const setArcElement = useCallback((instance: NativeView | null) => {
     arcElement.current = instance instanceof HTMLElement ? instance : null;
@@ -20,7 +20,7 @@ export function useStatusRingAnimationRef(): RefCallback<NativeView> {
 
   useLayoutEffect(() => {
     const element = arcElement.current;
-    if (!element) {
+    if (!active || !element) {
       return;
     }
 
@@ -29,7 +29,7 @@ export function useStatusRingAnimationRef(): RefCallback<NativeView> {
     return () => {
       animation.cancel();
     };
-  }, []);
+  }, [active]);
 
   return setArcElement;
 }
