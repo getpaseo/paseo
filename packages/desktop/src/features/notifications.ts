@@ -7,6 +7,7 @@ interface NotificationInput {
   title?: unknown;
   body?: unknown;
   data?: unknown;
+  presentedInApp?: unknown;
 }
 
 interface NotificationClickPayload {
@@ -101,6 +102,10 @@ export function registerNotificationHandlers(): void {
       return false;
     }
 
+    // If already presented as an in-app toast by the focused renderer, do not show OS or floating notifications.
+    if (rawInput?.presentedInApp === true) {
+      return true;
+    }
     const body = toTrimmedString(rawInput?.body) ?? undefined;
     const data = toRecord(rawInput?.data);
     const icon = getNotificationIcon();

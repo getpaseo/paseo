@@ -29,6 +29,7 @@ function getDesktopNotificationSender():
       title: string;
       body?: string;
       data?: Record<string, unknown>;
+      presentedInApp?: boolean;
     }) => Promise<boolean>)
   | null {
   const sendNotification = getDesktopHost()?.notification?.sendNotification;
@@ -37,6 +38,7 @@ function getDesktopNotificationSender():
         title: string;
         body?: string;
         data?: Record<string, unknown>;
+        presentedInApp?: boolean;
       }) => Promise<boolean>)
     : null;
 }
@@ -188,7 +190,10 @@ export async function sendOsNotification(payload: OsNotificationPayload): Promis
 
   const desktopNotificationSender = getDesktopNotificationSender();
   if (desktopNotificationSender) {
-    const sent = await desktopNotificationSender(payload);
+    const sent = await desktopNotificationSender({
+      ...payload,
+      presentedInApp: isAppFocused,
+    });
     if (sent) {
       // Played here rather than by the OS notification so audio still fires
       // when the OS suppresses the notification entirely.
