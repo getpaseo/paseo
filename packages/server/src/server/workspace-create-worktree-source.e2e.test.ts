@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { expect, test } from "vitest";
@@ -123,6 +123,47 @@ test("workspace.create accepts a Git-valid branch-off name outside Paseo slug sy
       "ABC-123_Fix-Broken-Model-Relationships_Author_Name",
     );
     expect(path.basename(result.workspace?.workspaceDirectory ?? "")).toBe("git-valid-branch-name");
+  } finally {
+    await client.close().catch(() => undefined);
+    await daemon.close();
+    rmSync(tempRoot, { recursive: true, force: true });
+  }
+}, 180000);
+
+test("workspace.create skips missing .worktreeinclude entries", async () => {
+  const daemon = await createTestPaseoDaemon();
+  const { repoDir, tempRoot } = createGitRepoWithBranch();
+  const client = new DaemonClient({
+    url: `ws://127.0.0.1:${daemon.port}/ws`,
+    appVersion: "0.1.82",
+  });
+
+  try {
+    writeFileSync(
+      path.join(repoDir, ".worktreeinclude"),
+      ["# Optional local files", ".env", ".env.keys", ""].join("\n"),
+    );
+    writeFileSync(path.join(repoDir, ".env"), "present\n");
+    await client.connect();
+
+    const result = await client.createWorkspace({
+      source: {
+        kind: "worktree",
+        cwd: repoDir,
+        action: "branch-off",
+        branchName: "feature/missing-include",
+        worktreeSlug: "missing-include",
+        baseBranch: "main",
+      },
+    });
+
+    expect(result.error).toBeNull();
+    const worktreePath = result.workspace?.workspaceDirectory;
+    if (!worktreePath) {
+      throw new Error("workspace.create did not return a worktree directory");
+    }
+    expect(readFileSync(path.join(worktreePath, ".env"), "utf8")).toBe("present\n");
+    expect(existsSync(path.join(worktreePath, ".env.keys"))).toBe(false);
   } finally {
     await client.close().catch(() => undefined);
     await daemon.close();
