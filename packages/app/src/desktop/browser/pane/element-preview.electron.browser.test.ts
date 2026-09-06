@@ -11,6 +11,31 @@ afterEach(() => {
 });
 
 describe("element preview guest script", () => {
+  it("immediately previews over important page styles and restores their original priority", () => {
+    document.body.innerHTML =
+      '<style>#title { color: red !important; font-size: 12px !important; }</style><h2 id="title" style="color: green !important">Original</h2>';
+    const title = document.querySelector<HTMLElement>("#title");
+    if (!title) throw new Error("Expected title");
+
+    window.eval(
+      buildElementPreviewScript({
+        selector: "#title",
+        changes: [
+          { fieldId: "color", path: "style.color", from: "green", to: "blue" },
+          { fieldId: "font-size", path: "style.font-size", from: "12px", to: "24px" },
+        ],
+      }),
+    );
+    expect(getComputedStyle(title).color).toBe("rgb(0, 0, 255)");
+    expect(getComputedStyle(title).fontSize).toBe("24px");
+
+    window.eval("window.__paseoElementPreview.destroy()");
+    expect(getComputedStyle(title).color).toBe("rgb(0, 128, 0)");
+    expect(getComputedStyle(title).fontSize).toBe("12px");
+    expect(title.style.getPropertyPriority("color")).toBe("important");
+    expect(title.style.getPropertyValue("font-size")).toBe("");
+  });
+
   it("reports a missing target through the preview queue and allows cleanup", async () => {
     const webview = Object.assign(document.createElement("div"), {
       executeJavaScript: async (code: string): Promise<unknown> => window.eval(code),

@@ -1,9 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import { Pressable, ScrollView, Text, View, type PressableStateCallbackType } from "react-native";
-import { Check } from "lucide-react-native";
+import { Check, ChevronDown } from "lucide-react-native";
 import { withUnistyles } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
 import { SelectField, type SelectFieldOption } from "@/components/ui/select-field";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Switch } from "@/components/ui/switch";
 import {
   EditingTextInput as TextInput,
@@ -189,10 +195,12 @@ function FieldValueControl({
 
 function EditableField({
   field,
+  isGenericContext,
   value,
   onChange,
 }: {
   field: BrowserElementField;
+  isGenericContext: boolean;
   value: BrowserElementJson;
   onChange: (fieldId: string, value: BrowserElementJson) => void;
 }) {
@@ -217,6 +225,43 @@ function EditableField({
     (next: BrowserElementJson) => changeText(String(next ?? "")),
     [changeText],
   );
+
+  if (isGenericContext && field.id === "font-family") {
+    return (
+      <View style={styles.fieldRow}>
+        <FieldLabel field={field} />
+        <View style={styles.inputWrap}>
+          <SyncedTextInput
+            disabled={disabled}
+            field={field}
+            onChange={changeValue}
+            value={formatBrowserElementFieldValue(value, false)}
+          />
+          <DropdownMenu>
+            <DropdownMenuTrigger
+              accessibilityLabel={`${field.label}: ${t("common.actions.select")}`}
+              accessibilityRole="button"
+              disabled={disabled}
+              style={styles.fontPresetsTrigger}
+              testID="element-context-font-presets"
+            >
+              <ThemedChevronDown size={16} uniProps={mutedIconMapping} />
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              {options.map((option) => (
+                <FontPresetOption
+                  key={browserElementValueKey(option.value)}
+                  onChange={changeValue}
+                  option={option}
+                  value={value}
+                />
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </View>
+      </View>
+    );
+  }
 
   if (field.editor === "boolean") {
     return (
@@ -297,6 +342,27 @@ function EditableField({
   );
 }
 
+function FontPresetOption({
+  option,
+  value,
+  onChange,
+}: {
+  option: BrowserElementOption;
+  value: BrowserElementJson;
+  onChange: (value: BrowserElementJson) => void;
+}) {
+  const handleSelect = useCallback(() => onChange(option.value), [onChange, option.value]);
+  return (
+    <DropdownMenuItem
+      disabled={option.disabled}
+      onSelect={handleSelect}
+      selected={browserElementValuesEqual(option.value, value)}
+    >
+      {option.label}
+    </DropdownMenuItem>
+  );
+}
+
 function FieldLabel({ field, stacked = false }: { field: BrowserElementField; stacked?: boolean }) {
   return (
     <View style={[styles.labelWrap, stacked ? styles.stackedLabelWrap : null]}>
@@ -340,6 +406,7 @@ export function ElementContextFields({
           {groupFields.map((field) => (
             <EditableField
               field={field}
+              isGenericContext={isGenericContext}
               key={field.id}
               onChange={onChange}
               value={values[field.id] ?? null}
@@ -353,5 +420,7 @@ export function ElementContextFields({
 
 const ThemedFieldInput = withUnistyles(TextInput);
 const ThemedCheck = withUnistyles(Check);
+const ThemedChevronDown = withUnistyles(ChevronDown);
+const mutedIconMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
 const inputMapping = (theme: Theme) => ({ placeholderTextColor: theme.colors.foregroundMuted });
 const selectedIconMapping = (theme: Theme) => ({ color: theme.colors.accentForeground });

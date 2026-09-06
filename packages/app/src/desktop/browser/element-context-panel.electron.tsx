@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useReducer } from "react";
 import type { TFunction } from "i18next";
 import { Pressable, Text, View, type StyleProp, type ViewStyle } from "react-native";
-import { Check, SlidersHorizontal, Undo2, X } from "lucide-react-native";
+import { Check, SlidersHorizontal, Undo2 } from "lucide-react-native";
 import { withUnistyles } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
@@ -248,35 +248,16 @@ export function ElementContextPanel({
   return (
     <View style={[styles.overlay, overlayStyle]} pointerEvents="box-none">
       <View style={[styles.panel, panelStyle]}>
-        <View style={styles.commentBar}>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel={adjustLabel}
-            onPress={closeDetails}
-            style={styles.toolbarButton}
-          >
-            <ThemedSliders size={15} uniProps={mutedIconMapping} />
-          </Pressable>
-          <ThemedFieldInput
-            accessibilityLabel={commentPlaceholder}
-            onChangeText={changeComment}
-            placeholder={commentPlaceholder}
-            style={styles.expandedCommentInput}
-            uniProps={inputMapping}
-            initialValue={comment}
-          />
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel={cancelLabel}
-            onPress={onCancel}
-            style={styles.toolbarButton}
-          >
-            <ThemedClose size={15} uniProps={mutedIconMapping} />
-          </Pressable>
-        </View>
-
         <View style={styles.targetBlock}>
           <View style={styles.targetHeader}>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={adjustLabel}
+              onPress={closeDetails}
+              style={styles.toolbarButton}
+            >
+              <ThemedSliders size={15} uniProps={mutedIconMapping} />
+            </Pressable>
             <View style={styles.headerText}>
               <Text numberOfLines={1} selectable>
                 <Text style={styles.title}>{context.target.label}</Text>
@@ -287,15 +268,11 @@ export function ElementContextPanel({
                 ) : null}
               </Text>
             </View>
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel={resetLabel}
-              disabled={changes.length === 0}
-              onPress={resetChanges}
-              style={[styles.toolbarButton, changes.length === 0 ? styles.disabledAction : null]}
-            >
-              <ThemedUndo size={15} uniProps={mutedIconMapping} />
-            </Pressable>
+            {changes.length > 0 ? (
+              <Button variant="ghost" size="xs" onPress={resetChanges} leftIcon={resetIcon}>
+                {resetLabel}
+              </Button>
+            ) : null}
           </View>
         </View>
 
@@ -307,6 +284,14 @@ export function ElementContextPanel({
         />
 
         <View style={styles.actions}>
+          <ThemedFieldInput
+            accessibilityLabel={commentPlaceholder}
+            onChangeText={changeComment}
+            placeholder={commentPlaceholder}
+            style={styles.expandedCommentInput}
+            uniProps={inputMapping}
+            initialValue={comment}
+          />
           <Button variant="ghost" size="xs" onPress={onCancel}>
             {cancelLabel}
           </Button>
@@ -327,9 +312,9 @@ export function ElementContextPanel({
 
 const ThemedFieldInput = withUnistyles(TextInput);
 const ThemedCheck = withUnistyles(Check);
-const ThemedClose = withUnistyles(X);
 const ThemedUndo = withUnistyles(Undo2);
 const ThemedSliders = withUnistyles(SlidersHorizontal);
 const inputMapping = (theme: Theme) => ({ placeholderTextColor: theme.colors.foregroundMuted });
 const mutedIconMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
 const selectedIconMapping = (theme: Theme) => ({ color: theme.colors.accentForeground });
+const resetIcon = <ThemedUndo size={15} uniProps={mutedIconMapping} />;

@@ -708,6 +708,8 @@ export function BrowserPane({
 
   const updateBrowserRef = useRef(updateBrowser);
   updateBrowserRef.current = updateBrowser;
+  const onFocusPaneRef = useRef(onFocusPane);
+  onFocusPaneRef.current = onFocusPane;
 
   const selectUrlBar = useCallback(() => {
     window.setTimeout(() => {
@@ -875,7 +877,7 @@ export function BrowserPane({
       }
     };
     const handleWebviewFocus = () => {
-      onFocusPane?.();
+      onFocusPaneRef.current?.();
       webview.focus?.();
       const focusBrowser = getDesktopHost()?.browser?.focus;
       if (typeof focusBrowser === "function") {
@@ -938,7 +940,7 @@ export function BrowserPane({
       }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [browserId, onFocusPane]);
+  }, [browserId]);
 
   useEffect(() => {
     const webview = webviewRef.current;

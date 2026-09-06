@@ -64,15 +64,6 @@ export const elementContextPanelStyles = StyleSheet.create((theme) => ({
     backgroundColor: theme.colors.accent,
   },
   compactSubmitDisabled: { opacity: 0.4 },
-  commentBar: {
-    minHeight: 44,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[1],
-    paddingHorizontal: theme.spacing[1],
-    borderBottomWidth: 1,
-    borderBottomColor: theme.colors.border,
-  },
   toolbarButton: {
     width: 28,
     height: 28,
@@ -82,7 +73,6 @@ export const elementContextPanelStyles = StyleSheet.create((theme) => ({
   },
   headerText: { flex: 1, minWidth: 0 },
   title: { fontSize: theme.fontSize.sm, fontWeight: "600", color: theme.colors.foreground },
-  disabledAction: { opacity: 0.35 },
   targetBlock: {
     paddingHorizontal: theme.spacing[3],
     paddingVertical: theme.spacing[1],
@@ -113,7 +103,10 @@ export const elementContextPanelStyles = StyleSheet.create((theme) => ({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
+    gap: theme.spacing[1],
     paddingHorizontal: theme.spacing[2],
+    borderTopWidth: 1,
+    borderTopColor: theme.colors.border,
   },
   panelSubmit: {
     width: 30,

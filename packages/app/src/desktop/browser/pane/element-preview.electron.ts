@@ -110,7 +110,7 @@ export function buildElementPreviewScript(input: {
             };
           }
           if (value == null || value === '') target.style.removeProperty(property);
-          else target.style.setProperty(property, String(value));
+          else target.style.setProperty(property, String(value), 'important');
         }
       });
       return true;

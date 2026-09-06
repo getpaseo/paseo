@@ -203,7 +203,7 @@ async function startTargetPage() {
           <style>
             body { margin: 24px; }
             #bridge-target {
-              color: rgb(34, 68, 102);
+              color: rgb(34, 68, 102) !important;
               background: rgb(238, 242, 246);
               font: 600 18px Arial, sans-serif;
               opacity: 0.8;
@@ -494,12 +494,10 @@ async function editElementProperties({ page, client, browserId, artifactDir }) {
   const textField = page.getByRole("textbox", { name: "Text", exact: true });
   const colorPicker = page.getByLabel("Text color picker", { exact: true });
   const fontSize = page.getByLabel("Font size", { exact: true });
+  const font = page.getByRole("textbox", { name: "Font", exact: true });
   await textField.waitFor({ state: "visible", timeout: timeoutMs });
   assert(await colorPicker.isVisible(), "Expanded inspector did not expose a color picker");
-  assert(
-    await page.getByRole("button", { name: /^Font \(/ }).isVisible(),
-    "Expanded inspector did not expose a font selector",
-  );
+  assert(await font.isVisible(), "Expanded inspector did not expose a font selector");
   assert(
     await page.getByRole("slider", { name: "Opacity", exact: true }).isVisible(),
     "Expanded inspector did not expose an opacity slider",
@@ -510,7 +508,19 @@ async function editElementProperties({ page, client, browserId, artifactDir }) {
   const textColor = await textField.evaluate((element) => getComputedStyle(element).color);
   const numberColor = await fontSize.evaluate((element) => getComputedStyle(element).color);
   assert(numberColor === textColor, `Numeric input lost the theme foreground: ${numberColor}`);
-  await page.getByRole("button", { name: /^Font \(/ }).click();
+  await font.fill('"Courier New", monospace');
+  const liveFont = await callBrowserTool(client, "browser_evaluate", {
+    browserId,
+    function: `() => getComputedStyle(document.querySelector('#bridge-target')).fontFamily`,
+  });
+  assert(
+    JSON.parse(liveFont.resultJson) === '"Courier New", monospace',
+    "Typed font did not preview immediately",
+  );
+  await page.getByRole("button", { name: "Font: Select", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Serif", exact: true }).click();
+  assert((await font.inputValue()) === "serif", "Font preset did not update the input");
+  await page.getByRole("button", { name: "Font: Select", exact: true }).click();
   const fontOption = page.getByText("System UI", { exact: true });
   await fontOption.waitFor({ state: "visible", timeout: timeoutMs });
   await page.keyboard.press("Escape");
@@ -528,6 +538,21 @@ async function editElementProperties({ page, client, browserId, artifactDir }) {
     );
   });
   assert(await textField.isVisible(), "IME confirmation submitted the annotation");
+  const commentBounds = await page
+    .getByRole("textbox", { name: "Describe another change for the agent…" })
+    .boundingBox();
+  const textBounds = await textField.boundingBox();
+  const cancelBounds = await page
+    .getByRole("button", { name: "Cancel", exact: true })
+    .boundingBox();
+  assert(commentBounds && textBounds && cancelBounds, "Annotation controls have no bounds");
+  assert(
+    commentBounds.y > textBounds.y &&
+      Math.abs(
+        commentBounds.y + commentBounds.height / 2 - cancelBounds.y - cancelBounds.height / 2,
+      ) < 3,
+    "Comment and actions are not together below properties",
+  );
   await callBrowserTool(client, "browser_wait", {
     browserId,
     text: "Edited target",

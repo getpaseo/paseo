@@ -76,6 +76,12 @@ export const elementContextFieldStyles = StyleSheet.create((theme) => ({
     backgroundColor: theme.colors.surface1,
   },
   invalidInputWrap: { borderColor: theme.colors.destructive },
+  fontPresetsTrigger: {
+    width: 32,
+    height: 32,
+    alignItems: "center",
+    justifyContent: "center",
+  },
   stackedControl: { width: "100%", flex: 0 },
   input: {
     flex: 1,
