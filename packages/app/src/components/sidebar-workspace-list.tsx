@@ -1,4 +1,5 @@
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
+import { InlineRenameInput, useDoubleClick } from "@/components/inline-rename-input";
 import {
   View,
   Text,
@@ -843,6 +844,7 @@ function NewWorkspaceGhostRow({
   );
 }
 
+// oxlint-disable-next-line complexity -- this row coordinates drag, hover, context-menu, and inline rename states.
 function ProjectHeaderRow({
   project,
   displayName,
@@ -868,10 +870,36 @@ function ProjectHeaderRow({
   const [isHovered, setIsHovered] = useState(false);
   const [isPressed, setIsPressed] = useState(false);
   const [contextMenuOpen, setContextMenuOpen] = useState(false);
+  const [isRenaming, setIsRenaming] = useState(false);
+  const { t } = useTranslation();
   const isMobileBreakpoint = useIsCompactFormFactor();
   const localDaemonServerId = useLocalDaemonServerId();
   const projectPath = resolveSidebarProjectLocalPath(project, localDaemonServerId);
   const settingsTarget = project.hosts[0] ?? null;
+  const beginProjectRename = useCallback(() => {
+    if (settingsTarget) {
+      setIsRenaming(true);
+      // Revert the collapse toggle triggered by the first click of this double-click
+      onPress();
+    }
+  }, [onPress, settingsTarget]);
+  const handleProjectTitlePointerUp = useDoubleClick(beginProjectRename);
+  const handleProjectRenameSubmit = useCallback(
+    async (nextName: string) => {
+      if (!settingsTarget) {
+        throw new Error(t("sidebar.workspace.toasts.hostDisconnected"));
+      }
+      const client = getHostRuntimeStore().getClient(settingsTarget.serverId);
+      if (!client) {
+        throw new Error(t("sidebar.workspace.toasts.hostDisconnected"));
+      }
+      await client.renameProject(settingsTarget.projectId, nextName.trim());
+    },
+    [settingsTarget, t],
+  );
+  const handleProjectRenameCancel = useCallback(() => {
+    setIsRenaming(false);
+  }, []);
   const handleBeginWorkspaceSetup = useCallback(() => {
     if (!worktreeTarget) {
       return;
@@ -950,10 +978,26 @@ function ProjectHeaderRow({
           isArchiving={isArchiving}
         />
 
-        <View style={styles.projectTitleGroup}>
-          <Text style={styles.projectTitle} numberOfLines={1}>
-            {displayName}
-          </Text>
+        <View style={styles.projectTitleGroup} onPointerUp={handleProjectTitlePointerUp}>
+          {isRenaming ? (
+            <InlineRenameInput
+              initialValue={displayName}
+              onSubmit={handleProjectRenameSubmit}
+              onCancel={handleProjectRenameCancel}
+              maxLength={200}
+              inputStyle={styles.projectRenameInput}
+              testID={`sidebar-project-inline-rename-${project.viewKey}`}
+              accessibilityLabel={t("settings.project.edit.nameLabel")}
+            />
+          ) : (
+            <Text
+              style={styles.projectTitle}
+              numberOfLines={1}
+              testID={`sidebar-project-title-${project.viewKey}`}
+            >
+              {displayName}
+            </Text>
+          )}
         </View>
       </View>
       <ProjectRowTrailingActions
@@ -986,18 +1030,27 @@ function ProjectHeaderRow({
         onPointerEnter={handlePointerEnter}
         onPointerLeave={handlePointerLeave}
       >
-        <PressHighlight
-          accessibilityRole="button"
-          style={projectRowStyle}
-          highlightStyle={styles.projectRowPressed}
-          onPressIn={handleProjectPressIn}
-          onTouchMove={interaction.handleTouchMove}
-          onPressOut={handleProjectPressOut}
-          onPress={handlePress}
-          testID={`sidebar-project-row-${project.viewKey}`}
-        >
-          {rowChildren}
-        </PressHighlight>
+        {isRenaming ? (
+          <View
+            style={projectRowStyle({ pressed: false })}
+            testID={`sidebar-project-row-${project.viewKey}`}
+          >
+            {rowChildren}
+          </View>
+        ) : (
+          <PressHighlight
+            accessibilityRole="button"
+            style={projectRowStyle}
+            highlightStyle={styles.projectRowPressed}
+            onPressIn={handleProjectPressIn}
+            onTouchMove={interaction.handleTouchMove}
+            onPressOut={handleProjectPressOut}
+            onPress={handlePress}
+            testID={`sidebar-project-row-${project.viewKey}`}
+          >
+            {rowChildren}
+          </PressHighlight>
+        )}
       </View>
     );
   }
@@ -1011,19 +1064,28 @@ function ProjectHeaderRow({
         onPointerEnter={handlePointerEnter}
         onPointerLeave={handlePointerLeave}
       >
-        <ContextMenuTrigger
-          enabledOnMobile={false}
-          accessibilityRole="button"
-          style={projectRowStyle}
-          highlightStyle={styles.projectRowPressed}
-          onPressIn={handleProjectPressIn}
-          onTouchMove={interaction.handleTouchMove}
-          onPressOut={handleProjectPressOut}
-          onPress={handlePress}
-          testID={`sidebar-project-row-${project.viewKey}`}
-        >
-          {rowChildren}
-        </ContextMenuTrigger>
+        {isRenaming ? (
+          <View
+            style={projectRowStyle({ pressed: false })}
+            testID={`sidebar-project-row-${project.viewKey}`}
+          >
+            {rowChildren}
+          </View>
+        ) : (
+          <ContextMenuTrigger
+            enabledOnMobile={false}
+            accessibilityRole="button"
+            style={projectRowStyle}
+            highlightStyle={styles.projectRowPressed}
+            onPressIn={handleProjectPressIn}
+            onTouchMove={interaction.handleTouchMove}
+            onPressOut={handleProjectPressOut}
+            onPress={handlePress}
+            testID={`sidebar-project-row-${project.viewKey}`}
+          >
+            {rowChildren}
+          </ContextMenuTrigger>
+        )}
       </View>
       <ContextMenuContent
         align="start"
@@ -2595,6 +2657,15 @@ const styles = StyleSheet.create((theme) => ({
     fontWeight: "400",
     minWidth: 0,
     flexShrink: 1,
+  },
+  projectRenameInput: {
+    height: 28,
+    borderWidth: 0,
+    borderRadius: 0,
+    backgroundColor: "transparent",
+    paddingHorizontal: 0,
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.base,
   },
   projectActionButton: {
     flexDirection: "row",

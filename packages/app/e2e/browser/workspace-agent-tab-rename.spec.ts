@@ -1,7 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { test, expect, type Page } from "../support/fixtures";
 import { seedWorkspace, type SeedDaemonClient } from "../support/helpers/seed-client";
-import { createIdleAgent, expectWorkspaceTabVisible } from "../support/helpers/archive-tab";
+import {
+  createIdleAgent,
+  createMockIdleAgent,
+  expectWorkspaceTabVisible,
+} from "../support/helpers/archive-tab";
 import { waitForWorkspaceTabsVisible } from "../support/helpers/workspace-tabs";
 import { buildHostAgentDetailRoute } from "@/utils/host-routes";
 import { renameModalInput, renameModalSubmit } from "../support/helpers/rename";
@@ -63,6 +67,118 @@ test.describe("Workspace agent tab rename", () => {
       await expect(input).toHaveCount(0, { timeout: 15_000 });
       await expect(tab).toContainText(renamed, { timeout: 15_000 });
       await expect.poll(() => fetchAgentTitle(workspace.client, agent.id)).toBe(renamed);
+    } finally {
+      await workspace.cleanup();
+    }
+  });
+
+  test("double-clicking an agent tab title opens inline rename", async ({ page }) => {
+    test.setTimeout(120_000);
+
+    const workspace = await seedWorkspace({ repoPrefix: "workspace-agent-inline-rename-" });
+
+    try {
+      const initialTitle = `inline-agent-${randomUUID().slice(0, 8)}`;
+      const agent = await createMockIdleAgent(workspace.client, {
+        cwd: workspace.repoPath,
+        workspaceId: workspace.workspaceId,
+        title: initialTitle,
+      });
+
+      await openAgentInWorkspace(page, agent);
+
+      const tab = page.getByTestId(`workspace-tab-agent_${agent.id}`).first();
+      await expect(tab).toContainText(initialTitle, { timeout: 15_000 });
+      await tab.dblclick();
+
+      const input = page.getByTestId(`workspace-tab-inline-rename-agent_${agent.id}`).first();
+      await expect(input).toBeVisible({ timeout: 10_000 });
+      await expect(input).toHaveValue(initialTitle);
+
+      const renamed = "Inline Renamed Agent";
+      await input.fill(renamed);
+      await input.press("Enter");
+
+      await expect(input).toHaveCount(0, { timeout: 15_000 });
+      await expect(tab).toContainText(renamed, { timeout: 15_000 });
+      await expect.poll(() => fetchAgentTitle(workspace.client, agent.id)).toBe(renamed);
+    } finally {
+      await workspace.cleanup();
+    }
+  });
+
+  test("pressing Escape cancels agent tab inline rename", async ({ page }) => {
+    test.setTimeout(120_000);
+
+    const workspace = await seedWorkspace({ repoPrefix: "workspace-agent-inline-cancel-" });
+
+    try {
+      const initialTitle = `inline-cancel-${randomUUID().slice(0, 8)}`;
+      const agent = await createMockIdleAgent(workspace.client, {
+        cwd: workspace.repoPath,
+        workspaceId: workspace.workspaceId,
+        title: initialTitle,
+      });
+
+      await openAgentInWorkspace(page, agent);
+
+      const tab = page.getByTestId(`workspace-tab-agent_${agent.id}`).first();
+      await expect(tab).toContainText(initialTitle, { timeout: 15_000 });
+      await tab.dblclick();
+
+      const input = page.getByTestId(`workspace-tab-inline-rename-agent_${agent.id}`).first();
+      await expect(input).toBeVisible({ timeout: 10_000 });
+
+      await input.fill("Do Not Save This");
+      await input.press("Escape");
+
+      await expect(input).toHaveCount(0, { timeout: 10_000 });
+      await expect(tab).toContainText(initialTitle, { timeout: 10_000 });
+      await expect.poll(() => fetchAgentTitle(workspace.client, agent.id)).toBe(initialTitle);
+    } finally {
+      await workspace.cleanup();
+    }
+  });
+
+  test("double-clicking a terminal tab title opens inline rename", async ({ page }) => {
+    test.setTimeout(120_000);
+
+    const workspace = await seedWorkspace({ repoPrefix: "workspace-terminal-inline-rename-" });
+
+    try {
+      const initialTitle = `terminal-${randomUUID().slice(0, 8)}`;
+      const result = await workspace.client.createTerminal(
+        workspace.repoPath,
+        initialTitle,
+        undefined,
+        {
+          workspaceId: workspace.workspaceId,
+        },
+      );
+      if (!result.terminal) throw new Error(`Failed to create terminal: ${result.error}`);
+      const terminal = result.terminal;
+
+      const agent = await createMockIdleAgent(workspace.client, {
+        cwd: workspace.repoPath,
+        workspaceId: workspace.workspaceId,
+        title: "seed-agent",
+      });
+
+      await openAgentInWorkspace(page, agent);
+
+      const tab = page.getByTestId(`workspace-tab-terminal_${terminal.id}`).first();
+      await expect(tab).toBeVisible({ timeout: 15_000 });
+      await tab.dblclick();
+
+      const input = page.getByTestId(`workspace-tab-inline-rename-terminal_${terminal.id}`).first();
+      await expect(input).toBeVisible({ timeout: 10_000 });
+
+      const renamed = "Renamed Terminal Tab";
+      await input.fill(renamed);
+      await input.press("Enter");
+
+      await expect(input).toHaveCount(0, { timeout: 15_000 });
+      await expect(tab).toContainText(renamed, { timeout: 15_000 });
     } finally {
       await workspace.cleanup();
     }
