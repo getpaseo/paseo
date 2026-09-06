@@ -1658,6 +1658,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   private pendingUserMessage: PendingUserMessage | null = null;
   private submittedUserMessageTurnId: string | null = null;
   private readonly toolCalls = new Map<string, ACPToolSnapshot>();
+  private readonly settledToolCallIds = new Set<string>();
   private readonly terminalEntries = new Map<string, TerminalEntry>();
   private readonly persistedHistory: AgentTimelineItem[] = [];
   private readonly initialHandle?: AgentPersistenceHandle;
@@ -2729,7 +2730,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
         return;
       }
       if (this.activeForegroundTurnId) {
-        this.synthesizeCanceledToolCalls();
+        this.settleRunningToolCalls("canceled");
         this.finishTurn({
           type: "turn_failed",
           provider: this.provider,
@@ -2982,6 +2983,9 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       snapshot = this.toolSnapshotTransformer(snapshot);
     }
     this.toolCalls.set(toolCallId, snapshot);
+    if (mapToolStatus(snapshot.status) !== "running") {
+      this.settledToolCallIds.add(toolCallId);
+    }
     return [this.wrapTimeline(mapToolSnapshotToTimeline(snapshot, this.terminalEntries))];
   }
 
@@ -3075,10 +3079,10 @@ export class ACPAgentSession implements AgentSession, ACPClient {
 
   private handlePromptResponse(response: PromptResponse, turnId: string): void {
     this.currentTurnUsage = mapACPUsage(response.usage) ?? this.currentTurnUsage;
+    this.settleRunningToolCalls(response.stopReason === "end_turn" ? "completed" : "canceled");
 
     switch (response.stopReason) {
       case "cancelled":
-        this.synthesizeCanceledToolCalls();
         this.finishTurn({
           type: "turn_canceled",
           provider: this.provider,
@@ -3188,14 +3192,15 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     });
   }
 
-  private synthesizeCanceledToolCalls(): void {
+  private settleRunningToolCalls(status: "canceled" | "completed"): void {
     for (const snapshot of this.toolCalls.values()) {
       const mapped = mapToolSnapshotToTimeline(snapshot, this.terminalEntries);
-      if (mapped.status === "running") {
+      if (mapped.status === "running" && !this.settledToolCallIds.has(snapshot.toolCallId)) {
+        this.settledToolCallIds.add(snapshot.toolCallId);
         this.pushEvent(
           this.wrapTimeline({
             ...mapped,
-            status: "canceled",
+            status,
             error: null,
           }),
         );
