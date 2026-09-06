@@ -2161,6 +2161,13 @@ export const ja: TranslationResources = {
         codeSizeHint: "コード、差分、ターミナル出力に使用されます",
         codeSizeAccessibility: "コードフォントサイズ",
       },
+      layout: {
+        title: "レイアウト",
+        contentWidth: "コンテンツ幅",
+        contentWidthHint:
+          "チャットテキストとレンダリングされた Markdown の最大幅。{{min}}〜{{max}} ピクセル。",
+        contentWidthAccessibility: "コンテンツ幅（ピクセル）",
+      },
       syntax: {
         title: "構文ハイライト",
         highlightTheme: "ハイライトテーマ",

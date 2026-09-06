@@ -1,5 +1,5 @@
-import { MAX_CONTENT_WIDTH } from "@/constants/layout";
 import { resolveAssistantImageSource } from "@/utils/assistant-image-source";
+import { getContentEstimateWidth } from "@/utils/content-estimate-width";
 import { createImageSourceCacheKey } from "@/attachments/utils";
 
 export interface AssistantImageMetadata {
@@ -14,7 +14,7 @@ const ASSISTANT_IMAGE_METADATA_CACHE_LIMIT = 500;
 const ASSISTANT_IMAGE_PARSE_CACHE_LIMIT = 500;
 
 const MARKDOWN_IMAGE_PATTERN = /!\[[^\]]*]\((<[^>]+>|[^)\n]+)\)/g;
-const ASSISTANT_IMAGE_ESTIMATE_WIDTH = MAX_CONTENT_WIDTH - 8;
+const ASSISTANT_IMAGE_HORIZONTAL_PADDING = 8;
 const ASSISTANT_IMAGE_MIN_HEIGHT = 160;
 const ASSISTANT_IMAGE_BLOCK_GAP = 24;
 const ASSISTANT_MESSAGE_BASE_HEIGHT = 96;
@@ -183,14 +183,12 @@ export function estimateAssistantMessageHeightFromCache(markdown: string): numbe
     return null;
   }
 
+  const imageEstimateWidth = getContentEstimateWidth() - ASSISTANT_IMAGE_HORIZONTAL_PADDING;
   const knownHeights = parsed.sources
     .map((source) => getAssistantImageMetadata({ source }))
     .filter((metadata): metadata is AssistantImageMetadata => metadata !== null)
     .map((metadata) =>
-      Math.max(
-        ASSISTANT_IMAGE_MIN_HEIGHT,
-        Math.round(ASSISTANT_IMAGE_ESTIMATE_WIDTH / metadata.aspectRatio),
-      ),
+      Math.max(ASSISTANT_IMAGE_MIN_HEIGHT, Math.round(imageEstimateWidth / metadata.aspectRatio)),
     );
 
   if (knownHeights.length === 0) {

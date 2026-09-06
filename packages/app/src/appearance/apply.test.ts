@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { darkHighlightColors, resolveSyntaxColors } from "@getpaseo/highlight";
 import { DEFAULT_UI_FONT_STACK, REGISTERED_THEMES } from "@/styles/theme";
+import { getContentEstimateWidth } from "@/utils/content-estimate-width";
 import { applyAppearance, type AppearanceInput } from "./apply";
 
 // Override the global react-native-unistyles mock (vitest.setup.ts) so that
@@ -37,6 +38,7 @@ interface FakeTheme {
     "4xl": number;
   };
   lineHeight: { diff: number };
+  layout: { maxContentWidth: number };
   colors: { foreground: string; syntax: Record<string, string> };
 }
 
@@ -56,6 +58,7 @@ function makeFakeTheme(): FakeTheme {
       "4xl": 26,
     },
     lineHeight: { diff: 22 },
+    layout: { maxContentWidth: 820 },
     colors: { foreground: "#fff", syntax: {} },
   };
 }
@@ -67,6 +70,7 @@ function makeInput(overrides: Partial<AppearanceInput> = {}): AppearanceInput {
     uiBaseFontSize: 14,
     contentFontSize: 15,
     codeFontSize: 12,
+    contentWidth: 820,
     syntaxTheme: "one",
     ...overrides,
   };
@@ -100,6 +104,19 @@ describe("applyAppearance", () => {
       "darkPureBlack",
       ...ALL_THEME_KEYS.filter((key) => key !== "darkPureBlack"),
     ]);
+  });
+
+  it("patches the content measure onto every theme", () => {
+    applyAppearance(makeInput({ contentWidth: 1100 }));
+
+    expect(runCapturedUpdater().layout.maxContentWidth).toBe(1100);
+    expect(runCapturedUpdater(ALL_THEME_KEYS.length - 1).layout.maxContentWidth).toBe(1100);
+  });
+
+  it("mirrors the content measure to the non-React height estimators", () => {
+    applyAppearance(makeInput({ contentWidth: 1240 }));
+
+    expect(getContentEstimateWidth()).toBe(1240);
   });
 
   it("resolves an empty UI font family to the default stack", () => {

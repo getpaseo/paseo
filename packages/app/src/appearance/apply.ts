@@ -7,6 +7,7 @@ import {
   REGISTERED_THEMES,
   type Theme,
 } from "@/styles/theme";
+import { setContentEstimateWidth } from "@/utils/content-estimate-width";
 import { applyRootUiFont } from "./apply-root-font";
 
 const ALL_THEME_KEYS = Object.keys(REGISTERED_THEMES) as (keyof typeof REGISTERED_THEMES)[];
@@ -17,6 +18,7 @@ export interface AppearanceInput {
   uiBaseFontSize: number; // already clamped
   contentFontSize: number; // already clamped
   codeFontSize: number; // already clamped
+  contentWidth: number; // already clamped
   syntaxTheme: SyntaxThemeId;
 }
 
@@ -80,12 +82,14 @@ export function applyAppearance(input: AppearanceInput): void {
         input.codeFontSize,
       );
       const lineHeight = { ...t.lineHeight, diff: diffLineHeight };
+      const layout = { ...t.layout, maxContentWidth: input.contentWidth };
       if (t.colorScheme === "light") {
         return {
           ...t,
           fontFamily,
           fontSize,
           lineHeight,
+          layout,
           colors: { ...t.colors, syntax: resolveSyntaxColors(input.syntaxTheme, t.colorScheme) },
         };
       }
@@ -94,10 +98,15 @@ export function applyAppearance(input: AppearanceInput): void {
         fontFamily,
         fontSize,
         lineHeight,
+        layout,
         colors: { ...t.colors, syntax: resolveSyntaxColors(input.syntaxTheme, t.colorScheme) },
       };
     });
   }
+
+  // Virtualized height estimation runs outside React and cannot read the theme.
+  // Mirror the committed measure to it in the same pass that patches the themes.
+  setContentEstimateWidth(input.contentWidth);
 
   // Web: apply the UI font app-wide (RN-web stamps a default font on every text
   // element, so it can't be done through the theme alone). No-op on native.

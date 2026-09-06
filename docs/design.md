@@ -116,7 +116,7 @@ Three themes is `DropdownMenu`. Thirty hosts is `Combobox`. A label and a value 
 
 Settings detail pages, the projects detail page, and any list+detail content sit inside a centered, max-width 720 column (`packages/app/src/screens/settings-screen.tsx`, `packages/app/src/screens/projects-screen.tsx`). Lines stay readable, the eye does not have to track wide horizontal distances. Form modals carry their own narrower content frame (`packages/app/src/components/add-host-modal.tsx`).
 
-Workspace and chat surfaces use the full width — these are working surfaces, not reading surfaces. The composer carries `MAX_CONTENT_WIDTH` from `packages/app/src/constants/layout.ts` to keep lines readable while letting the workspace pane fill the rest.
+Workspace and chat surfaces use the full width — these are working surfaces, not reading surfaces. The composer carries the content measure to keep lines readable while letting the workspace pane fill the rest. That measure is `theme.layout.maxContentWidth`; the Content width appearance setting moves it within a clamped range, and `packages/app/src/constants/layout.ts` holds the authored default. Read the theme token in styles — a surface that reads the constant keeps the default and stops following the setting.
 
 Sections sit apart. `<SettingsSection>` owns its own bottom margin; the next thing is wrapped in another `<SettingsSection>`. The agent-list `sectionHeading` carries the same `marginTop`/`marginBottom` rhythm (`packages/app/src/components/agent-list.tsx:511-517`). Adding `marginBottom` to a section is wrong.
 

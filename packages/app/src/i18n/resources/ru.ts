@@ -2181,6 +2181,13 @@ export const ru: TranslationResources = {
         codeSizeHint: "Используется для кода, диффов и вывода терминала",
         codeSizeAccessibility: "Размер шрифта кода",
       },
+      layout: {
+        title: "Макет",
+        contentWidth: "Ширина контента",
+        contentWidthHint:
+          "Максимальная ширина текста чата и отображаемого Markdown. От {{min}} до {{max}} пикселей.",
+        contentWidthAccessibility: "Ширина контента в пикселях",
+      },
       syntax: {
         title: "Синтаксис",
         highlightTheme: "Тема подсветки",

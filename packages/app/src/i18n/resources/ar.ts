@@ -2143,6 +2143,13 @@ export const ar: TranslationResources = {
         codeSizeHint: "يُستخدم للكود والفروقات ومخرجات الطرفية",
         codeSizeAccessibility: "حجم خط الكود",
       },
+      layout: {
+        title: "التخطيط",
+        contentWidth: "عرض المحتوى",
+        contentWidthHint:
+          "الحد الأقصى لعرض نص المحادثة وMarkdown المعروض. بين {{min}} و{{max}} بكسل.",
+        contentWidthAccessibility: "عرض المحتوى بالبكسل",
+      },
       syntax: {
         title: "بناء الجملة",
         highlightTheme: "تسليط الضوء على الموضوع",

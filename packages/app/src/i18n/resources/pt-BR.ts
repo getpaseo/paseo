@@ -2177,6 +2177,13 @@ export const ptBR: TranslationResources = {
         codeSizeHint: "Usado em código, diffs e saída do terminal",
         codeSizeAccessibility: "Tamanho da fonte de código",
       },
+      layout: {
+        title: "Layout",
+        contentWidth: "Largura do conteúdo",
+        contentWidthHint:
+          "Largura máxima do texto do chat e do Markdown renderizado. Entre {{min}} e {{max}} px.",
+        contentWidthAccessibility: "Largura do conteúdo em pixels",
+      },
       syntax: {
         title: "Sintaxe",
         highlightTheme: "Tema de destaque",

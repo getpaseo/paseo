@@ -2242,6 +2242,13 @@ export const en = {
         codeSizeHint: "Used for code, diffs, and terminal output",
         codeSizeAccessibility: "Code font size",
       },
+      layout: {
+        title: "Layout",
+        contentWidth: "Content width",
+        contentWidthHint:
+          "Maximum width of chat text and rendered Markdown. Between {{min}} and {{max}}px.",
+        contentWidthAccessibility: "Content width in pixels",
+      },
       syntax: {
         title: "Syntax",
         highlightTheme: "Highlight theme",

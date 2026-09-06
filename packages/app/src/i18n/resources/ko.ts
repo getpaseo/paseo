@@ -2154,6 +2154,12 @@ export const ko: TranslationResources = {
         codeSizeHint: "코드, diff 및 터미널 출력에 사용됩니다",
         codeSizeAccessibility: "코드 글꼴 크기",
       },
+      layout: {
+        title: "레이아웃",
+        contentWidth: "콘텐츠 너비",
+        contentWidthHint: "채팅 텍스트와 렌더링된 마크다운의 최대 너비. {{min}}~{{max}}픽셀.",
+        contentWidthAccessibility: "콘텐츠 너비(픽셀)",
+      },
       syntax: {
         title: "구문",
         highlightTheme: "강조 테마",
