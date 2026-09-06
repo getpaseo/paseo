@@ -1,44 +1,44 @@
-import { useCallback, useEffect, useMemo, useReducer, useRef } from "react";
-import type { AgentProviderDefinition } from "@getpaseo/protocol/provider-manifest";
 import type {
   AgentMode,
   AgentModelDefinition,
   AgentProvider,
   ProviderSnapshotEntry,
 } from "@getpaseo/protocol/agent-types";
-import { useHosts } from "@/runtime/host-runtime";
-import { buildProviderDefinitions } from "@/utils/provider-definitions";
+import type { AgentProviderDefinition } from "@getpaseo/protocol/provider-manifest";
+import { useCallback, useEffect, useMemo, useReducer, useRef } from "react";
+import type { MaterializedAgentProfile } from "@/agent-profiles";
+import { OptimisticFormPreferences } from "@/create-agent-preferences/optimistic-preferences";
+import { applyAgentProfilePreferences } from "@/create-agent-preferences/preferences";
+import { filterSelectableModels } from "@/provider-selection/model-catalog";
 import {
   buildSelectableProviderSelectorProviders,
   type ProviderSelectorProvider,
 } from "@/provider-selection/provider-selection";
-import { filterSelectableModels } from "@/provider-selection/model-catalog";
-import { OptimisticFormPreferences } from "@/create-agent-preferences/optimistic-preferences";
-import { applyAgentProfilePreferences } from "@/create-agent-preferences/preferences";
-import { useProvidersSnapshot } from "./use-providers-snapshot";
 import {
-  useFormPreferences,
-  mergeProviderPreferences,
-  type FormPreferences,
-} from "./use-form-preferences";
-import {
-  resolveAgentForm,
-  resolveEffectiveModel,
-  normalizeSelectedModelId,
-  resolveDefaultModelId,
-  mergeSelectedComposerPreferences,
-  combineInitialValues,
   buildProviderDefinitionMap,
   buildProviderDefinitionMapForStatuses,
-  INITIAL_AGENT_FORM_RESOLUTION,
-  INITIAL_USER_MODIFIED,
-  RESOLVABLE_PROVIDER_STATUSES,
-  SELECTABLE_PROVIDER_STATUSES,
+  combineInitialValues,
   type FormInitialValues,
   type FormState,
+  INITIAL_AGENT_FORM_RESOLUTION,
+  INITIAL_USER_MODIFIED,
+  mergeSelectedComposerPreferences,
+  normalizeSelectedModelId,
   type ProviderModelsByProvider,
+  RESOLVABLE_PROVIDER_STATUSES,
+  resolveAgentForm,
+  resolveDefaultModelId,
+  resolveEffectiveModel,
+  SELECTABLE_PROVIDER_STATUSES,
 } from "@/provider-selection/resolve-agent-form";
-import type { MaterializedAgentProfile } from "@/agent-profiles";
+import { useHosts } from "@/runtime/host-runtime";
+import { buildProviderDefinitions } from "@/utils/provider-definitions";
+import {
+  type FormPreferences,
+  mergeProviderPreferences,
+  useFormPreferences,
+} from "./use-form-preferences";
+import { useProvidersSnapshot } from "./use-providers-snapshot";
 
 export type { FormInitialValues } from "@/provider-selection/resolve-agent-form";
 
@@ -233,6 +233,48 @@ export function useAgentFormState(options: UseAgentFormStateOptions = {}): UseAg
       }
     },
     [updatePreferences],
+  );
+
+  // Coalesce rapid model/mode switches into one persisted write to avoid
+  // repeated JSON.stringify + Zod + AsyncStorage flushes blocking the JS thread.
+  const pendingPreferenceUpdateRef = useRef<{
+    timer: ReturnType<typeof setTimeout> | null;
+    queued: Array<Partial<FormPreferences> | ((current: FormPreferences) => FormPreferences)>;
+  }>({ timer: null, queued: [] });
+
+  const flushPendingPreferenceUpdates = useCallback(() => {
+    const queued = pendingPreferenceUpdateRef.current.queued;
+    if (queued.length === 0) return;
+    pendingPreferenceUpdateRef.current.queued = [];
+    const toPersist: (current: FormPreferences) => FormPreferences = (current) => {
+      let next = current;
+      for (const u of queued) {
+        next =
+          typeof u === "function"
+            ? (u as (c: FormPreferences) => FormPreferences)(next)
+            : ({ ...next, ...u } as FormPreferences);
+      }
+      return next;
+    };
+    void updateCurrentPreferences(toPersist).catch((error) => {
+      // Preserve diagnostics: validation/storage failures are expected to be rare,
+      // but losing a preference update is silent and hard to debug.
+      console.warn("[useAgentFormState] debounced preference persist failed", error);
+    });
+  }, [updateCurrentPreferences]);
+
+  const schedulePreferenceUpdate = useCallback(
+    (updates: Partial<FormPreferences> | ((current: FormPreferences) => FormPreferences)) => {
+      pendingPreferenceUpdateRef.current.queued.push(updates);
+      if (pendingPreferenceUpdateRef.current.timer) {
+        clearTimeout(pendingPreferenceUpdateRef.current.timer);
+      }
+      pendingPreferenceUpdateRef.current.timer = setTimeout(() => {
+        pendingPreferenceUpdateRef.current.timer = null;
+        flushPendingPreferenceUpdates();
+      }, 250);
+    },
+    [flushPendingPreferenceUpdates],
   );
 
   const daemons = useHosts();
@@ -439,7 +481,7 @@ export function useAgentFormState(options: UseAgentFormStateOptions = {}): UseAg
         providerModels,
         providerPrefs,
       });
-      void updateCurrentPreferences((current) =>
+      schedulePreferenceUpdate((current) =>
         mergeSelectedComposerPreferences({
           preferences: current,
           provider,
@@ -449,7 +491,7 @@ export function useAgentFormState(options: UseAgentFormStateOptions = {}): UseAg
         }),
       );
     },
-    [allProviderModels, selectableProviderDefinitionMap, updateCurrentPreferences],
+    [allProviderModels, schedulePreferenceUpdate, selectableProviderDefinitionMap],
   );
 
   const clearProviderSelectionFromUser = useCallback(() => {
@@ -515,7 +557,7 @@ export function useAgentFormState(options: UseAgentFormStateOptions = {}): UseAg
       dispatch({ type: "SET_MODE_FROM_USER", modeId });
       const provider = formState.provider;
       if (provider) {
-        void updateCurrentPreferences((current) =>
+        schedulePreferenceUpdate((current) =>
           mergeSelectedComposerPreferences({
             preferences: current,
             provider,
@@ -526,7 +568,7 @@ export function useAgentFormState(options: UseAgentFormStateOptions = {}): UseAg
         );
       }
     },
-    [formState.provider, updateCurrentPreferences],
+    [formState.provider, schedulePreferenceUpdate],
   );
 
   const setModelFromUser = useCallback(
@@ -544,7 +586,7 @@ export function useAgentFormState(options: UseAgentFormStateOptions = {}): UseAg
       if (provider) {
         const normalizedModelId = normalizeSelectedModelId(modelId);
         const nextModelId = normalizedModelId || resolveDefaultModelId(availableModels);
-        void updateCurrentPreferences((current) =>
+        schedulePreferenceUpdate((current) =>
           mergeSelectedComposerPreferences({
             preferences: current,
             provider,
@@ -555,7 +597,7 @@ export function useAgentFormState(options: UseAgentFormStateOptions = {}): UseAg
         );
       }
     },
-    [availableModels, formState.provider, updateCurrentPreferences],
+    [availableModels, formState.provider, schedulePreferenceUpdate],
   );
 
   const setThinkingOptionFromUser = useCallback(
@@ -563,7 +605,7 @@ export function useAgentFormState(options: UseAgentFormStateOptions = {}): UseAg
       dispatch({ type: "SET_THINKING_OPTION_FROM_USER", thinkingOptionId });
       const { provider, model: modelId } = formState;
       if (provider && modelId) {
-        void updateCurrentPreferences((current) =>
+        schedulePreferenceUpdate((current) =>
           mergeSelectedComposerPreferences({
             preferences: current,
             provider,
@@ -576,8 +618,22 @@ export function useAgentFormState(options: UseAgentFormStateOptions = {}): UseAg
         );
       }
     },
-    [formState, updateCurrentPreferences],
+    [formState, schedulePreferenceUpdate],
   );
+
+  useEffect(() => {
+    return () => {
+      // oxlint-disable-next-line eslint-plugin-react-hooks/exhaustive-deps
+      const pending = pendingPreferenceUpdateRef.current;
+      if (pending.timer) {
+        clearTimeout(pending.timer);
+        pending.timer = null;
+      }
+      // Reuse the same flush logic to avoid drift between the two paths;
+      // flushPendingPreferenceUpdates preserves diagnostics for unexpected failures.
+      flushPendingPreferenceUpdates();
+    };
+  }, [flushPendingPreferenceUpdates]);
 
   const setWorkingDir = useCallback((value: string) => {
     dispatch({ type: "SET_WORKING_DIR", value });

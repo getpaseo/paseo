@@ -1,21 +1,5 @@
-import { createContext, useCallback, useContext, useMemo, useReducer, useState } from "react";
-import { useTranslation } from "react-i18next";
-import {
-  FlatList,
-  Platform,
-  Pressable,
-  ScrollView,
-  Text,
-  View,
-  type AccessibilityActionEvent,
-  type GestureResponderEvent,
-  type PressableStateCallbackType,
-  type StyleProp,
-  type ViewStyle,
-} from "react-native";
+import type { AgentProvider } from "@getpaseo/protocol/agent-types";
 import { BottomSheetFlatList, BottomSheetScrollView } from "@gorhom/bottom-sheet";
-import { Gesture, GestureDetector } from "react-native-gesture-handler";
-import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import {
   AlertTriangle,
   Check,
@@ -25,7 +9,31 @@ import {
   Search,
   Settings,
 } from "lucide-react-native";
-import type { AgentProvider } from "@getpaseo/protocol/agent-types";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useDeferredValue,
+  useMemo,
+  useReducer,
+  useState,
+} from "react";
+import { useTranslation } from "react-i18next";
+import {
+  type AccessibilityActionEvent,
+  FlatList,
+  type GestureResponderEvent,
+  Platform,
+  Pressable,
+  type PressableStateCallbackType,
+  ScrollView,
+  type StyleProp,
+  Text,
+  View,
+  type ViewStyle,
+} from "react-native";
+import { Gesture, GestureDetector } from "react-native-gesture-handler";
+import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import {
   AgentProfileGlyph,
   type AgentProfilePicker,
@@ -33,31 +41,31 @@ import {
   type AgentProfileSeed,
 } from "@/agent-profiles";
 import type { SheetHeader } from "@/components/adaptive-modal-sheet";
+import {
+  groupProfilesByProviderModel,
+  type ModelBrowserView,
+  resolveInitialModelBrowserView,
+  resolveModelBrowserAllView,
+} from "@/components/model-browser-view";
+import { getProviderIcon } from "@/components/provider-icons";
 import { Button } from "@/components/ui/button";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { getProviderIcon } from "@/components/provider-icons";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { isNative, isWeb } from "@/constants/platform";
+import { useCurrentOverlayLayer } from "@/lib/overlay-root";
 import {
   buildProviderQualifiedDescription,
   buildSelectedTriggerLabel,
   filterAndRankModelRows,
   getAllProviderModelRows,
   getProviderModelRows,
-  resolveSelectedModelLabel,
   type ProviderSelectionModelRow,
   type ProviderSelectorProvider,
+  resolveSelectedModelLabel,
 } from "@/provider-selection/provider-selection";
 import { useProviderSettingsStore } from "@/stores/provider-settings-store";
-import { useCurrentOverlayLayer } from "@/lib/overlay-root";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
-import {
-  groupProfilesByProviderModel,
-  resolveInitialModelBrowserView,
-  resolveModelBrowserAllView,
-  type ModelBrowserView,
-} from "@/components/model-browser-view";
 
 const DESKTOP_PROVIDER_VIEW_MIN_HEIGHT = 220;
 const DESKTOP_PROVIDER_VIEW_MAX_HEIGHT = 400;
@@ -751,7 +759,9 @@ function ModelRow({
       <ModelRowProfileAction
         hovered={isHovered}
         onPress={handleEditProfiles}
-        label={t("modelSelector.editProfilesCount", { count: profiledRows.length })}
+        label={t("modelSelector.editProfilesCount", {
+          count: profiledRows.length,
+        })}
         testID={`model-edit-profiles-${row.provider}-${row.modelId}`}
       >
         <AgentProfileGlyph icon={primary.icon} color={primary.color} size={ICON_SIZE.xs} />
@@ -1098,6 +1108,11 @@ function IndependentModelList({
         contentContainerStyle={styles.virtualizedModelListContent}
         nestedScrollEnabled
         testID="compact-model-list"
+        initialNumToRender={16}
+        windowSize={7}
+        maxToRenderPerBatch={16}
+        updateCellsBatchingPeriod={40}
+        removeClippedSubviews={Platform.OS === "android"}
       />
     </IndependentScrollBoundary>
   );
@@ -1199,6 +1214,11 @@ function ModelRowList({
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
         contentContainerStyle={styles.virtualizedModelListContent}
+        initialNumToRender={16}
+        windowSize={7}
+        maxToRenderPerBatch={16}
+        updateCellsBatchingPeriod={40}
+        removeClippedSubviews={Platform.OS === "android"}
       />
     );
   }
@@ -1381,7 +1401,11 @@ function ModelBrowserContent({
   showProfilesSection = true,
 }: ModelBrowserContentProps) {
   const { t } = useTranslation();
-  const normalizedQuery = useMemo(() => normalizeSearchQuery(searchQuery), [searchQuery]);
+  const deferredSearchQuery = useDeferredValue(searchQuery);
+  const normalizedQuery = useMemo(
+    () => normalizeSearchQuery(deferredSearchQuery),
+    [deferredSearchQuery],
+  );
   const profiledLookup = useMemo(
     () => groupProfilesByProviderModel(profiles?.rows ?? []),
     [profiles],
