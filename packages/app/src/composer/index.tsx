@@ -2122,7 +2122,7 @@ function ComposerContentImpl({
 
   const handleToggleGithubItem = useCallback(
     (item: ForgeSearchItem) => {
-      const nextAttachments = toggleForgeAttachmentFromPicker({
+      const { attachments: nextAttachments, addedChangeRequest } = toggleForgeAttachmentFromPicker({
         current: attachments,
         item,
         markForgeAttachmentRemoved: forgeAutoAttach.markForgeAttachmentRemoved,
@@ -2130,10 +2130,18 @@ function ComposerContentImpl({
       setSelectedAttachments(nextAttachments);
       setIsGithubPickerOpen(false);
       setGithubSearchQuery("");
+      // A change request added from the picker is a new one, the same as a pasted link, so it
+      // gets to select the checkout ref. Detected must arm the selection before added applies it.
+      if (addedChangeRequest) {
+        onForgeChangeRequestDetected?.();
+        onForgeChangeRequestAutoAttach?.(addedChangeRequest);
+      }
     },
     [
       attachments,
       forgeAutoAttach,
+      onForgeChangeRequestAutoAttach,
+      onForgeChangeRequestDetected,
       setSelectedAttachments,
       setGithubSearchQuery,
       setIsGithubPickerOpen,
