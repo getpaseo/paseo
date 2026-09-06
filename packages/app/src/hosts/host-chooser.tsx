@@ -21,6 +21,7 @@ import { useLocalDaemonServerId } from "@/hooks/use-is-local-daemon";
 import {
   OverlayLayerProvider,
   useGlobalWebOverlayLayer,
+  useNativeOverlayDismiss,
   useWebOverlayRegistration,
 } from "@/lib/overlay-root";
 import { useHosts } from "@/runtime/host-runtime";
@@ -238,6 +239,7 @@ export function HostChooserModal() {
     layer: modalLayer,
     onKeyDown: handleWebOverlayKeyDown,
   });
+  useNativeOverlayDismiss({ active: request != null, layer: modalLayer, onDismiss: close });
 
   if (!request) return null;
 
