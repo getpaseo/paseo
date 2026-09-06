@@ -517,8 +517,6 @@ interface AgentMetadataPatch {
   labels?: AgentLabelPatch;
 }
 
-const SYSTEM_ERROR_PREFIX = "[System Error]";
-
 function attachPersistenceCwd(
   handle: AgentPersistenceHandle | null,
   cwd: string,
@@ -4488,13 +4486,12 @@ export class AgentManager {
       return;
     }
 
-    const text = `${SYSTEM_ERROR_PREFIX} ${normalized}`;
     const lastItem = await this.getLastItemFromStores(agent.id);
-    if (lastItem?.type === "assistant_message" && lastItem.text === text) {
+    if (lastItem?.type === "error" && lastItem.message === normalized) {
       return;
     }
 
-    const item: AgentTimelineItem = { type: "assistant_message", text };
+    const item: AgentTimelineItem = { type: "error", message: normalized };
     const row = this.recordTimeline(agent.id, item);
     this.dispatchStream(
       agent.id,

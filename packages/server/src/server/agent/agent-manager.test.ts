@@ -6462,7 +6462,7 @@ test("ignores stale autonomous terminals without lowering the active turn lifecy
   });
 });
 
-test("preserves terminal fallback when no active turn identity was observed", async () => {
+test("preserves terminal fallback and separates untracked failure activity", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-untracked-terminal-"));
   const storage = new AgentStorage(join(workdir, "agents"), logger);
   let capturedSession: TestAgentSession | null = null;
@@ -6483,6 +6483,11 @@ test("preserves terminal fallback when no active turn identity was observed", as
   const snapshot = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
     workspaceId: undefined,
   });
+  await manager.appendTimelineItem(snapshot.id, {
+    type: "assistant_message",
+    text: "Task completed.",
+    messageId: "assistant-1",
+  });
 
   capturedSession!.pushEvent({
     type: "turn_failed",
@@ -6498,10 +6503,22 @@ test("preserves terminal fallback when no active turn identity was observed", as
   });
   expect(manager.getTimeline(snapshot.id)).toContainEqual(
     expect.objectContaining({
-      type: "assistant_message",
-      text: expect.stringContaining("untracked failure"),
+      type: "error",
+      message: expect.stringContaining("untracked failure"),
     }),
   );
+  const projected = projectTimelineRows({
+    rows: await manager.getTimelineRows(snapshot.id),
+    mode: "projected",
+  });
+  expect(projected.map((entry) => entry.item)).toEqual([
+    {
+      type: "assistant_message",
+      text: "Task completed.",
+      messageId: "assistant-1",
+    },
+    { type: "error", message: "untracked failure" },
+  ]);
 });
 
 test("cancelAgentRun waits for an acknowledged autonomous interrupt to settle", async () => {
@@ -8363,7 +8380,7 @@ test("archiveAgent cascade surfaces partial child archive failures", async () =>
   );
 });
 
-test("turn_failed emits a system error assistant timeline message and keeps error lifecycle", async () => {
+test("turn_failed emits error activity and keeps error lifecycle", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-turn-failed-"));
   const storagePath = join(workdir, "agents");
   const storage = new AgentStorage(storagePath, logger);
@@ -8431,12 +8448,9 @@ test("turn_failed emits a system error assistant timeline message and keeps erro
 
   const systemErrors = manager
     .getTimeline(agent.id)
-    .filter(
-      (item): item is Extract<AgentTimelineItem, { type: "assistant_message" }> =>
-        item.type === "assistant_message" && item.text.includes("[System Error]"),
-    );
+    .filter((item): item is Extract<AgentTimelineItem, { type: "error" }> => item.type === "error");
   expect(systemErrors).toHaveLength(1);
-  expect(systemErrors[0]?.text).toContain("invalid model id");
+  expect(systemErrors[0]?.message).toContain("invalid model id");
 });
 
 test("turn_failed surfaces provider code and diagnostic in system error message", async () => {
@@ -8507,13 +8521,10 @@ test("turn_failed surfaces provider code and diagnostic in system error message"
 
   const systemError = manager
     .getTimeline(agent.id)
-    .find(
-      (item): item is Extract<AgentTimelineItem, { type: "assistant_message" }> =>
-        item.type === "assistant_message" && item.text.includes("[System Error]"),
-    );
-  expect(systemError?.text).toContain("Provider execution failed");
-  expect(systemError?.text).toContain("code: 126");
-  expect(systemError?.text).toContain("No preset version installed for command claude");
+    .find((item): item is Extract<AgentTimelineItem, { type: "error" }> => item.type === "error");
+  expect(systemError?.message).toContain("Provider execution failed");
+  expect(systemError?.message).toContain("code: 126");
+  expect(systemError?.message).toContain("No preset version installed for command claude");
 });
 
 test("permission request notifies once without forcing unread attention state", async () => {
