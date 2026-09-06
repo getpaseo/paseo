@@ -2154,6 +2154,13 @@ export const ar: TranslationResources = {
       },
     },
     shortcuts: {
+      modKey: {
+        title: "مفتاح التعديل",
+        hint: "المفتاح المستخدم كمعدِّل للاختصارات",
+        auto: "تلقائي",
+        cmd: "Cmd / Super",
+        ctrl: "Ctrl",
+      },
       dialogTitle: "الاختصارات",
       searchPlaceholder: "البحث في الاختصارات",
       unavailableOnMobile: "اختصارات لوحة المفاتيح متاحة فقط على سطح المكتب",

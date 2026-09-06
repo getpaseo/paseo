@@ -93,6 +93,7 @@ import { useSessionStore } from "@/stores/session-store";
 import { useRecommendedProjectPaths } from "@/stores/session-store-hooks";
 import type { AddProjectFlowRequest } from "@/stores/add-project-flow-store";
 import type { Theme } from "@/styles/theme";
+import { focusWithRetries } from "@/utils/focus-with-retries";
 import { shortenPath } from "@/utils/shorten-path";
 import { buildNewWorkspaceRoute, buildSettingsAddHostRoute } from "@/utils/host-routes";
 
@@ -395,8 +396,10 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
 
   useEffect(() => {
     inputRef.current?.replaceText(pageInputValueRef.current);
-    const timer = setTimeout(() => inputRef.current?.focus(), 0);
-    return () => clearTimeout(timer);
+    return focusWithRetries({
+      focus: () => inputRef.current?.focus(),
+      isFocused: () => inputRef.current?.isFocused() ?? false,
+    });
   }, [page.kind]);
 
   const searchesDirectories =

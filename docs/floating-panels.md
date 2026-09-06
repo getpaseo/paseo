@@ -20,6 +20,12 @@ input focused while its scrollable list lives in a Portal. There is no shared
 "floating panel" primitive yet — when a fifth use case shows up we can revisit;
 until then prefer copying the closest file and trimming.
 
+Compact bottom-sheet content can stay mounted while the sheet is closed. An
+input's mount-time `autoFocus` is therefore not an open signal. Gate focus on the
+surface's visible state and retry it through the presentation animation. For a
+picker that should not open the soft keyboard, also gate native focus on the
+hardware-keyboard connection state.
+
 ## Popover width contract
 
 Combobox desktop popovers are never narrower than their trigger, and they grow
@@ -91,6 +97,12 @@ desktop modal, combobox, and dropdown focus scopes with `useWebOverlayRegistrati
 highest painted scope alone receives overlay keys, traps focus, and restores
 focus when it closes. Do not add component-local global Escape listeners: two
 stacked overlays would both close on one keypress.
+
+Search fields and menus that drive a result list also own Ctrl+N, Ctrl+P,
+ArrowUp, ArrowDown, and Enter. Mark the active web surface with the shared
+list-search dataset so capture-phase global shortcuts yield, and register the
+active native surface with the list-search dispatcher. Only the topmost open
+surface handles the event.
 
 If an overlay is rendered by a global host rather than beneath its opener in
 the React tree, carry the opener's current layer through the host store and

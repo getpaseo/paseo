@@ -2254,9 +2254,16 @@ export const en = {
     shortcuts: {
       dialogTitle: "Shortcuts",
       searchPlaceholder: "Search shortcuts",
-      unavailableOnMobile: "Keyboard shortcuts are only available on desktop",
+      unavailableOnMobile: "Shortcut customization is only available on desktop",
       capturePrompt: "Press shortcut...",
       unassigned: "Not set",
+      modKey: {
+        title: "Modifier key",
+        hint: "Key used as the shortcut modifier",
+        auto: "Auto",
+        cmd: "Cmd / Super",
+        ctrl: "Ctrl",
+      },
       actions: {
         menu: "Actions for {{name}}",
         done: "Done",

@@ -2172,6 +2172,13 @@ export const ja: TranslationResources = {
       },
     },
     shortcuts: {
+      modKey: {
+        title: "修飾キー",
+        hint: "ショートカットの修飾キーとして使うキー",
+        auto: "自動",
+        cmd: "Cmd / Super",
+        ctrl: "Ctrl",
+      },
       dialogTitle: "ショートカット",
       searchPlaceholder: "ショートカットを検索",
       unavailableOnMobile: "キーボードショートカットはデスクトップでのみ利用できます",

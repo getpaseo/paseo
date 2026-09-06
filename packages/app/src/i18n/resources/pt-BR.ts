@@ -2188,6 +2188,13 @@ export const ptBR: TranslationResources = {
       },
     },
     shortcuts: {
+      modKey: {
+        title: "Tecla modificadora",
+        hint: "Tecla usada como modificador dos atalhos",
+        auto: "Auto",
+        cmd: "Cmd / Super",
+        ctrl: "Ctrl",
+      },
       dialogTitle: "Atalhos",
       searchPlaceholder: "Pesquisar atalhos",
       unavailableOnMobile: "Atalhos de teclado estão disponíveis apenas no desktop",

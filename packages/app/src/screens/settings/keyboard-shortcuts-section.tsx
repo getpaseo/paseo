@@ -30,10 +30,14 @@ import {
 } from "@/keyboard/shortcut-string";
 import type { ShortcutKey } from "@/utils/format-shortcut";
 import { useKeyboardShortcutsStore } from "@/stores/keyboard-shortcuts-store";
-import { getShortcutOs } from "@/utils/shortcut-platform";
-import { getIsElectronRuntime } from "@/constants/layout";
+import { type ShortcutModPreference, useShortcutModStore } from "@/stores/shortcut-mod-store";
+import { usesDesktopShortcutBindings, useShortcutOs } from "@/utils/shortcut-platform";
 import { isNative } from "@/constants/platform";
 import { getDesktopHost } from "@/desktop/host";
+import {
+  addHardwareKeyDownListener,
+  addHardwareModifierListener,
+} from "@/native/hardware-keyboard-events";
 
 const EMPTY_CAPTURED_COMBOS: string[] = [];
 
@@ -323,6 +327,52 @@ function ShortcutRow({
   );
 }
 
+const MOD_PREFERENCES: ShortcutModPreference[] = ["auto", "cmd", "ctrl"];
+
+function ModKeyOption({
+  option,
+  isSelected,
+  onSelect,
+}: {
+  option: ShortcutModPreference;
+  isSelected: boolean;
+  onSelect: (option: ShortcutModPreference) => void;
+}) {
+  const { t } = useTranslation();
+  const handlePress = useCallback(() => onSelect(option), [onSelect, option]);
+  return (
+    <Button variant={isSelected ? "secondary" : "ghost"} size="sm" onPress={handlePress}>
+      {t(`settings.shortcuts.modKey.${option}`)}
+    </Button>
+  );
+}
+
+function ModKeySection() {
+  const { t } = useTranslation();
+  const preference = useShortcutModStore((s) => s.preference);
+  const setPreference = useShortcutModStore((s) => s.setPreference);
+
+  return (
+    <SettingsSection title={t("settings.shortcuts.modKey.title")}>
+      <View style={settingsStyles.card}>
+        <View style={styles.row}>
+          <Text style={styles.rowLabel}>{t("settings.shortcuts.modKey.hint")}</Text>
+          <View style={styles.rowActions}>
+            {MOD_PREFERENCES.map((option) => (
+              <ModKeyOption
+                key={option}
+                option={option}
+                isSelected={preference === option}
+                onSelect={setPreference}
+              />
+            ))}
+          </View>
+        </View>
+      </View>
+    </SettingsSection>
+  );
+}
+
 export function KeyboardShortcutsSection() {
   const { t } = useTranslation();
   const [capturingBindingId, setCapturingBindingId] = useState<string | null>(null);
@@ -334,8 +384,8 @@ export function KeyboardShortcutsSection() {
   const capturing = useKeyboardShortcutsStore((s) => s.capturingShortcut);
 
   const isFocused = useIsFocused();
-  const isMac = getShortcutOs() === "mac";
-  const isDesktopApp = getIsElectronRuntime();
+  const isMac = useShortcutOs() === "mac";
+  const isDesktopApp = usesDesktopShortcutBindings();
   const sections = buildKeyboardShortcutHelpSections({ isMac, isDesktop: isDesktopApp });
 
   const cancelCapture = useCallback(() => {
@@ -399,6 +449,38 @@ export function KeyboardShortcutsSection() {
     };
   }, [capturingBindingId]);
 
+  // Native capture: the hardware-keyboard module only emits modifier combos
+  // (plus Escape and F-keys), which is exactly the set worth binding. Held
+  // modifiers come from the dedicated modifier stream.
+  useEffect(() => {
+    if (!isNative) return;
+    if (capturingBindingId === null) return;
+
+    const heldModifierLabels = new Set<string>();
+    const keySubscription = addHardwareKeyDownListener((event) => {
+      if (event.repeat) return;
+      const comboString = keyboardEventToComboString(event);
+      if (comboString === null) return;
+      setHeldModifiers(null);
+      setCapturedCombos((current) => [...current, comboString]);
+    });
+    const modifierSubscription = addHardwareModifierListener((event) => {
+      const MODIFIER_LABELS = { Meta: "Cmd", Control: "Ctrl", Alt: "Alt", Shift: "Shift" } as const;
+      const label = MODIFIER_LABELS[event.key];
+      if (event.down) {
+        heldModifierLabels.add(label);
+      } else {
+        heldModifierLabels.delete(label);
+      }
+      const ordered = ["Ctrl", "Alt", "Shift", "Cmd"].filter((l) => heldModifierLabels.has(l));
+      setHeldModifiers(ordered.length > 0 ? ordered.join("+") : null);
+    });
+    return () => {
+      keySubscription.remove();
+      modifierSubscription.remove();
+    };
+  }, [capturingBindingId]);
+
   useEffect(() => {
     return () => {
       setCapturingShortcut(false);
@@ -426,16 +508,6 @@ export function KeyboardShortcutsSection() {
     [removeOverride],
   );
 
-  if (isNative) {
-    return (
-      <SettingsSection title={t("settings.sections.shortcuts")}>
-        <View style={[settingsStyles.card, styles.mobileCard]}>
-          <Text style={styles.mobileText}>{t("settings.shortcuts.unavailableOnMobile")}</Text>
-        </View>
-      </SettingsSection>
-    );
-  }
-
   const resetAllButton = hasOverrides ? (
     <Button variant="ghost" size="sm" onPress={handleResetAll}>
       {t("settings.shortcuts.actions.resetAll")}
@@ -444,6 +516,7 @@ export function KeyboardShortcutsSection() {
 
   return (
     <>
+      <ModKeySection />
       {sections.map(function (section, sectionIndex) {
         return (
           <SettingsSection
@@ -545,12 +618,5 @@ const styles = StyleSheet.create((theme) => ({
   separator: {
     height: 1,
     backgroundColor: theme.colors.border,
-  },
-  mobileCard: {
-    padding: theme.spacing[4],
-  },
-  mobileText: {
-    fontSize: theme.fontSize.base,
-    color: theme.colors.foregroundMuted,
   },
 }));

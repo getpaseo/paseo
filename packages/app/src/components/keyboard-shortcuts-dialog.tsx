@@ -2,17 +2,16 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Text, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
-import { getIsElectronRuntime } from "@/constants/layout";
 import { AdaptiveModalSheet, type SheetHeader } from "@/components/adaptive-modal-sheet";
 import { Shortcut } from "@/components/ui/shortcut";
 import { useKeyboardShortcutsStore } from "@/stores/keyboard-shortcuts-store";
-import { getShortcutOs } from "@/utils/shortcut-platform";
 import {
   buildEffectiveBindings,
   buildKeyboardShortcutHelpSections,
 } from "@/keyboard/keyboard-shortcuts";
 import { filterShortcutHelpSections } from "@/keyboard/shortcut-help-search";
 import { useKeyboardShortcutOverrides } from "@/hooks/use-keyboard-shortcut-overrides";
+import { usesDesktopShortcutBindings, useShortcutOs } from "@/utils/shortcut-platform";
 
 const SNAP_POINTS: string[] = ["70%", "92%"];
 
@@ -22,9 +21,9 @@ export function KeyboardShortcutsDialog() {
   const setOpen = useKeyboardShortcutsStore((s) => s.setShortcutsDialogOpen);
   const [query, setQuery] = useState("");
 
-  const shortcutOs = getShortcutOs();
+  const shortcutOs = useShortcutOs();
   const isMac = shortcutOs === "mac";
-  const isDesktopApp = getIsElectronRuntime();
+  const isDesktopApp = usesDesktopShortcutBindings();
   const { overrides } = useKeyboardShortcutOverrides();
   // Effective bindings, so a shortcut the user unassigned lists no keys here
   // instead of advertising a default that no longer fires.

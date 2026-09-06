@@ -2209,6 +2209,13 @@ export const fr: TranslationResources = {
       },
     },
     shortcuts: {
+      modKey: {
+        title: "Touche de modification",
+        hint: "Touche utilisée comme modificateur des raccourcis",
+        auto: "Auto",
+        cmd: "Cmd / Super",
+        ctrl: "Ctrl",
+      },
       dialogTitle: "Raccourcis",
       searchPlaceholder: "Rechercher des raccourcis",
       unavailableOnMobile: "Les raccourcis clavier ne sont disponibles que sur le bureau",
