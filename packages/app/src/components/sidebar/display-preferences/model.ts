@@ -4,7 +4,11 @@ import {
   type SidebarWorkspaceTrailing,
   type WorkspaceTitleSource,
 } from "@/hooks/use-settings";
-import { useSidebarViewStore, type SidebarLabelFilter } from "@/stores/sidebar-view-store";
+import {
+  useSidebarViewStore,
+  type SidebarGroupMode,
+  type SidebarLabelFilter,
+} from "@/stores/sidebar-view-store";
 import { DEFAULT_SIDEBAR_CHECKS_DISPLAY, type SidebarChecksDisplay } from "./checks-display";
 import { DEFAULT_SIDEBAR_ROW_ITEMS, type SidebarRowItem, type SidebarRowItems } from "./row-items";
 
@@ -12,6 +16,8 @@ import { DEFAULT_SIDEBAR_ROW_ITEMS, type SidebarRowItem, type SidebarRowItems } 
 export type SidebarTrailingChoice = Exclude<SidebarWorkspaceTrailing, "none">;
 
 export interface SidebarDisplayPreferences {
+  grouping: SidebarGroupMode;
+  setGrouping: (mode: SidebarGroupMode) => void;
   titleSource: WorkspaceTitleSource;
   setTitleSource: (source: WorkspaceTitleSource) => void;
   rowItems: SidebarRowItems;
@@ -36,12 +42,14 @@ export interface SidebarDisplayPreferences {
 /**
  * Every decision the sidebar's display-preferences menu can make, behind one interface.
  *
- * Filters live in a local zustand store while the title source and row items are synced app
- * settings — a split that exists for good reasons (a filter is transient view state; a preference
- * follows you) and that the menu has no business knowing about. Callers ask this for a value and
- * set it; where it lands is this module's problem.
+ * Grouping and filters live in a local zustand store while the title source and row items are
+ * synced app settings — a split that exists for good reasons (a filter is transient view state; a
+ * preference follows you) and that the menu has no business knowing about. Callers ask this for a
+ * value and set it; where it lands is this module's problem.
  */
 export function useSidebarDisplayPreferences(): SidebarDisplayPreferences {
+  const grouping = useSidebarViewStore((state) => state.groupMode);
+  const setGrouping = useSidebarViewStore((state) => state.setGroupMode);
   const hostFilters = useSidebarViewStore((state) => state.hostFilters);
   const toggleHostFilter = useSidebarViewStore((state) => state.toggleHostFilter);
   const clearHostFilters = useSidebarViewStore((state) => state.clearHostFilters);
@@ -96,6 +104,8 @@ export function useSidebarDisplayPreferences(): SidebarDisplayPreferences {
 
   return useMemo(
     () => ({
+      grouping,
+      setGrouping,
       titleSource: workspaceTitleSource,
       setTitleSource,
       rowItems: sidebarRowItems,
@@ -115,6 +125,8 @@ export function useSidebarDisplayPreferences(): SidebarDisplayPreferences {
       clearLabelFilter,
     }),
     [
+      grouping,
+      setGrouping,
       workspaceTitleSource,
       setTitleSource,
       sidebarRowItems,

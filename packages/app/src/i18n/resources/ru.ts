@@ -1064,6 +1064,12 @@ export const ru: TranslationResources = {
     display: {
       trigger: "Настройки отображения",
       heading: "Отображение",
+      grouping: {
+        label: "Группировка",
+        project: "Проект",
+        status: "Статус",
+        labels: "Метки",
+      },
       titleSource: {
         label: "Заголовок",
         title: "Заголовок",

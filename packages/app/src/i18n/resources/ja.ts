@@ -1060,6 +1060,12 @@ export const ja: TranslationResources = {
     display: {
       trigger: "表示設定",
       heading: "表示",
+      grouping: {
+        label: "グループ化",
+        project: "プロジェクト",
+        status: "ステータス",
+        labels: "ラベル",
+      },
       titleSource: {
         label: "タイトル",
         title: "タイトル",

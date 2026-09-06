@@ -938,7 +938,7 @@ function SidebarGroupingToggle() {
       ? "shell.commandCenter.groupByProject"
       : "shell.commandCenter.groupByStatus",
   );
-  const Icon = targetMode === "project" ? Folder : CircleDashed;
+  const Icon = groupMode === "project" ? Folder : CircleDashed;
   const handlePress = useCallback(() => setGroupMode(targetMode), [setGroupMode, targetMode]);
 
   return (
@@ -947,7 +947,7 @@ function SidebarGroupingToggle() {
       label={label}
       onPress={handlePress}
       testID="sidebar-grouping-toggle"
-      iconTestID={`sidebar-grouping-toggle-icon-${targetMode}`}
+      iconTestID={`sidebar-grouping-toggle-icon-${groupMode}`}
       shortcutKeys={shortcutKeys}
     />
   );
