@@ -29,6 +29,21 @@ export function useRewindAgentMutation(input: UseRewindAgentMutationInput): {
   const { t } = useTranslation();
   const composerRestore = useRewindComposerRestore();
   const { isPending, mutateAsync } = useMutation({
+    onMutate: async ({ mode }: RewindAgentInput) => {
+      if (mode !== "files" && input.serverId && input.agentId && input.messageId) {
+        const session = useSessionStore.getState().sessions[input.serverId];
+        const previousTail = session?.agentStreamTail.get(input.agentId);
+        const previousHead = session?.agentStreamHead.get(input.agentId);
+
+        // Optimistic truncation: slice the local stream immediately (Zed-style zero-flash)
+        const expectedTruncatedTail = useSessionStore
+          .getState()
+          .truncateAgentStreamTailAtMessageId(input.serverId, input.agentId, input.messageId);
+
+        return { previousTail, previousHead, expectedTruncatedTail };
+      }
+      return undefined;
+    },
     mutationFn: async ({ mode }: RewindAgentInput) => {
       if (!input.client || !input.agentId || !input.messageId) {
         throw new Error(t("common.errors.daemonClientUnavailable"));
@@ -54,7 +69,21 @@ export function useRewindAgentMutation(input: UseRewindAgentMutationInput): {
       }
       composerRestore?.completeRewind(variables.rewoundText);
     },
-    onError: (error) => {
+    onError: (error, _variables, context) => {
+      // Guarded rollback: only restore if the timeline has not been updated by newer stream events
+      if (input.serverId && input.agentId && context?.expectedTruncatedTail) {
+        useSessionStore.getState().rollbackOptimisticStreamTruncation(
+          input.serverId,
+          input.agentId,
+          context.expectedTruncatedTail,
+          context.previousTail,
+          context.previousHead,
+        );
+        void getHostRuntimeStore().fetchAgentTimeline(input.serverId, input.agentId, {
+          direction: "tail",
+          projection: "projected",
+        });
+      }
       toast.error(error instanceof Error ? error.message : t("rewind.errors.failed"));
     },
   });
