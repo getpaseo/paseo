@@ -1055,6 +1055,8 @@ export const ko: TranslationResources = {
       heading: "표시",
       grouping: {
         label: "그룹화",
+        currentLabel: "현재 그룹화: {{current}}",
+        toggleLabel: "현재 그룹화: {{current}}. 그룹화 전환",
         project: "프로젝트",
         status: "상태",
         labels: "레이블",
@@ -2194,6 +2196,7 @@ export const ko: TranslationResources = {
         jumpToTab: "탭으로 이동",
         previousWorkspace: "이전 워크스페이스",
         nextWorkspace: "다음 워크스페이스",
+        cycleSidebarGrouping: "그룹화 전환",
         previousTab: "이전 탭",
         nextTab: "다음 탭",
         splitPaneRight: "창을 오른쪽으로 분할",

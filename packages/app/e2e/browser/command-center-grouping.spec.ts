@@ -1,7 +1,13 @@
 import { expect, test, type Page } from "../support/fixtures";
 import { gotoAppShell } from "../support/helpers/app";
 import { openCommandCenter } from "../support/helpers/command-center";
-import { seedWorkspace } from "../support/helpers/seed-client";
+import { seedWorkspace, type SeededWorkspace } from "../support/helpers/seed-client";
+import {
+  chooseSidebarGroupingFromOpenMenu,
+  cycleSidebarGroupingShortcut,
+  expectSidebarGrouping,
+  expectSidebarGroupingMenuSelection,
+} from "../support/helpers/sidebar";
 
 const GROUP_BY_STATUS = "Group by status";
 const GROUP_BY_PROJECT = "Group by project";
@@ -22,6 +28,36 @@ async function runGroupingEntry(page: Page, label: string, absent: string): Prom
 
 test.describe("Command center sidebar grouping", () => {
   test.describe.configure({ timeout: 120_000 });
+  let shortcutWorkspace: SeededWorkspace | null = null;
+
+  test.afterEach(async () => {
+    const workspace = shortcutWorkspace;
+    shortcutWorkspace = null;
+    await workspace?.cleanup();
+  });
+
+  test("cycles sidebar grouping with Cmd/Ctrl+;", async ({ page }) => {
+    shortcutWorkspace = await seedWorkspace({ repoPrefix: "keyboard-grouping-" });
+
+    await gotoAppShell(page);
+    await expectSidebarGrouping(page, "project");
+    await cycleSidebarGroupingShortcut(page);
+    await expectSidebarGrouping(page, "status");
+    await cycleSidebarGroupingShortcut(page);
+    await expectSidebarGrouping(page, "project");
+  });
+
+  test("keeps grouping in Display preferences and syncs it with the quick toggle", async ({
+    page,
+  }) => {
+    shortcutWorkspace = await seedWorkspace({ repoPrefix: "menu-grouping-" });
+
+    await gotoAppShell(page);
+    await expectSidebarGroupingMenuSelection(page, "project");
+    await chooseSidebarGroupingFromOpenMenu(page, "status");
+    await expectSidebarGrouping(page, "status");
+    await expectSidebarGroupingMenuSelection(page, "status");
+  });
 
   test("flips sidebar grouping and persists the choice across a reload", async ({ page }) => {
     const seeded = await seedWorkspace({ repoPrefix: "command-center-grouping-" });

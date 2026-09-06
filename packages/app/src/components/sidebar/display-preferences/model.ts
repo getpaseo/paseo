@@ -42,10 +42,10 @@ export interface SidebarDisplayPreferences {
 /**
  * Every decision the sidebar's display-preferences menu can make, behind one interface.
  *
- * Grouping and host filters live in a local zustand store while the title source and row items
- * are synced app settings — a split that exists for good reasons (a filter is transient view
- * state; a preference follows you) and that the menu has no business knowing about. Callers ask
- * this for a value and set it; where it lands is this module's problem.
+ * Grouping and filters live in a local zustand store while the title source and row items are
+ * synced app settings — a split that exists for good reasons (a filter is transient view state; a
+ * preference follows you) and that the menu has no business knowing about. Callers ask this for a
+ * value and set it; where it lands is this module's problem.
  */
 export function useSidebarDisplayPreferences(): SidebarDisplayPreferences {
   const grouping = useSidebarViewStore((state) => state.groupMode);

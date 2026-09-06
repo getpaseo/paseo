@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useCallback, useMemo } from "react";
 import { router, type Href } from "expo-router";
 import { useTranslation } from "react-i18next";
 import {
@@ -16,15 +16,17 @@ import {
 } from "lucide-react-native";
 import { withUnistyles } from "react-native-unistyles";
 import { getIsElectronRuntime, useIsCompactFormFactor } from "@/constants/layout";
+import { useKeyboardActionHandler } from "@/hooks/use-keyboard-action-handler";
 import { useKeyboardShortcutOverrides } from "@/hooks/use-keyboard-shortcut-overrides";
 import { useOpenAddProject } from "@/hooks/use-open-add-project";
 import { useImportSession } from "@/hooks/use-import-session";
 import { useKeyboardActionDispatcher } from "@/keyboard/keyboard-action-dispatcher-context";
+import type { KeyboardActionId } from "@/keyboard/keyboard-action-dispatcher";
 import { useKeyboardShortcutsAvailable } from "@/keyboard/availability";
 import { resolveShortcutKeysForAction } from "@/keyboard/keyboard-shortcuts";
 import { useKeyboardShortcutsStore } from "@/stores/keyboard-shortcuts-store";
 import { usePanelStore } from "@/stores/panel-store";
-import { useSidebarViewStore } from "@/stores/sidebar-view-store";
+import { nextSidebarGroupMode, useSidebarViewStore } from "@/stores/sidebar-view-store";
 import { clearCommandCenterFocusRestoreElement } from "@/utils/command-center-focus-restore";
 import {
   buildOpenProjectRoute,
@@ -62,6 +64,8 @@ const ThemedCircleDashed = withUnistyles(CircleDashed, (theme) => ({
 const ThemedPanelLeft = withUnistyles(PanelLeft, (theme) => ({
   color: theme.colors.foregroundMuted,
 }));
+
+const SIDEBAR_GROUPING_ACTIONS: readonly KeyboardActionId[] = ["sidebar.grouping.cycle"];
 
 function PlusIcon({ size }: CommandCenterIconProps) {
   return <ThemedPlus size={size} strokeWidth={2.4} />;
@@ -131,6 +135,19 @@ export function CommandCenterRootActions() {
     () => ({ isMac: getShortcutOs() === "mac", isDesktop: getIsElectronRuntime() }),
     [],
   );
+  const cycleSidebarGrouping = useCallback(() => {
+    setGroupMode(nextSidebarGroupMode(groupMode));
+    return true;
+  }, [groupMode, setGroupMode]);
+
+  useKeyboardActionHandler({
+    handlerId: "sidebar-grouping-global",
+    actions: SIDEBAR_GROUPING_ACTIONS,
+    enabled: true,
+    priority: 0,
+    handle: cycleSidebarGrouping,
+  });
+
   const actions = useMemo<CommandCenterContribution[]>(() => {
     const availableActions: CommandCenterContribution[] = [
       {
@@ -325,6 +342,9 @@ export function CommandCenterRootActions() {
           groupByStatus: t("shell.commandCenter.groupByStatus"),
         },
         icons: { project: FolderIcon, status: CircleDashedIcon },
+        shortcutKeys:
+          resolveShortcutKeysForAction("cycle-sidebar-grouping", overrides, shortcutPlatform) ??
+          undefined,
         setGroupMode,
       }),
     );

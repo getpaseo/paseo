@@ -1063,6 +1063,8 @@ export const ru: TranslationResources = {
       heading: "Отображение",
       grouping: {
         label: "Группировка",
+        currentLabel: "Текущая группировка: {{current}}",
+        toggleLabel: "Текущая группировка: {{current}}. Переключить группировку",
         project: "Проект",
         status: "Статус",
         labels: "Метки",
@@ -2222,6 +2224,7 @@ export const ru: TranslationResources = {
         jumpToTab: "Перейти на вкладку",
         previousWorkspace: "Предыдущее рабочее пространство",
         nextWorkspace: "Следующее рабочее пространство",
+        cycleSidebarGrouping: "Переключить группировку",
         previousTab: "Предыдущая вкладка",
         nextTab: "Следующая вкладка",
         splitPaneRight: "Разделить панель справа",

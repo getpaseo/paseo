@@ -25,6 +25,7 @@ function source(groupMode: SidebarGroupMode): {
         groupByStatus: "Group by status",
       },
       icons: { project: ProjectIcon, status: StatusIcon },
+      shortcutKeys: [["mod", ";"]],
       setGroupMode: (mode) => applied.push(mode),
     },
     applied,
@@ -39,6 +40,7 @@ describe("grouping command center contribution", () => {
     expect(contribution.presentation).toMatchObject({
       title: "Group by status",
       icon: StatusIcon,
+      shortcutKeys: [["mod", ";"]],
     });
 
     contribution.run();

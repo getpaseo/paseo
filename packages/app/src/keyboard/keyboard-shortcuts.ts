@@ -166,6 +166,7 @@ export const SHORTCUT_HELP_ROW_ORDER: Record<ShortcutSectionId, readonly string[
     "workspace-jump-index",
     "workspace-prev",
     "workspace-next",
+    "cycle-sidebar-grouping",
     "pin-workspace",
     "archive-workspace",
   ],
@@ -218,6 +219,7 @@ const SHORTCUT_HELP_LABEL_KEYS: Record<string, string> = {
   "workspace-tab-jump-index": "settings.shortcuts.help.jumpToTab",
   "workspace-prev": "settings.shortcuts.help.previousWorkspace",
   "workspace-next": "settings.shortcuts.help.nextWorkspace",
+  "cycle-sidebar-grouping": "settings.shortcuts.help.cycleSidebarGrouping",
   "workspace-tab-prev": "settings.shortcuts.help.previousTab",
   "workspace-tab-next": "settings.shortcuts.help.nextTab",
   "workspace-pane-split-right": "settings.shortcuts.help.splitPaneRight",
@@ -305,6 +307,30 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
       id: "new-workspace",
       section: "workspaces",
       label: "New workspace",
+    },
+  },
+
+  // --- Cycle sidebar grouping ---
+  {
+    id: "sidebar-grouping-cycle-cmd-semicolon-mac",
+    action: "sidebar.grouping.cycle",
+    combo: "Cmd+;",
+    when: { mac: true, commandCenter: false, editable: false, terminal: false },
+    help: {
+      id: "cycle-sidebar-grouping",
+      section: "workspaces",
+      label: "Cycle grouping",
+    },
+  },
+  {
+    id: "sidebar-grouping-cycle-ctrl-semicolon-non-mac",
+    action: "sidebar.grouping.cycle",
+    combo: "Ctrl+;",
+    when: { mac: false, commandCenter: false, editable: false, terminal: false },
+    help: {
+      id: "cycle-sidebar-grouping",
+      section: "workspaces",
+      label: "Cycle grouping",
     },
   },
 
@@ -1288,7 +1314,13 @@ function matchesCombo(combo: KeyCombo, event: KeyboardShortcutInput, isMac: bool
     if (!!combo.ctrl !== event.ctrlKey) return false;
   }
   if (!!combo.alt !== event.altKey) return false;
-  if (!!combo.shift !== event.shiftKey) return false;
+  const shiftedLayoutProducesTargetKey =
+    combo.shift !== true &&
+    event.shiftKey &&
+    combo.key !== undefined &&
+    combo.shiftedKey !== undefined &&
+    event.key.toLowerCase() === combo.key;
+  if (!!combo.shift !== event.shiftKey && !shiftedLayoutProducesTargetKey) return false;
   if (combo.repeat === false && event.repeat) return false;
 
   if (combo.code === "Digit") {

@@ -1,5 +1,15 @@
 import { router } from "expo-router";
-import { FolderPlus, GitBranch, Import, Server, Settings, X } from "lucide-react-native";
+import {
+  CircleDashed,
+  Folder,
+  FolderPlus,
+  GitBranch,
+  Import,
+  Search,
+  Server,
+  Settings,
+  X,
+} from "lucide-react-native";
 import { useTranslation } from "react-i18next";
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import {
@@ -14,7 +24,7 @@ import { Gesture } from "react-native-gesture-handler";
 import Animated, { runOnJS, useAnimatedStyle, useSharedValue } from "react-native-reanimated";
 import { scheduleOnRN } from "react-native-worklets";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { StyleSheet, useUnistyles } from "react-native-unistyles";
+import { StyleSheet, useUnistyles, withUnistyles } from "react-native-unistyles";
 import { TitlebarDragRegion } from "@/components/desktop/titlebar-drag-region";
 import { resolveDesktopSidebarWidth } from "@/components/desktop-sidebar-layout";
 import {
@@ -32,6 +42,7 @@ import { HEADER_INNER_HEIGHT, useIsCompactFormFactor } from "@/constants/layout"
 import { useOpenAddProject } from "@/hooks/use-open-add-project";
 import { useImportSession } from "@/hooks/use-import-session";
 import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
+import { useSidebarNavItems } from "@/sidebar-nav/use-sidebar-nav-items";
 import {
   type SidebarProjectEntry,
   type SidebarWorkspaceEntry,
@@ -41,14 +52,20 @@ import type { PinnedSidebarGroups } from "@/hooks/use-sidebar-pins";
 import { RetainedPanelActivity } from "@/components/retained-panel";
 import type { SidebarWorkspaceGroup } from "@/components/sidebar/sidebar-labels";
 import type { SidebarProjectIconTarget } from "@/utils/sidebar-project-row-model";
-import { type SidebarGroupMode, useSidebarViewStore } from "@/stores/sidebar-view-store";
+import {
+  nextSidebarGroupMode,
+  type SidebarGroupMode,
+  useSidebarViewStore,
+} from "@/stores/sidebar-view-store";
 import { useHosts } from "@/runtime/host-runtime";
 import { usePanelStore } from "@/stores/panel-store";
+import { useKeyboardShortcutsStore } from "@/stores/keyboard-shortcuts-store";
 import { useOwnsWindowChromeCorner, WindowChromeSafeArea } from "@/utils/desktop-window";
 import { useCloseAgentListGesture } from "@/mobile-panels/gestures";
 import { MobilePanelOverlay } from "@/mobile-panels/presentation";
 import { buildSettingsAddHostRoute, buildSettingsRoute } from "@/utils/host-routes";
 import { openHostOverview } from "@/navigation/settings-navigation";
+import type { Theme } from "@/styles/theme";
 import { SidebarAgentListSkeleton } from "./sidebar-agent-list-skeleton";
 import { SidebarCalloutSlot } from "./sidebar-callout-slot";
 import { SidebarWorkspaceList } from "./sidebar-workspace-list";
@@ -537,6 +554,10 @@ function MobileSidebar({
   const handleWorkspacePress = useCallback(() => {
     closeSidebar();
   }, [closeSidebar]);
+  const mobileWorkspacesSectionHeaderElement = useMemo(
+    () => <WorkspacesSectionHeader onBeforeSearch={closeSidebar} />,
+    [closeSidebar],
+  );
 
   const mobileSidebarInsetStyle = useMemo(
     () => ({
@@ -598,7 +619,7 @@ function MobileSidebar({
             onImportSession={handleImportSession}
             parentGestureRef={closeGestureRef}
             dragGestureHostActive={active}
-            listHeaderComponent={workspacesSectionHeaderElement}
+            listHeaderComponent={mobileWorkspacesSectionHeaderElement}
           />
         )}
 
@@ -800,11 +821,13 @@ function DesktopSidebar({
   );
 }
 
-function WorkspacesSectionHeader() {
+function WorkspacesSectionHeader({ onBeforeSearch }: { onBeforeSearch?: () => void }) {
   return (
     <View style={styles.workspacesSectionHeader}>
       <Text style={styles.workspacesSectionTitle}>Workspaces</Text>
       <View style={styles.workspacesSectionActions}>
+        <SidebarSearchAction onBeforeNavigate={onBeforeSearch} />
+        <SidebarGroupingToggle />
         <Tooltip delayDuration={300}>
           <TooltipTrigger asChild>
             <View>
@@ -817,6 +840,125 @@ function WorkspacesSectionHeader() {
         </Tooltip>
       </View>
     </View>
+  );
+}
+
+function workspacesSectionActionStyle({
+  hovered = false,
+  pressed,
+}: PressableStateCallbackType & { hovered?: boolean }) {
+  return [
+    styles.workspacesSectionAction,
+    (hovered || pressed) && styles.workspacesSectionActionHighlighted,
+  ];
+}
+
+interface WorkspacesSectionIconActionProps {
+  icon: typeof FolderPlus;
+  label: string;
+  accessibilityLabel?: string;
+  onPress: () => void;
+  testID: string;
+  iconTestID?: string;
+  shortcutKeys?: ReturnType<typeof useShortcutKeys>;
+}
+
+function WorkspacesSectionIconAction({
+  icon: Icon,
+  label,
+  accessibilityLabel = label,
+  onPress,
+  testID,
+  iconTestID,
+  shortcutKeys,
+}: WorkspacesSectionIconActionProps) {
+  const ThemedIcon = useMemo(() => withUnistyles(Icon), [Icon]);
+  return (
+    <Tooltip delayDuration={300}>
+      <TooltipTrigger asChild>
+        <Pressable
+          style={workspacesSectionActionStyle}
+          testID={testID}
+          accessible
+          accessibilityLabel={accessibilityLabel}
+          accessibilityRole="button"
+          onPress={onPress}
+        >
+          {({ hovered, pressed }) => (
+            <ThemedIcon
+              size={14}
+              uniProps={hovered || pressed ? foregroundColorMapping : foregroundMutedColorMapping}
+              testID={iconTestID}
+            />
+          )}
+        </Pressable>
+      </TooltipTrigger>
+      <TooltipContent side="bottom" align="center" offset={8}>
+        <IconTooltipContent label={label} shortcutKeys={shortcutKeys} />
+      </TooltipContent>
+    </Tooltip>
+  );
+}
+
+function SidebarSearchAction({ onBeforeNavigate }: { onBeforeNavigate?: () => void }) {
+  const { t } = useTranslation();
+  const { items } = useSidebarNavItems();
+  const shortcutKeys = useShortcutKeys("toggle-command-center");
+  const setCommandCenterOpen = useKeyboardShortcutsStore((state) => state.setCommandCenterOpen);
+  const handlePress = useCallback(() => {
+    onBeforeNavigate?.();
+    setCommandCenterOpen(true);
+  }, [onBeforeNavigate, setCommandCenterOpen]);
+  const isVisible = items.some(
+    (item) => item.kind === "builtin" && item.id === "search" && item.visible,
+  );
+
+  if (!isVisible) return null;
+
+  return (
+    <WorkspacesSectionIconAction
+      icon={Search}
+      label={t("sidebar.sections.search")}
+      onPress={handlePress}
+      testID="sidebar-command-center-search"
+      shortcutKeys={shortcutKeys}
+    />
+  );
+}
+
+const foregroundColorMapping = (theme: Theme) => ({ color: theme.colors.foreground });
+const foregroundMutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
+
+function SidebarGroupingToggle() {
+  const { t } = useTranslation();
+  const shortcutKeys = useShortcutKeys("cycle-sidebar-grouping");
+  const groupMode = useSidebarViewStore((state) => state.groupMode);
+  const setGroupMode = useSidebarViewStore((state) => state.setGroupMode);
+  const targetMode = nextSidebarGroupMode(groupMode);
+  const currentModeLabel = t(
+    groupMode === "project"
+      ? "sidebar.display.grouping.project"
+      : "sidebar.display.grouping.status",
+  );
+  const label = t("sidebar.display.grouping.currentLabel", {
+    current: currentModeLabel,
+  });
+  const accessibilityLabel = t("sidebar.display.grouping.toggleLabel", {
+    current: currentModeLabel,
+  });
+  const Icon = groupMode === "project" ? Folder : CircleDashed;
+  const handlePress = useCallback(() => setGroupMode(targetMode), [setGroupMode, targetMode]);
+
+  return (
+    <WorkspacesSectionIconAction
+      icon={Icon}
+      label={label}
+      accessibilityLabel={accessibilityLabel}
+      onPress={handlePress}
+      testID="sidebar-grouping-toggle"
+      iconTestID={`sidebar-grouping-toggle-icon-${groupMode}`}
+      shortcutKeys={shortcutKeys}
+    />
   );
 }
 
@@ -869,6 +1011,16 @@ const styles = StyleSheet.create((theme) => ({
     flexDirection: "row",
     alignItems: "center",
     gap: theme.spacing[1],
+  },
+  workspacesSectionAction: {
+    width: 28,
+    height: 28,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: theme.borderRadius.md,
+  },
+  workspacesSectionActionHighlighted: {
+    backgroundColor: theme.colors.surfaceSidebarHover,
   },
   sidebarContent: {
     flex: 1,

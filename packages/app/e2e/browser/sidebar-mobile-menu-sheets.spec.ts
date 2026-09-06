@@ -1,17 +1,41 @@
 import { expect, test, type Page } from "../support/fixtures";
 import { gotoAppShell } from "../support/helpers/app";
+import {
+  closeCommandCenter,
+  openCommandCenterFromSidebarHeader,
+} from "../support/helpers/command-center";
 import { projectEquivalenceViewKey } from "../support/helpers/project-view-key";
-import { seedWorkspace } from "../support/helpers/seed-client";
+import { seedWorkspace, type SeededWorkspace } from "../support/helpers/seed-client";
 import { getServerId } from "../support/helpers/server-id";
+import { expectMobileAgentSidebarHidden, openMobileAgentSidebar } from "../support/helpers/sidebar";
 import { waitForSidebarHydration } from "../support/helpers/workspace-ui";
 
 test.use({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+
+let searchWorkspace: SeededWorkspace | null = null;
+
+test.afterEach(async () => {
+  const workspace = searchWorkspace;
+  searchWorkspace = null;
+  await workspace?.cleanup();
+});
 
 async function closeMenuSheet(page: Page): Promise<void> {
   const backdrop = page.getByRole("button", { name: "Bottom sheet backdrop" }).first();
   await backdrop.click({ position: { x: 12, y: 12 } });
   await expect(backdrop).not.toBeVisible({ timeout: 10_000 });
 }
+
+test("sidebar header Search closes the compact sidebar before opening", async ({ page }) => {
+  searchWorkspace = await seedWorkspace({ repoPrefix: "sidebar-mobile-search-" });
+
+  await gotoAppShell(page);
+  await openMobileAgentSidebar(page);
+  await waitForSidebarHydration(page);
+  await openCommandCenterFromSidebarHeader(page);
+  await closeCommandCenter(page);
+  await expectMobileAgentSidebarHidden(page);
+});
 
 test("project and workspace kebabs open action sheets on compact layouts", async ({ page }) => {
   const seeded = await seedWorkspace({ repoPrefix: "sidebar-mobile-menu-sheet-" });
