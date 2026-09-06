@@ -876,13 +876,13 @@ function ProjectHeaderRow({
   const localDaemonServerId = useLocalDaemonServerId();
   const projectPath = resolveSidebarProjectLocalPath(project, localDaemonServerId);
   const settingsTarget = project.hosts[0] ?? null;
+  const canRenameInline = !isMobileBreakpoint && Boolean(settingsTarget);
   const beginProjectRename = useCallback(() => {
-    if (settingsTarget) {
-      setIsRenaming(true);
-      // Revert the collapse toggle triggered by the first click of this double-click
-      onPress();
-    }
-  }, [onPress, settingsTarget]);
+    if (!canRenameInline) return;
+    setIsRenaming(true);
+    // Revert the collapse toggle triggered by the first click of this double-click
+    onPress();
+  }, [canRenameInline, onPress]);
   const handleProjectTitlePointerUp = useDoubleClick(beginProjectRename);
   const handleProjectRenameSubmit = useCallback(
     async (nextName: string) => {
@@ -978,7 +978,10 @@ function ProjectHeaderRow({
           isArchiving={isArchiving}
         />
 
-        <View style={styles.projectTitleGroup} onPointerUp={handleProjectTitlePointerUp}>
+        <View
+          style={styles.projectTitleGroup}
+          onPointerUp={canRenameInline ? handleProjectTitlePointerUp : undefined}
+        >
           {isRenaming ? (
             <InlineRenameInput
               initialValue={displayName}
