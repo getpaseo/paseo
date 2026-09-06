@@ -1,6 +1,22 @@
 import { expect, type Page } from "@playwright/test";
 import { getServerId } from "./server-id";
 
+export type SidebarGroupingMode = "project" | "status";
+
+const GROUPING_LABELS: Record<SidebarGroupingMode, string> = {
+  project: "Project",
+  status: "Status",
+};
+
+const GROUPING_LIST_TEST_IDS: Record<SidebarGroupingMode, string> = {
+  project: "sidebar-project-workspace-list-scroll",
+  status: "sidebar-status-list-scroll",
+};
+
+function otherGroupingMode(mode: SidebarGroupingMode): SidebarGroupingMode {
+  return mode === "project" ? "status" : "project";
+}
+
 interface ContextMenuAnchor {
   x: number;
   y: number;
@@ -198,6 +214,56 @@ export async function closeSidebarDisplayPreferences(page: Page): Promise<void> 
 export async function selectSidebarStatusGrouping(page: Page): Promise<void> {
   await openSidebarDisplayPage(page, "sidebar-display-grouping");
   await page.getByTestId("sidebar-grouping-status").click();
+}
+
+export async function expectSidebarGrouping(page: Page, mode: SidebarGroupingMode): Promise<void> {
+  const otherMode = otherGroupingMode(mode);
+  const toggle = page.getByTestId("sidebar-grouping-toggle");
+  const tooltip = `Current grouping: ${GROUPING_LABELS[mode]}`;
+
+  await expect(page.getByTestId(GROUPING_LIST_TEST_IDS[mode])).toBeVisible({
+    timeout: 30_000,
+  });
+  await expect(page.getByTestId(GROUPING_LIST_TEST_IDS[otherMode])).toHaveCount(0);
+  await expect(toggle).toHaveAttribute("aria-label", `${tooltip}. Switch grouping`);
+  await expect(
+    toggle.locator(`svg[data-testid="sidebar-grouping-toggle-icon-${mode}"]`),
+  ).toBeVisible();
+  await expect(
+    toggle.locator(`svg[data-testid="sidebar-grouping-toggle-icon-${otherMode}"]`),
+  ).toHaveCount(0);
+  await toggle.hover();
+  await expect(page.getByText(tooltip, { exact: true })).toBeVisible();
+}
+
+export async function cycleSidebarGroupingShortcut(page: Page): Promise<void> {
+  await page.keyboard.press("ControlOrMeta+;");
+}
+
+export async function expectSidebarGroupingMenuSelection(
+  page: Page,
+  mode: SidebarGroupingMode,
+): Promise<void> {
+  const otherMode = otherGroupingMode(mode);
+  await page.getByTestId("sidebar-display-preferences-menu").click();
+  const grouping = page.getByTestId("sidebar-display-grouping");
+  await expect(grouping).toContainText(GROUPING_LABELS[mode]);
+  await grouping.click();
+  await expect(page.getByTestId(`sidebar-grouping-${mode}`)).toHaveAttribute(
+    "aria-checked",
+    "true",
+  );
+  await expect(page.getByTestId(`sidebar-grouping-${otherMode}`)).toHaveAttribute(
+    "aria-checked",
+    "false",
+  );
+}
+
+export async function chooseSidebarGroupingFromOpenMenu(
+  page: Page,
+  mode: SidebarGroupingMode,
+): Promise<void> {
+  await page.getByTestId(`sidebar-grouping-${mode}`).click();
 }
 
 export async function openMobileAgentSidebar(page: Page): Promise<void> {

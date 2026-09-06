@@ -2,14 +2,15 @@ import { expect, test, type Page } from "../support/fixtures";
 import { gotoAppShell } from "../support/helpers/app";
 import { openCommandCenter } from "../support/helpers/command-center";
 import { seedWorkspace, type SeededWorkspace } from "../support/helpers/seed-client";
-import { openSidebarDisplayPage } from "../support/helpers/sidebar";
+import {
+  chooseSidebarGroupingFromOpenMenu,
+  cycleSidebarGroupingShortcut,
+  expectSidebarGrouping,
+  expectSidebarGroupingMenuSelection,
+} from "../support/helpers/sidebar";
 
 const GROUP_BY_STATUS = "Group by status";
 const GROUP_BY_PROJECT = "Group by project";
-const PROJECT_GROUPING_TOOLTIP = "Current grouping: Project";
-const STATUS_GROUPING_TOOLTIP = "Current grouping: Status";
-const PROJECT_GROUPING_TOGGLE = `${PROJECT_GROUPING_TOOLTIP}. Switch grouping`;
-const STATUS_GROUPING_TOGGLE = `${STATUS_GROUPING_TOOLTIP}. Switch grouping`;
 
 // Result rows carry no testID of their own, so the entries are addressed by their visible label.
 async function runGroupingEntry(page: Page, label: string, absent: string): Promise<void> {
@@ -39,32 +40,11 @@ test.describe("Command center sidebar grouping", () => {
     shortcutWorkspace = await seedWorkspace({ repoPrefix: "keyboard-grouping-" });
 
     await gotoAppShell(page);
-    const projectList = page.getByTestId("sidebar-project-workspace-list-scroll");
-    const statusList = page.getByTestId("sidebar-status-list-scroll");
-    const toggle = page.getByTestId("sidebar-grouping-toggle");
-    const projectIcon = toggle.locator('svg[data-testid="sidebar-grouping-toggle-icon-project"]');
-    const statusIcon = toggle.locator('svg[data-testid="sidebar-grouping-toggle-icon-status"]');
-
-    await expect(projectList).toBeVisible({ timeout: 30_000 });
-    await expect(toggle).toHaveAttribute("aria-label", PROJECT_GROUPING_TOGGLE);
-    await expect(projectIcon).toBeVisible();
-    await toggle.hover();
-    await expect(page.getByText(PROJECT_GROUPING_TOOLTIP, { exact: true })).toBeVisible();
-
-    await page.keyboard.press("ControlOrMeta+;");
-    await expect(statusList).toBeVisible({ timeout: 30_000 });
-    await expect(projectList).toHaveCount(0);
-    await expect(toggle).toHaveAttribute("aria-label", STATUS_GROUPING_TOGGLE);
-    await expect(statusIcon).toBeVisible();
-    await expect(projectIcon).toHaveCount(0);
-    await expect(page.getByText(STATUS_GROUPING_TOOLTIP, { exact: true })).toBeVisible();
-
-    await page.keyboard.press("ControlOrMeta+;");
-    await expect(projectList).toBeVisible({ timeout: 30_000 });
-    await expect(statusList).toHaveCount(0);
-    await expect(toggle).toHaveAttribute("aria-label", PROJECT_GROUPING_TOGGLE);
-    await expect(projectIcon).toBeVisible();
-    await expect(statusIcon).toHaveCount(0);
+    await expectSidebarGrouping(page, "project");
+    await cycleSidebarGroupingShortcut(page);
+    await expectSidebarGrouping(page, "status");
+    await cycleSidebarGroupingShortcut(page);
+    await expectSidebarGrouping(page, "project");
   });
 
   test("keeps grouping in Display preferences and syncs it with the quick toggle", async ({
@@ -73,32 +53,10 @@ test.describe("Command center sidebar grouping", () => {
     shortcutWorkspace = await seedWorkspace({ repoPrefix: "menu-grouping-" });
 
     await gotoAppShell(page);
-    const toggle = page.getByTestId("sidebar-grouping-toggle");
-    const grouping = page.getByTestId("sidebar-display-grouping");
-
-    await openSidebarDisplayPage(page, "sidebar-display-grouping");
-    await expect(page.getByTestId("sidebar-grouping-project")).toHaveAttribute(
-      "aria-checked",
-      "true",
-    );
-    await expect(page.getByTestId("sidebar-grouping-status")).toHaveAttribute(
-      "aria-checked",
-      "false",
-    );
-    await page.getByTestId("sidebar-grouping-status").click();
-
-    await expect(toggle).toHaveAttribute("aria-label", STATUS_GROUPING_TOGGLE);
-    await expect(
-      toggle.locator('svg[data-testid="sidebar-grouping-toggle-icon-status"]'),
-    ).toBeVisible();
-
-    await page.getByTestId("sidebar-display-preferences-menu").click();
-    await expect(grouping).toContainText("Status");
-    await grouping.click();
-    await expect(page.getByTestId("sidebar-grouping-status")).toHaveAttribute(
-      "aria-checked",
-      "true",
-    );
+    await expectSidebarGroupingMenuSelection(page, "project");
+    await chooseSidebarGroupingFromOpenMenu(page, "status");
+    await expectSidebarGrouping(page, "status");
+    await expectSidebarGroupingMenuSelection(page, "status");
   });
 
   test("flips sidebar grouping and persists the choice across a reload", async ({ page }) => {
