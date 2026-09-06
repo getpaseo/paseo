@@ -162,58 +162,102 @@ describe("plugin theme palettes", () => {
   );
 
   it.each([
-    ["dark", MOCHA, darkTheme],
-    ["light", LATTE, lightTheme],
-  ] as const)(
-    "retains every legacy %s fallback when overrides are omitted",
-    (_appearance, contribution, family) => {
+    {
+      appearance: "dark",
+      contribution: MOCHA,
+      syntax: darkTheme.colors.syntax,
+      expected: {
+        surface3: "#45475a",
+        surface4: "#6c7086",
+        surfaceDiffEmpty: "#313244",
+        surfaceSidebar: "#1e1e2e",
+        surfaceSidebarHover: "#313244",
+        surfaceSidebarSelected: "#45475a",
+        surfaceWorkspace: "#313244",
+        interactionHighlight: darkTheme.colors.interactionHighlight,
+        foregroundExtraMuted: "#6c7086",
+        borderAccent: "#45475a",
+        accentBright: "#cba6f7",
+        accentForeground: "#1e1e2e",
+        destructive: darkTheme.colors.destructive,
+        destructiveForeground: darkTheme.colors.destructiveForeground,
+        diffAddition: darkTheme.colors.diffAddition,
+        diffDeletion: darkTheme.colors.diffDeletion,
+        statusSuccess: darkTheme.colors.statusSuccess,
+        statusDanger: darkTheme.colors.statusDanger,
+        statusWarning: darkTheme.colors.statusWarning,
+        statusMerged: darkTheme.colors.statusMerged,
+        statusDotSuccess: darkTheme.colors.statusDotSuccess,
+        statusDotDanger: darkTheme.colors.statusDotDanger,
+        statusDotWarning: darkTheme.colors.statusDotWarning,
+        statusDotRunning: darkTheme.colors.statusDotRunning,
+        accentBorder: "#45475a",
+        success: "#cba6f7",
+        terminal: {
+          ...darkTheme.colors.terminal,
+          background: "#1e1e2e",
+          foreground: "#cdd6f4",
+          cursor: "#cdd6f4",
+          cursorAccent: "#1e1e2e",
+          selectionForeground: "#cdd6f4",
+          black: "#45475a",
+          brightBlack: "#6c7086",
+        },
+      },
+    },
+    {
+      appearance: "light",
+      contribution: LATTE,
+      syntax: lightTheme.colors.syntax,
+      expected: {
+        surface3: "#ccd0da",
+        surface4: "#9ca0b0",
+        surfaceDiffEmpty: "#e6e9ef",
+        surfaceSidebar: "#dce0e8",
+        surfaceSidebarHover: "#e6e9ef",
+        surfaceSidebarSelected: "#ccd0da",
+        surfaceWorkspace: "#eff1f5",
+        interactionHighlight: lightTheme.colors.interactionHighlight,
+        foregroundExtraMuted: "#9ca0b0",
+        borderAccent: "#ccd0da",
+        accentBright: "#8839ef",
+        accentForeground: "#eff1f5",
+        destructive: lightTheme.colors.destructive,
+        destructiveForeground: "#eff1f5",
+        diffAddition: lightTheme.colors.diffAddition,
+        diffDeletion: lightTheme.colors.diffDeletion,
+        statusSuccess: lightTheme.colors.statusSuccess,
+        statusDanger: lightTheme.colors.statusDanger,
+        statusWarning: lightTheme.colors.statusWarning,
+        statusMerged: lightTheme.colors.statusMerged,
+        statusDotSuccess: lightTheme.colors.statusDotSuccess,
+        statusDotDanger: lightTheme.colors.statusDotDanger,
+        statusDotWarning: lightTheme.colors.statusDotWarning,
+        statusDotRunning: lightTheme.colors.statusDotRunning,
+        accentBorder: "#ccd0da",
+        success: "#8839ef",
+        terminal: {
+          ...lightTheme.colors.terminal,
+          background: "#eff1f5",
+          foreground: "#4c4f69",
+          cursor: "#4c4f69",
+          cursorAccent: "#eff1f5",
+          selectionForeground: "#4c4f69",
+          black: "#4c4f69",
+          brightBlack: "#9ca0b0",
+        },
+      },
+    },
+  ])(
+    "retains every legacy $appearance fallback when overrides are omitted",
+    ({ contribution, syntax, expected }) => {
       const theme = collectPluginThemes(
         [installed("host-a", [contribution])],
         new Set(["host-a"]),
       )[0].theme;
-      const colors = contribution.colors;
-      const isLight = contribution.appearance === "light";
-      const accent = colors.accent ?? colors.foreground;
 
-      expect(theme.colors).toMatchObject({
-        surface3: colors.border,
-        surface4: colors.ring,
-        surfaceDiffEmpty: colors.raised,
-        surfaceSidebar: isLight ? colors.control : colors.background,
-        surfaceSidebarHover: colors.raised,
-        surfaceSidebarSelected: isLight ? colors.border : colors.control,
-        surfaceWorkspace: isLight ? colors.background : colors.raised,
-        interactionHighlight: family.colors.interactionHighlight,
-        foregroundExtraMuted: colors.ring,
-        borderAccent: colors.border,
-        accentBright: accent,
-        accentForeground: colors.background,
-        destructive: family.colors.destructive,
-        destructiveForeground: isLight ? colors.background : family.colors.destructiveForeground,
-        diffAddition: family.colors.diffAddition,
-        diffDeletion: family.colors.diffDeletion,
-        statusSuccess: family.colors.statusSuccess,
-        statusDanger: family.colors.statusDanger,
-        statusWarning: family.colors.statusWarning,
-        statusMerged: family.colors.statusMerged,
-        statusDotSuccess: family.colors.statusDotSuccess,
-        statusDotDanger: family.colors.statusDotDanger,
-        statusDotWarning: family.colors.statusDotWarning,
-        statusDotRunning: family.colors.statusDotRunning,
-        terminal: {
-          ...family.colors.terminal,
-          background: colors.background,
-          foreground: colors.foreground,
-          cursor: colors.foreground,
-          cursorAccent: colors.background,
-          selectionForeground: colors.foreground,
-          black: isLight ? colors.foreground : colors.control,
-          brightBlack: colors.ring,
-        },
-      });
-      expect(theme.colors.accentBorder).toBe(colors.border);
-      expect(theme.colors.success).toBe(accent);
-      expect(theme.colors.syntax).toEqual(family.colors.syntax);
+      expect(theme.colors).toMatchObject(expected);
+      expect(theme.colors.syntax).toEqual(syntax);
     },
   );
 
