@@ -1,3 +1,4 @@
+import { createAgentRequestsStub } from "./test-utils/session-stubs.js";
 import { execSync } from "child_process";
 import { existsSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
@@ -46,6 +47,8 @@ import {
   asGitHubService,
   asWorkspaceGitService,
   asDaemonConfigStore,
+  findByType,
+  createProviderSnapshot,
   createProviderSnapshotManagerStub,
 } from "./test-utils/session-stubs.js";
 import { isPlatform } from "../test-utils/platform.js";
@@ -373,6 +376,7 @@ function createSessionForTest(options: SessionForTestOptions = {}): Session {
   const messages = options.messages ?? [];
 
   const sessionOptions: SessionOptions = {
+    agentRequests: createAgentRequestsStub(),
     clientId: options.clientId ?? "test-client",
     clientCapabilities: options.clientCapabilities,
     onMessage: (message) => messages.push(message),
@@ -2570,13 +2574,15 @@ describe("session provider refresh cwd routing", () => {
       getSnapshot,
       warmUpSnapshotForCwd,
     } = createProviderSnapshotManagerStub();
-    getSnapshot.mockReturnValue([
-      {
-        provider: "codex",
-        status: "loading",
-        enabled: true,
-      },
-    ]);
+    getSnapshot.mockReturnValue(
+      createProviderSnapshot([
+        {
+          provider: "codex",
+          status: "loading",
+          enabled: true,
+        },
+      ]),
+    );
     const session = createSessionForTest({ messages, providerSnapshotManager });
 
     await session.handleMessage({
@@ -2601,13 +2607,15 @@ describe("session provider refresh cwd routing", () => {
     const messages: unknown[] = [];
     const { manager: providerSnapshotManager, warmUpSnapshotForCwd } =
       createProviderSnapshotManagerStub();
-    providerSnapshotManager.getSnapshot = vi.fn(() => [
-      {
-        provider: "codex",
-        status: "loading",
-        enabled: false,
-      },
-    ]);
+    providerSnapshotManager.getSnapshot = vi.fn(() =>
+      createProviderSnapshot([
+        {
+          provider: "codex",
+          status: "loading",
+          enabled: false,
+        },
+      ]),
+    );
     const session = createSessionForTest({ messages, providerSnapshotManager });
 
     await session.handleMessage({
@@ -2632,13 +2640,15 @@ describe("session provider refresh cwd routing", () => {
     const messages: unknown[] = [];
     const { manager: providerSnapshotManager, warmUpSnapshotForCwd } =
       createProviderSnapshotManagerStub();
-    providerSnapshotManager.getSnapshot = vi.fn(() => [
-      {
-        provider: "codex",
-        status: "loading",
-        enabled: false,
-      },
-    ]);
+    providerSnapshotManager.getSnapshot = vi.fn(() =>
+      createProviderSnapshot([
+        {
+          provider: "codex",
+          status: "loading",
+          enabled: false,
+        },
+      ]),
+    );
     const session = createSessionForTest({ messages, providerSnapshotManager });
 
     await session.handleMessage({
@@ -2667,23 +2677,27 @@ describe("session provider refresh cwd routing", () => {
       getSnapshot,
       warmUpSnapshotForCwd,
     } = createProviderSnapshotManagerStub();
-    getSnapshot.mockReturnValueOnce([
-      {
-        provider: "codex",
-        status: "loading",
-        enabled: true,
-      },
-    ]);
-    getSnapshot.mockReturnValue([
-      {
-        provider: "codex",
-        status: "ready",
-        enabled: true,
-        models: [{ provider: "codex", id: "gpt-5.4", label: "GPT-5.4" }],
-        modes: [],
-        fetchedAt: "2026-05-28T00:00:00.000Z",
-      },
-    ]);
+    getSnapshot.mockReturnValueOnce(
+      createProviderSnapshot([
+        {
+          provider: "codex",
+          status: "loading",
+          enabled: true,
+        },
+      ]),
+    );
+    getSnapshot.mockReturnValue(
+      createProviderSnapshot([
+        {
+          provider: "codex",
+          status: "ready",
+          enabled: true,
+          models: [{ provider: "codex", id: "gpt-5.4", label: "GPT-5.4" }],
+          modes: [],
+          fetchedAt: "2026-05-28T00:00:00.000Z",
+        },
+      ]),
+    );
     warmUpSnapshotForCwd.mockReturnValue(warmupDeferred.promise);
     const session = createSessionForTest({ messages, providerSnapshotManager });
 
@@ -6291,4 +6305,55 @@ describe("assistant RPCs", () => {
       owner: { principalId: "device-a" },
     });
   });
+});
+
+test("provider snapshots preserve versionless visibility while capabilities update independently", async () => {
+  const messages: SessionOutboundMessage[] = [];
+  const { manager } = createProviderSnapshotManagerStub();
+  manager.getSnapshot = () =>
+    createProviderSnapshot([
+      {
+        provider: "codex",
+        status: "ready",
+        enabled: true,
+        modes: [{ id: "default", label: "Default", icon: "Sparkles" }],
+      },
+      { provider: "plugin-provider", status: "ready", enabled: true },
+    ]);
+  const session = createSessionForTest({ messages, providerSnapshotManager: manager });
+  const read = async () => {
+    messages.length = 0;
+    await session.handleMessage({
+      type: "get_providers_snapshot_request",
+      requestId: "visibility",
+    });
+    return findByType(messages, "get_providers_snapshot_response")!.payload;
+  };
+  const versionless = await read();
+  expect(versionless.entries.map((entry) => entry.provider)).toEqual(["codex"]);
+  expect(versionless.entries[0]!.modes![0]!.icon).toBe("ShieldCheck");
+  session.updateClientCapabilities({
+    [CLIENT_CAPS.customModeIcons]: true,
+    [CLIENT_CAPS.providerSnapshotReferences]: true,
+  });
+  const iconsOnly = await read();
+  expect(iconsOnly.entries.map((entry) => entry.provider)).toEqual(["codex"]);
+  expect(iconsOnly.entries[0]!.modes![0]!.icon).toBe("Sparkles");
+  expect(iconsOnly.snapshotHash).toBeUndefined();
+  session.updateAppVersion("0.1.45");
+  expect((await read()).entries.map((entry) => entry.provider)).toEqual([
+    "codex",
+    "plugin-provider",
+  ]);
+  session.updateClientCapabilities({
+    [CLIENT_CAPS.compactProviderSnapshots]: true,
+    [CLIENT_CAPS.providerSnapshotReferences]: true,
+  });
+  const references = await read();
+  expect(references.entries).toEqual([]);
+  expect(references.compactSnapshot!.entries.map((entry) => entry.provider)).toEqual([
+    "codex",
+    "plugin-provider",
+  ]);
+  expect(references.compactSnapshot!.entries[0]!.modes![0]!.icon).toBe("ShieldCheck");
 });

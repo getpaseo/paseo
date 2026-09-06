@@ -50,6 +50,7 @@ function installed(serverId: string, themes: PluginThemeContribution[]): Install
     serverId,
     clientBundle: serverId,
     queryClient: new QueryClient(),
+    settingsScreens: [],
     surfaces: [],
     sidebarItems: [],
     workspacePanels: [],

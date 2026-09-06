@@ -8,9 +8,10 @@ import { agentCommandsQueryRoot } from "@/hooks/agent-commands-query";
 import { orderCheckoutDiffFiles } from "@/git/diff-order";
 import { daemonConfigQueryKey } from "@/data/daemon-config";
 import { daemonPairingOfferQueryKey } from "@/data/daemon-pairing";
-import { providerSnapshotCache, type ProviderSnapshotCache } from "@/data/provider-snapshot-cache";
+import { type ProviderSnapshotCache } from "@/data/provider-snapshot-cache";
 import {
   normalizeProvidersSnapshotCwd,
+  fetchProvidersSnapshot,
   providersSnapshotQueryKey,
   providersSnapshotQueryRoot,
 } from "@/data/providers-snapshot";
@@ -68,6 +69,7 @@ export interface ServerDataQueryMeta extends Record<string, unknown> {
 export type ProvidersSnapshotUpdate = ProvidersSnapshotUpdateMessage;
 
 interface ServerDataPushClient {
+  getProvidersSnapshot: import("@getpaseo/client/internal/daemon-client").DaemonClient["getProvidersSnapshot"];
   on<TType extends ServerDataEventType>(
     type: TType,
     handler: (message: Extract<SessionOutboundMessage, { type: TType }>) => void,
@@ -185,35 +187,40 @@ export function invalidateServerDataQueriesAfterReconnect(input: {
   }
 }
 
-export function applyProvidersSnapshotUpdate(input: {
+export async function applyProvidersSnapshotUpdate(input: {
   serverId: string;
   queryClient: QueryClient;
   message: ProvidersSnapshotUpdate;
+  client: Pick<ServerDataPushClient, "getProvidersSnapshot">;
   cache?: ProviderSnapshotCache;
-}): void {
-  if (input.message.type !== "providers_snapshot_update") {
-    return;
-  }
-  const queryKey = providersSnapshotQueryKey(input.serverId, input.message.payload.cwd);
-  input.queryClient.setQueryData(queryKey, {
-    entries: input.message.payload.entries,
-    generatedAt: input.message.payload.generatedAt,
-    requestId: "providers_snapshot_update",
+}): Promise<void> {
+  const snapshot = { ...input.message.payload, requestId: "providers_snapshot_update" };
+  const cwd = normalizeProvidersSnapshotCwd(snapshot.cwd);
+  const queryKey = providersSnapshotQueryKey(input.serverId, cwd);
+  const previous = input.queryClient.getQueryData<{ snapshotHash?: string }>(queryKey);
+  let announcement: typeof snapshot | undefined = snapshot;
+  void input.queryClient.cancelQueries({ queryKey, exact: true });
+  await input.queryClient.fetchQuery({
+    queryKey,
+    staleTime: 0,
+    retry: false,
+    queryFn: ({ signal }) => {
+      const incoming = announcement;
+      announcement = undefined;
+      return fetchProvidersSnapshot({
+        ...input,
+        cwd,
+        snapshot: incoming,
+        signal,
+      });
+    },
   });
-  const { compactSnapshot, snapshotHash } = input.message.payload;
-  if (compactSnapshot && snapshotHash) {
-    void (input.cache ?? providerSnapshotCache).write({
-      serverId: input.serverId,
-      cwd: normalizeProvidersSnapshotCwd(input.message.payload.cwd),
-      hash: snapshotHash,
-      generatedAt: input.message.payload.generatedAt,
-      compactSnapshot,
+  if (!snapshot.snapshotHash || previous?.snapshotHash !== snapshot.snapshotHash) {
+    void input.queryClient.invalidateQueries({
+      queryKey: agentCommandsQueryRoot(input.serverId),
+      exact: false,
     });
   }
-  void input.queryClient.invalidateQueries({
-    queryKey: agentCommandsQueryRoot(input.serverId),
-    exact: false,
-  });
 }
 
 export function mountServerDataPushRouter(input: PushRouterInput): () => void {
@@ -283,10 +290,13 @@ export function mountServerDataPushRouter(input: PushRouterInput): () => void {
     reconcileSubscriptions();
   });
   const unsubscribeProviders = input.client.on("providers_snapshot_update", (message) => {
-    applyProvidersSnapshotUpdate({
+    void applyProvidersSnapshotUpdate({
+      client: input.client,
       queryClient: input.queryClient,
       serverId: input.serverId,
       message,
+    }).catch(() => {
+      /* Query state owns fetch failures; reconnect/refetch repairs them. */
     });
   });
   const unsubscribeDaemonConfig = input.client.on("status", (message) => {

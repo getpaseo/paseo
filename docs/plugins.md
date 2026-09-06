@@ -1,7 +1,7 @@
 # Plugins
 
 Local plugins contribute daemon RPCs, native app surfaces, workspace panels, Command Center items,
-client slash commands, timeline items, composer pills, app themes, and composer attachment sources.
+client slash commands, timeline items, composer pills, app themes, composer attachment sources, and settings screens.
 Paseo executes `index.server.ts` in a subprocess and `index.client.tsx` in every connected app.
 
 > **Trust every plugin you add.** `paseo plugin add` and `paseo plugin install` mean “I trust this codebase.” Plugins are unsandboxed: server code and Git preparation commands run with the daemon user's access on the daemon host, and client contributions run inside Paseo. The repository's dependencies and future updates are part of that trust decision. With `--host`, preparation runs on that remote daemon host.
@@ -155,7 +155,8 @@ Shared files import contract helpers and types from `@getpaseo/plugin`. Server h
 `@getpaseo/plugin/react-native`. Its `Icon` resolves a Lucide name using the client's installed icon
 set; an unknown name renders nothing so it cannot break the plugin surface.
 Its controlled modal keeps presentation metadata on `<Modal title="…" icon={…}>` and body UI in
-`<Modal.Content>`.
+`<Modal.Content>`. Body layout, sheet-aware scrolling, and clipboard actions follow the
+[host UI contract](../public-docs/plugins/v0.8/reference.md#host-ui).
 Plugin UI runs on desktop and mobile across multiple themes: color every `Text` from
 `theme.colors.foreground` or `theme.colors.foregroundMuted`, and size layout from `layout.compact`.
 See `public-docs/plugins/v0.8/reference.md`.
@@ -165,6 +166,8 @@ See `public-docs/plugins/v0.8/reference.md`.
 | `@getpaseo/plugin`              | contribution contracts, shared definitions, RPC input/output types, and client data hooks |
 | `@getpaseo/plugin/react-native` | Paseo React Native components and UI hooks                                                |
 | `@getpaseo/plugin/server`       | handler-only types such as `PluginHandlerContext`                                         |
+| `@getpaseo/plugin/provider`     | provider registration, connection, session, input, event, and timeline contracts          |
+| `@getpaseo/plugin/acp`          | command-backed ACP adapter and focused transformer hooks                                  |
 
 The compiler rejects a client import of `server/`, a server import of `client/`, and every `node:`
 import reachable from client code. Shared modules cannot import runtime-owned modules. A relative
@@ -217,7 +220,7 @@ typed async function. Use the host-provided `@tanstack/react-query` for request 
 Paseo gives each plugin installation its own query client.
 
 `usePaseo()` and the handler's `{ paseo }` context expose the same `PaseoApi`: projects,
-workspaces, agents, providers, and daemon config. They do not expose connection lifecycle. A surface borrows the
+workspaces, agents, terminals, providers, and daemon config. They do not expose connection lifecycle. A surface borrows the
 selected host's existing connection; switching the screen's host changes both `usePaseo()` and
 `useRpc()` to that host. An offline selected host fails there and never falls through to another
 installation. A server handler owns an IPC-backed daemon session for the life of its subprocess.
@@ -252,6 +255,56 @@ They use typed plugin RPC only for plugin-specific backend work. Surface and pan
 optional client-owned agent and workspace navigation; its absence is the compatibility gate for
 older clients. Other navigation remains limited to registered global surfaces and workspace panels.
 Plugins do not receive Expo Router or workspace-layout store access.
+
+## Contribute a provider
+
+Register a provider from `index.server.ts`. The provider connection is callback-based and owns all
+of its sessions; plugin RPC is not part of the provider data path.
+
+```ts
+import type { PluginServerContext } from "@getpaseo/plugin";
+import type { ProviderRegistration } from "@getpaseo/plugin/provider";
+import { createProvider } from "./server/provider";
+
+export default function contribute(server: PluginServerContext) {
+  server.registerProvider(createProvider() satisfies ProviderRegistration);
+  return () => {};
+}
+```
+
+Implement optional `ProviderRegistration.getCatalogCacheKey(options)` to share equivalent catalogue
+probes. The callback runs in the plugin process before discovery and receives the actual global or
+workspace target. Return a key covering effective configuration and execution environment, or
+`undefined` for target-specific caching. Ignore `force` when choosing identity. Existing providers
+need no change. See [catalogue ownership](providers.md#provider-snapshot-refresh-contract).
+
+`send()` resolves after acceptance. Publish operation completion, prompt disposition, turn state,
+configuration, permissions, persistence, and complete timeline snapshots through `onEvent()`.
+Route messages, structured commands, steering, and command side effects through `session.prompt`.
+Provider settings are toggle/select data that Paseo renders in the composer. Keep private options in
+the opaque `providerOptions` config object.
+
+Agent refresh closes the current provider session and opens it again with current configuration and
+persistence. Providers re-read credentials, environment, global configuration, and MCP servers on
+`session.open`; there is no provider reload input.
+
+For an ACP command, register `runAcpProvider({ id, label, command })` from
+`@getpaseo/plugin/acp`. Its transformer hooks cover narrow vendor differences; do not translate the
+whole provider event stream. The direct and ACP examples live in `plugin-examples/provider-direct`
+and `plugin-examples/provider-acp-transformer`.
+
+Provider-emitted plugin timeline items use the same renderer registration as transformed and
+daemon-appended plugin items. The direct example includes both sides. The renderer-only
+`plugin-examples/inline-thinking` example shows that timeline presentation remains independent of a
+provider implementation. The public [provider plugin guide](../public-docs/plugins/v0.8/providers.md)
+owns author workflow, lifecycle, testing, and distribution guidance.
+
+`ProviderRegistration.icon` is a file path relative to the plugin directory, such as `icon.svg`.
+It must resolve inside that directory to a regular SVG file no larger than 64 KiB. The SVG must be
+self-contained: scripts, styles, `foreignObject`, event-handler attributes, JavaScript URLs, and
+external `href` or `xlink:href` references are rejected. Fragment references such as `#mark` are
+allowed. Paseo reads and sanitizes the file when the plugin starts; the string is never an inline
+SVG or URL.
 
 ## Contribute composer pills
 
@@ -393,6 +446,18 @@ Attachment sources stay scoped to the composer's host. Unlike sidebar contributi
 on several hosts are not coalesced. The selected snapshot submits as a text attachment with neutral
 external-resource presentation, so it remains readable if the plugin is removed or an older peer
 drops the optional presentation fields.
+
+## Contribute settings
+
+Register ordinary components with `client.addSettingsScreen` and open them with `openSettings`.
+The host settings shell owns navigation and layout; plugin content must not add another page
+scroll view or header. See the [author contract](../public-docs/plugins/v0.8/reference.md#settings-screens)
+and `plugin-examples/settings` for the named UI components and persistence API.
+
+Settings storage is scoped to the runtime installation ID, never the source path or manifest ID.
+Its writer lives with the plugin subprocess, while its directory lives outside managed sources,
+so updates and reloads retain values. Settings-change notifications must not enter the catalog
+reload path: that path disposes the plugin and would destroy open drafts after every save.
 
 ## Contribute a theme
 

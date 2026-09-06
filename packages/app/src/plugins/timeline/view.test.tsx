@@ -30,16 +30,6 @@ vi.mock("../icons", () => ({
   Icon: () => null,
   resolvePluginIcon: () => () => null,
 }));
-vi.mock("react-native-unistyles", () => ({
-  StyleSheet: {
-    create: (factory: (theme: object) => object) =>
-      factory({
-        colors: { foregroundMuted: "gray", statusDanger: "red" },
-        spacing: [0, 4, 8, 12, 16],
-      }),
-  },
-  withUnistyles: (Component: React.ComponentType) => Component,
-}));
 
 import { pluginRegistry } from "../registry";
 import { PluginTimelineItemView } from "./view";

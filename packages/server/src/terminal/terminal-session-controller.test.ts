@@ -300,7 +300,7 @@ describe("terminal-session-controller legacy terminal creation", () => {
       hasBinaryChannel: () => true,
       isPathWithinRoot: isSameOrDescendantPath,
       sessionLogger: createLogger(),
-      listTerminalWorkspaceRefs: async () => [],
+      listTerminalWorkspaceRefs: async () => [{ workspaceId: "ws-1", cwd: "/work/repo" }],
     });
 
     await controller.dispatch({
@@ -548,7 +548,13 @@ describe("terminal-session-controller subdirectory aggregation", () => {
         payload: {
           cwd: rootCwd,
           terminals: [
-            { id: "root-term", name: "Terminal 1", workspaceId: "ws-test", activity: null },
+            {
+              id: "root-term",
+              name: "Terminal 1",
+              cwd: rootCwd,
+              workspaceId: "ws-test",
+              activity: null,
+            },
           ],
           requestId: "req-root",
         },
@@ -558,7 +564,13 @@ describe("terminal-session-controller subdirectory aggregation", () => {
         payload: {
           cwd: worktreeCwd,
           terminals: [
-            { id: "worktree-term", name: "Feature", workspaceId: "ws-test", activity: null },
+            {
+              id: "worktree-term",
+              name: "Feature",
+              cwd: worktreeCwd,
+              workspaceId: "ws-test",
+              activity: null,
+            },
           ],
           requestId: "req-worktree",
         },

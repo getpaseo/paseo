@@ -889,9 +889,13 @@ describe("WorkspaceGitService checkout observation", () => {
     });
     const subscription = service.registerWorkspace({ cwd: REPO_CWD }, vi.fn());
     await fetchSnapshotRead.promise;
+    // Observation setup also reads facts. Wait for the initial snapshot to be
+    // published before injecting an event that must produce a second refresh.
     await vi.waitFor(() => {
-      expect(getCheckoutSnapshotFacts).toHaveBeenCalledTimes(1);
+      expect(service.peekSnapshot(REPO_CWD)?.git.currentBranch).toBe("feature");
+      expect(service.getMetrics().workspaceRefreshInFlightCount).toBe(0);
     });
+    expect(getCheckoutSnapshotFacts).toHaveBeenCalledTimes(1);
 
     await vi.waitFor(() => {
       expect(getWatcherRecordsForDirectory(watcher, GIT_DIR)).toHaveLength(1);

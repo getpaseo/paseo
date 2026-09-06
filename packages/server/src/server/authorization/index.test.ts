@@ -26,6 +26,11 @@ function inboundMessage(type: SessionInboundMessage["type"]): SessionInboundMess
 }
 
 function outboundMessage(type: SessionOutboundMessage["type"]): SessionOutboundMessage {
+  if (type === "status")
+    return {
+      type,
+      payload: { status: "agent_create_failed", error: "test", requestId: "test" },
+    } as SessionOutboundMessage;
   return { type } as SessionOutboundMessage;
 }
 
@@ -93,6 +98,45 @@ describe("SessionAuthorization", () => {
     }
     expect(viewer.allowsOutbound(outboundMessage("assistant.list.response"))).toBe(true);
     expect(viewer.allowsOutbound(outboundMessage("assistant.create.response"))).toBe(false);
+  });
+
+  test("Hub can operate ordinary agents and recover workspaces without daemon administration", () => {
+    const authorization = new SessionAuthorization(["hub.execute"]);
+    for (const type of [
+      "create_agent_request",
+      "send_agent_message_request",
+      "fetch_agent_request",
+      "agent.timeline.set_subscription.request",
+      "workspace.recovery.inspect.request",
+      "workspace.recovery.restore.request",
+    ] as const) {
+      expect(authorization.allowsInbound(inboundMessage(type))).toBe(true);
+    }
+    for (const type of [
+      "status",
+      "agent_update",
+      "agent_stream",
+      "send_agent_message_response",
+      "workspace.recovery.restore.response",
+    ] as const) {
+      expect(authorization.allowsOutbound(outboundMessage(type))).toBe(true);
+    }
+    for (const type of [
+      "restart_server_request",
+      "terminal_input",
+      "hub.management.daemon.permissions.update.request",
+    ] as const) {
+      expect(authorization.allowsInbound(inboundMessage(type))).toBe(false);
+    }
+    expect(
+      authorization.allowsOutbound({
+        type: "status",
+        payload: { status: "shutdown_requested", clientId: "owner", requestId: "shutdown" },
+      }),
+    ).toBe(false);
+    authorization.replacePermissions([]);
+    expect(authorization.allowsInbound(inboundMessage("send_agent_message_request"))).toBe(false);
+    expect(authorization.allowsOutbound(outboundMessage("agent_update"))).toBe(false);
   });
 
   test("correlated authorization errors can always be emitted", () => {

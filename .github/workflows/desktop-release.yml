@@ -547,28 +547,10 @@ jobs:
           fi
           timestamp="$(date -u +"%Y-%m-%dT%H:%M:%S.000Z")"
           node ../scripts/stamp-rollout.mjs --release-date "$timestamp" --rollout-hours "$ROLLOUT_HOURS" "${files[@]}"
-          # shellcheck disable=SC2016
-          ROLLOUT_HOURS_EXPECTED="$ROLLOUT_HOURS" RELEASE_DATE_EXPECTED="$timestamp" node -e '
-            const yaml = require("js-yaml");
-            const fs = require("fs");
-            const expectedHours = Number(process.env.ROLLOUT_HOURS_EXPECTED);
-            const expectedDate = process.env.RELEASE_DATE_EXPECTED;
-            if (!Number.isFinite(expectedHours) || expectedHours < 0) {
-              throw new Error(`expected non-negative rolloutHours, got ${process.env.ROLLOUT_HOURS_EXPECTED}`);
-            }
-            for (const f of process.argv.slice(1)) {
-              const m = yaml.load(fs.readFileSync(f, "utf8")) ?? {};
-              if (m.rolloutHours !== expectedHours) {
-                throw new Error(`${f}: rolloutHours=${m.rolloutHours}, expected ${expectedHours}`);
-              }
-              if (m.releaseDate !== expectedDate) {
-                throw new Error(`${f}: releaseDate=${m.releaseDate}, expected ${expectedDate}`);
-              }
-              if (typeof m.version !== "string" || m.version.length === 0) {
-                throw new Error(`${f}: missing or invalid version`);
-              }
-            }
-          ' "${files[@]}"
+          node ../scripts/validate-desktop-manifests.mjs \
+            --release-date "$timestamp" \
+            --rollout-hours "$ROLLOUT_HOURS" \
+            "${files[@]}"
           gh release upload "$release_lookup" "${files[@]}" --clobber --repo "${{ github.repository }}"
 
           failed_builds=()

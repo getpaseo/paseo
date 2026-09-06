@@ -1,3 +1,4 @@
+import { PluginSettingsLinks } from "@/plugins/settings";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Text, View } from "react-native";
@@ -14,7 +15,7 @@ import { useFetchQuery } from "@/data/query";
 import { useDaemonConfig } from "@/hooks/use-daemon-config";
 import { useHostFeature } from "@/runtime/host-features";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
-import { SettingsSection } from "@/screens/settings/settings-section";
+import { SettingsSection } from "@/components/settings/headings/settings-section";
 import { resolvePluginPageState } from "@/screens/settings/plugins-page-state";
 import { pluginRegistry, useInstalledPlugins } from "@/plugins/registry";
 import { settingsStyles } from "@/styles/settings";
@@ -36,6 +37,7 @@ function pluginRowAction(action: string | undefined): PluginRowAction | undefine
 
 function PluginRow({
   plugin,
+  serverId,
   clientError,
   pending,
   pendingAction,
@@ -44,6 +46,7 @@ function PluginRow({
   supportsLogs,
 }: {
   plugin: PluginListItem;
+  serverId: string;
   clientError?: string;
   pending: boolean;
   pendingAction?: PluginRowAction;
@@ -70,37 +73,45 @@ function PluginRow({
   if (pendingAction === "enable") toggleLabel = t("settings.plugins.actions.enabling");
   else if (pendingAction === "disable") toggleLabel = t("settings.plugins.actions.disabling");
   return (
-    <View style={styles.pluginRow} accessibilityLabel={`${plugin.id} ${statusLabel}`}>
-      <View style={settingsStyles.rowContent}>
-        <View style={styles.pluginTitle}>
-          <Text style={settingsStyles.rowTitle}>{plugin.id}</Text>
-          <StatusBadge label={statusLabel} variant={badgeVariant} />
+    <View>
+      <View style={styles.pluginRow} accessibilityLabel={`${plugin.id} ${statusLabel}`}>
+        <View style={settingsStyles.rowContent}>
+          <View style={styles.pluginTitle}>
+            <Text style={settingsStyles.rowTitle}>{plugin.id}</Text>
+            <StatusBadge label={statusLabel} variant={badgeVariant} />
+          </View>
+          <Text style={settingsStyles.rowHint}>{plugin.path}</Text>
+          {clientError || plugin.error ? (
+            <Text style={styles.error}>{clientError ?? plugin.error}</Text>
+          ) : null}
         </View>
-        <Text style={settingsStyles.rowHint}>{plugin.path}</Text>
-        {clientError || plugin.error ? (
-          <Text style={styles.error}>{clientError ?? plugin.error}</Text>
-        ) : null}
-      </View>
-      <View style={styles.actions}>
-        {supportsLogs ? (
-          <Button variant="outline" size="sm" onPress={openLogs} disabled={pending}>
-            {t("settings.plugins.logs.action")}
+        <View style={styles.actions}>
+          {supportsLogs ? (
+            <Button variant="outline" size="sm" onPress={openLogs} disabled={pending}>
+              {t("settings.plugins.logs.action")}
+            </Button>
+          ) : null}
+          <Button
+            variant="outline"
+            size="sm"
+            onPress={reload}
+            disabled={pending || !plugin.enabled}
+          >
+            {pendingAction === "reload"
+              ? t("settings.plugins.actions.reloading")
+              : t("settings.plugins.actions.reload")}
           </Button>
-        ) : null}
-        <Button variant="outline" size="sm" onPress={reload} disabled={pending || !plugin.enabled}>
-          {pendingAction === "reload"
-            ? t("settings.plugins.actions.reloading")
-            : t("settings.plugins.actions.reload")}
-        </Button>
-        <Button variant="outline" size="sm" onPress={toggle} disabled={pending}>
-          {toggleLabel}
-        </Button>
-        <Button variant="outline" size="sm" onPress={remove} disabled={pending}>
-          {pendingAction === "remove"
-            ? t("settings.plugins.actions.removing")
-            : t("settings.plugins.actions.remove")}
-        </Button>
+          <Button variant="outline" size="sm" onPress={toggle} disabled={pending}>
+            {toggleLabel}
+          </Button>
+          <Button variant="outline" size="sm" onPress={remove} disabled={pending}>
+            {pendingAction === "remove"
+              ? t("settings.plugins.actions.removing")
+              : t("settings.plugins.actions.remove")}
+          </Button>
+        </View>
       </View>
+      <PluginSettingsLinks serverId={serverId} pluginId={plugin.id} />
     </View>
   );
 }
@@ -347,6 +358,7 @@ export function HostPluginsPage({ serverId }: { serverId: string }) {
             return (
               <PluginRow
                 key={plugin.id}
+                serverId={serverId}
                 plugin={plugin}
                 clientError={clientError}
                 pending={mutation.isPending}
