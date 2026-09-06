@@ -35,9 +35,10 @@ import {
   ChevronDown,
   ChevronRight,
   CircleAlert,
+  CircleArrowRight,
   CircleCheck,
-  CircleDot,
   CircleX,
+  Clock,
 } from "lucide-react-native";
 import { useToast } from "@/contexts/toast-context";
 import { WorkspaceRenameModal } from "@/components/workspace-rename-modal";
@@ -102,9 +103,10 @@ const runningColorMapping = (theme: Theme) => ({
 const ThemedChevronDown = withUnistyles(ChevronDown);
 const ThemedChevronRight = withUnistyles(ChevronRight);
 const ThemedCircleAlert = withUnistyles(CircleAlert);
+const ThemedCircleArrowRight = withUnistyles(CircleArrowRight);
 const ThemedCircleCheck = withUnistyles(CircleCheck);
-const ThemedCircleDot = withUnistyles(CircleDot);
 const ThemedCircleX = withUnistyles(CircleX);
+const ThemedClock = withUnistyles(Clock);
 const EMPTY_SHORTCUT_INDEX = new Map<string, number>();
 
 function statusWorkspaceKeyExtractor(workspace: SidebarWorkspaceEntry): string {
@@ -480,9 +482,9 @@ function StatusGroupIcon({ bucket }: { bucket: StatusBucket }) {
     case "failed":
       return <ThemedCircleX size={14} uniProps={failedColorMapping} />;
     case "attention":
-      return <ThemedCircleCheck size={14} uniProps={attentionColorMapping} />;
+      return <ThemedCircleArrowRight size={14} uniProps={attentionColorMapping} />;
     case "running":
-      return <ThemedCircleDot size={14} uniProps={runningColorMapping} />;
+      return <ThemedClock size={14} uniProps={runningColorMapping} />;
     case "done":
       return <ThemedCircleCheck size={14} uniProps={foregroundMutedColorMapping} />;
   }
