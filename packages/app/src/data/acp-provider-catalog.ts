@@ -33,6 +33,16 @@ const CATALOG_DATA = [
     command: ["amp-acp"],
   },
   {
+    id: "antigravity",
+    title: "Google Antigravity",
+    description:
+      "Google Antigravity ACP adapter with multi-model support, session isolation, and token metering",
+    version: "1.1.4",
+    iconId: null,
+    installLink: "https://github.com/tucomel/paseo-acp-agy",
+    command: ["npx", "-y", "paseo-acp-agy@1.1.4", "--acp"],
+  },
+  {
     id: "auggie",
     title: "Auggie CLI",
     description:
