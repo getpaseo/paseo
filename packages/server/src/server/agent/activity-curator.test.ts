@@ -1,5 +1,12 @@
+import { Buffer } from "node:buffer";
 import { describe, expect, it } from "vitest";
-import { buildAgentForkContextAttachment, curateAgentActivity } from "./activity-curator.js";
+import {
+  AGENT_CONTEXT_ATTACHMENT_MAX_BYTES,
+  buildAgentContextAttachment,
+  buildAgentForkContextAttachment,
+  curateAgentActivity,
+  resolveAgentContextAttachmentMaxBytes,
+} from "./activity-curator.js";
 import type { AgentTimelineItem } from "./agent-sdk-types.js";
 import type { AgentTimelineRow } from "./agent-timeline-store-types.js";
 
@@ -438,5 +445,170 @@ second line'`,
         rows: [row(1, { type: "assistant_message", text: "Done.", messageId: "assistant-1" })],
       }),
     ).toThrow("Selected assistant message is no longer available.");
+  });
+
+  it("builds a privacy-curated, byte-bounded agent context attachment", () => {
+    const result = buildAgentContextAttachment({
+      agentTitle: "Source Agent",
+      cwd: "/repo",
+      maxBytes: 1024,
+      rows: [
+        row(1, { type: "user_message", text: "Inspect the auth flow" }),
+        row(2, { type: "reasoning", text: "PRIVATE_REASONING_SHOULD_NOT_LEAK" }),
+        row(
+          3,
+          toolCallItem({
+            callId: "unknown-tool",
+            name: "PRIVATE_PROVIDER_TOOL_NAME",
+            input: { command: "PRIVATE_TOOL_INPUT_SHOULD_NOT_LEAK" },
+          }),
+        ),
+        row(
+          4,
+          toolCallItem({
+            callId: "subagent-tool",
+            name: "SECRET_SUBAGENT_PROVIDER_NAME",
+            detail: {
+              type: "sub_agent",
+              subAgentType: "SECRET_SUBAGENT_TYPE",
+              description: "SECRET_SUBAGENT_DESCRIPTION",
+              log: "PRIVATE_SUBAGENT_LOG_SHOULD_NOT_LEAK",
+            },
+          }),
+        ),
+        row(5, { type: "assistant_message", text: "The auth flow is ready." }),
+      ],
+    });
+
+    expect(result.attachment).toMatchObject({
+      type: "text",
+      mimeType: "text/plain",
+      contextKind: "chat_history",
+      title: "Chat history",
+    });
+    expect(result.byteCount).toBeLessThanOrEqual(1024);
+    expect(Buffer.byteLength(result.attachment.text, "utf8")).toBe(result.byteCount);
+    expect(result.attachment.text).toContain("Source agent: Source Agent");
+    expect(result.attachment.text).toContain("[User] Inspect the auth flow");
+    expect(result.attachment.text).toContain("[Tool]");
+    expect(result.attachment.text).toContain("[Task]");
+    expect(result.attachment.text).toContain("[Assistant] The auth flow is ready.");
+    expect(result.attachment.text).not.toContain("PRIVATE_REASONING_SHOULD_NOT_LEAK");
+    expect(result.attachment.text).not.toContain("PRIVATE_PROVIDER_TOOL_NAME");
+    expect(result.attachment.text).not.toContain("PRIVATE_TOOL_INPUT_SHOULD_NOT_LEAK");
+    expect(result.attachment.text).not.toContain("SECRET_SUBAGENT_TYPE");
+    expect(result.attachment.text).not.toContain("SECRET_SUBAGENT_DESCRIPTION");
+    expect(result.attachment.text).not.toContain("PRIVATE_SUBAGENT_LOG_SHOULD_NOT_LEAK");
+  });
+
+  it("does not serialize oversized unknown tool input for agent context", () => {
+    let serializations = 0;
+    const oversizedInput = {
+      toJSON: () => {
+        serializations += 1;
+        return "PRIVATE_TOOL_INPUT_SHOULD_NOT_BE_SERIALIZED".repeat(50_000);
+      },
+    };
+
+    const result = buildAgentContextAttachment({
+      maxBytes: 1024,
+      rows: [
+        row(
+          1,
+          toolCallItem({
+            callId: "oversized-unknown-tool",
+            name: "PRIVATE_PROVIDER_TOOL_NAME",
+            input: oversizedInput,
+          }),
+        ),
+      ],
+    });
+
+    expect(serializations).toBe(0);
+    expect(result.attachment.text).toContain("[Tool]");
+    expect(result.attachment.text).not.toContain("PRIVATE_TOOL_INPUT_SHOULD_NOT_BE_SERIALIZED");
+  });
+
+  it("keeps the newest complete context entries when a source is bounded", () => {
+    const oversized = "old assistant context ".repeat(100);
+    const result = buildAgentContextAttachment({
+      maxBytes: 1024,
+      hasOlderRows: true,
+      rows: [
+        row(1, { type: "assistant_message", text: oversized }),
+        row(2, { type: "user_message", text: "Newest complete context" }),
+      ],
+    });
+
+    expect(result.truncated).toBe(true);
+    expect(result.attachment.text).toContain("[User] Newest complete context");
+    expect(result.attachment.text).not.toContain(oversized);
+  });
+
+  it("bounds multibyte context using UTF-8 bytes without splitting an entry", () => {
+    const newest = `最新の回答 ${"🙂漢字".repeat(60)}`;
+    const result = buildAgentContextAttachment({
+      maxBytes: 1024,
+      rows: [
+        row(1, { type: "assistant_message", text: `古い回答 ${"界".repeat(2_000)}` }),
+        row(2, { type: "user_message", text: newest }),
+      ],
+    });
+
+    expect(result.byteCount).toBeLessThanOrEqual(1024);
+    expect(result.attachment.text).toContain(newest);
+    expect(result.attachment.text).not.toContain("古い回答");
+    expect(result.truncated).toBe(true);
+  });
+
+  it("does not materialize an oversized newest entry or fall back to older context", () => {
+    const result = buildAgentContextAttachment({
+      maxBytes: 1024,
+      rows: [
+        row(1, { type: "assistant_message", text: "Older context that would fit." }),
+        row(2, { type: "assistant_message", text: "x".repeat(10_000) }),
+      ],
+    });
+
+    expect(result.attachment.text).toContain("No chat history to display.");
+    expect(result.attachment.text).not.toContain("Older context that would fit.");
+    expect(result.byteCount).toBeLessThanOrEqual(1024);
+    expect(result.truncated).toBe(true);
+  });
+
+  it("charges repeated tool lifecycle updates only once before selecting older context", () => {
+    const result = buildAgentContextAttachment({
+      maxBytes: 1024,
+      rows: [
+        row(1, { type: "user_message", text: "Keep this useful request." }),
+        ...Array.from({ length: 100 }, (_, index) =>
+          row(
+            index + 2,
+            toolCallItem({
+              callId: "same-long-running-tool",
+              name: "provider_tool",
+              status: index === 99 ? "completed" : "running",
+            }),
+          ),
+        ),
+      ],
+    });
+
+    expect(result.attachment.text).toContain("[User] Keep this useful request.");
+    expect(result.attachment.text.match(/\[Tool\]/g)).toHaveLength(1);
+    expect(result.byteCount).toBeLessThanOrEqual(1024);
+  });
+
+  it("clamps daemon-side agent context limits", () => {
+    expect(resolveAgentContextAttachmentMaxBytes(1)).toBe(1024);
+    expect(resolveAgentContextAttachmentMaxBytes(Number.NaN)).toBe(
+      AGENT_CONTEXT_ATTACHMENT_MAX_BYTES,
+    );
+    expect(resolveAgentContextAttachmentMaxBytes(Number.POSITIVE_INFINITY)).toBe(
+      AGENT_CONTEXT_ATTACHMENT_MAX_BYTES,
+    );
+    expect(resolveAgentContextAttachmentMaxBytes(AGENT_CONTEXT_ATTACHMENT_MAX_BYTES * 2)).toBe(
+      AGENT_CONTEXT_ATTACHMENT_MAX_BYTES,
+    );
   });
 });

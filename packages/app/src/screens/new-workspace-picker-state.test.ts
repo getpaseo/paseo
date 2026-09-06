@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import type { UserComposerAttachment } from "@/attachments/types";
 import {
+  clearAttachmentsForWorkspaceHostChange,
   clearPickerPrAttachmentForTargetChange,
   initialPickerSelectionState,
+  reconcileNewWorkspaceHostAttachments,
   reducePickerSelection,
   syncPickerPrAttachment,
 } from "./new-workspace-picker-state";
@@ -49,6 +51,17 @@ function makeIssueItem(number: number): ForgeSearchItem {
 
 function issueAttachment(number: number): UserComposerAttachment {
   return { kind: "github_issue", item: makeIssueItem(number) };
+}
+
+function agentContextAttachment(serverId: string, agentId: string): UserComposerAttachment {
+  return {
+    kind: "agent_context",
+    source: {
+      serverId,
+      agentId,
+      title: `Agent ${agentId}`,
+    },
+  };
 }
 
 describe("syncPickerPrAttachment", () => {
@@ -159,6 +172,97 @@ describe("clearPickerPrAttachmentForTargetChange", () => {
         nextTargetId: "server-b",
       }),
     ).toEqual([issue]);
+  });
+});
+
+describe("clearAttachmentsForWorkspaceHostChange", () => {
+  it("does not restore a cleared PR while removing foreign agent context", () => {
+    const pickerPr = prAttachment(makePrItem(202, "Picker PR"), "new-workspace-picker");
+    const currentHostAgent = agentContextAttachment("server-b", "source-b");
+    const foreignHostAgent = agentContextAttachment("server-a", "source-a");
+    const issue = issueAttachment(44);
+
+    expect(
+      clearAttachmentsForWorkspaceHostChange({
+        attachments: [issue, pickerPr, currentHostAgent, foreignHostAgent],
+        currentTargetId: "server-a",
+        nextTargetId: "server-b",
+        nextServerId: "server-b",
+      }),
+    ).toEqual([issue, currentHostAgent]);
+  });
+});
+
+describe("reconcileNewWorkspaceHostAttachments", () => {
+  it("defers an automatic host cleanup until the persisted draft is hydrated", () => {
+    const pickerPr = prAttachment(makePrItem(202, "Picker PR"), "new-workspace-picker");
+    const currentHostAgent = agentContextAttachment("server-b", "source-b");
+    const foreignHostAgent = agentContextAttachment("server-a", "source-a");
+    const issue = issueAttachment(44);
+    const attachments = [issue, pickerPr, currentHostAgent, foreignHostAgent];
+
+    const beforeHydration = reconcileNewWorkspaceHostAttachments({
+      attachments,
+      isHydrated: false,
+      previousServerId: "server-a",
+      selectedServerId: "server-b",
+    });
+
+    expect(beforeHydration).toEqual({
+      attachments,
+      didChangeHost: false,
+      previousServerId: "server-a",
+    });
+
+    expect(
+      reconcileNewWorkspaceHostAttachments({
+        ...beforeHydration,
+        isHydrated: true,
+        selectedServerId: "server-b",
+      }),
+    ).toEqual({
+      attachments: [issue, currentHostAgent],
+      didChangeHost: true,
+      previousServerId: "server-b",
+    });
+  });
+
+  it("reconciles a hydrated draft against its initially selected host", () => {
+    const pickerPr = prAttachment(makePrItem(202, "Picker PR"), "new-workspace-picker");
+    const currentHostAgent = agentContextAttachment("server-b", "source-b");
+    const foreignHostAgent = agentContextAttachment("server-a", "source-a");
+    const issue = issueAttachment(44);
+
+    expect(
+      reconcileNewWorkspaceHostAttachments({
+        attachments: [issue, pickerPr, currentHostAgent, foreignHostAgent],
+        isHydrated: true,
+        previousServerId: "server-b",
+        selectedServerId: "server-b",
+      }),
+    ).toEqual({
+      attachments: [issue, pickerPr, currentHostAgent],
+      didChangeHost: false,
+      previousServerId: "server-b",
+    });
+  });
+
+  it("does not rewrite attachments when the effective host is unchanged", () => {
+    const attachments = [issueAttachment(44), agentContextAttachment("server-b", "source-b")];
+
+    const result = reconcileNewWorkspaceHostAttachments({
+      attachments,
+      isHydrated: true,
+      previousServerId: "server-b",
+      selectedServerId: "server-b",
+    });
+
+    expect(result).toEqual({
+      attachments,
+      didChangeHost: false,
+      previousServerId: "server-b",
+    });
+    expect(result.attachments).toBe(attachments);
   });
 });
 

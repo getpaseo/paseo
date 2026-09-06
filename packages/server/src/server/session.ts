@@ -65,7 +65,12 @@ import { loadPersistedConfig } from "./persisted-config.js";
 import { releaseWorkspaceServicePortPlan } from "./workspace-service-port-registry.js";
 import { getErrorMessage, getErrorMessageOr } from "@getpaseo/protocol/error-utils";
 import { getAgentStatusPriority } from "@getpaseo/protocol/agent-state-bucket";
-import { getParentAgentIdFromLabels } from "@getpaseo/protocol/agent-labels";
+import { getParentAgentIdFromLabels, isDelegatedAgent } from "@getpaseo/protocol/agent-labels";
+import {
+  MAX_AGENT_CONTEXT_ATTACHMENTS,
+  MAX_AGENT_CONTEXT_ATTACHMENTS_TOTAL_BYTES,
+  MAX_AGENT_CONTEXT_TIMELINE_SCAN_ROWS,
+} from "@getpaseo/protocol/agent-context-limits";
 import type { WorkspaceGitRuntimeSnapshot, WorkspaceGitService } from "./workspace-git-service.js";
 import type { ProjectUpdate } from "./workspace-reconciliation-service.js";
 import {
@@ -121,7 +126,11 @@ import {
   type TimelineProjectionEntry,
   type TimelineProjectionMode,
 } from "./agent/timeline-projection.js";
-import { buildAgentForkContextAttachment } from "./agent/activity-curator.js";
+import {
+  AGENT_CONTEXT_ATTACHMENT_MAX_BYTES,
+  buildAgentContextAttachment,
+  buildAgentForkContextAttachment,
+} from "./agent/activity-curator.js";
 import { buildAgentPrompt } from "./agent/prompt-attachments.js";
 import type { StructuredGenerationDaemonConfig } from "./agent/structured-generation-providers.js";
 import {
@@ -335,6 +344,26 @@ function beginAgentDeleteIfSupported(agentStorage: AgentStorage, agentId: string
 }
 
 const FETCH_AGENTS_SORT_KEYS = ["status_priority", "created_at", "updated_at", "title"] as const;
+interface AgentContextSource {
+  liveAgent: ManagedAgent | null;
+  storedRecord: StoredAgentRecord | null;
+}
+
+function assertAgentContextSourceIsAttachable(input: AgentContextSource, agentId: string): void {
+  const { liveAgent, storedRecord } = input;
+  if ((!liveAgent && !storedRecord) || liveAgent?.internal || storedRecord?.internal) {
+    throw new Error(`Agent context unavailable: agent not found: ${agentId}`);
+  }
+  if (storedRecord?.archivedAt) {
+    throw new Error("Agent context unavailable: archived agents cannot be attached.");
+  }
+  if (
+    (liveAgent && isDelegatedAgent(liveAgent)) ||
+    (storedRecord && isDelegatedAgent(storedRecord))
+  ) {
+    throw new Error("Agent context unavailable: delegated agents cannot be attached.");
+  }
+}
 
 export function resolveWaitForFinishError(options: {
   status: "permission" | "error" | "idle";
@@ -3483,6 +3512,127 @@ export class Session {
   }
 
   /**
+   * Resolve daemon-local agent references immediately before the operation
+   * consumes attachments. Only retained timeline rows are read: this must not
+   * resume a closed provider session or create a new provider runtime.
+   */
+  private async resolveAgentContextAttachments(
+    attachments: AgentAttachment[] | undefined,
+    options?: { targetAgentId?: string },
+  ): Promise<AgentAttachment[] | undefined> {
+    if (!attachments?.some((attachment) => attachment.type === "agent_context")) {
+      return attachments;
+    }
+    // A write or manage operation can carry an agent context reference, but it
+    // does not grant access to the referenced agent's retained timeline.
+    if (!this.allowsPermission("workspace.read")) {
+      throw new Error("Session is not authorized to read agent context.");
+    }
+
+    const uniqueReferences: Extract<AgentAttachment, { type: "agent_context" }>[] = [];
+    const seenAgentIds = new Set<string>();
+    for (const attachment of attachments) {
+      if (attachment.type !== "agent_context" || seenAgentIds.has(attachment.agentId)) {
+        continue;
+      }
+      seenAgentIds.add(attachment.agentId);
+      uniqueReferences.push(attachment);
+    }
+    if (uniqueReferences.length > MAX_AGENT_CONTEXT_ATTACHMENTS) {
+      throw new Error(
+        `A message can include at most ${MAX_AGENT_CONTEXT_ATTACHMENTS} agent context attachments.`,
+      );
+    }
+
+    // Three full 128 KiB contexts fit in the aggregate cap. When more are
+    // attached, allocate evenly so later selections retain useful context too.
+    const maxBytesPerAttachment = Math.min(
+      AGENT_CONTEXT_ATTACHMENT_MAX_BYTES,
+      Math.floor(MAX_AGENT_CONTEXT_ATTACHMENTS_TOTAL_BYTES / uniqueReferences.length),
+    );
+    const resolvedByAgentId = new Map<string, Extract<AgentAttachment, { type: "text" }>>();
+    for (const reference of uniqueReferences) {
+      resolvedByAgentId.set(
+        reference.agentId,
+        await this.resolveAgentContextAttachment(reference, {
+          targetAgentId: options?.targetAgentId,
+          maxBytes: maxBytesPerAttachment,
+        }),
+      );
+    }
+
+    const resolved: AgentAttachment[] = [];
+    const emittedAgentIds = new Set<string>();
+    for (const attachment of attachments) {
+      if (attachment.type !== "agent_context") {
+        resolved.push(attachment);
+        continue;
+      }
+      if (emittedAgentIds.has(attachment.agentId)) {
+        continue;
+      }
+      emittedAgentIds.add(attachment.agentId);
+      const context = resolvedByAgentId.get(attachment.agentId);
+      if (!context) {
+        throw new Error(`Agent context unavailable: ${attachment.agentId}`);
+      }
+      resolved.push(context);
+    }
+    return resolved;
+  }
+
+  private async resolveAgentContextAttachment(
+    reference: Extract<AgentAttachment, { type: "agent_context" }>,
+    options: { targetAgentId?: string; maxBytes: number },
+  ): Promise<Extract<AgentAttachment, { type: "text" }>> {
+    if (options.targetAgentId === reference.agentId) {
+      throw new Error("An agent cannot attach its own chat history.");
+    }
+
+    const source = await this.getAgentContextSource(reference.agentId);
+
+    const timeline = this.agentManager.fetchRetainedTimeline(reference.agentId, {
+      direction: "tail",
+      limit: MAX_AGENT_CONTEXT_TIMELINE_SCAN_ROWS,
+    });
+    if (!timeline) {
+      throw new Error(
+        "Agent context unavailable: open the source session on this host, then try again.",
+      );
+    }
+
+    return buildAgentContextAttachment({
+      rows: timeline.rows,
+      hasOlderRows: timeline.hasOlder,
+      maxBytes: options.maxBytes,
+      agentTitle: source.storedRecord?.title ?? null,
+      cwd: source.liveAgent?.cwd ?? source.storedRecord?.cwd ?? null,
+    }).attachment;
+  }
+
+  private async getAgentContextSource(agentId: string): Promise<AgentContextSource> {
+    const source = {
+      liveAgent: this.agentManager.getAgent(agentId),
+      storedRecord: await this.agentStorage.get(agentId),
+    };
+    assertAgentContextSourceIsAttachable(source, agentId);
+    return source;
+  }
+
+  private async resolveFirstAgentContextAttachments(
+    firstAgentContext: FirstAgentContext | undefined,
+  ): Promise<FirstAgentContext | undefined> {
+    if (!firstAgentContext) {
+      return firstAgentContext;
+    }
+    const attachments = await this.resolveAgentContextAttachments(firstAgentContext.attachments);
+    if (attachments === firstAgentContext.attachments) {
+      return firstAgentContext;
+    }
+    return { ...firstAgentContext, ...(attachments ? { attachments } : {}) };
+  }
+
+  /**
    * Handle text message to agent (with optional image attachments)
    */
   private async handleSendAgentMessage(
@@ -3510,10 +3660,12 @@ export class Session {
       }`,
     );
 
-    const promptText = options?.spokenInput ? wrapSpokenInput(text) : text;
-    const prompt = buildAgentPrompt(promptText, images, attachments);
-
     try {
+      const promptText = options?.spokenInput ? wrapSpokenInput(text) : text;
+      const resolvedAttachments = await this.resolveAgentContextAttachments(attachments, {
+        targetAgentId: agentId,
+      });
+      const prompt = buildAgentPrompt(promptText, images, resolvedAttachments);
       await sendPromptToAgent({
         agentManager: this.agentManager,
         agentStorage: this.agentStorage,
@@ -3623,6 +3775,7 @@ export class Session {
     let createdWorktreeForCleanup: CreatePaseoWorktreeWorkflowResult | null = null;
     let createdAgentId: string | null = null;
     try {
+      const resolvedAttachments = await this.resolveAgentContextAttachments(attachments);
       const requestedCwd = resolve(config.cwd);
       const needsRequestedDirectory =
         Boolean(worktreeName || git || worktree) || (!msg.workspaceId && !msg.callerAgentId);
@@ -3637,7 +3790,9 @@ export class Session {
 
       const firstAgentContext: FirstAgentContext = {
         ...(trimmedPrompt ? { prompt: trimmedPrompt } : {}),
-        ...(attachments && attachments.length > 0 ? { attachments } : {}),
+        ...(resolvedAttachments && resolvedAttachments.length > 0
+          ? { attachments: resolvedAttachments }
+          : {}),
       };
       const workspacePromptTitle = resolveFirstAgentPromptTitle(firstAgentContext);
       const createdWorktree = await this.createAgentLifecycleDispatch.createWorktreeForRequest({
@@ -3676,7 +3831,7 @@ export class Session {
           clientMessageId,
           outputSchema,
           images,
-          attachments,
+          attachments: resolvedAttachments,
           git,
           labels: resolvedIntent.intent.labels,
           env,
@@ -6047,11 +6202,18 @@ export class Session {
     request: Extract<SessionInboundMessage, { type: "workspace.create.request" }>,
   ): Promise<void> {
     try {
-      if (request.source.kind === "directory") {
-        await this.handleWorkspaceCreateLocal(request);
+      const firstAgentContext = await this.resolveFirstAgentContextAttachments(
+        request.firstAgentContext,
+      );
+      const resolvedRequest =
+        firstAgentContext === request.firstAgentContext
+          ? request
+          : { ...request, firstAgentContext };
+      if (resolvedRequest.source.kind === "directory") {
+        await this.handleWorkspaceCreateLocal(resolvedRequest);
         return;
       }
-      await this.handleWorkspaceCreateWorktree(request);
+      await this.handleWorkspaceCreateWorktree(resolvedRequest);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to create workspace";
       this.sessionLogger.error(
@@ -6688,17 +6850,46 @@ export class Session {
   private async handleCreatePaseoWorktreeRequest(
     request: Extract<SessionInboundMessage, { type: "create_paseo_worktree_request" }>,
   ): Promise<void> {
-    return handleCreateWorktreeRequest(
-      {
-        paseoHome: this.paseoHome,
-        worktreesRoot: this.worktreesRoot,
-        describeWorkspaceRecord: (result) => this.describeCreatedWorktreeWorkspace(result),
-        emit: (message) => this.emit(message),
-        sessionLogger: this.sessionLogger,
-        createPaseoWorktreeWorkflow: (input) => this.createPaseoWorktreeWorkflow(input),
-      },
-      request,
-    );
+    try {
+      const resolvedRequest = request.firstAgentContext
+        ? {
+            ...request,
+            firstAgentContext: await this.resolveFirstAgentContextAttachments(
+              request.firstAgentContext,
+            ),
+          }
+        : {
+            ...request,
+            attachments: await this.resolveAgentContextAttachments(request.attachments),
+          };
+      return await handleCreateWorktreeRequest(
+        {
+          paseoHome: this.paseoHome,
+          worktreesRoot: this.worktreesRoot,
+          describeWorkspaceRecord: (result) => this.describeCreatedWorktreeWorkspace(result),
+          emit: (message) => this.emit(message),
+          sessionLogger: this.sessionLogger,
+          createPaseoWorktreeWorkflow: (input) => this.createPaseoWorktreeWorkflow(input),
+        },
+        resolvedRequest,
+      );
+    } catch (error) {
+      const wireError = toWorktreeWireError(error);
+      this.sessionLogger.error(
+        { err: error, cwd: request.cwd, worktreeSlug: request.worktreeSlug },
+        "Failed to resolve worktree agent context",
+      );
+      this.emit({
+        type: "create_paseo_worktree_response",
+        payload: {
+          workspace: null,
+          error: wireError.message,
+          errorCode: wireError.code,
+          setupTerminalId: null,
+          requestId: request.requestId,
+        },
+      });
+    }
   }
 
   private async createPaseoWorktreeWorkflow(
@@ -7497,7 +7688,10 @@ export class Session {
     try {
       const agentId = resolved.agentId;
 
-      const prompt = buildAgentPrompt(msg.text, msg.images, msg.attachments);
+      const attachments = await this.resolveAgentContextAttachments(msg.attachments, {
+        targetAgentId: agentId,
+      });
+      const prompt = buildAgentPrompt(msg.text, msg.images, attachments);
       this.sessionLogger.trace(
         {
           agentId,

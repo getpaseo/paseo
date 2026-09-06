@@ -109,6 +109,7 @@ import {
 import {
   clearPickerPrAttachmentForTargetChange,
   initialPickerSelectionState,
+  reconcileNewWorkspaceHostAttachments,
   reducePickerSelection,
   syncPickerPrAttachment,
 } from "./new-workspace-picker-state";
@@ -1821,10 +1822,34 @@ export function NewWorkspaceScreen({
       });
       if (nextAttachments === chatDraft.attachments) return;
       chatDraft.setAttachments(nextAttachments);
-      dispatchPickerSelection({ type: "target-changed" });
+      if (currentTargetId !== nextTargetId) {
+        dispatchPickerSelection({ type: "target-changed" });
+      }
     },
     [chatDraft],
   );
+
+  const previousSelectedServerIdRef = useRef(selectedServerId);
+  const {
+    attachments: draftAttachments,
+    isHydrated: isChatDraftHydrated,
+    setAttachments: setDraftAttachments,
+  } = chatDraft;
+  useEffect(() => {
+    const nextHostAttachments = reconcileNewWorkspaceHostAttachments({
+      attachments: draftAttachments,
+      isHydrated: isChatDraftHydrated,
+      previousServerId: previousSelectedServerIdRef.current,
+      selectedServerId,
+    });
+    previousSelectedServerIdRef.current = nextHostAttachments.previousServerId;
+
+    if (nextHostAttachments.attachments !== draftAttachments) {
+      setDraftAttachments(nextHostAttachments.attachments);
+    }
+    if (!nextHostAttachments.didChangeHost) return;
+    dispatchPickerSelection({ type: "target-changed" });
+  }, [draftAttachments, isChatDraftHydrated, selectedServerId, setDraftAttachments]);
 
   const handleSelectProjectOption = useCallback(
     (id: string) => {
@@ -1841,9 +1866,8 @@ export function NewWorkspaceScreen({
   const handleSelectWorkspaceHost = useCallback(
     (id: string) => {
       handleSelectHost(id);
-      clearPickerSelectionForTargetChange(selectedServerId, id);
     },
-    [clearPickerSelectionForTargetChange, handleSelectHost, selectedServerId],
+    [handleSelectHost],
   );
 
   const handleAddProject = useCallback(() => {

@@ -1,11 +1,11 @@
 import { useCallback, useMemo, useReducer } from "react";
 import { useTranslation } from "react-i18next";
-import type { ComposerAttachment } from "@/attachments/types";
+import { hasForeignAgentContextAttachments, type ComposerAttachment } from "@/attachments/types";
 import {
   resolveComposerAttachmentSubmitFormat,
   splitComposerAttachmentsForSubmit,
 } from "@/composer/attachments/submit";
-import { useCreateFlowStore } from "@/stores/create-flow-store";
+import { useCreateFlowStore, type PendingCreateAttempt } from "@/stores/create-flow-store";
 import { handoffCreatedAgentMessageSubmission } from "@/composer/submission/writer";
 import { useSessionStore } from "@/stores/session-store";
 import {
@@ -19,12 +19,92 @@ import type { PendingMessageSubmission } from "@/composer/submission/model";
 
 const EMPTY_STREAM_ITEMS: StreamItem[] = [];
 
+function hasAgentContextAttachment(attachments: readonly ComposerAttachment[]): boolean {
+  return attachments.some((attachment) => attachment.kind === "agent_context");
+}
+
+function hasWireAgentContextAttachment(
+  attachments: readonly AgentAttachment[] | undefined,
+): boolean {
+  return attachments?.some((attachment) => attachment.type === "agent_context") ?? false;
+}
+
 interface CreateAttempt {
   clientMessageId: string;
   text: string;
   timestamp: Date;
   images?: UserMessageImageAttachment[];
   attachments?: AgentAttachment[];
+}
+
+function resolveAgentContextAttachmentError(input: {
+  attachments: readonly ComposerAttachment[];
+  pendingServerId: string;
+  supportsAgentContextAttachments: boolean;
+  updateHostMessage: string;
+  wrongHostMessage: string;
+}): string | null {
+  if (hasAgentContextAttachment(input.attachments) && !input.supportsAgentContextAttachments) {
+    return input.updateHostMessage;
+  }
+  if (hasForeignAgentContextAttachments(input.attachments, input.pendingServerId)) {
+    return input.wrongHostMessage;
+  }
+  return null;
+}
+
+function resolveDraftInputError(input: {
+  text: string;
+  attachments: readonly ComposerAttachment[];
+  cwd: string;
+  images: readonly UserMessageImageAttachment[];
+  wireAttachments: readonly AgentAttachment[];
+  allowEmptyText: boolean;
+  initialPromptRequiredMessage: string;
+  validateBeforeSubmit?: (ctx: SubmitContext) => string | null;
+}): string | null {
+  const hasAttachmentContent = input.images.length > 0 || input.wireAttachments.length > 0;
+  if (!input.text && !hasAttachmentContent && !input.allowEmptyText) {
+    return input.initialPromptRequiredMessage;
+  }
+  return (
+    input.validateBeforeSubmit?.({
+      text: input.text,
+      attachments: [...input.attachments],
+      cwd: input.cwd,
+    }) ?? null
+  );
+}
+
+function buildCreateAttempt(input: {
+  text: string;
+  images: UserMessageImageAttachment[];
+  attachments: AgentAttachment[];
+}): CreateAttempt {
+  return {
+    clientMessageId: generateMessageId(),
+    text: input.text,
+    timestamp: new Date(),
+    ...(input.images.length > 0 ? { images: input.images } : {}),
+    ...(input.attachments.length > 0 ? { attachments: input.attachments } : {}),
+  };
+}
+
+function buildPendingCreateAttempt(input: {
+  draftId: string;
+  serverId: string;
+  attempt: CreateAttempt;
+}): Omit<PendingCreateAttempt, "lifecycle"> {
+  return {
+    draftId: input.draftId,
+    serverId: input.serverId,
+    agentId: null,
+    clientMessageId: input.attempt.clientMessageId,
+    text: input.attempt.text,
+    timestamp: input.attempt.timestamp.getTime(),
+    ...(input.attempt.images?.length ? { images: input.attempt.images } : {}),
+    ...(input.attempt.attachments?.length ? { attachments: input.attempt.attachments } : {}),
+  };
 }
 
 type DraftAgentMachineState<TDraftAgent> =
@@ -197,6 +277,15 @@ export function useDraftAgentCreateFlow<TDraftAgent, TCreateResult>({
       }
 
       try {
+        const supportsAgentContextAttachments =
+          useSessionStore.getState().sessions[pendingServerId]?.serverInfo?.features
+            ?.agentContextAttachments === true;
+        if (
+          hasWireAgentContextAttachment(attempt.attachments) &&
+          !supportsAgentContextAttachments
+        ) {
+          throw new Error(t("agentContext.status.updateHost"));
+        }
         await onBeforeSubmit?.({
           attempt,
           text: attempt.text,
@@ -267,55 +356,57 @@ export function useDraftAgentCreateFlow<TDraftAgent, TCreateResult>({
         dispatch({ type: "DRAFT_SET_ERROR", message: error.message });
         throw error;
       }
-      const supportsForgeSearch =
-        useSessionStore.getState().sessions[pendingServerId]?.serverInfo?.features?.forgeSearch ===
-        true;
+      const serverFeatures =
+        useSessionStore.getState().sessions[pendingServerId]?.serverInfo?.features;
+      const agentContextError = resolveAgentContextAttachmentError({
+        attachments,
+        pendingServerId,
+        supportsAgentContextAttachments: serverFeatures?.agentContextAttachments === true,
+        updateHostMessage: t("agentContext.status.updateHost"),
+        wrongHostMessage: t("agentContext.status.wrongHost"),
+      });
+      if (agentContextError) {
+        const error = new Error(agentContextError);
+        dispatch({ type: "DRAFT_SET_ERROR", message: error.message });
+        throw error;
+      }
       const wirePayload = splitComposerAttachmentsForSubmit(attachments, {
         format: resolveComposerAttachmentSubmitFormat({
-          supportsForgeAttachments: supportsForgeSearch,
+          supportsForgeAttachments: serverFeatures?.forgeSearch === true,
         }),
       });
       const images = wirePayload.images;
 
-      const hasAttachmentContent = images.length > 0 || wirePayload.attachments.length > 0;
-      if (!trimmedPrompt && !hasAttachmentContent && !allowEmptyText) {
-        const error = new Error(t("composer.errors.initialPromptRequired"));
-        dispatch({ type: "DRAFT_SET_ERROR", message: error.message });
-        throw error;
-      }
-
-      const validationError = validateBeforeSubmit?.({
+      const inputError = resolveDraftInputError({
         text: trimmedPrompt,
         attachments,
         cwd,
+        images,
+        wireAttachments: wirePayload.attachments,
+        allowEmptyText,
+        initialPromptRequiredMessage: t("composer.errors.initialPromptRequired"),
+        validateBeforeSubmit,
       });
-      if (validationError) {
-        const error = new Error(validationError);
-        dispatch({ type: "DRAFT_SET_ERROR", message: validationError });
+      if (inputError) {
+        const error = new Error(inputError);
+        dispatch({ type: "DRAFT_SET_ERROR", message: inputError });
         throw error;
       }
 
-      const attempt: CreateAttempt = {
-        clientMessageId: generateMessageId(),
+      const attempt = buildCreateAttempt({
         text: trimmedPrompt,
-        timestamp: new Date(),
-        ...(images && images.length > 0 ? { images } : {}),
-        ...(wirePayload.attachments.length > 0 ? { attachments: wirePayload.attachments } : {}),
-      };
+        images,
+        attachments: wirePayload.attachments,
+      });
 
       startCreateAttempt(attempt);
-      setPendingCreateAttempt({
-        draftId,
-        serverId: pendingServerId,
-        agentId: null,
-        clientMessageId: attempt.clientMessageId,
-        text: attempt.text,
-        timestamp: attempt.timestamp.getTime(),
-        ...(attempt.images && attempt.images.length > 0 ? { images: attempt.images } : {}),
-        ...(attempt.attachments && attempt.attachments.length > 0
-          ? { attachments: attempt.attachments }
-          : {}),
-      });
+      setPendingCreateAttempt(
+        buildPendingCreateAttempt({
+          draftId,
+          serverId: pendingServerId,
+          attempt,
+        }),
+      );
 
       onCreateStart?.();
       await runCreateAttempt({ attempt, cwd });

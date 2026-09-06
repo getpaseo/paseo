@@ -14,10 +14,13 @@ import {
 } from "@getpaseo/protocol/search/text-match";
 
 /**
- * History search ranks what the daemon already knows about a session: the four
- * names attached to it. Transcripts are deliberately out — they are unbounded,
- * and a partial-transcript index would answer "not found" for sessions that do
- * contain the phrase, which is worse than never claiming to search them.
+ * History search ranks the session names first, then its working directory and
+ * id. `@` agent mentions already match those two identifiers, so excluding
+ * them here would make older matches disappear once the client uses the
+ * complete daemon-side search. Transcripts are deliberately out — they are
+ * unbounded, and a partial-transcript index would answer "not found" for
+ * sessions that do contain the phrase, which is worse than never claiming to
+ * search them.
  *
  * Field order is the tie-break order. Workspace and agent titles are what
  * people actually recall; a project name matches every session in the repo, so
@@ -34,32 +37,41 @@ const SEARCH_FIELDS = ["workspace", "title", "branch", "project"] as const;
 
 type SearchField = (typeof SEARCH_FIELDS)[number];
 
-function searchableFields(candidate: AgentHistorySearchCandidate): string[] {
+interface SearchableField {
+  value: string;
+  /** Only rendered names have a wire highlight field. */
+  displayField: SearchField | null;
+}
+
+function searchableFields(candidate: AgentHistorySearchCandidate): SearchableField[] {
   const { agent, project } = candidate;
   return [
-    project.workspaceName ?? "",
-    agent.title ?? "",
-    project.checkout.currentBranch ?? "",
-    project.projectName,
+    { value: project.workspaceName ?? "", displayField: "workspace" },
+    { value: agent.title ?? "", displayField: "title" },
+    { value: project.checkout.currentBranch ?? "", displayField: "branch" },
+    { value: project.projectName, displayField: "project" },
+    { value: agent.cwd, displayField: null },
+    { value: agent.id, displayField: null },
   ];
 }
 
 interface FieldMatch {
   score: MatchScore;
   fieldRank: number;
+  displayField: SearchField | null;
   token: string;
 }
 
-function bestFieldMatch(token: string, fields: string[]): FieldMatch | null {
+function bestFieldMatch(token: string, fields: readonly SearchableField[]): FieldMatch | null {
   const fuzzy = fuzzyPolicyForToken(token);
   let best: FieldMatch | null = null;
   for (let fieldRank = 0; fieldRank < fields.length; fieldRank += 1) {
     const field = fields[fieldRank];
-    if (!field) continue;
-    const score = scoreMatch(token, field, { fuzzy });
+    if (!field?.value) continue;
+    const score = scoreMatch(token, field.value, { fuzzy });
     if (!score) continue;
     if (!best || compareMatchScores(score, best.score) < 0) {
-      best = { score, fieldRank, token };
+      best = { score, fieldRank, displayField: field.displayField, token };
     }
   }
   return best;
@@ -139,9 +151,14 @@ export function describeAgentHistoryMatches(
   const fields = searchableFields(candidate);
   const rangesByField = new Map<SearchField, MatchRange[]>();
   for (const match of matches) {
-    const field = SEARCH_FIELDS[match.fieldRank];
-    const ranges = matchRanges(match.token, fields[match.fieldRank], match.score);
-    rangesByField.set(field, [...(rangesByField.get(field) ?? []), ...ranges]);
+    if (!match.displayField) continue;
+    const field = fields[match.fieldRank];
+    if (!field) continue;
+    const ranges = matchRanges(match.token, field.value, match.score);
+    rangesByField.set(match.displayField, [
+      ...(rangesByField.get(match.displayField) ?? []),
+      ...ranges,
+    ]);
   }
 
   return [...rangesByField.entries()].map(([field, ranges]) => ({

@@ -2958,6 +2958,124 @@ describe("HostRuntimeStore", () => {
     sessionStore.clearSession(host.serverId);
   });
 
+  it("keeps queued agent context unsent when the daemon lacks its capability", async () => {
+    const host = makeHost({ serverId: "srv_legacy_agent_context_attachment" });
+    const fakeClient = new FakeDaemonClient();
+    const store = new HostRuntimeStore({
+      deps: {
+        createClient: () => fakeClient as unknown as DaemonClient,
+        connectToDaemon: async () => ({
+          client: fakeClient as unknown as DaemonClient,
+          serverId: host.serverId,
+          hostname: null,
+        }),
+        getClientId: async () => "cid_legacy_agent_context_attachment",
+      },
+    });
+    const queuedMessage = {
+      id: "queued-agent-context",
+      text: "Use the prior agent's work",
+      attachments: [
+        {
+          kind: "agent_context" as const,
+          source: {
+            serverId: host.serverId,
+            agentId: "source-agent",
+            title: "Source agent",
+          },
+        },
+      ],
+    };
+    const sessionStore = useSessionStore.getState();
+    sessionStore.initializeSession(host.serverId, fakeClient as unknown as DaemonClient, 1);
+    sessionStore.updateSessionServerInfo(host.serverId, {
+      serverId: host.serverId,
+      hostname: null,
+      version: "0.1.105",
+      features: { forgeSearch: false },
+    });
+    sessionStore.setQueuedMessages(host.serverId, new Map([["agent", [queuedMessage]]]));
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    try {
+      store.drainQueuedAgentMessage(host.serverId, "agent");
+
+      await vi.waitFor(() => {
+        expect(consoleError).toHaveBeenCalledWith(
+          "[HostRuntime] failed to drain queued agent message",
+          expect.objectContaining({ serverId: host.serverId, agentId: "agent" }),
+        );
+      });
+
+      expect(fakeClient.sentAgentMessages).toEqual([]);
+      expect(
+        useSessionStore.getState().sessions[host.serverId]?.queuedMessages.get("agent"),
+      ).toEqual([queuedMessage]);
+    } finally {
+      consoleError.mockRestore();
+      sessionStore.clearSession(host.serverId);
+    }
+  });
+
+  it("keeps queued agent context unsent after its draft moved to another host", async () => {
+    const host = makeHost({ serverId: "srv_agent_context_destination" });
+    const fakeClient = new FakeDaemonClient();
+    const store = new HostRuntimeStore({
+      deps: {
+        createClient: () => fakeClient as unknown as DaemonClient,
+        connectToDaemon: async () => ({
+          client: fakeClient as unknown as DaemonClient,
+          serverId: host.serverId,
+          hostname: null,
+        }),
+        getClientId: async () => "cid_agent_context_destination",
+      },
+    });
+    const queuedMessage = {
+      id: "queued-foreign-agent-context",
+      text: "Use the prior agent's work",
+      attachments: [
+        {
+          kind: "agent_context" as const,
+          source: {
+            serverId: "srv_agent_context_source",
+            agentId: "source-agent",
+            title: "Source agent",
+          },
+        },
+      ],
+    };
+    const sessionStore = useSessionStore.getState();
+    sessionStore.initializeSession(host.serverId, fakeClient as unknown as DaemonClient, 1);
+    sessionStore.updateSessionServerInfo(host.serverId, {
+      serverId: host.serverId,
+      hostname: null,
+      version: "0.2.0",
+      features: { agentContextAttachments: true, forgeSearch: false },
+    });
+    sessionStore.setQueuedMessages(host.serverId, new Map([["agent", [queuedMessage]]]));
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    try {
+      store.drainQueuedAgentMessage(host.serverId, "agent");
+
+      await vi.waitFor(() => {
+        expect(consoleError).toHaveBeenCalledWith(
+          "[HostRuntime] failed to drain queued agent message",
+          expect.objectContaining({ serverId: host.serverId, agentId: "agent" }),
+        );
+      });
+
+      expect(fakeClient.sentAgentMessages).toEqual([]);
+      expect(
+        useSessionStore.getState().sessions[host.serverId]?.queuedMessages.get("agent"),
+      ).toEqual([queuedMessage]);
+    } finally {
+      consoleError.mockRestore();
+      sessionStore.clearSession(host.serverId);
+    }
+  });
+
   it("applies buffered stale side effects from the accepted page agent", async () => {
     const host = makeHost({
       serverId: "srv_buffered_stale_side_effects",

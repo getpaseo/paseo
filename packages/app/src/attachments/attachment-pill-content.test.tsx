@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { i18n } from "@/i18n/i18next";
-import { getAgentAttachmentPillContent } from "./attachment-pill-content";
+import {
+  getAgentAttachmentPillContent,
+  getAgentContextAttachmentPillContent,
+} from "./attachment-pill-content";
 
 describe("agent attachment pill content", () => {
   it("presents external resources with their provider identity", () => {
@@ -25,5 +28,37 @@ describe("agent attachment pill content", () => {
 
     expect(content.title).toBe("Plugin attachments");
     expect(content.subtitle).toBe("Linear issue ENG-123");
+  });
+
+  it("labels a sent agent reference even when the optional wire title is absent", () => {
+    const content = getAgentAttachmentPillContent(
+      {
+        type: "agent_context",
+        agentId: "agent-source",
+      },
+      i18n.t,
+    );
+
+    expect(content.title).toBe("Agent context");
+    expect(content.subtitle).toBe("Agent context");
+  });
+
+  it("uses persisted source presentation metadata in the composer pill", () => {
+    const content = getAgentContextAttachmentPillContent(
+      {
+        kind: "agent_context",
+        source: {
+          serverId: "server-a",
+          agentId: "agent-source",
+          title: "Investigate auth race",
+          workspaceLabel: "Paseo",
+          provider: "codex",
+        },
+      },
+      i18n.t,
+    );
+
+    expect(content.title).toBe("Investigate auth race");
+    expect(content.subtitle).toBe("Paseo");
   });
 });

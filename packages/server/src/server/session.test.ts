@@ -1,5 +1,6 @@
 import { createAgentRequestsStub } from "./test-utils/session-stubs.js";
 import { execSync } from "child_process";
+import { Buffer } from "node:buffer";
 import { existsSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join, resolve as resolvePath } from "path";
@@ -12,7 +13,7 @@ import {
 } from "../services/github-service.js";
 import { PARENT_AGENT_ID_LABEL } from "@getpaseo/protocol/agent-labels";
 import { CLIENT_CAPS } from "@getpaseo/protocol/client-capabilities";
-import type { WorkspaceDescriptorPayload } from "@getpaseo/protocol/messages";
+import type { AgentAttachment, WorkspaceDescriptorPayload } from "@getpaseo/protocol/messages";
 import {
   decodeFileTransferFrame,
   encodeFileTransferFrame,
@@ -24,7 +25,7 @@ import { OWNER_PERMISSIONS, type DaemonPermission } from "./authorization/index.
 import { DownloadTokenStore } from "./file-download/token-store.js";
 import { StructuredAgentFallbackError } from "./agent/agent-response-loop.js";
 import type { StoredAgentRecord } from "./agent/agent-storage.js";
-import type { AgentManagerEvent } from "./agent/agent-manager.js";
+import type { AgentManagerEvent, ManagedAgent } from "./agent/agent-manager.js";
 import type { ProviderSnapshotManager } from "./agent/provider-snapshot-manager.js";
 import { WorkspaceLabelError, type WorkspaceLabelService } from "./workspace-labels/index.js";
 import { createPersistedProjectRecord } from "./workspace-registry.js";
@@ -85,6 +86,10 @@ interface SessionHandlerInternals {
   handleStashPopRequest(params: unknown): Promise<unknown>;
   createPaseoWorktree(params: unknown): Promise<unknown>;
   handleStartWorkspaceScriptRequest(params: unknown): Promise<unknown>;
+  resolveAgentContextAttachments(
+    attachments: AgentAttachment[] | undefined,
+    options?: { targetAgentId?: string },
+  ): Promise<AgentAttachment[] | undefined>;
 }
 
 function asSessionInternals(session: Session): SessionHandlerInternals {
@@ -1377,6 +1382,313 @@ function createStoredAgentRecord(
     archivedAt: overrides.archivedAt ?? null,
   };
 }
+
+function retainedTimelineWithAssistant(text: string) {
+  return {
+    epoch: "retained-timeline",
+    direction: "tail" as const,
+    reset: false,
+    staleCursor: false,
+    gap: false,
+    window: { minSeq: 1, maxSeq: 1, nextSeq: 2 },
+    hasOlder: false,
+    hasNewer: false,
+    rows: [
+      {
+        seq: 1,
+        timestamp: "2026-07-22T00:00:00.000Z",
+        item: { type: "assistant_message" as const, text },
+      },
+    ],
+  };
+}
+
+test("resolves an agent reference from retained history without loading the provider session", async () => {
+  const sourceAgentId = "source-agent";
+  const getAgent = vi.fn(() => null);
+  const fetchRetainedTimeline = vi.fn(() => retainedTimelineWithAssistant("Retained answer."));
+  const session = createSessionForTest({
+    agentManager: { getAgent, fetchRetainedTimeline },
+    agentStorage: {
+      get: vi.fn(async () =>
+        createStoredAgentRecord({
+          id: sourceAgentId,
+          cwd: "/tmp/source",
+          title: "Stored source",
+        }),
+      ),
+    },
+  });
+
+  const resolved = await asSessionInternals(session).resolveAgentContextAttachments([
+    { type: "agent_context", agentId: sourceAgentId, title: "Ignored client title" },
+  ]);
+
+  expect(resolved).toHaveLength(1);
+  expect(resolved?.[0]).toMatchObject({
+    type: "text",
+    contextKind: "chat_history",
+    title: "Chat history",
+  });
+  const attachment = resolved?.[0];
+  if (attachment?.type !== "text") {
+    throw new Error("expected a resolved text attachment");
+  }
+  expect(attachment.text).toContain("Source agent: Stored source");
+  expect(attachment.text).toContain("Retained answer.");
+  expect(attachment.text).not.toContain("Ignored client title");
+  expect(getAgent).toHaveBeenCalledWith(sourceAgentId);
+  expect(fetchRetainedTimeline).toHaveBeenCalledWith(sourceAgentId, {
+    direction: "tail",
+    limit: 25_000,
+  });
+});
+
+test.each([
+  ["workspace.write", ["workspace.write"]],
+  ["workspace.manage", ["workspace.manage"]],
+] as const)(
+  "requires workspace.read before resolving agent context for a %s session",
+  async (_permission, permissions) => {
+    const sourceAgentId = "source-agent";
+    const getAgent = vi.fn(() => null);
+    const getStoredAgent = vi.fn(async () =>
+      createStoredAgentRecord({ id: sourceAgentId, cwd: "/tmp/source" }),
+    );
+    const fetchRetainedTimeline = vi.fn(() => retainedTimelineWithAssistant("Should not be read."));
+    const session = createSessionForTest({
+      permissions,
+      agentManager: { getAgent, fetchRetainedTimeline },
+      agentStorage: { get: getStoredAgent },
+    });
+
+    await expect(
+      asSessionInternals(session).resolveAgentContextAttachments([
+        { type: "agent_context", agentId: sourceAgentId },
+      ]),
+    ).rejects.toThrow("not authorized to read agent context");
+
+    expect(getAgent).not.toHaveBeenCalled();
+    expect(getStoredAgent).not.toHaveBeenCalled();
+    expect(fetchRetainedTimeline).not.toHaveBeenCalled();
+  },
+);
+
+test("rejects unsafe agent context references before reading retained history", async () => {
+  const sourceAgentId = "source-agent";
+  const fetchRetainedTimeline = vi.fn(() => retainedTimelineWithAssistant("Should not be read."));
+  const session = createSessionForTest({
+    agentManager: {
+      getAgent: vi.fn(() => null),
+      fetchRetainedTimeline,
+    },
+    agentStorage: {
+      get: vi.fn(async () =>
+        createStoredAgentRecord({
+          id: sourceAgentId,
+          cwd: "/tmp/source",
+          archivedAt: "2026-07-22T00:00:00.000Z",
+        }),
+      ),
+    },
+  });
+
+  await expect(
+    asSessionInternals(session).resolveAgentContextAttachments([
+      { type: "agent_context", agentId: sourceAgentId },
+    ]),
+  ).rejects.toThrow("archived agents cannot be attached");
+  expect(fetchRetainedTimeline).not.toHaveBeenCalled();
+});
+
+test.each(["stored", "live"] as const)(
+  "rejects an internal %s agent context source without reading retained history",
+  async (sourceKind) => {
+    const sourceAgentId = "internal-source-agent";
+    const fetchRetainedTimeline = vi.fn(() => retainedTimelineWithAssistant("Should not be read."));
+    const storedRecord = createStoredAgentRecord({
+      id: sourceAgentId,
+      cwd: "/tmp/internal-source",
+      internal: sourceKind === "stored",
+    });
+    const session = createSessionForTest({
+      agentManager: {
+        getAgent: vi.fn(() =>
+          sourceKind === "live"
+            ? ({
+                id: sourceAgentId,
+                cwd: "/tmp/internal-source",
+                internal: true,
+                labels: {},
+              } as ManagedAgent)
+            : null,
+        ),
+        fetchRetainedTimeline,
+      },
+      agentStorage: {
+        get: vi.fn(async () => (sourceKind === "stored" ? storedRecord : null)),
+      },
+    });
+
+    await expect(
+      asSessionInternals(session).resolveAgentContextAttachments([
+        { type: "agent_context", agentId: sourceAgentId },
+      ]),
+    ).rejects.toThrow(`agent not found: ${sourceAgentId}`);
+    expect(fetchRetainedTimeline).not.toHaveBeenCalled();
+  },
+);
+
+test("asks the user to open a valid source when its timeline is no longer retained", async () => {
+  const sourceAgentId = "source-without-retained-timeline";
+  const fetchRetainedTimeline = vi.fn(() => null);
+  const session = createSessionForTest({
+    agentManager: { getAgent: vi.fn(() => null), fetchRetainedTimeline },
+    agentStorage: {
+      get: vi.fn(async () => createStoredAgentRecord({ id: sourceAgentId, cwd: "/tmp/source" })),
+    },
+  });
+
+  await expect(
+    asSessionInternals(session).resolveAgentContextAttachments([
+      { type: "agent_context", agentId: sourceAgentId },
+    ]),
+  ).rejects.toThrow("open the source session on this host, then try again");
+  expect(fetchRetainedTimeline).toHaveBeenCalledTimes(1);
+});
+
+test("rejects delegated and self agent context references", async () => {
+  const sourceAgentId = "source-agent";
+  const fetchRetainedTimeline = vi.fn(() => retainedTimelineWithAssistant("Should not be read."));
+  const delegated = createSessionForTest({
+    agentManager: { getAgent: vi.fn(() => null), fetchRetainedTimeline },
+    agentStorage: {
+      get: vi.fn(async () =>
+        createStoredAgentRecord({
+          id: sourceAgentId,
+          cwd: "/tmp/source",
+          labels: { [PARENT_AGENT_ID_LABEL]: "parent-agent" },
+        }),
+      ),
+    },
+  });
+
+  await expect(
+    asSessionInternals(delegated).resolveAgentContextAttachments([
+      { type: "agent_context", agentId: sourceAgentId },
+    ]),
+  ).rejects.toThrow("delegated agents cannot be attached");
+
+  const self = createSessionForTest({
+    agentManager: { getAgent: vi.fn(), fetchRetainedTimeline },
+  });
+  await expect(
+    asSessionInternals(self).resolveAgentContextAttachments(
+      [{ type: "agent_context", agentId: sourceAgentId }],
+      { targetAgentId: sourceAgentId },
+    ),
+  ).rejects.toThrow("cannot attach its own chat history");
+  expect(fetchRetainedTimeline).not.toHaveBeenCalled();
+});
+
+test("deduplicates agent references and rejects more than five sources", async () => {
+  const fetchRetainedTimeline = vi.fn((agentId: string) => retainedTimelineWithAssistant(agentId));
+  const session = createSessionForTest({
+    agentManager: { getAgent: vi.fn(() => null), fetchRetainedTimeline },
+    agentStorage: {
+      get: vi.fn(async (agentId: string) =>
+        createStoredAgentRecord({ id: agentId, cwd: "/tmp/source" }),
+      ),
+    },
+  });
+
+  const deduplicated = await asSessionInternals(session).resolveAgentContextAttachments([
+    { type: "agent_context", agentId: "source-a" },
+    { type: "agent_context", agentId: "source-a", title: "Later duplicate" },
+  ]);
+  expect(deduplicated).toHaveLength(1);
+  expect(fetchRetainedTimeline).toHaveBeenCalledTimes(1);
+
+  await expect(
+    asSessionInternals(session).resolveAgentContextAttachments(
+      Array.from({ length: 6 }, (_, index) => ({
+        type: "agent_context" as const,
+        agentId: `source-${index}`,
+      })),
+    ),
+  ).rejects.toThrow("at most 5 agent context attachments");
+});
+
+test("caps aggregate resolved agent context bodies at 384 KiB", async () => {
+  const fetchRetainedTimeline = vi.fn((agentId: string) => ({
+    epoch: `retained-${agentId}`,
+    direction: "tail" as const,
+    reset: false,
+    staleCursor: false,
+    gap: false,
+    window: { minSeq: 1, maxSeq: 40, nextSeq: 41 },
+    hasOlder: false,
+    hasNewer: false,
+    rows: Array.from({ length: 40 }, (_, index) => ({
+      seq: index + 1,
+      timestamp: "2026-07-22T00:00:00.000Z",
+      item: {
+        type: "assistant_message" as const,
+        text: `${agentId} ${"x".repeat(4_000)}`,
+      },
+    })),
+  }));
+  const session = createSessionForTest({
+    agentManager: { getAgent: vi.fn(() => null), fetchRetainedTimeline },
+    agentStorage: {
+      get: vi.fn(async (agentId: string) => createStoredAgentRecord({ id: agentId, cwd: "/tmp" })),
+    },
+  });
+
+  const resolved = await asSessionInternals(session).resolveAgentContextAttachments(
+    Array.from({ length: 5 }, (_, index) => ({
+      type: "agent_context" as const,
+      agentId: `source-${index}`,
+    })),
+  );
+  const textBodies =
+    resolved?.flatMap((attachment) => (attachment.type === "text" ? [attachment.text] : [])) ?? [];
+
+  expect(textBodies).toHaveLength(5);
+  expect(
+    textBodies.reduce((total, text) => total + Buffer.byteLength(text, "utf8"), 0),
+  ).toBeLessThanOrEqual(384 * 1024);
+  expect(textBodies.every((text) => Buffer.byteLength(text, "utf8") <= 128 * 1024)).toBe(true);
+});
+
+test("returns a worktree response when agent context resolution fails", async () => {
+  const messages: SessionOutboundMessage[] = [];
+  const session = createSessionForTest({
+    messages,
+    agentManager: { getAgent: vi.fn(() => null) },
+    agentStorage: { get: vi.fn(async () => null) },
+  });
+
+  await session.handleMessage({
+    type: "create_paseo_worktree_request",
+    requestId: "req-agent-context-worktree",
+    cwd: "/tmp/repo",
+    firstAgentContext: {
+      attachments: [{ type: "agent_context", agentId: "missing-source" }],
+    },
+  });
+
+  expect(messages).toContainEqual({
+    type: "create_paseo_worktree_response",
+    payload: expect.objectContaining({
+      requestId: "req-agent-context-worktree",
+      workspace: null,
+      errorCode: "unknown",
+      error: "Agent context unavailable: agent not found: missing-source",
+    }),
+  });
+  expect(messages.some((message) => message.type === "rpc_error")).toBe(false);
+});
 
 describe("plugin timeline append RPC", () => {
   test("stamps the plugin identity and returns the timeline position", async () => {

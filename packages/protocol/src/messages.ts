@@ -1159,6 +1159,18 @@ export const TextAttachmentSchema = z
     ...(contextKind === "chat_history" ? { contextKind } : {}),
   }));
 
+/**
+ * A daemon-local reference to an existing Paseo agent. The client deliberately
+ * sends only identity/display metadata: the destination daemon resolves and
+ * curates retained history at submission time, so transcript bodies never
+ * travel through the client.
+ */
+export const AgentContextAttachmentSchema = z.object({
+  type: z.literal("agent_context"),
+  agentId: z.string().min(1),
+  title: z.string().optional(),
+});
+
 export const ReviewAttachmentContextLineSchema = z.object({
   oldLineNumber: z.number().int().positive().nullable(),
   newLineNumber: z.number().int().positive().nullable(),
@@ -1202,6 +1214,7 @@ export const AgentAttachmentSchema = z.discriminatedUnion("type", [
   GitHubPrAttachmentSchema,
   GitHubIssueAttachmentSchema,
   TextAttachmentSchema,
+  AgentContextAttachmentSchema,
   ReviewAttachmentSchema,
   UploadedFileAttachmentSchema,
 ]);
@@ -1213,9 +1226,18 @@ function normalizeAgentAttachments(input: unknown): AgentAttachment[] {
   const normalized: AgentAttachment[] = [];
   for (const item of input) {
     const parsed = AgentAttachmentSchema.safeParse(item);
-    if (parsed.success) {
-      normalized.push(parsed.data);
+    if (!parsed.success) {
+      continue;
     }
+    if (parsed.data.type === "agent_context") {
+      const agentId = parsed.data.agentId.trim();
+      if (!agentId) {
+        continue;
+      }
+      normalized.push({ ...parsed.data, agentId });
+      continue;
+    }
+    normalized.push(parsed.data);
   }
   return normalized;
 }
@@ -1352,9 +1374,10 @@ export const FetchAgentHistoryRequestMessageSchema = z.object({
   type: z.literal("fetch_agent_history_request"),
   requestId: z.string(),
   filter: AgentDirectoryFilterSchema.optional(),
-  // A ranked free-text query over agent title, workspace name, branch, and
-  // project name. Present only on history: agent subscriptions filter on
-  // structure, not on relevance. Ranking replaces `sort` when it is set.
+  // A ranked free-text query over agent title, workspace name, branch, project
+  // name, working directory, and id. Highlight matches identify rendered names
+  // only. Present only on history: agent subscriptions filter on structure, not
+  // on relevance. Ranking replaces `sort` when it is set.
   search: z.string().optional(),
   sort: z
     .array(
@@ -3500,6 +3523,8 @@ export const ServerInfoStatusPayloadSchema = z
         agentForkContext: z.boolean().optional(),
         // COMPAT(agentForkContextCursor): added in v0.1.108, remove gate after 2027-01-14.
         agentForkContextCursor: z.boolean().optional(),
+        // COMPAT(agentContextAttachments): added in v0.2.0, remove gate after 2027-01-18.
+        agentContextAttachments: z.boolean().optional(),
         // COMPAT(providerSubagents): added in v0.1.107, remove gate after 2027-01-12.
         providerSubagents: z.boolean().optional(),
         // COMPAT(providerSubagentNesting): added in v0.7, remove gate after 2027-03-04.
@@ -6819,6 +6844,7 @@ export type DictationStreamFinishMessage = z.infer<typeof DictationStreamFinishM
 export type DictationStreamCancelMessage = z.infer<typeof DictationStreamCancelMessageSchema>;
 export type CreateAgentRequestMessage = z.infer<typeof CreateAgentRequestMessageSchema>;
 export type AgentAttachment = z.infer<typeof AgentAttachmentSchema>;
+export type AgentContextAttachment = z.infer<typeof AgentContextAttachmentSchema>;
 export type ForgeChangeRequestAttachment = z.infer<typeof ForgeChangeRequestAttachmentSchema>;
 export type ForgeIssueAttachment = z.infer<typeof ForgeIssueAttachmentSchema>;
 export type UploadedFileAttachment = z.infer<typeof UploadedFileAttachmentSchema>;

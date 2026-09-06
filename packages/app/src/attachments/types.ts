@@ -103,11 +103,29 @@ export interface WorkspaceFileComposerAttachment {
   selection: WorkspaceFileSelection;
 }
 
+export interface AgentContextAttachmentSource {
+  /**
+   * Daemon that owns the reference. This stays client-side so a persisted
+   * attachment cannot accidentally be submitted after switching hosts.
+   */
+  serverId: string;
+  agentId: string;
+  title: string;
+  workspaceLabel?: string;
+  provider?: string;
+}
+
+export interface AgentContextAttachment {
+  kind: "agent_context";
+  source: AgentContextAttachmentSource;
+}
+
 export type UserComposerAttachment =
   | { kind: "image"; metadata: AttachmentMetadata }
   | { kind: "file"; attachment: UploadedFileAttachment }
   | WorkspaceFileComposerAttachment
   | PluginResourceComposerAttachment
+  | AgentContextAttachment
   | { kind: "forge_issue"; item: ForgeSearchItem }
   | { kind: "forge_change_request"; item: ForgeSearchItem }
   // COMPAT(githubAttachmentKinds): legacy persisted attachment kinds retained
@@ -135,6 +153,32 @@ export type WorkspaceComposerAttachment =
     };
 
 export type ComposerAttachment = UserComposerAttachment | WorkspaceComposerAttachment;
+
+export function isAgentContextAttachment<T extends ComposerAttachment>(
+  attachment: T,
+): attachment is T & AgentContextAttachment {
+  return attachment.kind === "agent_context";
+}
+
+/** A daemon-local reference must not silently follow a draft to another host. */
+export function hasForeignAgentContextAttachments(
+  attachments: readonly ComposerAttachment[],
+  serverId: string,
+): boolean {
+  return attachments.some(
+    (attachment) => isAgentContextAttachment(attachment) && attachment.source.serverId !== serverId,
+  );
+}
+
+export function filterAgentContextAttachmentsForServer<T extends ComposerAttachment>(
+  attachments: readonly T[],
+  serverId: string,
+): T[] {
+  return attachments.filter(
+    (attachment) =>
+      !isAgentContextAttachment(attachment) || attachment.source.serverId === serverId,
+  );
+}
 
 export type AttachmentDataSource =
   | { kind: "bytes"; bytes: Uint8Array }

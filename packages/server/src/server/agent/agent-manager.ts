@@ -1144,6 +1144,21 @@ export class AgentManager {
     return this.timelineStore.fetch(id, options);
   }
 
+  /**
+   * Read history already retained by this daemon without resuming or creating
+   * a provider session. A closed agent can keep an in-memory timeline until it
+   * is discarded, which makes this safe for daemon-resolved context references.
+   */
+  fetchRetainedTimeline(
+    id: string,
+    options?: AgentTimelineFetchOptions,
+  ): AgentTimelineFetchResult | null {
+    if (!this.timelineStore.has(id)) {
+      return null;
+    }
+    return this.timelineStore.fetch(id, options);
+  }
+
   listProviderSubagents(parentAgentId: string): ProviderSubagentDescriptor[] {
     this.requirePublicAgent(parentAgentId);
     return this.providerSubagents.list(parentAgentId);
