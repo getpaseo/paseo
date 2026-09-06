@@ -4796,6 +4796,45 @@ test("archiveAgent does not cascade to a detached former child", async () => {
   expect((await storage.get(child.id))?.archivedAt).toBeFalsy();
 });
 
+test("archiveAgent with cascadeWorkspaceId does not cascade to a child in another workspace", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-workspace-scoped-cascade-"));
+  const storagePath = join(workdir, "agents");
+  const storage = new AgentStorage(storagePath, logger);
+  const manager = new AgentManager({
+    clients: { codex: new TestAgentClient() },
+    registry: storage,
+    logger,
+  });
+
+  const parent = await manager.createAgent(
+    { provider: "codex", cwd: workdir, title: "Parent" },
+    undefined,
+    { workspaceId: "ws-a" },
+  );
+  const sameWorkspaceChild = await manager.createAgent(
+    { provider: "codex", cwd: workdir, title: "Same workspace child" },
+    undefined,
+    { labels: { [PARENT_AGENT_ID_LABEL]: parent.id }, workspaceId: "ws-a" },
+  );
+  const crossWorkspaceChild = await manager.createAgent(
+    { provider: "codex", cwd: workdir, title: "Cross workspace child" },
+    undefined,
+    { labels: { [PARENT_AGENT_ID_LABEL]: parent.id }, workspaceId: "ws-b" },
+  );
+
+  await manager.archiveAgent(parent.id, { cascadeWorkspaceId: "ws-a" });
+
+  expect((await storage.get(parent.id))?.archivedAt).toEqual(expect.any(String));
+  expect((await storage.get(sameWorkspaceChild.id))?.archivedAt).toEqual(expect.any(String));
+  // The cross-workspace child is skipped outright: not archived, and still
+  // pointing at its parent. Unscoped archive detaches it instead (see
+  // "archiveAgent detaches a cross-workspace child even when its tab is
+  // closed"), which is what this restriction avoids during workspace teardown.
+  const storedCrossWorkspaceChild = await storage.get(crossWorkspaceChild.id);
+  expect(storedCrossWorkspaceChild?.archivedAt).toBeFalsy();
+  expect(storedCrossWorkspaceChild?.labels[PARENT_AGENT_ID_LABEL]).toBe(parent.id);
+});
+
 test("runAgent persists finished attention and idle status without an external snapshot subscriber", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-finished-attention-"));
   const storagePath = join(workdir, "agents");
