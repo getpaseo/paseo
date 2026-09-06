@@ -53,6 +53,7 @@ import type { MessageInputKeyboardActionKind } from "@/keyboard/actions";
 import { isImeComposingKeyboardEvent } from "@/utils/keyboard-ime";
 import { isWeb } from "@/constants/platform";
 import { useIsCompactFormFactor } from "@/constants/layout";
+import { useHasFinePointer } from "@/hooks/use-fine-pointer";
 import { useComposerKeyboardScope } from "@/composer/keyboard-scope";
 import { RenderProfile } from "@/utils/render-profiler";
 import { useComposerHeight } from "./height";
@@ -391,6 +392,12 @@ interface DesktopKeyPressContext {
   disabled: boolean;
   handleAlternateSendAction: () => void;
   handleDefaultSendAction: () => void;
+}
+
+function shouldSubmitOnEnter(isCompact: boolean, hasFinePointer: boolean): boolean {
+  // Compact web can also be a narrow desktop pane. Keep phone keyboards multiline
+  // while preserving desktop Enter behavior when a mouse-like pointer is present.
+  return isWeb && (!isCompact || hasFinePointer);
 }
 
 function handleDesktopKeyPressImpl(
@@ -1189,6 +1196,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
     const mode = resolveComposerInputMode(inputMode);
     const { t } = useTranslation();
     const isCompact = useIsCompactFormFactor();
+    const hasFinePointer = useHasFinePointer();
     const { height: windowHeight } = useWindowDimensions();
     const maxInputHeight = resolveMaxInputHeight(windowHeight);
     const buttonIconSize = isWeb ? ICON_SIZE.md : ICON_SIZE.lg;
@@ -1585,7 +1593,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
     );
 
     const shouldHandleWebKeyPress = isWeb;
-    const shouldSubmitOnEnter = isWeb && !isCompact;
+    const submitOnEnter = shouldSubmitOnEnter(isCompact, hasFinePointer);
 
     function handleDesktopKeyPress(event: WebTextInputKeyPressEvent) {
       if (!shouldHandleWebKeyPress) return;
@@ -1596,7 +1604,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
           valueRef.current,
           selectionRef.current,
         ),
-        submitOnEnter: shouldSubmitOnEnter,
+        submitOnEnter,
         isAgentRunning,
         onQueue,
         isSubmitDisabled,
