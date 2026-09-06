@@ -7,7 +7,7 @@
     "start": "npm run start:expo",
     "start:expo": "cross-env APP_VARIANT=development expo start",
     "reset-project": "node ./scripts/reset-project.js",
-    "eas-build-post-install": "npm --prefix ../.. run build:app-deps && npm run build:terminal-webview",
+    "eas-build-post-install": "npm --prefix ../.. run build:app-deps && npm run build:embedded-webviews",
     "android": "npm run android:development",
     "android:development": "npm --prefix ../.. run build:client && cross-env APP_VARIANT=development expo prebuild --platform android --clean --non-interactive && cross-env APP_VARIANT=development expo run:android --variant=debug",
     "android:production": "npm --prefix ../.. run build:client && cross-env APP_VARIANT=production expo prebuild --platform android --clean --non-interactive && cross-env APP_VARIANT=production expo run:android --variant=release",
@@ -35,7 +35,10 @@
     "profile:workspace-switching": "node ./scripts/profile-workspace-switching.mjs",
     "profile:workspace-tabs": "node ./scripts/profile-workspace-tabs.mjs",
     "deploy:web": "npm run build:web && wrangler pages deploy dist --project-name paseo-app --branch main",
+    "build:embedded-webviews": "npm run build:terminal-webview && npm run build:source-editor-webview",
     "build:terminal-webview": "node ./scripts/build-terminal-webview-html.mjs",
+    "build:source-editor-webview": "node ./scripts/build-source-editor-webview-html.mjs",
+    "build:source-editor-webview:check": "node ./scripts/build-source-editor-webview-html.mjs --check",
     "build:mermaid-runtime": "node ./src/components/markdown/fence/mermaid/build-runtime.mjs"
   },
   "dependencies": {

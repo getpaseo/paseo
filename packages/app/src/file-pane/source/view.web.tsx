@@ -2,9 +2,9 @@ import { useEffect, useRef } from "react";
 import { Compartment, EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import { getLanguageForFile } from "@getpaseo/highlight";
+import type { SourceEditorTheme } from "@/source-editor/contract";
+import { sourceEditorTheme } from "@/source-editor/codemirror/configuration";
 import type { WorkspaceFileLocation } from "@/workspace/file-open";
-import type { EditorVisualTheme } from "../editor/extensions.web";
-import { editorTheme } from "../editor/extensions.web";
 import { selectSourcePresentation, type SourcePresentation } from "./presentation";
 
 interface FileSourceViewProps {
@@ -13,7 +13,7 @@ interface FileSourceViewProps {
   location: WorkspaceFileLocation;
   navigationRevision: number;
   size: number;
-  theme: EditorVisualTheme;
+  theme: SourceEditorTheme;
   tooLargeMessage: string;
 }
 
@@ -76,7 +76,7 @@ function ReadonlyCodeMirror({
           languageCompartment.of(
             languageFor({ filename: values.filename, presentation: values.presentation }),
           ),
-          themeCompartment.of(editorTheme(values.theme)),
+          themeCompartment.of(sourceEditorTheme(values.theme)),
         ],
       }),
     });
@@ -97,7 +97,7 @@ function ReadonlyCodeMirror({
     viewRef.current?.dispatch({
       effects: [
         languageCompartment.reconfigure(languageFor({ filename, presentation })),
-        themeCompartment.reconfigure(editorTheme(theme)),
+        themeCompartment.reconfigure(sourceEditorTheme(theme)),
       ],
     });
   }, [filename, presentation, theme]);
