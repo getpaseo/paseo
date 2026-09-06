@@ -43,6 +43,7 @@ import {
   type SteerResult,
   type AgentStreamEvent,
   type AgentTimelineItem,
+  type ToolCallTimelineItem,
   type AgentUsage,
   type AgentRuntimeInfo,
   type ImportedTimelineEntry,
@@ -50,6 +51,12 @@ import {
   type ListImportableSessionsOptions,
 } from "./agent-sdk-types.js";
 import { buildArchivedAgentRecord, type ArchivedStoredAgentRecord } from "./agent-archive.js";
+import {
+  createLoopGuardState,
+  DEFAULT_LOOP_GUARD_THRESHOLD,
+  observeToolCall,
+  type LoopGuardState,
+} from "./agent-loop-guard.js";
 import type { StoredAgentRecord, AgentStorage } from "./agent-storage.js";
 import type { AgentOwner } from "./agent-owner.js";
 import {
@@ -306,6 +313,11 @@ export interface AgentManagerOptions {
     agentId: string;
     expectedTurnId: string;
   }) => Promise<void>;
+  /**
+   * Trip the doom-loop circuit breaker after this many consecutive identical
+   * unproductive tool calls in one turn. Defaults to DEFAULT_LOOP_GUARD_THRESHOLD.
+   */
+  loopGuardThreshold?: number;
   logger: Logger;
 }
 
@@ -723,6 +735,8 @@ export class AgentManager {
   private readonly rescueTimeouts: Required<AgentManagerRescueTimeouts>;
   private readonly beforeSteerUnavailableFallback?: AgentManagerOptions["beforeSteerUnavailableFallback"];
   private acceptingAgentRegistrations = true;
+  private readonly loopGuards = new Map<string, LoopGuardState>();
+  private readonly loopGuardThreshold: number;
 
   constructor(options: AgentManagerOptions) {
     this.idFactory = options?.idFactory ?? (() => randomUUID());
@@ -743,6 +757,7 @@ export class AgentManager {
         options.rescueTimeouts?.interruptSessionMs ?? INTERRUPT_SESSION_TIMEOUT_MS,
     };
     this.beforeSteerUnavailableFallback = options.beforeSteerUnavailableFallback;
+    this.loopGuardThreshold = options.loopGuardThreshold ?? DEFAULT_LOOP_GUARD_THRESHOLD;
     this.agentStreamCoalescer = new AgentStreamCoalescer({
       windowMs: options.agentStreamCoalesceWindowMs ?? AGENT_STREAM_COALESCE_DEFAULT_WINDOW_MS,
       timers: { setTimeout, clearTimeout },
@@ -3475,6 +3490,7 @@ export class AgentManager {
     this.agentStreamCoalescer.flushAndDiscard(agent.id);
     this.agents.delete(agent.id);
     this.previousStatuses.delete(agent.id);
+    this.loopGuards.delete(agent.id);
     if (agent.unsubscribeSession) {
       agent.unsubscribeSession();
       agent.unsubscribeSession = null;
@@ -4422,6 +4438,10 @@ export class AgentManager {
       }
     }
 
+    if (item.type === "tool_call") {
+      this.observeToolCallForLoopGuard(agentId, item, provider, turnId);
+    }
+
     return event;
   }
 
@@ -4471,6 +4491,62 @@ export class AgentManager {
       if (enriched) this.enqueueDurableTimelineUpdate(agent.id, enriched);
     }
     return existing;
+  }
+
+  private observeToolCallForLoopGuard(
+    agentId: string,
+    item: ToolCallTimelineItem,
+    provider: AgentProvider,
+    turnId: string | undefined,
+  ): void {
+    let state = this.loopGuards.get(agentId);
+    if (!state) {
+      state = createLoopGuardState();
+      this.loopGuards.set(agentId, state);
+    }
+    const outcome = observeToolCall(state, item, turnId, this.loopGuardThreshold);
+    if (outcome.tripped) {
+      void this.tripLoopGuard(agentId, provider, outcome.signature, outcome.count);
+    }
+  }
+
+  /**
+   * Cancel a turn that is stuck repeating the same unproductive tool call, and
+   * leave a human-readable breadcrumb so the loop is not silent. Provider-agnostic:
+   * every provider funnels tool_call items through recordAndDispatchTimelineItem.
+   */
+  private async tripLoopGuard(
+    agentId: string,
+    provider: AgentProvider,
+    signature: string,
+    count: number,
+  ): Promise<void> {
+    this.logger.warn(
+      { agentId, provider, signature, count },
+      "agent.loop_guard.tripped: canceling stuck turn",
+    );
+    // Write+dispatch the explanation BEFORE canceling. cancelAgentRun pushes a
+    // turn_canceled event to live subscribers; if we started the cancel first,
+    // the async message write (it does a store round-trip before dispatch) could
+    // resume after subscribers already closed, so a live watcher would see the
+    // turn end with no reason. Sequencing guarantees the breadcrumb lands first.
+    const agent = this.agents.get(agentId);
+    if (agent) {
+      try {
+        await this.appendSystemErrorTimelineMessage(
+          agent,
+          provider,
+          `Agent appears stuck: it repeated the same unproductive action ${count} times in a row (${signature}). Paseo auto-canceled this turn. Try rephrasing the task, or run the command yourself to see the error.`,
+        );
+      } catch (error) {
+        this.logger.warn({ err: error, agentId }, "agent.loop_guard.message_failed");
+      }
+    }
+    try {
+      await this.cancelAgentRun(agentId);
+    } catch (error) {
+      this.logger.warn({ err: error, agentId }, "agent.loop_guard.cancel_failed");
+    }
   }
 
   private async appendSystemErrorTimelineMessage(

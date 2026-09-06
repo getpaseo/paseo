@@ -8363,6 +8363,93 @@ test("archiveAgent cascade surfaces partial child archive failures", async () =>
   );
 });
 
+test("doom-loop guard explains the interruption before canceling the turn", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-loop-guard-"));
+  const turnId = "loop-guard-turn";
+
+  class LoopingSession extends TestAgentSession {
+    interruptCount = 0;
+
+    override async startTurn(): Promise<{ turnId: string }> {
+      queueMicrotask(() => {
+        this.pushEvent({ type: "turn_started", provider: this.provider, turnId });
+        for (let index = 0; index < 3; index++) {
+          this.pushEvent({
+            type: "timeline",
+            provider: this.provider,
+            turnId,
+            item: {
+              type: "tool_call",
+              callId: `failed-call-${index}`,
+              name: "shell",
+              status: "completed",
+              error: null,
+              detail: { type: "shell", command: "rtk lint", exitCode: 127 },
+            },
+          });
+        }
+      });
+      return { turnId };
+    }
+
+    override async interrupt(): Promise<void> {
+      this.interruptCount += 1;
+      this.pushEvent({ type: "turn_canceled", provider: this.provider, turnId });
+    }
+  }
+
+  const session = new LoopingSession({ provider: "codex", cwd: workdir });
+  const manager = new AgentManager({
+    clients: {
+      codex: new (class extends TestAgentClient {
+        override async createSession(): Promise<AgentSession> {
+          return session;
+        }
+      })(),
+    },
+    loopGuardThreshold: 3,
+    logger,
+  });
+  const observed: string[] = [];
+  let agentId: string | null = null;
+
+  try {
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    agentId = agent.id;
+    manager.subscribe(
+      (event) => {
+        if (event.type !== "agent_stream") return;
+        if (
+          event.event.type === "timeline" &&
+          event.event.item.type === "assistant_message" &&
+          event.event.item.text.includes("Agent appears stuck")
+        ) {
+          observed.push("explanation");
+        }
+        if (event.event.type === "turn_canceled") {
+          observed.push("canceled");
+        }
+      },
+      { agentId: agent.id, replayState: false },
+    );
+
+    const result = await manager.runAgent(agent.id, "repeat a bad command");
+
+    expect(result.canceled).toBe(true);
+    expect(session.interruptCount).toBe(1);
+    expect(observed).toEqual(["explanation", "canceled"]);
+    expect(manager.getTimeline(agent.id)).toContainEqual({
+      type: "assistant_message",
+      text: expect.stringContaining("repeated the same unproductive action 3 times"),
+    });
+  } finally {
+    if (agentId) await manager.closeAgent(agentId).catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
 test("turn_failed emits a system error assistant timeline message and keeps error lifecycle", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-turn-failed-"));
   const storagePath = join(workdir, "agents");
