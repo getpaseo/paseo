@@ -473,15 +473,16 @@ function resolveListenAddress(
 
 function resolveAuthConfig(
   env: NodeJS.ProcessEnv,
-  persisted: ReturnType<typeof loadPersistedConfig>,
+  persisted: PersistedConfig,
 ): PaseoDaemonConfig["auth"] {
   const envPassword = env.PASEO_PASSWORD?.trim();
-  if (envPassword) {
-    return { password: hashDaemonPassword(envPassword) };
-  }
-  return persisted.daemon?.auth?.password
-    ? { password: persisted.daemon.auth.password }
-    : undefined;
+  const password = envPassword ? hashDaemonPassword(envPassword) : persisted.daemon?.auth?.password;
+  if (!password) return undefined;
+
+  return {
+    password,
+    exemptLoopback: persisted.daemon?.auth?.exemptLoopback ?? true,
+  };
 }
 
 function resolveWorktreesRoot(

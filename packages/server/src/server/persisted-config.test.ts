@@ -22,15 +22,15 @@ function modeOf(filePath: string): number {
 }
 
 describe("PersistedConfigSchema daemon auth config", () => {
-  test("accepts optional daemon password hash", () => {
+  test("accepts the daemon password and loopback override", () => {
     const hash = "$2b$12$OLxyuuP9uLK30Uzc4wQX0O6liuU/Q1t5P2b0Ebf36mULvpVK3DRZW";
     const parsed = PersistedConfigSchema.parse({
       daemon: {
-        auth: { password: hash },
+        auth: { password: hash, exemptLoopback: false },
       },
     });
 
-    expect(parsed.daemon?.auth?.password).toBe(hash);
+    expect(parsed.daemon?.auth).toEqual({ password: hash, exemptLoopback: false });
   });
 });
 

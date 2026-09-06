@@ -6,6 +6,7 @@ export const DAEMON_PASSWORD_BCRYPT_COST = 12;
 
 export interface DaemonAuthConfig {
   password?: string;
+  exemptLoopback?: boolean;
 }
 
 export interface BearerAuthRejectContext {
@@ -17,6 +18,23 @@ export interface BearerAuthRejectContext {
 interface BearerValidationInput {
   password: string | undefined;
   token: string | null;
+}
+
+export function isLoopbackAddress(address: string | undefined): boolean {
+  if (!address) return false;
+
+  const normalized = address.toLowerCase();
+  if (normalized === "::1" || normalized === "0:0:0:0:0:0:0:1") return true;
+  const ipv4 = normalized.startsWith("::ffff:") ? normalized.slice("::ffff:".length) : normalized;
+  return ipv4.startsWith("127.");
+}
+
+export function shouldRequireDaemonPassword(
+  auth: DaemonAuthConfig | undefined,
+  remoteAddress: string | undefined,
+): boolean {
+  if (!auth?.password) return false;
+  return auth.exemptLoopback === false || !isLoopbackAddress(remoteAddress);
 }
 
 export function isBearerTokenValid(input: BearerValidationInput): boolean {
@@ -93,7 +111,10 @@ export function createRequireBearerMiddleware(
 ): RequestHandler {
   const password = auth?.password;
   return (req, res, next) => {
-    if (!password || shouldBypassBearerAuth(req.method, req.path)) {
+    if (
+      !shouldRequireDaemonPassword(auth, req.socket.remoteAddress) ||
+      shouldBypassBearerAuth(req.method, req.path)
+    ) {
       next();
       return;
     }

@@ -87,7 +87,10 @@ test("DaemonClient connects to a password-protected daemon", async () => {
 
 test("DaemonClient surfaces password auth failures from WebSocket close reasons", async () => {
   const daemon = await createTestPaseoDaemon({
-    auth: { password: "$2b$12$GMhF7pN4QnMlHOQXOqjd1OitKWPSmAO3FwB0PHzKtcZR/sAMryz76" },
+    auth: {
+      password: "$2b$12$GMhF7pN4QnMlHOQXOqjd1OitKWPSmAO3FwB0PHzKtcZR/sAMryz76",
+      exemptLoopback: false,
+    },
   });
   const missingPasswordClient = new DaemonClient({
     url: `ws://127.0.0.1:${daemon.port}/ws`,

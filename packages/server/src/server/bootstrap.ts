@@ -202,6 +202,7 @@ import { isHostnameAllowed, type HostnamesConfig } from "./hostnames.js";
 import {
   createRequireBearerMiddleware,
   isAgentMcpRequestAuthorized,
+  isLoopbackAddress,
   type DaemonAuthConfig,
 } from "./auth.js";
 import { createWebUiMiddleware } from "./web-ui.js";
@@ -283,17 +284,11 @@ const TERMINAL_ACTIVITY_STATE_MAP = {
   "needs-input": "attention",
 } as const;
 
-const LOOPBACK_REMOTE_ADDRESSES = new Set(["127.0.0.1", "::1", "::ffff:127.0.0.1"]);
-
-function isLoopbackRemoteAddress(remoteAddress: string | undefined): boolean {
-  return remoteAddress !== undefined && LOOPBACK_REMOTE_ADDRESSES.has(remoteAddress);
-}
-
 export function createTerminalActivityRouteHandler(
   terminalManager: TerminalManager,
 ): express.RequestHandler {
   return async (req, res) => {
-    if (!isLoopbackRemoteAddress(req.socket.remoteAddress)) {
+    if (!isLoopbackAddress(req.socket.remoteAddress)) {
       res.status(403).json({ error: "Forbidden" });
       return;
     }

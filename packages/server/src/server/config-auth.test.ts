@@ -23,7 +23,7 @@ describe("daemon auth config", () => {
     await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
   });
 
-  test("loads optional auth password hash from config.json", async () => {
+  test("loads the password hash with loopback exemption enabled by default", async () => {
     const paseoHome = await createPaseoHome({
       version: 1,
       daemon: {
@@ -34,16 +34,17 @@ describe("daemon auth config", () => {
     const config = loadConfig(paseoHome, { env: {} });
 
     expect(config.auth?.password).toBe(CONFIG_PASSWORD_HASH);
+    expect(config.auth?.exemptLoopback).toBe(true);
     expect(isBearerTokenValid({ password: config.auth?.password, token: "correct-password" })).toBe(
       true,
     );
   });
 
-  test("lets PASEO_PASSWORD override config.json auth password hash", async () => {
+  test("preserves an explicit loopback auth requirement when PASEO_PASSWORD overrides the hash", async () => {
     const paseoHome = await createPaseoHome({
       version: 1,
       daemon: {
-        auth: { password: CONFIG_PASSWORD_HASH },
+        auth: { password: CONFIG_PASSWORD_HASH, exemptLoopback: false },
       },
     });
 
@@ -53,6 +54,7 @@ describe("daemon auth config", () => {
 
     expect(config.auth?.password).not.toBe(CONFIG_PASSWORD_HASH);
     expect(config.auth?.password).toMatch(/^\$2[aby]\$12\$/);
+    expect(config.auth?.exemptLoopback).toBe(false);
     expect(isBearerTokenValid({ password: config.auth?.password, token: "from-env" })).toBe(true);
   });
 });

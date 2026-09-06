@@ -78,6 +78,8 @@ import {
   extractWsBearerProtocol,
   extractWsBearerToken,
   isBearerTokenValid,
+  isLoopbackAddress,
+  shouldRequireDaemonPassword,
   type DaemonAuthConfig,
 } from "./auth.js";
 import {
@@ -819,7 +821,7 @@ export class VoiceAssistantWebSocketServer {
       },
     });
     wss.on("connection", (ws, request) => {
-      void this.attachAuthenticatedSocket(ws, request, password);
+      void this.attachAuthenticatedSocket(ws, request, auth);
     });
     return wss;
   }
@@ -901,9 +903,10 @@ export class VoiceAssistantWebSocketServer {
   private async attachAuthenticatedSocket(
     ws: WebSocket,
     request: IncomingMessage,
-    password: string | undefined,
+    auth: DaemonAuthConfig | undefined,
   ): Promise<void> {
-    if (password) {
+    const password = auth?.password;
+    if (shouldRequireDaemonPassword(auth, request.socket.remoteAddress)) {
       const requestMetadata = extractSocketRequestMetadata(request);
       const protocol = extractWsBearerProtocol(request.headers["sec-websocket-protocol"]);
       const token = extractWsBearerToken(protocol);
@@ -2733,13 +2736,6 @@ function resolveConnectionPeer(
   if (metadata !== undefined) return "external";
   if (!requestMetadata.remoteAddress) return "local_ipc";
   return isLoopbackAddress(requestMetadata.remoteAddress) ? "loopback" : "external";
-}
-
-function isLoopbackAddress(address: string): boolean {
-  const normalized = address.toLowerCase();
-  if (normalized === "::1" || normalized === "0:0:0:0:0:0:0:1") return true;
-  const ipv4 = normalized.startsWith("::ffff:") ? normalized.slice("::ffff:".length) : normalized;
-  return ipv4.startsWith("127.");
 }
 
 function extractSocketRequestMetadata(request: unknown): SocketRequestMetadata {

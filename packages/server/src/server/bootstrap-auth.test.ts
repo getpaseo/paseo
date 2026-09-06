@@ -60,9 +60,25 @@ describe("daemon bearer auth", () => {
     }
   });
 
-  test("requires Authorization bearer on protected HTTP routes when password is configured", async () => {
+  test("allows loopback HTTP and WebSocket clients without the configured password by default", async () => {
     const daemonHandle = await createTestPaseoDaemon({
       auth: { password: CORRECT_PASSWORD_HASH },
+    });
+    try {
+      const response = await fetch(`http://127.0.0.1:${daemonHandle.port}/api/status`);
+      expect(response.status).toBe(200);
+
+      const { ws, protocol } = await connectWebSocket({ port: daemonHandle.port });
+      expect(protocol).toBe("");
+      ws.close();
+    } finally {
+      await daemonHandle.close();
+    }
+  });
+
+  test("requires Authorization bearer on protected HTTP routes when password is configured", async () => {
+    const daemonHandle = await createTestPaseoDaemon({
+      auth: { password: CORRECT_PASSWORD_HASH, exemptLoopback: false },
     });
     try {
       const missing = await fetch(`http://127.0.0.1:${daemonHandle.port}/api/status`);
@@ -84,7 +100,7 @@ describe("daemon bearer auth", () => {
 
   test("allows file downloads with only a capability token when password is configured", async () => {
     const daemonHandle = await createTestPaseoDaemon({
-      auth: { password: CORRECT_PASSWORD_HASH },
+      auth: { password: CORRECT_PASSWORD_HASH, exemptLoopback: false },
     });
     try {
       // No bearer at all: the route is reachable, but the download token store
@@ -105,7 +121,7 @@ describe("daemon bearer auth", () => {
 
   test("bypasses bearer auth for preflight and liveness endpoints", async () => {
     const daemonHandle = await createTestPaseoDaemon({
-      auth: { password: CORRECT_PASSWORD_HASH },
+      auth: { password: CORRECT_PASSWORD_HASH, exemptLoopback: false },
     });
     try {
       const preflight = await fetch(`http://127.0.0.1:${daemonHandle.port}/api/files/download`, {
@@ -126,7 +142,7 @@ describe("daemon bearer auth", () => {
 
   test("closes WebSocket connections with readable auth failures when password is configured", async () => {
     const daemonHandle = await createTestPaseoDaemon({
-      auth: { password: CORRECT_PASSWORD_HASH },
+      auth: { password: CORRECT_PASSWORD_HASH, exemptLoopback: false },
     });
     try {
       await expectWebSocketCloses({
