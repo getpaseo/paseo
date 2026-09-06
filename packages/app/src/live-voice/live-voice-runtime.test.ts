@@ -299,6 +299,27 @@ describe("live voice runtime", () => {
     expect(transcripts[transcripts.length - 1]?.id).toBe("t204");
   });
 
+  it("keeps the daemon's reason clean when the client decorates Error.message", async () => {
+    // LiveVoiceStartRejectedError carries the daemon text on `errorMessage` and
+    // appends the code to `message`; the snapshot should show the plain reason.
+    const rejection = Object.assign(new Error("Out of credits (start_failed)"), {
+      errorCode: "start_failed",
+      errorMessage: "Out of credits",
+    });
+    harness = createHarness({
+      startLiveVoice: vi.fn(async () => {
+        throw rejection;
+      }),
+    });
+
+    await expect(harness.runtime.start(SERVER_ID)).rejects.toBeInstanceOf(LiveVoiceStartError);
+
+    expect(harness.runtime.getSnapshot().error).toEqual({
+      code: "start_failed",
+      message: "Out of credits",
+    });
+  });
+
   it("reports a daemon rejection through LiveVoiceStartError and releases the lease", async () => {
     const rejection = Object.assign(new Error("Host already has a call"), { errorCode: "busy" });
     harness = createHarness({

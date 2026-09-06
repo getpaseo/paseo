@@ -448,13 +448,19 @@ export function createLiveVoiceRuntime(deps: LiveVoiceRuntimeDeps): LiveVoiceRun
 
   function toErrorInfo(error: unknown): LiveVoiceErrorInfo {
     if (error && typeof error === "object") {
-      const candidate = error as { errorCode?: unknown; code?: unknown; message?: unknown };
+      const candidate = error as {
+        errorCode?: unknown;
+        code?: unknown;
+        errorMessage?: unknown;
+        message?: unknown;
+      };
       const code = typeof candidate.errorCode === "string" ? candidate.errorCode : candidate.code;
       if (typeof code === "string" && code.length > 0) {
-        return {
-          code,
-          message: typeof candidate.message === "string" ? candidate.message : null,
-        };
+        // `errorMessage` is the daemon's reason verbatim; `message` is the
+        // client's Error text, which appends the code for logs.
+        const reason =
+          typeof candidate.errorMessage === "string" ? candidate.errorMessage : candidate.message;
+        return { code, message: typeof reason === "string" ? reason : null };
       }
     }
     return {
