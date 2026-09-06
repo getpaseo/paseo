@@ -2,6 +2,10 @@ import { useCallback, useEffect, useMemo, useRef } from "react";
 import { useLocalSearchParams, useRouter, type Href } from "expo-router";
 import { HostRouteBootstrapBoundary } from "@/components/host-route-bootstrap-boundary";
 import { useFetchQuery } from "@/data/query";
+import {
+  resolveLiveActivityFocusTarget,
+  useLiveActivityFocusStore,
+} from "@/live-activity/live-activity-focus";
 import { resolveAgentRoute, type AgentRouteLookup } from "@/navigation/agent-route-resolution";
 import { AgentRouteResolutionView } from "@/navigation/agent-route-resolution-view";
 import { useSessionStore } from "@/stores/session-store";
@@ -18,15 +22,39 @@ export default function HostAgentReadyRoute() {
   );
 }
 
+interface AgentRouteSearchParams {
+  serverId?: string;
+  agentId?: string;
+  source?: string;
+  permissionRequestId?: string;
+  permissionActionId?: string;
+}
+
+function normalizeAgentRouteParams(params: AgentRouteSearchParams) {
+  return {
+    serverId: typeof params.serverId === "string" ? params.serverId : "",
+    agentId: typeof params.agentId === "string" ? params.agentId : "",
+    source: typeof params.source === "string" ? params.source : "",
+    permissionRequestId:
+      typeof params.permissionRequestId === "string" ? params.permissionRequestId : "",
+    permissionActionId:
+      typeof params.permissionActionId === "string" ? params.permissionActionId : undefined,
+  };
+}
+
 function HostAgentReadyRouteContent() {
   const router = useRouter();
   const params = useLocalSearchParams<{
     serverId?: string;
     agentId?: string;
+    source?: string;
+    permissionRequestId?: string;
+    permissionActionId?: string;
   }>();
   const handledNavigationRef = useRef<string | null>(null);
-  const serverId = typeof params.serverId === "string" ? params.serverId : "";
-  const agentId = typeof params.agentId === "string" ? params.agentId : "";
+  const { serverId, agentId, source, permissionRequestId, permissionActionId } =
+    normalizeAgentRouteParams(params);
+  const setLiveActivityFocus = useLiveActivityFocusStore((state) => state.setFocus);
   const hosts = useHosts();
   const runtimeSnapshot = useHostRuntimeSnapshot(serverId);
   const client = runtimeSnapshot?.client ?? null;
@@ -106,11 +134,30 @@ function HostAgentReadyRouteContent() {
     handledNavigationRef.current = navigationKey;
 
     if (resolution.kind === "resolved") {
+      const focusTarget = resolveLiveActivityFocusTarget({
+        source,
+        serverId,
+        agentId,
+        permissionRequestId,
+        permissionActionId,
+      });
+      if (focusTarget) {
+        setLiveActivityFocus(focusTarget);
+      }
       navigateToAgent({ serverId, agentId, workspaceId: resolution.workspaceId });
       return;
     }
     router.replace(resolution.kind === "invalid" ? ("/" as Href) : buildHostRootRoute(serverId));
-  }, [agentId, resolution, router, serverId]);
+  }, [
+    agentId,
+    permissionActionId,
+    permissionRequestId,
+    resolution,
+    router,
+    serverId,
+    setLiveActivityFocus,
+    source,
+  ]);
 
   const handleRetry = useCallback(() => {
     if (resolution.kind === "lookupError") {

@@ -109,6 +109,7 @@ export default {
       infoPlist: {
         NSMicrophoneUsageDescription: "This app needs access to the microphone for voice commands.",
         ITSAppUsesNonExemptEncryption: false,
+        NSSupportsLiveActivities: true,
       },
       bundleIdentifier: variant.packageId,
       ...(variant.googleServiceInfoPlist
@@ -176,6 +177,10 @@ export default {
         },
       ],
       ...buildProfile.fdroidPlugins,
+      // Links targets/* (the Live Activity widget extension) into the CNG-generated
+      // Xcode project. Must stay after the plugins that create the main app target.
+      // Local wrapper works around @bacons/apple-targets 4.0.7 incremental-prebuild crash.
+      "./modules/paseo-live-activity/app.plugin.js",
       ...(isProfileBuild ? [withAndroidProfileable] : []),
     ],
     experiments: {

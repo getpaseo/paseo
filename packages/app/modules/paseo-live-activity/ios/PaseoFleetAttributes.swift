@@ -1,0 +1,1 @@
+../../../targets/paseo-live-activity/PaseoFleetAttributes.swift

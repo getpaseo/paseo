@@ -5,6 +5,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { useClientActivity } from "@/hooks/use-client-activity";
 import { useAppVisible } from "@/hooks/use-app-visible";
+import { useLiveActivity } from "@/live-activity/use-live-activity";
 import { startPushNotifications } from "@/push-notifications";
 import {
   createSetAgentInitializing,
@@ -290,6 +291,7 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
     onAppResumed: handleAppResumed,
   });
   useEffect(() => startPushNotifications({ client, serverId }), [client, serverId]);
+  useLiveActivity({ serverId });
 
   const notifyAgentAttention = useCallback(
     (params: {
