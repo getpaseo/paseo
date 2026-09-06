@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useSyncExternalStore, type ReactElement } from "react";
+import { useCallback, useMemo, useState, useSyncExternalStore, type ReactElement } from "react";
 import { Text, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
@@ -27,6 +27,16 @@ function resolveFormErrorMessage(t: TFunction, error: AssistantFormError | null)
     case null:
       return null;
   }
+}
+
+/** A blank name is only an error once the user has been in the field. */
+function resolveVisibleNameError(
+  t: TFunction,
+  error: AssistantFormError | null,
+  nameTouched: boolean,
+): string | null {
+  if (error === "name_required" && !nameTouched) return null;
+  return resolveFormErrorMessage(t, error);
 }
 
 /**
@@ -159,7 +169,17 @@ export function AssistantFormView({
     [model],
   );
 
-  const nameError = resolveFormErrorMessage(t, state.nameError);
+  // A blank name is only an error once the user has been in the field; a
+  // pristine form should not open with red text.
+  const [nameTouched, setNameTouched] = useState(state.name.length > 0);
+  const handleNameChange = useCallback(
+    (value: string) => {
+      setNameTouched(true);
+      model.setName(value);
+    },
+    [model],
+  );
+  const nameError = resolveVisibleNameError(t, state.nameError, nameTouched);
   const contextResetKey = `${state.templateId ?? ""}`;
 
   return (
@@ -172,7 +192,7 @@ export function AssistantFormView({
         <FormTextInput
           size={size}
           initialValue={state.name}
-          onChangeText={model.setName}
+          onChangeText={handleNameChange}
           editable={!disabled}
           placeholder={t("assistants.form.name.placeholder")}
           autoCorrect={false}
