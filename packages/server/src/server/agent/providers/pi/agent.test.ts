@@ -994,6 +994,7 @@ describe("PiRpcAgentSession", () => {
       const { pi, session, events } = await createSession();
       const fakeSession = pi.latestSession();
       const abortFinished = Promise.withResolvers<void>();
+      const turnFinished = Promise.withResolvers<void>();
       fakeSession.abort = async () => {
         fakeSession.finishTurn({
           role: "assistant",
@@ -1001,12 +1002,14 @@ describe("PiRpcAgentSession", () => {
           errorMessage: "This operation was aborted",
           content: [],
         });
+        turnFinished.resolve();
         await abortFinished.promise;
       };
       fakeSession.emit({ type: "agent_start" });
       fakeSession.emit({ type: "turn_start" });
 
       const stopping = session.interrupt();
+      await turnFinished.promise;
       expect(events.turnLifecycleEvents()).toEqual([{ type: "turn_started", turnId: undefined }]);
       abortFinished.resolve();
       await stopping;
@@ -1025,13 +1028,16 @@ describe("PiRpcAgentSession", () => {
     const { pi, session, events } = await createSession();
     const fakeSession = pi.latestSession();
     const abortFinished = Promise.withResolvers<void>();
+    const turnFinished = Promise.withResolvers<void>();
     fakeSession.abort = async () => {
       fakeSession.finishTurn({ role: "assistant", stopReason: "stop", content: [] });
+      turnFinished.resolve();
       await abortFinished.promise;
     };
     fakeSession.emit({ type: "agent_start" });
     fakeSession.emit({ type: "turn_start" });
     const stopping = session.interrupt();
+    await turnFinished.promise;
     fakeSession.emit({ type: "agent_start" });
     fakeSession.emit({ type: "turn_start" });
     abortFinished.resolve();
