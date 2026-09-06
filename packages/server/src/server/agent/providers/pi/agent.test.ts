@@ -655,6 +655,98 @@ describe("PiRpcAgentSession", () => {
     ]);
   });
 
+  test("streams Pi content blocks by content index when an earlier thinking delta arrives late", async () => {
+    const { pi, session, events } = await createSession();
+    const fakeSession = pi.latestSession();
+
+    await session.startTurn("hello");
+    fakeSession.emit({
+      type: "message_start",
+      message: {
+        role: "assistant",
+        responseId: "response-1",
+        content: [
+          { type: "thinking", thinking: "" },
+          { type: "text", text: "" },
+        ],
+      },
+    });
+    fakeSession.emit({
+      type: "message_update",
+      assistantMessageEvent: { type: "thinking_start", contentIndex: 0 },
+    });
+    fakeSession.emit({
+      type: "message_update",
+      assistantMessageEvent: { type: "thinking_delta", contentIndex: 0, delta: "verify" },
+    });
+    fakeSession.emit({
+      type: "message_update",
+      assistantMessageEvent: { type: "text_start", contentIndex: 1 },
+    });
+    fakeSession.emit({
+      type: "message_update",
+      assistantMessageEvent: { type: "text_delta", contentIndex: 1, delta: "Answer" },
+    });
+    fakeSession.emit({
+      type: "message_update",
+      assistantMessageEvent: { type: "thinking_delta", contentIndex: 0, delta: "." },
+    });
+    fakeSession.emit({
+      type: "message_update",
+      assistantMessageEvent: { type: "thinking_end", contentIndex: 0 },
+    });
+    fakeSession.emit({
+      type: "message_update",
+      assistantMessageEvent: { type: "text_delta", contentIndex: 1, delta: " complete." },
+    });
+    fakeSession.emit({
+      type: "message_update",
+      assistantMessageEvent: { type: "text_end", contentIndex: 1 },
+    });
+
+    expect(events.timelineItems()).toEqual([
+      { type: "reasoning", text: "verify" },
+      { type: "reasoning", text: "." },
+      { type: "assistant_message", text: "Answer", messageId: "response-1" },
+      { type: "assistant_message", text: " complete.", messageId: "response-1" },
+    ]);
+  });
+
+  test("flushes indexed Pi blocks under the previous message id when its end event is missing", async () => {
+    const { pi, session, events } = await createSession();
+    const fakeSession = pi.latestSession();
+
+    await session.startTurn("hello");
+    fakeSession.emit({
+      type: "message_start",
+      message: {
+        role: "assistant",
+        responseId: "response-1",
+        content: [
+          { type: "thinking", thinking: "" },
+          { type: "text", text: "" },
+        ],
+      },
+    });
+    fakeSession.emit({
+      type: "message_update",
+      assistantMessageEvent: { type: "thinking_delta", contentIndex: 0, delta: "think" },
+    });
+    fakeSession.emit({
+      type: "message_update",
+      assistantMessageEvent: { type: "text_delta", contentIndex: 1, delta: "answer" },
+    });
+    fakeSession.emit({
+      type: "message_start",
+      message: { role: "assistant", responseId: "response-2", content: [] },
+    });
+
+    expect(events.timelineItems()).toEqual([
+      { type: "reasoning", text: "think" },
+      { type: "assistant_message", text: "answer", messageId: "response-1" },
+    ]);
+  });
+
   test("streams Pi task calls as sub-agent cards with lifecycle status", async () => {
     const { pi, session, events } = await createSession();
     const fakeSession = pi.latestSession();

@@ -151,9 +151,11 @@ export interface PiRpcResponse {
 }
 
 export type PiAssistantMessageEvent =
-  | { type: "text_delta"; delta?: string }
-  | { type: "thinking_delta"; delta?: string }
-  | { type: "start" | "text_start" | "text_end" | "thinking_start" | "thinking_end" | "done" };
+  | { type: "text_delta"; contentIndex?: number; delta?: string }
+  | { type: "thinking_delta"; contentIndex?: number; delta?: string }
+  | { type: "text_start" | "text_end" | "thinking_start" | "thinking_end"; contentIndex?: number }
+  | { type: "toolcall_start" | "toolcall_delta" | "toolcall_end"; contentIndex?: number }
+  | { type: "start" | "done" };
 
 export type PiAgentSessionEvent =
   | { type: "agent_start" }

@@ -65,6 +65,7 @@ import {
 } from "./history-mapper.js";
 import { materializeProviderImage } from "../provider-image-output.js";
 import { PiCliRuntime } from "./cli-runtime.js";
+import { PiMessageContentStream, type PiMessageContentChunk } from "./message-content-stream.js";
 import { revertPiConversation } from "./rewind.js";
 import { listPiImportableSessions, readPiImportSessionConfig } from "./session-descriptor.js";
 import type { PiRuntime, PiRuntimeSession, PiStartSessionInput } from "./runtime.js";
@@ -1236,6 +1237,7 @@ export class PiRpcAgentSession implements AgentSession {
   private activeTurnId: string | null = null;
   private activeClientMessageId: string | null = null;
   private activeAssistantMessageId: string | null = null;
+  private readonly activeAssistantContent = new PiMessageContentStream();
   private activeTurnStarted = false;
   private activeTurnStartedEmitted = false;
   private pendingSettledMessages: PiAgentMessage[] | null = null;
@@ -1332,6 +1334,7 @@ export class PiRpcAgentSession implements AgentSession {
     this.lastInterruptedTurnId = null;
     this.activeClientMessageId = options?.clientMessageId ?? null;
     this.activeAssistantMessageId = null;
+    this.activeAssistantContent.reset();
     this.activeTurnStarted = false;
     this.activeTurnStartedEmitted = false;
     this.pendingSettledMessages = null;
@@ -2218,7 +2221,7 @@ export class PiRpcAgentSession implements AgentSession {
         });
         return;
       case "message_start":
-        this.handleMessageStart(event);
+        this.handleMessageStart(event, turnId);
         return;
       case "message_end":
         this.handleMessageEnd(event, turnId);
@@ -2363,37 +2366,55 @@ export class PiRpcAgentSession implements AgentSession {
     if (event.message && event.message.role !== "assistant") {
       return;
     }
-    if (event.assistantMessageEvent.type === "text_delta") {
-      // Pi-compatible runtimes may emit updates without a preceding message_start.
-      this.activeAssistantMessageId ??= event.message?.responseId || randomUUID();
-      this.emit({
-        type: "timeline",
-        provider: this.provider,
-        turnId,
-        item: {
-          type: "assistant_message",
-          text: event.assistantMessageEvent.delta ?? "",
-          messageId: this.activeAssistantMessageId,
-        },
-      });
-      return;
-    }
-    if (event.assistantMessageEvent.type === "thinking_delta") {
+    const message = event.message?.role === "assistant" ? event.message : undefined;
+    this.emitMessageContentChunks(
+      this.activeAssistantContent.update(event.assistantMessageEvent, message),
+      turnId,
+      message?.responseId,
+    );
+  }
+
+  private emitMessageContentChunks(
+    chunks: PiMessageContentChunk[],
+    turnId: string | undefined,
+    responseId?: string,
+  ): void {
+    for (const chunk of chunks) {
+      if (chunk.type === "text") {
+        // Pi-compatible runtimes may emit updates without a preceding message_start.
+        this.activeAssistantMessageId ??= responseId || randomUUID();
+        this.emit({
+          type: "timeline",
+          provider: this.provider,
+          turnId,
+          item: {
+            type: "assistant_message",
+            text: chunk.text,
+            messageId: this.activeAssistantMessageId,
+          },
+        });
+        continue;
+      }
       this.emit({
         type: "timeline",
         provider: this.provider,
         turnId,
         item: {
           type: "reasoning",
-          text: event.assistantMessageEvent.delta ?? "",
+          text: chunk.text,
         },
       });
     }
   }
 
-  private handleMessageStart(event: Extract<PiAgentSessionEvent, { type: "message_start" }>): void {
+  private handleMessageStart(
+    event: Extract<PiAgentSessionEvent, { type: "message_start" }>,
+    turnId: string | undefined,
+  ): void {
     if (event.message.role === "assistant") {
+      this.emitMessageContentChunks(this.activeAssistantContent.finish(), turnId);
       this.activeAssistantMessageId = event.message.responseId || null;
+      this.activeAssistantContent.start(event.message.content);
     }
   }
 
@@ -2402,6 +2423,7 @@ export class PiRpcAgentSession implements AgentSession {
     turnId: string | undefined,
   ): void {
     if (event.message.role === "assistant") {
+      this.emitMessageContentChunks(this.activeAssistantContent.finish(), turnId);
       this.activeAssistantMessageId = null;
       return;
     }
@@ -2472,6 +2494,7 @@ export class PiRpcAgentSession implements AgentSession {
       this.lastInterruptedTurnId = null;
       return;
     }
+    this.emitMessageContentChunks(this.activeAssistantContent.finish(), turnId);
     this.activeTurnId = null;
     this.activeClientMessageId = null;
     this.activeAssistantMessageId = null;
