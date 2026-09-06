@@ -123,6 +123,23 @@ const IMAGE_MIME_TYPES: Record<string, string> = {
   ".svg": "image/svg+xml",
 };
 
+// Video files stay `kind: "binary"` — the explorer's file kinds are part of the
+// wire schema, and a new one would need capability gating for no gain here. What
+// the client needs is the real media type: a blob built from
+// `application/octet-stream` never plays, so a daemon that doesn't know these
+// extensions simply leaves the app on its unsupported-format fallback.
+const VIDEO_MIME_TYPES: Record<string, string> = {
+  ".mp4": "video/mp4",
+  ".m4v": "video/mp4",
+  ".webm": "video/webm",
+  ".ogv": "video/ogg",
+  ".mov": "video/quicktime",
+};
+
+function binaryMimeTypeForExtension(ext: string): string {
+  return VIDEO_MIME_TYPES[ext] ?? "application/octet-stream";
+}
+
 interface ScopedPathParams {
   root: string;
   relativePath?: string;
@@ -272,7 +289,7 @@ export async function readExplorerFileBytes({
         kind: "binary",
         encoding: "binary",
         bytes: buffer,
-        mimeType: "application/octet-stream",
+        mimeType: binaryMimeTypeForExtension(ext),
       };
     }
 
@@ -313,7 +330,7 @@ export async function streamExplorerFile(
       mimeType = IMAGE_MIME_TYPES[ext];
     } else if (isBinary) {
       kind = "binary";
-      mimeType = "application/octet-stream";
+      mimeType = binaryMimeTypeForExtension(ext);
     }
 
     await consume({

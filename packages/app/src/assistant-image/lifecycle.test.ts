@@ -9,7 +9,7 @@ describe("assistant image lifecycle", () => {
       aspectRatio: null,
     });
     const loaded = transitionAssistantImageLifecycle(loading, {
-      type: "image_loaded",
+      type: "media_loaded",
       uri: "blob:first",
       aspectRatio: 1.5,
     });
@@ -35,7 +35,7 @@ describe("assistant image lifecycle", () => {
     });
 
     const recreated = transitionAssistantImageLifecycle(recreating, {
-      type: "image_loaded",
+      type: "media_loaded",
       uri: "blob:recreated",
       aspectRatio: 0.75,
     });
@@ -54,7 +54,7 @@ describe("assistant image lifecycle", () => {
       aspectRatio: null,
     });
     const loaded = transitionAssistantImageLifecycle(loading, {
-      type: "image_loaded",
+      type: "media_loaded",
       uri: "blob:current",
       aspectRatio: 1.5,
     });
@@ -94,7 +94,7 @@ describe("assistant image lifecycle", () => {
     });
 
     const afterStaleLoad = transitionAssistantImageLifecycle(current, {
-      type: "image_loaded",
+      type: "media_loaded",
       uri: "blob:released",
       aspectRatio: 2,
     });

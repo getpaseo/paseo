@@ -2,11 +2,15 @@ import { describe, expect, it } from "vitest";
 import {
   getMimeTypeFromPath,
   getRasterImageMimeTypeFromPath,
+  getVideoMimeTypeFromPath,
   isRasterImageFile,
   isRasterImageMimeType,
   isRasterImagePath,
+  isVideoMimeType,
+  isVideoPath,
   RASTER_IMAGE_FILE_EXTENSIONS,
   resolveRasterImageMimeType,
+  resolveVideoMimeType,
 } from "./file-types";
 
 describe("attachment file types", () => {
@@ -61,5 +65,38 @@ describe("attachment file types", () => {
         path: "/tmp/screenshot.png",
       }),
     ).toBeNull();
+  });
+
+  it("maps the video extensions a browser decodes natively", () => {
+    expect(getVideoMimeTypeFromPath("/tmp/demo.mp4")).toBe("video/mp4");
+    expect(getVideoMimeTypeFromPath("/tmp/demo.M4V")).toBe("video/mp4");
+    expect(getVideoMimeTypeFromPath("/tmp/capture.webm?v=2")).toBe("video/webm");
+    expect(getVideoMimeTypeFromPath("/tmp/clip.mov")).toBe("video/quicktime");
+    expect(isVideoPath("/tmp/demo.mp4")).toBe(true);
+  });
+
+  it("leaves containers no browser plays out of the video table", () => {
+    expect(getVideoMimeTypeFromPath("/tmp/demo.mkv")).toBeNull();
+    expect(getVideoMimeTypeFromPath("/tmp/demo.avi")).toBeNull();
+    expect(isVideoPath("/tmp/demo.mkv")).toBe(false);
+    expect(isVideoMimeType("video/x-matroska")).toBe(false);
+  });
+
+  it("keeps the video table out of the generic attachment MIME path", () => {
+    expect(getMimeTypeFromPath("/tmp/demo.mp4")).toBe("application/octet-stream");
+    expect(isRasterImagePath("/tmp/demo.mp4")).toBe(false);
+  });
+
+  it("uses explicit video MIME metadata before the filename", () => {
+    expect(resolveVideoMimeType({ mimeType: "video/webm", path: "/tmp/demo.mp4" })).toBe(
+      "video/webm",
+    );
+    expect(resolveVideoMimeType({ mimeType: "video/mp4; codecs=avc1", path: "/x.webm" })).toBe(
+      "video/mp4",
+    );
+    expect(
+      resolveVideoMimeType({ mimeType: "application/octet-stream", path: "/tmp/demo.mp4" }),
+    ).toBeNull();
+    expect(resolveVideoMimeType({ mimeType: "", path: "/tmp/demo.mp4" })).toBe("video/mp4");
   });
 });

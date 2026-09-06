@@ -8,7 +8,7 @@ import {
 } from "./acquisition-cache";
 
 export interface AssistantImageFileAcquisitionPort {
-  readFile(cwd: string, path: string): Promise<FileReadResult>;
+  readFile(cwd: string, path: string, maxBytes?: number): Promise<FileReadResult>;
   persist(input: {
     id: string;
     bytes: Uint8Array;
@@ -28,6 +28,13 @@ export function createAssistantImageFileAcquisition(input: {
   serverId?: string;
   occurrenceKey: string;
   unavailableMessage: string;
+  // Which reads this caller can render. Images want the explorer's "image" kind;
+  // video arrives as "binary" carrying a video MIME type, because the explorer's
+  // kinds are wire schema and video did not earn a new one.
+  accept?: (file: FileReadResult) => boolean;
+  // Refuses the read by size before any bytes move: the daemon compares against
+  // the file's stat and errors out, so an oversized file costs one round trip.
+  maxBytes?: number;
 }): AssistantImageAcquisition | null {
   if (input.resolution?.kind !== "file_rpc") {
     return null;
@@ -44,8 +51,9 @@ export function createAssistantImageFileAcquisition(input: {
       if (!port) {
         throw new Error(input.unavailableMessage);
       }
-      const file = await port.readFile(resolution.cwd, resolution.path);
-      if (file.kind !== "image") {
+      const file = await port.readFile(resolution.cwd, resolution.path, input.maxBytes);
+      const accept = input.accept ?? ((candidate: FileReadResult) => candidate.kind === "image");
+      if (!accept(file)) {
         throw new Error(input.unavailableMessage);
       }
       return await port.persist({

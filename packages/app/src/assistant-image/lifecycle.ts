@@ -6,7 +6,7 @@ export type AssistantImageLifecycle =
 export type AssistantImageLifecycleEvent =
   | { type: "preview_created"; uri: string; aspectRatio: number | null }
   | { type: "preview_released" }
-  | { type: "image_loaded"; uri: string; aspectRatio: number }
+  | { type: "media_loaded"; uri: string; aspectRatio: number }
   | { type: "failed"; uri: string; message: string };
 
 export function createAssistantImageLifecycle(): AssistantImageLifecycle {
@@ -17,7 +17,7 @@ export function transitionAssistantImageLifecycle(
   state: AssistantImageLifecycle,
   event: AssistantImageLifecycleEvent,
 ): AssistantImageLifecycle {
-  if (event.type === "image_loaded") {
+  if (event.type === "media_loaded") {
     if (state.status !== "loading" || state.uri !== event.uri) {
       return state;
     }
