@@ -7,6 +7,7 @@ interface NotificationInput {
   title?: unknown;
   body?: unknown;
   data?: unknown;
+  forceBackground?: unknown;
 }
 
 interface NotificationClickPayload {
@@ -100,7 +101,7 @@ export function registerNotificationHandlers(): void {
     const senderWin =
       BrowserWindow.fromWebContents(event.sender) ??
       BrowserWindow.getAllWindows().find((w) => !w.isDestroyed() && w.isResizable());
-    const isAppFocused = senderWin
+    const isAppFocused = !rawInput?.forceBackground && senderWin
       ? senderWin.isFocused() && !senderWin.isMinimized() && senderWin.isVisible()
       : false;
 

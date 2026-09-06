@@ -29,6 +29,7 @@ function getDesktopNotificationSender():
       title: string;
       body?: string;
       data?: Record<string, unknown>;
+      forceBackground?: boolean;
     }) => Promise<boolean | { surface: "in_app" | "os" }>)
   | null {
   const sendNotification = getDesktopHost()?.notification?.sendNotification;
@@ -37,6 +38,7 @@ function getDesktopNotificationSender():
         title: string;
         body?: string;
         data?: Record<string, unknown>;
+        forceBackground?: boolean;
       }) => Promise<boolean | { surface: "in_app" | "os" }>)
     : null;
 }
@@ -180,11 +182,26 @@ export async function sendOsNotification(payload: OsNotificationPayload): Promis
     });
     if (result) {
       if (typeof result === "object" && result.surface === "in_app") {
-        inAppNotificationStore.push({
-          title: payload.title,
-          body: payload.body,
-          data: payload.data,
-        });
+        const isAppStillFocused =
+          typeof document !== "undefined" &&
+          !document.hidden &&
+          (typeof document.hasFocus === "function" ? document.hasFocus() : true);
+
+        if (isAppStillFocused) {
+          inAppNotificationStore.push({
+            title: payload.title,
+            body: payload.body,
+            data: payload.data,
+          });
+        } else {
+          // Focus lost during IPC; re-route to background surface so notification is not obscured
+          await desktopNotificationSender({
+            title: payload.title,
+            body: payload.body,
+            data: payload.data,
+            forceBackground: true,
+          });
+        }
       }
       await playNotificationSound();
       return true;
