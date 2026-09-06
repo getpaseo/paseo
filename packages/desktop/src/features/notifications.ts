@@ -1,7 +1,7 @@
 import path from "node:path";
 import { existsSync } from "node:fs";
 import { app, BrowserWindow, Notification, ipcMain, nativeImage } from "electron";
-import { getDesktopSettingsStore } from "../settings/desktop-settings-electron.js";
+import { showScreenFloatingNotification } from "./screen-notification.js";
 
 interface NotificationInput {
   title?: unknown;
@@ -49,16 +49,24 @@ function getNotificationIcon(): Electron.NativeImage | null {
   return null;
 }
 
-function focusSenderWindow(sender: Electron.WebContents): BrowserWindow | null {
-  const win = BrowserWindow.fromWebContents(sender) ?? BrowserWindow.getAllWindows()[0] ?? null;
+function focusSenderWindow(sender?: Electron.WebContents): BrowserWindow | null {
+  const targetWin = sender ? BrowserWindow.fromWebContents(sender) : null;
+  const win =
+    targetWin ??
+    BrowserWindow.getAllWindows().find((w) => !w.isDestroyed() && w.isResizable()) ??
+    null;
+
   if (!win || win.isDestroyed()) {
     return null;
   }
-  win.show();
   if (win.isMinimized()) {
     win.restore();
   }
+  win.show();
+  // Force foreground bypass on Windows when restored from minimized
+  win.setAlwaysOnTop(true);
   win.focus();
+  win.setAlwaysOnTop(false);
   return win;
 }
 
@@ -84,10 +92,6 @@ export function registerNotificationHandlers(): void {
   });
 
   ipcMain.handle("paseo:notification:send", async (event, rawInput?: NotificationInput) => {
-    if (!Notification.isSupported()) {
-      return false;
-    }
-
     const title = toTrimmedString(rawInput?.title);
     if (!title) {
       return false;
@@ -95,31 +99,73 @@ export function registerNotificationHandlers(): void {
 
     const body = toTrimmedString(rawInput?.body) ?? undefined;
     const data = toRecord(rawInput?.data);
+
+    const senderWin =
+      BrowserWindow.fromWebContents(event.sender) ??
+      BrowserWindow.getAllWindows().find((w) => !w.isDestroyed() && w.isResizable());
+    const isAppFocused = senderWin
+      ? senderWin.isFocused() && !senderWin.isMinimized() && senderWin.isVisible()
+      : false;
+
+    if (isAppFocused && senderWin) {
+      senderWin.webContents.send("paseo:event:notification-in-app", {
+        title,
+        ...(body ? { body } : {}),
+        ...(data ? { data } : {}),
+      });
+      return true;
+    }
     const icon = getNotificationIcon();
-    const settings = await getDesktopSettingsStore().get();
-    const notification = new Notification({
-      title,
-      ...(body ? { body } : {}),
-      ...(icon ? { icon } : {}),
-      silent: !settings.notifications.playSound,
-    });
+    // Always silent here: the renderer plays the notification sound itself
+    // (app/src/utils/notification-sound) so audio still fires when the OS
+    // suppresses the notification entirely (e.g. Windows with notifications
+    // disabled), and so the playSound setting has a single sound source.
+    if (Notification.isSupported()) {
+      const notification = new Notification({
+        title,
+        ...(body ? { body } : {}),
+        ...(icon ? { icon } : {}),
+        silent: true,
+      });
 
-    activeNotifications.add(notification);
+      activeNotifications.add(notification);
 
-    notification.on("click", () => {
-      const win = focusSenderWindow(event.sender);
-      if (win && data && Object.keys(data).length > 0) {
-        const payload: NotificationClickPayload = { data };
-        win.webContents.send("paseo:event:notification-click", payload);
+      notification.on("click", () => {
+        const win = focusSenderWindow(event.sender);
+        if (win && data && Object.keys(data).length > 0) {
+          const payload: NotificationClickPayload = { data };
+          win.webContents.send("paseo:event:notification-click", payload);
+        }
+        activeNotifications.delete(notification);
+      });
+
+      notification.on("close", () => {
+        activeNotifications.delete(notification);
+      });
+
+      notification.on("failed", () => {
+        activeNotifications.delete(notification);
+      });
+
+      try {
+        notification.show();
+      } catch {
+        activeNotifications.delete(notification);
       }
-      activeNotifications.delete(notification);
-    });
-
-    notification.on("close", () => {
-      activeNotifications.delete(notification);
-    });
-
-    notification.show();
+    } else {
+      showScreenFloatingNotification({
+        title,
+        body,
+        data,
+        onOpenTarget: (clickData) => {
+          const win = focusSenderWindow(event.sender);
+          if (win && clickData && Object.keys(clickData).length > 0) {
+            const payload: NotificationClickPayload = { data: clickData };
+            win.webContents.send("paseo:event:notification-click", payload);
+          }
+        },
+      });
+    }
     return true;
   });
 }

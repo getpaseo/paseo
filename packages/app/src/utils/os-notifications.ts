@@ -1,6 +1,8 @@
 import { Asset } from "expo-asset";
 import { getDesktopHost } from "@/desktop/host";
 import { buildNotificationRoute, resolveNotificationTarget } from "./notification-routing";
+import { playNotificationSound } from "./notification-sound";
+import { inAppNotificationStore } from "@/components/in-app-notifications/in-app-notification-store";
 import { isNative } from "@/constants/platform";
 
 interface OsNotificationPayload {
@@ -168,12 +170,34 @@ export async function sendOsNotification(payload: OsNotificationPayload): Promis
   if (isNative) {
     return false;
   }
-
   const desktopNotificationSender = getDesktopNotificationSender();
   if (desktopNotificationSender) {
-    return await desktopNotificationSender(payload);
+    const sent = await desktopNotificationSender({
+      title: payload.title,
+      body: payload.body,
+      data: payload.data,
+    });
+    if (sent) {
+      await playNotificationSound();
+    }
+    return sent;
   }
 
+  // Web fallback (non-Electron browser tab)
+  const isAppFocused =
+    typeof document !== "undefined" &&
+    !document.hidden &&
+    (typeof document.hasFocus === "function" ? document.hasFocus() : true);
+
+  if (isAppFocused) {
+    inAppNotificationStore.push({
+      title: payload.title,
+      body: payload.body,
+      data: payload.data,
+    });
+    await playNotificationSound();
+    return true;
+  }
   const NotificationConstructor = getWebNotificationConstructor();
   if (NotificationConstructor) {
     const granted = await ensureNotificationPermission();
@@ -186,6 +210,7 @@ export async function sendOsNotification(payload: OsNotificationPayload): Promis
       if (hasNotificationClickTarget(payload.data)) {
         attachWebClickHandler(notification, payload.data);
       }
+      await playNotificationSound();
       return true;
     }
   }
