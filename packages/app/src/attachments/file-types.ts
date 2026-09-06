@@ -15,6 +15,30 @@ const RASTER_IMAGE_MIME_TYPE_BY_EXTENSION: Record<string, string> = {
 const RASTER_IMAGE_MIME_TYPES = new Set(Object.values(RASTER_IMAGE_MIME_TYPE_BY_EXTENSION));
 const GENERIC_FILE_MIME_TYPE = "application/octet-stream";
 
+const VIDEO_MIME_TYPE_BY_EXTENSION: Record<string, string> = {
+  ".mp4": "video/mp4",
+  ".m4v": "video/mp4",
+  ".mov": "video/quicktime",
+  ".webm": "video/webm",
+  ".ogv": "video/ogg",
+  ".mkv": "video/x-matroska",
+  ".avi": "video/x-msvideo",
+  ".mpeg": "video/mpeg",
+  ".mpg": "video/mpeg",
+  ".3gp": "video/3gpp",
+  ".3g2": "video/3gpp2",
+};
+
+export function getVideoMimeTypeFromPath(path: string): string | null {
+  return VIDEO_MIME_TYPE_BY_EXTENSION[getFileExtension(path)] ?? null;
+}
+
+export function resolveVideoMimeType(input: { mimeType?: string; path: string }): string | null {
+  const mimeType = input.mimeType?.split(";", 1)[0]?.trim().toLowerCase();
+  if (mimeType?.startsWith("video/")) return mimeType;
+  return getVideoMimeTypeFromPath(input.path);
+}
+
 export const RASTER_IMAGE_FILE_EXTENSIONS = Object.keys(RASTER_IMAGE_MIME_TYPE_BY_EXTENSION).map(
   (extension) => extension.slice(1),
 );

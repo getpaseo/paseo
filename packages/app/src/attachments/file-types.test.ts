@@ -7,9 +7,38 @@ import {
   isRasterImagePath,
   RASTER_IMAGE_FILE_EXTENSIONS,
   resolveRasterImageMimeType,
+  resolveVideoMimeType,
 } from "./file-types";
 
 describe("attachment file types", () => {
+  it.each([
+    ["clip.WEBM", "video/webm"],
+    ["recording.mov", "video/quicktime"],
+    ["clip.mp4", "video/mp4"],
+    ["clip.m4v", "video/mp4"],
+    ["clip.ogv", "video/ogg"],
+    ["clip.mkv", "video/x-matroska"],
+    ["clip.avi", "video/x-msvideo"],
+    ["clip.mpeg", "video/mpeg"],
+    ["clip.mpg", "video/mpeg"],
+    ["clip.3gp", "video/3gpp"],
+    ["clip.3g2", "video/3gpp2"],
+  ])("recognizes %s when the daemon sends generic binary MIME metadata", (path, expected) => {
+    expect(resolveVideoMimeType({ path, mimeType: "application/octet-stream" })).toBe(expected);
+  });
+
+  it("honors video MIME metadata and leaves other file types alone", () => {
+    expect(resolveVideoMimeType({ path: "clip", mimeType: " Video/WebM; codecs=vp9 " })).toBe(
+      "video/webm",
+    );
+    expect(resolveVideoMimeType({ path: "clip.mp4", mimeType: "video/quicktime" })).toBe(
+      "video/quicktime",
+    );
+    expect(resolveVideoMimeType({ path: "notes.txt", mimeType: "text/plain" })).toBeNull();
+    expect(resolveVideoMimeType({ path: "archive.zip" })).toBeNull();
+    expect(resolveVideoMimeType({ path: "clip.mp4.txt" })).toBeNull();
+  });
+
   it("keeps SVG as a file while treating raster image files as images", () => {
     expect(getMimeTypeFromPath("/tmp/logo.svg")).toBe("application/octet-stream");
     expect(isRasterImagePath("/tmp/logo.svg")).toBe(false);

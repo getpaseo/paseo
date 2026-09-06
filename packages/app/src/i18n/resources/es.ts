@@ -1822,6 +1822,8 @@ export const es: TranslationResources = {
       loading: "Cargando archivo...",
       noPreview: "No hay vista previa disponible",
       binaryPreviewUnavailable: "Vista previa binaria no disponible",
+      videoPlaybackFailed:
+        "No se puede reproducir este vídeo. El archivo puede estar dañado o su formato no ser compatible con este dispositivo.",
       tooLargeToDisplay: "Este archivo es demasiado grande para mostrarlo",
       failedToLoad: "No se pudo cargar el archivo",
       failedToLoadPreview: "No se pudo cargar la vista previa del archivo",
