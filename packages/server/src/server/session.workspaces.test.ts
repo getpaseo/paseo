@@ -1,3 +1,4 @@
+import { createAgentRequestsStub } from "./test-utils/session-stubs.js";
 import { execFileSync } from "node:child_process";
 import {
   existsSync,
@@ -636,6 +637,7 @@ function createSessionForWorkspaceTests(
 
   const session = asTestSession(
     new Session({
+      agentRequests: createAgentRequestsStub(),
       clientId: "test-client",
       permissions: OWNER_PERMISSIONS,
       appVersion: options.appVersion ?? null,
@@ -992,6 +994,7 @@ test("create_agent_request keeps requested child cwd when grouped under an exist
     const emitted: SessionOutboundMessage[] = [];
     const session = asTestSession(
       new Session({
+        agentRequests: createAgentRequestsStub(),
         clientId: "test-client",
         serverId: "test-server",
         permissions: OWNER_PERMISSIONS,
@@ -1145,6 +1148,7 @@ test("create_agent_request launches from an exact subdirectory in a created work
 
     const emitted: SessionOutboundMessage[] = [];
     const session = new Session({
+      agentRequests: createAgentRequestsStub(),
       clientId: "test-client",
       permissions: OWNER_PERMISSIONS,
       appVersion: null,
@@ -1282,6 +1286,7 @@ test("create_agent_request does not title an existing workspace from the agent p
     let generateCalls = 0;
     const session = asTestSession(
       new Session({
+        agentRequests: createAgentRequestsStub(),
         clientId: "test-client",
         permissions: OWNER_PERMISSIONS,
         appVersion: null,
@@ -1551,6 +1556,7 @@ test("archive emits an authoritative agent_update upsert for subscribed clients"
 
   const session = asTestSession(
     new Session({
+      agentRequests: createAgentRequestsStub(),
       clientId: "test-client",
       permissions: OWNER_PERMISSIONS,
       onMessage: (message) => emitted.push(message),
@@ -1916,6 +1922,7 @@ test("close_items_request archives agents and kills terminals in one batch", asy
   const cancelAgentRun = vi.fn(async () => ({ status: "settled" as const }));
   const session = asTestSession(
     new Session({
+      agentRequests: createAgentRequestsStub(),
       clientId: "test-client",
       permissions: OWNER_PERMISSIONS,
       onMessage: (message) => emitted.push(message),
@@ -2084,6 +2091,7 @@ test("close_items_request archives stored agents that are not currently loaded",
 
   const session = asTestSession(
     new Session({
+      agentRequests: createAgentRequestsStub(),
       clientId: "test-client",
       permissions: OWNER_PERMISSIONS,
       onMessage: (message) => emitted.push(message),
@@ -2243,6 +2251,7 @@ test("close_items_request continues after an archive failure", async () => {
   const killTerminalBestEffort = vi.fn();
   const session = asTestSession(
     new Session({
+      agentRequests: createAgentRequestsStub(),
       clientId: "test-client",
       permissions: OWNER_PERMISSIONS,
       onMessage: (message) => emitted.push(message),
@@ -3514,6 +3523,7 @@ test("workspace update stream keeps persisted workspace visible after agents sto
 
   const session = asTestSession(
     new Session({
+      agentRequests: createAgentRequestsStub(),
       clientId: "test-client",
       permissions: OWNER_PERMISSIONS,
       onMessage: (message) => emitted.push(message),

@@ -85,6 +85,7 @@ Paseo provides these modules to client code:
 | Module                          | Use it for                                                                                             |
 | ------------------------------- | ------------------------------------------------------------------------------------------------------ |
 | `@getpaseo/plugin`              | Contribution contracts, `defineRpc`, `defineAttachmentSource`, `RpcInput`, `RpcOutput`, and data hooks |
+| `@getpaseo/plugin/ui`           | Named, composable settings components                                                                  |
 | `@getpaseo/plugin/react-native` | Paseo UI components and UI hooks                                                                       |
 | `@getpaseo/plugin/server`       | Handler-only types such as `PluginHandlerContext`                                                      |
 | `@tanstack/react-query`         | Request state and caching                                                                              |
@@ -136,9 +137,8 @@ for the whole project and hides the next mistake. Components import `openExterna
 `window` themselves. `layout.platform` on surface and panel props carries the same value as
 `Platform.OS` for rendering decisions.
 
-There is no plugin storage API. Browser storage does not persist settings across Paseo clients.
-There is also no general host navigation API: plugin code cannot open native Paseo routes. Command
-Center callbacks can only open surfaces and panels registered by the same plugin.
+Use the [settings API](#settings-screens) for typed host-scoped persistence across clients.
+Use `openSettings`, `openSurface`, and `openPanel` for your own registered contributions.
 
 ### Server runtime
 
@@ -320,15 +320,95 @@ the `open` state.
 
 `Modal.Content` owns the body below the host-rendered header:
 
-| Prop       | Type        | Required | Behavior                                      |
-| ---------- | ----------- | -------- | --------------------------------------------- |
-| `children` | `ReactNode` | Yes      | Renders the plugin's React Native UI content. |
+| Prop                    | Type                   | Default            | Behavior                                                                          |
+| ----------------------- | ---------------------- | ------------------ | --------------------------------------------------------------------------------- |
+| `children`              | `ReactNode`            | Required           | Body content below the header.                                                    |
+| `style`                 | `StyleProp<ViewStyle>` | —                  | Styles the full body viewport, including empty space. Use for backgrounds.        |
+| `contentContainerStyle` | `StyleProp<ViewStyle>` | Padding 24, gap 16 | Overrides the content layout. Set `padding: 0, gap: 0` for edge-to-edge rows.     |
+| `scrollable`            | `boolean`              | `true`             | The host scrolls the body. Set `false` for a bounded body with your own scroller. |
+
+A plain `Modal.Content` is already padded and scrollable. Avoid adding a second padded wrapper
+unless you want another inset. Body styles leave the host header, drag handle, and dismissal controls
+intact. The host reserves bottom safe-area space on compact native layouts; setting content padding
+to zero removes the decorative inset, not that space. Keyboard clearance is handled separately.
+
+With `scrollable={false}`, the body fills the available sheet height, and the centered dialog uses
+85% of the available height. Use `flex: 1, minHeight: 0` on your list. In this mode the body scrolls
+at every sheet height; drag the handle to resize or dismiss the sheet. Default scrolling dialogs stay
+content-sized on wide layouts. Presentation follows window size, including narrow desktop windows
+and wide tablets.
 
 The close button, backdrop, platform back action, web Escape key, and compact sheet gesture dismiss
 the modal. Dismissal calls `onOpenChange(false)`; the plugin must update `open` to close it.
 
 Modal children keep the plugin runtime context. `usePaseo`, `useRpc`, `useWorkspace`, and
 `useAgent` work inside them.
+
+### Scrolling
+
+Import `ScrollView` and `FlatList` from `@getpaseo/plugin/react-native` when content can appear in a
+Paseo modal. They accept React Native props and refs and integrate with the sheet's gestures. Outside
+a sheet they use ordinary React Native scrolling. Do not import bottom-sheet libraries directly.
+
+Use one vertical scroll owner: either the default modal body, or your own list with
+`scrollable={false}`. A fixed-height vertical list nested inside the default scrolling body can compete
+with the sheet for gestures on Android. Horizontal scrolling can coexist with the host's vertical body.
+
+```tsx
+import { FlatList, Modal } from "@getpaseo/plugin/react-native";
+import { Text } from "react-native";
+
+// Inside your controlled Modal:
+<Modal.Content
+  scrollable={false}
+  style={{ backgroundColor: theme.colors.surface1 }}
+  contentContainerStyle={{ padding: 0, gap: 0 }}
+>
+  <FlatList
+    style={{ flex: 1, minHeight: 0 }}
+    data={items}
+    keyExtractor={(item) => item.id}
+    renderItem={({ item }) => (
+      <Text style={{ padding: 16, color: theme.colors.foreground }}>{item.title}</Text>
+    )}
+  />
+</Modal.Content>;
+```
+
+For horizontal tabs, place `<ScrollView horizontal style={{ flexGrow: 0 }}>…</ScrollView>` inside the
+default `Modal.Content`. Keep the content's vertical scrolling on the host.
+
+### Copy and paste
+
+`copyText(text): Promise<void>` writes to the clipboard on the device running the app. Call it from a
+user action and await it before reporting success. It rejects if the platform denies copying or the
+clipboard is unavailable; browser permissions and secure-context requirements still apply.
+
+```tsx
+import { copyText, useToast } from "@getpaseo/plugin/react-native";
+
+// Inside your component:
+const toast = useToast();
+async function copyResult() {
+  try {
+    await copyText(result);
+    toast.show("Copied", { variant: "success" });
+  } catch {
+    toast.error("Could not copy. Select the text and use Copy.");
+  }
+}
+```
+
+Programmatic copying and native text selection are separate interactions. Use `<Text selectable>`
+for long-press selection and OS Copy. Import `TextInput` from `@getpaseo/plugin/react-native` for modal forms. It accepts React Native
+input props and refs, supports OS Paste, and registers focus with the native sheet so the keyboard
+can raise the form. Outside a sheet it uses the ordinary input. A plain React Native input supports
+Paste too, but does not register focus with the sheet; the keyboard can cover it. No clipboard read
+API is needed for OS Paste. Avoid DOM clipboard code in native plugins and the deprecated
+`Clipboard` export from `react-native`.
+
+The runnable [modal UI example](https://github.com/getpaseo/paseo/tree/main/plugin-examples/modal-ui)
+contains a padded form, full-width rows, a virtualized list, horizontal tabs, and a copy/paste input.
 
 ### Toasts
 
@@ -527,6 +607,121 @@ unpainted.
 
 Themes need a host that supports them. A client released before `addTheme` cannot evaluate that client entry and reports
 `client.addTheme is not a function`. Update the client.
+
+## Settings screens
+
+Register a component with `client.addSettingsScreen({ id, title, icon, Component })` in
+`index.client.tsx`. It appears under **Settings → Plugins → your plugin** on that host.
+`id` is unique within the installation; `icon` is a Lucide name. Registration returns an
+idempotent remover, and plugin teardown removes remaining screens.
+
+Call `client.openSettings(id)` or a Command Center callback's `openSettings(id)` to open one
+of your own screens. Each installation has its own values and route, even when several hosts
+install the same plugin.
+
+The component receives `PluginSurfaceProps`. Paseo owns the header, back navigation, safe areas,
+scrolling, and the centered settings column. Compact windows push a full-screen detail; wide
+windows keep the settings sidebar. Render content inside that frame using React Native components.
+A disabled or removed plugin leaves an unavailable screen with working Back navigation.
+
+### Named UI components
+
+Import settings components from `@getpaseo/plugin/ui`. They work with your own state and RPCs;
+no form wrapper or storage binding is required.
+
+```tsx
+import { useState } from "react";
+import { SettingsCard, SettingsSection, SettingsSwitch } from "@getpaseo/plugin/ui";
+
+export function DisplaySettings() {
+  const [visible, setVisible] = useState(true);
+  return (
+    <SettingsSection title="Display">
+      <SettingsCard>
+        <SettingsSwitch label="Show metadata" value={visible} onValueChange={setVisible} />
+      </SettingsCard>
+    </SettingsSection>
+  );
+}
+```
+
+| Component                          | Props and behavior                                                                                                                       |
+| ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `SettingsGroup`, `SettingsSection` | Required `title`, `children`; optional `info` tooltip, `trailing` content, `testID`. Own section spacing and headings.                   |
+| `SettingsCard`                     | `children`, optional `testID`. Owns the card surface and dividers between direct children. Give mapped rows stable React keys.           |
+| `SettingsRow`                      | Required `label`; optional `hint`, `error`, `children`, `testID`. Wrap any custom control or content.                                    |
+| `SettingsSwitch`                   | Row props plus required `value: boolean`, `onValueChange`; optional `disabled`.                                                          |
+| `SettingsSelect`                   | Row props plus required string `value`, `options: { label, value }[]`, `onValueChange`; optional `disabled`. Uses Paseo's adaptive menu. |
+| `SettingsInput`                    | Row props plus required `onChangeText`; optional `initialValue`, `placeholder`, `disabled`, `secureTextEntry`, `ref`.                    |
+| `SettingsAction`                   | Row props plus required `actionLabel`, `onPress`; optional `disabled`.                                                                   |
+
+`SettingsInput` owns in-progress text. `initialValue` seeds it when mounted. Its ref exposes
+`focus()`, `blur()`, `getText()`, and `replaceText(text)` for explicit programmatic changes.
+Keep draft text outside persisted values until the user saves. Custom previews and controls
+can sit beside or inside these components.
+
+### Persisted values
+
+Define a settings document in `shared/`:
+
+```ts
+import { defineSettings } from "@getpaseo/plugin";
+import { z } from "zod";
+
+export const preferences = defineSettings({
+  id: "display",
+  scope: "host",
+  version: 1,
+  schema: z.object({ showMetadata: z.boolean().default(true) }),
+});
+```
+
+Register it with `server.registerSettings(preferences)` in `index.server.ts` before returning
+cleanup. This server entry is required for built-in persistence; a screen using its own data
+can remain client-only.
+
+| Definition field               | Contract                                                                                                                             |
+| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `id`                           | Lowercase identifier matching `[a-z][a-z0-9_-]*`; unique within the installation.                                                    |
+| `scope`                        | Required `"host"`. All authorized clients of that host share the document. No per-user, device-local, or cross-host synchronization. |
+| `version`                      | Required positive integer describing the schema, independent of the write revision.                                                  |
+| `schema`                       | Zod schema for JSON values. Supply defaults so parsing `{}` produces a complete document.                                            |
+| `migrate(values, fromVersion)` | Optional synchronous or asynchronous conversion from an older stored version. Its output must pass the current schema.               |
+
+Call `useSettings(preferences)` in any contributed component. It returns a discriminated state:
+
+| `status`  | Available data                                                           |
+| --------- | ------------------------------------------------------------------------ |
+| `loading` | Read is pending; do not render default values as though they were saved. |
+| `ready`   | Typed `values` and an opaque `revision`.                                 |
+| `invalid` | `error` and `revision`; stored data is preserved.                        |
+| `error`   | `error` from the read/connection.                                        |
+
+Every state also exposes `saving`, `saveError`, and these actions:
+
+- `save(values, revision): Promise<boolean>` validates and saves a complete document. Returns
+  `false` and sets `saveError` on validation, conflict, or transport failure; it does not throw.
+- `reset(): Promise<boolean>` explicitly replaces the document with schema defaults, using the
+  revision loaded by the hook. It can recover invalid stored data.
+- `reload(): Promise<void>` clears the save error and reads again. Your component owns its draft;
+  reloading does not discard that draft automatically.
+
+For an immediate toggle, pass `{ ...settings.values, showMetadata }` and `settings.revision`
+to `save`. For a draft editor, capture both the values and revision when opening it. Keep that
+revision until a save succeeds or the user discards the draft. A stale revision rejects the
+save, preserving both the draft and the newer saved values.
+
+Writes are atomic and validated on the host. Connected clients receive updates without reloading
+the plugin. Values survive daemon restart, plugin reload, disable, and updates. Removing an
+installation deletes its settings. Reinstalling that ID starts from defaults.
+
+A missing document uses schema defaults. Invalid data, failed migrations, and unsupported newer
+versions produce `invalid` without silently resetting the file. Successful migrations persist
+the new version once. These documents are ordinary host-side JSON, not a credential vault.
+Settings RPCs use the existing `daemon.manage` permission for plugin execution.
+
+See the complete [settings example](https://github.com/getpaseo/paseo/tree/main/plugin-examples/settings)
+for immediate controls, a draft editor with validation, custom content, and Command Center navigation.
 
 ## Workspace panels
 
@@ -843,7 +1038,7 @@ function PullRequestAction() {
 }
 ```
 
-The returned API covers projects, workspaces, agents, providers, and daemon config. See the [SDK API reference](/docs/sdk/reference) for its methods. Connection lifecycle methods are intentionally absent because Paseo owns the connection.
+The returned API covers projects, workspaces, agents, terminals, providers, and daemon config. See the [SDK API reference](/docs/sdk/reference) for its methods. Connection lifecycle methods are intentionally absent because Paseo owns the connection.
 
 ## Add plugin-specific backend behavior
 

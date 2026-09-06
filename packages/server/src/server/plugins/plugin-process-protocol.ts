@@ -14,7 +14,13 @@ export interface PluginProviderMetadata {
 }
 
 export type PluginProcessRequest =
-  | { type: "initialize"; pluginId: string; bundle: string; appVersion: string }
+  | {
+      type: "initialize";
+      pluginId: string;
+      bundle: string;
+      appVersion: string;
+      settingsDirectory?: string;
+    }
   | { type: "invoke"; requestId: string; method: string; input: unknown }
   | {
       type: "provider.connect";
@@ -34,6 +40,7 @@ export type PluginProcessRequest =
   | { type: "paseo_close" };
 
 export type PluginProcessMessage =
+  | { type: "settings.changed"; settingsId: string }
   | { type: "ready"; methods: string[]; providers: PluginProviderMetadata[] }
   | { type: "result"; requestId: string; output: unknown }
   | { type: "error"; requestId: string; error: string }
@@ -85,6 +92,7 @@ export const PluginProcessRequestSchema: z.ZodType<PluginProcessRequest> = z.dis
         pluginId: z.string().min(1),
         bundle: z.string(),
         appVersion: z.string(),
+        settingsDirectory: z.string().optional(),
       })
       .strict(),
     z
@@ -121,6 +129,7 @@ export const PluginProcessRequestSchema: z.ZodType<PluginProcessRequest> = z.dis
 export const PluginProcessMessageSchema: z.ZodType<PluginProcessMessage> = z.discriminatedUnion(
   "type",
   [
+    z.object({ type: z.literal("settings.changed"), settingsId: z.string() }).strict(),
     z
       .object({
         type: z.literal("ready"),

@@ -34,7 +34,7 @@ export class SessionAuthorization {
   }
 
   allowsOutbound(message: SessionOutboundMessage): boolean {
-    return this.allows(requiredPermissionForOutbound(message.type));
+    return this.allows(requiredPermissionForOutbound(message));
   }
 
   replacePermissions(permissions: readonly DaemonPermission[]): void {

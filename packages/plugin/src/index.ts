@@ -1,3 +1,10 @@
+import type { SettingsDefinition, SettingsState } from "./settings.js";
+import type { ZodType } from "zod";
+export { defineSettings, type SettingsDefinition, type SettingsState } from "./settings.js";
+export declare function useSettings<Schema extends ZodType>(
+  definition: SettingsDefinition<Schema>,
+): SettingsState<Schema>;
+
 import type { ComponentType } from "react";
 import type { PluginAttachmentSourceContribution, PluginIconProps } from "./contracts.js";
 
@@ -41,6 +48,7 @@ export type {
   PluginTheme,
   PluginSidebarContribution,
   PluginSurfaceContribution,
+  PluginSettingsScreenContribution,
   PluginSurfaceProps,
   PluginThemeColors,
   PluginThemeContribution,

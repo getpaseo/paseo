@@ -2,7 +2,7 @@ import React, { createContext, useContext, type ReactNode } from "react";
 
 const BottomSheetScopeContext = createContext(false);
 
-export function BottomSheetTextInputScope({ children }: { children: ReactNode }) {
+export function BottomSheetScope({ children }: { children: ReactNode }) {
   return <BottomSheetScopeContext.Provider value>{children}</BottomSheetScopeContext.Provider>;
 }
 

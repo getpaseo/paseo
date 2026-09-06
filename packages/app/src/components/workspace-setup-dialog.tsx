@@ -1,3 +1,4 @@
+import { getHostRuntimeStore } from "@/runtime/host-runtime";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Text, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
@@ -12,7 +13,11 @@ import { useToast } from "@/contexts/toast-context";
 import { useAgentInputDraft } from "@/composer/draft/input-draft";
 import { useProjectIcon } from "@/projects/icons";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
-import { normalizeWorkspaceDescriptor, useSessionStore } from "@/stores/session-store";
+import {
+  normalizeWorkspaceDescriptor,
+  useSessionStore,
+  type WorkspaceDescriptor,
+} from "@/stores/session-store";
 import { useWorkspaceSetupStore } from "@/stores/workspace-setup-store";
 import { normalizeAgentSnapshot } from "@/utils/agent-snapshots";
 import { applyLegacyDaemonWorkspaceOwnership } from "@/workspace/legacy-daemon-workspaces";
@@ -164,9 +169,13 @@ export function WorkspaceSetupDialog() {
   const toast = useToast();
   const pendingWorkspaceSetup = useWorkspaceSetupStore((state) => state.pendingWorkspaceSetup);
   const clearWorkspaceSetup = useWorkspaceSetupStore((state) => state.clearWorkspaceSetup);
-  const mergeWorkspaces = useSessionStore((state) => state.mergeWorkspaces);
+  const mergeWorkspaces = useCallback(
+    (targetServerId: string, workspaces: Iterable<WorkspaceDescriptor>) => {
+      getHostRuntimeStore().acceptWorkspaceSnapshots(targetServerId, Array.from(workspaces));
+    },
+    [],
+  );
   const setHasHydratedWorkspaces = useSessionStore((state) => state.setHasHydratedWorkspaces);
-  const setAgents = useSessionStore((state) => state.setAgents);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [createdWorkspace, setCreatedWorkspace] = useState<ReturnType<
     typeof normalizeWorkspaceDescriptor
@@ -341,17 +350,13 @@ export function WorkspaceSetupDialog() {
           return;
         }
 
-        setAgents(serverId, (previous) => {
-          const next = new Map(previous);
-          next.set(
-            agent.id,
-            applyLegacyDaemonWorkspaceOwnership({
-              serverId,
-              agent: normalizeAgentSnapshot(agent, serverId),
-            }),
-          );
-          return next;
-        });
+        getHostRuntimeStore().acceptAgentSnapshot(
+          serverId,
+          applyLegacyDaemonWorkspaceOwnership({
+            serverId,
+            agent: normalizeAgentSnapshot(agent, serverId),
+          }),
+        );
         navigateAfterCreation(ensuredWorkspace.id, { kind: "agent", agentId: agent.id });
       } catch (error) {
         const message = toErrorMessage(error);
@@ -368,7 +373,6 @@ export function WorkspaceSetupDialog() {
       getIsStillActive,
       navigateAfterCreation,
       serverId,
-      setAgents,
       ensureWorkspace,
       t,
       toast,

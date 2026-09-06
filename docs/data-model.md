@@ -574,8 +574,8 @@ Right-sidebar client state splits on whether it is determined by the directory o
 
 The durable client replica uses IndexedDB on browser/Electron and expo-sqlite on native. Rows use the
 compound key `(serverId, kind, id)`; kinds are `agent`, `workspace`, `project`, `timeline`, and
-`checkpoint`. Directory entities have individual rows. Timeline and checkpoint use the singleton id
-and have at most one row per host.
+`checkpoint`. Directory entities have individual rows, timelines use the agent id, and the checkpoint
+uses the singleton id.
 
 The store is a typed persistence boundary. It returns values to directory and timeline owners and
 accepts their explicit commits; it never reads or writes UI state. Reads are scoped to the requested
