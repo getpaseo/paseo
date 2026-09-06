@@ -492,6 +492,13 @@ function asInternals(session: CodexTestSession): CodexSessionTestAccess {
   return castInternals<CodexSessionTestAccess>(session);
 }
 
+function assistantMessageText(event: AgentStreamEvent | undefined): string {
+  if (event?.type !== "timeline" || event.item.type !== "assistant_message") {
+    throw new Error("Expected assistant_message timeline event");
+  }
+  return event.item.text;
+}
+
 function markdownImageSource(markdown: string): string {
   const match = markdown.match(/^!\[[^\]]*]\((.*)\)$/);
   if (!match) {
@@ -4850,6 +4857,39 @@ describe("Codex app-server provider", () => {
         },
       },
     ]);
+  });
+
+  test("warns that a goal set in Plan mode won't auto-run", async () => {
+    const requests: Array<{ method: string; params: unknown }> = [];
+    const session = createSession({ featureValues: { plan_mode: true } }, { goalsEnabled: true });
+    session.client = {
+      request: vi.fn(async (method: string, params: unknown) => {
+        requests.push({ method, params });
+        if (method === "thread/loaded/list") {
+          return { data: ["test-thread"] };
+        }
+        return {};
+      }),
+    };
+
+    const handler = session.tryHandleOutOfBand?.("/goal ship feature");
+    expect(handler).not.toBeNull();
+
+    const events: AgentStreamEvent[] = [];
+    await handler?.run({ emit: (event) => events.push(event) });
+
+    expect(requests).toContainEqual({
+      method: "thread/goal/set",
+      params: {
+        threadId: "test-thread",
+        objective: "ship feature",
+        status: "active",
+      },
+    });
+    const message = assistantMessageText(events.at(-1));
+    expect(message).toContain("Goal set: ship feature");
+    expect(message).toContain("Plan mode");
+    expect(message).toContain("Switch to Default or Code mode");
   });
 
   test("lists /compact and sends Codex compaction out of band", async () => {

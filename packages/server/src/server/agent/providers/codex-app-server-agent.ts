@@ -4947,6 +4947,13 @@ export class CodexAppServerAgentSession implements AgentSession {
             objective: subcommand.objective,
             status: "active",
           });
+          if (this.planModeEnabled) {
+            return (
+              `Goal set: ${subcommand.objective}\n\n` +
+              "Note: the goal was saved but won't start automatically in Plan mode. " +
+              "Switch to Default or Code mode to run it."
+            );
+          }
           return `Goal set: ${subcommand.objective}`;
         }
         case "pause": {
