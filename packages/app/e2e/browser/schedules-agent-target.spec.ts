@@ -8,6 +8,8 @@ import {
 import { seedMockAgentWorkspace } from "../support/helpers/mock-agent";
 import { seedWorkspace } from "../support/helpers/seed-client";
 import { getServerId } from "../support/helpers/server-id";
+import { waitForWorkspaceTabsVisible } from "../support/helpers/workspace-tabs";
+import { buildHostAgentDetailRoute } from "../../src/utils/host-routes";
 import { waitForSidebarHydration } from "../support/helpers/workspace-ui";
 import { expectStableHeight } from "../support/helpers/settled";
 import { buildSchedulesRoute } from "../../src/utils/host-routes";
@@ -186,18 +188,27 @@ test.describe("Schedules targeting an existing agent", () => {
       title: agentTitle,
     });
     cleanupTasks.push(() => agent.cleanup());
-    const serverId = getServerId();
 
-    await gotoAppShell(page);
-    await waitForSidebarHydration(page);
-    await page.goto(`/host/${serverId}/workspace/${agent.workspaceId}/agent/${agent.agentId}`);
+    await page.goto(buildHostAgentDetailRoute(getServerId(), agent.agentId, agent.workspaceId));
+    await page.waitForURL(
+      (url) => url.pathname.includes("/workspace/") && !url.searchParams.has("open"),
+      { timeout: 60_000 },
+    );
+    await waitForWorkspaceTabsVisible(page);
 
-    const tabMenuTrigger = page.getByTestId(`workspace-tab-context-agent_${agent.agentId}`).first();
-    await expect(tabMenuTrigger).toBeVisible({ timeout: 30_000 });
-    await tabMenuTrigger.click({ button: "right" });
-    await page.getByTestId(`workspace-tab-context-agent_${agent.agentId}-schedule-message`).click();
+    const tab = page.getByTestId(`workspace-tab-agent_${agent.agentId}`).first();
+    await expect(tab).toBeVisible({ timeout: 30_000 });
+    await tab.click({ button: "right" });
 
-    await expect(page).toHaveURL(new RegExp(`/schedules\\?.*agentId=${agent.agentId}`));
+    const scheduleItem = page.getByTestId(
+      `workspace-tab-context-agent_${agent.agentId}-schedule-message`,
+    );
+    await expect(scheduleItem).toBeVisible({ timeout: 30_000 });
+    await scheduleItem.click();
+
+    await expect(page).toHaveURL(new RegExp(`/schedules\\?.*agentId=${agent.agentId}`), {
+      timeout: 30_000,
+    });
     await expect(page.getByTestId("schedule-form-sheet")).toBeVisible({ timeout: 30_000 });
     await expect(page.getByTestId("schedule-agent-trigger")).toContainText(agentTitle, {
       timeout: 30_000,
