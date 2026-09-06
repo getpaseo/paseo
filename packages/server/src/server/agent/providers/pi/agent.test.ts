@@ -1156,6 +1156,35 @@ describe("PiRpcAgentSession", () => {
     ]);
   });
 
+  test("settles a Pi-run autonomous turn that Paseo never started", async () => {
+    const { pi, events } = await createSession();
+    const fakeSession = pi.latestSession();
+
+    fakeSession.emit({ type: "agent_start" });
+    fakeSession.emit({ type: "turn_start" });
+    fakeSession.finishAgentRun({
+      message: {
+        role: "assistant",
+        provider: "test-provider",
+        model: "test-model",
+        stopReason: "stop",
+        content: [{ type: "text", text: "Background subagent finished" }],
+      },
+      willRetry: false,
+    });
+
+    // Without settlement the daemon would stay "running": agent_end always carries
+    // willRetry, so turn_completed can only arrive from agent_settled.
+    expect(events.turnLifecycleEvents()).toEqual([{ type: "turn_started", turnId: undefined }]);
+
+    fakeSession.settleTurn();
+
+    expect(events.turnLifecycleEvents()).toEqual([
+      { type: "turn_started", turnId: undefined },
+      { type: "turn_completed", turnId: undefined },
+    ]);
+  });
+
   test("resumes by launching Pi with the persisted session file and cwd metadata", async () => {
     const pi = new FakePi();
     const client = createClient(pi);

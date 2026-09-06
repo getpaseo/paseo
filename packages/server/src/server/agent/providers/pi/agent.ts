@@ -2290,19 +2290,27 @@ export class PiRpcAgentSession implements AgentSession {
     event: Extract<PiAgentSessionEvent, { type: "agent_end" | "agent_settled" }>;
     turnId: string | undefined;
   }): void {
+    // A turn is open whenever Pi started one Paseo did not own. Foreground turns
+    // set activeTurnId via startTurn; autonomous runs (e.g. a pi-subagents
+    // background-notify that makes Pi run a turn on its own) never do, so the only
+    // signal is the turn_started we already emitted. Both must reach a terminal
+    // event or the daemon's autonomous lifecycle stays "running" forever.
+    const turnOpen = this.activeTurnId !== null || this.activeTurnStartedEmitted;
     if (event.type === "agent_end") {
       // COMPAT(piAgentSettled): added in v0.5.0, remove after 2027-02-21 once the Pi
-      // floor emits agent_settled and willRetry.
+      // floor emits agent_settled and willRetry. The legacy floor has no willRetry, so
+      // this path closes unconditionally — an autonomous run on that floor has no
+      // turn_started to key turnOpen off of.
       if (event.willRetry === undefined) {
         this.completeTurn(turnId, event.messages ?? []);
         return;
       }
-      if (this.activeTurnId) {
+      if (turnOpen) {
         this.pendingSettledMessages = event.messages ?? [];
       }
       return;
     }
-    if (this.activeTurnId) {
+    if (turnOpen) {
       this.completeTurn(turnId, this.pendingSettledMessages ?? []);
     }
   }
