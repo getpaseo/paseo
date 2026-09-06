@@ -469,7 +469,9 @@ function resolveAgentTargetLabel(input: {
   if (input.display) {
     return input.display.label;
   }
-  return input.directory.status === "loaded" ? "Agent unavailable" : "Loading agents...";
+  return input.directory.status === "loaded"
+    ? "Agent session unavailable"
+    : "Loading agent sessions...";
 }
 
 function buildProviderSnapshotRequest(input: {
@@ -837,7 +839,7 @@ function buildInitialState(snapshot: ScheduleFormSnapshot): ScheduleFormState {
     agentOptions: [],
     selectedAgentUnavailable: false,
     selectedAgentConfirmed: false,
-    agentTargetLabel: "Loading agents...",
+    agentTargetLabel: "Loading agent sessions...",
     agentDirectoryRequest: null,
     disclosure: {
       showHostField: false,
@@ -1067,8 +1069,8 @@ function buildAgentTargetPlan(input: {
     return {
       kind: "blocked",
       reason: state.selectedAgentUnavailable
-        ? "That agent is no longer running on this host"
-        : "Waiting for the agent list on this host",
+        ? "That agent session is no longer running on this host"
+        : "Waiting for the agent session list on this host",
     };
   }
   if (!state.submitCadence) {

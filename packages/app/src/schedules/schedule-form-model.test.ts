@@ -979,7 +979,7 @@ describe("schedule form heartbeat target", () => {
     expect(form.getState()).toMatchObject({
       targetKind: "agent",
       selectedAgentId: "agent-1",
-      agentTargetLabel: "Loading agents...",
+      agentTargetLabel: "Loading agent sessions...",
       agentDirectoryRequest: { serverId: "host-a" },
     });
 
@@ -1011,7 +1011,7 @@ describe("schedule form heartbeat target", () => {
     });
     expect(form.buildSubmitPlan()).toEqual({
       kind: "blocked",
-      reason: "Waiting for the agent list on this host",
+      reason: "Waiting for the agent session list on this host",
     });
 
     loadAgents(form, [directoryAgent()]);
@@ -1039,7 +1039,7 @@ describe("schedule form heartbeat target", () => {
     });
     expect(form.buildSubmitPlan()).toEqual({
       kind: "blocked",
-      reason: "That agent is no longer running on this host",
+      reason: "That agent session is no longer running on this host",
     });
   });
 
@@ -1081,11 +1081,11 @@ describe("schedule form heartbeat target", () => {
       defaults: { serverId: "host-a", projectTargets: PROJECT_TARGETS },
     });
 
-    expect(form.getState().agentTargetLabel).toBe("Loading agents...");
+    expect(form.getState().agentTargetLabel).toBe("Loading agent sessions...");
 
     loadAgents(form, []);
 
-    expect(form.getState().agentTargetLabel).toBe("Agent unavailable");
+    expect(form.getState().agentTargetLabel).toBe("Agent session unavailable");
   });
 
   it("still names an archived agent it is editing, without offering it", () => {

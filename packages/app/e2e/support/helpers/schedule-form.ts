@@ -89,13 +89,13 @@ export async function expectNewAgentFieldsHidden(page: Page): Promise<void> {
 }
 
 export async function expectHostHasNoAgents(page: Page): Promise<void> {
-  await expect(page.getByText("No agents on this host")).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByText("No agent sessions on this host")).toBeVisible({ timeout: 30_000 });
   await expect(page.getByTestId("schedule-form-submit")).toBeDisabled();
 }
 
 /** A host that never answers must read as unresolved, never as "no agents". */
 export async function expectAgentDirectoryUnresolved(page: Page): Promise<void> {
-  await expect(page.getByText("No agents on this host")).toHaveCount(0);
+  await expect(page.getByText("No agent sessions on this host")).toHaveCount(0);
   await expect(page.getByTestId("schedule-form-submit")).toBeDisabled();
 }
 

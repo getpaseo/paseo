@@ -884,20 +884,20 @@ function ScheduleAgentField({
 
   return (
     <SelectField
-      label="Agent"
+      label="Agent session"
       value={state.selectedAgentId || null}
       selectedDisplay={state.agentDisplay}
       options={options}
       onChange={handleChange}
-      placeholder="Select agent"
-      emptyText="No agents on this host"
+      placeholder="Select agent session"
+      emptyText="No agent sessions on this host"
       loading={state.agentLoadState.status !== "loaded"}
       disabled={!state.selectedServerId}
       hint={!state.selectedServerId ? "Choose a host first." : undefined}
-      error={state.selectedAgentUnavailable ? "Agent unavailable" : undefined}
+      error={state.selectedAgentUnavailable ? "Agent session unavailable" : undefined}
       searchable
-      searchPlaceholder="Search agents..."
-      title="Select agent"
+      searchPlaceholder="Search agent sessions..."
+      title="Select agent session"
       size={size}
       triggerTestID="schedule-agent-trigger"
     />
