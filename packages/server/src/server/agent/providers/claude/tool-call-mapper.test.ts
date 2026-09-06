@@ -433,6 +433,251 @@ describe("claude tool-call mapper", () => {
     });
   });
 
+  // Input shapes below are the live Claude Code 2.1.220 schemas (the build bundled in
+  // @anthropic-ai/claude-agent-sdk 0.3.220), captured from the tools array it sends to the API.
+  it("maps native scheduling tools to labelled details", () => {
+    const cron = expectMapped(
+      mapClaudeCompletedToolCall({
+        callId: "claude-cron-1",
+        name: "CronCreate",
+        input: { cron: "0 9 * * *", prompt: "Review overnight CI failures", recurring: true },
+        output: "Created cron job abc123",
+      }),
+    );
+    expect(cron.detail).toEqual({
+      type: "plain_text",
+      label: "0 9 * * *",
+      text: "Review overnight CI failures",
+      icon: "calendar_clock",
+    });
+
+    const wakeup = expectMapped(
+      mapClaudeCompletedToolCall({
+        callId: "claude-wake-1",
+        name: "ScheduleWakeup",
+        input: { delaySeconds: 2700, reason: "check the deploy" },
+        output: null,
+      }),
+    );
+    expect(wakeup.detail).toEqual({
+      type: "plain_text",
+      label: "in 45m",
+      text: "check the deploy",
+      icon: "alarm_clock",
+    });
+
+    const stop = expectMapped(
+      mapClaudeCompletedToolCall({
+        callId: "claude-wake-2",
+        name: "ScheduleWakeup",
+        input: { stop: true },
+        output: null,
+      }),
+    );
+    expect(stop.detail).toEqual({ type: "plain_text", label: "Stop loop", icon: "alarm_clock" });
+  });
+
+  it("maps Monitor command watches as shell detail and websocket watches as plain text", () => {
+    const command = expectMapped(
+      mapClaudeCompletedToolCall({
+        callId: "claude-monitor-1",
+        name: "Monitor",
+        input: {
+          command: "bash /tmp/watch.sh",
+          description: "CI checks on #3664",
+          timeout_ms: 3600000,
+          persistent: true,
+        },
+        output: "check run failed",
+      }),
+    );
+    expect(command.detail).toEqual({
+      type: "shell",
+      command: "bash /tmp/watch.sh",
+      output: "check run failed",
+    });
+
+    const socket = expectMapped(
+      mapClaudeCompletedToolCall({
+        callId: "claude-monitor-2",
+        name: "Monitor",
+        input: { ws: "wss://example.test/feed", description: "Watch the feed", persistent: false },
+        output: null,
+      }),
+    );
+    expect(socket.detail).toEqual({
+      type: "plain_text",
+      label: "Watch the feed",
+      icon: "eye",
+    });
+  });
+
+  it("maps NotebookEdit as an edit detail so the file opens from the card", () => {
+    const item = expectMapped(
+      mapClaudeCompletedToolCall({
+        callId: "claude-notebook-1",
+        name: "NotebookEdit",
+        input: {
+          notebook_path: "/repo/analysis.ipynb",
+          new_source: "import pandas as pd",
+          cell_id: "cell-3",
+          edit_mode: "replace",
+        },
+        output: null,
+      }),
+    );
+    expect(item.detail).toEqual({
+      type: "edit",
+      filePath: "/repo/analysis.ipynb",
+      newString: "import pandas as pd",
+    });
+  });
+
+  it("maps ToolSearch as a search detail", () => {
+    const item = expectMapped(
+      mapClaudeCompletedToolCall({
+        callId: "claude-toolsearch-1",
+        name: "ToolSearch",
+        input: { query: "select:WebFetch,WebSearch", max_results: 2 },
+        output: null,
+      }),
+    );
+    expect(item.detail).toEqual({
+      type: "search",
+      query: "select:WebFetch,WebSearch",
+      toolName: "search",
+    });
+  });
+
+  it("maps messaging, task and worktree tools to plain text summaries", () => {
+    const cases: Array<{ name: string; input: unknown; label: string; text?: string }> = [
+      {
+        name: "SendMessage",
+        input: { to: "abc99e33", summary: "verify CODEX_HOME scoping", message: "Full body" },
+        label: "verify CODEX_HOME scoping",
+        text: "Full body",
+      },
+      {
+        name: "PushNotification",
+        input: { message: "Maintainer replied on #3602", status: "proactive" },
+        label: "Maintainer replied on #3602",
+      },
+      { name: "TaskStop", input: { task_id: "buzpt8ue2" }, label: "buzpt8ue2" },
+      { name: "EnterWorktree", input: { name: "fix/schema-drift" }, label: "fix/schema-drift" },
+      { name: "ExitWorktree", input: { action: "merge" }, label: "merge" },
+      { name: "DesignSync", input: { method: "push" }, label: "push" },
+    ];
+
+    for (const testCase of cases) {
+      const item = expectMapped(
+        mapClaudeCompletedToolCall({
+          callId: `claude-${testCase.name}`,
+          name: testCase.name,
+          input: testCase.input,
+          output: null,
+        }),
+      );
+      expect(item.detail?.type, testCase.name).toBe("plain_text");
+      if (item.detail?.type === "plain_text") {
+        expect(item.detail.label, testCase.name).toBe(testCase.label);
+        expect(item.detail.text, testCase.name).toBe(testCase.text);
+      }
+    }
+  });
+
+  it("keeps partial streaming input on the mapped branch instead of falling back to unknown", () => {
+    // Tool input arrives as partial JSON, so a half-streamed CronCreate must still map.
+    const item = expectMapped(
+      mapClaudeRunningToolCall({
+        callId: "claude-cron-partial",
+        name: "CronCreate",
+        input: { cron: "*/5 * * * *" },
+        output: null,
+      }),
+    );
+    expect(item.detail).toEqual({
+      type: "plain_text",
+      label: "*/5 * * * *",
+      icon: "calendar_clock",
+    });
+  });
+
+  it("still falls back to unknown detail when a native tool call carries no usable input", () => {
+    const item = expectMapped(
+      mapClaudeCompletedToolCall({
+        callId: "claude-cron-empty",
+        name: "CronDelete",
+        input: {},
+        output: null,
+      }),
+    );
+    expect(item.detail?.type).toBe("unknown");
+  });
+
+  it("keeps the input-derived label when the tool result is structured JSON", () => {
+    // buildToolOutput JSON.parses any result text that happens to be valid JSON, so the mapper
+    // sees { output: [...] } rather than a string. That must not sink the branch.
+    const cronList = expectMapped(
+      mapClaudeCompletedToolCall({
+        callId: "claude-cronlist-json",
+        name: "CronList",
+        input: {},
+        output: { output: [{ id: "abc123", cron: "0 9 * * *" }] },
+      }),
+    );
+    expect(cronList.detail).toEqual({
+      type: "plain_text",
+      label: "Scheduled jobs",
+      icon: "calendar_clock",
+    });
+
+    const cron = expectMapped(
+      mapClaudeCompletedToolCall({
+        callId: "claude-cron-json",
+        name: "CronCreate",
+        input: { cron: "0 9 * * *", prompt: "Review overnight CI failures" },
+        output: { id: "abc123", created: true },
+      }),
+    );
+    expect(cron.detail).toEqual({
+      type: "plain_text",
+      label: "0 9 * * *",
+      text: "Review overnight CI failures",
+      icon: "calendar_clock",
+    });
+
+    const skill = expectMapped(
+      mapClaudeCompletedToolCall({
+        callId: "claude-skill-json",
+        name: "Skill",
+        input: { skill: "superpowers:brainstorming" },
+        output: [{ type: "text", text: "done" }],
+      }),
+    );
+    expect(skill.detail).toEqual({
+      type: "plain_text",
+      label: "superpowers:brainstorming",
+      icon: "sparkles",
+    });
+  });
+
+  it("maps EnterPlanMode, which carries no input at all", () => {
+    const item = expectMapped(
+      mapClaudeCompletedToolCall({
+        callId: "claude-plan-1",
+        name: "EnterPlanMode",
+        input: {},
+        output: "You are now in plan mode.",
+      }),
+    );
+    expect(item.detail).toEqual({
+      type: "plain_text",
+      label: "Plan mode",
+      text: "You are now in plan mode.",
+      icon: "brain",
+    });
+  });
+
   it("drops tool calls when callId is missing", () => {
     const item = mapClaudeCompletedToolCall({
       callId: null,

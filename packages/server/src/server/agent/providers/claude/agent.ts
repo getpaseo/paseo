@@ -4,6 +4,7 @@ import fs from "node:fs";
 import { promises } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { isSubAgentToolName } from "@getpaseo/protocol/tool-name-normalization";
 import {
   type AgentDefinition,
   type CanUseTool,
@@ -1875,7 +1876,7 @@ function readLegacyResultUsageTokens(usage: unknown): number | undefined {
 }
 
 function isClaudeSubagentToolName(name: string | undefined): boolean {
-  return name === "Task" || name === "Agent" || name === "Workflow";
+  return typeof name === "string" && isSubAgentToolName(name);
 }
 
 function readClaudeParentToolUseId(message: SDKMessage): string | null {
@@ -5866,7 +5867,8 @@ function readClaudeHistoricalSubagentToolCalls(
       const block = toObjectRecord(value);
       if (
         block?.type !== "tool_use" ||
-        (block.name !== "Task" && block.name !== "Agent") ||
+        typeof block.name !== "string" ||
+        !isClaudeSubagentToolName(block.name) ||
         typeof block.id !== "string"
       ) {
         continue;
