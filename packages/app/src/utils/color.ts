@@ -69,7 +69,9 @@ export function parseHexColor(hex: string): [number, number, number] | null {
 
 /** Adds alpha to a theme-owned hex color in a format accepted by Canvas and Skia. */
 export function hexColorWithAlpha(hex: string, alpha: number): string {
-  const rgb = parseHexColor(hex);
+  const body = hex.startsWith("#") ? hex.slice(1) : hex;
+  const rgbHex = body.length === 8 && /^[0-9a-fA-F]{8}$/.test(body) ? body.slice(0, 6) : hex;
+  const rgb = parseHexColor(rgbHex);
   if (!rgb) throw new TypeError(`Expected a hex color, received ${hex}`);
   if (!Number.isFinite(alpha) || alpha < 0 || alpha > 1) {
     throw new RangeError(`Color alpha must be between 0 and 1, received ${alpha}`);

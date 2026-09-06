@@ -22,6 +22,10 @@ describe("hexColorWithAlpha", () => {
     expect(hexColorWithAlpha("#3e704a", 0.15)).toBe("rgba(62, 112, 74, 0.15)");
   });
 
+  it("replaces the alpha channel on eight-digit theme colors", () => {
+    expect(hexColorWithAlpha("#3e704a80", 0.15)).toBe("rgba(62, 112, 74, 0.15)");
+  });
+
   it("rejects colors and alpha values outside its contract", () => {
     expect(() => hexColorWithAlpha("currentColor", 0.15)).toThrow();
     expect(() => hexColorWithAlpha("#3e704a", 1.1)).toThrow();
