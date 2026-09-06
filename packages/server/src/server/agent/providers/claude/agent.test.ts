@@ -2698,6 +2698,312 @@ describe("ClaudeAgentSession context window usage", () => {
     }
   });
 
+  test("main assistant response usage wins over an aggregate empty-iterations result", async () => {
+    // Real-world regression: a translating backend reports the turn's cumulative usage
+    // in the flat result fields with iterations: [], while each main assistant response
+    // carries the true per-response usage.
+    const session = await createSessionForTurns([
+      [
+        createInitMessage(),
+        {
+          type: "assistant",
+          message: {
+            id: "resp_final",
+            role: "assistant",
+            content: [{ type: "text", text: "done" }],
+            usage: {
+              input_tokens: 470,
+              cache_creation_input_tokens: 0,
+              cache_read_input_tokens: 127_616,
+              output_tokens: 2_756,
+            },
+          },
+          session_id: "session-1",
+        },
+        createSuccessResult({
+          total_cost_usd: 11.9,
+          usage: {
+            input_tokens: 241_054,
+            cache_creation_input_tokens: 0,
+            cache_read_input_tokens: 3_838_464,
+            output_tokens: 21_677,
+            iterations: [],
+          },
+          modelUsage: {
+            "claude-opus-4-8": { contextWindow: 1_000_000 },
+          },
+        }),
+      ],
+    ]);
+
+    try {
+      const result = await session.run("turn");
+
+      expect(result.usage).toEqual({
+        inputTokens: 241_054,
+        cachedInputTokens: 3_838_464,
+        outputTokens: 21_677,
+        totalCostUsd: 11.9,
+        contextWindowMaxTokens: 1_000_000,
+        contextWindowUsedTokens: 130_842,
+      });
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("subagent assistant responses do not feed the main context usage", async () => {
+    const session = await createSessionForTurns([
+      [
+        createInitMessage(),
+        {
+          type: "assistant",
+          parent_tool_use_id: "toolu-subagent-1",
+          message: {
+            id: "resp_subagent",
+            role: "assistant",
+            content: [{ type: "text", text: "subagent answer" }],
+            usage: {
+              input_tokens: 216_174,
+              cache_creation_input_tokens: 0,
+              cache_read_input_tokens: 248_320,
+              output_tokens: 5_924,
+            },
+          },
+          session_id: "session-1",
+        },
+        {
+          type: "assistant",
+          message: {
+            id: "resp_main",
+            role: "assistant",
+            content: [{ type: "text", text: "done" }],
+            usage: {
+              input_tokens: 1_000,
+              cache_creation_input_tokens: 0,
+              cache_read_input_tokens: 20_000,
+              output_tokens: 500,
+            },
+          },
+          session_id: "session-1",
+        },
+        createSuccessResult({
+          total_cost_usd: 0.5,
+          usage: {
+            input_tokens: 3_000,
+            cache_creation_input_tokens: 0,
+            cache_read_input_tokens: 900_000,
+            output_tokens: 9_000,
+            iterations: [],
+          },
+          modelUsage: {
+            "claude-opus-4-8": { contextWindow: 1_000_000 },
+          },
+        }),
+      ],
+    ]);
+
+    try {
+      const result = await session.run("turn");
+
+      expect(result.usage).toEqual({
+        inputTokens: 3_000,
+        cachedInputTokens: 900_000,
+        outputTokens: 9_000,
+        totalCostUsd: 0.5,
+        contextWindowMaxTokens: 1_000_000,
+        // 1,000 + 0 + 20,000 + 500 — the main response, not the subagent's 470k.
+        contextWindowUsedTokens: 21_500,
+      });
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("last main assistant response usage carries into a later result turn", async () => {
+    const session = await createSessionForTurns([
+      [
+        createInitMessage(),
+        {
+          type: "assistant",
+          message: {
+            id: "resp_turn1",
+            role: "assistant",
+            content: [{ type: "text", text: "hi" }],
+            usage: {
+              input_tokens: 500,
+              cache_creation_input_tokens: 0,
+              cache_read_input_tokens: 30_000,
+              output_tokens: 200,
+            },
+          },
+          session_id: "session-1",
+        },
+        createSuccessResult(),
+      ],
+      [
+        createSuccessResult({
+          total_cost_usd: 0.1,
+          usage: {
+            input_tokens: 1_000,
+            cache_read_input_tokens: 200,
+            output_tokens: 300,
+          },
+          uuid: "result-2",
+        }),
+      ],
+    ]);
+
+    try {
+      await session.run("turn 1");
+      const secondTurn = await session.run("turn 2");
+
+      // The flat fields of the second result (1,500 total) are aggregate accounting and
+      // remain excluded after turn one; the last main response usage (30,700) is the
+      // observed real context fill.
+      expect(secondTurn.usage).toEqual({
+        inputTokens: 1_000,
+        cachedInputTokens: 200,
+        outputTokens: 300,
+        totalCostUsd: 0.1,
+        contextWindowMaxTokens: 200_000,
+        contextWindowUsedTokens: 30_700,
+      });
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("third-party gateway turn reporting full finalized usage wins over partial stream", async () => {
+    // Gemini/GLM gateway pattern: stream message_start reports partial uncached tokens (3400),
+    // but final result reports the true full turn usage (40301 + 36434 + 419 = 77154).
+    const session = await createSessionForTurns([
+      [
+        createInitMessage(),
+        createMessageStartEvent({
+          input_tokens: 3_400,
+          cache_creation_input_tokens: 0,
+          cache_read_input_tokens: 0,
+        }),
+        createMessageDeltaEvent(419),
+        createSuccessResult({
+          total_cost_usd: 0.432142,
+          usage: {
+            input_tokens: 40_301,
+            cache_creation_input_tokens: 0,
+            cache_read_input_tokens: 36_434,
+            output_tokens: 419,
+            iterations: [],
+          },
+          modelUsage: {
+            "claude-opus-4-8": { contextWindow: 1_000_000 },
+          },
+        }),
+      ],
+    ]);
+
+    try {
+      const result = await session.run("turn");
+
+      expect(result.usage).toEqual({
+        inputTokens: 40_301,
+        cachedInputTokens: 36_434,
+        outputTokens: 419,
+        totalCostUsd: 0.432142,
+        contextWindowMaxTokens: 1_000_000,
+        contextWindowUsedTokens: 77_154,
+      });
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("empty-iterations finalized usage applies when stream reports no request input", async () => {
+    const session = await createSessionForTurns([
+      [
+        createInitMessage(),
+        createMessageStartEvent({
+          input_tokens: 0,
+          cache_creation_input_tokens: 0,
+          cache_read_input_tokens: 0,
+        }),
+        createMessageDeltaEvent(4_790),
+        createSuccessResult({
+          total_cost_usd: 0.1,
+          usage: {
+            input_tokens: 61_489,
+            cache_creation_input_tokens: 0,
+            cache_read_input_tokens: 266_816,
+            output_tokens: 4_790,
+            iterations: [],
+          },
+          modelUsage: {
+            "claude-opus-4-8": { contextWindow: 1_000_000 },
+          },
+        }),
+      ],
+    ]);
+
+    try {
+      const result = await session.run("turn");
+
+      expect(result.usage).toEqual({
+        inputTokens: 61_489,
+        cachedInputTokens: 266_816,
+        outputTokens: 4_790,
+        totalCostUsd: 0.1,
+        contextWindowMaxTokens: 1_000_000,
+        contextWindowUsedTokens: 333_095,
+      });
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("compaction and advisor iterations are skipped when picking the active iteration", async () => {
+    const session = await createSessionForTurns([
+      [
+        createInitMessage(),
+        createSuccessResult({
+          total_cost_usd: 0.1,
+          usage: {
+            input_tokens: 500,
+            cache_creation_input_tokens: 0,
+            cache_read_input_tokens: 100,
+            output_tokens: 50,
+            iterations: [
+              {
+                type: "compaction",
+                input_tokens: 180_000,
+                cache_creation_input_tokens: 0,
+                cache_read_input_tokens: 0,
+                output_tokens: 3_500,
+              },
+              {
+                type: "message",
+                input_tokens: 400,
+                cache_creation_input_tokens: 0,
+                cache_read_input_tokens: 90,
+                output_tokens: 45,
+              },
+            ],
+          },
+          modelUsage: {
+            "claude-opus-4-8": { contextWindow: 200_000 },
+          },
+        }),
+      ],
+    ]);
+
+    try {
+      const result = await session.run("turn");
+
+      expect(result.usage?.contextWindowUsedTokens).toBe(535);
+    } finally {
+      await session.close();
+    }
+  });
+
   test("manual compact boundary updates context usage from post tokens", async () => {
     const session = await createSessionForTurns([
       [

@@ -1829,20 +1829,6 @@ function readStreamRequestOutputTokens(event: Record<string, unknown>): number |
   return outputTokens;
 }
 
-function readLastUsageIteration(usage: unknown): Record<string, unknown> | undefined {
-  const iterations = toObjectRecord(usage)?.iterations;
-  if (!Array.isArray(iterations)) {
-    return undefined;
-  }
-  for (let index = iterations.length - 1; index >= 0; index -= 1) {
-    const candidate = toObjectRecord(iterations[index]);
-    if (candidate) {
-      return candidate;
-    }
-  }
-  return undefined;
-}
-
 function readUsageTokenTotal(usage: Record<string, unknown>): number | undefined {
   const usageWithCacheCreation = usage as typeof usage & {
     cache_creation_input_tokens?: unknown;
@@ -1869,14 +1855,79 @@ function readUsageTokenTotal(usage: Record<string, unknown>): number | undefined
   return total > 0 ? total : undefined;
 }
 
-function readActiveUsageTokens(usage: unknown): number | undefined {
-  const activeUsage = readLastUsageIteration(usage);
-  return activeUsage ? readUsageTokenTotal(activeUsage) : undefined;
-}
-
 function readLegacyResultUsageTokens(usage: unknown): number | undefined {
   const usageRecord = toObjectRecord(usage);
   return usageRecord ? readUsageTokenTotal(usageRecord) : undefined;
+}
+
+function readFinalizedFlatUsageTokens(usage: unknown): number | undefined {
+  const usageRecord = toObjectRecord(usage);
+  if (!usageRecord || !Array.isArray(usageRecord.iterations) || usageRecord.iterations.length > 0) {
+    return undefined;
+  }
+
+  // Some Anthropic-compatible backends emit an explicit empty iterations array
+  // with finalized per-turn usage. Missing iterations remains unsafe after turn one
+  // because legacy Claude results can contain aggregate totals.
+  return readUsageTokenTotal(usageRecord);
+}
+
+/**
+ * The last iteration is only the active context when it is a main-loop sampling
+ * iteration. Compaction iterations hold the pre-compaction context and advisor
+ * iterations hold sub-reasoning usage; neither is the live window fill.
+ */
+function readLastMainIteration(usage: unknown): Record<string, unknown> | undefined {
+  const iterations = toObjectRecord(usage)?.iterations;
+  if (!Array.isArray(iterations)) {
+    return undefined;
+  }
+  for (let index = iterations.length - 1; index >= 0; index -= 1) {
+    const candidate = toObjectRecord(iterations[index]);
+    if (!candidate) {
+      continue;
+    }
+    if (candidate.type === "compaction" || candidate.type === "advisor_message") {
+      continue;
+    }
+    return candidate;
+  }
+  return undefined;
+}
+
+function readMainIterationUsageTokens(usage: unknown): number | undefined {
+  const iteration = readLastMainIteration(usage);
+  return iteration ? readUsageTokenTotal(iteration) : undefined;
+}
+
+/**
+ * Reads the usage of a main-loop assistant response. Each assistant SDKMessage carries
+ * the final usage of one API response, which is the most direct evidence of the live
+ * context fill at that point in the conversation.
+ */
+function readAssistantResponseUsage(message: SDKMessage): number | undefined {
+  if (message.type !== "assistant") {
+    return undefined;
+  }
+  const usageRecord = toObjectRecord(
+    toObjectRecord((message as { message?: unknown }).message)?.usage,
+  );
+  if (!usageRecord) {
+    return undefined;
+  }
+  return readUsageTokenTotal(usageRecord);
+}
+
+function isTrustworthyContextUsage(
+  usedTokens: number | undefined,
+  contextWindowMaxTokens: number | undefined,
+): usedTokens is number {
+  if (typeof usedTokens !== "number" || !Number.isFinite(usedTokens) || usedTokens <= 0) {
+    return false;
+  }
+  // No successful request can have consumed more than the context window, so anything
+  // above it is session/query accounting, never the active context.
+  return contextWindowMaxTokens === undefined || usedTokens <= contextWindowMaxTokens;
 }
 
 function isClaudeSubagentToolName(name: string | undefined): boolean {
@@ -1896,6 +1947,12 @@ class ClaudeContextUsageState {
   private streamRequestInputTokens: number | undefined;
   private streamRequestOutputTokens: number | undefined;
   private compactedContextWindowUsedTokens: number | undefined;
+  /**
+   * Usage of the most recent main-loop assistant response. Unlike the stream counters
+   * this survives across turns: it is the last observed real context fill, not a
+   * per-turn accumulator.
+   */
+  private lastMainResponseUsage: number | undefined;
   private completedResultTurns = 0;
 
   constructor(initialContextWindowMaxTokens?: number) {
@@ -1918,6 +1975,13 @@ class ClaudeContextUsageState {
       this.contextWindowMaxTokens = contextWindowMaxTokens;
     }
     return this.contextWindowMaxTokens;
+  }
+
+  recordMainAssistantResponse(message: SDKMessage): void {
+    const usageTokens = readAssistantResponseUsage(message);
+    if (usageTokens !== undefined) {
+      this.lastMainResponseUsage = usageTokens;
+    }
   }
 
   buildStreamUsageEvent(event: unknown): AgentStreamEvent | null {
@@ -1969,11 +2033,30 @@ class ClaudeContextUsageState {
         usage.contextWindowMaxTokens = modelContextWindowMaxTokens;
       }
 
-      const activeResultUsageTokens =
-        readActiveUsageTokens(message.usage) ??
-        (this.completedResultTurns === 0 ? readLegacyResultUsageTokens(message.usage) : undefined);
-      const usedTokens =
-        this.streamUsedTokens() ?? activeResultUsageTokens ?? this.compactedContextWindowUsedTokens;
+      const mainIterationUsageTokens = readMainIterationUsageTokens(message.usage);
+      const legacyResultUsageTokens =
+        this.completedResultTurns === 0 ? readLegacyResultUsageTokens(message.usage) : undefined;
+      const finalizedFlatUsageTokens = readFinalizedFlatUsageTokens(message.usage);
+      // Candidate priority:
+      // 1. Observed main-loop assistant response usage (direct per-response evidence).
+      // 2. Valid main-loop sampling iteration (structured per-iteration evidence).
+      // 3. Finalized flat usage for explicit empty-iterations backends (e.g. #4019).
+      // 4. Streamed request usage from message_start / message_delta.
+      // 5. First-turn legacy flat result fallback.
+      // 6. Compaction postTokens fallback.
+      const streamTokens = this.streamUsedTokens();
+      const observedStreamTokens =
+        streamTokens !== undefined && (this.streamRequestInputTokens ?? 0) > 0
+          ? streamTokens
+          : undefined;
+      const usedTokens = [
+        this.lastMainResponseUsage,
+        mainIterationUsageTokens,
+        finalizedFlatUsageTokens,
+        observedStreamTokens,
+        legacyResultUsageTokens,
+        this.compactedContextWindowUsedTokens,
+      ].find((candidate) => isTrustworthyContextUsage(candidate, this.contextWindowMaxTokens));
       if (usedTokens !== undefined) {
         usage.contextWindowUsedTokens = usedTokens;
       }
@@ -4096,6 +4179,7 @@ class ClaudeAgentSession implements AgentSession {
         this.appendSidechainResultEvents(message, events);
         break;
       case "assistant": {
+        this.contextUsage.recordMainAssistantResponse(message);
         const timelineItems = this.mapBlocksToTimeline(message.message.content, {
           suppressAssistantText: options?.suppressAssistantText ?? false,
           suppressReasoning: options?.suppressReasoning ?? false,
