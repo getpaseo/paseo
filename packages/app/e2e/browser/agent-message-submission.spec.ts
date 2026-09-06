@@ -5,6 +5,7 @@ import {
   expectAgentIdle,
   expectAgentReadyToInterrupt,
   expectAgentSurfacesIdle,
+  expectInlineWorkingIndicator,
   expectRunningAgentChrome,
   expectVisibleAgentSurfacesIdle,
 } from "../support/helpers/agent-stream";
@@ -39,7 +40,10 @@ import {
   expectResumeOverflowFallsBackToOneTail,
   rememberTimelineRequestCounts,
 } from "../support/helpers/timeline-resume";
-import { workspaceDeckEntryLocator } from "../support/helpers/workspace-ui";
+import {
+  waitForWorkspaceInSidebar,
+  workspaceDeckEntryLocator,
+} from "../support/helpers/workspace-ui";
 import { expectInFlightForkAvailable } from "../support/helpers/assistant-fork";
 import {
   scrollTimelineToNewestLoadedEdge,
@@ -468,6 +472,10 @@ async function expectHiddenStreamingSubmissionOrderAfterWorkspaceEviction(
 
     await target.client.waitForFinish(target.agentId, 30_000);
     const requestsBeforeReturn = rememberTimelineRequestCounts(gate);
+    await waitForWorkspaceInSidebar(page, {
+      serverId: getServerId(),
+      workspaceId: target.workspaceId,
+    });
     await openAgentRoute(page, target);
     await expectComposerVisible(page);
     await subscriptions.waitForSubscribedAgents([target.agentId]);
@@ -542,9 +550,18 @@ async function expectProviderAcknowledgementBeforeRpcAcceptanceSettlesSubmission
     const userMessage = await submitMessageWithImage(page, prompt);
     await gate.waitForHeldServerMessage();
     await gate.waitForAgentStreamItem("user_message");
+    await gate.waitForAgentStreamEvent("turn_started");
     gate.releaseHeldServerMessage();
+    await expect(userMessage).toHaveAttribute("aria-busy", "false");
     await gate.drop();
-    await expect(page.getByTestId("turn-working-indicator")).toHaveCount(0);
+    await expectInlineWorkingIndicator(page);
+    await expect(userMessage).toHaveAttribute("aria-busy", "false");
+
+    await agent.client.waitForFinish(agent.agentId, 30_000);
+    gate.setServerMessageSuppressed("agent_status", false);
+    gate.setServerMessageSuppressed("agent_update", false);
+    gate.restoreFresh();
+    await expectVisibleAgentSurfacesIdle(page);
     await expect(userMessage).toHaveAttribute("aria-busy", "false");
   } finally {
     gate.restore();
@@ -984,7 +1001,7 @@ test.describe("Agent message submission", () => {
       await openAgentRoute(page, agent);
       await expectComposerVisible(page);
       await submitMessage(page, "Keep running until the queued turn is ready.");
-      await expectAgentReadyToInterrupt(page);
+      await expectRunningAgentChrome(page, title);
       await queueMessage(page, secondPrompt);
       await expect(page.getByRole("button", { name: "Send queued message now" })).toBeVisible();
 

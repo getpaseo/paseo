@@ -11,35 +11,37 @@ export function attachMutableProviderConfigOwner(options: {
   providerSnapshotManager: ProviderSnapshotManager;
   updateProviderRegistry: (state: AgentManagerProviderState) => void;
 }): () => void {
-  let publishPendingProviderChange: (() => void) | null = null;
+  let commitPendingProviderChange: (() => void) | null = null;
 
   const unsubscribeApply = options.store.onApply((config, previous, details) => {
     if (equal(config.providers, previous.providers)) return () => undefined;
 
     const previousAgentManagerState =
       options.providerSnapshotManager.getAgentManagerProviderState();
-    const staged = options.providerSnapshotManager.stageMutableProviderConfig(config.providers, {
-      removeProviders: details.removedProviders,
-      replace: true,
-    });
+    const prepared = options.providerSnapshotManager.prepareMutableProviderConfig(
+      config.providers,
+      {
+        removeProviders: details.removedProviders,
+        replace: true,
+      },
+    );
     try {
-      options.updateProviderRegistry(staged.agentManagerState);
+      options.updateProviderRegistry(prepared.agentManagerState);
     } catch (error) {
-      staged.rollback();
+      options.updateProviderRegistry(previousAgentManagerState);
       throw error;
     }
-    publishPendingProviderChange = staged.publish;
+    commitPendingProviderChange = prepared.commit;
 
     return () => {
-      publishPendingProviderChange = null;
-      staged.rollback();
+      commitPendingProviderChange = null;
       options.updateProviderRegistry(previousAgentManagerState);
     };
   });
   const unsubscribeChange = options.store.onChange(() => {
-    const publish = publishPendingProviderChange;
-    publishPendingProviderChange = null;
-    publish?.();
+    const commit = commitPendingProviderChange;
+    commitPendingProviderChange = null;
+    commit?.();
   });
 
   return () => {

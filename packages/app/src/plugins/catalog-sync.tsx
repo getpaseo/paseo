@@ -1,9 +1,9 @@
+import { pluginSettingsKey } from "./settings/use-settings";
 import { useEffect } from "react";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { useHostFeature } from "@/runtime/host-features";
 import { useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import { pluginRegistry } from "./registry";
-import { useSessionStore } from "@/stores/session-store";
 
 export function PluginCatalogSync({
   serverId,
@@ -32,15 +32,10 @@ export function PluginCatalogSync({
           .getPluginCatalog()
           .then((catalog) => {
             if (!cancelled) {
-              const timelineChanged = pluginRegistry.installCatalog(serverId, catalog, {
+              pluginRegistry.installCatalog(serverId, catalog, {
                 replacePluginId,
                 client,
               });
-              if (timelineChanged) {
-                useSessionStore
-                  .getState()
-                  .sessions[serverId]?.viewedTimelineSync?.reprojectVisibleTimelines();
-              }
             }
             return undefined;
           })
@@ -55,6 +50,15 @@ export function PluginCatalogSync({
     };
     void refresh();
     const unsubscribe = client.on("status", (message) => {
+      if (message.payload.status === "plugin_settings_changed") {
+        const { pluginId, settingsId } = message.payload;
+        if (typeof settingsId === "string") {
+          const plugin = pluginRegistry
+            .getSnapshot()
+            .find((item) => item.serverId === serverId && item.id === pluginId);
+          void plugin?.queryClient.invalidateQueries({ queryKey: pluginSettingsKey(settingsId) });
+        }
+      }
       if (message.payload.status === "plugin_catalog_changed") {
         const pluginId = message.payload.pluginId;
         if (typeof pluginId === "string") void refresh(pluginId);

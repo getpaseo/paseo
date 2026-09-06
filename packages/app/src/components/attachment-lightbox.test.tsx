@@ -136,6 +136,8 @@ let container: HTMLElement | null = null;
 
 beforeEach(() => {
   const dom = new JSDOM("<!doctype html><html><body></body></html>");
+  dom.window.requestAnimationFrame = vi.fn(() => 1);
+  dom.window.cancelAnimationFrame = vi.fn();
   vi.stubGlobal("React", React);
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.stubGlobal("window", dom.window);

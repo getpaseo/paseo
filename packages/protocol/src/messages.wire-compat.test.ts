@@ -8,6 +8,26 @@ import {
   WSHelloMessageSchema,
 } from "./messages.js";
 
+test("terminal listings accept older rows and retain new per-terminal directories", () => {
+  const response = {
+    type: "list_terminals_response",
+    payload: {
+      requestId: "terminal-list",
+      cwd: "/workspace",
+      terminals: [{ id: "terminal", name: "Shell", workspaceId: "workspace" }],
+    },
+  };
+  expect(SessionOutboundMessageSchema.parse(response)).toEqual(response);
+  const withDirectory = {
+    ...response,
+    payload: {
+      ...response.payload,
+      terminals: [{ ...response.payload.terminals[0], cwd: "/workspace/subdirectory" }],
+    },
+  };
+  expect(SessionOutboundMessageSchema.parse(withDirectory)).toEqual(withDirectory);
+});
+
 const LegacySubAgentToolCallSchema = z.object({
   type: z.literal("tool_call"),
   callId: z.string(),
@@ -266,5 +286,19 @@ describe("wire schema compatibility", () => {
     expect(parsed.capabilities.supportsRewindConversation).toBe(false);
     expect(parsed.capabilities.supportsRewindFiles).toBe(false);
     expect(parsed.capabilities.supportsRewindBoth).toBe(false);
+  });
+
+  test("notification timeline items parse their level and message", () => {
+    expect(
+      AgentTimelineItemPayloadSchema.parse({
+        type: "notification",
+        level: "warning",
+        message: "Command blocked by user",
+      }),
+    ).toEqual({
+      type: "notification",
+      level: "warning",
+      message: "Command blocked by user",
+    });
   });
 });
