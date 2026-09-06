@@ -2354,6 +2354,9 @@ export class Session {
     if (msg.type === "hub.execution.agent.validate.request") {
       return this.hubExecutionController?.validateAgent(msg);
     }
+    if (msg.type === "hub.execution.agent.prompt.request") {
+      return this.hubExecutionController?.promptAgent(msg);
+    }
     if (msg.type === "hub.execution.control.request") {
       return this.hubExecutionController?.controlExecution(msg);
     }

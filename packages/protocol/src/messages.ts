@@ -3025,6 +3025,27 @@ const HubExecutionAgentCreateErrorSchema = z.discriminatedUnion("code", [
 
 export type HubExecutionAgentCreateError = z.infer<typeof HubExecutionAgentCreateErrorSchema>;
 
+/**
+ * A message for an execution's agent, sent by Hub while that agent is alive.
+ *
+ * Hub could only ever create an agent, interrupt it, or archive it. A trigger surface that is
+ * conversational — a Linear agent session, where the user keeps typing into the same panel — had
+ * no way to reach the agent it already started, so each message forced a new agent and replayed
+ * the thread as text. This carries the message to the running one instead.
+ *
+ * `activeTurnBehavior` decides what happens when a turn is already in flight: `steer` folds the
+ * message into it (the user adding a precision mid-work), `interrupt` replaces it.
+ */
+export const HubExecutionAgentPromptRequestSchema = z.object({
+  type: z.literal("hub.execution.agent.prompt.request"),
+  requestId: z.string(),
+  executionId: z.string(),
+  prompt: z.string(),
+  activeTurnBehavior: ActiveTurnBehaviorSchema.optional(),
+});
+
+export type HubExecutionAgentPromptRequest = z.infer<typeof HubExecutionAgentPromptRequestSchema>;
+
 export const HubExecutionControlActionSchema = z.enum(["interrupt", "archive"]);
 export type HubExecutionControlAction = z.infer<typeof HubExecutionControlActionSchema>;
 
@@ -3040,6 +3061,7 @@ export type HubExecutionControlRequest = z.infer<typeof HubExecutionControlReque
 export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   HubExecutionAgentCreateRequestSchema,
   HubExecutionAgentValidateRequestSchema,
+  HubExecutionAgentPromptRequestSchema,
   HubExecutionControlRequestSchema,
   BrowserAutomationExecuteResponseSchema,
   VoiceAudioChunkMessageSchema,
@@ -6183,6 +6205,24 @@ export const HubExecutionAgentValidateResponseSchema = z.object({
   }),
 });
 
+export const HubExecutionAgentPromptResponseSchema = z.object({
+  type: z.literal("hub.execution.agent.prompt.response"),
+  payload: z.object({
+    requestId: z.string(),
+    executionId: z.string(),
+    /**
+     * False when the execution has no live agent to talk to — archived, closed, or never created
+     * on this daemon. It is not an error: the caller is expected to fall back to starting one.
+     */
+    delivered: z.boolean(),
+    /** How the daemon dispatched it, when it did. */
+    disposition: z.enum(["out_of_band", "steered", "turn_started"]).nullable(),
+    error: z.string().nullable(),
+  }),
+});
+
+export type HubExecutionAgentPromptResponse = z.infer<typeof HubExecutionAgentPromptResponseSchema>;
+
 export const HubExecutionControlResponseSchema = z.object({
   type: z.literal("hub.execution.control.response"),
   payload: z.object({
@@ -6223,6 +6263,7 @@ export type HubExecutionAgentStream = z.infer<typeof HubExecutionAgentStreamSche
 export const HubExecutionOutboundMessageSchema = z.discriminatedUnion("type", [
   HubExecutionAgentCreateResponseSchema,
   HubExecutionAgentValidateResponseSchema,
+  HubExecutionAgentPromptResponseSchema,
   HubExecutionControlResponseSchema,
   HubExecutionAgentUpdateSchema,
   HubExecutionAgentStreamSchema,
@@ -6416,6 +6457,7 @@ export const AgentSkillsImportLegacySelectionResponseSchema = z.object({
 export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   HubExecutionAgentCreateResponseSchema,
   HubExecutionAgentValidateResponseSchema,
+  HubExecutionAgentPromptResponseSchema,
   HubExecutionControlResponseSchema,
   HubExecutionAgentUpdateSchema,
   HubExecutionAgentStreamSchema,

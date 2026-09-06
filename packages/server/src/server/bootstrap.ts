@@ -129,6 +129,7 @@ import type { LocalSpeechProviderConfig } from "./speech/providers/local/config.
 import type { RequestedSpeechProviders } from "./speech/speech-types.js";
 import { createSpeechService } from "./speech/speech-runtime.js";
 import { AgentManager } from "./agent/agent-manager.js";
+import { sendPromptToAgent } from "./agent/agent-prompt.js";
 import { AgentStorage } from "./agent/agent-storage.js";
 import { attachAgentStoragePersistence } from "./persistence-hooks.js";
 import { createAgentMcpServer } from "./agent/mcp-server.js";
@@ -1251,6 +1252,20 @@ export async function createPaseoDaemon(
         agentStorage,
         createAgent,
         interruptAgent: (agentId) => cancelAgentRunCommand({ agentManager, logger }, agentId),
+        // Hub reaching a live agent it already started. `unarchive: false` keeps that reach
+        // narrow: a Hub prompt continues a conversation, it never revives a closed one.
+        promptAgent: (input) =>
+          sendPromptToAgent({
+            agentManager,
+            agentStorage,
+            agentId: input.agentId,
+            prompt: input.prompt,
+            unarchive: false,
+            logger,
+            ...(input.activeTurnBehavior === undefined
+              ? {}
+              : { activeTurnBehavior: input.activeTurnBehavior }),
+          }),
         archiveWorkspace: archiveWorkspaceByIdExternal,
         cleanupFailedCreate: (input) =>
           hubAgentLifecycle.cleanupCreatedWorktreeAfterFailedAgentCreate(input),

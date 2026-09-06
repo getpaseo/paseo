@@ -2,6 +2,7 @@ import { isAbsolute } from "node:path";
 import type {
   HubExecutionAgentCreateError,
   HubExecutionAgentCreateRequest,
+  HubExecutionAgentPromptRequest,
   HubExecutionAgentValidateRequest,
   HubExecutionAgentValidationIssue,
   HubExecutionControlRequest,
@@ -30,6 +31,7 @@ export class HubExecutionController {
   private readonly pendingCreates = new Set<Promise<void>>();
   private readonly pendingControls = new Set<Promise<void>>();
   private readonly pendingValidations = new Set<Promise<void>>();
+  private readonly pendingPrompts = new Set<Promise<void>>();
   private cleanupPromise: Promise<void> | null = null;
   private closed = false;
 
@@ -52,6 +54,7 @@ export class HubExecutionController {
       ...this.pendingCreates,
       ...this.pendingControls,
       ...this.pendingValidations,
+      ...this.pendingPrompts,
     ]);
   }
 
@@ -89,6 +92,49 @@ export class HubExecutionController {
         requestId: message.requestId,
         valid: error === null && issues.length === 0,
         issues,
+        error,
+      },
+    });
+  }
+
+  async promptAgent(message: HubExecutionAgentPromptRequest): Promise<void> {
+    if (this.closed) return;
+    const prompt = this.promptAgentWithResponse(message);
+    this.pendingPrompts.add(prompt);
+    try {
+      await prompt;
+    } finally {
+      this.pendingPrompts.delete(prompt);
+    }
+  }
+
+  private async promptAgentWithResponse(message: HubExecutionAgentPromptRequest): Promise<void> {
+    let delivered = false;
+    let disposition: "out_of_band" | "steered" | "turn_started" | null = null;
+    let error: string | null = null;
+    try {
+      requireNonBlankHubAgentField("executionId", message.executionId);
+      requireNonBlankHubAgentField("prompt", message.prompt);
+      const result = await this.agents.prompt({
+        executionId: message.executionId,
+        prompt: message.prompt,
+        ...(message.activeTurnBehavior === undefined
+          ? {}
+          : { activeTurnBehavior: message.activeTurnBehavior }),
+      });
+      delivered = result.delivered;
+      disposition = result.disposition;
+    } catch (promptError) {
+      error = promptError instanceof Error ? promptError.message : String(promptError);
+    }
+    if (this.closed) return;
+    this.send({
+      type: "hub.execution.agent.prompt.response",
+      payload: {
+        requestId: message.requestId,
+        executionId: message.executionId,
+        delivered,
+        disposition,
         error,
       },
     });

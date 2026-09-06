@@ -8,6 +8,7 @@ import type {
 
 import type {
   HubExecutionAgents,
+  HubExecutionPromptResult,
   OwnedAgentEvent,
   OwnedAgentSnapshot,
 } from "./daemon-executions.js";
@@ -44,6 +45,10 @@ class ControlledHubExecutionAgents implements HubExecutionAgents {
 
   async control(): Promise<void> {}
 
+  async prompt(): Promise<HubExecutionPromptResult> {
+    return { delivered: false, disposition: null };
+  }
+
   subscribe(_listener: (event: OwnedAgentEvent) => void): () => void {
     return () => undefined;
   }
@@ -73,6 +78,10 @@ class RejectingHubExecutionAgents implements HubExecutionAgents {
   }
 
   async control(): Promise<void> {}
+
+  async prompt(): Promise<HubExecutionPromptResult> {
+    return { delivered: false, disposition: null };
+  }
 
   subscribe(_listener: (event: OwnedAgentEvent) => void): () => void {
     return () => undefined;
