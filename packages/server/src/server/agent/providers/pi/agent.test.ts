@@ -895,6 +895,61 @@ describe("PiRpcAgentSession", () => {
     ]);
   });
 
+  test("hidden extension context neither renders nor completes an ordinary turn", async () => {
+    const { pi, session, events } = await createSession();
+    const fakeSession = pi.latestSession();
+
+    // A custom message is not proof that the prompt was an extension command: extensions also
+    // inject model-only context into ordinary prompts from `before_agent_start`. Completing
+    // here would end the turn before the model has even started.
+    await session.startTurn("research today's report");
+    fakeSession.emit({
+      type: "message_end",
+      message: {
+        role: "custom",
+        content: [{ type: "text", text: "model-only context" }],
+        display: false,
+      },
+    });
+
+    expect(events.timelineAndCompletionEvents()).toEqual([]);
+
+    fakeSession.emit({ type: "turn_start" });
+    fakeSession.finishTurn();
+    await events.nextTurnCompletion();
+
+    expect(events.eventTypes()).toEqual(["turn_started", "turn_completed"]);
+  });
+
+  test("hides display:false context injected into an extension command", async () => {
+    const { pi, session, events } = await createSession();
+    const fakeSession = pi.latestSession();
+
+    // The prompt is a real extension command here, but the hidden message still is not its
+    // output -- only the visible message that follows is, and that one settles the turn.
+    await session.startTurn("/show-status");
+    fakeSession.emit({
+      type: "message_end",
+      message: {
+        role: "custom",
+        content: [{ type: "text", text: "model-only context" }],
+        display: false,
+      },
+    });
+
+    expect(events.timelineAndCompletionEvents()).toEqual([]);
+
+    fakeSession.emit({
+      type: "message_end",
+      message: { role: "custom", content: [{ type: "text", text: "Status: OK" }] },
+    });
+
+    expect(events.timelineAndCompletionEvents()).toEqual([
+      { type: "timeline", item: { type: "assistant_message", text: "Status: OK" } },
+      { type: "turn_completed" },
+    ]);
+  });
+
   test("canceling a silent Pi extension command leaves the session usable", async () => {
     const { pi, session, events } = await createSession();
     const fakeSession = pi.latestSession();

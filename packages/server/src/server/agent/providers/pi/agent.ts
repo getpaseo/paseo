@@ -2406,6 +2406,11 @@ export class PiRpcAgentSession implements AgentSession {
       return;
     }
     if (event.message.role === "custom") {
+      // `display: false` marks model-only context that an extension injected into somebody
+      // else's prompt, so it must touch neither the timeline nor the turn lifecycle.
+      if (event.message.display === false) {
+        return;
+      }
       const text = getUserMessageText(event.message.content);
       if (text) {
         this.emit({
@@ -2415,7 +2420,17 @@ export class PiRpcAgentSession implements AgentSession {
           item: { type: "assistant_message", text },
         });
       }
-      this.completeTurn(turnId, []);
+      // Only an extension command's own output settles the turn. `activeNoTurnPromptText` is
+      // the submitted prompt and `turn_start` clears it, so this is true exactly while a Pi
+      // extension command is running without a model turn — the case this branch was written
+      // for. A custom message arriving during an ordinary turn is just context: completeTurn()
+      // has no `activeTurnStarted` guard, so completing here would truncate a live turn.
+      if (
+        this.activeNoTurnPromptText !== null &&
+        this.parseSlashCommandInput(this.activeNoTurnPromptText) !== null
+      ) {
+        this.completeTurn(turnId, []);
+      }
       return;
     }
   }
