@@ -1,5 +1,6 @@
 import path from "node:path";
 import { readFileSync } from "node:fs";
+import type { TerminalDefaultColors } from "@getpaseo/protocol/messages";
 import type { TerminalActivity } from "@getpaseo/protocol/terminal-activity";
 import { connectDaemonClient } from "./daemon-client-loader";
 import { withProjectOwnership } from "./project-ownership";
@@ -81,7 +82,13 @@ export interface SeedDaemonClient {
     cwd: string,
     name?: string,
     requestId?: string,
-    options?: { agentId?: string; command?: string; args?: string[]; workspaceId?: string },
+    options?: {
+      agentId?: string;
+      command?: string;
+      args?: string[];
+      workspaceId?: string;
+      defaultColors?: TerminalDefaultColors;
+    },
   ): Promise<{
     terminal: { id: string; name: string; cwd: string; activity?: TerminalActivity | null } | null;
     error: string | null;

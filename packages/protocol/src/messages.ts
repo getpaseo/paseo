@@ -108,6 +108,10 @@ export const DAEMON_PERMISSIONS = [
 export const DaemonPermissionSchema = z.enum(DAEMON_PERMISSIONS);
 export type DaemonPermission = z.infer<typeof DaemonPermissionSchema>;
 
+export const HexColorSchema = z
+  .string()
+  .regex(/^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/, "Must be a hex color");
+
 const MutableDaemonProviderModelSchema = z
   .object({
     id: z.string().min(1),
@@ -2846,6 +2850,14 @@ export const UnsubscribeTerminalsRequestSchema = z.object({
   workspaceId: z.string().optional(),
 });
 
+export const TerminalDefaultColorsSchema = z.object({
+  foreground: HexColorSchema,
+  background: HexColorSchema,
+  cursor: HexColorSchema.optional(),
+});
+
+export type TerminalDefaultColors = z.infer<typeof TerminalDefaultColorsSchema>;
+
 export const CreateTerminalRequestSchema = z.object({
   type: z.literal("create_terminal_request"),
   cwd: z.string(),
@@ -2854,6 +2866,10 @@ export const CreateTerminalRequestSchema = z.object({
   agentId: z.string().optional(),
   command: z.string().optional(),
   args: z.array(z.string()).optional(),
+  // The palette selected by the client when this terminal was created. The
+  // daemon owns OSC color-query replies, so it must not infer these from a
+  // later viewer's theme.
+  defaultColors: TerminalDefaultColorsSchema.optional(),
   // Initial PTY size. Added in v0.1.107; the app no longer sends it (the estimate cache that fed
   // it was removed — the pane-focus resize claim sizes the PTY instead). Kept and honored
   // permanently: released v0.1.107 clients still send it, and programmatic callers may pass an
