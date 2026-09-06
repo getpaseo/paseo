@@ -104,6 +104,11 @@ export type PaseoProjectListOptions = Omit<ProjectListRequestMessage, "type" | "
   requestId?: string;
 };
 export type PaseoProjectListResult = ProjectListResponseMessage["payload"];
+export type PaseoProjectUpdate = Extract<
+  SessionOutboundMessage,
+  { type: "project.update" }
+>["payload"];
+export type PaseoProjectUpdateHandler = (update: PaseoProjectUpdate) => void;
 
 export interface PaseoAgentListResult {
   requestId: string;
@@ -173,6 +178,7 @@ export interface PaseoWorkspaceHandle {
 
 export interface PaseoProjectActions {
   list(options?: PaseoProjectListOptions): Promise<PaseoProjectListResult>;
+  subscribe(handler: PaseoProjectUpdateHandler): () => void;
 }
 
 export interface PaseoWorkspaceActions {
@@ -494,6 +500,10 @@ export function createPaseoApi(daemonClient: DaemonClient): PaseoApi {
     terminals,
     projects: {
       list: (options) => daemonClient.listProjects(options),
+      subscribe: (handler) =>
+        daemonClient.on("project.update", (message) => {
+          handler(message.payload);
+        }),
     },
     workspaces: {
       list: (options) => daemonClient.fetchWorkspaces(options),

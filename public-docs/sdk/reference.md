@@ -112,9 +112,12 @@ Creation options include `config`, `cwd`, `parent`, `title`, `prompt`, `env`, `o
 
 ## `client.projects`
 
-| Method           | Result                   | Behavior                                                                      |
-| ---------------- | ------------------------ | ----------------------------------------------------------------------------- |
-| `list(options?)` | `PaseoProjectListResult` | Lists every registered project, including projects with no active workspaces. |
+| Method               | Result                   | Behavior                                                                                |
+| -------------------- | ------------------------ | --------------------------------------------------------------------------------------- |
+| `list(options?)`     | `PaseoProjectListResult` | Lists every registered project, including projects with no active workspaces.           |
+| `subscribe(handler)` | Unsubscribe function     | Listens only for future project upserts/removals. Pair with `list()` for initial state. |
+
+To build a complete project cache without an initialization gap, subscribe and buffer updates before awaiting `list()`. Initialize the cache from the list result, then apply buffered updates in arrival order.
 
 ## `client.workspaces`
 

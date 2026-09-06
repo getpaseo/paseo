@@ -335,6 +335,63 @@ test("project actions list registered projects through the existing RPC", async 
   await client.close();
 });
 
+test("project actions subscribe to existing project updates", async () => {
+  const { client, ws } = await connectClient();
+  const updates: string[] = [];
+  const unsubscribe = client.projects.subscribe((update) => {
+    updates.push(update.kind === "upsert" ? update.project.projectDisplayName : update.projectId);
+  });
+
+  ws.message(
+    sessionMessage({
+      type: "project.update",
+      payload: {
+        kind: "upsert",
+        project: {
+          projectId: "project_sdk",
+          projectKey: "sdk",
+          projectDisplayName: "Renamed SDK",
+          projectCustomName: "Renamed SDK",
+          projectCustomIconRevision: null,
+          projectIconRevision: "icon-revision",
+          projectRootPath: "/repo/sdk",
+          projectKind: "git",
+          syncSeq: 9,
+        },
+        generation: "daemon-generation",
+        seq: 9,
+      },
+    }),
+  );
+  ws.message(
+    sessionMessage({
+      type: "project.update",
+      payload: {
+        kind: "remove",
+        projectId: "project_removed",
+        generation: "daemon-generation",
+        seq: 10,
+      },
+    }),
+  );
+
+  expect(updates).toEqual(["Renamed SDK", "project_removed"]);
+
+  unsubscribe();
+  ws.message(
+    sessionMessage({
+      type: "project.update",
+      payload: {
+        kind: "remove",
+        projectId: "project_after_unsubscribe",
+      },
+    }),
+  );
+  expect(updates).toEqual(["Renamed SDK", "project_removed"]);
+
+  await client.close();
+});
+
 test("agent actions list the daemon directory without exposing the low-level client", async () => {
   const { client, ws } = await connectClient();
   const listedAgent = createAgent({ title: "Planner" });
