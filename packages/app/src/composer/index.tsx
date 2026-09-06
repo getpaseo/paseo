@@ -83,10 +83,7 @@ import { Shortcut } from "@/components/ui/shortcut";
 import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
 import { AutocompletePopover } from "@/components/ui/autocomplete-popover";
 import type { AutocompleteOption } from "@/components/ui/autocomplete";
-import {
-  useAgentAutocomplete,
-  type AgentMentionSelection,
-} from "@/hooks/use-agent-autocomplete";
+import { useAgentAutocomplete, type AgentMentionSelection } from "@/hooks/use-agent-autocomplete";
 import { usePluginClientSlashCommands } from "@/plugins/client-slash-commands";
 import {
   executePluginClientSlashCommand,

@@ -109,6 +109,27 @@ interface ImportSessionMutationInput {
   action: ImportSessionAction;
 }
 
+function resolveImportSessionListingScope(input: {
+  cwd: string | null | undefined;
+  workspaceId: string | null | undefined;
+  isShowingAllDirectories: boolean;
+  supportsProviderSessionContinue: boolean;
+}) {
+  const scopeCwd = input.isShowingAllDirectories ? null : (input.cwd ?? null);
+  const hasTargetWorkspace = Boolean(
+    !input.isShowingAllDirectories &&
+    input.workspaceId &&
+    input.cwd &&
+    input.supportsProviderSessionContinue,
+  );
+  return {
+    scopeCwd,
+    hasTargetWorkspace,
+    listingCwd: hasTargetWorkspace ? null : scopeCwd,
+    listingTargetCwd: hasTargetWorkspace ? (input.cwd ?? null) : null,
+  };
+}
+
 function buildSessionsQueriesConfig(args: {
   providersToFetch: AgentProvider[] | null;
   visible: boolean;
@@ -472,8 +493,15 @@ export function ImportSessionSheet({
   const [pageLimit, setPageLimit] = useState(PER_PROVIDER_LIMIT);
   const [selectedProvider, setSelectedProvider] = useState<string>(ALL_FILTER_VALUE);
 
-  const scopeCwd = isShowingAllDirectories ? null : (cwd ?? null);
   const supportsSearch = useHostFeature(serverId, "importSessionSearch");
+  const supportsProviderSessionContinue = useHostFeature(serverId, "providerSessionContinue");
+  const { scopeCwd, hasTargetWorkspace, listingCwd, listingTargetCwd } =
+    resolveImportSessionListingScope({
+      cwd,
+      workspaceId,
+      isShowingAllDirectories,
+      supportsProviderSessionContinue,
+    });
   const query = useDebouncedValue(supportsSearch ? searchInput : "", SEARCH_DEBOUNCE_MS).trim();
 
   useEffect(() => {
@@ -493,7 +521,6 @@ export function ImportSessionSheet({
     enabled: visible,
   });
   const supportsWorkspaceTarget = useHostFeature(serverId, "importSessionWorkspaceTarget");
-  const supportsProviderSessionContinue = useHostFeature(serverId, "providerSessionContinue");
   const requiresHostUpgrade = requiresImportSessionsHostUpgrade({
     supportsSnapshot,
     workspaceId,
@@ -509,12 +536,6 @@ export function ImportSessionSheet({
     () => buildProviderLabelMap(snapshotEntries),
     [snapshotEntries],
   );
-
-  const hasTargetWorkspace = Boolean(
-    !isShowingAllDirectories && workspaceId && cwd && supportsProviderSessionContinue,
-  );
-  const listingCwd = hasTargetWorkspace ? null : scopeCwd;
-  const listingTargetCwd = hasTargetWorkspace ? (cwd ?? null) : null;
 
   const sessionsQueryRoot = useMemo(
     () =>

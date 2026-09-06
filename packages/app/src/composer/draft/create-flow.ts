@@ -277,13 +277,6 @@ export function useDraftAgentCreateFlow<TDraftAgent, TCreateResult>({
       }
 
       try {
-        await onBeforeSubmit?.({
-          attempt,
-          text: attempt.text,
-          images: attempt.images,
-          attachments: attempt.attachments,
-          cwd,
-        });
         const supportsAgentContextAttachments =
           useSessionStore.getState().sessions[pendingServerId]?.serverInfo?.features
             ?.agentContextAttachments === true;

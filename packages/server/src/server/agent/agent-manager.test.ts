@@ -10451,6 +10451,7 @@ test("listImportableSessions returns healthy rows alongside thrown and timed-out
       sessions: [
         {
           provider: "claude",
+          canContinueHere: false,
           providerHandleId: "claude-session",
           cwd: "/tmp/recent",
           title: null,

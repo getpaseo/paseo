@@ -157,11 +157,12 @@ export async function listImportableProviderSessions(
   // Continuing in another worktree needs enough source rows to filter by a
   // local Git identity after provider discovery. A normal resume listing keeps
   // its existing tight limit.
-  const listingLimit = query
-    ? IMPORT_SESSION_SEARCH_SCAN_LIMIT
-    : targetCwd
-      ? Math.min(Math.max(limit * 5, 50) + importedSessions.count, 200)
-      : limit + importedSessions.count;
+  let listingLimit = limit + importedSessions.count;
+  if (query) {
+    listingLimit = IMPORT_SESSION_SEARCH_SCAN_LIMIT;
+  } else if (targetCwd) {
+    listingLimit = Math.min(Math.max(limit * 5, 50) + importedSessions.count, 200);
+  }
 
   const listing = await agentManager.listImportableSessions({
     limit: listingLimit,
