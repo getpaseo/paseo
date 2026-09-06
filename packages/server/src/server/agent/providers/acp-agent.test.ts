@@ -3823,6 +3823,7 @@ describe("ACP session/load invariant — cwd and mcpServers always passed", () =
           ...args.capabilities,
         },
         handle: args.handle,
+        historyReplayIdleMs: 0,
       },
     );
 
@@ -4001,6 +4002,92 @@ describe("ACP session/load invariant — cwd and mcpServers always passed", () =
     expect(assistantMessages[1].messageId).toBe(assistantMessages[0].messageId);
     expect(assistantMessages[2].messageId).toEqual(expect.any(String));
     expect(assistantMessages[2].messageId).not.toBe(assistantMessages[0].messageId);
+  });
+
+  test("keeps session/update replay after the session/load result", async () => {
+    let session!: ACPAgentSession;
+    const loadSession = async () => {
+      await session.sessionUpdate({
+        sessionId: "session-1",
+        update: {
+          sessionUpdate: "user_message_chunk",
+          messageId: "user-1",
+          content: { type: "text", text: "first prompt" },
+        } as SessionUpdate,
+      });
+      return {
+        sessionId: "session-1",
+        modes: null,
+        models: null,
+        configOptions: [],
+      };
+    };
+    ({ session } = makeTestSession({
+      capabilities: { loadSession: true },
+      handle: { sessionId: "session-1", provider: "qoder" },
+      loadSession,
+    }));
+
+    await session.initializeResumedSession();
+    await session.sessionUpdate({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "agent_message_chunk",
+        messageId: "assistant-1",
+        content: { type: "text", text: "first reply" },
+      } as SessionUpdate,
+    });
+    await session.sessionUpdate({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "user_message_chunk",
+        messageId: "user-2",
+        content: { type: "text", text: "follow up" },
+      } as SessionUpdate,
+    });
+    await session.sessionUpdate({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "agent_message_chunk",
+        messageId: "assistant-2",
+        content: { type: "text", text: "second reply" },
+      } as SessionUpdate,
+    });
+
+    const history: AgentStreamEvent[] = [];
+    for await (const event of session.streamHistory()) {
+      history.push(event);
+    }
+    expect(history).toEqual([
+      {
+        type: "timeline",
+        provider: session.provider,
+        item: { type: "user_message", text: "first prompt", messageId: "user-1" },
+      },
+      {
+        type: "timeline",
+        provider: session.provider,
+        item: {
+          type: "assistant_message",
+          text: "first reply",
+          messageId: "assistant-1",
+        },
+      },
+      {
+        type: "timeline",
+        provider: session.provider,
+        item: { type: "user_message", text: "follow up", messageId: "user-2" },
+      },
+      {
+        type: "timeline",
+        provider: session.provider,
+        item: {
+          type: "assistant_message",
+          text: "second reply",
+          messageId: "assistant-2",
+        },
+      },
+    ]);
   });
 
   test("loadSession is always called with mcpServers even when supportsMcpServers is false", async () => {
