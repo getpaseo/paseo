@@ -15,15 +15,17 @@ const logger = pino({ level: "silent" });
 describe("sherpa model downloader", () => {
   test("getSherpaOnnxModelDir maps modelId to extractedDir", () => {
     const modelsDir = "/tmp/models";
-    expect(getSherpaOnnxModelDir(modelsDir, "parakeet-tdt-0.6b-v2-int8")).toContain(
-      "sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8",
+    expect(getSherpaOnnxModelDir(modelsDir, "parakeet-tdt-0.6b-v3-int8")).toContain(
+      "sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8",
     );
-    expect(getSherpaOnnxModelDir(modelsDir, "kokoro-en-v0_19")).toContain("kokoro-en-v0_19");
+    expect(getSherpaOnnxModelDir(modelsDir, "kokoro-multi-v1_0")).toContain(
+      "kokoro-multi-lang-v1_0",
+    );
   });
 
   test("ensureSherpaOnnxModel succeeds without downloading when files exist", async () => {
     const modelsDir = makeTmpDir();
-    const modelDir = getSherpaOnnxModelDir(modelsDir, "kokoro-en-v0_19");
+    const modelDir = getSherpaOnnxModelDir(modelsDir, "kokoro-multi-v1_0");
 
     mkdirSync(path.join(modelDir, "espeak-ng-data"), { recursive: true });
     writeFileSync(path.join(modelDir, "model.onnx"), "x");
@@ -32,7 +34,7 @@ describe("sherpa model downloader", () => {
 
     const out = await ensureSherpaOnnxModel({
       modelsDir,
-      modelId: "kokoro-en-v0_19",
+      modelId: "kokoro-multi-v1_0",
       logger,
     });
 

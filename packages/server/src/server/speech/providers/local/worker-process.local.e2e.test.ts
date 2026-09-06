@@ -20,12 +20,15 @@ import { bufferToWorkerBytes } from "./worker-bytes.js";
 const modelsDir =
   process.env.PASEO_LOCAL_MODELS_DIR ?? path.join(homedir(), ".paseo", "models", "local-speech");
 const shouldDownload = process.env.PASEO_SPEECH_E2E_DOWNLOAD === "1";
-const workerSpeechTest = hasParakeetModel(modelsDir) || shouldDownload ? test : test.skip;
+const hasFixtures =
+  existsSync(fixturePath("recording.wav")) && existsSync(fixturePath("recording.baseline.txt"));
+const workerSpeechTest =
+  (hasParakeetModel(modelsDir) || shouldDownload) && hasFixtures ? test : test.skip;
 
 function hasParakeetModel(dir: string): boolean {
   return (
-    existsSync(path.join(dir, "sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8", "encoder.int8.onnx")) &&
-    existsSync(path.join(dir, "sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8", "tokens.txt"))
+    existsSync(path.join(dir, "sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8", "encoder.int8.onnx")) &&
+    existsSync(path.join(dir, "sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8", "tokens.txt"))
   );
 }
 
@@ -77,7 +80,7 @@ workerSpeechTest(
     if (!hasParakeetModel(modelsDir)) {
       await ensureSherpaOnnxModels({
         modelsDir,
-        modelIds: ["parakeet-tdt-0.6b-v2-int8"],
+        modelIds: ["parakeet-tdt-0.6b-v3-int8"],
       });
     }
 
@@ -95,8 +98,8 @@ workerSpeechTest(
     try {
       const config: LocalSpeechWorkerConfig = {
         modelsDir,
-        voiceSttModel: "parakeet-tdt-0.6b-v2-int8",
-        dictationSttModel: "parakeet-tdt-0.6b-v2-int8",
+        voiceSttModel: "parakeet-tdt-0.6b-v3-int8",
+        dictationSttModel: "parakeet-tdt-0.6b-v3-int8",
         voiceTtsModel: "kokoro-en-v0_19",
       };
       const sessionId = randomUUID();

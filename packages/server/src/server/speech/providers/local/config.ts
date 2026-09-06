@@ -1,5 +1,3 @@
-import path from "node:path";
-
 import { z } from "zod";
 
 import type { PersistedConfig } from "../../../persisted-config.js";
@@ -13,6 +11,7 @@ import {
   type LocalSttModelId,
   type LocalTtsModelId,
 } from "./models.js";
+import { resolveDefaultSpeechModelsDir } from "./model-directory.js";
 
 export interface LocalSpeechModelConfig {
   dictationStt: LocalSttModelId;
@@ -34,7 +33,6 @@ export interface ResolvedLocalSpeechConfig {
 
 export type { LocalSpeechModelId, LocalSttModelId, LocalTtsModelId };
 
-const DEFAULT_LOCAL_MODELS_SUBDIR = path.join("models", "local-speech");
 const DEFAULT_STT_LANGUAGE = "en";
 
 export interface LocalSpeechSttLanguageConfig {
@@ -56,9 +54,9 @@ const OptionalIntegerSchema = NumberLikeSchema.pipe(
 const LocalSpeechResolutionSchema = z.object({
   includeProviderConfig: z.boolean(),
   modelsDir: z.string().trim().min(1),
-  dictationLocalSttModel: LocalSttModelIdSchema.default(DEFAULT_LOCAL_STT_MODEL),
-  voiceLocalSttModel: LocalSttModelIdSchema.default(DEFAULT_LOCAL_STT_MODEL),
-  voiceLocalTtsModel: LocalTtsModelIdSchema.default(DEFAULT_LOCAL_TTS_MODEL),
+  dictationLocalSttModel: LocalSttModelIdSchema.optional(),
+  voiceLocalSttModel: LocalSttModelIdSchema.optional(),
+  voiceLocalTtsModel: LocalTtsModelIdSchema.optional(),
   dictationLanguage: LanguageSchema,
   voiceLanguage: LanguageSchema,
   voiceLocalTtsSpeakerId: OptionalIntegerSchema,
@@ -74,6 +72,10 @@ function persistedLocalFeatureModel(
     return undefined;
   }
   return model;
+}
+
+function defaultIfEnabled(enabled: boolean | undefined, defaultModel: string): string | undefined {
+  return enabled !== false ? defaultModel : undefined;
 }
 
 function shouldIncludeLocalProviderConfig(params: {
@@ -148,7 +150,7 @@ function buildLocalSpeechResolutionInput(params: {
     modelsDir: firstDefinedValue<string>([
       env.PASEO_LOCAL_MODELS_DIR,
       persisted.providers?.local?.modelsDir,
-      path.join(paseoHome, DEFAULT_LOCAL_MODELS_SUBDIR),
+      resolveDefaultSpeechModelsDir(paseoHome),
     ]),
     dictationLocalSttModel: firstDefinedValue<string>([
       env.PASEO_DICTATION_LOCAL_STT_MODEL,
@@ -157,7 +159,7 @@ function buildLocalSpeechResolutionInput(params: {
         providers.dictationStt.enabled,
         persisted.features?.dictation?.stt?.model,
       ),
-      DEFAULT_LOCAL_STT_MODEL,
+      defaultIfEnabled(providers.dictationStt.enabled, DEFAULT_LOCAL_STT_MODEL),
     ]),
     voiceLocalSttModel: firstDefinedValue<string>([
       env.PASEO_VOICE_LOCAL_STT_MODEL,
@@ -166,7 +168,7 @@ function buildLocalSpeechResolutionInput(params: {
         providers.voiceStt.enabled,
         persisted.features?.voiceMode?.stt?.model,
       ),
-      DEFAULT_LOCAL_STT_MODEL,
+      defaultIfEnabled(providers.voiceStt.enabled, DEFAULT_LOCAL_STT_MODEL),
     ]),
     voiceLocalTtsModel: firstDefinedValue<string>([
       env.PASEO_VOICE_LOCAL_TTS_MODEL,
@@ -175,7 +177,7 @@ function buildLocalSpeechResolutionInput(params: {
         providers.voiceTts.enabled,
         persisted.features?.voiceMode?.tts?.model,
       ),
-      DEFAULT_LOCAL_TTS_MODEL,
+      defaultIfEnabled(providers.voiceTts.enabled, DEFAULT_LOCAL_TTS_MODEL),
     ]),
     ...buildLocalSpeechLanguageResolutionInput({ env, persisted }),
     voiceLocalTtsSpeakerId: firstDefinedValue<string | number>([
@@ -200,9 +202,7 @@ export function resolveLocalSpeechConfig(params: {
     buildLocalSpeechResolutionInput({ ...params, includeProviderConfig }),
   );
 
-  const resolvedVoiceTtsSpeakerId =
-    parsed.voiceLocalTtsSpeakerId ??
-    (parsed.voiceLocalTtsModel === "kokoro-en-v0_19" ? 0 : undefined);
+  const resolvedVoiceTtsSpeakerId = parsed.voiceLocalTtsSpeakerId ?? 0;
 
   return {
     sttLanguages: {

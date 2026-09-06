@@ -1,9 +1,8 @@
-import path from "node:path";
-
 import { describe, expect, test } from "vitest";
 
 import { PersistedConfigSchema } from "../persisted-config.js";
 import { resolveSpeechConfig } from "./speech-config-resolver.js";
+import { resolveDefaultSpeechModelsDir } from "./providers/local/model-directory.js";
 
 describe("resolveSpeechConfig", () => {
   test("resolves local-first defaults without env overrides", () => {
@@ -39,17 +38,17 @@ describe("resolveSpeechConfig", () => {
       enabled: true,
     });
     expect(result.speech.local).toEqual({
-      modelsDir: path.join(paseoHome, "models", "local-speech"),
+      modelsDir: resolveDefaultSpeechModelsDir(paseoHome),
       models: {
-        dictationStt: "parakeet-tdt-0.6b-v2-int8",
-        voiceStt: "parakeet-tdt-0.6b-v2-int8",
-        voiceTts: "kokoro-en-v0_19",
+        dictationStt: "parakeet-tdt-0.6b-v3-int8",
+        voiceStt: "parakeet-tdt-0.6b-v3-int8",
+        voiceTts: "kokoro-multi-v1_0",
         voiceTtsSpeakerId: 0,
       },
     });
-    expect(result.speech.local?.models.dictationStt).toBe("parakeet-tdt-0.6b-v2-int8");
-    expect(result.speech.local?.models.voiceStt).toBe("parakeet-tdt-0.6b-v2-int8");
-    expect(result.speech.local?.models.voiceTts).toBe("kokoro-en-v0_19");
+    expect(result.speech.local?.models.dictationStt).toBe("parakeet-tdt-0.6b-v3-int8");
+    expect(result.speech.local?.models.voiceStt).toBe("parakeet-tdt-0.6b-v3-int8");
+    expect(result.speech.local?.models.voiceTts).toBe("kokoro-multi-v1_0");
     expect(result.speech.local?.models.voiceTtsSpeakerId).toBe(0);
     expect(result.speech.sttLanguages).toEqual({
       dictation: "en",
@@ -70,9 +69,9 @@ describe("resolveSpeechConfig", () => {
       },
     });
     const env = {
-      PASEO_DICTATION_LOCAL_STT_MODEL: "parakeet-tdt-0.6b-v2-int8",
-      PASEO_VOICE_LOCAL_STT_MODEL: "parakeet-tdt-0.6b-v2-int8",
-      PASEO_VOICE_LOCAL_TTS_MODEL: "kokoro-en-v0_19",
+      PASEO_DICTATION_LOCAL_STT_MODEL: "parakeet-tdt-0.6b-v3-int8",
+      PASEO_VOICE_LOCAL_STT_MODEL: "parakeet-tdt-0.6b-v3-int8",
+      PASEO_VOICE_LOCAL_TTS_MODEL: "kokoro-multi-v1_0",
       PASEO_VOICE_LOCAL_TTS_SPEAKER_ID: "5",
       PASEO_VOICE_LOCAL_TTS_SPEED: "1.35",
       PASEO_DICTATION_LANGUAGE: "es",
@@ -93,9 +92,9 @@ describe("resolveSpeechConfig", () => {
     expect(result.speech.local).toEqual({
       modelsDir: "/tmp/models",
       models: {
-        dictationStt: "parakeet-tdt-0.6b-v2-int8",
-        voiceStt: "parakeet-tdt-0.6b-v2-int8",
-        voiceTts: "kokoro-en-v0_19",
+        dictationStt: "parakeet-tdt-0.6b-v3-int8",
+        voiceStt: "parakeet-tdt-0.6b-v3-int8",
+        voiceTts: "kokoro-multi-v1_0",
         voiceTtsSpeakerId: 5,
         voiceTtsSpeed: 1.35,
       },
@@ -120,9 +119,9 @@ describe("resolveSpeechConfig", () => {
       explicit: true,
       enabled: true,
     });
-    expect(result.speech.local?.models.dictationStt).toBe("parakeet-tdt-0.6b-v2-int8");
-    expect(result.speech.local?.models.voiceStt).toBe("parakeet-tdt-0.6b-v2-int8");
-    expect(result.speech.local?.models.voiceTts).toBe("kokoro-en-v0_19");
+    expect(result.speech.local?.models.dictationStt).toBe("parakeet-tdt-0.6b-v3-int8");
+    expect(result.speech.local?.models.voiceStt).toBe("parakeet-tdt-0.6b-v3-int8");
+    expect(result.speech.local?.models.voiceTts).toBe("kokoro-multi-v1_0");
     expect(result.speech.local?.models.voiceTtsSpeakerId).toBe(5);
     expect(result.speech.local?.models.voiceTtsSpeed).toBe(1.35);
     expect(result.speech.sttLanguages).toEqual({

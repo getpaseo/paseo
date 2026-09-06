@@ -1978,6 +1978,7 @@ export const ru: TranslationResources = {
       metadata: "Метаданные",
       workspaces: "Рабочие пространства",
       providers: "Провайдеры",
+      speech: "Речь",
       usage: "Использование",
       terminals: "Терминалы",
       plugins: "Плагины",

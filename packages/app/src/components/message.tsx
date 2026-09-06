@@ -425,7 +425,7 @@ export const UserMessage = memo(function UserMessage({
   serverId,
   agentId,
   messageId,
-  message,
+  message: rawMessage,
   images = [],
   attachments = [],
   timestamp,
@@ -446,6 +446,20 @@ export const UserMessage = memo(function UserMessage({
     [lightboxMetadata],
   );
   const resolvedDisableOuterSpacing = useDisableOuterSpacing(disableOuterSpacing);
+
+  // Voice mode wraps spoken input in internal markers
+  // (<spoken-input>...</spoken-input> + <instruction>...</instruction>).
+  // Render only the spoken text so the chat stays readable.
+  const message = useMemo(() => {
+    const match = rawMessage.match(
+      /^\s*<spoken-input>\s*([\s\S]*?)\s*<\/spoken-input>(?:\s*<instruction>[\s\S]*?<\/instruction>)?\s*$/,
+    );
+    if (!match) {
+      return rawMessage;
+    }
+    return match[1].trim();
+  }, [rawMessage]);
+
   const hasText = message.trim().length > 0;
   const hasImages = images.length > 0;
   const hasAttachments = attachments.length > 0;

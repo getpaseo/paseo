@@ -6,7 +6,7 @@ import type { SpeechStreamResult, TextToSpeechProvider } from "../../../speech-p
 import { chunkBuffer, float32ToPcm16le } from "../../../audio.js";
 import { loadSherpaOnnxNode } from "./sherpa-onnx-node-loader.js";
 
-export type SherpaTtsPreset = "kokoro-en-v0_19";
+export type SherpaTtsPreset = "kokoro-en-v0_19" | "kokoro-multi-v1_0" | "kokoro-multi-v1_1";
 
 export interface SherpaTtsConfig {
   preset: SherpaTtsPreset;
@@ -50,25 +50,45 @@ export class SherpaOnnxTTS implements TextToSpeechProvider {
       throw new Error("sherpa-onnx-node OfflineTts is unavailable");
     }
 
-    const modelPath = `${config.modelDir}/model.onnx`;
-    const voicesPath = `${config.modelDir}/voices.bin`;
     const tokensPath = `${config.modelDir}/tokens.txt`;
     const dataDir = `${config.modelDir}/espeak-ng-data`;
-
-    assertFileExists(modelPath, "TTS model");
-    assertFileExists(voicesPath, "TTS voices");
     assertFileExists(tokensPath, "TTS tokens");
-    assertFileExists(dataDir, "TTS espeak-ng dataDir");
 
-    const modelConfig = {
-      kokoro: {
-        model: modelPath,
-        voices: voicesPath,
-        tokens: tokensPath,
-        dataDir,
-        lengthScale: config.lengthScale ?? 1.0,
-      },
-    };
+    const isKokoro = config.preset.startsWith("kokoro-");
+    let modelConfig: Record<string, unknown>;
+    let modelPath: string;
+
+    if (isKokoro) {
+      modelPath = `${config.modelDir}/model.onnx`;
+      assertFileExists(modelPath, "TTS model");
+      const voicesPath = `${config.modelDir}/voices.bin`;
+      assertFileExists(voicesPath, "TTS voices");
+      assertFileExists(dataDir, "TTS espeak-ng dataDir");
+
+      const lexiconEnPath = `${config.modelDir}/lexicon-us-en.txt`;
+      const lexiconZhPath = `${config.modelDir}/lexicon-zh.txt`;
+      const lexiconCandidates: string[] = [];
+      if (existsSync(lexiconEnPath)) {
+        lexiconCandidates.push(lexiconEnPath);
+      }
+      if (existsSync(lexiconZhPath)) {
+        lexiconCandidates.push(lexiconZhPath);
+      }
+      const lexicon = lexiconCandidates.length > 0 ? lexiconCandidates.join(",") : undefined;
+
+      modelConfig = {
+        kokoro: {
+          model: modelPath,
+          voices: voicesPath,
+          tokens: tokensPath,
+          dataDir,
+          lengthScale: config.lengthScale ?? 1.0,
+          ...(lexicon ? { lexicon } : {}),
+        },
+      };
+    } else {
+      throw new Error(`Unsupported TTS preset: ${config.preset}`);
+    }
 
     const offlineTtsConfig = {
       model: modelConfig,

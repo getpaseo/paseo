@@ -2824,6 +2824,212 @@ export const PushUnregisterResponseSchema = z.object({
 });
 
 // ============================================================================
+// Speech Models Messages
+// ============================================================================
+
+export const SpeechModelKindSchema = z.enum(["stt", "tts", "vad"]);
+export type SpeechModelKind = z.infer<typeof SpeechModelKindSchema>;
+
+export const SpeechModelStatusSchema = z.enum(["installed", "not_installed", "downloading", "error"]);
+export type SpeechModelStatus = z.infer<typeof SpeechModelStatusSchema>;
+
+export const SpeechModelVoiceSchema = z.object({
+  id: z.number(),
+  name: z.string(),
+  language: z.string(),
+});
+export type SpeechModelVoice = z.infer<typeof SpeechModelVoiceSchema>;
+
+export const SpeechModelItemSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  kind: SpeechModelKindSchema,
+  description: z.string(),
+  languages: z.array(z.string()),
+  sizeMB: z.number(),
+  status: SpeechModelStatusSchema,
+  isDefault: z.boolean().optional(),
+  runtimeSupported: z.boolean().optional(),
+  sha256: z.string().optional(),
+  downloadProgress: z.number().optional(),
+  storagePath: z.string().optional(),
+  voices: z.array(SpeechModelVoiceSchema).optional(),
+});
+export type SpeechModelItem = z.infer<typeof SpeechModelItemSchema>;
+
+export const SpeechModelPreferencesSchema = z.object({
+  activeSttModelId: z.string().nullable(),
+  activeTtsModelId: z.string().nullable(),
+  modelLanguages: z.record(z.string(), z.string()),
+  ttsSpeakerId: z.number().nullable().optional(),
+  dictationEnabled: z.boolean().optional(),
+  voiceModeEnabled: z.boolean().optional(),
+});
+export type SpeechModelPreferences = z.infer<typeof SpeechModelPreferencesSchema>;
+
+export const SpeechModelsListRequestMessageSchema = z.object({
+  type: z.literal("speech.models.list.request"),
+  requestId: z.string(),
+});
+export type SpeechModelsListRequestMessage = z.infer<typeof SpeechModelsListRequestMessageSchema>;
+
+export const SpeechModelsListResponseMessageSchema = z.object({
+  type: z.literal("speech.models.list.response"),
+  payload: z.object({
+    requestId: z.string(),
+    models: z.array(SpeechModelItemSchema),
+    storageDir: z.string(),
+    preferences: SpeechModelPreferencesSchema,
+    error: z.string().nullable().optional(),
+  }),
+});
+export type SpeechModelsListResponseMessage = z.infer<typeof SpeechModelsListResponseMessageSchema>;
+
+export const SpeechModelDownloadRequestMessageSchema = z.object({
+  type: z.literal("speech.model.download.request"),
+  modelId: z.string(),
+  requestId: z.string(),
+});
+export type SpeechModelDownloadRequestMessage = z.infer<typeof SpeechModelDownloadRequestMessageSchema>;
+
+export const SpeechModelDownloadResponseMessageSchema = z.object({
+  type: z.literal("speech.model.download.response"),
+  payload: z.object({
+    requestId: z.string(),
+    modelId: z.string(),
+    ok: z.boolean(),
+    error: z.string().nullable().optional(),
+  }),
+});
+export type SpeechModelDownloadResponseMessage = z.infer<typeof SpeechModelDownloadResponseMessageSchema>;
+
+export const SpeechModelDownloadProgressMessageSchema = z.object({
+  type: z.literal("speech.model.download.progress"),
+  payload: z.object({
+    modelId: z.string(),
+    receivedBytes: z.number(),
+    totalBytes: z.number().nullable().optional(),
+    percent: z.number().nullable().optional(),
+    stage: z.enum(["downloading", "extracting", "verifying", "complete"]),
+  }),
+});
+export type SpeechModelDownloadProgressMessage = z.infer<
+  typeof SpeechModelDownloadProgressMessageSchema
+>;
+
+export const SpeechModelDeleteRequestMessageSchema = z.object({
+  type: z.literal("speech.model.delete.request"),
+  modelId: z.string(),
+  requestId: z.string(),
+});
+export type SpeechModelDeleteRequestMessage = z.infer<typeof SpeechModelDeleteRequestMessageSchema>;
+
+export const SpeechModelDeleteResponseMessageSchema = z.object({
+  type: z.literal("speech.model.delete.response"),
+  payload: z.object({
+    requestId: z.string(),
+    modelId: z.string(),
+    ok: z.boolean(),
+    error: z.string().nullable().optional(),
+  }),
+});
+export type SpeechModelDeleteResponseMessage = z.infer<typeof SpeechModelDeleteResponseMessageSchema>;
+
+export const SpeechModelSetActiveRequestMessageSchema = z.object({
+  type: z.literal("speech.model.set_active.request"),
+  modelId: z.string(),
+  requestId: z.string(),
+});
+export type SpeechModelSetActiveRequestMessage = z.infer<
+  typeof SpeechModelSetActiveRequestMessageSchema
+>;
+
+export const SpeechModelSetActiveResponseMessageSchema = z.object({
+  type: z.literal("speech.model.set_active.response"),
+  payload: z.object({
+    requestId: z.string(),
+    modelId: z.string(),
+    ok: z.boolean(),
+    error: z.string().nullable().optional(),
+  }),
+});
+export type SpeechModelSetActiveResponseMessage = z.infer<
+  typeof SpeechModelSetActiveResponseMessageSchema
+>;
+
+export const SpeechModelSetLanguageRequestMessageSchema = z.object({
+  type: z.literal("speech.model.set_language.request"),
+  modelId: z.string(),
+  language: z.string(),
+  requestId: z.string(),
+});
+export type SpeechModelSetLanguageRequestMessage = z.infer<
+  typeof SpeechModelSetLanguageRequestMessageSchema
+>;
+
+export const SpeechModelSetLanguageResponseMessageSchema = z.object({
+  type: z.literal("speech.model.set_language.response"),
+  payload: z.object({
+    requestId: z.string(),
+    modelId: z.string(),
+    language: z.string(),
+    ok: z.boolean(),
+    error: z.string().nullable().optional(),
+  }),
+});
+export type SpeechModelSetLanguageResponseMessage = z.infer<
+  typeof SpeechModelSetLanguageResponseMessageSchema
+>;
+
+export const SpeechModelSetSpeakerRequestMessageSchema = z.object({
+  type: z.literal("speech.model.set_speaker.request"),
+  modelId: z.string(),
+  speakerId: z.number().int(),
+  requestId: z.string(),
+});
+export type SpeechModelSetSpeakerRequestMessage = z.infer<
+  typeof SpeechModelSetSpeakerRequestMessageSchema
+>;
+
+export const SpeechModelSetSpeakerResponseMessageSchema = z.object({
+  type: z.literal("speech.model.set_speaker.response"),
+  payload: z.object({
+    requestId: z.string(),
+    modelId: z.string(),
+    speakerId: z.number().int(),
+    ok: z.boolean(),
+    error: z.string().nullable().optional(),
+  }),
+});
+export type SpeechModelSetSpeakerResponseMessage = z.infer<
+  typeof SpeechModelSetSpeakerResponseMessageSchema
+>;
+
+export const SpeechFeatureSetEnabledRequestMessageSchema = z.object({
+  type: z.literal("speech.feature.set_enabled.request"),
+  feature: z.enum(["dictation", "voiceMode"]),
+  enabled: z.boolean(),
+  requestId: z.string(),
+});
+export type SpeechFeatureSetEnabledRequestMessage = z.infer<
+  typeof SpeechFeatureSetEnabledRequestMessageSchema
+>;
+
+export const SpeechFeatureSetEnabledResponseMessageSchema = z.object({
+  type: z.literal("speech.feature.set_enabled.response"),
+  payload: z.object({
+    requestId: z.string(),
+    feature: z.enum(["dictation", "voiceMode"]),
+    enabled: z.boolean(),
+    ok: z.boolean(),
+    error: z.string().nullable().optional(),
+  }),
+});
+export type SpeechFeatureSetEnabledResponseMessage = z.infer<
+  typeof SpeechFeatureSetEnabledResponseMessageSchema
+>;
+
+// ============================================================================
 // Terminal Messages
 // ============================================================================
 
@@ -3103,6 +3309,13 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   DictationStreamChunkMessageSchema,
   DictationStreamFinishMessageSchema,
   DictationStreamCancelMessageSchema,
+  SpeechModelsListRequestMessageSchema,
+  SpeechModelDownloadRequestMessageSchema,
+  SpeechModelDeleteRequestMessageSchema,
+  SpeechModelSetActiveRequestMessageSchema,
+  SpeechModelSetLanguageRequestMessageSchema,
+  SpeechModelSetSpeakerRequestMessageSchema,
+  SpeechFeatureSetEnabledRequestMessageSchema,
   CreateAgentRequestMessageSchema,
   ListProviderModelsRequestMessageSchema,
   ListProviderModesRequestMessageSchema,
@@ -6492,6 +6705,14 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   HubManagementDaemonDisconnectResponseSchema,
   HubManagementDaemonPermissionsUpdateResponseSchema,
   DiagnosticsResponseSchema,
+  SpeechModelsListResponseMessageSchema,
+  SpeechModelDownloadResponseMessageSchema,
+  SpeechModelDownloadProgressMessageSchema,
+  SpeechModelDeleteResponseMessageSchema,
+  SpeechModelSetActiveResponseMessageSchema,
+  SpeechModelSetLanguageResponseMessageSchema,
+  SpeechModelSetSpeakerResponseMessageSchema,
+  SpeechFeatureSetEnabledResponseMessageSchema,
   GetDaemonConfigResponseMessageSchema,
   SetDaemonConfigResponseMessageSchema,
   ReadProjectConfigResponseMessageSchema,

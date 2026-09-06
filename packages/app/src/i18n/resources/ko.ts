@@ -1957,6 +1957,7 @@ export const ko: TranslationResources = {
       metadata: "메타데이터",
       workspaces: "워크스페이스",
       providers: "프로바이더",
+      speech: "음성",
       usage: "사용량",
       terminals: "터미널",
       plugins: "플러그인",

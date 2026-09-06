@@ -1979,6 +1979,7 @@ export const ptBR: TranslationResources = {
       metadata: "Metadados",
       workspaces: "Workspaces",
       providers: "Provedores",
+      speech: "Fala",
       usage: "Uso",
       terminals: "Terminais",
       plugins: "Plugins",

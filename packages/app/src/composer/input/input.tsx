@@ -29,7 +29,7 @@ import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { useSessionStore } from "@/stores/session-store";
 import { useVoiceOptional } from "@/contexts/voice-context";
 import { useToast } from "@/contexts/toast-context";
-import { resolveVoiceUnavailableMessage } from "@/utils/server-info-capabilities";
+import { resolveVoiceUnavailableMessage, getVoiceReadinessState } from "@/utils/server-info-capabilities";
 import {
   collectImageFilesFromClipboardData,
   filesToImageAttachments,
@@ -1332,6 +1332,10 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
       serverInfo,
       mode: "dictation",
     });
+    // Hide the mic entirely when dictation is disabled in daemon config
+    // (distinct from temporarily unavailable, e.g. downloading models).
+    const isDictationFeatureEnabled =
+      getVoiceReadinessState({ serverInfo, mode: "dictation" })?.enabled !== false;
 
     const canStartDictation = useCallback(
       () =>
@@ -1838,7 +1842,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
             <View style={styles.rightButtonGroup}>
               {beforeVoiceContent}
               <VoiceButtonTooltip
-                visible={mode.showVoice}
+                visible={mode.showVoice && isDictationFeatureEnabled}
                 onVoicePress={handleVoicePress}
                 isDictationStartEnabled={isDictationStartEnabled}
                 voiceButtonAccessibilityLabel={voiceButtonAccessibilityLabel}

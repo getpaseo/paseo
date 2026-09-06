@@ -1992,6 +1992,7 @@ export const en = {
       metadata: "Metadata",
       workspaces: "Workspaces",
       providers: "Providers",
+      speech: "Speech",
       usage: "Usage",
       terminals: "Terminals",
       plugins: "Plugins",
