@@ -3442,6 +3442,98 @@ describe("ACPAgentSession initialization cleanup", () => {
     expect(terminator.terminated).toContain(child);
   });
 
+  test("surfaces actionable JSON-RPC details when the configured ACP mode fails", async () => {
+    const terminator = new FakeTerminator();
+    const child = createProbeChildStub();
+    const clientToAgent = new TransformStream();
+    const agentToClient = new TransformStream();
+    const agent: Agent = {
+      async initialize() {
+        return {
+          protocolVersion: PROTOCOL_VERSION,
+          agentCapabilities: {},
+        };
+      },
+      async newSession() {
+        return {
+          sessionId: "session-1",
+          modes: {
+            currentModeId: "default",
+            availableModes: [
+              { id: "default", name: "Default" },
+              { id: "plan", name: "Plan" },
+            ],
+          },
+        };
+      },
+      async setSessionMode() {
+        throw new RequestError(-32603, "Internal error", {
+          code: "stub_refuses",
+          details: "stub refuses set_mode",
+        });
+      },
+      async prompt() {
+        return { stopReason: "end_turn" };
+      },
+      async authenticate() {},
+      async cancel() {},
+    };
+    const agentConnection = new AgentSideConnection(
+      () => agent,
+      ndJsonStream(agentToClient.writable, clientToAgent.readable),
+    );
+    const connection = new ClientSideConnection(
+      () => ({
+        async requestPermission() {
+          return { outcome: { outcome: "cancelled" } };
+        },
+        async sessionUpdate() {},
+      }),
+      ndJsonStream(clientToAgent.writable, agentToClient.readable),
+    );
+    const initialize = await connection.initialize({
+      protocolVersion: PROTOCOL_VERSION,
+      clientCapabilities: {},
+      clientInfo: { name: "Paseo test", version: "dev" },
+    });
+
+    class FailingConfiguredModeSession extends ACPAgentSession {
+      protected override async spawnProcess(): Promise<SpawnedACPProcess> {
+        return { child, connection, initialize };
+      }
+    }
+
+    const session = new FailingConfiguredModeSession(
+      {
+        provider: "acp-stub",
+        cwd: "/tmp/paseo-acp-test",
+        modeId: "plan",
+      },
+      {
+        provider: "acp-stub",
+        logger: createTestLogger(),
+        defaultCommand: ["node", "acp-stub.mjs"],
+        defaultModes: [],
+        capabilities: {
+          supportsStreaming: true,
+          supportsSessionPersistence: true,
+          supportsDynamicModes: true,
+        },
+        terminateProcess: terminator.terminate,
+      },
+    );
+
+    const initialization = session.initializeNewSession();
+
+    await expect(initialization).rejects.toBeInstanceOf(Error);
+    await expect(initialization).rejects.toMatchObject({
+      name: "ACPRequestError",
+      message: "Internal error: stub refuses set_mode",
+    });
+    expect(agentConnection.signal.aborted).toBe(false);
+    expect(terminator.terminated).toContain(child);
+  });
+
   test("terminates the ACP process when session/load fails", async () => {
     const terminator = new FakeTerminator();
     const child = createProbeChildStub();
