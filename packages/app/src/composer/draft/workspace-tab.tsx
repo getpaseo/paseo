@@ -16,7 +16,7 @@ import { useAgentInputDraft } from "@/composer/draft/input-draft";
 import type { CreateAgentInitialValues } from "@/hooks/use-agent-form-state";
 import { useDraftAgentCreateFlow, type DraftCreateAttempt } from "@/composer/draft/create-flow";
 import { resolveTurnPresentation, TURN_LIVENESS_IDLE } from "@/timeline/turn-liveness";
-import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
+import { useHostRuntimeClient } from "@/runtime/host-runtime";
 import { buildWorkspaceDraftAgentConfig } from "@/screens/workspace/workspace-draft-agent-config";
 import { buildDraftStoreKey } from "@/stores/draft-keys";
 import { useCreateFlowStore } from "@/stores/create-flow-store";
@@ -55,7 +55,6 @@ import { openWorkspaceChanges } from "@/workspace-tabs/open-supporting-view";
 import { useSettings } from "@/hooks/use-settings";
 
 const EMPTY_PENDING_PERMISSIONS = new Map();
-const EMPTY_ONLINE_SERVER_IDS: string[] = [];
 const DRAFT_CAPABILITIES: AgentCapabilityFlags = {
   supportsStreaming: true,
   supportsSessionPersistence: false,
@@ -270,17 +269,10 @@ function buildDraftAgentSnapshot(input: {
 }
 
 function buildDraftInitialValues(input: {
-  workingDir: string | null;
   initialSetup: WorkspaceDraftTabSetup | null;
 }): CreateAgentInitialValues | undefined {
-  if (!input.workingDir) {
-    return undefined;
-  }
-  if (!input.initialSetup) {
-    return { workingDir: input.workingDir };
-  }
+  if (!input.initialSetup) return undefined;
   return {
-    workingDir: input.workingDir,
     provider: input.initialSetup.provider,
     modeId: input.initialSetup.modeId,
     model: input.initialSetup.model,
@@ -296,13 +288,6 @@ function resolveDraftWorkingDirectory(input: {
     return input.initialSetup.cwd;
   }
   return input.workspaceDirectory;
-}
-
-function resolveOnlineServerIds(input: { isConnected: boolean; serverId: string }): string[] {
-  if (!input.isConnected) {
-    return EMPTY_ONLINE_SERVER_IDS;
-  }
-  return [input.serverId];
 }
 
 interface WorkspaceDraftAgentTabProps {
@@ -341,7 +326,6 @@ export function WorkspaceDraftAgentTab({
   const { t } = useTranslation();
   const insets = useSafeAreaInsets();
   const client = useHostRuntimeClient(serverId);
-  const isConnected = useHostRuntimeIsConnected(serverId);
   const workspaceFields = useWorkspaceFields(serverId, workspaceId, (w) => ({
     workspaceDirectory: w.workspaceDirectory,
     id: w.id,
@@ -353,10 +337,8 @@ export function WorkspaceDraftAgentTab({
     initialSetup: draftSetup,
   });
   const draftInitialValues = buildDraftInitialValues({
-    workingDir: draftWorkingDirectory,
     initialSetup: draftSetup,
   });
-  const onlineServerIds = resolveOnlineServerIds({ isConnected, serverId });
   const draftStoreKey = useMemo(
     () =>
       buildDraftStoreKey({
@@ -373,7 +355,6 @@ export function WorkspaceDraftAgentTab({
       initialValues: draftInitialValues,
       initialFeatureValues: draftSetup?.featureValues,
       isVisible: true,
-      onlineServerIds,
       lockedWorkingDir: draftWorkingDirectory ?? undefined,
     },
   });

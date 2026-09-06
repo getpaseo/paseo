@@ -29,6 +29,7 @@ interface PluginRuntimePort {
   clearLogs(pluginId: string): void;
   getProviderRegistrations?(pluginId: string): readonly PluginProviderMetadata[];
   connectProvider: PluginRuntime["connectProvider"];
+  getProviderCatalogCacheKey?: PluginRuntime["getProviderCatalogCacheKey"];
   validatePlugin?(path: string): Promise<void>;
   startPlugin(pluginId: string, path: string, canPublish: () => boolean): Promise<void>;
   stopPluginById(pluginId: string): Promise<boolean>;
@@ -456,6 +457,13 @@ export class PluginService {
           id: provider.id,
           label: provider.label,
           description: provider.description,
+          getCatalogCacheKey: provider.hasCatalogCacheKey
+            ? (options) => {
+                if (!this.runtime.getProviderCatalogCacheKey)
+                  throw new Error("Plugin runtime cannot resolve catalogue keys");
+                return this.runtime.getProviderCatalogCacheKey(pluginId, provider.id, options);
+              }
+            : undefined,
           icon: provider.iconPath
             ? await readPluginProviderIcon(pluginDirectory, provider.iconPath)
             : undefined,

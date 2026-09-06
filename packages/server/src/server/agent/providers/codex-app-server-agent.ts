@@ -7083,6 +7083,11 @@ export class CodexAppServerAgentClient implements AgentClient {
     });
   }
 
+  async getCatalogCacheKey(_options: FetchCatalogOptions): Promise<string> {
+    // This client discovers through host configuration, independent of project cwd.
+    return "host";
+  }
+
   async fetchCatalog(
     _options: FetchCatalogOptions,
     context?: ProviderRefreshContext,

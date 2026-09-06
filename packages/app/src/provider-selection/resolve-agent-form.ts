@@ -12,30 +12,24 @@ import {
 import { findModelByReference } from "./model-catalog";
 
 export interface FormInitialValues {
-  serverId?: string | null;
   provider?: AgentProvider;
   modeId?: string | null;
   model?: string | null;
   thinkingOptionId?: string | null;
-  workingDir?: string;
 }
 
 export interface FormState {
-  serverId: string | null;
   provider: AgentProvider | null;
   modeId: string;
   model: string;
   thinkingOptionId: string;
-  workingDir: string;
 }
 
 export interface UserModifiedFields {
-  serverId: boolean;
   provider: boolean;
   modeId: boolean;
   model: boolean;
   thinkingOptionId: boolean;
-  workingDir: boolean;
 }
 
 export type ProviderModelsByProvider = Map<AgentProvider, AgentModelDefinition[] | null>;
@@ -46,15 +40,18 @@ export interface AgentFormReducerState {
   form: FormState;
   userModified: UserModifiedFields;
   resolution: AgentFormResolutionState;
+  inputs?: {
+    serverId: string | null;
+    initialValues: FormInitialValues | undefined;
+    active: boolean;
+  };
 }
 
 export const INITIAL_USER_MODIFIED: UserModifiedFields = {
-  serverId: false,
   provider: false,
   modeId: false,
   model: false,
   thinkingOptionId: false,
-  workingDir: false,
 };
 
 export const PENDING_AGENT_FORM_RESOLUTION: AgentFormResolutionState = { status: "pending" };
@@ -68,7 +65,21 @@ export const RESOLVABLE_PROVIDER_STATUSES = new Set<ProviderSnapshotEntry["statu
 ]);
 export const SELECTABLE_PROVIDER_STATUSES = new Set<ProviderSnapshotEntry["status"]>(["ready"]);
 
+interface AgentFormInputs {
+  type: "INPUTS_CHANGED";
+  serverId: string | null;
+  isVisible: boolean;
+  isCreateFlow: boolean;
+  isPreferencesLoading: boolean;
+  hasSnapshot: boolean;
+  initialValues: FormInitialValues | undefined;
+  preferences: FormPreferences | null;
+  providerModelsByProvider: ProviderModelsByProvider;
+  allowedProviderMap: Map<AgentProvider, AgentProviderDefinition>;
+}
+
 export type AgentFormAction =
+  | AgentFormInputs
   | { type: "REQUEST_RESOLUTION" }
   | {
       type: "COMPLETE_RESOLUTION";
@@ -77,8 +88,6 @@ export type AgentFormAction =
       providerModelsByProvider: ProviderModelsByProvider;
       allowedProviderMap: Map<AgentProvider, AgentProviderDefinition>;
     }
-  | { type: "SET_SERVER_ID"; value: string | null }
-  | { type: "SET_SERVER_ID_FROM_USER"; value: string | null }
   | {
       type: "SET_PROVIDER_AND_MODEL_FROM_USER";
       provider: AgentProvider;
@@ -106,9 +115,6 @@ export type AgentFormAction =
     }
   | { type: "CLEAR_PROVIDER_SELECTION_FROM_USER" }
   | { type: "SET_THINKING_OPTION_FROM_USER"; thinkingOptionId: string }
-  | { type: "SET_WORKING_DIR"; value: string }
-  | { type: "SET_WORKING_DIR_FROM_USER"; value: string }
-  | { type: "AUTO_SELECT_SERVER"; candidateServerId: string }
   | { type: "RESET" };
 
 type CompleteResolutionAction = Extract<AgentFormAction, { type: "COMPLETE_RESOLUTION" }>;
@@ -144,7 +150,7 @@ export function resolveEffectiveModel(
 ): AgentModelDefinition | null {
   if (!availableModels || availableModels.length === 0) return null;
   if (!normalizeSelectedModelId(modelId)) return null;
-  return findModelByReference(availableModels, modelId) ?? resolveDefaultModel(availableModels);
+  return findModelByReference(availableModels, modelId) ?? null;
 }
 
 function resolvePreferredThinkingOptionId(input: {
@@ -216,36 +222,12 @@ export function mergeSelectedComposerPreferences(args: {
   });
 }
 
-export function combineInitialValues(
-  initialValues: FormInitialValues | undefined,
-  initialServerId: string | null,
-): FormInitialValues | undefined {
-  const hasExplicitServerId = initialValues?.serverId !== undefined;
-  const serverIdFromOptions = initialServerId === null ? undefined : initialServerId;
-
-  if (!initialValues && !hasExplicitServerId && serverIdFromOptions === undefined) {
-    return undefined;
-  }
-
-  if (hasExplicitServerId) {
-    return { ...initialValues, serverId: initialValues?.serverId };
-  }
-
-  if (serverIdFromOptions !== undefined) {
-    return { ...initialValues, serverId: serverIdFromOptions };
-  }
-
-  return initialValues;
-}
-
 export function hasFormStateChanged(prev: FormState, next: FormState): boolean {
   return (
-    prev.serverId !== next.serverId ||
     prev.provider !== next.provider ||
     prev.modeId !== next.modeId ||
     prev.model !== next.model ||
-    prev.thinkingOptionId !== next.thinkingOptionId ||
-    prev.workingDir !== next.workingDir
+    prev.thinkingOptionId !== next.thinkingOptionId
   );
 }
 
@@ -282,29 +264,11 @@ function resolveProvider(input: {
   userModified: boolean;
   initialValues: FormInitialValues | undefined;
   preferences: FormPreferences | null;
-  allowedProviderMap: Map<AgentProvider, AgentProviderDefinition>;
 }): AgentProvider | null {
-  const { currentProvider, userModified, initialValues, preferences, allowedProviderMap } = input;
-  if (userModified) {
-    if (
-      currentProvider &&
-      allowedProviderMap.size > 0 &&
-      !allowedProviderMap.has(currentProvider)
-    ) {
-      return null;
-    }
-    return currentProvider;
-  }
-  if (initialValues?.provider && allowedProviderMap.has(initialValues.provider)) {
-    return initialValues.provider;
-  }
-  if (preferences?.provider && allowedProviderMap.has(preferences.provider)) {
-    return preferences.provider;
-  }
-  if (currentProvider && allowedProviderMap.size > 0 && !allowedProviderMap.has(currentProvider)) {
-    return null;
-  }
-  return currentProvider;
+  const { currentProvider, userModified, initialValues, preferences } = input;
+  // Discovery readiness does not change the user's saved or explicit choice.
+  if (userModified) return currentProvider;
+  return initialValues?.provider ?? preferences?.provider ?? currentProvider;
 }
 
 function resolveModeId(input: {
@@ -340,16 +304,22 @@ function resolveModelField(input: {
   if (!provider) return "";
   const initialModel = normalizeSelectedModelId(initialValues?.model);
   const preferredModel = normalizeSelectedModelId(providerPrefs?.model);
-  const defaultModelId = resolveDefaultModelId(availableModels);
+  // COMPAT(default-model-id): added in v0.7.2, remove after 2026-12-06.
+  // Older drafts used "default" before providers exposed concrete model IDs.
+  if ((initialModel || preferredModel) === "default" && availableModels?.length) {
+    return (
+      findModelByReference(availableModels, "default")?.id || resolveDefaultModelId(availableModels)
+    );
+  }
   if (initialModel) {
     return !availableModels
       ? initialModel
-      : resolveCanonicalModelId(availableModels, initialModel) || defaultModelId;
+      : resolveCanonicalModelId(availableModels, initialModel) || initialModel;
   }
   if (preferredModel) {
     return !availableModels
       ? preferredModel
-      : resolveCanonicalModelId(availableModels, preferredModel) || defaultModelId;
+      : resolveCanonicalModelId(availableModels, preferredModel) || preferredModel;
   }
   return "";
 }
@@ -403,7 +373,6 @@ export function resolveFormState(
     userModified: userModified.provider,
     initialValues,
     preferences,
-    allowedProviderMap,
   });
 
   const providerDef = result.provider ? allowedProviderMap.get(result.provider) : undefined;
@@ -445,14 +414,6 @@ export function resolveFormState(
       modelId: result.model,
       requestedThinkingOptionId: result.thinkingOptionId,
     });
-  }
-
-  if (!userModified.serverId && initialValues?.serverId !== undefined) {
-    result.serverId = initialValues.serverId;
-  }
-
-  if (!userModified.workingDir && initialValues?.workingDir !== undefined) {
-    result.workingDir = initialValues.workingDir;
   }
 
   return result;
@@ -615,11 +576,45 @@ function applyProfile(state: AgentFormReducerState, action: ApplyProfileAction) 
   };
 }
 
+function sameInitialValues(left: FormInitialValues = {}, right: FormInitialValues = {}): boolean {
+  return (
+    left.provider === right.provider &&
+    left.model === right.model &&
+    left.modeId === right.modeId &&
+    left.thinkingOptionId === right.thinkingOptionId
+  );
+}
+
+function receiveInputs(
+  state: AgentFormReducerState,
+  action: AgentFormInputs,
+): AgentFormReducerState {
+  const active = action.isVisible && action.isCreateFlow;
+  const previous = state.inputs;
+  const initial = action.initialValues;
+  const changed =
+    previous?.active !== active ||
+    previous.serverId !== action.serverId ||
+    !sameInitialValues(previous.initialValues, initial);
+  let next = state;
+  if (changed) {
+    next = {
+      ...resolveAgentForm(state, { type: action.isVisible ? "REQUEST_RESOLUTION" : "RESET" }),
+      inputs: { serverId: action.serverId, initialValues: initial, active },
+    };
+  }
+  if (!active || action.isPreferencesLoading || !action.serverId || !action.hasSnapshot)
+    return next;
+  return completeResolution(next, { ...action, type: "COMPLETE_RESOLUTION" });
+}
+
 export function resolveAgentForm(
   state: AgentFormReducerState,
   action: AgentFormAction,
 ): AgentFormReducerState {
   switch (action.type) {
+    case "INPUTS_CHANGED":
+      return receiveInputs(state, action);
     case "REQUEST_RESOLUTION":
       return {
         ...state,
@@ -629,16 +624,6 @@ export function resolveAgentForm(
 
     case "COMPLETE_RESOLUTION":
       return completeResolution(state, action);
-
-    case "SET_SERVER_ID":
-      return { ...state, form: { ...state.form, serverId: action.value } };
-
-    case "SET_SERVER_ID_FROM_USER":
-      return {
-        ...state,
-        form: { ...state.form, serverId: action.value },
-        userModified: { ...state.userModified, serverId: true },
-      };
 
     case "SET_PROVIDER_AND_MODEL_FROM_USER": {
       const normalizedModelId = resolveCanonicalModelId(action.providerModels, action.modelId);
@@ -729,20 +714,6 @@ export function resolveAgentForm(
         form: { ...state.form, thinkingOptionId: action.thinkingOptionId },
         userModified: { ...state.userModified, thinkingOptionId: true },
       };
-
-    case "SET_WORKING_DIR":
-      return { ...state, form: { ...state.form, workingDir: action.value } };
-
-    case "SET_WORKING_DIR_FROM_USER":
-      return {
-        ...state,
-        form: { ...state.form, workingDir: action.value },
-        userModified: { ...state.userModified, workingDir: true },
-      };
-
-    case "AUTO_SELECT_SERVER":
-      if (state.form.serverId) return state;
-      return { ...state, form: { ...state.form, serverId: action.candidateServerId } };
 
     case "RESET":
       return {

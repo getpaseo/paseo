@@ -1,5 +1,6 @@
 import type {
   ProviderConnectRequest,
+  ProviderCatalogOptions,
   ProviderEvent,
   ProviderInput,
 } from "@getpaseo/plugin/provider";
@@ -7,6 +8,7 @@ import { ProviderEventSchema, ProviderInputSchema } from "@getpaseo/plugin/provi
 import { z } from "zod";
 
 export interface PluginProviderMetadata {
+  hasCatalogCacheKey?: boolean;
   id: string;
   label: string;
   description?: string;
@@ -20,6 +22,12 @@ export type PluginProcessRequest =
       bundle: string;
       appVersion: string;
       settingsDirectory?: string;
+    }
+  | {
+      type: "provider.catalog_key";
+      requestId: string;
+      providerId: string;
+      options: ProviderCatalogOptions;
     }
   | { type: "invoke"; requestId: string; method: string; input: unknown }
   | {
@@ -70,6 +78,7 @@ const providerMetadataSchema = z
     label: z.string().min(1),
     description: z.string().optional(),
     iconPath: z.string().optional(),
+    hasCatalogCacheKey: z.boolean().optional(),
   })
   .strict();
 const providerConnectRequestSchema = z
@@ -93,6 +102,23 @@ export const PluginProcessRequestSchema: z.ZodType<PluginProcessRequest> = z.dis
         bundle: z.string(),
         appVersion: z.string(),
         settingsDirectory: z.string().optional(),
+      })
+      .strict(),
+    z
+      .object({
+        type: z.literal("provider.catalog_key"),
+        requestId: z.string().min(1),
+        providerId: z.string().min(1),
+        options: z.discriminatedUnion("scope", [
+          z.object({ scope: z.literal("global"), force: z.boolean().optional() }).strict(),
+          z
+            .object({
+              scope: z.literal("workspace"),
+              cwd: z.string(),
+              force: z.boolean().optional(),
+            })
+            .strict(),
+        ]),
       })
       .strict(),
     z
