@@ -713,6 +713,10 @@ export const AgentTimelineItemPayloadSchema: z.ZodType<AgentTimelineItem, unknow
     type: z.literal("assistant_message"),
     text: z.string(),
     messageId: z.string().optional(),
+    // Questions the agent asked without pausing its turn; the reply is an ordinary user message.
+    questions: z
+      .array(z.object({ title: z.string(), options: z.array(z.string()).optional() }))
+      .optional(),
   }),
   z.object({
     type: z.literal("reasoning"),

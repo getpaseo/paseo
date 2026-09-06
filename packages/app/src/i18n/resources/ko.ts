@@ -216,6 +216,12 @@ export const ko: TranslationResources = {
       question: "어떻게 진행할까요?",
       proposedPlan: "제안된 계획",
     },
+    questions: {
+      answerPlaceholder: "답변을 입력하세요...",
+      submit: "답변 보내기",
+      answered: "답변함",
+      sendFailed: "답변을 보내지 못했습니다",
+    },
   },
   agentPanel: {
     states: {

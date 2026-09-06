@@ -11,6 +11,7 @@ import { isSpeakToolName } from "@getpaseo/protocol/tool-name-normalization";
 
 interface CodexMapperOptions {
   cwd?: string | null;
+  statusOverride?: CodexToolCallStatus;
 }
 
 const CodexCommandValueSchema = z.union([z.string(), z.array(z.string())]);
@@ -203,6 +204,15 @@ const CodexSubAgentActivityItemSchema = z
   })
   .passthrough();
 
+const CodexSleepItemSchema = z
+  .object({
+    type: z.literal("sleep"),
+    id: z.string().min(1),
+    durationMs: z.number().finite().nonnegative(),
+    status: z.string().optional(),
+  })
+  .passthrough();
+
 const CodexToolThreadItemSchema = z.discriminatedUnion("type", [
   CodexCommandExecutionItemSchema,
   CodexFileChangeItemSchema,
@@ -217,6 +227,7 @@ const CodexThreadItemSchema = z.discriminatedUnion("type", [
   CodexWebSearchItemSchema,
   CodexCollabAgentToolCallItemSchema,
   CodexSubAgentActivityItemSchema,
+  CodexSleepItemSchema,
 ]);
 
 function unwrapShellCommand(command: string): string {
@@ -1012,6 +1023,48 @@ function mapSubAgentActivityItem(
   };
 }
 
+function formatSleepDuration(durationMs: number): string {
+  if (durationMs < 1_000) {
+    return `${Math.round(durationMs)}ms`;
+  }
+
+  let remainingSeconds = Math.floor(durationMs / 1_000);
+  const units = [
+    { suffix: "d", seconds: 86_400 },
+    { suffix: "h", seconds: 3_600 },
+    { suffix: "m", seconds: 60 },
+    { suffix: "s", seconds: 1 },
+  ];
+  const parts: string[] = [];
+  for (const unit of units) {
+    const value = Math.floor(remainingSeconds / unit.seconds);
+    if (value > 0) {
+      parts.push(`${value}${unit.suffix}`);
+      remainingSeconds %= unit.seconds;
+    }
+  }
+  return parts.join(" ");
+}
+
+function mapSleepItem(
+  item: z.infer<typeof CodexSleepItemSchema>,
+  options?: CodexMapperOptions,
+): ToolCallTimelineItem {
+  const status =
+    options?.statusOverride ?? normalizeToolCallStatus(item.status ?? "completed", null, null);
+  return {
+    type: "tool_call",
+    callId: item.id,
+    name: "sleep",
+    status,
+    error: null,
+    detail: {
+      type: "plain_text",
+      text: `Sleeping for ${formatSleepDuration(item.durationMs)}`,
+    },
+  };
+}
+
 function mapThreadItemToNormalizedEnvelope(
   item: z.infer<typeof CodexToolThreadItemSchema>,
   options?: CodexMapperOptions,
@@ -1049,6 +1102,9 @@ export function mapCodexToolCallFromThreadItem(
   }
   if (parsed.data.type === "subAgentActivity") {
     return mapSubAgentActivityItem(parsed.data);
+  }
+  if (parsed.data.type === "sleep") {
+    return mapSleepItem(parsed.data, options);
   }
   const envelope = mapThreadItemToNormalizedEnvelope(parsed.data, options);
   if (!envelope) {

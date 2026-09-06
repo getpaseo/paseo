@@ -216,6 +216,12 @@ export const ja: TranslationResources = {
       question: "どのように続けますか？",
       proposedPlan: "提案されたプラン",
     },
+    questions: {
+      answerPlaceholder: "回答を入力...",
+      submit: "回答を送信",
+      answered: "回答済み",
+      sendFailed: "回答を送信できませんでした",
+    },
   },
   agentPanel: {
     states: {

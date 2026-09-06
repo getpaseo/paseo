@@ -43,6 +43,33 @@ describe("plugin timeline projection", () => {
     expect(detail.filePath).toBe("/repo/original.ts");
   });
 
+  it("hands plugins the questions an assistant asked mid-turn", () => {
+    const source: StreamItem = {
+      kind: "assistant_message",
+      id: "assistant-1",
+      messageId: "message-1",
+      text: "Which runtime?",
+      timestamp: new Date("2026-01-01T00:00:00.000Z"),
+      questions: [{ title: "Which runtime?", options: ["Bun", "Node"] }],
+    };
+    const seen: unknown[] = [];
+    const transform: TimelineItemTransform = ({ item }) => {
+      seen.push(item);
+      return undefined;
+    };
+
+    projectPluginTimelineItems([source], transform);
+
+    expect(seen).toEqual([
+      {
+        type: "assistant_message",
+        text: "Which runtime?",
+        messageId: "message-1",
+        questions: [{ title: "Which runtime?", options: ["Bun", "Node"] }],
+      },
+    ]);
+  });
+
   it("projects a streaming reasoning row from its first delta", () => {
     const transform: TimelineItemTransform = vi.fn(({ item, phase, sourceId }) => [
       {

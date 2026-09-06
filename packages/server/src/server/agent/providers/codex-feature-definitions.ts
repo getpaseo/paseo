@@ -1,6 +1,26 @@
 import type { AgentFeature, AgentFeatureToggle } from "../agent-sdk-types.js";
 
+// Fallback for models the app-server catalog does not describe (custom
+// endpoints, catalog fetch failures). Catalog speed tiers win when present.
 const CODEX_FAST_MODE_SUPPORTED_MODEL_PREFIXES = ["gpt-5", "gpt-4.1", "o3", "o4-mini"] as const;
+
+export const CODEX_FAST_SPEED_TIER = "fast";
+
+export interface CodexModelServiceTier {
+  id: string;
+  name?: string;
+  description?: string;
+}
+
+export interface CodexModelSpeedInfo {
+  additionalSpeedTiers: string[];
+  serviceTiers: CodexModelServiceTier[];
+}
+
+export interface CodexFastModeAvailability {
+  available: boolean;
+  description?: string;
+}
 
 export const CODEX_FAST_MODE_FEATURE: Omit<AgentFeatureToggle, "value"> = {
   type: "toggle",
@@ -20,6 +40,15 @@ export const CODEX_PLAN_MODE_FEATURE: Omit<AgentFeatureToggle, "value"> = {
   icon: "list-todo",
 };
 
+export const CODEX_CONTEXT_NOTES_FEATURE: Omit<AgentFeatureToggle, "value"> = {
+  type: "toggle",
+  id: "context_notes",
+  label: "Notes",
+  description: "Keep notes across context windows (experimental)",
+  tooltip: "Toggle context notes",
+  icon: "notebook-pen",
+};
+
 function normalizeCodexModelId(modelId: string | null | undefined): string | null {
   const normalized = typeof modelId === "string" ? modelId.trim() : "";
   return normalized.length > 0 ? normalized : null;
@@ -35,17 +64,36 @@ export function codexModelSupportsFastMode(modelId: string | null | undefined): 
   );
 }
 
+export function resolveCodexFastModeAvailability(
+  modelId: string | null | undefined,
+  speedInfo: CodexModelSpeedInfo | undefined,
+): CodexFastModeAvailability {
+  if (!speedInfo) {
+    return { available: codexModelSupportsFastMode(modelId) };
+  }
+  const available = speedInfo.additionalSpeedTiers.includes(CODEX_FAST_SPEED_TIER);
+  if (!available) {
+    return { available: false };
+  }
+  const description = speedInfo.serviceTiers.find(
+    (tier) => tier.id === "priority" || tier.name === "Fast",
+  )?.description;
+  return description ? { available, description } : { available };
+}
+
 export function buildCodexFeatures(input: {
-  modelId: string | null | undefined;
+  fastMode: CodexFastModeAvailability;
   fastModeEnabled: boolean;
   planModeEnabled: boolean;
+  contextNotesEnabled: boolean;
   planModeAvailable?: boolean;
 }): AgentFeature[] {
   const features: AgentFeature[] = [];
 
-  if (codexModelSupportsFastMode(input.modelId)) {
+  if (input.fastMode.available) {
     features.push({
       ...CODEX_FAST_MODE_FEATURE,
+      ...(input.fastMode.description ? { description: input.fastMode.description } : {}),
       value: input.fastModeEnabled,
     });
   }
@@ -56,6 +104,11 @@ export function buildCodexFeatures(input: {
       value: input.planModeEnabled,
     });
   }
+
+  features.push({
+    ...CODEX_CONTEXT_NOTES_FEATURE,
+    value: input.contextNotesEnabled,
+  });
 
   return features;
 }

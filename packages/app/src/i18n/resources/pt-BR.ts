@@ -216,6 +216,12 @@ export const ptBR: TranslationResources = {
       question: "Como você quer prosseguir?",
       proposedPlan: "Plano proposto",
     },
+    questions: {
+      answerPlaceholder: "Digite sua resposta...",
+      submit: "Enviar resposta",
+      answered: "Respondida",
+      sendFailed: "Não foi possível enviar sua resposta",
+    },
   },
   agentPanel: {
     states: {

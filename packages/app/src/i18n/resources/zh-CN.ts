@@ -216,6 +216,12 @@ export const zhCN: TranslationResources = {
       question: "你想如何继续？",
       proposedPlan: "建议计划",
     },
+    questions: {
+      answerPlaceholder: "输入你的回答...",
+      submit: "发送回答",
+      answered: "已回答",
+      sendFailed: "无法发送你的回答",
+    },
   },
   agentPanel: {
     states: {

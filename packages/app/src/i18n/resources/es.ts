@@ -216,6 +216,12 @@ export const es: TranslationResources = {
       question: "¿Cómo le gustaría proceder?",
       proposedPlan: "Plan propuesto",
     },
+    questions: {
+      answerPlaceholder: "Escribe tu respuesta...",
+      submit: "Enviar respuesta",
+      answered: "Respondida",
+      sendFailed: "No se pudo enviar tu respuesta",
+    },
   },
   agentPanel: {
     states: {

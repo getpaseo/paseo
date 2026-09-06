@@ -5,7 +5,7 @@ import { PassThrough } from "node:stream";
 import type { AgentSession, AgentStreamEvent } from "../../../agent-sdk-types.js";
 
 type JsonObject = Record<string, unknown>;
-type FakeCodexAppServerHandler = (params: unknown) => unknown;
+export type FakeCodexAppServerHandler = (params: unknown) => unknown;
 interface FakeSubAgentActivity {
   callId: string;
   threadId: string;
@@ -31,6 +31,17 @@ interface FakeTerminalInput {
   itemId: string;
   processId: string;
   text: string;
+}
+interface FakeAsyncQuestion {
+  threadId: string;
+  itemId: string;
+  text: string;
+  questions: Array<{ title: string; options: string[] | null }>;
+}
+interface FakeSleep {
+  threadId: string;
+  itemId: string;
+  durationMs: number;
 }
 interface FakeLegacyPatch {
   threadId: string;
@@ -83,6 +94,11 @@ export interface FakeCodexAppServer {
   completesSilentLegacyCommand(params: FakeSilentCommand): void;
   typesIntoTerminal(params: FakeTerminalInput): void;
   says(params: { threadId: string; itemId?: string; text: string; chunks?: string[] }): void;
+  startsAsyncQuestion(params: FakeAsyncQuestion): void;
+  streamsAgentMessage(params: { threadId: string; itemId: string; delta: string }): void;
+  completesAsyncQuestion(params: FakeAsyncQuestion): void;
+  startsSleep(params: FakeSleep): void;
+  completesSleep(params: FakeSleep): void;
   requestCommandApproval(params: {
     itemId: string;
     threadId: string;
@@ -147,6 +163,7 @@ export function createFakeCodexAppServer(
           id: "gpt-5.4",
           isDefault: true,
           defaultReasoningEffort: "medium",
+          additionalSpeedTiers: ["fast"],
         },
       ],
     }),
@@ -513,6 +530,47 @@ export function createFakeCodexAppServer(
         type: "agentMessage",
         ...(params.itemId ? { id: params.itemId } : {}),
         text: params.text,
+      });
+    },
+    startsAsyncQuestion(params) {
+      writeNotification("item/started", {
+        threadId: params.threadId,
+        item: {
+          type: "agentMessage",
+          id: params.itemId,
+          text: params.text,
+          delivery: "async",
+          questions: params.questions,
+        },
+      });
+    },
+    streamsAgentMessage(params) {
+      writeNotification("item/agentMessage/delta", {
+        threadId: params.threadId,
+        itemId: params.itemId,
+        delta: params.delta,
+      });
+    },
+    completesAsyncQuestion(params) {
+      completeItem(params.threadId, {
+        type: "agentMessage",
+        id: params.itemId,
+        text: params.text,
+        delivery: "async",
+        questions: params.questions,
+      });
+    },
+    startsSleep(params) {
+      writeNotification("item/started", {
+        threadId: params.threadId,
+        item: { type: "sleep", id: params.itemId, durationMs: params.durationMs },
+      });
+    },
+    completesSleep(params) {
+      completeItem(params.threadId, {
+        type: "sleep",
+        id: params.itemId,
+        durationMs: params.durationMs,
       });
     },
     requestCommandApproval(params) {

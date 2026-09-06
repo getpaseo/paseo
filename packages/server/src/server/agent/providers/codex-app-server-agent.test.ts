@@ -1872,7 +1872,12 @@ describe("Codex app-server provider", () => {
       throw new Error(`resumeSession timed out; thread requests: ${threadRequests.join(", ")}`);
     }
 
-    expect(threadRequests).toEqual(["config/read", "thread/loaded/list", "thread/resume"]);
+    expect(threadRequests).toEqual([
+      "config/read",
+      "model/list",
+      "thread/loaded/list",
+      "thread/resume",
+    ]);
     expect(outcome).toBe("rejected");
     appServer.assertNoErrors();
   });
@@ -3964,6 +3969,91 @@ describe("Codex app-server provider", () => {
     ]);
   });
 
+  test("maps asynchronous questions and sleep items from persisted history", async () => {
+    const appServer = createFakeCodexAppServer({
+      "thread/loaded/list": () => ({ data: ["history-thread"] }),
+      "thread/read": () => ({
+        thread: {
+          turns: [
+            {
+              items: [
+                {
+                  type: "agentMessage",
+                  id: "async-history",
+                  text: "Which?",
+                  delivery: "async",
+                  questions: [
+                    { title: "Which?", options: null },
+                    { title: "Mode?", options: ["Fast", "Careful"] },
+                  ],
+                },
+                {
+                  type: "agentMessage",
+                  id: "empty-questions-history",
+                  text: "No question metadata.",
+                  delivery: "async",
+                  questions: [],
+                },
+                { type: "sleep", id: "sleep-history", durationMs: 150_000 },
+              ],
+            },
+          ],
+        },
+      }),
+    });
+    const session = new CodexAppServerAgentSession(
+      createConfig({ cwd: "/workspace/project" }),
+      { sessionId: "history-thread" },
+      createTestLogger(),
+      async () => appServer.child,
+    );
+
+    try {
+      await session.connect();
+      const history: AgentStreamEvent[] = [];
+      for await (const event of session.streamHistory()) {
+        history.push(event);
+      }
+
+      expect(history.filter((event) => event.type === "timeline")).toEqual([
+        {
+          type: "timeline",
+          provider: "codex",
+          item: {
+            type: "assistant_message",
+            messageId: "async-history",
+            text: "Which?",
+            questions: [{ title: "Which?" }, { title: "Mode?", options: ["Fast", "Careful"] }],
+          },
+        },
+        {
+          type: "timeline",
+          provider: "codex",
+          item: {
+            type: "assistant_message",
+            messageId: "empty-questions-history",
+            text: "No question metadata.",
+          },
+        },
+        {
+          type: "timeline",
+          provider: "codex",
+          item: {
+            type: "tool_call",
+            callId: "sleep-history",
+            name: "sleep",
+            status: "completed",
+            error: null,
+            detail: { type: "plain_text", text: "Sleeping for 2m 30s" },
+          },
+        },
+      ]);
+      appServer.assertNoErrors();
+    } finally {
+      await session.close();
+    }
+  });
+
   test("retains native turn ids from persisted user messages", async () => {
     const session = createSession();
     session.client = {
@@ -5641,6 +5731,152 @@ describe("Codex app-server provider", () => {
         item: { type: "assistant_message", text: "lo", messageId: "assistant-item-1" },
       },
     ]);
+  });
+
+  test("streams asynchronous questions through started, delta, and completed items", async () => {
+    const appServer = createFakeCodexAppServer();
+    const session = new CodexAppServerAgentSession(
+      createConfig({ cwd: "/workspace/project" }),
+      null,
+      createTestLogger(),
+      async () => appServer.child,
+    );
+
+    try {
+      const resultPromise = session.run("Ask without blocking the turn.");
+      await appServer.waitForTurnStart();
+      appServer.startsAsyncQuestion({
+        threadId: "thread-1",
+        itemId: "async-1",
+        text: "",
+        questions: [
+          { title: "Which?", options: null },
+          { title: "Mode?", options: ["Fast", "Careful"] },
+        ],
+      });
+      appServer.streamsAgentMessage({
+        threadId: "thread-1",
+        itemId: "async-1",
+        delta: "Which?",
+      });
+      appServer.completesAsyncQuestion({
+        threadId: "thread-1",
+        itemId: "async-1",
+        text: "Which?",
+        questions: [
+          { title: "Which?", options: null },
+          { title: "Mode?", options: ["Fast", "Careful"] },
+        ],
+      });
+      appServer.completeTurn();
+
+      const result = await resultPromise;
+      expect(result.finalText).toBe("Which?");
+      expect(result.timeline.filter((item) => item.type === "assistant_message")).toEqual([
+        {
+          type: "assistant_message",
+          messageId: "async-1",
+          text: "",
+          questions: [{ title: "Which?" }, { title: "Mode?", options: ["Fast", "Careful"] }],
+        },
+        {
+          type: "assistant_message",
+          messageId: "async-1",
+          text: "Which?",
+          questions: [{ title: "Which?" }, { title: "Mode?", options: ["Fast", "Careful"] }],
+        },
+        {
+          type: "assistant_message",
+          messageId: "async-1",
+          text: "",
+          questions: [{ title: "Which?" }, { title: "Mode?", options: ["Fast", "Careful"] }],
+        },
+      ]);
+      appServer.assertNoErrors();
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("maps live sleep lifecycle items to one tool call", async () => {
+    const appServer = createFakeCodexAppServer();
+    const session = new CodexAppServerAgentSession(
+      createConfig({ cwd: "/workspace/project" }),
+      null,
+      createTestLogger(),
+      async () => appServer.child,
+    );
+
+    try {
+      const resultPromise = session.run("Wait before continuing.");
+      await appServer.waitForTurnStart();
+      appServer.startsSleep({ threadId: "thread-1", itemId: "sleep-1", durationMs: 150_000 });
+      appServer.completesSleep({
+        threadId: "thread-1",
+        itemId: "sleep-1",
+        durationMs: 150_000,
+      });
+      appServer.completeTurn();
+
+      const result = await resultPromise;
+      expect(result.timeline.filter((item) => item.type === "tool_call")).toEqual([
+        {
+          type: "tool_call",
+          callId: "sleep-1",
+          name: "sleep",
+          status: "running",
+          error: null,
+          detail: { type: "plain_text", text: "Sleeping for 2m 30s" },
+        },
+        {
+          type: "tool_call",
+          callId: "sleep-1",
+          name: "sleep",
+          status: "completed",
+          error: null,
+          detail: { type: "plain_text", text: "Sleeping for 2m 30s" },
+        },
+      ]);
+      appServer.assertNoErrors();
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("cancels a running sleep before an interrupted turn terminates", async () => {
+    const appServer = createFakeCodexAppServer();
+    const session = new CodexAppServerAgentSession(
+      createConfig({ cwd: "/workspace/project" }),
+      null,
+      createTestLogger(),
+      async () => appServer.child,
+    );
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    try {
+      await session.startTurn("Wait until interrupted.");
+      appServer.startsTurn({ threadId: "thread-1", turnId: "sleep-turn" });
+      appServer.startsSleep({ threadId: "thread-1", itemId: "sleep-2", durationMs: 2_000 });
+      appServer.completeTurn({ threadId: "thread-1", status: "interrupted" });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(
+        events.flatMap((event) => {
+          if (
+            event.type === "timeline" &&
+            event.item.type === "tool_call" &&
+            event.item.callId === "sleep-2"
+          ) {
+            return [event.item.status];
+          }
+          return event.type === "turn_canceled" ? [event.type] : [];
+        }),
+      ).toEqual(["running", "canceled", "turn_canceled"]);
+      appServer.assertNoErrors();
+    } finally {
+      await session.close();
+    }
   });
 
   test("emits only the missing assistant suffix when completed text extends streamed deltas", () => {

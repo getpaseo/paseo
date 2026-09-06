@@ -216,6 +216,12 @@ export const ru: TranslationResources = {
       question: "Как бы вы хотели продолжить?",
       proposedPlan: "Предлагаемый план",
     },
+    questions: {
+      answerPlaceholder: "Введите ответ...",
+      submit: "Отправить ответ",
+      answered: "Отвечено",
+      sendFailed: "Не удалось отправить ответ",
+    },
   },
   agentPanel: {
     states: {

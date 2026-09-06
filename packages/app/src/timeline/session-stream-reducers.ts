@@ -3,6 +3,7 @@ import type { AgentStreamEventPayload } from "@getpaseo/protocol/messages";
 import { selectAgentTimelineState, useSessionStore } from "@/stores/session-store";
 import type { AssistantMessageItem, StreamItem, TodoEntry } from "@/types/stream";
 import type { TurnLivenessTransition } from "@/timeline/turn-liveness";
+import { readAssistantQuestions } from "@/timeline/assistant-questions";
 import {
   applyStreamEvent,
   flushHeadToTail,
@@ -775,12 +776,14 @@ function replaceLiveAssistantWithProjectedText(params: {
   if (!event.item.text.startsWith(current.text)) {
     return null;
   }
+  const questions = readAssistantQuestions(event.item) ?? current.questions;
   const next = [...head];
   next[index] = {
     ...current,
     text: event.item.text,
     timestamp,
     timelineCursor,
+    ...(questions ? { questions } : {}),
   };
   return next;
 }
@@ -825,10 +828,12 @@ function reconcileOverlappingProjectedAssistant(params: {
 
   const blockGroupId = match.current.blockGroupId;
   const messageId = projectedMessageId ?? match.current.messageId;
+  const questions = readAssistantQuestions(unit.event.item) ?? match.current.questions;
   const replacement: AssistantMessageItem = {
     kind: "assistant_message",
     id: blockGroupId ?? match.current.id,
     ...(messageId !== undefined ? { messageId } : {}),
+    ...(questions ? { questions } : {}),
     text: projectedText,
     timestamp: unit.timestamp,
     timelineCursor: { epoch: params.epoch, seq: unit.seqEnd },

@@ -6,6 +6,7 @@ import { CodexAppServerAgentSession } from "./codex-app-server-agent.js";
 import {
   createFakeCodexAppServer,
   type FakeCodexAppServer,
+  type FakeCodexAppServerHandler,
 } from "./codex/test-utils/fake-app-server.js";
 import { createTestLogger } from "../../../test-utils/test-logger.js";
 
@@ -32,7 +33,22 @@ const TEST_COLLABORATION_MODES: CollaborationModeRecord[] = [
   },
 ];
 
+const CONTEXT_NOTES_FEATURE_DISABLED = {
+  type: "toggle",
+  id: "context_notes",
+  label: "Notes",
+  description: "Keep notes across context windows (experimental)",
+  tooltip: "Toggle context notes",
+  icon: "notebook-pen",
+  value: false,
+} as const;
+
 type CodexFeaturesTestSession = AgentSession;
+
+interface SessionHarnessOptions {
+  logger?: pino.Logger;
+  appServerHandlers?: Record<string, FakeCodexAppServerHandler>;
+}
 
 interface CapturedLogEntry {
   level?: number;
@@ -65,7 +81,7 @@ function createConfig(overrides: Partial<AgentSessionConfig> = {}): AgentSession
 
 function createSessionHarness(
   configOverrides: Partial<AgentSessionConfig> = {},
-  options: { logger?: pino.Logger } = {},
+  options: SessionHarnessOptions = {},
 ): {
   session: CodexFeaturesTestSession;
   appServer: FakeCodexAppServer;
@@ -73,6 +89,7 @@ function createSessionHarness(
   const config = createConfig(configOverrides);
   const appServer = createFakeCodexAppServer({
     "collaborationMode/list": () => ({ data: TEST_COLLABORATION_MODES }),
+    ...options.appServerHandlers,
   });
   const session = new CodexAppServerAgentSession(
     { ...config, provider: CODEX_PROVIDER },
@@ -85,7 +102,7 @@ function createSessionHarness(
 
 async function createConnectedSession(
   configOverrides: Partial<AgentSessionConfig> = {},
-  options: { logger?: pino.Logger } = {},
+  options: SessionHarnessOptions = {},
 ): Promise<{
   session: CodexFeaturesTestSession;
   appServer: FakeCodexAppServer;
@@ -97,7 +114,7 @@ async function createConnectedSession(
 }
 
 describe("Codex app-server provider features", () => {
-  test("features returns fast and plan toggles when supported", async () => {
+  test("features returns fast, plan, and context notes toggles when supported", async () => {
     const { session } = await createConnectedSession();
 
     expect(session.features).toEqual([
@@ -119,6 +136,7 @@ describe("Codex app-server provider features", () => {
         icon: "list-todo",
         value: false,
       },
+      CONTEXT_NOTES_FEATURE_DISABLED,
     ]);
 
     await session.setFeature?.("fast_mode", true);
@@ -143,6 +161,7 @@ describe("Codex app-server provider features", () => {
         icon: "list-todo",
         value: true,
       },
+      CONTEXT_NOTES_FEATURE_DISABLED,
     ]);
   });
 
@@ -159,6 +178,7 @@ describe("Codex app-server provider features", () => {
         icon: "list-todo",
         value: false,
       },
+      CONTEXT_NOTES_FEATURE_DISABLED,
     ]);
   });
 
@@ -178,12 +198,75 @@ describe("Codex app-server provider features", () => {
         icon: "list-todo",
         value: false,
       },
+      CONTEXT_NOTES_FEATURE_DISABLED,
     ]);
 
     await session.startTurn("hello");
     await expect(appServer.waitForTurnStart()).resolves.not.toMatchObject({
       serviceTier: expect.anything(),
     });
+  });
+
+  test("features omit fast toggle when the catalog reports no fast speed tier", async () => {
+    const { session } = await createConnectedSession(
+      { model: "gpt-5.4-mini" },
+      {
+        appServerHandlers: {
+          "model/list": () => ({
+            data: [
+              { id: "gpt-5.4-mini", isDefault: true, additionalSpeedTiers: [], serviceTiers: [] },
+            ],
+          }),
+        },
+      },
+    );
+
+    expect(session.features?.map((feature) => feature.id)).toEqual(["plan_mode", "context_notes"]);
+  });
+
+  test("features use catalog speed tiers for models outside the prefix fallback", async () => {
+    const modelListParams: unknown[] = [];
+    const { session, appServer } = await createConnectedSession(
+      { model: "gpt-6-astra", featureValues: { fast_mode: true } },
+      {
+        appServerHandlers: {
+          "model/list": (params) => {
+            modelListParams.push(params);
+            return {
+              data: [
+                { id: "gpt-5.6-sol", isDefault: true, additionalSpeedTiers: ["fast"] },
+                {
+                  id: "gpt-6-astra",
+                  hidden: true,
+                  additionalSpeedTiers: ["fast"],
+                  serviceTiers: [
+                    { id: "priority", name: "Fast", description: "2x speed, increased usage" },
+                  ],
+                },
+              ],
+            };
+          },
+        },
+      },
+    );
+
+    expect(modelListParams).toEqual([{ includeHidden: true }]);
+    expect(session.features).toEqual([
+      {
+        type: "toggle",
+        id: "fast_mode",
+        label: "Fast",
+        description: "2x speed, increased usage",
+        tooltip: "Toggle fast mode",
+        icon: "zap",
+        value: true,
+      },
+      expect.objectContaining({ id: "plan_mode" }),
+      CONTEXT_NOTES_FEATURE_DISABLED,
+    ]);
+
+    await session.startTurn("hello");
+    await expect(appServer.waitForTurnStart()).resolves.toMatchObject({ serviceTier: "fast" });
   });
 
   test("setFeature('fast_mode', true) sets serviceTier to fast", async () => {
@@ -242,7 +325,7 @@ describe("Codex app-server provider features", () => {
 
   test("constructor restores feature flags from config.featureValues", async () => {
     const { session, appServer } = await createConnectedSession({
-      featureValues: { fast_mode: true, plan_mode: true },
+      featureValues: { fast_mode: true, plan_mode: true, context_notes: true },
     });
 
     expect(session.features).toEqual([
@@ -264,15 +347,65 @@ describe("Codex app-server provider features", () => {
         icon: "list-todo",
         value: true,
       },
+      { ...CONTEXT_NOTES_FEATURE_DISABLED, value: true },
     ]);
 
     await session.startTurn("hello");
+    await expect(appServer.waitForRequest("thread/start")).resolves.toMatchObject({
+      config: {
+        features: {
+          context_management: { experimental_mode: true },
+        },
+      },
+    });
     await expect(appServer.waitForTurnStart()).resolves.toMatchObject({
       serviceTier: "fast",
       collaborationMode: expect.objectContaining({
         mode: "plan",
       }),
     });
+  });
+
+  test("context notes merge with provider feature options at thread start", async () => {
+    const { session, appServer } = createSessionHarness({
+      featureValues: { context_notes: true },
+      providerOptions: {
+        features: {
+          multi_agent_v2: true,
+          network_proxy: { enabled: true, domains: { "example.com": "allow" } },
+        },
+      },
+    });
+
+    await session.startTurn("hello");
+
+    await expect(appServer.waitForRequest("thread/start")).resolves.toMatchObject({
+      config: {
+        features: {
+          multi_agent_v2: true,
+          network_proxy: { enabled: true, domains: { "example.com": "allow" } },
+          context_management: { experimental_mode: true },
+        },
+      },
+    });
+  });
+
+  test("context notes can change before thread creation", async () => {
+    const { session } = createSessionHarness();
+
+    await session.setFeature?.("context_notes", true);
+
+    expect(session.features).toContainEqual({ ...CONTEXT_NOTES_FEATURE_DISABLED, value: true });
+  });
+
+  test("context notes cannot change after thread creation", async () => {
+    const { session, appServer } = createSessionHarness();
+    await session.startTurn("hello");
+    await appServer.waitForRequest("thread/start");
+
+    await expect(session.setFeature?.("context_notes", true)).rejects.toThrow(
+      "Context notes can only be changed before the first message",
+    );
   });
 
   test("startTurn includes serviceTier when fast mode is enabled", async () => {
@@ -326,6 +459,7 @@ describe("Codex app-server provider features", () => {
         icon: "list-todo",
         value: false,
       },
+      CONTEXT_NOTES_FEATURE_DISABLED,
     ]);
     await session.startTurn("hello");
 

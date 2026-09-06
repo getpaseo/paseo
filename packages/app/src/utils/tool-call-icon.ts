@@ -2,6 +2,7 @@ import type { ComponentType } from "react";
 import {
   Bot,
   Brain,
+  Clock,
   Eye,
   MicVocal,
   Pencil,
@@ -27,6 +28,7 @@ const ICON_COMPONENTS: Record<ToolCallIcon, ToolCallIconComponent> = {
   brain: Brain,
   mic_vocal: MicVocal,
   paseo: PaseoLogo,
+  clock: Clock,
 };
 
 export function componentForToolCallIcon(name: ToolCallIcon): ToolCallIconComponent {

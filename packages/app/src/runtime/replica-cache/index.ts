@@ -88,6 +88,9 @@ const StoredTimelineItemSchema = z.discriminatedUnion("kind", [
     text: z.string(),
     blockGroupId: z.string().optional(),
     blockIndex: z.number().int().nonnegative().optional(),
+    questions: z
+      .array(z.strictObject({ title: z.string(), options: z.array(z.string()).optional() }))
+      .optional(),
   }),
   z.strictObject({
     ...TimelineItemBaseShape,
@@ -412,6 +415,7 @@ function serializeTimelineItem(item: StreamItem): StoredTimelineItem | null {
         text: item.text,
         ...(item.blockGroupId ? { blockGroupId: item.blockGroupId } : {}),
         ...(item.blockIndex !== undefined ? { blockIndex: item.blockIndex } : {}),
+        ...(item.questions ? { questions: item.questions } : {}),
       };
     case "thought":
       return { ...base, kind: item.kind, text: item.text, status: item.status };
@@ -504,6 +508,7 @@ function deserializeBuiltinTimelineItem(
         text: item.text,
         ...(item.blockGroupId ? { blockGroupId: item.blockGroupId } : {}),
         ...(item.blockIndex !== undefined ? { blockIndex: item.blockIndex } : {}),
+        ...(item.questions ? { questions: item.questions } : {}),
       };
     case "thought":
       return { ...base, kind: item.kind, text: item.text, status: item.status };

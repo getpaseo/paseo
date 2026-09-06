@@ -213,6 +213,12 @@ export const en = {
       question: "How would you like to proceed?",
       proposedPlan: "Proposed plan",
     },
+    questions: {
+      answerPlaceholder: "Type your answer...",
+      submit: "Send answer",
+      answered: "Answered",
+      sendFailed: "Couldn't send your answer",
+    },
   },
   agentPanel: {
     states: {

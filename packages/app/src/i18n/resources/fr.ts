@@ -218,6 +218,12 @@ export const fr: TranslationResources = {
       question: "Comment souhaitez-vous procéder?",
       proposedPlan: "Plan proposé",
     },
+    questions: {
+      answerPlaceholder: "Saisissez votre réponse...",
+      submit: "Envoyer la réponse",
+      answered: "Répondu",
+      sendFailed: "Impossible d'envoyer votre réponse",
+    },
   },
   agentPanel: {
     states: {
