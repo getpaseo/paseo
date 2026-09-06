@@ -3378,9 +3378,17 @@ class ClaudeAgentSession implements AgentSession {
           };
         }
     > = [];
+    // Claude Code only expands a slash command (custom command or skill) when it is the last
+    // content block of the user message. buildAgentPrompt puts the typed text before images and
+    // rendered attachments, so "/command" plus an attached issue or screenshot would reach the
+    // model as literal text. Track the typed block and move it to the end.
+    let slashCommandIndex = -1;
     if (Array.isArray(prompt)) {
       for (const chunk of prompt) {
         if (chunk.type === "text") {
+          if (slashCommandIndex === -1 && this.parseSlashCommandInput(chunk.text)) {
+            slashCommandIndex = content.length;
+          }
           content.push({ type: "text", text: chunk.text });
         } else if (chunk.type === "image") {
           if (isImageMimeType(chunk.mimeType)) {
@@ -3399,6 +3407,10 @@ class ClaudeAgentSession implements AgentSession {
       }
     } else {
       content.push({ type: "text", text: prompt });
+    }
+    if (slashCommandIndex !== -1 && slashCommandIndex !== content.length - 1) {
+      const [slashCommandBlock] = content.splice(slashCommandIndex, 1);
+      content.push(slashCommandBlock);
     }
 
     const messageId = randomUUID();
