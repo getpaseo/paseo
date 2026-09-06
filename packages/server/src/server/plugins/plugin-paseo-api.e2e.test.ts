@@ -4,6 +4,7 @@ import path from "node:path";
 import { afterEach, expect, test } from "vitest";
 import { DaemonClient } from "../test-utils/daemon-client.js";
 import { createTestPaseoDaemon } from "../test-utils/paseo-daemon.js";
+import { createTestAgentClient, createTestAgentClients } from "../test-utils/fake-agent-client.js";
 
 const roots: string[] = [];
 
@@ -20,8 +21,8 @@ test("plugin handlers create workspaces and agents through their Paseo API", asy
     JSON.stringify({ id: "paseo-api" }),
   );
   await writeFile(
-    path.join(pluginDirectory, "index.tsx"),
-    `import { defineRpc, type PluginContext } from "@paseo/plugin";
+    path.join(pluginDirectory, "index.server.ts"),
+    `import { defineRpc, type PluginServerContext } from "@getpaseo/plugin";
 import { z } from "zod";
 
 const create = defineRpc({
@@ -30,23 +31,50 @@ const create = defineRpc({
   output: z.object({ workspaceId: z.string(), agentId: z.string() }),
 });
 
-export default function contribute(plugin: PluginContext) {
-  plugin.handle(create, async ({ path }, { paseo }) => {
+const list = defineRpc({
+  name: "list",
+  input: z.object({}),
+  output: z.object({ agentIds: z.array(z.string()) }),
+});
+
+const append = defineRpc({
+  name: "append",
+  input: z.object({ agentId: z.string(), status: z.string() }),
+  output: z.object({ seq: z.number(), epoch: z.string() }),
+});
+
+export default function contribute(server: PluginServerContext) {
+  server.handle(create, async ({ path }, { paseo }) => {
     const workspace = await paseo.workspaces.create({
       source: { kind: "directory", path },
       title: "Plugin workspace",
     });
     const agent = await workspace.agents.create({
-      config: { provider: "codex/test" },
+      config: { provider: "pi/test" },
       prompt: "Created by a plugin handler",
     });
     return { workspaceId: workspace.id, agentId: agent.id };
   });
+  server.handle(list, async (_input, { paseo }) => {
+    const result = await paseo.agents.list({ page: { limit: 100 } });
+    return { agentIds: result.entries.map((entry) => entry.agent.id) };
+  });
+  server.handle(append, ({ agentId, status }, { paseo }) =>
+    paseo.agents.ref(agentId).timeline.append({
+      type: "plugin",
+      id: "review-1",
+      kind: "review",
+      version: 1,
+      data: { status },
+    }),
+  );
   return () => undefined;
 }`,
   );
 
-  const daemon = await createTestPaseoDaemon();
+  const daemon = await createTestPaseoDaemon({
+    agentClients: { ...createTestAgentClients(), pi: createTestAgentClient("pi") },
+  });
   const client = new DaemonClient({
     url: `ws://127.0.0.1:${daemon.port}/ws`,
     appVersion: "0.4.0",
@@ -71,6 +99,26 @@ export default function contribute(plugin: PluginContext) {
     if (typeof created !== "object" || created === null) {
       throw new Error("Plugin returned an invalid creation result");
     }
+    const listed = await client.invokePluginRpc("paseo-api", "list", {});
+    expect(listed).toEqual({
+      agentIds: expect.arrayContaining([Reflect.get(created, "agentId")]),
+    });
+    const agentId = Reflect.get(created, "agentId");
+    await expect(
+      client.invokePluginRpc("paseo-api", "append", { agentId, status: "running" }),
+    ).resolves.toEqual({ seq: expect.any(Number), epoch: expect.any(String) });
+    await client.invokePluginRpc("paseo-api", "append", { agentId, status: "complete" });
+    const timeline = await client.fetchAgentTimeline(agentId, { projection: "projected" });
+    expect(timeline.entries.filter((entry) => entry.item.type === "plugin")).toEqual([
+      expect.objectContaining({
+        item: expect.objectContaining({
+          type: "plugin",
+          id: "review-1",
+          pluginId: "paseo-api",
+          data: { status: "complete" },
+        }),
+      }),
+    ]);
     await client.removePlugin("paseo-api");
     const workspaces = await client.fetchWorkspaces();
     const agents = await client.fetchAgents();
@@ -96,9 +144,9 @@ test("daemon config reload enables and disables configured plugins without resta
     JSON.stringify({ id: "reloadable-plugin" }),
   );
   await writeFile(
-    path.join(pluginDirectory, "index.tsx"),
-    `export default function contribute(plugin: unknown) {
-  void plugin;
+    path.join(pluginDirectory, "index.server.ts"),
+    `export default function contribute(server: unknown) {
+  void server;
   return () => undefined;
     }`,
   );

@@ -13,23 +13,23 @@ export async function runKillCommand(
   options: TerminalCommandOptions,
   _command: Command,
 ): Promise<SingleResult<TerminalKillRow>> {
-  const { client } = await connectTerminalClient(options.host);
+  const { client, close } = await connectTerminalClient(options.host);
 
   try {
     const resolvedId = await requireTerminalId(client, terminalId);
-    const payload = await client.killTerminal(resolvedId);
+    await client.terminals.ref(resolvedId).kill();
     return {
       type: "single",
       data: {
-        terminalId: payload.terminalId,
-        success: payload.success,
+        terminalId: resolvedId,
+        success: true,
       },
       schema: terminalKillSchema,
     };
   } catch (err) {
     throw toTerminalCommandError("TERMINAL_KILL_FAILED", "kill terminal", err);
   } finally {
-    await client.close().catch(() => {});
+    await close().catch(() => {});
   }
 }
 

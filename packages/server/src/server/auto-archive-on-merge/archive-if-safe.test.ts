@@ -253,6 +253,7 @@ function createRealOutcomeHarness(input: {
   archivedWorkspaceIds: Set<string>;
 }) {
   const active = [...input.activeWorkspaces];
+  const autoArchivedChangeRequestUrls = new Map<string, string>();
   const logger = pino({ level: "silent" });
   vi.spyOn(logger, "info").mockImplementation(() => undefined);
   vi.spyOn(logger, "warn").mockImplementation(() => undefined);
@@ -311,8 +312,12 @@ function createRealOutcomeHarness(input: {
     },
     listActiveWorkspaces: async () =>
       active.filter((workspace) => !input.archivedWorkspaceIds.has(workspace.workspaceId)),
-    getAutoArchivedChangeRequestUrl: async () => null,
-    archiveWorkspaceRecord: async (workspaceId: string) => {
+    getAutoArchivedChangeRequestUrl: async (workspaceId: string) =>
+      autoArchivedChangeRequestUrls.get(workspaceId) ?? null,
+    archiveWorkspaceRecord: async (workspaceId: string, context) => {
+      if (context?.autoArchivedChangeRequestUrl) {
+        autoArchivedChangeRequestUrls.set(workspaceId, context.autoArchivedChangeRequestUrl);
+      }
       input.archivedWorkspaceIds.add(workspaceId);
       const index = active.findIndex((workspace) => workspace.workspaceId === workspaceId);
       if (index !== -1) {
@@ -327,6 +332,10 @@ function createRealOutcomeHarness(input: {
   return {
     options,
     log: logger,
+    unarchiveWorkspace(workspace: ActiveWorkspaceRef) {
+      input.archivedWorkspaceIds.delete(workspace.workspaceId);
+      active.push(workspace);
+    },
   };
 }
 
@@ -549,5 +558,49 @@ describe("archiveIfSafe", () => {
 
     expect(archivedWorkspaceIds.has(workspaceA)).toBe(true);
     expect(existsSync(worktree.worktreePath)).toBe(false);
+  });
+
+  test("real outcome: an unarchived workspace is not archived again for the same merged PR", async () => {
+    const { tempDir, repoDir } = createGitRepo();
+    const paseoHome = path.join(tempDir, ".paseo");
+    const worktree = await createPaseoOwnedWorktree(repoDir, paseoHome, "merged-then-unarchived");
+    const workspace = {
+      workspaceId: "ws-merged-then-unarchived",
+      cwd: worktree.worktreePath,
+      kind: "worktree" as const,
+    };
+    const sibling = {
+      workspaceId: "ws-directory-preserving-sibling",
+      cwd: worktree.worktreePath,
+      kind: "local_checkout" as const,
+    };
+    const archivedWorkspaceIds = new Set<string>();
+    const harness = createRealOutcomeHarness({
+      paseoHome,
+      repoDir,
+      worktreePath: worktree.worktreePath,
+      activeWorkspaces: [workspace, sibling],
+      archivedWorkspaceIds,
+    });
+    const mergedSnapshot = { ...createSnapshot(), cwd: worktree.worktreePath };
+
+    await archiveIfSafe({
+      workspaceId: workspace.workspaceId,
+      snapshot: mergedSnapshot,
+      options: harness.options,
+      log: harness.log,
+    });
+    expect(archivedWorkspaceIds.has(workspace.workspaceId)).toBe(true);
+
+    harness.unarchiveWorkspace(workspace);
+    await archiveIfSafe({
+      workspaceId: workspace.workspaceId,
+      snapshot: mergedSnapshot,
+      options: harness.options,
+      log: harness.log,
+    });
+
+    expect(archivedWorkspaceIds.has(workspace.workspaceId)).toBe(false);
+    expect(existsSync(worktree.worktreePath)).toBe(true);
   });
 });

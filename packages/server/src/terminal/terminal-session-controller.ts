@@ -178,6 +178,19 @@ export class TerminalSessionController {
     };
   }
 
+  async hasDirectorySubscription(input: { cwd: string; workspaceId?: string }): Promise<boolean> {
+    const workspaceRoots = await this.listTerminalWorkspaceRoots();
+    return Array.from(this.subscribedDirectories.values()).some((subscription) => {
+      if (
+        subscription.workspaceId !== undefined &&
+        subscription.workspaceId !== input.workspaceId
+      ) {
+        return false;
+      }
+      return this.terminalBelongsToRoot(subscription.cwd, input.cwd, workspaceRoots);
+    });
+  }
+
   dispatch(msg: SessionInboundMessage): Promise<void> | undefined {
     if (!isTerminalMessage(msg)) {
       return undefined;
@@ -413,10 +426,16 @@ export class TerminalSessionController {
     }
 
     try {
-      const terminals =
-        typeof msg.cwd === "string"
-          ? await this.getTerminalsForWorkspaceRoot(msg.cwd, msg.workspaceId)
-          : await this.getAllTerminalSessions();
+      let terminals: TerminalSession[];
+      if (msg.workspaceId !== undefined) {
+        terminals = (await this.getAllTerminalSessions()).filter(
+          (terminal) => terminal.workspaceId === msg.workspaceId,
+        );
+      } else if (typeof msg.cwd === "string") {
+        terminals = await this.getTerminalsForWorkspaceRoot(msg.cwd);
+      } else {
+        terminals = await this.getAllTerminalSessions();
+      }
       for (const terminal of terminals) {
         this.ensureExitSubscription(terminal);
       }
@@ -424,7 +443,9 @@ export class TerminalSessionController {
         type: "list_terminals_response",
         payload: {
           ...(msg.cwd ? { cwd: msg.cwd } : {}),
-          terminals: terminals.map((terminal) => this.toTerminalInfo(terminal)),
+          terminals: terminals.map((terminal) =>
+            Object.assign(this.toTerminalInfo(terminal), { cwd: terminal.cwd }),
+          ),
           requestId: msg.requestId,
         },
       });
@@ -450,7 +471,9 @@ export class TerminalSessionController {
     const terminalsByDirectory = await Promise.all(
       directories.map((cwd) => manager.getTerminals(cwd)),
     );
-    return terminalsByDirectory.flat();
+    return [
+      ...new Map(terminalsByDirectory.flat().map((terminal) => [terminal.id, terminal])).values(),
+    ];
   }
 
   private async getTerminalsForWorkspaceRoot(
@@ -543,6 +566,11 @@ export class TerminalSessionController {
           },
         });
         return;
+      }
+
+      const workspaces = await this.listTerminalWorkspaceRefs();
+      if (!workspaces.some((workspace) => workspace.workspaceId === workspaceId)) {
+        throw new Error(`Workspace ${workspaceId} is not active or does not exist`);
       }
 
       const session = await this.terminalManager.createTerminal({
@@ -733,12 +761,24 @@ export class TerminalSessionController {
   }
 
   private async handleKillTerminalRequest(msg: KillTerminalRequest): Promise<void> {
-    const result = this.killTerminalForClose(msg.terminalId);
+    let success = false;
+    if (this.terminalManager) {
+      try {
+        this.detachStream(msg.terminalId, { emitExit: true });
+        await this.terminalManager.killTerminalAndWait(msg.terminalId);
+        success = true;
+      } catch (error) {
+        this.sessionLogger.error(
+          { err: error, terminalId: msg.terminalId },
+          "Failed to kill terminal",
+        );
+      }
+    }
     this.emit({
       type: "kill_terminal_response",
       payload: {
-        terminalId: result.terminalId,
-        success: result.success,
+        terminalId: msg.terminalId,
+        success,
         requestId: msg.requestId,
       },
     });

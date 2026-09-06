@@ -23,7 +23,6 @@ import {
   getCliInstallStatus,
   installCli,
 } from "../integrations/cli-install/index.js";
-import { createSkillsCommandHandlers, getSkillsController } from "../integrations/skills/index.js";
 import {
   openLocalTransportSession,
   sendLocalTransportMessage,
@@ -39,6 +38,11 @@ import type { DesktopSettings } from "../settings/desktop-settings.js";
 import { getDesktopSettingsStore } from "../settings/desktop-settings-electron.js";
 import { isRunningUnderARM64Translation } from "../system/arm64-translation.js";
 import { getDesktopAppLogs } from "../diagnostics/app-logs.js";
+import { getDesktopUpdaterDiagnostics } from "../diagnostics/updater.js";
+import {
+  deleteLegacySkillSelection,
+  readLegacySkillSelection,
+} from "../integrations/legacy-skill-selection.js";
 import { tailFile } from "../diagnostics/tail-file.js";
 
 const DAEMON_LOG_FILENAME = "daemon.log";
@@ -213,6 +217,34 @@ function logDesktopDaemonLifecycle(message: string, details?: Record<string, unk
   });
 }
 
+function statusFromDaemonProbe(
+  payload: Record<string, unknown>,
+  home: string,
+): DesktopDaemonStatus {
+  const local = typeof payload.localDaemon === "string" ? payload.localDaemon : "stopped";
+  const reachable = payload.connectedDaemon === "reachable";
+  const processAlive = local === "running";
+  const stalledProcess = local === "unresponsive";
+  let status: DesktopDaemonState = "stopped";
+  if (reachable || processAlive) {
+    status = "running";
+  } else if (stalledProcess) {
+    status = "errored";
+  }
+  return {
+    serverId: typeof payload.serverId === "string" ? payload.serverId : "",
+    status,
+    listen: typeof payload.listen === "string" ? payload.listen : null,
+    hostname:
+      status === "running" && typeof payload.hostname === "string" ? payload.hostname : null,
+    pid: (processAlive || stalledProcess) && typeof payload.pid === "number" ? payload.pid : null,
+    home,
+    version: typeof payload.daemonVersion === "string" ? payload.daemonVersion : null,
+    desktopManaged: payload.desktopManaged === true,
+    error: null,
+  };
+}
+
 function resolveDesktopAppVersion(): string {
   if (app.isPackaged) {
     return app.getVersion();
@@ -245,32 +277,7 @@ export async function resolveDesktopDaemonStatus(): Promise<DesktopDaemonStatus>
       string,
       unknown
     >;
-    const localDaemon = typeof payload.localDaemon === "string" ? payload.localDaemon : "stopped";
-    const connectedDaemon =
-      typeof payload.connectedDaemon === "string" ? payload.connectedDaemon : "not_probed";
-    const hasRunningLocalProcess = localDaemon === "running";
-    const hasLocalProcess = hasRunningLocalProcess || localDaemon === "unresponsive";
-    const desktopManaged = payload.desktopManaged === true;
-    const apiReachable = connectedDaemon === "reachable";
-    let status: DesktopDaemonState = "stopped";
-    if (apiReachable || hasRunningLocalProcess) {
-      status = "running";
-    } else if (localDaemon === "unresponsive") {
-      status = "errored";
-    }
-
-    return {
-      serverId: typeof payload.serverId === "string" ? payload.serverId : "",
-      status,
-      listen: typeof payload.listen === "string" ? payload.listen : null,
-      hostname:
-        status === "running" && typeof payload.hostname === "string" ? payload.hostname : null,
-      pid: hasLocalProcess && typeof payload.pid === "number" ? payload.pid : null,
-      home,
-      version: typeof payload.daemonVersion === "string" ? payload.daemonVersion : null,
-      desktopManaged,
-      error: null,
-    };
+    return statusFromDaemonProbe(payload, home);
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     logDesktopDaemonLifecycle("resolveStatus CLI command failed", { error: errorMessage });
@@ -525,6 +532,7 @@ export function createDaemonCommandHandlers(): Record<string, DesktopCommandHand
     restart_desktop_daemon: () => restartDaemon(),
     desktop_daemon_logs: () => getDaemonLogs(),
     desktop_app_logs: () => getDesktopAppLogs(),
+    desktop_update_diagnostics: () => getDesktopUpdaterDiagnostics(),
     desktop_get_system_idle_time: () => powerMonitor.getSystemIdleTime() * 1000,
     cli_daemon_status: () => getCliDaemonStatus(),
     write_attachment_base64: (args) => writeAttachmentBase64(args ?? {}),
@@ -533,10 +541,7 @@ export function createDaemonCommandHandlers(): Record<string, DesktopCommandHand
     read_file_base64: (args) => readManagedFileBase64(args ?? {}),
     delete_attachment_file: (args) => deleteManagedAttachmentFile(args ?? {}),
     garbage_collect_attachment_files: (args) => garbageCollectManagedAttachmentFiles(args ?? {}),
-    open_local_daemon_transport: async (args) => {
-      const target = args as { transportType: "socket" | "pipe"; transportPath: string };
-      return await openLocalTransportSession(target);
-    },
+    open_local_daemon_transport: async (args) => await openLocalTransportSession(args),
     send_local_daemon_transport_message: async (args) => {
       await sendLocalTransportMessage(
         args as { sessionId: string; text?: string; binaryBase64?: string },
@@ -569,7 +574,8 @@ export function createDaemonCommandHandlers(): Record<string, DesktopCommandHand
     get_local_daemon_version: () => getLocalDaemonVersion(),
     install_cli: () => installCli(),
     get_cli_install_status: () => getCliInstallStatus(),
-    ...createSkillsCommandHandlers({ controller: getSkillsController() }),
+    read_legacy_skill_selection: () => readLegacySkillSelection(),
+    delete_legacy_skill_selection: () => deleteLegacySkillSelection(),
   };
 }
 

@@ -69,7 +69,7 @@ describe("useSidebarShortcutModel", () => {
     root = createRoot(container);
     useSidebarCollapsedSectionsStore.setState({
       collapsedProjectKeys: new Set(),
-      collapsedStatusGroupKeys: new Set(),
+      collapsedWorkspaceGroupKeys: new Set(),
     });
   });
 

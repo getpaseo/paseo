@@ -4,7 +4,7 @@ import { useTranslation } from "react-i18next";
 import { Archive, Unlink } from "lucide-react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { getProviderIcon } from "@/components/provider-icons";
-import { ComposerTrackPill, ComposerTrackRow } from "@/composer/tracks";
+import { ComposerTrackActions, ComposerTrackPill, ComposerTrackRow } from "@/composer/tracks";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { isNative } from "@/constants/platform";
@@ -30,6 +30,7 @@ const foregroundMutedColorMapping = (theme: Theme) => ({
 });
 
 export interface SubagentsTrackProps {
+  serverId: string;
   rows: SubagentRow[];
   onOpenSubagent: (id: string) => void;
   onOpenProviderSubagent: (parentAgentId: string, subagentId: string) => void;
@@ -44,17 +45,18 @@ const IDLE_ARCHIVE_FINISHED_STATUS: ArchiveFinishedStatus = { kind: "idle" };
 /** Leading and action glyphs share one size so rows keep a single icon column. */
 const ROW_ICON_SIZE = 14;
 
-function buildRowPresentation(row: SubagentRow): WorkspaceTabPresentation {
+function buildRowPresentation(row: SubagentRow, serverId: string): WorkspaceTabPresentation {
   const data = buildSubagentRowPresentationData(row);
   return {
     ...data,
     tooltip: data.label,
     modified: false,
-    icon: getProviderIcon(row.provider),
+    icon: getProviderIcon(row.provider, serverId),
   };
 }
 
 export function SubagentsTrack({
+  serverId,
   rows,
   onOpenSubagent,
   onOpenProviderSubagent,
@@ -78,35 +80,37 @@ export function SubagentsTrack({
   return (
     <ComposerTrackPill
       testID="subagents-track-header"
-      label={pill.label}
+      segments={pill.segments}
+      accessibilityLabel={pill.accessibilityLabel}
       panelTitle={t("subagents.title")}
-      statusBucket={pill.statusBucket}
     >
+      {showArchiveFinished && onArchiveFinished ? (
+        <ComposerTrackActions divided={rows.length > 0}>
+          <ArchiveFinishedRow
+            status={archiveFinishedStatus}
+            disabled={isArchivingFinished}
+            onPress={onArchiveFinished}
+          />
+        </ComposerTrackActions>
+      ) : null}
       {rows.map((row) => (
         <SubagentsTrackRow
           key={row.id}
           row={row}
+          serverId={serverId}
           onOpenSubagent={onOpenSubagent}
           onOpenProviderSubagent={onOpenProviderSubagent}
           onArchiveSubagent={onArchiveSubagent}
           onDetachSubagent={onDetachSubagent}
         />
       ))}
-      {showArchiveFinished && onArchiveFinished ? (
-        <ArchiveFinishedRow
-          status={archiveFinishedStatus}
-          disabled={isArchivingFinished}
-          onPress={onArchiveFinished}
-        />
-      ) : null}
     </ComposerTrackPill>
   );
 }
 
 /**
- * Bulk archive, as a row at the foot of the panel rather than an icon next to the count. The
- * pill has no header to hang an icon off, and a destructive-ish action reads better with its
- * name attached.
+ * Bulk archive, as a row above the list rather than an icon next to the count. The pill has no
+ * header to hang an icon off, and a destructive-ish action reads better with its name attached.
  */
 function ArchiveFinishedRow({
   status,
@@ -163,6 +167,7 @@ function ArchiveFinishedRow({
 }
 
 interface SubagentsTrackRowProps {
+  serverId: string;
   row: SubagentRow;
   onOpenSubagent: (id: string) => void;
   onOpenProviderSubagent: (parentAgentId: string, subagentId: string) => void;
@@ -171,6 +176,7 @@ interface SubagentsTrackRowProps {
 }
 
 function SubagentsTrackRow({
+  serverId,
   row,
   onOpenSubagent,
   onOpenProviderSubagent,
@@ -179,7 +185,7 @@ function SubagentsTrackRow({
 }: SubagentsTrackRowProps): ReactElement {
   const { t } = useTranslation();
   const isCompact = useIsCompactFormFactor();
-  const presentation = useMemo(() => buildRowPresentation(row), [row]);
+  const presentation = useMemo(() => buildRowPresentation(row, serverId), [row, serverId]);
   const displayLabel =
     presentation.titleState === "loading" ? t("common.states.loading") : presentation.label;
   const handlePress = useCallback(() => {

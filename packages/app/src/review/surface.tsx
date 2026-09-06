@@ -6,7 +6,6 @@ import {
   Pressable,
   type PressableStateCallbackType,
   Text,
-  TextInput,
   type TextStyle,
   View,
   type StyleProp,
@@ -14,10 +13,13 @@ import {
 } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { Button } from "@/components/ui/button";
+import {
+  EditingTextInput as TextInput,
+  type EditingTextInputHandle,
+} from "@/components/ui/text-input";
 import { isWeb } from "@/constants/platform";
 import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
 import type { Theme } from "@/styles/theme";
-import { useWorkspaceFocusRestoration } from "@/workspace/focus";
 import { useReviewDraftComments, useReviewDraftStore, type ReviewDraftComment } from "./store";
 import { buildReviewableDiffTargetKey, type ReviewableDiffTarget } from "@/utils/diff-layout";
 import {
@@ -30,11 +32,6 @@ import {
 } from "./geometry";
 
 type PressableState = PressableStateCallbackType & { hovered?: boolean };
-type WebTextInputRef = TextInput & {
-  getNativeElement?: () => unknown;
-  getNativeRef?: () => unknown;
-};
-
 function iconButtonStyle({ hovered, pressed }: PressableState): StyleProp<ViewStyle> {
   return [styles.iconButton, (hovered || pressed) && styles.iconButtonHovered];
 }
@@ -43,12 +40,11 @@ function iconButtonDestructiveStyle({ hovered, pressed }: PressableState): Style
   return [styles.iconButton, (hovered || pressed) && styles.iconButtonDestructiveHovered];
 }
 
-function getWebTextInputElement(input: TextInput | null): HTMLElement | null {
+function getWebTextInputElement(input: EditingTextInputHandle | null): HTMLElement | null {
   if (!isWeb || typeof HTMLElement === "undefined" || !input) {
     return null;
   }
-  const webInput = input as WebTextInputRef;
-  const element = webInput.getNativeElement?.() ?? webInput.getNativeRef?.() ?? input;
+  const element = input.getNativeRef();
   return element instanceof HTMLElement ? element : null;
 }
 
@@ -443,8 +439,7 @@ export function InlineReviewEditor({
   testID?: string;
 }) {
   const { t } = useTranslation();
-  const inputRef = useRef<TextInput | null>(null);
-  const focus = useWorkspaceFocusRestoration();
+  const inputRef = useRef<EditingTextInputHandle | null>(null);
   const [body, setBody] = useState(initialBody);
   const [isFocused, setIsFocused] = useState(false);
   const trimmedBody = body.trim();
@@ -455,13 +450,11 @@ export function InlineReviewEditor({
   }, []);
 
   const handleFocus = useCallback(() => {
-    focus.unfocus();
     setIsFocused(true);
-  }, [focus]);
+  }, []);
   const handleBlur = useCallback(() => {
     setIsFocused(false);
-    focus.restore();
-  }, [focus]);
+  }, []);
   const handleSave = useCallback(() => onSave(trimmedBody), [onSave, trimmedBody]);
 
   useEffect(() => {
@@ -512,7 +505,7 @@ export function InlineReviewEditor({
         placeholder={t("review.comment.placeholder")}
         placeholderTextColor={styles.placeholderColor.color}
         multiline
-        value={body}
+        initialValue={body}
         onChangeText={setBody}
         onFocus={handleFocus}
         onBlur={handleBlur}
@@ -604,8 +597,8 @@ const styles = StyleSheet.create((theme) => ({
     flex: 1,
     minWidth: 0,
     color: theme.colors.foreground,
-    fontSize: theme.fontSize.base,
-    lineHeight: theme.fontSize.base * 1.4,
+    fontSize: theme.fontSize.content,
+    lineHeight: theme.fontSize.content * 1.4,
   },
   commentActions: {
     flexDirection: "row",
@@ -653,8 +646,8 @@ const styles = StyleSheet.create((theme) => ({
     borderRadius: theme.borderRadius.md,
     paddingHorizontal: theme.spacing[3],
     paddingVertical: theme.spacing[2],
-    fontSize: theme.fontSize.base,
-    lineHeight: theme.fontSize.base * 1.4,
+    fontSize: theme.fontSize.content,
+    lineHeight: theme.fontSize.content * 1.4,
     textAlignVertical: "top",
     ...(isWeb
       ? {

@@ -10,14 +10,13 @@ category: Hub
 
 A trigger says which provider event can start a workflow. The [Hub workflows](/docs/hub/workflows) page covers the steps, inputs, routing, prompts, and deadlines that run after a match.
 
-`.paseo/workflows/github-mention.yml`:
+`.paseo/workflows/github-issue.yml`:
 
 ```yaml
-name: mention
-on: github.issue_comment
+name: triage-issue
+on: github.issue_created
 filters:
   repo: acme/api
-  contains: "@paseo"
   from_users: [alice]
 max_runtime: 2h
 steps:
@@ -33,17 +32,60 @@ steps:
 
 Field-by-field detail is in the [configuration reference](/docs/hub/configuration/hub-yml).
 
+## Choose the agent in Hub
+
+When you create or edit a trigger in the Hub dashboard, choose the daemon and enter its working directory first. Hub then asks that daemon for its available providers, models, execution modes, and thinking options. The suggested model and mode are the daemon's defaults.
+
+Changing the daemon or working directory reloads the choices. If an existing trigger names a model, mode, or thinking option that the daemon no longer reports, Hub marks that value unavailable without replacing it. You can keep the authored value, choose a current value, or switch to YAML editing.
+
+If the daemon is offline or needs a newer Paseo version, the agent selectors show an error and a retry action. The rest of the trigger and its YAML remain editable.
+
+## Continue the same agent
+
+Dashboard triggers default to **Same conversation**. Messages in the same Slack or Discord thread, events on the same GitHub issue or pull request, and events on the same Linear issue continue the existing agent in that project. An event without a conversation starts a new agent.
+
+If the agent is busy, the new prompt steers its current work. If its workspace is archived, Hub asks Paseo to restore it before sending the prompt. Each arrival still has its own deadline, output limits, and completion status.
+
+Choose **Custom key** to group arrivals by an input, or **New agent** to keep them separate. A self-contained trigger document can express the same choice:
+
+```yaml
+name: support
+on:
+  slack.mention:
+    filters:
+      from_users: [U01234567]
+run:
+  target:
+    daemon: laptop
+    cwd: /Users/you/code/support
+  agent:
+    provider: codex
+  continuation:
+    mode: conversation
+  max_runtime: 30m
+  idle_timeout: 5m
+  prompt: Handle this request and call finish_execution when complete.
+```
+
+The [continuation reference](/docs/hub/configuration/hub-yml#agent-continuation) describes keys and compatibility. The run detail shows whether each arrival created, continued, or restored an agent.
+
+Hub includes an `executionId` in each prompt. When using a continuing agent, pass that ID to `reply` and `finish_execution`. These tools act on that arrival's destination and contract; an old or unrelated execution ID is rejected.
+
 ## Events
 
-| `on`                                 | Fires when                            |
-| ------------------------------------ | ------------------------------------- |
-| `github.issue_comment`               | A comment on an issue or pull request |
-| `github.issues`                      | An issue is opened or edited          |
-| `github.pull_request_review`         | A review is submitted                 |
-| `github.pull_request_review_comment` | A comment on a diff                   |
-| `slack.mention`                      | The bot is mentioned in a channel     |
-| `discord.mention`                    | The bot is mentioned in a guild       |
-| `manual.run`                         | A run started from the API            |
+| `on`                                  | Fires when                                           |
+| ------------------------------------- | ---------------------------------------------------- |
+| `github.issue_created`                | An issue is opened.                                  |
+| `github.pull_request_created`         | A pull request is opened.                            |
+| `github.issue_comment_created`        | A comment is created on an issue.                    |
+| `github.pull_request_comment_created` | A conversation comment is created on a pull request. |
+| `github.issue_label_added`            | A label is added to an issue.                        |
+| `github.pull_request_label_added`     | A label is added to a pull request.                  |
+| `slack.mention`                       | The bot is mentioned in a channel.                   |
+| `discord.mention`                     | The bot is mentioned in a guild.                     |
+| `manual.run`                          | A run started from the API.                          |
+
+New GitHub workflows should use a semantic event. The five legacy events remain compatible: `github.issues`, `github.issue_comment`, `github.pull_request_review`, `github.pull_request_review_comment`, and `github.push`. See [GitHub triggers](/docs/hub/triggers/github) for complete workflows and when to use each event.
 
 Each provider page documents its events and the data they expose:
 
@@ -59,16 +101,18 @@ The allowlist is what keeps a stranger's comment on a public issue from starting
 
 An allowlist is one layer of defense. It does not make a permitted account trustworthy after compromise or make prompt injection harmless. See [Hub security](/docs/hub/security) before choosing the daemon, working directory, provider policy, and outputs for an external trigger.
 
-| Filter       | Applies to     | Matches                                                         |
-| ------------ | -------------- | --------------------------------------------------------------- |
-| `from_users` | all            | GitHub: login. Slack and Discord: **user id**, not display name |
-| `repo`       | GitHub         | `owner/name`                                                    |
-| `workspace`  | Slack          | Team id, `T01234567`                                            |
-| `guild`      | Discord        | Guild id                                                        |
-| `channels`   | Slack, Discord | Channel ids                                                     |
-| `contains`   | all            | GitHub substring; Slack and Discord invocation prefix           |
-| `pattern`    | all            | Invocation prefix                                               |
-| `connection` | all            | A connection slug, when the organization has several            |
+| Filter       | Applies to                | Matches                                                              |
+| ------------ | ------------------------- | -------------------------------------------------------------------- |
+| `from_users` | all                       | GitHub: login. Slack and Discord: **user id**, not display name      |
+| `repo`       | GitHub                    | `owner/name`                                                         |
+| `workspace`  | Slack                     | Team id, `T01234567`                                                 |
+| `guild`      | Discord                   | Guild id                                                             |
+| `channels`   | Slack, Discord            | Channel ids                                                          |
+| `contains`   | all                       | GitHub substring; Slack and Discord invocation prefix                |
+| `pattern`    | all                       | Invocation prefix                                                    |
+| `connection` | all                       | A connection slug, when the organization has several                 |
+| `label`      | GitHub label-added events | The label added by this delivery, case-insensitively                 |
+| `labels`     | GitHub                    | Every listed current issue or pull-request label, case-insensitively |
 
 All conditions must pass. There is no `any` mode.
 

@@ -61,6 +61,12 @@ complete`), keyed off the opened snapshot's serverId. Waiting for data is a
   states) is owned by `components/ui/control-geometry.ts` — controls never
   declare their own, and screens never nudge global component styles to align
   a row.
+- Every text field consumes `EditingTextInput`, directly or through a UI
+  wrapper. The editing surface owns in-progress text; React observes committed
+  edits through `onChangeText`, and programmatic mutations use the input's
+  `replaceText` command. Its props omit `value` and `defaultValue`, web IME
+  candidates stay unpublished until composition commits, and lint rejects raw
+  React Native `TextInput` imports outside the primitive.
 - The form declares one size for all fields: `sm` on desktop, `md` compact
   (`useIsCompactFormFactor`).
 - Availability hierarchy: a field whose capability doesn't apply is **hidden**
@@ -71,6 +77,14 @@ complete`), keyed off the opened snapshot's serverId. Waiting for data is a
   exact string; validation errors are the exception. State a fact (like the
   timezone) once — never in a preview line AND a helper line.
 - `useUnistyles` is banned (see docs/unistyles.md); lint enforces.
+
+## Settings rows
+
+Use the named components from `@/components/settings` for settings cards and controls.
+`SettingsCard` owns row separators; `SettingsRow` accepts custom content. Heading-only screens
+can import `SettingsGroup` and `SettingsSection` directly from their modules in
+`@/components/settings/headings/`.
+The plugin UI entry exposes the same components; keep them independent of storage and routing.
 
 ## Data gating
 

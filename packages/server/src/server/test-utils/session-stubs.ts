@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { vi } from "vitest";
 
 import { getAgentProviderDefinition } from "@getpaseo/protocol/provider-manifest";
@@ -261,5 +262,16 @@ export function createProviderSnapshotManagerStub(): {
     getProviderDiagnostic,
     applyMutableProviderConfig,
     destroy,
+  };
+}
+
+export function createAgentRequestsStub(): SessionOptions["agentRequests"] {
+  return {
+    async create(input) {
+      const agentId = randomUUID();
+      await input.create(agentId);
+      return agentId;
+    },
+    send: (input) => input.send(),
   };
 }

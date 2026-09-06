@@ -16,8 +16,28 @@ export interface CodexRewindClient {
 }
 
 export interface CodexUserMessageTurnIndex {
-  resolve(messageId: string): number | null;
+  resolve(messageId: string): { index: number; turnId: string | null } | null;
   count(): number;
+}
+
+type CodexThreadHistoryMode = "legacy" | "paginated";
+
+async function readCodexThreadHistoryMode(
+  client: CodexRewindClient,
+  threadId: string,
+): Promise<CodexThreadHistoryMode> {
+  const response = await client.request("thread/read", { threadId, includeTurns: false });
+  if (typeof response !== "object" || response === null || !("thread" in response)) {
+    throw new Error("Codex thread/read did not return thread metadata");
+  }
+  const thread = response.thread;
+  if (typeof thread !== "object" || thread === null || !("historyMode" in thread)) {
+    return "legacy";
+  }
+  if (thread.historyMode === "legacy" || thread.historyMode === "paginated") {
+    return thread.historyMode;
+  }
+  throw new Error(`Codex thread/read returned unknown history mode ${String(thread.historyMode)}`);
 }
 
 async function forkCodexThread(
@@ -54,15 +74,33 @@ export async function revertCodexConversation(input: {
     throw new Error("Codex thread is not ready for rewind");
   }
 
-  const targetTurnIndex = input.userMessageTurns.resolve(input.messageId);
-  if (targetTurnIndex === null) {
+  const targetTurn = input.userMessageTurns.resolve(input.messageId);
+  if (targetTurn === null) {
     throw new Error(`Codex could not find user message ${input.messageId} in the current thread`);
   }
 
   const currentUserTurnCount = input.userMessageTurns.count();
-  const numTurns = currentUserTurnCount - targetTurnIndex;
+  const numTurns = currentUserTurnCount - targetTurn.index;
   if (numTurns < 0) {
     throw new Error(`Codex user message ${input.messageId} is outside the current thread`);
+  }
+
+  const historyMode = await readCodexThreadHistoryMode(input.client, input.threadId);
+  if (historyMode === "paginated") {
+    if (!targetTurn.turnId) {
+      throw new Error(`Codex could not find the turn containing user message ${input.messageId}`);
+    }
+    const forked = await forkCodexThread(input.client, {
+      threadId: input.threadId,
+      beforeTurnId: targetTurn.turnId,
+      cwd: input.cwd ?? null,
+      model: input.model ?? null,
+      serviceTier: input.serviceTier ?? null,
+      excludeTurns: false,
+      persistExtendedHistory: true,
+    });
+    await input.setThreadId(forked.thread.id);
+    return;
   }
 
   // Fork is non-destructive: the old thread file stays on disk and remains

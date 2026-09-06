@@ -210,7 +210,6 @@ function AddCustomModelSubSheet({
         <AdaptiveTextInput
           initialValue={input}
           resetKey={`add-custom-${visible}`}
-          value={input}
           onChangeText={setInput}
           onSubmitEditing={handleAdd}
           placeholder={t("settings.providers.models.modelIdPlaceholder")}

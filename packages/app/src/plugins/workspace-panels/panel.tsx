@@ -1,9 +1,10 @@
 import type {
   PluginAgentPanelProps,
   PluginHostProps,
+  PluginTheme,
   PluginWorkspacePanelProps,
-} from "@paseo/plugin";
-import { PluginClientStateProvider } from "@paseo/plugin/host";
+} from "@getpaseo/plugin";
+import { PluginClientStateProvider } from "@getpaseo/plugin/host";
 import { CircleAlert } from "lucide-react-native";
 import { useMemo } from "react";
 import { Platform, Text, View } from "react-native";
@@ -11,13 +12,15 @@ import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import invariant from "tiny-invariant";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { usePaneContext } from "@/panels/pane-context";
-import type { PanelDescriptor, PanelRegistration } from "@/panels/panel-registry";
+import { definePanel, type PanelDescriptor } from "@/panels/panel-registry";
 import { useHostRuntimeClient, useHosts } from "@/runtime/host-runtime";
 import { useSessionStore } from "@/stores/session-store";
 import { useWorkspaceExists } from "@/stores/session-store-hooks";
 import type { Theme } from "@/styles/theme";
 import { normalizeWorkspaceOpaqueId } from "@/utils/workspace-identity";
+import { usePluginHostNavigation } from "../host-navigation";
 import { createPluginClientStateSource } from "../client-state/source";
+import { toPluginTheme } from "../theme";
 import { resolvePluginIcon } from "../icons";
 import { useInstalledPlugin } from "../registry";
 import { PluginRuntimeBoundary } from "../runtime-boundary";
@@ -25,9 +28,8 @@ import { createPluginSurfaceRuntime } from "../surface-runtime";
 import { SurfaceErrorBoundary } from "../surface-error-boundary";
 import { resolvePluginWorkspacePanel } from "./resolution";
 
-const EMPTY_THEME_DTO: Record<string, unknown> = {};
 const pluginThemeMapping = (theme: Theme) => ({
-  themeDto: JSON.parse(JSON.stringify(theme)) as Record<string, unknown>,
+  theme: toPluginTheme(theme),
 });
 
 function resolvePlatform(): PluginHostProps["layout"]["platform"] {
@@ -36,7 +38,7 @@ function resolvePlatform(): PluginHostProps["layout"]["platform"] {
   return "web";
 }
 
-function PluginPanelBody({ themeDto = EMPTY_THEME_DTO }: { themeDto?: Record<string, unknown> }) {
+function PluginPanelBody({ theme }: { theme: PluginTheme }) {
   const { serverId, workspaceId, target } = usePaneContext();
   invariant(target.kind === "plugin", "PluginPanel requires plugin target");
   const plugin = useInstalledPlugin(serverId, target.pluginId);
@@ -62,6 +64,7 @@ function PluginPanelBody({ themeDto = EMPTY_THEME_DTO }: { themeDto?: Record<str
   const host = useMemo(() => ({ id: serverId, label: hostLabel }), [hostLabel, serverId]);
   const layout = useMemo(() => ({ compact, platform: resolvePlatform() }), [compact]);
   const stateSource = useMemo(() => createPluginClientStateSource(serverId), [serverId]);
+  const navigation = usePluginHostNavigation(serverId);
 
   if (!plugin || !contribution || !workspaceExists) {
     return <PluginPanelUnavailable />;
@@ -75,9 +78,10 @@ function PluginPanelBody({ themeDto = EMPTY_THEME_DTO }: { themeDto?: Record<str
   if (contribution.context === "workspace") {
     const props: PluginWorkspacePanelProps = {
       context: "workspace",
-      theme: themeDto,
+      theme,
       host,
       layout,
+      navigation,
       workspaceId,
     };
     const Component = contribution.Component;
@@ -86,9 +90,10 @@ function PluginPanelBody({ themeDto = EMPTY_THEME_DTO }: { themeDto?: Record<str
   } else if (agentExists && target.context === "agent") {
     const props: PluginAgentPanelProps = {
       context: "agent",
-      theme: themeDto,
+      theme,
       host,
       layout,
+      navigation,
       workspaceId,
       agentId: target.agentId,
     };
@@ -158,11 +163,10 @@ function usePluginPanelDescriptor(
   };
 }
 
-export const pluginPanelRegistration: PanelRegistration<"plugin"> = {
-  kind: "plugin",
+export const pluginPanelRegistration = definePanel("plugin", {
   component: PluginPanel,
   useDescriptor: usePluginPanelDescriptor,
-};
+});
 
 const styles = StyleSheet.create((theme) => ({
   unavailable: {

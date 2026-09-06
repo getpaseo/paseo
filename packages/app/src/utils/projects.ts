@@ -1,6 +1,7 @@
 import type { ProjectDescriptor, WorkspaceDescriptor } from "@/stores/session-store";
 import type { HostProjectListItem } from "@/projects/host-project-model";
 import { buildWorkspaceStructureProjects } from "@/projects/workspace-structure";
+import { selectPrHintFromStatus } from "@/git/pr-hint";
 
 export interface WorkspaceSummary {
   id: string;
@@ -10,6 +11,8 @@ export interface WorkspaceSummary {
   status: WorkspaceDescriptor["status"];
   currentBranch: string | null;
   archivingAt?: string;
+  /** Pull/merge request number backing this workspace, so a query can find it. */
+  changeRequestNumber: number | null;
 }
 
 export interface ProjectHostEntry {
@@ -25,6 +28,7 @@ export interface ProjectHostEntry {
   gitRuntime?: WorkspaceDescriptor["gitRuntime"];
   githubRuntime?: WorkspaceDescriptor["githubRuntime"];
   customIconRevision?: string | null;
+  iconRevision?: string;
 }
 
 export interface ProjectSummary {
@@ -87,9 +91,10 @@ interface HostGroup {
   isOnline: boolean;
   workspaces: WorkspaceDescriptor[];
   customIconRevision?: string | null;
-  // Repo root for a project parent that has no workspaces yet. Without it the
-  // host's repoRoot resolves to "" and the project reads as non-editable.
-  fallbackRepoRoot: string;
+  iconRevision?: string;
+  // The project record exists before its first workspace. Keep its editable
+  // root at the project boundary instead of deriving it from child rows.
+  projectRoot: string;
 }
 
 interface ProjectGroup {
@@ -124,8 +129,25 @@ function buildHostProjectEntries(hosts: ProjectHost[]): HostProjectListItem[] {
   });
 }
 
-function resolveHostRepoRoot(group: HostGroup): string {
-  return group.workspaces[0]?.projectRootPath ?? group.fallbackRepoRoot;
+function resolveHostRepoRoot(input: {
+  projectRoot: string;
+  workspaces: readonly WorkspaceDescriptor[];
+}): string {
+  return input.workspaces[0]?.projectRootPath || input.projectRoot;
+}
+
+/**
+ * Resolve the workspace's pull/merge request number.
+ *
+ * The wire carries the number directly, so prefer it. `selectPrHintFromStatus`
+ * is only the fallback: it derives the number by regex-parsing the PR/MR URL,
+ * which yields null for a noncanonical or absent URL even when the daemon sent
+ * a perfectly good number.
+ */
+function toChangeRequestNumber(workspace: WorkspaceDescriptor): number | null {
+  const pullRequest = workspace.githubRuntime?.pullRequest;
+  if (!pullRequest) return null;
+  return pullRequest.number ?? selectPrHintFromStatus(pullRequest, workspace.forge)?.number ?? null;
 }
 
 function toWorkspaceSummary(workspace: WorkspaceDescriptor): WorkspaceSummary {
@@ -138,6 +160,7 @@ function toWorkspaceSummary(workspace: WorkspaceDescriptor): WorkspaceSummary {
     status: workspace.status,
     currentBranch: currentBranch && currentBranch !== "HEAD" ? currentBranch : null,
     ...(workspace.archivingAt ? { archivingAt: workspace.archivingAt } : {}),
+    changeRequestNumber: toChangeRequestNumber(workspace),
   };
 }
 
@@ -159,6 +182,7 @@ function toHostEntry(group: HostGroup): ProjectHostEntry {
     gitRuntime: canonical?.gitRuntime,
     githubRuntime: canonical?.githubRuntime,
     customIconRevision: canonical?.projectCustomIconRevision ?? group.customIconRevision,
+    iconRevision: group.iconRevision,
   };
 }
 
@@ -223,7 +247,8 @@ function addHostProjects(
         isOnline: host.isOnline,
         workspaces: [],
         customIconRevision: placement.customIconRevision,
-        fallbackRepoRoot: repoRootByProjectId.get(projectId) ?? "",
+        iconRevision: placement.iconRevision,
+        projectRoot: repoRootByProjectId.get(projectId) ?? "",
       });
     }
   }

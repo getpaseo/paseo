@@ -174,6 +174,27 @@ export async function openSidebarDisplayPage(page: Page, branchTestID: string): 
   await page.getByTestId(branchTestID).click();
 }
 
+// Project filters live a page below the display-preferences root, like the host filters.
+export async function openSidebarProjectFilter(page: Page): Promise<void> {
+  await openSidebarDisplayPage(page, "sidebar-display-project-filter");
+}
+
+// The filter rows are keyed by the project's sidebar view key. A project seeded from its own temp
+// repo has a `projectKey` unique on the host, so the view key IS that key — see
+// `buildWorkspaceStructureProjects`.
+export async function toggleProjectFilter(page: Page, projectViewKey: string): Promise<void> {
+  await page.getByTestId(`sidebar-project-filter-${projectViewKey}`).click();
+}
+
+export async function selectAllProjectsFilter(page: Page): Promise<void> {
+  await page.getByTestId("sidebar-project-filter-all").click();
+}
+
+export async function closeSidebarDisplayPreferences(page: Page): Promise<void> {
+  await page.keyboard.press("Escape");
+  await expect(page.getByTestId("sidebar-display-preferences-content")).toHaveCount(0);
+}
+
 export async function selectSidebarStatusGrouping(page: Page): Promise<void> {
   await openSidebarDisplayPage(page, "sidebar-display-grouping");
   await page.getByTestId("sidebar-grouping-status").click();

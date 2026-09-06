@@ -9,7 +9,6 @@ import {
 } from "react";
 import {
   FlatList,
-  Keyboard,
   Platform,
   View,
   type LayoutChangeEvent,
@@ -23,6 +22,9 @@ import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import type { StreamItem } from "@/types/stream";
 import type { Theme } from "@/styles/theme";
 import { useStableEvent } from "@/hooks/use-stable-event";
+import { useSettledKeyboardShift } from "@/hooks/keyboard-shift-context";
+import { resolveStreamKeyboardInset } from "@/hooks/keyboard-shift-policy";
+import { useRevisedHistoryRows } from "./history-row-revision";
 import { useBottomAnchorController } from "./bottom-anchor-controller";
 import { useScrollKeyboardDismiss } from "./scroll-keyboard-dismiss/use-scroll-keyboard-dismiss";
 import type { StreamRenderInput, StreamStrategy, StreamViewportHandle } from "./strategy";
@@ -62,24 +64,6 @@ const historyStartSlotStyle: ViewStyle = {
   flexShrink: 0,
 };
 const HISTORY_START_SETTLE_FRAMES = 2;
-
-interface HistoryRowDisplayVariants {
-  regular?: StreamItem;
-  compact?: StreamItem;
-}
-
-const historyRowDisplayVariants = new WeakMap<StreamItem, HistoryRowDisplayVariants>();
-
-function getHistoryRowDisplayVariant(item: StreamItem, compact: boolean): StreamItem {
-  let variants = historyRowDisplayVariants.get(item);
-  if (!variants) {
-    variants = {};
-    historyRowDisplayVariants.set(item, variants);
-  }
-  const key = compact ? "compact" : "regular";
-  variants[key] ??= { ...item };
-  return variants[key];
-}
 
 function keyExtractor(item: { id: string }): string {
   return item.id;
@@ -121,6 +105,7 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
   const scrollOffsetYRef = useRef(0);
   const isUserScrollActiveRef = useRef(false);
   const scrollKeyboardDismiss = useScrollKeyboardDismiss();
+  const settledKeyboardShift = useSettledKeyboardShift();
   const userScrollEndFrameIdRef = useRef<number | null>(null);
   const programmaticScrollEventBudgetRef = useRef(0);
   const [isNativeViewportSettling, setIsNativeViewportSettling] = useState(false);
@@ -138,27 +123,7 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
     }
     return [...segments.historyVirtualized, ...segments.historyMounted];
   }, [segments.historyMounted, segments.historyVirtualized]);
-  // Keep unchanged item identities intact so live updates only rerender rows
-  // whose projected content or local display state actually changed. A rare
-  // breakpoint change intentionally refreshes the whole history window.
-  const globallyRevisedHistoryRows = useMemo(() => {
-    const globalDisplayState = historyRowRevision?.globalDisplayState ?? false;
-    return historyItems.map((item) => getHistoryRowDisplayVariant(item, globalDisplayState));
-  }, [historyItems, historyRowRevision?.globalDisplayState]);
-  const displayStateHistoryRows = useMemo(
-    () =>
-      globallyRevisedHistoryRows.map((item) =>
-        historyRowRevision?.displayStateById.has(item.id) ? { ...item } : item,
-      ),
-    [globallyRevisedHistoryRows, historyRowRevision?.displayStateById],
-  );
-  const historyRows = useMemo(
-    () =>
-      displayStateHistoryRows.map((item) =>
-        historyRowRevision?.contentById.has(item.id) ? { ...item } : item,
-      ),
-    [displayStateHistoryRows, historyRowRevision?.contentById],
-  );
+  const historyRows = useRevisedHistoryRows(historyItems, historyRowRevision);
   const getHistoryStartPaginationInput = useStableEvent((): HistoryStartPaginationInput => {
     const metrics = streamViewportMetricsRef.current;
     const hasMeasuredViewport =
@@ -310,6 +275,34 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
     Platform.OS === "android" && bottomAnchorController.mode === "sticky-bottom"
       ? undefined
       : DEFAULT_MAINTAIN_VISIBLE_CONTENT_POSITION;
+  const streamKeyboardInset = useMemo(
+    () =>
+      resolveStreamKeyboardInset({
+        platform: Platform.OS === "ios" ? "ios" : "android",
+        settledShift: settledKeyboardShift,
+      }),
+    [settledKeyboardShift],
+  );
+  const listContentContainerStyle = useMemo(
+    () => [
+      baseListContentContainerStyle,
+      { paddingBottom: streamKeyboardInset.contentContainerPaddingBottom },
+    ],
+    [baseListContentContainerStyle, streamKeyboardInset.contentContainerPaddingBottom],
+  );
+  const listInsetProps = useMemo(
+    () =>
+      streamKeyboardInset.contentInset
+        ? {
+            automaticallyAdjustContentInsets: false,
+            automaticallyAdjustsScrollIndicatorInsets: false,
+            contentInsetAdjustmentBehavior: "never" as const,
+            contentInset: streamKeyboardInset.contentInset,
+            scrollIndicatorInsets: streamKeyboardInset.contentInset,
+          }
+        : {},
+    [streamKeyboardInset.contentInset],
+  );
 
   useEffect(() => {
     streamViewportMetricsRef.current = {
@@ -342,27 +335,7 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
     };
   }, [agentId, clearNativeViewportSettling, clearPendingUserScrollEnd, evaluateHistoryStart]);
 
-  useEffect(() => {
-    const keyboardEvents = [
-      "keyboardWillShow",
-      "keyboardWillHide",
-      "keyboardDidShow",
-      "keyboardDidHide",
-      "keyboardWillChangeFrame",
-      "keyboardDidChangeFrame",
-    ] as const;
-    const subscriptions = keyboardEvents.map((eventName) =>
-      Keyboard.addListener(eventName, () => {
-        markNativeViewportSettling();
-      }),
-    );
-    return () => {
-      for (const subscription of subscriptions) {
-        subscription.remove();
-      }
-      clearNativeViewportSettling();
-    };
-  }, [clearNativeViewportSettling, markNativeViewportSettling]);
+  useEffect(() => () => clearNativeViewportSettling(), [clearNativeViewportSettling]);
 
   useEffect(() => {
     bottomAnchorController.prepareForStickyContentChange();
@@ -597,6 +570,7 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
   // data or the live header changes, preserving the row identities above.
   return (
     <FlatList
+      {...listInsetProps}
       ref={flatListRef}
       data={historyRows}
       renderItem={renderItem}
@@ -606,7 +580,7 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
       nativeID="agent-chat-scroll-native-virtualized"
       ListHeaderComponent={liveHeaderContent ?? undefined}
       ListFooterComponent={historyFooterContent ?? undefined}
-      contentContainerStyle={baseListContentContainerStyle}
+      contentContainerStyle={listContentContainerStyle}
       style={listStyle}
       onLayout={handleListLayout}
       onScroll={handleScroll}
@@ -617,10 +591,8 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
       scrollEventThrottle={16}
       onContentSizeChange={handleContentSizeChange}
       maintainVisibleContentPosition={maintainVisibleContentPosition}
-      initialNumToRender={40}
-      maxToRenderPerBatch={40}
-      updateCellsBatchingPeriod={0}
-      windowSize={21}
+      initialNumToRender={12}
+      windowSize={10}
       removeClippedSubviews={false}
       scrollEnabled={scrollEnabled}
       showsVerticalScrollIndicator

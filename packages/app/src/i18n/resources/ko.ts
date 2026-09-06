@@ -1,4 +1,4 @@
-import type { TranslationResources } from "./en";
+import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const ko: TranslationResources = {
@@ -10,10 +10,12 @@ export const ko: TranslationResources = {
       cancel: "취소",
       close: "닫기",
       copy: "복사",
+      copyLine: "줄 복사",
       dismiss: "닫기",
       retry: "다시 시도",
       search: "검색",
       select: "선택",
+      selectAll: "모두 선택",
     },
     placeholders: {
       search: "검색...",
@@ -33,6 +35,7 @@ export const ko: TranslationResources = {
     errors: {
       error: "오류",
       unableToSave: "저장할 수 없습니다",
+      unableToCopy: "복사할 수 없습니다",
       nameRequired: "이름을 입력하세요",
       daemonUnavailable: "데몬을 사용할 수 없습니다",
       daemonClientUnavailable: "데몬 클라이언트를 사용할 수 없습니다",
@@ -64,6 +67,9 @@ export const ko: TranslationResources = {
       workspaces: "워크스페이스",
       agents: "에이전트",
       newAgent: "새 에이전트",
+      open: "{{name}} 열기",
+      openInSidePane: "사이드 패널에서 {{name}} 열기",
+      openInFocusedPane: "포커스된 창에서 {{name}} 열기",
       addProject: "프로젝트 추가",
       home: "홈",
       groupByProject: "프로젝트별 그룹화",
@@ -200,6 +206,7 @@ export const ko: TranslationResources = {
     empty: "이 에이전트와 대화를 시작하세요...",
     scrollToBottom: "맨 아래로 스크롤",
     historyLoadFailed: "에이전트 기록을 로드할 수 없습니다.",
+    messageCapped: "이 메시지는 길이 제한으로 잘렸습니다({{bytes}}바이트).",
     permission: {
       plan: "계획",
       required: "권한 필요",
@@ -215,7 +222,8 @@ export const ko: TranslationResources = {
       notFound: "에이전트를 찾을 수 없습니다",
       failedToLoad: "에이전트를 불러오지 못했습니다",
       reconnecting: "다시 연결하는 중",
-      timelineSyncFailed: "에이전트 기록을 새로고침할 수 없습니다. 재시도 중…",
+      timelineSyncFailed: "에이전트 기록을 새로고침할 수 없습니다.",
+      timelineSyncRetrying: "재시도 중…",
       archivingTitle: "에이전트 보관 중...",
       archivingSubtitle: "이 에이전트를 보관하는 동안 잠시 기다려 주세요.",
     },
@@ -282,6 +290,7 @@ export const ko: TranslationResources = {
       zoomIn: "확대",
       zoomOut: "축소",
       resetZoom: "보기 초기화",
+      fullscreen: "전체 화면",
       viewSource: "소스 보기",
       viewDiagram: "다이어그램 보기",
     },
@@ -342,7 +351,6 @@ export const ko: TranslationResources = {
         added: "추가됨",
         started: "시작됨",
         completed: "완료됨",
-        reopened: "다시 열림",
       },
     },
     compaction: {
@@ -354,7 +362,13 @@ export const ko: TranslationResources = {
     },
   },
   importSession: {
+    chooseHostTitle: en.importSession.chooseHostTitle,
     title: "세션 가져오기",
+    searchPlaceholder: "세션 검색...",
+    scope: {
+      host: "{{host}}의 세션",
+      workspace: "이 워크스페이스",
+    },
     filters: {
       all: "전체",
     },
@@ -363,12 +377,13 @@ export const ko: TranslationResources = {
       updateHost: "세션을 가져오려면 호스트를 업데이트하세요.",
       noProviders: "가져올 수 있는 프로바이더가 활성화되어 있지 않습니다.",
       loading: "최근 세션을 불러오는 중...",
-      failedAll: "최근 세션을 불러올 수 없습니다.",
-      failedProviders: "{{providers}}의 세션을 불러올 수 없습니다.",
+      failedProvider: "{{provider}} 세션을 불러올 수 없습니다",
       failedImport: "선택한 세션을 가져올 수 없습니다.",
     },
     actions: {
       refresh: "세션 새로고침",
+      showAll: "전체 표시",
+      loadMore: "더 보기",
     },
     preview: {
       untitledSession: "제목 없는 세션",
@@ -376,6 +391,7 @@ export const ko: TranslationResources = {
     },
     empty: {
       noRecent: "가져올 최근 세션이 없습니다.",
+      noMatches: "검색과 일치하는 세션이 없습니다.",
       alreadyImported: "최근 세션이 모두 이미 가져와졌습니다.",
       noProviderSessions: "{{provider}} 세션을 찾을 수 없습니다.",
     },
@@ -413,6 +429,8 @@ export const ko: TranslationResources = {
     },
     fileActions: {
       openFile: "파일 열기",
+      openIn: "{{target}}에서 열기",
+      openToSide: "옆에 열기",
       copyPath: "경로 복사",
       copyRelativePath: "상대 경로 복사",
       revealIn: "{{target}}에서 보기",
@@ -486,14 +504,23 @@ export const ko: TranslationResources = {
         completed: "설정 완료",
         failed: "설정 실패",
         workspace: "워크스페이스 설정",
+        blocked: "설정 차단됨",
       },
       status: {
         running: "실행 중",
         completed: "완료됨",
         failed: "실패함",
         waiting: "설정 출력을 기다리는 중",
+        blocked: "차단됨",
       },
       waiting: "워크스페이스 설정 중...",
+      blocked: {
+        title: "설정이 실행되지 않았습니다",
+        description:
+          "이 PR은 다른 저장소인 {{repository}}에서 왔습니다. 설정과 스크립트가 검토하지 않은 코드를 실행할 수 있습니다.",
+        run: "설정 실행",
+        runFailed: "워크스페이스 설정 실행 실패",
+      },
       empty: {
         noCommands: "이 워크스페이스에서 실행된 설정 명령이 없습니다.",
       },
@@ -553,7 +580,6 @@ export const ko: TranslationResources = {
       loading: "불러오는 중...",
       modified: "저장되지 않은 변경사항",
       loadingAgentTitle: "에이전트 제목 불러오는 중",
-      emptyPane: "이 창에 탭이 없습니다.",
       fallback: {
         newAgent: "새 에이전트",
         setup: "설정",
@@ -580,6 +606,7 @@ export const ko: TranslationResources = {
         closeLeft: "왼쪽 탭 닫기",
         closeRight: "오른쪽 탭 닫기",
         closeOthers: "다른 탭 닫기",
+        moveToMain: "기본 패널로 이동",
         reloadAgent: "에이전트 다시 로드",
         reloadAgentTooltip:
           "스킬, MCP 또는 로그인 상태를 업데이트하려면 에이전트를 다시 로드하세요.",
@@ -596,6 +623,7 @@ export const ko: TranslationResources = {
         newBrowser: "새 브라우저",
         maximizePane: "창 최대화",
         restorePane: "창 복원",
+        closePane: "창 닫기",
         exitFocusMode: "집중 모드 종료",
         splitRight: "창을 오른쪽으로 분할",
         splitDown: "창을 아래로 분할",
@@ -603,12 +631,12 @@ export const ko: TranslationResources = {
         files: "파일",
         pullRequest: "풀 리퀘스트",
         terminalProfilesMenu: "터미널 프로필",
-        editTerminalProfiles: "프로필 편집…",
+        editTerminalProfiles: "프로필 편집",
       },
-      explorer: {
-        open: "탐색기 열기",
-        close: "탐색기 닫기",
-        toggle: "탐색기 토글",
+      explorerSidebar: {
+        open: "사이드 패널 열기",
+        close: "사이드 패널 닫기",
+        toggle: "사이드 패널 토글",
         changes: "변경 사항",
         files: "파일",
       },
@@ -708,6 +736,10 @@ export const ko: TranslationResources = {
         startFailed: "{{scriptName}}을(를) 시작하지 못했습니다",
         stopFailed: "{{scriptName}}를 중지하지 못했습니다.",
       },
+    },
+    tree: {
+      showFolderTree: "폴더 트리 표시",
+      hideFolderTree: "폴더 트리 숨기기",
     },
     git: {
       actions: {
@@ -852,6 +884,7 @@ export const ko: TranslationResources = {
       },
       diff: {
         openChangesTab: "변경사항 탭 열기",
+        openDiffTab: "Diff 탭 열기",
         closeChangesTab: "변경사항 탭 닫기",
         binaryFile: "바이너리 파일",
         tooLarge: "표시하기에 diff가 너무 큽니다",
@@ -861,9 +894,8 @@ export const ko: TranslationResources = {
         split: "나란히 보기 diff",
         switchToUnified: "통합 diff로 전환",
         switchToSplit: "나란히 보기 diff로 전환",
-        showTreeView: "폴더 트리 표시",
-        hideTreeView: "폴더 트리 숨기기",
         options: "Diff 옵션",
+        inlineDiff: "인라인 Diff",
         hideWhitespace: "공백 숨기기",
         showWhitespace: "공백 표시",
         scrollLongLines: "긴 줄 스크롤",
@@ -878,6 +910,8 @@ export const ko: TranslationResources = {
         failedRefresh: "Git 상태를 새로고침하지 못했습니다.",
         emptyHiddenWhitespace: "공백을 숨긴 후 표시할 변경 사항이 없습니다",
         emptyUncommitted: "커밋되지 않은 변경 사항이 없습니다",
+        seeUncommittedChanges: "커밋되지 않은 변경 사항 보기",
+        seeCommittedChanges: "커밋된 변경 사항 보기",
         emptyAgainstBase: "{{baseRef}} 대비 변경 사항이 없습니다",
         checkingRepository: "저장소 확인 중...",
         notRepository: "Git 저장소가 아닙니다",
@@ -935,6 +969,16 @@ export const ko: TranslationResources = {
         accessibility: {
           pullRequest: "풀 리퀘스트 #{{number}}",
           pullRequest_mr: "병합 요청 !{{number}}",
+          checkStatus: {
+            passed: "통과",
+            failed: "실패",
+            warning: "경고",
+            actionRequired: "조치 필요",
+            manual: "수동",
+            pending: "대기 중",
+            skipped: "건너뜀",
+            cancelled: "취소됨",
+          },
         },
         states: {
           draft: "초안",
@@ -966,6 +1010,48 @@ export const ko: TranslationResources = {
       },
     },
   },
+  workspaceLabels: {
+    title: "레이블",
+    unlabelled: "레이블 없음",
+    create: "레이블 만들기",
+    createConfirm: "만들기",
+    creating: "만드는 중…",
+    name: "레이블 이름",
+    updateHostUse: "레이블을 사용하려면 호스트를 업데이트하세요.",
+    errors: { update: "레이블을 업데이트할 수 없습니다", load: "레이블을 불러올 수 없습니다" },
+    colors: {
+      violet: "보라",
+      sky: "하늘",
+      emerald: "에메랄드",
+      orange: "주황",
+      pink: "분홍",
+      indigo: "남색",
+      teal: "청록",
+      red: "빨강",
+      amber: "호박",
+      blue: "파랑",
+    },
+    filter: {
+      clear: "필터 지우기",
+    },
+    manage: {
+      open: "레이블 관리…",
+      title: "레이블 관리",
+      search: "레이블 검색",
+      empty: "이 호스트에 레이블이 없습니다.",
+      edit: "레이블 편집",
+      editLabel: "{{name}} 편집",
+      name: "이름",
+      color: "색상",
+      save: "저장",
+      delete: "삭제",
+      deleteTitle: "{{name}}을(를) 삭제할까요?",
+      deleteMessage_one: "이 호스트의 워크스페이스 {{count}}개에서 레이블을 제거합니다.",
+      deleteMessage_other: "이 호스트의 워크스페이스 {{count}}개에서 레이블을 제거합니다.",
+      offline: "이 호스트는 오프라인입니다.",
+      updateHost: "레이블을 관리하려면 호스트를 업데이트하세요.",
+    },
+  },
   sidebar: {
     display: {
       trigger: "표시 설정",
@@ -974,6 +1060,7 @@ export const ko: TranslationResources = {
         label: "그룹화",
         project: "프로젝트",
         status: "상태",
+        labels: "레이블",
       },
       titleSource: {
         label: "제목",
@@ -988,6 +1075,7 @@ export const ko: TranslationResources = {
         changeRequest: "풀 리퀘스트",
         checks: "검사",
         services: "서비스",
+        labels: "레이블",
         diff: "Diff 통계",
         timestamp: "마지막 활동",
       },
@@ -1000,6 +1088,15 @@ export const ko: TranslationResources = {
         label: "호스트",
         all: "모든 호스트",
       },
+      projectFilter: {
+        label: "프로젝트",
+        all: "모든 프로젝트",
+      },
+    },
+    filterEmpty: {
+      title: "일치하는 워크스페이스가 없습니다",
+      description: "워크스페이스를 보려면 사이드바 필터를 변경하거나 지우세요.",
+      clear: "필터 지우기",
     },
     pinned: {
       title: "고정됨",
@@ -1013,7 +1110,6 @@ export const ko: TranslationResources = {
       addProject: "프로젝트 추가",
       newWorkspace: "새 워크스페이스",
       hosts: "호스트",
-      home: "홈",
       settings: "설정",
       closeSidebar: "사이드바 닫기",
     },
@@ -1030,6 +1126,7 @@ export const ko: TranslationResources = {
     },
     sections: {
       sessions: "기록",
+      search: "검색",
       schedules: "일정",
     },
     worktreeSetup: {
@@ -1071,6 +1168,14 @@ export const ko: TranslationResources = {
         serviceRunning: "서비스 {{name}} 실행 중",
         serviceUnhealthy: "서비스 {{name}} 비정상",
         creating: "생성하는 중...",
+      },
+      checks: {
+        passed: "통과: {{count}}개",
+        failed: "실패: {{count}}개",
+        warning: "경고: {{count}}개",
+        actionRequired: "조치 필요: {{count}}개",
+        manual: "수동: {{count}}개",
+        pending: "대기 중: {{count}}개",
       },
       actions: {
         menu: "워크스페이스 작업",
@@ -1157,6 +1262,12 @@ export const ko: TranslationResources = {
     },
   },
   desktop: {
+    windowControls: {
+      minimize: "창 최소화",
+      maximize: "창 최대화",
+      restore: "창 복원",
+      close: "창 닫기",
+    },
     quitting: {
       title: "Paseo 종료 중...",
       detail: "로컬 데몬을 중지하는 중입니다.",
@@ -1307,13 +1418,6 @@ export const ko: TranslationResources = {
         statusFailed: "CLI 설치 상태를 확인할 수 없습니다.",
         installFailed: "Paseo CLI를 설치할 수 없습니다.",
       },
-      skills: {
-        statusFailed: "오케스트레이션 스킬 상태를 확인할 수 없습니다.",
-        installFailed: "오케스트레이션 스킬을 설치할 수 없습니다.",
-        updateFailed: "오케스트레이션 스킬을 업데이트할 수 없습니다.",
-        uninstallFailed: "오케스트레이션 스킬을 제거할 수 없습니다.",
-        saveSelectionFailed: "오케스트레이션 스킬 선택을 저장하지 못했습니다.",
-      },
     },
   },
   rootError: {
@@ -1433,6 +1537,9 @@ export const ko: TranslationResources = {
     editProfiles: "편집",
     editProfilesLabel: "에이전트 프로필 편집",
     createProfile: "프로필 만들기",
+    createProfileFromModel: "이 모델에서 프로필 만들기",
+    editProfileLabel: "{{name}} 편집",
+    editProfilesCount: "프로필 편집 ({{count}})",
     modelCount: "모델 {{count}}개",
     modelCountPlural: "모델 {{count}}개",
     retry: "다시 시도",
@@ -1482,6 +1589,10 @@ export const ko: TranslationResources = {
         title: "직접 연결",
         description: "로컬 네트워크 또는 VPN.",
       },
+      remoteSsh: {
+        title: "원격 SSH",
+        description: "데스크톱 SSH 클라이언트를 통해 연결합니다.",
+      },
       scanQr: {
         title: "QR 코드 스캔",
         description: "암호화된 릴레이 연결.",
@@ -1530,6 +1641,23 @@ export const ko: TranslationResources = {
         tlsError: "TLS 오류. 직접 연결은 데몬 앞에 TLS 종단 장치가 있을 때만 SSL을 사용합니다.",
         unableToConnect: "연결할 수 없습니다. 호스트/포트와 데몬에 접근 가능한지 확인하세요.",
         details: "세부 정보: {{detail}}",
+      },
+    },
+    remoteSsh: {
+      title: "원격 SSH",
+      helper: "원격 호스트에서 실행 중인 Paseo 데몬에 연결합니다.",
+      fields: {
+        target: "SSH 호스트",
+      },
+      actions: {
+        cancel: "취소",
+        connect: "연결",
+        connecting: "연결 중...",
+      },
+      errors: {
+        targetRequired: "SSH 호스트가 필요합니다",
+        invalidTarget: "유효한 ssh:// 호스트를 입력하세요",
+        failedToConnect: "SSH로 연결할 수 없습니다. {{detail}}",
       },
     },
     link: {
@@ -1583,6 +1711,8 @@ export const ko: TranslationResources = {
       updateRequired: "Paseo 데스크톱에서 릴레이를 활성화하려면 호스트를 업데이트하세요.",
       unavailable: "페어링 정보를 사용할 수 없습니다.",
       hint: "휴대폰의 Paseo로 이 QR 코드를 스캔하거나 아래 링크를 복사하세요.",
+      securityWarning:
+        "이 페어링 링크는 비밀번호처럼 취급하세요. 링크를 가진 사람은 누구나 이 데몬에 접근할 수 있습니다.",
       qrUnavailable: "QR 코드를 사용할 수 없습니다.",
       qrAccessibility: "페어링 QR 코드",
       retry: "다시 시도",
@@ -1634,7 +1764,7 @@ export const ko: TranslationResources = {
     title: "하위 에이전트",
     pillLabelOne: "하위 에이전트 1개",
     pillLabelMany: "하위 에이전트 {{count}}개",
-    pillLabelRunning: "{{count}}개 실행 중",
+    pillLabelWorking: "{{count}}개 실행 중",
     pillLabelFailed: "{{count}}개 실패",
     pillLabelNeedsInputOne: "1개 입력 필요",
     pillLabelNeedsInputMany: "{{count}}개 입력 필요",
@@ -1656,6 +1786,7 @@ export const ko: TranslationResources = {
       loading: "파일 불러오는 중...",
       noPreview: "사용 가능한 미리보기가 없습니다",
       binaryPreviewUnavailable: "바이너리 미리보기를 사용할 수 없습니다",
+      tooLargeToDisplay: "이 파일은 너무 커서 표시할 수 없습니다",
       failedToLoad: "파일을 불러오지 못했습니다",
       failedToLoadPreview: "파일 미리보기를 불러오지 못했습니다",
       editor: {
@@ -1684,6 +1815,7 @@ export const ko: TranslationResources = {
       label: "파일",
       subtitle: "워크스페이스 파일",
       tooltip: "워크스페이스 파일 탐색",
+      chooseFile: "파일 선택",
     },
     pullRequest: {
       label: "풀 리퀘스트",
@@ -1693,6 +1825,7 @@ export const ko: TranslationResources = {
     },
     diff: {
       changesLabel: "변경 사항",
+      diffLabel: "Diff",
       changesSubtitle: "작업 트리 diff",
       commitSubtitle: "커밋 diff",
       uncommittedSubtitle: "커밋되지 않은 변경 사항",
@@ -1787,6 +1920,7 @@ export const ko: TranslationResources = {
     sections: {
       general: "일반",
       appearance: "모양",
+      layout: en.settings.sections.layout,
       editor: "편집기",
       shortcuts: "단축키",
       integrations: "통합",
@@ -1795,6 +1929,7 @@ export const ko: TranslationResources = {
       diagnostics: "진단",
       about: "정보",
     },
+    layout: en.settings.layout,
     editor: {
       title: "편집기",
       vimKeybindings: "Vim 키 바인딩",
@@ -1993,19 +2128,30 @@ export const ko: TranslationResources = {
         title: "채팅 개요",
         description: "프롬프트 사이를 이동하기 위한 개요 표시",
       },
+      sidebar: {
+        title: "사이드바",
+        description: "사이드바 상단에 표시할 항목과 순서를 선택하세요",
+        moveUp: "위로 이동",
+        moveDown: "아래로 이동",
+      },
       fonts: {
         title: "글꼴",
         systemDefault: "시스템 기본값",
         interfaceFont: "인터페이스 글꼴",
         interfaceFontHint: "앱 전체에 사용됩니다. 시스템 기본값을 사용하려면 비워 두세요",
         interfaceFontAccessibility: "인터페이스 글꼴 패밀리",
-        baseSize: "기본 크기",
-        baseSizeAccessibility: "기본 글꼴 크기",
+        interfaceSize: "인터페이스 크기",
+        interfaceSizeHint: "탐색, 컨트롤 및 레이블에 사용됩니다",
+        interfaceSizeAccessibility: "인터페이스 글꼴 크기",
+        contentSize: "콘텐츠 크기",
+        contentSizeHint: "채팅 텍스트와 렌더링된 Markdown에 사용됩니다",
+        contentSizeAccessibility: "콘텐츠 글꼴 크기",
         codeFont: "코드 글꼴",
         codeFontHint:
           "코드, diff, 터미널 출력에 사용됩니다. 시스템 기본값을 사용하려면 비워 두세요",
         codeFontAccessibility: "코드 글꼴 패밀리",
         codeSize: "코드 크기",
+        codeSizeHint: "코드, diff 및 터미널 출력에 사용됩니다",
         codeSizeAccessibility: "코드 글꼴 크기",
       },
       syntax: {
@@ -2013,7 +2159,8 @@ export const ko: TranslationResources = {
         highlightTheme: "강조 테마",
         highlightThemeHint: "앱 테마와 독립적인 코드 색상",
         highlightThemeAccessibility: "강조 테마: {{value}}",
-        previewAccessibility: "구문 테마와 코드 글꼴의 실시간 미리보기",
+        previewAccessibility: "콘텐츠 타이포그래피, 구문 테마, 코드 글꼴의 실시간 미리보기",
+        previewContent: "콘텐츠 및 코드 미리보기",
       },
     },
     shortcuts: {
@@ -2068,11 +2215,10 @@ export const ko: TranslationResources = {
         toggleCommandCenter: "명령 센터 토글",
         showKeyboardShortcuts: "키보드 단축키 표시",
         toggleLeftSidebar: "왼쪽 사이드바 토글",
-        toggleRightSidebar: "오른쪽 사이드바 토글",
+        toggleRightSidebar: "사이드 패널 토글",
         toggleBothSidebars: "양쪽 사이드바 토글",
         toggleSettings: "설정 토글",
         toggleFocusMode: "집중 모드 토글",
-        toggleExplorerPaneMaximization: "탐색기 창 최대화 전환",
         cycleTheme: "테마 순환",
         focusMessageInput: "메시지 입력란에 포커스",
         cycleAgentMode: "에이전트 모드 전환",
@@ -2092,48 +2238,16 @@ export const ko: TranslationResources = {
       title: "통합",
       docs: {
         cli: "CLI 문서",
-        skills: "스킬 문서",
         openCli: "CLI 문서 열기",
-        openSkills: "스킬 문서 열기",
       },
       commandLine: {
         title: "명령줄",
         description: "터미널에서 에이전트를 제어하고 스크립팅합니다",
       },
-      skills: {
-        title: "오케스트레이션 스킬",
-        description: "CLI를 통해 에이전트가 오케스트레이션하도록 가르칩니다",
-        updateAvailable: "업데이트 사용 가능",
-        updateTitle: "Paseo 스킬을 업데이트할까요?",
-        updateFallback: "번들된 스킬을 내 컴퓨터에 동기화합니다.",
-        uninstallTitle: "Paseo 스킬을 제거할까요?",
-        uninstallMessage:
-          "~/.agents, ~/.claude, ~/.codex에서 모든 Paseo 오케스트레이션 스킬을 제거합니다.",
-        choose: "스킬 선택",
-        chooseAll: "모든 스킬",
-        chooseAllHint: "나중에 추가되는 항목을 포함하여 모든 번들 스킬을 설치된 상태로 유지합니다.",
-        chooseList: "번들 스킬",
-        chooseEmpty: "이 빌드에는 번들 스킬이 없습니다.",
-        removeTitle: "선택 해제한 스킬을 제거할까요?",
-        removeMessage:
-          "{{skills}}는 ~/.agents, ~/.claude 및 ~/.codex에서 삭제됩니다. 해당 스킬 폴더 안에 추가한 모든 항목도 삭제됩니다.",
-        saveFailed: "선택한 스킬을 저장하지 못했습니다.",
-      },
       actions: {
         install: "설치",
         installing: "설치 중...",
         installed: "설치됨",
-        update: "업데이트",
-        working: "작업 중...",
-        remove: "제거",
-        uninstall: "제거",
-        save: "저장",
-        saving: "저장 중...",
-      },
-      operations: {
-        add: "스킬 추가",
-        update: "스킬 업데이트",
-        delete: "스킬 삭제",
       },
     },
     permissions: {
@@ -2188,6 +2302,7 @@ export const ko: TranslationResources = {
       badges: {
         relay: "릴레이",
         local: "로컬",
+        remoteSsh: "원격 SSH",
       },
       connections: {
         title: "연결",
@@ -2202,6 +2317,48 @@ export const ko: TranslationResources = {
         title: "기기 페어링",
         rowTitle: "기기 페어링",
         rowHint: "QR 코드를 스캔하거나 링크를 복사하여 휴대폰을 이 호스트에 연결하세요",
+      },
+      skills: {
+        ...en.settings.host.skills,
+        sectionTitle: "오케스트레이션 스킬",
+        title: "오케스트레이션 스킬",
+        description: "CLI를 통해 에이전트가 오케스트레이션하도록 가르칩니다",
+        updateAvailable: "업데이트 사용 가능",
+        updateTitle: "Paseo 스킬을 업데이트할까요?",
+        updateFallback: "번들된 스킬을 내 컴퓨터에 동기화합니다.",
+        uninstallTitle: "Paseo 스킬을 제거할까요?",
+        uninstallMessage:
+          "~/.agents, ~/.claude, ~/.codex에서 모든 Paseo 오케스트레이션 스킬을 제거합니다.",
+        choose: "스킬 선택",
+        chooseAll: "모든 스킬",
+        chooseAllHint: "나중에 추가되는 항목을 포함하여 모든 번들 스킬을 설치된 상태로 유지합니다.",
+        chooseList: "번들 스킬",
+        chooseEmpty: "이 빌드에는 번들 스킬이 없습니다.",
+        removeTitle: "선택 해제한 스킬을 제거할까요?",
+        removeMessage:
+          "{{skills}}는 ~/.agents, ~/.claude 및 ~/.codex에서 삭제됩니다. 해당 스킬 폴더 안에 추가한 모든 항목도 삭제됩니다.",
+        saveFailed: "선택한 스킬을 저장하지 못했습니다.",
+        statusFailed: "오케스트레이션 스킬 상태를 확인할 수 없습니다.",
+        updateFailed: "오케스트레이션 스킬을 업데이트할 수 없습니다.",
+        uninstallFailed: "오케스트레이션 스킬을 제거할 수 없습니다.",
+        saveSelectionFailed: "오케스트레이션 스킬 선택을 저장하지 못했습니다.",
+        actions: {
+          install: "설치",
+          installing: "설치 중...",
+          installed: "설치됨",
+          update: "업데이트",
+          working: "작업 중...",
+          remove: "제거",
+          uninstall: "제거",
+          save: "저장",
+          saving: "저장 중...",
+          cancel: "취소",
+        },
+        operations: {
+          add: "스킬 추가",
+          update: "스킬 업데이트",
+          delete: "스킬 삭제",
+        },
       },
       orchestration: {
         title: "오케스트레이션",
@@ -2279,10 +2436,9 @@ export const ko: TranslationResources = {
         featuresLabel: "기능",
         featureCount: "기능 {{count}}개",
         featureCountOne: "기능 {{count}}개",
-        notesLabel: "에이전트를 위한 메모",
+        notesLabel: "사용 시점",
         notesPlaceholder: "UI 작업에 사용 — 컴포넌트, 레이아웃, 디자인 토큰.",
-        notesHint:
-          "list_profiles MCP 도구가 반환합니다. 다른 에이전트에게 전달할 지침으로 작성하세요.",
+        notesHint: "에이전트가 다른 에이전트를 시작할 때 이 프로필을 선택하는 데 사용됩니다.",
         save: "저장",
         saving: "저장하는 중...",
         remove: "제거",

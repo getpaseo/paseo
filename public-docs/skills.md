@@ -16,10 +16,10 @@ Start with [Orchestration](/docs/orchestration) if you want the mental model, or
 
 Two ways to install:
 
-- **Desktop app:** Settings → Integrations → Install
+- **Paseo app:** Connect to the host, then open Settings → Host → Agents → Orchestration skills. The selected host installs the skills on its own machine.
 - **Manual:** `npx skills add getpaseo/paseo`, this installs to `~/.agents/skills/` and sets up symlinks for each agent.
 
-When the desktop app finds installed Paseo skills, it keeps the bundled skills up to date on startup. If automatic update fails, use Settings → Integrations → Update or the manual command above.
+When a daemon finds installed Paseo skills, it keeps the selected bundled skills up to date on startup without removing deselected directories. Use the host's Orchestration skills card to install, update, choose, or uninstall skills. Removal always asks for confirmation.
 
 ## `/paseo`, Paseo Reference
 

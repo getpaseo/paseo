@@ -504,6 +504,77 @@ describe("daemon E2E (real claude) - send message during tool call", () => {
     }
   }, 210_000);
 
+  test("Stop cancels a queued Claude steer before it can resume the interrupted turn", async () => {
+    const logger = pino({ level: "silent" });
+    const cwd = tmpCwd();
+    const daemon = await createTestPaseoDaemon({
+      agentClients: { claude: new ClaudeAgentClient({ logger }) },
+      logger,
+    });
+    const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
+    const collector = createMessageCollector(client);
+    try {
+      await within("connect queued-steer Stop client", 15_000, client.connect());
+      await within(
+        "subscribe queued-steer Stop client",
+        15_000,
+        client.fetchAgents({ subscribe: { subscriptionId: "queued-steer-stop" } }),
+      );
+      const agent = await within(
+        "create queued-steer Stop agent",
+        30_000,
+        client.createAgent({
+          cwd,
+          title: "claude-queued-steer-stop",
+          ...getRealProviderConfig("claude"),
+        }),
+      );
+      await within(
+        "start original Claude sleep turn",
+        30_000,
+        client.sendAgentMessage(
+          agent.id,
+          "Use Bash to run exactly: sleep 5 in the foreground. Do not finish until instructed.",
+          { messageId: generateClientMessageId() },
+        ),
+      );
+      await within(
+        "wait for original Claude tool boundary",
+        90_000,
+        waitForRunningClaudeSleep(client, collector, agent.id, 80_000),
+      );
+      const steerId = generateClientMessageId();
+      await within(
+        "admit queued Claude steer",
+        30_000,
+        client.sendAgentMessage(agent.id, "RESUME_FORBIDDEN", {
+          messageId: steerId,
+          activeTurnBehavior: "steer",
+        }),
+      );
+      const messagesBeforeStop = collector.messages.length;
+      await within("Stop original Claude turn", 30_000, client.cancelAgent(agent.id));
+      await within("wait for stopped Claude turn", 60_000, client.waitForFinish(agent.id, 50_000));
+      const afterStop = collector.messages.slice(messagesBeforeStop);
+      expect(
+        afterStop.filter(
+          (message) =>
+            message.type === "agent_stream" &&
+            message.payload.agentId === agent.id &&
+            message.payload.event.type === "turn_started",
+        ),
+      ).toHaveLength(0);
+      // The steer's row stays in the transcript even though Claude never read it, matching Codex.
+      expect(getAssistantTexts(afterStop, agent.id).join("\n")).not.toContain("RESUME_FORBIDDEN");
+    } finally {
+      const cleanup = await Promise.allSettled([client.close(), daemon.close()]);
+      rmSync(cwd, { recursive: true, force: true });
+      expect(
+        cleanup.flatMap((result) => (result.status === "rejected" ? [result.reason] : [])),
+      ).toEqual([]);
+    }
+  }, 180_000);
+
   test("sending a message while a tool call is running replaces the turn without error, idle flash, or autonomous fallback", async () => {
     const logger = pino({ level: "silent" });
     const cwd = tmpCwd();

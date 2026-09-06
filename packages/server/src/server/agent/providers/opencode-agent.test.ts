@@ -26,6 +26,12 @@ import type {
   AgentTimelineItem,
 } from "../agent-sdk-types.js";
 
+// Deliberately an independent literal rather than the production constant these tests
+// guard: deriving the boundary from OPENCODE_SERVER_STARTUP_TIMEOUT_MS would keep the
+// readiness tests green if that constant were shortened below the required budget.
+const EXPECTED_STARTUP_BUDGET_MS = 30_000;
+const EXPECTED_EVENT_READINESS_BUDGET_MS = 45_000;
+
 function tmpCwd(): string {
   const dir = mkdtempSync(path.join(os.tmpdir(), "opencode-agent-test-"));
   try {
@@ -73,11 +79,21 @@ const TEST_MODEL = "opencode/big-pickle";
 function createDirectEventSource(client: OpencodeClient): OpenCodeEventSource {
   const listeners = new Set<(input: never) => void>();
   const abort = new AbortController();
+  let connected = false;
   void client.global
     .event({ signal: abort.signal, sseMaxRetryAttempts: 0 })
     .then(async ({ stream }) => {
       for await (const event of stream) {
-        for (const listener of listeners) listener(event as never);
+        const payload = "payload" in event ? event.payload : event;
+        if (!connected && payload.type === "server.connected") {
+          connected = true;
+          continue;
+        }
+        for (const listener of listeners) {
+          listener(
+            ("payload" in event ? event : { directory: "/tmp/test", payload: event }) as never,
+          );
+        }
       }
       return undefined;
     });
@@ -338,6 +354,81 @@ describe("OpenCodeAgentClient adapter smoke tests", () => {
     rmSync(cwd, { recursive: true, force: true });
   }, 60_000);
 
+  test("creates a session when session.create needs more than ten seconds", async () => {
+    vi.useFakeTimers();
+    const cwd = tmpCwd();
+    const runtime = new TestOpenCodeHarness();
+    const openCode = new TestOpenCodeClient();
+    const slowCreate = createTestDeferred<void>();
+    openCode.sessionCreateImplementation = async () => {
+      await slowCreate.promise;
+      return { data: { id: "session-1" } };
+    };
+    runtime.enqueueClient(openCode);
+    const client = new OpenCodeAgentClient(logger, undefined, {
+      serverManager: runtime,
+      createClient: runtime.createClient,
+    });
+
+    try {
+      const creation = client.createSession(buildConfig(cwd));
+      let settled = false;
+      const markSettled = () => {
+        settled = true;
+      };
+      void creation.then(markSettled, markSettled);
+
+      // Under CPU contention a per-directory bootstrap has been measured well past ten
+      // seconds, which the previous budget failed outright.
+      await vi.advanceTimersByTimeAsync(20_000);
+      expect(settled).toBe(false);
+
+      slowCreate.resolve();
+      const session = await creation;
+      expect(session.provider).toBe("opencode");
+      expect(openCode.calls.sessionCreate).toHaveLength(1);
+      await session.close();
+    } finally {
+      vi.useRealTimers();
+      slowCreate.resolve();
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  test("bounds session.create at the server startup budget", async () => {
+    vi.useFakeTimers();
+    const cwd = tmpCwd();
+    const runtime = new TestOpenCodeHarness();
+    const openCode = new TestOpenCodeClient();
+    openCode.sessionCreateImplementation = () => new Promise<never>(() => undefined);
+    runtime.enqueueClient(openCode);
+    const client = new OpenCodeAgentClient(logger, undefined, {
+      serverManager: runtime,
+      createClient: runtime.createClient,
+    });
+
+    try {
+      const creation = client.createSession(buildConfig(cwd));
+      const rejection = expect(creation).rejects.toThrow("OpenCode session.create timed out");
+      let settled = false;
+      const markSettled = () => {
+        settled = true;
+      };
+      void creation.then(markSettled, markSettled);
+
+      await vi.advanceTimersByTimeAsync(EXPECTED_STARTUP_BUDGET_MS - 1);
+      expect(settled).toBe(false);
+
+      await vi.advanceTimersByTimeAsync(1);
+      await rejection;
+      expect(settled).toBe(true);
+      expect(runtime.acquisitions.at(-1)?.releaseCount).toBe(1);
+    } finally {
+      vi.useRealTimers();
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
   test("archives and unarchives the durable native session through client hooks", async () => {
     const cwd = tmpCwd();
     const runtime = new TestOpenCodeHarness();
@@ -369,7 +460,7 @@ describe("OpenCodeAgentClient adapter smoke tests", () => {
       {
         sessionID: "session-1",
         directory: cwd,
-        time: { archived: null },
+        time: { archived: 0 },
       },
     ]);
     expect(runtime.acquisitions.every((acquisition) => acquisition.releaseCount === 1)).toBe(true);
@@ -2023,6 +2114,167 @@ describe("OpenCode adapter startTurn error handling", () => {
     }
   });
 
+  test("uses OpenCode native steer admission and reconciles the user echo", async () => {
+    const { parent: session, openCode } = await createParentSession("ses_native_steer");
+    openCode.sessionPromptAsyncEvents = [];
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    const { turnId } = await session.startTurn("first");
+    const result = await session.steerActiveTurn?.("steer this turn", {
+      expectedTurnId: turnId,
+      clientMessageId: "client-steer-1",
+    });
+
+    expect(result).toEqual({ status: "accepted" });
+    expect(openCode.calls.sessionPromptAsync).toHaveLength(2);
+    const request = openCode.calls.sessionPromptAsync[1] as {
+      sessionID: string;
+      messageID: string;
+      parts: Array<{ type: string; text?: string }>;
+    };
+    expect(request).toMatchObject({
+      sessionID: "ses_native_steer",
+    });
+    expect(request.messageID).toMatch(/^msg_/);
+    expect(request.parts).toEqual([{ type: "text", text: "steer this turn" }]);
+
+    openCode.emitEvent({
+      type: "message.updated",
+      properties: {
+        info: { id: request.messageID, sessionID: "ses_native_steer", role: "user" },
+      },
+    });
+    await vi.waitFor(() => {
+      let found;
+      for (const e of events) {
+        if (
+          e.type === "timeline" &&
+          e.item.type === "user_message" &&
+          e.item.text === "steer this turn" &&
+          e.item.messageId === request.messageID &&
+          e.item.clientMessageId === "client-steer-1"
+        ) {
+          found = e;
+          break;
+        }
+      }
+      expect(found).toBeDefined();
+    });
+
+    await session.close();
+  });
+
+  test("clears permissions blocking an accepted human steer", async () => {
+    const { parent: session, openCode } = await createParentSession("ses_steer_permission");
+    openCode.sessionPromptAsyncEvents = [];
+    const { turnId } = await session.startTurn("first");
+    openCode.emitEvent({
+      type: "permission.asked",
+      properties: {
+        id: "permission-steer",
+        sessionID: "ses_steer_permission",
+        permission: "bash",
+        patterns: ["echo blocked"],
+        metadata: { command: "echo blocked", cwd: "/workspace/repo" },
+      },
+    });
+    await vi.waitFor(() => expect(session.getPendingPermissions()).toHaveLength(1));
+
+    await expect(
+      session.steerActiveTurn?.("change course", {
+        expectedTurnId: turnId,
+        clearPendingPermissions: true,
+      }),
+    ).resolves.toEqual({ status: "accepted" });
+
+    expect(openCode.calls.permissionReply).toContainEqual(
+      expect.objectContaining({ requestID: "permission-steer", reply: "reject" }),
+    );
+    expect(session.getPendingPermissions()).toHaveLength(0);
+    await session.close();
+  });
+
+  test("keeps multiple native steers correlated in admission order", async () => {
+    const { parent: session, openCode } = await createParentSession("ses_native_steer_fifo");
+    openCode.sessionPromptAsyncEvents = [];
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    const { turnId } = await session.startTurn("first");
+    await session.steerActiveTurn?.("steer one", {
+      expectedTurnId: turnId,
+      clientMessageId: "client-steer-1",
+    });
+    await session.steerActiveTurn?.("steer two", {
+      expectedTurnId: turnId,
+      clientMessageId: "client-steer-2",
+    });
+
+    const requests = openCode.calls.sessionPromptAsync.slice(1) as Array<{ messageID: string }>;
+    expect(requests).toHaveLength(2);
+    for (const request of requests) {
+      openCode.emitEvent({
+        type: "message.updated",
+        properties: {
+          info: { id: request.messageID, sessionID: "ses_native_steer_fifo", role: "user" },
+        },
+      });
+    }
+    const userMessageTexts = () => {
+      const texts: string[] = [];
+      for (const e of events) {
+        if (e.type === "timeline" && e.item.type === "user_message") texts.push(e.item.text);
+      }
+      return texts;
+    };
+    await vi.waitFor(() => expect(userMessageTexts()).toEqual(["steer one", "steer two"]));
+
+    await session.close();
+  });
+
+  test("falls back only for a definitive native steer rejection", async () => {
+    const { parent: session, openCode } = await createParentSession("ses_native_steer_404");
+    openCode.sessionPromptAsyncEvents = [];
+    let promptCount = 0;
+    openCode.sessionPromptAsyncImplementation = async () => {
+      promptCount += 1;
+      if (promptCount === 1) return { data: {}, error: undefined };
+      return { error: new Error("missing"), response: { status: 404 } };
+    };
+    const { turnId } = await session.startTurn("first");
+
+    await expect(
+      session.steerActiveTurn?.("steer", {
+        expectedTurnId: turnId,
+        clientMessageId: "client-steer",
+      }),
+    ).resolves.toEqual({ status: "unavailable" });
+
+    await session.close();
+  });
+
+  test("surfaces an ambiguous native steer failure", async () => {
+    const { parent: session, openCode } = await createParentSession("ses_native_steer_error");
+    openCode.sessionPromptAsyncEvents = [];
+    let promptCount = 0;
+    openCode.sessionPromptAsyncImplementation = async () => {
+      promptCount += 1;
+      if (promptCount === 1) return { data: {}, error: undefined };
+      throw new Error("connection lost");
+    };
+    const { turnId } = await session.startTurn("first");
+
+    await expect(
+      session.steerActiveTurn?.("steer", {
+        expectedTurnId: turnId,
+        clientMessageId: "client-steer",
+      }),
+    ).rejects.toThrow("connection lost");
+
+    await session.close();
+  });
+
   test("sends exact Hub MCP permission grants without approving unrelated tools", async () => {
     const promptAsync = vi.fn(async () => ({ data: {}, error: undefined }));
     const fakeClient = {
@@ -2722,7 +2974,7 @@ describe("OpenCode adapter startTurn error handling", () => {
 
     try {
       await session.startTurn("/summarize");
-      openCode.emitEvent({ type: "reconnected" });
+      openCode.emitEvent({ type: "server.connected", properties: {} });
       await vi.waitFor(() => expect(countEvents(events, "turn_completed")).toBe(1));
 
       expect(openCode.calls.sessionMessages).toHaveLength(0);
@@ -2794,7 +3046,7 @@ describe("OpenCode adapter startTurn error handling", () => {
           return recoveredMessages;
         };
 
-        openCode.emitEvent({ type: "reconnected" });
+        openCode.emitEvent({ type: "server.connected", properties: {} });
         await vi.waitFor(() =>
           expect(failedRequest === "status" ? statusAttempts : messageAttempts).toBe(1),
         );
@@ -2831,7 +3083,7 @@ describe("OpenCode adapter startTurn error handling", () => {
 
     try {
       await session.startTurn("missing dispatch");
-      openCode.emitEvent({ type: "reconnected" });
+      openCode.emitEvent({ type: "server.connected", properties: {} });
       await vi.waitFor(() => expect(countEvents(events, "turn_failed")).toBe(1));
       await vi.advanceTimersByTimeAsync(5_000);
 
@@ -2855,7 +3107,7 @@ describe("OpenCode adapter startTurn error handling", () => {
 
     try {
       await session.startTurn("keep live ingress moving");
-      openCode.emitEvent({ type: "reconnected" });
+      openCode.emitEvent({ type: "server.connected", properties: {} });
       await vi.waitFor(() => expect(openCode.calls.sessionStatus).toHaveLength(1));
       openCode.emitEvent({ type: "session.idle", properties: { sessionID: session.id } });
       await vi.waitFor(() => expect(countEvents(events, "turn_completed")).toBe(1));
@@ -2893,7 +3145,7 @@ describe("OpenCode adapter startTurn error handling", () => {
 
     try {
       await session.startTurn("first turn");
-      openCode.emitEvent({ type: "reconnected" });
+      openCode.emitEvent({ type: "server.connected", properties: {} });
       await firstStatus.promise;
       openCode.emitEvent({ type: "session.idle", properties: { sessionID: session.id } });
       await firstCompletion.promise;
@@ -2935,7 +3187,7 @@ describe("OpenCode adapter startTurn error handling", () => {
 
     try {
       await session.startTurn("first turn");
-      openCode.emitEvent({ type: "reconnected" });
+      openCode.emitEvent({ type: "server.connected", properties: {} });
       await vi.waitFor(() => expect(statusAttempts).toBe(1));
       await vi.advanceTimersByTimeAsync(100);
       await retryStarted.promise;
@@ -2974,12 +3226,12 @@ describe("OpenCode adapter startTurn error handling", () => {
     await vi.waitFor(() => expect(session.getPendingPermissions()).toHaveLength(1));
 
     openCode.permissionListResponse = { error: new Error("snapshot failed") };
-    openCode.emitEvent({ type: "reconnected" });
+    openCode.emitEvent({ type: "server.connected", properties: {} });
     await vi.waitFor(() => expect(openCode.calls.permissionList).toHaveLength(1));
     expect(session.getPendingPermissions()).toHaveLength(1);
 
     openCode.permissionListResponse = { data: [] };
-    openCode.emitEvent({ type: "reconnected" });
+    openCode.emitEvent({ type: "server.connected", properties: {} });
     await vi.waitFor(() => expect(session.getPendingPermissions()).toHaveLength(0));
     expect(events).toContainEqual(
       expect.objectContaining({ type: "permission_resolved", requestId: "permission-1" }),
@@ -3074,7 +3326,7 @@ describe("OpenCode adapter startTurn error handling", () => {
         ],
       };
 
-      openCode.emitEvent({ type: "reconnected" });
+      openCode.emitEvent({ type: "server.connected", properties: {} });
       await vi.waitFor(() =>
         expect(countChildStatuses(events, recoveryCase.status, childId)).toBeGreaterThanOrEqual(1),
       );
@@ -3096,7 +3348,7 @@ describe("OpenCode adapter startTurn error handling", () => {
 
       openCode.permissionListResponse = { error: new Error("permission snapshot failed") };
       openCode.questionListResponse = { error: new Error("question snapshot failed") };
-      openCode.emitEvent({ type: "reconnected" });
+      openCode.emitEvent({ type: "server.connected", properties: {} });
       await vi.waitFor(() => expect(openCode.calls.permissionList.length).toBeGreaterThan(1));
       expect(parent.getPendingPermissions()).toEqual([]);
 
@@ -3119,13 +3371,13 @@ describe("OpenCode adapter startTurn error handling", () => {
         },
       });
       await vi.waitFor(() => expect(parent.getPendingPermissions()).toHaveLength(2));
-      openCode.emitEvent({ type: "reconnected" });
+      openCode.emitEvent({ type: "server.connected", properties: {} });
       await vi.waitFor(() => expect(openCode.calls.permissionList.length).toBeGreaterThan(2));
       expect(parent.getPendingPermissions()).toHaveLength(2);
 
       openCode.permissionListResponse = { data: [] };
       openCode.questionListResponse = { data: [] };
-      openCode.emitEvent({ type: "reconnected" });
+      openCode.emitEvent({ type: "server.connected", properties: {} });
       await vi.waitFor(() => expect(parent.getPendingPermissions()).toHaveLength(0));
       await parent.close();
     }
@@ -3169,7 +3421,7 @@ describe("OpenCode adapter startTurn error handling", () => {
       ],
     };
 
-    openCode.emitEvent({ type: "reconnected" });
+    openCode.emitEvent({ type: "server.connected", properties: {} });
     await vi.waitFor(() => expect(countChildStatuses(events, "failed", childId)).toBe(1));
     const recoveredStatuses = events.flatMap((event) =>
       event.type === "provider_subagent" &&
@@ -3228,7 +3480,7 @@ describe("OpenCode adapter startTurn error handling", () => {
       throw new Error("child messages unavailable");
     };
 
-    openCode.emitEvent({ type: "reconnected" });
+    openCode.emitEvent({ type: "server.connected", properties: {} });
     await vi.waitFor(() => expect(openCode.calls.sessionMessages).toHaveLength(1));
     const recoveredStatuses = events.flatMap((event) =>
       event.type === "provider_subagent" &&
@@ -3299,7 +3551,7 @@ describe("OpenCode adapter startTurn error handling", () => {
     await session.close();
   });
 
-  test("bounds dispatch readiness at ten seconds without sending a prompt", async () => {
+  test("bounds dispatch readiness without sending a prompt", async () => {
     vi.useFakeTimers();
     const openCode = new TestOpenCodeClient();
     const session = new __openCodeInternals.OpenCodeAgentSession(
@@ -3311,18 +3563,103 @@ describe("OpenCode adapter startTurn error handling", () => {
       {
         ready: () => new Promise<void>(() => undefined),
         subscribe: () => () => undefined,
+        diagnostics: () => ({
+          attempt: 2,
+          phase: "first-record",
+          elapsedMs: EXPECTED_EVENT_READINESS_BUDGET_MS,
+          lastOutcome: "watchdog",
+        }),
       },
     );
     try {
       const dispatch = session.startTurn("wait for transport");
-      const rejection = expect(dispatch).rejects.toThrow("OpenCode event stream first record");
-      await vi.advanceTimersByTimeAsync(9_999);
+      const rejection = expect(dispatch).rejects.toThrow(
+        "OpenCode server.connected event; your message was not sent. opencode-stream attempt=2 phase=first-record elapsedMs=45000 lastOutcome=watchdog",
+      );
+      let settled = false;
+      void dispatch.then(
+        () => {
+          settled = true;
+          return undefined;
+        },
+        () => {
+          settled = true;
+          return undefined;
+        },
+      );
+
+      await vi.advanceTimersByTimeAsync(EXPECTED_EVENT_READINESS_BUDGET_MS - 1);
+      expect(settled).toBe(false);
       expect(openCode.calls.sessionPromptAsync).toHaveLength(0);
+
       await vi.advanceTimersByTimeAsync(1);
       await rejection;
+      expect(settled).toBe(true);
       expect(openCode.calls.sessionPromptAsync).toHaveLength(0);
     } finally {
       vi.useRealTimers();
+      await session.close();
+    }
+  });
+
+  test("dispatches a prompt when the event stream needs more than ten seconds", async () => {
+    vi.useFakeTimers();
+    const openCode = new TestOpenCodeClient();
+    openCode.sessionPromptAsyncEvents = [];
+    const streamReady = createTestDeferred<void>();
+    const session = new __openCodeInternals.OpenCodeAgentSession(
+      { provider: "opencode", cwd: "/workspace/repo" },
+      openCode.asSdkClient(),
+      "ses_readiness_slow_stream",
+      createTestLogger(),
+      new Map(),
+      {
+        ready: () => streamReady.promise,
+        subscribe: () => () => undefined,
+      },
+    );
+    try {
+      const dispatch = session.startTurn("wait for a slow transport");
+      await vi.advanceTimersByTimeAsync(20_000);
+      expect(openCode.calls.sessionPromptAsync).toHaveLength(0);
+
+      streamReady.resolve();
+      await dispatch;
+      await vi.advanceTimersByTimeAsync(0);
+      expect(openCode.calls.sessionPromptAsync).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+      streamReady.resolve();
+      await session.close();
+    }
+  });
+
+  test("allows the shared stream to recover once after its thirty-second watchdog", async () => {
+    vi.useFakeTimers();
+    const openCode = new TestOpenCodeClient();
+    openCode.sessionPromptAsyncEvents = [];
+    const streamReady = createTestDeferred<void>();
+    const session = new __openCodeInternals.OpenCodeAgentSession(
+      { provider: "opencode", cwd: "/workspace/repo" },
+      openCode.asSdkClient(),
+      "ses_readiness_retry",
+      createTestLogger(),
+      new Map(),
+      {
+        ready: () => streamReady.promise,
+        subscribe: () => () => undefined,
+      },
+    );
+    try {
+      const dispatch = session.startTurn("wait for the producer retry");
+      await vi.advanceTimersByTimeAsync(35_000);
+      streamReady.resolve();
+      await dispatch;
+      await vi.advanceTimersByTimeAsync(0);
+      expect(openCode.calls.sessionPromptAsync).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+      streamReady.resolve();
       await session.close();
     }
   });
@@ -3382,7 +3719,7 @@ describe("OpenCode adapter startTurn error handling", () => {
         await session.startTurn("keep running");
       }
 
-      openCode.emitEvent({ type: "reconnected" });
+      openCode.emitEvent({ type: "server.connected", properties: {} });
       await Promise.race([
         blocked.promise,
         new Promise((_, reject) =>
@@ -4077,6 +4414,7 @@ describe("OpenCode provider subagent contract", () => {
       event: {
         type: "upsert",
         id: "ses_child_registry",
+        parentSubagentId: null,
         description: "Live child",
         status: "running",
       },
@@ -5001,6 +5339,7 @@ describe("OpenCode provider subagent contract", () => {
       event: {
         type: "upsert",
         id: "ses_child_background",
+        parentSubagentId: null,
         description: "Plugin child",
         status: "running",
       },
@@ -5049,6 +5388,7 @@ describe("OpenCode provider subagent contract", () => {
         event: {
           type: "upsert",
           id: "ses_child_plugin",
+          parentSubagentId: null,
           description: "Background plugin child",
           status: "running",
         },
@@ -5292,6 +5632,7 @@ describe("OpenCode provider subagent contract", () => {
         event: {
           type: "upsert",
           id: "ses_child_rich",
+          parentSubagentId: null,
           title: "explore",
           description: "Investigate flaky test",
           status: "running",
@@ -5318,7 +5659,12 @@ describe("OpenCode provider subagent contract", () => {
       {
         type: "provider_subagent",
         provider: "opencode",
-        event: { type: "upsert", id: "ses_child_bare", status: "running" },
+        event: {
+          type: "upsert",
+          id: "ses_child_bare",
+          parentSubagentId: null,
+          status: "running",
+        },
       },
     ]);
   });
@@ -5643,12 +5989,24 @@ describe("OpenCode provider subagent contract", () => {
       {
         type: "provider_subagent",
         provider: "opencode",
-        event: { type: "upsert", id: "ses_child_a", description: "Child A", status: "completed" },
+        event: {
+          type: "upsert",
+          id: "ses_child_a",
+          parentSubagentId: null,
+          description: "Child A",
+          status: "completed",
+        },
       },
       {
         type: "provider_subagent",
         provider: "opencode",
-        event: { type: "upsert", id: "ses_child_b", description: "Child B", status: "completed" },
+        event: {
+          type: "upsert",
+          id: "ses_child_b",
+          parentSubagentId: null,
+          description: "Child B",
+          status: "completed",
+        },
       },
       {
         type: "provider_subagent",
@@ -5656,6 +6014,7 @@ describe("OpenCode provider subagent contract", () => {
         event: {
           type: "upsert",
           id: "ses_grandchild_a",
+          parentSubagentId: "ses_child_a",
           description: "Grandchild A",
           status: "completed",
         },
@@ -5718,6 +6077,7 @@ describe("OpenCode provider subagent contract", () => {
       event: {
         type: "upsert",
         id: "ses_child_with_history",
+        parentSubagentId: null,
         description: "Historical child",
         status: "completed",
         cwd: "/workspace/child",
@@ -5805,6 +6165,7 @@ describe("OpenCode provider subagent contract", () => {
       event: {
         type: "upsert",
         id: "ses_child_hydrated_facts",
+        parentSubagentId: null,
         description: "Chase the regression",
         status: "completed",
         subtitle: "claude-sonnet-5 · Max",
@@ -6024,7 +6385,7 @@ describe("OpenCode provider subagent contract", () => {
           messageID: "msg_child_prompt",
           type: "text",
           text: "Inspect the auth flow.",
-          time: { start: 1, end: 2 },
+          time: { start: 1 },
         },
       },
     });

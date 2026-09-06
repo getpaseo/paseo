@@ -3,7 +3,7 @@ import { View, Text } from "react-native";
 import { useIsFocused } from "@react-navigation/native";
 import { router } from "expo-router";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
-import { ChevronLeft } from "lucide-react-native";
+import { ChevronLeft, Import } from "lucide-react-native";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 import { MenuHeader } from "@/components/headers/menu-header";
@@ -15,6 +15,7 @@ import { HostFilter } from "@/components/hosts/host-filter";
 import { ALL_HOSTS_OPTION_ID } from "@/components/hosts/host-picker";
 import { type AgentHistoryHostError, useAgentHistory } from "@/hooks/use-agent-history";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
+import { useImportSession } from "@/hooks/use-import-session";
 import { useHosts } from "@/runtime/host-runtime";
 import { buildOpenProjectRoute } from "@/utils/host-routes";
 
@@ -72,6 +73,7 @@ export function SessionsScreen() {
 function SessionsScreenContent() {
   const { theme } = useUnistyles();
   const { t } = useTranslation();
+  const importSession = useImportSession();
   const hosts = useHosts();
   const [selectedHost, setSelectedHost] = useState(ALL_HOSTS_OPTION_ID);
   const [searchInput, setSearchInput] = useState("");
@@ -201,6 +203,9 @@ function SessionsScreenContent() {
               Back
             </Button>
           )}
+          <Button variant="ghost" leftIcon={Import} onPress={importSession.open}>
+            {t("importSession.title")}
+          </Button>
         </View>
       ) : null}
       {!isInitialLoad && !showLoadError && agents.length > 0 ? (
@@ -216,6 +221,7 @@ function SessionsScreenContent() {
           flat={isSearching}
         />
       ) : null}
+      {importSession.sheet}
     </View>
   );
 }

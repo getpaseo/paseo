@@ -5,6 +5,13 @@ import type { MessageInputKeyboardActionKind } from "@/keyboard/actions";
 
 export type SendBehavior = ActiveTurnBehavior | "queue";
 
+export function resolveActiveSendBehavior(
+  sendBehavior: SendBehavior,
+  hasPendingPermission: boolean,
+): SendBehavior {
+  return sendBehavior === "queue" && hasPendingPermission ? "interrupt" : sendBehavior;
+}
+
 interface ComposerSurfaceState {
   opacity: 0 | 1;
   pointerEvents: "auto" | "none";

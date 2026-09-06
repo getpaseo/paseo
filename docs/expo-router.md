@@ -67,13 +67,28 @@ that decision; if no host route is mounted yet, it falls back to ordinary route
 navigation.
 
 Those hidden entries are not harmless: composer floating panels can measure
-against the wrong deck and disappear offscreen.
+against the wrong deck and disappear offscreen. Follow the
+[retained panel measurement rules](coding-standards.md#retained-panel-measurements)
+for components that intentionally remain mounted while hidden.
 
 Hidden host routes may keep their local params while an app-wide route is
 foregrounded. Active-workspace observers must prefer the current pathname and
 only use local param fallback during cold mount (`/` or empty pathname), or a
 hidden workspace can overwrite the remembered workspace before Settings or
 History returns.
+
+Plugin settings use the distinct `settings/hosts/[serverId]/plugins/[pluginId]/[screenId]` leaf;
+Back returns to that host's Plugins page.
+
+Settings detail routes are separate siblings on purpose. Keep
+`settings/[section]`, the host routes, the projects index, and project detail as
+distinct route names. `router.dismissTo()` ultimately matches stack entries by
+route name. A single catch-all Settings route would make project detail and the
+projects index the same route; Back would update params in place and leave a
+phantom detail entry underneath. The host routes also stay outside the
+store-ready protected group so a cold host deep link can survive daemon startup.
+Do not collapse this topology with a catch-all, `getId`, or
+`dangerouslySingular` workaround.
 
 ## Agent Targets
 

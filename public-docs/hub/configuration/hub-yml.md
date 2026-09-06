@@ -137,6 +137,39 @@ steps:
 | `values`      | no       | Named expressions.                                        |
 | `steps`       | yes      | One or more ordered inline steps.                         |
 
+### GitHub events and filters
+
+Use one of these semantic event names for new GitHub workflows:
+
+| `on`                                  | Matches                                                                   |
+| ------------------------------------- | ------------------------------------------------------------------------- |
+| `github.issue_created`                | An `issues` delivery whose action is `opened`.                            |
+| `github.pull_request_created`         | A `pull_request` delivery whose action is `opened`.                       |
+| `github.issue_comment_created`        | An `issue_comment` delivery whose action is `created`, on an issue.       |
+| `github.pull_request_comment_created` | An `issue_comment` delivery whose action is `created`, on a pull request. |
+| `github.issue_label_added`            | An `issues` delivery whose action is `labeled`.                           |
+| `github.pull_request_label_added`     | A `pull_request` delivery whose action is `labeled`.                      |
+
+Existing configurations may continue to use `github.issues`, `github.issue_comment`, `github.pull_request_review`, `github.pull_request_review_comment`, and `github.push`. These legacy events retain their existing behavior.
+
+`filters` supports these GitHub fields. `from_users` must be non-empty for every externally sourced workflow. All supplied filters compose with AND.
+
+| Field        | Type                                | Applies to                                                    | Meaning                                                                         |
+| ------------ | ----------------------------------- | ------------------------------------------------------------- | ------------------------------------------------------------------------------- |
+| `from_users` | non-empty list of strings           | all GitHub events                                             | GitHub logins allowed to start the workflow.                                    |
+| `repo`       | non-empty string                    | all GitHub events                                             | Repository in `owner/name` form.                                                |
+| `connection` | string                              | all GitHub events                                             | GitHub connection slug.                                                         |
+| `contains`   | string                              | issue, pull-request, and comment events                       | Substring in the issue or pull-request title plus body, or in the comment body. |
+| `pattern`    | string                              | issue, pull-request, and comment events                       | Start of that same text.                                                        |
+| `label`      | non-empty string                    | `github.issue_label_added`, `github.pull_request_label_added` | The label added by the delivery.                                                |
+| `labels`     | non-empty list of non-empty strings | issue, pull-request, and comment events                       | Every listed label must be currently present on the issue or pull request.      |
+
+`label` and `labels` match GitHub labels case-insensitively. `label` checks the one changed label; `labels` checks the full current label set and requires every entry. For example, `labels: [bug, backend]` requires both `bug` and `backend`.
+
+Use `label` only with a label-added event. It has no match on other events. Use `labels` to require the item state, including when a comment starts the workflow.
+
+See [GitHub triggers](/docs/hub/triggers/github) for complete triage, pull-request review, and ready-for-agent workflows.
+
 ### Inputs and values
 
 Inputs have `type: string | number | boolean`, plus optional `required`, `default`, and `choices`. `required` and `default` cannot be combined. Finite `choices` are required when an input can choose authority such as an environment or named agent.
@@ -222,3 +255,27 @@ Keep `environments` in `hub.yml`, convert the environment list to a named map, a
 Hub does not read TOML or a monolithic `triggers` section, and the CLI does not rewrite either format.
 
 See [Workflows](/docs/hub/workflows) for complete routing examples.
+
+## Agent continuation
+
+Self-contained dashboard trigger documents accept `run.continuation`:
+
+| Value                                                    | Behavior                                                                                                                |
+| -------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| `{mode: conversation}`                                   | Default. Reuse the project's agent for the event's conversation; create a new agent when the event has no conversation. |
+| `{mode: key, key: "support-${{ paseo.inputs.ticket }}"}` | Reuse the project's agent for the evaluated custom key.                                                                 |
+| `{mode: new}`                                            | Create a new agent for each arrival.                                                                                    |
+
+Keys use the existing expression syntax and must resolve to a non-empty string of at most 512 characters. Custom keys and provider conversation identities occupy separate namespaces. The same key in different projects does not share an agent.
+
+An existing session keeps its daemon, agent configuration, target, environment, and tool contracts. Changing those settings for the same key fails with an explanation; choose a different key or **New agent**. Prompts and output destinations belong to each arrival and may change. A worktree branch is chosen when the session is first created and reused on later arrivals.
+
+Triggers that mint temporary environment credentials, including a `run.github` grant or a connection token in `run.env`, must choose **New agent** when the event has a conversation or uses a custom key. These credentials expire with the execution, and an existing agent's environment cannot be refreshed. Hub-managed reply tools remain available with continuation.
+
+### Upgrading
+
+Upgrade the connected Paseo daemons before enabling the new Hub version. Hub requires the daemon's ordinary agent RPC and request receipt capabilities; an older host produces an actionable dispatch error.
+
+Hub's database migration adds sessions and nullable execution associations. Existing executions retain their saved launch contract and execution-specific MCP endpoint until they finish. New arrivals for existing self-contained trigger documents use the conversation default. Historical agents are not backfilled into sessions.
+
+Legacy multi-step workflow bundles keep their existing behavior. Converting one to a self-contained trigger writes `mode: new` explicitly; change it in the editor when ready to reuse agents.

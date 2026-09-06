@@ -91,6 +91,32 @@ describe("Hub HTTP client", () => {
     );
   });
 
+  it("reads self-contained trigger documents for export", async () => {
+    const requests: Array<{ url: string | undefined; body: string }> = [];
+    const origin = await startServer(
+      () => ({
+        status: 200,
+        body: {
+          triggers: [
+            {
+              id: "a50e05af-4f20-4c8f-8dcc-58e5ea360663",
+              name: "slack-help",
+              enabled: true,
+              format: "single_run",
+              yaml: "name: slack-help\n",
+            },
+          ],
+        },
+      }),
+      requests,
+    );
+
+    const triggers = await new HubHttpClient().listTriggers(origin, "secret");
+
+    assert.equal(triggers[0]?.yaml, "name: slack-help\n");
+    assert.deepEqual(requests[0], { url: "/api/v1/triggers", body: "" });
+  });
+
   it("reads configuration resources in the Hub's slug vocabulary", async () => {
     const requests: Array<{ url: string | undefined; body: string }> = [];
     const origin = await startServer(
@@ -118,6 +144,52 @@ describe("Hub HTTP client", () => {
     assert.equal(resources.daemons[0]?.slug, "macbook");
     assert.equal(resources.discord[0]?.slug, "paseo");
     assert.equal(requests[0]?.url, "/api/v1/configuration-resources");
+  });
+
+  it("reads strict provider-native setup resources", async () => {
+    const requests: Array<{ url: string | undefined; body: string }> = [];
+    const origin = await startServer(
+      () => ({
+        status: 200,
+        body: {
+          github: [
+            {
+              slug: "getpaseo",
+              accountLogin: "getpaseo",
+              accountType: "Organization",
+              repositories: ["getpaseo/paseo"],
+            },
+          ],
+          discord: [{ guildId: "guild-123", guildName: "Paseo" }],
+          slack: [{ teamId: "team-123", teamName: "Paseo" }],
+        },
+      }),
+      requests,
+    );
+
+    const resources = await new HubHttpClient().listSetupResources(origin, "secret");
+
+    assert.equal(resources.slack[0]?.teamId, "team-123");
+    assert.equal(resources.discord[0]?.guildId, "guild-123");
+    assert.deepEqual(requests[0], { url: "/api/v1/setup-resources", body: "" });
+  });
+
+  it.each([
+    { github: [], discord: [], slack: [{ teamId: "team-123", teamName: "Paseo", slug: "wrong" }] },
+    { github: [], discord: [], slack: [{ teamId: 123, teamName: "Paseo" }] },
+  ])("rejects malformed or unknown setup resource fields", async (body) => {
+    const requests: Array<{ url: string | undefined; body: string }> = [];
+    const origin = await startServer(
+      () => ({
+        status: 200,
+        body,
+      }),
+      requests,
+    );
+
+    await assert.rejects(new HubHttpClient().listSetupResources(origin, "secret"), {
+      code: "HUB_INVALID_RESPONSE",
+    });
   });
 
   it("renders file-aware Hub validation issues without exposing credentials or response bodies", async () => {

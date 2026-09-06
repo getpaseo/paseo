@@ -133,6 +133,23 @@ function forceTimelineReset(message: string | Buffer, enabled: boolean): string 
   return JSON.stringify(envelope);
 }
 
+// The daemon refusal this reproduces: a Codex thread that already has an active writer.
+const TIMELINE_WRITER_CONFLICT_ERROR =
+  "Failed to resume Codex thread playwright-thread: thread playwright-thread already has an active writer";
+
+function failTimelineResponse(message: string | Buffer, agentId: string | null): string | Buffer {
+  if (!agentId || typeof message !== "string") return message;
+  const envelope = JSON.parse(message) as {
+    message?: { payload?: Record<string, unknown> };
+    payload?: Record<string, unknown>;
+  };
+  const payload = envelope.message?.payload ?? envelope.payload;
+  if (!payload || payload.agentId !== agentId) return message;
+  payload.error = TIMELINE_WRITER_CONFLICT_ERROR;
+  payload.entries = [];
+  return JSON.stringify(envelope);
+}
+
 function rewriteShellToolCommand(
   message: string | Buffer,
   command: string | null,
@@ -284,6 +301,10 @@ export async function installDaemonWebSocketGate(page: Page) {
   let stripAssistantMessageIds = false;
   let stripCanonicalSubmittedPromptsFeature = false;
   let shellToolCommandOverride: string | null = null;
+  let failingTimelineAgentId: string | null = null;
+  let holdingTimelineAgentId: string | null = null;
+  const heldTimelineResponses: Array<() => void> = [];
+  const heldTimelineResponseWaiters = new Set<() => void>();
   let heldClientRequestType: string | null = null;
   let heldClientRequest: { server: WebSocketRoute; message: string | Buffer } | null = null;
   let resolveHeldClientRequest: (() => void) | null = null;
@@ -294,6 +315,9 @@ export async function installDaemonWebSocketGate(page: Page) {
   const suppressedAgentStreamEventTypes = new Set<string>();
   const suppressedAgentStreamItemTypes = new Set<string>();
   const activeSockets = new Set<WebSocketRoute>();
+  let blockedConnectionCount = 0;
+  let blockedConnectionCountAtDrop = 0;
+  const blockedConnectionWaiters = new Set<() => void>();
   let latestServer: WebSocketRoute | null = null;
   const directoryStarts: DirectoryRequestStartCounts = {
     subscribed: { agents: 0, workspaces: 0 },
@@ -422,6 +446,9 @@ export async function installDaemonWebSocketGate(page: Page) {
 
   await page.routeWebSocket(daemonWsRoutePattern(), (ws) => {
     if (!acceptingConnections) {
+      blockedConnectionCount += 1;
+      for (const resolve of blockedConnectionWaiters) resolve();
+      blockedConnectionWaiters.clear();
       void ws.close({ code: 1008, reason: "Blocked by reconnect test." });
       return;
     }
@@ -487,11 +514,25 @@ export async function installDaemonWebSocketGate(page: Page) {
         stripCanonicalSubmittedPromptsFeature,
         serverMessage?.type,
       );
+      const isTimelineResponse = serverMessage?.type === "fetch_agent_timeline_response";
+      if (isTimelineResponse) {
+        outboundMessage = failTimelineResponse(outboundMessage, failingTimelineAgentId);
+      }
       const shouldForceTimelineReset =
         forceTimelineEpochReset && serverMessage?.type === "fetch_agent_timeline_response";
       outboundMessage = forceTimelineReset(outboundMessage, shouldForceTimelineReset);
       if (shouldForceTimelineReset) forceTimelineEpochReset = false;
       recordServerMessage(serverMessage);
+      if (isTimelineResponse && holdingTimelineAgentId) {
+        const payload = (serverMessage as { payload?: { agentId?: unknown } } | null)?.payload;
+        if (payload?.agentId === holdingTimelineAgentId) {
+          const forward = outboundMessage;
+          heldTimelineResponses.push(() => ws.send(forward));
+          for (const resolve of heldTimelineResponseWaiters) resolve();
+          heldTimelineResponseWaiters.clear();
+          return;
+        }
+      }
       if (holdServerMessage({ browser: ws, message: outboundMessage, parsed: serverMessage }))
         return;
       if (holdReadyFileUpdate(ws, outboundMessage, fileMessage)) return;
@@ -548,6 +589,7 @@ export async function installDaemonWebSocketGate(page: Page) {
       forward?.();
     },
     async drop(): Promise<void> {
+      blockedConnectionCountAtDrop = blockedConnectionCount;
       acceptingConnections = false;
       const sockets = Array.from(activeSockets);
       activeSockets.clear();
@@ -557,8 +599,30 @@ export async function installDaemonWebSocketGate(page: Page) {
         ),
       );
     },
+    async waitForBlockedConnection(): Promise<void> {
+      if (blockedConnectionCount > blockedConnectionCountAtDrop) return;
+      await new Promise<void>((resolve) => blockedConnectionWaiters.add(resolve));
+    },
     restore(): void {
       acceptingConnections = true;
+    },
+    failTimelineResponses(agentId: string): void {
+      failingTimelineAgentId = agentId;
+    },
+    allowTimelineResponses(): void {
+      failingTimelineAgentId = null;
+    },
+    holdTimelineResponses(agentId: string): void {
+      holdingTimelineAgentId = agentId;
+    },
+    async waitForHeldTimelineResponse(): Promise<void> {
+      while (heldTimelineResponses.length === 0) {
+        await new Promise<void>((resolve) => heldTimelineResponseWaiters.add(resolve));
+      }
+    },
+    releaseHeldTimelineResponses(): void {
+      holdingTimelineAgentId = null;
+      for (const forward of heldTimelineResponses.splice(0)) forward();
     },
     restoreFresh(): void {
       reconnectWithFreshClient = true;

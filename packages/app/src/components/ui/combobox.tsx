@@ -13,7 +13,6 @@ import {
   Text,
   Pressable,
   Modal,
-  TextInput,
   ScrollView,
   Platform,
   StatusBar,
@@ -26,6 +25,7 @@ import {
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import type { EditingTextInputHandle } from "@/components/ui/text-input";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import {
@@ -191,11 +191,11 @@ export function SearchInput({
   onChangeText,
   onSubmitEditing,
   autoFocus = false,
-  useBottomSheetInput = false,
+  useBottomSheetInput: _useBottomSheetInput = false,
   resetKey,
 }: SearchInputProps): ReactElement {
   const { theme } = useUnistyles();
-  const inputRef = useRef<TextInput>(null);
+  const inputRef = useRef<EditingTextInputHandle>(null);
 
   useEffect(() => {
     if (autoFocus && IS_WEB && inputRef.current) {
@@ -209,32 +209,18 @@ export function SearchInput({
   return (
     <View style={styles.searchInputContainer}>
       <Search size={16} color={theme.colors.foregroundMuted} />
-      {useBottomSheetInput ? (
-        <AdaptiveTextInput
-          ref={inputRef}
-          // @ts-expect-error - outlineStyle is web-only
-          style={[styles.searchInput, IS_WEB && { outlineStyle: "none" }]}
-          placeholder={placeholder}
-          resetKey={resetKey}
-          onChangeText={onChangeText}
-          autoCapitalize="none"
-          autoCorrect={false}
-          onSubmitEditing={onSubmitEditing}
-        />
-      ) : (
-        <TextInput
-          key={resetKey}
-          ref={inputRef}
-          // @ts-expect-error - outlineStyle is web-only
-          style={[styles.searchInput, IS_WEB && { outlineStyle: "none" }]}
-          placeholder={placeholder}
-          placeholderTextColor={theme.colors.foregroundMuted}
-          onChangeText={onChangeText}
-          autoCapitalize="none"
-          autoCorrect={false}
-          onSubmitEditing={onSubmitEditing}
-        />
-      )}
+      <AdaptiveTextInput
+        ref={inputRef}
+        // @ts-expect-error - outlineStyle is web-only
+        style={[styles.searchInput, IS_WEB && { outlineStyle: "none" }]}
+        placeholder={placeholder}
+        placeholderTextColor={theme.colors.foregroundMuted}
+        resetKey={resetKey}
+        onChangeText={onChangeText}
+        autoCapitalize="none"
+        autoCorrect={false}
+        onSubmitEditing={onSubmitEditing}
+      />
     </View>
   );
 }

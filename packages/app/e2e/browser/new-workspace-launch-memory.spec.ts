@@ -21,13 +21,13 @@ import {
   type TerminalProfileSeed,
 } from "../support/helpers/new-workspace-launch";
 
-// `sleep` keeps the terminal alive long enough for the UI to attach and
-// render output before the process exits — see new-workspace-launch-terminal.spec.ts.
+// Wait for input until project cleanup kills the terminal. A fixed lifetime
+// can expire before a busy browser attaches or finishes revisiting the composer.
 const PROMPT_PROFILE: TerminalProfile = {
   id: "e2e-memory-profile",
   name: "Memory Profile",
   command: "/bin/sh",
-  args: ["-c", 'echo remembered: "$0"; sleep 10', "{{{prompt}}}"],
+  args: ["-c", 'echo remembered: "$0"; exec cat', "{{{prompt}}}"],
 };
 
 function hasLeftNewWorkspaceRoute(url: URL): boolean {
@@ -64,6 +64,7 @@ test.describe("New workspace: launch target memory", () => {
     await test.step("launching a terminal profile preselects it the next time New workspace opens", async () => {
       await openNewWorkspace();
       await selectLaunchOption(page, PROMPT_PROFILE.id);
+      await expectTerminalLaunchSelected(page, PROMPT_PROFILE.name);
       await fillTerminalPrompt(page, "remember me");
       await submitTerminalLaunch(page);
       await expectWorkspaceOpensWithTerminalTab(page);
@@ -88,6 +89,7 @@ test.describe("New workspace: launch target memory", () => {
 
     await test.step("re-selecting the terminal profile, then removing it daemon-side, falls back to Chat rather than a dead entry", async () => {
       await selectLaunchOption(page, PROMPT_PROFILE.id);
+      await expectTerminalLaunchSelected(page, PROMPT_PROFILE.name);
       await fillTerminalPrompt(page, "second run");
       await submitTerminalLaunch(page);
       await expectWorkspaceOpensWithTerminalTab(page);

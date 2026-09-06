@@ -29,8 +29,6 @@ asarUnpack:
 extraResources:
   - from: ../app/dist
     to: app-dist
-  - from: ../../skills
-    to: skills
   - from: assets/editor-targets
     to: editor-target-icons
 publish:
@@ -39,6 +37,7 @@ publish:
   repo: paseo
 mac:
   artifactName: "Paseo-${version}-${arch}.${ext}"
+  minimumSystemVersion: "13.0.0"
   category: public.app-category.developer-tools
   icon: assets/icon.icns
   hardenedRuntime: true

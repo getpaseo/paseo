@@ -25,6 +25,7 @@ export interface ControlInteractionStyleMap {
 const TIGHT_CONTROL_HEIGHT = 28;
 const COMPACT_CONTROL_HEIGHT = 32;
 const FIELD_CONTROL_HEIGHT = 44;
+export const HEADER_CONTROL_HEIGHT = 26;
 const SEGMENTED_TIGHT_INSET = 2;
 const SEGMENTED_COMPACT_INSET = 2;
 const SEGMENTED_FIELD_INSET = 3;
@@ -78,8 +79,12 @@ function fieldLineHeight(fontSize: number): number {
   return Math.round(fontSize * FIELD_TEXT_LINE_HEIGHT_RATIO);
 }
 
-function fieldVerticalPadding(controlHeight: number, lineHeight: number): number {
-  return (controlHeight - lineHeight) / 2;
+function fieldVerticalPadding(
+  controlHeight: number,
+  lineHeight: number,
+  borderWidth: number,
+): number {
+  return (controlHeight - lineHeight - borderWidth * 2) / 2;
 }
 
 export function getControlInteractionPhase(
@@ -111,18 +116,27 @@ export function resolveControlInteractionStyles(
 }
 
 export function createControlGeometry(theme: Theme) {
+  const controlBorderWidth = theme.borderWidth[1];
   const fieldTextSmLineHeight = fieldLineHeight(theme.fontSize.base);
   const fieldTextMdLineHeight = fieldLineHeight(theme.fontSize.base);
   const fieldControlSm = {
     minHeight: CONTROL_HEIGHTS.compact,
     paddingHorizontal: theme.spacing[3],
-    paddingVertical: fieldVerticalPadding(CONTROL_HEIGHTS.compact, fieldTextSmLineHeight),
+    paddingVertical: fieldVerticalPadding(
+      CONTROL_HEIGHTS.compact,
+      fieldTextSmLineHeight,
+      controlBorderWidth,
+    ),
     borderRadius: theme.borderRadius.md,
   };
   const fieldControlMd = {
     minHeight: CONTROL_HEIGHTS.field,
     paddingHorizontal: theme.spacing[4],
-    paddingVertical: fieldVerticalPadding(CONTROL_HEIGHTS.field, fieldTextMdLineHeight),
+    paddingVertical: fieldVerticalPadding(
+      CONTROL_HEIGHTS.field,
+      fieldTextMdLineHeight,
+      controlBorderWidth,
+    ),
     borderRadius: theme.borderRadius.lg,
   };
   const fieldTextSm = {
@@ -182,7 +196,7 @@ export function createControlGeometry(theme: Theme) {
     fieldTextSm,
     fieldTextMd,
     controlRest: {
-      borderWidth: theme.borderWidth[1],
+      borderWidth: controlBorderWidth,
       borderColor: "transparent",
       outlineWidth: 0,
       outlineColor: "transparent",

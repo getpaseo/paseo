@@ -36,7 +36,12 @@ import { useWorkspaceAttachmentsStore } from "@/attachments/workspace-attachment
 import { useToast } from "@/contexts/toast-context";
 import { useCheckoutGitActionsStore } from "@/git/actions-store";
 import { isNative } from "@/constants/platform";
-import { useIsCompactFormFactor, WORKSPACE_SECONDARY_HEADER_HEIGHT } from "@/constants/layout";
+import { useIsCompactFormFactor } from "@/constants/layout";
+import {
+  PaneContentToolbar,
+  paneContentToolbarIconSize,
+  paneContentToolbarIconButtonStyle,
+} from "@/components/ui/pane-content-toolbar";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
 import { getForgePresentation } from "@/git/forge";
 import { CLIENT_FORGE_VIEW_MODULES } from "@/git/forges/view";
@@ -61,6 +66,7 @@ import { ChecksSection, getCheckIdentity } from "./checks-section";
 import { getActivityVerb, getStateLabel } from "./data";
 import type { PrPaneActivity, PrPaneCheck, PrPaneData, PrState } from "./data";
 import type { ForgeSpecificStatusFacts } from "@/git/merge-capability";
+import { CheckPresentationIcon } from "@/git/check-presentation.view";
 import {
   buildPrTimeline,
   type PrReviewEntry,
@@ -69,8 +75,6 @@ import {
 } from "./timeline";
 import {
   Section,
-  SUMMARY_DANGER_ICON,
-  SUMMARY_SUCCESS_ICON,
   SummaryPill,
   dangerColorMapping,
   foregroundMutedColorMapping,
@@ -124,6 +128,8 @@ const PR_STATE_PRESENTATION: Record<PrState, PrStatePresentation> = {
 const SUMMARY_COMMENT_ICON = (
   <ThemedMessageSquare size={11} uniProps={foregroundMutedColorMapping} />
 );
+const SUMMARY_APPROVAL_ICON = <CheckPresentationIcon presentation="success" size={12} />;
+const SUMMARY_CHANGES_REQUESTED_ICON = <CheckPresentationIcon presentation="failure" size={12} />;
 const ADD_TO_CHAT_MENU_ICON = (
   <ThemedMessageSquarePlus size={14} uniProps={foregroundMutedColorMapping} />
 );
@@ -145,11 +151,11 @@ function kebabTriggerStyle({
   return [styles.kebabButton, hovered && styles.kebabButtonHovered];
 }
 
-function refreshButtonStyle({
-  hovered = false,
-  pressed = false,
-}: PressableStateCallbackType & { hovered?: boolean }) {
-  return [styles.refreshButton, (hovered || pressed) && styles.refreshButtonHovered];
+function refreshButtonStyle(
+  { hovered, pressed }: PressableStateCallbackType & { hovered?: boolean },
+  isCompact: boolean,
+) {
+  return paneContentToolbarIconButtonStyle({ hovered, pressed }, false, isCompact);
 }
 
 function renderKebabTriggerIcon({ hovered }: { hovered?: boolean }) {
@@ -193,10 +199,16 @@ export function PullRequestPane({
   workspaceAttachmentScopeKey?: string;
 }) {
   const { t } = useTranslation();
+  const isCompact = useIsCompactFormFactor();
+  const toolbarRefreshButtonStyle = useCallback(
+    (state: PressableStateCallbackType) => refreshButtonStyle(state, isCompact),
+    [isCompact],
+  );
   const toast = useToast();
   const daemonClient = useHostRuntimeClient(serverId);
-  // COMPAT(githubCheckDetailsRpc): added in v0.1.106, remove after 2026-12-28 once
-  // all supported clients use checkout.forge.get_check_details.*.
+  // COMPAT(githubCheckDetailsRpc): recognize the legacy capability on daemons
+  // predating checkout.forge.get_check_details.*. Remove after 2027-01-17 once
+  // the supported daemon floor is >= v0.2.0.
   const canFetchGitHubCheckDetails = useSessionStore(
     (state) => state.sessions[serverId]?.serverInfo?.features?.githubCheckDetails === true,
   );
@@ -385,8 +397,9 @@ export function PullRequestPane({
               workflowRunId: ref.workflowRunId,
               changeRequestNumber: data.number,
             };
-            // COMPAT(githubCheckDetailsRpc): added in v0.1.106, remove after 2026-12-28 once
-            // all supported clients use checkout.forge.get_check_details.*.
+            // COMPAT(githubCheckDetailsRpc): use the legacy GitHub RPC with
+            // daemons predating checkout.forge.get_check_details.*. Remove after
+            // 2027-01-17 once the supported daemon floor is >= v0.2.0.
             const payload = canFetchForgeCheckDetails
               ? await daemonClient.checkoutForgeGetCheckDetails(request)
               : await daemonClient.checkoutGithubGetCheckDetails(request);
@@ -467,7 +480,7 @@ export function PullRequestPane({
   return (
     <View style={styles.root} testID="pr-pane">
       <ScrollView style={styles.scroll} showsVerticalScrollIndicator={false}>
-        <View style={styles.toolbar} testID="pr-pane-toolbar">
+        <PaneContentToolbar style={styles.toolbar} testID="pr-pane-toolbar">
           <View style={styles.toolbarActions}>
             <Button
               variant="ghost"
@@ -489,7 +502,7 @@ export function PullRequestPane({
                   : t("workspace.git.diff.refreshState", { brand: forgePresentation.brandLabel })
               }
               testID="pr-pane-refresh"
-              style={refreshButtonStyle}
+              style={toolbarRefreshButtonStyle}
               hitSlop={8}
               onPress={handleRefresh}
               disabled={isRefreshing}
@@ -497,16 +510,19 @@ export function PullRequestPane({
               <View style={styles.refreshIcon}>
                 {isRefreshing ? (
                   <ThemedLoadingSpinner
-                    size={ICON_SIZE.sm}
+                    size={paneContentToolbarIconSize(isCompact)}
                     uniProps={foregroundMutedColorMapping}
                   />
                 ) : (
-                  <ThemedRotateCw size={ICON_SIZE.sm} uniProps={foregroundMutedColorMapping} />
+                  <ThemedRotateCw
+                    size={paneContentToolbarIconSize(isCompact)}
+                    uniProps={foregroundMutedColorMapping}
+                  />
                 )}
               </View>
             </Pressable>
           ) : null}
-        </View>
+        </PaneContentToolbar>
 
         <Pressable onPress={handleOpenPrUrl} style={styles.header}>
           {({ hovered }) => (
@@ -557,8 +573,12 @@ export function PullRequestPane({
           onToggle={handleToggleActivity}
           summary={
             <>
-              <SummaryPill count={approvals} icon={SUMMARY_SUCCESS_ICON} variant="success" />
-              <SummaryPill count={changesRequested} icon={SUMMARY_DANGER_ICON} variant="danger" />
+              <SummaryPill count={approvals} icon={SUMMARY_APPROVAL_ICON} variant="success" />
+              <SummaryPill
+                count={changesRequested}
+                icon={SUMMARY_CHANGES_REQUESTED_ICON}
+                variant="danger"
+              />
               <SummaryPill count={commentCount} icon={SUMMARY_COMMENT_ICON} variant="muted" />
             </>
           }
@@ -1239,15 +1259,10 @@ const styles = StyleSheet.create((theme) => ({
     backgroundColor: theme.colors.border,
   },
   toolbar: {
-    height: WORKSPACE_SECONDARY_HEADER_HEIGHT,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    borderBottomWidth: 1,
-    borderBottomColor: theme.colors.border,
-    paddingTop: theme.spacing[2],
     paddingRight: theme.spacing[3],
-    paddingBottom: theme.spacing[2],
     paddingLeft: theme.spacing[3],
   },
   toolbarActions: {
@@ -1262,17 +1277,6 @@ const styles = StyleSheet.create((theme) => ({
     paddingVertical: 0,
     paddingHorizontal: theme.spacing[1],
     borderRadius: theme.borderRadius.base,
-  },
-  refreshButton: {
-    marginLeft: "auto",
-    width: 22,
-    height: 22,
-    borderRadius: theme.borderRadius.md,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  refreshButtonHovered: {
-    backgroundColor: theme.colors.surface2,
   },
   refreshIcon: {
     width: ICON_SIZE.md,

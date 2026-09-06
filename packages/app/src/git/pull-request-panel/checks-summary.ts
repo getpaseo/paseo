@@ -1,4 +1,4 @@
-import type { CheckStatus } from "./check-status";
+import { classifyCheck, type CheckPresentation } from "@/git/check-presentation";
 import type { PrPaneCheck } from "./data";
 
 /**
@@ -6,25 +6,32 @@ import type { PrPaneCheck } from "./data";
  * waiting on, then what needs no attention. Skipped trails everything because it is the
  * only status that says nothing about whether the run is going well.
  */
-const STATUS_ORDER = [
+const PRESENTATION_ORDER = [
+  "actionRequired",
+  "warning",
   "failure",
   "pending",
+  "manual",
   "success",
-  "skipped",
-] as const satisfies readonly CheckStatus[];
+  "ignored",
+] as const satisfies readonly CheckPresentation[];
 
 /** How each status reads inside a count phrase: "2 failing", "4 in progress". */
-const STATUS_NOUN: Record<CheckStatus, string> = {
+const PRESENTATION_NOUN: Record<CheckPresentation, string> = {
+  actionRequired: "needs action",
+  warning: "warning",
   failure: "failing",
   pending: "in progress",
+  manual: "manual",
   success: "successful",
-  skipped: "skipped",
+  ignored: "skipped",
 };
 
 /** The worst thing happening in the run, which is what the headline and the ring report. */
-export type ChecksOutcome = "failure" | "pending" | "success" | "none";
+export type ChecksOutcome = "actionRequired" | "failure" | "pending" | "success" | "none";
 
 const OUTCOME_HEADLINE: Record<ChecksOutcome, string> = {
+  actionRequired: "Some checks need your attention",
   failure: "Some checks were not successful",
   pending: "Some checks haven't completed yet",
   success: "All checks have passed",
@@ -32,14 +39,14 @@ const OUTCOME_HEADLINE: Record<ChecksOutcome, string> = {
 };
 
 export interface ChecksCountPart {
-  status: CheckStatus;
+  status: CheckPresentation;
   count: number;
   /** e.g. "2 failing" */
   text: string;
 }
 
 export interface ChecksGroup {
-  status: CheckStatus;
+  status: CheckPresentation;
   /** e.g. "2 failing checks" */
   label: string;
   checks: readonly PrPaneCheck[];
@@ -69,20 +76,20 @@ export function summarizeChecks(checks: readonly PrPaneCheck[]): ChecksSummary {
   const groups: ChecksGroup[] = [];
   const parts: ChecksCountPart[] = [];
 
-  for (const status of STATUS_ORDER) {
-    const matching = checks.filter((check) => check.status === status);
+  for (const status of PRESENTATION_ORDER) {
+    const matching = checks.filter((check) => classifyCheck(check) === status);
     if (matching.length === 0) {
       continue;
     }
     groups.push({
       status,
-      label: `${matching.length} ${STATUS_NOUN[status]} ${countNoun(matching.length)}`,
+      label: `${matching.length} ${PRESENTATION_NOUN[status]} ${countNoun(matching.length)}`,
       checks: matching,
     });
     parts.push({
       status,
       count: matching.length,
-      text: `${matching.length} ${STATUS_NOUN[status]}`,
+      text: `${matching.length} ${PRESENTATION_NOUN[status]}`,
     });
   }
 
@@ -107,7 +114,15 @@ function selectOutcome(checks: readonly PrPaneCheck[]): ChecksOutcome {
   if (checks.length === 0) {
     return "none";
   }
-  if (checks.some((check) => check.status === "failure")) {
+  if (checks.some((check) => classifyCheck(check) === "actionRequired")) {
+    return "actionRequired";
+  }
+  if (
+    checks.some((check) => {
+      const presentation = classifyCheck(check);
+      return presentation === "failure" || presentation === "warning";
+    })
+  ) {
     return "failure";
   }
   if (checks.some((check) => check.status === "pending")) {

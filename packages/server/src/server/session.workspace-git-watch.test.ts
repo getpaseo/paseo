@@ -1,9 +1,11 @@
+import { createAgentRequestsStub } from "./test-utils/session-stubs.js";
 import { describe, expect, test, vi } from "vitest";
 import path from "node:path";
 import type pino from "pino";
 import { createBranchChangeRouteHandler } from "./script-route-branch-handler.js";
 import { createServiceProxySubsystem, type ServiceProxySubsystem } from "./service-proxy.js";
 import { Session, type SessionOptions } from "./session.js";
+import { OWNER_PERMISSIONS } from "./authorization/index.js";
 import { asInternals, createStub } from "./test-utils/class-mocks.js";
 import { createProviderSnapshotManagerStub } from "./test-utils/session-stubs.js";
 import { createTestLogger } from "../test-utils/test-logger.js";
@@ -190,8 +192,9 @@ function createSessionForWorkspaceGitWatchTests(options?: {
   };
 
   const session = new Session({
+    agentRequests: createAgentRequestsStub(),
     clientId: "test-client",
-    scopes: ["*"],
+    permissions: OWNER_PERMISSIONS,
     onMessage: (message) => emitted.push(message as { type: string; payload: unknown }),
     logger: createStub<pino.Logger>(logger),
     downloadTokenStore: createStub<SessionOptions["downloadTokenStore"]>({}),

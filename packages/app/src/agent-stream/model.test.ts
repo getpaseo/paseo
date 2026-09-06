@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { StreamItem } from "@/types/stream";
+import { projectPluginTimelineItems } from "@/plugins/timeline/projection";
+import { findMountedWindowStart } from "./history-window";
 import { buildAgentStreamRenderModel } from "./model";
 
 function createTimestamp(seed: number): Date {
@@ -25,6 +27,80 @@ function assistantMessage(id: string, seed: number): StreamItem {
 }
 
 describe("buildAgentStreamRenderModel", () => {
+  it("projects a bounded recent turn-aligned history window on every platform", () => {
+    const tail = [
+      userMessage("u1", 1),
+      assistantMessage("a1", 2),
+      userMessage("u2", 3),
+      assistantMessage("a2", 4),
+      userMessage("u3", 5),
+      assistantMessage("a3", 6),
+    ];
+
+    const model = buildAgentStreamRenderModel({
+      isTurnActive: false,
+      activeTurnStartedAt: null,
+      tail,
+      head: [],
+      platform: "native",
+      isMobileBreakpoint: false,
+      historyStart: 2,
+    });
+
+    expect(model.history.map((item) => item.id)).toEqual(["a3", "u3", "a2", "u2"]);
+    expect(model.segments.historyVirtualized).toHaveLength(0);
+  });
+
+  it("derives timing only for the rendered history window", () => {
+    const tail = [
+      userMessage("hidden-u", 1),
+      assistantMessage("hidden-a", 2),
+      userMessage("visible-u", 3),
+      assistantMessage("visible-a", 4),
+    ];
+
+    const model = buildAgentStreamRenderModel({
+      isTurnActive: false,
+      activeTurnStartedAt: null,
+      tail,
+      head: [],
+      platform: "web",
+      isMobileBreakpoint: false,
+      historyStart: 2,
+    });
+
+    expect(model.turnTiming.byAssistantId.has("hidden-a")).toBe(false);
+    expect(model.turnTiming.byAssistantId.get("visible-a")).toEqual({
+      completedAt: tail[3]?.timestamp,
+      durationMs: 1000,
+    });
+  });
+
+  it("keeps the mounted boundary stable when a transformer filters an earlier item", () => {
+    const tail = [
+      userMessage("filtered", 1),
+      assistantMessage("hidden", 2),
+      userMessage("visible-u", 3),
+      assistantMessage("visible-a", 4),
+    ];
+
+    const projectedTail = projectPluginTimelineItems(tail, ({ sourceId }) =>
+      sourceId === "filtered" ? [] : undefined,
+    );
+    const historyStart = findMountedWindowStart({ items: projectedTail, minMountedCount: 2 });
+    const model = buildAgentStreamRenderModel({
+      isTurnActive: false,
+      activeTurnStartedAt: null,
+      tail: projectedTail,
+      head: [],
+      platform: "native",
+      isMobileBreakpoint: false,
+      historyStart,
+    });
+
+    expect(model.history.map((item) => item.id)).toEqual(["visible-a", "visible-u"]);
+  });
+
   it("keeps head separate from committed history on desktop web", () => {
     const tail: StreamItem[] = [];
     for (let index = 0; index < 60; index += 1) {
@@ -126,7 +202,6 @@ describe("buildAgentStreamRenderModel", () => {
 
     expect(model.turnTiming.runningStartedAt).toBe(null);
     expect(model.turnTiming.byAssistantId.get("live-a")).toEqual({
-      startedAt: tail[0]?.timestamp,
       completedAt: head[0]?.timestamp,
       durationMs: 3000,
     });
@@ -146,7 +221,6 @@ describe("buildAgentStreamRenderModel", () => {
 
     expect(model.segments.historyMounted.map((item) => item.id)).toEqual(["a1", "u1"]);
     expect(model.turnTiming.byAssistantId.get("a1")).toEqual({
-      startedAt: tail[0]?.timestamp,
       completedAt: tail[1]?.timestamp,
       durationMs: 3000,
     });

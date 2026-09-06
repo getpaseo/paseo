@@ -1,14 +1,9 @@
+import { STATUS_BUCKET_ORDER } from "@/utils/sidebar-agent-state";
 import type { SidebarWorkspaceEntry } from "@/hooks/sidebar-workspaces-view-model";
 
 export type StatusBucket = SidebarWorkspaceEntry["statusBucket"];
 
-export const STATUS_BUCKET_ORDER: readonly StatusBucket[] = [
-  "needs_input",
-  "failed",
-  "attention",
-  "running",
-  "done",
-] as const;
+export { STATUS_BUCKET_ORDER };
 
 export const STATUS_BUCKET_LABELS: Record<StatusBucket, string> = {
   needs_input: "Needs input",

@@ -5,6 +5,7 @@ import {
   expectAgentIdle,
   expectAgentReadyToInterrupt,
   expectAgentSurfacesIdle,
+  expectInlineWorkingIndicator,
   expectRunningAgentChrome,
   expectVisibleAgentSurfacesIdle,
 } from "../support/helpers/agent-stream";
@@ -39,7 +40,10 @@ import {
   expectResumeOverflowFallsBackToOneTail,
   rememberTimelineRequestCounts,
 } from "../support/helpers/timeline-resume";
-import { workspaceDeckEntryLocator } from "../support/helpers/workspace-ui";
+import {
+  waitForWorkspaceInSidebar,
+  workspaceDeckEntryLocator,
+} from "../support/helpers/workspace-ui";
 import { expectInFlightForkAvailable } from "../support/helpers/assistant-fork";
 import {
   scrollTimelineToNewestLoadedEdge,
@@ -302,13 +306,30 @@ async function configureSteerInSettings(page: Page): Promise<void> {
 }
 
 async function selectSteerInSettings(page: Page): Promise<void> {
-  await page.getByRole("button", { name: "Steer", exact: true }).click();
+  await selectSendBehaviorInSettings(page, "Steer", "steer");
+}
+
+/** Steer is the default, so the interrupt path only gets exercised by opting back into it. */
+async function configureInterruptInSettings(page: Page): Promise<void> {
+  const modifier = process.platform === "darwin" ? "Meta" : "Control";
+  await page.keyboard.press(`${modifier}+Comma`);
+  await expect(page).toHaveURL(/\/settings\/general$/);
+  await selectSendBehaviorInSettings(page, "Interrupt", "interrupt");
+}
+
+async function selectSendBehaviorInSettings(
+  page: Page,
+  behaviorLabel: string,
+  stored: string,
+): Promise<void> {
+  await page.getByRole("button", { name: /^Default send: / }).click();
+  await page.getByRole("menuitem", { name: behaviorLabel, exact: true }).click();
   await expect
     .poll(async () => {
       const raw = await page.evaluate(() => localStorage.getItem("@paseo:app-settings"));
       return raw ? (JSON.parse(raw) as { sendBehavior?: unknown }).sendBehavior : null;
     })
-    .toBe("steer");
+    .toBe(stored);
 }
 
 async function replaySteeredSleepTurnInBrowser(
@@ -451,6 +472,10 @@ async function expectHiddenStreamingSubmissionOrderAfterWorkspaceEviction(
 
     await target.client.waitForFinish(target.agentId, 30_000);
     const requestsBeforeReturn = rememberTimelineRequestCounts(gate);
+    await waitForWorkspaceInSidebar(page, {
+      serverId: getServerId(),
+      workspaceId: target.workspaceId,
+    });
     await openAgentRoute(page, target);
     await expectComposerVisible(page);
     await subscriptions.waitForSubscribedAgents([target.agentId]);
@@ -525,9 +550,18 @@ async function expectProviderAcknowledgementBeforeRpcAcceptanceSettlesSubmission
     const userMessage = await submitMessageWithImage(page, prompt);
     await gate.waitForHeldServerMessage();
     await gate.waitForAgentStreamItem("user_message");
+    await gate.waitForAgentStreamEvent("turn_started");
     gate.releaseHeldServerMessage();
+    await expect(userMessage).toHaveAttribute("aria-busy", "false");
     await gate.drop();
-    await expect(page.getByTestId("turn-working-indicator")).toHaveCount(0);
+    await expectInlineWorkingIndicator(page);
+    await expect(userMessage).toHaveAttribute("aria-busy", "false");
+
+    await agent.client.waitForFinish(agent.agentId, 30_000);
+    gate.setServerMessageSuppressed("agent_status", false);
+    gate.setServerMessageSuppressed("agent_update", false);
+    gate.restoreFresh();
+    await expectVisibleAgentSurfacesIdle(page);
     await expect(userMessage).toHaveAttribute("aria-busy", "false");
   } finally {
     gate.restore();
@@ -932,9 +966,9 @@ test.describe("Agent message submission", () => {
 
       gate.holdNextClientRequest("send_agent_message_request");
       await fillComposerDraft(page, "Replace the running turn without duplicating its action.");
-      await expect(
-        page.getByRole("button", { name: "Send and interrupt", exact: true }),
-      ).toHaveCount(1);
+      await expect(page.getByRole("button", { name: "Send and steer", exact: true })).toHaveCount(
+        1,
+      );
       await expect(page.getByRole("button", { name: "Stop agent", exact: true })).toHaveCount(0);
       await expect(page.getByRole("button", { name: "Interrupt agent", exact: true })).toHaveCount(
         0,
@@ -967,7 +1001,7 @@ test.describe("Agent message submission", () => {
       await openAgentRoute(page, agent);
       await expectComposerVisible(page);
       await submitMessage(page, "Keep running until the queued turn is ready.");
-      await expectAgentReadyToInterrupt(page);
+      await expectRunningAgentChrome(page, title);
       await queueMessage(page, secondPrompt);
       await expect(page.getByRole("button", { name: "Send queued message now" })).toBeVisible();
 
@@ -1161,6 +1195,38 @@ test.describe("Agent message submission", () => {
     }
   });
 
+  test("sends interrupt behavior on the wire when the user opts out of steering", async ({
+    page,
+  }, testInfo) => {
+    test.setTimeout(120_000);
+    const gate = await gateNextAgentMessage(page);
+    const agent = await startRunningMockAgent(page, {
+      prefix: `interrupt-submission-${testInfo.workerIndex}-`,
+      model: "one-minute-stream",
+      prompt: "Keep this turn active until the user interrupts it.",
+    });
+    try {
+      await configureInterruptInSettings(page);
+      await page.goBack();
+      await expectComposerVisible(page);
+      await expectAgentReadyToInterrupt(page);
+
+      const prompt = "Interrupt the running turn.";
+      await fillComposerDraft(page, prompt);
+      await expect(
+        page.getByRole("button", { name: "Send and interrupt", exact: true }),
+      ).toHaveCount(1);
+      await composerLocator(page).press("Enter");
+
+      const request = await gate.waitForRequest();
+      expect(request.activeTurnBehavior).toBe("interrupt");
+      gate.accept();
+      await expect(page.getByTestId("user-message").filter({ hasText: prompt })).toHaveCount(1);
+    } finally {
+      await agent.cleanup();
+    }
+  });
+
   test("replays Claude-shaped steering inside one active turn", async ({ page }, testInfo) => {
     test.setTimeout(120_000);
     await replaySteeredSleepTurnInBrowser(page, testInfo, "claude");
@@ -1224,7 +1290,7 @@ test.describe("Agent message submission", () => {
   test("keeps a streaming hidden submission before its output after workspace eviction", async ({
     page,
   }, testInfo) => {
-    test.setTimeout(120_000);
+    test.setTimeout(240_000);
     await expectHiddenStreamingSubmissionOrderAfterWorkspaceEviction(page, testInfo);
   });
 

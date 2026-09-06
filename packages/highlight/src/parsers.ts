@@ -14,11 +14,13 @@ import { parser as phpParser } from "@lezer/php";
 import { parser as rustParser } from "@lezer/rust";
 import { parser as xmlParser } from "@lezer/xml";
 import { parser as yamlParser } from "@lezer/yaml";
-import { csharpLanguage } from "@replit/codemirror-lang-csharp";
-import { nixLanguage } from "@replit/codemirror-lang-nix";
-import { svelteLanguage } from "@replit/codemirror-lang-svelte";
 import { parser as elixirParser } from "lezer-elixir";
 import type { Parser } from "@lezer/common";
+import { csharpLanguage } from "./csharp/language.js";
+import { astroParser } from "./astro/parser.js";
+import { nixLanguage } from "./nix/language.js";
+import { parser as svelteBaseParser } from "./svelte/parser.js";
+import { configureNesting, defaultNesting } from "./svelte/nesting.js";
 
 function language(parser: Parser): Language {
   return new Language(defineLanguageFacet(), parser);
@@ -51,7 +53,9 @@ const languagesByExtension: Record<string, Language> = {
   html: language(htmlParser),
   htm: language(htmlParser),
   // Svelte
-  svelte: svelteLanguage,
+  svelte: language(svelteBaseParser.configure({ wrap: configureNesting(defaultNesting) })),
+  // Astro
+  astro: language(astroParser),
   // XML
   xml: language(xmlParser),
   // Java
