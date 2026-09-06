@@ -3223,10 +3223,18 @@ class ClaudeAgentSession implements AgentSession {
       return { thinking: { type: "disabled" }, effort: undefined, ultracode: false };
     }
     if (thinkingOptionId === CLAUDE_ULTRACODE_THINKING_OPTION_ID) {
-      return { thinking: { type: "adaptive" }, effort: "xhigh", ultracode: true };
+      return {
+        thinking: { type: "adaptive", display: "summarized" },
+        effort: "xhigh",
+        ultracode: true,
+      };
     }
     if (thinkingOptionId && isClaudeThinkingEffort(thinkingOptionId)) {
-      return { thinking: { type: "adaptive" }, effort: thinkingOptionId, ultracode: false };
+      return {
+        thinking: { type: "adaptive", display: "summarized" },
+        effort: thinkingOptionId,
+        ultracode: false,
+      };
     }
     return { thinking: undefined, effort: undefined, ultracode: false };
   }

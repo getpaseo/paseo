@@ -880,7 +880,7 @@ describe("ClaudeAgentSession features", () => {
 
     expect(queryFactory.mock.calls[0]?.[0].options).toMatchObject({
       effort: "xhigh",
-      thinking: { type: "adaptive" },
+      thinking: { type: "adaptive", display: "summarized" },
       settings: { ultracode: true },
     });
 
@@ -1065,7 +1065,7 @@ describe("ClaudeAgentSession features", () => {
 
   test.each([
     ["supported model", "claude-opus-4-8", { type: "disabled" }, undefined],
-    ["unsupported model", "claude-fable-5", { type: "adaptive" }, "high"],
+    ["unsupported model", "claude-fable-5", { type: "adaptive", display: "summarized" }, "high"],
     ["custom model", "openrouter/anthropic/claude-opus-4-8", undefined, undefined],
     ["provider default", null, undefined, undefined],
   ])("reconciles Off when switching to a %s", async (_label, modelId, thinking, effort) => {
