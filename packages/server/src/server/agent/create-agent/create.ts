@@ -115,6 +115,8 @@ export interface CreateAgentFromMcpInput {
     refName?: string;
     action?: "branch-off" | "checkout";
     githubPrNumber?: number;
+    /** Land in the existing worktree of that name rather than beside it. */
+    reuseExisting?: boolean;
   };
 }
 
@@ -544,6 +546,11 @@ async function resolveMcpCwd(params: {
       githubPrNumber: worktree.githubPrNumber,
       firstAgentContext: { prompt: params.initialPrompt },
       runSetup: false,
+      // A Hub execution names its worktree after the work it serves (a Linear issue), not after
+      // itself, so every run about that work must land in the same one. Without this, each run
+      // gets `pos-33`, `pos-33-1`, `pos-33-2` — fresh copies of the default branch, each blind
+      // to what the previous ones changed.
+      ...(worktree.reuseExisting === undefined ? {} : { reuseExisting: worktree.reuseExisting }),
       paseoHome: dependencies.paseoHome,
       worktreesRoot: dependencies.worktreesRoot,
     },

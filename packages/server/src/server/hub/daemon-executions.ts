@@ -1,4 +1,5 @@
 import type {
+  ActiveTurnBehavior,
   AgentSnapshotPayload,
   AgentStreamEventPayload,
   CreateAgentWorktreeTarget,
@@ -14,6 +15,7 @@ import type { CreatePaseoWorktreeWorkflowResult } from "../worktree-session.js";
 import { buildStoredAgentPayload } from "../agent/agent-projections.js";
 import { serializeAgentSnapshot, serializeAgentStreamEvent } from "../messages.js";
 import { daemonExecutionKey, type DaemonAgentOwner } from "../agent/agent-owner.js";
+import type { PromptDispatchDisposition } from "../agent/agent-prompt.js";
 
 export interface HubExecutionAgentCreateInput {
   executionId: string;
@@ -37,6 +39,18 @@ export interface HubExecutionControlInput {
   action: HubExecutionControlAction;
 }
 
+export interface HubExecutionPromptInput {
+  executionId: string;
+  prompt: string;
+  activeTurnBehavior?: ActiveTurnBehavior;
+}
+
+export interface HubExecutionPromptResult {
+  /** False when this execution has no live agent here; the caller starts one instead. */
+  delivered: boolean;
+  disposition: PromptDispatchDisposition | null;
+}
+
 export interface OwnedAgentSnapshot {
   executionId: string;
   agent: AgentSnapshotPayload;
@@ -57,6 +71,11 @@ interface DaemonExecutionsOptions {
   agentStorage: AgentStorage;
   createAgent: BoundCreateAgentCommand;
   interruptAgent: (agentId: string) => Promise<unknown>;
+  promptAgent: (input: {
+    agentId: string;
+    prompt: string;
+    activeTurnBehavior?: ActiveTurnBehavior;
+  }) => Promise<{ disposition: PromptDispatchDisposition }>;
   archiveWorkspace: (workspaceId: string, requestId: string) => Promise<unknown>;
   cleanupFailedCreate?: (input: {
     createdWorktree: CreatePaseoWorktreeWorkflowResult | null;
@@ -66,6 +85,7 @@ interface DaemonExecutionsOptions {
 
 export interface HubExecutionAgents {
   create(input: HubExecutionAgentCreateInput): Promise<OwnedAgentSnapshot>;
+  prompt(input: HubExecutionPromptInput): Promise<HubExecutionPromptResult>;
   control(input: HubExecutionControlInput): Promise<void>;
   subscribe(listener: (event: OwnedAgentEvent) => void): () => void;
   invalidateAuthority(): Promise<void>;
@@ -110,6 +130,38 @@ export class DaemonExecutions implements HubExecutionAgents {
     });
     this.pendingCreates.set(key, create);
     return create;
+  }
+
+  /**
+   * Sends a message to the agent this execution already owns.
+   *
+   * Ordered behind the same per-execution tail as control actions: a prompt racing an archive, or
+   * two prompts racing each other, would otherwise reach the agent in whichever order the event
+   * loop happened to pick. `delivered: false` is the ordinary answer for an execution whose agent
+   * is gone — the caller decides whether to start a new one, and only a real failure throws.
+   */
+  prompt(input: HubExecutionPromptInput): Promise<HubExecutionPromptResult> {
+    if (!this.authorityActive) {
+      return Promise.reject(new Error("Hub relationship authority is no longer active"));
+    }
+    const owner = this.owner(input.executionId);
+    const executionKey = daemonExecutionKey(owner);
+    const previous =
+      this.controlTails.get(executionKey) ??
+      this.pendingCreates.get(executionKey)?.then(() => undefined) ??
+      Promise.resolve();
+    const authorityGeneration = this.authorityGeneration;
+    const prompt = previous
+      .catch(() => undefined)
+      .then(() => this.promptOwnedExecution(owner, input, authorityGeneration));
+    this.controlTails.set(
+      executionKey,
+      prompt.then(
+        () => undefined,
+        () => undefined,
+      ),
+    );
+    return prompt;
   }
 
   control(input: HubExecutionControlInput): Promise<void> {
@@ -245,6 +297,28 @@ export class DaemonExecutions implements HubExecutionAgents {
       executionId: owner.executionId,
       agent: serializeAgentSnapshot(result.liveSnapshot),
     };
+  }
+
+  private async promptOwnedExecution(
+    owner: DaemonAgentOwner,
+    input: HubExecutionPromptInput,
+    authorityGeneration: number,
+  ): Promise<HubExecutionPromptResult> {
+    this.requireAuthority(authorityGeneration, "execution prompt");
+    const record = await this.agentStorage.findByDaemonExecution(owner);
+    this.requireAuthority(authorityGeneration, "execution prompt");
+    // An archived agent is a finished conversation. Reviving it silently would resurrect a
+    // workspace the daemon already tore down, so the caller is told to start a fresh one.
+    if (!record || record.archivedAt) return { delivered: false, disposition: null };
+    this.requireOwner(record);
+    const result = await this.options.promptAgent({
+      agentId: record.id,
+      prompt: input.prompt,
+      ...(input.activeTurnBehavior === undefined
+        ? {}
+        : { activeTurnBehavior: input.activeTurnBehavior }),
+    });
+    return { delivered: true, disposition: result.disposition };
   }
 
   private async controlOwnedExecution(
@@ -391,6 +465,10 @@ function toCreateAgentWorktree(target: CreateAgentWorktreeTarget | undefined) {
       worktreeName: target.newBranch,
       baseBranch: target.base,
       action: "branch-off" as const,
+      // Hub worktrees are named after the work they serve, so two runs about the same issue
+      // belong in the same one. Suffixing instead would hand each run a fresh copy of the base
+      // branch, blind to what the previous ones changed.
+      reuseExisting: true,
     };
   }
   if (target.mode === "checkout-branch") {
