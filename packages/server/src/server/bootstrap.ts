@@ -6,6 +6,10 @@ import { randomUUID } from "node:crypto";
 import { hostname as getHostname } from "node:os";
 import path from "node:path";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
+import {
+  LATEST_PROTOCOL_VERSION,
+  SUPPORTED_PROTOCOL_VERSIONS,
+} from "@modelcontextprotocol/sdk/types.js";
 import type { Logger } from "pino";
 import { z } from "zod";
 import { createBranchChangeRouteHandler } from "./script-route-branch-handler.js";
@@ -496,6 +500,44 @@ function createBootstrapManagedProcessRegistry(
     terminateProcess: terminateWithTreeKill,
     logger,
   });
+}
+
+
+/**
+ * Accepts an `MCP-Protocol-Version` the bundled SDK has never heard of.
+ *
+ * A client that ships ahead of the SDK sends a date we do not know, and the transport answers
+ * `400 Unsupported protocol version` on every call. For an agent that is fatal in a way nobody
+ * sees: it keeps working, but every hub tool is gone, so it can neither reply nor finish, and the
+ * run ends "succeeded" with nothing said. Measured on 2026-09-06 with Claude Code 2.1.259, which
+ * sends `2026-07-28`; the newest published SDK (1.30.0) still tops out at 2025-11-25.
+ *
+ * A date NEWER than ours is downgraded to ours, which is what version negotiation is for -- MCP
+ * is backward compatible, and a client that asked for more can be served less. A date OLDER than
+ * ours, or one that is not a date at all, is left untouched: the SDK must keep rejecting what it
+ * genuinely cannot speak.
+ */
+export function clampAgentMcpProtocolVersion(request: {
+  headers: Record<string, unknown>;
+  rawHeaders?: string[];
+}): void {
+  const raw = request.headers["mcp-protocol-version"];
+  const requested = Array.isArray(raw) ? raw[0] : raw;
+  if (typeof requested !== "string") return;
+  if (SUPPORTED_PROTOCOL_VERSIONS.includes(requested)) return;
+  if (!/^\d{4}-\d{2}-\d{2}$/u.test(requested)) return;
+  if (requested <= LATEST_PROTOCOL_VERSION) return;
+  request.headers["mcp-protocol-version"] = LATEST_PROTOCOL_VERSION;
+  // `@hono/node-server`, which the SDK transport uses, rebuilds the Web Request from `rawHeaders`
+  // and never reads `headers`. Rewriting only the parsed object changes nothing -- measured on
+  // cs8, where the 400 kept coming after the first attempt at this fix.
+  const rawList = request.rawHeaders;
+  if (rawList === undefined) return;
+  for (let i = 0; i < rawList.length; i += 2) {
+    if (rawList[i]?.toLowerCase() === "mcp-protocol-version") {
+      rawList[i + 1] = LATEST_PROTOCOL_VERSION;
+    }
+  }
 }
 
 async function reconcileManagedProcessLedger(
@@ -1521,6 +1563,7 @@ export async function createPaseoDaemon(
           void server.close();
         });
 
+        clampAgentMcpProtocolVersion(req as unknown as { headers: Record<string, unknown>; rawHeaders?: string[] });
         await transport.handleRequest(
           req as unknown as IncomingMessage,
           res as unknown as ServerResponse,
