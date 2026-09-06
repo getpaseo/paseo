@@ -92,6 +92,12 @@ highest painted scope alone receives overlay keys, traps focus, and restores
 focus when it closes. Do not add component-local global Escape listeners: two
 stacked overlays would both close on one keypress.
 
+Search fields and menus that drive a result list also own Ctrl+N, Ctrl+P,
+ArrowUp, ArrowDown, and Enter. Mark the active web surface with the shared
+list-search dataset so capture-phase global shortcuts yield, and register the
+active native surface with the list-search dispatcher. Only the topmost open
+surface handles the event.
+
 If an overlay is rendered by a global host rather than beneath its opener in
 the React tree, carry the opener's current layer through the host store and
 restore it with `OverlayLayerProvider`. Otherwise painting and keyboard
