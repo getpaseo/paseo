@@ -1,11 +1,14 @@
-import React, { useMemo, type ReactNode } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
+  Pressable,
   View,
   Text,
   ScrollView as RNScrollView,
   type StyleProp,
   type ViewStyle,
 } from "react-native";
+import * as Clipboard from "expo-clipboard";
+import { Check, Copy } from "lucide-react-native";
 import { ScrollView as GHScrollView } from "react-native-gesture-handler";
 import { StyleSheet } from "react-native-unistyles";
 import type { TFunction } from "i18next";
@@ -27,6 +30,7 @@ import { getCodeInsets } from "./code-insets";
 import { isWeb } from "@/constants/platform";
 
 const ScrollView = isWeb ? RNScrollView : GHScrollView;
+const COPIED_RESET_MS = 1500;
 
 // ---- Content Component ----
 
@@ -427,6 +431,80 @@ function EditDetailSection({ diffLines, ds }: EditDetailProps) {
   );
 }
 
+function isMarkdownPath(filePath: string | null | undefined): boolean {
+  return /\.(md|mdx|markdown)$/i.test(filePath ?? "");
+}
+
+function WriteDetailSection({
+  content,
+  filePath,
+  ds,
+}: {
+  content: string;
+  filePath?: string | null;
+  ds: DetailStyles;
+}) {
+  const containerStyle = useMemo(
+    () => [ds.sectionFillStyle, styles.copyableSection],
+    [ds.sectionFillStyle],
+  );
+
+  return (
+    <View style={containerStyle}>
+      {isMarkdownPath(filePath) ? <CopyTextButton content={content} /> : null}
+      <ScrollableTextSection
+        content={content}
+        ds={ds}
+        wrapInSectionFill={false}
+        filePath={filePath}
+      />
+    </View>
+  );
+}
+
+function CopyTextButton({ content }: { content: string }) {
+  const { t } = useTranslation();
+  const [copied, setCopied] = useState(false);
+  const resetRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(
+    () => () => {
+      if (resetRef.current) clearTimeout(resetRef.current);
+    },
+    [],
+  );
+
+  const handlePress = useCallback(async () => {
+    if (!content) return;
+    await Clipboard.setStringAsync(content);
+    setCopied(true);
+    if (resetRef.current) clearTimeout(resetRef.current);
+    resetRef.current = setTimeout(() => {
+      setCopied(false);
+      resetRef.current = null;
+    }, COPIED_RESET_MS);
+  }, [content]);
+
+  return (
+    <Pressable
+      onPress={handlePress}
+      style={styles.copyButton}
+      accessibilityRole="button"
+      accessibilityLabel={copied ? t("common.states.copied") : t("common.actions.copy")}
+      hitSlop={8}
+    >
+      {({ hovered }) => {
+        const iconColor = hovered ? styles.copyIconHovered.color : styles.copyIcon.color;
+        return copied ? (
+          <Check size={14} color={iconColor} />
+        ) : (
+          <Copy size={14} color={iconColor} />
+        );
+      }}
+    </Pressable>
+  );
+}
+
 interface ScrollableContentProps {
   content: string;
   ds: DetailStyles;
@@ -708,12 +786,7 @@ function buildDetailSections(
     return [
       <View key="write" style={ds.sectionFillStyle}>
         {detail.content ? (
-          <ScrollableTextSection
-            content={detail.content}
-            ds={ds}
-            wrapInSectionFill={false}
-            filePath={detail.filePath}
-          />
+          <WriteDetailSection content={detail.content} ds={ds} filePath={detail.filePath} />
         ) : null}
       </View>,
     ];
@@ -879,6 +952,22 @@ const styles = StyleSheet.create((theme) => {
     },
     section: {
       gap: theme.spacing[2],
+    },
+    copyableSection: {
+      position: "relative",
+    },
+    copyButton: {
+      position: "absolute",
+      top: theme.spacing[2],
+      right: theme.spacing[2],
+      zIndex: 1,
+      padding: theme.spacing[1],
+    },
+    copyIcon: {
+      color: theme.colors.foregroundMuted,
+    },
+    copyIconHovered: {
+      color: theme.colors.foreground,
     },
     fillHeight: {
       flex: 1,
