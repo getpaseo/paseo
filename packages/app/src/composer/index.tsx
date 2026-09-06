@@ -42,6 +42,7 @@ import {
 } from "@/composer/agent-controls";
 import { ContextWindowMeter } from "@/components/context-window-meter";
 import { KeyboardTranslateView } from "@/components/keyboard-translate-view";
+import { shouldRenderCompactContextWindowSlot } from "./context-window-slot";
 import { useImageAttachmentPicker } from "@/hooks/use-image-attachment-picker";
 import { selectAgentTurnPresentation, useSessionStore } from "@/stores/session-store";
 import { useFilePicker } from "@/hooks/use-file-picker";
@@ -299,8 +300,18 @@ function renderContextWindowMeter(
 function resolveContextWindowPlacement(
   meter: ReactElement | null,
   reserveSlot: boolean,
-): ReactNode {
-  return reserveSlot ? <View style={styles.contextWindowMeterSlot}>{meter}</View> : null;
+  isCompactLayout: boolean,
+): { beforeVoiceContent: ReactNode; compactContextWindowContent: ReactNode } {
+  if (!reserveSlot) {
+    return { beforeVoiceContent: null, compactContextWindowContent: null };
+  }
+  if (isCompactLayout) {
+    return { beforeVoiceContent: null, compactContextWindowContent: meter };
+  }
+  return {
+    beforeVoiceContent: <View style={styles.contextWindowMeterSlot}>{meter}</View>,
+    compactContextWindowContent: null,
+  };
 }
 
 interface RenderLeftContentArgs {
@@ -1998,6 +2009,10 @@ function ComposerContentImpl({
 
   const contextWindowPending = agentState.status === "initializing" || isAgentRunning;
   const contextWindowMeterGlyphSize = isCompactLayout ? ICON_SIZE.md : buttonIconSize;
+  const contextWindowAgentKey = `${serverId}:${agentId}`;
+  const [reservedCompactContextWindowAgentKey, setReservedCompactContextWindowAgentKey] = useState<
+    string | null
+  >(null);
 
   const contextWindowMeter = useMemo(
     () =>
@@ -2005,7 +2020,7 @@ function ComposerContentImpl({
         contextWindowMaxTokens,
         contextWindowUsedTokens,
         agentState.totalCostUsd,
-        false,
+        isCompactLayout,
         serverId,
         agentState.provider,
         contextWindowPending,
@@ -2015,16 +2030,31 @@ function ComposerContentImpl({
       contextWindowMaxTokens,
       contextWindowUsedTokens,
       agentState.totalCostUsd,
+      isCompactLayout,
       serverId,
       agentState.provider,
       contextWindowPending,
       contextWindowMeterGlyphSize,
     ],
   );
-  const beforeVoiceContent = useMemo(
-    () => resolveContextWindowPlacement(contextWindowMeter, hasAgent),
-    [contextWindowMeter, hasAgent],
+  const { beforeVoiceContent, compactContextWindowContent } = useMemo(
+    () => resolveContextWindowPlacement(contextWindowMeter, hasAgent, isCompactLayout),
+    [contextWindowMeter, hasAgent, isCompactLayout],
   );
+  const shouldReserveCompactContextWindowSlot = shouldRenderCompactContextWindowSlot(
+    isCompactLayout,
+    hasAgent,
+    contextWindowMeter !== null,
+    contextWindowAgentKey,
+    reservedCompactContextWindowAgentKey,
+  );
+
+  useEffect(() => {
+    if (!isCompactLayout || !hasAgent || contextWindowMeter === null) return;
+    setReservedCompactContextWindowAgentKey((current) =>
+      current === contextWindowAgentKey ? current : contextWindowAgentKey,
+    );
+  }, [contextWindowAgentKey, contextWindowMeter, hasAgent, isCompactLayout]);
 
   const hasGithubAttachment = useMemo(
     () =>
@@ -2382,6 +2412,11 @@ function ComposerContentImpl({
                   submitLabel={submitLabel}
                 />
               </RenderProfile>
+              {shouldReserveCompactContextWindowSlot ? (
+                <View style={styles.contextWindowMeterCompactSlot}>
+                  {compactContextWindowContent}
+                </View>
+              ) : null}
               <Combobox
                 options={githubSearchOptions}
                 value=""
@@ -2472,6 +2507,10 @@ const styles = StyleSheet.create((theme: Theme) => ({
     flexShrink: 0,
     alignItems: "center",
     justifyContent: "center",
+  },
+  contextWindowMeterCompactSlot: {
+    alignSelf: "stretch",
+    height: 28,
   },
   realtimeVoiceButton: {
     width: 28,

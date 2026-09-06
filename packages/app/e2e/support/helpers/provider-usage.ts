@@ -9,7 +9,12 @@ interface ProviderUsageFixturePayload {
 
 export interface ProviderUsageFixture {
   requestCount(): number;
+  releaseNextResponse(): void;
   waitForRequestCount(count: number): Promise<void>;
+}
+
+interface ProviderUsageFixtureOptions {
+  deferResponses?: boolean;
 }
 
 type WebSocketMessage = string | Buffer;
@@ -78,9 +83,11 @@ function withProviderUsageFeature(message: WebSocketMessage): string | null {
 export async function installProviderUsageFixture(
   page: Page,
   payloads: ProviderUsageFixturePayload[],
+  options: ProviderUsageFixtureOptions = {},
 ): Promise<ProviderUsageFixture> {
   let requests = 0;
   const waiters: Array<{ count: number; resolve: () => void }> = [];
+  const pendingResponses: Array<() => void> = [];
 
   function notifyWaiters() {
     for (const waiter of waiters.splice(0)) {
@@ -114,19 +121,26 @@ export async function installProviderUsageFixture(
         }
         const payload = payloadForRequest();
         notifyWaiters();
-        ws.send(
-          JSON.stringify({
-            type: "session",
-            message: {
-              type: "provider.usage.list.response",
-              payload: {
-                requestId,
-                fetchedAt: payload.fetchedAt,
-                providers: payload.providers,
+        const sendResponse = () => {
+          ws.send(
+            JSON.stringify({
+              type: "session",
+              message: {
+                type: "provider.usage.list.response",
+                payload: {
+                  requestId,
+                  fetchedAt: payload.fetchedAt,
+                  providers: payload.providers,
+                },
               },
-            },
-          }),
-        );
+            }),
+          );
+        };
+        if (options.deferResponses) {
+          pendingResponses.push(sendResponse);
+        } else {
+          sendResponse();
+        }
         return;
       }
       server.send(message);
@@ -141,6 +155,13 @@ export async function installProviderUsageFixture(
   return {
     requestCount() {
       return requests;
+    },
+    releaseNextResponse() {
+      const sendResponse = pendingResponses.shift();
+      if (!sendResponse) {
+        throw new Error("No deferred provider usage response is pending.");
+      }
+      sendResponse();
     },
     waitForRequestCount(count: number) {
       if (requests >= count) {

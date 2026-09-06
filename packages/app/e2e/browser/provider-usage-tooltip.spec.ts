@@ -19,7 +19,7 @@ async function openMockAgent(page: Page) {
 }
 
 test.describe("provider usage tooltip", () => {
-  test("fetches usage when the context tooltip opens and renders the active provider", async ({
+  test("shows the active provider's usage when the mobile context meter opens", async ({
     page,
   }) => {
     test.setTimeout(180_000);
@@ -49,7 +49,7 @@ test.describe("provider usage tooltip", () => {
     try {
       expect(usageFixture.requestCount()).toBe(0);
 
-      await page.getByTestId("context-window-meter").hover();
+      await page.getByTestId("context-window-meter").click();
       await usageFixture.waitForRequestCount(1);
 
       await expect(page.getByText("Mock provider", { exact: true })).toBeVisible({
@@ -57,14 +57,15 @@ test.describe("provider usage tooltip", () => {
       });
       await expect(page.getByText("Test plan")).toBeVisible();
       await expect(page.getByText("Session", { exact: true })).toBeVisible();
-      await expect(page.getByText("42%")).toBeVisible();
+      await expect(page.getByText("42% used", { exact: true })).toBeVisible();
     } finally {
       await session.cleanup();
     }
   });
 
-  test("refreshes usage again each time the tooltip is shown", async ({ page }) => {
+  test("does not show provider usage without context telemetry", async ({ page }) => {
     test.setTimeout(180_000);
+    await page.setViewportSize(MOBILE_VIEWPORT);
     const usageFixture = await installProviderUsageFixture(page, [
       {
         fetchedAt: "2026-06-19T00:00:00.000Z",
@@ -74,38 +75,20 @@ test.describe("provider usage tooltip", () => {
             displayName: "Mock provider",
             status: "available",
             planLabel: "Test plan",
-            windows: [{ id: "session", label: "Session", usedPct: 41 }],
-          },
-        ],
-      },
-      {
-        fetchedAt: "2026-06-19T00:01:00.000Z",
-        providers: [
-          {
-            providerId: "mock",
-            displayName: "Mock provider",
-            status: "available",
-            planLabel: "Test plan",
-            windows: [{ id: "session", label: "Session", usedPct: 64 }],
+            windows: [{ id: "session", label: "Session", usedPct: 37 }],
           },
         ],
       },
     ]);
-    const session = await openMockAgent(page);
+    const session = await seedMockAgentWorkspace({
+      repoPrefix: "provider-usage-no-context-",
+      title: "Provider usage without context telemetry",
+    });
     try {
-      const meter = page.getByTestId("context-window-meter");
-
-      await meter.hover();
-      await usageFixture.waitForRequestCount(1);
-      await expect(page.getByText("41%")).toBeVisible({ timeout: 10_000 });
-
-      await page.mouse.move(0, 0);
-      await expect(page.getByText("Mock provider", { exact: true })).toHaveCount(0);
-
-      await meter.hover();
-      await usageFixture.waitForRequestCount(2);
-      expect(usageFixture.requestCount()).toBe(2);
-      await expect(page.getByText("64%")).toBeVisible();
+      await openAgentRoute(page, session);
+      await expectComposerVisible(page);
+      await expect(page.getByTestId("context-window-meter")).toHaveCount(0);
+      expect(usageFixture.requestCount()).toBe(0);
     } finally {
       await session.cleanup();
     }
