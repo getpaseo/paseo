@@ -100,6 +100,17 @@ async function createPaseoWorktreeWithPriority(
       baseBranch: resolveIntentBaseBranch(createdWorktree.intent),
       title: input.title?.trim() || resolveFirstAgentPromptTitle(input.firstAgentContext),
       expectsInitialAgent: Boolean(input.firstAgentContext),
+      ...(createdWorktree.intent.kind === "checkout-change-request" &&
+      createdWorktree.intent.headRepository
+        ? {
+            untrustedSource: {
+              kind: "change_request" as const,
+              forge: createdWorktree.intent.forge,
+              number: createdWorktree.intent.changeRequestNumber,
+              headRepository: createdWorktree.intent.headRepository,
+            },
+          }
+        : {}),
     });
 
     deps.github.invalidate({ cwd: createdWorktree.worktree.worktreePath });

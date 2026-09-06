@@ -230,11 +230,43 @@ test("createPaseoApi borrows daemon capabilities without exposing connection own
     "config",
     "projects",
     "providers",
+    "terminals",
     "workspaces",
   ]);
   expect("connect" in paseo).toBe(false);
   expect("close" in paseo).toBe(false);
   expect("skills" in paseo.agents).toBe(false);
+});
+
+test("agent handles send permission responses for their agent", async () => {
+  const { client, ws } = await connectClient();
+
+  await client.agents.ref("agent_sdk").respondToPermission({
+    requestId: "permission-request",
+    response: {
+      behavior: "deny",
+      selectedActionId: "deny-once",
+      message: "Not approved",
+      interrupt: true,
+    },
+  });
+
+  expect(parseSentFrame(ws.sent.at(-1))).toEqual({
+    type: "session",
+    message: {
+      type: "agent_permission_response",
+      agentId: "agent_sdk",
+      requestId: "permission-request",
+      response: {
+        behavior: "deny",
+        selectedActionId: "deny-once",
+        message: "Not approved",
+        interrupt: true,
+      },
+    },
+  });
+
+  await client.close();
 });
 
 test("project actions list registered projects through the existing RPC", async () => {
@@ -736,6 +768,27 @@ test("agent handles delegate create, send, timeline refetch, archive, and local 
   );
   await timelinePromise;
   expect(agent.current()).toEqual(timelineAgent);
+
+  const appendPromise = agent.timeline.append({
+    type: "plugin",
+    id: "review-1",
+    kind: "review",
+    version: 1,
+    data: { status: "running" },
+  });
+  const appendRequest = parseSentSessionMessage(ws.sent.at(-1));
+  expect(appendRequest).toMatchObject({
+    type: "agent.timeline.append.request",
+    agentId: "agent_sdk",
+    item: { id: "review-1", kind: "review" },
+  });
+  ws.message(
+    sessionMessage({
+      type: "agent.timeline.append.response",
+      payload: { requestId: appendRequest.requestId, seq: 8, epoch: "epoch-sdk" },
+    }),
+  );
+  await expect(appendPromise).resolves.toEqual({ seq: 8, epoch: "epoch-sdk" });
 
   const archivePromise = agent.archive();
   const archiveRequest = parseSentSessionMessage(ws.sent.at(-1));

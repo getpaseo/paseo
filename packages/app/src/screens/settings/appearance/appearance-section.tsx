@@ -16,8 +16,8 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Switch } from "@/components/ui/switch";
-import { SettingsSection } from "@/screens/settings/settings-section";
+import { SettingsCard, SettingsSwitch } from "@/components/settings";
+import { SettingsSection } from "@/components/settings/headings/settings-section";
 import { useContributedThemes } from "@/appearance/provider";
 import { EditingTextInput as TextInput } from "@/components/ui/text-input";
 import {
@@ -46,6 +46,7 @@ import { isNative } from "@/constants/platform";
 import type { PluginThemeOption } from "@/plugins/themes";
 import { settingsStyles } from "@/styles/settings";
 import { AppearancePreview } from "./appearance-preview";
+import { SidebarNavSection } from "./sidebar-nav-section";
 
 // ---------------------------------------------------------------------------
 // Theme-reactive leaf icons (withUnistyles + uniProps color mapping — no
@@ -233,17 +234,12 @@ interface AutoExpandReasoningRowProps {
 function AutoExpandReasoningRow({ value, onChange }: AutoExpandReasoningRowProps) {
   const { t } = useTranslation();
   return (
-    <View style={settingsStyles.row}>
-      <View style={settingsStyles.rowContent}>
-        <Text style={settingsStyles.rowTitle}>
-          {t("settings.general.autoExpandReasoning.label")}
-        </Text>
-        <Text style={settingsStyles.rowHint}>
-          {t("settings.general.autoExpandReasoning.description")}
-        </Text>
-      </View>
-      <Switch value={value} onValueChange={onChange} />
-    </View>
+    <SettingsSwitch
+      label={t("settings.general.autoExpandReasoning.label")}
+      hint={t("settings.general.autoExpandReasoning.description")}
+      value={value}
+      onValueChange={onChange}
+    />
   );
 }
 
@@ -255,19 +251,12 @@ interface ChatOutlineRowProps {
 function ChatOutlineRow({ value, onChange }: ChatOutlineRowProps) {
   const { t } = useTranslation();
   return (
-    <View style={[settingsStyles.row, settingsStyles.rowBorder]}>
-      <View style={settingsStyles.rowContent}>
-        <Text style={settingsStyles.rowTitle}>{t("settings.appearance.chatOutline.title")}</Text>
-        <Text style={settingsStyles.rowHint}>
-          {t("settings.appearance.chatOutline.description")}
-        </Text>
-      </View>
-      <Switch
-        value={value}
-        onValueChange={onChange}
-        accessibilityLabel={t("settings.appearance.chatOutline.title")}
-      />
-    </View>
+    <SettingsSwitch
+      label={t("settings.appearance.chatOutline.title")}
+      hint={t("settings.appearance.chatOutline.description")}
+      value={value}
+      onValueChange={onChange}
+    />
   );
 }
 
@@ -308,7 +297,7 @@ function ToolCallDetailRow({ value, onChange }: ToolCallDetailRowProps) {
   const { t } = useTranslation();
   const selectedLabel = getToolCallDetailLevelLabel(t, value);
   return (
-    <View style={[settingsStyles.row, settingsStyles.rowBorder]}>
+    <View style={settingsStyles.row}>
       <View style={settingsStyles.rowContent}>
         <Text style={settingsStyles.rowTitle}>{t("settings.general.toolCallDetail.label")}</Text>
         <Text style={settingsStyles.rowHint}>
@@ -692,7 +681,7 @@ export function AppearanceSection() {
         </View>
       </SettingsSection>
       <SettingsSection title={t("settings.appearance.detailLevel.title")}>
-        <View style={settingsStyles.card}>
+        <SettingsCard>
           <AutoExpandReasoningRow
             value={settings.autoExpandReasoning}
             onChange={handleAutoExpandReasoningChange}
@@ -707,8 +696,9 @@ export function AppearanceSection() {
               onChange={handleChatOutlineChange}
             />
           ) : null}
-        </View>
+        </SettingsCard>
       </SettingsSection>
+      <SidebarNavSection />
       <SettingsSection title={t("settings.appearance.fonts.title")}>
         <View style={settingsStyles.card}>
           {showInterfaceFontFamilyRow ? (

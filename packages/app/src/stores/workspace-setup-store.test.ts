@@ -221,11 +221,12 @@ describe("workspace-setup-store", () => {
     ).toBe(true);
   });
 
-  it("seeds a setup tab only for failed setup", () => {
+  it("seeds a setup tab for failed or blocked setup", () => {
     expect(shouldSeedWorkspaceSetupTab(null)).toBe(false);
     expect(shouldSeedWorkspaceSetupTab(makeSnapshot("running"))).toBe(false);
     expect(shouldSeedWorkspaceSetupTab(makeSnapshot("completed"))).toBe(false);
     expect(shouldSeedWorkspaceSetupTab(makeSnapshot("failed", "Setup failed"))).toBe(true);
+    expect(shouldSeedWorkspaceSetupTab(makeSnapshot("blocked"))).toBe(true);
   });
 
   it("claims one failed setup surface until a later setup lifecycle begins", () => {

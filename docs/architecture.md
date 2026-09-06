@@ -94,7 +94,7 @@ facade. App and CLI may import the low-level driver from
 `@getpaseo/client/internal/daemon-client` during migration, while new SDK-shaped
 code imports from `@getpaseo/client`.
 
-`PaseoApi` is the capability-only boundary over workspaces, agents, providers, and config.
+`PaseoApi` is the capability-only boundary over workspaces, agents, terminals, providers, and config.
 `PaseoClient` adds connection lifecycle. App plugin surfaces borrow an API over their selected
 host's client; plugin subprocesses use the same facade over a host-owned IPC transport.
 
@@ -355,13 +355,13 @@ Two workspaces can share the same `cwd` (e.g. a `directory` workspace and a `loc
 
 | State                        | Key builder / store                                | Source                                                        |
 | ---------------------------- | -------------------------------------------------- | ------------------------------------------------------------- |
-| Review draft comments        | `buildReviewDraftKey` / `buildReviewDraftScopeKey` | `packages/app/src/review/store.ts`                            |
-| Diff mode override           | review-draft scope key (in-memory)                 | `packages/app/src/review/state.ts`                            |
+| Review draft comments        | `buildReviewDraftKey`                              | `packages/app/src/review/store.ts`                            |
+| Working diff comparison      | `workingDiffComparisonKey` (in-memory)             | `packages/app/src/git/working-diff-comparison/state.ts`       |
 | Composer attachments         | `buildWorkspaceAttachmentScopeKey`                 | `packages/app/src/attachments/workspace-attachments-store.ts` |
 | File explorer nav/open state | `fileExplorer` map keyed `workspace:{workspaceId}` | `packages/app/src/hooks/use-file-explorer-actions.ts`         |
 | File explorer expanded paths | `expandedPathsByWorkspace[workspaceStateKey]`      | `packages/app/src/stores/panel-store/state.ts`                |
 
-`diff-pane.tsx` is the canonical wiring site: it passes `{ serverId, cwd }` to the git queries and `{ serverId, workspaceId, cwd }` to the draft/override/attachment scope keys.
+`diff-pane.tsx` is the canonical wiring site: it passes `{ serverId, cwd }` to the git queries and `{ serverId, workspaceId, cwd }` to the draft/comparison/attachment scope keys.
 
 **Do not "fix" the sharing away.** Re-keying a directory-backed query by `workspaceId` makes same-`cwd` workspaces diverge (two windows onto the same git tree showing different diffs). Re-keying owned state (drafts, expanded paths) by `cwd` makes them leak between distinct workspaces on the same folder. The `workspaceId`-keyed builders carry a `// workspaceId is opaque; do not parse this key back into a path.` comment — the opaque-id fallback to `cwd` exists only for old payloads without a `workspaceId`, not as a content-sharing mechanism.
 

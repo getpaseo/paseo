@@ -1,3 +1,4 @@
+import { createAgentRequestsStub } from "./test-utils/session-stubs.js";
 import { execSync } from "child_process";
 import { existsSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
@@ -282,6 +283,7 @@ vi.mock("./worktree-bootstrap.js", async (importOriginal) => {
 });
 
 interface SessionForTestOptions {
+  clientId?: string;
   permissions?: readonly DaemonPermission[];
   agentManager?: { [K in keyof SessionOptions["agentManager"]]?: unknown };
   agentStorage?: { [K in keyof SessionOptions["agentStorage"]]?: unknown };
@@ -360,7 +362,8 @@ function createSessionForTest(options: SessionForTestOptions = {}): Session {
   const messages = options.messages ?? [];
 
   const sessionOptions: SessionOptions = {
-    clientId: "test-client",
+    agentRequests: createAgentRequestsStub(),
+    clientId: options.clientId ?? "test-client",
     onMessage: (message) => messages.push(message),
     ...(options.targetedMessages
       ? {
@@ -1374,6 +1377,100 @@ function createStoredAgentRecord(
     archivedAt: overrides.archivedAt ?? null,
   };
 }
+
+describe("plugin timeline append RPC", () => {
+  test("stamps the plugin identity and returns the timeline position", async () => {
+    const messages: SessionOutboundMessage[] = [];
+    const appendTimelineItem = vi.fn().mockResolvedValue({ seq: 7, epoch: "epoch-1" });
+    const session = createSessionForTest({
+      clientId: "plugin:review",
+      messages,
+      agentManager: { appendTimelineItem },
+    });
+
+    await session.handleMessage({
+      type: "agent.timeline.append.request",
+      requestId: "append-1",
+      agentId: "agent-1",
+      item: {
+        type: "plugin",
+        id: "review-1",
+        kind: "review",
+        version: 1,
+        data: { status: "running" },
+      },
+    });
+
+    expect(appendTimelineItem).toHaveBeenCalledWith("agent-1", {
+      type: "plugin",
+      id: "review-1",
+      pluginId: "review",
+      kind: "review",
+      version: 1,
+      data: { status: "running" },
+    });
+    expect(messages).toContainEqual({
+      type: "agent.timeline.append.response",
+      payload: { requestId: "append-1", seq: 7, epoch: "epoch-1" },
+    });
+  });
+
+  test("rejects append requests from non-plugin sessions", async () => {
+    const messages: SessionOutboundMessage[] = [];
+    const appendTimelineItem = vi.fn();
+    const session = createSessionForTest({ messages, agentManager: { appendTimelineItem } });
+
+    await session.handleMessage({
+      type: "agent.timeline.append.request",
+      requestId: "append-1",
+      agentId: "agent-1",
+      item: { type: "plugin", id: "review-1", kind: "review", version: 1, data: {} },
+    });
+
+    expect(appendTimelineItem).not.toHaveBeenCalled();
+    expect(messages).toContainEqual(
+      expect.objectContaining({
+        type: "rpc_error",
+        payload: expect.objectContaining({ requestId: "append-1", code: "handler_error" }),
+      }),
+    );
+  });
+
+  test("rejects plugin data larger than the append budget", async () => {
+    const messages: SessionOutboundMessage[] = [];
+    const appendTimelineItem = vi.fn();
+    const session = createSessionForTest({
+      clientId: "plugin:review",
+      messages,
+      agentManager: { appendTimelineItem },
+    });
+
+    await session.handleMessage({
+      type: "agent.timeline.append.request",
+      requestId: "append-large",
+      agentId: "agent-1",
+      item: {
+        type: "plugin",
+        id: "review-1",
+        kind: "review",
+        version: 1,
+        data: { text: "x".repeat(64 * 1024) },
+      },
+    });
+
+    expect(appendTimelineItem).not.toHaveBeenCalled();
+    expect(messages).toContainEqual(
+      expect.objectContaining({
+        type: "rpc_error",
+        payload: expect.objectContaining({
+          requestId: "append-large",
+          code: "handler_error",
+          error: expect.stringContaining("65536 bytes"),
+        }),
+      }),
+    );
+  });
+});
 
 describe("agent detach RPC", () => {
   test("detaches a stored subagent and emits the updated standalone agent", async () => {

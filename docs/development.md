@@ -556,12 +556,15 @@ npm run cli -- daemon status         # Check daemon status
 npm run cli -- clone owner/repo --dir ~/workspace # Clone GitHub repo and register project
 ```
 
-Use `--host` to point the CLI at a different daemon:
+Use the global `--host` option to point the CLI at a different daemon:
 
 ```bash
-npm run cli -- ls -a --host localhost:7777
-npm run cli -- ls -a --host ssh://user@host
+npm run cli -- --host localhost:7777 ls -a
+npm run cli -- --host ssh://user@host ls -a
 ```
+
+Set `PASEO_HOST` to use the same target across invocations. An explicit
+`--host` overrides the environment variable.
 
 In an SSH URI, the URL port is the SSH server port. The remote daemon defaults to `127.0.0.1:6767`; use `?daemonPort=7777` to override it. The transport runs non-interactively through the local OpenSSH client and never installs, starts, or configures the remote daemon. User-facing setup and troubleshooting live in [public-docs/connectivity.md](../public-docs/connectivity.md#ssh).
 
