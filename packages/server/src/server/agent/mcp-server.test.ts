@@ -58,6 +58,9 @@ import type { BrowserToolsBroker, BrowserToolsExecuteInput } from "../browser-to
 import type { BrowserToolsResponsePayload } from "../browser-tools/errors.js";
 import { readPaseoWorktreeMetadata } from "../../utils/worktree-metadata.js";
 import { createWorkspaceProvisioningService } from "../session/workspace-provisioning/workspace-provisioning-service.js";
+import { serializePaseoToolInputParameters } from "./tools/paseo-tool-serialization.js";
+import { createPaseoToolCatalog } from "./tools/paseo-tools.js";
+import type { PaseoToolCatalog } from "./tools/types.js";
 
 const REPO_CWD = resolvePath("/tmp/repo");
 const TARGET_CWD = resolvePath("/tmp/target");
@@ -138,6 +141,22 @@ async function invokeToolWithParsedInput(
   const parsed = await tool.inputSchema.safeParseAsync(input);
   expect(parsed.success).toBe(true);
   return tool.handler(parsed.data);
+}
+
+interface SerializedToolSchema {
+  properties?: Record<string, { description?: string }>;
+  required?: string[];
+}
+
+function serializedInputSchema(catalog: PaseoToolCatalog, name: string): SerializedToolSchema {
+  const tool = catalog.getTool(name);
+  if (!tool) {
+    throw new Error(`Paseo tool not registered: ${name}`);
+  }
+  // The OpenCode bridge advertises this exact serialization (see
+  // OpenCodeBridge.serializeManifest), so asserting on it locks the advertised
+  // contract, not just the zod validation behavior.
+  return serializePaseoToolInputParameters(tool) as unknown as SerializedToolSchema;
 }
 
 function agentsOf(response: {
@@ -3156,6 +3175,79 @@ describe("create_agent MCP tool", () => {
       workspace: { kind: "current" },
       notifyOnFinish: true,
     });
+  });
+
+  it("advertises agent-scoped definitions from the caller-less bridge manifest scope", async () => {
+    const { agentManager, agentStorage } = createTestDeps();
+    const providerSnapshotManager = createOpenCodeManager().manager;
+    // The OpenCode bridge manifest is built without a callerAgentId but serves
+    // only agent-bound sessions, which validate against agent-scoped schemas.
+    // A top-level manifest advertises keys (e.g. create_agent.background) that
+    // execution rejects with "Unrecognized key", trapping models in a retry loop.
+    // Build the catalogs exactly as bootstrap (manifest) and agent-manager
+    // (per-session execution bindings) do.
+    const manifestCatalog = createPaseoToolCatalog({
+      agentManager,
+      agentStorage,
+      providerSnapshotManager,
+      toolScope: "agent",
+      logger,
+    });
+    const executionCatalog = createPaseoToolCatalog({
+      agentManager,
+      agentStorage,
+      providerSnapshotManager,
+      callerAgentId: "parent-agent",
+      logger,
+    });
+    const topLevelCatalog = createPaseoToolCatalog({
+      agentManager,
+      agentStorage,
+      providerSnapshotManager,
+      logger,
+    });
+
+    const manifestCreateAgent = serializedInputSchema(manifestCatalog, "create_agent");
+    const executionCreateAgent = serializedInputSchema(executionCatalog, "create_agent");
+    const topLevelCreateAgent = serializedInputSchema(topLevelCatalog, "create_agent");
+
+    // Advertise == validate: the manifest offers exactly the keys execution accepts.
+    expect(Object.keys(manifestCreateAgent.properties ?? {}).sort()).toEqual(
+      Object.keys(executionCreateAgent.properties ?? {}).sort(),
+    );
+    expect(manifestCreateAgent.properties).not.toHaveProperty("background");
+    // Top-level callers keep the background knob.
+    expect(topLevelCreateAgent.properties).toHaveProperty("background");
+
+    // The scope override covers the other caller-varying definitions too.
+    const manifestPrompt = serializedInputSchema(manifestCatalog, "send_agent_prompt");
+    expect(manifestPrompt.properties?.background?.description).toContain(
+      "Agent-scoped default is true",
+    );
+    const manifestSchedule = serializedInputSchema(manifestCatalog, "create_schedule");
+    expect(manifestSchedule.required ?? []).not.toContain("provider");
+    const topLevelSchedule = serializedInputSchema(topLevelCatalog, "create_schedule");
+    expect(topLevelSchedule.required ?? []).toContain("provider");
+
+    // The advertised manifest input parses through execution validation.
+    const executionTool = registeredTool(
+      await createAgentMcpServer({
+        agentManager,
+        agentStorage,
+        providerSnapshotManager,
+        callerAgentId: "parent-agent",
+        logger,
+      }),
+      "create_agent",
+    );
+    const parsed = await executionTool.inputSchema.safeParseAsync({
+      title: "Child",
+      provider: "codex/gpt-5.4",
+      initialPrompt: "Do work",
+      workspaceId: "wks_parent",
+      notifyOnFinish: true,
+    });
+    expect(parsed.success).toBe(true);
   });
 
   it("returns notify-on-finish guidance for caller-created agents", async () => {
