@@ -11,6 +11,7 @@ export interface PluginTheme {
     readonly surface1: string;
     readonly surface2: string;
     readonly border: string;
+    readonly scrim: string;
     readonly foreground: string;
     readonly foregroundMuted: string;
     readonly accent: string;
@@ -18,6 +19,7 @@ export interface PluginTheme {
     readonly statusSuccess: string;
     readonly statusWarning: string;
     readonly statusDanger: string;
+    readonly statusDangerTint: string;
   };
 }
 

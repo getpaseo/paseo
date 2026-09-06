@@ -64,12 +64,13 @@ function installed(serverId: string, themes: PluginThemeContribution[]): Install
 
 describe("toPluginTheme", () => {
   it("maps the app theme into the plugin color tokens", () => {
-    expect(toPluginTheme(lightTheme)).toEqual({
+    expect(toPluginTheme(lightTheme, "md")).toEqual({
       colors: {
         surface0: lightTheme.colors.surface0,
         surface1: lightTheme.colors.surface1,
         surface2: lightTheme.colors.surface2,
         border: lightTheme.colors.border,
+        scrim: "rgba(0,0,0,0.55)",
         foreground: lightTheme.colors.foreground,
         foregroundMuted: lightTheme.colors.foregroundMuted,
         accent: lightTheme.colors.accent,
@@ -77,8 +78,13 @@ describe("toPluginTheme", () => {
         statusSuccess: lightTheme.colors.statusSuccess,
         statusWarning: lightTheme.colors.statusWarning,
         statusDanger: lightTheme.colors.statusDanger,
+        statusDangerTint: "rgba(157, 67, 59, 0.1)",
       },
     });
+  });
+
+  it.each(["xs", "sm"])("uses the compact sheet scrim at the %s breakpoint", (breakpoint) => {
+    expect(toPluginTheme(lightTheme, breakpoint).colors.scrim).toBe("rgba(0,0,0,0.45)");
   });
 });
 

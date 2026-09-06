@@ -379,11 +379,13 @@ Recreate styles when `theme` or `layout.compact` changes.
 | `theme.colors.surface1`         | Raised surfaces            | Cards and panels                    |
 | `theme.colors.surface2`         | Control surfaces           | Inputs and secondary controls       |
 | `theme.colors.border`           | Surface boundaries         | Borders and dividers                |
+| `theme.colors.scrim`            | Modal backdrops            | Overlays behind modal surfaces      |
 | `theme.colors.accent`           | Primary action fills       | Buttons and selected states         |
 | `theme.colors.accentForeground` | Text on an accent fill     | Button labels                       |
 | `theme.colors.statusSuccess`    | Success feedback           | Success messages and indicators     |
 | `theme.colors.statusWarning`    | Warning feedback           | Warning messages and indicators     |
 | `theme.colors.statusDanger`     | Failure copy               | Error messages and destructive text |
+| `theme.colors.statusDangerTint` | Subtle danger surfaces     | Armed destructive rows              |
 | `layout.compact`                | Padding and stacking       | `true` on mobile and narrow windows |
 | `layout.platform`               | Platform-specific behavior | `ios`, `android`, or `web`          |
 

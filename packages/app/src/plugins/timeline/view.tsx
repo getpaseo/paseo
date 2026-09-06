@@ -14,7 +14,9 @@ import { createPluginSurfaceRuntime } from "../surface-runtime";
 import { SurfaceErrorBoundary } from "../surface-error-boundary";
 import { toPluginTheme } from "../theme";
 
-const pluginThemeMapping = (theme: Theme) => ({ theme: toPluginTheme(theme) });
+const pluginThemeMapping = (theme: Theme, runtime: { breakpoint?: string }) => ({
+  theme: toPluginTheme(theme, runtime.breakpoint),
+});
 
 function resolvePlatform(): PluginHostProps["layout"]["platform"] {
   if (Platform.OS === "ios") return "ios";
