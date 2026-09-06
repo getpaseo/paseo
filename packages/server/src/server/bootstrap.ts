@@ -183,6 +183,7 @@ import type {
   AgentProviderRuntimeSettingsMap,
   ProviderOverride,
 } from "./agent/provider-launch-config.js";
+import type { NotificationPolicy } from "@getpaseo/protocol/messages";
 import { loadPersistedConfig, type PersistedConfig } from "./persisted-config.js";
 import { createServiceProxySubsystem, type ServiceProxySubsystem } from "./service-proxy.js";
 import { releaseWorkspaceServicePortPlan } from "./workspace-service-port-registry.js";
@@ -449,6 +450,11 @@ export interface PaseoDaemonConfig {
   onLifecycleIntent?: (intent: DaemonLifecycleIntent) => void;
   pushNotificationSender?: PushNotificationSender;
   managedProcesses?: ManagedProcessRegistry;
+  notifications?: {
+    // Controls when the daemon sends a remote push to mobile devices when an
+    // attention event fires. See agent-attention-policy.ts.
+    policy?: NotificationPolicy;
+  };
   configReload?: {
     env: NodeJS.ProcessEnv;
     cli?: CliConfigOverrides;
@@ -551,6 +557,7 @@ function createInitialMutableDaemonConfig(config: PaseoDaemonConfig): MutableDae
     pluginsEnabled: config.pluginsEnabled ?? false,
     plugins: config.plugins ?? {},
     skills: { selection: config.skillSelection },
+    notifications: config.notifications,
   };
 
   if (config.terminalProfiles !== undefined) {

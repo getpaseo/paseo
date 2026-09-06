@@ -416,7 +416,7 @@ $PASEO_HOME/
 ├── schedules/                                  # Scheduled-agent definitions and runs
 ├── config.json                                 # Daemon config (mutable)
 ├── daemon-keypair.json                         # Daemon identity for relay/E2EE
-├── push-tokens.json                            # Mobile push tokens
+├── push-tokens.json                            # Mobile push tokens (see [notifications.md](notifications.md))
 ├── paseo.sock / paseo.pid                      # Local IPC socket and pidfile
 └── daemon.log                                  # Daemon trace logs (rotated)
 ```

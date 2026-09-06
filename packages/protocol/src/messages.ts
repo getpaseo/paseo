@@ -211,6 +211,19 @@ export const AgentSkillSelectionSchema = z.discriminatedUnion("mode", [
 ]);
 export type AgentSkillSelection = z.infer<typeof AgentSkillSelectionSchema>;
 
+export const NotificationPolicySchema = z.enum(["smart", "unwatched", "always"]);
+export type NotificationPolicy = z.infer<typeof NotificationPolicySchema>;
+
+const MutableNotificationsConfigSchema = z
+  .object({
+    // Controls when the daemon sends a remote push to mobile devices when an
+    // attention event fires. "smart" (default) pushes only when no client has
+    // been present recently; "unwatched" pushes unless a foreground client is
+    // focused on the target; "always" pushes whenever the reason is eligible.
+    policy: NotificationPolicySchema.optional(),
+  })
+  .strict();
+
 export const MutableDaemonConfigSchema = z
   .object({
     // COMPAT(relayConfig): added in v0.2.6, remove after 2027-01-31 when old daemons are unsupported.
@@ -248,6 +261,7 @@ export const MutableDaemonConfigSchema = z
     skills: z.object({ selection: AgentSkillSelectionSchema.optional() }).strict().optional(),
     pluginsEnabled: z.boolean().optional(),
     plugins: z.record(PluginIdSchema, PluginSourceSchema).optional(),
+    notifications: MutableNotificationsConfigSchema.optional(),
   })
   .passthrough();
 

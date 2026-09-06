@@ -1,4 +1,5 @@
 import type { AgentAttentionReason } from "@getpaseo/protocol/agent-attention-notification";
+import type { NotificationPolicy } from "@getpaseo/protocol/messages";
 
 export const PRESENCE_THRESHOLD_MS = 180_000;
 
@@ -19,11 +20,16 @@ export interface NotificationPlan {
 interface ComputeNotificationPlanInput {
   allStates: ClientPresenceState[];
   // A present, app-visible client focused on the attention target suppresses the
-  // notification entirely. Pass null when the target should not suppress notifications.
+  // in-app banner for everyone. It only suppresses the remote push under "smart"
+  // and "unwatched", not "always". Pass null when the target should not suppress
+  // notifications.
   focusTarget: AttentionFocusTarget | null;
-  // Whether a push notification is allowed when no client is present.
+  // False for "error" reasons, in which case no mode sends a remote push.
   pushEligible: boolean;
   nowMs: number;
+  // Controls when a remote push is sent to mobile devices. In-app routing is
+  // unchanged in every mode. Defaults to "smart" (presence suppresses push).
+  policy?: NotificationPolicy;
 }
 
 function isFocusedOnTarget(
@@ -44,9 +50,11 @@ export function computeNotificationPlan({
   focusTarget,
   pushEligible,
   nowMs,
+  policy = "smart",
 }: ComputeNotificationPlanInput): NotificationPlan {
   let mostRecentPresentIndex: number | null = null;
   let mostRecentPresentAtMs = Number.NEGATIVE_INFINITY;
+  let focusedOnTarget = false;
 
   for (const [clientIndex, state] of allStates.entries()) {
     const clampedActivityAtMs =
@@ -59,7 +67,10 @@ export function computeNotificationPlan({
     }
 
     if (state.appVisible && isFocusedOnTarget(state, focusTarget)) {
-      return { inAppRecipientIndex: null, shouldPush: false };
+      // A focused-visible client suppresses the in-app banner for everyone (in
+      // every mode). Whether the remote push still goes out depends on the policy.
+      focusedOnTarget = true;
+      continue;
     }
 
     if (clampedActivityAtMs > mostRecentPresentAtMs) {
@@ -68,11 +79,45 @@ export function computeNotificationPlan({
     }
   }
 
-  if (mostRecentPresentIndex !== null) {
-    return { inAppRecipientIndex: mostRecentPresentIndex, shouldPush: false };
-  }
+  return {
+    inAppRecipientIndex: focusedOnTarget ? null : mostRecentPresentIndex,
+    shouldPush: computeShouldPush({
+      anyPresent: focusedOnTarget || mostRecentPresentIndex !== null,
+      focusedOnTarget,
+      pushEligible,
+      policy,
+    }),
+  };
+}
 
-  return { inAppRecipientIndex: null, shouldPush: pushEligible };
+function computeShouldPush({
+  anyPresent,
+  focusedOnTarget,
+  pushEligible,
+  policy,
+}: {
+  anyPresent: boolean;
+  focusedOnTarget: boolean;
+  pushEligible: boolean;
+  policy: NotificationPolicy;
+}): boolean {
+  if (!pushEligible) {
+    return false;
+  }
+  switch (policy) {
+    case "smart":
+      // Push only when no client has been present recently (nobody around).
+      return !anyPresent;
+    case "unwatched":
+      // Push unless someone is actively looking at the target.
+      return !focusedOnTarget;
+    case "always":
+      return true;
+    default:
+      // Exhaustive guard: a future unknown mode must not silently inherit
+      // "always" semantics.
+      throw new Error(`Unknown notification policy: ${String(policy)}`);
+  }
 }
 
 export function isPushEligibleAttentionReason(reason: AgentAttentionReason): boolean {

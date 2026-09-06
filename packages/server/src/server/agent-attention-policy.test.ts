@@ -223,6 +223,120 @@ describe("computeNotificationPlan", () => {
       }),
     ).toEqual({ inAppRecipientIndex: null, shouldPush: true });
   });
+
+  describe("policy", () => {
+    const defaultFocus: { kind: "agent"; id: string } = { kind: "agent", id: "agent-1" };
+
+    it('"smart" (default) pushes only when no client has been present recently', () => {
+      // Present but not watching -> no push.
+      expect(
+        computeNotificationPlan({
+          allStates: [state({ lastActivityAtMs: nowMs - 1_000 })],
+          focusTarget: defaultFocus,
+          pushEligible: true,
+          nowMs,
+        }),
+      ).toEqual({ inAppRecipientIndex: 0, shouldPush: false });
+      // Everyone away -> push.
+      expect(
+        computeNotificationPlan({
+          allStates: [state({ lastActivityAtMs: staleAtMs })],
+          focusTarget: defaultFocus,
+          pushEligible: true,
+          nowMs,
+        }),
+      ).toEqual({ inAppRecipientIndex: null, shouldPush: true });
+    });
+
+    it('"unwatched" pushes for any non-watched presence, not just everyone-away', () => {
+      // A present but non-focused client (backgrounded / on another agent) still triggers a push.
+      expect(
+        computeNotificationPlan({
+          allStates: [state({ lastActivityAtMs: nowMs - 1_000 })],
+          focusTarget: defaultFocus,
+          pushEligible: true,
+          nowMs,
+          policy: "unwatched",
+        }),
+      ).toEqual({ inAppRecipientIndex: 0, shouldPush: true });
+    });
+
+    it('"unwatched" suppresses only when a present foreground client is focused on the target', () => {
+      expect(
+        computeNotificationPlan({
+          allStates: [state({ focusedAgentId: "agent-1", lastActivityAtMs: presentAtMs })],
+          focusTarget: defaultFocus,
+          pushEligible: true,
+          nowMs,
+          policy: "unwatched",
+        }),
+      ).toEqual({ inAppRecipientIndex: null, shouldPush: false });
+    });
+
+    it('"unwatched" pushes for a backgrounded (not app-visible) client even when it focuses the target', () => {
+      expect(
+        computeNotificationPlan({
+          allStates: [
+            state({ appVisible: false, focusedAgentId: "agent-1", lastActivityAtMs: presentAtMs }),
+          ],
+          focusTarget: defaultFocus,
+          pushEligible: true,
+          nowMs,
+          policy: "unwatched",
+        }),
+      ).toEqual({ inAppRecipientIndex: 0, shouldPush: true });
+    });
+
+    it('"unwatched" still pushes when everyone is away', () => {
+      expect(
+        computeNotificationPlan({
+          allStates: [state({ lastActivityAtMs: staleAtMs })],
+          focusTarget: defaultFocus,
+          pushEligible: true,
+          nowMs,
+          policy: "unwatched",
+        }),
+      ).toEqual({ inAppRecipientIndex: null, shouldPush: true });
+    });
+
+    it('"always" pushes even when a present foreground client is focused on the target', () => {
+      expect(
+        computeNotificationPlan({
+          allStates: [state({ focusedAgentId: "agent-1", lastActivityAtMs: presentAtMs })],
+          focusTarget: defaultFocus,
+          pushEligible: true,
+          nowMs,
+          policy: "always",
+        }),
+      ).toEqual({ inAppRecipientIndex: null, shouldPush: true });
+    });
+
+    it('"always" keeps the in-app recipient for a present non-focused client and pushes', () => {
+      expect(
+        computeNotificationPlan({
+          allStates: [state({ lastActivityAtMs: nowMs - 1_000 })],
+          focusTarget: defaultFocus,
+          pushEligible: true,
+          nowMs,
+          policy: "always",
+        }),
+      ).toEqual({ inAppRecipientIndex: 0, shouldPush: true });
+    });
+
+    it("all policies respect pushEligible for errors", () => {
+      for (const policy of ["smart", "unwatched", "always"] as const) {
+        expect(
+          computeNotificationPlan({
+            allStates: [state({ lastActivityAtMs: presentAtMs })],
+            focusTarget: defaultFocus,
+            pushEligible: false,
+            nowMs,
+            policy,
+          }),
+        ).toEqual({ inAppRecipientIndex: 0, shouldPush: false });
+      }
+    });
+  });
 });
 
 describe("isPushEligibleAttentionReason", () => {

@@ -102,6 +102,7 @@ function createServer(agentManagerOverrides?: Record<string, unknown>) {
   const daemonConfigStore = {
     onApply: vi.fn(() => () => {}),
     onChange: vi.fn(() => () => {}),
+    get: vi.fn(() => ({})),
   };
 
   const server = new VoiceAssistantWebSocketServer(

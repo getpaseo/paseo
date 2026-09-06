@@ -12,6 +12,7 @@ import { ensurePrivateFile, writePrivateFileAtomicSync } from "./private-files.j
 import {
   AgentProfileSchema,
   AgentSkillSelectionSchema,
+  NotificationPolicySchema,
   PluginIdSchema,
   PluginSourceSchema,
   TerminalProfileSchema,
@@ -294,6 +295,14 @@ export const PersistedConfigSchema = z
           .strict()
           .optional(),
         auth: DaemonAuthSchema.optional(),
+        notifications: z
+          .object({
+            // Controls when the daemon sends a remote push to mobile devices when
+            // an attention event fires. See agent-attention-policy.ts.
+            policy: NotificationPolicySchema.optional(),
+          })
+          .strict()
+          .optional(),
       })
       .strict()
       .transform(({ allowedHosts, ...daemon }) => {
