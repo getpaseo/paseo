@@ -3208,10 +3208,8 @@ describe("create_agent MCP tool", () => {
           headers: { Authorization: `Bearer ${token}` },
         })
       ).json()) as { tools: Array<{ name: string; inputSchema: unknown }> };
-      const createAgent = manifest.tools.find((tool) => tool.name === "create_agent");
-      if (!createAgent) {
-        throw new Error("Bridge manifest is missing create_agent");
-      }
+      expect(manifest.tools.map((tool) => tool.name)).toContain("create_agent");
+      const createAgent = manifest.tools.find((tool) => tool.name === "create_agent")!;
       const properties = Object.keys(
         ((createAgent.inputSchema ?? {}) as { properties?: Record<string, unknown> }).properties ??
           {},
