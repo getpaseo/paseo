@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, type ReactElement } from "react";
+import { createElement, useCallback, useEffect, useMemo, useRef, type ReactElement } from "react";
 import type { GestureResponderEvent } from "react-native";
 import { Pressable, Text, View } from "react-native";
 import * as Clipboard from "expo-clipboard";
@@ -7,6 +7,7 @@ import {
   ChevronDown,
   Copy,
   Eye,
+  ExternalLink,
   Globe,
   Play,
   RotateCw,
@@ -31,6 +32,8 @@ import { useToast } from "@/contexts/toast-context";
 import { openServiceUrl } from "@/utils/open-service-url";
 import {
   resolveWorkspaceScriptLink,
+  resolveWorkspaceScriptQuickLinks,
+  type WorkspaceScriptQuickLinkTarget,
   type WorkspaceScriptLinkKind,
   type WorkspaceScriptLinkTarget,
 } from "@/utils/workspace-script-links";
@@ -58,6 +61,7 @@ const ThemedSquareTerminal = withUnistyles(SquareTerminal);
 const ThemedGlobe = withUnistyles(Globe);
 const ThemedChevronDown = withUnistyles(ChevronDown);
 const ThemedEye = withUnistyles(Eye);
+const ThemedExternalLink = withUnistyles(ExternalLink);
 const ThemedCopy = withUnistyles(Copy);
 const ThemedRotateCw = withUnistyles(RotateCw);
 const ThemedSquare = withUnistyles(Square);
@@ -81,6 +85,14 @@ const redColorMapping = (theme: Theme) => ({
 });
 const playFillTransparent = { fill: "transparent" };
 const ghostPlayStroke = { strokeWidth: 1.5 };
+const serviceQuickLinkLeading = createElement(ThemedEye, {
+  size: 12,
+  uniProps: mutedColorMapping,
+});
+const serviceQuickLinkTrailing = createElement(ThemedExternalLink, {
+  size: 11,
+  uniProps: mutedColorMapping,
+});
 
 interface ScriptRowActionButtonProps {
   accessibilityLabel: string;
@@ -158,7 +170,7 @@ function ScriptRowActionButton({
   );
 }
 
-interface ServiceLinkRowProps {
+interface ServiceRouteRowProps {
   selectedTarget: WorkspaceScriptLinkTarget;
   targets: WorkspaceScriptLinkTarget[];
   scriptName: string;
@@ -289,13 +301,13 @@ function ServiceRouteSelector({
   );
 }
 
-function ServiceLinkRow({
+function ServiceRouteRow({
   selectedTarget,
   targets,
   scriptName,
   onSelectKind,
   onCopy,
-}: ServiceLinkRowProps): ReactElement {
+}: ServiceRouteRowProps): ReactElement {
   const { t } = useTranslation();
   const closeMenu = useDropdownMenuClose();
   const { label, url } = selectedTarget;
@@ -330,6 +342,34 @@ function ServiceLinkRow({
         tooltipLabel={t("workspace.scripts.actions.copyUrl")}
       />
     </View>
+  );
+}
+
+interface ServiceQuickLinkRowProps {
+  index: number;
+  link: WorkspaceScriptQuickLinkTarget;
+  scriptName: string;
+  onOpen: (url: string) => void;
+}
+
+function ServiceQuickLinkRow({
+  index,
+  link,
+  scriptName,
+  onOpen,
+}: ServiceQuickLinkRowProps): ReactElement {
+  const handleSelect = useCallback(() => onOpen(link.url), [link.url, onOpen]);
+
+  return (
+    <DropdownMenuItem
+      testID={`workspace-scripts-link-${scriptName}-${index}`}
+      leading={serviceQuickLinkLeading}
+      trailing={serviceQuickLinkTrailing}
+      onSelect={handleSelect}
+    >
+      <Text style={styles.quickLinkLabel}>{link.label}</Text>
+      <Text style={styles.quickLinkPath}> {link.path}</Text>
+    </DropdownMenuItem>
   );
 }
 
@@ -405,6 +445,12 @@ function ScriptRow({
       ? (serviceLink.targets.find((target) => target.kind === preferredRouteKind) ??
         serviceLink.primary)
       : null;
+  const quickLinks = selectedLink
+    ? resolveWorkspaceScriptQuickLinks({
+        baseUrl: selectedLink.url,
+        links: script.links,
+      })
+    : [];
   const liveTerminalId =
     script.terminalId && liveTerminalIdSet.has(script.terminalId) ? script.terminalId : null;
 
@@ -418,6 +464,13 @@ function ScriptRow({
     closeMenu();
     void openServiceUrl(selectedLink.url, { openInApp: onOpenUrlInBrowserTab });
   }, [selectedLink, closeMenu, onOpenUrlInBrowserTab]);
+
+  const handleOpenServiceLink = useCallback(
+    (url: string) => {
+      void openServiceUrl(url, { openInApp: onOpenUrlInBrowserTab });
+    },
+    [onOpenUrlInBrowserTab],
+  );
 
   const handleView = useCallback(() => {
     if (liveTerminalId) onViewTerminal?.(liveTerminalId);
@@ -453,17 +506,18 @@ function ScriptRow({
       />
     ) : null;
 
-  const openServiceAction = selectedLink ? (
-    <ScriptRowActionButton
-      accessibilityLabel={t("workspace.scripts.accessibility.openService", {
-        scriptName: script.scriptName,
-      })}
-      testID={`workspace-scripts-open-${script.scriptName}`}
-      icon="open"
-      onPress={handleOpenService}
-      tooltipLabel={t("workspace.scripts.actions.openService")}
-    />
-  ) : null;
+  const openServiceAction =
+    selectedLink && quickLinks.length === 0 ? (
+      <ScriptRowActionButton
+        accessibilityLabel={t("workspace.scripts.accessibility.openService", {
+          scriptName: script.scriptName,
+        })}
+        testID={`workspace-scripts-open-${script.scriptName}`}
+        icon="open"
+        onPress={handleOpenService}
+        tooltipLabel={t("workspace.scripts.actions.openService")}
+      />
+    ) : null;
 
   const lifecycleAction = isRunning ? (
     <ScriptRowActionButton
@@ -520,15 +574,26 @@ function ScriptRow({
         {lifecycleAction}
       </View>
       {selectedLink ? (
-        <View style={styles.hostList}>
-          <ServiceLinkRow
-            selectedTarget={selectedLink}
-            targets={serviceLink.targets}
-            scriptName={script.scriptName}
-            onSelectKind={onSelectRouteKind}
-            onCopy={onCopyUrl}
-          />
-        </View>
+        <>
+          <View style={styles.hostList}>
+            <ServiceRouteRow
+              selectedTarget={selectedLink}
+              targets={serviceLink.targets}
+              scriptName={script.scriptName}
+              onSelectKind={onSelectRouteKind}
+              onCopy={onCopyUrl}
+            />
+          </View>
+          {quickLinks.map((link, index) => (
+            <ServiceQuickLinkRow
+              key={link.key}
+              index={index}
+              link={link}
+              scriptName={script.scriptName}
+              onOpen={handleOpenServiceLink}
+            />
+          ))}
+        </>
       ) : null}
     </View>
   );
@@ -826,6 +891,16 @@ const styles = StyleSheet.create((theme) => ({
     gap: theme.spacing[2],
     paddingVertical: 2,
     minHeight: 18,
+  },
+  quickLinkLabel: {
+    fontSize: theme.fontSize.sm,
+    lineHeight: 14,
+    color: theme.colors.foreground,
+  },
+  quickLinkPath: {
+    fontSize: theme.fontSize.sm,
+    lineHeight: 14,
+    color: theme.colors.foregroundMuted,
   },
   routeDisplay: {
     flex: 1,

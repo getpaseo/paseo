@@ -414,6 +414,11 @@ Every `scripts` entry with `"type": "service"` receives these environment variab
 
 Service proxy hostnames use the double-dash shape: `web--feature-auth--project.localhost` or, on the default branch, `web--project.localhost`. Optional public aliases use the same leftmost label under the configured public base host.
 
+Service quick links are paths under the route selected in the Scripts menu. Without configured links,
+the app keeps the existing root open action. Configured links replace that action, so include `/`
+explicitly when the root should remain available. Keep the fallback in the app rather than migrating
+`paseo.json`: existing project files predate the field, and older daemons omit the optional metadata.
+
 `<NAME>` is normalized from the script name by uppercasing it, replacing each run of non-`A-Z0-9` characters with `_`, and trimming leading or trailing `_`. For example, `app-server` and `app.server` both normalize to `APP_SERVER`; that collision fails at spawn time with an actionable error.
 
 `PORT` is not injected by default. If a framework requires `PORT`, set it in the command:

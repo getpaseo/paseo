@@ -1,5 +1,5 @@
 import { parseHostPort } from "@getpaseo/protocol/daemon-endpoints";
-import type { WorkspaceScriptPayload } from "@getpaseo/protocol/messages";
+import type { PaseoServiceLink, WorkspaceScriptPayload } from "@getpaseo/protocol/messages";
 import type { ActiveConnection } from "@/runtime/host-runtime";
 
 export type WorkspaceScriptLinkKind = "public" | "paseo" | "direct";
@@ -13,6 +13,11 @@ export interface WorkspaceScriptLinkTarget {
 export interface ResolvedWorkspaceScriptLink {
   primary: WorkspaceScriptLinkTarget | null;
   targets: WorkspaceScriptLinkTarget[];
+}
+
+export interface WorkspaceScriptQuickLinkTarget extends PaseoServiceLink {
+  key: string;
+  url: string;
 }
 
 function isLoopbackHost(host: string): boolean {
@@ -89,4 +94,37 @@ export function resolveWorkspaceScriptLink(input: {
   addTarget(targets, "direct", buildDirectServiceUrl(activeConnection, script.port));
 
   return { primary: targets[0] ?? null, targets };
+}
+
+export function resolveWorkspaceScriptQuickLinks(input: {
+  baseUrl: string;
+  links: WorkspaceScriptPayload["links"];
+}): WorkspaceScriptQuickLinkTarget[] {
+  const links = input.links ?? [];
+  if (links.length === 0) return [];
+
+  const baseUrl = new URL(input.baseUrl);
+  const targets: WorkspaceScriptQuickLinkTarget[] = [];
+  const occurrences = new Map<string, number>();
+  for (const link of links) {
+    let url: URL;
+    try {
+      url = new URL(link.path, baseUrl);
+    } catch (error) {
+      if (error instanceof TypeError) continue;
+      throw error;
+    }
+    if (url.origin !== baseUrl.origin) continue;
+
+    const identity = JSON.stringify([link.label, link.path]);
+    const occurrence = occurrences.get(identity) ?? 0;
+    occurrences.set(identity, occurrence + 1);
+    targets.push({
+      key: JSON.stringify([link.label, link.path, occurrence]),
+      label: link.label,
+      path: link.path,
+      url: url.toString(),
+    });
+  }
+  return targets;
 }

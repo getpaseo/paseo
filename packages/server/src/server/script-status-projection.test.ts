@@ -243,6 +243,40 @@ describe("script-status-projection", () => {
     }
   });
 
+  it("projects configured service links", () => {
+    const workspaceId = "workspace-service-links";
+    const workspace = createWorkspaceRepo({
+      paseoConfig: {
+        scripts: {
+          web: {
+            type: "service",
+            command: "npm run web",
+            links: [
+              { label: " Site ", path: "/ " },
+              { label: "Admin", path: "/admin" },
+            ],
+          },
+        },
+      },
+    });
+
+    try {
+      expect(
+        buildPayloads({
+          workspaceId,
+          workspaceDirectory: workspace.repoDir,
+          runtimeStore: new WorkspaceScriptRuntimeStore(),
+          daemonPort: 6767,
+        })[0]?.links,
+      ).toEqual([
+        { label: "Site", path: "/" },
+        { label: "Admin", path: "/admin" },
+      ]);
+    } finally {
+      workspace.cleanup();
+    }
+  });
+
   it("overlays runtime, route, and health state for running services", () => {
     const workspaceId = "workspace-running-service";
     const workspace = createWorkspaceRepo({

@@ -33,6 +33,51 @@ describe("paseo config schema", () => {
     });
   });
 
+  it("preserves valid service links when a sibling entry is malformed", () => {
+    const parsed = PaseoConfigSchema.parse({
+      scripts: {
+        dev: {
+          type: "service",
+          command: "npm run dev",
+          links: [
+            { label: "Admin", path: "/admin" },
+            { label: "External", path: "//example.com" },
+            { label: "GraphQL", path: "/api/graphql" },
+          ],
+        },
+      },
+    });
+
+    expect(parsed.scripts?.dev.links).toEqual([
+      { label: "Admin", path: "/admin" },
+      { label: "GraphQL", path: "/api/graphql" },
+    ]);
+  });
+
+  it.each(["\u0000", "\t", "\n", "\r", "\u001f", "\u007f"])(
+    "drops service links containing control character %j without dropping valid siblings",
+    (control) => {
+      const parsed = PaseoConfigSchema.parse({
+        scripts: {
+          dev: {
+            type: "service",
+            command: "npm run dev",
+            links: [
+              { label: "Admin", path: "/admin" },
+              { label: "Unsafe", path: `/${control}//evil.example` },
+              { label: "GraphQL", path: "/api/graphql?studio=1#query" },
+            ],
+          },
+        },
+      });
+
+      expect(parsed.scripts?.dev.links).toEqual([
+        { label: "Admin", path: "/admin" },
+        { label: "GraphQL", path: "/api/graphql?studio=1#query" },
+      ]);
+    },
+  );
+
   it("parses service port allocation", () => {
     expect(
       PaseoConfigSchema.parse({

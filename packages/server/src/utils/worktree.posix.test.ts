@@ -1123,7 +1123,7 @@ describe.skipIf(isPlatform("win32"))("worktree POSIX-only", () => {
       expect(isServiceScript(typecheck!)).toBe(false);
     });
 
-    it("parses service scripts and preserves optional port", async () => {
+    it("parses service scripts, links, and optional port", async () => {
       writeFileSync(
         join(repoDir, "paseo.json"),
         JSON.stringify({
@@ -1132,6 +1132,7 @@ describe.skipIf(isPlatform("win32"))("worktree POSIX-only", () => {
               type: "service",
               command: "npm run dev",
               port: 4321,
+              links: [{ label: " Admin ", path: "/admin " }],
             },
           },
         }),
@@ -1144,6 +1145,7 @@ describe.skipIf(isPlatform("win32"))("worktree POSIX-only", () => {
         type: "service",
         command: "npm run dev",
         port: 4321,
+        links: [{ label: "Admin", path: "/admin" }],
       });
       expect(server).toBeDefined();
       expect(isServiceScript(server!)).toBe(true);
@@ -1181,7 +1183,7 @@ describe.skipIf(isPlatform("win32"))("worktree POSIX-only", () => {
         new Map([
           ["valid", { command: "npm run valid" }],
           ["invalidType", { command: "npm run worker" }],
-          ["invalidPort", { type: "service", command: "npm run dev" }],
+          ["invalidPort", { type: "service", command: "npm run dev", links: [] }],
         ]),
       );
     });

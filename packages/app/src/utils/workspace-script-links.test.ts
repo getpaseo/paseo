@@ -1,7 +1,13 @@
 import { describe, expect, it } from "vitest";
-import type { WorkspaceScriptPayload } from "@getpaseo/protocol/messages";
+import {
+  WorkspaceScriptPayloadSchema,
+  type WorkspaceScriptPayload,
+} from "@getpaseo/protocol/messages";
 import type { ActiveConnection } from "@/runtime/host-runtime";
-import { resolveWorkspaceScriptLink } from "./workspace-script-links";
+import {
+  resolveWorkspaceScriptLink,
+  resolveWorkspaceScriptQuickLinks,
+} from "./workspace-script-links";
 
 const runningService: WorkspaceScriptPayload = {
   scriptName: "web",
@@ -200,5 +206,120 @@ describe("resolveWorkspaceScriptLink", () => {
       primary: null,
       targets: [],
     });
+  });
+});
+
+describe("resolveWorkspaceScriptQuickLinks", () => {
+  it("keeps distinct keys for duplicate links across reordering, removal, and route changes", () => {
+    const admin = { label: "Admin", path: "/admin" };
+    const graphQL = { label: "GraphQL", path: "/api/graphql" };
+    const original = resolveWorkspaceScriptQuickLinks({
+      baseUrl: "http://localhost:3000",
+      links: [admin, graphQL, admin],
+    });
+    expect(new Set(original.map((link) => link.key)).size).toBe(3);
+
+    const reordered = resolveWorkspaceScriptQuickLinks({
+      baseUrl: "https://web.services.example.com",
+      links: [graphQL, admin, admin],
+    });
+    expect(reordered.map((link) => link.key)).toEqual([
+      original[1].key,
+      original[0].key,
+      original[2].key,
+    ]);
+
+    const remaining = resolveWorkspaceScriptQuickLinks({
+      baseUrl: "https://web.services.example.com",
+      links: [admin, graphQL],
+    });
+    expect(remaining.map((link) => link.key)).toEqual([original[0].key, original[1].key]);
+  });
+
+  it.each([
+    "https://web--feature--paseo.services.example.com",
+    "http://web--feature--paseo.localhost:6767",
+    "http://localhost:3000",
+  ])("drops cross-origin and unparseable links received from a daemon for %s", (baseUrl) => {
+    const script = WorkspaceScriptPayloadSchema.parse({
+      ...runningService,
+      links: [
+        { label: "Admin", path: "/admin?next=https://example.com#settings" },
+        { label: "Escape", path: "/\t//evil.example" },
+        { label: "Port", path: "/\t/localhost:3001/" },
+        { label: "Invalid host", path: "/\t/[" },
+        { label: "Invalid authority", path: "/\t/" },
+        { label: "Encoded path", path: "/%2f%2fevil.example" },
+      ],
+    });
+
+    expect(resolveWorkspaceScriptQuickLinks({ baseUrl, links: script.links })).toEqual([
+      {
+        key: '["Admin","/admin?next=https://example.com#settings",0]',
+        label: "Admin",
+        path: "/admin?next=https://example.com#settings",
+        url: baseUrl + "/admin?next=https://example.com#settings",
+      },
+      {
+        key: '["Encoded path","/%2f%2fevil.example",0]',
+        label: "Encoded path",
+        path: "/%2f%2fevil.example",
+        url: baseUrl + "/%2f%2fevil.example",
+      },
+    ]);
+  });
+
+  it("returns no quick links when none are configured", () => {
+    expect(
+      resolveWorkspaceScriptQuickLinks({
+        baseUrl: "http://web--feature--paseo.localhost:6767",
+        links: undefined,
+      }),
+    ).toEqual([]);
+  });
+
+  it("uses configured paths instead of the root fallback", () => {
+    expect(
+      resolveWorkspaceScriptQuickLinks({
+        baseUrl: "https://web--feature--paseo.services.example.com",
+        links: [
+          { label: "Admin", path: "/admin" },
+          { label: "GraphQL", path: "/api/graphql?studio=1" },
+        ],
+      }),
+    ).toEqual([
+      {
+        key: '["Admin","/admin",0]',
+        label: "Admin",
+        path: "/admin",
+        url: "https://web--feature--paseo.services.example.com/admin",
+      },
+      {
+        key: '["GraphQL","/api/graphql?studio=1",0]',
+        label: "GraphQL",
+        path: "/api/graphql?studio=1",
+        url: "https://web--feature--paseo.services.example.com/api/graphql?studio=1",
+      },
+    ]);
+  });
+
+  it("keeps an explicitly configured root in configured order", () => {
+    expect(
+      resolveWorkspaceScriptQuickLinks({
+        baseUrl: "http://localhost:3000",
+        links: [
+          { label: "Admin", path: "/admin" },
+          { label: "Site", path: "/" },
+        ],
+      }),
+    ).toEqual([
+      {
+        key: '["Admin","/admin",0]',
+        label: "Admin",
+        path: "/admin",
+        url: "http://localhost:3000/admin",
+      },
+      { key: '["Site","/",0]', label: "Site", path: "/", url: "http://localhost:3000/" },
+    ]);
   });
 });
