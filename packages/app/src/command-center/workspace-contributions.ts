@@ -8,6 +8,13 @@ import type { WorkspaceTabTarget } from "@/workspace-tabs/model";
 import type { ShortcutKey } from "@/utils/format-shortcut";
 import type { CommandCenterContribution, CommandCenterIcon } from "./contributions";
 
+export interface WorkspaceCommandCenterLabelChoice {
+  name: string;
+  /** Whether the current workspace already carries this label. */
+  assigned: boolean;
+  icon?: CommandCenterIcon;
+}
+
 export interface WorkspaceCommandCenterLabels {
   section: string;
   newAgent: string;
@@ -40,9 +47,16 @@ export interface WorkspaceCommandCenterLabels {
   moveTabUp: string;
   moveTabDown: string;
   closePane: string;
-  togglePaneMaximization: string;
   toggleFocusMode: string;
-  toggleSidePanel: string;
+  toggleExplorerSidebar: string;
+  // Workspace management actions
+  rename: string;
+  copyPath: string;
+  copyBranchName: string;
+  pin: string;
+  unpin: string;
+  showSetup: string;
+  labelsGroup: string;
 }
 
 export interface WorkspaceCommandCenterIcons {
@@ -62,9 +76,16 @@ export interface WorkspaceCommandCenterIcons {
   copy?: CommandCenterIcon;
   focusPane?: CommandCenterIcon;
   moveTab?: CommandCenterIcon;
-  maximize?: CommandCenterIcon;
   focusMode?: CommandCenterIcon;
-  sidePanel?: CommandCenterIcon;
+  explorerSidebar?: CommandCenterIcon;
+  // Workspace management action icons
+  copyPath?: CommandCenterIcon;
+  copyBranchName?: CommandCenterIcon;
+  pin?: CommandCenterIcon;
+  unpin?: CommandCenterIcon;
+  showSetup?: CommandCenterIcon;
+  toggleFocusMode?: CommandCenterIcon;
+  label?: CommandCenterIcon;
   git?(action: GitAction): CommandCenterIcon | undefined;
 }
 
@@ -78,9 +99,9 @@ export interface WorkspaceCommandCenterShortcuts {
   nextTab?: ShortcutKey[][];
   closeCurrentTab?: ShortcutKey[][];
   closePane?: ShortcutKey[][];
-  togglePaneMaximization?: ShortcutKey[][];
   toggleFocusMode?: ShortcutKey[][];
-  toggleSidePanel?: ShortcutKey[][];
+  toggleExplorerSidebar?: ShortcutKey[][];
+  pinWorkspace?: ShortcutKey[][];
 }
 
 export interface WorkspaceCommandCenterSource {
@@ -92,12 +113,27 @@ export interface WorkspaceCommandCenterSource {
     canSplitPanes: boolean;
     canOpenBrowserTabs: boolean;
     isGit: boolean;
+    /** Host supports the `workspacePinning` feature. */
+    canPin: boolean;
+    /** The workspace has setup commands or a setup error — same gate as the header menu. */
+    canShowSetup: boolean;
   };
   activeTabKind: WorkspaceTabTarget["kind"] | null;
   activeTabIndex: number;
   activeTabCount: number;
+  /** Null on a non-git workspace, or before gitRuntime resolves. Omits Copy branch name. */
+  currentBranch: string | null;
+  isPinned: boolean;
+  /**
+   * The host's label catalog, each entry told whether the current workspace carries it. Null
+   * before the catalog has loaded — omits the whole group rather than showing it empty.
+   */
+  labelCatalog: readonly WorkspaceCommandCenterLabelChoice[] | null;
   dispatch(action: KeyboardActionDefinition): void;
   runGitAction(action: GitAction): void;
+  copyPath(): void;
+  copyBranchName(): void;
+  toggleLabel(name: string, assigned: boolean): void | Promise<void>;
 }
 
 function buildGitContribution(
@@ -198,7 +234,9 @@ function buildPanelContributions(
       }),
     );
     if (!source.capabilities.canSplitPanes) continue;
-    for (const [placementIndex, placement] of (["side-panel", "focused-pane"] as const).entries()) {
+    if (panel.target !== "pull-request") continue;
+    const placements = ["side-pane", "focused-pane"] as const;
+    for (const [placementIndex, placement] of placements.entries()) {
       contributions.push(
         buildQueryAction(source, {
           id: `tab:open:${panel.target}:${placement}`,
@@ -448,15 +486,6 @@ function buildPaneContributions(source: WorkspaceCommandCenterSource): CommandCe
       action: { id: "workspace.pane.close", scope: "workspace" },
     },
     {
-      id: "pane:maximize-toggle",
-      rank: 61,
-      title: source.labels.togglePaneMaximization,
-      keywords: ["pane", "maximize", "restore", "toggle"],
-      icon: source.icons.maximize,
-      shortcutKeys: source.shortcuts.togglePaneMaximization,
-      action: { id: "workspace.explorer.maximize.toggle", scope: "workspace" },
-    },
-    {
       id: "pane:focus-mode-toggle",
       rank: 62,
       title: source.labels.toggleFocusMode,
@@ -467,6 +496,35 @@ function buildPaneContributions(source: WorkspaceCommandCenterSource): CommandCe
     },
   ];
   return paneActions.map((action) => buildQueryAction(source, action));
+}
+
+function buildWorkspaceCallback(input: {
+  source: WorkspaceCommandCenterSource;
+  id: string;
+  rank: number;
+  title: string;
+  keywords: readonly string[];
+  icon?: CommandCenterIcon;
+  shortcutKeys?: ShortcutKey[][];
+  run: () => void;
+  visibility: "always" | "query";
+}): CommandCenterContribution {
+  return {
+    id: input.id,
+    group: "workspace",
+    groupRank: -1,
+    rank: input.rank,
+    keywords: input.keywords,
+    visibility: input.visibility,
+    run: input.run,
+    presentation: {
+      kind: "action",
+      title: input.title,
+      sectionTitle: input.source.labels.section,
+      icon: input.icon,
+      shortcutKeys: input.shortcutKeys,
+    },
+  };
 }
 
 function buildCreationContributions(
@@ -521,20 +579,150 @@ export function buildWorkspaceCommandCenterContributions(
     ...buildPanelContributions(source),
     ...buildActiveTabContributions(source),
     ...(source.capabilities.canSplitPanes ? buildPaneContributions(source) : []),
-    buildQueryAction(source, {
-      id: "side-panel:toggle",
-      rank: 70,
-      title: source.labels.toggleSidePanel,
-      keywords: ["side", "panel", "toggle", "show", "hide"],
-      icon: source.icons.sidePanel,
-      shortcutKeys: source.shortcuts.toggleSidePanel,
-      action: { id: "sidebar.toggle.right", scope: "workspace" },
-    }),
   ];
+
   const primary = source.gitActions.primary;
   for (const [index, action] of source.gitActions.secondary.entries()) {
     if (action.id === primary?.id) continue;
     contributions.push(buildGitContribution(source, action, 100 + index, "query"));
   }
+
+  if (source.capabilities.canPin) {
+    contributions.push(
+      buildWorkspaceAction({
+        source,
+        id: "workspace:pin",
+        rank: 20,
+        title: source.isPinned ? source.labels.unpin : source.labels.pin,
+        keywords: ["pin", "unpin", "favorite", "sticky"],
+        icon: source.isPinned ? source.icons.unpin : source.icons.pin,
+        shortcutKeys: source.shortcuts.pinWorkspace,
+        action: { id: "workspace.pin", scope: "sidebar" },
+        visibility: "always",
+      }),
+    );
+  }
+
+  contributions.push(
+    buildWorkspaceAction({
+      source,
+      id: "workspace:rename",
+      rank: 21,
+      title: source.labels.rename,
+      keywords: ["rename", "title", "name", "label"],
+      icon: source.icons.rename,
+      action: { id: "workspace.rename", scope: "workspace" },
+      visibility: "query",
+    }),
+    buildWorkspaceCallback({
+      source,
+      id: "workspace:copy-path",
+      rank: 22,
+      title: source.labels.copyPath,
+      keywords: ["copy", "path", "directory", "folder", "cwd"],
+      icon: source.icons.copyPath,
+      run: source.copyPath,
+      visibility: "query",
+    }),
+  );
+
+  // Omitted rather than present-and-failing: a non-git workspace has nothing to copy.
+  if (source.currentBranch) {
+    contributions.push(
+      buildWorkspaceCallback({
+        source,
+        id: "workspace:copy-branch-name",
+        rank: 23,
+        title: source.labels.copyBranchName,
+        keywords: ["copy", "branch", "git", source.currentBranch],
+        icon: source.icons.copyBranchName,
+        run: source.copyBranchName,
+        visibility: "query",
+      }),
+    );
+  }
+
+  if (source.capabilities.canShowSetup) {
+    contributions.push(
+      buildWorkspaceAction({
+        source,
+        id: "workspace:show-setup",
+        rank: 24,
+        title: source.labels.showSetup,
+        keywords: ["setup", "provision", "install", "bootstrap"],
+        icon: source.icons.showSetup,
+        action: { id: "workspace.setup.show", scope: "workspace" },
+        visibility: "query",
+      }),
+    );
+  }
+
+  // Toggle Explorer sidebar and Toggle focus mode belong here, NOT in root-registration.tsx:
+  // their handlers live in workspace-screen.tsx behind `enabled: isRouteFocused && ...`, so a
+  // global registration would list two entries that silently no-op on /settings, /sessions,
+  // /schedules and Home. Toggle sidebar (left) is global and stays in the root set — that is why
+  // the three toggles render in two non-adjacent sections. Don't "tidy" them back together.
+  contributions.push(
+    buildWorkspaceAction({
+      source,
+      id: "workspace:toggle-explorer-sidebar",
+      rank: 25,
+      title: source.labels.toggleExplorerSidebar,
+      keywords: ["toggle", "sidebar", "explorer", "files", "changes"],
+      icon: source.icons.explorerSidebar,
+      shortcutKeys: source.shortcuts.toggleExplorerSidebar,
+      action: { id: "sidebar.toggle.right", scope: "sidebar" },
+      visibility: "query",
+    }),
+  );
+
+  // `buildPaneContributions` already dispatches this same `workspace.focus.toggle` action as
+  // `pane:focus-mode-toggle` once split panes are available, so only add the standalone entry
+  // where that function is skipped — otherwise the palette lists "Toggle focus mode" twice.
+  if (!source.capabilities.canSplitPanes) {
+    contributions.push(
+      buildWorkspaceAction({
+        source,
+        id: "workspace:toggle-focus-mode",
+        rank: 26,
+        title: source.labels.toggleFocusMode,
+        keywords: ["toggle", "focus", "zen", "distraction", "fullscreen"],
+        icon: source.icons.toggleFocusMode,
+        shortcutKeys: source.shortcuts.toggleFocusMode,
+        action: { id: "workspace.focus.toggle", scope: "workspace" },
+        visibility: "query",
+      }),
+    );
+  }
+
+  contributions.push(...buildLabelContributions(source));
+
   return contributions;
+}
+
+/**
+ * One choice per catalog label, ticked when the current workspace carries it. Selecting toggles
+ * assignment rather than gating on `!selected` — unlike the model/mode choice groups this is a
+ * multi-select, so picking an already-assigned label un-assigns it instead of no-op'ing.
+ */
+function buildLabelContributions(
+  source: WorkspaceCommandCenterSource,
+): CommandCenterContribution[] {
+  if (!source.labelCatalog) return [];
+  return source.labelCatalog.map((choice, index) => ({
+    id: `workspace:label:${choice.name}`,
+    group: "workspace",
+    groupRank: -1,
+    rank: 30 + index,
+    keywords: ["label", "tag", choice.name],
+    visibility: "query" as const,
+    run: () => source.toggleLabel(choice.name, !choice.assigned),
+    presentation: {
+      kind: "choice" as const,
+      path: [source.labels.labelsGroup, choice.name] as const,
+      icon: choice.icon,
+      selected: choice.assigned,
+      testId: `command-center-workspace-label-${choice.name}`,
+    },
+  }));
 }

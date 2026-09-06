@@ -113,6 +113,11 @@ export async function enableRelayAndExpectOffer(page: Page): Promise<void> {
 export async function expectPairingOffer(page: Page): Promise<void> {
   await expect(page.getByRole("img", { name: "Pairing QR code" })).toBeVisible();
   await expect(page.getByRole("textbox", { name: "Pairing link" })).toHaveValue(/#offer=/);
+  await expect(
+    page.getByRole("alert").filter({
+      hasText: "Treat this pairing link like a password. Anyone with it can access this daemon.",
+    }),
+  ).toBeVisible();
   await expect(page.getByRole("button", { name: "Copy", exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Enable relay", exact: true })).toHaveCount(0);
 }

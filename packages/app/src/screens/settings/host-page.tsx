@@ -59,7 +59,7 @@ import { ProvidersSection } from "@/screens/settings/providers-section";
 import { ProviderUsageSettingsSection } from "@/provider-usage/settings-section";
 import { useProviderUsage } from "@/provider-usage/use-provider-usage";
 import { HostAppearanceSection } from "@/screens/settings/host-appearance-section";
-import { SettingsSection } from "@/screens/settings/settings-section";
+import { SettingsSection } from "@/components/settings/headings/settings-section";
 import { useSessionStore } from "@/stores/session-store";
 import { settingsStyles } from "@/styles/settings";
 import type { HostConnection, HostProfile } from "@/types/host-connection";
@@ -111,6 +111,9 @@ function formatHostConnectionLabel(connection: HostConnection, t: TFunction): st
   if (connection.type === "directSocket" || connection.type === "directPipe") {
     return `${t("settings.host.badges.local")} (${connection.path})`;
   }
+  if (connection.type === "remoteSsh") {
+    return `${t("settings.host.badges.remoteSsh")} (${connection.host})`;
+  }
   return `TCP (${connection.endpoint})`;
 }
 
@@ -130,6 +133,12 @@ function formatActiveConnectionBadge(
     return {
       icon: <Monitor size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />,
       text: t("settings.host.badges.local"),
+    };
+  }
+  if (activeConnection.type === "remoteSsh") {
+    return {
+      icon: <Globe size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />,
+      text: t("settings.host.badges.remoteSsh"),
     };
   }
   return {
@@ -186,7 +195,6 @@ function HostStatusBadges({ serverId }: { serverId: string }) {
   }
   const connectionBadge = formatActiveConnectionBadge(activeConnection, theme, t);
   const versionBadgeText = formatDaemonVersionBadge(daemonVersion);
-
   const statusDotStyle = useMemo(
     () => [styles.statusDot, { backgroundColor: statusDotColor }],
     [statusDotColor],

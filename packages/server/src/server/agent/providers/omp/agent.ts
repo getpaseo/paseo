@@ -69,7 +69,7 @@ export { formatOmpVersionSupport, resolveOmpDiagnosticPaths } from "./provider-c
 import { OmpSubagentCardTracker, type OmpSubagentCardScheduler } from "./subagent-card-tracker.js";
 import { shouldDisplayOmpCustomMessage } from "./custom-message.js";
 import { getUserMessageText } from "./message-history.js";
-import { mapOmpSystemNoticeToToolCall } from "./system-notice.js";
+import { mapOmpSystemNoticeToNotification } from "./system-notice.js";
 import { materializeProviderImage } from "../provider-image-output.js";
 import { OmpCliRuntime } from "./cli-runtime.js";
 import { listOmpImportableSessions, readOmpImportSessionConfig } from "./session-descriptor.js";
@@ -828,12 +828,15 @@ function buildExtensionUiResponse(
 function createRuntime(
   logger: Logger,
   runtimeSettings: ProviderRuntimeSettings | undefined,
+  providerParams: OmpRuntimeProviderParams,
 ): OmpRuntime {
   return new OmpCliRuntime({
     logger,
     runtimeSettings,
     command: ["omp"],
     commandsRpcName: "get_available_commands",
+    readyTimeoutMs: providerParams.readyTimeoutMs,
+    requestTimeoutMs: providerParams.rpcTimeoutMs,
   });
 }
 
@@ -2016,7 +2019,7 @@ export class OmpAgentSession implements AgentSession {
         if (text) {
           const item =
             mapOmpAdvisorMessageToToolCall(event.message, text) ??
-            mapOmpSystemNoticeToToolCall(text);
+            mapOmpSystemNoticeToNotification(text);
           this.emit({
             type: "timeline",
             provider: this.provider,
@@ -2213,7 +2216,8 @@ export class OmpAgentClient implements AgentClient {
     this.providerIdleScheduler = options.providerIdleScheduler;
     this.noTurnScheduler = options.noTurnScheduler;
     this.usagePollScheduler = options.usagePollScheduler;
-    this.runtime = options.runtime ?? createRuntime(options.logger, runtimeSettings);
+    this.runtime =
+      options.runtime ?? createRuntime(options.logger, runtimeSettings, this.providerParams);
   }
 
   private async configureNativePaseoTools(

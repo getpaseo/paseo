@@ -1,6 +1,6 @@
 {
   "name": "@getpaseo/plugin",
-  "version": "0.5.0-beta.5",
+  "version": "0.7.2",
   "description": "Paseo plugin SDK package",
   "files": [
     "dist",
@@ -18,10 +18,30 @@
       "source": "./src/server.ts",
       "default": "./dist/server.js"
     },
+    "./provider": {
+      "types": "./dist/provider.d.ts",
+      "source": "./src/provider.ts",
+      "default": "./dist/provider.js"
+    },
+    "./acp": {
+      "types": "./dist/acp.d.ts",
+      "source": "./src/acp.ts",
+      "default": "./dist/acp.js"
+    },
+    "./react-native": {
+      "types": "./dist/react-native.d.ts",
+      "source": "./src/react-native.ts",
+      "default": "./dist/react-native.js"
+    },
     "./host": {
       "types": "./dist/host.d.ts",
       "source": "./src/host.ts",
       "default": "./dist/host.js"
+    },
+    "./ui": {
+      "types": "./dist/ui.d.ts",
+      "source": "./src/ui.ts",
+      "default": "./dist/ui.js"
     }
   },
   "publishConfig": {
@@ -36,10 +56,12 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@agentclientprotocol/sdk": "^1.4.0",
     "use-sync-external-store": "^1.6.0"
   },
   "devDependencies": {
-    "@getpaseo/client": "0.5.0-beta.5",
+    "@getpaseo/client": "0.7.2",
+    "@getpaseo/protocol": "0.7.2",
     "@types/node": "^20.9.0",
     "@types/react": "~19.2.0",
     "react": "19.1.0",
@@ -48,7 +70,8 @@
     "zod": "^4.4.3"
   },
   "peerDependencies": {
-    "@getpaseo/client": "0.5.0-beta.5",
+    "@getpaseo/client": "0.7.2",
+    "@getpaseo/protocol": "0.7.2",
     "react": "19.1.0",
     "zod": "^4.4.3"
   }

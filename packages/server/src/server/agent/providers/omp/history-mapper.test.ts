@@ -88,7 +88,7 @@ describe("OMP history mapper", () => {
     ]);
   });
 
-  test("absorbs replayed omp system-notice custom messages as synthetic tool calls", async () => {
+  test("maps replayed OMP system-notice custom messages to notifications", async () => {
     const notice = [
       "<system-notice>",
       "Background job DocsSmokeTwo has completed. Resume your work using the result below.",
@@ -124,24 +124,9 @@ describe("OMP history mapper", () => {
         type: "timeline",
         provider: "omp",
         item: {
-          type: "tool_call",
-          callId: "omp-notice:DocsSmokeTwo",
-          name: "task_notification",
-          status: "completed",
-          detail: {
-            type: "plain_text",
-            label: "Background job DocsSmokeTwo completed",
-            text: notice,
-            icon: "wrench",
-          },
-          metadata: {
-            synthetic: true,
-            source: "omp_system_notice",
-            taskId: "DocsSmokeTwo",
-            subagentType: "explore",
-            status: "completed",
-          },
-          error: null,
+          type: "notification",
+          level: "info",
+          message: "Background job DocsSmokeTwo completed",
         },
       },
       {

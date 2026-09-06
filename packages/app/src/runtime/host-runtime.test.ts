@@ -21,7 +21,7 @@ import {
   type HostRuntimeControllerDeps,
   type HostRuntimeStorage,
 } from "./host-runtime";
-import { ReplicaCache } from "./replica-cache";
+import type { ReplicaRow, ReplicaRowStore } from "./replica-cache/row-store";
 
 class FakeDaemonClient {
   private state: ConnectionState = { status: "idle" };
@@ -31,6 +31,8 @@ class FakeDaemonClient {
   private latencyMeasurementFailure: Error | null = null;
   private latencyMeasurementsRequested: Array<{ timeoutMs?: number }> = [];
   public connectCalls = 0;
+  public ensureConnectedCalls = 0;
+  public reconnectEnabledChanges: boolean[] = [];
   public fetchAgentsCalls: FetchAgentsOptions[] = [];
   public fetchAgentsResponses: Array<
     Awaited<ReturnType<DaemonClient["fetchAgents"]>> | ReturnType<DaemonClient["fetchAgents"]>
@@ -105,6 +107,7 @@ class FakeDaemonClient {
   }
 
   ensureConnected(): void {
+    this.ensureConnectedCalls += 1;
     if (this.state.status !== "connected") {
       this.setConnectionState({ status: "connected" });
     }
@@ -112,6 +115,10 @@ class FakeDaemonClient {
 
   getConnectionState(): ConnectionState {
     return this.state;
+  }
+
+  getLastServerInfoMessage(): null {
+    return null;
   }
 
   subscribeConnectionStatus(listener: (status: ConnectionState) => void): () => void {
@@ -166,7 +173,9 @@ class FakeDaemonClient {
     return result.rttMs;
   }
 
-  setReconnectEnabled(_enabled: boolean): void {}
+  setReconnectEnabled(enabled: boolean): void {
+    this.reconnectEnabledChanges.push(enabled);
+  }
 
   getLastLivenessRttMs(): number | null {
     return this.heartbeatRttMs;
@@ -254,11 +263,11 @@ class Deferred<T> {
   }
 }
 
-async function waitForDirectoryReady(store: HostRuntimeStore, serverId: string): Promise<void> {
-  if (store.getSnapshot(serverId)?.agentDirectoryStatus === "ready") return;
+async function waitForHostOnline(store: HostRuntimeStore, serverId: string): Promise<void> {
+  if (store.getSnapshot(serverId)?.connectionStatus === "online") return;
   await new Promise<void>((resolve) => {
     const unsubscribe = store.subscribe(serverId, () => {
-      if (store.getSnapshot(serverId)?.agentDirectoryStatus !== "ready") return;
+      if (store.getSnapshot(serverId)?.connectionStatus !== "online") return;
       unsubscribe();
       resolve();
     });
@@ -448,6 +457,50 @@ function createMemoryHostRuntimeStorage(entries: Record<string, string> = {}): H
     removeItem: async (key) => {
       values.delete(key);
     },
+  };
+}
+
+function createMemoryReplicaRowStore(): ReplicaRowStore {
+  const rows = new Map<string, ReplicaRow>();
+  const keyOf = (row: Pick<ReplicaRow, "serverId" | "kind" | "id">) =>
+    `${row.serverId}:${row.kind}:${row.id}`;
+  return {
+    open: async () => undefined,
+    read: async (serverId, kinds, ids) => {
+      const acceptedKinds = new Set(kinds);
+      const acceptedIds = ids ? new Set(ids) : null;
+      return [...rows.values()].filter(
+        (row) =>
+          row.serverId === serverId &&
+          acceptedKinds.has(row.kind) &&
+          (!acceptedIds || acceptedIds.has(row.id)),
+      );
+    },
+    readAll: async () => {
+      const hosts = new Map<string, ReplicaRow[]>();
+      for (const row of rows.values()) {
+        const hostRows = hosts.get(row.serverId) ?? [];
+        hostRows.push(row);
+        hosts.set(row.serverId, hostRows);
+      }
+      return [...hosts].map(([serverId, hostRows]) => ({ serverId, rows: hostRows }));
+    },
+    apply: async (changes) => {
+      for (const key of changes.deletes) rows.delete(keyOf(key));
+      for (const row of changes.upserts) rows.set(keyOf(row), row);
+    },
+    deleteHost: async (serverId) => {
+      for (const [key, row] of rows) if (row.serverId === serverId) rows.delete(key);
+    },
+    renameHost: async (oldServerId, newServerId) => {
+      for (const [key, row] of rows) {
+        if (row.serverId !== oldServerId) continue;
+        rows.delete(key);
+        const renamed = { ...row, serverId: newServerId };
+        rows.set(keyOf(renamed), renamed);
+      }
+    },
+    clear: async () => rows.clear(),
   };
 }
 
@@ -765,6 +818,52 @@ describe("HostRuntimeController", () => {
       latencyMs: 42,
     });
     expect(activeClient.latencyMeasurements()).toEqual([]);
+  });
+
+  it("does not create a probe client for the selected connection while it reconnects", async () => {
+    useHostRuntimeClock();
+    const relay: HostConnection = {
+      id: "relay:relay.paseo.sh:443",
+      type: "relay",
+      relayEndpoint: "relay.paseo.sh:443",
+      daemonPublicKeyB64: "pk_test",
+    };
+    const host = makeHost({ connections: [relay], preferredConnectionId: relay.id });
+    const activeClient = new FakeDaemonClient();
+    activeClient.setConnectionState({ status: "connected" });
+    const probeAttempts: string[] = [];
+    const controller = new HostRuntimeController({
+      host,
+      deps: {
+        createClient: () => {
+          throw new Error("the existing client owns the selected connection");
+        },
+        connectToDaemon: async ({ connection }) => {
+          probeAttempts.push(connection.id);
+          return {
+            client: makeConnectedProbeClient(10) as unknown as DaemonClient,
+            serverId: host.serverId,
+            hostname: host.label ?? null,
+          };
+        },
+        getClientId: async () => "cid_test_runtime",
+      },
+    });
+
+    await controller.start({
+      autoProbe: false,
+      initialConnection: {
+        connectionId: relay.id,
+        existingClient: activeClient as unknown as DaemonClient,
+      },
+    });
+    activeClient.setConnectionState({ status: "disconnected", reason: "network lost" });
+    await vi.advanceTimersByTimeAsync(10_000);
+
+    await controller.runProbeCycleNow();
+
+    expect(probeAttempts).toEqual([]);
+    expect(controller.getSnapshot().client).toBe(activeClient as unknown as DaemonClient);
   });
 
   it("rejects probes that resolve to a different server id", async () => {
@@ -1387,6 +1486,71 @@ describe("HostRuntimeController", () => {
 });
 
 describe("HostRuntimeStore", () => {
+  it("reconnects every registered host immediately on app resume", async () => {
+    const relay = (suffix: string): HostConnection => ({
+      id: `relay:relay-${suffix}.paseo.sh:443`,
+      type: "relay",
+      relayEndpoint: `relay-${suffix}.paseo.sh:443`,
+      daemonPublicKeyB64: `pk_${suffix}`,
+    });
+    const hostAConnection = relay("a");
+    const hostBConnection = relay("b");
+    const hostA = makeHost({
+      serverId: "srv_a",
+      connections: [hostAConnection],
+      preferredConnectionId: hostAConnection.id,
+    });
+    const hostB = makeHost({
+      serverId: "srv_b",
+      connections: [hostBConnection],
+      preferredConnectionId: hostBConnection.id,
+    });
+    const clientA = new FakeDaemonClient();
+    const clientB = new FakeDaemonClient();
+    clientA.setConnectionState({ status: "connected" });
+    clientB.setConnectionState({ status: "connected" });
+    const store = new HostRuntimeStore({
+      storage: createMemoryHostRuntimeStorage(),
+      deps: {
+        createClient: () => {
+          throw new Error("initial clients are supplied");
+        },
+        connectToDaemon: async () => {
+          throw new Error("single-connection hosts reuse their active clients");
+        },
+        getClientId: async () => "cid_test_runtime",
+      },
+    });
+
+    store.syncHosts([hostA, hostB], {
+      initialConnectionByServerId: new Map([
+        [
+          hostA.serverId,
+          { connectionId: hostAConnection.id, existingClient: clientA as unknown as DaemonClient },
+        ],
+        [
+          hostB.serverId,
+          { connectionId: hostBConnection.id, existingClient: clientB as unknown as DaemonClient },
+        ],
+      ]),
+    });
+    await waitForHostOnline(store, hostA.serverId);
+    await waitForHostOnline(store, hostB.serverId);
+    store.setAppVisible(false);
+    expect(clientA.reconnectEnabledChanges.at(-1)).toBe(false);
+    expect(clientB.reconnectEnabledChanges.at(-1)).toBe(false);
+    clientA.setConnectionState({ status: "disconnected", reason: "backgrounded" });
+    clientB.setConnectionState({ status: "disconnected", reason: "backgrounded" });
+
+    store.setAppVisible(true);
+    expect(clientA.reconnectEnabledChanges.at(-1)).toBe(true);
+    expect(clientB.reconnectEnabledChanges.at(-1)).toBe(true);
+    expect(clientA.ensureConnectedCalls).toBe(1);
+    expect(clientB.ensureConnectedCalls).toBe(1);
+
+    store.syncHosts([]);
+  });
+
   it("revokes push notifications before removing a host", async () => {
     const host = makeHost({ connections: [makeHost().connections[0]!] });
     const revocation = createDeferred<void>();
@@ -1435,48 +1599,25 @@ describe("HostRuntimeStore", () => {
     expect(store.getHosts()).toEqual([]);
   });
 
-  it("restores the display replica before declaring the host registry loaded", async () => {
+  it("loads the host registry and restores its cached directory", async () => {
     const host = makeHost();
     const storage = createMemoryHostRuntimeStorage();
+    let fullScans = 0;
+    const backingStore = createMemoryReplicaRowStore();
+    const replicaRowStore: ReplicaRowStore = {
+      ...backingStore,
+      read: async (...args) => {
+        fullScans += 1;
+        return backingStore.read(...args);
+      },
+    };
     await storage.setItem("@paseo:daemon-registry", JSON.stringify([host]));
     await storage.setItem("@paseo:e2e", "1");
-
-    const cachedAgent = replicaAgent(
-      makeFetchAgentsEntry({
-        id: "cached-agent",
-        cwd: "/repo/paseo",
-        updatedAt: "2026-07-18T08:00:00.000Z",
-        title: "Cached agent",
-      }).agent,
-      host.serverId,
-    );
     const session = useSessionStore.getState();
-    session.initializeSession(host.serverId, null);
-    session.setAgents(host.serverId, new Map([[cachedAgent.id, cachedAgent]]));
-    session.setFocusedAgentId(host.serverId, cachedAgent.id);
-    session.setAgentStreamTail(
-      host.serverId,
-      new Map([
-        [
-          cachedAgent.id,
-          [
-            {
-              kind: "assistant_message",
-              id: "cached-message",
-              text: "Already painted",
-              timestamp: new Date("2026-07-18T08:01:00.000Z"),
-            },
-          ],
-        ],
-      ]),
-    );
-    const cache = new ReplicaCache(storage);
-    cache.setHosts([host.serverId]);
-    await cache.flush();
-    session.clearSession(host.serverId);
 
     const store = new HostRuntimeStore({
       storage,
+      replicaRowStore,
       deps: {
         createClient: () => {
           throw new Error("createClient should not be called");
@@ -1491,13 +1632,14 @@ describe("HostRuntimeStore", () => {
     store.boot();
     await registryLoaded;
 
-    const restored = useSessionStore.getState().sessions[host.serverId];
-    expect(restored?.agents.get(cachedAgent.id)?.title).toBe("Cached agent");
-    expect(restored?.agentStreamTail.get(cachedAgent.id)?.[0]).toMatchObject({
-      text: "Already painted",
-      timestamp: new Date("2026-07-18T08:01:00.000Z"),
+    await vi.waitFor(() => expect(fullScans).toBe(1));
+    expect(useSessionStore.getState().sessions[host.serverId]).toMatchObject({
+      client: null,
+      hasHydratedAgents: false,
+      hasHydratedWorkspaces: false,
     });
-    expect(restored?.hasHydratedAgents).toBe(false);
+    expect(useSessionStore.getState().sessions[host.serverId]?.agents.size).toBe(0);
+    expect(useSessionStore.getState().sessions[host.serverId]?.workspaces.size).toBe(0);
 
     store.syncHosts([]);
     session.clearSession(host.serverId);
@@ -1716,8 +1858,7 @@ describe("HostRuntimeStore", () => {
     });
 
     store.syncHosts([host]);
-    await fakeClient.waitForFetches(1);
-    await waitForDirectoryReady(store, host.serverId);
+    await waitForHostOnline(store, host.serverId);
     await vi.advanceTimersByTimeAsync(1_500);
 
     const outageStartedAt = Date.now();
@@ -1734,7 +1875,7 @@ describe("HostRuntimeStore", () => {
     store.syncHosts([]);
   });
 
-  it("bootstraps agent directory subscription when host transitions online", async () => {
+  it("loads an agent directory only after a consumer requests it", async () => {
     const host = makeHost({
       connections: [
         {
@@ -1761,16 +1902,25 @@ describe("HostRuntimeStore", () => {
     useSessionStore
       .getState()
       .initializeSession(host.serverId, fakeClient as unknown as DaemonClient, 1);
+    useSessionStore.getState().updateSessionServerInfo(host.serverId, {
+      serverId: host.serverId,
+      hostname: null,
+      version: "test",
+      features: { workspaceMultiplicity: false },
+    });
     store.syncHosts([host]);
-
+    await waitForHostOnline(store, host.serverId);
+    expect(fakeClient.fetchAgentsCalls).toHaveLength(0);
+    const releaseDemand = store.acquireDirectoryDemand(host.serverId);
     await fakeClient.waitForFetches(1);
-    await waitForDirectoryReady(store, host.serverId);
+    await vi.waitFor(() => {
+      expect(store.getSnapshot(host.serverId)?.agentDirectoryStatus).toBe("ready");
+    });
 
     expect(fakeClient.fetchAgentsCalls).toHaveLength(1);
     expect(fakeClient.fetchAgentsCalls[0]).toEqual({
-      scope: "active",
       sort: [{ key: "updated_at", direction: "desc" }],
-      subscribe: { subscriptionId: "app:srv_test" },
+      subscribe: {},
       page: { limit: 200 },
     });
 
@@ -1778,13 +1928,18 @@ describe("HostRuntimeStore", () => {
     expect(snapshot?.agentDirectoryStatus).toBe("ready");
     expect(snapshot?.hasEverLoadedAgentDirectory).toBe(true);
 
+    fakeClient.setConnectionState({ status: "disconnected", reason: "transport closed" });
+    fakeClient.setConnectionState({ status: "connected" });
+    await fakeClient.waitForFetches(2);
+    expect(fakeClient.fetchAgentsCalls[1]).toMatchObject({ subscribe: {} });
+
     await store.refreshAgentDirectory({ serverId: host.serverId });
-    expect(fakeClient.fetchAgentsCalls[1]).toEqual({
-      scope: "active",
+    expect(fakeClient.fetchAgentsCalls[2]).toEqual({
       sort: [{ key: "updated_at", direction: "desc" }],
       page: { limit: 200 },
     });
 
+    releaseDemand();
     store.syncHosts([]);
     useSessionStore.getState().clearSession(host.serverId);
   });
@@ -1815,9 +1970,14 @@ describe("HostRuntimeStore", () => {
     });
 
     store.syncHosts([host]);
-
+    await waitForHostOnline(store, host.serverId);
+    const load = store.refreshAgentDirectory({
+      serverId: host.serverId,
+      subscribe: { subscriptionId: "app:srv_no_session" },
+      page: { limit: 200 },
+    });
     await fakeClient.waitForFetches(1);
-    await waitForDirectoryReady(store, host.serverId);
+    await load;
 
     const session = useSessionStore.getState().sessions[host.serverId];
     expect(session?.client).toBe(fakeClient);
@@ -1880,9 +2040,14 @@ describe("HostRuntimeStore", () => {
       version: "0.1.96",
     });
     store.syncHosts([host]);
-
+    await waitForHostOnline(store, host.serverId);
+    const load = store.refreshAgentDirectory({
+      serverId: host.serverId,
+      subscribe: { subscriptionId: "app:srv_legacy_workspace_daemon" },
+      page: { limit: 200 },
+    });
     await fakeClient.waitForFetches(1);
-    await waitForDirectoryReady(store, host.serverId);
+    await load;
 
     expect(fakeClient.fetchAgentsCalls).toEqual([
       {
@@ -1957,11 +2122,27 @@ describe("HostRuntimeStore", () => {
       new Map([
         [
           "legacy-snapshot",
-          { ...replicaAgent(snapshotAgent.agent, host.serverId), status: "running" },
+          {
+            ...replicaAgent(snapshotAgent.agent, host.serverId),
+            turn: {
+              phase: "open",
+              turnId: null,
+              startedAt: null,
+              cancellationRequestId: null,
+            },
+          },
         ],
         [
           "legacy-buffered",
-          { ...replicaAgent(bufferedAgent.agent, host.serverId), status: "running" },
+          {
+            ...replicaAgent(bufferedAgent.agent, host.serverId),
+            turn: {
+              phase: "open",
+              turnId: null,
+              startedAt: null,
+              cancellationRequestId: null,
+            },
+          },
         ],
       ]),
     );
@@ -1973,6 +2154,12 @@ describe("HostRuntimeStore", () => {
       ]),
     );
     store.syncHosts([host]);
+    await waitForHostOnline(store, host.serverId);
+    const load = store.refreshAgentDirectory({
+      serverId: host.serverId,
+      subscribe: { subscriptionId: `app:${host.serverId}` },
+      page: { limit: 200 },
+    });
     await fakeClient.waitForFetches(2);
     fakeClient.agentUpdate({
       kind: "upsert",
@@ -1980,7 +2167,7 @@ describe("HostRuntimeStore", () => {
       project: bufferedAgent.project,
     });
     pageTwo.resolve(makeFetchAgentsPayload({ entries: [] }));
-    await waitForDirectoryReady(store, host.serverId);
+    await load;
     await fakeClient.waitForSentMessages(2);
 
     expect(fakeClient.sentAgentMessages.map(([agentId, text]) => [agentId, text])).toEqual([
@@ -2057,9 +2244,14 @@ describe("HostRuntimeStore", () => {
       .getState()
       .initializeSession(host.serverId, fakeClient as unknown as DaemonClient, 1);
     store.syncHosts([host]);
-
+    await waitForHostOnline(store, host.serverId);
+    const load = store.refreshAgentDirectory({
+      serverId: host.serverId,
+      subscribe: { subscriptionId: "app:srv_paged" },
+      page: { limit: 200 },
+    });
     await fakeClient.waitForFetches(2);
-    await waitForDirectoryReady(store, host.serverId);
+    await load;
 
     expect(fakeClient.fetchAgentsCalls).toHaveLength(2);
     expect(fakeClient.fetchAgentsCalls[0]).toEqual({
@@ -2142,6 +2334,12 @@ describe("HostRuntimeStore", () => {
       new Map([[recoveredAgent.agent.id, { epoch: "epoch", startSeq: 10, endSeq: 20 }]]),
     );
     store.syncHosts([host]);
+    await waitForHostOnline(store, host.serverId);
+    const load = store.refreshAgentDirectory({
+      serverId: host.serverId,
+      subscribe: { subscriptionId: "app:srv_paged_delta" },
+      page: { limit: 200 },
+    });
     await fakeClient.waitForFetches(2);
 
     fakeClient.agentUpdate({
@@ -2165,7 +2363,7 @@ describe("HostRuntimeStore", () => {
         ],
       }),
     );
-    await waitForDirectoryReady(store, host.serverId);
+    await load;
 
     expect(
       Array.from(useSessionStore.getState().sessions[host.serverId]?.agents.values() ?? []).map(
@@ -2227,6 +2425,11 @@ describe("HostRuntimeStore", () => {
 
     store.syncHosts([host]);
     await fakeClient.waitForAgentUpdates();
+    const load = store.refreshAgentDirectory({
+      serverId: host.serverId,
+      subscribe: { subscriptionId: `app:${host.serverId}` },
+      page: { limit: 200 },
+    });
     fakeClient.agentUpdate({
       kind: "upsert",
       agent: { ...snapshotEntry.agent, title: "before-session" },
@@ -2238,7 +2441,7 @@ describe("HostRuntimeStore", () => {
       version: "test",
     });
     await fakeClient.waitForFetches(1);
-    await waitForDirectoryReady(store, host.serverId);
+    await load;
 
     expect(
       useSessionStore.getState().sessions[host.serverId]?.agents.get("agent-pre-session")?.title,
@@ -2271,8 +2474,8 @@ describe("HostRuntimeStore", () => {
       .getState()
       .initializeSession(host.serverId, fakeClient as unknown as DaemonClient, 1);
     store.syncHosts([host]);
-    await fakeClient.waitForFetches(1);
-    await waitForDirectoryReady(store, host.serverId);
+    await waitForHostOnline(store, host.serverId);
+    await store.refreshAgentDirectory({ serverId: host.serverId });
     const olderPage = new Deferred<Awaited<ReturnType<DaemonClient["fetchAgents"]>>>();
     fakeClient.fetchAgentsResponses.push(olderPage.promise);
     const olderRefresh = store.refreshAgentDirectory({ serverId: host.serverId });
@@ -2339,8 +2542,8 @@ describe("HostRuntimeStore", () => {
       .getState()
       .initializeSession(host.serverId, fakeClient as unknown as DaemonClient, 1);
     store.syncHosts([host]);
-    await fakeClient.waitForFetches(1);
-    await waitForDirectoryReady(store, host.serverId);
+    await waitForHostOnline(store, host.serverId);
+    await store.refreshAgentDirectory({ serverId: host.serverId });
 
     const olderPage = new Deferred<Awaited<ReturnType<DaemonClient["fetchAgents"]>>>();
     fakeClient.fetchAgentsResponses.push(olderPage.promise);
@@ -2398,8 +2601,8 @@ describe("HostRuntimeStore", () => {
     const sessionStore = useSessionStore.getState();
     sessionStore.initializeSession(host.serverId, fakeClient as unknown as DaemonClient, 1);
     store.syncHosts([host]);
-    await fakeClient.waitForFetches(1);
-    await waitForDirectoryReady(store, host.serverId);
+    await waitForHostOnline(store, host.serverId);
+    await store.refreshAgentDirectory({ serverId: host.serverId });
     const stalePage = new Deferred<Awaited<ReturnType<DaemonClient["fetchAgents"]>>>();
     fakeClient.fetchAgentsResponses.push(stalePage.promise);
 
@@ -2474,11 +2677,27 @@ describe("HostRuntimeStore", () => {
       new Map([
         [
           "snapshot-transition",
-          { ...replicaAgent(snapshotAgent.agent, host.serverId), status: "running" },
+          {
+            ...replicaAgent(snapshotAgent.agent, host.serverId),
+            turn: {
+              phase: "open",
+              turnId: null,
+              startedAt: null,
+              cancellationRequestId: null,
+            },
+          },
         ],
         [
           "buffered-transition",
-          { ...replicaAgent(bufferedAgent.agent, host.serverId), status: "running" },
+          {
+            ...replicaAgent(bufferedAgent.agent, host.serverId),
+            turn: {
+              phase: "open",
+              turnId: null,
+              startedAt: null,
+              cancellationRequestId: null,
+            },
+          },
         ],
       ]),
     );
@@ -2496,6 +2715,8 @@ describe("HostRuntimeStore", () => {
       ]),
     );
     store.syncHosts([host]);
+    await waitForHostOnline(store, host.serverId);
+    const load = store.refreshAgentDirectory({ serverId: host.serverId });
     await fakeClient.waitForFetches(2);
     fakeClient.agentUpdate({
       kind: "upsert",
@@ -2503,7 +2724,7 @@ describe("HostRuntimeStore", () => {
       project: bufferedAgent.project,
     });
     pageTwo.resolve(makeFetchAgentsPayload({ entries: [] }));
-    await waitForDirectoryReady(store, host.serverId);
+    await load;
     await fakeClient.waitForSentMessages(2);
 
     expect(fakeClient.sentAgentMessages.map(([agentId, text]) => [agentId, text])).toEqual([
@@ -2796,6 +3017,8 @@ describe("HostRuntimeStore", () => {
       isArchiving: true,
     });
     store.syncHosts([host]);
+    await waitForHostOnline(store, host.serverId);
+    const load = store.refreshAgentDirectory({ serverId: host.serverId });
     await fakeClient.waitForFetches(2);
     fakeClient.agentUpdate({
       kind: "upsert",
@@ -2811,7 +3034,7 @@ describe("HostRuntimeStore", () => {
       project: base.project,
     });
     pageTwo.resolve(makeFetchAgentsPayload({ entries: [] }));
-    await waitForDirectoryReady(store, host.serverId);
+    await load;
     sessionStore.flushAgentLastActivity();
 
     const state = useSessionStore.getState();
@@ -2844,7 +3067,7 @@ describe("HostRuntimeStore", () => {
     useSessionStore.getState().clearSession(host.serverId);
   });
 
-  it("re-subscribes agent directory updates after reconnect", async () => {
+  it("re-subscribes agent directory updates when the surface requests after reconnect", async () => {
     const host = makeHost({
       serverId: "srv_resubscribe",
       connections: [
@@ -2873,9 +3096,13 @@ describe("HostRuntimeStore", () => {
       .getState()
       .initializeSession(host.serverId, fakeClient as unknown as DaemonClient, 1);
     store.syncHosts([host]);
-
+    await waitForHostOnline(store, host.serverId);
+    await store.refreshAgentDirectory({
+      serverId: host.serverId,
+      subscribe: { subscriptionId: "app:srv_resubscribe" },
+      page: { limit: 200 },
+    });
     await fakeClient.waitForFetches(1);
-    await waitForDirectoryReady(store, host.serverId);
 
     fakeClient.setConnectionState({ status: "connected" });
     await Promise.resolve();
@@ -2887,9 +3114,13 @@ describe("HostRuntimeStore", () => {
       reason: "client_closed",
     });
     fakeClient.setConnectionState({ status: "connected" });
-
+    await waitForHostOnline(store, host.serverId);
+    await store.refreshAgentDirectory({
+      serverId: host.serverId,
+      subscribe: { subscriptionId: "app:srv_resubscribe" },
+      page: { limit: 200 },
+    });
     await fakeClient.waitForFetches(2);
-    await waitForDirectoryReady(store, host.serverId);
 
     expect(fakeClient.fetchAgentsCalls).toEqual([
       {
@@ -2954,12 +3185,14 @@ describe("HostRuntimeStore", () => {
       }).agent;
       const staleAgent: Agent = {
         ...stale,
-        activeTurn: stale.activeTurn
+        turn: stale.activeTurn
           ? {
+              phase: "open",
               turnId: stale.activeTurn.turnId,
               startedAt: stale.activeTurn.startedAt ? new Date(stale.activeTurn.startedAt) : null,
+              cancellationRequestId: null,
             }
-          : null,
+          : { phase: "idle", cancellationRequestId: null },
         serverId: host.serverId,
         createdAt: new Date(stale.createdAt),
         updatedAt: new Date(stale.updatedAt),
@@ -2973,9 +3206,13 @@ describe("HostRuntimeStore", () => {
     });
 
     store.syncHosts([host]);
-
+    await waitForHostOnline(store, host.serverId);
+    await store.refreshAgentDirectory({
+      serverId: host.serverId,
+      subscribe: { subscriptionId: "app:srv_archived_rehydrate" },
+      page: { limit: 200 },
+    });
     await fakeClient.waitForFetches(1);
-    await waitForDirectoryReady(store, host.serverId);
 
     expect(useSessionStore.getState().sessions[host.serverId]?.agents.has("agent-archived")).toBe(
       false,

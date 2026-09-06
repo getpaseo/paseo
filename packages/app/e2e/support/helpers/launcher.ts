@@ -96,17 +96,20 @@ export async function assertNewTabMenuTriggerVisible(page: Page): Promise<void> 
 
 // ─── Tab creation actions ─────────────────────────────────────────────────
 
-/** Create a New tab and choose Agent to create a draft/chat tab. */
+/** Choose Agent from the pane-local `+` menu. */
 export async function clickNewChat(page: Page): Promise<void> {
   await createAgentTabFromMenu(page);
 }
 
-/** Create a New tab and choose Terminal. */
+/** Choose Terminal from the pane-local `+` menu. */
 export async function clickNewTerminal(page: Page): Promise<void> {
   const trigger = page.getByTestId("workspace-new-tab-button").filter({ visible: true }).first();
   await expect(trigger).toBeVisible({ timeout: 10_000 });
   await trigger.click();
-  const item = page.getByTestId("workspace-new-tab-terminal").filter({ visible: true }).first();
+  const item = page
+    .getByTestId("workspace-new-tab-menu-terminal")
+    .filter({ visible: true })
+    .first();
   await expect(item).toBeVisible({ timeout: 10_000 });
   await item.click();
 }
@@ -172,7 +175,7 @@ export async function sampleTabsDuringTransition(
     function sample() {
       const tabs = Array.from(
         document.querySelectorAll<HTMLElement>(
-          '[data-testid^="workspace-tab-"]:not([data-testid^="workspace-tab-context-"])',
+          '[data-testid^="workspace-tab-"][role="button"][aria-selected]',
         ),
       ).filter((element) => element.getClientRects().length > 0);
       scope.__paseoTabTrackFrames?.push(
@@ -185,7 +188,10 @@ export async function sampleTabsDuringTransition(
         requestAnimationFrame(sample);
       }
     }
-    requestAnimationFrame(sample);
+    // Establish the known-good pre-action state synchronously. Starting on the
+    // next animation frame lets the action race the first sample, which can
+    // misclassify a not-yet-painted test harness frame as a transition blank.
+    sample();
   }, durationMs);
   await action();
   await page.waitForTimeout(durationMs + 100);

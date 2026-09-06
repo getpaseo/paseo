@@ -66,7 +66,7 @@ afterEach(async () => {
 });
 
 githubTest(
-  "does not retarget a never-pushed workspace when its checkout moves onto a merged PR branch",
+  "shows but does not archive an already-merged PR checked out in another workspace",
   async () => {
     const repository = realpathSync(mkdtempSync(path.join(tmpdir(), "paseo-github-merge-")));
     cleanupPaths.add(repository);
@@ -154,6 +154,13 @@ githubTest(
       "Producer-level auto-archive reproduction.",
     ]);
 
+    expect((await context.client.checkoutRefresh(merged.worktreePath)).success).toBe(true);
+    expect((await context.client.checkoutPrStatus(merged.worktreePath)).status).toMatchObject({
+      url: pullRequestUrl,
+      state: "open",
+      isMerged: false,
+    });
+
     const beforeMerge = await activeWorkspaceIds(context);
     expect(beforeMerge).toEqual(
       expect.arrayContaining([mergedWorkspace.workspace.id, unrelatedWorkspace.workspace.id]),
@@ -176,13 +183,17 @@ githubTest(
     expect(unrelatedStatus.status).toBeNull();
     expect(await activeWorkspaceIds(context)).toContain(unrelatedWorkspace.workspace.id);
 
-    // The workspace remains identified by the branch it was created for. Moving the
-    // checkout does not silently retarget its PR association or archive identity.
-    run(merged.worktreePath, "git", ["checkout", "--detach"]);
+    // The current checkout's PR remains visible, but arriving after its merge is not
+    // a merge transition and must not archive this workspace.
     run(unrelated.worktreePath, "git", ["checkout", "merged-feature"]);
     expect((await context.client.checkoutRefresh(unrelated.worktreePath)).success).toBe(true);
     const switchedStatus = await context.client.checkoutPrStatus(unrelated.worktreePath);
-    expect(switchedStatus.status).toBeNull();
+    expect(switchedStatus.status).toMatchObject({
+      url: pullRequestUrl,
+      headRefName: "merged-feature",
+      state: "merged",
+      isMerged: true,
+    });
     expect(await activeWorkspaceIds(context)).toContain(unrelatedWorkspace.workspace.id);
   },
   180_000,

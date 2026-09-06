@@ -4,6 +4,7 @@ import {
   clickChatOutlineRowEdge,
   disableChatOutlineFromAppearance,
   expectActiveChatOutlinePrompt,
+  expectActiveChatOutlinePromptMovedFrom,
   expectChatOutlinePreview,
   expectChatOutlinePrompts,
   expectChatOutlinePromptToRemainBare,
@@ -29,7 +30,6 @@ import {
   openAgentTimeline,
   scrollThroughOlderHistoryPages,
   scrollTimelineToNewestLoadedEdge,
-  scrollTimelineToOldestLoadedEdge,
   seedLongMockAgentTimeline,
   type LongTimelineAgent,
 } from "../support/helpers/timeline-pagination";
@@ -130,11 +130,12 @@ test.describe("desktop chat outline", () => {
       await expectOneActiveChatOutlinePrompt(page);
 
       await clickChatOutlineRowEdge(page, 4);
-      await expectTimelinePromptVisible(page, agent.prompts[3]);
+      await expectTimelinePromptLandedBelowTop(page, agent.prompts[3]);
       await expectActiveChatOutlinePrompt(page, 4);
 
-      await scrollTimelineToOldestLoadedEdge(page);
-      await expectActiveChatOutlinePrompt(page, 1);
+      await scrollTimelineToNewestLoadedEdge(page);
+      await expectTimelinePromptVisible(page, agent.newestPrompt);
+      await expectActiveChatOutlinePromptMovedFrom(page, 4);
     });
 
     test("keeps a clicked prompt free of persistent selection chrome", async ({ page }) => {

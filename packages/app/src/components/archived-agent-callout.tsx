@@ -2,11 +2,10 @@ import { useCallback, useMemo, useState } from "react";
 import { View, Text } from "react-native";
 import { useTranslation } from "react-i18next";
 import { StyleSheet } from "react-native-unistyles";
-import Animated from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { FOOTER_HEIGHT, MAX_CONTENT_WIDTH } from "@/constants/layout";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
-import { useKeyboardShiftStyle } from "@/hooks/use-keyboard-shift-style";
+import { KeyboardTranslateView } from "@/components/keyboard-translate-view";
 import { Button } from "@/components/ui/button";
 import type { Theme } from "@/styles/theme";
 import { toErrorMessage } from "@/utils/error-messages";
@@ -24,11 +23,9 @@ export function ArchivedAgentCallout({ serverId, agentId }: ArchivedAgentCallout
   const [isUnarchiving, setIsUnarchiving] = useState(false);
   const [unarchiveError, setUnarchiveError] = useState<string | null>(null);
 
-  const { style: keyboardAnimatedStyle } = useKeyboardShiftStyle({ mode: "translate" });
-
   const containerStyle = useMemo(
-    () => [styles.container, { paddingBottom: insets.bottom }, keyboardAnimatedStyle],
-    [insets.bottom, keyboardAnimatedStyle],
+    () => [styles.container, { paddingBottom: insets.bottom }],
+    [insets.bottom],
   );
 
   const handleUnarchive = useCallback(async () => {
@@ -44,7 +41,7 @@ export function ArchivedAgentCallout({ serverId, agentId }: ArchivedAgentCallout
   }, [client, isConnected, isUnarchiving, agentId]);
 
   return (
-    <Animated.View style={containerStyle}>
+    <KeyboardTranslateView style={containerStyle}>
       <View style={styles.inputAreaContainer}>
         <View style={styles.inputAreaContent}>
           <View style={styles.calloutStack}>
@@ -67,7 +64,7 @@ export function ArchivedAgentCallout({ serverId, agentId }: ArchivedAgentCallout
           </View>
         </View>
       </View>
-    </Animated.View>
+    </KeyboardTranslateView>
   );
 }
 

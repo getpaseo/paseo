@@ -21,12 +21,10 @@ import {
   type OpenCodeEventSource,
 } from "./event-consumer.js";
 
-/**
- * Budget for an OpenCode server to become usable after spawn. Plugin-heavy installs
- * routinely need well over ten seconds on a cold start, so every wait that depends on
- * the server finishing its boot shares this budget.
- */
+/** Budget for the OpenCode HTTP server to become usable after spawn. */
 export const OPENCODE_SERVER_STARTUP_TIMEOUT_MS = 30_000;
+/** One stalled SSE attempt plus enough time for the consumer's retry. */
+export const OPENCODE_EVENT_STREAM_READY_TIMEOUT_MS = 45_000;
 const OPENCODE_SERVER_GRACEFUL_SHUTDOWN_TIMEOUT_MS = 5_000;
 const OPENCODE_SERVER_FORCE_SHUTDOWN_TIMEOUT_MS = 1_000;
 
@@ -75,6 +73,7 @@ export interface OpenCodeServerManagerOptions {
   resolveHomeDir?: () => string;
   spawnServerProcess?: OpenCodeServerProcessSpawner;
   createEventSource?: OpenCodeEventConsumerFactory;
+  decorateServerEnv?: (env: Record<string, string>) => Record<string, string>;
 }
 
 export class OpenCodeServerManager implements OpenCodeServerManagerLike {
@@ -95,6 +94,7 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
   private readonly resolveHomeDir: () => string;
   private readonly spawnServerProcess: OpenCodeServerProcessSpawner;
   private readonly createEventSource: OpenCodeEventConsumerFactory;
+  private readonly decorateServerEnv?: (env: Record<string, string>) => Record<string, string>;
 
   constructor(options: OpenCodeServerManagerOptions) {
     this.logger = options.logger;
@@ -111,6 +111,7 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
     this.spawnServerProcess = options.spawnServerProcess ?? spawnProcess;
     this.createEventSource =
       options.createEventSource ?? ((input) => new OpenCodeEventConsumer(input));
+    this.decorateServerEnv = options.decorateServerEnv;
   }
 
   static getInstance(
@@ -234,6 +235,7 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
     }
 
     this.retiredServers.delete(server);
+    this.logger.info(generationLogContext(server), "OpenCode server generation released");
     await this.killServer(server);
   }
 
@@ -296,6 +298,7 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
       existing.retired = true;
       this.retiredServers.add(existing);
       this.currentServer = null;
+      this.logger.info(generationLogContext(existing), "OpenCode server generation retired");
       await this.cleanupRetiredServers();
     }
     if (this.startPromise) {
@@ -303,6 +306,7 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
       pending.retired = true;
       this.retiredServers.add(pending);
       this.currentServer = null;
+      this.logger.info(generationLogContext(pending), "OpenCode server generation retired");
       await this.cleanupRetiredServers();
     }
   }
@@ -318,6 +322,15 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
     const serverCwd = this.resolveHomeDir();
     mkdirSync(serverCwd, { recursive: true });
 
+    const existingConfigContent =
+      launchEnv?.OPENCODE_CONFIG_CONTENT ??
+      this.runtimeSettings?.env?.OPENCODE_CONFIG_CONTENT ??
+      (typeof this.baseEnv?.OPENCODE_CONFIG_CONTENT === "string"
+        ? this.baseEnv.OPENCODE_CONFIG_CONTENT
+        : process.env.OPENCODE_CONFIG_CONTENT);
+    const bridgeEnv = this.decorateServerEnv?.(
+      existingConfigContent ? { OPENCODE_CONFIG_CONTENT: existingConfigContent } : {},
+    );
     const serverProcess = this.spawnServerProcess(launchPrefix.command, serverArgs, {
       cwd: serverCwd,
       detached: process.platform !== "win32",
@@ -325,7 +338,7 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
       ...createProviderEnvSpec({
         baseEnv: this.baseEnv,
         runtimeSettings: this.runtimeSettings,
-        overlays: [launchEnv],
+        overlays: [launchEnv, bridgeEnv],
       }),
     });
     const managedProcessRecord = this.recordManagedServerProcess({
@@ -345,9 +358,13 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
       refCount: 0,
       retired: false,
       ready: Promise.resolve(),
-      events: this.createEventSource({ serverUrl: url, processExit }),
+      events: this.createEventSource({ serverUrl: url, processExit, logger: this.logger }),
       managedProcessRecord,
     };
+    this.logger.info(
+      { ...generationLogContext(server), dedicated: launchEnv !== undefined },
+      "OpenCode server generation started",
+    );
     void managedProcessRecord.then((record) => {
       if (record && server.managedProcessRecord === managedProcessRecord) {
         server.managedProcessId = record.id;
@@ -418,7 +435,11 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
         failStartup(new Error(buildStartupErrorMessage(headline)));
       });
 
-      serverProcess.on("exit", (code) => {
+      serverProcess.on("exit", (code, signal) => {
+        this.logger.info(
+          { ...generationLogContext(server), code, signal },
+          "OpenCode server generation exited",
+        );
         resolveProcessExit(new Error(`OpenCode server exited with code ${code}`));
         this.removeManagedServerRecord(server);
         if (!started) {
@@ -454,6 +475,9 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
       ...(this.currentServer ? [this.currentServer] : []),
       ...Array.from(this.retiredServers),
     ];
+    for (const server of servers) {
+      this.logger.info(generationLogContext(server), "OpenCode server generation stopping");
+    }
     await Promise.all(servers.map((server) => this.killServer(server)));
     this.currentServer = null;
     this.retiredServers.clear();
@@ -560,6 +584,16 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
       this.logger.warn({ err: error, id }, "Failed to remove OpenCode helper process record");
     }
   }
+}
+
+function generationLogContext(server: OpenCodeServerGeneration): Record<string, unknown> {
+  return {
+    pid: server.process.pid,
+    port: server.port,
+    url: server.url,
+    refCount: server.refCount,
+    retired: server.retired,
+  };
 }
 
 async function waitForServerAcquisition<T>(

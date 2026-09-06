@@ -13,12 +13,26 @@ const patchedPackages = [
     patchPrefix: "react-native-markdown-display+",
   },
   {
+    nodeModulesPath: "node_modules/react-native",
+    patchPrefix: "react-native+",
+  },
+  // Remove after react-native-unistyles ships
+  // https://github.com/jpudysz/react-native-unistyles/pull/1203.
+  {
+    nodeModulesPath: "node_modules/react-native-unistyles",
+    patchPrefix: "react-native-unistyles+",
+  },
+  {
     nodeModulesPath: "node_modules/react-native-draggable-flatlist",
     patchPrefix: "react-native-draggable-flatlist+",
   },
   {
     nodeModulesPath: "node_modules/react-native-gesture-handler",
     patchPrefix: "react-native-gesture-handler+",
+  },
+  {
+    nodeModulesPath: "node_modules/react-native-svg",
+    patchPrefix: "react-native-svg+",
   },
   {
     nodeModulesPath: "node_modules/@mattermost/react-native-paste-input",

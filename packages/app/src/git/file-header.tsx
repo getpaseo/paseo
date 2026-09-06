@@ -1,5 +1,10 @@
 import { memo, type ReactElement, useCallback, useMemo, useState } from "react";
-import { Text, View, type PressableStateCallbackType } from "react-native";
+import {
+  Text,
+  View,
+  type GestureResponderEvent,
+  type PressableStateCallbackType,
+} from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { useWorkspaceFileDragSource } from "@/attachments/use-workspace-file-drag-source";
 import { DiffStat } from "@/components/diff-stat";
@@ -9,7 +14,7 @@ import { MaterialFileIcon } from "@/components/material-file-icon";
 import {
   treeRowPaddingLeft,
   workspaceTreeRowStyles,
-  WORKSPACE_FILE_ROW_TRAILING_PADDING,
+  WORKSPACE_PANE_TRAILING_GLYPH_RAIL,
   WORKSPACE_FILE_ROW_VERTICAL_PADDING,
   WORKSPACE_TREE_ICON_LABEL_GAP,
   WORKSPACE_TREE_ICON_SIZE,
@@ -17,6 +22,12 @@ import {
 import { ContextMenu, ContextMenuTrigger } from "@/components/ui/context-menu";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useFileHeaderInteraction } from "@/git/file-header-interaction";
+import {
+  diffFileChangeKind,
+  directorySuffix,
+  fileNameForPath,
+  formatDiffCount,
+} from "@/git/file-header-presentation";
 import type { ParsedDiffFile } from "@/git/use-diff-query";
 import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
 
@@ -32,6 +43,7 @@ export interface FileHeaderProps {
   onActivate?: (path: string) => void;
   onSelect?: (path: string) => void;
   onOpenFile?: (path: string) => void;
+  onOpenToSide?: (path: string) => void;
   onAddToChat?: (path: string) => void;
   onCopyPath?: (path: string) => void;
   onCopyRelativePath?: (path: string) => void;
@@ -42,14 +54,8 @@ export interface FileHeaderProps {
   onRevert?: (path: string, oldPath?: string) => void;
   onHeaderHeightChange?: (path: string, height: number) => void;
   testID?: string;
-}
-
-function fileNameForPath(path: string): string {
-  return path.split("/").pop() ?? path;
-}
-
-function directorySuffix(path: string): string {
-  return path.includes("/") ? ` ${path.slice(0, path.lastIndexOf("/"))}` : "";
+  canvasRendered?: boolean;
+  onActiveChange?: (active: boolean) => void;
 }
 
 function fileHeaderAccessibilityState(input: {
@@ -67,12 +73,22 @@ function expandedAriaValue(showsBodyState: boolean, bodyVisible: boolean): boole
   return showsBodyState ? bodyVisible : undefined;
 }
 
-function useFileHeaderHover(enabled: boolean) {
+function fileHeaderAccessibilityLabel(canvasRendered: boolean, file: ParsedDiffFile) {
+  if (!canvasRendered) return undefined;
+  return `${file.path}, +${formatDiffCount(file.additions)}, -${formatDiffCount(file.deletions)}`;
+}
+
+function useFileHeaderHover(enabled: boolean, onActiveChange?: (active: boolean) => void) {
   const [isHovered, setIsHovered] = useState(false);
   const handlePointerEnter = useCallback(() => {
-    if (enabled) setIsHovered(true);
-  }, [enabled]);
-  const handlePointerLeave = useCallback(() => setIsHovered(false), []);
+    if (!enabled) return;
+    setIsHovered(true);
+    onActiveChange?.(true);
+  }, [enabled, onActiveChange]);
+  const handlePointerLeave = useCallback(() => {
+    setIsHovered(false);
+    onActiveChange?.(false);
+  }, [onActiveChange]);
   return { isHovered, handlePointerEnter, handlePointerLeave };
 }
 
@@ -95,7 +111,8 @@ function fileHeaderInteractionStyle(input: {
   return input.showsBodyState ? styles.documentActive : workspaceTreeRowStyles.active;
 }
 
-function fileHeaderPressFeedbackStyle(showsBodyState: boolean) {
+function fileHeaderPressFeedbackStyle(showsBodyState: boolean, canvasRendered: boolean) {
+  if (canvasRendered) return undefined;
   return showsBodyState ? styles.documentPressFeedback : workspaceTreeRowStyles.active;
 }
 
@@ -114,29 +131,13 @@ function fileHeaderNameStyle(showsBodyState: boolean, isHovered: boolean) {
 }
 
 function fileChange(file: ParsedDiffFile): "added" | "deleted" | "modified" {
-  if (file.isNew) return "added";
-  if (file.isDeleted) return "deleted";
-  return "modified";
-}
-
-function documentFileChangeIcon(file: ParsedDiffFile, showsBodyState: boolean) {
-  if (!showsBodyState) return null;
-  if (file.isNew) return <FileChangeIcon change="added" />;
-  if (file.isDeleted) return <FileChangeIcon change="deleted" />;
-  return null;
-}
-
-function treeFileChangeIcon(file: ParsedDiffFile, showsBodyState: boolean) {
-  return showsBodyState ? null : <FileChangeIcon change={fileChange(file)} />;
-}
-
-function fileHeaderRightStyle(showsBodyState: boolean) {
-  return showsBodyState ? styles.right : [styles.right, styles.treeRight];
+  return diffFileChangeKind(file);
 }
 
 function FileHeaderMenu({
   file,
   onOpenFile,
+  onOpenToSide,
   onAddToChat,
   onCopyPath,
   onCopyRelativePath,
@@ -148,6 +149,7 @@ function FileHeaderMenu({
   testID,
 }: FileHeaderProps) {
   const openFile = useCallback(() => onOpenFile?.(file.path), [file.path, onOpenFile]);
+  const openToSide = useCallback(() => onOpenToSide?.(file.path), [file.path, onOpenToSide]);
   const addToChat = useCallback(() => onAddToChat?.(file.path), [file.path, onAddToChat]);
   const copyPath = useCallback(() => onCopyPath?.(file.path), [file.path, onCopyPath]);
   const copyRelativePath = useCallback(
@@ -166,6 +168,7 @@ function FileHeaderMenu({
       fileKind="file"
       fileExists={!file.isDeleted}
       onOpenFile={onOpenFile ? openFile : undefined}
+      onOpenToSide={onOpenToSide ? openToSide : undefined}
       onCopyPath={onCopyPath ? copyPath : undefined}
       onCopyRelativePath={onCopyRelativePath ? copyRelativePath : undefined}
       onReveal={onReveal ? reveal : undefined}
@@ -192,9 +195,11 @@ export const FileHeader = memo(function FileHeader({
   onSelect,
   onHeaderHeightChange,
   testID,
+  canvasRendered = false,
+  onActiveChange,
   ...actions
 }: FileHeaderProps) {
-  const hover = useFileHeaderHover(interactive);
+  const hover = useFileHeaderHover(interactive, onActiveChange);
   const dragSourceRef = useWorkspaceFileDragSource({
     enabled: interactive,
     disabled: file.isDeleted,
@@ -207,7 +212,6 @@ export const FileHeader = memo(function FileHeader({
     enabled: interactive,
     onSelect,
     onActivate,
-    stickyPressFallback: showsBodyState,
     onLayout: useCallback(
       (height: number) => onHeaderHeightChange?.(file.path, height),
       [file.path, onHeaderHeightChange],
@@ -232,15 +236,20 @@ export const FileHeader = memo(function FileHeader({
     ],
     [depth, hover.isHovered, isSelected, showsBodyState],
   );
+  const canvasPressableStyle = useCallback(
+    (state: PressableStateCallbackType) => [
+      pressableStyle(state),
+      canvasRendered && styles.canvasInteraction,
+    ],
+    [canvasRendered, pressableStyle],
+  );
   const accessibilityState = useMemo(
     () => fileHeaderAccessibilityState({ showsBodyState, bodyVisible, isSelected }),
     [bodyVisible, isSelected, showsBodyState],
   );
   const fileName = fileNameForPath(file.path);
   const nameStyle = fileHeaderNameStyle(showsBodyState, hover.isHovered);
-  const documentChangeIcon = documentFileChangeIcon(file, showsBodyState);
-  const treeChangeIcon = treeFileChangeIcon(file, showsBodyState);
-  const rightStyle = fileHeaderRightStyle(showsBodyState);
+  const changeIcon = <FileChangeIcon change={fileChange(file)} />;
   const content = (
     <View
       style={[styles.content, showsBodyState && styles.documentContent]}
@@ -262,48 +271,78 @@ export const FileHeader = memo(function FileHeader({
         ) : (
           <View style={styles.directorySpacer} />
         )}
-        {documentChangeIcon}
       </View>
-      <View style={rightStyle}>
+      <View style={styles.right}>
         <DiffStat
           additions={file.additions}
           deletions={file.deletions}
           testID={testID ? `${testID}-stat` : undefined}
         />
-        {treeChangeIcon}
+        {changeIcon}
       </View>
     </View>
+  );
+  const renderedContent = canvasRendered ? (
+    <View ref={dragSourceRef} style={styles.canvasInteractionContent} />
+  ) : (
+    content
+  );
+  const accessibilityLabel = fileHeaderAccessibilityLabel(canvasRendered, file);
+  const handlePressIn = useCallback(
+    (_event: GestureResponderEvent) => {
+      onActiveChange?.(true);
+      interaction.onPressIn();
+    },
+    [interaction, onActiveChange],
+  );
+  const handlePressOut = useCallback(
+    (_event: GestureResponderEvent) => {
+      onActiveChange?.(false);
+    },
+    [onActiveChange],
   );
   let trigger: ReactElement;
   if (interactive) {
     trigger = (
       <ContextMenuTrigger
         testID={testID ? `${testID}-toggle` : undefined}
-        style={pressableStyle}
-        highlightStyle={fileHeaderPressFeedbackStyle(showsBodyState)}
-        cancelable={false}
-        onPressIn={interaction.onPressIn}
-        onPressOut={interaction.onPressOut}
+        style={canvasPressableStyle}
+        highlightStyle={fileHeaderPressFeedbackStyle(showsBodyState, canvasRendered)}
+        onPressIn={handlePressIn}
+        onPressOut={handlePressOut}
         onLongPress={interaction.onLongPress}
         onContextMenu={interaction.select}
         onPress={interaction.activate}
         accessibilityState={accessibilityState}
+        accessibilityLabel={accessibilityLabel}
         aria-expanded={expandedAriaValue(showsBodyState, bodyVisible)}
         aria-selected={isSelected}
       >
-        {content}
+        {renderedContent}
       </ContextMenuTrigger>
     );
   } else {
-    trigger = <View style={pressableStyle({ pressed: false })}>{content}</View>;
+    trigger = (
+      <View
+        style={[pressableStyle({ pressed: false }), canvasRendered && styles.canvasInteraction]}
+        accessibilityLabel={accessibilityLabel}
+      >
+        {renderedContent}
+      </View>
+    );
   }
   return (
     <View
-      style={[styles.container, fileHeaderContainerStyle(showsBodyState)]}
+      style={[
+        styles.container,
+        fileHeaderContainerStyle(showsBodyState),
+        canvasRendered && styles.canvasInteraction,
+      ]}
       onLayout={interaction.onLayout}
       onPointerEnter={hover.handlePointerEnter}
       onPointerLeave={hover.handlePointerLeave}
       testID={testID}
+      accessibilityLabel={accessibilityLabel}
     >
       <ContextMenu>
         <Tooltip delayDuration={300} enabledOnDesktop enabledOnMobile={false}>
@@ -332,7 +371,7 @@ const styles = StyleSheet.create((theme) => ({
     flexDirection: "row",
     alignItems: "center",
     paddingLeft: theme.spacing[3],
-    paddingRight: WORKSPACE_FILE_ROW_TRAILING_PADDING,
+    paddingRight: WORKSPACE_PANE_TRAILING_GLYPH_RAIL,
     paddingVertical: WORKSPACE_FILE_ROW_VERTICAL_PADDING,
     gap: theme.spacing[1],
     minWidth: 0,
@@ -354,9 +393,20 @@ const styles = StyleSheet.create((theme) => ({
     justifyContent: "space-between",
     userSelect: "none",
   },
-  documentContent: { height: 28, paddingHorizontal: theme.spacing[3] },
+  documentContent: {
+    height: 28,
+    paddingLeft: theme.spacing[3],
+    paddingRight: WORKSPACE_PANE_TRAILING_GLYPH_RAIL,
+  },
   documentActive: { backgroundColor: theme.colors.surface1 },
   documentPressFeedback: { backgroundColor: theme.colors.surface1 },
+  canvasInteraction: {
+    backgroundColor: "transparent",
+    borderColor: "transparent",
+    elevation: 0,
+    shadowOpacity: 0,
+  },
+  canvasInteractionContent: { flex: 1, minWidth: 0 },
   left: {
     flexDirection: "row",
     alignItems: "center",
@@ -369,11 +419,10 @@ const styles = StyleSheet.create((theme) => ({
   right: {
     flexDirection: "row",
     alignItems: "center",
-    gap: theme.spacing[1],
+    gap: theme.spacing[2],
     flexShrink: 0,
     userSelect: "none",
   },
-  treeRight: { gap: theme.spacing[2] },
   icon: {
     width: WORKSPACE_TREE_ICON_SIZE,
     height: WORKSPACE_TREE_ICON_SIZE,

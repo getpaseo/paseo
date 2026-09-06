@@ -38,6 +38,7 @@ import {
   Smartphone,
   Sparkles,
   Blocks,
+  PanelsTopLeft,
 } from "lucide-react-native";
 import { DropdownTrigger } from "@/components/ui/dropdown-trigger";
 import { ComboboxTrigger } from "@/components/ui/combobox-trigger";
@@ -47,8 +48,9 @@ import { HostPicker as SharedHostPicker } from "@/components/hosts/host-picker";
 import { HostStatusDot } from "@/components/host-status-dot";
 import { ScreenTitle } from "@/components/headers/screen-title";
 import { HeaderIconBadge } from "@/components/headers/header-icon-badge";
-import { SettingsSection } from "@/screens/settings/settings-section";
+import { SettingsSection } from "@/components/settings/headings/settings-section";
 import { AppearanceSection } from "@/screens/settings/appearance/appearance-section";
+import { LayoutSection } from "@/screens/settings/layout/layout-section";
 import {
   useAppSettings,
   useSettings,
@@ -72,12 +74,12 @@ import { BackHeader } from "@/components/headers/back-header";
 import { ScreenHeader } from "@/components/headers/screen-header";
 import { AddHostMethodModal } from "@/components/add-host-method-modal";
 import { AddHostModal } from "@/components/add-host-modal";
+import { AddRemoteSshHostModal } from "@/components/add-remote-ssh-host-modal";
 import { PairLinkModal } from "@/components/pair-link-modal";
 import { KeyboardShortcutsSection } from "@/screens/settings/keyboard-shortcuts-section";
 import { EditorSection } from "@/screens/settings/editor-section";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
-import { supportsDesktopPaneSplits } from "@/constants/layout";
 import { CommunityLinks } from "@/components/community-links";
 import { SegmentedControl } from "@/components/ui/segmented-control";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem } from "@/components/ui/dropdown-menu";
@@ -110,6 +112,9 @@ import {
   HostWorkspacesPage,
   HostTerminalsPage,
 } from "@/screens/settings/host-page";
+import { resolvePluginIcon } from "@/plugins/icons";
+import { PluginSettingsContent } from "@/plugins/settings";
+import { useInstalledPlugins } from "@/plugins/registry";
 import { HostPluginsPage } from "@/screens/settings/plugins-page";
 import { MetadataGenerationPage } from "@/screens/settings/metadata-generation-page";
 import ProjectsScreen from "@/screens/projects-screen";
@@ -145,6 +150,12 @@ interface SidebarSectionItem {
 const SIDEBAR_SECTION_ITEMS: SidebarSectionItem[] = [
   { id: "general", labelKey: "settings.sections.general", icon: Settings },
   { id: "appearance", labelKey: "settings.sections.appearance", icon: Palette },
+  {
+    id: "layout",
+    labelKey: "settings.sections.layout",
+    icon: PanelsTopLeft,
+    desktopOnly: true,
+  },
   { id: "editor", labelKey: "settings.sections.editor", icon: Code2, webOnly: true },
   { id: "shortcuts", labelKey: "settings.sections.shortcuts", icon: Keyboard, desktopOnly: true },
   {
@@ -274,7 +285,6 @@ interface GeneralSectionProps {
   handleServiceUrlBehaviorChange: (behavior: ServiceUrlBehavior) => void;
   handleLanguageChange: (language: AppLanguage) => void;
   handleTerminalScrollbackLinesChange: (lines: number) => void;
-  handleSidePanelRoutingChange: (enabled: boolean) => void;
 }
 
 interface ServiceUrlBehaviorMenuItemProps {
@@ -349,7 +359,6 @@ function GeneralSection({
   handleServiceUrlBehaviorChange,
   handleLanguageChange,
   handleTerminalScrollbackLinesChange,
-  handleSidePanelRoutingChange,
 }: GeneralSectionProps) {
   const { t, i18n } = useTranslation();
   const activeLocale = getActiveLocale(i18n.language);
@@ -497,23 +506,6 @@ function GeneralSection({
             accessibilityLabel={t("settings.general.terminalScrollback.accessibilityLabel")}
           />
         </View>
-        {supportsDesktopPaneSplits() ? (
-          <View style={[settingsStyles.row, settingsStyles.rowBorder]}>
-            <View style={settingsStyles.rowContent}>
-              <Text style={settingsStyles.rowTitle}>
-                {t("settings.general.sidePanelRouting.label")}
-              </Text>
-              <Text style={settingsStyles.rowHint}>
-                {t("settings.general.sidePanelRouting.description")}
-              </Text>
-            </View>
-            <Switch
-              value={settings.openSupportingTabsInSidePanel}
-              onValueChange={handleSidePanelRoutingChange}
-              accessibilityLabel={t("settings.general.sidePanelRouting.label")}
-            />
-          </View>
-        ) : null}
       </View>
     </SettingsSection>
   );
@@ -1077,6 +1069,7 @@ function SettingsSidebar({
   let selectedHostSection: HostSectionSlug | null = null;
   if (view.kind === "host") selectedHostSection = view.section;
   if (view.kind === "project") selectedHostSection = "projects";
+  if (view.kind === "plugin") selectedHostSection = "plugins";
 
   const sidebarBody = (
     <>
@@ -1199,6 +1192,7 @@ export default function SettingsScreen({ view, openAddHostIntent = null }: Setti
   const { settings, isLoading: settingsLoading, updateSettings } = useAppSettings();
   const [isAddHostMethodVisible, setIsAddHostMethodVisible] = useState(false);
   const [isDirectHostVisible, setIsDirectHostVisible] = useState(false);
+  const [isRemoteSshVisible, setIsRemoteSshVisible] = useState(false);
   const [isPasteLinkVisible, setIsPasteLinkVisible] = useState(false);
   const [isPlaybackTestRunning, setIsPlaybackTestRunning] = useState(false);
   const [playbackTestResult, setPlaybackTestResult] = useState<string | null>(null);
@@ -1214,7 +1208,9 @@ export default function SettingsScreen({ view, openAddHostIntent = null }: Setti
   const sortedHosts = useSortedHosts(hosts, localServerId);
   const lastWorkspaceSelection = useLastWorkspaceSelection();
   const routedSettingsHostServerId =
-    view.kind === "host" || view.kind === "project" ? view.serverId : null;
+    view.kind === "host" || view.kind === "project" || view.kind === "plugin"
+      ? view.serverId
+      : null;
   const [selectedSettingsHostServerId, setSelectedSettingsHostServerId] = useState<string | null>(
     routedSettingsHostServerId ?? lastWorkspaceSelection?.serverId ?? null,
   );
@@ -1229,7 +1225,8 @@ export default function SettingsScreen({ view, openAddHostIntent = null }: Setti
   // The host the four sections scope to: the host on the active view, otherwise
   // the picker choice, otherwise the connected local daemon, otherwise the first host.
   const activeHostServerId = useMemo(() => {
-    if (view.kind === "host" || view.kind === "project") return view.serverId;
+    if (view.kind === "host" || view.kind === "project" || view.kind === "plugin")
+      return view.serverId;
     return resolveActiveHostServerId({
       selectedServerId: selectedSettingsHostServerId,
       localServerId,
@@ -1262,13 +1259,6 @@ export default function SettingsScreen({ view, openAddHostIntent = null }: Setti
   const handleTerminalScrollbackLinesChange = useCallback(
     (terminalScrollbackLines: number) => {
       void updateSettings({ terminalScrollbackLines });
-    },
-    [updateSettings],
-  );
-
-  const handleSidePanelRoutingChange = useCallback(
-    (openSupportingTabsInSidePanel: boolean) => {
-      void updateSettings({ openSupportingTabsInSidePanel });
     },
     [updateSettings],
   );
@@ -1312,11 +1302,13 @@ export default function SettingsScreen({ view, openAddHostIntent = null }: Setti
   const closeAddConnectionFlow = useCallback(() => {
     setIsAddHostMethodVisible(false);
     setIsDirectHostVisible(false);
+    setIsRemoteSshVisible(false);
     setIsPasteLinkVisible(false);
   }, []);
 
   const goBackToAddConnectionMethods = useCallback(() => {
     setIsDirectHostVisible(false);
+    setIsRemoteSshVisible(false);
     setIsPasteLinkVisible(false);
     setIsAddHostMethodVisible(true);
   }, []);
@@ -1336,6 +1328,11 @@ export default function SettingsScreen({ view, openAddHostIntent = null }: Setti
   const handleSelectDirectConnection = useCallback(() => {
     setIsAddHostMethodVisible(false);
     setIsDirectHostVisible(true);
+  }, []);
+
+  const handleSelectRemoteSsh = useCallback(() => {
+    setIsAddHostMethodVisible(false);
+    setIsRemoteSshVisible(true);
   }, []);
 
   const handleSelectPasteLink = useCallback(() => {
@@ -1435,11 +1432,21 @@ export default function SettingsScreen({ view, openAddHostIntent = null }: Setti
     returnFromSettings({ kind: "root" });
   }, []);
 
+  const installedPlugins = useInstalledPlugins();
   const detailHeader = ((): {
     title: string;
     Icon: ComponentType<{ size: number; color: string }>;
     titleAccessory?: ReactNode;
   } | null => {
+    if (view.kind === "plugin") {
+      const screen = installedPlugins
+        .find((plugin) => plugin.serverId === view.serverId && plugin.id === view.pluginId)
+        ?.settingsScreens.find((candidate) => candidate.id === view.screenId);
+      return {
+        title: `${view.pluginId} · ${screen?.title ?? t("settings.title")}`,
+        Icon: screen ? resolvePluginIcon(screen.icon) : Blocks,
+      };
+    }
     if (view.kind === "host") {
       const item = HOST_SECTION_ITEMS.find((s) => s.id === view.section);
       if (!item) return null;
@@ -1456,72 +1463,84 @@ export default function SettingsScreen({ view, openAddHostIntent = null }: Setti
     return null;
   })();
 
-  const content = (() => {
-    if (view.kind === "host") {
-      return renderHostSettingsContent(view, handleHostRemoved);
-    }
-    if (view.kind === "project") {
-      return (
-        <ProjectSettingsScreen
-          serverId={view.serverId}
-          projectId={view.projectId}
-          onBackToProjects={handleBackFromDetail}
-          showBackToProjects={!isCompactLayout}
-        />
-      );
-    }
-    if (view.kind === "section") {
-      switch (view.section) {
-        case "general":
-          return (
-            <>
-              <GeneralSection
-                settings={settings}
-                isDesktopApp={isDesktopApp}
-                handleSendBehaviorChange={handleSendBehaviorChange}
-                handleServiceUrlBehaviorChange={handleServiceUrlBehaviorChange}
-                handleLanguageChange={handleLanguageChange}
-                handleTerminalScrollbackLinesChange={handleTerminalScrollbackLinesChange}
-                handleSidePanelRoutingChange={handleSidePanelRoutingChange}
-              />
-              {isDesktopApp ? <BrowserDataSection /> : null}
-            </>
-          );
-        case "appearance":
-          return <AppearanceSection />;
-        case "editor":
-          return isWeb ? <EditorSection /> : null;
-        case "shortcuts":
-          return isDesktopApp ? <KeyboardShortcutsSection /> : null;
-        case "integrations":
-          return isDesktopApp ? <IntegrationsSection /> : null;
-        case "notifications":
-          return isDesktopApp ? <DesktopNotificationsSection /> : null;
-        case "permissions":
-          return isDesktopApp ? <DesktopPermissionsSection /> : null;
-        case "diagnostics":
-          return (
-            <DiagnosticsSection
-              useLegacyTerminalRenderer={settings.useLegacyTerminalRenderer}
-              onUseLegacyTerminalRendererChange={handleUseLegacyTerminalRendererChange}
-              voiceAudioEngine={voiceAudioEngine}
-              isPlaybackTestRunning={isPlaybackTestRunning}
-              playbackTestResult={playbackTestResult}
-              handlePlaybackTest={handlePlaybackTest}
-            />
-          );
-        case "about":
-          return (
-            <AboutSection
-              appVersion={appVersion}
-              appVersionText={appVersionText}
-              isDesktopApp={isDesktopApp}
-            />
-          );
+  let content: ReactNode;
+  if (view.kind === "section" && view.section === "layout") {
+    content = isDesktopApp ? <LayoutSection /> : null;
+  } else {
+    content = (() => {
+      if (view.kind === "plugin")
+        return (
+          <PluginSettingsContent
+            serverId={view.serverId}
+            pluginId={view.pluginId}
+            screenId={view.screenId}
+          />
+        );
+      if (view.kind === "host") {
+        return renderHostSettingsContent(view, handleHostRemoved);
       }
-    }
-    return null;
-  })();
+      if (view.kind === "project") {
+        return (
+          <ProjectSettingsScreen
+            serverId={view.serverId}
+            projectId={view.projectId}
+            onBackToProjects={handleBackFromDetail}
+            showBackToProjects={!isCompactLayout}
+          />
+        );
+      }
+      if (view.kind === "section") {
+        switch (view.section) {
+          case "general":
+            return (
+              <>
+                <GeneralSection
+                  settings={settings}
+                  isDesktopApp={isDesktopApp}
+                  handleSendBehaviorChange={handleSendBehaviorChange}
+                  handleServiceUrlBehaviorChange={handleServiceUrlBehaviorChange}
+                  handleLanguageChange={handleLanguageChange}
+                  handleTerminalScrollbackLinesChange={handleTerminalScrollbackLinesChange}
+                />
+                {isDesktopApp ? <BrowserDataSection /> : null}
+              </>
+            );
+          case "appearance":
+            return <AppearanceSection />;
+          case "editor":
+            return isWeb ? <EditorSection /> : null;
+          case "shortcuts":
+            return isDesktopApp ? <KeyboardShortcutsSection /> : null;
+          case "integrations":
+            return isDesktopApp ? <IntegrationsSection /> : null;
+          case "notifications":
+            return isDesktopApp ? <DesktopNotificationsSection /> : null;
+          case "permissions":
+            return isDesktopApp ? <DesktopPermissionsSection /> : null;
+          case "diagnostics":
+            return (
+              <DiagnosticsSection
+                useLegacyTerminalRenderer={settings.useLegacyTerminalRenderer}
+                onUseLegacyTerminalRendererChange={handleUseLegacyTerminalRendererChange}
+                voiceAudioEngine={voiceAudioEngine}
+                isPlaybackTestRunning={isPlaybackTestRunning}
+                playbackTestResult={playbackTestResult}
+                handlePlaybackTest={handlePlaybackTest}
+              />
+            );
+          case "about":
+            return (
+              <AboutSection
+                appVersion={appVersion}
+                appVersionText={appVersionText}
+                isDesktopApp={isDesktopApp}
+              />
+            );
+        }
+      }
+      return null;
+    })();
+  }
 
   if (settingsLoading) {
     return (
@@ -1547,11 +1566,18 @@ export default function SettingsScreen({ view, openAddHostIntent = null }: Setti
         visible={isAddHostMethodVisible}
         onClose={closeAddConnectionFlow}
         onDirectConnection={handleSelectDirectConnection}
+        onRemoteSsh={handleSelectRemoteSsh}
         onPasteLink={handleSelectPasteLink}
         onScanQr={handleScanQr}
       />
       <AddHostModal
         visible={isDirectHostVisible}
+        onClose={closeAddConnectionFlow}
+        onCancel={goBackToAddConnectionMethods}
+        onSaved={handleHostAdded}
+      />
+      <AddRemoteSshHostModal
+        visible={isRemoteSshVisible}
         onClose={closeAddConnectionFlow}
         onCancel={goBackToAddConnectionMethods}
         onSaved={handleHostAdded}

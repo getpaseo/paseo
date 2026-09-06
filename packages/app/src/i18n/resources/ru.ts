@@ -1,4 +1,4 @@
-import type { TranslationResources } from "./en";
+import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const ru: TranslationResources = {
@@ -10,10 +10,12 @@ export const ru: TranslationResources = {
       cancel: "Отмена",
       close: "Закрыть",
       copy: "Копировать",
+      copyLine: "Копировать строку",
       dismiss: "Отклонить",
       retry: "Повторить",
       search: "Поиск",
       select: "Выбрать",
+      selectAll: "Выбрать все",
     },
     placeholders: {
       search: "Поиск...",
@@ -33,6 +35,7 @@ export const ru: TranslationResources = {
     errors: {
       error: "Ошибка",
       unableToSave: "Не удалось сохранить",
+      unableToCopy: "Не удалось скопировать",
       nameRequired: "Требуется имя",
       daemonUnavailable: "Daemon недоступен",
       daemonClientUnavailable: "Daemon клиента недоступен",
@@ -65,7 +68,7 @@ export const ru: TranslationResources = {
       agents: "Агенты",
       newAgent: "Новый агент",
       open: "Открыть {{name}}",
-      openInSidePanel: "Открыть {{name}} в боковой панели",
+      openInSidePane: "Открыть {{name}} в боковой панели",
       openInFocusedPane: "Открыть {{name}} в активной области",
       addProject: "Добавить проект",
       home: "Главная",
@@ -203,6 +206,7 @@ export const ru: TranslationResources = {
     empty: "Начните общаться с этим агентом...",
     scrollToBottom: "Прокрутить вниз",
     historyLoadFailed: "Не удалось загрузить историю агента",
+    messageCapped: "Это сообщение было обрезано ({{bytes}} байт).",
     permission: {
       plan: "План",
       required: "Требуется разрешение",
@@ -287,6 +291,7 @@ export const ru: TranslationResources = {
       zoomIn: "Увеличить масштаб",
       zoomOut: "Уменьшить масштаб",
       resetZoom: "Сбросить масштаб",
+      fullscreen: "Полноэкранный режим",
       viewSource: "Показать исходный код",
       viewDiagram: "Показать диаграмму",
     },
@@ -347,7 +352,6 @@ export const ru: TranslationResources = {
         added: "Добавлена",
         started: "Начата",
         completed: "Завершена",
-        reopened: "Возобновлена",
       },
     },
     compaction: {
@@ -359,7 +363,13 @@ export const ru: TranslationResources = {
     },
   },
   importSession: {
+    chooseHostTitle: en.importSession.chooseHostTitle,
     title: "Импортировать сессию",
+    searchPlaceholder: "Поиск сессий...",
+    scope: {
+      host: "Сессии на {{host}}",
+      workspace: "Это рабочее пространство",
+    },
     filters: {
       all: "Все",
     },
@@ -368,12 +378,13 @@ export const ru: TranslationResources = {
       updateHost: "Обновите хост, чтобы импортировать сессии.",
       noProviders: "Нет включённых провайдеров с поддержкой импорта.",
       loading: "Загрузка недавних сессий...",
-      failedAll: "Не удалось загрузить недавние сессии.",
-      failedProviders: "Не удалось загрузить сессии следующих провайдеров: {{providers}}.",
+      failedProvider: "Не удалось загрузить сессии провайдера {{provider}}",
       failedImport: "Не удалось импортировать выбранную сессию.",
     },
     actions: {
       refresh: "Обновить список сессий",
+      showAll: "Показать все",
+      loadMore: "Загрузить ещё",
     },
     preview: {
       untitledSession: "Сессия без названия",
@@ -381,6 +392,7 @@ export const ru: TranslationResources = {
     },
     empty: {
       noRecent: "Нет недавних сессий для импорта.",
+      noMatches: "Нет сессий, соответствующих запросу.",
       alreadyImported: "Все недавние сессии уже импортированы.",
       noProviderSessions: "Сессии провайдера {{provider}} не найдены.",
     },
@@ -419,6 +431,8 @@ export const ru: TranslationResources = {
     },
     fileActions: {
       openFile: "Открыть файл",
+      openIn: "Открыть в {{target}}",
+      openToSide: "Открыть сбоку",
       copyPath: "Копировать путь",
       copyRelativePath: "Копировать относительный путь",
       revealIn: "Показать в {{target}}",
@@ -492,14 +506,23 @@ export const ru: TranslationResources = {
         completed: "Настройка завершена",
         failed: "Настройка не удалась",
         workspace: "Настройка рабочего пространства",
+        blocked: "Настройка заблокирована",
       },
       status: {
         running: "Выполняется",
         completed: "Завершено",
         failed: "Завершено с ошибкой",
         waiting: "Ожидание вывода команд настройки",
+        blocked: "Заблокировано",
       },
       waiting: "Настройка рабочего пространства...",
+      blocked: {
+        title: "Настройка не запускалась",
+        description:
+          "Этот PR поступил из другого репозитория — {{repository}}. Его настройка и скрипты могут выполнить код, который вы не проверяли.",
+        run: "Запустить настройку",
+        runFailed: "Не удалось запустить настройку рабочего пространства",
+      },
       empty: {
         noCommands: "Для этого рабочего пространства не выполнялись команды настройки.",
       },
@@ -577,7 +600,7 @@ export const ru: TranslationResources = {
       },
       menu: {
         openFor: "Открыть меню для {{label}}",
-        copyResumeCommand: "Скопировать команду возобновления",
+        copyResumeCommand: "Копировать команду продолжения",
         copyAgentId: "Скопировать идентификатор агента",
         copyTerminalId: "Скопировать идентификатор терминала",
         copyFilePath: "Скопировать путь к файлу",
@@ -587,6 +610,7 @@ export const ru: TranslationResources = {
         closeLeft: "Закрыть вкладки слева",
         closeRight: "Закрыть вкладки справа",
         closeOthers: "Закрыть другие вкладки",
+        moveToMain: "Переместить на основную панель",
         reloadAgent: "Перезагрузить агента",
         reloadAgentTooltip: "Перезагрузите агента, чтобы обновить навыки, MCP или статус входа.",
         close: "Закрыть",
@@ -612,7 +636,7 @@ export const ru: TranslationResources = {
         terminalProfilesMenu: "Профили терминала",
         editTerminalProfiles: "Изменить профили",
       },
-      sidePanel: {
+      explorerSidebar: {
         open: "Открыть боковую панель",
         close: "Закрыть боковую панель",
         toggle: "Переключить боковую панель",
@@ -623,7 +647,7 @@ export const ru: TranslationResources = {
         copyFailed: "Не удалось скопировать",
         agentIdCopiedLabel: "ID агента",
         terminalIdCopiedLabel: "Идентификатор терминала",
-        resumeCommandCopiedLabel: "команда возобновления",
+        resumeCommandCopiedLabel: "команда продолжения",
         filePathCopiedLabel: "Путь к файлу",
         resumeIdUnavailable: "ID возобновления недоступен",
         resumeCommandUnavailable: "Команда возобновления недоступна",
@@ -868,6 +892,7 @@ export const ru: TranslationResources = {
       },
       diff: {
         openChangesTab: "Открыть вкладку «Изменения»",
+        openDiffTab: "Открыть вкладку «Дифф»",
         closeChangesTab: "Закрыть вкладку «Изменения»",
         binaryFile: "Бинарный файл",
         tooLarge: "Дифф слишком велик для отображения",
@@ -878,6 +903,7 @@ export const ru: TranslationResources = {
         switchToUnified: "Переключиться на унифицированный дифф",
         switchToSplit: "Переключиться на параллельный дифф",
         options: "Параметры диффа",
+        inlineDiff: "Встроенный дифф",
         hideWhitespace: "Скрыть пробельные изменения",
         showWhitespace: "Показать пробельные изменения",
         scrollLongLines: "Прокручивать длинные строки",
@@ -951,6 +977,16 @@ export const ru: TranslationResources = {
         accessibility: {
           pullRequest: "PR #{{number}}",
           pullRequest_mr: "MR !{{number}}",
+          checkStatus: {
+            passed: "Успешно",
+            failed: "Ошибка",
+            warning: "Предупреждение",
+            actionRequired: "Требуется действие",
+            manual: "Вручную",
+            pending: "Ожидание",
+            skipped: "Пропущено",
+            cancelled: "Отменено",
+          },
         },
         states: {
           draft: "Черновик",
@@ -1083,7 +1119,6 @@ export const ru: TranslationResources = {
       addProject: "Добавить проект",
       newWorkspace: "Новое рабочее пространство",
       hosts: "Хосты",
-      home: "Главная",
       settings: "Настройки",
       closeSidebar: "Закрыть боковую панель",
     },
@@ -1100,6 +1135,7 @@ export const ru: TranslationResources = {
     },
     sections: {
       sessions: "История",
+      search: "Поиск",
       schedules: "Расписания",
     },
     worktreeSetup: {
@@ -1141,6 +1177,14 @@ export const ru: TranslationResources = {
         serviceRunning: "Сервис {{name}} запущен",
         serviceUnhealthy: "Сервис {{name}} работает некорректно",
         creating: "Создание...",
+      },
+      checks: {
+        passed: "Успешные: {{count}}",
+        failed: "Ошибки: {{count}}",
+        warning: "Предупреждения: {{count}}",
+        actionRequired: "Требуется действие: {{count}}",
+        manual: "Вручную: {{count}}",
+        pending: "Ожидают: {{count}}",
       },
       actions: {
         menu: "Действия рабочего пространства",
@@ -1228,6 +1272,12 @@ export const ru: TranslationResources = {
     },
   },
   desktop: {
+    windowControls: {
+      minimize: "Свернуть окно",
+      maximize: "Развернуть окно",
+      restore: "Восстановить окно",
+      close: "Закрыть окно",
+    },
     quitting: {
       title: "Завершение работы Paseo...",
       detail: "Остановка локального демона.",
@@ -1556,6 +1606,10 @@ export const ru: TranslationResources = {
         title: "Прямое подключение",
         description: "Локальная сеть или VPN.",
       },
+      remoteSsh: {
+        title: "Удалённый SSH",
+        description: "Подключение через SSH-клиент настольного приложения.",
+      },
       scanQr: {
         title: "Сканировать QR-код",
         description: "Зашифрованное подключение через ретранслятор.",
@@ -1606,6 +1660,23 @@ export const ru: TranslationResources = {
         unableToConnect:
           "Не удалось подключиться. Проверьте адрес хоста и порт, а также доступность демона.",
         details: "Подробности: {{detail}}",
+      },
+    },
+    remoteSsh: {
+      title: "Удалённый SSH",
+      helper: "Подключитесь к демону Paseo на удалённом хосте.",
+      fields: {
+        target: "Хост SSH",
+      },
+      actions: {
+        cancel: "Отмена",
+        connect: "Подключить",
+        connecting: "Подключение...",
+      },
+      errors: {
+        targetRequired: "Укажите хост SSH",
+        invalidTarget: "Укажите корректный хост ssh://",
+        failedToConnect: "Не удалось подключиться по SSH. {{detail}}",
       },
     },
     link: {
@@ -1660,6 +1731,8 @@ export const ru: TranslationResources = {
       updateRequired: "Обновите хост, чтобы включить ретранслятор из Paseo Desktop.",
       unavailable: "Данные для сопряжения недоступны.",
       hint: "Отсканируйте этот QR-код с помощью Paseo на телефоне или скопируйте ссылку ниже.",
+      securityWarning:
+        "Обращайтесь с этой ссылкой для сопряжения как с паролем. Любой, у кого она есть, может получить доступ к этому демону.",
       qrUnavailable: "QR-код недоступен.",
       qrAccessibility: "QR-код сопряжения",
       retry: "Повторить попытку",
@@ -1773,6 +1846,7 @@ export const ru: TranslationResources = {
     },
     diff: {
       changesLabel: "Изменения",
+      diffLabel: "Дифф",
       changesSubtitle: "Изменения в worktree",
       commitSubtitle: "Изменения в коммите",
       uncommittedSubtitle: "Незафиксированные изменения",
@@ -1867,6 +1941,7 @@ export const ru: TranslationResources = {
     sections: {
       general: "Основные",
       appearance: "Оформление",
+      layout: en.settings.sections.layout,
       editor: "Редактор",
       shortcuts: "Сочетания клавиш",
       integrations: "Интеграции",
@@ -1875,6 +1950,7 @@ export const ru: TranslationResources = {
       diagnostics: "Диагностика",
       about: "О приложении",
     },
+    layout: en.settings.layout,
     editor: {
       title: "Редактор",
       vimKeybindings: "Сочетания клавиш Vim",
@@ -1965,11 +2041,6 @@ export const ru: TranslationResources = {
         label: "Буфер прокрутки терминала",
         description: "Количество строк, сохраняемых во встроенном буфере терминала",
         accessibilityLabel: "Количество строк в буфере прокрутки терминала",
-      },
-      sidePanelRouting: {
-        label: "Открывать вспомогательные вкладки в боковой панели",
-        description:
-          "Ссылки на файлы, пул-реквесты и ход настройки открываются рядом с вашей работой, а не в активной панели",
       },
       autoExpandReasoning: {
         label: "Всегда разворачивать размышления",
@@ -2082,6 +2153,13 @@ export const ru: TranslationResources = {
         title: "Оглавление чата",
         description: "Показывать оглавление для перехода между запросами",
       },
+      sidebar: {
+        title: "Боковая панель",
+        description:
+          "Выберите, какие элементы отображаются вверху боковой панели и в каком порядке",
+        moveUp: "Переместить вверх",
+        moveDown: "Переместить вниз",
+      },
       fonts: {
         title: "Шрифты",
         systemDefault: "Системный шрифт",
@@ -2169,7 +2247,6 @@ export const ru: TranslationResources = {
         toggleBothSidebars: "Переключить обе боковые панели",
         toggleSettings: "Переключить настройки",
         toggleFocusMode: "Переключить режим фокусировки",
-        toggleExplorerPaneMaximization: "Развернуть или восстановить боковую панель",
         cycleTheme: "Переключить тему",
         focusMessageInput: "Перейти к полю ввода сообщения",
         cycleAgentMode: "Переключить режим агента",
@@ -2253,6 +2330,7 @@ export const ru: TranslationResources = {
       badges: {
         relay: "Ретранслятор",
         local: "Локальный",
+        remoteSsh: "Удалённый SSH",
       },
       connections: {
         title: "Подключения",

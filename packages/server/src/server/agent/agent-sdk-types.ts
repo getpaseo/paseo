@@ -1,6 +1,7 @@
 import type {
   AgentProviderNotice,
   AgentTaskItem,
+  JsonValue,
   ProviderOptions,
   ToolPolicy,
 } from "@getpaseo/protocol/agent-types";
@@ -124,6 +125,7 @@ export interface ProviderSnapshotEntry {
   fetchedAt?: string;
   label?: string;
   description?: string;
+  iconSvg?: string;
   defaultModeId?: string | null;
 }
 
@@ -390,6 +392,15 @@ export interface CompactionTimelineItem {
   preTokens?: number;
 }
 
+export interface PluginTimelineItem {
+  type: "plugin";
+  id: string;
+  pluginId: string;
+  kind: string;
+  version: number;
+  data: JsonValue;
+}
+
 export type AgentTimelineItem =
   | { type: "user_message"; text: string; messageId?: string; clientMessageId?: string }
   | { type: "assistant_message"; text: string; messageId?: string }
@@ -397,7 +408,13 @@ export type AgentTimelineItem =
   | ToolCallTimelineItem
   | { type: "todo"; items: AgentTaskItem[] }
   | { type: "error"; message: string }
-  | CompactionTimelineItem;
+  | {
+      type: "notification";
+      level: "info" | "warning" | "error";
+      message: string;
+    }
+  | CompactionTimelineItem
+  | PluginTimelineItem;
 
 export type AgentStreamEvent =
   | { type: "thread_started"; sessionId: string; provider: AgentProvider }
@@ -533,6 +550,13 @@ export interface AgentSlashCommand {
 
 export interface ListImportableSessionsOptions {
   limit?: number;
+  /** Optional case-insensitive descriptor search text. */
+  query?: string;
+  /**
+   * Maximum number of cheap persisted-session candidates to inspect before
+   * applying the result limit. Providers must cap this at 500.
+   */
+  scanLimit?: number;
   /**
    * Optional cwd hint. Providers that can cheaply pre-filter importable
    * sessions by working directory should do so before doing expensive work.
@@ -653,6 +677,11 @@ export interface AgentSession {
     response: AgentPermissionResponse,
   ): Promise<AgentPermissionResult | void>;
   describePersistence(): AgentPersistenceHandle | null;
+  /**
+   * Resolve once every foreground turn that predates this call can no longer run or become active.
+   * Calling while already idle is a successful no-op. Reject only when foreground ownership is
+   * still uncertain.
+   */
   interrupt(): Promise<void>;
   /** Release live runtime resources without archiving or deleting the durable native session. */
   close(): Promise<void>;

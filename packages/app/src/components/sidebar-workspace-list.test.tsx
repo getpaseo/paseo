@@ -31,7 +31,6 @@ import {
   type SidebarProjectEntry,
 } from "@/hooks/use-sidebar-workspaces-list";
 import { useSidebarWorkspacesList } from "@/hooks/use-sidebar-workspaces-list";
-import { patchWorkspaceScripts } from "@/contexts/session-workspace-scripts";
 import {
   getHostRuntimeStore,
   type HostRuntimeController,
@@ -39,7 +38,7 @@ import {
 } from "@/runtime/host-runtime";
 import type { HostProfile } from "@/types/host-connection";
 import { useSessionStore, type WorkspaceDescriptor } from "@/stores/session-store";
-import { seedSessionWorkspaces } from "@/test/seed-session";
+import { seedRuntimeWorkspaces } from "@/test/seed-session";
 import { useSidebarOrderStore } from "@/stores/sidebar-order-store";
 import { useWorkspaceFields } from "@/stores/session-store-hooks";
 import { useActiveWorkspaceSelection } from "@/stores/navigation-active-workspace-store";
@@ -168,7 +167,7 @@ function initializeSidebarState(workspaces: WorkspaceDescriptor[]): void {
   act(() => {
     setHostProfiles([makeHost()]);
     useSessionStore.getState().initializeSession(SERVER_ID, null as unknown as DaemonClient);
-    seedSessionWorkspaces(SERVER_ID, new Map(workspaces.map((entry) => [entry.id, entry])));
+    seedRuntimeWorkspaces(SERVER_ID, new Map(workspaces.map((entry) => [entry.id, entry])));
     useSessionStore.getState().setHasHydratedWorkspaces(SERVER_ID, true);
     useSidebarOrderStore.setState({
       projectOrder: ["project-a", "project-b"],
@@ -393,35 +392,6 @@ describe("sidebar workspace render isolation", () => {
       updateControllerSnapshot({
         probeByConnectionId: new Map(probeByConnectionId),
       });
-    });
-
-    expect(counts).toEqual({
-      frame: 0,
-      headers: {},
-      rows: {},
-      projectSelection: {},
-      rowSelection: {},
-    });
-  });
-
-  it("does not re-render for a deep-equal scripts patch", async () => {
-    const counts: RenderCounts = {
-      frame: 0,
-      headers: {},
-      rows: {},
-      projectSelection: {},
-      rowSelection: {},
-    };
-    ({ root, container } = await renderProbe(counts));
-
-    const applyRunningScript = (current: Parameters<typeof patchWorkspaceScripts>[0]) =>
-      patchWorkspaceScripts(current, {
-        workspaceId: "a-main",
-        scripts: [{ ...runningScript }],
-      });
-
-    act(() => {
-      useSessionStore.getState().setWorkspaces(SERVER_ID, applyRunningScript);
     });
 
     expect(counts).toEqual({

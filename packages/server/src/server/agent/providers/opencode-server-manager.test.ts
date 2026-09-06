@@ -5,6 +5,8 @@ import { createServer, type ServerResponse } from "node:http";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
+import { Writable } from "node:stream";
+import pino, { type Logger } from "pino";
 import { afterEach, describe, expect, test, vi } from "vitest";
 
 import { findExecutable } from "../../../executable-resolution/executable-resolution.js";
@@ -28,6 +30,26 @@ afterEach(() => {
 });
 
 describe("OpenCodeServerManager generations", () => {
+  test("logs generation lifecycle transitions", async () => {
+    const { logger, records } = createCapturingLogger();
+    const { manager } = createTestManager([4081, 4082], { logger });
+
+    const first = await manager.acquireCurrent();
+    const second = await manager.acquireNew();
+    await second.release();
+    await first.release();
+    await manager.shutdown();
+
+    expect(records).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ msg: "OpenCode server generation started", port: 4081 }),
+        expect.objectContaining({ msg: "OpenCode server generation retired", port: 4081 }),
+        expect.objectContaining({ msg: "OpenCode server generation started", port: 4082 }),
+        expect.objectContaining({ msg: "OpenCode server generation released", port: 4082 }),
+        expect.objectContaining({ msg: "OpenCode server generation exited", port: 4081 }),
+      ]),
+    );
+  });
   test("shares one real SDK event stream across acquisitions until generation shutdown", async () => {
     const responses: ServerResponse[] = [];
     let requestCount = 0;
@@ -400,6 +422,7 @@ function createTestManager(
     autoAnnounce?: boolean;
     baseEnv?: Record<string, string>;
     opencodeHomeDir?: string;
+    logger?: Logger;
   } = {},
 ): {
   manager: OpenCodeServerManager;
@@ -411,7 +434,7 @@ function createTestManager(
   });
   return {
     manager: new OpenCodeServerManager({
-      logger: createTestLogger(),
+      logger: options.logger ?? createTestLogger(),
       baseEnv: options.baseEnv,
       managedProcesses: runtime.managedProcesses,
       portAllocator: runtime.allocatePort,
@@ -422,6 +445,17 @@ function createTestManager(
     }),
     runtime,
   };
+}
+
+function createCapturingLogger(): { logger: Logger; records: Array<Record<string, unknown>> } {
+  const records: Array<Record<string, unknown>> = [];
+  const stream = new Writable({
+    write(chunk, _encoding, callback) {
+      records.push(JSON.parse(chunk.toString()) as Record<string, unknown>);
+      callback();
+    },
+  });
+  return { logger: pino({ level: "info" }, stream), records };
 }
 
 class FakeOpenCodeServerRuntime {

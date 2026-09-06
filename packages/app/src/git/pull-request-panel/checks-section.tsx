@@ -5,12 +5,13 @@ import { ChevronDown, ChevronRight, MessageSquarePlus } from "lucide-react-nativ
 import { Button } from "@/components/ui/button";
 import { openExternalUrl } from "@/utils/open-external-url";
 import { ICON_SIZE } from "@/styles/theme";
-import type { CheckStatus } from "./check-status";
+import { classifyCheck, type CheckPresentation } from "@/git/check-presentation";
+import { CheckPresentationIcon } from "@/git/check-presentation.view";
 import { ChecksRing } from "./checks-ring";
 import { summarizeChecks, type ChecksGroup } from "./checks-summary";
 import { canAddPullRequestCheckLogsToChat } from "./context-attachment";
 import type { PrPaneCheck } from "./data";
-import { CheckStatusIcon, foregroundMutedColorMapping, sectionKitStyles } from "./section-kit";
+import { foregroundMutedColorMapping, sectionKitStyles } from "./section-kit";
 import { useCheckGroupState } from "./check-group-state";
 
 const ThemedChevronDown = withUnistyles(ChevronDown);
@@ -26,10 +27,13 @@ const LIST_MAX_HEIGHT = 268;
  * The three statuses the pane has always labelled for tests. Skipped has no id because
  * nothing asserts on it.
  */
-const PART_TEST_ID: Partial<Record<CheckStatus, string>> = {
+const PART_TEST_ID: Partial<Record<CheckPresentation, string>> = {
+  actionRequired: "pr-pane-check-action-required",
+  warning: "pr-pane-check-warning",
   success: "pr-pane-check-passed",
   failure: "pr-pane-check-failed",
   pending: "pr-pane-check-pending",
+  manual: "pr-pane-check-manual",
 };
 
 /**
@@ -137,14 +141,14 @@ function CheckGroup({
 }: {
   group: ChecksGroup;
   collapsed: boolean;
-  onToggle: (status: CheckStatus) => void;
+  onToggle: (status: CheckPresentation) => void;
   attachEnabled: boolean;
   loadingCheckKeys: ReadonlySet<string>;
   onAddLogsToChat: (check: PrPaneCheck) => void;
 }) {
   const handlePress = useCallback(() => onToggle(group.status), [group.status, onToggle]);
   return (
-    <View>
+    <View testID={`pr-pane-check-group-${group.status}`}>
       <Pressable onPress={handlePress} style={styles.groupHeader} accessibilityRole="button">
         <Text style={styles.groupLabel}>{group.label}</Text>
         {collapsed ? (
@@ -194,7 +198,7 @@ function CheckRow({
   );
   return (
     <Pressable onPress={handlePress} style={rowPressableStyle} testID="pr-pane-check-row">
-      <CheckStatusIcon status={check.status} />
+      <CheckPresentationIcon presentation={classifyCheck(check)} size={14} />
       <Text style={sectionKitStyles.checkName} numberOfLines={1}>
         {check.name}
       </Text>

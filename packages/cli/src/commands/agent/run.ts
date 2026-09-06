@@ -575,6 +575,7 @@ async function resolveRunWorkspace(
   const branch = result.workspace.gitRuntime?.currentBranch;
   const label = branch ? `${result.workspace.name} (${branch})` : result.workspace.name;
   console.error(`Created workspace ${result.workspace.id} - ${label}`);
+  if (result.setupSkippedReason) console.error(result.setupSkippedReason);
   console.error(
     "Tip: pass --workspace <id> (or set PASEO_WORKSPACE_ID) to run in an existing workspace.",
   );

@@ -1,10 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import { Keyboard, ScrollView, StyleSheet as RNStyleSheet, Text, View } from "react-native";
 import { useTranslation } from "react-i18next";
-import ReanimatedAnimated from "react-native-reanimated";
 import { StyleSheet } from "react-native-unistyles";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useKeyboardShiftStyle } from "@/hooks/use-keyboard-shift-style";
+import { KeyboardTranslateView } from "@/components/keyboard-translate-view";
 import { useContainerWidthBelow } from "@/hooks/use-container-width";
 import invariant from "tiny-invariant";
 import { Composer } from "@/composer";
@@ -52,7 +51,8 @@ import {
   buildWorkspaceTabPersistenceKey,
   type WorkspaceDraftTabSetup,
 } from "@/workspace-tabs/model";
-import { openSidePanelView } from "@/workspace-tabs/side-panel";
+import { openWorkspaceChanges } from "@/workspace-tabs/open-supporting-view";
+import { useSettings } from "@/hooks/use-settings";
 
 const EMPTY_PENDING_PERMISSIONS = new Map();
 const EMPTY_ONLINE_SERVER_IDS: string[] = [];
@@ -248,7 +248,7 @@ function buildDraftAgentSnapshot(input: {
     id: tabId,
     provider,
     status: "running",
-    activeTurn: null,
+    turn: { phase: "idle", cancellationRequestId: null },
     createdAt: now,
     updatedAt: now,
     lastUserMessageAt: now,
@@ -439,6 +439,7 @@ export function WorkspaceDraftAgentTab({
     workspaceId,
   });
   const draftAttachmentScopeKey = useDraftWorkspaceAttachmentScopeKey(draftId);
+  const openInSidePane = useSettings((settings) => settings.openInSidePane);
   const attachmentScopeKeys = useMemo(
     () => [draftAttachmentScopeKey, workspaceAttachmentScopeKey].filter(Boolean),
     [draftAttachmentScopeKey, workspaceAttachmentScopeKey],
@@ -451,14 +452,14 @@ export function WorkspaceDraftAgentTab({
       if (attachment.kind !== "review") {
         return;
       }
-      openSidePanelView({
+      openWorkspaceChanges({
         isCompact: isCompactFormFactor,
         workspaceKey: buildWorkspaceTabPersistenceKey({ serverId, workspaceId: workspaceId ?? "" }),
-        checkout: { serverId, cwd: attachment.attachment.cwd, isGit: true },
-        view: "changes",
+        checkout: { serverId, cwd: composerState.workingDir, isGit: true },
+        preferences: openInSidePane,
       });
     },
-    [isCompactFormFactor, serverId, workspaceId],
+    [composerState.workingDir, isCompactFormFactor, openInSidePane, serverId, workspaceId],
   );
 
   const {
@@ -622,17 +623,9 @@ export function WorkspaceDraftAgentTab({
     focusInputRef.current = focus;
   }, []);
 
-  const { style: composerKeyboardStyle } = useKeyboardShiftStyle({
-    mode: "translate",
-  });
-
   const inputAreaWrapperStyle = useMemo(
-    () => [
-      animatedStaticStyles.inputAreaWrapper,
-      { paddingBottom: insets.bottom },
-      composerKeyboardStyle,
-    ],
-    [insets.bottom, composerKeyboardStyle],
+    () => [animatedStaticStyles.inputAreaWrapper, { paddingBottom: insets.bottom }],
+    [insets.bottom],
   );
 
   const handleDropdownCloseFocus = useCallback(() => {
@@ -676,7 +669,7 @@ export function WorkspaceDraftAgentTab({
         )}
       </View>
 
-      <ReanimatedAnimated.View style={inputAreaWrapperStyle} onLayout={onInputAreaLayout}>
+      <KeyboardTranslateView style={inputAreaWrapperStyle} onLayout={onInputAreaLayout}>
         {importPillPress ? (
           <View style={styles.importPillRow}>
             <View style={styles.importPillContent}>
@@ -695,7 +688,7 @@ export function WorkspaceDraftAgentTab({
           blurOnSubmit={true}
           value={draftInput.text}
           onChangeText={draftInput.editText}
-          textReplacementKey={draftInput.textReplacementKey}
+          textReplacement={draftInput.textReplacement}
           attachments={draftInput.attachments}
           attachmentScopeKeys={attachmentScopeKeys}
           onOpenWorkspaceAttachment={handleOpenWorkspaceAttachment}
@@ -709,7 +702,7 @@ export function WorkspaceDraftAgentTab({
           agentControls={composerAgentControls}
           isCompactLayout={isCompactComposerLayout}
         />
-      </ReanimatedAnimated.View>
+      </KeyboardTranslateView>
     </FileDropZone>
   );
 }

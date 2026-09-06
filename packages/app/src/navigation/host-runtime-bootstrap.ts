@@ -1,3 +1,4 @@
+import type { AppState } from "react-native";
 import type { ActiveWorkspaceSelection } from "@/stores/navigation-active-workspace-store";
 import type {
   DaemonStartCondition,
@@ -249,4 +250,15 @@ export function resolveStartupRoute(input: ResolveStartupRouteInput): StartupRou
   }
 
   return resolveReadyIndexStartupRoute(input);
+}
+
+export function bindHostRuntimeAppState(
+  store: { setAppVisible: (visible: boolean) => void },
+  appState: Pick<typeof AppState, "currentState" | "addEventListener">,
+): () => void {
+  const subscription = appState.addEventListener("change", (state) => {
+    store.setAppVisible(state === "active");
+  });
+  store.setAppVisible(appState.currentState === "active");
+  return () => subscription.remove();
 }
