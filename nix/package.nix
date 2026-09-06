@@ -127,6 +127,10 @@ buildNpmPackage rec {
     # Web UI Assets
     cp -r packages/server/dist/server/web-ui $out/lib/paseo/packages/server/dist/server/
 
+    # `node-pty` native module
+    cp -r packages/server/node_modules/node-pty/prebuilds \
+        "$out/lib/paseo/packages/server/node_modules/node-pty/"
+
     # Create wrapper for the server entry point (for systemd / direct use)
     mkdir -p $out/bin
     # Keep Paseo's runtime mode separate from NODE_ENV, which belongs to spawned agents.
