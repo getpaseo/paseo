@@ -5,6 +5,7 @@ import { resolve } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 
 import type { Logger } from "pino";
+import pLimit, { type LimitFunction } from "p-limit";
 
 import { expandTilde } from "../../utils/path.js";
 import { withTimeout } from "../../utils/promise-timeout.js";
@@ -215,7 +216,10 @@ interface ProviderCatalog {
 interface RegistryGeneration {
   definitions: Record<AgentProvider, ProviderDefinition>;
   order: readonly AgentProvider[];
-  initial: ReadonlyMap<AgentProvider, ProviderSnapshotRecord>;
+  providerStates: ReadonlyMap<
+    AgentProvider,
+    { initial: ProviderSnapshotRecord; discoveryLimit: LimitFunction }
+  >;
 }
 
 interface Target {
@@ -617,6 +621,9 @@ export class ProviderSnapshotManager {
     clients: Record<AgentProvider, AgentClient>,
     changed: ReadonlySet<AgentProvider>,
   ): void {
+    for (const provider of changed) {
+      this.generation.providerStates.get(provider)?.discoveryLimit.clearQueue();
+    }
     this.generation = generation;
     this.providerClients = clients;
     for (const [key, catalogs] of this.catalogs) {
@@ -653,6 +660,8 @@ export class ProviderSnapshotManager {
   }
 
   async shutdown(): Promise<void> {
+    this.destroyed = true;
+    for (const state of this.generation.providerStates.values()) state.discoveryLimit.clearQueue();
     // Materialize a client per enabled provider so provider-owned resources
     // (background processes, sockets, etc.) get a chance to release even when
     // a given provider hasn't been touched yet during this daemon's lifetime.
@@ -662,6 +671,7 @@ export class ProviderSnapshotManager {
 
   destroy(): void {
     this.destroyed = true;
+    for (const state of this.generation.providerStates.values()) state.discoveryLimit.clearQueue();
     this.catalogs.clear();
     this.targets.clear();
     this.events.removeAllListeners();
@@ -764,7 +774,7 @@ export class ProviderSnapshotManager {
       return await this.getProvider({ provider, wait: false });
     } catch (error) {
       return {
-        ...this.generation.initial.get(provider)!.entry,
+        ...this.generation.providerStates.get(provider)!.initial.entry,
         status: "error",
         error: toErrorMessage(error),
       };
@@ -801,19 +811,23 @@ export class ProviderSnapshotManager {
     overrides: Record<string, ProviderOverride> | undefined,
   ): RegistryGeneration {
     const order = Object.keys(definitions);
-    const initial = new Map<AgentProvider, ProviderSnapshotRecord>();
+    const providerStates = new Map<
+      AgentProvider,
+      { initial: ProviderSnapshotRecord; discoveryLimit: LimitFunction }
+    >();
     for (const provider of order) {
       const definition = definitions[provider]!;
+      const previous = this.generation?.providerStates.get(provider);
       if (this.generation?.definitions[provider] === definition) {
-        initial.set(provider, this.generation.initial.get(provider)!);
+        providerStates.set(provider, previous!);
         continue;
       }
       const custom =
         this.pluginProviders.has(provider) ||
         (!BUILTIN_PROVIDER_IDS.includes(provider) && !!overrides?.[provider]?.extends);
-      initial.set(
-        provider,
-        identifyEntry({
+      providerStates.set(provider, {
+        discoveryLimit: previous?.discoveryLimit ?? pLimit({ concurrency: 4, rejectOnClear: true }),
+        initial: identifyEntry({
           provider,
           status: definition.enabled ? "loading" : "unavailable",
           enabled: definition.enabled,
@@ -823,9 +837,9 @@ export class ProviderSnapshotManager {
           iconSvg: definition.iconSvg,
           defaultModeId: definition.defaultModeId ?? null,
         }),
-      );
+      });
     }
-    return { definitions, order, initial };
+    return { definitions, order, providerStates };
   }
 
   private async warmUp(target: ProviderSnapshotTarget, providers?: AgentProvider[]): Promise<void> {
@@ -883,7 +897,7 @@ export class ProviderSnapshotManager {
   ): Promise<void> {
     const { provider, snapshotCwd, force } = options;
     const definition = this.generation.definitions[provider]!;
-    const initial = this.generation.initial.get(provider)!.entry;
+    const initial = this.generation.providerStates.get(provider)!.initial.entry;
     this.getOrCreateTarget(snapshotCwd);
     if (!definition.enabled) return;
     const currentBinding = () => this.targets.get(snapshotCwd)?.bindings.get(provider);
@@ -906,7 +920,7 @@ export class ProviderSnapshotManager {
       binding.force = false;
       binding.key = undefined;
       binding.failure = identifyEntry({
-        ...this.generation.initial.get(provider)!.entry,
+        ...this.generation.providerStates.get(provider)!.initial.entry,
         status: "error",
         error: toErrorMessage(error),
       });
@@ -933,17 +947,20 @@ export class ProviderSnapshotManager {
     catalog.stale = false;
 
     const current = catalog;
-    const load = Promise.resolve()
-      .then(() =>
-        this.refreshProvider({
+    const isCurrent = (): boolean =>
+      !this.destroyed && this.catalogs.get(key)?.get(provider) === current && current.load === load;
+    const load = this.generation.providerStates
+      .get(provider)!
+      .discoveryLimit(() => {
+        if (!isCurrent()) return;
+        return this.refreshProvider({
           catalogOptions,
           provider,
           definition,
           initial,
           client,
           publish: (entry) => {
-            if (this.catalogs.get(key)?.get(provider) !== current || current.load !== load)
-              return false;
+            if (!isCurrent()) return false;
             current.result = identifyEntry(structuredClone(entry));
             const boundTargets = [...this.targets].flatMap(([cwd, target]) =>
               target.bindings.get(provider)?.key === key ? [cwd] : [],
@@ -951,8 +968,8 @@ export class ProviderSnapshotManager {
             this.publishTargets(boundTargets);
             return true;
           },
-        }),
-      )
+        });
+      })
       .finally(() => {
         if (current.load === load) current.load = undefined;
       });
@@ -1036,7 +1053,7 @@ export class ProviderSnapshotManager {
         const result = binding?.key
           ? this.catalogs.get(binding.key)?.get(provider)?.result
           : undefined;
-        return binding?.failure ?? result ?? this.generation.initial.get(provider)!;
+        return binding?.failure ?? result ?? this.generation.providerStates.get(provider)!.initial;
       });
       const previous = target.snapshot;
       if (sameSnapshotRecords(previous.records, records)) continue;
@@ -1065,7 +1082,9 @@ export class ProviderSnapshotManager {
         bindings: new Map(),
         snapshot: {
           cwd,
-          records: this.generation.order.map((provider) => this.generation.initial.get(provider)!),
+          records: this.generation.order.map(
+            (provider) => this.generation.providerStates.get(provider)!.initial,
+          ),
         },
       };
       this.targets.set(cwd, target);

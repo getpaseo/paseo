@@ -2617,6 +2617,158 @@ test("settings refresh starts independent workspace discoveries together and sha
   }
 });
 
+test("bounds each provider across workspaces without blocking another provider", async () => {
+  let release!: () => void;
+  const pending = new Promise<void>((finish) => {
+    release = finish;
+  });
+  let refreshing = false;
+  let peerFetches = 0;
+  let active = 0;
+  let peak = 0;
+  const started = new Set<string>();
+  const updated = new Set<string>();
+  const cwds = Array.from({ length: 16 }, (_, index) => resolveSnapshotCwd(`/bounded-${index}`));
+  const manager = new ProviderSnapshotManager({
+    logger: createTestLogger(),
+    extraClients: {
+      codex: createExtraClient("codex", {
+        async isAvailable() {
+          return true;
+        },
+        async fetchCatalog() {
+          peerFetches++;
+          return { models: [], modes: [] };
+        },
+      }),
+      pi: createExtraClient("pi", {
+        async isAvailable(_signal, options) {
+          if (refreshing && options?.scope === "workspace") {
+            started.add(options.cwd);
+            peak = Math.max(peak, ++active);
+            await pending;
+            active--;
+          }
+          return true;
+        },
+        async fetchCatalog() {
+          return {
+            models: [{ provider: "pi", id: refreshing ? "new" : "old", label: "Model" }],
+            modes: [],
+          };
+        },
+      }),
+    },
+  });
+  const requests: Promise<void>[] = [];
+  try {
+    await Promise.all(cwds.map((cwd) => manager.warmUpSnapshotForCwd({ cwd, providers: ["pi"] })));
+    manager.on("change", ({ current }) => {
+      if (
+        current.records.find((record) => record.entry.provider === "pi")?.entry.models?.[0]?.id ===
+        "new"
+      ) {
+        updated.add(current.cwd);
+      }
+    });
+    refreshing = true;
+    requests.push(manager.refreshSettingsSnapshot({ providers: ["pi"] }));
+    await expect.poll(() => started.size).toBeGreaterThanOrEqual(4);
+    requests.push(manager.warmUpSnapshotForCwd({ cwd: "/concurrent-read", providers: ["pi"] }));
+    expect(peak).toBe(4);
+    requests.push(
+      manager.warmUpSnapshotForCwd({ cwd: "/independent-provider", providers: ["codex"] }),
+    );
+    await expect.poll(() => peerFetches).toBe(1);
+    release();
+    await Promise.all(requests);
+    expect(started.size).toBe(cwds.length + 1);
+    expect(peak).toBe(4);
+    // Other sessions receive refreshed views without initiating a scoped read.
+    expect(cwds.every((cwd) => updated.has(cwd))).toBe(true);
+  } finally {
+    release();
+    await Promise.all(requests);
+    await manager.shutdown();
+    manager.destroy();
+  }
+});
+
+test.each(["configuration", "shutdown", "destroy"])(
+  "discards queued discovery after %s",
+  async (action) => {
+    let release!: () => void;
+    const pending = new Promise<void>((finish) => {
+      release = finish;
+    });
+    const calls: string[] = [];
+    let keys = 0;
+    const cwds = Array.from({ length: 5 }, (_, index) => resolveSnapshotCwd(`/queued-${index}`));
+    const manager = new ProviderSnapshotManager({
+      logger: createTestLogger(),
+      providerOverrides: { ...PUBLICATION_PROVIDERS, pi: { enabled: true, label: "Initial" } },
+      extraClients: {
+        pi: createExtraClient("pi", {
+          async getCatalogCacheKey() {
+            keys++;
+            return undefined;
+          },
+          async isAvailable() {
+            return true;
+          },
+          async fetchCatalog(options) {
+            if (options.scope === "workspace") calls.push(options.cwd);
+            await pending;
+            return { models: [], modes: [] };
+          },
+        }),
+      },
+    });
+    const requests = cwds.map((cwd) => manager.warmUpSnapshotForCwd({ cwd, providers: ["pi"] }));
+    let transitions = 0;
+    manager.on("change", () => {
+      transitions++;
+    });
+    try {
+      await expect.poll(() => keys).toBe(5);
+      await expect.poll(() => calls.length).toBeGreaterThanOrEqual(4);
+      expect(calls).toEqual(cwds.slice(0, 4));
+      let queuedSettled = false;
+      void requests[4]!.then(() => {
+        queuedSettled = true;
+        return undefined;
+      });
+      if (action === "configuration") {
+        manager.applyMutableProviderConfig({
+          ...PUBLICATION_PROVIDERS,
+          pi: { enabled: true, label: "Updated" },
+        });
+        await expect.poll(() => queuedSettled).toBe(true);
+        // Replacing configuration must not reset the budget for still-active probes.
+        expect(calls).toEqual(cwds.slice(0, 4));
+        release();
+        await manager.warmUpSnapshotForCwd({ cwd: cwds[4], providers: ["pi"] });
+        await Promise.all(requests);
+        expect(calls.filter((cwd) => cwd === cwds[4])).toHaveLength(1);
+      } else {
+        const beforeStop = transitions;
+        if (action === "shutdown") await manager.shutdown();
+        else manager.destroy();
+        await expect.poll(() => queuedSettled).toBe(true);
+        release();
+        await Promise.all(requests);
+        expect(calls).toEqual(cwds.slice(0, 4));
+        expect(transitions).toBe(beforeStop);
+      }
+    } finally {
+      release();
+      await Promise.all(requests);
+      await manager.shutdown();
+      manager.destroy();
+    }
+  },
+);
+
 test("settings invalidation discards pending discovery even when the provider returns the same key", async () => {
   let release!: () => void;
   let started!: () => void;

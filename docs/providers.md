@@ -164,7 +164,8 @@ keep expanded entries and full updates. Only callers that own materialization op
 Keep the full encoding for older clients; compact-snapshot support alone does not imply reference support.
 
 Settings refresh invalidates requested providers across known targets and refreshes them in their
-actual execution context, sharing discovery by provider key. Configuration replacement invalidates
+actual execution context, so every connected client receives the refreshed view. Discovery shares
+work by provider key and admits at most four concurrent catalogue probes per configured provider, so a stalled provider does not block discovery for others. Configuration replacement invalidates
 only changed providers; unchanged entries, clients, and discovery in flight survive. Preparation
 leaves installed reads untouched until commit. Plugin replacement uses registration runtime
 identity, so unchanged registrations and builtins keep their results. Await the refresh or warmup
