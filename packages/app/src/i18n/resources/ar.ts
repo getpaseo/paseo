@@ -650,6 +650,7 @@ export const ar: TranslationResources = {
         reloadedAgent: "وكيل إعادة تحميل",
         failedToReloadAgent: "فشل في إعادة تحميل الوكيل",
         failedToCloseAgent: "فشل في إغلاق الوكيل",
+        failedToSaveClosePreference: "تعذّر حفظ تفضيل إغلاق المحطة",
       },
       confirmations: {
         unsavedTitle: "تغييرات غير محفوظة",
@@ -664,6 +665,8 @@ export const ar: TranslationResources = {
         archive: "أرشيف",
         closeTerminalTitle: "إغلاق المحطة؟",
         closeTerminalMessage: "سيتم إيقاف أي عملية جارية في هذه المحطة على الفور.",
+        rememberChoice: "تذكر هذا الاختيار",
+        closeAndDontAskAgain: "إغلاق وعدم السؤال مرة أخرى",
         archiveRunningAgentTitle: "وكيل تشغيل الأرشيف؟",
         archiveRunningAgentMessage:
           "هذا الوكيل لا يزال قيد التشغيل. ستؤدي أرشفته إلى إيقاف الوكيل وإغلاق علامة التبويب.",
@@ -2008,6 +2011,10 @@ export const ar: TranslationResources = {
         label: "التمرير Terminal",
         description: "يتم الاحتفاظ بالخطوط في المخزن المؤقت الطرفي المدمج",
         accessibilityLabel: "خطوط التمرير Terminal",
+      },
+      confirmTerminalClose: {
+        label: "تأكيد إغلاق المحطات",
+        description: "اسأل قبل إغلاق علامة تبويب المحطة",
       },
       autoExpandReasoning: {
         label: "عرض التفكير دائماً",

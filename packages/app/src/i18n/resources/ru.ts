@@ -655,6 +655,7 @@ export const ru: TranslationResources = {
         reloadedAgent: "Агент перезагружен",
         failedToReloadAgent: "Не удалось перезагрузить агента",
         failedToCloseAgent: "Не удалось закрыть агента",
+        failedToSaveClosePreference: "Не удалось сохранить настройку закрытия терминала",
       },
       confirmations: {
         unsavedTitle: "Несохранённые изменения",
@@ -670,6 +671,8 @@ export const ru: TranslationResources = {
         closeTerminalTitle: "Закрыть терминал?",
         closeTerminalMessage:
           "Любой запущенный процесс в этом терминале будет немедленно остановлен.",
+        rememberChoice: "Запомнить выбор",
+        closeAndDontAskAgain: "Закрыть и больше не спрашивать",
         archiveRunningAgentTitle: "Архивировать работающего агента?",
         archiveRunningAgentMessage:
           "Этот агент всё ещё работает. При архивировании агент будет остановлен, а вкладка закрыта.",
@@ -2041,6 +2044,10 @@ export const ru: TranslationResources = {
         label: "Буфер прокрутки терминала",
         description: "Количество строк, сохраняемых во встроенном буфере терминала",
         accessibilityLabel: "Количество строк в буфере прокрутки терминала",
+      },
+      confirmTerminalClose: {
+        label: "Подтверждать закрытие терминалов",
+        description: "Спрашивать перед закрытием вкладки терминала",
       },
       autoExpandReasoning: {
         label: "Всегда разворачивать размышления",

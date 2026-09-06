@@ -655,6 +655,7 @@ export const ja: TranslationResources = {
         reloadedAgent: "エージェントを再読み込みしました",
         failedToReloadAgent: "エージェントの再読み込みに失敗しました",
         failedToCloseAgent: "エージェントを閉じられませんでした",
+        failedToSaveClosePreference: "ターミナルを閉じる設定を保存できませんでした",
       },
       confirmations: {
         unsavedTitle: "未保存の変更",
@@ -667,6 +668,8 @@ export const ja: TranslationResources = {
         archive: "アーカイブ",
         closeTerminalTitle: "ターミナルを閉じますか？",
         closeTerminalMessage: "このターミナルで実行中のプロセスはすぐに停止されます。",
+        rememberChoice: "この選択を記憶する",
+        closeAndDontAskAgain: "閉じて今後確認しない",
         archiveRunningAgentTitle: "実行中のエージェントをアーカイブしますか？",
         archiveRunningAgentMessage:
           "このエージェントはまだ実行中です。アーカイブするとエージェントが停止してタブが閉じられます。",
@@ -2025,6 +2028,10 @@ export const ja: TranslationResources = {
         label: "ターミナルスクロールバック",
         description: "組み込みターミナルバッファに保持する行数",
         accessibilityLabel: "ターミナルスクロールバック行数",
+      },
+      confirmTerminalClose: {
+        label: "ターミナルを閉じる前に確認",
+        description: "ターミナルのタブを閉じる前に確認します",
       },
       autoExpandReasoning: {
         label: "常に思考プロセスを展開",

@@ -654,6 +654,8 @@ export const ptBR: TranslationResources = {
         reloadedAgent: "Agente recarregado",
         failedToReloadAgent: "Falha ao recarregar agente",
         failedToCloseAgent: "Falha ao fechar agente",
+        failedToSaveClosePreference:
+          "Não foi possível salvar sua preferência de fechamento do terminal",
       },
       confirmations: {
         unsavedTitle: "Alterações não salvas",
@@ -668,6 +670,8 @@ export const ptBR: TranslationResources = {
         closeTerminalTitle: "Fechar terminal?",
         closeTerminalMessage:
           "Qualquer processo em execução neste terminal será interrompido imediatamente.",
+        rememberChoice: "Lembrar desta escolha",
+        closeAndDontAskAgain: "Fechar e não perguntar novamente",
         archiveRunningAgentTitle: "Arquivar agente em execução?",
         archiveRunningAgentMessage:
           "Este agente ainda está em execução. Arquivá-lo interromperá o agente e fechará a aba.",
@@ -2041,6 +2045,10 @@ export const ptBR: TranslationResources = {
         label: "Scrollback do terminal",
         description: "Linhas mantidas no buffer do terminal integrado",
         accessibilityLabel: "Linhas do scrollback do terminal",
+      },
+      confirmTerminalClose: {
+        label: "Confirmar o fechamento de terminais",
+        description: "Perguntar antes de fechar uma aba de terminal",
       },
       autoExpandReasoning: {
         label: "Sempre expandir raciocínio",

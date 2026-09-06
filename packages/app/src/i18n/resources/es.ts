@@ -655,6 +655,7 @@ export const es: TranslationResources = {
         reloadedAgent: "Agente recargado",
         failedToReloadAgent: "No se pudo recargar el agente",
         failedToCloseAgent: "No se pudo cerrar el agente",
+        failedToSaveClosePreference: "No se pudo guardar tu preferencia de cierre de terminal",
       },
       confirmations: {
         unsavedTitle: "Cambios sin guardar",
@@ -670,6 +671,8 @@ export const es: TranslationResources = {
         closeTerminalTitle: "¿Cerrar terminal?",
         closeTerminalMessage:
           "Cualquier proceso en ejecución en esta terminal se detendrá inmediatamente.",
+        rememberChoice: "Recordar esta elección",
+        closeAndDontAskAgain: "Cerrar y no volver a preguntar",
         archiveRunningAgentTitle: "¿Agente de ejecución de archivos?",
         archiveRunningAgentMessage:
           "Este agente todavía está ejecutándose. Archivarlo detendrá al agente y cerrará la pestaña.",
@@ -2057,6 +2060,10 @@ export const es: TranslationResources = {
         label: "Historial de terminal",
         description: "Líneas mantenidas en el búfer de terminal incorporado",
         accessibilityLabel: "Líneas del historial de terminal",
+      },
+      confirmTerminalClose: {
+        label: "Confirmar el cierre de terminales",
+        description: "Preguntar antes de cerrar una pestaña de terminal",
       },
       autoExpandReasoning: {
         label: "Siempre expandir razonamiento",
