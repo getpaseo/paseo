@@ -30,8 +30,10 @@ async function enumerateCandidatesViaSystemWhich(name: string): Promise<string[]
       killSignal: "SIGKILL",
     });
     return Array.from(new Set(stdout.trim().split("\n").filter(Boolean)));
-  } catch {
-    return [];
+  } catch (error) {
+    // which exits 1 for a missing command. A failed lookup is not evidence of absence.
+    if (error instanceof Error && "code" in error && error.code === 1) return [];
+    throw error;
   }
 }
 

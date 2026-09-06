@@ -113,6 +113,12 @@ function registerProvider(provider: ProviderRegistration): void {
   if (typeof provider.connect !== "function") {
     throw new Error(`Plugin provider ${id} must implement connect()`);
   }
+  if (
+    provider.getCatalogCacheKey !== undefined &&
+    typeof provider.getCatalogCacheKey !== "function"
+  ) {
+    throw new Error(`Invalid catalogue key callback for plugin provider ${id}`);
+  }
   if (providers.has(id)) throw new Error(`Duplicate plugin provider ID: ${id}`);
   providers.set(id, { ...provider, id });
 }
@@ -123,6 +129,7 @@ function providerMetadata(provider: ProviderRegistration) {
     label: provider.label,
     description: provider.description,
     iconPath: provider.icon,
+    hasCatalogCacheKey: provider.getCatalogCacheKey !== undefined,
   };
 }
 
@@ -323,7 +330,9 @@ process.on("message", (rawMessage: unknown) => {
     return;
   }
   if (stopping) {
-    if (message.type === "provider.connect") {
+    if (message.type === "provider.catalog_key") {
+      send({ type: "error", requestId: message.requestId, error: "Plugin is stopping" });
+    } else if (message.type === "provider.connect") {
       send({
         type: "provider.connect_failed",
         connectionId: message.connectionId,
@@ -339,6 +348,19 @@ process.on("message", (rawMessage: unknown) => {
     } else if (message.type === "provider.close") {
       send({ type: "provider.closed", connectionId: message.connectionId });
     }
+    return;
+  }
+  if (message.type === "provider.catalog_key") {
+    void (async () => {
+      const provider = providers.get(message.providerId);
+      if (!provider) throw new Error(`Unknown provider: ${message.providerId}`);
+      const output = await provider.getCatalogCacheKey?.(message.options);
+      if (output !== undefined && typeof output !== "string")
+        throw new Error("Invalid catalogue key");
+      send({ type: "result", requestId: message.requestId, output });
+    })().catch((error) =>
+      send({ type: "error", requestId: message.requestId, error: describeError(error) }),
+    );
     return;
   }
   if (message.type === "provider.connect") {

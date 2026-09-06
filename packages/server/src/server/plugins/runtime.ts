@@ -8,6 +8,7 @@ import {
   PROVIDER_CAPABILITIES,
   requireProviderCapabilities,
   type ProviderConnectRequest,
+  type ProviderCatalogOptions,
   type ProviderConnection,
   type ProviderEvent,
   type ProviderInput,
@@ -415,16 +416,42 @@ export class PluginRuntime {
     if (!loaded) throw new Error(`Plugin is not available: ${pluginId}`);
     if (!loaded.methods.has(method))
       throw new Error(`Plugin ${pluginId} does not contribute RPC ${method}`);
+    return this.request(loaded, { type: "invoke", requestId: randomUUID(), method, input });
+  }
+
+  async getProviderCatalogCacheKey(
+    pluginId: string,
+    providerId: string,
+    options: ProviderCatalogOptions,
+  ): Promise<string | undefined> {
+    const loaded = this.plugins.get(pluginId);
+    if (!loaded) throw new Error(`Plugin is not available: ${pluginId}`);
+    const output = await this.request(loaded, {
+      type: "provider.catalog_key",
+      requestId: randomUUID(),
+      providerId,
+      options,
+    });
+    if (output !== undefined && typeof output !== "string")
+      throw new Error("Invalid catalogue key from plugin");
+    return output;
+  }
+
+  private request(
+    loaded: LoadedPlugin,
+    message: Extract<PluginProcessRequest, { requestId: string }>,
+  ): Promise<unknown> {
     const child = loaded.child;
+    const pluginId = loaded.id;
     if (!child) throw new Error(`Plugin ${pluginId} has no server entry`);
-    const requestId = randomUUID();
+    const requestId = message.requestId;
     return new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
         loaded.pending.delete(requestId);
-        reject(new Error(`Plugin RPC timed out: ${pluginId}.${method}`));
+        reject(new Error(`Plugin RPC timed out: ${pluginId}.${message.type}`));
       }, REQUEST_TIMEOUT_MS);
       loaded.pending.set(requestId, { resolve, reject, timeout });
-      void send(child, { type: "invoke", requestId, method, input }).catch((error) => {
+      void send(child, message).catch((error) => {
         clearTimeout(timeout);
         loaded.pending.delete(requestId);
         reject(error);
