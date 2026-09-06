@@ -1,3 +1,7 @@
+import type {
+  PluginThemeColorOverrides,
+  PluginThemeTerminalColorOverrides,
+} from "@getpaseo/plugin";
 import { Platform } from "react-native";
 import { darkHighlightColors, lightHighlightColors } from "@getpaseo/highlight";
 
@@ -244,8 +248,44 @@ const lightTerminalAnsi = {
   brightWhite: "#fafafa",
 } as const;
 
-export function buildLightSemanticColors(tint: LightThemeConfig) {
+type CompleteTerminalColors = {
+  [Name in keyof PluginThemeTerminalColorOverrides]-?: string;
+};
+
+interface OverrideableSemanticColors {
+  borderAccent: string;
+  accentBorder: string;
+  statusSuccess: string;
+  success: string;
+  terminal: CompleteTerminalColors;
+}
+
+function applyPluginThemeColorOverrides<Colors extends OverrideableSemanticColors>(
+  colors: Colors,
+  overrides?: PluginThemeColorOverrides,
+) {
+  if (!overrides) return colors;
+  const { terminal, borderAccent, statusSuccess, ...semantic } = overrides;
+  const semanticOverrides = Object.fromEntries(
+    Object.entries(semantic).filter(([, value]) => value !== undefined),
+  ) as Partial<typeof semantic>;
+  const terminalOverrides = Object.fromEntries(
+    Object.entries(terminal ?? {}).filter(([, value]) => value !== undefined),
+  ) as PluginThemeTerminalColorOverrides;
   return {
+    ...colors,
+    ...semanticOverrides,
+    ...(borderAccent === undefined ? {} : { borderAccent, accentBorder: borderAccent }),
+    ...(statusSuccess === undefined ? {} : { statusSuccess, success: statusSuccess }),
+    terminal: { ...colors.terminal, ...terminalOverrides },
+  };
+}
+
+export function buildLightSemanticColors(
+  tint: LightThemeConfig,
+  overrides?: PluginThemeColorOverrides,
+) {
+  const colors = {
     surface0: tint.surface0,
     surface1: tint.surface1,
     surface2: tint.surface2,
@@ -303,6 +343,7 @@ export function buildLightSemanticColors(tint: LightThemeConfig) {
       brightBlack: tint.terminalBrightBlack,
     },
   };
+  return applyPluginThemeColorOverrides(colors, overrides);
 }
 
 const lightSemanticColors = buildLightSemanticColors({
@@ -372,10 +413,13 @@ const darkTerminalAnsi = {
   brightWhite: "#f0f0f2",
 } as const;
 
-export function buildDarkSemanticColors(tint: DarkThemeConfig) {
+export function buildDarkSemanticColors(
+  tint: DarkThemeConfig,
+  overrides?: PluginThemeColorOverrides,
+) {
   const foreground = tint.foreground ?? "#fafafa";
   const ring = tint.ring ?? "#d4d4d8";
-  return {
+  const colors = {
     surface0: tint.surface0,
     surface1: tint.surface1,
     surface2: tint.surface2,
@@ -434,6 +478,7 @@ export function buildDarkSemanticColors(tint: DarkThemeConfig) {
       brightBlack: tint.terminalBrightBlack,
     },
   };
+  return applyPluginThemeColorOverrides(colors, overrides);
 }
 
 // ---------------------------------------------------------------------------

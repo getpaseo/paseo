@@ -14,6 +14,22 @@ export default function contribute(client: PluginClientContext) {
       accent: "#cba6f7",
       mutedForeground: "#a6adc8",
       ring: "#6c7086",
+      overrides: {
+        surface3: "#585b70",
+        foregroundExtraMuted: "#7f849c",
+        accentBright: "#f5c2e7",
+        destructive: "#f38ba8",
+        diffAddition: "#a6e3a1",
+        diffDeletion: "#f38ba8",
+        statusSuccess: "#a6e3a1",
+        statusDanger: "#f38ba8",
+        statusWarning: "#f9e2af",
+        statusMerged: "#cba6f7",
+        terminal: {
+          black: "#45475a",
+          brightBlack: "#585b70",
+        },
+      },
     },
   });
   return () => {};
