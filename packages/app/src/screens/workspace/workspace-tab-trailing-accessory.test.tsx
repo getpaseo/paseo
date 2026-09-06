@@ -36,6 +36,7 @@ vi.mock("lucide-react-native", () => {
     CopyX: StubIcon,
     Ellipsis: StubIcon,
     Pencil: StubIcon,
+    Pin: StubIcon,
     RotateCw: StubIcon,
     X: StubIcon,
   };
@@ -132,6 +133,7 @@ function terminalTab(): WorkspaceTabDescriptor {
 function renderAccessory(
   tab: WorkspaceTabDescriptor,
   onRenameTab: (tab: WorkspaceTabDescriptor) => void,
+  onTogglePinTab: (tabId: string) => void = vi.fn(),
 ): { base: string; unmount: () => void } {
   const base = `workspace-tab-menu-${tab.tabId}`;
   const menuEntries = buildWorkspaceTabMenuEntries({
@@ -146,6 +148,7 @@ function renderAccessory(
     onCopyFilePath: vi.fn(),
     onReloadAgent: vi.fn(),
     onRenameTab,
+    onTogglePinTab,
     onCloseTab: vi.fn(),
     onCloseTabsBefore: vi.fn(),
     onCloseTabsAfter: vi.fn(),
@@ -228,5 +231,17 @@ describe("MobileTabTrailingAccessory", () => {
     fireEvent.click(renameButton as HTMLElement);
 
     expect(onRenameTab).toHaveBeenCalledWith(terminalTab());
+  });
+
+  it("reaches Pin tab for a compact session", () => {
+    const onTogglePinTab = vi.fn();
+    const rendered = renderAccessory(agentTab(), vi.fn(), onTogglePinTab);
+    current = rendered;
+
+    const pinButton = document.querySelector(`[data-testid="${rendered.base}-pin"]`);
+    expect(pinButton).not.toBeNull();
+    fireEvent.click(pinButton as HTMLElement);
+
+    expect(onTogglePinTab).toHaveBeenCalledWith("agent_123");
   });
 });

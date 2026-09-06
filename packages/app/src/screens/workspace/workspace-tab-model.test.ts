@@ -133,6 +133,26 @@ describe("deriveWorkspaceTabModel", () => {
     expect(model.activeTab?.descriptor.target).toEqual({ kind: "agent", agentId: "agent-1" });
   });
 
+  it("preserves user-facing pinned state on derived tab descriptors", () => {
+    const model = deriveWorkspaceTabModel({
+      tabs: [
+        {
+          tabId: "browser_browser-a",
+          target: { kind: "browser", browserId: "browser-a" },
+          createdAt: 1,
+          isPinned: true,
+        },
+        {
+          tabId: "file_/repo/worktree/README.md",
+          target: { kind: "file", path: "/repo/worktree/README.md" },
+          createdAt: 2,
+        },
+      ],
+    });
+
+    expect(model.tabs.map((tab) => tab.descriptor.isPinned)).toEqual([true, false]);
+  });
+
   it("normalizes file paths and discards invalid tabs", () => {
     const model = deriveWorkspaceTabModel({
       tabs: [

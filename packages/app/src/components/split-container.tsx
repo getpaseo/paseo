@@ -77,6 +77,7 @@ import { ExplorerSidebarDock } from "@/screens/workspace/explorer-sidebar";
 import {
   WorkspaceTabPresentationResolver,
   WorkspaceTabIcon,
+  WorkspaceTabPinIcon,
 } from "@/screens/workspace/workspace-tab-presentation";
 import type { WorkspaceTabDescriptor } from "@/screens/workspace/workspace-tabs-types";
 import {
@@ -112,6 +113,7 @@ interface SplitContainerProps {
   onCopyFilePath: (path: string) => Promise<void> | void;
   onReloadAgent: (agentId: string) => Promise<void> | void;
   onRenameTab: (tab: WorkspaceTabDescriptor) => void;
+  onTogglePinTab: (tabId: string) => void;
   onCloseTabsToLeft: (tabId: string, paneTabs: WorkspaceTabDescriptor[]) => Promise<void> | void;
   onCloseTabsToRight: (tabId: string, paneTabs: WorkspaceTabDescriptor[]) => Promise<void> | void;
   onCloseOtherTabs: (tabId: string, paneTabs: WorkspaceTabDescriptor[]) => Promise<void> | void;
@@ -325,6 +327,7 @@ export function SplitContainer({
   onCopyFilePath,
   onReloadAgent,
   onRenameTab,
+  onTogglePinTab,
   onCloseTabsToLeft,
   onCloseTabsToRight,
   onCloseOtherTabs,
@@ -678,6 +681,7 @@ export function SplitContainer({
                   onCopyFilePath={onCopyFilePath}
                   onReloadAgent={onReloadAgent}
                   onRenameTab={onRenameTab}
+                  onTogglePinTab={onTogglePinTab}
                   onCloseTabsToLeft={onCloseTabsToLeft}
                   onCloseTabsToRight={onCloseTabsToRight}
                   onCloseOtherTabs={onCloseOtherTabs}
@@ -725,6 +729,7 @@ export function SplitContainer({
                   closingTabIds={closingTabIds}
                   onSelectTab={onSelectTabInPane}
                   onCloseTab={onCloseTab}
+                  onTogglePinTab={onTogglePinTab}
                   onCreateNewTab={handleCreateExplorerTab}
                   onMoveTabToMain={handleMoveExplorerTabToMain}
                   buildPaneContentModel={buildPaneContentModel}
@@ -772,6 +777,7 @@ function DragOverlayTabChip({
             tabId: tab.tabId,
             kind: tab.target.kind,
             target: tab.target,
+            isPinned: tab.isPinned === true,
           }
         : null,
     [tab],
@@ -828,6 +834,7 @@ function DragOverlayTabChipInner({
         return (
           <View style={chipStyle}>
             <WorkspaceTabIcon presentation={presentation} active size={14} backdrop="surface1" />
+            <WorkspaceTabPinIcon isPinned={tab.isPinned === true} />
             <Text numberOfLines={1} style={chipLabelStyle}>
               {label}
             </Text>
@@ -940,6 +947,7 @@ function SplitNodeView({
   onCopyFilePath,
   onReloadAgent,
   onRenameTab,
+  onTogglePinTab,
   onCloseTabsToLeft,
   onCloseTabsToRight,
   onCloseOtherTabs,
@@ -1028,6 +1036,7 @@ function SplitNodeView({
             onCopyFilePath={onCopyFilePath}
             onReloadAgent={onReloadAgent}
             onRenameTab={onRenameTab}
+            onTogglePinTab={onTogglePinTab}
             onCloseTabsToLeft={onCloseTabsToLeft}
             onCloseTabsToRight={onCloseTabsToRight}
             onCloseOtherTabs={onCloseOtherTabs}
@@ -1080,6 +1089,7 @@ function SplitNodeView({
               onCopyFilePath={onCopyFilePath}
               onReloadAgent={onReloadAgent}
               onRenameTab={onRenameTab}
+              onTogglePinTab={onTogglePinTab}
               onCloseTabsToLeft={onCloseTabsToLeft}
               onCloseTabsToRight={onCloseTabsToRight}
               onCloseOtherTabs={onCloseOtherTabs}
@@ -1140,6 +1150,7 @@ function SplitPaneView({
   onCopyFilePath,
   onReloadAgent,
   onRenameTab,
+  onTogglePinTab,
   onCloseTabsToLeft,
   onCloseTabsToRight,
   onCloseOtherTabs,
@@ -1275,6 +1286,7 @@ function SplitPaneView({
             onCopyFilePath={onCopyFilePath}
             onReloadAgent={onReloadAgent}
             onRenameTab={onRenameTab}
+            onTogglePinTab={onTogglePinTab}
             onCloseTabsToLeft={handleCloseTabsToLeft}
             onCloseTabsToRight={handleCloseTabsToRight}
             onCloseOtherTabs={handleCloseOtherTabs}

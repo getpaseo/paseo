@@ -38,6 +38,7 @@ describe("buildWorkspaceTabMenuEntries", () => {
       onCopyFilePath,
       onReloadAgent,
       onRenameTab,
+      onTogglePinTab: vi.fn(),
       onCloseTab,
       onCloseTabsBefore,
       onCloseTabsAfter,
@@ -48,6 +49,7 @@ describe("buildWorkspaceTabMenuEntries", () => {
       "Copy resume command",
       "Copy agent id",
       "Rename",
+      "Pin tab",
       "Close to the left",
       "Close to the right",
       "Close other tabs",
@@ -69,6 +71,7 @@ describe("buildWorkspaceTabMenuEntries", () => {
       onCopyFilePath: vi.fn(),
       onReloadAgent: vi.fn(),
       onRenameTab: vi.fn(),
+      onTogglePinTab: vi.fn(),
       onCloseTab: vi.fn(),
       onCloseTabsBefore: vi.fn(),
       onCloseTabsAfter: vi.fn(),
@@ -79,6 +82,7 @@ describe("buildWorkspaceTabMenuEntries", () => {
       "Copy resume command",
       "Copy agent id",
       "Rename",
+      "Pin tab",
       "Close tabs above",
       "Close tabs below",
       "Close other tabs",
@@ -87,7 +91,7 @@ describe("buildWorkspaceTabMenuEntries", () => {
     ]);
   });
 
-  it("omits agent copy actions and rename for draft tabs", () => {
+  it("omits agent copy actions and rename for draft tabs while keeping pin", () => {
     const entries = buildWorkspaceTabMenuEntries({
       surface: "mobile",
       tab: {
@@ -105,6 +109,7 @@ describe("buildWorkspaceTabMenuEntries", () => {
       onCopyFilePath: vi.fn(),
       onReloadAgent: vi.fn(),
       onRenameTab: vi.fn(),
+      onTogglePinTab: vi.fn(),
       onCloseTab: vi.fn(),
       onCloseTabsBefore: vi.fn(),
       onCloseTabsAfter: vi.fn(),
@@ -118,7 +123,8 @@ describe("buildWorkspaceTabMenuEntries", () => {
       false,
     );
     expect(entries.some((entry) => entry.kind === "item" && entry.label === "Rename")).toBe(false);
-    expect(entries.some((entry) => entry.kind === "separator")).toBe(false);
+    expect(entries.some((entry) => entry.kind === "item" && entry.label === "Pin tab")).toBe(true);
+    expect(entries.some((entry) => entry.kind === "separator")).toBe(true);
   });
 
   it("adds reload tooltip copy for agent tabs", () => {
@@ -134,6 +140,7 @@ describe("buildWorkspaceTabMenuEntries", () => {
       onCopyFilePath: vi.fn(),
       onReloadAgent: vi.fn(),
       onRenameTab: vi.fn(),
+      onTogglePinTab: vi.fn(),
       onCloseTab: vi.fn(),
       onCloseTabsBefore: vi.fn(),
       onCloseTabsAfter: vi.fn(),
@@ -164,6 +171,7 @@ describe("buildWorkspaceTabMenuEntries", () => {
       onCopyFilePath: vi.fn(),
       onReloadAgent: vi.fn(),
       onRenameTab,
+      onTogglePinTab: vi.fn(),
       onCloseTab: vi.fn(),
       onCloseTabsBefore: vi.fn(),
       onCloseTabsAfter: vi.fn(),
@@ -200,6 +208,7 @@ describe("buildWorkspaceTabMenuEntries", () => {
       onCopyFilePath: vi.fn(),
       onReloadAgent: vi.fn(),
       onRenameTab,
+      onTogglePinTab: vi.fn(),
       onCloseTab: vi.fn(),
       onCloseTabsBefore: vi.fn(),
       onCloseTabsAfter: vi.fn(),
@@ -209,6 +218,7 @@ describe("buildWorkspaceTabMenuEntries", () => {
     const labels = entries.filter((entry) => entry.kind === "item").map((entry) => entry.label);
     expect(labels[0]).toBe("Copy terminal id");
     expect(labels[1]).toBe("Rename");
+    expect(labels[2]).toBe("Pin tab");
     expect(labels).not.toContain("Copy resume command");
     expect(labels).not.toContain("Copy agent id");
     expect(labels).not.toContain("Copy file path");
@@ -251,6 +261,7 @@ describe("buildWorkspaceTabMenuEntries", () => {
       onCopyFilePath,
       onReloadAgent: vi.fn(),
       onRenameTab: vi.fn(),
+      onTogglePinTab: vi.fn(),
       onCloseTab: vi.fn(),
       onCloseTabsBefore: vi.fn(),
       onCloseTabsAfter: vi.fn(),
@@ -259,6 +270,7 @@ describe("buildWorkspaceTabMenuEntries", () => {
 
     const labels = entries.filter((entry) => entry.kind === "item").map((entry) => entry.label);
     expect(labels[0]).toBe("Copy file path");
+    expect(labels[1]).toBe("Pin tab");
     expect(labels).not.toContain("Copy resume command");
     expect(labels).not.toContain("Copy agent id");
     expect(labels).not.toContain("Rename");
@@ -294,6 +306,7 @@ describe("buildWorkspaceTabMenuEntries", () => {
       onCopyFilePath: vi.fn(),
       onReloadAgent: vi.fn(),
       onRenameTab: vi.fn(),
+      onTogglePinTab: vi.fn(),
       onCloseTab: vi.fn(),
       onCloseTabsToLeft: vi.fn(),
       onCloseTabsToRight: vi.fn(),
@@ -325,6 +338,7 @@ describe("buildWorkspaceTabMenuEntries", () => {
       onCopyFilePath: vi.fn(),
       onReloadAgent: vi.fn(),
       onRenameTab: vi.fn(),
+      onTogglePinTab: vi.fn(),
       onCloseTab: vi.fn(),
       onCloseTabsBefore: vi.fn(),
       onCloseTabsAfter: vi.fn(),
@@ -362,7 +376,127 @@ describe("buildWorkspaceTabMenuEntries", () => {
     const terminalSeparator = terminalEntries
       .slice(terminalEntries.indexOf(terminalRename) + 1)
       .find((entry) => entry.kind === "separator");
-    expect(agentSeparator?.key).toBe("rename-separator");
-    expect(terminalSeparator?.key).toBe("rename-separator");
+    expect(agentSeparator?.key).toBe("pin-separator");
+    expect(terminalSeparator?.key).toBe("pin-separator");
+  });
+
+  it.each<WorkspaceTabDescriptor["target"]>([
+    { kind: "draft", draftId: "draft-1" },
+    { kind: "agent", agentId: "agent-1" },
+    { kind: "provider_subagent", parentAgentId: "parent-1", subagentId: "child-1" },
+    { kind: "terminal", terminalId: "terminal-1" },
+    { kind: "browser", browserId: "browser-1" },
+    { kind: "changes_tree" },
+    { kind: "files" },
+    { kind: "pull_request" },
+    { kind: "file", path: "/repo/file.ts" },
+    { kind: "working_diff" },
+    { kind: "plugin", pluginId: "plugin-1", panelId: "panel-1", context: "workspace" },
+    { kind: "setup", workspaceId: "workspace-1" },
+  ])("shows the pin action for persistent $kind tabs", (target) => {
+    const tab: WorkspaceTabDescriptor = {
+      key: `tab-${target.kind}`,
+      tabId: `tab-${target.kind}`,
+      kind: target.kind,
+      target,
+    };
+    const entries = buildWorkspaceTabMenuEntries({
+      surface: "desktop",
+      tab,
+      index: 0,
+      tabCount: 1,
+      menuTestIDBase: `workspace-tab-context-${tab.tabId}`,
+      onCopyResumeCommand: vi.fn(),
+      onCopyAgentId: vi.fn(),
+      onCopyTerminalId: vi.fn(),
+      onCopyFilePath: vi.fn(),
+      onReloadAgent: vi.fn(),
+      onRenameTab: vi.fn(),
+      onTogglePinTab: vi.fn(),
+      onCloseTab: vi.fn(),
+      onCloseTabsBefore: vi.fn(),
+      onCloseTabsAfter: vi.fn(),
+      onCloseOtherTabs: vi.fn(),
+    });
+
+    expect(entries).toContainEqual(
+      expect.objectContaining({
+        kind: "item",
+        key: "toggle-pin",
+        label: "Pin tab",
+        icon: "pin",
+        testID: `workspace-tab-context-${tab.tabId}-pin`,
+      }),
+    );
+  });
+
+  it.each<WorkspaceTabDescriptor["target"]>([
+    { kind: "new_tab" },
+    { kind: "commit_diff", sha: "abc123" },
+  ])("omits the pin action for ephemeral $kind tabs", (target) => {
+    const tab: WorkspaceTabDescriptor = {
+      key: `tab-${target.kind}`,
+      tabId: `tab-${target.kind}`,
+      kind: target.kind,
+      target,
+    };
+    const entries = buildWorkspaceTabMenuEntries({
+      surface: "desktop",
+      tab,
+      index: 0,
+      tabCount: 1,
+      menuTestIDBase: `workspace-tab-context-${tab.tabId}`,
+      onCopyResumeCommand: vi.fn(),
+      onCopyAgentId: vi.fn(),
+      onCopyTerminalId: vi.fn(),
+      onCopyFilePath: vi.fn(),
+      onReloadAgent: vi.fn(),
+      onRenameTab: vi.fn(),
+      onTogglePinTab: vi.fn(),
+      onCloseTab: vi.fn(),
+      onCloseTabsBefore: vi.fn(),
+      onCloseTabsAfter: vi.fn(),
+      onCloseOtherTabs: vi.fn(),
+    });
+
+    expect(entries).not.toContainEqual(
+      expect.objectContaining({ kind: "item", key: "toggle-pin" }),
+    );
+    expect(entries).not.toContainEqual({ kind: "separator", key: "pin-separator" });
+  });
+
+  it("switches to Unpin tab and dispatches the toggle for a pinned tab", () => {
+    const onTogglePinTab = vi.fn();
+    const onCloseTab = vi.fn();
+    const tab = { ...createAgentTab(), isPinned: true };
+    const entries = buildWorkspaceTabMenuEntries({
+      surface: "desktop",
+      tab,
+      index: 0,
+      tabCount: 1,
+      menuTestIDBase: "workspace-tab-context-agent_123",
+      onCopyResumeCommand: vi.fn(),
+      onCopyAgentId: vi.fn(),
+      onCopyTerminalId: vi.fn(),
+      onCopyFilePath: vi.fn(),
+      onReloadAgent: vi.fn(),
+      onRenameTab: vi.fn(),
+      onTogglePinTab,
+      onCloseTab,
+      onCloseTabsBefore: vi.fn(),
+      onCloseTabsAfter: vi.fn(),
+      onCloseOtherTabs: vi.fn(),
+    });
+
+    const pinEntry = entries.find((entry) => entry.kind === "item" && entry.key === "toggle-pin");
+    if (!pinEntry || pinEntry.kind !== "item") throw new Error("Pin entry missing");
+    pinEntry.onSelect();
+    expect(pinEntry.label).toBe("Unpin tab");
+    expect(onTogglePinTab).toHaveBeenCalledWith(tab.tabId);
+
+    const closeEntry = entries.find((entry) => entry.kind === "item" && entry.key === "close");
+    if (!closeEntry || closeEntry.kind !== "item") throw new Error("Close entry missing");
+    closeEntry.onSelect();
+    expect(onCloseTab).toHaveBeenCalledWith(tab.tabId);
   });
 });

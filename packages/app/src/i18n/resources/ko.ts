@@ -601,6 +601,8 @@ export const ko: TranslationResources = {
         copyTerminalId: "터미널 ID 복사",
         copyFilePath: "파일 경로 복사",
         rename: "이름 변경",
+        pinTab: "탭 고정",
+        unpinTab: "탭 고정 해제",
         closeAbove: "위쪽 탭 닫기",
         closeBelow: "아래쪽 탭 닫기",
         closeLeft: "왼쪽 탭 닫기",

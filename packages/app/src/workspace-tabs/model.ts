@@ -52,7 +52,12 @@ export interface WorkspaceTab {
   tabId: string;
   target: WorkspaceTabTarget;
   createdAt: number;
+  isPinned?: boolean;
   state?: JsonValue;
+}
+
+export function isWorkspaceTabTargetPersistent(target: WorkspaceTabTarget): boolean {
+  return target.kind !== "commit_diff" && target.kind !== "new_tab";
 }
 
 export function buildWorkspaceTabPersistenceKey(input: {

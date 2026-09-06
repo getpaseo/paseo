@@ -126,6 +126,13 @@ function collectTabIds(root: SplitNode): string[] {
   return collectAllTabs(root).map((tab) => tab.tabId);
 }
 
+function findTabById(root: SplitNode, tabId: string) {
+  for (const tab of collectAllTabs(root)) {
+    if (tab.tabId === tabId) return tab;
+  }
+  return undefined;
+}
+
 function collectContentTabs(root: SplitNode): WorkspaceTab[] {
   return contentTabs(collectAllTabs(root));
 }
@@ -1225,6 +1232,68 @@ describe("workspace-layout-store actions", () => {
     const tabs = collectAllTabs(restored.getState().layoutByWorkspace[workspaceKey].root);
     expect(tabs.find((tab) => tab.tabId === first)?.state).toEqual(firstState);
     expect(tabs.find((tab) => tab.tabId === second)?.state).toEqual(secondState);
+  });
+
+  it("persists user-pinned tab state and still allows an explicit close", async () => {
+    await AsyncStorage.removeItem("workspace-layout-state");
+    const workspaceKey = createWorkspaceKey();
+    const source = createWorkspaceLayoutStore(createDeterministicWorkspaceLayoutIds());
+    await source.persist.rehydrate();
+    const pinnedTabId = source.getState().openTab({
+      workspaceKey,
+      target: { kind: "browser", browserId: "browser-1" },
+      intent: "new",
+    });
+    const unpinnedTabId = source.getState().openTab({
+      workspaceKey,
+      target: { kind: "file", path: "/repo/README.md" },
+      intent: "new",
+    });
+    expect(pinnedTabId).toBeTruthy();
+    expect(unpinnedTabId).toBeTruthy();
+    source.getState().toggleTabPinned(workspaceKey, pinnedTabId as string);
+
+    await vi.waitFor(async () => {
+      const persisted = await AsyncStorage.getItem("workspace-layout-state");
+      const root = JSON.parse(persisted ?? "{}").state.layoutByWorkspace[workspaceKey].root;
+      expect(findTabById(root, pinnedTabId as string)?.isPinned).toBe(true);
+      expect(findTabById(root, unpinnedTabId as string)?.isPinned).toBeUndefined();
+    });
+
+    const restored = createWorkspaceLayoutStore(createDeterministicWorkspaceLayoutIds());
+    await restored.persist.rehydrate();
+    const restoredTabs = collectAllTabs(restored.getState().layoutByWorkspace[workspaceKey].root);
+    expect(restoredTabs.find((tab) => tab.tabId === pinnedTabId)?.isPinned).toBe(true);
+    expect(restoredTabs.find((tab) => tab.tabId === unpinnedTabId)?.isPinned).toBeUndefined();
+
+    restored.getState().closeTab(workspaceKey, pinnedTabId as string);
+    expect(
+      collectAllTabs(restored.getState().layoutByWorkspace[workspaceKey].root).some(
+        (tab) => tab.tabId === pinnedTabId,
+      ),
+    ).toBe(false);
+  });
+
+  it("keeps pinned state when replacing a tab target", () => {
+    const workspaceKey = createWorkspaceKey();
+    const store = workspaceLayoutStore.getState();
+    const tabId = store.openTab({
+      workspaceKey,
+      target: { kind: "file", path: "/repo/a.ts" },
+      intent: "new",
+    });
+    expect(tabId).toBeTruthy();
+    store.toggleTabPinned(workspaceKey, tabId as string);
+
+    const replacementTabId = store.replaceTab(workspaceKey, tabId as string, {
+      kind: "file",
+      path: "/repo/b.ts",
+    });
+    const replacement = collectAllTabs(
+      workspaceLayoutStore.getState().layoutByWorkspace[workspaceKey].root,
+    ).find((tab) => tab.tabId === replacementTabId);
+
+    expect(replacement?.isPinned).toBe(true);
   });
 
   it("leaves an Explorer background tab in the only other pane instead of emptying it", () => {
@@ -3196,6 +3265,7 @@ describe("workspace-layout-store actions", () => {
       targetPaneId: "main",
       position: "right",
     });
+    store.toggleTabPinned(workspaceKey, draftTabId!);
 
     const nextTabId = store.convertDraftToAgent(workspaceKey, draftTabId!, "agent-1");
     const layout = workspaceLayoutStore.getState().layoutByWorkspace[workspaceKey];
@@ -3205,6 +3275,9 @@ describe("workspace-layout-store actions", () => {
     expect(collectContentTabs(layout.root).map((tab) => tab.tabId)).toEqual(["agent_agent-1"]);
     expect(layout.focusedPaneId).toBe(splitPaneId);
     expect(findPaneContainingTab(layout.root, "agent_agent-1")?.id).toBe(splitPaneId);
+    expect(collectAllTabs(layout.root).find((tab) => tab.tabId === agentTabId)?.isPinned).toBe(
+      true,
+    );
   });
 
   it("reconcileTabs canonicalizes duplicates and prunes stale entity tabs from hydrated snapshots", () => {
@@ -3226,6 +3299,7 @@ describe("workspace-layout-store actions", () => {
                   tabId: "draft_agent",
                   target: { kind: "agent", agentId: "agent-1" },
                   createdAt: 1,
+                  isPinned: true,
                 },
                 {
                   tabId: "agent_agent-1",
@@ -3276,6 +3350,7 @@ describe("workspace-layout-store actions", () => {
       tabId: "agent_agent-1",
       target: { kind: "agent", agentId: "agent-1" },
       createdAt: 2,
+      isPinned: true,
     });
     expect(layout.focusedPaneId).toBe("main");
     expect(findPaneById(layout.root, "main")?.focusedTabId).toBe("agent_agent-1");

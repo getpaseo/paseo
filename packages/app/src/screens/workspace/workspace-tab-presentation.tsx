@@ -1,6 +1,6 @@
 import { useCallback, useMemo, type ReactElement, type ReactNode } from "react";
 import { Pressable, Text, View, type PressableStateCallbackType } from "react-native";
-import { Check, CircleAlert } from "lucide-react-native";
+import { Check, CircleAlert, Pin } from "lucide-react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
 import invariant from "tiny-invariant";
@@ -16,7 +16,7 @@ import {
   STATUS_INDICATOR_ALERT_SIZE,
   STATUS_INDICATOR_DOT_SIZE,
 } from "@/utils/status-indicator-geometry";
-import type { Theme } from "@/styles/theme";
+import { ICON_SIZE, type Theme } from "@/styles/theme";
 import { usePanelInstanceAttributes } from "@/panels/panel-instance-attributes";
 
 export interface WorkspaceTabPresentation {
@@ -127,6 +127,7 @@ interface WorkspaceTabIconProps {
 
 const ThemedCheckIcon = withUnistyles(Check);
 const ThemedCircleAlert = withUnistyles(CircleAlert);
+const ThemedPin = withUnistyles(Pin);
 const mutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
 const needsInputAlertMapping = (theme: Theme) => ({
   color: theme.colors.surface0,
@@ -186,8 +187,17 @@ export function WorkspaceTabIcon({
   );
 }
 
+export function WorkspaceTabPinIcon({ isPinned }: { isPinned: boolean }): ReactElement {
+  return (
+    <View style={styles.pinIconSlot} accessibilityElementsHidden>
+      {isPinned ? <ThemedPin size={ICON_SIZE.xs} uniProps={mutedColorMapping} /> : null}
+    </View>
+  );
+}
+
 interface WorkspaceTabOptionRowProps {
   presentation: WorkspaceTabPresentation;
+  isPinned: boolean;
   selected: boolean;
   active: boolean;
   onPress: () => void;
@@ -196,6 +206,7 @@ interface WorkspaceTabOptionRowProps {
 
 export function WorkspaceTabOptionRow({
   presentation,
+  isPinned,
   selected,
   active,
   onPress,
@@ -232,6 +243,7 @@ export function WorkspaceTabOptionRow({
                   backdrop={optionActive ? "surface1" : "surface0"}
                 />
               </View>
+              <WorkspaceTabPinIcon isPinned={isPinned} />
               <View style={styles.optionContent}>
                 <Text numberOfLines={1} style={styles.optionLabel}>
                   {presentation.titleState === "loading"
@@ -264,6 +276,13 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: "center",
     justifyContent: "center",
     flexShrink: 0,
+  },
+  pinIconSlot: {
+    width: ICON_SIZE.xs,
+    height: ICON_SIZE.xs,
+    flexShrink: 0,
+    alignItems: "center",
+    justifyContent: "center",
   },
   statusDot: {
     position: "absolute",

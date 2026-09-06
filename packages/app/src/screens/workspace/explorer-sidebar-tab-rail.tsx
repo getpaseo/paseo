@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useState, type ComponentType, type ReactNode } from "react";
 import { Text, View } from "react-native";
-import { ArrowLeftToLine, Plus, X } from "lucide-react-native";
+import { ArrowLeftToLine, Pin, Plus, X } from "lucide-react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
 import Animated from "react-native-reanimated";
@@ -23,6 +23,7 @@ import { iconButtonChromeGlyphSize } from "@/components/ui/icon-button-chrome";
 import { HEADER_CONTROL_HEIGHT } from "@/components/ui/control-geometry";
 import {
   WorkspaceTabIcon,
+  WorkspaceTabPinIcon,
   WorkspaceTabPresentationResolver,
   type WorkspaceTabPresentation,
 } from "@/screens/workspace/workspace-tab-presentation";
@@ -37,6 +38,7 @@ import type { PanelIconProps } from "@/panels/panel-registry";
 import { panelTargetSupportsHost } from "@/plugins/workspace-panels/locations";
 import type { Theme } from "@/styles/theme";
 import type { SurfaceBackdrop } from "@/styles/surface-backdrop";
+import { isWorkspaceTabTargetPersistent } from "@/workspace-tabs/model";
 import {
   HorizontalScrollBoundaryShades,
   useHorizontalScrollBoundary,
@@ -56,6 +58,7 @@ interface ExplorerSidebarTabRailProps {
   tabDropPreviewIndex: number | null;
   onNavigateTab: (tabId: string) => void;
   onCloseTab: (tabId: string) => Promise<void> | void;
+  onTogglePinTab: (tabId: string) => void;
   onCreateNewTab: () => void;
   onMoveTabToMain: (tabId: string) => void;
   onReorderTabs: (tabs: WorkspaceTabDescriptor[]) => void;
@@ -76,6 +79,7 @@ function ExplorerSidebarTab({
   dragHandleProps,
   onNavigateTab,
   onCloseTab,
+  onTogglePinTab,
   onMoveTabToMain,
   normalizedServerId,
   normalizedWorkspaceId,
@@ -85,6 +89,7 @@ function ExplorerSidebarTab({
   dragHandleProps?: DraggableListDragHandleProps;
   onNavigateTab: (tabId: string) => void;
   onCloseTab: (tabId: string) => Promise<void> | void;
+  onTogglePinTab: (tabId: string) => void;
   onMoveTabToMain: (tabId: string) => void;
   normalizedServerId: string;
   normalizedWorkspaceId: string;
@@ -100,16 +105,21 @@ function ExplorerSidebarTab({
   const handleClose = useCallback(() => {
     void onCloseTab(item.tab.tabId);
   }, [item.tab.tabId, onCloseTab]);
+  const handleTogglePin = useCallback(() => {
+    onTogglePinTab(item.tab.tabId);
+  }, [item.tab.tabId, onTogglePinTab]);
   const handleMoveToMain = useCallback(
     () => onMoveTabToMain(item.tab.tabId),
     [item.tab.tabId, onMoveTabToMain],
   );
   const canMoveToMain = panelTargetSupportsHost(normalizedServerId, item.tab.target, "main");
+  const canPinTab = isWorkspaceTabTargetPersistent(item.tab.target);
   const moveToMainLeading = useMemo(
     () => <ThemedArrowLeftToLine size={14} uniProps={mutedColorMapping} />,
     [],
   );
   const closeLeading = useMemo(() => <ThemedX size={14} uniProps={mutedColorMapping} />, []);
+  const pinLeading = useMemo(() => <ThemedPin size={14} uniProps={mutedColorMapping} />, []);
   const accessibilityState = useMemo(() => ({ selected: item.isActive }), [item.isActive]);
   const renderPresentation = useCallback(
     (presentation: WorkspaceTabPresentation) => (
@@ -141,6 +151,7 @@ function ExplorerSidebarTab({
                 strokeWidth={1.5}
                 backdrop={resolveExplorerSidebarTabBackdrop()}
               />
+              <WorkspaceTabPinIcon isPinned={item.tab.isPinned === true} />
               <Text
                 selectable={false}
                 numberOfLines={1}
@@ -162,6 +173,22 @@ function ExplorerSidebarTab({
             </ContextMenuItem>
           ) : null}
           {canMoveToMain ? <ContextMenuSeparator /> : null}
+          {canPinTab ? (
+            <>
+              <ContextMenuItem
+                testID={`explorer-sidebar-tab-${item.tab.tabId}-pin`}
+                leading={pinLeading}
+                onSelect={handleTogglePin}
+              >
+                {t(
+                  item.tab.isPinned === true
+                    ? "workspace.tabs.menu.unpinTab"
+                    : "workspace.tabs.menu.pinTab",
+                )}
+              </ContextMenuItem>
+              <ContextMenuSeparator />
+            </>
+          ) : null}
           <ContextMenuItem leading={closeLeading} onSelect={handleClose}>
             {t("workspace.tabs.menu.close")}
           </ContextMenuItem>
@@ -174,13 +201,16 @@ function ExplorerSidebarTab({
       handleHoverIn,
       handleHoverOut,
       handleClose,
+      handleTogglePin,
       handleMoveToMain,
       handlePress,
       hovered,
       isDragging,
       item,
       canMoveToMain,
+      canPinTab,
       closeLeading,
+      pinLeading,
       moveToMainLeading,
       t,
     ],
@@ -209,6 +239,7 @@ function CatalogIcon({
 
 const ThemedCatalogIcon = withUnistyles(CatalogIcon);
 const ThemedArrowLeftToLine = withUnistyles(ArrowLeftToLine);
+const ThemedPin = withUnistyles(Pin);
 const ThemedPlus = withUnistyles(Plus);
 const ThemedX = withUnistyles(X);
 
@@ -260,6 +291,7 @@ export function ExplorerSidebarTabRail({
   tabDropPreviewIndex,
   onNavigateTab,
   onCloseTab,
+  onTogglePinTab,
   onCreateNewTab,
   onMoveTabToMain,
   onReorderTabs,
@@ -313,6 +345,7 @@ export function ExplorerSidebarTabRail({
             dragHandleProps={dragHandleProps}
             onNavigateTab={onNavigateTab}
             onCloseTab={onCloseTab}
+            onTogglePinTab={onTogglePinTab}
             onMoveTabToMain={onMoveTabToMain}
             normalizedServerId={normalizedServerId}
             normalizedWorkspaceId={normalizedWorkspaceId}
@@ -327,6 +360,7 @@ export function ExplorerSidebarTabRail({
       normalizedWorkspaceId,
       onNavigateTab,
       onCloseTab,
+      onTogglePinTab,
       onMoveTabToMain,
       tabDropPreviewIndex,
       tabs.length,

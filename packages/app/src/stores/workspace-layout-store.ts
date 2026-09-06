@@ -43,6 +43,7 @@ import {
   reorderFocusedPaneTabsInLayout,
   reorderPaneTabsInLayout,
   setPaneHiddenInLayout,
+  setTabPinnedInLayout,
   setTabStateInLayout,
   selectTabInPaneInLayout,
   splitPaneEmptyInLayout,
@@ -127,6 +128,7 @@ interface WorkspaceLayoutStore {
     target: WorkspaceTabTarget,
     state?: JsonValue,
   ) => string | null;
+  toggleTabPinned: (workspaceKey: string, tabId: string) => void;
   setTabState: (workspaceKey: string, tabId: string, state: JsonValue | undefined) => void;
   convertDraftToAgent: (workspaceKey: string, tabId: string, agentId: string) => string | null;
   reconcileTabs: (workspaceKey: string, snapshot: WorkspaceTabSnapshot) => void;
@@ -239,6 +241,7 @@ const WorkspaceTabStorageSchema = z.strictObject({
   tabId: z.string(),
   target: WorkspaceTabTargetStorageSchema,
   createdAt: z.number(),
+  isPinned: z.boolean().optional(),
   state: z.json().optional(),
 });
 const SplitNodeStorageSchema: z.ZodType<SplitNode> = z.lazy(() =>
@@ -1137,6 +1140,33 @@ export function createWorkspaceLayoutStore(
             },
           }));
           return result.tabId;
+        },
+        toggleTabPinned: (workspaceKey, tabId) => {
+          const normalizedWorkspaceKey = trimNonEmpty(workspaceKey);
+          const normalizedTabId = trimNonEmpty(tabId);
+          if (!normalizedWorkspaceKey || !normalizedTabId) return;
+          set((state) => {
+            const currentLayout = getWorkspaceLayout(
+              state.layoutByWorkspace,
+              normalizedWorkspaceKey,
+            );
+            const tab = collectAllTabs(currentLayout.root).find(
+              (candidate) => candidate.tabId === normalizedTabId,
+            );
+            if (!tab) return state;
+            const layout = setTabPinnedInLayout({
+              layout: currentLayout,
+              tabId: normalizedTabId,
+              isPinned: tab.isPinned !== true,
+            });
+            if (!layout) return state;
+            return {
+              layoutByWorkspace: {
+                ...state.layoutByWorkspace,
+                [normalizedWorkspaceKey]: layout,
+              },
+            };
+          });
         },
         setTabState: (workspaceKey, tabId, tabState) => {
           const normalizedWorkspaceKey = trimNonEmpty(workspaceKey);

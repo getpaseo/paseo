@@ -25,6 +25,7 @@ interface ExplorerSidebarDockProps {
   tabDropPreview: TabDropPreview | null;
   onSelectTab: (paneId: string, tabId: string) => void;
   onCloseTab: (tabId: string) => Promise<void> | void;
+  onTogglePinTab: (tabId: string) => void;
   onCreateNewTab: () => void;
   onMoveTabToMain: (tabId: string) => void;
   onReorderTabsInPane: (paneId: string, tabIds: string[]) => void;
@@ -47,6 +48,7 @@ export function ExplorerSidebarDock({
   tabDropPreview,
   onSelectTab,
   onCloseTab,
+  onTogglePinTab,
   onCreateNewTab,
   onMoveTabToMain,
   onReorderTabsInPane,
@@ -97,6 +99,7 @@ export function ExplorerSidebarDock({
               }
               onNavigateTab={handleSelectTab}
               onCloseTab={onCloseTab}
+              onTogglePinTab={onTogglePinTab}
               onCreateNewTab={onCreateNewTab}
               onMoveTabToMain={onMoveTabToMain}
               onReorderTabs={handleReorderTabs}

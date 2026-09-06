@@ -3,6 +3,7 @@ import {
   buildBulkCloseConfirmationMessage,
   classifyBulkClosableTabs,
   closeBulkWorkspaceTabs,
+  selectBulkCloseTabs,
 } from "@/screens/workspace/workspace-bulk-close";
 import type { WorkspaceTabDescriptor } from "@/screens/workspace/workspace-tabs-types";
 
@@ -33,7 +34,47 @@ function makeFileTab(path: string): WorkspaceTabDescriptor {
   };
 }
 
+function pinned(tab: WorkspaceTabDescriptor): WorkspaceTabDescriptor {
+  return { ...tab, isPinned: true };
+}
+
 describe("workspace bulk close helpers", () => {
+  it("skips pinned tabs when selecting tabs before, after, or around an anchor", () => {
+    const left = makeFileTab("/repo/left.ts");
+    const pinnedLeft = pinned(makeAgentTab("pinned-left"));
+    const anchor = pinned(makeTerminalTab("anchor"));
+    const pinnedRight = pinned(makeFileTab("/repo/pinned-right.ts"));
+    const right = makeAgentTab("right");
+    const tabs = [left, pinnedLeft, anchor, pinnedRight, right];
+
+    expect(selectBulkCloseTabs({ tabs, anchorTabId: anchor.tabId, selection: "before" })).toEqual([
+      left,
+    ]);
+    expect(selectBulkCloseTabs({ tabs, anchorTabId: anchor.tabId, selection: "after" })).toEqual([
+      right,
+    ]);
+    expect(selectBulkCloseTabs({ tabs, anchorTabId: anchor.tabId, selection: "others" })).toEqual([
+      left,
+      right,
+    ]);
+  });
+
+  it("returns no bulk-close candidates when the anchor is missing or every candidate is pinned", () => {
+    const anchor = makeAgentTab("anchor");
+    const tabs = [pinned(makeFileTab("/repo/left.ts")), anchor, pinned(makeTerminalTab("right"))];
+
+    expect(selectBulkCloseTabs({ tabs, anchorTabId: "missing", selection: "others" })).toEqual([]);
+    expect(selectBulkCloseTabs({ tabs, anchorTabId: anchor.tabId, selection: "before" })).toEqual(
+      [],
+    );
+    expect(selectBulkCloseTabs({ tabs, anchorTabId: anchor.tabId, selection: "after" })).toEqual(
+      [],
+    );
+    expect(selectBulkCloseTabs({ tabs, anchorTabId: anchor.tabId, selection: "others" })).toEqual(
+      [],
+    );
+  });
+
   it("classifies agent, terminal, and passive tabs for shared bulk close handling", () => {
     const groups = classifyBulkClosableTabs([
       makeAgentTab("a1"),
@@ -210,5 +251,23 @@ describe("workspace bulk close helpers", () => {
     expect(closeItems).toHaveBeenCalledWith({ agentIds: ["root"], terminalIds: [] });
     expect(preparedSubagents).toEqual(["child"]);
     expect(cleanedTabs).toEqual(["agent_child", "agent_root"]);
+  });
+
+  it("still closes a pinned tab when it is explicitly supplied", async () => {
+    const tab = pinned(makeFileTab("/repo/pinned.ts"));
+    const cleanedTabs: string[] = [];
+
+    await closeBulkWorkspaceTabs({
+      groups: classifyBulkClosableTabs([tab]),
+      client: null,
+      closeTab: async (_tabId, action) => action(),
+      closeLayoutOnlyAgent: async () => {},
+      closeWorkspaceTabWithCleanup: ({ tabId }) => {
+        cleanedTabs.push(tabId);
+      },
+      logLabel: "explicit tab",
+    });
+
+    expect(cleanedTabs).toEqual([tab.tabId]);
   });
 });
