@@ -90,6 +90,40 @@ async function extractTarArchive(
   });
 }
 
+async function downloadDirectFiles(options: {
+  modelDir: string;
+  directFiles: Array<{ path: string; urls: string[] }>;
+  logger: pino.Logger;
+}): Promise<void> {
+  const { modelDir, directFiles, logger } = options;
+  for (const file of directFiles) {
+    const outputPath = path.join(modelDir, file.path);
+    if (await isNonEmptyFile(outputPath)) {
+      continue;
+    }
+
+    let lastError: unknown = null;
+    for (const url of file.urls) {
+      try {
+        logger.info({ url, outputPath }, "Downloading model file");
+        await downloadToFile({
+          url,
+          outputPath,
+        });
+        lastError = null;
+        break;
+      } catch (error) {
+        lastError = error;
+        logger.warn({ err: error, url, outputPath }, "Model file download failed");
+      }
+    }
+
+    if (lastError) {
+      throw lastError;
+    }
+  }
+}
+
 async function isNonEmptyFile(filePath: string): Promise<boolean> {
   try {
     const s = await stat(filePath);
@@ -118,6 +152,26 @@ export async function ensureSherpaOnnxModel(
   logger.info({ modelsDir: options.modelsDir }, "Starting model download");
 
   try {
+    if (spec.directFiles) {
+      try {
+        await downloadDirectFiles({
+          modelDir,
+          directFiles: spec.directFiles,
+          logger,
+        });
+        if (await hasRequiredFiles(modelDir, spec.requiredFiles)) {
+          logger.info({ modelDir }, "Model direct file download completed");
+          return modelDir;
+        }
+        logger.warn(
+          { modelDir, requiredFiles: spec.requiredFiles },
+          "Downloaded direct model files, but required files are still missing",
+        );
+      } catch (error) {
+        logger.warn({ err: error }, "Direct model file download failed; falling back to archive");
+      }
+    }
+
     const downloadsDir = path.join(options.modelsDir, ".downloads");
     const archiveFilename = path.basename(new URL(spec.archiveUrl).pathname);
     const archivePath = path.join(downloadsDir, archiveFilename);

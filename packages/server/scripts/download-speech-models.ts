@@ -7,7 +7,23 @@ import {
   type LocalSpeechModelId,
 } from "../src/server/speech/providers/local/models.js";
 
+function usage(): string {
+  return [
+    "Usage: npm run speech:download -- [--models-dir <dir>] [--model <modelId>]",
+    "",
+    "Examples:",
+    "  npm run speech:download -- --model parakeet-tdt-0.6b-v2-int8",
+    "  npm run speech:download -- --model sense-voice-zh-en-ja-ko-yue-int8-2025-09-09",
+    "  npm run speech:download -- --models-dir /tmp/paseo-speech --model sense-voice-zh-en-ja-ko-yue-int8-2025-09-09",
+  ].join("\n");
+}
+
 function parseArgs(argv: string[]): { modelsDir: string; modelIds: LocalSpeechModelId[] } {
+  if (argv.includes("--help") || argv.includes("-h")) {
+    process.stdout.write(`${usage()}\n`);
+    process.exit(0);
+  }
+
   const home = resolvePaseoHome();
   let modelsDir = process.env.PASEO_LOCAL_MODELS_DIR || `${home}/models/local-speech`;
   const modelIds: LocalSpeechModelId[] = [];

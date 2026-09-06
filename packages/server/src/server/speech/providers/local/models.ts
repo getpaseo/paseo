@@ -2,6 +2,7 @@ import { ensureSherpaOnnxModels, getSherpaOnnxModelDir } from "./sherpa/model-do
 import {
   DEFAULT_LOCAL_STT_MODEL,
   DEFAULT_LOCAL_TTS_MODEL,
+  getSherpaOnnxModelSpec,
   LocalSttModelIdSchema,
   LocalTtsModelIdSchema,
   listSherpaOnnxModels,
@@ -28,6 +29,10 @@ export function listLocalSpeechModels(): LocalSpeechModelSpec[] {
 
 export function getLocalSpeechModelDir(modelsDir: string, modelId: LocalSpeechModelId): string {
   return getSherpaOnnxModelDir(modelsDir, modelId);
+}
+
+export function getLocalSpeechModelSpec(modelId: LocalSpeechModelId): LocalSpeechModelSpec {
+  return getSherpaOnnxModelSpec(modelId);
 }
 
 export async function ensureLocalSpeechModels(options: {

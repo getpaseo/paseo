@@ -1,9 +1,19 @@
+import path from "node:path";
+
 import pino from "pino";
 
 import type { StreamingTranscriptionSession } from "../../speech-provider.js";
 import type { TurnDetectionSession } from "../../turn-detection-provider.js";
-import { getLocalSpeechModelDir, type LocalSttModelId, type LocalTtsModelId } from "./models.js";
-import { SherpaOfflineRecognizerEngine } from "./sherpa/sherpa-offline-recognizer.js";
+import {
+  getLocalSpeechModelDir,
+  getLocalSpeechModelSpec,
+  type LocalSttModelId,
+  type LocalTtsModelId,
+} from "./models.js";
+import {
+  SherpaOfflineRecognizerEngine,
+  type SherpaOfflineRecognizerModel,
+} from "./sherpa/sherpa-offline-recognizer.js";
 import { SherpaOnnxParakeetSTT } from "./sherpa/sherpa-parakeet-stt.js";
 import { SherpaParakeetRealtimeTranscriptionSession } from "./sherpa/sherpa-parakeet-realtime-session.js";
 import { SherpaOnnxTTS } from "./sherpa/sherpa-tts.js";
@@ -72,6 +82,39 @@ function ttsKey(config: LocalSpeechWorkerConfig): string {
   ].join(":");
 }
 
+function localModelPath(modelDir: string, relPath: string): string {
+  return path.join(modelDir, relPath);
+}
+
+function buildSttRecognizerModel(
+  modelDir: string,
+  modelId: LocalSttModelId,
+): SherpaOfflineRecognizerModel {
+  const spec = getLocalSpeechModelSpec(modelId);
+  if (spec.kind !== "stt-offline") {
+    throw new Error(`Local model '${modelId}' is not an STT model`);
+  }
+
+  const recognizer = spec.recognizer;
+  if (recognizer.kind === "nemo_transducer") {
+    return {
+      kind: "nemo_transducer",
+      encoder: localModelPath(modelDir, recognizer.encoder),
+      decoder: localModelPath(modelDir, recognizer.decoder),
+      joiner: localModelPath(modelDir, recognizer.joiner),
+      tokens: localModelPath(modelDir, recognizer.tokens),
+    };
+  }
+
+  return {
+    kind: "sense_voice",
+    model: localModelPath(modelDir, recognizer.model),
+    tokens: localModelPath(modelDir, recognizer.tokens),
+    language: recognizer.language,
+    useInverseTextNormalization: recognizer.useInverseTextNormalization,
+  };
+}
+
 function getSttEngine(
   config: LocalSpeechWorkerConfig,
   model: "voice" | "dictation",
@@ -85,13 +128,7 @@ function getSttEngine(
   const modelDir = getLocalSpeechModelDir(config.modelsDir, modelId);
   const created = new SherpaOfflineRecognizerEngine(
     {
-      model: {
-        kind: "nemo_transducer",
-        encoder: `${modelDir}/encoder.int8.onnx`,
-        decoder: `${modelDir}/decoder.int8.onnx`,
-        joiner: `${modelDir}/joiner.int8.onnx`,
-        tokens: `${modelDir}/tokens.txt`,
-      },
+      model: buildSttRecognizerModel(modelDir, modelId),
       numThreads: 2,
       debug: 0,
     },
