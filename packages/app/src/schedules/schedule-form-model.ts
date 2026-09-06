@@ -26,6 +26,13 @@ import {
 } from "@/provider-selection/resolve-agent-form";
 import { buildProviderDefinitions } from "@/utils/provider-definitions";
 import { shortenPath } from "@/utils/shorten-path";
+import {
+  buildScheduleAgentOptions,
+  scheduleAgentLabel,
+  type ScheduleFormAgent,
+  type ScheduleFormAgentOption,
+} from "./schedule-agent-options";
+import type { AggregateLoadState } from "./aggregated-schedules";
 import { normalizeScheduleFormCadence } from "./schedule-cadence-options";
 import { PROJECT_OPTION_PREFIX, type ScheduleProjectTarget } from "./schedule-project-targets";
 
@@ -49,6 +56,8 @@ export interface ScheduleFormSnapshot {
     projectTargets: readonly ScheduleProjectTarget[];
     preferences?: FormPreferences;
     timezone?: string;
+    /** Opens create mode already aimed at a running agent. */
+    createTarget?: { type: "agent"; agentId: string };
   };
 }
 
@@ -57,6 +66,10 @@ export interface ScheduleFormProviderSnapshot {
 }
 
 export interface ScheduleDisclosureState {
+  showHostField: boolean;
+  showTargetKindField: boolean;
+  showAgentField: boolean;
+  showAgentTargetReadonly: boolean;
   showProjectField: boolean;
   showModelField: boolean;
   showThinkingField: boolean;
@@ -68,6 +81,10 @@ export interface ScheduleDisclosureState {
 export interface ScheduleProviderSnapshotRequest {
   serverId: string;
   cwd: string;
+}
+
+export interface ScheduleAgentDirectoryRequest {
+  serverId: string;
 }
 
 export interface ScheduleFormProjectOption {
@@ -113,6 +130,19 @@ export interface ScheduleFormState {
   canUseWorktreeIsolation: boolean;
   providerResolutionByServerId: Record<string, ProviderResolutionStatus>;
   providerSnapshotRequest: ScheduleProviderSnapshotRequest | null;
+  selectedAgentId: string;
+  agentDisplay: ScheduleFormDisplay | null;
+  agentLoadState: AggregateLoadState<ScheduleFormAgent>;
+  agentOptions: ScheduleFormAgentOption[];
+  selectedAgentUnavailable: boolean;
+  /**
+   * True only once the host's directory has answered and still lists the
+   * selected agent. A route prefill hands us an id we have not verified, so
+   * until this flips the form must not build an agent target.
+   */
+  selectedAgentConfirmed: boolean;
+  agentTargetLabel: string;
+  agentDirectoryRequest: ScheduleAgentDirectoryRequest | null;
   disclosure: ScheduleDisclosureState;
   canSubmit: boolean;
   submitError: string | null;
@@ -126,7 +156,11 @@ export interface ScheduleFormModel {
   applyProjectTargets: (targets: readonly ScheduleProjectTarget[]) => void;
   applyPreferences: (preferences: FormPreferences | undefined) => void;
   applyProviderSnapshot: (serverId: string, snapshot: ScheduleFormProviderSnapshot) => void;
+  applyAgentDirectory: (serverId: string, directory: AggregateLoadState<ScheduleFormAgent>) => void;
   setHost: (serverId: string | null) => void;
+  setTargetKind: (targetKind: ScheduleFormTargetKind) => void;
+  setAgent: (agentId: string, display: ScheduleFormDisplay) => void;
+  buildSubmitPlan: () => ScheduleFormSubmitPlan;
   setProject: (optionId: string, display: ScheduleFormDisplay) => void;
   setModel: (provider: AgentProvider, modelId: string) => void;
   setThinking: (thinkingOptionId: string) => void;
@@ -374,10 +408,70 @@ function makeProviderResolutionRecord(
 }
 
 function resolveTargetKind(snapshot: ScheduleFormSnapshot): ScheduleFormTargetKind {
-  if (snapshot.mode === "edit" && snapshot.schedule?.target.type === "agent") {
-    return "agent";
+  if (snapshot.mode === "edit") {
+    return snapshot.schedule?.target.type === "agent" ? "agent" : "new-agent";
   }
-  return "new-agent";
+  return snapshot.defaults.createTarget ? "agent" : "new-agent";
+}
+
+function resolveInitialAgentId(snapshot: ScheduleFormSnapshot): string {
+  if (snapshot.mode === "edit") {
+    return snapshot.schedule?.target.type === "agent" ? snapshot.schedule.target.agentId : "";
+  }
+  return snapshot.defaults.createTarget?.agentId ?? "";
+}
+
+function buildAgentDirectoryRequest(input: {
+  targetKind: ScheduleFormTargetKind;
+  selectedServerId: string | null;
+}): ScheduleAgentDirectoryRequest | null {
+  if (input.targetKind !== "agent" || !input.selectedServerId) {
+    return null;
+  }
+  return { serverId: input.selectedServerId };
+}
+
+function findDirectoryAgent(
+  directory: AggregateLoadState<ScheduleFormAgent>,
+  agentId: string,
+): ScheduleFormAgent | null {
+  if (directory.status !== "loaded" || !agentId) {
+    return null;
+  }
+  return directory.data.find((agent) => agent.id === agentId) ?? null;
+}
+
+/**
+ * The selected agent's label is owned state: captured at selection, and
+ * hydrated once from the directory when the form opened already pointing at an
+ * agent. It is never re-derived afterwards, so a rename or a reorder mid-edit
+ * cannot blank the trigger.
+ */
+function resolveAgentDisplay(input: {
+  current: ScheduleFormDisplay | null;
+  selectedAgentId: string;
+  directory: AggregateLoadState<ScheduleFormAgent>;
+}): ScheduleFormDisplay | null {
+  if (input.current) {
+    return input.current;
+  }
+  const agent = findDirectoryAgent(input.directory, input.selectedAgentId);
+  if (!agent) {
+    return null;
+  }
+  return { label: scheduleAgentLabel(agent), description: agent.cwd };
+}
+
+function resolveAgentTargetLabel(input: {
+  display: ScheduleFormDisplay | null;
+  directory: AggregateLoadState<ScheduleFormAgent>;
+}): string {
+  if (input.display) {
+    return input.display.label;
+  }
+  return input.directory.status === "loaded"
+    ? "Agent session unavailable"
+    : "Loading agent sessions...";
 }
 
 function buildProviderSnapshotRequest(input: {
@@ -510,8 +604,16 @@ function resolveEffectiveIsolation(input: {
 }
 
 function resolveDisclosure(state: ScheduleFormState): ScheduleDisclosureState {
+  const showHostField = state.mode === "edit" || state.hosts.length > 1;
+  const targetFields = {
+    showHostField,
+    showTargetKindField: state.mode === "create",
+    showAgentField: state.mode === "create" && state.targetKind === "agent",
+    showAgentTargetReadonly: state.mode === "edit" && state.targetKind === "agent",
+  };
   if (state.targetKind === "agent") {
     return {
+      ...targetFields,
       showProjectField: false,
       showModelField: false,
       showThinkingField: false,
@@ -527,6 +629,7 @@ function resolveDisclosure(state: ScheduleFormState): ScheduleDisclosureState {
   const showProjectField = state.mode === "edit" || Boolean(state.selectedServerId);
   const showModelField = hasProject;
   return {
+    ...targetFields,
     showProjectField,
     showModelField,
     showThinkingField:
@@ -544,7 +647,14 @@ function resolveDisclosure(state: ScheduleFormState): ScheduleDisclosureState {
 
 function resolveCanSubmit(state: ScheduleFormState): boolean {
   if (state.targetKind === "agent") {
-    return state.submitCadence !== undefined;
+    if (state.mode === "edit") {
+      return state.submitCadence !== undefined;
+    }
+    return (
+      state.prompt.trim().length > 0 &&
+      state.selectedAgentConfirmed &&
+      state.submitCadence !== undefined
+    );
   }
   if (state.prompt.trim().length === 0) {
     return false;
@@ -569,6 +679,7 @@ function updateDerivedState(input: {
   hosts: readonly ScheduleFormHost[];
   targets: readonly ScheduleProjectTarget[];
   providerEntries: readonly ProviderSnapshotEntry[];
+  agentDirectoryByServerId: ReadonlyMap<string, AggregateLoadState<ScheduleFormAgent>>;
 }): ScheduleFormState {
   const modeOptions = resolveModeOptions(input.providerEntries, input.state.selectedProvider);
   const availableThinkingOptions = resolveThinkingOptions(
@@ -596,6 +707,18 @@ function updateDerivedState(input: {
     serverId: input.state.selectedServerId,
     cwd: input.state.workingDir,
   });
+  const agentLoadState: AggregateLoadState<ScheduleFormAgent> = input.state.selectedServerId
+    ? (input.agentDirectoryByServerId.get(input.state.selectedServerId) ?? {
+        status: "connecting",
+      })
+    : { status: "connecting" };
+  const agentDisplay = resolveAgentDisplay({
+    current: input.state.agentDisplay,
+    selectedAgentId: input.state.selectedAgentId,
+    directory: agentLoadState,
+  });
+  const agentOptions =
+    agentLoadState.status === "loaded" ? buildScheduleAgentOptions(agentLoadState.data) : [];
   const nextState: ScheduleFormState = {
     ...input.state,
     hosts: [...input.hosts],
@@ -624,6 +747,29 @@ function updateDerivedState(input: {
       ? input.state.archiveOnFinish
       : undefined,
     submitIsolation: canSubmitWorkspaceLifecycleOptions ? effectiveIsolation : undefined,
+    agentLoadState,
+    agentOptions,
+    agentDisplay,
+    // Only a host that has answered can prove an agent is gone; while it is
+    // still resolving, an absent agent is just a cold cache.
+    selectedAgentUnavailable:
+      input.state.targetKind === "agent" &&
+      input.state.selectedAgentId.length > 0 &&
+      agentLoadState.status === "loaded" &&
+      !agentOptions.some((option) => option.value === input.state.selectedAgentId),
+    selectedAgentConfirmed:
+      input.state.targetKind === "agent" &&
+      input.state.selectedAgentId.length > 0 &&
+      agentLoadState.status === "loaded" &&
+      agentOptions.some((option) => option.value === input.state.selectedAgentId),
+    agentTargetLabel: resolveAgentTargetLabel({
+      display: agentDisplay,
+      directory: agentLoadState,
+    }),
+    agentDirectoryRequest: buildAgentDirectoryRequest({
+      targetKind: input.state.targetKind,
+      selectedServerId: input.state.selectedServerId,
+    }),
   };
   const disclosure = resolveDisclosure(nextState);
   return { ...nextState, disclosure, canSubmit: resolveCanSubmit({ ...nextState, disclosure }) };
@@ -687,7 +833,19 @@ function buildInitialState(snapshot: ScheduleFormSnapshot): ScheduleFormState {
     canUseWorktreeIsolation: false,
     providerResolutionByServerId: buildInitialProviderResolution(providerSnapshotRequest),
     providerSnapshotRequest,
+    selectedAgentId: resolveInitialAgentId(snapshot),
+    agentDisplay: null,
+    agentLoadState: { status: "connecting" },
+    agentOptions: [],
+    selectedAgentUnavailable: false,
+    selectedAgentConfirmed: false,
+    agentTargetLabel: "Loading agent sessions...",
+    agentDirectoryRequest: null,
     disclosure: {
+      showHostField: false,
+      showTargetKindField: false,
+      showAgentField: false,
+      showAgentTargetReadonly: false,
       showProjectField: false,
       showModelField: false,
       showThinkingField: false,
@@ -703,6 +861,7 @@ function buildInitialState(snapshot: ScheduleFormSnapshot): ScheduleFormState {
     hosts: snapshot.hosts,
     targets: snapshot.defaults.projectTargets,
     providerEntries: [],
+    agentDirectoryByServerId: new Map(),
   });
 }
 
@@ -835,6 +994,197 @@ function canonicalizeThinkingDrafts(
   }
 }
 
+export interface ScheduleCreatePlan {
+  prompt: string;
+  name?: string;
+  cadence: CronCadence;
+  target:
+    | { type: "agent"; agentId: string }
+    | {
+        type: "new-agent";
+        config: {
+          provider: AgentProvider;
+          cwd: string;
+          model?: string;
+          modeId?: string;
+          thinkingOptionId?: string;
+          archiveOnFinish?: boolean;
+          isolation?: "local" | "worktree";
+          title?: string;
+        };
+      };
+  maxRuns?: number;
+}
+
+export interface ScheduleUpdatePlan {
+  id: string;
+  name?: string | null;
+  prompt?: string;
+  cadence?: CronCadence;
+  newAgentConfig?: {
+    provider: AgentProvider;
+    model: string | null;
+    modeId: string | null;
+    thinkingOptionId: string | null;
+    cwd: string;
+    archiveOnFinish?: boolean;
+    isolation?: "local" | "worktree";
+  };
+  maxRuns?: number | null;
+}
+
+export type ScheduleFormSubmitPlan =
+  | { kind: "create"; create: ScheduleCreatePlan }
+  | { kind: "update"; update: ScheduleUpdatePlan }
+  | { kind: "blocked"; reason: string };
+
+function parseMaxRuns(raw: string): number | null {
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
+
+function buildAgentTargetPlan(input: {
+  state: ScheduleFormState;
+  scheduleId?: string;
+  name: string;
+  prompt: string;
+  maxRuns: number | null;
+}): ScheduleFormSubmitPlan {
+  const { state } = input;
+  if (state.mode === "edit") {
+    if (!input.scheduleId) {
+      return { kind: "blocked", reason: "This schedule is no longer available" };
+    }
+    if (!state.submitCadence) {
+      return { kind: "blocked", reason: "Choose a cron cadence before saving this heartbeat" };
+    }
+    return { kind: "update", update: { id: input.scheduleId, cadence: state.submitCadence } };
+  }
+  if (!state.selectedAgentId) {
+    return { kind: "blocked", reason: "Choose an agent before creating this heartbeat" };
+  }
+  if (!state.selectedAgentConfirmed) {
+    // The daemon does not validate the agent id at create time, so an
+    // unconfirmed target would produce a heartbeat that only fails when it runs.
+    return {
+      kind: "blocked",
+      reason: state.selectedAgentUnavailable
+        ? "That agent session is no longer running on this host"
+        : "Waiting for the agent session list on this host",
+    };
+  }
+  if (!state.submitCadence) {
+    return { kind: "blocked", reason: "Choose a cron cadence before creating this heartbeat" };
+  }
+  return {
+    kind: "create",
+    create: {
+      prompt: input.prompt,
+      ...(input.name ? { name: input.name } : {}),
+      cadence: state.submitCadence,
+      target: { type: "agent", agentId: state.selectedAgentId },
+      ...(input.maxRuns != null ? { maxRuns: input.maxRuns } : {}),
+    },
+  };
+}
+
+function buildNewAgentTargetPlan(input: {
+  state: ScheduleFormState;
+  scheduleId?: string;
+  name: string;
+  prompt: string;
+  maxRuns: number | null;
+  provider: AgentProvider;
+  cwd: string;
+}): ScheduleFormSubmitPlan {
+  const { state, provider, cwd } = input;
+  const lifecycle = {
+    ...(state.submitArchiveOnFinish !== undefined
+      ? { archiveOnFinish: state.submitArchiveOnFinish }
+      : {}),
+    ...(state.submitIsolation !== undefined ? { isolation: state.submitIsolation } : {}),
+  };
+
+  if (state.mode === "edit") {
+    if (!input.scheduleId) {
+      return { kind: "blocked", reason: "This schedule is no longer available" };
+    }
+    return {
+      kind: "update",
+      update: {
+        id: input.scheduleId,
+        name: input.name || null,
+        prompt: input.prompt,
+        ...(state.submitCadence ? { cadence: state.submitCadence } : {}),
+        newAgentConfig: {
+          provider,
+          model: state.selectedModel || null,
+          modeId: state.selectedMode || null,
+          thinkingOptionId: state.selectedThinkingOptionId || null,
+          cwd,
+          ...lifecycle,
+        },
+        maxRuns: input.maxRuns,
+      },
+    };
+  }
+
+  if (!state.submitCadence) {
+    return { kind: "blocked", reason: "Choose a cron cadence before creating this schedule" };
+  }
+  return {
+    kind: "create",
+    create: {
+      prompt: input.prompt,
+      ...(input.name ? { name: input.name } : {}),
+      cadence: state.submitCadence,
+      target: {
+        type: "new-agent",
+        config: {
+          provider,
+          cwd,
+          model: state.selectedModel || undefined,
+          modeId: state.selectedMode || undefined,
+          thinkingOptionId: state.selectedThinkingOptionId || undefined,
+          ...lifecycle,
+          title: input.name || undefined,
+        },
+      },
+      ...(input.maxRuns != null ? { maxRuns: input.maxRuns } : {}),
+    },
+  };
+}
+
+/**
+ * The one place a schedule payload is built. The sheet dispatches the result;
+ * it never assembles a target, so create and edit cannot drift apart and the
+ * shape is unit-testable without React.
+ */
+export function buildScheduleSubmitPlan(input: {
+  state: ScheduleFormState;
+  scheduleId?: string;
+}): ScheduleFormSubmitPlan {
+  const { state } = input;
+  const shared = {
+    state,
+    scheduleId: input.scheduleId,
+    name: state.name.trim(),
+    prompt: state.prompt.trim(),
+    maxRuns: parseMaxRuns(state.maxRuns),
+  };
+
+  if (state.targetKind === "agent") {
+    return buildAgentTargetPlan(shared);
+  }
+
+  const provider = state.selectedProvider;
+  const cwd = state.workingDir.trim();
+  if (!provider || !cwd) {
+    return { kind: "blocked", reason: "Choose a project and a model before saving" };
+  }
+  return buildNewAgentTargetPlan({ ...shared, provider, cwd });
+}
+
 export function openScheduleForm(snapshot: ScheduleFormSnapshot): ScheduleFormModel {
   const listeners = new Set<() => void>();
   const initialValues = normalizeInitialValues({
@@ -858,6 +1208,7 @@ export function openScheduleForm(snapshot: ScheduleFormSnapshot): ScheduleFormMo
     );
   }
   let providerEntries: ProviderSnapshotEntry[] = [];
+  const agentDirectoryByServerId = new Map<string, AggregateLoadState<ScheduleFormAgent>>();
   let userModified = { ...INITIAL_USER_MODIFIED, isolation: false };
   const timezone = snapshot.defaults.timezone ?? DEFAULT_TIMEZONE;
   let state = buildInitialState(snapshot);
@@ -871,6 +1222,7 @@ export function openScheduleForm(snapshot: ScheduleFormSnapshot): ScheduleFormMo
       hosts,
       targets: projectTargets,
       providerEntries,
+      agentDirectoryByServerId,
     });
     for (const listener of listeners) {
       listener();
@@ -1005,6 +1357,20 @@ export function openScheduleForm(snapshot: ScheduleFormSnapshot): ScheduleFormMo
         providerSnapshotRequest: isPendingResolution ? null : state.providerSnapshotRequest,
       });
     },
+    applyAgentDirectory(serverId, directory) {
+      if (closed) {
+        return;
+      }
+      const current = agentDirectoryByServerId.get(serverId);
+      if (current === directory) {
+        return;
+      }
+      agentDirectoryByServerId.set(serverId, directory);
+      if (state.selectedServerId !== serverId) {
+        return;
+      }
+      publish(state);
+    },
     setHost(serverId) {
       if (closed || state.selectedServerId === serverId) {
         return;
@@ -1017,8 +1383,27 @@ export function openScheduleForm(snapshot: ScheduleFormSnapshot): ScheduleFormMo
           projectDisplay: null,
           selectedProjectOptionId: "",
           providerResolutionByServerId: {},
+          selectedAgentId: "",
+          agentDisplay: null,
         }),
       );
+    },
+    setTargetKind(targetKind) {
+      if (closed || state.targetKind === targetKind || state.mode === "edit") {
+        return;
+      }
+      // Deliberately keeps the project/model work intact: toggling back and
+      // forth must not destroy what the user already picked.
+      publish({ ...state, targetKind, submitError: null });
+    },
+    setAgent(agentId, display) {
+      if (closed) {
+        return;
+      }
+      publish({ ...state, selectedAgentId: agentId, agentDisplay: display, submitError: null });
+    },
+    buildSubmitPlan() {
+      return buildScheduleSubmitPlan({ state, scheduleId: snapshot.schedule?.id });
     },
     setProject(optionId, display) {
       if (closed) {

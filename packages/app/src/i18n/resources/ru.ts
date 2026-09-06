@@ -616,6 +616,7 @@ export const ru: TranslationResources = {
         close: "Закрыть",
         renameTerminal: "Переименовать терминал",
         renameAgent: "Переименовать агента",
+        scheduleMessage: "Запланировать сообщение...",
       },
       actions: {
         newTab: "Новая вкладка",

@@ -616,6 +616,7 @@ export const fr: TranslationResources = {
         close: "Fermer",
         renameTerminal: "Renommer le terminal",
         renameAgent: "Renommer l'agent",
+        scheduleMessage: "Planifier un message...",
       },
       actions: {
         newTab: "Nouvel onglet",

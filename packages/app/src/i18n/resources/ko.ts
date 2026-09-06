@@ -613,6 +613,7 @@ export const ko: TranslationResources = {
         close: "닫기",
         renameTerminal: "터미널 이름 변경",
         renameAgent: "에이전트 이름 변경",
+        scheduleMessage: "메시지 예약...",
       },
       actions: {
         newTab: "새 탭",

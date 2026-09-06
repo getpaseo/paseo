@@ -26,16 +26,18 @@ interface FakeScheduleSummary {
   name: string | null;
   prompt: string;
   cadence: { type: "cron"; expression: string };
-  target: {
-    type: "new-agent";
-    config: {
-      provider: "mock";
-      cwd: string;
-      model: string;
-      modeId: string;
-      title?: string;
-    };
-  };
+  target:
+    | {
+        type: "new-agent";
+        config: {
+          provider: "mock";
+          cwd: string;
+          model: string;
+          modeId: string;
+          title?: string;
+        };
+      }
+    | { type: "agent"; agentId: string };
   status: "active";
   createdAt: string;
   updatedAt: string;
@@ -44,6 +46,18 @@ interface FakeScheduleSummary {
   pausedAt: string | null;
   expiresAt: string | null;
   maxRuns: number | null;
+}
+
+export interface FakeAgentDirectoryEntry {
+  id: string;
+  title: string | null;
+  status: string;
+  cwd: string;
+  workspaceId: string;
+  provider: "mock";
+  createdAt: string;
+  lastActivityAt: string;
+  archivedAt: string | null;
 }
 
 function parseJson(message: WebSocketMessage): unknown {
@@ -143,6 +157,12 @@ export async function installFakeScheduleHost(input: {
   workspace: Record<string, unknown>;
   project: Pick<FakeScheduleHostWorkspace, "projectId" | "projectKey" | "projectDisplayName">;
   schedules?: FakeScheduleSummary[];
+  /**
+   * How this host answers the agent directory: an answered-but-empty host, a
+   * host that never answers (so the picker must read as loading, not empty), or
+   * an explicit entry list.
+   */
+  agentDirectory?: "empty" | "hold" | FakeAgentDirectoryEntry[];
 }): Promise<void> {
   await input.page.routeWebSocket(wsRoutePatternForPort(input.port), (ws) => {
     ws.onMessage((message) => {
@@ -217,15 +237,20 @@ export async function installFakeScheduleHost(input: {
             }),
           );
           return;
-        case "fetch_agents_request":
+        case "fetch_agents_request": {
+          const agentDirectory = input.agentDirectory ?? "empty";
+          if (agentDirectory === "hold") {
+            return;
+          }
           ws.send(
             buildSessionMessage("fetch_agents_response", {
               requestId,
-              entries: [],
+              entries: agentDirectory === "empty" ? [] : agentDirectory,
               pageInfo: { nextCursor: null, prevCursor: null, hasMore: false },
             }),
           );
           return;
+        }
         case "get_providers_snapshot_request":
           ws.send(
             buildSessionMessage("get_providers_snapshot_response", {

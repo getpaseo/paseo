@@ -615,6 +615,7 @@ export const ptBR: TranslationResources = {
         close: "Fechar",
         renameTerminal: "Renomear terminal",
         renameAgent: "Renomear agente",
+        scheduleMessage: "Agendar uma mensagem...",
       },
       actions: {
         newTab: "Nova aba",

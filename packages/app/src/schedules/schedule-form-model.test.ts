@@ -7,7 +7,12 @@ import type { ScheduleSummary } from "@getpaseo/protocol/schedule/types";
 import type { FormPreferences } from "@/create-agent-preferences/preferences";
 import { describe, expect, it } from "vitest";
 import { buildProjectOptionId, type ScheduleProjectTarget } from "./schedule-project-targets";
-import { openScheduleForm, type ScheduleFormSnapshot } from "./schedule-form-model";
+import {
+  openScheduleForm,
+  type ScheduleFormModel,
+  type ScheduleFormSnapshot,
+} from "./schedule-form-model";
+import type { ScheduleFormAgent } from "./schedule-agent-options";
 
 type TestSchedule = ScheduleSummary & { serverId: string; serverName: string };
 
@@ -168,6 +173,21 @@ function providerSnapshot(
       },
     ],
   };
+}
+
+function directoryAgent(overrides: Partial<ScheduleFormAgent> = {}): ScheduleFormAgent {
+  return {
+    id: "agent-1",
+    serverId: "host-a",
+    title: "Nightly triage",
+    cwd: "/repo/a",
+    archived: false,
+    ...overrides,
+  };
+}
+
+function loadAgents(form: ScheduleFormModel, agents: ScheduleFormAgent[], serverId = "host-a") {
+  form.applyAgentDirectory(serverId, { status: "loaded", data: agents });
 }
 
 function open(snapshot: Omit<ScheduleFormSnapshot, "hosts">) {
@@ -350,6 +370,10 @@ describe("schedule form model", () => {
     });
 
     expect(form.getState().disclosure).toEqual({
+      showHostField: true,
+      showTargetKindField: true,
+      showAgentField: false,
+      showAgentTargetReadonly: false,
       showProjectField: true,
       showModelField: false,
       showThinkingField: false,
@@ -361,6 +385,10 @@ describe("schedule form model", () => {
     form.setProject(buildProjectOptionId("host-a", "project-a"), { label: "Project A" });
 
     expect(form.getState().disclosure).toEqual({
+      showHostField: true,
+      showTargetKindField: true,
+      showAgentField: false,
+      showAgentTargetReadonly: false,
       showProjectField: true,
       showModelField: true,
       showThinkingField: false,
@@ -373,6 +401,10 @@ describe("schedule form model", () => {
     form.setModel("mock", "model-b");
 
     expect(form.getState().disclosure).toEqual({
+      showHostField: true,
+      showTargetKindField: true,
+      showAgentField: false,
+      showAgentTargetReadonly: false,
       showProjectField: true,
       showModelField: true,
       showThinkingField: true,
@@ -757,6 +789,317 @@ describe("schedule form model", () => {
       selectedModel: "model-a",
       selectedMode: "load-test",
       isolation: "worktree",
+    });
+  });
+});
+
+describe("schedule form heartbeat target", () => {
+  function openHeartbeatCreate() {
+    const form = open({
+      mode: "create",
+      defaults: { serverId: "host-a", projectTargets: PROJECT_TARGETS },
+    });
+    form.setTargetKind("agent");
+    return form;
+  }
+
+  it("hides every new-agent field once the target is an existing agent", () => {
+    const form = openHeartbeatCreate();
+
+    expect(form.getState()).toMatchObject({
+      targetKind: "agent",
+      disclosure: {
+        showTargetKindField: true,
+        showAgentField: true,
+        showAgentTargetReadonly: false,
+        showProjectField: false,
+        showModelField: false,
+        showThinkingField: false,
+        showModeField: false,
+        showIsolationField: false,
+        showArchiveOnFinishField: false,
+      },
+    });
+  });
+
+  it("keeps the new-agent work when the target kind is toggled back", () => {
+    const form = openHeartbeatCreate();
+    form.setTargetKind("new-agent");
+
+    expect(form.getState()).toMatchObject({
+      targetKind: "new-agent",
+      selectedServerId: "host-a",
+      disclosure: { showProjectField: true },
+    });
+  });
+
+  it("builds a create plan aimed at the selected agent", () => {
+    const form = openHeartbeatCreate();
+    loadAgents(form, [directoryAgent()]);
+    form.setPrompt("  continue where you left off  ");
+    form.setName(" Token reset ");
+    form.setMaxRuns("1");
+    form.setAgent("agent-1", { label: "Nightly triage" });
+    form.setCadence({ type: "cron", expression: "0 9 * * *" });
+
+    expect(form.buildSubmitPlan()).toEqual({
+      kind: "create",
+      create: {
+        prompt: "continue where you left off",
+        name: "Token reset",
+        cadence: { type: "cron", expression: "0 9 * * *", timezone: "UTC" },
+        target: { type: "agent", agentId: "agent-1" },
+        maxRuns: 1,
+      },
+    });
+  });
+
+  it("still builds the unchanged new-agent create payload", () => {
+    const form = open({
+      mode: "create",
+      defaults: { serverId: "host-a", projectTargets: PROJECT_TARGETS, preferences: {} },
+    });
+    form.setProject(buildProjectOptionId("host-a", "project-a"), { label: "Project A" });
+    form.applyProviderSnapshot("host-a", providerSnapshot(HOST_A_MODELS));
+    form.setModel("mock", "model-a");
+    form.setPrompt("Run the nightly sweep");
+    form.setName("Nightly");
+    form.setCadence({ type: "cron", expression: "0 9 * * *" });
+
+    expect(form.buildSubmitPlan()).toEqual({
+      kind: "create",
+      create: {
+        prompt: "Run the nightly sweep",
+        name: "Nightly",
+        cadence: { type: "cron", expression: "0 9 * * *", timezone: "UTC" },
+        target: {
+          type: "new-agent",
+          config: {
+            provider: "mock",
+            cwd: "/repo/a",
+            model: "model-a",
+            modeId: "load-test",
+            thinkingOptionId: undefined,
+            archiveOnFinish: true,
+            isolation: "local",
+            title: "Nightly",
+          },
+        },
+      },
+    });
+  });
+
+  it("cannot submit until both a prompt and an agent are present", () => {
+    const form = openHeartbeatCreate();
+    loadAgents(form, [directoryAgent()]);
+    // Create mode opens with a default cadence, so only the two target-side
+    // requirements are outstanding.
+    expect(form.getState().canSubmit).toBe(false);
+
+    form.setPrompt("ping");
+    expect(form.getState().canSubmit).toBe(false);
+
+    form.setAgent("agent-1", { label: "Nightly triage" });
+    expect(form.getState().canSubmit).toBe(true);
+
+    form.setPrompt("   ");
+    expect(form.getState().canSubmit).toBe(false);
+  });
+
+  it("separates a still-loading directory from a genuinely empty one", () => {
+    const form = openHeartbeatCreate();
+    form.applyAgentDirectory("host-a", { status: "loading" });
+
+    expect(form.getState()).toMatchObject({
+      agentLoadState: { status: "loading" },
+      agentOptions: [],
+      selectedAgentUnavailable: false,
+    });
+
+    loadAgents(form, []);
+
+    expect(form.getState()).toMatchObject({
+      agentLoadState: { status: "loaded", data: [] },
+      agentOptions: [],
+    });
+  });
+
+  it("keeps the selected label through directory churn", () => {
+    const form = openHeartbeatCreate();
+    loadAgents(form, [directoryAgent()]);
+    form.setAgent("agent-1", { label: "Nightly triage" });
+
+    form.applyAgentDirectory("host-a", { status: "loading" });
+    loadAgents(form, [directoryAgent({ title: "Renamed by the agent" })]);
+
+    expect(form.getState().agentDisplay).toEqual({ label: "Nightly triage" });
+  });
+
+  it("blocks submission when the selected agent leaves the directory", () => {
+    const form = openHeartbeatCreate();
+    loadAgents(form, [directoryAgent()]);
+    form.setPrompt("ping");
+    form.setAgent("agent-1", { label: "Nightly triage" });
+    form.setCadence({ type: "cron", expression: "0 9 * * *" });
+    expect(form.getState().canSubmit).toBe(true);
+
+    loadAgents(form, [directoryAgent({ id: "agent-1", archived: true })]);
+
+    expect(form.getState()).toMatchObject({
+      selectedAgentUnavailable: true,
+      canSubmit: false,
+    });
+  });
+
+  it("clears the selected agent when the host changes", () => {
+    const form = openHeartbeatCreate();
+    loadAgents(form, [directoryAgent()]);
+    form.setAgent("agent-1", { label: "Nightly triage" });
+
+    form.setHost("host-b");
+
+    expect(form.getState()).toMatchObject({
+      selectedAgentId: "",
+      agentDisplay: null,
+      agentLoadState: { status: "connecting" },
+      selectedAgentUnavailable: false,
+    });
+  });
+
+  it("opens on the prefilled agent and names it once the directory answers", () => {
+    const form = open({
+      mode: "create",
+      defaults: {
+        serverId: "host-a",
+        projectTargets: PROJECT_TARGETS,
+        createTarget: { type: "agent", agentId: "agent-1" },
+      },
+    });
+
+    expect(form.getState()).toMatchObject({
+      targetKind: "agent",
+      selectedAgentId: "agent-1",
+      agentTargetLabel: "Loading agent sessions...",
+      agentDirectoryRequest: { serverId: "host-a" },
+    });
+
+    loadAgents(form, [directoryAgent()]);
+
+    expect(form.getState()).toMatchObject({
+      agentDisplay: { label: "Nightly triage", description: "/repo/a" },
+      agentTargetLabel: "Nightly triage",
+    });
+  });
+
+  it("cannot submit a prefilled agent until its host confirms the agent is there", () => {
+    const form = open({
+      mode: "create",
+      defaults: {
+        serverId: "host-a",
+        projectTargets: PROJECT_TARGETS,
+        createTarget: { type: "agent", agentId: "agent-1" },
+      },
+    });
+    form.setPrompt("continue where you left off");
+
+    // The route handed us an id we have not verified: the daemon accepts any
+    // agent id at create time, so submitting now could schedule a dead target.
+    expect(form.getState()).toMatchObject({
+      selectedAgentConfirmed: false,
+      selectedAgentUnavailable: false,
+      canSubmit: false,
+    });
+    expect(form.buildSubmitPlan()).toEqual({
+      kind: "blocked",
+      reason: "Waiting for the agent session list on this host",
+    });
+
+    loadAgents(form, [directoryAgent()]);
+
+    expect(form.getState()).toMatchObject({ selectedAgentConfirmed: true, canSubmit: true });
+    expect(form.buildSubmitPlan()).toMatchObject({ kind: "create" });
+  });
+
+  it("blocks a prefilled agent that the host no longer lists", () => {
+    const form = open({
+      mode: "create",
+      defaults: {
+        serverId: "host-a",
+        projectTargets: PROJECT_TARGETS,
+        createTarget: { type: "agent", agentId: "agent-1" },
+      },
+    });
+    form.setPrompt("continue where you left off");
+    loadAgents(form, [directoryAgent({ id: "someone-else" })]);
+
+    expect(form.getState()).toMatchObject({
+      selectedAgentUnavailable: true,
+      selectedAgentConfirmed: false,
+      canSubmit: false,
+    });
+    expect(form.buildSubmitPlan()).toEqual({
+      kind: "blocked",
+      reason: "That agent session is no longer running on this host",
+    });
+  });
+
+  it("keeps editing an existing heartbeat cadence-only", () => {
+    const form = open({
+      mode: "edit",
+      schedule: heartbeatOnHost({ type: "cron", expression: "0 9 * * *" }),
+      defaults: { serverId: "host-a", projectTargets: PROJECT_TARGETS },
+    });
+
+    expect(form.getState()).toMatchObject({
+      targetKind: "agent",
+      selectedAgentId: "agent-1",
+      disclosure: {
+        showAgentField: false,
+        showAgentTargetReadonly: true,
+        showTargetKindField: false,
+      },
+    });
+
+    form.setTargetKind("new-agent");
+    expect(form.getState().targetKind).toBe("agent");
+
+    form.setCadence({ type: "cron", expression: "*/5 * * * *" });
+
+    expect(form.buildSubmitPlan()).toEqual({
+      kind: "update",
+      update: {
+        id: "heartbeat-host-a",
+        cadence: { type: "cron", expression: "*/5 * * * *", timezone: "UTC" },
+      },
+    });
+  });
+
+  it("names a gone agent only after its host has answered", () => {
+    const form = open({
+      mode: "edit",
+      schedule: heartbeatOnHost({ type: "cron", expression: "0 9 * * *" }),
+      defaults: { serverId: "host-a", projectTargets: PROJECT_TARGETS },
+    });
+
+    expect(form.getState().agentTargetLabel).toBe("Loading agent sessions...");
+
+    loadAgents(form, []);
+
+    expect(form.getState().agentTargetLabel).toBe("Agent session unavailable");
+  });
+
+  it("still names an archived agent it is editing, without offering it", () => {
+    const form = open({
+      mode: "edit",
+      schedule: heartbeatOnHost({ type: "cron", expression: "0 9 * * *" }),
+      defaults: { serverId: "host-a", projectTargets: PROJECT_TARGETS },
+    });
+
+    loadAgents(form, [directoryAgent({ archived: true })]);
+
+    expect(form.getState()).toMatchObject({
+      agentTargetLabel: "Nightly triage",
+      agentOptions: [],
     });
   });
 });

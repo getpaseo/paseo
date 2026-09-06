@@ -611,6 +611,7 @@ export const ar: TranslationResources = {
         close: "يغلق",
         renameTerminal: "إعادة تسمية المحطة",
         renameAgent: "إعادة تسمية الوكيل",
+        scheduleMessage: "جدولة رسالة...",
       },
       actions: {
         newTab: "علامة تبويب جديدة",
