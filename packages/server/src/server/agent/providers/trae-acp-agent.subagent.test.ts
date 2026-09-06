@@ -10,10 +10,12 @@ import { TraeACPAgentSession } from "./trae-acp-agent.js";
 const ROOT_ID = "parent-thread";
 const CHILD_ID = "child-thread";
 const SPAWN_ID = "call-spawn";
-const message = (text: string) => ({
-  sessionUpdate: "agent_message_chunk" as const,
-  content: { type: "text" as const, text },
-});
+function message(text: string) {
+  return {
+    sessionUpdate: "agent_message_chunk" as const,
+    content: { type: "text" as const, text },
+  };
+}
 
 function createSession(): { session: TraeACPAgentSession; events: AgentStreamEvent[] } {
   const session = new TraeACPAgentSession(
@@ -44,8 +46,8 @@ function notification(
   };
 }
 
-const spawn = () =>
-  notification({
+function spawn() {
+  return notification({
     sessionUpdate: "tool_call",
     toolCallId: SPAWN_ID,
     title: "Spawn Bacon",
@@ -63,15 +65,17 @@ const spawn = () =>
       },
     },
   });
+}
 
-const child = (update: SessionNotification["update"]) =>
-  notification(update, {
+function child(update: SessionNotification["update"]) {
+  return notification(update, {
     type: "subagent_child",
     parentThreadId: ROOT_ID,
     childThreadId: CHILD_ID,
     parentToolCallId: SPAWN_ID,
     childTurnId: "child-turn",
   });
+}
 
 function childEvents(events: AgentStreamEvent[]) {
   return events.flatMap((event) => (event.type === "provider_subagent" ? [event.event] : []));
