@@ -143,6 +143,26 @@ try {
     assert(!output.includes("error: option"), "should not have option parsing error");
     console.log("✓ -q (quiet) flag is accepted with logs\n");
   }
+
+  // Test 10: logs --help advertises --json
+  {
+    console.log("Test 10: logs --help advertises --json");
+    const result = await $`npx paseo logs --help`.nothrow();
+    assert.strictEqual(result.exitCode, 0, "logs --help should exit 0");
+    assert(result.stdout.includes("--json"), "help should mention --json option");
+    console.log("✓ logs --help advertises --json\n");
+  }
+
+  // Test 11: logs --json flag is accepted
+  {
+    console.log("Test 11: logs --json flag is accepted");
+    const result =
+      await $`PASEO_HOST=localhost:${port} PASEO_HOME=${paseoHome} npx paseo logs --json abc123`.nothrow();
+    const output = result.stdout + result.stderr;
+    assert(!output.includes("unknown option"), "should accept --json flag");
+    assert(!output.includes("error: option"), "should not have option parsing error");
+    console.log("✓ logs --json flag is accepted\n");
+  }
 } finally {
   // Clean up temp directory
   await rm(paseoHome, { recursive: true, force: true });

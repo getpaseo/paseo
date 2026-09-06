@@ -27,6 +27,16 @@ describe("canonical CLI surface", () => {
     expect(nestedReload?.helpInformation()).toContain("--json");
   });
 
+  it("offers JSON output on both top-level and agent logs", () => {
+    const cli = createCli();
+    const logs = cli.commands.find((command) => command.name() === "logs");
+    const agent = cli.commands.find((command) => command.name() === "agent");
+    const nestedLogs = agent?.commands.find((command) => command.name() === "logs");
+
+    expect(logs?.helpInformation()).toContain("--json");
+    expect(nestedLogs?.helpInformation()).toContain("--json");
+  });
+
   it("names explicit workspace creation without exposing older syntax", () => {
     const run = createCli().commands.find((command) => command.name() === "run");
     const help = run?.helpInformation();

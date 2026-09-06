@@ -92,7 +92,7 @@ export function createCli(): Command {
     withGlobalOptions(runAttachCommand),
   );
 
-  addDaemonHostOption(addLogsOptions(program.command("logs"))).action(
+  addJsonAndDaemonHostOptions(addLogsOptions(program.command("logs"))).action(
     withGlobalOptions(runLogsCommand),
   );
 
