@@ -113,7 +113,7 @@ import { createWorkspaceBrowser, useBrowserStore } from "@/desktop/browser/store
 import { getDesktopHost } from "@/desktop/host";
 import { buildProviderCommand } from "@/utils/provider-command-templates";
 import { generateDraftId } from "@/stores/draft-keys";
-import { resolveWorkspaceRouteId } from "@/utils/workspace-identity";
+import { normalizeWorkspaceOpaqueId, resolveWorkspaceRouteId } from "@/utils/workspace-identity";
 import { useOpenAgentTabLabels } from "@/subagents/use-open-agent-tab-labels";
 import {
   WorkspaceTabPresentationResolver,
@@ -174,6 +174,7 @@ import {
   type NewTabLauncher,
   type WorkspaceTabLaunchDestination,
 } from "@/workspace-tabs/launcher";
+import { getFocusedAgentId } from "@/plugins/command-center/context";
 import type { TerminalTabDestination } from "@/screens/workspace/terminals/use-workspace-terminals";
 import {
   buildBulkCloseConfirmationMessage,
@@ -1935,13 +1936,17 @@ function WorkspaceScreenContent({
   }, [persistenceKey, viewedTimelineSync]);
   const setFocusedAgentId = useSessionStore((state) => state.setFocusedAgentId);
   const setFocusedTerminalId = useSessionStore((state) => state.setFocusedTerminalId);
-  const focusedPaneAgentId = useMemo(() => {
-    const target = focusedPaneTabState.activeTab?.descriptor.target;
-    if (target?.kind !== "agent") {
-      return null;
-    }
-    return target.agentId;
-  }, [focusedPaneTabState.activeTab]);
+  const focusedPaneAgentId = useMemo(() => getFocusedAgentId(workspaceLayout), [workspaceLayout]);
+  const pluginPanelAgentId = useSessionStore((state) => {
+    if (!focusedPaneAgentId) return null;
+    const session = state.sessions[normalizedServerId];
+    const agent =
+      session?.agents.get(focusedPaneAgentId) ?? session?.agentDetails.get(focusedPaneAgentId);
+    return normalizeWorkspaceOpaqueId(agent?.workspaceId) ===
+      normalizeWorkspaceOpaqueId(normalizedWorkspaceId)
+      ? focusedPaneAgentId
+      : null;
+  });
   const focusedPaneTerminalId = useMemo(() => {
     const target = focusedPaneTabState.activeTab?.descriptor.target;
     if (target?.kind !== "terminal") {
@@ -3834,6 +3839,7 @@ function WorkspaceScreenContent({
   const showCreateBrowserTab = getIsElectron();
   const newTabLauncher = useMemo<NewTabLauncher>(
     () => ({
+      agentId: pluginPanelAgentId,
       showChanges: isGitCheckout,
       showPullRequest: hasPullRequest,
       showBrowser: showCreateBrowserTab,
@@ -3842,6 +3848,7 @@ function WorkspaceScreenContent({
     }),
     [
       createTerminalDisabled,
+      pluginPanelAgentId,
       hasPullRequest,
       isGitCheckout,
       launchWorkspaceTab,

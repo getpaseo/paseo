@@ -13,10 +13,9 @@ import invariant from "tiny-invariant";
 import { useDaemonConfig } from "@/hooks/use-daemon-config";
 import { resolvePluginIcon } from "@/plugins/icons";
 import { useInstalledPlugins } from "@/plugins/registry";
-import { pluginPanelSupportsLocation } from "@/plugins/workspace-panels/locations";
 import { buildSettingsHostSectionRoute } from "@/utils/host-routes";
 import type { NewTabSelection } from "@/workspace-tabs/new-tab";
-import type { WorkspaceTabTarget } from "@/workspace-tabs/model";
+import type { PluginWorkspaceTabTarget, WorkspaceTabTarget } from "@/workspace-tabs/model";
 import type { TerminalProfile } from "@getpaseo/protocol/messages";
 import { panelSupportsHost, type PaneHost } from "@/panels/panel-manifest";
 import {
@@ -29,7 +28,11 @@ import {
   getTerminalProfileIcon,
   resolveTerminalProfiles,
 } from "@getpaseo/protocol/terminal-profiles";
-import { getBuiltInLaunchOrder, type BuiltInLaunchItemId } from "./internal/catalog";
+import {
+  getBuiltInLaunchOrder,
+  getPluginPanelLaunchEntries,
+  type BuiltInLaunchItemId,
+} from "./internal/catalog";
 
 export type WorkspaceTabLaunchPurpose = "primary" | "supporting";
 
@@ -38,6 +41,7 @@ export type WorkspaceTabLaunchDestination =
   | { kind: "replace"; tabId: string };
 
 export interface NewTabLauncher {
+  agentId: string | null;
   showChanges: boolean;
   showPullRequest: boolean;
   showBrowser: boolean;
@@ -53,6 +57,7 @@ export interface WorkspaceTabLaunchItem {
   shortcutActionId?: string;
   disabled: boolean;
   panelKind: WorkspaceTabTarget["kind"];
+  pluginTarget: PluginWorkspaceTabTarget | null;
   launch: (destination: WorkspaceTabLaunchDestination) => void;
 }
 
@@ -128,6 +133,7 @@ export function useWorkspaceTabLaunchCatalog(input: {
         shortcutActionId: "workspace-tab-target-agent",
         disabled: false,
         panelKind: "draft",
+        pluginTarget: null,
         launch: launchSelection(BUILT_IN_SELECTIONS.agent),
       },
       terminal: {
@@ -137,6 +143,7 @@ export function useWorkspaceTabLaunchCatalog(input: {
         shortcutActionId: "workspace-terminal-new",
         disabled: launcher.terminalDisabled,
         panelKind: "terminal",
+        pluginTarget: null,
         launch: launchSelection(BUILT_IN_SELECTIONS.terminal),
       },
       changes: {
@@ -145,6 +152,7 @@ export function useWorkspaceTabLaunchCatalog(input: {
         Icon: changesPresentation.icon,
         disabled: false,
         panelKind: "changes_tree",
+        pluginTarget: null,
         hidden: !launcher.showChanges,
         launch: launchSelection(BUILT_IN_SELECTIONS.changes),
       },
@@ -155,6 +163,7 @@ export function useWorkspaceTabLaunchCatalog(input: {
         shortcutActionId: "workspace-tab-target-changes",
         disabled: false,
         panelKind: "working_diff",
+        pluginTarget: null,
         hidden: !launcher.showChanges,
         launch: launchSelection(BUILT_IN_SELECTIONS.diff),
       },
@@ -165,6 +174,7 @@ export function useWorkspaceTabLaunchCatalog(input: {
         shortcutActionId: "workspace-tab-target-files",
         disabled: false,
         panelKind: "files",
+        pluginTarget: null,
         launch: launchSelection(BUILT_IN_SELECTIONS.files),
       },
       browser: {
@@ -174,6 +184,7 @@ export function useWorkspaceTabLaunchCatalog(input: {
         shortcutActionId: "workspace-tab-target-browser",
         disabled: false,
         panelKind: "browser",
+        pluginTarget: null,
         hidden: !launcher.showBrowser,
         launch: launchSelection(BUILT_IN_SELECTIONS.browser),
       },
@@ -183,6 +194,7 @@ export function useWorkspaceTabLaunchCatalog(input: {
         Icon: pullRequestPresentation.icon,
         disabled: false,
         panelKind: "pull_request",
+        pluginTarget: null,
         hidden: !launcher.showPullRequest,
         launch: launchSelection(BUILT_IN_SELECTIONS.pullRequest),
       },
@@ -192,27 +204,23 @@ export function useWorkspaceTabLaunchCatalog(input: {
       return item.hidden || !panelSupportsHost(item.panelKind, host) ? [] : [item];
     });
 
-    const pluginItems: WorkspaceTabLaunchItem[] = [];
-    for (const plugin of plugins) {
-      if (plugin.serverId !== serverId) continue;
-      for (const panel of plugin.workspacePanels) {
-        if (panel.context !== "workspace") continue;
-        const location = host === "explorer" ? "explorer" : "workspace";
-        if (!pluginPanelSupportsLocation(panel, location)) continue;
-        const selection: NewTabSelection = {
-          kind: "target",
-          target: { kind: "plugin", pluginId: plugin.id, panelId: panel.id, context: "workspace" },
-        };
-        pluginItems.push({
-          id: `plugin:${plugin.id}:${panel.id}`,
-          label: panel.title,
-          Icon: resolvePluginIcon(panel.icon),
-          disabled: false,
-          panelKind: "plugin",
-          launch: launchSelection(selection),
-        });
-      }
-    }
+    const pluginItems = getPluginPanelLaunchEntries({
+      plugins,
+      serverId,
+      host,
+      agentId: launcher.agentId,
+    }).map(({ pluginId, panel, target }): WorkspaceTabLaunchItem => {
+      const selection: NewTabSelection = { kind: "target", target };
+      return {
+        id: `plugin:${pluginId}:${panel.id}`,
+        label: panel.title,
+        Icon: resolvePluginIcon(panel.icon),
+        disabled: false,
+        panelKind: "plugin",
+        pluginTarget: target,
+        launch: launchSelection(selection),
+      };
+    });
 
     const profiles = resolveTerminalProfiles(config?.terminalProfiles);
     const groups: WorkspaceTabLaunchGroup[] = [{ id: "tabs", label: null, items: tabItems }];
@@ -229,6 +237,7 @@ export function useWorkspaceTabLaunchCatalog(input: {
           terminalIconKey: getTerminalProfileIcon(profile),
           disabled: launcher.terminalDisabled,
           panelKind: "terminal",
+          pluginTarget: null,
           launch: launchSelection({ kind: "terminal", profile }),
         })),
         accessory: {

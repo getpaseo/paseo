@@ -29,10 +29,13 @@ import {
 import type { WorkspaceDesktopTabRowItem } from "@/screens/workspace/workspace-desktop-tabs-row";
 import type { WorkspaceTabDescriptor } from "@/screens/workspace/workspace-tabs-types";
 import {
+  catalogItemMatchesTab,
+  getExplorerSidebarConfigurationItems,
+} from "@/screens/workspace/explorer-sidebar-tab-configuration";
+import {
   useWorkspaceTabLaunchCatalog,
   type WorkspaceTabLaunchItem,
 } from "@/workspace-tabs/launcher";
-import { panelSupportsHost } from "@/panels/panel-manifest";
 import type { PanelIconProps } from "@/panels/panel-registry";
 import { panelTargetSupportsHost } from "@/plugins/workspace-panels/locations";
 import type { Theme } from "@/styles/theme";
@@ -247,10 +250,6 @@ function ExplorerSidebarConfigurationItem({
   );
 }
 
-function catalogItemMatchesTab(item: WorkspaceTabLaunchItem, tab: WorkspaceTabDescriptor): boolean {
-  return item.panelKind === tab.target.kind;
-}
-
 export function ExplorerSidebarTabRail({
   paneId,
   tabs,
@@ -273,10 +272,7 @@ export function ExplorerSidebarTabRail({
     host: "explorer",
   });
   const singletonConfigurationItems = useMemo(
-    () =>
-      (groups.find((group) => group.id === "tabs")?.items ?? []).filter(
-        (item) => !panelSupportsHost(item.panelKind, "main"),
-      ),
+    () => getExplorerSidebarConfigurationItems(groups),
     [groups],
   );
   const newTabLeading = useMemo(() => <ThemedPlus size={14} uniProps={mutedColorMapping} />, []);

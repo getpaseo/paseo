@@ -246,8 +246,8 @@ runtime so plugin code cannot mutate normalized app state or a memoized selectio
 current installed-plugin catalog. A missing contribution renders unavailable inside the tab.
 Panels declare `locations: ["workspace", "explorer"]` to opt into Explorer hosting; omission means
 workspace only. Location controls hosting, not context. An agent panel target keeps its `agentId`
-when moved between hosts. Explorer configuration can create workspace-context panels and remove
-existing agent-context instances, but it cannot create an agent panel without an agent-aware command.
+when moved between hosts. Explorer's New Tab launcher and tab-rail configuration menu bind
+agent-context panels to the focused main-pane agent and omit them when no valid agent context exists.
 
 Command Center callbacks use the selected host's existing `PaseoApi` for normal Paseo operations.
 They use typed plugin RPC only for plugin-specific backend work. Surface and panel props expose
