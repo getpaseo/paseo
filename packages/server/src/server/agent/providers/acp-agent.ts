@@ -406,12 +406,85 @@ export interface ACPCatalogModelResolverContext {
 /**
  * Optional hook that refines the catalog's model list using the live probe session.
  * The base client ships no resolver — catalog discovery derives models from the initial
- * session response and never mutates the probe. Providers that need per-model data (Kimi)
- * inject a resolver so the extra round trips stay off every other ACP.
+ * session response and never mutates the probe. Providers that need per-model data (Kimi,
+ * Cursor) inject a resolver so the extra round trips stay off every other ACP.
  */
 export type ACPCatalogModelResolver = (
   context: ACPCatalogModelResolverContext,
 ) => Promise<AgentModelDefinition[]>;
+
+/**
+ * Some ACP agents (Kimi, Cursor) report different thinking levels per model, but only
+ * expose the currently selected model's levels through `configOptions`. The shared
+ * `deriveModelDefinitionsFromACP` path would otherwise stamp that one list onto every
+ * model in the catalog.
+ *
+ * Reuse the single catalog probe session, switch each candidate model, and read back
+ * that model's `thought_level` options. Skip when the provider reports one model or no
+ * model picker. Do not require `thought_level` on `session/new`: Cursor Composer/Auto
+ * defaults omit it, and Grok only exposes effort after a switch. Opt-in via
+ * {@link ACPCatalogModelResolver} so a slow ACP does not stall every provider's catalog
+ * probe.
+ */
+export async function resolveAcpPerModelThinkingCatalog({
+  connection,
+  sessionId,
+  models,
+  configOptions,
+  runRequest,
+  transformConfigOptions,
+  logger,
+  provider,
+}: ACPCatalogModelResolverContext): Promise<AgentModelDefinition[]> {
+  if (models.length <= 1) {
+    return models;
+  }
+  const modelOption = findSelectConfigOption({ configOptions, category: "model" });
+  if (!modelOption) {
+    return models;
+  }
+
+  const resolved: AgentModelDefinition[] = [];
+  for (const model of models) {
+    try {
+      const response = await runRequest(() =>
+        connection.setSessionConfigOption({
+          sessionId,
+          configId: modelOption.id,
+          value: model.id,
+        }),
+      );
+      const modelConfigOptions = transformConfigOptions(response.configOptions ?? []);
+      const thinkingOptions = deriveSelectorOptions(modelConfigOptions, "thought_level");
+      resolved.push({
+        ...model,
+        thinkingOptions: thinkingOptions.length > 0 ? thinkingOptions : undefined,
+        defaultThinkingOptionId:
+          thinkingOptions.find((option) => option.isDefault)?.id ?? undefined,
+      });
+    } catch (error) {
+      const errorMessage = toDiagnosticErrorMessage(error);
+      if (model.isDefault) {
+        logger.warn(
+          { modelId: model.id, error: errorMessage },
+          `${provider} catalog probe could not refresh thinking options for current model "${model.id}"; keeping session options`,
+        );
+        resolved.push(model);
+        continue;
+      }
+      logger.warn(
+        { modelId: model.id, error: errorMessage },
+        `${provider} catalog probe could not resolve thinking options for model "${model.id}"; omitting thinking options`,
+      );
+      resolved.push({
+        ...model,
+        thinkingOptions: undefined,
+        defaultThinkingOptionId: undefined,
+      });
+    }
+  }
+  return resolved;
+}
 
 interface ACPAgentClientOptions {
   provider: string;

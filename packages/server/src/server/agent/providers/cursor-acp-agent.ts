@@ -1,6 +1,6 @@
 import type { Logger } from "pino";
 
-import type { ACPConfigFeatureOption } from "./acp-agent.js";
+import { resolveAcpPerModelThinkingCatalog, type ACPConfigFeatureOption } from "./acp-agent.js";
 import { GenericACPAgentClient } from "./generic-acp-agent.js";
 
 interface CursorACPAgentClientOptions {
@@ -40,6 +40,7 @@ export class CursorACPAgentClient extends GenericACPAgentClient {
       initialCommandsWaitTimeoutMs: CURSOR_INITIAL_COMMANDS_WAIT_TIMEOUT_MS,
       clientCapabilityMeta: CURSOR_CLIENT_CAPABILITY_META,
       configFeatureOptions: [CURSOR_FAST_FEATURE_OPTION],
+      catalogModelResolver: resolveAcpPerModelThinkingCatalog,
     });
   }
 }

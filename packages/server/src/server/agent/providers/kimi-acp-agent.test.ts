@@ -156,8 +156,13 @@ describe("KimiACPAgentClient per-model thinking options", () => {
     expect(setSessionConfigOption).not.toHaveBeenCalled();
   });
 
-  test("skips per-model probing when the provider has no thinking picker", async () => {
-    const setSessionConfigOption = vi.fn();
+  test("probes each model when session/new has no thought_level so a later model can still expose thinking options", async () => {
+    const setSessionConfigOption = vi.fn(async ({ value }: { value: string }) => ({
+      configOptions:
+        value === "kimi-k3"
+          ? [modelConfigOption(value), effortThinkingConfigOption()]
+          : [modelConfigOption(value)],
+    }));
 
     const client = createKimiClient(
       async () =>
@@ -174,16 +179,28 @@ describe("KimiACPAgentClient per-model thinking options", () => {
         }) as unknown as SpawnedACPProcess,
     );
 
-    await client.fetchCatalog({
+    const catalog = await client.fetchCatalog({
       scope: "workspace",
       cwd: "/tmp/acp-kimi-no-thinking",
       force: false,
     });
 
-    expect(setSessionConfigOption).not.toHaveBeenCalled();
+    expect(setSessionConfigOption).toHaveBeenCalledTimes(2);
+
+    const kimiForCoding = catalog.models.find((model) => model.id === "kimi-for-coding");
+    const kimiK3 = catalog.models.find((model) => model.id === "kimi-k3");
+    expect(kimiForCoding?.thinkingOptions).toBeUndefined();
+    expect(kimiForCoding?.defaultThinkingOptionId).toBeUndefined();
+    expect(kimiK3?.thinkingOptions).toEqual([
+      expect.objectContaining({ id: "off", isDefault: false }),
+      expect.objectContaining({ id: "low", isDefault: false }),
+      expect.objectContaining({ id: "medium", isDefault: true }),
+      expect.objectContaining({ id: "high", isDefault: false }),
+    ]);
+    expect(kimiK3?.defaultThinkingOptionId).toBe("medium");
   });
 
-  test("keeps a model's default thinking options when its probe fails", async () => {
+  test("omits thinking options when a model's probe fails instead of keeping another model's list", async () => {
     const setSessionConfigOption = vi.fn(async ({ value }: { value: string }) => {
       if (value === "kimi-k3") {
         throw new Error("probe rejected model switch");
@@ -212,10 +229,13 @@ describe("KimiACPAgentClient per-model thinking options", () => {
       force: false,
     });
 
+    const kimiForCoding = catalog.models.find((model) => model.id === "kimi-for-coding");
     const kimiK3 = catalog.models.find((model) => model.id === "kimi-k3");
-    expect(kimiK3?.thinkingOptions).toEqual([
+    expect(kimiForCoding?.thinkingOptions).toEqual([
       expect.objectContaining({ id: "off", isDefault: true }),
       expect.objectContaining({ id: "on", isDefault: false }),
     ]);
+    expect(kimiK3?.thinkingOptions).toBeUndefined();
+    expect(kimiK3?.defaultThinkingOptionId).toBeUndefined();
   });
 });

@@ -1,3 +1,4 @@
+import { SessionConfigOption } from "@agentclientprotocol/sdk";
 import { describe, expect, test, vi } from "vitest";
 
 import type { SpawnedACPProcess, SessionStateResponse } from "./acp-agent.js";
@@ -172,5 +173,339 @@ describe("CursorACPAgentClient model discovery", () => {
         ],
       },
     ]);
+  });
+});
+
+function cursorModelConfigOption(currentValue: string): SessionConfigOption {
+  return {
+    id: "model",
+    name: "Model",
+    category: "model",
+    type: "select",
+    currentValue,
+    options: [
+      { value: "claude-haiku-4-5", name: "Haiku 4.5" },
+      { value: "grok-4.6", name: "Grok 4.6" },
+    ],
+  };
+}
+
+function cursorComposerAndGrokModelConfigOption(currentValue: string): SessionConfigOption {
+  return {
+    id: "model",
+    name: "Model",
+    category: "model",
+    type: "select",
+    currentValue,
+    options: [
+      { value: "composer-2", name: "Composer" },
+      { value: "grok-4.6", name: "Grok 4.6" },
+    ],
+  };
+}
+
+function cursorBooleanThinkingConfigOption(): SessionConfigOption {
+  return {
+    id: "thinking",
+    name: "Thinking",
+    category: "thought_level",
+    type: "select",
+    currentValue: "true",
+    options: [
+      { value: "false", name: "Off" },
+      { value: "true", name: "On" },
+    ],
+  };
+}
+
+function cursorGrokThinkingConfigOption(): SessionConfigOption {
+  return {
+    id: "effort",
+    name: "Effort",
+    category: "thought_level",
+    type: "select",
+    currentValue: "xhigh",
+    options: [
+      { value: "low", name: "Low" },
+      { value: "medium", name: "Medium" },
+      { value: "high", name: "High" },
+      { value: "xhigh", name: "Extra High" },
+    ],
+  };
+}
+
+function cursorAvailableModels(currentModelId: string) {
+  return {
+    currentModelId,
+    availableModels: [
+      { modelId: "claude-haiku-4-5", name: "Haiku 4.5", description: null },
+      { modelId: "grok-4.6", name: "Grok 4.6", description: null },
+    ],
+  };
+}
+
+function createCursorClient(spawnProcess: () => Promise<SpawnedACPProcess>): CursorACPAgentClient {
+  class TestCursorCatalogClient extends CursorACPAgentClient {
+    protected override async spawnProcess(): Promise<SpawnedACPProcess> {
+      return spawnProcess();
+    }
+
+    protected override async closeProbe(): Promise<void> {}
+  }
+
+  return new TestCursorCatalogClient({
+    logger: createTestLogger(),
+    command: ["cursor-agent", "acp"],
+  });
+}
+
+describe("CursorACPAgentClient per-model thinking options", () => {
+  test("probes each model so Haiku Off/On is not stamped onto Grok 4.6", async () => {
+    const setSessionConfigOption = vi.fn(async ({ value }: { value: string }) => ({
+      configOptions:
+        value === "grok-4.6"
+          ? [cursorModelConfigOption(value), cursorGrokThinkingConfigOption()]
+          : [cursorModelConfigOption(value), cursorBooleanThinkingConfigOption()],
+    }));
+
+    const client = createCursorClient(
+      async () =>
+        ({
+          child: { kill: vi.fn(), exitCode: 0, signalCode: null, once: vi.fn() },
+          connection: {
+            newSession: vi.fn().mockResolvedValue({
+              sessionId: "session-1",
+              models: cursorAvailableModels("claude-haiku-4-5"),
+              configOptions: [
+                cursorModelConfigOption("claude-haiku-4-5"),
+                cursorBooleanThinkingConfigOption(),
+              ],
+            }),
+            setSessionConfigOption,
+          },
+          initialize: { agentCapabilities: {} },
+        }) as unknown as SpawnedACPProcess,
+    );
+
+    const catalog = await client.fetchCatalog({
+      scope: "workspace",
+      cwd: "/tmp/acp-cursor-thinking",
+      force: false,
+    });
+
+    expect(setSessionConfigOption).toHaveBeenCalledTimes(2);
+    expect(setSessionConfigOption).toHaveBeenNthCalledWith(1, {
+      sessionId: "session-1",
+      configId: "model",
+      value: "claude-haiku-4-5",
+    });
+    expect(setSessionConfigOption).toHaveBeenNthCalledWith(2, {
+      sessionId: "session-1",
+      configId: "model",
+      value: "grok-4.6",
+    });
+
+    const haiku = catalog.models.find((model) => model.id === "claude-haiku-4-5");
+    const grok = catalog.models.find((model) => model.id === "grok-4.6");
+
+    expect(haiku?.thinkingOptions).toEqual([
+      expect.objectContaining({ id: "false", label: "Off", isDefault: false }),
+      expect.objectContaining({ id: "true", label: "On", isDefault: true }),
+    ]);
+    expect(grok?.thinkingOptions).toEqual([
+      expect.objectContaining({ id: "low", label: "Low", isDefault: false }),
+      expect.objectContaining({ id: "medium", label: "Medium", isDefault: false }),
+      expect.objectContaining({ id: "high", label: "High", isDefault: false }),
+      expect.objectContaining({ id: "xhigh", label: "Extra High", isDefault: true }),
+    ]);
+    expect(grok?.defaultThinkingOptionId).toBe("xhigh");
+  });
+
+  test("probes each model when Composer default has no thought_level so Grok still gets effort options", async () => {
+    const setSessionConfigOption = vi.fn(async ({ value }: { value: string }) => ({
+      configOptions:
+        value === "grok-4.6"
+          ? [cursorComposerAndGrokModelConfigOption(value), cursorGrokThinkingConfigOption()]
+          : [cursorComposerAndGrokModelConfigOption(value)],
+    }));
+
+    const client = createCursorClient(
+      async () =>
+        ({
+          child: { kill: vi.fn(), exitCode: 0, signalCode: null, once: vi.fn() },
+          connection: {
+            newSession: vi.fn().mockResolvedValue({
+              sessionId: "session-1",
+              models: {
+                currentModelId: "composer-2",
+                availableModels: [
+                  { modelId: "composer-2", name: "Composer", description: null },
+                  { modelId: "grok-4.6", name: "Grok 4.6", description: null },
+                ],
+              },
+              configOptions: [cursorComposerAndGrokModelConfigOption("composer-2")],
+            }),
+            setSessionConfigOption,
+          },
+          initialize: { agentCapabilities: {} },
+        }) as unknown as SpawnedACPProcess,
+    );
+
+    const catalog = await client.fetchCatalog({
+      scope: "workspace",
+      cwd: "/tmp/acp-cursor-composer-default",
+      force: false,
+    });
+
+    expect(setSessionConfigOption).toHaveBeenCalledTimes(2);
+    expect(setSessionConfigOption).toHaveBeenNthCalledWith(1, {
+      sessionId: "session-1",
+      configId: "model",
+      value: "composer-2",
+    });
+    expect(setSessionConfigOption).toHaveBeenNthCalledWith(2, {
+      sessionId: "session-1",
+      configId: "model",
+      value: "grok-4.6",
+    });
+
+    const composer = catalog.models.find((model) => model.id === "composer-2");
+    const grok = catalog.models.find((model) => model.id === "grok-4.6");
+
+    expect(composer?.thinkingOptions).toBeUndefined();
+    expect(composer?.defaultThinkingOptionId).toBeUndefined();
+    expect(grok?.thinkingOptions).toEqual([
+      expect.objectContaining({ id: "low", label: "Low", isDefault: false }),
+      expect.objectContaining({ id: "medium", label: "Medium", isDefault: false }),
+      expect.objectContaining({ id: "high", label: "High", isDefault: false }),
+      expect.objectContaining({ id: "xhigh", label: "Extra High", isDefault: true }),
+    ]);
+    expect(grok?.defaultThinkingOptionId).toBe("xhigh");
+  });
+
+  test("skips per-model probing when Cursor reports a single model", async () => {
+    const setSessionConfigOption = vi.fn();
+
+    const client = createCursorClient(
+      async () =>
+        ({
+          child: { kill: vi.fn(), exitCode: 0, signalCode: null, once: vi.fn() },
+          connection: {
+            newSession: vi.fn().mockResolvedValue({
+              sessionId: "session-1",
+              models: {
+                currentModelId: "grok-4.6",
+                availableModels: [{ modelId: "grok-4.6", name: "Grok 4.6", description: null }],
+              },
+              configOptions: [
+                {
+                  id: "model",
+                  name: "Model",
+                  category: "model",
+                  type: "select",
+                  currentValue: "grok-4.6",
+                  options: [{ value: "grok-4.6", name: "Grok 4.6" }],
+                },
+                cursorGrokThinkingConfigOption(),
+              ],
+            }),
+            setSessionConfigOption,
+          },
+          initialize: { agentCapabilities: {} },
+        }) as unknown as SpawnedACPProcess,
+    );
+
+    await client.fetchCatalog({
+      scope: "workspace",
+      cwd: "/tmp/acp-cursor-single",
+      force: false,
+    });
+
+    expect(setSessionConfigOption).not.toHaveBeenCalled();
+  });
+
+  test("omits thinking options when a model's probe fails instead of keeping another model's list", async () => {
+    const setSessionConfigOption = vi.fn(async ({ value }: { value: string }) => {
+      if (value === "grok-4.6") {
+        throw new Error("probe rejected model switch");
+      }
+      return {
+        configOptions: [cursorModelConfigOption(value), cursorBooleanThinkingConfigOption()],
+      };
+    });
+
+    const client = createCursorClient(
+      async () =>
+        ({
+          child: { kill: vi.fn(), exitCode: 0, signalCode: null, once: vi.fn() },
+          connection: {
+            newSession: vi.fn().mockResolvedValue({
+              sessionId: "session-1",
+              models: cursorAvailableModels("claude-haiku-4-5"),
+              configOptions: [
+                cursorModelConfigOption("claude-haiku-4-5"),
+                cursorBooleanThinkingConfigOption(),
+              ],
+            }),
+            setSessionConfigOption,
+          },
+          initialize: { agentCapabilities: {} },
+        }) as unknown as SpawnedACPProcess,
+    );
+
+    const catalog = await client.fetchCatalog({
+      scope: "workspace",
+      cwd: "/tmp/acp-cursor-probe-error",
+      force: false,
+    });
+
+    const haiku = catalog.models.find((model) => model.id === "claude-haiku-4-5");
+    const grok = catalog.models.find((model) => model.id === "grok-4.6");
+    expect(haiku?.thinkingOptions).toEqual([
+      expect.objectContaining({ id: "false", label: "Off", isDefault: false }),
+      expect.objectContaining({ id: "true", label: "On", isDefault: true }),
+    ]);
+    expect(grok?.thinkingOptions).toBeUndefined();
+    expect(grok?.defaultThinkingOptionId).toBeUndefined();
+  });
+
+  test("keeps session thinking options when the current model's probe fails", async () => {
+    const setSessionConfigOption = vi.fn(async () => {
+      throw new Error("probe rejected model switch");
+    });
+
+    const client = createCursorClient(
+      async () =>
+        ({
+          child: { kill: vi.fn(), exitCode: 0, signalCode: null, once: vi.fn() },
+          connection: {
+            newSession: vi.fn().mockResolvedValue({
+              sessionId: "session-1",
+              models: cursorAvailableModels("claude-haiku-4-5"),
+              configOptions: [
+                cursorModelConfigOption("claude-haiku-4-5"),
+                cursorBooleanThinkingConfigOption(),
+              ],
+            }),
+            setSessionConfigOption,
+          },
+          initialize: { agentCapabilities: {} },
+        }) as unknown as SpawnedACPProcess,
+    );
+
+    const catalog = await client.fetchCatalog({
+      scope: "workspace",
+      cwd: "/tmp/acp-cursor-current-probe-error",
+      force: false,
+    });
+
+    const haiku = catalog.models.find((model) => model.id === "claude-haiku-4-5");
+    const grok = catalog.models.find((model) => model.id === "grok-4.6");
+    expect(haiku?.thinkingOptions).toEqual([
+      expect.objectContaining({ id: "false", label: "Off", isDefault: false }),
+      expect.objectContaining({ id: "true", label: "On", isDefault: true }),
+    ]);
+    expect(grok?.thinkingOptions).toBeUndefined();
+    expect(grok?.defaultThinkingOptionId).toBeUndefined();
   });
 });

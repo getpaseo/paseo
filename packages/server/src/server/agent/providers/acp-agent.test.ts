@@ -1794,10 +1794,9 @@ describe("ACPAgentClient modelTransformer", () => {
 
 describe("ACPAgentClient catalog discovery without a model resolver", () => {
   test("never switches models during catalog discovery even with multiple models and a thinking picker", async () => {
-    // The per-model probing that switches models lives on KimiACPAgentClient
-    // (see kimi-acp-agent.test.ts). The base client ships no catalog model resolver, so a
-    // slow or nonconforming ACP can't stall its catalog probe on extra setSessionConfigOption
-    // round trips.
+    // Per-model probing lives on providers that opt in (Kimi, Cursor). The base
+    // client ships no catalog model resolver, so a slow or nonconforming ACP can't
+    // stall its catalog probe on extra setSessionConfigOption round trips.
     const setSessionConfigOption = vi.fn();
 
     class TestACPAgentClient extends ACPAgentClient {
