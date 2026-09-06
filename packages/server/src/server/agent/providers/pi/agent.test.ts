@@ -1052,6 +1052,57 @@ describe("PiRpcAgentSession", () => {
     ]);
   });
 
+  test("a completed foreground Stop does not suppress a later autonomous abort", async () => {
+    const { pi, session, events } = await createSession();
+    const fakeSession = pi.latestSession();
+    fakeSession.abort = async () => {
+      fakeSession.finishTurn({ role: "assistant", stopReason: "stop", content: [] });
+    };
+    const { turnId } = await session.startTurn("finish while stopping");
+    fakeSession.emit({ type: "agent_start" });
+    fakeSession.emit({ type: "turn_start" });
+    await session.interrupt();
+    fakeSession.emit({ type: "agent_start" });
+    fakeSession.emit({ type: "turn_start" });
+    fakeSession.finishTurn({
+      role: "assistant",
+      stopReason: "aborted",
+      errorMessage: "Autonomous run aborted",
+      content: [],
+    });
+
+    expect(events.turnLifecycleEvents()).toEqual([
+      { type: "turn_started", turnId },
+      { type: "turn_completed", turnId },
+      { type: "turn_started", turnId: undefined },
+      { type: "turn_failed", turnId: undefined },
+    ]);
+  });
+
+  test("Pi process exit during Stop emits one autonomous failure", async () => {
+    const { pi, session, events } = await createSession();
+    const fakeSession = pi.latestSession();
+    fakeSession.abort = async () => {
+      fakeSession.finishTurn({
+        role: "assistant",
+        stopReason: "error",
+        errorMessage: "This operation was aborted",
+        content: [],
+      });
+      fakeSession.emit({ type: "process_exit", error: "Pi process exited" });
+      throw new Error("Pi process exited");
+    };
+    fakeSession.emit({ type: "agent_start" });
+    fakeSession.emit({ type: "turn_start" });
+
+    await expect(session.interrupt()).rejects.toThrow("Pi process exited");
+    expect(events.turnLifecycleEvents()).toEqual([
+      { type: "turn_started", turnId: undefined },
+      { type: "turn_failed", turnId: undefined },
+    ]);
+    await expect(events.nextTurnFailure()).resolves.toMatchObject({ error: "Pi process exited" });
+  });
+
   test("preserves the autonomous terminal error when abort rejects", async () => {
     const { pi, session, events } = await createSession();
     const fakeSession = pi.latestSession();
