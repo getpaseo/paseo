@@ -6,6 +6,7 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { describe, expect, test } from "vitest";
 import { experimental_createMCPClient } from "ai";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { SUPPORTED_PROTOCOL_VERSIONS } from "@modelcontextprotocol/sdk/types.js";
 import pino from "pino";
 
 import { withTimeout } from "../../utils/promise-timeout.js";
@@ -87,6 +88,25 @@ async function createMcpClient(url: string, authToken?: string): Promise<McpClie
   const rawClient = await experimental_createMCPClient({ transport });
   const boundCallTool: McpClient["callTool"] = Reflect.get(rawClient, "callTool").bind(rawClient);
   return { callTool: boundCallTool, close: () => rawClient.close() };
+}
+
+/**
+ * Extract the JSON-RPC result object from a raw MCP HTTP response body, which
+ * is either a JSON object or an SSE stream with a single `data:` line.
+ */
+function parseJsonRpcResult(body: string): Record<string, unknown> {
+  const dataLine = body
+    .split("\n")
+    .map((line) => line.trim())
+    .find((line) => line.startsWith("data:"));
+  const payload = JSON.parse(dataLine ? dataLine.slice("data:".length).trim() : body);
+  if (payload?.error) {
+    throw new Error(`MCP response carried an error: ${JSON.stringify(payload.error)}`);
+  }
+  if (payload?.result === undefined || typeof payload.result !== "object") {
+    throw new Error(`MCP response had no result object: ${body.slice(0, 200)}`);
+  }
+  return payload.result as Record<string, unknown>;
 }
 
 interface LaunchRecorder {
@@ -232,6 +252,89 @@ describe("agent MCP end-to-end (offline)", () => {
       await rm(paseoHome, { recursive: true, force: true });
       await rm(staticDir, { recursive: true, force: true });
       await rm(agentCwd, { recursive: true, force: true });
+    }
+  }, 30_000);
+
+  test("agent MCP tolerates clients echoing an unadvertised protocol version header", async () => {
+    // Reproduces #3599: a client (Codex CLI >= 0.148) that sends its
+    // *preferred* protocol version in the MCP-Protocol-Version header of
+    // post-initialize requests, instead of the negotiated one, must not lose
+    // the injected tool surface to a 400 "Unsupported protocol version".
+    const paseoHome = await mkdtemp(path.join(os.tmpdir(), "paseo-home-"));
+    const staticDir = await mkdtemp(path.join(os.tmpdir(), "paseo-static-"));
+    const port = await getAvailablePort();
+
+    const daemonConfig: PaseoDaemonConfig = {
+      listen: `127.0.0.1:${port}`,
+      paseoHome,
+      corsAllowedOrigins: [],
+      hostnames: true,
+      mcpEnabled: true,
+      staticDir,
+      mcpDebug: false,
+      agentClients: createTestAgentClients(),
+      agentStoragePath: path.join(paseoHome, "agents"),
+    };
+
+    const daemon = await createPaseoDaemon(daemonConfig, pino({ level: "silent" }));
+    await daemon.start();
+
+    const mcpUrl = `http://127.0.0.1:${port}/mcp/agents`;
+    // A protocol revision the bundled SDK will never advertise, standing in
+    // for a client speaking a newer spec than the daemon's SDK supports.
+    const futureVersion = "2999-01-01";
+
+    try {
+      // The handshake still negotiates DOWN to a version the server supports.
+      const initialize = await fetch(mcpUrl, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          accept: "application/json, text/event-stream",
+        },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "initialize",
+          params: {
+            protocolVersion: futureVersion,
+            capabilities: {},
+            clientInfo: { name: "future-client", version: "1.0.0" },
+          },
+        }),
+      });
+      expect(initialize.status).toBe(200);
+      const initializeResult = parseJsonRpcResult(await initialize.text());
+      expect(typeof initializeResult.protocolVersion).toBe("string");
+      expect(SUPPORTED_PROTOCOL_VERSIONS).toContain(initializeResult.protocolVersion);
+
+      // Post-handshake requests carrying the client's preferred (unadvertised)
+      // version in MCP-Protocol-Version must not be rejected with the 400
+      // "Unsupported protocol version" the bundled transport raises.
+      const toolsList = await fetch(mcpUrl, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          accept: "application/json, text/event-stream",
+          "mcp-protocol-version": futureVersion,
+        },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 2,
+          method: "tools/list",
+        }),
+      });
+      expect(toolsList.status).toBe(200);
+      const toolsListResult = parseJsonRpcResult(await toolsList.text());
+      const toolNames = (toolsListResult.tools as Array<{ name: string }>).map(
+        (tool) => tool.name,
+      );
+      expect(toolNames.length).toBeGreaterThan(0);
+      expect(toolNames).toContain("create_agent");
+    } finally {
+      await daemon.stop();
+      await rm(paseoHome, { recursive: true, force: true });
+      await rm(staticDir, { recursive: true, force: true });
     }
   }, 30_000);
 
