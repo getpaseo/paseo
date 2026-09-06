@@ -3248,10 +3248,15 @@ function buildCodexCustomProviderConfig(
     providerConfig.env_key = "OPENAI_API_KEY";
     providerConfig.requires_openai_auth = false;
   }
+  // Codex reserves its built-in provider ids and rejects a config that redefines
+  // one, failing the whole launch. Paseo provider ids are user-chosen, so namespace
+  // the generated entry to keep every id usable. The key is internal to the Codex
+  // config; the user-visible label still comes from `name`.
+  const providerKey = `paseo-${customProvider.id}`;
   return {
-    model_provider: customProvider.id,
+    model_provider: providerKey,
     model_providers: {
-      [customProvider.id]: providerConfig,
+      [providerKey]: providerConfig,
     },
   };
 }
