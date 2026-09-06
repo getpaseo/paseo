@@ -752,6 +752,37 @@ function buildResolvedBuiltinProviders(
   return resolvedProviders;
 }
 
+const SPECIALIZED_ACP_VARIANTS = ["cursor", "kimi", "kiro", "traecli"] as const;
+
+// Custom profiles have their own id; params.acpVariant opts them into a specialized ACP adapter.
+// Absent → fall back to provider id. Present but invalid → throw at registry build.
+function resolveAcpVariant(providerId: string, params: unknown): string {
+  if (params == null || typeof params !== "object" || Array.isArray(params)) {
+    return providerId;
+  }
+  if (!Object.hasOwn(params, "acpVariant")) {
+    return providerId;
+  }
+  const acpVariant = Reflect.get(params, "acpVariant");
+  if (
+    typeof acpVariant === "string" &&
+    (SPECIALIZED_ACP_VARIANTS as readonly string[]).includes(acpVariant)
+  ) {
+    return acpVariant;
+  }
+  let rendered: string;
+  if (typeof acpVariant === "string") {
+    rendered = `'${acpVariant}'`;
+  } else if (acpVariant === undefined) {
+    rendered = "undefined";
+  } else {
+    rendered = JSON.stringify(acpVariant);
+  }
+  throw new Error(
+    `ACP provider '${providerId}' has invalid params.acpVariant ${rendered}; expected one of ${SPECIALIZED_ACP_VARIANTS.join(", ")}`,
+  );
+}
+
 function addDerivedProviders(
   resolvedProviders: Map<string, ResolvedProvider>,
   providerOverrides: Record<string, ProviderOverride>,
@@ -772,6 +803,7 @@ function addDerivedProviders(
       }
       // Capture command in const for closure - TypeScript can't track type refinement inside closures
       const command = override.command;
+      const acpVariant = resolveAcpVariant(providerId, override.params);
 
       resolvedProviders.set(providerId, {
         definition: createDerivedDefinition(
@@ -801,16 +833,16 @@ function addDerivedProviders(
             label: override.label ?? providerId,
             providerParams: override.params,
           };
-          if (providerId === "cursor") {
+          if (acpVariant === "cursor") {
             return new CursorACPAgentClient(acpOptions);
           }
-          if (providerId === "kimi") {
+          if (acpVariant === "kimi") {
             return new KimiACPAgentClient(acpOptions);
           }
-          if (providerId === "kiro") {
+          if (acpVariant === "kiro") {
             return new KiroACPAgentClient(acpOptions);
           }
-          if (providerId === "traecli") {
+          if (acpVariant === "traecli") {
             return new TraeACPAgentClient(acpOptions);
           }
           return new GenericACPAgentClient(acpOptions);

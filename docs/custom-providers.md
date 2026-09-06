@@ -536,6 +536,33 @@ container. When delegating filesystem operations to Paseo (`fs.readTextFile: tru
 or `fs.writeTextFile: true`), ensure the agent and Paseo share equivalent
 absolute workspace paths.
 
+### Custom profiles of a built-in ACP agent
+
+A few catalog agents ship a specialized adapter selected by provider id: `kimi` (per-model
+thinking probe), `cursor` (fast mode), `kiro`, and `traecli`. A custom profile has its own id, so
+`extends: "acp"` alone gives it the generic adapter. Set `params.acpVariant` to opt a profile back
+into one of those adapters. This is what lets you run two Kimi accounts as separate profiles
+without losing per-model thinking:
+
+```json
+{
+  "agents": {
+    "providers": {
+      "kimi-work": {
+        "extends": "acp",
+        "label": "Kimi (Work)",
+        "command": ["kimi", "acp"],
+        "params": { "acpVariant": "kimi" }
+      }
+    }
+  }
+}
+```
+
+Valid values: `cursor`, `kimi`, `kiro`, `traecli`. Omit the key to keep the generic ACP adapter.
+An unrecognized value fails provider registry startup. The profile keeps its own id, label,
+credentials, and models.
+
 ### Generic ACP diagnostics
 
 Paseo diagnostics for `extends: "acp"` providers report the configured command, resolved launcher binary, version output, ACP `initialize`, ACP `session/new`, model count, modes, and final status.

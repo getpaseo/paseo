@@ -3,6 +3,7 @@ import type { Logger } from "pino";
 import type { AgentModelDefinition } from "../agent-sdk-types.js";
 import {
   type ACPCatalogModelResolverContext,
+  type ConfigOptionSelector,
   deriveSelectorOptions,
   findSelectConfigOption,
 } from "./acp-agent.js";
@@ -27,14 +28,90 @@ interface KimiACPAgentClientOptions {
  * thinking options.
  *
  * Reuse the single catalog probe session to switch through each candidate model in turn and
- * read back its real thinking options, rather than spawning a probe per model. Skipped
- * entirely when the provider reports one model or no thinking picker, so a misbehaving ACP
- * that only advertises a single model pays no extra round trips.
+ * read back its real thinking options, rather than spawning a probe per model. Per-model
+ * switching is skipped when the provider reports one model or no thinking picker, but
+ * thinking options are still normalized so a lone K3 does not keep the invalid legacy "on".
  *
  * This lives on the Kimi client, not the base ACP adapter: only Kimi needs the extra
  * `setSessionConfigOption` round trips, so no other ACP provider risks a slow or
  * nonconforming agent stalling its catalog probe on model switching.
  */
+// Drop the legacy on/off toggle when real effort levels are present; default unspecified effort to high.
+const THINKING_TOGGLE_OPTION_IDS = new Set(["on", "off"]);
+const KIMI_DEFAULT_EFFORT_OPTION_ID = "high";
+
+// Used when a non-current model's probe fails and the session only exposed an on/off toggle.
+// Prefer this over inheriting "on" (invalid for K3) or clearing options (K3 becomes unconfigurable).
+function kimiFallbackEffortOptions(): ConfigOptionSelector[] {
+  return [
+    { id: "low", label: "Thinking Low", isDefault: false },
+    { id: "high", label: "Thinking High", isDefault: true },
+    { id: "max", label: "Thinking Max", isDefault: false },
+  ];
+}
+
+function normalizeKimiThinkingOptions(options: ConfigOptionSelector[]): {
+  options: ConfigOptionSelector[];
+  defaultThinkingOptionId: string | undefined;
+} {
+  const efforts = options.filter(
+    (option) => !THINKING_TOGGLE_OPTION_IDS.has(option.id.trim().toLowerCase()),
+  );
+  if (efforts.length === 0) {
+    return { options, defaultThinkingOptionId: options.find((o) => o.isDefault)?.id };
+  }
+
+  const markedDefaultId = efforts.find((option) => option.isDefault)?.id;
+  const defaultThinkingOptionId =
+    markedDefaultId ??
+    efforts.find((option) => option.id.trim().toLowerCase() === KIMI_DEFAULT_EFFORT_OPTION_ID)?.id;
+
+  for (const option of efforts) {
+    option.isDefault = option.id === defaultThinkingOptionId;
+  }
+  return { options: efforts, defaultThinkingOptionId };
+}
+
+function withNormalizedKimiThinkingOptions(model: AgentModelDefinition): AgentModelDefinition {
+  if (!model.thinkingOptions?.length) {
+    return model;
+  }
+  // Clone so models that share a thinkingOptions array (pre-probe derivation) aren't mutated
+  // mid-map.
+  const derived = model.thinkingOptions.map((option) => ({ ...option }));
+  const { options: thinkingOptions, defaultThinkingOptionId } =
+    normalizeKimiThinkingOptions(derived);
+  return {
+    ...model,
+    thinkingOptions: thinkingOptions.length > 0 ? thinkingOptions : undefined,
+    defaultThinkingOptionId,
+  };
+}
+
+function hasOnlyThinkingToggles(options: ConfigOptionSelector[] | undefined): boolean {
+  return (
+    !!options?.length &&
+    options.every((option) => THINKING_TOGGLE_OPTION_IDS.has(option.id.trim().toLowerCase()))
+  );
+}
+
+function thinkingOptionsForFailedNonCurrentProbe(
+  model: AgentModelDefinition,
+): AgentModelDefinition {
+  if (hasOnlyThinkingToggles(model.thinkingOptions)) {
+    return {
+      ...model,
+      thinkingOptions: kimiFallbackEffortOptions(),
+      defaultThinkingOptionId: KIMI_DEFAULT_EFFORT_OPTION_ID,
+    };
+  }
+  return {
+    ...model,
+    thinkingOptions: undefined,
+    defaultThinkingOptionId: undefined,
+  };
+}
+
 export async function resolveKimiCatalogModels({
   connection,
   sessionId,
@@ -46,11 +123,11 @@ export async function resolveKimiCatalogModels({
   provider,
 }: ACPCatalogModelResolverContext): Promise<AgentModelDefinition[]> {
   if (models.length <= 1) {
-    return models;
+    return models.map(withNormalizedKimiThinkingOptions);
   }
   const modelOption = findSelectConfigOption({ configOptions, category: "model" });
   if (!modelOption || !findSelectConfigOption({ configOptions, category: "thought_level" })) {
-    return models;
+    return models.map(withNormalizedKimiThinkingOptions);
   }
 
   const resolved: AgentModelDefinition[] = [];
@@ -64,19 +141,37 @@ export async function resolveKimiCatalogModels({
         }),
       );
       const modelConfigOptions = transformConfigOptions(response.configOptions ?? []);
-      const thinkingOptions = deriveSelectorOptions(modelConfigOptions, "thought_level");
+      const derived = deriveSelectorOptions(modelConfigOptions, "thought_level");
+      const { options: thinkingOptions, defaultThinkingOptionId } =
+        normalizeKimiThinkingOptions(derived);
       resolved.push({
         ...model,
         thinkingOptions: thinkingOptions.length > 0 ? thinkingOptions : undefined,
-        defaultThinkingOptionId:
-          thinkingOptions.find((option) => option.isDefault)?.id ?? undefined,
+        defaultThinkingOptionId,
       });
     } catch (error) {
+      // Inherited options are only trustworthy for the session-current model. For others:
+      // - toggle-only inheritance (K2.7 → K3) gets the standard effort fallback, not "on"
+      // - effort inheritance onto an unknown model is cleared rather than guessed as always-on
+      const keepInheritedOptions =
+        model.id === modelOption.currentValue ||
+        (modelOption.currentValue == null && model.isDefault === true);
+      let fallback: AgentModelDefinition;
+      let warnSuffix: string;
+      if (keepInheritedOptions) {
+        fallback = withNormalizedKimiThinkingOptions(model);
+        warnSuffix = "keeping current model options";
+      } else {
+        fallback = thinkingOptionsForFailedNonCurrentProbe(model);
+        warnSuffix = fallback.thinkingOptions
+          ? "using effort fallback"
+          : "omitting inherited options";
+      }
       logger.warn(
         { modelId: model.id, error: toDiagnosticErrorMessage(error) },
-        `${provider} catalog probe could not resolve thinking options for model "${model.id}"; keeping its default options`,
+        `${provider} catalog probe could not resolve thinking options for model "${model.id}"; ${warnSuffix}`,
       );
-      resolved.push(model);
+      resolved.push(fallback);
     }
   }
   return resolved;

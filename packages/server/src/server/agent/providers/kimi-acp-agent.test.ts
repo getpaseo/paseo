@@ -25,11 +25,8 @@ function booleanThinkingConfigOption(): SessionConfigOption {
     name: "Thinking",
     category: "thought_level",
     type: "select",
-    currentValue: "off",
-    options: [
-      { value: "off", name: "Off" },
-      { value: "on", name: "On" },
-    ],
+    currentValue: "on",
+    options: [{ value: "on", name: "Thinking On" }],
   };
 }
 
@@ -39,12 +36,12 @@ function effortThinkingConfigOption(): SessionConfigOption {
     name: "Thinking",
     category: "thought_level",
     type: "select",
-    currentValue: "medium",
+    currentValue: "on",
     options: [
-      { value: "off", name: "Off" },
-      { value: "low", name: "Low" },
-      { value: "medium", name: "Medium" },
-      { value: "high", name: "High" },
+      { value: "low", name: "Thinking Low" },
+      { value: "high", name: "Thinking High" },
+      { value: "max", name: "Thinking Max" },
+      { value: "on", name: "Thinking On" },
     ],
   };
 }
@@ -112,15 +109,15 @@ describe("KimiACPAgentClient per-model thinking options", () => {
     const kimiK3 = catalog.models.find((model) => model.id === "kimi-k3");
 
     expect(kimiForCoding?.thinkingOptions).toEqual([
-      expect.objectContaining({ id: "off", isDefault: true }),
-      expect.objectContaining({ id: "on", isDefault: false }),
+      expect.objectContaining({ id: "on", isDefault: true }),
     ]);
     expect(kimiK3?.thinkingOptions).toEqual([
-      expect.objectContaining({ id: "off", isDefault: false }),
       expect.objectContaining({ id: "low", isDefault: false }),
-      expect.objectContaining({ id: "medium", isDefault: true }),
-      expect.objectContaining({ id: "high", isDefault: false }),
+      expect.objectContaining({ id: "high", isDefault: true }),
+      expect.objectContaining({ id: "max", isDefault: false }),
     ]);
+    expect(kimiK3?.thinkingOptions?.map((option) => option.id)).not.toContain("on");
+    expect(kimiK3?.defaultThinkingOptionId).toBe("high");
   });
 
   test("skips per-model probing when the provider reports a single model", async () => {
@@ -151,9 +148,69 @@ describe("KimiACPAgentClient per-model thinking options", () => {
         }) as unknown as SpawnedACPProcess,
     );
 
-    await client.fetchCatalog({ scope: "workspace", cwd: "/tmp/acp-kimi-single", force: false });
+    const catalog = await client.fetchCatalog({
+      scope: "workspace",
+      cwd: "/tmp/acp-kimi-single",
+      force: false,
+    });
 
     expect(setSessionConfigOption).not.toHaveBeenCalled();
+    expect(catalog.models).toEqual([
+      expect.objectContaining({
+        id: "kimi-for-coding",
+        thinkingOptions: [expect.objectContaining({ id: "on", isDefault: true })],
+        defaultThinkingOptionId: "on",
+      }),
+    ]);
+  });
+
+  test("normalizes a single-model K3 catalog without probing", async () => {
+    const setSessionConfigOption = vi.fn();
+
+    const client = createKimiClient(
+      async () =>
+        ({
+          child: { kill: vi.fn(), exitCode: 0, signalCode: null, once: vi.fn() },
+          connection: {
+            newSession: vi.fn().mockResolvedValue({
+              sessionId: "session-1",
+              configOptions: [
+                {
+                  id: "model",
+                  name: "Model",
+                  category: "model",
+                  type: "select",
+                  currentValue: "kimi-k3",
+                  options: [{ value: "kimi-k3", name: "K3" }],
+                },
+                effortThinkingConfigOption(),
+              ],
+            }),
+            setSessionConfigOption,
+          },
+          initialize: { agentCapabilities: {} },
+        }) as unknown as SpawnedACPProcess,
+    );
+
+    const catalog = await client.fetchCatalog({
+      scope: "workspace",
+      cwd: "/tmp/acp-kimi-single-k3",
+      force: false,
+    });
+
+    expect(setSessionConfigOption).not.toHaveBeenCalled();
+    expect(catalog.models).toEqual([
+      expect.objectContaining({
+        id: "kimi-k3",
+        thinkingOptions: [
+          expect.objectContaining({ id: "low", isDefault: false }),
+          expect.objectContaining({ id: "high", isDefault: true }),
+          expect.objectContaining({ id: "max", isDefault: false }),
+        ],
+        defaultThinkingOptionId: "high",
+      }),
+    ]);
+    expect(catalog.models[0]?.thinkingOptions?.map((option) => option.id)).not.toContain("on");
   });
 
   test("skips per-model probing when the provider has no thinking picker", async () => {
@@ -183,7 +240,7 @@ describe("KimiACPAgentClient per-model thinking options", () => {
     expect(setSessionConfigOption).not.toHaveBeenCalled();
   });
 
-  test("keeps a model's default thinking options when its probe fails", async () => {
+  test("uses effort fallback when a non-current model probe fails under a toggle-only session", async () => {
     const setSessionConfigOption = vi.fn(async ({ value }: { value: string }) => {
       if (value === "kimi-k3") {
         throw new Error("probe rejected model switch");
@@ -212,10 +269,99 @@ describe("KimiACPAgentClient per-model thinking options", () => {
       force: false,
     });
 
+    const kimiForCoding = catalog.models.find((model) => model.id === "kimi-for-coding");
     const kimiK3 = catalog.models.find((model) => model.id === "kimi-k3");
-    expect(kimiK3?.thinkingOptions).toEqual([
-      expect.objectContaining({ id: "off", isDefault: true }),
-      expect.objectContaining({ id: "on", isDefault: false }),
+    // Successful probe keeps its options; failed K3 gets effort fallback instead of "on" or nothing.
+    expect(kimiForCoding?.thinkingOptions).toEqual([
+      expect.objectContaining({ id: "on", isDefault: true }),
     ]);
+    expect(kimiK3?.thinkingOptions).toEqual([
+      expect.objectContaining({ id: "low", isDefault: false }),
+      expect.objectContaining({ id: "high", isDefault: true }),
+      expect.objectContaining({ id: "max", isDefault: false }),
+    ]);
+    expect(kimiK3?.defaultThinkingOptionId).toBe("high");
+    expect(kimiK3?.thinkingOptions?.map((option) => option.id)).not.toContain("on");
+  });
+
+  test("keeps current-model thinking options when that model's probe fails", async () => {
+    const setSessionConfigOption = vi.fn(async () => {
+      throw new Error("probe rejected model switch");
+    });
+
+    const client = createKimiClient(
+      async () =>
+        ({
+          child: { kill: vi.fn(), exitCode: 0, signalCode: null, once: vi.fn() },
+          connection: {
+            newSession: vi.fn().mockResolvedValue({
+              sessionId: "session-1",
+              configOptions: [modelConfigOption("kimi-for-coding"), booleanThinkingConfigOption()],
+            }),
+            setSessionConfigOption,
+          },
+          initialize: { agentCapabilities: {} },
+        }) as unknown as SpawnedACPProcess,
+    );
+
+    const catalog = await client.fetchCatalog({
+      scope: "workspace",
+      cwd: "/tmp/acp-kimi-current-probe-error",
+      force: false,
+    });
+
+    const kimiForCoding = catalog.models.find((model) => model.id === "kimi-for-coding");
+    const kimiK3 = catalog.models.find((model) => model.id === "kimi-k3");
+    expect(kimiForCoding?.thinkingOptions).toEqual([
+      expect.objectContaining({ id: "on", isDefault: true }),
+    ]);
+    expect(kimiK3?.thinkingOptions).toEqual([
+      expect.objectContaining({ id: "low", isDefault: false }),
+      expect.objectContaining({ id: "high", isDefault: true }),
+      expect.objectContaining({ id: "max", isDefault: false }),
+    ]);
+    expect(kimiK3?.defaultThinkingOptionId).toBe("high");
+  });
+
+  test("omits thinking options when a non-current probe fails under an effort session", async () => {
+    const setSessionConfigOption = vi.fn(async ({ value }: { value: string }) => {
+      if (value === "kimi-for-coding") {
+        throw new Error("probe rejected model switch");
+      }
+      return { configOptions: [modelConfigOption(value), effortThinkingConfigOption()] };
+    });
+
+    const client = createKimiClient(
+      async () =>
+        ({
+          child: { kill: vi.fn(), exitCode: 0, signalCode: null, once: vi.fn() },
+          connection: {
+            newSession: vi.fn().mockResolvedValue({
+              sessionId: "session-1",
+              configOptions: [modelConfigOption("kimi-k3"), effortThinkingConfigOption()],
+            }),
+            setSessionConfigOption,
+          },
+          initialize: { agentCapabilities: {} },
+        }) as unknown as SpawnedACPProcess,
+    );
+
+    const catalog = await client.fetchCatalog({
+      scope: "workspace",
+      cwd: "/tmp/acp-kimi-effort-probe-error",
+      force: false,
+    });
+
+    const kimiForCoding = catalog.models.find((model) => model.id === "kimi-for-coding");
+    const kimiK3 = catalog.models.find((model) => model.id === "kimi-k3");
+    // Do not invent always-on "on" for K2.7 from a K3 session; omit rather than guess.
+    expect(kimiForCoding?.thinkingOptions).toBeUndefined();
+    expect(kimiForCoding?.defaultThinkingOptionId).toBeUndefined();
+    expect(kimiK3?.thinkingOptions).toEqual([
+      expect.objectContaining({ id: "low", isDefault: false }),
+      expect.objectContaining({ id: "high", isDefault: true }),
+      expect.objectContaining({ id: "max", isDefault: false }),
+    ]);
+    expect(kimiK3?.defaultThinkingOptionId).toBe("high");
   });
 });
