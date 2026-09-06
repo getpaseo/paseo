@@ -1063,6 +1063,16 @@ export const zhCN: TranslationResources = {
         labels: "标签",
         diff: "差异统计",
         timestamp: "最近活动",
+        compactRows: "紧凑行",
+        newWorkspaceRow: "新建工作区行",
+      },
+      recentlyDone: {
+        label: "最近完成",
+        options: {
+          off: "关闭",
+          minutes: "{{minutes}} 分钟",
+          hour: "1 小时",
+        },
       },
       checks: {
         iconAndText: "图标和文字",
@@ -2098,6 +2108,40 @@ export const zhCN: TranslationResources = {
         description: "选择侧边栏顶部显示的项目及其顺序",
         moveUp: "上移",
         moveDown: "下移",
+        compactRows: {
+          label: "紧凑行",
+          description: "为行、分区标题和状态分组使用更紧凑的间距",
+        },
+        hideDiffStats: {
+          label: "隐藏差异统计",
+          description: "隐藏工作区行上的 +/− 更改计数",
+        },
+        hidePrStatus: {
+          label: "隐藏 PR 状态",
+          description: "隐藏工作区行上的拉取请求徽章和检查",
+        },
+        hideNewWorkspaceRow: {
+          label: "隐藏“新建工作区”行",
+          description: "隐藏空项目下方的 + 新建工作区 行",
+        },
+        hideScriptIndicators: {
+          label: "隐藏脚本指示器",
+          description: "隐藏运行中脚本的地球和终端图标",
+        },
+        hideHostNames: {
+          label: "隐藏主机名",
+          description: "在工作区行中隐藏机器名称徽标",
+        },
+        recentlyDone: {
+          label: "最近完成",
+          description: "将刚刚完成的工作区显示在“已完成”上方的独立分组中",
+          accessibilityLabel: "最近完成时间范围，当前为 {{value}}",
+          options: {
+            off: "关闭",
+            minutes: "{{minutes}} 分钟",
+            hour: "1 小时",
+          },
+        },
       },
       fonts: {
         title: "字体",

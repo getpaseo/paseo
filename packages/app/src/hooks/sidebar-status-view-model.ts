@@ -5,6 +5,17 @@ export type StatusBucket = SidebarWorkspaceEntry["statusBucket"];
 
 export { STATUS_BUCKET_ORDER };
 
+export type StatusGroupKey = StatusBucket | "recently_done";
+
+export const STATUS_GROUP_ORDER: readonly StatusGroupKey[] = [
+  "needs_input",
+  "failed",
+  "attention",
+  "running",
+  "recently_done",
+  "done",
+] as const;
+
 export const STATUS_BUCKET_LABELS: Record<StatusBucket, string> = {
   needs_input: "Needs input",
   failed: "Failed",
@@ -13,39 +24,74 @@ export const STATUS_BUCKET_LABELS: Record<StatusBucket, string> = {
   done: "Done",
 };
 
+export const STATUS_GROUP_LABELS: Record<StatusGroupKey, string> = {
+  ...STATUS_BUCKET_LABELS,
+  recently_done: "Recently done",
+};
+
 export interface StatusGroup {
-  bucket: StatusBucket;
+  key: StatusGroupKey;
   label: string;
   rows: SidebarWorkspaceEntry[];
+}
+
+export interface RecentlyDoneRecency {
+  windowMs: number;
+  clientNow: number;
+  serverClockOffsetMsByServerId: ReadonlyMap<string, number>;
+}
+
+const MIN_RECENCY_TICK_MS = 5_000;
+const MAX_RECENCY_TICK_MS = 60_000;
+
+export function resolveRecencyTickMs(windowMs: number): number | null {
+  if (windowMs <= 0) return null;
+  return Math.min(MAX_RECENCY_TICK_MS, Math.max(MIN_RECENCY_TICK_MS, Math.round(windowMs / 4)));
 }
 
 export function buildStatusGroups(
   workspaces: SidebarWorkspaceEntry[],
   projectNamesByViewKey: Map<string, string>,
+  recency?: RecentlyDoneRecency,
 ): StatusGroup[] {
-  const bucketRows = new Map<StatusBucket, SidebarWorkspaceEntry[]>();
+  const rowsByKey = new Map<StatusGroupKey, SidebarWorkspaceEntry[]>();
 
   for (const ws of workspaces) {
-    const bucket: StatusBucket = ws.statusBucket;
-    let rows = bucketRows.get(bucket);
+    const key = resolveStatusGroupKey(ws, recency);
+    let rows = rowsByKey.get(key);
     if (!rows) {
       rows = [];
-      bucketRows.set(bucket, rows);
+      rowsByKey.set(key, rows);
     }
     rows.push(ws);
   }
 
   const groups: StatusGroup[] = [];
 
-  for (const bucket of STATUS_BUCKET_ORDER) {
-    const rows = bucketRows.get(bucket);
+  for (const key of STATUS_GROUP_ORDER) {
+    const rows = rowsByKey.get(key);
     if (!rows || rows.length === 0) continue;
 
     rows.sort((a, b) => compareStatusRows(a, b, projectNamesByViewKey));
-    groups.push({ bucket, label: STATUS_BUCKET_LABELS[bucket], rows });
+    groups.push({ key, label: STATUS_GROUP_LABELS[key], rows });
   }
 
   return groups;
+}
+
+function resolveStatusGroupKey(
+  workspace: SidebarWorkspaceEntry,
+  recency: RecentlyDoneRecency | undefined,
+): StatusGroupKey {
+  if (workspace.statusBucket !== "done" || !recency || recency.windowMs <= 0) {
+    return workspace.statusBucket;
+  }
+  const enteredAt = workspace.statusEnteredAt?.getTime();
+  const serverClockOffsetMs = recency.serverClockOffsetMsByServerId.get(workspace.serverId);
+  if (enteredAt === undefined || serverClockOffsetMs === undefined) return "done";
+  const serverNow = recency.clientNow + serverClockOffsetMs;
+  const age = serverNow - enteredAt;
+  return age >= 0 && age < recency.windowMs ? "recently_done" : "done";
 }
 
 function compareStatusRows(

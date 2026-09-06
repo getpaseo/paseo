@@ -28,10 +28,13 @@ import {
   MIN_CONTENT_FONT_SIZE,
   MIN_UI_BASE_FONT_SIZE,
   parseClampedFontSize,
+  RECENTLY_DONE_WINDOW_OPTIONS,
   sanitizeFontFamily,
   useAppSettings,
+  type AppearanceSettings,
   type AppSettings,
   DEFAULT_THEME_PREFERENCE,
+  type RecentlyDoneWindowMinutes,
 } from "@/hooks/use-settings";
 import {
   DEFAULT_MONO_FONT_STACK,
@@ -515,6 +518,110 @@ function SyntaxRow({ value, onChange }: SyntaxRowProps) {
 }
 
 // ---------------------------------------------------------------------------
+// Sidebar: device-local toggles that declutter the sidebar
+// ---------------------------------------------------------------------------
+
+interface SidebarToggleRowProps {
+  title: string;
+  hint: string;
+  settingKey: keyof AppearanceSettings;
+  value: boolean;
+  withBorder: boolean;
+  onChange: (key: keyof AppearanceSettings, value: boolean) => void;
+}
+
+function SidebarToggleRow({
+  title,
+  hint,
+  settingKey,
+  value,
+  withBorder,
+  onChange,
+}: SidebarToggleRowProps) {
+  const handleValueChange = useCallback(
+    (next: boolean) => onChange(settingKey, next),
+    [onChange, settingKey],
+  );
+  return (
+    <View style={withBorder ? [settingsStyles.row, settingsStyles.rowBorder] : settingsStyles.row}>
+      <View style={settingsStyles.rowContent}>
+        <Text style={settingsStyles.rowTitle}>{title}</Text>
+        <Text style={settingsStyles.rowHint}>{hint}</Text>
+      </View>
+      <Switch value={value} onValueChange={handleValueChange} />
+    </View>
+  );
+}
+
+function formatRecentlyDoneWindow(t: TFunction, value: RecentlyDoneWindowMinutes): string {
+  if (value === 0) return t("settings.appearance.sidebar.recentlyDone.options.off");
+  if (value === 60) return t("settings.appearance.sidebar.recentlyDone.options.hour");
+  return t("settings.appearance.sidebar.recentlyDone.options.minutes", { minutes: value });
+}
+
+function RecentlyDoneMenuItem({
+  value,
+  selected,
+  onChange,
+}: {
+  value: RecentlyDoneWindowMinutes;
+  selected: boolean;
+  onChange: (value: RecentlyDoneWindowMinutes) => void;
+}) {
+  const { t } = useTranslation();
+  const handleSelect = useCallback(() => onChange(value), [onChange, value]);
+  return (
+    <DropdownMenuItem selected={selected} onSelect={handleSelect}>
+      {formatRecentlyDoneWindow(t, value)}
+    </DropdownMenuItem>
+  );
+}
+
+function RecentlyDoneRow({
+  value,
+  onChange,
+}: {
+  value: RecentlyDoneWindowMinutes;
+  onChange: (value: RecentlyDoneWindowMinutes) => void;
+}) {
+  const { t } = useTranslation();
+  const selectedLabel = formatRecentlyDoneWindow(t, value);
+  return (
+    <View style={[settingsStyles.row, settingsStyles.rowBorder]}>
+      <View style={settingsStyles.rowContent}>
+        <Text style={settingsStyles.rowTitle}>
+          {t("settings.appearance.sidebar.recentlyDone.label")}
+        </Text>
+        <Text style={settingsStyles.rowHint}>
+          {t("settings.appearance.sidebar.recentlyDone.description")}
+        </Text>
+      </View>
+      <DropdownMenu>
+        <DropdownMenuTrigger
+          style={dropdownTriggerStyle}
+          accessibilityLabel={t("settings.appearance.sidebar.recentlyDone.accessibilityLabel", {
+            value: selectedLabel,
+          })}
+        >
+          <Text style={styles.triggerText}>{selectedLabel}</Text>
+          <ThemedChevronDown size={ICON_SIZE.sm} uniProps={mutedColorMapping} />
+        </DropdownMenuTrigger>
+        <DropdownMenuContent side="bottom" align="end" width={200}>
+          {RECENTLY_DONE_WINDOW_OPTIONS.map((option) => (
+            <RecentlyDoneMenuItem
+              key={option}
+              value={option}
+              selected={value === option}
+              onChange={onChange}
+            />
+          ))}
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </View>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Page
 // ---------------------------------------------------------------------------
 
@@ -587,6 +694,20 @@ export function AppearanceSection() {
       void updateSettings({ chatOutlineEnabled });
     },
     [updateSettings],
+  );
+
+  const handleAppearanceChange = useCallback(
+    (key: keyof AppearanceSettings, value: boolean) => {
+      void updateSettings({ appearance: { ...settings.appearance, [key]: value } });
+    },
+    [settings.appearance, updateSettings],
+  );
+
+  const handleRecentlyDoneWindowChange = useCallback(
+    (recentlyDoneWindowMinutes: RecentlyDoneWindowMinutes) => {
+      void updateSettings({ appearance: { ...settings.appearance, recentlyDoneWindowMinutes } });
+    },
+    [settings.appearance, updateSettings],
   );
 
   const commitUiFontFamily = useCallback(
@@ -711,6 +832,62 @@ export function AppearanceSection() {
         </View>
       </SettingsSection>
       <SidebarNavSection />
+      <SettingsSection title={t("settings.appearance.sidebar.title")}>
+        <View style={settingsStyles.card}>
+          <SidebarToggleRow
+            title={t("settings.appearance.sidebar.compactRows.label")}
+            hint={t("settings.appearance.sidebar.compactRows.description")}
+            settingKey="compactSidebarRows"
+            value={settings.appearance.compactSidebarRows}
+            withBorder={false}
+            onChange={handleAppearanceChange}
+          />
+          <SidebarToggleRow
+            title={t("settings.appearance.sidebar.hideDiffStats.label")}
+            hint={t("settings.appearance.sidebar.hideDiffStats.description")}
+            settingKey="hideWorkspaceDiffStats"
+            value={settings.appearance.hideWorkspaceDiffStats}
+            withBorder
+            onChange={handleAppearanceChange}
+          />
+          <SidebarToggleRow
+            title={t("settings.appearance.sidebar.hidePrStatus.label")}
+            hint={t("settings.appearance.sidebar.hidePrStatus.description")}
+            settingKey="hidePrStatus"
+            value={settings.appearance.hidePrStatus}
+            withBorder
+            onChange={handleAppearanceChange}
+          />
+          <SidebarToggleRow
+            title={t("settings.appearance.sidebar.hideNewWorkspaceRow.label")}
+            hint={t("settings.appearance.sidebar.hideNewWorkspaceRow.description")}
+            settingKey="hideNewWorkspaceRow"
+            value={settings.appearance.hideNewWorkspaceRow}
+            withBorder
+            onChange={handleAppearanceChange}
+          />
+          <SidebarToggleRow
+            title={t("settings.appearance.sidebar.hideScriptIndicators.label")}
+            hint={t("settings.appearance.sidebar.hideScriptIndicators.description")}
+            settingKey="hideScriptIndicators"
+            value={settings.appearance.hideScriptIndicators}
+            withBorder
+            onChange={handleAppearanceChange}
+          />
+          <SidebarToggleRow
+            title={t("settings.appearance.sidebar.hideHostNames.label")}
+            hint={t("settings.appearance.sidebar.hideHostNames.description")}
+            settingKey="hideHostLabels"
+            value={settings.appearance.hideHostLabels}
+            withBorder
+            onChange={handleAppearanceChange}
+          />
+          <RecentlyDoneRow
+            value={settings.appearance.recentlyDoneWindowMinutes}
+            onChange={handleRecentlyDoneWindowChange}
+          />
+        </View>
+      </SettingsSection>
       <SettingsSection title={t("settings.appearance.fonts.title")}>
         <View style={settingsStyles.card}>
           {showInterfaceFontFamilyRow ? (

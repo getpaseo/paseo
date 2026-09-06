@@ -1104,6 +1104,16 @@ export const fr: TranslationResources = {
         labels: "Libellés",
         diff: "Statistiques de diff",
         timestamp: "Dernière activité",
+        compactRows: "Lignes compactes",
+        newWorkspaceRow: "Ligne nouvel espace de travail",
+      },
+      recentlyDone: {
+        label: "Récemment terminé",
+        options: {
+          off: "Désactivé",
+          minutes: "{{minutes}} min",
+          hour: "1 heure",
+        },
       },
       checks: {
         iconAndText: "Icône et texte",
@@ -2176,6 +2186,44 @@ export const fr: TranslationResources = {
         description: "Choisissez les éléments affichés en haut de la barre latérale et leur ordre",
         moveUp: "Déplacer vers le haut",
         moveDown: "Déplacer vers le bas",
+        compactRows: {
+          label: "Lignes compactes",
+          description:
+            "Espacement plus serré pour les lignes, les en-têtes et les groupes de statut",
+        },
+        hideDiffStats: {
+          label: "Masquer les statistiques de diff",
+          description:
+            "Masquer les décomptes de modifications +/− sur les lignes d'espaces de travail",
+        },
+        hidePrStatus: {
+          label: "Masquer l'état de la PR",
+          description:
+            "Masquer le badge de pull request et les vérifications sur les lignes d'espaces de travail",
+        },
+        hideNewWorkspaceRow: {
+          label: "Masquer la ligne Nouvel espace de travail",
+          description: "Masquer la ligne + Nouvel espace de travail sous les projets vides",
+        },
+        hideScriptIndicators: {
+          label: "Masquer les indicateurs de scripts",
+          description: "Masquer les icônes globe et terminal des scripts en cours d'exécution",
+        },
+        hideHostNames: {
+          label: "Masquer les noms d'hôte",
+          description: "Masquer le badge du nom de la machine sur les lignes d'espace de travail",
+        },
+        recentlyDone: {
+          label: "Terminé récemment",
+          description:
+            "Afficher les espaces de travail juste terminés dans leur propre groupe au-dessus de Terminé",
+          accessibilityLabel: "Fenêtre Terminé récemment, actuellement {{value}}",
+          options: {
+            off: "Désactivé",
+            minutes: "{{minutes}} min",
+            hour: "1 heure",
+          },
+        },
       },
       fonts: {
         title: "Polices",

@@ -1078,6 +1078,16 @@ export const ko: TranslationResources = {
         labels: "레이블",
         diff: "Diff 통계",
         timestamp: "마지막 활동",
+        compactRows: "행 간격 좁게",
+        newWorkspaceRow: "새 워크스페이스 행",
+      },
+      recentlyDone: {
+        label: "최근 완료",
+        options: {
+          off: "끄기",
+          minutes: "{{minutes}}분",
+          hour: "1시간",
+        },
       },
       checks: {
         iconAndText: "아이콘 및 텍스트",
@@ -2133,6 +2143,40 @@ export const ko: TranslationResources = {
         description: "사이드바 상단에 표시할 항목과 순서를 선택하세요",
         moveUp: "위로 이동",
         moveDown: "아래로 이동",
+        compactRows: {
+          label: "컴팩트 행",
+          description: "프로젝트와 워크스페이스 행의 간격을 좁힙니다",
+        },
+        hideDiffStats: {
+          label: "차이 통계 숨기기",
+          description: "워크스페이스 행의 +/− 변경 횟수를 숨깁니다",
+        },
+        hidePrStatus: {
+          label: "PR 상태 숨기기",
+          description: "워크스페이스 행의 풀 리퀘스트 배지와 검사를 숨깁니다",
+        },
+        hideNewWorkspaceRow: {
+          label: "새 워크스페이스 행 숨기기",
+          description: "빈 프로젝트 아래의 + 새 워크스페이스 행을 숨깁니다",
+        },
+        hideScriptIndicators: {
+          label: "스크립트 표시 숨기기",
+          description: "실행 중인 스크립트의 지구본과 터미널 아이콘을 숨깁니다",
+        },
+        hideHostNames: {
+          label: "호스트 이름 숨기기",
+          description: "워크스페이스 행의 기기 이름 배지를 숨깁니다",
+        },
+        recentlyDone: {
+          label: "최근 완료",
+          description: "방금 끝난 워크스페이스를 완료 위 별도 그룹에 표시합니다",
+          accessibilityLabel: "최근 완료 기간, 현재 {{value}}",
+          options: {
+            off: "끄기",
+            minutes: "{{minutes}}분",
+            hour: "1시간",
+          },
+        },
       },
       fonts: {
         title: "글꼴",

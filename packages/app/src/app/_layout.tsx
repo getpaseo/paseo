@@ -38,6 +38,7 @@ import { LeftSidebar } from "@/components/left-sidebar";
 import { WindowSidebarMenuToggle } from "@/components/headers/menu-header";
 import { DesktopWindowControls } from "@/components/desktop/window-controls";
 import { SidebarModelProvider } from "@/components/sidebar/sidebar-model";
+import { SidebarRecencyProvider } from "@/components/sidebar/sidebar-recency-context";
 import { WorkspacePinShortcutHandler } from "@/components/workspace-pin-shortcut-handler";
 import { WorkspaceRenameHost } from "@/components/workspace-rename-host";
 import { CompactExplorerSidebarHost } from "@/components/compact-explorer-sidebar-host";
@@ -538,12 +539,15 @@ function AppContainer({ children, chromeEnabled: chromeEnabledOverride }: AppCon
     hasTopLeftWindowControls,
     sidebarControlsEnabled: chromeEnabled && !isWorkspaceFocusModeEnabled,
   });
+  const sidebarChromeVisible = isCompactLayout ? chromeEnabled : desktopSidebarVisible;
   const sidebarChrome = (
-    <SidebarChrome
-      mounted={isCompactLayout ? chromeEnabled : desktopSidebarMounted}
-      visible={isCompactLayout ? chromeEnabled : desktopSidebarVisible}
-      keyboardShortcutsEnabled={keyboardShortcutsEnabled}
-    />
+    <SidebarRecencyBoundary visible={sidebarChromeVisible}>
+      <SidebarChrome
+        mounted={isCompactLayout ? chromeEnabled : desktopSidebarMounted}
+        visible={sidebarChromeVisible}
+        keyboardShortcutsEnabled={keyboardShortcutsEnabled}
+      />
+    </SidebarRecencyBoundary>
   );
   const workspaceChrome = (
     <View style={rowStyle}>
@@ -615,6 +619,14 @@ function AppContainer({ children, chromeEnabled: chromeEnabledOverride }: AppCon
   );
 
   return <CommandCenterProvider>{content}</CommandCenterProvider>;
+}
+
+function SidebarRecencyBoundary({ children, visible }: { children: ReactNode; visible: boolean }) {
+  const isCompactLayout = useIsCompactFormFactor();
+  const isMobileActive = useIsMobilePanelActive("agent-list");
+  const isDesktopOpen = usePanelStore((state) => state.desktop.agentListOpen);
+  const active = visible && (isCompactLayout ? isMobileActive : isDesktopOpen);
+  return <SidebarRecencyProvider active={active}>{children}</SidebarRecencyProvider>;
 }
 
 function SidebarChrome({
