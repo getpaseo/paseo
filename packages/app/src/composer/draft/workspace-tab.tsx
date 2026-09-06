@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef } from "react";
+import { PluginDraftActionsProvider } from "@/plugins";
 import { Keyboard, ScrollView, StyleSheet as RNStyleSheet, Text, View } from "react-native";
 import { useTranslation } from "react-i18next";
 import { StyleSheet } from "react-native-unistyles";
@@ -677,31 +678,38 @@ export function WorkspaceDraftAgentTab({
             </View>
           </View>
         ) : null}
-        <Composer
-          agentId={tabId}
+        <PluginDraftActionsProvider
           serverId={serverId}
           workspaceId={workspaceId}
-          externalKeyboardShift
-          isPaneFocused={isPaneFocused}
-          onSubmitMessage={handleCreateFromInput}
-          isSubmitLoading={isSubmitting}
-          blurOnSubmit={true}
-          value={draftInput.text}
-          onChangeText={draftInput.editText}
-          textReplacement={draftInput.textReplacement}
-          attachments={draftInput.attachments}
-          attachmentScopeKeys={attachmentScopeKeys}
-          onOpenWorkspaceAttachment={handleOpenWorkspaceAttachment}
-          onChangeAttachments={draftInput.setAttachments}
-          cwd={composerState.workingDir}
-          clearDraft={draftInput.clear}
-          autoFocus={shouldAutoFocusWorkspaceDraftComposer({ isPaneFocused, isSubmitting })}
-          autoFocusKey={String(draftInput.attachmentFocusRequestId)}
-          onFocusInput={handleFocusInputCallback}
-          commandDraftConfig={composerState.commandDraftConfig}
-          agentControls={composerAgentControls}
-          isCompactLayout={isCompactComposerLayout}
-        />
+          text={draftInput.text}
+          replaceText={draftInput.replaceText}
+        >
+          <Composer
+            agentId={tabId}
+            serverId={serverId}
+            workspaceId={workspaceId}
+            externalKeyboardShift
+            isPaneFocused={isPaneFocused}
+            onSubmitMessage={handleCreateFromInput}
+            isSubmitLoading={isSubmitting}
+            blurOnSubmit={true}
+            value={draftInput.text}
+            onChangeText={draftInput.editText}
+            textReplacement={draftInput.textReplacement}
+            attachments={draftInput.attachments}
+            attachmentScopeKeys={attachmentScopeKeys}
+            onOpenWorkspaceAttachment={handleOpenWorkspaceAttachment}
+            onChangeAttachments={draftInput.setAttachments}
+            cwd={composerState.workingDir}
+            clearDraft={draftInput.clear}
+            autoFocus={shouldAutoFocusWorkspaceDraftComposer({ isPaneFocused, isSubmitting })}
+            autoFocusKey={String(draftInput.attachmentFocusRequestId)}
+            onFocusInput={handleFocusInputCallback}
+            commandDraftConfig={composerState.commandDraftConfig}
+            agentControls={composerAgentControls}
+            isCompactLayout={isCompactComposerLayout}
+          />
+        </PluginDraftActionsProvider>
       </KeyboardTranslateView>
     </FileDropZone>
   );

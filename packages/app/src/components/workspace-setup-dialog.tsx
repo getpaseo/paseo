@@ -1,5 +1,6 @@
 import { getHostRuntimeStore } from "@/runtime/host-runtime";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { PluginDraftActionsProvider } from "@/plugins";
 import { Text, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
@@ -434,25 +435,31 @@ export function WorkspaceSetupDialog() {
       desktopMaxWidth={640}
     >
       <FileDropZone style={styles.section}>
-        <Composer
-          agentId={`workspace-setup:${serverId}:${sourceDirectory}`}
+        <PluginDraftActionsProvider
           serverId={serverId}
-          isPaneFocused={true}
-          onSubmitMessage={handleCreateChatAgent}
-          isSubmitLoading={pendingAction === "chat"}
-          blurOnSubmit={true}
-          value={chatDraft.text}
-          onChangeText={chatDraft.editText}
-          textReplacement={chatDraft.textReplacement}
-          attachments={chatDraft.attachments}
-          onChangeAttachments={chatDraft.setAttachments}
-          cwd={sourceDirectory}
-          clearDraft={chatDraft.clear}
-          autoFocus
-          commandDraftConfig={composerState?.commandDraftConfig}
-          agentControls={agentControlsWithDisabled}
-          inputWrapperStyle={styles.composerInputWrapper}
-        />
+          text={chatDraft.text}
+          replaceText={chatDraft.replaceText}
+        >
+          <Composer
+            agentId={`workspace-setup:${serverId}:${sourceDirectory}`}
+            serverId={serverId}
+            isPaneFocused={true}
+            onSubmitMessage={handleCreateChatAgent}
+            isSubmitLoading={pendingAction === "chat"}
+            blurOnSubmit={true}
+            value={chatDraft.text}
+            onChangeText={chatDraft.editText}
+            textReplacement={chatDraft.textReplacement}
+            attachments={chatDraft.attachments}
+            onChangeAttachments={chatDraft.setAttachments}
+            cwd={sourceDirectory}
+            clearDraft={chatDraft.clear}
+            autoFocus
+            commandDraftConfig={composerState?.commandDraftConfig}
+            agentControls={agentControlsWithDisabled}
+            inputWrapperStyle={styles.composerInputWrapper}
+          />
+        </PluginDraftActionsProvider>
       </FileDropZone>
 
       {errorMessage ? <Text style={styles.errorText}>{errorMessage}</Text> : null}

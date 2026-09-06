@@ -122,6 +122,18 @@ export interface PluginComposerPillContribution {
   onPress(): void | Promise<void>;
 }
 
+export interface PluginDraftActionContext {
+  workspaceId?: string;
+  agentId?: string;
+}
+
+export interface PluginDraftActionContribution {
+  id: string;
+  title: string;
+  icon?: string;
+  transform(text: string, context: PluginDraftActionContext): Promise<string>;
+}
+
 export interface PluginClientOpenPanelOptions extends PluginOpenPanelOptions {
   workspaceId: string;
   agentId?: string;
@@ -135,6 +147,7 @@ export interface PluginClientContext extends PluginCommandCapabilities {
   addCommandCenterItem(contribution: PluginCommandCenterItemContribution): PluginCleanup;
   addSlashCommand(contribution: PluginClientSlashCommandContribution): PluginCleanup;
   addComposerPill(contribution: PluginComposerPillContribution): PluginCleanup;
+  addDraftAction(contribution: PluginDraftActionContribution): PluginCleanup;
   addAttachmentSource(contribution: PluginAttachmentSourceContribution): PluginCleanup;
   addTheme(contribution: PluginThemeContribution): PluginCleanup;
   addTimelineTransformer<ItemType extends AgentTimelineItem["type"]>(

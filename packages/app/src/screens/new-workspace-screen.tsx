@@ -1,5 +1,6 @@
 import { getHostRuntimeStore } from "@/runtime/host-runtime";
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
+import { PluginDraftActionsProvider } from "@/plugins";
 import type { ReactElement, RefObject } from "react";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
@@ -2318,36 +2319,43 @@ export function NewWorkspaceScreen({
               autoFocusKey={launchFocusKey}
             />
           ) : (
-            <Composer
-              key="chat"
-              externalKeyboardShift
-              agentId={draftKey}
+            <PluginDraftActionsProvider
               serverId={selectedServerId}
-              isPaneFocused={true}
-              onSubmitMessage={handleSubmitNewWorkspace}
-              allowEmptySubmit={true}
-              submitButtonAccessibilityLabel={t("newWorkspace.create")}
-              submitButtonTestID="workspace-create-submit"
-              submitIcon="return"
-              isSubmitLoading={isPending}
-              waitForForgeAutoAttachOnSubmit
-              submitBehavior="preserve-and-lock"
-              blurOnSubmit={true}
-              value={chatDraft.text}
-              onChangeText={chatDraft.editText}
-              textReplacement={chatDraft.textReplacement}
-              attachments={chatDraft.attachments}
-              attachmentScopeKeys={visibleDraftContextScopeKeys}
-              onChangeAttachments={chatDraft.setAttachments}
-              onForgeChangeRequestDetected={handleForgeChangeRequestDetected}
-              onForgeChangeRequestAutoAttach={handleForgeChangeRequestAutoAttach}
-              cwd={selectedSourceDirectory ?? ""}
-              clearDraft={handleClearDraft}
-              autoFocus
-              autoFocusKey={launchFocusKey}
-              commandDraftConfig={composerState?.commandDraftConfig}
-              agentControls={agentControlsWithDisabled}
-            />
+              text={chatDraft.text}
+              replaceText={chatDraft.replaceText}
+              locked={isPending}
+            >
+              <Composer
+                key="chat"
+                externalKeyboardShift
+                agentId={draftKey}
+                serverId={selectedServerId}
+                isPaneFocused={true}
+                onSubmitMessage={handleSubmitNewWorkspace}
+                allowEmptySubmit={true}
+                submitButtonAccessibilityLabel={t("newWorkspace.create")}
+                submitButtonTestID="workspace-create-submit"
+                submitIcon="return"
+                isSubmitLoading={isPending}
+                waitForForgeAutoAttachOnSubmit
+                submitBehavior="preserve-and-lock"
+                blurOnSubmit={true}
+                value={chatDraft.text}
+                onChangeText={chatDraft.editText}
+                textReplacement={chatDraft.textReplacement}
+                attachments={chatDraft.attachments}
+                attachmentScopeKeys={visibleDraftContextScopeKeys}
+                onChangeAttachments={chatDraft.setAttachments}
+                onForgeChangeRequestDetected={handleForgeChangeRequestDetected}
+                onForgeChangeRequestAutoAttach={handleForgeChangeRequestAutoAttach}
+                cwd={selectedSourceDirectory ?? ""}
+                clearDraft={handleClearDraft}
+                autoFocus
+                autoFocusKey={launchFocusKey}
+                commandDraftConfig={composerState?.commandDraftConfig}
+                agentControls={agentControlsWithDisabled}
+              />
+            </PluginDraftActionsProvider>
           )}
           {errorMessage ? <Text style={styles.errorText}>{errorMessage}</Text> : null}
         </KeyboardTranslateView>

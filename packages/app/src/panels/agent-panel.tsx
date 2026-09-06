@@ -68,7 +68,7 @@ import {
 import { usePaneContext, usePaneFocus } from "@/panels/pane-context";
 import { definePanel, type PanelDescriptor } from "@/panels/panel-registry";
 import { RenderProfile } from "@/utils/render-profiler";
-import { useHasPluginComposerPills } from "@/plugins";
+import { PluginDraftActionsProvider, useHasPluginComposerPills } from "@/plugins";
 import { buildDraftPanelDescriptor } from "@/panels/draft-panel-descriptor";
 import {
   type HostRuntimeConnectionStatus,
@@ -1701,32 +1701,40 @@ function ActiveAgentComposer({
 
   return (
     <View style={inputAreaStyle} onLayout={onInputAreaLayout}>
-      <Composer
-        agentId={agentId}
+      <PluginDraftActionsProvider
         serverId={serverId}
         workspaceId={workspaceId}
-        externalKeyboardShift
-        blurOnSubmit={isNative}
-        isPaneFocused={isPaneFocused}
-        value={agentInputDraft.text}
-        onChangeText={agentInputDraft.editText}
-        textReplacement={agentInputDraft.textReplacement}
-        attachments={agentInputDraft.attachments}
-        attachmentScopeKeys={attachmentScopeKeys}
-        onOpenWorkspaceAttachment={handleOpenWorkspaceAttachment}
-        onChangeAttachments={agentInputDraft.setAttachments}
-        cwd={cwd}
-        clearDraft={agentInputDraft.clear}
-        autoFocus
-        autoFocusKey={String(agentInputDraft.attachmentFocusRequestId)}
-        isSubmitLoading={isSubmitLoading}
-        onAttentionInputFocus={onAttentionInputFocus}
-        onAttentionPromptSend={onAttentionPromptSend}
-        onComposerHeightChange={onComposerHeightChange}
-        onMessageSent={onMessageSent}
-        onClientSlashCommand={handleClientSlashCommand}
-        isCompactLayout={isCompactComposerLayout}
-      />
+        agentId={agentId}
+        text={agentInputDraft.text}
+        replaceText={agentInputDraft.replaceText}
+      >
+        <Composer
+          agentId={agentId}
+          serverId={serverId}
+          workspaceId={workspaceId}
+          externalKeyboardShift
+          blurOnSubmit={isNative}
+          isPaneFocused={isPaneFocused}
+          value={agentInputDraft.text}
+          onChangeText={agentInputDraft.editText}
+          textReplacement={agentInputDraft.textReplacement}
+          attachments={agentInputDraft.attachments}
+          attachmentScopeKeys={attachmentScopeKeys}
+          onOpenWorkspaceAttachment={handleOpenWorkspaceAttachment}
+          onChangeAttachments={agentInputDraft.setAttachments}
+          cwd={cwd}
+          clearDraft={agentInputDraft.clear}
+          autoFocus
+          autoFocusKey={String(agentInputDraft.attachmentFocusRequestId)}
+          isSubmitLoading={isSubmitLoading}
+          onAttentionInputFocus={onAttentionInputFocus}
+          onAttentionPromptSend={onAttentionPromptSend}
+          onComposerHeightChange={onComposerHeightChange}
+          onMessageSent={onMessageSent}
+          onClientSlashCommand={handleClientSlashCommand}
+          isCompactLayout={isCompactComposerLayout}
+        />
+      </PluginDraftActionsProvider>
     </View>
   );
 }
