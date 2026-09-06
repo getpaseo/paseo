@@ -39,7 +39,7 @@ async function executeSendKeysCommand(
   keys: string[],
   options: TerminalSendKeysOptions,
 ): Promise<{ terminalId: string; keysSent: number }> {
-  const { client } = await connectTerminalClient(options.host);
+  const { client, close } = await connectTerminalClient(options.host);
 
   try {
     const resolvedId = await resolveTerminalId(client, terminalId);
@@ -51,49 +51,16 @@ async function executeSendKeysCommand(
       };
     }
 
-    const data = keys.map((key) => resolveKeyToken(key, options.literal === true)).join("");
-    client.sendTerminalInput(resolvedId, { type: "input", data });
+    const terminal = client.terminals.ref(resolvedId);
+    const keysSent = options.literal ? terminal.write(keys.join("")) : terminal.sendKeys(keys);
 
     return {
       terminalId: resolvedId,
-      keysSent: data.length,
+      keysSent,
     };
   } catch (err) {
     throw toTerminalCommandError("TERMINAL_SEND_KEYS_FAILED", "send terminal keys", err);
   } finally {
-    await client.close().catch(() => {});
-  }
-}
-
-function resolveKeyToken(key: string, literal: boolean): string {
-  if (literal) {
-    return key;
-  }
-
-  switch (key) {
-    case "Enter":
-      return "\r";
-    case "Tab":
-      return "\t";
-    case "Escape":
-      return "\u001b";
-    case "Space":
-      return " ";
-    case "BSpace":
-      return "\u007f";
-    case "C-c":
-      return "\u0003";
-    case "C-d":
-      return "\u0004";
-    case "C-z":
-      return "\u001a";
-    case "C-l":
-      return "\u000c";
-    case "C-a":
-      return "\u0001";
-    case "C-e":
-      return "\u0005";
-    default:
-      return key;
+    await close().catch(() => {});
   }
 }

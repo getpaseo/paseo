@@ -13,7 +13,7 @@ const AGENT_DEFAULTS: Agent = {
   id: "agent",
   provider: "codex",
   status: "idle",
-  activeTurn: null,
+  turn: { phase: "idle", cancellationRequestId: null },
   createdAt: AGENT_TIMESTAMP,
   updatedAt: AGENT_TIMESTAMP,
   lastUserMessageAt: null,
@@ -316,6 +316,7 @@ describe("selectSubagentsForParent", () => {
         description: null,
         subtitle: null,
         status: "running",
+        turn: { phase: "idle", cancellationRequestId: null },
         requiresAttention: true,
         createdAt,
       },
@@ -330,6 +331,7 @@ describe("selectSubagentsForParent", () => {
       "status",
       "subtitle",
       "title",
+      "turn",
     ]);
     expect(rows[0]).not.toHaveProperty("onOpen");
     expect(rows[0]).not.toHaveProperty("model");

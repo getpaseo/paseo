@@ -89,6 +89,8 @@ interface RemoteProviderConnection {
 }
 
 interface PluginRuntimeDependencies {
+  settingsDirectory?: string;
+  onSettingsChanged?: (pluginId: string, settingsId: string) => void;
   spawnChild?: () => PluginChild;
   sessionHost?: PluginPaseoSessionHost;
 }
@@ -270,7 +272,7 @@ export class PluginRuntime {
   constructor(
     logger: pino.Logger,
     private readonly daemonVersion: string,
-    dependencies: PluginRuntimeDependencies = {},
+    private readonly dependencies: PluginRuntimeDependencies = {},
   ) {
     this.logger = logger.child({ module: "plugins" });
     this.spawnChild = dependencies.spawnChild ?? spawnPluginChild;
@@ -532,6 +534,9 @@ export class PluginRuntime {
             pluginId,
             appVersion: this.daemonVersion,
             bundle: serverBundle,
+            settingsDirectory: this.dependencies.settingsDirectory
+              ? path.join(this.dependencies.settingsDirectory, pluginId)
+              : undefined,
           }).catch(fail);
         },
       );
@@ -562,6 +567,10 @@ export class PluginRuntime {
   }
 
   private handleChildMessage(loaded: LoadedPlugin, message: PluginProcessMessage): void {
+    if (message.type === "settings.changed") {
+      this.dependencies.onSettingsChanged?.(loaded.id, message.settingsId);
+      return;
+    }
     if (message.type.startsWith("provider.")) {
       this.handleProviderMessage(loaded, message);
       return;

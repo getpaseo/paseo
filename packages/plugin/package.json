@@ -37,6 +37,11 @@
       "types": "./dist/host.d.ts",
       "source": "./src/host.ts",
       "default": "./dist/host.js"
+    },
+    "./ui": {
+      "types": "./dist/ui.d.ts",
+      "source": "./src/ui.ts",
+      "default": "./dist/ui.js"
     }
   },
   "publishConfig": {

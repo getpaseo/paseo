@@ -141,13 +141,13 @@ class TimelineReplicaOwner implements TimelineReplica {
   timelineUpdated(agentId: string): void {
     const session = useSessionStore.getState().sessions[this.serverId];
     const timeline = selectAgentTimelineState(session, agentId);
-    if (timeline.status !== "synced") return;
-    this.cachedRanges.delete(agentId);
+    if (timeline.status === "cold") return;
+    if (timeline.status === "synced") this.cachedRanges.delete(agentId);
     this.storage.commitTimeline(this.serverId, agentId, {
       agentId,
       items: [...timeline.items, ...(session?.agentStreamHead.get(agentId) ?? [])],
-      range: timeline.range,
-      hasOlder: timeline.older === "available",
+      range: timeline.status === "synced" ? timeline.range : null,
+      hasOlder: timeline.status === "synced" && timeline.older === "available",
     });
   }
 }
@@ -250,7 +250,7 @@ function finalizeProcessedTimeline(input: {
       .clearByAgent({ serverId: input.serverId, agentId: input.agentId });
     const session = useSessionStore.getState().sessions[input.serverId];
     const agent = session?.agents.get(input.agentId) ?? session?.agentDetails.get(input.agentId);
-    if (agent && agent.status !== "running") input.drainQueuedAgentMessage(input.agentId);
+    if (agent && agent.turn.phase === "idle") input.drainQueuedAgentMessage(input.agentId);
   }
   if (input.result.initResolution === "resolve") resolveInitDeferred(input.initKey);
 }

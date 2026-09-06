@@ -11,6 +11,7 @@ import type { PluginSurfaceRuntime } from "./surface-runtime";
 import type { InstalledPlugin } from "./types";
 
 export interface PluginNavigation {
+  openSettings(pluginId: string, screenId: string): void;
   openSurface(pluginId: string, surfaceId: string): void;
   openWorkspacePanel(pluginId: string, panelId: string, location: PluginPanelLocation): void;
   openAgentPanel(
@@ -29,6 +30,11 @@ export function createPluginCapabilities(
   return {
     paseo: runtime.paseo,
     rpc: (contract, input) => callPluginRpc(contract, runtime.invoke, input),
+    openSettings(screenId) {
+      if (!plugin.settingsScreens.some((screen) => screen.id === screenId))
+        throw new Error(`Plugin settings screen is unavailable: ${screenId}`);
+      navigation.openSettings(plugin.id, screenId);
+    },
     openSurface(surfaceId) {
       if (!plugin.surfaces.some((surface) => surface.id === surfaceId)) {
         throw new Error(`Plugin surface is unavailable: ${surfaceId}`);

@@ -4,7 +4,13 @@ import {
   type PluginProcessRequest,
 } from "./plugin-process-protocol.js";
 import { createRequire } from "node:module";
-import { defineAttachmentSource, defineRpc, type PluginRpcContract } from "@getpaseo/plugin";
+import {
+  defineSettings,
+  type SettingsDefinition,
+  defineAttachmentSource,
+  defineRpc,
+  type PluginRpcContract,
+} from "@getpaseo/plugin";
 import {
   ProviderEventSchema,
   type ProviderConnection,
@@ -20,6 +26,20 @@ import {
   isPluginServerTypesSdkSpecifier,
 } from "./plugin-sdk-specifiers.js";
 import { createPluginClientId } from "./plugin-session-identity.js";
+
+import { PluginSettingsStore } from "./settings/index.js";
+let settingsStore: PluginSettingsStore | null = null;
+function registerSettings(definition: SettingsDefinition) {
+  if (!settingsStore) throw new Error("Plugin settings storage is unavailable");
+  const handlers = settingsStore.register(definition);
+  register(handlers.read.contract, handlers.read.handle);
+  register(handlers.write.contract, (input) =>
+    handlers.write.handle(handlers.write.contract.input.parse(input)),
+  );
+  register(handlers.reset.contract, (input) =>
+    handlers.reset.handle(handlers.reset.contract.input.parse(input)),
+  );
+}
 
 type RpcHandler = (input: unknown, context: PluginHandlerContext) => unknown | Promise<unknown>;
 
@@ -186,6 +206,7 @@ async function closeProviderConnection(connectionId: string): Promise<void> {
 
 const pluginAuthorRuntime = {
   defineAttachmentSource,
+  defineSettings,
   defineRpc,
   Icon() {
     throw new Error("Icon is available only in plugin client code");
@@ -211,7 +232,7 @@ function evaluateBundle(bundle: string): void {
   if (typeof setup !== "function") {
     throw new Error("Plugin server bundle must default export a function");
   }
-  const contributedCleanup = setup({ handle: register, registerProvider });
+  const contributedCleanup = setup({ handle: register, registerProvider, registerSettings });
   if (typeof contributedCleanup !== "function") {
     throw new Error("Plugin contribution must return a cleanup function");
   }
@@ -237,6 +258,11 @@ async function initialize(message: Extract<PluginProcessRequest, { type: "initia
   });
   paseo = createPaseoApi(daemonClient);
   await daemonClient.connect();
+  settingsStore = message.settingsDirectory
+    ? new PluginSettingsStore(message.settingsDirectory, (settingsId) =>
+        send({ type: "settings.changed", settingsId }),
+      )
+    : null;
   evaluateBundle(message.bundle);
   send({
     type: "ready",

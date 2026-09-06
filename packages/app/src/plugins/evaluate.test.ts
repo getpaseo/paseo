@@ -4,6 +4,7 @@ import { runPluginClientBundle, type PluginClientRuntime } from "./evaluate";
 const runtime = {
   paseo: {},
   async rpc() {},
+  openSettings() {},
   openSurface() {},
   openPanel() {},
   addComposerPill() {
@@ -16,7 +17,7 @@ function evaluatePluginClientBundle(id: string, source: string) {
 }
 
 function bundle(body: string): string {
-  return `(function() {
+  return `(function(require) {
     const module = { exports: {} };
     module.exports.default = function(plugin) { ${body}; return function() {}; };
     return module.exports;
@@ -24,6 +25,17 @@ function bundle(body: string): string {
 }
 
 describe("evaluatePluginClientBundle", () => {
+  it("accepts memoized settings screens", () => {
+    const plugin = evaluatePluginClientBundle(
+      "settings",
+      bundle(`
+        const Component = require("react").memo(function Settings() { return null; });
+        plugin.addSettingsScreen({ id: "display", title: "Display", icon: "Settings", Component });
+      `),
+    );
+    expect(plugin.settingsScreens.map((screen) => screen.id)).toEqual(["display"]);
+  });
+
   it("returns idempotent removers for every client registration", () => {
     let pillCount = 0;
     const plugin = runPluginClientBundle(
@@ -33,6 +45,7 @@ describe("evaluatePluginClientBundle", () => {
         const schema = { safeParse(value) { return { success: true, data: value }; } };
         globalThis.__pluginRemovals = [
           plugin.addSurface("main", Component),
+          plugin.addSettingsScreen({ id: "display", title: "Display", icon: "Settings", Component }),
           plugin.addSidebarItem({ id: "main", title: "Main", icon: "Blocks", surface: "main" }),
           plugin.addWorkspacePanel({ id: "panel", title: "Panel", icon: "Blocks", context: "workspace", Component }),
           plugin.addCommandCenterItem({ id: "command", title: "Command", icon: "Blocks", context: "global", onSelect() {} }),
@@ -59,6 +72,7 @@ describe("evaluatePluginClientBundle", () => {
     expect(
       [
         plugin.surfaces,
+        plugin.settingsScreens,
         plugin.sidebarItems,
         plugin.workspacePanels,
         plugin.commandCenterItems,
@@ -77,6 +91,7 @@ describe("evaluatePluginClientBundle", () => {
     expect(
       [
         plugin.surfaces,
+        plugin.settingsScreens,
         plugin.sidebarItems,
         plugin.workspacePanels,
         plugin.commandCenterItems,

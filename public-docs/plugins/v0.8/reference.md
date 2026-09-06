@@ -85,6 +85,7 @@ Paseo provides these modules to client code:
 | Module                          | Use it for                                                                                             |
 | ------------------------------- | ------------------------------------------------------------------------------------------------------ |
 | `@getpaseo/plugin`              | Contribution contracts, `defineRpc`, `defineAttachmentSource`, `RpcInput`, `RpcOutput`, and data hooks |
+| `@getpaseo/plugin/ui`           | Named, composable settings components                                                                  |
 | `@getpaseo/plugin/react-native` | Paseo UI components and UI hooks                                                                       |
 | `@getpaseo/plugin/server`       | Handler-only types such as `PluginHandlerContext`                                                      |
 | `@tanstack/react-query`         | Request state and caching                                                                              |
@@ -136,9 +137,8 @@ for the whole project and hides the next mistake. Components import `openExterna
 `window` themselves. `layout.platform` on surface and panel props carries the same value as
 `Platform.OS` for rendering decisions.
 
-There is no plugin storage API. Browser storage does not persist settings across Paseo clients.
-There is also no general host navigation API: plugin code cannot open native Paseo routes. Command
-Center callbacks can only open surfaces and panels registered by the same plugin.
+Use the [settings API](#settings-screens) for typed host-scoped persistence across clients.
+Use `openSettings`, `openSurface`, and `openPanel` for your own registered contributions.
 
 ### Server runtime
 
@@ -528,6 +528,121 @@ unpainted.
 Themes need a host that supports them. A client released before `addTheme` cannot evaluate that client entry and reports
 `client.addTheme is not a function`. Update the client.
 
+## Settings screens
+
+Register a component with `client.addSettingsScreen({ id, title, icon, Component })` in
+`index.client.tsx`. It appears under **Settings → Plugins → your plugin** on that host.
+`id` is unique within the installation; `icon` is a Lucide name. Registration returns an
+idempotent remover, and plugin teardown removes remaining screens.
+
+Call `client.openSettings(id)` or a Command Center callback's `openSettings(id)` to open one
+of your own screens. Each installation has its own values and route, even when several hosts
+install the same plugin.
+
+The component receives `PluginSurfaceProps`. Paseo owns the header, back navigation, safe areas,
+scrolling, and the centered settings column. Compact windows push a full-screen detail; wide
+windows keep the settings sidebar. Render content inside that frame using React Native components.
+A disabled or removed plugin leaves an unavailable screen with working Back navigation.
+
+### Named UI components
+
+Import settings components from `@getpaseo/plugin/ui`. They work with your own state and RPCs;
+no form wrapper or storage binding is required.
+
+```tsx
+import { useState } from "react";
+import { SettingsCard, SettingsSection, SettingsSwitch } from "@getpaseo/plugin/ui";
+
+export function DisplaySettings() {
+  const [visible, setVisible] = useState(true);
+  return (
+    <SettingsSection title="Display">
+      <SettingsCard>
+        <SettingsSwitch label="Show metadata" value={visible} onValueChange={setVisible} />
+      </SettingsCard>
+    </SettingsSection>
+  );
+}
+```
+
+| Component                          | Props and behavior                                                                                                                       |
+| ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `SettingsGroup`, `SettingsSection` | Required `title`, `children`; optional `info` tooltip, `trailing` content, `testID`. Own section spacing and headings.                   |
+| `SettingsCard`                     | `children`, optional `testID`. Owns the card surface and dividers between direct children. Give mapped rows stable React keys.           |
+| `SettingsRow`                      | Required `label`; optional `hint`, `error`, `children`, `testID`. Wrap any custom control or content.                                    |
+| `SettingsSwitch`                   | Row props plus required `value: boolean`, `onValueChange`; optional `disabled`.                                                          |
+| `SettingsSelect`                   | Row props plus required string `value`, `options: { label, value }[]`, `onValueChange`; optional `disabled`. Uses Paseo's adaptive menu. |
+| `SettingsInput`                    | Row props plus required `onChangeText`; optional `initialValue`, `placeholder`, `disabled`, `secureTextEntry`, `ref`.                    |
+| `SettingsAction`                   | Row props plus required `actionLabel`, `onPress`; optional `disabled`.                                                                   |
+
+`SettingsInput` owns in-progress text. `initialValue` seeds it when mounted. Its ref exposes
+`focus()`, `blur()`, `getText()`, and `replaceText(text)` for explicit programmatic changes.
+Keep draft text outside persisted values until the user saves. Custom previews and controls
+can sit beside or inside these components.
+
+### Persisted values
+
+Define a settings document in `shared/`:
+
+```ts
+import { defineSettings } from "@getpaseo/plugin";
+import { z } from "zod";
+
+export const preferences = defineSettings({
+  id: "display",
+  scope: "host",
+  version: 1,
+  schema: z.object({ showMetadata: z.boolean().default(true) }),
+});
+```
+
+Register it with `server.registerSettings(preferences)` in `index.server.ts` before returning
+cleanup. This server entry is required for built-in persistence; a screen using its own data
+can remain client-only.
+
+| Definition field               | Contract                                                                                                                             |
+| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `id`                           | Lowercase identifier matching `[a-z][a-z0-9_-]*`; unique within the installation.                                                    |
+| `scope`                        | Required `"host"`. All authorized clients of that host share the document. No per-user, device-local, or cross-host synchronization. |
+| `version`                      | Required positive integer describing the schema, independent of the write revision.                                                  |
+| `schema`                       | Zod schema for JSON values. Supply defaults so parsing `{}` produces a complete document.                                            |
+| `migrate(values, fromVersion)` | Optional synchronous or asynchronous conversion from an older stored version. Its output must pass the current schema.               |
+
+Call `useSettings(preferences)` in any contributed component. It returns a discriminated state:
+
+| `status`  | Available data                                                           |
+| --------- | ------------------------------------------------------------------------ |
+| `loading` | Read is pending; do not render default values as though they were saved. |
+| `ready`   | Typed `values` and an opaque `revision`.                                 |
+| `invalid` | `error` and `revision`; stored data is preserved.                        |
+| `error`   | `error` from the read/connection.                                        |
+
+Every state also exposes `saving`, `saveError`, and these actions:
+
+- `save(values, revision): Promise<boolean>` validates and saves a complete document. Returns
+  `false` and sets `saveError` on validation, conflict, or transport failure; it does not throw.
+- `reset(): Promise<boolean>` explicitly replaces the document with schema defaults, using the
+  revision loaded by the hook. It can recover invalid stored data.
+- `reload(): Promise<void>` clears the save error and reads again. Your component owns its draft;
+  reloading does not discard that draft automatically.
+
+For an immediate toggle, pass `{ ...settings.values, showMetadata }` and `settings.revision`
+to `save`. For a draft editor, capture both the values and revision when opening it. Keep that
+revision until a save succeeds or the user discards the draft. A stale revision rejects the
+save, preserving both the draft and the newer saved values.
+
+Writes are atomic and validated on the host. Connected clients receive updates without reloading
+the plugin. Values survive daemon restart, plugin reload, disable, and updates. Removing an
+installation deletes its settings. Reinstalling that ID starts from defaults.
+
+A missing document uses schema defaults. Invalid data, failed migrations, and unsupported newer
+versions produce `invalid` without silently resetting the file. Successful migrations persist
+the new version once. These documents are ordinary host-side JSON, not a credential vault.
+Settings RPCs use the existing `daemon.manage` permission for plugin execution.
+
+See the complete [settings example](https://github.com/getpaseo/paseo/tree/main/plugin-examples/settings)
+for immediate controls, a draft editor with validation, custom content, and Command Center navigation.
+
 ## Workspace panels
 
 Register one panel for workspace or agent context:
@@ -843,7 +958,7 @@ function PullRequestAction() {
 }
 ```
 
-The returned API covers projects, workspaces, agents, providers, and daemon config. See the [SDK API reference](/docs/sdk/reference) for its methods. Connection lifecycle methods are intentionally absent because Paseo owns the connection.
+The returned API covers projects, workspaces, agents, terminals, providers, and daemon config. See the [SDK API reference](/docs/sdk/reference) for its methods. Connection lifecycle methods are intentionally absent because Paseo owns the connection.
 
 ## Add plugin-specific backend behavior
 

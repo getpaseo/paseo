@@ -1999,6 +1999,12 @@ export const en = {
     },
     plugins: {
       title: "Plugins",
+      screens: {
+        open: "Open",
+        offline: "Connect to this host to open plugin settings.",
+        update: "Update this host to use plugin settings.",
+        unavailable: "This plugin settings screen is unavailable.",
+      },
       trustedTitle: "Plugins are trusted code",
       trustedDescription:
         "They run on this host and inside the app without sandboxing. Install only code you trust.",

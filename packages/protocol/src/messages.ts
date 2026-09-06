@@ -1677,6 +1677,8 @@ export type CreateAgentWorktreeTarget = z.infer<typeof CreateAgentWorktreeTarget
 
 export const CreateAgentRequestMessageSchema = z.object({
   type: z.literal("create_agent_request"),
+  // A creation key requires initialPrompt to be sent separately with a stable messageId.
+  idempotencyKey: z.string().min(1).max(512).optional(),
   config: AgentSessionConfigSchema,
   env: z.record(z.string(), z.string()).optional(),
   workspaceId: z.string().optional(),
@@ -3399,6 +3401,10 @@ export const ServerInfoStatusPayloadSchema = z
     // COMPAT(providersSnapshot): added in v0.1.48, remove gating when all clients use snapshot
     features: z
       .object({
+        // COMPAT(agentRequestReceipts): added in v0.7.3; remove gate after 2027-03-05.
+        agentRequestReceipts: z.boolean().optional(),
+        // COMPAT(hubAgentRpc): added in v0.7.3; remove gate after 2027-03-05.
+        hubAgentRpc: z.boolean().optional(),
         providersSnapshot: z.boolean().optional(),
         // COMPAT(providersSnapshotCwd): added in v0.3.2, remove gate after 2027-02-10.
         providersSnapshotCwd: z.boolean().optional(),
@@ -3408,6 +3414,8 @@ export const ServerInfoStatusPayloadSchema = z
         workspaceLabels: z.boolean().optional(),
         // COMPAT(workspaceSetupRun): added in v0.7.3, remove gate after 2027-09-02.
         workspaceSetupRun: z.boolean().optional(),
+        // COMPAT(workspaceTerminals): added in v0.7.3, remove gate after 2027-09-05.
+        workspaceTerminals: z.boolean().optional(),
         // COMPAT(checkoutForgeSetAutoMerge): added in v0.2.0-beta.1. Remove the
         // feature gate and checkoutGithubSetAutoMerge fallback after 2027-01-17
         // once the supported daemon floor is >= v0.2.0.
@@ -3448,6 +3456,7 @@ export const ServerInfoStatusPayloadSchema = z
         // A daemon that predates this flag keeps `addTheme` in the server bundle it compiles,
         // so a theme plugin cannot start there at all.
         pluginThemes: z.boolean().optional(),
+        pluginSettings: z.boolean().optional(),
         pluginTimelineItems: z.boolean().optional(),
         // COMPAT(skillManagement): added in v0.4.0, remove gate after 2027-08-16.
         skillManagement: z.boolean().optional(),
@@ -3647,6 +3656,12 @@ export const PluginCatalogChangedStatusPayloadSchema = z.object({
   pluginId: PluginIdSchema,
 });
 
+export const PluginSettingsChangedStatusPayloadSchema = z.object({
+  status: z.literal("plugin_settings_changed"),
+  pluginId: PluginIdSchema,
+  settingsId: z.string(),
+});
+
 export const KnownStatusPayloadSchema = z.discriminatedUnion("status", [
   AgentCreatedStatusPayloadSchema,
   AgentCreateFailedStatusPayloadSchema,
@@ -3656,6 +3671,7 @@ export const KnownStatusPayloadSchema = z.discriminatedUnion("status", [
   RestartRequestedStatusPayloadSchema,
   DaemonConfigChangedStatusPayloadSchema,
   PluginCatalogChangedStatusPayloadSchema,
+  PluginSettingsChangedStatusPayloadSchema,
 ]);
 
 export type KnownStatusPayload = z.infer<typeof KnownStatusPayloadSchema>;
@@ -6024,7 +6040,7 @@ export const ListTerminalsResponseSchema = z.object({
   type: z.literal("list_terminals_response"),
   payload: z.object({
     cwd: z.string().optional(),
-    terminals: z.array(TerminalInfoSchema.omit({ cwd: true })),
+    terminals: z.array(TerminalInfoSchema.partial({ cwd: true })),
     requestId: z.string(),
   }),
 });
@@ -7076,6 +7092,7 @@ export const WSHelloMessageSchema = z.object({
     .object({
       voice: z.boolean().optional(),
       pushNotifications: z.boolean().optional(),
+      [CLIENT_CAPS.allProviders]: z.boolean().optional(),
       [CLIENT_CAPS.reasoningMergeEnum]: z.boolean().optional(),
       [CLIENT_CAPS.selectiveAgentTimeline]: z.boolean().optional(),
       [CLIENT_CAPS.customModeIcons]: z.boolean().optional(),

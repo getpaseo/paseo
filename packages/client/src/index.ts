@@ -25,6 +25,22 @@ import type {
   WorkspaceCreateRequest,
 } from "@getpaseo/protocol/messages";
 import { DaemonClient } from "./daemon-client.js";
+import {
+  createTerminalActions,
+  type PaseoTerminalActions,
+  type PaseoWorkspaceTerminalActions,
+} from "./terminals/index.js";
+export type {
+  PaseoTerminal,
+  PaseoTerminalActions,
+  PaseoTerminalHandle,
+  PaseoTerminalCreateOptions,
+  PaseoTerminalListOptions,
+  PaseoTerminalListResult,
+  PaseoTerminalCaptureOptions,
+  PaseoTerminalCaptureResult,
+  PaseoWorkspaceTerminalActions,
+} from "./terminals/index.js";
 import type { PluginTimelineItem } from "@getpaseo/protocol/agent-types";
 import type {
   FetchAgentsEntry,
@@ -141,6 +157,7 @@ export interface PaseoWorkspaceHandle {
   readonly agents: {
     create(options: PaseoWorkspaceAgentCreateOptions): Promise<PaseoAgentHandle>;
   };
+  readonly terminals: PaseoWorkspaceTerminalActions;
   current(): PaseoWorkspace | null;
   refresh(options?: { requestId?: string }): Promise<PaseoWorkspace | null>;
   setTitle(title: string | null, requestId?: string): Promise<{ title: string | null }>;
@@ -408,6 +425,7 @@ export interface PaseoConfigActions {
 }
 
 export interface PaseoApi {
+  readonly terminals: PaseoTerminalActions;
   readonly workspaces: PaseoWorkspaceActions;
   readonly projects: PaseoProjectActions;
   readonly agents: PaseoAgentActions;
@@ -463,9 +481,17 @@ export function createPaseoApi(daemonClient: DaemonClient): PaseoApi {
     });
     return createAgentHandle(agent);
   };
-  const createWorkspaceHandle = createWorkspaceHandleFactory(daemonClient, createAgent);
+  const terminals = createTerminalActions(daemonClient, async (workspaceId) => {
+    const workspace = await createWorkspaceHandle(workspaceId).refresh();
+    if (!workspace?.workspaceDirectory) {
+      throw new Error(`Workspace ${workspaceId} is not active or has no available directory`);
+    }
+    return workspace.workspaceDirectory;
+  });
+  const createWorkspaceHandle = createWorkspaceHandleFactory(daemonClient, createAgent, terminals);
 
   return {
+    terminals,
     projects: {
       list: (options) => daemonClient.listProjects(options),
     },
@@ -531,6 +557,7 @@ type CreateAgent = (
 function createWorkspaceHandleFactory(
   daemonClient: DaemonClient,
   createAgent: CreateAgent,
+  terminals: PaseoTerminalActions,
 ): WorkspaceHandleFactory {
   return (workspace) => {
     const id = typeof workspace === "string" ? workspace : workspace.id;
@@ -581,6 +608,10 @@ function createWorkspaceHandleFactory(
             { workspaceId: id, cwd: snapshot.workspaceDirectory },
           );
         },
+      },
+      terminals: {
+        create: (options) => terminals.create({ ...options, workspaceId: id }),
+        list: (options) => terminals.list({ ...options, workspaceId: id }),
       },
       current: () => current,
       refresh,
