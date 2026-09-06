@@ -4,8 +4,7 @@ export type SherpaOnnxModelKind = "stt-offline" | "tts";
 
 type DefaultModelRole = "stt" | "tts";
 
-interface SherpaOnnxCatalogEntry {
-  kind: SherpaOnnxModelKind;
+interface SherpaOnnxCatalogEntryBase {
   archiveUrl: string;
   extractedDir: string;
   requiredFiles: string[];
@@ -13,9 +12,23 @@ interface SherpaOnnxCatalogEntry {
   defaultFor?: DefaultModelRole;
 }
 
+export type SherpaOnnxSttArchitecture = "nemo_transducer" | "paraformer";
+
+interface SherpaOnnxSttCatalogEntry extends SherpaOnnxCatalogEntryBase {
+  kind: "stt-offline";
+  architecture: SherpaOnnxSttArchitecture;
+}
+
+interface SherpaOnnxTtsCatalogEntry extends SherpaOnnxCatalogEntryBase {
+  kind: "tts";
+}
+
+type SherpaOnnxCatalogEntry = SherpaOnnxSttCatalogEntry | SherpaOnnxTtsCatalogEntry;
+
 export const SHERPA_ONNX_MODEL_CATALOG = {
   "parakeet-tdt-0.6b-v2-int8": {
     kind: "stt-offline",
+    architecture: "nemo_transducer",
     archiveUrl:
       "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8.tar.bz2",
     extractedDir: "sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8",
@@ -25,12 +38,22 @@ export const SHERPA_ONNX_MODEL_CATALOG = {
   },
   "parakeet-tdt-0.6b-v3-int8": {
     kind: "stt-offline",
+    architecture: "nemo_transducer",
     archiveUrl:
       "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8.tar.bz2",
     extractedDir: "sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8",
     requiredFiles: ["encoder.int8.onnx", "decoder.int8.onnx", "joiner.int8.onnx", "tokens.txt"],
     description:
       "NVIDIA Parakeet TDT v3 (offline NeMo transducer, 25 European languages, auto-detected).",
+  },
+  "paraformer-zh": {
+    kind: "stt-offline",
+    architecture: "paraformer",
+    archiveUrl:
+      "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-paraformer-zh-2023-09-14.tar.bz2",
+    extractedDir: "sherpa-onnx-paraformer-zh-2023-09-14",
+    requiredFiles: ["model.int8.onnx", "tokens.txt"],
+    description: "Paraformer ZH (offline int8, Chinese/English).",
   },
   "kokoro-en-v0_19": {
     kind: "tts",
@@ -58,7 +81,7 @@ const ALL_MODEL_IDS: SherpaOnnxModelId[] = Object.keys(SHERPA_ONNX_MODEL_CATALOG
 );
 
 function isLocalSttModelId(id: SherpaOnnxModelId): id is LocalSttModelId {
-  return SHERPA_ONNX_MODEL_CATALOG[id].kind !== "tts";
+  return SHERPA_ONNX_MODEL_CATALOG[id].kind === "stt-offline";
 }
 
 function isLocalTtsModelId(id: SherpaOnnxModelId): id is LocalTtsModelId {
@@ -100,21 +123,35 @@ function createModelIdSchema<T extends string>(modelIds: readonly T[]): z.ZodTyp
 export const LocalSttModelIdSchema = createModelIdSchema(LOCAL_STT_MODEL_IDS);
 export const LocalTtsModelIdSchema = createModelIdSchema(LOCAL_TTS_MODEL_IDS);
 
-export type SherpaOnnxModelSpec = SherpaOnnxCatalogEntry & {
+export interface SherpaOnnxSttModelSpec extends SherpaOnnxSttCatalogEntry {
   id: SherpaOnnxModelId;
-};
+}
+
+export interface SherpaOnnxTtsModelSpec extends SherpaOnnxTtsCatalogEntry {
+  id: SherpaOnnxModelId;
+}
+
+export type SherpaOnnxModelSpec = SherpaOnnxSttModelSpec | SherpaOnnxTtsModelSpec;
 
 export function listSherpaOnnxModels(): SherpaOnnxModelSpec[] {
-  return ALL_MODEL_IDS.map((id) => Object.assign({ id }, SHERPA_ONNX_MODEL_CATALOG[id]));
+  return ALL_MODEL_IDS.map((id) => getSherpaOnnxModelSpec(id));
 }
 
 export function getSherpaOnnxModelSpec(id: SherpaOnnxModelId): SherpaOnnxModelSpec {
-  const spec = SHERPA_ONNX_MODEL_CATALOG[id];
-  if (!spec) {
+  const entry = SHERPA_ONNX_MODEL_CATALOG[id];
+  if (!entry) {
     throw new Error(`Unknown local speech model id: ${id}`);
   }
-  return {
-    id,
-    ...spec,
-  };
+  if (entry.kind === "stt-offline") {
+    return { id, ...entry };
+  }
+  return { id, ...entry };
+}
+
+export function getSherpaOnnxSttArchitecture(id: LocalSttModelId): SherpaOnnxSttArchitecture {
+  const spec = SHERPA_ONNX_MODEL_CATALOG[id];
+  if (spec.kind !== "stt-offline") {
+    throw new Error(`Local speech model is not an offline STT model: ${id}`);
+  }
+  return spec.architecture;
 }

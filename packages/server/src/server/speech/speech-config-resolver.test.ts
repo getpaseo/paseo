@@ -134,6 +134,30 @@ describe("resolveSpeechConfig", () => {
     expect(result.openai?.stt?.model).toBe("gpt-4o-transcribe");
   });
 
+  test("resolves paraformer-zh for local voice STT", () => {
+    const result = resolveSpeechConfig({
+      paseoHome: "/tmp/paseo-home",
+      env: {},
+      persisted: PersistedConfigSchema.parse({
+        features: {
+          voiceMode: {
+            stt: {
+              provider: "local",
+              model: " PARAFormer-ZH ",
+            },
+          },
+        },
+      }),
+    });
+
+    expect(result.speech.providers.voiceStt).toEqual({
+      provider: "local",
+      explicit: true,
+      enabled: true,
+    });
+    expect(result.speech.local?.models.voiceStt).toBe("paraformer-zh");
+  });
+
   test("resolves STT language from env, settings, and voice-to-dictation fallback", () => {
     const persisted = PersistedConfigSchema.parse({
       features: {

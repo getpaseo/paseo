@@ -1,5 +1,6 @@
 import { expect, test } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import pino from "pino";
@@ -8,11 +9,11 @@ import { ensureSherpaOnnxModels, getSherpaOnnxModelDir } from "./model-downloade
 import { createDaemonTestContext } from "../../../../test-utils/index.js";
 import { parsePcm16MonoWav, wordSimilarity } from "../../../../test-utils/dictation-e2e.js";
 import { SherpaOnnxTTS } from "./sherpa-tts.js";
-import { SherpaOfflineRecognizerEngine } from "./sherpa-offline-recognizer.js";
+import {
+  createOfflineRecognizerModel,
+  SherpaOfflineRecognizerEngine,
+} from "./sherpa-offline-recognizer.js";
 import { SherpaOnnxParakeetSTT } from "./sherpa-parakeet-stt.js";
-
-const RUN = process.env.PASEO_SPEECH_E2E_DOWNLOAD === "1";
-const downloadTest = RUN ? test : test.skip;
 
 async function readFixtureWav(): Promise<Buffer> {
   const fixturePath = path.resolve(process.cwd(), "..", "app", "e2e", "fixtures", "recording.wav");
@@ -82,7 +83,7 @@ function toAudioPcmFormat(format: string): string {
   return `audio/pcm;${trimmed}`;
 }
 
-downloadTest(
+test(
   "downloads default local speech models and runs STT + TTS",
   async () => {
     const logger = pino({ level: "silent" });
@@ -206,13 +207,7 @@ downloadTest(
       const sttModelDir = getSherpaOnnxModelDir(modelsDir, "parakeet-tdt-0.6b-v2-int8");
       const engine = new SherpaOfflineRecognizerEngine(
         {
-          model: {
-            kind: "nemo_transducer",
-            encoder: `${sttModelDir}/encoder.int8.onnx`,
-            decoder: `${sttModelDir}/decoder.int8.onnx`,
-            joiner: `${sttModelDir}/joiner.int8.onnx`,
-            tokens: `${sttModelDir}/tokens.txt`,
-          },
+          model: createOfflineRecognizerModel("parakeet-tdt-0.6b-v2-int8", sttModelDir),
           numThreads: 2,
           debug: 0,
         },
@@ -227,4 +222,72 @@ downloadTest(
     }
   },
   15 * 60_000,
+);
+
+test(
+  "downloads Paraformer and transcribes a mixed Chinese-English dictation stream",
+  async () => {
+    const logger = pino({ level: "silent" });
+    const paseoHomeRoot = mkdtempSync(path.join(tmpdir(), "paseo-paraformer-download-"));
+    const modelsDir = path.join(paseoHomeRoot, ".paseo", "models", "local-speech");
+
+    await ensureSherpaOnnxModels({
+      modelsDir,
+      modelIds: ["paraformer-zh"],
+      logger,
+    });
+
+    const ctx = await createDaemonTestContext({
+      paseoHomeRoot,
+      dictationFinalTimeoutMs: 30_000,
+      speech: {
+        providers: {
+          dictationStt: { provider: "local", explicit: true },
+          voiceTurnDetection: { provider: "local", explicit: true, enabled: false },
+          voiceStt: { provider: "local", explicit: true, enabled: false },
+          voiceTts: { provider: "local", explicit: true, enabled: false },
+        },
+        local: {
+          modelsDir,
+          models: {
+            dictationStt: "paraformer-zh",
+            voiceStt: "paraformer-zh",
+            voiceTts: "kokoro-en-v0_19",
+            voiceTtsSpeakerId: 0,
+          },
+        },
+      },
+    });
+
+    try {
+      const modelDir = getSherpaOnnxModelDir(modelsDir, "paraformer-zh");
+      const wav = await readFile(path.join(modelDir, "test_wavs", "6-zh-en.wav"));
+      const { sampleRate, pcm16 } = parsePcm16MonoWav(wav);
+      expect(sampleRate).toBe(16000);
+
+      const dictationId = "paraformer-dictation";
+      await ctx.client.startDictationStream(dictationId, "audio/pcm;rate=16000;bits=16");
+
+      const chunkBytes = 3200;
+      let sequence = 0;
+      for (let offset = 0; offset < pcm16.length; offset += chunkBytes) {
+        const chunk = pcm16.subarray(offset, Math.min(pcm16.length, offset + chunkBytes));
+        ctx.client.sendDictationStreamChunk(
+          dictationId,
+          sequence,
+          chunk.toString("base64"),
+          "audio/pcm;rate=16000;bits=16",
+        );
+        sequence += 1;
+      }
+
+      const final = await ctx.client.finishDictationStream(dictationId, sequence - 1);
+      expect(final.text).toContain("星期一");
+      expect(final.text.toLowerCase()).toContain("tuesday");
+      expect(final.text).toContain("明天是星期三");
+    } finally {
+      await ctx.cleanup();
+    }
+  },
+  5 * 60_000,
 );

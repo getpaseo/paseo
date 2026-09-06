@@ -3,7 +3,10 @@ import pino from "pino";
 import type { StreamingTranscriptionSession } from "../../speech-provider.js";
 import type { TurnDetectionSession } from "../../turn-detection-provider.js";
 import { getLocalSpeechModelDir, type LocalSttModelId, type LocalTtsModelId } from "./models.js";
-import { SherpaOfflineRecognizerEngine } from "./sherpa/sherpa-offline-recognizer.js";
+import {
+  createOfflineRecognizerModel,
+  SherpaOfflineRecognizerEngine,
+} from "./sherpa/sherpa-offline-recognizer.js";
 import { SherpaOnnxParakeetSTT } from "./sherpa/sherpa-parakeet-stt.js";
 import { SherpaParakeetRealtimeTranscriptionSession } from "./sherpa/sherpa-parakeet-realtime-session.js";
 import { SherpaOnnxTTS } from "./sherpa/sherpa-tts.js";
@@ -85,13 +88,7 @@ function getSttEngine(
   const modelDir = getLocalSpeechModelDir(config.modelsDir, modelId);
   const created = new SherpaOfflineRecognizerEngine(
     {
-      model: {
-        kind: "nemo_transducer",
-        encoder: `${modelDir}/encoder.int8.onnx`,
-        decoder: `${modelDir}/decoder.int8.onnx`,
-        joiner: `${modelDir}/joiner.int8.onnx`,
-        tokens: `${modelDir}/tokens.txt`,
-      },
+      model: createOfflineRecognizerModel(modelId, modelDir),
       numThreads: 2,
       debug: 0,
     },
