@@ -79,6 +79,9 @@ function terminalCharWidth(char: string): number {
 }
 
 function shouldSkipSpacerCell(cells: TerminalRenderableCell[], col: number, char: string): boolean {
+  if (cells[col + 1]?.char === "") {
+    return true;
+  }
   if (terminalCharWidth(char) < 2) {
     return false;
   }

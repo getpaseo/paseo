@@ -41,6 +41,18 @@ describe("terminal row model", () => {
     ]);
   });
 
+  test("renders snapshot continuation sentinels without gaps before headless replay", () => {
+    const resolver = createTerminalCellStyleResolver(DEFAULT_TERMINAL_THEME);
+    const rows = buildRows({
+      grid: [[cell("한"), cell(""), cell(" "), cell(" "), cell("𠀀"), cell(""), cell("A")]],
+      resolver,
+    });
+
+    expect(rows[0].runs.map((run) => ({ text: run.text, cellCount: run.cellCount }))).toEqual([
+      { text: "한  𠀀A", cellCount: 7 },
+    ]);
+  });
+
   test("redraws selected cells with the terminal selection colors", () => {
     const resolver = createTerminalCellStyleResolver(DEFAULT_TERMINAL_THEME);
     const grid = [[cell("a", { fg: 1, fgMode: 1 }), cell("b", { dim: true }), cell("c")]];

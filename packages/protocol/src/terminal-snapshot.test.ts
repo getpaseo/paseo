@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { renderTerminalSnapshotToAnsi } from "./terminal-snapshot";
 import type { TerminalState } from "./messages";
+import { stripVTControlCharacters } from "node:util";
 
 function cells(text: string): TerminalState["grid"][number] {
   return [...text].map((char) => ({ char }));
@@ -45,5 +46,30 @@ describe("renderTerminalSnapshotToAnsi", () => {
 
     expect(ansi).toContain("[?7l");
     expect(ansi).toContain("ABCDEFGHIJ\r\nKLMNOP");
+  });
+
+  it("preserves real spaces when wide continuations cross a wrapped scrollback boundary", () => {
+    const state: TerminalState = {
+      rows: 1,
+      cols: 8,
+      scrollback: [
+        [
+          { char: "한", fg: 1, fgMode: 1 },
+          { char: "" },
+          { char: " " },
+          { char: " " },
+          { char: "글" },
+          { char: "" },
+        ],
+      ],
+      scrollbackWrapped: [true],
+      grid: [[{ char: "끝" }, { char: "" }, { char: "!" }]],
+      gridWrapped: [false],
+      cursor: { row: 0, col: 3 },
+    };
+
+    // The short wrapped row needs two real padding columns, not extra columns
+    // for either wide glyph. The two intentional spaces must also survive.
+    expect(stripVTControlCharacters(renderTerminalSnapshotToAnsi(state))).toBe("한  글  끝!");
   });
 });
