@@ -1,4 +1,56 @@
 export const en = {
+  localFiles: {
+    updateHost: "Update this host to import local files.",
+    missingTitle: "Missing local files",
+    missingConfirm:
+      "{{files}} are missing in {{root}}. Continue without these files? Cancel to import them first.",
+    continueWithout: "Continue without files",
+    unavailableForWorktree: "Resolve these local files before creating a worktree: {{files}}",
+
+    title: "Local files",
+    info: "Import ignored environment and configuration files to this host. Its agents and scripts can read them.",
+    import: "Import files…",
+    importTo: "Import to {{host}}",
+    thisDevice: "This device",
+    fromDevice: "From this device…",
+    fromHost: "From another host…",
+    source: "Source: {{source}}",
+    sourcePath: "Other source file (project-relative path)",
+    inspect: "Inspect",
+    refresh: "Refresh",
+    total: "Selected: {{count}} · {{size}}",
+    include: "Include in future worktrees",
+    configPreview:
+      "Merge these paths into paseo.json. This creates an uncommitted configuration change; existing worktree files stay as they are.",
+    complete: "Files imported. Existing worktrees were not updated.",
+    limits:
+      "Individual files only. Maximum 10 MiB per file, 25 MiB per import, and 100 files. Updates are manual.",
+    existing: "Already exists · replacement requires selection",
+    replace: "Replace {{path}}",
+    status: {
+      ready: "Present",
+      missing: "Missing",
+      not_ignored: "Must be Git-ignored",
+      unsupported: "Unsupported file or path",
+      too_large: "Too large",
+      unavailable: "Unavailable",
+      imported: "Imported",
+    },
+    errors: {
+      load_failed: "Could not inspect files. Check the host connection and try again.",
+      selection_invalid: "Choose at most 100 files with distinct names.",
+      no_source_files: "No eligible files found. Enter an ignored file path to inspect it.",
+      changed: "File changed since preview. Choose the source again to review the latest copy.",
+      import_failed: "Import failed. Check the connection and try again.",
+      partial_failure:
+        "Some files failed. Retry selected failures or choose the source again to refresh.",
+      secure_connection_required:
+        "Use a relay, TLS, or a local/SSH connection to transfer sensitive files.",
+      config_failed:
+        "Files imported, but inclusion was not saved. Refresh to review the latest configuration, then save inclusion without retransferring files.",
+    },
+  },
+
   common: {
     back: "Back",
     loading: "Loading...",

@@ -112,6 +112,63 @@ Both fields accept a multiline shell script or an array of commands; commands ru
 
 Commands run with the worktree as `cwd`. Use `$PASEO_SOURCE_CHECKOUT_PATH` to reach files in the original checkout (untracked config, local caches, etc).
 
+## Local files
+
+Open **Project Settings → Local files** on the destination host and select
+**Import files**. Choose files from your device, or choose another connected host
+and project. Your device does not need a local daemon or a checkout of the project.
+Both hosts must be connected when copying from another host. Device imports use
+the chosen filename: `~/code/app/.env` becomes `/srv/app/.env` when `/srv/app` is
+the selected destination project. A host source must be a registered project,
+but it does not have to be linked to the destination or use the same repository.
+
+Review names, sizes, and destination status before importing. Small new files are
+selected for you. Existing files remain unchecked; selecting one authorizes its
+replacement. If a source or destination changes after inspection, select it again
+to review the current copy. Values are never shown in the import preview.
+
+Files must be Git-ignored and untracked in the destination project. Host sources
+must also be ignored and untracked. Only individual regular files are supported:
+no directories, globs, or symlinks. Imports are limited to 10 MiB per file,
+25 MiB per selection, and 100 files. Device pickers start with files you choose;
+Paseo does not scan your device for credentials. Host suggestions use configured
+paths and common environment filenames without interpreting their contents.
+
+Enable **Include in future worktrees** to merge the selected paths into
+`paseo.json`:
+
+```json
+{
+  "worktree": {
+    "localFiles": [".env.local", "local/dev.pem"]
+  }
+}
+```
+
+Paths are relative to the selected project root, including projects within a repo
+subdirectory. This edit is visible and uncommitted. The checked-out source
+project's file list takes effect for new worktrees immediately; commit the list
+to share that intent through Git with other hosts. Each host still needs its own
+file contents. Setup commands continue to come from the worktree's selected
+branch.
+
+Configured files are copied before setup starts. Existing files in a worktree are
+preserved, including when you run setup again. For an external change request,
+files are withheld until you explicitly run setup, along with the other workspace
+automation. If configured files are missing, workspace creation lets you import
+first or explicitly continue without them; a setup script that requires those
+files can still fail.
+
+Imports update the destination project root. Existing worktrees are not updated,
+and files do not synchronize in the background. If files arrive but saving
+`paseo.json` fails, refresh the configuration in the import sheet and save inclusion
+again without retransmitting successful files.
+
+The client requires an encrypted relay connection, TLS, or loopback for file
+contents. Imported files remain plaintext on the destination host and are readable
+by its agents and scripts. Paseo creates files with owner-only permissions on
+POSIX; Windows uses the destination's filesystem access controls.
+
 ## Scripts and services
 
 `scripts` are named commands you can run inside a worktree on demand. Mark one as a _service_ and Paseo supervises it as a long-running process, assigns it a port, and routes HTTP traffic to it through the daemon's reverse proxy.

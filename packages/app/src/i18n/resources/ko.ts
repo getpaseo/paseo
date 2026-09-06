@@ -2,6 +2,57 @@ import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const ko: TranslationResources = {
+  localFiles: {
+    updateHost: "로컬 파일을 가져오려면 이 호스트를 업데이트하세요.",
+    missingTitle: "로컬 파일 누락",
+    missingConfirm:
+      "{{root}}에 {{files}} 파일이 없습니다. 파일 없이 계속할까요? 먼저 가져오려면 취소하세요.",
+    continueWithout: "파일 없이 계속",
+    unavailableForWorktree: "worktree를 만들기 전에 다음 로컬 파일을 확인하세요: {{files}}",
+
+    title: "로컬 파일",
+    info: "Git에서 무시하는 환경 및 설정 파일을 이 호스트로 가져옵니다. 호스트의 에이전트와 스크립트가 읽을 수 있습니다.",
+    import: "파일 가져오기…",
+    importTo: "{{host}}로 가져오기",
+    thisDevice: "이 기기",
+    fromDevice: "이 기기에서…",
+    fromHost: "다른 호스트에서…",
+    source: "원본: {{source}}",
+    sourcePath: "다른 원본 파일(프로젝트 상대 경로)",
+    inspect: "확인",
+    refresh: "새로고침",
+    total: "선택: {{count}} · {{size}}",
+    include: "향후 워크트리에 포함",
+    configPreview:
+      "이 경로들을 paseo.json에 추가합니다. 커밋되지 않은 설정 변경이 생기며 기존 워크트리 파일은 변경되지 않습니다.",
+    complete: "파일을 가져왔습니다. 기존 워크트리는 업데이트하지 않았습니다.",
+    limits:
+      "개별 파일만 지원합니다. 파일당 10 MiB, 가져오기당 25 MiB, 최대 100개. 업데이트는 수동입니다.",
+    existing: "이미 존재 · 교체하려면 선택",
+    replace: "{{path}} 교체",
+    status: {
+      ready: "있음",
+      missing: "없음",
+      not_ignored: "Git에서 무시해야 함",
+      unsupported: "지원하지 않는 파일 또는 경로",
+      too_large: "너무 큼",
+      unavailable: "사용 불가",
+      imported: "가져옴",
+    },
+    errors: {
+      load_failed: "파일을 확인하지 못했습니다. 호스트 연결을 확인하고 다시 시도하세요.",
+      selection_invalid: "이름이 서로 다른 파일을 최대 100개 선택하세요.",
+      no_source_files: "해당 파일이 없습니다. Git에서 무시하는 파일 경로를 입력해 확인하세요.",
+      changed: "미리보기 이후 파일이 변경되었습니다. 원본을 다시 선택해 최신 사본을 확인하세요.",
+      import_failed: "가져오기에 실패했습니다. 연결을 확인하고 다시 시도하세요.",
+      partial_failure:
+        "일부 파일이 실패했습니다. 선택한 실패 항목을 재시도하거나 원본을 다시 선택하세요.",
+      secure_connection_required: "민감한 파일은 릴레이, TLS, 로컬 또는 SSH 연결로 전송하세요.",
+      config_failed:
+        "파일은 가져왔지만 포함 설정을 저장하지 못했습니다. 새로고침하여 최신 설정을 확인한 후 재전송 없이 포함 설정을 저장하세요.",
+    },
+  },
+
   common: {
     back: "뒤로",
     loading: "불러오는 중...",

@@ -1,4 +1,9 @@
 import { getHostRuntimeStore } from "@/runtime/host-runtime";
+import {
+  NewWorkspaceLocalFiles,
+  LocalFilesCreationCanceled,
+  confirmMissingLocalFiles,
+} from "@/projects/local-files/creation";
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import type { ReactElement, RefObject } from "react";
 import { useTranslation } from "react-i18next";
@@ -802,6 +807,7 @@ async function createAndMergeWorkspace(input: {
 async function createMultiplicityWorkspace(input: {
   client: NonNullable<ReturnType<typeof useHostRuntimeClient>>;
   isolation: "local" | "worktree";
+  skipMissingLocalFiles?: boolean;
   project: HostProjectListItem;
   sourceDirectory: string;
   checkoutRequest: PickerCheckoutRequest | undefined;
@@ -827,6 +833,7 @@ async function createMultiplicityWorkspace(input: {
       ? {
           kind: "worktree",
           cwd: input.sourceDirectory,
+          skipMissingLocalFiles: input.skipMissingLocalFiles,
           projectId,
           worktreeSlug: createNameId(),
           ...input.checkoutRequest,
@@ -1575,6 +1582,7 @@ export function NewWorkspaceScreen({
   // COMPAT(workspaceMultiplicity): added in v0.1.97, drop the gate when floor >= v0.1.97
   const supportsWorkspaceMultiplicity = useHostFeature(selectedServerId, "workspaceMultiplicity");
   const supportsForgeSearch = useHostFeature(selectedServerId, "forgeSearch");
+  const supportsLocalFiles = useHostFeature(selectedServerId, "projectLocalFiles");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [createdWorkspace, setCreatedWorkspace] = useState<ReturnType<
     typeof normalizeWorkspaceDescriptor
@@ -1982,6 +1990,16 @@ export function NewWorkspaceScreen({
       }
       const connectedClient = withConnectedClient();
       const createsWorktree = !supportsWorkspaceMultiplicity || effectiveIsolation === "worktree";
+      const localFilesProjectId = getHostProjectId(selectedProject, selectedServerId);
+      const skipMissingLocalFiles =
+        createsWorktree && supportsLocalFiles && localFilesProjectId
+          ? await confirmMissingLocalFiles(
+              connectedClient,
+              localFilesProjectId,
+              selectedSourceDirectory,
+              t,
+            )
+          : false;
       const checkoutStatusForCreate = createsWorktree
         ? await ensureCheckoutStatus({
             queryClient,
@@ -1999,6 +2017,7 @@ export function NewWorkspaceScreen({
         ? await createMultiplicityWorkspace({
             client: connectedClient,
             isolation: effectiveIsolation,
+            skipMissingLocalFiles,
             project: selectedProject,
             sourceDirectory: selectedSourceDirectory,
             checkoutRequest,
@@ -2030,6 +2049,7 @@ export function NewWorkspaceScreen({
       selectedServerId,
       selectedSourceDirectory,
       supportsWorkspaceMultiplicity,
+      supportsLocalFiles,
       t,
       withConnectedClient,
     ],
@@ -2069,8 +2089,9 @@ export function NewWorkspaceScreen({
           },
         });
       } catch (error) {
-        const message = toErrorMessage(error);
         setPendingAction(null);
+        if (error instanceof LocalFilesCreationCanceled) return;
+        const message = toErrorMessage(error);
         setErrorMessage(message);
         toast.error(message);
       }
@@ -2132,8 +2153,9 @@ export function NewWorkspaceScreen({
           navigateToWorkspace({ serverId: targetServerId, workspaceId, target }),
       });
     } catch (error) {
-      const message = toErrorMessage(error);
       setPendingAction(null);
+      if (error instanceof LocalFilesCreationCanceled) return;
+      const message = toErrorMessage(error);
       setErrorMessage(message);
       toast.error(message);
     }
@@ -2281,6 +2303,13 @@ export function NewWorkspaceScreen({
             <Text style={styles.composerTitle}>{t("newWorkspace.title")}</Text>
           </View>
           {formStack}
+          <NewWorkspaceLocalFiles
+            client={client}
+            serverId={selectedServerId}
+            project={selectedProject}
+            isolation={effectiveIsolation}
+            supported={supportsLocalFiles}
+          />
           {isTerminalLaunch ? (
             <Composer
               key="terminal"

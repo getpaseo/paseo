@@ -1,3 +1,4 @@
+import { LocalFilesSection } from "@/projects/local-files/section";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
@@ -303,6 +304,14 @@ function ProjectSettingsBody({
         supportsCustomIcon={supportsCustomIcon}
         snapshot={editSnapshot}
       />
+
+      {loadedConfig ? (
+        <LocalFilesSection
+          host={selectedHost}
+          client={client}
+          configuredPaths={loadedConfig.worktree?.localFiles ?? []}
+        />
+      ) : null}
 
       {renderContent({
         readQuery,

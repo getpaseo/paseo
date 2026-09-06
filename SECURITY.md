@@ -50,7 +50,7 @@ The daemon also supports an optional shared-secret password (set via `auth.passw
 
 Connected clients are trusted operators of the daemon user. File previews follow that authority: a preview request may read any regular file the daemon process can read, while keeping path normalization and symlink checks in the daemon file service. Workspace-relative paths remain a UI convenience, not a security boundary.
 
-When Paseo checks out a change request from a different repository, it does not run that workspace's `paseo.json` setup, automatic terminals, named scripts, or teardown until you explicitly run setup for that workspace. The decision lasts for the workspace and does not re-prompt after new commits. Same-repository changes, ordinary branches, local workspaces, agent launches, terminals, explicit shell commands, and metadata-generation instructions are outside this gate.
+When Paseo checks out a change request from a different repository, it does not copy configured local files or run that workspace's `paseo.json` setup, automatic terminals, named scripts, or teardown until you explicitly run setup for that workspace. The decision lasts for the workspace and does not re-prompt after new commits. Same-repository changes, ordinary branches, local workspaces, agent launches, terminals, explicit shell commands, and metadata-generation instructions are outside this gate.
 
 If you expose the daemon beyond loopback, such as by binding to `0.0.0.0`, forwarding it through a tunnel or reverse proxy, or publishing it from a Docker container, you are responsible for restricting and securing that access. Setting a password is strongly recommended in that case.
 
@@ -82,7 +82,38 @@ If you don't trust a page, read it in `Source`, which executes nothing. Source i
 
 ## Agent authentication
 
-Paseo wraps agent CLIs (Claude Code, Codex, OpenCode) but does not manage their authentication. Each agent provider handles its own credentials. Paseo never stores or transmits provider API keys. Agents run in your user context with your existing credentials.
+Paseo wraps agent CLIs (Claude Code, Codex, OpenCode) but does not manage their authentication. Each agent provider handles its own credentials. Agents run in your user context with your existing credentials. Provider authentication stays outside Paseo. Files you explicitly import through Local files may contain API keys; that transfer is covered below.
+
+## Local file imports
+
+Local files is an explicit copy between a device or connected daemon project and
+another daemon project. The client shows filenames and sizes, reads selected
+contents for transfer, and does not put those contents in application state
+persistence, query caches, logs, or transcripts. Native imports request the
+original file URI rather than an app cache copy. The operating system or file
+provider can retain its own copies; JavaScript memory is not a secure-erasure
+boundary.
+
+The client permits file contents over an E2E relay, a direct TLS connection, or
+loopback (including a locally terminated tunnel). It refuses remote plaintext
+WebSockets for these RPCs. This client restriction does not replace the daemon's
+socket-access trust boundary. Read and import requests use the existing workspace
+read/write permissions. Linked project display grouping never authorizes a copy.
+
+Destinations are explicit relative paths in a registered project, Git-ignored and
+untracked. The importer rejects symlinks and non-regular files, enforces size
+limits, compares the preview revision before replacement, and publishes through a
+same-directory temporary file. New files use mode `0600` on POSIX; Windows relies
+on filesystem ACLs. Concurrent writes through this importer cannot both replace
+the same revision. These checks do not isolate against a malicious process running
+as the daemon user, which already controls the directory and daemon.
+
+Imported files are plaintext at rest. Agents, scripts, backups, filesystem tools,
+and other processes with access to the destination account can read them. Import
+creates another copy; it does not provide a vault, credential rotation, or remote
+revocation. Existing worktrees retain their copies when a project-root file
+changes or is removed. See [Local files](public-docs/worktrees.md#local-files) for
+configuration and worktree behavior.
 
 ## Forge host trust
 

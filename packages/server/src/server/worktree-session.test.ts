@@ -462,12 +462,20 @@ describe("create-agent worktree setup boundary", () => {
       path.join(repoDir, "paseo.json"),
       JSON.stringify({
         worktree: {
+          localFiles: [".env"],
           setup: [`node -e "require('fs').writeFileSync('${setupMarker}', 'ran')"`],
           terminals: [{ command: "unsafe-terminal" }],
         },
       }),
     );
 
+    writeFileSync(path.join(repoDir, ".gitignore"), ".env\n");
+    writeFileSync(path.join(repoDir, ".env"), "withheld-fixture");
+    execFileSync("git", ["add", "paseo.json", ".gitignore"], { cwd: repoDir, stdio: "ignore" });
+    execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "configure local files"], {
+      cwd: repoDir,
+      stdio: "ignore",
+    });
     try {
       const result = await createPaseoWorktreeWorkflow(
         {
@@ -509,6 +517,7 @@ describe("create-agent worktree setup boundary", () => {
       expect(result.setupContinuation?.kind).toBe("agent");
       result.setupContinuation?.startAfterAgentCreate({ agentId: "agent-fork" });
       expect(existsSync(setupMarker)).toBe(false);
+      expect(existsSync(path.join(result.workspace.cwd, ".env"))).toBe(false);
       expect(emitted).toContainEqual(
         expect.objectContaining({
           type: "workspace_setup_progress",
@@ -1412,6 +1421,7 @@ describe("runWorktreeSetupInBackground", () => {
     const terminalManager = createTerminalManagerStub();
     const dependencies = {
       getWorkspace: async () => workspace,
+      getProjectRoot: async () => tempDir,
       clearAutomationBlock: async () => {
         if (!blocked) return false;
         blocked = false;

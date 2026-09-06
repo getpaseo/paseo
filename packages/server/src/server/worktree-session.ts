@@ -1,3 +1,4 @@
+import { materializeLocalFiles } from "./local-files/files.js";
 import type { Logger } from "pino";
 import { basename } from "node:path";
 
@@ -170,6 +171,7 @@ interface HandleWorkspaceSetupStatusRequestDependencies {
 
 interface HandleWorkspaceSetupRunRequestDependencies extends CreatePaseoWorktreeInBackgroundDependencies {
   getWorkspace: (workspaceId: string) => Promise<PersistedWorkspaceRecord | null>;
+  getProjectRoot: (projectId: string) => Promise<string | null>;
   clearAutomationBlock: (workspaceId: string) => Promise<boolean>;
   startWorkspaceSetup: (workspaceId: string, operation: WorkspaceSetupOperation) => void;
 }
@@ -674,6 +676,7 @@ export async function createPaseoWorktreeWorkflow(
           dependencies,
           {
             requestCwd: input.cwd,
+            skipMissingLocalFiles: input.skipMissingLocalFiles,
             repoRoot: createdWorktree.repoRoot,
             workspaceId: workspace.workspaceId,
             worktree: createdWorktree.worktree,
@@ -703,6 +706,8 @@ export async function createPaseoWorktreeWorkflow(
             workspaceId: workspace.workspaceId,
             worktree: createdWorktree.worktree,
             workspaceCwd: workspace.cwd,
+            sourceProjectRoot: input.cwd,
+            skipMissingLocalFiles: input.skipMissingLocalFiles,
             shouldBootstrap: createdWorktree.created,
             terminalManager: setupContinuation.terminalManager,
             appendTimelineItem: (item) => setupContinuation.appendTimelineItem({ agentId, item }),
@@ -761,6 +766,8 @@ export async function handleWorkspaceSetupRunRequest(
     if (!workspace || workspace.archivedAt) {
       throw new Error(`Workspace not found: ${request.workspaceId}`);
     }
+    const sourceProjectRoot = await dependencies.getProjectRoot(workspace.projectId);
+    if (!sourceProjectRoot) throw new Error("Project no longer exists");
     const started = await dependencies.clearAutomationBlock(request.workspaceId);
     if (started) {
       const worktree: WorktreeConfig = {
@@ -771,7 +778,7 @@ export async function handleWorkspaceSetupRunRequest(
         runWorktreeSetupInBackground(
           dependencies,
           {
-            requestCwd: workspace.cwd,
+            requestCwd: sourceProjectRoot,
             repoRoot: workspace.mainRepoRoot ?? workspace.cwd,
             workspaceId: workspace.workspaceId,
             worktree,
@@ -812,6 +819,7 @@ export async function runWorktreeSetupInBackground(
   dependencies: CreatePaseoWorktreeInBackgroundDependencies,
   options: {
     requestCwd: string;
+    skipMissingLocalFiles?: boolean;
     repoRoot: string;
     workspaceId: string;
     worktree: WorktreeConfig;
@@ -861,6 +869,11 @@ export async function runWorktreeSetupInBackground(
       } else {
         const workspaceCwd = options.workspaceCwd ?? worktree.worktreePath;
         const setupCommands = getWorktreeSetupCommands(workspaceCwd);
+        await materializeLocalFiles(
+          options.requestCwd,
+          workspaceCwd,
+          options.skipMissingLocalFiles,
+        );
         if (setupCommands.length === 0) {
           setupStarted = true;
           emitSetupProgress("completed", null);

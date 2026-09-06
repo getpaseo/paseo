@@ -1,3 +1,4 @@
+import { materializeLocalFiles } from "./local-files/files.js";
 import { v4 as uuidv4 } from "uuid";
 import type { Logger } from "pino";
 import type { TerminalManager } from "../terminal/terminal-manager.js";
@@ -47,6 +48,8 @@ export interface RunAsyncWorktreeBootstrapOptions {
   workspaceId: string;
   worktree: WorktreeConfig;
   workspaceCwd?: string;
+  sourceProjectRoot?: string;
+  skipMissingLocalFiles?: boolean;
   shouldBootstrap?: boolean;
   terminalManager: TerminalManager | null;
   appendTimelineItem: (item: AgentTimelineItem) => Promise<boolean>;
@@ -666,6 +669,13 @@ export async function runAsyncWorktreeBootstrap(
       env: runtimeEnv,
     });
 
+    if (options.sourceProjectRoot) {
+      await materializeLocalFiles(
+        options.sourceProjectRoot,
+        workspaceCwd,
+        options.skipMissingLocalFiles,
+      );
+    }
     setupResults = await runWorktreeSetupCommands({
       worktreePath: workspaceCwd,
       branchName: options.worktree.branchName,

@@ -48,6 +48,7 @@ export const PaseoWorktreeConfigRawSchema = z
     setup: PaseoLifecycleCommandRawSchema.optional(),
     teardown: PaseoLifecycleCommandRawSchema.optional(),
     terminals: z.unknown().optional(),
+    localFiles: z.array(z.string()).max(100).optional(),
     servicePorts: PaseoServicePortAllocationSchema.optional(),
   })
   .passthrough();

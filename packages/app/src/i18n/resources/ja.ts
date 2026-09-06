@@ -2,6 +2,59 @@ import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const ja: TranslationResources = {
+  localFiles: {
+    updateHost: "ローカルファイルをインポートするには、このホストを更新してください。",
+    missingTitle: "ローカルファイルがありません",
+    missingConfirm:
+      "{{root}} に {{files}} がありません。ファイルなしで続行しますか？先にインポートする場合はキャンセルしてください。",
+    continueWithout: "ファイルなしで続行",
+    unavailableForWorktree:
+      "worktree を作成する前に、次のローカルファイルを確認してください: {{files}}",
+
+    title: "ローカルファイル",
+    info: "Gitで無視される環境・設定ファイルをこのホストにインポートします。このホストのエージェントやスクリプトは内容を読み取れます。",
+    import: "ファイルをインポート…",
+    importTo: "{{host}} にインポート",
+    thisDevice: "このデバイス",
+    fromDevice: "このデバイスから…",
+    fromHost: "別のホストから…",
+    source: "コピー元: {{source}}",
+    sourcePath: "その他のコピー元ファイル（プロジェクトからの相対パス）",
+    inspect: "確認",
+    refresh: "更新",
+    total: "選択: {{count}} · {{size}}",
+    include: "今後のワークツリーに含める",
+    configPreview:
+      "これらのパスを paseo.json に追加します。未コミットの設定変更が作成されます。既存のワークツリーファイルは変更されません。",
+    complete: "インポートしました。既存のワークツリーは更新していません。",
+    limits: "個別ファイルのみ。1ファイル10 MiB、1回25 MiB、100ファイルまで。更新は手動です。",
+    existing: "既存ファイル · 置換には選択が必要",
+    replace: "{{path}} を置換",
+    status: {
+      ready: "あり",
+      missing: "なし",
+      not_ignored: "Gitで無視する必要があります",
+      unsupported: "非対応のファイルまたはパス",
+      too_large: "サイズ超過",
+      unavailable: "利用不可",
+      imported: "インポート済み",
+    },
+    errors: {
+      load_failed: "ファイルを確認できませんでした。ホスト接続を確認して再試行してください。",
+      selection_invalid: "名前が重複しないファイルを100個まで選択してください。",
+      no_source_files:
+        "対象ファイルがありません。Gitで無視されるファイルのパスを入力して確認してください。",
+      changed: "プレビュー後に変更されました。コピー元を再選択して最新の状態を確認してください。",
+      import_failed: "インポートに失敗しました。接続を確認して再試行してください。",
+      partial_failure:
+        "一部のファイルに失敗しました。選択した失敗分を再試行するか、コピー元を再選択して更新してください。",
+      secure_connection_required:
+        "機密ファイルの転送にはリレー、TLS、ローカルまたはSSH接続を使用してください。",
+      config_failed:
+        "ファイルはインポート済みですが、追加設定を保存できませんでした。更新して最新の設定を確認し、再転送せずに追加設定を保存してください。",
+    },
+  },
+
   common: {
     back: "戻る",
     loading: "読み込み中...",
