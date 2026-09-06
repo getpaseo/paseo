@@ -143,7 +143,15 @@ export function registerNotificationHandlers(): void {
         activeNotifications.delete(notification);
       });
 
-      notification.show();
+      notification.on("failed", () => {
+        activeNotifications.delete(notification);
+      });
+
+      try {
+        notification.show();
+      } catch {
+        activeNotifications.delete(notification);
+      }
     } else {
       showScreenFloatingNotification({
         title,
