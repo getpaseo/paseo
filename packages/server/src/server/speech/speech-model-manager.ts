@@ -8,8 +8,6 @@ import {
   type PersistedConfig,
 } from "../persisted-config.js";
 import {
-  DEFAULT_LOCAL_STT_MODEL,
-  DEFAULT_LOCAL_TTS_MODEL,
   SHERPA_ONNX_MODEL_CATALOG,
   type SherpaOnnxCatalogEntry,
   type SherpaOnnxModelId,
@@ -50,12 +48,10 @@ export class SpeechModelManager {
     const features = loadPersistedConfig(this.requirePaseoHome(), this.logger).features;
     const stt = features?.dictation?.stt;
     const tts = features?.voiceMode?.tts;
-
     const activeSttModelId =
-      stt?.model && stt.model in SHERPA_ONNX_MODEL_CATALOG ? stt.model : DEFAULT_LOCAL_STT_MODEL;
+      stt?.model && stt.model in SHERPA_ONNX_MODEL_CATALOG ? stt.model : null;
     const activeTtsModelId =
-      tts?.model && tts.model in SHERPA_ONNX_MODEL_CATALOG ? tts.model : DEFAULT_LOCAL_TTS_MODEL;
-
+      tts?.model && tts.model in SHERPA_ONNX_MODEL_CATALOG ? tts.model : null;
     const modelLanguages =
       stt?.language && activeSttModelId ? { [activeSttModelId]: stt.language } : {};
 
@@ -70,11 +66,11 @@ export class SpeechModelManager {
   }
 
   private writeFeatureModels(next: {
-    dictationSttModel?: string;
-    voiceSttModel?: string;
-    voiceTtsModel?: string;
-    sttLanguage?: string;
-    voiceTtsSpeakerId?: number;
+    dictationSttModel?: string | null;
+    voiceSttModel?: string | null;
+    voiceTtsModel?: string | null;
+    sttLanguage?: string | null;
+    voiceTtsSpeakerId?: number | null;
     dictationEnabled?: boolean;
     voiceModeEnabled?: boolean;
   }): void {
@@ -87,22 +83,42 @@ export class SpeechModelManager {
     const voiceTts = { ...voiceMode.tts };
 
     if (next.dictationSttModel !== undefined) {
-      dictationStt.model = next.dictationSttModel;
+      if (next.dictationSttModel === null) {
+        delete dictationStt.model;
+      } else {
+        dictationStt.model = next.dictationSttModel;
+      }
     }
     if (next.voiceSttModel !== undefined) {
-      voiceStt.model = next.voiceSttModel;
+      if (next.voiceSttModel === null) {
+        delete voiceStt.model;
+      } else {
+        voiceStt.model = next.voiceSttModel;
+      }
     }
     if (next.voiceTtsModel !== undefined) {
-      voiceTts.model = next.voiceTtsModel;
+      if (next.voiceTtsModel === null) {
+        delete voiceTts.model;
+      } else {
+        voiceTts.model = next.voiceTtsModel;
+      }
     }
     if (next.voiceTtsSpeakerId !== undefined) {
-      voiceTts.speakerId = next.voiceTtsSpeakerId;
+      if (next.voiceTtsSpeakerId === null) {
+        delete voiceTts.speakerId;
+      } else {
+        voiceTts.speakerId = next.voiceTtsSpeakerId;
+      }
     }
     if (next.sttLanguage !== undefined) {
-      dictationStt.language = next.sttLanguage;
-      voiceStt.language = next.sttLanguage;
+      if (next.sttLanguage === null) {
+        delete dictationStt.language;
+        delete voiceStt.language;
+      } else {
+        dictationStt.language = next.sttLanguage;
+        voiceStt.language = next.sttLanguage;
+      }
     }
-
     const nextFeatures: PersistedConfig["features"] = {
       ...features,
       dictation: {
@@ -298,17 +314,25 @@ export class SpeechModelManager {
     const isTtsActive = prefs.activeTtsModelId === modelId;
 
     if (isSttActive || isTtsActive) {
+      const installedModels = await this.listModels();
+      const fallbackStt = installedModels.find(
+        (m) => m.kind === "stt" && m.id !== modelId && m.status === "installed",
+      )?.id;
+      const fallbackTts = installedModels.find(
+        (m) => m.kind === "tts" && m.id !== modelId && m.status === "installed",
+      )?.id;
+
       this.writeFeatureModels({
         ...(isSttActive
           ? {
-              dictationSttModel: DEFAULT_LOCAL_STT_MODEL,
-              voiceSttModel: DEFAULT_LOCAL_STT_MODEL,
+              dictationSttModel: fallbackStt ?? null,
+              voiceSttModel: fallbackStt ?? null,
             }
           : {}),
         ...(isTtsActive
           ? {
-              voiceTtsModel: DEFAULT_LOCAL_TTS_MODEL,
-              voiceTtsSpeakerId: undefined,
+              voiceTtsModel: fallbackTts ?? null,
+              voiceTtsSpeakerId: null,
             }
           : {}),
       });
