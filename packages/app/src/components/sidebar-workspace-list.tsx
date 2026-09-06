@@ -48,6 +48,10 @@ import {
 } from "@/hooks/use-sidebar-workspace-pin";
 import { useSidebarCollapsedSectionsStore } from "@/stores/sidebar-collapsed-sections-store";
 import { useHostFeatureMap } from "@/runtime/host-features";
+import {
+  useHostRuntimeConnectionStatuses,
+  type HostRuntimeConnectionStatus,
+} from "@/runtime/host-runtime";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { useProjectIcons } from "@/projects/icons";
 import {
@@ -1546,6 +1550,7 @@ function ProjectBlock({
   activeWorkspaceSelection,
   hostBadgeByServerId,
   supportsMultiplicityByServerId,
+  hostConnectionStatusByServerId,
   supportsPinningByServerId,
   onToggleWorkspacePin,
 }: {
@@ -1571,6 +1576,7 @@ function ProjectBlock({
   activeWorkspaceSelection: ActiveWorkspaceSelection | null;
   hostBadgeByServerId: ReadonlyMap<string, HostBadgeModel>;
   supportsMultiplicityByServerId: ReadonlyMap<string, boolean>;
+  hostConnectionStatusByServerId: ReadonlyMap<string, HostRuntimeConnectionStatus>;
   supportsPinningByServerId: ReadonlyMap<string, boolean>;
   onToggleWorkspacePin: ToggleSidebarWorkspacePin;
 }) {
@@ -1586,8 +1592,16 @@ function ProjectBlock({
         project,
         collapsed,
         supportsMultiplicityByServerId,
+        activeServerId: activeWorkspaceSelection?.serverId ?? null,
+        hostConnectionStatusByServerId,
       }),
-    [collapsed, project, supportsMultiplicityByServerId],
+    [
+      activeWorkspaceSelection?.serverId,
+      collapsed,
+      project,
+      supportsMultiplicityByServerId,
+      hostConnectionStatusByServerId,
+    ],
   );
 
   // Collapsed rows hide their workspace rows, so the project row carries the most urgent
@@ -1819,6 +1833,7 @@ function areProjectBlockPropsEqual(previous: ProjectBlockProps, next: ProjectBlo
     previous.shortcutIndexByWorkspaceKey === next.shortcutIndexByWorkspaceKey &&
     previous.hostBadgeByServerId === next.hostBadgeByServerId &&
     previous.supportsMultiplicityByServerId === next.supportsMultiplicityByServerId &&
+    previous.hostConnectionStatusByServerId === next.hostConnectionStatusByServerId &&
     previous.supportsPinningByServerId === next.supportsPinningByServerId &&
     previous.onToggleWorkspacePin === next.onToggleWorkspacePin &&
     previous.parentGestureRef === next.parentGestureRef &&
@@ -1898,6 +1913,7 @@ export function SidebarWorkspaceList({
   });
   const serverIds = useMemo(() => hosts.map((host) => host.serverId), [hosts]);
   const supportsMultiplicityByServerId = useHostFeatureMap(serverIds, "workspaceMultiplicity");
+  const hostConnectionStatusByServerId = useHostRuntimeConnectionStatuses(serverIds);
   const supportsPinningByServerId = useHostFeatureMap(serverIds, "workspacePinning");
   const onToggleWorkspacePin = useSidebarWorkspacePinController();
   const getPinnedWorkspaceOrder = useSidebarOrderStore((state) => state.getPinnedWorkspaceOrder);
@@ -1984,6 +2000,7 @@ export function SidebarWorkspaceList({
         pathname={pathname}
         hostBadgeByServerId={hostBadgeByServerId}
         supportsMultiplicityByServerId={supportsMultiplicityByServerId}
+        hostConnectionStatusByServerId={hostConnectionStatusByServerId}
         supportsPinningByServerId={supportsPinningByServerId}
         onToggleWorkspacePin={onToggleWorkspacePin}
         onPinnedWorkspaceReorder={handlePinnedWorkspaceReorder}
@@ -2080,6 +2097,7 @@ function ProjectModeList({
   pathname,
   hostBadgeByServerId,
   supportsMultiplicityByServerId,
+  hostConnectionStatusByServerId,
   supportsPinningByServerId,
   onToggleWorkspacePin,
   onPinnedWorkspaceReorder,
@@ -2098,6 +2116,7 @@ function ProjectModeList({
   pathname: string;
   hostBadgeByServerId: ReadonlyMap<string, HostBadgeModel>;
   supportsMultiplicityByServerId: ReadonlyMap<string, boolean>;
+  hostConnectionStatusByServerId: ReadonlyMap<string, HostRuntimeConnectionStatus>;
   supportsPinningByServerId: ReadonlyMap<string, boolean>;
   onToggleWorkspacePin: ToggleSidebarWorkspacePin;
   onPinnedWorkspaceReorder: (workspaces: SidebarWorkspacePlacement[]) => void;
@@ -2298,6 +2317,7 @@ function ProjectModeList({
           activeWorkspaceSelection={activeWorkspaceSelection}
           hostBadgeByServerId={hostBadgeByServerId}
           supportsMultiplicityByServerId={supportsMultiplicityByServerId}
+          hostConnectionStatusByServerId={hostConnectionStatusByServerId}
           supportsPinningByServerId={supportsPinningByServerId}
           onToggleWorkspacePin={onToggleWorkspacePin}
         />
@@ -2310,6 +2330,7 @@ function ProjectModeList({
       handleWorkspaceReorder,
       hostBadgeByServerId,
       supportsMultiplicityByServerId,
+      hostConnectionStatusByServerId,
       supportsPinningByServerId,
       onToggleWorkspacePin,
       onWorkspacePress,

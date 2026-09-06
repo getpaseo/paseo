@@ -136,6 +136,119 @@ describe("buildSidebarProjectRowModel", () => {
     });
   });
 
+  it("targets the active workspace's host when the project spans several hosts", () => {
+    const result = buildSidebarProjectRowModel({
+      project: project({
+        hosts: [
+          { serverId: "local", iconWorkingDir: "/repo/local", worktreeSupport: "supported" },
+          { serverId: "remote", iconWorkingDir: "/repo/remote", worktreeSupport: "supported" },
+        ],
+      }),
+      collapsed: false,
+      supportsMultiplicityByServerId: new Map(),
+      activeServerId: "remote",
+      hostConnectionStatusByServerId: new Map([
+        ["local", "online" as const],
+        ["remote", "online" as const],
+      ]),
+    });
+
+    expect(result.trailingAction).toEqual({
+      kind: "new_workspace",
+      target: { serverId: "remote", projectId: "project-remote", iconWorkingDir: "/repo/remote" },
+    });
+  });
+
+  it("keeps the first qualifying host when no workspace is active", () => {
+    const result = buildSidebarProjectRowModel({
+      project: project({
+        hosts: [
+          { serverId: "local", iconWorkingDir: "/repo/local", worktreeSupport: "supported" },
+          { serverId: "remote", iconWorkingDir: "/repo/remote", worktreeSupport: "supported" },
+        ],
+      }),
+      collapsed: false,
+      supportsMultiplicityByServerId: new Map(),
+      hostConnectionStatusByServerId: new Map([
+        ["local", "online" as const],
+        ["remote", "online" as const],
+      ]),
+    });
+
+    expect(result.trailingAction).toEqual({
+      kind: "new_workspace",
+      target: { serverId: "local", projectId: "project-local", iconWorkingDir: "/repo/local" },
+    });
+  });
+
+  it("ignores an active host that is offline", () => {
+    const result = buildSidebarProjectRowModel({
+      project: project({
+        hosts: [
+          { serverId: "local", iconWorkingDir: "/repo/local", worktreeSupport: "supported" },
+          { serverId: "remote", iconWorkingDir: "/repo/remote", worktreeSupport: "supported" },
+        ],
+      }),
+      collapsed: false,
+      supportsMultiplicityByServerId: new Map(),
+      activeServerId: "remote",
+      hostConnectionStatusByServerId: new Map([
+        ["local", "online" as const],
+        ["remote", "offline" as const],
+      ]),
+    });
+
+    expect(result.trailingAction).toEqual({
+      kind: "new_workspace",
+      target: { serverId: "local", projectId: "project-local", iconWorkingDir: "/repo/local" },
+    });
+  });
+
+  it("ignores an active host that does not have this project", () => {
+    const result = buildSidebarProjectRowModel({
+      project: project({
+        hosts: [{ serverId: "local", iconWorkingDir: "/repo/local", worktreeSupport: "supported" }],
+      }),
+      collapsed: false,
+      supportsMultiplicityByServerId: new Map(),
+      activeServerId: "remote",
+      hostConnectionStatusByServerId: new Map([
+        ["local", "online" as const],
+        ["remote", "online" as const],
+      ]),
+    });
+
+    expect(result.trailingAction).toEqual({
+      kind: "new_workspace",
+      target: { serverId: "local", projectId: "project-local", iconWorkingDir: "/repo/local" },
+    });
+  });
+
+  it("ignores an active host that cannot create a workspace for the project", () => {
+    const result = buildSidebarProjectRowModel({
+      project: project({
+        projectKind: "directory",
+        workspaces: [],
+        hosts: [
+          { serverId: "local", iconWorkingDir: "/repo/local", worktreeSupport: "unsupported" },
+          { serverId: "remote", iconWorkingDir: "/repo/remote", worktreeSupport: "unsupported" },
+        ],
+      }),
+      collapsed: false,
+      supportsMultiplicityByServerId: new Map([["local", true]]),
+      activeServerId: "remote",
+      hostConnectionStatusByServerId: new Map([
+        ["local", "online" as const],
+        ["remote", "online" as const],
+      ]),
+    });
+
+    expect(result.trailingAction).toEqual({
+      kind: "new_workspace",
+      target: { serverId: "local", projectId: "project-local", iconWorkingDir: "/repo/local" },
+    });
+  });
+
   it("targets the project host, not route state, for new workspace actions", () => {
     const result = buildSidebarProjectRowModel({
       project: project({
