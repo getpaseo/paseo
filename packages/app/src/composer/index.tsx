@@ -4,6 +4,7 @@ import {
   View,
   Pressable,
   Text,
+  Platform,
   StyleSheet as RNStyleSheet,
   type PressableStateCallbackType,
 } from "react-native";
@@ -1380,7 +1381,7 @@ function ComposerContentImpl({
 
   useEffect(() => () => cursorPublication.cancel(), [cursorPublication]);
 
-  const { pickImages } = useImageAttachmentPicker();
+  const { pickMedia } = useImageAttachmentPicker();
   const { pickFiles } = useFilePicker();
   const agentIdRef = useRef(agentId);
   const sendAgentMessageRef = useRef<
@@ -1650,15 +1651,6 @@ function ComposerContentImpl({
     ],
   );
 
-  const handlePickImage = useCallback(async () => {
-    const newImages = await pickAndPersistImages({
-      pickImages,
-      persister: composerImageAttachmentPersister,
-    });
-    if (newImages.length === 0) return;
-    addImages(newImages);
-  }, [addImages, pickImages]);
-
   const handlePasteImage = useCallback(async () => {
     try {
       const newImages = await pickAndPersistImages({
@@ -1734,6 +1726,27 @@ function ComposerContentImpl({
     },
     [addFiles, client, t],
   );
+
+  const handlePickMedia = useCallback(async () => {
+    const pickedMedia = await pickMedia();
+    if (!pickedMedia) return;
+
+    const pickedImages = pickedMedia
+      .filter((attachment) => attachment.kind === "image")
+      .map((attachment) => attachment.attachment);
+    const pickedFiles = pickedMedia
+      .filter((attachment) => attachment.kind === "file")
+      .map((attachment) => attachment.file);
+
+    const newImages = await pickAndPersistImages({
+      pickImages: async () => pickedImages,
+      persister: composerImageAttachmentPersister,
+    });
+    if (newImages.length > 0) {
+      addImages(newImages);
+    }
+    await uploadPickedFiles(pickedFiles);
+  }, [addImages, pickMedia, uploadPickedFiles]);
 
   const handlePickFile = useCallback(async () => {
     if (!client) {
@@ -2072,10 +2085,13 @@ function ComposerContentImpl({
     const items: AttachmentMenuItem[] = [
       {
         id: "image",
-        label: t("composer.attachments.addImage"),
+        label:
+          Platform.OS === "ios"
+            ? t("composer.attachments.addImageOrVideo")
+            : t("composer.attachments.addImage"),
         icon: <ThemedImageIcon size={ICON_SIZE.md} uniProps={iconForegroundMutedMapping} />,
         onSelect: () => {
-          void handlePickImage();
+          void handlePickMedia();
         },
       },
     ];
@@ -2115,7 +2131,7 @@ function ComposerContentImpl({
     forgePresentation,
     handlePasteImage,
     handlePickFile,
-    handlePickImage,
+    handlePickMedia,
     pluginAttachments.menuItems,
     t,
   ]);

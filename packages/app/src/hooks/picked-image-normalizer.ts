@@ -1,4 +1,7 @@
-export type PickedImageSource = { kind: "file_uri"; uri: string } | { kind: "blob"; blob: Blob };
+export type PickedImageSource =
+  | { kind: "file_uri"; uri: string }
+  | { kind: "blob"; blob: Blob }
+  | { kind: "data_url"; dataUrl: string };
 
 export interface PickedImageAttachmentInput {
   source: PickedImageSource;

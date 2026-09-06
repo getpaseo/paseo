@@ -1,17 +1,18 @@
 import { useCallback, useRef } from "react";
-import { Alert } from "react-native";
+import { Alert, Platform } from "react-native";
 import * as ImagePicker from "expo-image-picker";
 import { useTranslation } from "react-i18next";
 import { getDesktopHost, isElectronRuntime } from "@/desktop/host";
 import {
-  normalizePickedImageAssets,
+  normalizePickedMediaAssets,
   pickImagesWithDesktopDialog,
-  type PickedImageAttachmentInput,
+  type PickedMediaAttachmentInput,
 } from "@/hooks/image-attachment-picker";
 import { isWeb } from "@/constants/platform";
+import { resolveImagePickerMediaTypes } from "@/hooks/image-picker-media-types";
 
 interface UseImageAttachmentPickerResult {
-  pickImages: () => Promise<PickedImageAttachmentInput[] | null>;
+  pickMedia: () => Promise<PickedMediaAttachmentInput[] | null>;
 }
 
 export function useImageAttachmentPicker(): UseImageAttachmentPickerResult {
@@ -32,17 +33,18 @@ export function useImageAttachmentPicker(): UseImageAttachmentPickerResult {
     }
 
     if (!currentPermission?.granted) {
-      Alert.alert(
-        t("imageAttachmentPicker.permissionTitle"),
-        t("imageAttachmentPicker.permissionMessage"),
-      );
+      const permissionMessage =
+        Platform.OS === "ios"
+          ? t("imageAttachmentPicker.permissionMediaMessage")
+          : t("imageAttachmentPicker.permissionMessage");
+      Alert.alert(t("imageAttachmentPicker.permissionTitle"), permissionMessage);
       return false;
     }
 
     return true;
   }, [mediaPermission, requestMediaPermission, t]);
 
-  const pickImages = useCallback(async () => {
+  const pickMedia = useCallback(async () => {
     if (isPickingRef.current) {
       return null;
     }
@@ -55,7 +57,7 @@ export function useImageAttachmentPicker(): UseImageAttachmentPickerResult {
         if (selectedImages.length === 0) {
           return null;
         }
-        return selectedImages;
+        return selectedImages.map((attachment) => ({ kind: "image" as const, attachment }));
       }
 
       const hasPermission = await ensurePermission();
@@ -65,11 +67,12 @@ export function useImageAttachmentPicker(): UseImageAttachmentPickerResult {
 
       const pendingResult = await ImagePicker.getPendingResultAsync();
       if (pendingResult && "canceled" in pendingResult && !pendingResult.canceled) {
-        return await normalizePickedImageAssets(pendingResult.assets);
+        return await normalizePickedMediaAssets(pendingResult.assets);
       }
 
+      const mediaTypes = resolveImagePickerMediaTypes(Platform.OS);
       const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ["images"] as ImagePicker.MediaType[],
+        mediaTypes,
         allowsMultipleSelection: true,
         quality: 0.8,
       });
@@ -78,15 +81,19 @@ export function useImageAttachmentPicker(): UseImageAttachmentPickerResult {
         return null;
       }
 
-      return await normalizePickedImageAssets(result.assets);
+      return await normalizePickedMediaAssets(result.assets);
     } catch (error) {
-      console.error("[ImageAttachmentPicker] Failed to pick image:", error);
-      Alert.alert(t("imageAttachmentPicker.errorTitle"), t("imageAttachmentPicker.failedToSelect"));
+      console.error("[ImageAttachmentPicker] Failed to pick media:", error);
+      const errorMessage =
+        Platform.OS === "ios"
+          ? t("imageAttachmentPicker.failedToSelectMedia")
+          : t("imageAttachmentPicker.failedToSelect");
+      Alert.alert(t("imageAttachmentPicker.errorTitle"), errorMessage);
       return null;
     } finally {
       isPickingRef.current = false;
     }
   }, [ensurePermission, t]);
 
-  return { pickImages };
+  return { pickMedia };
 }

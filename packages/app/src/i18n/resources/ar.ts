@@ -127,6 +127,7 @@ export const ar: TranslationResources = {
     },
     attachments: {
       addImage: "أضف صورة",
+      addImageOrVideo: "إضافة صور أو فيديو",
       pasteImage: "لصق صورة",
       addFile: "Upload file",
       addIssueOrPr: "أضف مشكلة أو PR",
@@ -1489,8 +1490,11 @@ export const ar: TranslationResources = {
   imageAttachmentPicker: {
     permissionTitle: "الإذن مطلوب",
     permissionMessage: "يرجى السماح بالوصول إلى مكتبة الصور الخاصة بك لإرفاق الصور.",
+    permissionMediaMessage:
+      "يرجى السماح بالوصول إلى مكتبة الصور الخاصة بك لإرفاق الصور أو مقاطع الفيديو.",
     errorTitle: "خطأ",
     failedToSelect: "فشل في تحديد الصورة",
+    failedToSelectMedia: "فشل في تحديد الصور أو الفيديو",
     dialogTitle: "إرفاق الصور",
     dialogFilterName: "الصور",
   },

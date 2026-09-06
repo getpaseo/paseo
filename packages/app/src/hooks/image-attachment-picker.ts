@@ -3,24 +3,24 @@ import { RASTER_IMAGE_FILE_EXTENSIONS, resolveRasterImageMimeType } from "@/atta
 import { getFileNameFromPath } from "@/attachments/utils";
 import { i18n } from "@/i18n/i18next";
 import { isAbsolutePath } from "@/utils/path";
+import type {
+  ExpoImagePickerAssetLike,
+  PickedImageAttachmentInput,
+} from "./picked-image-normalizer";
+import type {
+  ExpoMediaPickerAssetLike,
+  PickedMediaAttachmentInput,
+} from "./picked-media-normalizer";
 
-export type PickedImageSource =
-  | { kind: "file_uri"; uri: string }
-  | { kind: "blob"; blob: Blob }
-  | { kind: "data_url"; dataUrl: string };
-
-export interface PickedImageAttachmentInput {
-  source: PickedImageSource;
-  mimeType: string;
-  fileName?: string | null;
-}
-
-export interface ExpoImagePickerAssetLike {
-  uri: string;
-  mimeType?: string | null;
-  fileName?: string | null;
-  file?: File | null;
-}
+export type {
+  ExpoImagePickerAssetLike,
+  PickedImageAttachmentInput,
+  PickedImageSource,
+} from "./picked-image-normalizer";
+export type {
+  ExpoMediaPickerAssetLike,
+  PickedMediaAttachmentInput,
+} from "./picked-media-normalizer";
 
 function shouldTreatAsFileUri(uri: string): boolean {
   return uri.startsWith("file://") || isAbsolutePath(uri);
@@ -84,6 +84,13 @@ export async function normalizePickedImageAssets(
       };
     }),
   );
+}
+
+export async function normalizePickedMediaAssets(
+  assets: readonly ExpoMediaPickerAssetLike[],
+): Promise<PickedMediaAttachmentInput[]> {
+  const images = await normalizePickedImageAssets(assets);
+  return images.map((attachment) => ({ kind: "image", attachment }));
 }
 
 function normalizeDesktopDialogSelection(selection: string | string[] | null): string[] {

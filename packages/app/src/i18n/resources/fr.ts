@@ -129,6 +129,7 @@ export const fr: TranslationResources = {
     },
     attachments: {
       addImage: "Ajouter une image",
+      addImageOrVideo: "Ajouter des images ou une vidéo",
       pasteImage: "Coller une image",
       addFile: "Upload file",
       addIssueOrPr: "Ajouter un problème ouPR",
@@ -1537,8 +1538,11 @@ export const fr: TranslationResources = {
   imageAttachmentPicker: {
     permissionTitle: "Autorisation requise",
     permissionMessage: "Veuillez autoriser l'accès à votre photothèque pour joindre des images.",
+    permissionMediaMessage:
+      "Veuillez autoriser l'accès à votre photothèque pour joindre des images ou des vidéos.",
     errorTitle: "Erreur",
     failedToSelect: "Échec de la sélection de l'image",
+    failedToSelectMedia: "Échec de la sélection des images ou de la vidéo",
     dialogTitle: "Joindre des images",
     dialogFilterName: "Images",
   },
