@@ -13,6 +13,7 @@
 
 ### Fixed
 
+- Fixed mobile sidebar drags remaining active after the finger was released.
 - Fixed large and many-file diffs stalling or crashing while opening and scrolling ([#4174](https://github.com/getpaseo/paseo/pull/4174))
 - Fixed mobile sidebar and explorer panels losing their settled position when a JS stall crossed the animation ([#4190](https://github.com/getpaseo/paseo/pull/4190))
 - Fixed a single oversized assistant message crashing the timeline by capping rendered content at 32,000 characters ([#4166](https://github.com/getpaseo/paseo/pull/4166))

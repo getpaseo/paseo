@@ -1,11 +1,15 @@
 import { RefreshControl } from "react-native";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import DraggableFlatList, {
   NestableDraggableFlatList,
   type RenderItemParams,
 } from "react-native-draggable-flatlist";
 import { useUnistyles } from "react-native-unistyles";
 import type { DraggableListProps, DraggableRenderItemInfo } from "./draggable-list.types";
+import {
+  createDragReleaseRecovery,
+  type DragReleaseRecovery,
+} from "./drag-reorder/drag-release-recovery";
 
 export type { DraggableListProps, DraggableRenderItemInfo };
 
@@ -36,7 +40,20 @@ export function DraggableList<T>({
   nestable = false,
 }: DraggableListProps<T>) {
   const { theme } = useUnistyles();
+  // The dependency commits a drop only after its spring finishes. If that callback is lost,
+  // remounting clears the native gesture and releases the nestable outer-scroll lock.
   const [isDragging, setIsDragging] = useState(false);
+  const [dragHostRevision, setDragHostRevision] = useState(0);
+  const dragReleaseRecoveryRef = useRef<DragReleaseRecovery | null>(null);
+  if (dragReleaseRecoveryRef.current === null) {
+    dragReleaseRecoveryRef.current = createDragReleaseRecovery(() => {
+      setIsDragging(false);
+      setDragHostRevision((revision) => revision + 1);
+    });
+  }
+  const dragReleaseRecovery = dragReleaseRecoveryRef.current;
+
+  useEffect(() => () => dragReleaseRecovery.dispose(), [dragReleaseRecovery]);
 
   // Pass the ref directly to DraggableFlatList - it handles gesture
   // coordination internally for nestable lists.
@@ -66,20 +83,28 @@ export function DraggableList<T>({
 
   const handleDragEnd = useCallback(
     ({ data: newData }: { data: T[] }) => {
+      dragReleaseRecovery.dragFinished();
       setIsDragging(false);
       onDragEnd(newData);
     },
-    [onDragEnd],
+    [dragReleaseRecovery, onDragEnd],
   );
 
   const handleDragBegin = useCallback(() => {
+    dragReleaseRecovery.dragBegan();
     setIsDragging(true);
     onDragBeginProp?.();
-  }, [onDragBeginProp]);
+  }, [dragReleaseRecovery, onDragBeginProp]);
 
   const handleRelease = useCallback(() => {
     setIsDragging(false);
-  }, []);
+    dragReleaseRecovery.fingerReleased();
+  }, [dragReleaseRecovery]);
+
+  const handleDragTerminate = useCallback(() => {
+    dragReleaseRecovery.dragFinished();
+    setIsDragging(false);
+  }, [dragReleaseRecovery]);
 
   const showRefreshControl = Boolean(onRefresh) && (!isDragging || Boolean(refreshing));
   const resolvedContainerStyle =
@@ -104,6 +129,7 @@ export function DraggableList<T>({
 
   return (
     <ListComponent
+      key={dragHostRevision}
       testID={testID}
       data={data}
       keyExtractor={keyExtractor}
@@ -125,6 +151,7 @@ export function DraggableList<T>({
       activationDistance={20}
       onDragBegin={handleDragBegin}
       onRelease={handleRelease}
+      onDragTerminate={handleDragTerminate}
       // @ts-ignore - waitFor is supported by RNGH FlatList but missing from DraggableFlatList types
       waitFor={waitFor}
       refreshControl={refreshControl}

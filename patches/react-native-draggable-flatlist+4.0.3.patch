@@ -396,7 +396,7 @@ index 7c88afc..6d5719c 100644
            ref={containerRef}
            onLayout={onContainerLayout}
 diff --git a/node_modules/react-native-draggable-flatlist/src/components/NestableDraggableFlatList.tsx b/node_modules/react-native-draggable-flatlist/src/components/NestableDraggableFlatList.tsx
-index 1559352..33eb5de 100644
+index 1559352..dfe0ff1 100644
 --- a/node_modules/react-native-draggable-flatlist/src/components/NestableDraggableFlatList.tsx
 +++ b/node_modules/react-native-draggable-flatlist/src/components/NestableDraggableFlatList.tsx
 @@ -1,5 +1,5 @@
@@ -415,18 +415,19 @@ index 1559352..33eb5de 100644
 
      const onSuccess = (_x: number, y: number) => {
        listVerticalOffset.value = y;
-@@ -74,6 +74,10 @@ function NestableDraggableFlatListInner<T>(
+@@ -74,6 +74,11 @@ function NestableDraggableFlatListInner<T>(
      }
    );
 
 +  const onDragTerminate = useStableCallback(() => {
 +    setOuterScrollEnabled(true);
++    props.onDragTerminate?.();
 +  });
 +
    const onAnimValInit: DraggableFlatListProps<T>["onAnimValInit"] = useStableCallback(
      (params) => {
        setListHoverOffset(params.hoverOffset);
-@@ -95,6 +99,7 @@ function NestableDraggableFlatListInner<T>(
+@@ -95,6 +100,7 @@ function NestableDraggableFlatListInner<T>(
        outerScrollOffset={outerScrollOffset}
        onDragBegin={onDragBegin}
        onDragEnd={onDragEnd}
