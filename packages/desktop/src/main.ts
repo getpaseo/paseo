@@ -634,7 +634,8 @@ async function getEffectiveAppIconPath(): Promise<string | null> {
 }
 
 async function applyAppIcon(): Promise<void> {
-  if (process.platform !== "darwin") {
+  // Packaged apps keep the bundle icon and its macOS system appearance.
+  if (app.isPackaged || process.platform !== "darwin") {
     return;
   }
 
