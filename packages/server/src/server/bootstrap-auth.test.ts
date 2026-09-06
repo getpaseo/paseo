@@ -151,4 +151,35 @@ describe("daemon bearer auth", () => {
       await daemonHandle.close();
     }
   });
+
+  test("lets loopback clients through without a password when the exemption is enabled", async () => {
+    const daemonHandle = await createTestPaseoDaemon({
+      auth: { password: CORRECT_PASSWORD_HASH, allowLoopbackWithoutPassword: true },
+    });
+    try {
+      const status = await fetch(`http://127.0.0.1:${daemonHandle.port}/api/status`);
+      expect(status.status).toBe(200);
+
+      // A loopback socket relaying a remote client still needs the password.
+      const forwarded = await fetch(`http://127.0.0.1:${daemonHandle.port}/api/status`, {
+        headers: { "X-Forwarded-For": "203.0.113.7" },
+      });
+      expect(forwarded.status).toBe(401);
+
+      // No subprotocol at all, the shape a CLI on this machine connects with.
+      const { ws, protocol } = await connectWebSocket({ port: daemonHandle.port });
+      expect(protocol).toBe("");
+      ws.close();
+
+      // A stale or wrong password from loopback is ignored rather than rejected.
+      const stale = await connectWebSocket({
+        port: daemonHandle.port,
+        protocol: "paseo.bearer.wrong-password",
+      });
+      expect(stale.protocol).toBe("paseo.bearer.wrong-password");
+      stale.ws.close();
+    } finally {
+      await daemonHandle.close();
+    }
+  });
 });

@@ -188,6 +188,27 @@ Or write the hash directly in `config.json`:
 
 After setting a password, restart the daemon for the change to take effect.
 
+### Exempting this machine
+
+Set `allowLoopbackWithoutPassword` to let clients on the daemon's own machine connect without the password, so remote devices authenticate while `paseo` on the box, agents, and a browser at `localhost` do not:
+
+```json
+{
+  "daemon": {
+    "auth": {
+      "password": "$2b$12$...",
+      "allowLoopbackWithoutPassword": true
+    }
+  }
+}
+```
+
+There is no environment variable or flag for this. It is a hole in the daemon's only authentication, so it lives where you can see it next to the password it exempts. It is read from `config.json` even when `PASEO_PASSWORD` supplies the password.
+
+A connection is exempt when its peer is a loopback address or a Unix socket, and the request carries no `Forwarded`, `X-Forwarded-For`, or `X-Real-IP` header. That last condition matters if you front the daemon with a reverse proxy on the same host: the proxy connects from `127.0.0.1` for every remote client, so without it the exemption would drop the password for the entire internet. A proxy that strips forwarding headers still defeats this, so leave the exemption off when one sits in front of the daemon.
+
+This widens access rather than merely saving you some typing. The password is stored as a bcrypt hash, so a process on the machine cannot read it out of `config.json` and authenticate with it; the password does keep local callers out, and the exemption gives that up. It also lets a browser on that machine reach the API without the password, leaving the host allowlist and CORS origins as the defence against a hostile page trying to use it (see [Security](/docs/security#dns-rebinding-protection)). Enable it when you trust everything running on the machine and want the password to apply to remote devices only.
+
 ### Connecting with a password
 
 The CLI picks up a password from, in order:

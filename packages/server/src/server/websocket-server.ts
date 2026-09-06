@@ -78,6 +78,8 @@ import {
   extractWsBearerProtocol,
   extractWsBearerToken,
   isBearerTokenValid,
+  isLoopbackAddress,
+  isLoopbackPasswordExempt,
   type DaemonAuthConfig,
 } from "./auth.js";
 import {
@@ -808,7 +810,8 @@ export class VoiceAssistantWebSocketServer {
     const wss = new WebSocketServer({
       server,
       path: "/ws",
-      handleProtocols: (protocols) => selectWebSocketProtocol(protocols, password),
+      handleProtocols: (protocols, request) =>
+        selectWebSocketProtocol(protocols, password, isUpgradePasswordExempt(auth, request)),
       verifyClient: ({ req }, callback) => {
         this.verifyWsUpgrade(
           req,
@@ -819,7 +822,7 @@ export class VoiceAssistantWebSocketServer {
       },
     });
     wss.on("connection", (ws, request) => {
-      void this.attachAuthenticatedSocket(ws, request, password);
+      void this.attachAuthenticatedSocket(ws, request, auth);
     });
     return wss;
   }
@@ -901,9 +904,10 @@ export class VoiceAssistantWebSocketServer {
   private async attachAuthenticatedSocket(
     ws: WebSocket,
     request: IncomingMessage,
-    password: string | undefined,
+    auth: DaemonAuthConfig | undefined,
   ): Promise<void> {
-    if (password) {
+    const password = auth?.password;
+    if (password && !isUpgradePasswordExempt(auth, request)) {
       const requestMetadata = extractSocketRequestMetadata(request);
       const protocol = extractWsBearerProtocol(request.headers["sec-websocket-protocol"]);
       const token = extractWsBearerToken(protocol);
@@ -2735,13 +2739,6 @@ function resolveConnectionPeer(
   return isLoopbackAddress(requestMetadata.remoteAddress) ? "loopback" : "external";
 }
 
-function isLoopbackAddress(address: string): boolean {
-  const normalized = address.toLowerCase();
-  if (normalized === "::1" || normalized === "0:0:0:0:0:0:0:1") return true;
-  const ipv4 = normalized.startsWith("::ffff:") ? normalized.slice("::ffff:".length) : normalized;
-  return ipv4.startsWith("127.");
-}
-
 function extractSocketRequestMetadata(request: unknown): SocketRequestMetadata {
   if (!request || typeof request !== "object") {
     return {};
@@ -2874,11 +2871,22 @@ export function isWebSocketSameOrigin(
   return isLoopbackAlias(originUrl.hostname) && isLoopbackAlias(requestAuthority.hostname);
 }
 
+function isUpgradePasswordExempt(
+  auth: DaemonAuthConfig | undefined,
+  request: IncomingMessage,
+): boolean {
+  return isLoopbackPasswordExempt(auth, {
+    remoteAddress: request.socket.remoteAddress,
+    headers: request.headers,
+  });
+}
+
 function selectWebSocketProtocol(
   protocols: Set<string>,
   password: string | undefined,
+  loopbackExempt: boolean,
 ): string | false {
-  if (!password) {
+  if (!password || loopbackExempt) {
     return protocols.values().next().value ?? false;
   }
 
