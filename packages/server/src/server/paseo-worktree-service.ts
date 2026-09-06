@@ -31,6 +31,7 @@ import type { FirstAgentContext } from "@getpaseo/protocol/messages";
 import { runWithGitCommandPriority } from "../utils/run-git-command.js";
 
 export interface CreatePaseoWorktreeInput extends CreateWorktreeCoreInput {
+  skipMissingLocalFiles?: boolean;
   projectId?: string;
   title?: string;
 }

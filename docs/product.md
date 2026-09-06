@@ -68,6 +68,14 @@ Anyone who builds software:
 3. **The daemon as infrastructure.** Server/client architecture enables deployment anywhere.
 4. **Open source outlasts funding.** Open source communities are resilient. Contributors become advocates.
 
+## Local files for worktrees
+
+Import ignored environment and configuration files from your device or another
+connected host through Project Settings. Each destination keeps its own copy.
+You can include selected paths in future worktrees; updates are manual.
+See the [worktree guide](../public-docs/worktrees.md#local-files) for the workflow
+and [security model](../SECURITY.md#local-file-imports) for the trust boundaries.
+
 ## Current state (May 2026)
 
 - Desktop (Electron), mobile (iOS/Android), web, CLI

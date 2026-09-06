@@ -2,6 +2,54 @@ import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const zhCN: TranslationResources = {
+  localFiles: {
+    updateHost: "请更新此主机以导入本地文件。",
+    missingTitle: "缺少本地文件",
+    missingConfirm: "{{root}} 中缺少 {{files}}。是否不带这些文件继续？取消后可先导入文件。",
+    continueWithout: "不带文件继续",
+    unavailableForWorktree: "创建 worktree 前请检查这些本地文件：{{files}}",
+
+    title: "本地文件",
+    info: "将 Git 忽略的环境和配置文件导入此主机。此主机的代理和脚本可以读取它们。",
+    import: "导入文件…",
+    importTo: "导入到 {{host}}",
+    thisDevice: "此设备",
+    fromDevice: "从此设备…",
+    fromHost: "从其他主机…",
+    source: "来源：{{source}}",
+    sourcePath: "其他源文件（项目相对路径）",
+    inspect: "检查",
+    refresh: "刷新",
+    total: "已选：{{count}} · {{size}}",
+    include: "包含在今后的工作树中",
+    configPreview:
+      "将这些路径添加到 paseo.json。这会产生未提交的配置变更；已有工作树文件保持不变。",
+    complete: "文件已导入。已有工作树未更新。",
+    limits: "仅限单个文件。每个文件最多 10 MiB，每次导入最多 25 MiB、100 个文件。更新为手动操作。",
+    existing: "已存在 · 需选中才能替换",
+    replace: "替换 {{path}}",
+    status: {
+      ready: "已存在",
+      missing: "缺失",
+      not_ignored: "必须被 Git 忽略",
+      unsupported: "不支持的文件或路径",
+      too_large: "过大",
+      unavailable: "不可用",
+      imported: "已导入",
+    },
+    errors: {
+      load_failed: "无法检查文件。请检查主机连接并重试。",
+      selection_invalid: "请选择最多 100 个名称不同的文件。",
+      no_source_files: "未找到符合条件的文件。请输入被 Git 忽略的文件路径进行检查。",
+      changed: "文件在预览后已更改。请重新选择来源以检查最新副本。",
+      import_failed: "导入失败。请检查连接并重试。",
+      partial_failure: "部分文件失败。请重试选中的失败项，或重新选择来源以刷新。",
+      secure_connection_required: "请使用中继、TLS、本地或 SSH 连接传输敏感文件。",
+      config_failed:
+        "文件已导入，但包含设置未保存。请刷新以查看最新配置，然后保存包含设置，无需重新传输文件。",
+    },
+  },
+
   common: {
     back: "返回",
     loading: "加载中...",
