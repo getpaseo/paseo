@@ -313,6 +313,26 @@ describe("native terminal selection", () => {
     });
   });
 
+  it("treats an orphan placeholder as a word boundary", () => {
+    const terminal = terminalFromRows([
+      [
+        { char: "a", width: 1 },
+        { char: "b", width: 1 },
+        { char: " ", width: 0 },
+        { char: "c", width: 1 },
+      ],
+    ]);
+    const bounds = terminal.getBufferBounds();
+
+    // The renderer omits the orphan and the anchor treats it as a blank, so
+    // the scan must stop there too: long-pressing "ab" selects only "ab".
+    expect(resolveTerminalWordSelection({ terminal, coordinate: { row: 0, col: 0 } })).toEqual({
+      start: { row: 0, col: 0 },
+      end: { row: 0, col: 1 },
+      coordinateEpoch: bounds.coordinateEpoch,
+    });
+  });
+
   it("copies soft-wrapped rows without fake line breaks", async () => {
     const terminal = createNativeHeadlessTerminal({ rows: 4, cols: 4, scrollbackLines: 20 });
     await terminal.write("abcdef");

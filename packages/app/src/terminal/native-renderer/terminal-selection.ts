@@ -102,9 +102,10 @@ interface TerminalSelectionState {
 const TERMINAL_WORD_SEPARATORS = " ()[]{}',\"`";
 
 // Walks from `fromCol` in `direction` until a separator cell bounds the word.
-// Width-0 cells are wide-glyph placeholders: their column belongs to the
-// preceding glyph and their char is a blank, so they are stepped over rather
-// than read as a word boundary.
+// A real wide-glyph placeholder (width 0 right after a width-2 cell) belongs
+// to the glyph, so it is stepped over rather than read as a word boundary. An
+// orphan placeholder belongs to no glyph: the renderer omits it and the anchor
+// treats it as a blank, so the scan stops on it too.
 function scanWordBoundary(input: {
   cells: TerminalCellRow;
   fromCol: number;
@@ -113,11 +114,13 @@ function scanWordBoundary(input: {
   const { cells, fromCol, direction } = input;
   let col = fromCol;
   while (direction < 0 ? col > 0 : col + 1 < cells.length) {
-    const neighbor = cells[col + direction];
-    if (neighbor?.width !== 0 && TERMINAL_WORD_SEPARATORS.includes(neighbor?.char || " ")) {
+    const neighborCol = col + direction;
+    const isGlyphPlaceholder =
+      cells[neighborCol]?.width === 0 && cells[neighborCol - 1]?.width === 2;
+    if (!isGlyphPlaceholder && TERMINAL_WORD_SEPARATORS.includes(cells[neighborCol]?.char || " ")) {
       break;
     }
-    col += direction;
+    col = neighborCol;
   }
   return col;
 }
