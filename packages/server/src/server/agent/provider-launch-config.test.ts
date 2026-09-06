@@ -265,6 +265,88 @@ describe("createProviderEnv", () => {
     expect(env.CLAUDE_AGENT_SDK_VERSION).toBeUndefined();
     expect(env.CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING).toBe("true");
   });
+
+  test("strips Claude host session auth and gateway env without removing user auth", () => {
+    const base = {
+      PATH: "/usr/bin",
+      CLAUDE_CODE_HOST_AUTH_ENV_VAR: "ANTHROPIC_AUTH_TOKEN",
+      CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST: "1",
+      CLAUDE_CODE_SDK_HAS_HOST_AUTH_REFRESH: "1",
+      CLAUDE_CODE_SDK_HAS_OAUTH_REFRESH: "1",
+      CLAUDE_CODE_SESSION_ID: "session",
+      CLAUDE_CODE_HOST_SESSION_ID: "host-session",
+      CLAUDE_CODE_CHILD_SESSION: "1",
+      CLAUDE_PID: "1234",
+      CLAUDE_CODE_EXECPATH: "/opt/claude",
+      CLAUDE_CODE_ATTRIBUTION_HEADER: "desktop",
+      CLAUDE_CODE_CLASSIFIER_SUMMARY: "1",
+      CLAUDE_CODE_DISABLE_CRON: "1",
+      CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS: "1",
+      CLAUDE_CODE_DISABLE_OFFICIAL_MARKETPLACE_AUTOINSTALL: "1",
+      CLAUDE_CODE_EAGER_FLUSH: "1",
+      CLAUDE_CODE_EMIT_TOOL_USE_SUMMARIES: "1",
+      CLAUDE_CODE_ENABLE_ASK_USER_QUESTION_TOOL: "1",
+      CLAUDE_CODE_ENABLE_AUTO_MODE: "1",
+      CLAUDE_CODE_OAUTH_SCOPES: "user:inference",
+      CLAUDE_EFFORT: "high",
+      ANTHROPIC_BASE_URL: "http://desktop-gateway",
+      ANTHROPIC_DEFAULT_MYTHOS_MODEL: "",
+      ANTHROPIC_AUTH_TOKEN: "user-token",
+    };
+
+    const env = createProviderEnv({ baseEnv: base });
+
+    expect(env).toEqual({
+      PATH: "/usr/bin",
+      ANTHROPIC_AUTH_TOKEN: "user-token",
+    });
+  });
+
+  test.each(["CLAUDE_CODE_HOST_AUTH_ENV_VAR", "CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST"])(
+    "detects a Claude host session from %s alone",
+    (marker) => {
+      const env = createProviderEnv({
+        baseEnv: {
+          [marker]: "1",
+          ANTHROPIC_BASE_URL: "http://desktop-gateway",
+        },
+      });
+
+      expect(env.ANTHROPIC_BASE_URL).toBeUndefined();
+    },
+  );
+
+  test("allows provider env to replace a stripped Claude host gateway", () => {
+    const base = {
+      CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST: "1",
+      ANTHROPIC_BASE_URL: "http://desktop-gateway",
+    };
+    const runtime: ProviderRuntimeSettings = {
+      env: {
+        ANTHROPIC_BASE_URL: "https://my-relay.example",
+        ANTHROPIC_AUTH_TOKEN: "user-token",
+      },
+    };
+
+    const env = createProviderEnv({ baseEnv: base, runtimeSettings: runtime });
+
+    expect(env.ANTHROPIC_BASE_URL).toBe("https://my-relay.example");
+    expect(env.ANTHROPIC_AUTH_TOKEN).toBe("user-token");
+  });
+
+  test("preserves Anthropic env outside a Claude host session", () => {
+    const base = {
+      ANTHROPIC_BASE_URL: "https://my-relay.example",
+      ANTHROPIC_DEFAULT_OPUS_MODEL: "claude-opus",
+      ANTHROPIC_AUTH_TOKEN: "user-token",
+    };
+
+    const env = createProviderEnv({ baseEnv: base });
+
+    expect(env.ANTHROPIC_BASE_URL).toBe("https://my-relay.example");
+    expect(env.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe("claude-opus");
+    expect(env.ANTHROPIC_AUTH_TOKEN).toBe("user-token");
+  });
 });
 
 describe("ProviderOverrideSchema", () => {

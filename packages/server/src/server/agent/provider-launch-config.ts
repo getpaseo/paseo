@@ -210,6 +210,33 @@ const PARENT_SESSION_ENV_VARS = [
   "CLAUDE_AGENT_SDK_VERSION",
 ];
 
+const CLAUDE_HOST_SESSION_MARKERS = [
+  "CLAUDE_CODE_HOST_AUTH_ENV_VAR",
+  "CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST",
+];
+
+const CLAUDE_HOST_SESSION_ENV_VARS = [
+  ...CLAUDE_HOST_SESSION_MARKERS,
+  "CLAUDE_CODE_SDK_HAS_HOST_AUTH_REFRESH",
+  "CLAUDE_CODE_SDK_HAS_OAUTH_REFRESH",
+  "CLAUDE_CODE_SESSION_ID",
+  "CLAUDE_CODE_HOST_SESSION_ID",
+  "CLAUDE_CODE_CHILD_SESSION",
+  "CLAUDE_PID",
+  "CLAUDE_CODE_EXECPATH",
+  "CLAUDE_CODE_ATTRIBUTION_HEADER",
+  "CLAUDE_CODE_CLASSIFIER_SUMMARY",
+  "CLAUDE_CODE_DISABLE_CRON",
+  "CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS",
+  "CLAUDE_CODE_DISABLE_OFFICIAL_MARKETPLACE_AUTOINSTALL",
+  "CLAUDE_CODE_EAGER_FLUSH",
+  "CLAUDE_CODE_EMIT_TOOL_USE_SUMMARIES",
+  "CLAUDE_CODE_ENABLE_ASK_USER_QUESTION_TOOL",
+  "CLAUDE_CODE_ENABLE_AUTO_MODE",
+  "CLAUDE_CODE_OAUTH_SCOPES",
+  "CLAUDE_EFFORT",
+];
+
 export interface ProviderEnvOptions {
   baseEnv?: ProcessEnvRecord;
   runtimeSettings?: ProviderRuntimeSettings;
@@ -230,14 +257,35 @@ function collectProviderEnvOverlays(
   );
 }
 
+function sanitizeClaudeHostSessionEnv(baseEnv: ProcessEnvRecord): ProcessEnvRecord | undefined {
+  const isClaudeHostSession = CLAUDE_HOST_SESSION_MARKERS.some((key) => baseEnv[key] !== undefined);
+  if (!isClaudeHostSession) {
+    return undefined;
+  }
+
+  const sanitizedBaseEnv = { ...baseEnv };
+  for (const key of CLAUDE_HOST_SESSION_ENV_VARS) {
+    delete sanitizedBaseEnv[key];
+  }
+  delete sanitizedBaseEnv.ANTHROPIC_BASE_URL;
+  for (const key of Object.keys(sanitizedBaseEnv)) {
+    if (key.startsWith("ANTHROPIC_DEFAULT_")) {
+      delete sanitizedBaseEnv[key];
+    }
+  }
+  return sanitizedBaseEnv;
+}
+
 export function createProviderEnvSpec(options: ProviderEnvOptions = {}): ProviderEnvSpec {
+  const sanitizedBaseEnv = sanitizeClaudeHostSessionEnv(options.baseEnv ?? process.env);
+  const baseEnv = sanitizedBaseEnv ?? options.baseEnv;
   const overlays = collectProviderEnvOverlays(options.runtimeSettings, options.overlays ?? []);
   const envOverlay: ProcessEnvRecord = Object.assign({}, ...overlays);
   for (const key of PARENT_SESSION_ENV_VARS) {
     envOverlay[key] = undefined;
   }
   return {
-    ...(options.baseEnv ? { baseEnv: options.baseEnv } : {}),
+    ...(baseEnv ? { baseEnv } : {}),
     envOverlay,
   };
 }
