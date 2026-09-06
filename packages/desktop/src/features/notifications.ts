@@ -97,6 +97,9 @@ export function registerNotificationHandlers(): void {
       return false;
     }
 
+    const body = toTrimmedString(rawInput?.body) ?? undefined;
+    const data = toRecord(rawInput?.data);
+
     const senderWin =
       BrowserWindow.fromWebContents(event.sender) ??
       BrowserWindow.getAllWindows().find((w) => !w.isDestroyed() && w.isResizable());
@@ -112,9 +115,6 @@ export function registerNotificationHandlers(): void {
       });
       return true;
     }
-
-    const body = toTrimmedString(rawInput?.body) ?? undefined;
-    const data = toRecord(rawInput?.data);
     const icon = getNotificationIcon();
     // Always silent here: the renderer plays the notification sound itself
     // (app/src/utils/notification-sound) so audio still fires when the OS
