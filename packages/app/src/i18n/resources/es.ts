@@ -2,6 +2,61 @@ import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const es: TranslationResources = {
+  localFiles: {
+    updateHost: "Actualiza este host para importar archivos locales.",
+    missingTitle: "Faltan archivos locales",
+    missingConfirm:
+      "Faltan {{files}} en {{root}}. ¿Continuar sin estos archivos? Cancela para importarlos primero.",
+    continueWithout: "Continuar sin archivos",
+    unavailableForWorktree: "Revisa estos archivos locales antes de crear un worktree: {{files}}",
+
+    title: "Archivos locales",
+    info: "Importa en este host archivos de entorno y configuración ignorados por Git. Sus agentes y scripts pueden leerlos.",
+    import: "Importar archivos…",
+    importTo: "Importar a {{host}}",
+    thisDevice: "Este dispositivo",
+    fromDevice: "Desde este dispositivo…",
+    fromHost: "Desde otro host…",
+    source: "Origen: {{source}}",
+    sourcePath: "Otro archivo de origen (ruta relativa al proyecto)",
+    inspect: "Comprobar",
+    refresh: "Actualizar",
+    total: "Seleccionados: {{count}} · {{size}}",
+    include: "Incluir en futuros worktrees",
+    configPreview:
+      "Añadir estas rutas a paseo.json. Esto crea un cambio de configuración sin commit; los archivos de worktrees existentes no cambian.",
+    complete: "Archivos importados. Los worktrees existentes no se actualizaron.",
+    limits:
+      "Solo archivos individuales. Máximo 10 MiB por archivo, 25 MiB por importación y 100 archivos. Actualizaciones manuales.",
+    existing: "Ya existe · selecciona para reemplazar",
+    replace: "Reemplazar {{path}}",
+    status: {
+      ready: "Presente",
+      missing: "Falta",
+      not_ignored: "Git debe ignorarlo",
+      unsupported: "Archivo o ruta no compatible",
+      too_large: "Demasiado grande",
+      unavailable: "No disponible",
+      imported: "Importado",
+    },
+    errors: {
+      load_failed:
+        "No se pudieron comprobar los archivos. Revisa la conexión del host e inténtalo de nuevo.",
+      selection_invalid: "Selecciona hasta 100 archivos con nombres distintos.",
+      no_source_files:
+        "No se encontraron archivos aptos. Introduce la ruta de un archivo ignorado por Git.",
+      changed:
+        "El archivo cambió desde la vista previa. Vuelve a elegir el origen para revisar la copia actual.",
+      import_failed: "Error al importar. Revisa la conexión e inténtalo de nuevo.",
+      partial_failure:
+        "Fallaron algunos archivos. Reintenta los fallos seleccionados o vuelve a elegir el origen.",
+      secure_connection_required:
+        "Usa un relay, TLS o una conexión local/SSH para transferir archivos sensibles.",
+      config_failed:
+        "Archivos importados, pero inclusión no guardada. Actualiza para revisar la configuración y guardar la inclusión sin volver a transferir archivos.",
+    },
+  },
+
   common: {
     back: "Atrás",
     loading: "Cargando...",

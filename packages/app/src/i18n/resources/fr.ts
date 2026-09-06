@@ -2,6 +2,61 @@ import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const fr: TranslationResources = {
+  localFiles: {
+    updateHost: "Mettez cet hôte à jour pour importer des fichiers locaux.",
+    missingTitle: "Fichiers locaux manquants",
+    missingConfirm:
+      "{{files}} sont absents de {{root}}. Continuer sans ces fichiers ? Annulez pour les importer.",
+    continueWithout: "Continuer sans les fichiers",
+    unavailableForWorktree: "Vérifiez ces fichiers locaux avant de créer un worktree : {{files}}",
+
+    title: "Fichiers locaux",
+    info: "Importez les fichiers d’environnement et de configuration ignorés par Git sur cet hôte. Ses agents et scripts peuvent les lire.",
+    import: "Importer des fichiers…",
+    importTo: "Importer sur {{host}}",
+    thisDevice: "Cet appareil",
+    fromDevice: "Depuis cet appareil…",
+    fromHost: "Depuis un autre hôte…",
+    source: "Source : {{source}}",
+    sourcePath: "Autre fichier source (chemin relatif au projet)",
+    inspect: "Vérifier",
+    refresh: "Actualiser",
+    total: "Sélection : {{count}} · {{size}}",
+    include: "Inclure dans les futurs worktrees",
+    configPreview:
+      "Ajouter ces chemins à paseo.json. Cela crée une modification de configuration non commitée ; les fichiers des worktrees existants restent inchangés.",
+    complete: "Fichiers importés. Les worktrees existants n’ont pas été mis à jour.",
+    limits:
+      "Fichiers individuels uniquement. Maximum : 10 MiB par fichier, 25 MiB par import et 100 fichiers. Mises à jour manuelles.",
+    existing: "Existe déjà · sélectionner pour remplacer",
+    replace: "Remplacer {{path}}",
+    status: {
+      ready: "Présent",
+      missing: "Manquant",
+      not_ignored: "Doit être ignoré par Git",
+      unsupported: "Fichier ou chemin non pris en charge",
+      too_large: "Trop volumineux",
+      unavailable: "Indisponible",
+      imported: "Importé",
+    },
+    errors: {
+      load_failed:
+        "Impossible de vérifier les fichiers. Vérifiez la connexion à l’hôte et réessayez.",
+      selection_invalid: "Sélectionnez au maximum 100 fichiers de noms distincts.",
+      no_source_files:
+        "Aucun fichier admissible trouvé. Saisissez le chemin d’un fichier ignoré par Git.",
+      changed:
+        "Le fichier a changé depuis l’aperçu. Sélectionnez à nouveau la source pour vérifier la dernière copie.",
+      import_failed: "Échec de l’import. Vérifiez la connexion et réessayez.",
+      partial_failure:
+        "Certains fichiers ont échoué. Réessayez les échecs sélectionnés ou sélectionnez à nouveau la source.",
+      secure_connection_required:
+        "Utilisez un relais, TLS ou une connexion locale/SSH pour transférer des fichiers sensibles.",
+      config_failed:
+        "Fichiers importés, mais inclusion non enregistrée. Actualisez pour vérifier la configuration, puis enregistrez l’inclusion sans retransférer les fichiers.",
+    },
+  },
+
   common: {
     back: "Dos",
     loading: "Chargement...",

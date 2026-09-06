@@ -1,3 +1,11 @@
+import {
+  InspectLocalFilesRequestSchema,
+  InspectLocalFilesResponseSchema,
+  ReadLocalFileRequestSchema,
+  ReadLocalFileResponseSchema,
+  ImportLocalFileRequestSchema,
+  ImportLocalFileResponseSchema,
+} from "./project-local-files.js";
 import { z } from "zod";
 import { TerminalActivitySchema } from "./terminal-activity.js";
 import { CLIENT_CAPS } from "./client-capabilities.js";
@@ -2578,6 +2586,8 @@ export const WorkspaceCreateRequestSchema = z.object({
       // the supported client floor is >= v0.2.0.
       githubPrNumber: z.number().int().positive().optional(),
       worktreeSlug: z.string().optional(),
+      // Explicitly acknowledged by the client; never skips unsafe or changed files.
+      skipMissingLocalFiles: z.boolean().optional(),
     }),
   ]),
 });
@@ -3097,6 +3107,9 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   AgentSkillsImportLegacySelectionRequestSchema,
   GetDaemonConfigRequestMessageSchema,
   SetDaemonConfigRequestMessageSchema,
+  InspectLocalFilesRequestSchema,
+  ReadLocalFileRequestSchema,
+  ImportLocalFileRequestSchema,
   ReadProjectConfigRequestMessageSchema,
   WriteProjectConfigRequestMessageSchema,
   DictationStreamStartMessageSchema,
@@ -3534,6 +3547,9 @@ export const ServerInfoStatusPayloadSchema = z
         workspaceScriptManagement: z.boolean().optional(),
         // COMPAT(projectCustomIcon): added in v0.2.0, remove after 2027-01-20.
         projectCustomIcon: z.boolean().optional(),
+        // COMPAT(projectLocalFiles): added after v0.7.2; remove gate after 2027-03-06
+        // once the supported daemon floor includes local-file import.
+        projectLocalFiles: z.boolean().optional(),
         // COMPAT(fsEntryOps): added in v0.3.0, remove gate after 2027-02-08.
         fsEntryOps: z.boolean().optional(),
         // COMPAT(fsEntryDuplicate): added in v0.3.0, remove gate after 2027-02-09.
@@ -6494,6 +6510,9 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   DiagnosticsResponseSchema,
   GetDaemonConfigResponseMessageSchema,
   SetDaemonConfigResponseMessageSchema,
+  InspectLocalFilesResponseSchema,
+  ReadLocalFileResponseSchema,
+  ImportLocalFileResponseSchema,
   ReadProjectConfigResponseMessageSchema,
   WriteProjectConfigResponseMessageSchema,
   SetAgentModeResponseMessageSchema,

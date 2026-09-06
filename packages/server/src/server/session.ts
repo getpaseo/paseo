@@ -1,3 +1,4 @@
+import { handleLocalFilesRequest } from "./session/local-files/local-files-session.js";
 import equal from "fast-deep-equal";
 import { v4 as uuidv4 } from "uuid";
 import { lstat, mkdir, mkdtemp, rename, rm, stat } from "node:fs/promises";
@@ -2584,6 +2585,12 @@ export class Session {
     source?: object,
   ): Promise<void> | undefined {
     switch (msg.type) {
+      case "project.local_files.inspect.request":
+      case "project.local_files.read.request":
+      case "project.local_files.import.request":
+        return handleLocalFilesRequest(msg, this.projectRegistry).then((response) =>
+          this.emitForSource(response, source),
+        );
       case "file_explorer_request":
         return this.workspaceFilesSession.handleFileExplorerRequest(msg, source);
       case "fs.file.subscribe.request":
@@ -6127,6 +6134,7 @@ export class Session {
         cwd: sourceCwd,
         projectId: source.projectId,
         worktreeSlug: source.worktreeSlug,
+        skipMissingLocalFiles: source.skipMissingLocalFiles,
         action: source.action,
         refName: source.refName,
         branchName: source.branchName,
@@ -6723,6 +6731,8 @@ export class Session {
     return handleWorkspaceSetupRunRequestMessage(
       {
         getWorkspace: (workspaceId) => this.workspaceRegistry.get(workspaceId),
+        getProjectRoot: async (projectId) =>
+          (await this.projectRegistry.get(projectId))?.rootPath ?? null,
         clearAutomationBlock: (workspaceId) =>
           clearWorkspaceAutomationBlock(this.workspaceRegistry, workspaceId),
         startWorkspaceSetup: (workspaceId, operation) =>

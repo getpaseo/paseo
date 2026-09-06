@@ -4793,6 +4793,58 @@ export class DaemonClient {
     this.sendSessionMessageStrict(response);
   }
 
+  private requireProtectedLocalFileTransport(): void {
+    const url = new URL(this.config.url);
+    const relay = isRelayClientWebSocketUrl(this.config.url);
+    if (relay) {
+      if (this.config.e2ee?.enabled === true) return;
+    } else if (
+      url.protocol === "wss:" ||
+      ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname)
+    ) {
+      return;
+    }
+    throw new Error("secure_connection_required");
+  }
+
+  async inspectProjectLocalFiles(
+    input: Omit<
+      Extract<SessionInboundMessage, { type: "project.local_files.inspect.request" }>,
+      "type" | "requestId"
+    >,
+  ) {
+    return this.sendCorrelatedSessionRequest({
+      message: { type: "project.local_files.inspect.request", ...input },
+      responseType: "project.local_files.inspect.response",
+    });
+  }
+
+  async readProjectLocalFile(
+    input: Omit<
+      Extract<SessionInboundMessage, { type: "project.local_files.read.request" }>,
+      "type" | "requestId"
+    >,
+  ) {
+    this.requireProtectedLocalFileTransport();
+    return this.sendCorrelatedSessionRequest({
+      message: { type: "project.local_files.read.request", ...input },
+      responseType: "project.local_files.read.response",
+    });
+  }
+
+  async importProjectLocalFile(
+    input: Omit<
+      Extract<SessionInboundMessage, { type: "project.local_files.import.request" }>,
+      "type" | "requestId"
+    >,
+  ) {
+    this.requireProtectedLocalFileTransport();
+    return this.sendCorrelatedSessionRequest({
+      message: { type: "project.local_files.import.request", ...input },
+      responseType: "project.local_files.import.response",
+    });
+  }
+
   async readProjectConfig(repoRoot: string, requestId?: string): Promise<ReadProjectConfigPayload> {
     return this.sendCorrelatedSessionRequest({
       requestId,
