@@ -101,7 +101,7 @@ export function createAudioEngine(
     queue: QueuedAudio[];
     processingQueue: boolean;
     activePlayback: {
-      source: AudioBufferSourceNode;
+      source: AudioBufferSourceNode | null;
       resolve: (duration: number) => void;
       reject: (error: Error) => void;
       settled: boolean;
@@ -163,44 +163,48 @@ export function createAudioEngine(
   }
 
   async function playAudio(audio: AudioPlaybackSource): Promise<number> {
-    const context = await ensurePlaybackContext();
-    const arrayBuffer = await audio.arrayBuffer();
-    const type = (audio.type || "").toLowerCase();
-    const audioBuffer = type.startsWith("audio/pcm")
-      ? pcm16LeToAudioBuffer(
-          context,
-          new Uint8Array(arrayBuffer),
-          parsePcmSampleRate(type) ?? 24000,
-        )
-      : await decodeAudioData(context, arrayBuffer);
-
-    const durationSec = audioBuffer.duration;
-    const source = context.createBufferSource();
-    source.buffer = audioBuffer;
-    source.connect(context.destination);
-
     return await new Promise<number>((resolve, reject) => {
-      refs.activePlayback = { source, resolve, reject, settled: false };
-
+      const active: NonNullable<typeof refs.activePlayback> = {
+        source: null,
+        resolve,
+        reject,
+        settled: false,
+      };
+      refs.activePlayback = active;
+      const isCurrent = () => refs.activePlayback === active && !active.settled;
       const settle = (fn: () => void) => {
-        const active = refs.activePlayback;
-        if (!active || active.source !== source || active.settled) {
-          return;
-        }
+        if (!isCurrent()) return;
         active.settled = true;
         refs.activePlayback = null;
         fn();
       };
 
-      source.addEventListener("ended", () => {
-        settle(() => resolve(durationSec));
-      });
+      void (async () => {
+        const context = await ensurePlaybackContext();
+        if (!isCurrent()) return;
+        const arrayBuffer = await audio.arrayBuffer();
+        if (!isCurrent()) return;
+        const type = (audio.type || "").toLowerCase();
+        const audioBuffer = type.startsWith("audio/pcm")
+          ? pcm16LeToAudioBuffer(
+              context,
+              new Uint8Array(arrayBuffer),
+              parsePcmSampleRate(type) ?? 24000,
+            )
+          : await decodeAudioData(context, arrayBuffer);
+        if (!isCurrent()) return;
 
-      try {
+        const source = context.createBufferSource();
+        active.source = source;
+        source.buffer = audioBuffer;
+        source.connect(context.destination);
+        source.addEventListener("ended", () => {
+          settle(() => resolve(audioBuffer.duration));
+        });
         source.start();
-      } catch (error) {
+      })().catch((error: unknown) => {
         settle(() => reject(error instanceof Error ? error : new Error(String(error))));
-      }
+      });
     });
   }
 
@@ -310,9 +314,13 @@ export function createAudioEngine(
             autoGainControl: true,
           },
         });
+        refs.stream = stream;
         const source = context.createMediaStreamSource(stream);
+        refs.source = source;
         const processor = context.createScriptProcessor(4096, 1, 1);
+        refs.processor = processor;
         const gain = context.createGain();
+        refs.gain = gain;
         gain.gain.value = 0;
 
         processor.onaudioprocess = (event) => {
@@ -342,10 +350,6 @@ export function createAudioEngine(
         gain.connect(context.destination);
 
         refs.started = true;
-        refs.stream = stream;
-        refs.source = source;
-        refs.processor = processor;
-        refs.gain = gain;
       } catch (error) {
         await stopCapture();
         const wrapped = error instanceof Error ? error : new Error(String(error));
@@ -384,7 +388,7 @@ export function createAudioEngine(
         const active = refs.activePlayback;
         refs.activePlayback = null;
         try {
-          active.source.stop();
+          active.source?.stop();
         } catch {
           // Ignore best-effort stop errors.
         }
@@ -399,7 +403,6 @@ export function createAudioEngine(
       while (refs.queue.length > 0) {
         refs.queue.shift()!.reject(new Error("Playback stopped"));
       }
-      refs.processingQueue = false;
     },
 
     isPlaying() {

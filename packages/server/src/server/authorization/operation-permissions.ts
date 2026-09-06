@@ -3,7 +3,11 @@ import type { DaemonPermission } from "./index.js";
 
 type InboundOperation = SessionInboundMessage["type"];
 type OutboundOperation = SessionOutboundMessage["type"];
-export type PermissionRequirement = DaemonPermission | readonly DaemonPermission[] | null;
+export type PermissionRequirement =
+  | DaemonPermission
+  | readonly DaemonPermission[]
+  | { readonly allOf: readonly DaemonPermission[] }
+  | null;
 
 const INBOUND_PERMISSION = {
   abort_request: "workspace.write",
@@ -186,7 +190,9 @@ const INBOUND_PERMISSION = {
   "voice.live.route.response": "workspace.write",
   "voice.live.start.request": "workspace.write",
   "voice.live.stop.request": "workspace.write",
-  "voice.live.tool.execute.request": "workspace.write",
+  "voice.live.tool.execute.request": {
+    allOf: ["workspace.write", "workspace.manage", "automation.manage"],
+  },
   "voice.live.voices.request": "workspace.read",
   voice_audio_chunk: "workspace.write",
   wait_for_finish_request: "workspace.read",

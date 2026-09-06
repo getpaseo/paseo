@@ -187,7 +187,7 @@ function asLiveVoiceHostSession(value: unknown): LiveVoiceHostSession | null {
  * it structurally; tests supply a minimal fake.
  */
 export interface LiveVoiceAgentSource {
-  hasPaseoMcpInjection(): boolean;
+  hasPaseoMcpInjection(provider?: AgentProvider, requiredTools?: readonly string[]): boolean;
   getProviderAvailability(
     provider: AgentProvider,
   ): Promise<{ available: boolean; error?: string | null }>;
@@ -420,11 +420,11 @@ export class LiveVoiceCoordinator {
     }
   }
 
-  stop(params: { liveSessionId: string }): void {
+  stop(params: { liveSessionId: string; sessionKey: object }): void {
     const call = this.calls.get(params.liveSessionId);
     // A stop for an already-closed call is a no-op; the caller still gets a
     // response.
-    if (!call) {
+    if (!call || call.owner.sessionKey !== params.sessionKey) {
       return;
     }
     this.close(call, "requested");
@@ -491,12 +491,13 @@ export class LiveVoiceCoordinator {
     provider: LiveVoiceHostSession;
     context: LiveVoiceStartContext | null;
   }> {
-    if (!this.agents.hasPaseoMcpInjection()) {
+    const hostProvider = this.hostProfile.provider;
+    const requiredTools = request.sendRouteRequest ? LIVE_VOICE_ROUTING_TOOLS : [];
+    if (!this.agents.hasPaseoMcpInjection(hostProvider, requiredTools)) {
       throw new LiveVoicePaseoToolsDisabledError(
         "Enable Paseo tools in this host's settings to use Live Voice.",
       );
     }
-    const hostProvider = this.hostProfile.provider;
     const availability = await this.agents.getProviderAvailability(hostProvider);
     if (!availability.available) {
       throw new LiveVoiceUnsupportedError(
@@ -546,19 +547,29 @@ export class LiveVoiceCoordinator {
     // registering afterward would expose the ordinary privileged catalog to the
     // hidden host for a race window.
     const hostAgentId = this.createHostAgentId();
-    if (request.sendRouteRequest) {
-      call.unregisterRoute = this.routeBroker.register({
-        hostAgentId,
-        liveSessionId: call.liveSessionId,
-        sourceKey: call.owner.sessionKey,
-        send: request.sendRouteRequest,
-        observer: (observation) => this.observeRoutedOperation(call, observation),
-      });
-    }
-    const agent = await this.agents.createAgent(config, hostAgentId, {
-      workspaceId: undefined,
-      initialTitle: HOST_TITLE,
+    call.unregisterRoute = this.routeBroker.register({
+      hostAgentId,
+      liveSessionId: call.liveSessionId,
+      sourceKey: call.owner.sessionKey,
+      send:
+        request.sendRouteRequest ??
+        (() => {
+          throw new Error("Update the Paseo app to enable Live Voice tool routing.");
+        }),
+      observer: (observation) => this.observeRoutedOperation(call, observation),
     });
+    let agent: LiveVoiceHostAgent;
+    try {
+      agent = await this.agents.createAgent(config, hostAgentId, {
+        workspaceId: undefined,
+        initialTitle: HOST_TITLE,
+      });
+    } catch (error) {
+      call.unregisterRoute?.();
+      call.unregisterRoute = null;
+      this.routeBroker.releaseHost(hostAgentId);
+      throw error;
+    }
     if (agent.id !== hostAgentId) {
       this.disposeHostSession(agent.id);
       throw new Error(`Live Voice host id mismatch: expected ${hostAgentId}, received ${agent.id}`);
@@ -693,11 +704,17 @@ export class LiveVoiceCoordinator {
     );
   }
 
-  /** Fire-and-forget: a failed host teardown must not fail the call teardown. */
+  /** Fire-and-forget: release classification only after confirmed teardown. */
   private disposeHostSession(hostAgentId: string): void {
-    void this.agents.closeAgent(hostAgentId).catch((error) => {
-      this.logger.warn({ err: error, hostAgentId }, "live_voice.host.close_failed");
-    });
+    void this.agents
+      .closeAgent(hostAgentId)
+      .then(() => {
+        this.routeBroker.releaseHost(hostAgentId);
+        return undefined;
+      })
+      .catch((error) => {
+        this.logger.warn({ err: error, hostAgentId }, "live_voice.host.close_failed");
+      });
   }
 
   private async performHandshake(
@@ -712,7 +729,7 @@ export class LiveVoiceCoordinator {
     // and a rejection with no handler attached in that window is an unhandled
     // rejection. The `await` below still sees the rejection.
     sdpPromise.catch(() => undefined);
-    await provider.realtimeStart({
+    const startPromise = provider.realtimeStart({
       sdp: request.offerSdp,
       realtimeSessionId: call.liveSessionId,
       ...(request.voice ? { voice: request.voice } : {}),
@@ -725,7 +742,22 @@ export class LiveVoiceCoordinator {
           }
         : {}),
     });
-    return await sdpPromise;
+    const handshakePromise = Promise.all([startPromise, sdpPromise]).then(([, sdp]) => sdp);
+    const timeoutPromise = new Promise<never>((_resolve, reject) => {
+      call.startTimer = setTimeout(() => {
+        call.startTimer = null;
+        reject(new Error(`Timed out after ${this.startSdpTimeoutMs}ms starting live voice`));
+      }, this.startSdpTimeoutMs);
+      call.startTimer.unref?.();
+    });
+    try {
+      return await Promise.race([handshakePromise, timeoutPromise]);
+    } finally {
+      if (call.startTimer) {
+        clearTimeout(call.startTimer);
+        call.startTimer = null;
+      }
+    }
   }
 
   /**
@@ -757,15 +789,6 @@ export class LiveVoiceCoordinator {
         return;
       }
       call.sdpWaiter = { resolve, reject };
-      call.startTimer = setTimeout(() => {
-        call.startTimer = null;
-        const waiter = call.sdpWaiter;
-        call.sdpWaiter = null;
-        waiter?.reject(
-          new Error(`Timed out after ${this.startSdpTimeoutMs}ms waiting for the answer SDP`),
-        );
-      }, this.startSdpTimeoutMs);
-      call.startTimer.unref?.();
     });
   }
 
@@ -834,10 +857,6 @@ export class LiveVoiceCoordinator {
     call.bufferedAnswerSdp = sdp;
     const waiter = call.sdpWaiter;
     call.sdpWaiter = null;
-    if (call.startTimer) {
-      clearTimeout(call.startTimer);
-      call.startTimer = null;
-    }
     waiter?.resolve(sdp);
   }
 

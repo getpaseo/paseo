@@ -105,7 +105,7 @@ describe("LiveVoiceRouteBroker", () => {
     expect(broker.receiveResponse(hostsResponse("route-request-1"), sourceKey)).toBe(false);
   });
 
-  it("rejects every pending request when the call unregisters", async () => {
+  it("revokes routing before releasing the hidden-host classification", async () => {
     const { broker, unregister } = createHarness();
     const resultPromise = broker.execute(HOST_AGENT_ID, {
       kind: "execute_tool",
@@ -120,6 +120,12 @@ describe("LiveVoiceRouteBroker", () => {
       "The Live Voice call closed before its routed request completed.",
     );
     expect(broker.getPendingRequestCount()).toBe(0);
+    expect(broker.isRegisteredHost(HOST_AGENT_ID)).toBe(true);
+    await expect(broker.execute(HOST_AGENT_ID, { kind: "list_hosts" })).rejects.toThrow(
+      "no longer connected",
+    );
+
+    broker.releaseHost(HOST_AGENT_ID);
     expect(broker.isRegisteredHost(HOST_AGENT_ID)).toBe(false);
   });
 

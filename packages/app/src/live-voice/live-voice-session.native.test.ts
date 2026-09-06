@@ -36,9 +36,11 @@ const nativeRtc = vi.hoisted(() => {
     onmessage: ((event: { data: unknown }) => void) | null = null;
     onerror: ((event: unknown) => void) | null = null;
     closed = false;
+    closeError: Error | null = null;
 
     close(): void {
       this.closed = true;
+      if (this.closeError) throw this.closeError;
     }
   }
 
@@ -226,6 +228,56 @@ describe("native live voice session", () => {
     expect(backgroundCallLifetime.begin).toHaveBeenCalledOnce();
 
     session.close();
+    expect(backgroundCallLifetime.end).toHaveBeenCalledOnce();
+  });
+
+  it("waits for background audio deactivation before close completes", async () => {
+    const ended = Promise.withResolvers<void>();
+    backgroundCallLifetime.end.mockReturnValueOnce(ended.promise);
+    const session = await startLiveVoiceSession({
+      negotiate: async () => ({ liveSessionId: "live-native", answerSdp: nativeRtc.ANSWER_SDP }),
+      onAudioBlocked: () => undefined,
+      onAudioResumed: () => undefined,
+      onTerminal: () => undefined,
+    });
+    let closeFinished = false;
+    const close = Promise.resolve(session.close()).then(() => {
+      closeFinished = true;
+      return undefined;
+    });
+    await Promise.resolve();
+
+    expect(closeFinished).toBe(false);
+    expect(nativeRtc.stream().track.stopped).toBe(true);
+    ended.resolve();
+    await close;
+    await session.close();
+
+    expect(closeFinished).toBe(true);
+    expect(backgroundCallLifetime.end).toHaveBeenCalledOnce();
+  });
+
+  it("reports peer failure and releases all other resources if the channel cannot close", async () => {
+    const onTerminal = vi.fn();
+    const session = await startLiveVoiceSession({
+      negotiate: async () => ({ liveSessionId: "live-native", answerSdp: nativeRtc.ANSWER_SDP }),
+      onAudioBlocked: () => undefined,
+      onAudioResumed: () => undefined,
+      onTerminal,
+    });
+    const peer = nativeRtc.FakePeerConnection.instances[0]!;
+    peer.channel.closeError = new Error("Data channel already disposed");
+    peer.connectionState = "failed";
+    peer.onconnectionstatechange?.();
+    await session.close();
+
+    expect(onTerminal).toHaveBeenCalledExactlyOnceWith({
+      code: "webrtc_failed",
+      message: "WebRTC connection failed.",
+    });
+    expect(peer.closed).toBe(true);
+    expect(nativeRtc.stream().track.stopped).toBe(true);
+    expect(nativeRtc.stream().released).toBe(true);
     expect(backgroundCallLifetime.end).toHaveBeenCalledOnce();
   });
 

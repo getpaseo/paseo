@@ -40,10 +40,7 @@ const ICE_GATHERING_TIMEOUT_MS = 10_000;
  */
 const SUSTAINED_DISCONNECT_MS = 8_000;
 
-/**
- * The provider's control channel. Phase 1 logs it and nothing more: the daemon's
- * `voice.live.update` transcripts are canonical and the two must never be merged.
- */
+/** Daemon updates carry the canonical transcripts; this channel only establishes WebRTC. */
 const EVENT_CHANNEL_LABEL = "oai-events";
 
 export const isLiveVoiceSessionSupported =
@@ -206,14 +203,6 @@ export async function startLiveVoiceSession(
     const listenerScope = { signal: listeners.signal };
 
     channel = pc.createDataChannel(EVENT_CHANNEL_LABEL);
-    channel.addEventListener(
-      "message",
-      (event) => {
-        // Log only. Daemon transcripts are canonical in phase 1.
-        console.debug("[LiveVoice] oai-events message", event.data);
-      },
-      listenerScope,
-    );
     channel.addEventListener(
       "error",
       (event) => {

@@ -10,7 +10,31 @@ interface QueuedAudio {
   reject: (error: Error) => void;
 }
 
+export type NativeAudioModule = Pick<
+  typeof import("@getpaseo/expo-two-way-audio"),
+  | "initialize"
+  | "tearDown"
+  | "toggleRecording"
+  | "releaseAudioSession"
+  | "addExpoTwoWayAudioEventListener"
+  | "resumePlayback"
+  | "playPCMData"
+  | "stopPlayback"
+> & {
+  getMicrophonePermissionsAsync(): Promise<NativeMicrophonePermission>;
+  requestMicrophonePermissionsAsync(): Promise<NativeMicrophonePermission>;
+};
+
+interface NativeMicrophonePermission {
+  granted: boolean;
+}
+
+const captureOwners = new WeakMap<NativeAudioModule, object>();
+const playbackOwners = new WeakMap<NativeAudioModule, object>();
+const nativeModuleUsers = new WeakMap<NativeAudioModule, number>();
+
 interface AudioEngineTraceOptions {
+  nativeModule?: NativeAudioModule;
   traceLabel?: string;
 }
 
@@ -68,9 +92,11 @@ function resamplePcm16(pcm: Uint8Array, fromRate: number, toRate: number): Uint8
 
 export function createAudioEngine(
   callbacks: AudioEngineCallbacks,
-  _options?: AudioEngineTraceOptions,
+  options?: AudioEngineTraceOptions,
 ): AudioEngine {
-  const native = require("@getpaseo/expo-two-way-audio");
+  const native: NativeAudioModule =
+    options?.nativeModule ?? require("@getpaseo/expo-two-way-audio");
+  nativeModuleUsers.set(native, (nativeModuleUsers.get(native) ?? 0) + 1);
 
   const refs: {
     initialized: boolean;
@@ -124,6 +150,7 @@ export function createAudioEngine(
       }
       const wasCaptureActive = refs.captureActive;
       refs.captureActive = false;
+      if (captureOwners.get(native) === refs) captureOwners.delete(native);
       refs.muted = false;
       callbacks.onVolumeLevel(0);
       if (wasCaptureActive) {
@@ -133,10 +160,15 @@ export function createAudioEngine(
   );
 
   async function ensureInitialized(): Promise<void> {
-    if (refs.initialized) {
-      return;
-    }
+    if (refs.destroyed) throw new Error("Audio engine was destroyed");
+    // Initialization belongs to the shared module, not an individual wrapper.
     const success = await native.initialize();
+    if (refs.destroyed) {
+      if (nativeModuleUsers.get(native) === 0) native.tearDown();
+      else if (!captureOwners.has(native) && !playbackOwners.has(native))
+        native.releaseAudioSession();
+      throw new Error("Audio engine was destroyed");
+    }
     if (!success) {
       throw new Error("expo-two-way-audio: native initialize() returned false");
     }
@@ -156,6 +188,11 @@ export function createAudioEngine(
     if (refs.captureActive || refs.activePlayback || refs.queue.length > 0) {
       return;
     }
+    if (playbackOwners.get(native) === refs) {
+      native.stopPlayback();
+      playbackOwners.delete(native);
+    }
+    if (captureOwners.has(native) || playbackOwners.has(native)) return;
     // The wrapper no-ops on binaries whose native module predates this function.
     native.releaseAudioSession();
   }
@@ -180,14 +217,18 @@ export function createAudioEngine(
   }
 
   async function playAudio(audio: AudioPlaybackSource): Promise<number> {
-    await ensureInitialized();
-
     return await new Promise<number>((resolve, reject) => {
-      refs.activePlayback = { resolve, reject, settled: false };
+      const active = { resolve, reject, settled: false };
+      refs.activePlayback = active;
+      const isCurrent = () => refs.activePlayback === active && !active.settled;
 
-      audio
-        .arrayBuffer()
+      ensureInitialized()
+        .then(async () => {
+          if (!isCurrent()) return null;
+          return await audio.arrayBuffer();
+        })
         .then((arrayBuffer) => {
+          if (!arrayBuffer || !isCurrent()) return;
           const pcm = new Uint8Array(arrayBuffer);
           const inputRate = parsePcmSampleRate(audio.type || "") ?? 24000;
 
@@ -195,26 +236,35 @@ export function createAudioEngine(
           const pcm16k = resamplePcm16(pcm, inputRate, 16000);
           const durationSec = pcm16k.length / 2 / 16000;
 
+          if (refs.destroyed) throw new Error("Audio engine was destroyed");
+          playbackOwners.set(native, refs);
           native.resumePlayback();
           native.playPCMData(pcm16k);
 
           clearPlaybackTimeout();
-          refs.playbackTimeout = setTimeout(() => {
+          let tailWaited = false;
+          const finish = () => {
+            if (!isCurrent()) {
+              return;
+            }
             clearPlaybackTimeout();
-            const active = refs.activePlayback;
-            if (!active || active.settled) {
+            // Native output can lag the duration estimate. Pad only the final
+            // standalone clip before stopping the player and releasing audio.
+            if (!refs.captureActive && refs.queue.length === 0 && !tailWaited) {
+              tailWaited = true;
+              refs.playbackTimeout = setTimeout(finish, 200);
               return;
             }
             active.settled = true;
             refs.activePlayback = null;
             resolve(durationSec);
-          }, durationSec * 1000);
+          };
+          refs.playbackTimeout = setTimeout(finish, durationSec * 1000);
           return undefined;
         })
         .catch((error: unknown) => {
-          clearPlaybackTimeout();
-          const active = refs.activePlayback;
-          if (active && !active.settled) {
+          if (isCurrent()) {
+            clearPlaybackTimeout();
             active.settled = true;
             refs.activePlayback = null;
             reject(error instanceof Error ? error : new Error(String(error)));
@@ -248,26 +298,33 @@ export function createAudioEngine(
     },
 
     async destroy() {
-      if (refs.destroyed) {
-        return;
-      }
+      if (refs.destroyed) return;
       refs.destroyed = true;
-      this.stop();
-      this.clearQueue();
-      if (refs.captureActive) {
-        native.toggleRecording(false);
+      try {
+        const ownedAudio =
+          captureOwners.get(native) === refs || playbackOwners.get(native) === refs;
+        this.stop();
+        this.clearQueue();
+        if (captureOwners.get(native) === refs) {
+          native.toggleRecording(false);
+          captureOwners.delete(native);
+        }
         refs.captureActive = false;
-      }
-      clearPlaybackTimeout();
-      refs.muted = false;
-      callbacks.onVolumeLevel(0);
-      if (refs.initialized) {
-        native.tearDown();
+        clearPlaybackTimeout();
+        refs.muted = false;
+        callbacks.onVolumeLevel(0);
+        const remainingUsers = (nativeModuleUsers.get(native) ?? 1) - 1;
+        if (remainingUsers === 0) native.tearDown();
+        else if (ownedAudio) native.releaseAudioSession();
+        nativeModuleUsers.set(native, remainingUsers);
         refs.initialized = false;
+        microphoneSubscription.remove();
+        volumeSubscription.remove();
+        interruptionSubscription.remove();
+      } catch (error) {
+        refs.destroyed = false;
+        throw error;
       }
-      microphoneSubscription.remove();
-      volumeSubscription.remove();
-      interruptionSubscription.remove();
     },
 
     async startCapture() {
@@ -284,6 +341,7 @@ export function createAudioEngine(
             "Microphone capture could not start because Android audio focus is unavailable.",
           );
         }
+        captureOwners.set(native, refs);
         refs.captureActive = true;
       } catch (error) {
         const wrapped = error instanceof Error ? error : new Error(String(error));
@@ -293,8 +351,9 @@ export function createAudioEngine(
     },
 
     async stopCapture() {
-      if (refs.captureActive) {
+      if (captureOwners.get(native) === refs) {
         native.toggleRecording(false);
+        captureOwners.delete(native);
       }
       refs.captureActive = false;
       refs.muted = false;
@@ -324,7 +383,10 @@ export function createAudioEngine(
     },
 
     stop() {
-      native.stopPlayback();
+      if (playbackOwners.get(native) === refs) {
+        native.stopPlayback();
+        playbackOwners.delete(native);
+      }
       clearPlaybackTimeout();
       const active = refs.activePlayback;
       refs.activePlayback = null;
@@ -339,7 +401,6 @@ export function createAudioEngine(
       while (refs.queue.length > 0) {
         refs.queue.shift()!.reject(new Error("Playback stopped"));
       }
-      refs.processingQueue = false;
       releaseSessionIfIdle();
     },
 

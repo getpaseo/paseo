@@ -28,7 +28,10 @@ const WIRE_REASONS: Record<AgentFinishReason, string> = {
 const MAX_SUMMARY_LENGTH = 1_200;
 
 export interface LiveVoiceAgentNotifierOptions {
-  agentManager: Pick<AgentManager, "subscribe" | "getAgent" | "getLastAssistantMessage">;
+  agentManager: Pick<
+    AgentManager,
+    "subscribe" | "listAgents" | "getAgent" | "getLastAssistantMessage"
+  >;
   agentStorage: Pick<AgentStorage, "get">;
   /**
    * Resolves where a finished agent's work lives. Read lazily because the
@@ -73,6 +76,7 @@ export class LiveVoiceAgentNotifier {
   private readonly logger: Logger;
   private readonly cancelsBySource = new Map<object, Set<() => void>>();
   private readonly ambientBySource = new Map<object, () => void>();
+  private readonly routedAgentsBySource = new Map<object, Map<string, number>>();
 
   constructor(options: LiveVoiceAgentNotifierOptions) {
     this.agentManager = options.agentManager;
@@ -83,6 +87,10 @@ export class LiveVoiceAgentNotifier {
   }
 
   watch(params: WatchLiveVoiceAgentParams): void {
+    const routedAgents =
+      this.routedAgentsBySource.get(params.sourceKey) ?? new Map<string, number>();
+    this.routedAgentsBySource.set(params.sourceKey, routedAgents);
+    routedAgents.set(params.agentId, (routedAgents.get(params.agentId) ?? 0) + 1);
     const cancels = this.cancelsBySource.get(params.sourceKey) ?? new Set<() => void>();
     this.cancelsBySource.set(params.sourceKey, cancels);
 
@@ -94,7 +102,20 @@ export class LiveVoiceAgentNotifier {
       if (cancels.size === 0) {
         this.cancelsBySource.delete(params.sourceKey);
       }
+      // Keep the claim through every subscriber handling this terminal event.
+      queueMicrotask(() => {
+        const remaining = (routedAgents.get(params.agentId) ?? 1) - 1;
+        if (remaining > 0) routedAgents.set(params.agentId, remaining);
+        else routedAgents.delete(params.agentId);
+        if (
+          routedAgents.size === 0 &&
+          this.routedAgentsBySource.get(params.sourceKey) === routedAgents
+        ) {
+          this.routedAgentsBySource.delete(params.sourceKey);
+        }
+      });
     };
+    let reportQueue = Promise.resolve();
 
     cancelInner = watchAgentFinish({
       agentManager: this.agentManager,
@@ -104,12 +125,14 @@ export class LiveVoiceAgentNotifier {
         if (details.terminal) {
           forget();
         }
-        void this.report(params, reason, details.turnId).catch((error) => {
-          this.logger.warn(
-            { err: error, agentId: params.agentId, reason },
-            "live_voice.agent_notify.report_failed",
-          );
-        });
+        reportQueue = reportQueue
+          .then(() => this.report(params, reason, details.turnId))
+          .catch((error) => {
+            this.logger.warn(
+              { err: error, agentId: params.agentId, reason },
+              "live_voice.agent_notify.report_failed",
+            );
+          });
       },
     });
   }
@@ -133,49 +156,92 @@ export class LiveVoiceAgentNotifier {
     // An agent going idle only means a turn ended if we saw it run. Without this
     // every agent already sitting idle would report the moment anything else on
     // the daemon changed.
-    const running = new Set<string>();
+    const running = new Set(
+      this.agentManager
+        .listAgents()
+        .filter((agent) => agent.lifecycle === "running")
+        .map((agent) => agent.id),
+    );
+    const errored = new Set<string>();
     const reportedPermissionIds = new Set<string>();
+    const reportQueues = new Map<string, Promise<void>>();
+    let active = true;
+    const enqueueReport = (agentId: string, reason: AgentFinishReason, turnId?: string): void => {
+      if (this.routedAgentsBySource.get(params.sourceKey)?.has(agentId)) return;
+      const previous = reportQueues.get(agentId) ?? Promise.resolve();
+      const next = previous
+        .then(() =>
+          this.report(
+            {
+              agentId,
+              emit: params.emit,
+              requestId: `ambient-${randomUUID()}`,
+              sourceKey: params.sourceKey,
+            },
+            reason,
+            turnId,
+            { unsolicited: true, shouldEmit: () => active },
+          ),
+        )
+        .catch((error) => {
+          this.logger.warn(
+            { err: error, agentId, reason },
+            "live_voice.agent_notify.ambient_report_failed",
+          );
+        });
+      reportQueues.set(agentId, next);
+      void next.finally(() => {
+        if (reportQueues.get(agentId) === next) {
+          reportQueues.delete(agentId);
+        }
+      });
+    };
 
-    const unsubscribe = this.agentManager.subscribe(
+    const unsubscribeAgentEvents = this.agentManager.subscribe(
       (event) => {
         if (event.type === "agent_state") {
           const { id, lifecycle } = event.agent;
           if (lifecycle === "running") {
+            errored.delete(id);
             running.add(id);
             return;
           }
           if (lifecycle === "closed") {
             running.delete(id);
+            errored.delete(id);
             return;
           }
           if (lifecycle === "error") {
             running.delete(id);
-            this.emitReport({ agentId: id, emit: params.emit }, "errored");
+            if (!errored.has(id)) {
+              errored.add(id);
+              enqueueReport(id, "errored");
+            }
             return;
           }
+          errored.delete(id);
           if (lifecycle === "idle" && running.delete(id)) {
-            this.emitReport({ agentId: id, emit: params.emit }, "finished");
+            enqueueReport(id, "finished");
           }
           return;
         }
 
         if (event.type === "agent_stream" && event.event.type === "permission_requested") {
-          const permissionId = event.event.request.id;
+          const permissionId = `${event.agentId}\0${event.event.request.id}`;
           if (reportedPermissionIds.has(permissionId)) {
             return;
           }
           reportedPermissionIds.add(permissionId);
-          this.emitReport(
-            { agentId: event.agentId, emit: params.emit },
-            "needs permission",
-            event.event.turnId,
-          );
+          enqueueReport(event.agentId, "needs permission", event.event.turnId);
         }
       },
       { replayState: false },
     );
 
-    this.ambientBySource.set(params.sourceKey, unsubscribe);
+    this.ambientBySource.set(params.sourceKey, () => {
+      active = false;
+      unsubscribeAgentEvents();
+    });
   }
 
   stopWatchingAll(sourceKey: object): void {
@@ -194,6 +260,7 @@ export class LiveVoiceAgentNotifier {
   /** The socket went away; nothing it started has anywhere left to report to. */
   releaseForSource(sourceKey: object): void {
     this.stopWatchingAll(sourceKey);
+    this.routedAgentsBySource.delete(sourceKey);
     const cancels = this.cancelsBySource.get(sourceKey);
     if (!cancels) {
       return;
@@ -219,34 +286,11 @@ export class LiveVoiceAgentNotifier {
     return count;
   }
 
-  /**
-   * Ambient reports have no routed tool call to be correlated against, so they
-   * carry a fresh id and say so. The client matches them to a call by which host
-   * it enabled the ambient watch on.
-   */
-  private emitReport(
-    params: { agentId: string; emit: (update: VoiceLiveAgentUpdate) => void },
-    reason: AgentFinishReason,
-    turnId?: string,
-  ): void {
-    void this.report(
-      { ...params, requestId: `ambient-${randomUUID()}`, sourceKey: params.emit },
-      reason,
-      turnId,
-      { unsolicited: true },
-    ).catch((error) => {
-      this.logger.warn(
-        { err: error, agentId: params.agentId, reason },
-        "live_voice.agent_notify.ambient_report_failed",
-      );
-    });
-  }
-
   private async report(
     params: WatchLiveVoiceAgentParams,
     reason: AgentFinishReason,
     turnId?: string,
-    options: { unsolicited?: boolean } = {},
+    options: { unsolicited?: boolean; shouldEmit?: () => boolean } = {},
   ): Promise<void> {
     const record = await this.agentStorage.get(params.agentId);
     const title = record?.title?.trim() || params.agentId;
@@ -257,6 +301,9 @@ export class LiveVoiceAgentNotifier {
         : WIRE_REASONS[reason];
     const lastAssistantMessage = await this.agentManager.getLastAssistantMessage(params.agentId);
     const placement = await this.resolvePlacement(record?.workspaceId);
+    if (options.shouldEmit && !options.shouldEmit()) {
+      return;
+    }
     params.emit({
       type: "voice.live.agent.update",
       payload: {

@@ -56,6 +56,13 @@ export async function enableAmbientLiveVoiceWatches(
       trackAmbientLiveVoiceWatch({ targetServerId: serverId, sourceServerId, liveSessionId });
       try {
         const result = await pin.client.setLiveVoiceAgentWatch({ enabled: true });
+        const current = getAmbientLiveVoiceWatch(serverId);
+        if (current?.liveSessionId !== liveSessionId) {
+          if (!current && result.enabled) {
+            await pin.client.setLiveVoiceAgentWatch({ enabled: false });
+          }
+          return null;
+        }
         return result.enabled ? serverId : null;
       } catch (error) {
         params.onError?.(serverId, error);
