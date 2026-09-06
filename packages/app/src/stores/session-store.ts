@@ -480,7 +480,14 @@ interface SessionStoreActions {
     serverId: string,
     agentId: string,
     messageId: string,
-  ) => void;
+  ) => StreamItem[] | null;
+  rollbackOptimisticStreamTruncation: (
+    serverId: string,
+    agentId: string,
+    expectedTruncatedTail: StreamItem[],
+    previousTail: StreamItem[] | undefined,
+    previousHead: StreamItem[] | undefined,
+  ) => boolean;
   applyAgentTurnLiveness: (
     serverId: string,
     agentId: string,
@@ -1064,6 +1071,7 @@ export const useSessionStore = create<SessionStore>()(
       },
 
       truncateAgentStreamTailAtMessageId: (serverId, agentId, messageId) => {
+        let resultTruncated: StreamItem[] | null = null;
         set((prev) => {
           const session = prev.sessions[serverId];
           if (!session) return prev;
@@ -1076,6 +1084,7 @@ export const useSessionStore = create<SessionStore>()(
           );
           if (targetIndex === -1) return prev;
           const truncated = currentTail.slice(0, targetIndex + 1);
+          resultTruncated = truncated;
           // Also clear the live head so no stale streaming items remain visible
           const nextTail = new Map(session.agentStreamTail).set(agentId, truncated);
           const nextHead = new Map(session.agentStreamHead);
@@ -1088,6 +1097,48 @@ export const useSessionStore = create<SessionStore>()(
             },
           };
         });
+        return resultTruncated;
+      },
+
+      rollbackOptimisticStreamTruncation: (
+        serverId,
+        agentId,
+        expectedTruncatedTail,
+        previousTail,
+        previousHead,
+      ) => {
+        let rolledBack = false;
+        set((prev) => {
+          const session = prev.sessions[serverId];
+          if (!session) return prev;
+          const currentTail = session.agentStreamTail.get(agentId);
+          // Guard: only rollback if the current tail is still the exact truncated array set by this mutation.
+          // If another stream update or newer rewind has changed the state, avoid overwriting with stale snapshot.
+          if (currentTail !== expectedTruncatedTail) {
+            return prev;
+          }
+          rolledBack = true;
+          const nextTail = new Map(session.agentStreamTail);
+          if (previousTail !== undefined) {
+            nextTail.set(agentId, previousTail);
+          } else {
+            nextTail.delete(agentId);
+          }
+          const nextHead = new Map(session.agentStreamHead);
+          if (previousHead !== undefined) {
+            nextHead.set(agentId, previousHead);
+          } else {
+            nextHead.delete(agentId);
+          }
+          return {
+            ...prev,
+            sessions: {
+              ...prev.sessions,
+              [serverId]: { ...session, agentStreamTail: nextTail, agentStreamHead: nextHead },
+            },
+          };
+        });
+        return rolledBack;
       },
 
       applyAgentTurnLiveness: (serverId, agentId, transition) => {

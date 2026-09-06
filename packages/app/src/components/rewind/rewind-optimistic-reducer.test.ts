@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { useSessionStore } from "@/stores/session-store";
 
 interface TimelineItem {
   id: string;
@@ -124,5 +125,134 @@ describe("Optimistic Timeline Truncation (Zero-Flash Rewind)", () => {
     expect(settledState.isRewinding).toBe(false);
     expect(settledState.targetMessageId).toBeNull();
     expect(settledState.items).toEqual(authoritativeItems);
+  });
+});
+
+describe("Session Store Optimistic Truncation & Rollback Guard", () => {
+  const serverId = "test-server-1";
+  const agentId = "agent-1";
+
+  it("truncates agentStreamTail at targeted messageId and clears head", () => {
+    const store = useSessionStore.getState();
+    const msg1 = {
+      id: "msg-1",
+      kind: "user_message" as const,
+      messageId: "msg-1",
+      text: "First prompt",
+    };
+    const msg2 = {
+      id: "msg-2",
+      kind: "user_message" as const,
+      messageId: "msg-2",
+      text: "Second prompt",
+    };
+    const msg3 = {
+      id: "msg-3",
+      kind: "user_message" as const,
+      messageId: "msg-3",
+      text: "Third prompt",
+    };
+
+    store.ensureSession(serverId);
+    store.setAgentStreamState(serverId, agentId, {
+      tail: [msg1, msg2, msg3],
+      head: [{ id: "head-1", kind: "user_message", text: "streaming..." }],
+    });
+
+    const truncated = store.truncateAgentStreamTailAtMessageId(serverId, agentId, "msg-2");
+    expect(truncated).toHaveLength(2);
+    expect(truncated?.map((i) => i.id)).toEqual(["msg-1", "msg-2"]);
+
+    const currentSession = useSessionStore.getState().sessions[serverId];
+    expect(currentSession?.agentStreamTail.get(agentId)).toEqual([msg1, msg2]);
+    expect(currentSession?.agentStreamHead.has(agentId)).toBe(false);
+  });
+
+  it("rolls back optimistic truncation cleanly when unchanged", () => {
+    const store = useSessionStore.getState();
+    const msg1 = {
+      id: "msg-1",
+      kind: "user_message" as const,
+      messageId: "msg-1",
+      text: "First prompt",
+    };
+    const msg2 = {
+      id: "msg-2",
+      kind: "user_message" as const,
+      messageId: "msg-2",
+      text: "Second prompt",
+    };
+
+    store.ensureSession(serverId);
+    store.setAgentStreamState(serverId, agentId, {
+      tail: [msg1, msg2],
+    });
+
+    const previousTail = [msg1, msg2];
+    const truncated = store.truncateAgentStreamTailAtMessageId(serverId, agentId, "msg-1");
+    expect(truncated).toHaveLength(1);
+
+    const rolledBack = store.rollbackOptimisticStreamTruncation(
+      serverId,
+      agentId,
+      truncated!,
+      previousTail,
+      undefined,
+    );
+    expect(rolledBack).toBe(true);
+    expect(useSessionStore.getState().sessions[serverId]?.agentStreamTail.get(agentId)).toEqual([
+      msg1,
+      msg2,
+    ]);
+  });
+
+  it("refuses rollback when newer stream events modified the tail", () => {
+    const store = useSessionStore.getState();
+    const msg1 = {
+      id: "msg-1",
+      kind: "user_message" as const,
+      messageId: "msg-1",
+      text: "First prompt",
+    };
+    const msg2 = {
+      id: "msg-2",
+      kind: "user_message" as const,
+      messageId: "msg-2",
+      text: "Second prompt",
+    };
+
+    store.ensureSession(serverId);
+    store.setAgentStreamState(serverId, agentId, {
+      tail: [msg1, msg2],
+    });
+
+    const previousTail = [msg1, msg2];
+    const truncated = store.truncateAgentStreamTailAtMessageId(serverId, agentId, "msg-1");
+
+    // Simulate another stream event modifying the tail in the meantime
+    const msgNew = {
+      id: "msg-new",
+      kind: "user_message" as const,
+      messageId: "msg-new",
+      text: "New prompt",
+    };
+    store.setAgentStreamState(serverId, agentId, {
+      tail: [msg1, msgNew],
+    });
+
+    // Rollback attempt must be rejected because tail changed!
+    const rolledBack = store.rollbackOptimisticStreamTruncation(
+      serverId,
+      agentId,
+      truncated!,
+      previousTail,
+      undefined,
+    );
+    expect(rolledBack).toBe(false);
+    // Tail must NOT be overwritten with the stale pre-request snapshot!
+    expect(useSessionStore.getState().sessions[serverId]?.agentStreamTail.get(agentId)).toEqual([
+      msg1,
+      msgNew,
+    ]);
   });
 });

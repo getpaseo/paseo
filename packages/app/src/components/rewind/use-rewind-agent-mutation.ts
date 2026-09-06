@@ -36,11 +36,11 @@ export function useRewindAgentMutation(input: UseRewindAgentMutationInput): {
         const previousHead = session?.agentStreamHead.get(input.agentId);
 
         // Optimistic truncation: slice the local stream immediately (Zed-style zero-flash)
-        useSessionStore
+        const expectedTruncatedTail = useSessionStore
           .getState()
           .truncateAgentStreamTailAtMessageId(input.serverId, input.agentId, input.messageId);
 
-        return { previousTail, previousHead };
+        return { previousTail, previousHead, expectedTruncatedTail };
       }
       return undefined;
     },
@@ -70,12 +70,15 @@ export function useRewindAgentMutation(input: UseRewindAgentMutationInput): {
       composerRestore?.completeRewind(variables.rewoundText);
     },
     onError: (error, _variables, context) => {
-      // Rollback optimistic truncation on failure
-      if (input.serverId && input.agentId && context) {
-        useSessionStore.getState().setAgentStreamState(input.serverId, input.agentId, {
-          tail: context.previousTail,
-          head: context.previousHead,
-        });
+      // Guarded rollback: only restore if the timeline has not been updated by newer stream events
+      if (input.serverId && input.agentId && context?.expectedTruncatedTail) {
+        useSessionStore.getState().rollbackOptimisticStreamTruncation(
+          input.serverId,
+          input.agentId,
+          context.expectedTruncatedTail,
+          context.previousTail,
+          context.previousHead,
+        );
         void getHostRuntimeStore().fetchAgentTimeline(input.serverId, input.agentId, {
           direction: "tail",
           projection: "projected",
