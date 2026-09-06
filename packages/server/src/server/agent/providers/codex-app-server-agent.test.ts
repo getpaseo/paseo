@@ -1022,7 +1022,13 @@ describe("Codex app-server provider", () => {
     child.stderr = new PassThrough() as ChildProcessWithoutNullStreams["stderr"];
     child.exitCode = null;
     child.signalCode = null;
-    child.kill = vi.fn(() => true) as ChildProcessWithoutNullStreams["kill"];
+    child.kill = vi.fn((signal) => {
+      if (signal === "SIGKILL") {
+        child.signalCode = "SIGKILL";
+        child.emit("exit", null, "SIGKILL");
+      }
+      return true;
+    }) as ChildProcessWithoutNullStreams["kill"];
     const client = new CodexAppServerClient(child, createTestLogger());
 
     try {
