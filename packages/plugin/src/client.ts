@@ -1,4 +1,31 @@
-export type * from "./client-contracts.js";
+export type {
+  PluginHostProps,
+  PluginSurfaceProps,
+  PluginIconProps,
+  PluginPanelLocation,
+  PluginOpenPanelOptions,
+  PluginWorkspacePanelProps,
+  PluginAgentPanelProps,
+  PluginComposerPillProps,
+  PluginComposerPillContribution,
+  PluginClientOpenPanelOptions,
+  PluginClientContext,
+  PluginClientContribution,
+  PluginWorkspacePanelContribution,
+  PluginSettingsScreenContribution,
+  PluginSurfaceContribution,
+  PluginSidebarContribution,
+  PluginTimelineTransformerContribution,
+  PluginTimelineItemProps,
+  PluginTimelineRendererContribution,
+  PluginCommandCapabilities,
+  PluginGlobalCommandContext,
+  PluginWorkspaceCommandContext,
+  PluginAgentCommandContext,
+  PluginCommandCenterItemContribution,
+  PluginClientSlashCommandContribution,
+  SettingsState,
+} from "./client-contracts.js";
 export { usePaseo } from "./paseo-context.js";
 export { useAgent, useWorkspace } from "./client-state.js";
 export { useRpc } from "./rpc-context.js";

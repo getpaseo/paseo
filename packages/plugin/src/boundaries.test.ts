@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { isBuiltin } from "node:module";
 import { fileURLToPath } from "node:url";
@@ -82,4 +82,45 @@ describe("plugin SDK import boundaries", () => {
       expect(boundaryViolations(path.join(sourceDirectory, `${name}.ts`), runtime)).toEqual([]);
     },
   );
+});
+
+describe("plugin example import boundaries", () => {
+  const examples = path.resolve(sourceDirectory, "../../../plugin-examples");
+  const files = readdirSync(examples, { recursive: true }).filter((file) =>
+    /(?<!\.test)\.tsx?$/.test(file),
+  );
+  const owner = (file: string) => {
+    const [, directory] = path.relative(examples, file).split(path.sep);
+    if (directory?.startsWith("index.client.")) return "client";
+    if (directory?.startsWith("index.server.")) return "server";
+    return directory;
+  };
+
+  it.each(files)("%s respects runtime ownership, including type imports", (relative) => {
+    const file = path.join(examples, relative);
+    const runtime = owner(file);
+    expect(["shared", "client", "server"]).toContain(runtime);
+    const violations: string[] = [];
+    for (const { fileName: specifier } of ts.preProcessFile(readFileSync(file, "utf8"), true, true)
+      .importedFiles) {
+      if (specifier.startsWith(".")) {
+        const imported = owner(resolveLocal(file, specifier));
+        if (imported !== "shared" && imported !== runtime) violations.push(specifier);
+      } else if (specifier.startsWith("@getpaseo/plugin")) {
+        const entry = specifier.replace("@getpaseo/plugin", ".") as keyof typeof entries;
+        if (
+          entry === "./host" ||
+          !(entry in entries) ||
+          (entries[entry] !== "shared" && entries[entry] !== runtime)
+        )
+          violations.push(specifier);
+      } else if (
+        (runtime !== "client" && uiDependency.test(specifier)) ||
+        (runtime !== "server" && isBuiltin(specifier))
+      ) {
+        violations.push(specifier);
+      }
+    }
+    expect(violations).toEqual([]);
+  });
 });

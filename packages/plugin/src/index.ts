@@ -1,5 +1,16 @@
 // Shared SDK entry. Keep runtime-specific imports and re-exports on /client or /server.
-export type * from "./contracts.js";
+export type {
+  PluginTheme,
+  PluginWorkspaceSnapshot,
+  PluginAgentSnapshot,
+  PluginThemeColors,
+  PluginThemeContribution,
+  PluginAttachmentSourceContribution,
+  PluginTimelineData,
+  PluginTimelineItem,
+  PluginTimelineTransformResult,
+  PluginCleanup,
+} from "./contracts.js";
 export { defineSettings, settingsRpc, type SettingsDefinition } from "./settings.js";
 export {
   defineAttachmentSource,
