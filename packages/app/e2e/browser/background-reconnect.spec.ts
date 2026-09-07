@@ -20,7 +20,15 @@ const test = base.extend<{ reconnectHost: IsolatedHostDaemon }>({
 
 test.describe.configure({ timeout: 120_000 });
 
-async function captureHost(page: Page, testInfo: TestInfo, name: string): Promise<void> {
+async function captureHost({
+  page,
+  testInfo,
+  name,
+}: {
+  page: Page;
+  testInfo: TestInfo;
+  name: string;
+}): Promise<void> {
   await page.screenshot({ path: testInfo.outputPath(`${name}.png`) });
 }
 
@@ -69,10 +77,10 @@ test("a hidden tab reconnects after daemon restart and stays connected on refocu
   reconnectHost,
 }, testInfo) => {
   await openHostOverview(page, reconnectHost);
-  await captureHost(page, testInfo, "before-hide");
+  await captureHost({ page, testInfo, name: "before-hide" });
   await setTabVisibility(page, "hidden");
   await restartHostWhileHidden(page, reconnectHost);
-  await captureHost(page, testInfo, "reconnected-while-hidden");
+  await captureHost({ page, testInfo, name: "reconnected-while-hidden" });
   await refocusConnectedTab(page);
-  await captureHost(page, testInfo, "reconnected-after-refocus");
+  await captureHost({ page, testInfo, name: "reconnected-after-refocus" });
 });
