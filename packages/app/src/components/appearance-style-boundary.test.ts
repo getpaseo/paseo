@@ -50,9 +50,9 @@ describe("retained native gesture host appearance placement", () => {
           child = parent, parent = parent.parent
         ) {
           if (
-            ts.isConditionalExpression(parent) &&
-            parent.condition.getText(source) === "isWeb" &&
-            parent.whenTrue === child
+            ts.isIfStatement(parent) &&
+            parent.expression.getText(source) === "isWeb" &&
+            parent.thenStatement === child
           )
             webOnly = true;
           if (

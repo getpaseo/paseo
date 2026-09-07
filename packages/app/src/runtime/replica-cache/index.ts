@@ -901,7 +901,7 @@ export class ReplicaCache {
   private readonly maxBytes: number;
   private persistTimer: ReturnType<typeof setTimeout> | null = null;
   // Memory readiness: the initial load followed by every host identity change, in order.
-  private image: Promise<void> | null = null;
+  private image: Promise<boolean> | null = null;
   // Disk operations run in order; the initial load is the first of them once it starts.
   private disk: Promise<void> = Promise.resolve();
   private writes: Promise<void> = Promise.resolve();
@@ -1188,17 +1188,29 @@ export class ReplicaCache {
     await this.disk;
   }
 
-  private ready(): Promise<void> {
-    this.image ??= this.queueDisk(() => this.loadStoredRows());
+  private ready(): Promise<boolean> {
+    this.image ??= this.queueDisk(() => this.loadStoredRows()).then(
+      () => true,
+      () => {
+        this.image = null;
+        return false;
+      },
+    );
     return this.image;
   }
 
   private async loadStoredRows(): Promise<void> {
     // COMPAT(replica-blob-cache): remove after 2026-11
     await this.clearLegacyCache().catch(() => undefined);
-    for (const host of await this.rowStore.readAll()) {
+    const hosts = await this.rowStore.readAll();
+    for (const host of hosts) {
       if (!this.activeServerIds.has(host.serverId) && !this.renamingHosts.has(host.serverId)) {
         await this.rowStore.deleteHost(host.serverId);
+      }
+    }
+    // Publish only after all fallible work succeeds; retries must not count partial loads twice.
+    for (const host of hosts) {
+      if (!this.activeServerIds.has(host.serverId) && !this.renamingHosts.has(host.serverId)) {
         continue;
       }
       const rows = new Map(host.rows.map((row) => [rowKey(row), row]));
@@ -1216,7 +1228,11 @@ export class ReplicaCache {
       mutation();
       return;
     }
-    this.image = this.image.then(mutation);
+    this.image = this.image.then((loaded) => {
+      // Identity changes still settle when loading fails; the next attempt reads their disk result.
+      mutation();
+      return loaded;
+    });
   }
 
   private queueDisk(operation: () => Promise<void>): Promise<void> {
@@ -1241,9 +1257,8 @@ export class ReplicaCache {
 
   private async writePendingChanges(): Promise<void> {
     if (!this.hasPendingChanges()) return;
-    try {
-      await this.ready();
-    } catch {
+    if (!(await this.ready())) {
+      this.schedulePersist();
       return;
     }
     const batch: PendingBatch = {

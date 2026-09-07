@@ -178,11 +178,10 @@ export function CompactExplorerSidebarHost({
       </DiffDocumentWorkspaceCacheProvider>
     ) : null;
 
-  const themedExplorer = isWeb ? (
-    <AppearanceStyleBoundary>{explorer}</AppearanceStyleBoundary>
-  ) : (
-    explorer
-  );
+  let themedExplorer = explorer;
+  if (isWeb) {
+    themedExplorer = <AppearanceStyleBoundary>{explorer}</AppearanceStyleBoundary>;
+  }
 
   if (presentation === "dock") {
     return (

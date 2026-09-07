@@ -30,8 +30,12 @@ class MemoryStorage implements ReplicaRowStore {
     ids?: readonly string[];
   }> = [];
   writes = 0;
+  readAlls = 0;
   cleanups = 0;
   nextWriteFailure: Error | null = null;
+  nextOpenFailure: Error | null = null;
+  nextReadAllFailure: Error | null = null;
+  nextDeleteFailure: Error | null = null;
   readGate: Promise<void> | null = null;
   readAllGate: Promise<void> | null = null;
   writeGate: Promise<void> | null = null;
@@ -41,7 +45,13 @@ class MemoryStorage implements ReplicaRowStore {
     return `${row.serverId}:${row.kind}:${row.id}`;
   }
 
-  async open(): Promise<void> {}
+  async open(): Promise<void> {
+    if (this.nextOpenFailure) {
+      const error = this.nextOpenFailure;
+      this.nextOpenFailure = null;
+      throw error;
+    }
+  }
 
   async read(
     serverIds: readonly string[],
@@ -60,7 +70,13 @@ class MemoryStorage implements ReplicaRowStore {
   }
 
   async readAll(): Promise<ReplicaHostRows[]> {
+    this.readAlls += 1;
     await this.readAllGate;
+    if (this.nextReadAllFailure) {
+      const error = this.nextReadAllFailure;
+      this.nextReadAllFailure = null;
+      throw error;
+    }
     const hosts = new Map<string, ReplicaRow[]>();
     for (const row of this.rows.values()) {
       const rows = hosts.get(row.serverId) ?? [];
@@ -84,6 +100,11 @@ class MemoryStorage implements ReplicaRowStore {
   }
 
   async deleteHost(serverId: string): Promise<void> {
+    if (this.nextDeleteFailure) {
+      const error = this.nextDeleteFailure;
+      this.nextDeleteFailure = null;
+      throw error;
+    }
     for (const [key, row] of this.rows) if (row.serverId === serverId) this.rows.delete(key);
   }
 
@@ -1014,6 +1035,66 @@ describe("ReplicaCache", () => {
       "project",
       "workspace",
     ]);
+  });
+
+  it.each(["nextOpenFailure", "nextReadAllFailure"] as const)(
+    "persists an accepted commit automatically after %s",
+    async (failure) => {
+      const storage = new MemoryStorage();
+      const cache = createCache(storage);
+      storage[failure] = new Error("storage busy");
+      cache.commitTimeline(SERVER_ID, "agent-1", timeline("Retry me"));
+
+      await cache.flush();
+      expect(storage.rows.size).toBe(0);
+      expect(await cache.readTimeline(SERVER_ID, "agent-1")).toEqual(timeline("Retry me"));
+      await expect.poll(() => storage.rows.size, { timeout: 2500 }).toBe(1);
+
+      const reopened = createCache(storage);
+      expect(await reopened.readTimeline(SERVER_ID, "agent-1")).toEqual(timeline("Retry me"));
+    },
+  );
+
+  it("recovers a partial index load with queued host changes and the exact surviving budget", async () => {
+    const storage = new MemoryStorage();
+    const writer = createCache(storage);
+    writer.setHosts([SERVER_ID, "stale", "old", "removed"]);
+    for (const host of [SERVER_ID, "stale", "old", "removed"]) {
+      writer.commitTimeline(host, "agent-1", timeline("Stored"));
+    }
+    await writer.flush();
+    const survivorBytes = [...storage.rows.values()]
+      .filter((row) => row.serverId === SERVER_ID || row.serverId === "old")
+      .reduce((bytes, row) => bytes + Buffer.byteLength(row.payload), 0);
+    const cache = createCache(storage, survivorBytes);
+    cache.setHosts([SERVER_ID, "old", "removed"]);
+    const release = deferred();
+    storage.readAllGate = release.promise;
+    storage.nextDeleteFailure = new Error("stale host cleanup busy");
+    const loadsBefore = storage.readAlls;
+    cache.commitTimeline(SERVER_ID, "agent-1", timeline("Newest"));
+    const writing = cache.flush();
+    try {
+      await expect.poll(() => storage.readAlls).toBe(loadsBefore + 1);
+      cache.reconcileServerId("old", "renamed");
+      cache.setHosts([SERVER_ID, "renamed"]);
+    } finally {
+      release.resolve();
+      await writing;
+    }
+    expect(await cache.readTimeline(SERVER_ID, "agent-1")).toEqual(timeline("Newest"));
+    expect(await cache.readTimeline("renamed", "agent-1")).toEqual(timeline("Stored"));
+    expect(await cache.readTimeline("removed", "agent-1")).toBeUndefined();
+    await expect.poll(() => storage.changes.length, { timeout: 2500 }).toBe(2);
+
+    const reopened = createCache(storage);
+    reopened.setHosts([SERVER_ID, "renamed"]);
+    expect([...storage.rows.values()].map((row) => row.serverId).sort()).toEqual([
+      SERVER_ID,
+      "renamed",
+    ]);
+    expect(await reopened.readTimeline(SERVER_ID, "agent-1")).toEqual(timeline("Newest"));
+    expect(await reopened.readTimeline("renamed", "agent-1")).toEqual(timeline("Stored"));
   });
 
   it("retries an explicit commit after a storage failure", async () => {

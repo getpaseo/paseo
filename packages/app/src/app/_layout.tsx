@@ -551,11 +551,10 @@ function AppContainer({ children, chromeEnabled: chromeEnabledOverride }: AppCon
       keyboardShortcutsEnabled={keyboardShortcutsEnabled}
     />
   );
-  const themedSidebarChrome = isWeb ? (
-    <AppearanceStyleBoundary>{sidebarChrome}</AppearanceStyleBoundary>
-  ) : (
-    sidebarChrome
-  );
+  let themedSidebarChrome = sidebarChrome;
+  if (isWeb) {
+    themedSidebarChrome = <AppearanceStyleBoundary>{sidebarChrome}</AppearanceStyleBoundary>;
+  }
   const workspaceChrome = (
     <View style={rowStyle}>
       {!isCompactLayout ? (
