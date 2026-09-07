@@ -40,7 +40,7 @@ import {
   useActiveWorkspaceSelection,
 } from "@/stores/navigation-active-workspace-store";
 import { dispatchTopWebOverlayKeyDown } from "@/lib/overlay-root";
-import { navigateRouteHistory } from "@/navigation/route-history";
+import { useRouteHistory } from "@/navigation/route-history";
 
 export function useKeyboardShortcuts({
   enabled,
@@ -62,6 +62,7 @@ export function useKeyboardShortcuts({
   const keyboardActionDispatcher = useKeyboardActionDispatcher();
   const pathname = usePathname();
   const router = useRouter();
+  const navigateRouteHistory = useRouteHistory();
   const resetModifiers = useKeyboardShortcutsStore((s) => s.resetModifiers);
   const { overrides } = useKeyboardShortcutOverrides();
   const bindings = useMemo(() => buildEffectiveBindings(overrides), [overrides]);
@@ -428,6 +429,7 @@ export function useKeyboardShortcuts({
     isMobile,
     isWorkspaceFocusModeEnabled,
     keyboardActionDispatcher,
+    navigateRouteHistory,
     openProjectPickerAction,
     pathname,
     publishBrowserShortcutPolicy,
