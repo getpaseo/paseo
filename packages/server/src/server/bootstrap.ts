@@ -9,7 +9,12 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import type { Logger } from "pino";
 import { z } from "zod";
 import { createBranchChangeRouteHandler } from "./script-route-branch-handler.js";
-import { formatListenTarget, parseListenString, type ListenTarget, resolveBoundListenTarget } from "../utils/listen-target.js";
+import {
+  formatListenTarget,
+  parseListenString,
+  type ListenTarget,
+  resolveBoundListenTarget,
+} from "@server/utils/listen-target";
 
 
 export async function fanOutReconciledWorkspaceUpdates(input: {

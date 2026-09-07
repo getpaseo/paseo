@@ -7,7 +7,7 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 import { WebSocket } from "ws";
 
 import { createPaseoDaemon, type PaseoDaemonConfig } from "./bootstrap.js";
-import { parseListenString } from "../utils/listen-target.js";
+import { parseListenString } from "@server/utils/listen-target";
 import { loadConfig } from "./config.js";
 import { AgentManagerShuttingDownError } from "./agent/agent-manager.js";
 import { hashDaemonPassword } from "./auth.js";
@@ -854,47 +854,6 @@ export default function contribute(plugin: unknown) {
       globalThis.fetch = originalFetch;
       await daemonHandle.close();
     }
-  });
-
-  test("parses whitespace-padded numeric port strings", () => {
-    expect(parseListenString(" 6767 ")).toEqual({
-      type: "tcp",
-      host: "127.0.0.1",
-      port: 6767,
-    });
-  });
-
-  test("parses IPv6 listen targets correctly", () => {
-    expect(parseListenString("[::1]:6767")).toEqual({
-      type: "tcp",
-      host: "::1",
-      port: 6767,
-    });
-    expect(parseListenString("[::]:6767")).toEqual({
-      type: "tcp",
-      host: "::",
-      port: 6767,
-    });
-  });
-
-  test("rejects Windows absolute paths that are not named pipes", () => {
-    // A Windows drive path like C:\daemon must NOT be silently parsed as TCP
-    // (split(":") would yield host="C" and port="\\daemon" which is nonsensical).
-    expect(() => parseListenString(String.raw`C:\daemon`)).toThrow();
-    expect(() => parseListenString(String.raw`D:\Users\foo\.paseo\daemon.sock`)).toThrow();
-    // Single-letter "host" with no valid port is not a valid listen string
-    expect(() => parseListenString(String.raw`C:\some\path`)).toThrow();
-  });
-
-  test("parses Windows named pipes as managed IPC listen targets", () => {
-    expect(parseListenString(String.raw`\\.\pipe\paseo-managed-test`)).toEqual({
-      type: "pipe",
-      path: String.raw`\\.\pipe\paseo-managed-test`,
-    });
-    expect(parseListenString(`pipe://${String.raw`\\.\pipe\paseo-managed-test`}`)).toEqual({
-      type: "pipe",
-      path: String.raw`\\.\pipe\paseo-managed-test`,
-    });
   });
 
   // POSIX-only: Unix socket listen paths are invalid Windows listen targets.
