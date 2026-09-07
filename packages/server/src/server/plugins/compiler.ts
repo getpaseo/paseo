@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { createRequire, isBuiltin } from "node:module";
 import path from "node:path";
-import { readPluginModuleImports } from "./compiler-imports.js";
+import { createPluginImportReader } from "./compiler-imports.js";
 import type { Metafile, OnResolveResult, Plugin } from "esbuild";
 import {
   isPluginClientOnlySdkSpecifier,
@@ -161,27 +161,82 @@ function createRuntimeBoundaryPlugin(target: PluginBuildTarget, pluginDirectory:
     name: `paseo-plugin-${target}-runtime-boundary`,
     setup(buildContext) {
       const checked = new Set<string>();
-      async function checkSourceImports(file: string): Promise<OnResolveResult | null> {
-        if (checked.has(file) || !/\.[cm]?[jt]sx?$/.test(file)) return null;
+      const imports = createPluginImportReader(pluginDirectory);
+      function resolvedBoundaryError(
+        file: string,
+        specifier: string,
+        importer: string,
+        owner: PluginBuildTarget | "shared",
+      ) {
         const location = directoryTarget(file, pluginDirectory);
-        if (location === null || location === "invalid") return null;
-        checked.add(file);
-        for (const { specifier, kind } of readPluginModuleImports(file)) {
-          // Resolve through the same ownership checks, including imports erased from the bundle.
-          const resolution = await buildContext.resolve(specifier, {
-            importer: file,
-            resolveDir: path.dirname(file),
-            kind,
-          });
-          if (resolution.errors.length) return { errors: resolution.errors };
-          if (!resolution.external && resolution.namespace === "file") {
-            const error = await checkSourceImports(resolution.path);
-            if (error) return error;
+        if (location === "invalid") {
+          if (
+            [...linkedDependencyRoots].some(
+              (root) => containsPath(root, importer) && containsPath(root, file),
+            )
+          )
+            return null;
+          if (!specifier.startsWith(".") && !path.isAbsolute(specifier)) {
+            const root = findDependencyRoot(file, specifier, pluginDirectory);
+            if (root) {
+              linkedDependencyRoots.add(root);
+              return null;
+            }
           }
+        }
+        return moduleBoundaryError(location, owner, file);
+      }
+      async function checkSourceImports(
+        file: string,
+        inheritedOwner: PluginBuildTarget | "shared",
+      ): Promise<OnResolveResult | null> {
+        const owner =
+          directoryTarget(file, pluginDirectory) === "shared" ? "shared" : inheritedOwner;
+        const key = `${owner}:${file}`;
+        if (checked.has(key) || !/\.[cm]?[jt]sx?$/.test(file)) return null;
+        checked.add(key);
+        for (const { specifier, kind, typeOnly } of imports.read(file)) {
+          const error =
+            runtimeSpecifierError(specifier, owner, file) ??
+            lexicalBoundaryError(specifier, path.dirname(file), pluginDirectory, owner);
+          if (error) return error;
+          // Host modules have separately enforced SDK boundaries and need no local installation.
+          if (
+            (PLUGIN_SDK_SPECIFIERS as readonly string[]).includes(specifier) ||
+            /^(zod|react|react-native|@tanstack\/react-query)(\/|$)/.test(specifier) ||
+            isBuiltin(specifier)
+          )
+            continue;
+          let resolvedPath: string;
+          if (typeOnly) {
+            const declaration = imports.resolve(specifier, file, kind);
+            if (!declaration)
+              return {
+                errors: [
+                  { text: `Could not resolve type dependency "${specifier}" imported by ${file}` },
+                ],
+              };
+            resolvedPath = declaration;
+          } else {
+            const resolution = await buildContext.resolve(specifier, {
+              importer: file,
+              resolveDir: path.dirname(file),
+              kind,
+            });
+            if (resolution.errors.length) return { errors: resolution.errors };
+            if (resolution.external || resolution.namespace !== "file") continue;
+            resolvedPath = resolution.path;
+          }
+          const boundaryError = resolvedBoundaryError(resolvedPath, specifier, file, owner);
+          if (boundaryError) return boundaryError;
+          const dependencyError = await checkSourceImports(resolvedPath, owner);
+          if (dependencyError) return dependencyError;
         }
         return null;
       }
-      buildContext.onLoad({ filter: /\.[cm]?[jt]sx?$/ }, (args) => checkSourceImports(args.path));
+      buildContext.onLoad({ filter: /\.[cm]?[jt]sx?$/ }, (args) =>
+        checkSourceImports(args.path, target),
+      );
       buildContext.onResolve({ filter: /.*/ }, async (args) => {
         if (args.kind === "entry-point") return null;
         if (args.pluginData === boundaryResolution) return null;
@@ -211,26 +266,7 @@ function createRuntimeBoundaryPlugin(target: PluginBuildTarget, pluginDirectory:
         ) {
           return null;
         }
-        const resolvedPath = resolution.path;
-        const importedTarget = directoryTarget(resolvedPath, pluginDirectory);
-        if (importedTarget === "invalid") {
-          if (
-            [...linkedDependencyRoots].some(
-              (root) => containsPath(root, args.importer) && containsPath(root, resolvedPath),
-            )
-          ) {
-            return null;
-          }
-          if (!args.path.startsWith(".") && !path.isAbsolute(args.path)) {
-            const dependencyRoot = findDependencyRoot(resolvedPath, args.path, pluginDirectory);
-            if (dependencyRoot) {
-              linkedDependencyRoots.add(dependencyRoot);
-              return null;
-            }
-          }
-          return moduleBoundaryError(importedTarget, owner, resolvedPath);
-        }
-        return moduleBoundaryError(importedTarget, owner, resolvedPath);
+        return resolvedBoundaryError(resolution.path, args.path, args.importer, owner);
       });
     },
   };

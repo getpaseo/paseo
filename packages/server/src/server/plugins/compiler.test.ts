@@ -215,6 +215,83 @@ describe("plugin runtime entries", () => {
     await expect(compilePlugin(entries)).rejects.toThrow("plugin shared");
   });
 
+  it.each([{ types: "./index.d.ts" }, { exports: { ".": { types: "./index.d.ts" } } }])(
+    "accepts declaration-only dependencies: %j",
+    async (manifest) => {
+      const entries = await createSplitPlugin();
+      const dependency = path.join(entries.directory, "node_modules/neutral-types");
+      await mkdir(dependency, { recursive: true });
+      await writeFile(
+        path.join(dependency, "package.json"),
+        JSON.stringify({ name: "neutral-types", ...manifest }),
+      );
+      await writeFile(
+        path.join(dependency, "index.d.ts"),
+        "export type JsonValue = string | number | boolean | null;",
+      );
+      await writeFile(
+        path.join(entries.directory, "shared/labels.ts"),
+        'import type { JsonValue } from "neutral-types"; export const clientLabel: JsonValue = "client"; export const serverLabel: JsonValue = "server";',
+      );
+      const result = await compilePlugin(entries);
+      expect(result.clientBundle).toContain('"client"');
+      expect(result.serverBundle).toContain('"server"');
+      expect(result.clientBundle).not.toContain("neutral-types");
+    },
+  );
+
+  it("resolves type-only path aliases from the plugin tsconfig", async () => {
+    const entries = await createSplitPlugin();
+    await writeFile(
+      path.join(entries.directory, "tsconfig.json"),
+      JSON.stringify({
+        compilerOptions: { baseUrl: ".", paths: { "shared-types": ["shared/types.ts"] } },
+      }),
+    );
+    await writeFile(path.join(entries.directory, "shared/types.ts"), "export type Value = string;");
+    await writeFile(
+      path.join(entries.directory, "shared/labels.ts"),
+      'import type { Value } from "shared-types"; export const clientLabel: Value = "client"; export const serverLabel: Value = "server";',
+    );
+    await expect(compilePlugin(entries)).resolves.toMatchObject({
+      clientBundle: expect.any(String),
+      serverBundle: expect.any(String),
+    });
+    await writeFile(
+      path.join(entries.directory, "shared/types.ts"),
+      'export type { PluginClientContext as Value } from "@getpaseo/plugin/client";',
+    );
+    await expect(compilePlugin(entries)).rejects.toThrow("plugin shared");
+  });
+
+  it.each(["@getpaseo/plugin/client", "@getpaseo/plugin/server"])(
+    "rejects transitive declaration dependencies on %s",
+    async (specifier) => {
+      const entries = await createSplitPlugin();
+      const dependency = path.join(entries.directory, "node_modules/typed-helper");
+      await mkdir(dependency, { recursive: true });
+      await writeFile(
+        path.join(dependency, "package.json"),
+        JSON.stringify({ name: "typed-helper", main: "index.js", types: "index.d.ts" }),
+      );
+      await writeFile(path.join(dependency, "index.js"), "export {};");
+      await writeFile(
+        path.join(dependency, "index.d.ts"),
+        'export type { Context } from "./context";',
+      );
+      const context = specifier.endsWith("client") ? "PluginClientContext" : "PluginServerContext";
+      await writeFile(
+        path.join(dependency, "context.d.ts"),
+        `export type { ${context} as Context } from "${specifier}";`,
+      );
+      await writeFile(
+        path.join(entries.directory, "shared/labels.ts"),
+        'export type { Context } from "typed-helper"; export const clientLabel = "client"; export const serverLabel = "server";',
+      );
+      await expect(compilePlugin(entries)).rejects.toThrow("plugin shared");
+    },
+  );
+
   it("checks files reached only through type imports", async () => {
     const entries = await createSplitPlugin();
     await writeFile(

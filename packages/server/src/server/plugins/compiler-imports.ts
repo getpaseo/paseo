@@ -1,69 +1,108 @@
-import { parse } from "@babel/parser";
 import { readFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import type { ImportKind } from "esbuild";
+import type { Node, NamedImportBindings, NamedExportBindings } from "typescript";
 
-// esbuild erases type dependencies. Read the original syntax before validating ownership.
-export function readPluginModuleImports(file: string): { specifier: string; kind: ImportKind }[] {
-  const ast = parse(readFileSync(file, "utf8"), {
-    sourceType: "unambiguous",
-    plugins: ["typescript", "decorators", ...(file.endsWith("x") ? ["jsx" as const] : [])],
-  });
-  const imports: { specifier: string; kind: ImportKind }[] = [];
-  function visit(value: unknown): void {
-    if (!value || typeof value !== "object") return;
-    if (Array.isArray(value)) {
-      value.forEach(visit);
-      return;
-    }
-    const node = value as Record<string, unknown>;
-    let source: unknown;
-    let kind: ImportKind = "import-statement";
-    switch (node.type) {
-      case "ImportDeclaration":
-      case "ExportNamedDeclaration":
-      case "ExportAllDeclaration":
-        source = node.source;
-        break;
-      case "TSImportType":
-        source = node.argument;
-        break;
-      case "TSExternalModuleReference":
-        source = node.expression;
-        kind = "require-call";
-        break;
-      case "ImportExpression":
-        source = node.source;
-        kind = "dynamic-import";
-        break;
-      case "CallExpression": {
-        const callee = node.callee as Record<string, unknown>;
-        if (
-          callee.type === "Import" ||
-          (callee.type === "Identifier" && callee.name === "require")
-        ) {
-          source = (node.arguments as unknown[])[0];
-          kind = callee.type === "Import" ? "dynamic-import" : "require-call";
-        }
-        break;
-      }
-    }
-    const specifier = stringLiteral(source);
-    if (specifier !== undefined) imports.push({ specifier, kind });
-    Object.values(node).forEach(visit);
-  }
-  visit(ast.program);
-  return imports;
+const nodeRequire = createRequire(import.meta.url);
+
+interface ModuleImport {
+  specifier: string;
+  kind: ImportKind;
+  typeOnly: boolean;
 }
 
-function stringLiteral(source: unknown): string | undefined {
-  if (
-    source &&
-    typeof source === "object" &&
-    "type" in source &&
-    source.type === "StringLiteral" &&
-    "value" in source &&
-    typeof source.value === "string"
-  )
-    return source.value;
-  return undefined;
+// Keep the TypeScript compiler off daemon startup. esbuild erases these edges, so
+// ownership validation needs the original syntax and declaration-aware resolution.
+export function createPluginImportReader(directory: string) {
+  const ts = nodeRequire("typescript") as typeof import("typescript");
+  const configFile = ts.findConfigFile(directory, ts.sys.fileExists);
+  const config = configFile
+    ? ts.getParsedCommandLineOfConfigFile(
+        configFile,
+        {},
+        {
+          ...ts.sys,
+          onUnRecoverableConfigFileDiagnostic: (diagnostic) => {
+            throw new Error(ts.flattenDiagnosticMessageText(diagnostic.messageText, "\n"));
+          },
+        },
+      )
+    : undefined;
+  const options = {
+    ...config?.options,
+    module: ts.ModuleKind.ESNext,
+    moduleResolution: ts.ModuleResolutionKind.Bundler,
+    allowJs: true,
+  };
+  const cache = ts.createModuleResolutionCache(directory, (file) => file, options);
+  return {
+    resolve(specifier: string, importer: string, kind: ImportKind): string | undefined {
+      return ts.resolveModuleName(
+        specifier,
+        importer,
+        options,
+        ts.sys,
+        cache,
+        undefined,
+        kind === "require-call" ? ts.ModuleKind.CommonJS : ts.ModuleKind.ESNext,
+      ).resolvedModule?.resolvedFileName;
+    },
+    read(file: string): ModuleImport[] {
+      const source = ts.createSourceFile(
+        file,
+        readFileSync(file, "utf8"),
+        ts.ScriptTarget.Latest,
+        true,
+      );
+      const imports: ModuleImport[] = [];
+      function add(
+        node: Node | undefined,
+        typeOnly: boolean,
+        kind: ImportKind = "import-statement",
+      ) {
+        if (node && ts.isStringLiteralLike(node)) {
+          imports.push({
+            specifier: node.text,
+            kind,
+            typeOnly: source.isDeclarationFile || typeOnly,
+          });
+        }
+      }
+      function onlyTypeBindings(
+        bindings: NamedImportBindings | NamedExportBindings | undefined,
+      ): boolean {
+        return (
+          !!bindings &&
+          (ts.isNamedImports(bindings) || ts.isNamedExports(bindings)) &&
+          bindings.elements.length > 0 &&
+          bindings.elements.every((element) => element.isTypeOnly)
+        );
+      }
+      function visit(node: Node): void {
+        if (ts.isImportDeclaration(node)) {
+          const clause = node.importClause;
+          const typeOnly =
+            !!clause?.isTypeOnly || (!clause?.name && onlyTypeBindings(clause?.namedBindings));
+          add(node.moduleSpecifier, typeOnly);
+        } else if (ts.isExportDeclaration(node)) {
+          add(node.moduleSpecifier, node.isTypeOnly || onlyTypeBindings(node.exportClause));
+        } else if (ts.isImportTypeNode(node) && ts.isLiteralTypeNode(node.argument)) {
+          add(node.argument.literal, true);
+        } else if (
+          ts.isImportEqualsDeclaration(node) &&
+          ts.isExternalModuleReference(node.moduleReference)
+        ) {
+          add(node.moduleReference.expression, node.isTypeOnly, "require-call");
+        } else if (ts.isCallExpression(node)) {
+          if (node.expression.kind === ts.SyntaxKind.ImportKeyword)
+            add(node.arguments[0], false, "dynamic-import");
+          else if (ts.isIdentifier(node.expression) && node.expression.text === "require")
+            add(node.arguments[0], false, "require-call");
+        }
+        ts.forEachChild(node, visit);
+      }
+      visit(source);
+      return imports;
+    },
+  };
 }
