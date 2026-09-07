@@ -4338,7 +4338,7 @@ export class DaemonClient {
     },
     requestId?: string,
   ): Promise<WorkspaceCreatePayload> {
-    // COMPAT(workspaceRequestReceipts): added in v0.7.3; remove gate after 2027-03-07.
+    // COMPAT(workspaceRequestReceipts): added in v0.8.0; remove gate after 2027-03-07.
     if (
       input.idempotencyKey !== undefined &&
       !this.lastServerInfoMessage?.features?.workspaceRequestReceipts

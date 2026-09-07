@@ -17,18 +17,36 @@ type Receipt = z.infer<typeof ReceiptStateSchema> & {
   resource: { kind: "agent" | "workspace"; id: string };
 };
 
+interface CreateAgentInput {
+  key: string;
+  request: unknown;
+  findAgent: (agentId: string) => Promise<boolean>;
+  create: (agentId: string) => Promise<void>;
+}
+
+interface CreateWorkspaceInput {
+  key: string;
+  request: unknown;
+  workspaceId: string;
+  findWorkspace: (workspaceId: string) => Promise<boolean>;
+  create: (workspaceId: string) => Promise<void>;
+}
+
+interface SendMessageInput {
+  agentId: string;
+  messageId: string;
+  request: unknown;
+  send: () => Promise<void>;
+  prepare?: () => Promise<void>;
+}
+
 /** One daemon-owned request journal, shared by all of its socket sessions. */
 export class RequestReceipts {
   private readonly pending = new Map<string, Promise<string>>();
 
   constructor(private readonly directory: string) {}
 
-  createAgent(input: {
-    key: string;
-    request: unknown;
-    findAgent: (agentId: string) => Promise<boolean>;
-    create: (agentId: string) => Promise<void>;
-  }): Promise<string> {
+  createAgent(input: CreateAgentInput): Promise<string> {
     return this.execute(["create", input.key], input.request, {
       resource: { kind: "agent", id: randomUUID() },
       recover: input.findAgent,
@@ -37,13 +55,7 @@ export class RequestReceipts {
     });
   }
 
-  createWorkspace(input: {
-    key: string;
-    request: unknown;
-    workspaceId: string;
-    findWorkspace: (workspaceId: string) => Promise<boolean>;
-    create: (workspaceId: string) => Promise<void>;
-  }): Promise<string> {
+  createWorkspace(input: CreateWorkspaceInput): Promise<string> {
     return this.execute(["create-workspace", input.key], input.request, {
       resource: { kind: "workspace", id: input.workspaceId },
       // A registry entry can survive failed provisioning and checkout rollback.
@@ -54,13 +66,7 @@ export class RequestReceipts {
     });
   }
 
-  async sendMessage(input: {
-    agentId: string;
-    messageId: string;
-    request: unknown;
-    send: () => Promise<void>;
-    prepare?: () => Promise<void>;
-  }): Promise<void> {
+  async sendMessage(input: SendMessageInput): Promise<void> {
     await this.execute(["send", input.agentId, input.messageId], input.request, {
       resource: { kind: "agent", id: input.agentId },
       // A provider call can take effect before the daemon records its outcome.
