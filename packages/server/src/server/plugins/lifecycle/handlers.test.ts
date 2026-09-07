@@ -48,31 +48,6 @@ test("before hooks compose returned requests and preserve the original input", a
   expect(input).toEqual({ source: { kind: "directory", path: "/project" } });
 });
 
-test("an invalid transform fails before another handler runs", async () => {
-  const hooks = new PluginHookHandlers(() => {});
-  let secondRan = false;
-  // @ts-expect-error Exercise validation of an untyped plugin's malformed return value.
-  hooks.before("workspace.create", () => {
-    return { source: { kind: "worktree", branchName: 42 } };
-  });
-  hooks.before("workspace.create", ({ request }) => {
-    secondRan = true;
-    return request;
-  });
-  await expect(
-    hooks.invoke(
-      "operation",
-      "before",
-      "workspace.create",
-      {
-        source: { kind: "directory", path: "/project" },
-      },
-      paseo,
-    ),
-  ).rejects.toThrow();
-  expect(secondRan).toBe(false);
-});
-
 test("teardown aborts an active callback and removes its registrations", async () => {
   const hooks = new PluginHookHandlers(() => {});
   hooks.before("workspace.create", async (_input, context) => {

@@ -220,3 +220,46 @@ export default function contribute(server) {
     await rm(directory, { recursive: true, force: true });
   }
 }, 60_000);
+
+test("invalid output from an untyped plugin rejects creation before later callbacks run", async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), "paseo-invalid-hook-"));
+  const daemon = await createTestPaseoDaemon({ daemonVersion: "0.8.0" });
+  const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws`, appVersion: "0.8.0" });
+  try {
+    await writeFile(
+      path.join(directory, "paseo-plugin.json"),
+      JSON.stringify({ id: "invalid-hook", requirements: { paseo: ">=0.8.0" } }),
+    );
+    await writeFile(
+      path.join(directory, "index.server.ts"),
+      `
+export default function contribute(server) {
+  server.before("workspace.create", () => {
+    return { source: { kind: "worktree", branchName: 42 } };
+  });
+  server.before("workspace.create", ({ request }) => {
+    console.log("Unexpected later callback");
+    return request;
+  });
+  return () => {};
+}
+`,
+    );
+    await client.connect();
+    await client.patchDaemonConfig({ pluginsEnabled: true });
+    await client.installDirectoryPlugin(directory);
+    const result = await client.createWorkspace({ source: { kind: "directory", path: directory } });
+    expect(result.workspace).toBeNull();
+    expect(result.error).toContain("Plugin invalid-hook before workspace.create failed");
+    const logs = await client.getPluginLogs("invalid-hook");
+    expect(
+      logs.some((entry) => {
+        return entry.message.includes("Unexpected later callback");
+      }),
+    ).toBe(false);
+  } finally {
+    await client.close();
+    await daemon.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+}, 60_000);

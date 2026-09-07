@@ -1756,17 +1756,11 @@ export class AgentManager {
   }
 
   private async markRecordArchived(record: StoredAgentRecord): Promise<ArchivedStoredAgentRecord> {
-    const registry = this.requireRegistry();
     const archivedAt = new Date().toISOString();
-    const archivedRecord = buildArchivedAgentRecord(record, { archivedAt, updatedAt: archivedAt });
-
-    await registry.upsert(archivedRecord);
-    if (!record.archivedAt && !record.internal) {
-      this.pluginLifecycle?.emit("agent.archived", {
-        agent: describeHookAgent(record),
-        archivedAt,
-      });
-    }
+    const archivedRecord = await this.persistArchivedRecord(record, {
+      archivedAt,
+      updatedAt: archivedAt,
+    });
 
     await this.syncNativeArchiveState(record.provider, record.persistence, "archive");
 
@@ -1778,6 +1772,21 @@ export class AgentManager {
 
     await this.fireAgentArchived(record.id);
 
+    return archivedRecord;
+  }
+
+  private async persistArchivedRecord(
+    record: StoredAgentRecord,
+    options: { archivedAt: string; updatedAt?: string },
+  ): Promise<ArchivedStoredAgentRecord> {
+    const archivedRecord = buildArchivedAgentRecord(record, options);
+    await this.requireRegistry().upsert(archivedRecord);
+    if (!record.archivedAt && !record.internal) {
+      this.pluginLifecycle?.emit("agent.archived", {
+        agent: describeHookAgent(archivedRecord),
+        archivedAt: archivedRecord.archivedAt,
+      });
+    }
     return archivedRecord;
   }
 
@@ -2052,8 +2061,7 @@ export class AgentManager {
       throw new Error(`Agent not found: ${agentId}`);
     }
 
-    const nextRecord = buildArchivedAgentRecord(record, { archivedAt });
-    await registry.upsert(nextRecord);
+    const nextRecord = await this.persistArchivedRecord(record, { archivedAt });
 
     await this.syncNativeArchiveState(record.provider, record.persistence, "archive");
 
