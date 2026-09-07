@@ -1,8 +1,8 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { createRequire, isBuiltin } from "node:module";
 import path from "node:path";
-import { createPluginImportReader } from "./compiler-imports.js";
-import type { ImportKind, Metafile, OnResolveResult, Plugin } from "esbuild";
+import { createPluginImportReader, type PluginImportKind } from "./compiler-imports.js";
+import type { Metafile, OnResolveResult, Plugin } from "esbuild";
 import {
   isPluginClientOnlySdkSpecifier,
   isPluginServerOnlySdkSpecifier,
@@ -102,12 +102,13 @@ function findDependencyRoot(
   pluginDirectory: string,
 ): string | null {
   const expectedName = dependencyName(specifier);
+  const ambientName = `@types/${expectedName.replace(/^@/, "").replace("/", "__")}`;
   let directory = path.dirname(resolvedPath);
   for (;;) {
     const manifestPath = path.join(directory, "package.json");
     if (existsSync(manifestPath)) {
       const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as { name?: unknown };
-      if (manifest.name === expectedName) {
+      if (manifest.name === expectedName || manifest.name === ambientName) {
         if (containsPath(pluginDirectory, directory) || containsPath(directory, pluginDirectory)) {
           return null;
         }
@@ -189,7 +190,7 @@ function createRuntimeBoundaryPlugin(target: PluginBuildTarget, pluginDirectory:
       async function resolveImportFiles(
         file: string,
         specifier: string,
-        kind: ImportKind,
+        kind: PluginImportKind,
         typeOnly: boolean,
       ): Promise<Set<string>> {
         const declaration = imports.resolve(specifier, file, kind);
@@ -199,16 +200,14 @@ function createRuntimeBoundaryPlugin(target: PluginBuildTarget, pluginDirectory:
         if (typeOnly && !declaration) {
           throw new Error(`Could not resolve type dependency "${specifier}" imported by ${file}`);
         }
-        if (!typeOnly) {
+        if (!typeOnly && kind !== "type-reference") {
           const resolution = await buildContext.resolve(specifier, {
             importer: file,
             resolveDir: path.dirname(file),
             kind,
           });
-          // A normal TS import may also be erased. Validate its declarations;
-          // esbuild still rejects missing runtime modules when it emits the import.
-          if (resolution.errors.length && dependencyFiles.size === 0)
-            throw new Error(resolution.errors.map((error) => error.text).join("\n"));
+          // esbuild owns missing-runtime errors: erased imports and guarded optional
+          // requires are legal. Inspect every dependency that actually resolves.
           if (!resolution.errors.length && !resolution.external && resolution.namespace === "file")
             dependencyFiles.add(resolution.path);
         }
@@ -224,15 +223,21 @@ function createRuntimeBoundaryPlugin(target: PluginBuildTarget, pluginDirectory:
         if (checked.has(key) || !/\.[cm]?[jt]sx?$/.test(file)) return null;
         checked.add(key);
         for (const { specifier, kind, typeOnly } of imports.read(file)) {
+          const packageSpecifier =
+            kind === "type-reference"
+              ? `@types/${specifier.replace(/^@/, "").replace("/", "__")}`
+              : specifier;
           const error =
             runtimeSpecifierError(specifier, owner, file) ??
+            runtimeSpecifierError(packageSpecifier, owner, file) ??
             lexicalBoundaryError(specifier, path.dirname(file), pluginDirectory, owner);
           if (error) return error;
           // Host modules have separately enforced SDK boundaries and need no local installation.
           if (
             (PLUGIN_SDK_SPECIFIERS as readonly string[]).includes(specifier) ||
             /^(zod|react|react-native|@tanstack\/react-query)(\/|$)/.test(specifier) ||
-            isBuiltin(specifier)
+            isBuiltin(specifier) ||
+            packageSpecifier === "@types/node"
           )
             continue;
           const dependencyFiles = await resolveImportFiles(file, specifier, kind, typeOnly);
@@ -309,12 +314,13 @@ function runtimeSpecifierError(
     !(PLUGIN_SDK_SPECIFIERS as readonly string[]).includes(specifier)
   )
     kind = "Unknown SDK";
-  else if (target !== "server" && isBuiltin(specifier)) kind = "Node";
+  else if (target !== "server" && (isBuiltin(specifier) || specifier === "@types/node"))
+    kind = "Node";
   else if (target !== "server" && isPluginServerOnlySdkSpecifier(specifier)) kind = "server-only";
   else if (
     target !== "client" &&
     (isPluginClientOnlySdkSpecifier(specifier) ||
-      /^(react(?:-dom|-native)?|use-sync-external-store|@tanstack\/react-query)(\/|$)/.test(
+      /^((?:@types\/)?react(?:-dom|-native)?|use-sync-external-store|@tanstack\/react-query)(\/|$)/.test(
         specifier,
       ))
   )
@@ -358,7 +364,7 @@ function checkSharedDependencies(inputs: Metafile["inputs"], pluginDirectory: st
 
 async function compileTarget(entryPath: string, target: PluginBuildTarget): Promise<string> {
   const { build } = loadEsbuild();
-  const pluginDirectory = path.dirname(entryPath);
+  const pluginDirectory = realpathSync(path.dirname(entryPath));
   const result = await build({
     entryPoints: [entryPath],
     bundle: true,

@@ -264,6 +264,89 @@ describe("plugin runtime entries", () => {
     await expect(compilePlugin(entries)).rejects.toThrow('Could not resolve "neutral-types"');
   });
 
+  it("preserves guarded optional requires in server dependencies", async () => {
+    const entries = await createSplitPlugin();
+    const dependency = path.join(entries.directory, "node_modules/optional-helper");
+    await mkdir(dependency, { recursive: true });
+    await writeFile(
+      path.join(dependency, "package.json"),
+      JSON.stringify({ name: "optional-helper", main: "index.js" }),
+    );
+    await writeFile(
+      path.join(dependency, "index.js"),
+      'let value = "fallback"; try { value = require("missing-accelerator"); } catch {} module.exports = value;',
+    );
+    await writeFile(entries.server, 'import value from "optional-helper"; export default value;');
+    await expect(compilePlugin({ client: null, server: entries.server })).resolves.toMatchObject({
+      serverBundle: expect.stringContaining("fallback"),
+    });
+    await writeFile(
+      path.join(dependency, "index.js"),
+      'module.exports = require("missing-accelerator");',
+    );
+    await expect(compilePlugin({ client: null, server: entries.server })).rejects.toThrow(
+      'Could not resolve "missing-accelerator"',
+    );
+  });
+
+  it.each(["path", "types"])(
+    "checks declaration reference %s directives",
+    async (referenceKind) => {
+      const entries = await createSplitPlugin();
+      const dependency = path.join(entries.directory, "node_modules/typed-helper");
+      const referencedDirectory =
+        referenceKind === "path"
+          ? dependency
+          : path.join(entries.directory, "node_modules/@types/referenced-helper");
+      await mkdir(dependency, { recursive: true });
+      await mkdir(referencedDirectory, { recursive: true });
+      await writeFile(
+        path.join(dependency, "package.json"),
+        JSON.stringify({ name: "typed-helper", types: "index.d.ts" }),
+      );
+      await writeFile(
+        path.join(dependency, "index.d.ts"),
+        `/// <reference ${referenceKind}="${referenceKind === "path" ? "./context.d.ts" : "referenced-helper"}" />
+export type Value = string;`,
+      );
+      const referencedFile = path.join(
+        referencedDirectory,
+        referenceKind === "path" ? "context.d.ts" : "index.d.ts",
+      );
+      await writeFile(
+        referencedFile,
+        'export type { PluginClientContext } from "@getpaseo/plugin/client";',
+      );
+      await writeFile(
+        path.join(entries.directory, "shared/labels.ts"),
+        'import type { Value } from "typed-helper"; export const clientLabel: Value = "client"; export const serverLabel: Value = "server";',
+      );
+      await expect(compilePlugin(entries)).rejects.toThrow("plugin shared");
+      await writeFile(referencedFile, "export type Neutral = string;");
+      await expect(compilePlugin(entries)).resolves.toMatchObject({
+        clientBundle: expect.any(String),
+        serverBundle: expect.any(String),
+      });
+    },
+  );
+
+  it("checks the physical owner of type-only symlinks", async () => {
+    const entries = await createSplitPlugin();
+    await writeFile(
+      path.join(entries.directory, "server/context.ts"),
+      "export type Value = string;",
+    );
+    await symlink(
+      path.join(entries.directory, "server/context.ts"),
+      path.join(entries.directory, "shared/context.ts"),
+    );
+    await writeFile(
+      path.join(entries.directory, "shared/labels.ts"),
+      'import type { Value } from "./context"; export const clientLabel: Value = "client"; export const serverLabel: Value = "server";',
+    );
+    await expect(compilePlugin(entries)).rejects.toThrow("server-only module");
+  });
+
   it("resolves type-only path aliases from the plugin tsconfig", async () => {
     const entries = await createSplitPlugin();
     await writeFile(

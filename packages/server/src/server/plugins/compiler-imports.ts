@@ -1,13 +1,16 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, realpathSync } from "node:fs";
 import { createRequire } from "node:module";
+import path from "node:path";
 import type { ImportKind } from "esbuild";
 import type { Node, NamedImportBindings, NamedExportBindings } from "typescript";
 
 const nodeRequire = createRequire(import.meta.url);
 
+export type PluginImportKind = ImportKind | "type-reference";
+
 interface ModuleImport {
   specifier: string;
-  kind: ImportKind;
+  kind: PluginImportKind;
   typeOnly: boolean;
 }
 
@@ -36,16 +39,21 @@ export function createPluginImportReader(directory: string) {
   };
   const cache = ts.createModuleResolutionCache(directory, (file) => file, options);
   return {
-    resolve(specifier: string, importer: string, kind: ImportKind): string | undefined {
-      return ts.resolveModuleName(
-        specifier,
-        importer,
-        options,
-        ts.sys,
-        cache,
-        undefined,
-        kind === "require-call" ? ts.ModuleKind.CommonJS : ts.ModuleKind.ESNext,
-      ).resolvedModule?.resolvedFileName;
+    resolve(specifier: string, importer: string, kind: PluginImportKind): string | undefined {
+      const resolved =
+        kind === "type-reference"
+          ? ts.resolveTypeReferenceDirective(specifier, importer, options, ts.sys)
+              .resolvedTypeReferenceDirective?.resolvedFileName
+          : ts.resolveModuleName(
+              specifier,
+              importer,
+              options,
+              ts.sys,
+              cache,
+              undefined,
+              kind === "require-call" ? ts.ModuleKind.CommonJS : ts.ModuleKind.ESNext,
+            ).resolvedModule?.resolvedFileName;
+      return resolved ? realpathSync(resolved) : undefined;
     },
     read(file: string): ModuleImport[] {
       const source = ts.createSourceFile(
@@ -102,6 +110,16 @@ export function createPluginImportReader(directory: string) {
         ts.forEachChild(node, visit);
       }
       visit(source);
+      for (const reference of source.referencedFiles) {
+        imports.push({
+          specifier: path.resolve(path.dirname(file), reference.fileName),
+          kind: "import-statement",
+          typeOnly: true,
+        });
+      }
+      for (const reference of source.typeReferenceDirectives) {
+        imports.push({ specifier: reference.fileName, kind: "type-reference", typeOnly: true });
+      }
       return imports;
     },
   };
