@@ -530,7 +530,12 @@ export default function TerminalEmulator({
     if (resizeRequestToken <= 0) {
       return;
     }
-    runtimeRef.current?.resize({ forceClaim: false, shouldClaim: false });
+    runtimeRef.current?.resize({ forceRefresh: true, shouldClaim: false });
+    if (typeof window.requestAnimationFrame === "function") {
+      window.requestAnimationFrame(() => {
+        runtimeRef.current?.resize({ forceRefresh: true, shouldClaim: false });
+      });
+    }
   }, [resizeRequestToken]);
 
   const showTerminalContextMenu = useCallback(() => {

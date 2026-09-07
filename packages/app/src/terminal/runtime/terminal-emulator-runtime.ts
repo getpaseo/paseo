@@ -175,6 +175,7 @@ export class TerminalEmulatorRuntime {
   private fitAddon: FitAddon | null = null;
   private fitAndEmitResize: ((input?: TerminalResizeRequest) => void) | null = null;
   private lastSize: { rows: number; cols: number } | null = null;
+  private hiddenFitSkipped = false;
   private cleanup: (() => void) | null = null;
   private outputOperations: TerminalOutputOperation[] = [];
   private inFlightOutputOperation: TerminalOutputOperation | null = null;
@@ -224,6 +225,7 @@ export class TerminalEmulatorRuntime {
 
     input.host.innerHTML = "";
     this.lastSize = null;
+    this.hiddenFitSkipped = false;
     this.inputModeTracker.reset();
     this.emitInputModeChange();
 
@@ -369,6 +371,9 @@ export class TerminalEmulatorRuntime {
       }
 
       if (input.root.offsetWidth === 0 || input.root.offsetHeight === 0) {
+        // Hidden retained tabs measure 0x0. Remember that so the next real fit
+        // still refreshes, even if cols/rows did not change.
+        this.hiddenFitSkipped = true;
         return;
       }
 
@@ -381,9 +386,12 @@ export class TerminalEmulatorRuntime {
       const nextRows = currentTerminal.rows;
       const nextCols = currentTerminal.cols;
       const previous = this.lastSize;
+      const forceHiddenRestore = this.hiddenFitSkipped;
+      this.hiddenFitSkipped = false;
       if (
         !forceRefresh &&
         !forceClaim &&
+        !forceHiddenRestore &&
         previous &&
         previous.rows === nextRows &&
         previous.cols === nextCols
@@ -799,6 +807,7 @@ export class TerminalEmulatorRuntime {
     this.fitAddon = null;
     this.fitAndEmitResize = null;
     this.lastSize = null;
+    this.hiddenFitSkipped = false;
     this.themeBackgroundElements = [];
     this.suppressInput = false;
     this.inputModeDecoder.decode();
