@@ -143,4 +143,63 @@ describe("runArchiveCommand", () => {
       code: "WORKTREE_NOT_FOUND",
     });
   });
+
+  it("passes process.cwd() to getPaseoWorktreeList when cwd is omitted", async () => {
+    const listCalls: Array<Parameters<DaemonClient["getPaseoWorktreeList"]>[0]> = [];
+    const fakeClient = createFakeDaemonClient({
+      getPaseoWorktreeList: async (input) => {
+        listCalls.push(input);
+        return {
+          worktrees: [],
+          error: null,
+          requestId: "req-list",
+        };
+      },
+    });
+
+    await expect(
+      runArchiveCommandWithDeps(
+        "missing",
+        {},
+        {
+          connectToDaemon: async () => fakeClient,
+        },
+      ),
+    ).rejects.toMatchObject({
+      code: "WORKTREE_NOT_FOUND",
+    });
+
+    expect(listCalls).toHaveLength(1);
+    expect(listCalls[0]).toEqual({ cwd: process.cwd() });
+  });
+
+  it("passes explicit cwd to getPaseoWorktreeList when provided", async () => {
+    const listCalls: Array<Parameters<DaemonClient["getPaseoWorktreeList"]>[0]> = [];
+    const explicitCwd = "/tmp/explicit-repo-root";
+    const fakeClient = createFakeDaemonClient({
+      getPaseoWorktreeList: async (input) => {
+        listCalls.push(input);
+        return {
+          worktrees: [],
+          error: null,
+          requestId: "req-list",
+        };
+      },
+    });
+
+    await expect(
+      runArchiveCommandWithDeps(
+        "missing",
+        { cwd: explicitCwd },
+        {
+          connectToDaemon: async () => fakeClient,
+        },
+      ),
+    ).rejects.toMatchObject({
+      code: "WORKTREE_NOT_FOUND",
+    });
+
+    expect(listCalls).toHaveLength(1);
+    expect(listCalls[0]).toEqual({ cwd: explicitCwd });
+  });
 });

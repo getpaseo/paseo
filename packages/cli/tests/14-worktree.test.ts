@@ -49,6 +49,7 @@ try {
     const result = await $`npx paseo worktree ls --help`.nothrow();
     assert.strictEqual(result.exitCode, 0, "worktree ls --help should exit 0");
     assert(result.stdout.includes("--host"), "help should mention --host option");
+    assert(result.stdout.includes("--cwd"), "help should mention --cwd option");
     console.log("✓ worktree ls --help shows options\n");
   }
 
@@ -85,6 +86,7 @@ try {
     const result = await $`npx paseo worktree archive --help`.nothrow();
     assert.strictEqual(result.exitCode, 0, "worktree archive --help should exit 0");
     assert(result.stdout.includes("--host"), "help should mention --host option");
+    assert(result.stdout.includes("--cwd"), "help should mention --cwd option");
     assert(result.stdout.includes("<name>"), "help should mention required name argument");
     console.log("✓ worktree archive --help shows options\n");
   }
@@ -160,6 +162,28 @@ try {
     assert.strictEqual(result.exitCode, 0, "paseo --help should exit 0");
     assert(!result.stdout.includes("worktree"), "help should not advertise worktree subcommand");
     console.log("✓ paseo --help hides worktree compatibility command\n");
+  }
+
+  // Test 12: worktree ls with --cwd flag is accepted
+  {
+    console.log("Test 12: worktree ls with --cwd flag is accepted");
+    const result =
+      await $`PASEO_HOST=localhost:${port} PASEO_HOME=${paseoHome} npx paseo worktree ls --cwd /tmp`.nothrow();
+    const output = result.stdout + result.stderr;
+    assert(!output.includes("unknown option"), "should accept --cwd flag");
+    assert(!output.includes("error: option"), "should not have option parsing error");
+    console.log("✓ worktree ls with --cwd flag is accepted\n");
+  }
+
+  // Test 13: worktree archive with --cwd flag is accepted
+  {
+    console.log("Test 13: worktree archive with --cwd flag is accepted");
+    const result =
+      await $`PASEO_HOST=localhost:${port} PASEO_HOME=${paseoHome} npx paseo worktree archive test-worktree --cwd /tmp`.nothrow();
+    const output = result.stdout + result.stderr;
+    assert(!output.includes("unknown option"), "should accept --cwd flag");
+    assert(!output.includes("error: option"), "should not have option parsing error");
+    console.log("✓ worktree archive with --cwd flag is accepted\n");
   }
 } finally {
   // Clean up temp directory
