@@ -43,7 +43,9 @@ and tool identity without approving native tools.
 
 Extend `ACPAgentClient` from `packages/server/src/server/agent/providers/acp-agent.ts`. The base class handles process spawning, stdio transport, session lifecycle, streaming, permissions, and model discovery. You provide configuration (command, modes, capabilities) and optionally override `isAvailable()` for auth checks.
 
-The only built-in ACP provider today is `copilot` (`copilot-acp-agent.ts`). `GenericACPAgentClient` (`generic-acp-agent.ts`) is also ACP-based but is used for user-defined custom providers configured via `extends: "acp"` overrides — see [docs/custom-providers.md](custom-providers.md).
+Copilot is the built-in ACP provider. Custom providers use `GenericACPAgentClient` through `extends: "acp"` overrides; adapters such as Cursor, Kimi, and Grok extend it for provider-specific controls. See [custom provider configuration](custom-providers.md#adding-a-generic-acp-provider).
+
+Grok's effort, planning, and permission settings are independent. Its mode-shaped effort metadata and plan/agent updates must not become permission choices. Native permission modes replace Paseo's ACP Auto Accept toggle so native rules remain in control. See the [Grok launch constraint](custom-providers.md#grok-launch-constraint) for process isolation.
 
 Copilot custom agents are exposed through ACP session config, not the slash-command list. When custom agents are available, Copilot returns a select config option with `id: "agent"` and `category: "_agent"`; Paseo maps that to the `agent` provider feature. Copilot uses the agent display name as the option value, and the blank value means the default Copilot agent.
 

@@ -37,7 +37,15 @@ export const GenericACPProviderParamsSchema = z
 
 type GenericACPProviderParams = z.infer<typeof GenericACPProviderParamsSchema>;
 
-interface GenericACPAgentClientOptions {
+type ACPControlOptions = Pick<
+  ConstructorParameters<typeof ACPAgentClient>[0],
+  | "sessionResponseTransformer"
+  | "providerModelWriter"
+  | "thinkingOptionWriter"
+  | "nativePermissions"
+>;
+
+interface GenericACPAgentClientOptions extends ACPControlOptions {
   logger: Logger;
   command: [string, ...string[]];
   env?: Record<string, string>;
@@ -77,6 +85,10 @@ export class GenericACPAgentClient extends ACPAgentClient {
       configFeatureOptions: options.configFeatureOptions,
       extensionCommandsParser: options.extensionCommandsParser,
       catalogModelResolver: options.catalogModelResolver,
+      sessionResponseTransformer: options.sessionResponseTransformer,
+      providerModelWriter: options.providerModelWriter,
+      thinkingOptionWriter: options.thinkingOptionWriter,
+      nativePermissions: options.nativePermissions,
       now: options.now,
     });
 

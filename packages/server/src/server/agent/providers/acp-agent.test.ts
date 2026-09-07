@@ -42,6 +42,15 @@ import {
   writeCopilotProviderMode,
 } from "./copilot-acp-agent.js";
 import { GenericACPAgentClient } from "./generic-acp-agent.js";
+import { GrokACPAgentClient } from "./grok/agent.js";
+import { FakeGrokConnection } from "./grok/fake-connection.js";
+import {
+  GROK_MODES,
+  transformGrokSessionResponse,
+  writeGrokModel,
+  writeGrokPermissionMode,
+  writeGrokThinkingOption,
+} from "./grok/controls.js";
 import { parseKiroExtensionCommands } from "./kiro-acp-agent.js";
 import { transformPiModels } from "./pi/agent.js";
 import type { AgentStreamEvent } from "../agent-sdk-types.js";
@@ -183,6 +192,7 @@ function createSessionWithConfig(
     modeId?: string | null;
     model?: string | null;
     featureValues?: Record<string, unknown>;
+    sessionOptions?: Partial<ConstructorParameters<typeof ACPAgentSession>[1]>;
   } = {},
   logger: ReturnType<typeof createTestLogger> = createTestLogger(),
 ): ACPAgentSession {
@@ -207,6 +217,7 @@ function createSessionWithConfig(
         supportsReasoningStream: true,
         supportsToolInvocations: true,
       },
+      ...config.sessionOptions,
     },
   );
 }
@@ -836,6 +847,144 @@ describe("ACP selection validity helpers", () => {
       hasAvailableModels: true,
     });
     expect(result.configOption?.id).toBe("model");
+  });
+});
+
+describe("ACPAgentSession native controls", () => {
+  const model = {
+    modelId: "grok-4.6",
+    name: "Grok 4.6",
+    _meta: {
+      reasoningEffort: "high",
+      reasoningEfforts: [
+        { id: "high", label: "High Effort", default: true },
+        { id: "low", label: "Low Effort", default: false },
+      ],
+    },
+  };
+
+  async function nativeSession(
+    config: { modeId?: string; featureValues?: Record<string, unknown>; legacy?: boolean } = {},
+  ) {
+    const connection = new FakeGrokConnection({
+      currentModelId: model.modelId,
+      availableModels: [model],
+    });
+    const session = createSessionWithConfig({
+      ...config,
+      provider: "grok",
+      sessionOptions: {
+        spawnProcess: async () => ({
+          child: null,
+          connection,
+          initialize: {
+            protocolVersion: PROTOCOL_VERSION,
+            agentCapabilities: { loadSession: true },
+          },
+        }),
+        sessionResponseTransformer: transformGrokSessionResponse,
+        handle: config.legacy
+          ? { provider: "grok", sessionId: "session-1", nativeHandle: "session-1" }
+          : undefined,
+        defaultModes: GROK_MODES,
+        nativePermissions: {
+          defaultModeId: "ask",
+          modes: GROK_MODES,
+          write: writeGrokPermissionMode,
+        },
+        thinkingOptionWriter: writeGrokThinkingOption,
+        providerModelWriter: writeGrokModel,
+      },
+    });
+    if (config.legacy) await session.initializeResumedSession();
+    else await session.initializeNewSession();
+    return { session, connection };
+  }
+
+  test.each([
+    { modeId: undefined, featureValues: undefined, expected: "ask" },
+    // Legacy clients also send auto_accept when creating new agents.
+    { modeId: undefined, featureValues: { auto_accept: true }, expected: "always-approve" },
+    // Remove this legacy fixture with the acpNativePermissions shim.
+    {
+      modeId: undefined,
+      featureValues: { auto_accept: true },
+      legacy: true,
+      expected: "always-approve",
+    },
+    { modeId: "ask", featureValues: { auto_accept: true }, legacy: true, expected: "ask" },
+  ])("initializes native mode $expected from stored settings", async ({ expected, ...config }) => {
+    const { session, connection } = await nativeSession(config);
+    expect(await session.getCurrentMode()).toBe(expected);
+    expect(connection.yolo).toBe(expected === "always-approve");
+    expect(session.describePersistence()?.metadata?.modeId).toBe(expected);
+  });
+
+  test("native permissions replace Auto Accept and survive workflow/config updates", async () => {
+    const { session } = await nativeSession({
+      modeId: "ask",
+      featureValues: { auto_accept: true },
+    });
+    const client = new GrokACPAgentClient({
+      providerId: "grok",
+      logger: createTestLogger(),
+      command: ["grok", "agent", "stdio"],
+    });
+    expect(await client.listFeatures({ provider: "grok", cwd: "/tmp" })).toEqual([]);
+    expect(session.features).toEqual([]);
+    await expect(session.setFeature("auto_accept", true)).rejects.toThrow("Unknown grok feature");
+    await session.sessionUpdate({
+      sessionId: "session-1",
+      update: { sessionUpdate: "current_mode_update", currentModeId: "plan" },
+    });
+    await session.sessionUpdate({
+      sessionId: "session-1",
+      update: { sessionUpdate: "config_option_update", configOptions: [] },
+    });
+    expect(await session.getCurrentMode()).toBe("ask");
+    expect(await session.getAvailableModes()).toEqual(GROK_MODES);
+    const permission = session.requestPermission({
+      sessionId: "session-1",
+      toolCall: { toolCallId: "tool-1", title: "Write file", kind: "edit", status: "pending" },
+      options: [{ optionId: "allow-once", name: "Allow", kind: "allow_once" }],
+    });
+    const pending = session.getPendingPermissions();
+    expect(pending).toHaveLength(1);
+    await session.respondToPermission(pending[0]!.id, { behavior: "allow" });
+    await expect(permission).resolves.toEqual({
+      outcome: { outcome: "selected", optionId: "allow-once" },
+    });
+  });
+
+  test("dispatches native writers and keeps effort selectable after a config update", async () => {
+    const { session, connection } = await nativeSession();
+    await session.setThinkingOption("low");
+    expect(connection.effort).toBe("low");
+    await session.sessionUpdate({
+      sessionId: "session-1",
+      update: { sessionUpdate: "config_option_update", configOptions: [] },
+    });
+    await session.setThinkingOption("high");
+    expect(connection.effort).toBe("high");
+    expect(await session.getRuntimeInfo()).toMatchObject({ thinkingOptionId: "high" });
+    await session.setThinkingOption("low");
+    await session.setModel(model.modelId);
+    expect(connection.effort).toBe("low");
+    expect(session.describePersistence()?.metadata).toMatchObject({
+      model: model.modelId,
+      thinkingOptionId: "low",
+    });
+    connection.failure = new Error("disconnected");
+    await expect(session.setThinkingOption(null)).rejects.toThrow("disconnected");
+    await expect(session.setMode("always-approve")).rejects.toThrow("disconnected");
+    expect(session.describePersistence()?.metadata).toMatchObject({
+      modeId: "ask",
+      thinkingOptionId: "low",
+    });
+    connection.failure = null;
+    await session.setThinkingOption(null);
+    expect(connection.effort).toBe("high");
+    expect(session.describePersistence()?.metadata?.thinkingOptionId).toBeUndefined();
   });
 });
 

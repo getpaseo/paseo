@@ -536,6 +536,12 @@ container. When delegating filesystem operations to Paseo (`fs.readTextFile: tru
 or `fs.writeTextFile: true`), ensure the agent and Paseo share equivalent
 absolute workspace paths.
 
+### Grok launch constraint
+
+The `grok` provider requires `agent` and `stdio` arguments in its configured command, for example `["grok", "agent", "stdio"]`. Paseo inserts `--no-leader` after `agent` so each session owns its process. Grok permission notifications affect every session in that process; sharing a leader would let one agent change another agent's permissions.
+
+Wrappers must accept and forward these arguments, for example `["/path/to/grok-wrapper", "agent", "stdio"]`. A command without them fails provider-registry construction, including daemon startup. The error includes the rejected command.
+
 ### Generic ACP diagnostics
 
 Paseo diagnostics for `extends: "acp"` providers report the configured command, resolved launcher binary, version output, ACP `initialize`, ACP `session/new`, model count, modes, and final status.
@@ -604,10 +610,12 @@ When you launch an agent with an ACP provider:
 4. Paseo creates a session and sends prompts through the ACP protocol
 5. The agent streams responses, tool calls, and permission requests back over stdout
 
-Every ACP provider exposes an **Auto Accept** toggle. Enable it per session to let Paseo approve
+Generic ACP providers expose an **Auto Accept** toggle. Enable it per session to let Paseo approve
 ACP permission requests without surfacing each prompt. If the provider sends no allow option,
 Paseo leaves the request for you to answer. Unattended agents enable Auto Accept unless you
 explicitly disable it.
+
+Grok replaces this toggle with native **Ask**, **Auto**, and **Always approve** modes. New sessions default to Ask; unattended creation selects Always approve. Older clients and stored sessions can still supply Auto Accept: when no explicit mode is set, Paseo maps enabled Auto Accept to Always approve. An explicit Ask mode always wins.
 
 Models and modes are discovered dynamically at runtime from the agent process. If you want to override the model list (e.g., to curate which models appear in the UI), use the `models` field:
 
