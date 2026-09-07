@@ -1,5 +1,6 @@
 #!/usr/bin/env npx tsx
 import { resolveCliVersion } from "../../src/version.js";
+import { readPluginManifest } from "../../../server/src/server/plugins/manifest.js";
 
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
@@ -31,7 +32,7 @@ async function main(): Promise<void> {
     const init = await context.paseo(["plugin", "init", scaffold, "--json"]);
     assert.equal(init.exitCode, 0, init.stderr);
     const manifestPath = path.join(scaffold, "paseo-plugin.json");
-    const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
+    const manifest = await readPluginManifest(scaffold);
     assert.deepEqual(manifest.requirements, { paseo: `>=${resolveCliVersion()}` });
     await writeFile(
       path.join(directory, "paseo-plugin.json"),

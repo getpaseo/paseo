@@ -12,12 +12,14 @@ export function validatePluginRequirements(requirements: PluginRequirements | un
   }
 }
 
-export function assertPluginCompatibility(input: {
+interface PluginCompatibilityInput {
   id: string;
   requirements?: PluginRequirements;
   version: string | null;
   runtime: "daemon" | "app";
-}): void {
+}
+
+export function assertPluginCompatibility(input: PluginCompatibilityInput): void {
   validatePluginRequirements(input.requirements);
   // COMPAT(plugin-requirements): added in v0.8.0; remove after 2027-03-07 once pre-0.8 plugins and catalogs are unsupported.
   const range = input.requirements?.paseo ?? "<0.8.0";
