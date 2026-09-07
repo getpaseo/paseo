@@ -651,8 +651,9 @@ export function AdaptiveModalSheet({
         enableContentPanningGesture={scrollable}
         backgroundComponent={SheetBackground}
         handleIndicatorStyle={handleIndicatorStyle}
-        keyboardBehavior="extend"
+        keyboardBehavior="interactive"
         keyboardBlurBehavior="restore"
+        android_keyboardInputMode="adjustPan"
         accessible={false}
         presentation={presentation}
       >
