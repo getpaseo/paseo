@@ -15,6 +15,7 @@ import { useTranslation } from "react-i18next";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { useSessionStore, type ExplorerFile } from "@/stores/session-store";
 import { filePreviewRenderKind } from "@/components/file-pane-render-mode";
+import type { AttachmentMetadata } from "@/attachments/types";
 import { useAttachmentPreviewUrl } from "@/attachments/use-attachment-preview-url";
 import { getFileNameFromPath } from "@/attachments/utils";
 import { resolveFilePreviewReadTarget } from "@/file-explorer/preview-target";
@@ -29,6 +30,7 @@ import { useFilePreview } from "./preview-lifecycle/hook";
 import { resolveFilePreviewLifecycle } from "./preview-lifecycle/model";
 import { FilePanelBar } from "./bar";
 import { FileHtmlPreview } from "./html-preview";
+import { FileImagePreview } from "./image-preview";
 import { FileMarkdownPreview } from "./markdown-preview";
 import { FileEditorModel, getFileConflictCallout, type FileConflictCallout } from "./editor/model";
 import { createFileObservationSource } from "./editor/observation-source";
@@ -39,7 +41,6 @@ import type { LiveFileModel } from "./live-file/model";
 import { confirmDialog } from "@/utils/confirm-dialog";
 import { usePublishPanelInstanceAttributes } from "@/panels/panel-instance-attributes";
 import type { Theme } from "@/styles/theme";
-import { ZoomableImage } from "@/components/zoomable-viewport/image";
 
 const ThemedLoadingSpinner = withUnistyles(LoadingSpinner);
 const foregroundMutedColorMapping = (theme: Theme) => ({
@@ -54,6 +55,8 @@ interface FilePreviewBodyProps {
   location: WorkspaceFileLocation;
   navigationRevision: number;
   imagePreviewUri: string | null;
+  imageAttachment: AttachmentMetadata | null;
+  imageFileName: string;
 }
 
 type TextExplorerFile = ExplorerFile & { kind: "text" };
@@ -135,6 +138,8 @@ function FilePreviewBody({
   location,
   navigationRevision,
   imagePreviewUri,
+  imageAttachment,
+  imageFileName,
 }: FilePreviewBodyProps) {
   const { t } = useTranslation();
   const filePath = location.path;
@@ -208,7 +213,13 @@ function FilePreviewBody({
       );
     }
 
-    return <ZoomableImage uri={imagePreviewUri} testID="image-file-preview" />;
+    return (
+      <FileImagePreview
+        uri={imagePreviewUri}
+        fileName={imageFileName}
+        attachment={imageAttachment}
+      />
+    );
   }
 
   return (
@@ -316,6 +327,7 @@ export function FilePane({
       location={location}
       navigationRevision={navigationRevision}
       imagePreviewUri={imagePreviewUri}
+      imageAttachment={imageAttachment}
     />
   );
 }
@@ -357,6 +369,7 @@ function FilePanePresentation({
   location,
   navigationRevision,
   imagePreviewUri,
+  imageAttachment,
 }: {
   serverId: string;
   client: DaemonClient | null;
@@ -378,6 +391,7 @@ function FilePanePresentation({
   location: WorkspaceFileLocation;
   navigationRevision: number;
   imagePreviewUri: string | null;
+  imageAttachment: AttachmentMetadata | null;
 }) {
   if (!client && readTarget) {
     return (
@@ -449,6 +463,8 @@ function FilePanePresentation({
         location={location}
         navigationRevision={navigationRevision}
         imagePreviewUri={imagePreviewUri}
+        imageAttachment={imageAttachment}
+        imageFileName={filename}
       />
     </View>
   );
@@ -622,6 +638,8 @@ function EditableFilePane({
           location={location}
           navigationRevision={navigationRevision}
           imagePreviewUri={null}
+          imageAttachment={null}
+          imageFileName={filename}
         />
       )}
     </View>

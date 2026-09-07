@@ -553,6 +553,40 @@ test.describe("CodeMirror workspace file editing", () => {
     await expect.poll(() => image.getAttribute("src")).not.toBe(initialSource);
   });
 
+  test("closes a compact file preview back to its parent session", async ({ page }) => {
+    const session = await seedMockAgentWorkspace({
+      repoPrefix: "file-preview-close-",
+      title: "Close file preview",
+      initialPrompt: "Generate a title and a git branch name. Return JSON only.",
+    });
+    await writeFile(path.join(session.cwd, "pixel.png"), RED_PIXEL);
+
+    try {
+      await page.setViewportSize({ width: 390, height: 844 });
+      await openAgentRoute(page, session);
+      await page.getByTestId("workspace-explorer-toggle").first().click();
+      const compactFileTree = page
+        .getByTestId("file-explorer-tree-scroll")
+        .filter({ visible: true });
+      if (!(await compactFileTree.isVisible())) {
+        await page.getByTestId("explorer-tab-files").filter({ visible: true }).click();
+      }
+      await expect(compactFileTree).toBeVisible();
+      await compactFileTree.getByText("pixel.png", { exact: true }).click();
+
+      await expect(page.getByTestId("image-file-preview")).toBeVisible();
+      const closePreview = page.getByTestId("workspace-file-tab-close");
+      await expect(closePreview).toBeVisible();
+      await closePreview.click();
+
+      await expect(closePreview).toHaveCount(0);
+      await expect(page.getByTestId("image-file-preview")).toHaveCount(0);
+      await expect(page.getByTestId("message-input-root")).toBeVisible();
+    } finally {
+      await session.cleanup();
+    }
+  });
+
   test("previews and refreshes an HTML plan while preserving source access", async ({
     page,
     withWorkspace,
