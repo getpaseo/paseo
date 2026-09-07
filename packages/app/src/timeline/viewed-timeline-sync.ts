@@ -42,16 +42,16 @@ async function prepareCachedTimeline(input: {
   const before = useSessionStore.getState().sessions[input.serverId];
   const beforeTimeline = selectAgentTimelineState(before, input.agentId);
   if (beforeTimeline.status === "synced") return undefined;
-  const beforeHead = before?.agentStreamHead.get(input.agentId);
-  await input.prepareAgent(input.agentId);
-  const stored = await input.storage.readTimeline(input.serverId, input.agentId);
+  const [stored] = await Promise.all([
+    input.storage.readTimeline(input.serverId, input.agentId),
+    input.prepareAgent(input.agentId),
+  ]);
   if (!stored) return undefined;
   const session = useSessionStore.getState().sessions[input.serverId];
   const currentTimeline = selectAgentTimelineState(session, input.agentId);
   const currentHead = session?.agentStreamHead.get(input.agentId);
   if (currentTimeline.status === "synced") return undefined;
   if (!stored.range) {
-    if (currentHead !== beforeHead) return undefined;
     if (beforeTimeline.status === "painted") {
       return currentTimeline.status === "painted" && currentTimeline.items === beforeTimeline.items
         ? stored
@@ -63,18 +63,20 @@ async function prepareCachedTimeline(input: {
     currentTimeline.status === "painted"
       ? [...currentTimeline.items, ...(currentHead ?? [])]
       : (currentHead ?? []);
-  const replacement = stored.range
-    ? replaceWithCanonicalStream({
-        canonical: stored.items,
-        previousTail: [],
-        previousHead: liveItems,
-        sendingClientMessageIds: getSendingClientMessageIds(
-          session?.messageSubmissions.get(input.agentId),
-        ),
-        preserveContinuity: true,
-        canonicalCoverage: stored.range,
-      })
-    : { tail: stored.items, head: liveItems, acknowledgedClientMessageIds: [] };
+  const replacement = replaceWithCanonicalStream({
+    canonical: stored.items,
+    previousTail: [],
+    previousHead: liveItems,
+    sendingClientMessageIds: getSendingClientMessageIds(
+      session?.messageSubmissions.get(input.agentId),
+    ),
+    preserveContinuity: true,
+    // Display-only rows claim no coverage over the live head.
+    canonicalCoverage: stored.range ?? {
+      epoch: liveItems.find((item) => item.timelineCursor)?.timelineCursor?.epoch ?? "",
+      endSeq: null,
+    },
+  });
   useSessionStore.getState().applyAgentTimelineResponseState(input.serverId, input.agentId, {
     items: replacement.tail,
     head: replacement.head,
