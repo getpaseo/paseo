@@ -1,4 +1,5 @@
 import type { KeyboardFocusScope } from "@/keyboard/actions";
+import { LIST_SEARCH_SELECTOR } from "@/keyboard/list-search-keys";
 
 function isElement(value: unknown): value is Element {
   return typeof Element !== "undefined" && value instanceof Element;
@@ -26,6 +27,12 @@ function getFocusCandidateElements(target: EventTarget | null): Element[] {
   }
 
   return candidates;
+}
+
+export function ownsListNavigationKeys(target: EventTarget | null): boolean {
+  return getFocusCandidateElements(target).some((element) =>
+    Boolean(element.closest(LIST_SEARCH_SELECTOR)),
+  );
 }
 
 export function resolveKeyboardFocusScope(input: {

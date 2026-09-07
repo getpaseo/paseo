@@ -16,6 +16,10 @@ import {
 } from "../support/helpers/agent-profiles";
 import { expectComposerVisible } from "../support/helpers/composer";
 import { clickNewChat, gotoWorkspace } from "../support/helpers/launcher";
+import {
+  activateFirstListHighlight,
+  navigateToHighlightedListItem,
+} from "../support/helpers/list-navigation";
 import { seedWorkspace } from "../support/helpers/seed-client";
 
 const MOCK_PROVIDER_LABEL = "Mock Load Test";
@@ -96,6 +100,16 @@ test.describe("Cross-provider model search", () => {
 
       await test.step("results replace the pinned profiles", async () => {
         await expectPinnedProfilesHidden(page);
+      });
+
+      await test.step("Ctrl+N and Ctrl+P move the model highlight", async () => {
+        await searchAllModels(page, "ten second stream");
+        const first = page.getByTestId("model-row-mock-ten-second-stream");
+        const second = page.getByTestId(`model-row-${STUDIO.id}-studio-fast`);
+        const activeBackground = await activateFirstListHighlight(page, first);
+
+        await navigateToHighlightedListItem(page, "next", second, activeBackground);
+        await navigateToHighlightedListItem(page, "previous", first, activeBackground);
       });
 
       // Search falls back to subsequence matching, so "no matches" needs letters
