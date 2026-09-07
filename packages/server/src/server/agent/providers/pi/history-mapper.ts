@@ -9,6 +9,7 @@ import {
   type PiToolResult,
   type PiTrackedToolCall,
 } from "./tool-call-mapper.js";
+import { formatTintinwebSubagentNotification } from "./tintinweb-notification.js";
 
 export interface PiCapturedUserMessageEntry {
   id: string;
@@ -121,12 +122,13 @@ export class PiHistoryMapper {
     if (mappedEvent) {
       return [mappedEvent];
     }
-    return text
+    const displayText = formatTintinwebSubagentNotification(message) ?? text;
+    return displayText
       ? [
           {
             type: "timeline",
             provider: this.provider,
-            item: { type: "assistant_message", text },
+            item: { type: "assistant_message", text: displayText },
           },
         ]
       : [];
