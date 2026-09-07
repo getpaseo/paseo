@@ -91,6 +91,9 @@ export interface PluginClientContext extends PluginCommandCapabilities {
   addWorkspacePanel(contribution: PluginWorkspacePanelContribution): PluginCleanup;
   addCommandCenterItem(contribution: PluginCommandCenterItemContribution): PluginCleanup;
   addSlashCommand(contribution: PluginClientSlashCommandContribution): PluginCleanup;
+  addSlashCommandProvider(
+    contribution: PluginClientSlashCommandProviderContribution,
+  ): PluginCleanup;
   addComposerPill(contribution: PluginComposerPillContribution): PluginCleanup;
   addAttachmentSource(contribution: PluginAttachmentSourceContribution): PluginCleanup;
   addTheme(contribution: PluginThemeContribution): PluginCleanup;
@@ -215,20 +218,50 @@ export type PluginCommandCenterItemContribution =
       onSelect(context: PluginAgentCommandContext): void | Promise<void>;
     });
 
-interface PluginClientSlashCommandBase {
+export interface PluginSlashCommandDescriptor {
   name: string;
   description: string;
   argumentHint: string;
 }
 
 export type PluginClientSlashCommandContribution =
-  | (PluginClientSlashCommandBase & {
+  | (PluginSlashCommandDescriptor & {
       context: "workspace";
       onSubmit(context: PluginWorkspaceCommandContext & { args: string }): void | Promise<void>;
     })
-  | (PluginClientSlashCommandBase & {
+  | (PluginSlashCommandDescriptor & {
       context: "agent";
       onSubmit(context: PluginAgentCommandContext & { args: string }): void | Promise<void>;
+    });
+
+interface PluginClientSlashCommandProviderBase {
+  id: string;
+}
+
+export type PluginClientSlashCommandProviderContribution =
+  | (PluginClientSlashCommandProviderBase & {
+      context: "workspace";
+      list(
+        context: PluginWorkspaceCommandContext,
+      ): readonly PluginSlashCommandDescriptor[] | Promise<readonly PluginSlashCommandDescriptor[]>;
+      onSubmit(
+        context: PluginWorkspaceCommandContext & {
+          command: PluginSlashCommandDescriptor;
+          args: string;
+        },
+      ): void | Promise<void>;
+    })
+  | (PluginClientSlashCommandProviderBase & {
+      context: "agent";
+      list(
+        context: PluginAgentCommandContext,
+      ): readonly PluginSlashCommandDescriptor[] | Promise<readonly PluginSlashCommandDescriptor[]>;
+      onSubmit(
+        context: PluginAgentCommandContext & {
+          command: PluginSlashCommandDescriptor;
+          args: string;
+        },
+      ): void | Promise<void>;
     });
 
 export type SettingsState<Schema extends ZodType> = (

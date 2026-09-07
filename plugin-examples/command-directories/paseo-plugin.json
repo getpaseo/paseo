@@ -1,0 +1,6 @@
+{
+  "id": "command-directories-example",
+  "requirements": {
+    "paseo": ">=0.8.0"
+  }
+}

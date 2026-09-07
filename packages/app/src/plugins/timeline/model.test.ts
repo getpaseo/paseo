@@ -19,6 +19,7 @@ function plugin(input: {
     workspacePanels: [],
     commandCenterItems: [],
     clientSlashCommands: [],
+    clientSlashCommandProviders: [],
     attachmentSources: [],
     themes: [],
     timelineTransformers: [

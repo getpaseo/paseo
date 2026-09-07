@@ -1,9 +1,11 @@
 import { pluginSettingsKey } from "./settings/use-settings";
 import { useEffect } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { useHostFeature } from "@/runtime/host-features";
 import { useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import { pluginRegistry } from "./registry";
+import { pluginSlashCommandProviderQueryKey } from "./client-slash-commands/query";
 
 export function PluginCatalogSync({
   serverId,
@@ -12,6 +14,7 @@ export function PluginCatalogSync({
   serverId: string;
   client: DaemonClient;
 }) {
+  const queryClient = useQueryClient();
   const connected = useHostRuntimeIsConnected(serverId);
   const supported = useHostFeature(serverId, "plugins");
 
@@ -52,11 +55,14 @@ export function PluginCatalogSync({
     const unsubscribe = client.on("status", (message) => {
       if (message.payload.status === "plugin_settings_changed") {
         const { pluginId, settingsId } = message.payload;
-        if (typeof settingsId === "string") {
+        if (typeof pluginId === "string" && typeof settingsId === "string") {
           const plugin = pluginRegistry
             .getSnapshot()
             .find((item) => item.serverId === serverId && item.id === pluginId);
           void plugin?.queryClient.invalidateQueries({ queryKey: pluginSettingsKey(settingsId) });
+          void queryClient.invalidateQueries({
+            queryKey: pluginSlashCommandProviderQueryKey(serverId, pluginId),
+          });
         }
       }
       if (message.payload.status === "plugin_catalog_changed") {
@@ -68,7 +74,7 @@ export function PluginCatalogSync({
       cancelled = true;
       unsubscribe();
     };
-  }, [client, connected, serverId, supported]);
+  }, [client, connected, queryClient, serverId, supported]);
 
   useEffect(() => () => pluginRegistry.removeHost(serverId), [serverId]);
   return null;

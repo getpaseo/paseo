@@ -32,6 +32,7 @@ Pick the contribution that matches the request. Each row names the registration,
 | Workspace panel           | `addWorkspacePanel`                              | UI that lives as a tab beside agents, terminals, files, and diffs; `locations: ["explorer"]` for the Explorer | reference.md → Workspace panels                                                                    |
 | Command Center item       | `addCommandCenterItem`                           | A global, workspace, or agent action reachable from ⌘K                                                        | reference.md → Command Center items                                                                |
 | Client slash command      | `addSlashCommand`                                | A `/command args` in the composer that runs plugin code instead of prompting the agent                        | reference.md → Client slash commands                                                               |
+| Dynamic slash commands    | `addSlashCommandProvider`                        | A plugin-provided workspace- or agent-dependent command list loaded asynchronously for the composer           | reference.md → Dynamic slash command providers                                                     |
 | Composer pill             | `addComposerPill`                                | A per-agent button in the composer track bar next to Tasks and Subagents                                      | reference.md → Composer pills                                                                      |
 | Timeline transformer      | `addTimelineTransformer` + `addTimelineRenderer` | Replace, explode, or hide a built-in timeline item, including while it streams                                | reference.md → Timeline items; `plugin-examples/timeline-items`, `plugin-examples/inline-thinking` |
 | Timeline row              | `paseo.agents.ref(id).timeline.append(...)`      | Push a plugin-owned row into an agent timeline from a server handler and update it later                      | reference.md → Append a timeline row from the daemon                                               |
@@ -461,6 +462,15 @@ client.addSlashCommand({
 ```
 
 The callback receives the same context as the matching Command Center item plus `args`. Paseo owns the autocomplete row, input clearing, and the error toast; put pending UI in a pill or panel. Precedence is built-in client commands, then plugin commands, then provider commands; a lower-precedence collision is dropped. Commands do not run while the composer has attachments. Server-side slash commands do not exist.
+
+Use `addSlashCommandProvider` when command names depend on the current workspace or agent. Its
+`list` callback may call plugin RPC and returns `{ name, description, argumentHint }[]`. Its
+`onSubmit` callback receives the selected `command`, trimmed `args`, and the matching command
+context. Keep filesystem discovery and template expansion in server handlers; do not read daemon
+paths from the client. Paseo scopes and caches results by installation and context, surfaces list
+failures in autocomplete, and invalidates the provider after a plugin settings write. See
+`plugin-examples/command-directories` for arbitrary workspace-, project-, and absolute-directory
+configuration.
 
 ## Add a composer pill
 

@@ -1,14 +1,15 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   executePluginClientSlashCommand,
-  mergeSlashCommandSources,
+  mergeSlashCommands,
+  normalizePluginSlashCommandProviderCommands,
   resolvePluginClientSlashCommand,
 } from "./model";
 
 describe("plugin client slash commands", () => {
   it("uses built-in, plugin, then provider precedence", () => {
     const collision = vi.fn();
-    const result = mergeSlashCommandSources({
+    const result = mergeSlashCommands({
       builtIn: [{ name: "clear", aliases: ["new"] }],
       plugins: [
         { name: "clear", pluginId: "review" },
@@ -44,6 +45,39 @@ describe("plugin client slash commands", () => {
         commands: [command],
       }),
     ).toBeNull();
+  });
+
+  it("normalizes commands returned by a dynamic provider", () => {
+    expect(
+      normalizePluginSlashCommandProviderCommands({
+        pluginId: "commands",
+        providerId: "filesystem",
+        commands: [
+          { name: " review ", description: " Review changes ", argumentHint: " [scope] " },
+        ],
+      }),
+    ).toEqual([{ name: "review", description: "Review changes", argumentHint: "[scope]" }]);
+  });
+
+  it("rejects invalid or duplicate commands returned by a dynamic provider", () => {
+    expect(() =>
+      normalizePluginSlashCommandProviderCommands({
+        pluginId: "commands",
+        providerId: "filesystem",
+        commands: [{ name: "Review", description: "Review", argumentHint: "" }],
+      }),
+    ).toThrow("commands/filesystem returned invalid slash command name: Review");
+
+    expect(() =>
+      normalizePluginSlashCommandProviderCommands({
+        pluginId: "commands",
+        providerId: "filesystem",
+        commands: [
+          { name: "review", description: "Review", argumentHint: "" },
+          { name: "review", description: "Again", argumentHint: "" },
+        ],
+      }),
+    ).toThrow("commands/filesystem returned duplicate slash command: review");
   });
 
   it("runs the client handler and reports failures", async () => {

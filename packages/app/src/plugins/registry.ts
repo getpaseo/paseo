@@ -87,6 +87,7 @@ export class PluginRegistry {
           workspacePanels: [],
           commandCenterItems: [],
           clientSlashCommands: [],
+          clientSlashCommandProviders: [],
           attachmentSources: [],
           themes: [],
           timelineTransformers: [],

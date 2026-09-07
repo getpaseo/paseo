@@ -84,7 +84,10 @@ import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
 import { AutocompletePopover } from "@/components/ui/autocomplete-popover";
 import type { AutocompleteOption } from "@/components/ui/autocomplete";
 import { useAgentAutocomplete } from "@/hooks/use-agent-autocomplete";
-import { usePluginClientSlashCommands } from "@/plugins/client-slash-commands";
+import {
+  usePluginClientSlashCommands,
+  type PluginClientSlashCommand,
+} from "@/plugins/client-slash-commands";
 import {
   executePluginClientSlashCommand,
   resolvePluginClientSlashCommand,
@@ -1330,7 +1333,7 @@ function ComposerContentImpl({
   );
 
   const runPluginClientSlashCommand = useCallback(
-    (resolved: { command: (typeof pluginClientSlashCommands)[number]; args: string }): boolean => {
+    (resolved: { command: PluginClientSlashCommand; args: string }): boolean => {
       if (blurOnSubmit) messageInputRef.current?.blur();
       clearDraft("sent");
       replaceUserInput("");
@@ -1359,7 +1362,9 @@ function ComposerContentImpl({
     draftConfig: commandDraftConfig,
     canExecuteClientSlashCommand: buildOutgoingAttachments(attachments).length === 0,
     onClientSlashCommand: runClientSlashCommand,
-    pluginClientSlashCommands,
+    pluginClientSlashCommands: pluginClientSlashCommands.commands,
+    pluginClientSlashCommandsLoading: pluginClientSlashCommands.isLoading,
+    pluginClientSlashCommandsError: pluginClientSlashCommands.error,
     onAutocompleteApplied: () => {
       messageInputRef.current?.focus();
     },
@@ -1630,7 +1635,7 @@ function ComposerContentImpl({
       const pluginSlashCommand = resolvePluginClientSlashCommand({
         text: payload.text,
         hasAttachments: outgoingAttachments.length > 0,
-        commands: pluginClientSlashCommands,
+        commands: pluginClientSlashCommands.commands,
       });
       if (pluginSlashCommand && runPluginClientSlashCommand(pluginSlashCommand)) return;
 
@@ -1644,7 +1649,7 @@ function ComposerContentImpl({
       blurOnSubmit,
       buildOutgoingAttachments,
       runClientSlashCommand,
-      pluginClientSlashCommands,
+      pluginClientSlashCommands.commands,
       runPluginClientSlashCommand,
       sendMessageWithContent,
     ],
@@ -1890,7 +1895,7 @@ function ComposerContentImpl({
       const pluginSlashCommand = resolvePluginClientSlashCommand({
         text: payload.text,
         hasAttachments: outgoingAttachments.length > 0,
-        commands: pluginClientSlashCommands,
+        commands: pluginClientSlashCommands.commands,
       });
       if (pluginSlashCommand && runPluginClientSlashCommand(pluginSlashCommand)) return;
       queueMessage(payload.text, outgoingAttachments);
@@ -1898,7 +1903,7 @@ function ComposerContentImpl({
     [
       attachments,
       buildOutgoingAttachments,
-      pluginClientSlashCommands,
+      pluginClientSlashCommands.commands,
       queueMessage,
       runClientSlashCommand,
       runPluginClientSlashCommand,

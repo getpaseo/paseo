@@ -24,6 +24,8 @@ export type {
   PluginAgentCommandContext,
   PluginCommandCenterItemContribution,
   PluginClientSlashCommandContribution,
+  PluginClientSlashCommandProviderContribution,
+  PluginSlashCommandDescriptor,
   SettingsState,
 } from "./contracts.js";
 export { usePaseo } from "./paseo-context.js";

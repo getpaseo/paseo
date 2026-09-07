@@ -56,6 +56,7 @@ function installed(serverId: string, themes: PluginThemeContribution[]): Install
     workspacePanels: [],
     commandCenterItems: [],
     clientSlashCommands: [],
+    clientSlashCommandProviders: [],
     attachmentSources: [],
     themes,
     timelineTransformers: [],

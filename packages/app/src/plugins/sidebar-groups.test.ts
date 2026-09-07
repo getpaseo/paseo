@@ -23,6 +23,7 @@ function installed(serverId: string, contributionId = "main"): InstalledPlugin {
     workspacePanels: [],
     commandCenterItems: [],
     clientSlashCommands: [],
+    clientSlashCommandProviders: [],
     attachmentSources: [],
     themes: [],
     timelineTransformers: [],

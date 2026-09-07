@@ -1,6 +1,47 @@
+import type { PluginSlashCommandDescriptor } from "@getpaseo/plugin/client";
+
+const PLUGIN_SLASH_COMMAND_NAME = /^[a-z][a-z0-9-]*$/;
+
 export interface SlashCommandDescriptor {
   name: string;
   aliases?: readonly string[];
+}
+
+export function normalizePluginSlashCommandProviderCommands(input: {
+  pluginId: string;
+  providerId: string;
+  commands: unknown;
+}): PluginSlashCommandDescriptor[] {
+  const provider = `${input.pluginId}/${input.providerId}`;
+  if (!Array.isArray(input.commands)) {
+    throw new Error(`${provider} must return an array of slash commands`);
+  }
+
+  const names = new Set<string>();
+  return input.commands.map((command) => {
+    if (typeof command !== "object" || command === null || Array.isArray(command)) {
+      throw new Error(`${provider} returned a slash command that is not an object`);
+    }
+    const rawName = Reflect.get(command, "name");
+    const rawDescription = Reflect.get(command, "description");
+    const rawArgumentHint = Reflect.get(command, "argumentHint");
+    const name = typeof rawName === "string" ? rawName.trim() : "";
+    if (!PLUGIN_SLASH_COMMAND_NAME.test(name)) {
+      throw new Error(`${provider} returned invalid slash command name: ${String(rawName)}`);
+    }
+    if (names.has(name)) {
+      throw new Error(`${provider} returned duplicate slash command: ${name}`);
+    }
+    const description = typeof rawDescription === "string" ? rawDescription.trim() : "";
+    if (!description) {
+      throw new Error(`${provider} returned slash command ${name} without a description`);
+    }
+    if (typeof rawArgumentHint !== "string") {
+      throw new Error(`${provider} returned slash command ${name} without an argument hint`);
+    }
+    names.add(name);
+    return { name, description, argumentHint: rawArgumentHint.trim() };
+  });
 }
 
 export type AvailableSlashCommand<
@@ -12,7 +53,7 @@ export type AvailableSlashCommand<
   | { source: "plugin"; command: Plugin }
   | { source: "provider"; command: Provider };
 
-export function mergeSlashCommandSources<
+export function mergeSlashCommands<
   BuiltIn extends SlashCommandDescriptor,
   Plugin extends SlashCommandDescriptor,
   Provider extends SlashCommandDescriptor,

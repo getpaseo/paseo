@@ -28,6 +28,7 @@ function installation(
     workspacePanels: [],
     commandCenterItems: [],
     clientSlashCommands: [],
+    clientSlashCommandProviders: [],
     attachmentSources: [],
     themes: [],
     timelineTransformers: [],

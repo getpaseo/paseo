@@ -451,6 +451,43 @@ the agent. Built-in client commands win name and alias collisions, plugin comman
 provider-command collisions, and the first plugin in stable catalog order wins collisions between
 plugins. Plugin slash commands do not run when the composer has attachments.
 
+Use `addSlashCommandProvider` when the available command names depend on the active workspace or
+agent. The plugin's asynchronous `list` callback receives the same cached context and capabilities
+as a matching command callback. Paseo validates the returned descriptors and owns the loading UI,
+errors, context-scoped caching, autocomplete, and collisions. `onSubmit` receives the selected
+descriptor and current arguments; the plugin owns command discovery and the action.
+
+```ts
+client.addSlashCommandProvider({
+  id: "workspace-files",
+  context: "agent",
+  async list({ workspace, rpc }) {
+    const result = await rpc(listCommands, {
+      workspaceDirectory: workspace.directory,
+      projectRootPath: workspace.projectRootPath,
+    });
+    return result.commands;
+  },
+  async onSubmit({ command, args, workspace, agent, paseo, rpc }) {
+    const result = await rpc(resolveCommand, {
+      workspaceDirectory: workspace.directory,
+      projectRootPath: workspace.projectRootPath,
+      name: command.name,
+      args,
+    });
+    await paseo.agents.ref(agent.id).send(result.prompt);
+  },
+});
+```
+
+Static commands precede dynamic providers from the same installation. Providers retain
+registration order and commands retain returned order; the normal cross-plugin precedence rules
+then apply.
+Reload and teardown discard their cached results. A plugin settings write invalidates that
+installation's provider queries. Keep filesystem reads and command-template expansion behind RPCs
+so the same client bundle works on mobile and remote hosts. See
+`plugin-examples/command-directories` for workspace-, project-, and absolute-directory resolution.
+
 ## Contribute composer attachments
 
 Register a declarative attachment source backed by a plugin RPC. Paseo owns the attachment menu,
@@ -524,4 +561,5 @@ Existing plugin authors should follow the standalone [v0.8 runtime-entry migrati
 
 See `plugin-examples/local-plugin` for a native surface, `plugin-examples/linear` for a complete
 attachment-source example, `plugin-examples/timeline-items` for timeline projection, and
-`plugin-examples/catppuccin` for a theme.
+`plugin-examples/catppuccin` for a theme. `plugin-examples/command-directories` contributes dynamic
+slash commands from arbitrary daemon-host directories.

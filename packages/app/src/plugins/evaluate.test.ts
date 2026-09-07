@@ -25,6 +25,46 @@ function bundle(body: string): string {
 }
 
 describe("evaluatePluginClientBundle", () => {
+  it("collects contextual slash command providers", () => {
+    const plugin = evaluatePluginClientBundle(
+      "commands",
+      bundle(`
+        plugin.addSlashCommandProvider({
+          id: "workspace-files",
+          context: "agent",
+          async list() { return []; },
+          async onSubmit() {},
+        });
+      `),
+    );
+
+    expect(plugin.clientSlashCommandProviders.map(({ id, context }) => ({ id, context }))).toEqual([
+      { id: "workspace-files", context: "agent" },
+    ]);
+  });
+
+  it("rejects duplicate and incomplete slash command providers", () => {
+    expect(() =>
+      evaluatePluginClientBundle(
+        "commands",
+        bundle(`
+          const provider = { id: "workspace-files", context: "agent", list() { return []; }, onSubmit() {} };
+          plugin.addSlashCommandProvider(provider);
+          plugin.addSlashCommandProvider(provider);
+        `),
+      ),
+    ).toThrow("Duplicate client slash command provider: workspace-files");
+
+    expect(() =>
+      evaluatePluginClientBundle(
+        "commands",
+        bundle(`
+          plugin.addSlashCommandProvider({ id: "workspace-files", context: "agent", onSubmit() {} });
+        `),
+      ),
+    ).toThrow("Client slash command provider workspace-files has no list callback");
+  });
+
   it("accepts memoized settings screens", () => {
     const plugin = evaluatePluginClientBundle(
       "settings",
@@ -50,6 +90,7 @@ describe("evaluatePluginClientBundle", () => {
           plugin.addWorkspacePanel({ id: "panel", title: "Panel", icon: "Blocks", context: "workspace", Component }),
           plugin.addCommandCenterItem({ id: "command", title: "Command", icon: "Blocks", context: "global", onSelect() {} }),
           plugin.addSlashCommand({ name: "review", description: "Review", argumentHint: "", context: "workspace", onSubmit() {} }),
+          plugin.addSlashCommandProvider({ id: "workspace-files", context: "workspace", list() { return []; }, onSubmit() {} }),
           plugin.addComposerPill({ id: "pill", title: "Pill", workspaceId: "workspace", agentId: "agent", Component, onPress() {} }),
           plugin.addAttachmentSource({ id: "issues", title: "Issues", icon: "Blocks", pickerTitle: "Attach issue", searchPlaceholder: "Search", search: { name: "issues.search", input: {}, output: {} } }),
           plugin.addTheme({ id: "night", name: "Night", appearance: "dark", colors: { background: "#000", foreground: "#fff", raised: "#111", control: "#222", border: "#333", mutedForeground: "#aaa", ring: "#555" } }),
@@ -77,6 +118,7 @@ describe("evaluatePluginClientBundle", () => {
         plugin.workspacePanels,
         plugin.commandCenterItems,
         plugin.clientSlashCommands,
+        plugin.clientSlashCommandProviders,
         plugin.attachmentSources,
         plugin.themes,
         plugin.timelineTransformers,
@@ -96,6 +138,7 @@ describe("evaluatePluginClientBundle", () => {
         plugin.workspacePanels,
         plugin.commandCenterItems,
         plugin.clientSlashCommands,
+        plugin.clientSlashCommandProviders,
         plugin.attachmentSources,
         plugin.themes,
         plugin.timelineTransformers,

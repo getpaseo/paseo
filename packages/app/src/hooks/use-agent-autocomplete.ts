@@ -14,7 +14,7 @@ import { useSessionStore } from "@/stores/session-store";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import { CLIENT_SLASH_COMMANDS, type ClientSlashCommand } from "@/client-slash-commands";
 import type { PluginClientSlashCommand } from "@/plugins/client-slash-commands";
-import { mergeSlashCommandSources } from "@/plugins/client-slash-commands/model";
+import { mergeSlashCommands } from "@/plugins/client-slash-commands/model";
 import {
   applySlashCommandReplacement,
   filterAndRankCommandAutocompleteEntries,
@@ -38,7 +38,9 @@ interface UseAgentAutocompleteInput {
   onAutocompleteApplied?: () => void;
   onClientSlashCommand?: (command: ClientSlashCommand) => void;
   canExecuteClientSlashCommand?: boolean;
-  pluginClientSlashCommands?: readonly PluginClientSlashCommand[];
+  pluginClientSlashCommands: readonly PluginClientSlashCommand[];
+  pluginClientSlashCommandsLoading: boolean;
+  pluginClientSlashCommandsError: Error | null;
 }
 
 interface AgentAutocompleteKeyPressEvent {
@@ -217,7 +219,7 @@ function buildCommandAutocompleteOptions(input: BuildAutocompleteOptionsInput) {
       source: "provider" as const,
       command,
     }));
-    const rootCommands: AvailableCommand[] = mergeSlashCommandSources({
+    const rootCommands: AvailableCommand[] = mergeSlashCommands({
       builtIn: CLIENT_SLASH_COMMANDS,
       plugins: input.pluginCommands,
       provider: input.commands,
@@ -337,6 +339,20 @@ function resolveAutocompleteErrorMessage(args: {
   return undefined;
 }
 
+function combineCommandQueryState(input: {
+  providerLoading: boolean;
+  providerError: boolean;
+  providerErrorValue: Error | null;
+  pluginLoading: boolean;
+  pluginError: Error | null;
+}) {
+  return {
+    isLoading: input.providerLoading || input.pluginLoading,
+    isError: input.providerError || input.pluginError !== null,
+    error: input.providerErrorValue ?? input.pluginError,
+  };
+}
+
 export function useAgentAutocomplete(input: UseAgentAutocompleteInput): AgentAutocompleteResult {
   const { t } = useTranslation();
   const {
@@ -349,7 +365,9 @@ export function useAgentAutocomplete(input: UseAgentAutocompleteInput): AgentAut
     onAutocompleteApplied,
     onClientSlashCommand,
     canExecuteClientSlashCommand,
-    pluginClientSlashCommands = [],
+    pluginClientSlashCommands,
+    pluginClientSlashCommandsLoading,
+    pluginClientSlashCommandsError,
   } = input;
 
   const activeSlashCommand = useMemo(
@@ -422,7 +440,14 @@ export function useAgentAutocomplete(input: UseAgentAutocompleteInput): AgentAut
     draftConfig: queryDraftConfig,
   });
 
-  const isVisible = canShowAutocomplete && !(mode === "command" && isCommandsLoading);
+  const commandQuery = combineCommandQueryState({
+    providerLoading: isCommandsLoading,
+    providerError: isError,
+    providerErrorValue: error,
+    pluginLoading: pluginClientSlashCommandsLoading,
+    pluginError: pluginClientSlashCommandsError,
+  });
+  const isVisible = canShowAutocomplete && !(mode === "command" && commandQuery.isLoading);
 
   const fileSuggestionsQuery = useQuery({
     queryKey: [
@@ -570,15 +595,15 @@ export function useAgentAutocomplete(input: UseAgentAutocompleteInput): AgentAut
 
   const isLoading = resolveAutocompleteIsLoading({
     mode,
-    isCommandsLoading,
+    isCommandsLoading: commandQuery.isLoading,
     fileSuggestionsIsPending: fileSuggestionsQuery.isPending,
     fileSuggestionsIsLoading: fileSuggestionsQuery.isLoading,
     optionsLength: options.length,
   });
   const errorMessage = resolveAutocompleteErrorMessage({
     mode,
-    isCommandError: isError,
-    commandError: error,
+    isCommandError: commandQuery.isError,
+    commandError: commandQuery.error,
     fileSuggestionsError: fileSuggestionsQuery.error,
     t,
   });

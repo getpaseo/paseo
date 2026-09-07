@@ -8,6 +8,7 @@ import type {
 import type {
   PluginCommandCenterItemContribution,
   PluginClientSlashCommandContribution,
+  PluginClientSlashCommandProviderContribution,
   PluginComposerPillContribution,
   PluginSidebarContribution,
   PluginSurfaceContribution,
@@ -31,6 +32,7 @@ export interface EvaluatedPlugin {
   workspacePanels: EvaluatedPluginWorkspacePanelContribution[];
   commandCenterItems: PluginCommandCenterItemContribution[];
   clientSlashCommands: PluginClientSlashCommandContribution[];
+  clientSlashCommandProviders: PluginClientSlashCommandProviderContribution[];
   attachmentSources: PluginAttachmentSourceContribution[];
   themes: PluginThemeContribution[];
   timelineTransformers: PluginTimelineTransformerContribution[];
@@ -48,6 +50,7 @@ export type {
   PluginAttachmentSourceContribution,
   PluginCommandCenterItemContribution,
   PluginClientSlashCommandContribution,
+  PluginClientSlashCommandProviderContribution,
   PluginComposerPillContribution,
   PluginSidebarContribution,
   PluginSurfaceContribution,

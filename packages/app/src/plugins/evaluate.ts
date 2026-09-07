@@ -18,6 +18,7 @@ import {
   type PluginCommandCenterItemContribution,
   type PluginClientContext,
   type PluginClientSlashCommandContribution,
+  type PluginClientSlashCommandProviderContribution,
   type PluginSidebarContribution,
   type PluginSurfaceProps,
   type PluginTimelineRendererContribution,
@@ -86,6 +87,7 @@ export function runPluginClientBundle(
     workspacePanels: [],
     commandCenterItems: [],
     clientSlashCommands: [],
+    clientSlashCommandProviders: [],
     attachmentSources: [],
     themes: [],
     timelineTransformers: [],
@@ -97,6 +99,7 @@ export function runPluginClientBundle(
   const workspacePanelIds = new Set<string>();
   const commandCenterItemIds = new Set<string>();
   const clientSlashCommandNames = new Set<string>();
+  const clientSlashCommandProviderIds = new Set<string>();
   const attachmentSourceIds = new Set<string>();
   const themeIds = new Set<string>();
   const timelineTransformerIds = new Set<string>();
@@ -250,6 +253,27 @@ export function runPluginClientBundle(
           argumentHint: contribution.argumentHint.trim(),
         },
         () => clientSlashCommandNames.delete(name),
+      );
+    },
+    addSlashCommandProvider(contribution: PluginClientSlashCommandProviderContribution) {
+      const providerId = requireId(contribution.id, "client slash command provider id");
+      if (clientSlashCommandProviderIds.has(providerId)) {
+        throw new Error(`Duplicate client slash command provider: ${providerId}`);
+      }
+      if (contribution.context !== "workspace" && contribution.context !== "agent") {
+        throw new Error(`Client slash command provider ${providerId} has invalid context`);
+      }
+      if (typeof contribution.list !== "function") {
+        throw new Error(`Client slash command provider ${providerId} has no list callback`);
+      }
+      if (typeof contribution.onSubmit !== "function") {
+        throw new Error(`Client slash command provider ${providerId} has no submit callback`);
+      }
+      clientSlashCommandProviderIds.add(providerId);
+      return register(
+        collector.clientSlashCommandProviders,
+        { ...contribution, id: providerId },
+        () => clientSlashCommandProviderIds.delete(providerId),
       );
     },
     addAttachmentSource(contribution: PluginAttachmentSourceContribution) {
@@ -413,6 +437,7 @@ export function runPluginClientBundle(
     workspacePanels: collector.workspacePanels as EvaluatedPlugin["workspacePanels"],
     commandCenterItems: collector.commandCenterItems,
     clientSlashCommands: collector.clientSlashCommands,
+    clientSlashCommandProviders: collector.clientSlashCommandProviders,
     attachmentSources: collector.attachmentSources,
     themes: collector.themes,
     timelineTransformers: collector.timelineTransformers,

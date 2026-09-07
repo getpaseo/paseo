@@ -1295,6 +1295,57 @@ Precedence is built-in client commands, plugin commands, then provider commands.
 collision is omitted. Built-in aliases also reserve their names. The first plugin in stable catalog
 order wins a collision between plugins. Commands do not run while the composer has attachments.
 
+### Dynamic slash command providers
+
+Use `client.addSlashCommandProvider` when a workspace or agent determines which command names
+exist. Paseo calls the plugin provider asynchronously with the matching command context, validates
+its result, and shows only that context's commands:
+
+```ts
+client.addSlashCommandProvider({
+  id: "workspace-files",
+  context: "agent",
+  async list({ workspace, rpc }) {
+    const result = await rpc(listCommands, {
+      workspaceDirectory: workspace.directory,
+      projectRootPath: workspace.projectRootPath,
+    });
+    return result.commands;
+  },
+  async onSubmit({ command, args, workspace, agent, paseo, rpc }) {
+    const result = await rpc(resolveCommand, {
+      workspaceDirectory: workspace.directory,
+      projectRootPath: workspace.projectRootPath,
+      name: command.name,
+      args,
+    });
+    await paseo.agents.ref(agent.id).send(result.prompt);
+  },
+});
+```
+
+| Field      | Required | Meaning                                                                               |
+| ---------- | -------- | ------------------------------------------------------------------------------------- |
+| `id`       | Yes      | Plugin-local provider ID.                                                             |
+| `context`  | Yes      | `"workspace"` or `"agent"`.                                                           |
+| `list`     | Yes      | Returns command descriptors for the current context, synchronously or asynchronously. |
+| `onSubmit` | Yes      | Runs with the selected `command`, trimmed `args`, and current context.                |
+
+Every returned descriptor has the same required `name`, `description`, and `argumentHint` fields
+as a static command. Names use the normal lowercase command-ID rules and must be unique within one
+provider result. A malformed result fails that provider and appears as an autocomplete load error.
+
+Static commands from an installation precede its dynamic providers. Providers retain registration
+order, commands retain returned order, and the normal built-in/plugin/agent-provider collision
+policy applies afterward. Results are scoped to the installation, host, workspace, and agent.
+Reload, teardown, relevant context changes, and plugin settings writes replace or invalidate them.
+
+Read daemon files through plugin RPC rather than client code. The runnable
+[`command-directories` example](https://github.com/getpaseo/paseo/tree/main/plugin-examples/command-directories)
+resolves any configured workspace-relative, project-relative, or absolute daemon-host directory,
+expands a selected Markdown command, and sends the resulting ordinary prompt to the current agent
+without inspecting its provider.
+
 ## Composer pills
 
 The client entry owns pill creation and removal. This can live directly in `index.client.tsx` or in
