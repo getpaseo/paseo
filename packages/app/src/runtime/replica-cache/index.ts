@@ -1,7 +1,6 @@
 import { z } from "zod";
 import {
   AgentStatusSchema,
-  AgentAttachmentSchema,
   AgentTimelineItemPayloadSchema,
   WorkspaceGitHubRuntimePayloadSchema,
 } from "@getpaseo/protocol/messages";
@@ -46,6 +45,11 @@ export interface CachedDirectory {
   checkpoint?: DirectoryCheckpoint;
 }
 
+export interface CachedWorkspace {
+  workspace: WorkspaceDescriptor;
+  project?: ProjectDescriptor;
+}
+
 export interface DirectoryCursor {
   generation: string;
   afterSeq: number;
@@ -65,31 +69,12 @@ export interface CachedTimeline {
 }
 
 const PERSIST_DELAY_MS = 1_000;
+const MAX_TIMELINE_ITEMS = 50;
 const MAX_CACHE_BYTES = 32 * 1024 * 1024;
 const IsoDateSchema = z.iso.datetime();
 const TimelinePositionSchema = z.strictObject({
   epoch: z.string(),
   seq: z.number().int().nonnegative(),
-});
-const RowSourceSchema = z.strictObject({
-  startSeq: z.number().int().nonnegative(),
-  chunks: z
-    .array(
-      z.strictObject({
-        seq: z.number().int().nonnegative(),
-        offset: z.number().int().nonnegative(),
-      }),
-    )
-    .optional(),
-});
-const StoredImageSchema = z.strictObject({
-  id: z.string(),
-  mimeType: z.string(),
-  storageType: z.enum(["web-indexeddb", "desktop-file", "native-file"]),
-  storageKey: z.string(),
-  fileName: z.string().nullable().optional(),
-  byteSize: z.number().nullable().optional(),
-  createdAt: z.number(),
 });
 const PluginTimelineDataSchema: z.ZodType<PluginTimelineData> = z.lazy(() =>
   z.union([
@@ -105,8 +90,6 @@ const PluginTimelineDataSchema: z.ZodType<PluginTimelineData> = z.lazy(() =>
 const TimelineItemBaseShape = {
   id: z.string(),
   timelineCursor: TimelinePositionSchema.optional(),
-  // Absent on rows saved before source provenance existed.
-  source: RowSourceSchema.optional(),
   // COMPAT(active-turn-membership): absent on caches written before turn membership.
   turnId: z.string().optional(),
   timestamp: IsoDateSchema,
@@ -132,8 +115,6 @@ const StoredTimelineItemSchema = z.discriminatedUnion("kind", [
   z.strictObject({
     ...TimelineItemBaseShape,
     kind: z.literal("user_message"),
-    images: z.array(StoredImageSchema).optional(),
-    attachments: z.array(AgentAttachmentSchema).optional(),
     clientMessageId: z.string().optional(),
     messageId: z.string().optional(),
     text: z.string(),
@@ -398,7 +379,10 @@ const DirectoryCheckpointSchema = z.strictObject({
   agents: DirectoryCursorSchema.optional(),
 });
 
-function deserializeTimeline(stored: StoredTimeline): CachedTimeline {
+function deserializeTimeline(stored: StoredTimeline | null): CachedTimeline | null {
+  if (!stored) {
+    return null;
+  }
   return {
     agentId: stored.agentId,
     items: stored.items.map(deserializeTimelineItem),
@@ -411,7 +395,6 @@ function timelineBase(item: StreamItem) {
   return {
     id: item.id,
     ...(item.timelineCursor ? { timelineCursor: item.timelineCursor } : {}),
-    ...(item.source ? { source: item.source } : {}),
     ...(item.turnId ? { turnId: item.turnId } : {}),
     timestamp: item.timestamp.toISOString(),
   };
@@ -439,7 +422,13 @@ function serializeTimelineItem(item: StreamItem): StoredTimelineItem | null {
   const base = timelineBase(item);
   switch (item.kind) {
     case "user_message":
-      return { ...item, ...base };
+      return {
+        ...base,
+        kind: item.kind,
+        ...(item.clientMessageId ? { clientMessageId: item.clientMessageId } : {}),
+        ...(item.messageId ? { messageId: item.messageId } : {}),
+        text: item.text,
+      };
     case "assistant_message":
       return {
         ...base,
@@ -501,7 +490,6 @@ function deserializeTimelineItem(item: StoredTimelineItem): StreamItem {
     return {
       id: item.id,
       ...(item.timelineCursor ? { timelineCursor: item.timelineCursor } : {}),
-      ...(item.source ? { source: item.source } : {}),
       ...(item.turnId ? { turnId: item.turnId } : {}),
       timestamp: new Date(item.timestamp),
       kind: item.kind,
@@ -521,13 +509,18 @@ function deserializeBuiltinTimelineItem(
   const base = {
     id: item.id,
     ...(item.timelineCursor ? { timelineCursor: item.timelineCursor } : {}),
-    ...(item.source ? { source: item.source } : {}),
     ...(item.turnId ? { turnId: item.turnId } : {}),
     timestamp: new Date(item.timestamp),
   };
   switch (item.kind) {
     case "user_message":
-      return { ...item, ...base };
+      return {
+        ...base,
+        kind: item.kind,
+        ...(item.clientMessageId ? { clientMessageId: item.clientMessageId } : {}),
+        ...(item.messageId ? { messageId: item.messageId } : {}),
+        text: item.text,
+      };
     case "assistant_message":
       return {
         ...base,
@@ -734,43 +727,44 @@ function serializeProject(project: ProjectDescriptor): StoredProject {
   };
 }
 
-// A saved timeline is either certified or display-only. Certified rows keep the owner's restart page
-// with its range, so the next launch resumes with one `after endSeq` page. Everything the range
-// cannot vouch for (a discontiguous window or rows the schema cannot encode) falls back to a
-// display-only tail that carries no coverage claim.
-function isCertifiedTimeline(timeline: CachedTimeline): boolean {
-  const range = timeline.range;
-  return (
-    range !== null &&
-    range.retainedRanges === undefined &&
-    timeline.items.every(
-      (item) =>
-        (item.kind === "user_message" && isUnreconciledLocalUserMessage(item)) ||
-        ((item.kind !== "tool_call" || item.payload.source === "agent") &&
-          item.source !== undefined &&
-          item.timelineCursor?.epoch === range.epoch &&
-          item.timelineCursor.seq >= range.startSeq &&
-          item.timelineCursor.seq <= range.endSeq),
-    )
-  );
+function isTimelineItemStoredLosslessly(item: StreamItem): boolean {
+  switch (item.kind) {
+    case "user_message":
+      return (item.images?.length ?? 0) === 0 && (item.attachments?.length ?? 0) === 0;
+    case "tool_call":
+      return item.payload.source === "agent";
+    default:
+      return true;
+  }
 }
 
-function serializeTimelinePayload(timeline: CachedTimeline): string {
-  const items = timeline.items
-    .filter((item) => item.kind !== "user_message" || !isUnreconciledLocalUserMessage(item))
-    .map(serializeTimelineItem)
-    .filter((item) => item !== null);
+function serializeTimeline(timeline: CachedTimeline): StoredTimeline | null {
+  const canonicalItems = timeline.items.filter(
+    (item) => item.kind !== "user_message" || !isUnreconciledLocalUserMessage(item),
+  );
+  const items = canonicalItems.map(serializeTimelineItem).filter((item) => item !== null);
   const range = timeline.range;
-  const certified = isCertifiedTimeline(timeline);
-  return JSON.stringify({
+  const canPersistCoverage =
+    range !== null &&
+    range.retainedRanges === undefined &&
+    canonicalItems.length <= MAX_TIMELINE_ITEMS &&
+    items.length === canonicalItems.length &&
+    canonicalItems.every(
+      (item) =>
+        isTimelineItemStoredLosslessly(item) &&
+        item.timelineCursor?.epoch === range.epoch &&
+        item.timelineCursor.seq >= range.startSeq &&
+        item.timelineCursor.seq <= range.endSeq,
+    ) &&
+    canonicalItems.some((item) => item.timelineCursor?.seq === range.endSeq);
+  return {
     agentId: timeline.agentId,
-    items,
-    range:
-      certified && range
-        ? { epoch: range.epoch, startSeq: range.startSeq, endSeq: range.endSeq }
-        : null,
-    hasOlder: certified && timeline.hasOlder,
-  } satisfies StoredTimeline);
+    items: items.slice(-MAX_TIMELINE_ITEMS),
+    range: canPersistCoverage
+      ? { epoch: range.epoch, startSeq: range.startSeq, endSeq: range.endSeq }
+      : null,
+    hasOlder: canPersistCoverage ? timeline.hasOlder : false,
+  };
 }
 
 function rowKey(key: Pick<ReplicaRowKey, "kind" | "id">): string {
@@ -826,6 +820,12 @@ interface DirectoryReadAccumulator {
   checkpoint?: DirectoryCheckpoint;
 }
 
+interface PendingReplicaChanges {
+  upserts: StructuredReplicaUpsert[];
+  deletes: ReplicaRowKey[];
+  baselines: Set<string>;
+}
+
 function applyDirectoryRow(
   serverId: string,
   row: ReplicaRow,
@@ -868,43 +868,22 @@ function directoryEntityForRow(row: ReplicaRow): keyof DirectoryCheckpoint | und
   return undefined;
 }
 
-const DIRECTORY_KINDS: readonly ReplicaRowKind[] = ["agent", "workspace", "project", "checkpoint"];
-
-interface PendingRow {
-  key: ReplicaRowKey;
-  // Null is an accepted deletion.
-  upsert: StructuredReplicaUpsert | null;
-}
-
-interface PendingBatch {
-  rows: Map<string, PendingRow>;
-  baselines: Map<string, symbol>;
-}
-
-// Scoped disk reads are overlaid by accepted commits, including changes that settled while
-// a read was in flight. The full disk index serves write-behind budget accounting only.
 export class ReplicaCache {
-  private activeServerIds = new Set<string>();
+  private readonly activeServerIds = new Set<string>();
+  private readonly hostRevisions = new Map<string, number>();
   private readonly storedRows = new Map<string, Map<string, ReplicaRow>>();
   private readonly hostBytes = new Map<string, number>();
   private readonly hostWriteOrder = new Map<string, true>();
-  private totalBytes = 0;
-  private readonly pendingRows = new Map<string, PendingRow>();
-  // Accepted commits overlay any disk read, including reads started before a write settled.
-  private readonly acceptedRows = new Map<string, PendingRow>();
-  private readonly acceptedBaselines = new Set<string>();
-  private readonly hostSources = new Map<string, Set<string>>();
-  private readonly pendingBaselines = new Map<string, symbol>();
+  private pendingUpserts = new Map<string, StructuredReplicaUpsert>();
+  private pendingDeletes = new Map<string, ReplicaRowKey>();
+  private pendingBaselines = new Set<string>();
   private readonly invalidatedHosts = new Set<string>();
-  // Renames queued behind the initial load, so the load keeps the old host's rows for them.
-  private readonly renamingHosts = new Map<string, string>();
   private readonly maxBytes: number;
+  private totalBytes = 0;
   private persistTimer: ReturnType<typeof setTimeout> | null = null;
-  // Memory readiness: the initial load followed by every host identity change, in order.
-  private image: Promise<boolean> | null = null;
-  // Disk operations run in order; the initial load is the first of them once it starts.
-  private disk: Promise<void> = Promise.resolve();
-  private writes: Promise<void> = Promise.resolve();
+  private writeQueue: Promise<void> = Promise.resolve();
+  private preparePromise: Promise<void> | null = null;
+  private storedIndexPromise: Promise<void> | null = null;
 
   constructor(
     private readonly rowStore: ReplicaRowStore,
@@ -916,8 +895,50 @@ export class ReplicaCache {
 
   private readonly clearLegacyCache: () => Promise<void>;
 
+  async readAgent(serverId: string, agentId: string): Promise<Agent | undefined> {
+    const rows = await this.readRows(serverId, ["agent"], [agentId]);
+    const row = rows[0];
+    if (!row) return undefined;
+    try {
+      const stored = parseStoredPayload(StoredAgentSchema, row.payload);
+      if (stored.snapshot.id !== row.id) throw new Error("Replica agent row id mismatch");
+      return deserializeAgent(serverId, stored);
+    } catch {
+      await this.deleteInvalidRow(row);
+      return undefined;
+    }
+  }
+
+  async readWorkspace(serverId: string, workspaceId: string): Promise<CachedWorkspace | undefined> {
+    const workspaceRow = (await this.readRows(serverId, ["workspace"], [workspaceId]))[0];
+    if (!workspaceRow) return undefined;
+    let workspace: WorkspaceDescriptor;
+    try {
+      const stored = parseStoredPayload(StoredWorkspaceSchema, workspaceRow.payload);
+      if (stored.id !== workspaceRow.id) throw new Error("Replica workspace row id mismatch");
+      workspace = normalizeWorkspaceDescriptor(stored);
+    } catch {
+      await this.deleteInvalidRow(workspaceRow);
+      return undefined;
+    }
+
+    let project: ProjectDescriptor | undefined;
+    const projectRow = (await this.readRows(serverId, ["project"], [workspace.projectId]))[0];
+    if (projectRow) {
+      try {
+        const stored = parseStoredPayload(StoredProjectSchema, projectRow.payload);
+        if (stored.projectId !== projectRow.id) throw new Error("Replica project row id mismatch");
+        project = normalizeProjectDescriptor(stored);
+      } catch {
+        await this.deleteInvalidRow(projectRow);
+      }
+    }
+
+    return { workspace, ...(project ? { project } : {}) };
+  }
+
   async readDirectory(serverId: string): Promise<CachedDirectory> {
-    const rows = await this.readRows(serverId, DIRECTORY_KINDS);
+    const rows = await this.readRows(serverId, ["agent", "workspace", "project", "checkpoint"]);
     const result: DirectoryReadAccumulator = {
       agents: new Map(),
       workspaces: new Map(),
@@ -926,23 +947,6 @@ export class ReplicaCache {
     const invalidEntities = new Set<keyof DirectoryCheckpoint>();
     const invalidRows: ReplicaRow[] = [];
     for (const row of rows) {
-      if ("value" in row) {
-        switch (row.kind) {
-          case "agent":
-            result.agents.set(row.id, { ...row.value, serverId });
-            break;
-          case "workspace":
-            result.workspaces.set(row.id, row.value);
-            break;
-          case "project":
-            result.projects.set(row.id, row.value);
-            break;
-          case "checkpoint":
-            result.checkpoint = row.value;
-            break;
-        }
-        continue;
-      }
       try {
         applyDirectoryRow(serverId, row, result);
       } catch {
@@ -956,100 +960,113 @@ export class ReplicaCache {
       for (const entity of invalidEntities) delete result.checkpoint[entity];
     }
     if (invalidRows.length > 0) {
-      this.repairInvalidDirectoryRows(serverId, invalidRows, result.checkpoint);
+      await this.repairInvalidDirectoryRows(serverId, invalidRows, result.checkpoint);
     }
     return result;
   }
 
   async readTimeline(serverId: string, agentId: string): Promise<CachedTimeline | undefined> {
-    const row = (await this.readRows(serverId, ["timeline"], [agentId]))[0];
+    const rows = await this.readRows(serverId, ["timeline"], [agentId]);
+    const row = rows[0];
     if (!row) return undefined;
-    let timeline: CachedTimeline;
-    if ("value" in row) {
-      if (row.kind !== "timeline") return undefined;
-      timeline = row.value;
-    } else {
-      try {
-        const stored = parseStoredPayload(StoredTimelineSchema, row.payload);
-        if (stored.agentId !== agentId) return undefined;
-        timeline = deserializeTimeline(stored);
-      } catch {
-        this.queueDelete(row);
-        this.schedulePersist();
-        return undefined;
-      }
+    try {
+      const stored = parseStoredPayload(StoredTimelineSchema, row.payload);
+      if (stored.agentId !== agentId) return undefined;
+      return deserializeTimeline(stored) ?? undefined;
+    } catch {
+      await this.deleteInvalidRow(row);
+      return undefined;
     }
-    const certified = isCertifiedTimeline(timeline);
-    return {
-      ...timeline,
-      items: timeline.items.filter(
-        (item) =>
-          !(item.kind === "user_message" && isUnreconciledLocalUserMessage(item)) &&
-          !(item.kind === "tool_call" && item.payload.source !== "agent"),
-      ),
-      range: certified ? timeline.range : null,
-      hasOlder: certified && timeline.hasOlder,
-    };
   }
 
   private async readRows(
     serverId: string,
     kinds: readonly ReplicaRowKind[],
     ids?: readonly string[],
-  ): Promise<Array<ReplicaRow | StructuredReplicaUpsert>> {
+  ): Promise<ReplicaRow[]> {
     if (!this.activeServerIds.has(serverId)) return [];
-    const sources = this.hostSources.get(serverId);
-    if (!sources) return [];
-    const sourceOrder = [...sources];
-    const accepted = ids
-      ? kinds.every((kind) =>
-          ids.every((id) => this.acceptedRows.has(pendingRowKey({ serverId, kind, id }))),
-        )
-      : this.acceptedBaselines.has(serverId) && !kinds.includes("timeline");
-    let stored: ReplicaRow[] = [];
-    if (!accepted) {
-      try {
-        await this.rowStore.open();
-        stored = await this.rowStore.read(sourceOrder, kinds, ids);
-      } catch {
-        // Accepted commits remain readable even if the disk is unavailable.
+    try {
+      await this.prepareStore();
+      while (this.activeServerIds.has(serverId)) {
+        await this.flush();
+        const revision = this.hostRevisions.get(serverId) ?? 0;
+        const rows = await this.rowStore.read(serverId, kinds, ids);
+        if (this.canReadHostRevision(serverId, revision)) return rows;
       }
+      return [];
+    } catch {
+      return [];
     }
-    if (this.hostSources.get(serverId) !== sources) return [];
-    const accepts = (key: ReplicaRowKey) =>
-      key.serverId === serverId && kinds.includes(key.kind) && (!ids || ids.includes(key.id));
-    const rows = new Map<string, ReplicaRow | StructuredReplicaUpsert>();
-    const replacingBaseline = this.acceptedBaselines.has(serverId);
-    // Moved rows replace collisions at the destination, even before the disk rename commits.
-    stored.sort((a, b) => sourceOrder.indexOf(b.serverId) - sourceOrder.indexOf(a.serverId));
-    for (const row of stored) {
-      if (replacingBaseline && row.kind !== "timeline") continue;
-      rows.set(rowKey(row), { ...row, serverId });
-    }
-    for (const pending of this.acceptedRows.values()) {
-      if (!accepts(pending.key)) continue;
-      if (pending.upsert === null) rows.delete(rowKey(pending.key));
-      else rows.set(rowKey(pending.key), pending.upsert);
-    }
-    return [...rows.values()];
   }
 
-  private repairInvalidDirectoryRows(
+  private async deleteInvalidRow(row: ReplicaRow): Promise<void> {
+    const invalidEntity = directoryEntityForRow(row);
+    if (!invalidEntity) {
+      const changes = { upserts: [], deletes: [row] } satisfies ReplicaRowChanges;
+      await this.queueOperation(async () => {
+        await this.rowStore.apply(changes);
+        this.applyStoredChanges(changes);
+      });
+      return;
+    }
+
+    const checkpointRow = (
+      await this.readRows(row.serverId, ["checkpoint"], [REPLICA_SINGLETON_ROW_ID])
+    )[0];
+    let checkpoint: DirectoryCheckpoint | undefined;
+    if (checkpointRow) {
+      try {
+        checkpoint = parseStoredPayload(DirectoryCheckpointSchema, checkpointRow.payload);
+        checkpoint = { ...checkpoint };
+        delete checkpoint[invalidEntity];
+      } catch {
+        checkpoint = undefined;
+      }
+    }
+    const changes: ReplicaRowChanges = {
+      deletes: [row, ...(checkpointRow && !checkpoint ? [checkpointRow] : [])],
+      upserts:
+        checkpointRow && checkpoint
+          ? [
+              {
+                serverId: row.serverId,
+                kind: "checkpoint",
+                id: REPLICA_SINGLETON_ROW_ID,
+                payload: JSON.stringify(checkpoint),
+              },
+            ]
+          : [],
+    };
+    await this.queueOperation(async () => {
+      await this.rowStore.apply(changes);
+      this.applyStoredChanges(changes);
+    });
+  }
+
+  private async repairInvalidDirectoryRows(
     serverId: string,
     invalidRows: ReplicaRow[],
     checkpoint: DirectoryCheckpoint | undefined,
-  ): void {
-    for (const row of invalidRows) this.queueDelete(row);
+  ): Promise<void> {
     const checkpointWasInvalid = invalidRows.some((row) => row.kind === "checkpoint");
-    if (checkpoint !== undefined && !checkpointWasInvalid) {
-      this.queueUpsert({
-        serverId,
-        kind: "checkpoint",
-        id: REPLICA_SINGLETON_ROW_ID,
-        value: checkpoint,
-      });
-    }
-    this.schedulePersist();
+    const changes: ReplicaRowChanges = {
+      deletes: invalidRows,
+      upserts:
+        checkpoint !== undefined && !checkpointWasInvalid
+          ? [
+              {
+                serverId,
+                kind: "checkpoint",
+                id: REPLICA_SINGLETON_ROW_ID,
+                payload: JSON.stringify(checkpoint),
+              },
+            ]
+          : [],
+    };
+    await this.queueOperation(async () => {
+      await this.rowStore.apply(changes);
+      this.applyStoredChanges(changes);
+    });
   }
 
   commitDirectoryMutations(
@@ -1059,9 +1076,10 @@ export class ReplicaCache {
   ): void {
     if (!this.activeServerIds.has(serverId)) return;
     if (this.invalidatedHosts.has(serverId)) return;
+    this.advanceHostRevision(serverId);
     for (const mutation of mutations) {
       if (mutation.type === "delete") {
-        this.queueDelete({ serverId, kind: mutation.kind, id: mutation.id });
+        this.queueEntityDelete(serverId, mutation.kind, mutation.id);
       } else {
         this.queueUpsert({
           serverId,
@@ -1084,18 +1102,15 @@ export class ReplicaCache {
 
   replaceDirectoryBaseline(serverId: string, directory: CachedDirectory): void {
     if (!this.activeServerIds.has(serverId)) return;
+    this.advanceHostRevision(serverId);
     // Replacing the directory must not discard independently accepted timeline changes.
-    for (const [key, pending] of this.pendingRows) {
-      if (pending.key.serverId === serverId && pending.key.kind !== "timeline") {
-        this.pendingRows.delete(key);
-      }
+    for (const [key, row] of this.pendingUpserts) {
+      if (row.serverId === serverId && row.kind !== "timeline") this.pendingUpserts.delete(key);
     }
-    this.pendingBaselines.set(serverId, Symbol("baseline"));
-    this.acceptedBaselines.add(serverId);
-    for (const [key, row] of this.acceptedRows) {
-      if (row.key.serverId === serverId && row.key.kind !== "timeline")
-        this.acceptedRows.delete(key);
+    for (const [key, row] of this.pendingDeletes) {
+      if (row.serverId === serverId && row.kind !== "timeline") this.pendingDeletes.delete(key);
     }
+    this.pendingBaselines.add(serverId);
     for (const [id, value] of directory.agents) {
       this.queueUpsert({ serverId, kind: "agent", id, value });
     }
@@ -1116,23 +1131,10 @@ export class ReplicaCache {
     this.schedulePersist();
   }
 
-  removeTimeline(serverId: string, agentId: string): void {
-    if (!this.activeServerIds.has(serverId)) return;
-    this.queueDelete({ serverId, kind: "timeline", id: agentId });
-    this.schedulePersist();
-  }
-
-  commitTimeline(
-    serverId: string,
-    agentId: string,
-    timeline: CachedTimeline,
-    requireCertified = false,
-  ): void {
+  commitTimeline(serverId: string, agentId: string, timeline: CachedTimeline): void {
     if (!this.activeServerIds.has(serverId)) return;
     if (timeline.agentId !== agentId) throw new Error("Timeline cache key does not match payload");
-    // The timeline authority can retain a good restart snapshot while its richer accepted
-    // page cannot be represented with truthful coverage.
-    if (requireCertified && !isCertifiedTimeline(timeline)) return;
+    this.advanceHostRevision(serverId);
     this.queueUpsert({ serverId, kind: "timeline", id: agentId, value: timeline });
     this.schedulePersist();
   }
@@ -1140,193 +1142,148 @@ export class ReplicaCache {
   setHosts(serverIds: Iterable<string>): void {
     const next = new Set(serverIds);
     const removed = [...this.activeServerIds].filter((serverId) => !next.has(serverId));
-    this.activeServerIds = next;
-    for (const serverId of next) {
-      if (!this.hostSources.has(serverId)) this.hostSources.set(serverId, new Set([serverId]));
-    }
+    const added = [...next].filter((serverId) => !this.activeServerIds.has(serverId));
+    for (const serverId of [...removed, ...added]) this.advanceHostRevision(serverId);
+    this.activeServerIds.clear();
+    for (const serverId of next) this.activeServerIds.add(serverId);
     for (const serverId of removed) {
-      this.dropAcceptedHost(serverId);
+      this.removeStoredHost(serverId);
       this.dropPendingHostChanges(serverId);
       this.invalidatedHosts.delete(serverId);
-      this.applyToImage(() => this.removeStoredHost(serverId));
-      void this.deleteStoredSource(serverId);
+      this.queueOperation(() => this.rowStore.deleteHost(serverId));
     }
   }
 
   reconcileServerId(oldServerId: string, newServerId: string): void {
-    if (oldServerId === newServerId) return;
-    this.renamePendingHostChanges(oldServerId, newServerId);
-    const sources = this.hostSources.get(oldServerId) ?? new Set<string>();
-    const retiredSources = new Set<string>();
-    this.hostSources.set(oldServerId, retiredSources);
-    this.hostSources.set(newServerId, new Set([...sources, newServerId]));
-    if (this.acceptedBaselines.delete(oldServerId)) this.acceptedBaselines.add(newServerId);
-    for (const [key, row] of this.acceptedRows) {
-      if (row.key.serverId !== oldServerId) continue;
-      this.acceptedRows.delete(key);
-      const renamed = {
-        key: { ...row.key, serverId: newServerId },
-        upsert: row.upsert ? { ...row.upsert, serverId: newServerId } : null,
-      };
-      this.acceptedRows.set(pendingRowKey(renamed.key), renamed);
+    this.advanceHostRevision(oldServerId);
+    this.advanceHostRevision(newServerId);
+    const rows = this.storedRows.get(oldServerId);
+    if (rows) {
+      const newRows = this.storedRows.get(newServerId) ?? new Map<string, ReplicaRow>();
+      this.totalBytes -=
+        (this.hostBytes.get(oldServerId) ?? 0) + (this.hostBytes.get(newServerId) ?? 0);
+      this.storedRows.delete(oldServerId);
+      for (const [key, row] of rows) newRows.set(key, { ...row, serverId: newServerId });
+      this.storedRows.set(newServerId, newRows);
+      const bytes = [...newRows.values()].reduce((sum, row) => sum + rowBytes(row), 0);
+      this.hostBytes.delete(oldServerId);
+      this.hostBytes.set(newServerId, bytes);
+      this.totalBytes += bytes;
+      this.hostWriteOrder.delete(oldServerId);
+      this.touchHost(newServerId);
     }
+    this.renamePendingHostChanges(oldServerId, newServerId);
     if (this.activeServerIds.delete(oldServerId)) this.activeServerIds.add(newServerId);
-    this.renamingHosts.set(oldServerId, newServerId);
-    this.applyToImage(() => {
-      this.renamingHosts.delete(oldServerId);
-      this.renameStoredHost(oldServerId, newServerId);
-    });
-    void this.queueDisk(async () => {
-      await this.rowStore.renameHost(oldServerId, newServerId);
-      for (const aliases of this.hostSources.values()) aliases.delete(oldServerId);
-      if (this.hostSources.get(oldServerId) === retiredSources) retiredSources.add(oldServerId);
-    });
+    this.queueOperation(() => this.rowStore.renameHost(oldServerId, newServerId));
   }
 
   async flush(): Promise<void> {
     await this.persist();
-    await this.disk;
+    await this.writeQueue.catch(() => undefined);
   }
 
-  private ready(): Promise<boolean> {
-    this.image ??= this.queueDisk(() => this.loadStoredRows()).then(
-      () => true,
-      () => {
-        this.image = null;
-        return false;
-      },
-    );
-    return this.image;
+  private async flushPending(): Promise<void> {
+    await this.persist();
   }
 
-  private async loadStoredRows(): Promise<void> {
-    // COMPAT(replica-blob-cache): remove after 2026-11
-    await this.clearLegacyCache().catch(() => undefined);
-    const hosts = await this.rowStore.readAll();
-    for (const host of hosts) {
-      if (!this.activeServerIds.has(host.serverId) && !this.renamingHosts.has(host.serverId)) {
-        await this.rowStore.deleteHost(host.serverId);
-      }
-    }
-    // Publish only after all fallible work succeeds; retries must not count partial loads twice.
-    for (const host of hosts) {
-      if (!this.activeServerIds.has(host.serverId) && !this.renamingHosts.has(host.serverId)) {
-        continue;
-      }
-      const rows = new Map(host.rows.map((row) => [rowKey(row), row]));
-      const bytes = host.rows.reduce((sum, row) => sum + rowBytes(row), 0);
-      this.storedRows.set(host.serverId, rows);
-      this.hostBytes.set(host.serverId, bytes);
-      this.totalBytes += bytes;
-      this.touchHost(host.serverId);
-    }
-  }
-
-  // Keep budget accounting in order with its initial load and host identity changes.
-  private applyToImage(mutation: () => void): void {
-    if (this.image === null) {
-      mutation();
-      return;
-    }
-    this.image = this.image.then((loaded) => {
-      // Identity changes still settle when loading fails; the next attempt reads their disk result.
-      mutation();
-      return loaded;
-    });
-  }
-
-  private queueDisk(operation: () => Promise<void>): Promise<void> {
-    const run = this.disk.then(async () => {
-      await this.rowStore.open();
-      await operation();
-      return undefined;
-    });
-    this.disk = run.catch(() => undefined);
-    return run;
-  }
-
-  private persist(): Promise<void> {
+  private async persist(): Promise<void> {
     if (this.persistTimer) {
       clearTimeout(this.persistTimer);
       this.persistTimer = null;
     }
-    const write = this.writes.then(() => this.writePendingChanges());
-    this.writes = write.catch(() => undefined);
-    return write;
-  }
-
-  private async writePendingChanges(): Promise<void> {
     if (!this.hasPendingChanges()) return;
-    if (!(await this.ready())) {
-      this.schedulePersist();
-      return;
-    }
-    const batch: PendingBatch = {
-      rows: new Map(this.pendingRows),
-      baselines: new Map(this.pendingBaselines),
-    };
-    const changes = this.materializeBatch(batch);
-    const { changes: boundedChanges, evicted } = await this.fitChangesToBudget(changes);
-    if (boundedChanges.upserts.length > 0 || boundedChanges.deletes.length > 0) {
-      try {
-        await this.queueDisk(() => this.rowStore.apply(boundedChanges));
-      } catch {
-        this.schedulePersist();
-        return;
-      }
-    }
-    // The write commits to the mirror only what is still pending unchanged. A host removed or
-    // renamed meanwhile already dropped or re-keyed its pending rows, and its disk delete or
-    // rename is queued behind this write, so the rows just written must not reappear in memory.
-    // A row replaced meanwhile stays pending and is written again.
-    const settled = (key: ReplicaRowKey) => {
-      const pending = batch.rows.get(pendingRowKey(key));
-      return pending !== undefined && this.pendingRows.get(pendingRowKey(key)) === pending;
-    };
-    const baselineSettled = (serverId: string) =>
-      this.pendingBaselines.get(serverId) === batch.baselines.get(serverId);
-    this.applyStoredChanges({
-      upserts: boundedChanges.upserts.filter(settled),
-      deletes: boundedChanges.deletes.filter(
-        (key) =>
-          settled(key) || (!batch.rows.has(pendingRowKey(key)) && baselineSettled(key.serverId)),
-      ),
-    });
-    for (const [key, pending] of batch.rows) {
-      if (this.pendingRows.get(key) === pending) this.pendingRows.delete(key);
-    }
-    for (const [serverId, token] of batch.baselines) {
-      if (this.pendingBaselines.get(serverId) !== token) continue;
-      this.pendingBaselines.delete(serverId);
-      if (!evicted.has(serverId)) this.invalidatedHosts.delete(serverId);
-    }
+    const write = this.writeQueue
+      .catch(() => undefined)
+      .then(async () => {
+        const pending = this.drainPendingChanges();
+        try {
+          await this.prepareStore();
+          await this.ensureStoredIndex();
+          const changes = this.materializePendingChanges(pending);
+          const { changes: boundedChanges, evicted } = await this.fitChangesToBudget(changes);
+          if (boundedChanges.upserts.length > 0 || boundedChanges.deletes.length > 0) {
+            await this.rowStore.apply(boundedChanges);
+            this.applyStoredChanges(boundedChanges);
+          }
+          for (const serverId of pending.baselines) {
+            if (!evicted.has(serverId)) this.invalidatedHosts.delete(serverId);
+          }
+        } catch {
+          this.restorePendingChanges(pending);
+          if (this.hasPendingChanges()) this.schedulePersist();
+        }
+        return undefined;
+      });
+    this.writeQueue = write;
+    await write;
   }
 
-  private queueUpsert(upsert: StructuredReplicaUpsert): void {
-    const row = { key: upsert, upsert };
-    this.pendingRows.set(pendingRowKey(upsert), row);
-    this.acceptedRows.set(pendingRowKey(upsert), row);
+  private queueEntityDelete(serverId: string, kind: ReplicaRowKind, id: string): void {
+    this.queueDelete({ serverId, kind, id });
+  }
+
+  private queueUpsert(row: StructuredReplicaUpsert): void {
+    const key = pendingRowKey(row);
+    this.pendingDeletes.delete(key);
+    this.pendingUpserts.set(key, row);
   }
 
   private queueDelete(key: ReplicaRowKey): void {
-    const { serverId, kind, id } = key;
-    const row = { key: { serverId, kind, id }, upsert: null };
-    this.pendingRows.set(pendingRowKey(key), row);
-    this.acceptedRows.set(pendingRowKey(key), row);
+    const pendingKey = pendingRowKey(key);
+    this.pendingUpserts.delete(pendingKey);
+    this.pendingDeletes.set(pendingKey, key);
   }
 
   private hasPendingChanges(): boolean {
-    return this.pendingRows.size > 0 || this.pendingBaselines.size > 0;
+    return (
+      this.pendingUpserts.size > 0 || this.pendingDeletes.size > 0 || this.pendingBaselines.size > 0
+    );
   }
 
-  private materializeBatch(batch: PendingBatch): ReplicaRowChanges {
-    const deletes = new Map<string, ReplicaRowKey>();
-    const upserts: ReplicaRow[] = [];
-    for (const pending of batch.rows.values()) {
-      if (pending.upsert === null) deletes.set(pendingRowKey(pending.key), pending.key);
-      else upserts.push(materializeUpsert(pending.upsert));
+  private canReadHostRevision(serverId: string, revision: number): boolean {
+    return (
+      this.activeServerIds.has(serverId) &&
+      (this.hostRevisions.get(serverId) ?? 0) === revision &&
+      !this.hasPendingHostChanges(serverId)
+    );
+  }
+
+  private hasPendingHostChanges(serverId: string): boolean {
+    if (this.pendingBaselines.has(serverId)) return true;
+    for (const row of this.pendingUpserts.values()) {
+      if (row.serverId === serverId) return true;
     }
-    for (const serverId of batch.baselines.keys()) {
+    for (const row of this.pendingDeletes.values()) {
+      if (row.serverId === serverId) return true;
+    }
+    return false;
+  }
+
+  private advanceHostRevision(serverId: string): void {
+    this.hostRevisions.set(serverId, (this.hostRevisions.get(serverId) ?? 0) + 1);
+  }
+
+  private drainPendingChanges(): PendingReplicaChanges {
+    const changes = {
+      upserts: [...this.pendingUpserts.values()],
+      deletes: [...this.pendingDeletes.values()],
+      baselines: this.pendingBaselines,
+    };
+    this.pendingUpserts = new Map();
+    this.pendingDeletes = new Map();
+    this.pendingBaselines = new Set();
+    return changes;
+  }
+
+  private materializePendingChanges(pending: PendingReplicaChanges): ReplicaRowChanges {
+    const deletes = new Map(pending.deletes.map((row) => [pendingRowKey(row), row]));
+    const upserts: ReplicaRow[] = [];
+    for (const upsert of pending.upserts) {
+      const row = this.materializeUpsert(upsert);
+      if (row) upserts.push(row);
+      else deletes.set(pendingRowKey(upsert), upsert);
+    }
+    for (const serverId of pending.baselines) {
       const replacementKeys = new Set(
         upserts.filter((row) => row.serverId === serverId && row.kind !== "timeline").map(rowKey),
       );
@@ -1337,6 +1294,60 @@ export class ReplicaCache {
       }
     }
     return { upserts, deletes: [...deletes.values()] };
+  }
+
+  private materializeUpsert(upsert: StructuredReplicaUpsert): ReplicaRow | null {
+    let value: unknown;
+    switch (upsert.kind) {
+      case "agent":
+        value = serializeAgent(upsert.value);
+        break;
+      case "workspace":
+        value = serializeWorkspace(upsert.value);
+        break;
+      case "project":
+        value = serializeProject(upsert.value);
+        break;
+      case "timeline":
+        value = serializeTimeline(upsert.value);
+        if (!value) return null;
+        break;
+      case "checkpoint":
+        value = upsert.value;
+        break;
+    }
+    return {
+      serverId: upsert.serverId,
+      kind: upsert.kind,
+      id: upsert.id,
+      payload: JSON.stringify(value),
+    };
+  }
+
+  private restorePendingChanges(changes: PendingReplicaChanges): void {
+    for (const serverId of changes.baselines) {
+      if (this.activeServerIds.has(serverId)) this.pendingBaselines.add(serverId);
+    }
+    for (const key of changes.deletes) {
+      const pendingKey = pendingRowKey(key);
+      if (
+        this.activeServerIds.has(key.serverId) &&
+        !this.pendingUpserts.has(pendingKey) &&
+        !this.pendingDeletes.has(pendingKey)
+      ) {
+        this.queueDelete(key);
+      }
+    }
+    for (const row of changes.upserts) {
+      const pendingKey = pendingRowKey(row);
+      if (
+        this.activeServerIds.has(row.serverId) &&
+        !this.pendingUpserts.has(pendingKey) &&
+        !this.pendingDeletes.has(pendingKey)
+      ) {
+        this.queueUpsert(row);
+      }
+    }
   }
 
   private applyStoredChanges(changes: ReplicaRowChanges): void {
@@ -1412,13 +1423,12 @@ export class ReplicaCache {
     while (projectedTotal > this.maxBytes) {
       const serverId = writeOrder.shift();
       if (serverId === undefined) break;
-      projectedTotal -= projectedBytes.get(serverId) ?? 0;
+      const bytes = projectedBytes.get(serverId) ?? 0;
+      projectedTotal -= bytes;
       projectedBytes.delete(serverId);
       evicted.add(serverId);
       this.invalidatedHosts.add(serverId);
-      this.dropPendingHostChanges(serverId);
-      this.dropAcceptedHost(serverId);
-      await this.deleteStoredSource(serverId).catch(() => undefined);
+      if (this.storedRows.has(serverId)) await this.rowStore.deleteHost(serverId);
       this.removeStoredHost(serverId);
     }
 
@@ -1431,22 +1441,6 @@ export class ReplicaCache {
     };
   }
 
-  private dropAcceptedHost(serverId: string): void {
-    this.hostSources.set(serverId, new Set());
-    this.acceptedBaselines.delete(serverId);
-    for (const [key, row] of this.acceptedRows) {
-      if (row.key.serverId === serverId) this.acceptedRows.delete(key);
-    }
-  }
-
-  private deleteStoredSource(serverId: string): Promise<void> {
-    const sources = this.hostSources.get(serverId);
-    return this.queueDisk(async () => {
-      await this.rowStore.deleteHost(serverId);
-      if (this.hostSources.get(serverId) === sources) sources?.add(serverId);
-    });
-  }
-
   private removeStoredHost(serverId: string): void {
     this.totalBytes -= this.hostBytes.get(serverId) ?? 0;
     this.storedRows.delete(serverId);
@@ -1454,74 +1448,79 @@ export class ReplicaCache {
     this.hostWriteOrder.delete(serverId);
   }
 
-  private renameStoredHost(oldServerId: string, newServerId: string): void {
-    const rows = this.storedRows.get(oldServerId);
-    if (!rows) return;
-    const newRows = this.storedRows.get(newServerId) ?? new Map<string, ReplicaRow>();
-    this.removeStoredHost(oldServerId);
-    this.removeStoredHost(newServerId);
-    for (const [key, row] of rows) newRows.set(key, { ...row, serverId: newServerId });
-    this.storedRows.set(newServerId, newRows);
-    const bytes = [...newRows.values()].reduce((sum, row) => sum + rowBytes(row), 0);
-    this.hostBytes.set(newServerId, bytes);
-    this.totalBytes += bytes;
-    this.touchHost(newServerId);
-  }
-
   private dropPendingHostChanges(serverId: string): void {
     this.pendingBaselines.delete(serverId);
-    for (const [key, pending] of this.pendingRows) {
-      if (pending.key.serverId === serverId) this.pendingRows.delete(key);
+    for (const [key, row] of this.pendingUpserts) {
+      if (row.serverId === serverId) this.pendingUpserts.delete(key);
+    }
+    for (const [key, row] of this.pendingDeletes) {
+      if (row.serverId === serverId) this.pendingDeletes.delete(key);
     }
   }
 
   private renamePendingHostChanges(oldServerId: string, newServerId: string): void {
-    const renamed = [...this.pendingRows.values()].filter(
-      (pending) => pending.key.serverId === oldServerId,
-    );
-    for (const pending of renamed) {
-      this.pendingRows.delete(pendingRowKey(pending.key));
-      const key = { ...pending.key, serverId: newServerId };
-      this.pendingRows.set(pendingRowKey(key), {
-        key,
-        upsert: pending.upsert ? { ...pending.upsert, serverId: newServerId } : null,
-      });
+    const changes = this.drainPendingChanges();
+    for (const key of changes.deletes) {
+      this.queueDelete(key.serverId === oldServerId ? { ...key, serverId: newServerId } : key);
     }
-    const baseline = this.pendingBaselines.get(oldServerId);
-    if (baseline) {
-      this.pendingBaselines.delete(oldServerId);
-      this.pendingBaselines.set(newServerId, baseline);
+    for (const row of changes.upserts) {
+      this.queueUpsert(row.serverId === oldServerId ? { ...row, serverId: newServerId } : row);
+    }
+    for (const serverId of changes.baselines) {
+      this.pendingBaselines.add(serverId === oldServerId ? newServerId : serverId);
     }
     if (this.invalidatedHosts.delete(oldServerId)) this.invalidatedHosts.add(newServerId);
+  }
+
+  private prepareStore(): Promise<void> {
+    this.preparePromise ??= (async () => {
+      await this.rowStore.open();
+      // COMPAT(replica-blob-cache): remove after 2026-11
+      await this.clearLegacyCache().catch(() => undefined);
+    })();
+    return this.preparePromise;
+  }
+
+  private ensureStoredIndex(): Promise<void> {
+    this.storedIndexPromise ??= this.rowStore.readAll().then(async (hosts) => {
+      this.storedRows.clear();
+      this.hostBytes.clear();
+      this.hostWriteOrder.clear();
+      this.totalBytes = 0;
+      for (const host of hosts) {
+        if (!this.activeServerIds.has(host.serverId)) {
+          await this.rowStore.deleteHost(host.serverId);
+          continue;
+        }
+        const rows = new Map(host.rows.map((row) => [rowKey(row), row]));
+        const bytes = host.rows.reduce((sum, row) => sum + rowBytes(row), 0);
+        this.storedRows.set(host.serverId, rows);
+        this.hostBytes.set(host.serverId, bytes);
+        this.totalBytes += bytes;
+        this.touchHost(host.serverId);
+      }
+      return undefined;
+    });
+    return this.storedIndexPromise;
+  }
+
+  private queueOperation(operation: () => Promise<void>): Promise<void> {
+    this.writeQueue = this.writeQueue
+      .catch(() => undefined)
+      .then(async () => {
+        await this.prepareStore();
+        await operation();
+        return undefined;
+      })
+      .catch(() => undefined);
+    return this.writeQueue;
   }
 
   private schedulePersist(): void {
     if (this.persistTimer) return;
     this.persistTimer = setTimeout(() => {
       this.persistTimer = null;
-      void this.persist();
+      void this.flushPending();
     }, PERSIST_DELAY_MS);
   }
-}
-
-function materializeUpsert(upsert: StructuredReplicaUpsert): ReplicaRow {
-  let payload: string;
-  switch (upsert.kind) {
-    case "agent":
-      payload = JSON.stringify(serializeAgent(upsert.value));
-      break;
-    case "workspace":
-      payload = JSON.stringify(serializeWorkspace(upsert.value));
-      break;
-    case "project":
-      payload = JSON.stringify(serializeProject(upsert.value));
-      break;
-    case "timeline":
-      payload = serializeTimelinePayload(upsert.value);
-      break;
-    case "checkpoint":
-      payload = JSON.stringify(upsert.value);
-      break;
-  }
-  return { serverId: upsert.serverId, kind: upsert.kind, id: upsert.id, payload };
 }

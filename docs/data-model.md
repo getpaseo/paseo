@@ -578,20 +578,16 @@ compound key `(serverId, kind, id)`; kinds are `agent`, `workspace`, `project`, 
 uses the singleton id.
 
 The store is a typed persistence boundary. It returns values to directory and timeline owners and
-accepts their explicit commits; it never reads or writes UI state.
-One invalid row is deleted and returned as a miss without affecting other rows.
+accepts their explicit commits; it never reads or writes UI state. Reads are scoped to the requested
+host, kinds, and ids. Opening a cached workspace uses exact workspace and project keys rather than a
+directory scan. One invalid row is deleted and returned as a miss without affecting other rows.
 An invalid directory row and its affected checkpoint cursor are repaired in one transaction, so a
 later launch cannot accept a checkpoint for a partial baseline. Directory changes and their
-checkpoint are also applied in one transaction. Cold reads query only the requested host's directory
-or agent timeline. Accepted commits overlay those reads, including changes accepted or persisted
-while a read was in flight. Host removal invalidates old reads; reconciliation exposes moved rows
-before the disk rename finishes. Disk is write-behind: a change stays pending until the disk
-confirms it, so failed writes preserve accepted values. Timeline eligibility is checked without
-serialization; the coalesced write encodes the latest accepted page once.
+checkpoint are also applied in one transaction.
 
-The cache is capped at 32 MiB and evicts whole hosts in least-recently-written order. The first
-write loads the global row index and accounts for its bytes; requested reads do not await that
-work. Later writes update the index. The row store is not encrypted. A cached timeline can contain
+The cache is capped at 32 MiB and evicts whole hosts in least-recently-written order. Budget
+bookkeeping may scan opaque row sizes during a deferred write, never during host registry startup or
+before a requested cache row can paint. The row store is not encrypted. A cached timeline can contain
 source code, prompts, and tool output; encrypted-at-rest storage is a separate security decision.
 
 ### Draft Store

@@ -4,7 +4,6 @@ import type { AgentTimelineItem, ToolCallDetail } from "@getpaseo/protocol/agent
 import {
   createUserMessage,
   hydrateStreamState,
-  rowStartSeq,
   type AgentToolCallItem,
   type StreamItem,
 } from "@/types/stream";
@@ -482,12 +481,7 @@ describe("processTimelineResponse", () => {
   it("replaces destructively when the same epoch rewinds behind the local cursor", () => {
     const result = processTimelineResponse({
       ...baseTimelineInput,
-      currentTail: [
-        {
-          ...makeAssistantItem("future history", "future-history"),
-          timelineCursor: { epoch: "epoch-1", seq: 40 },
-        },
-      ],
+      currentTail: [makeAssistantItem("future history", "future-history")],
       currentCursor: { epoch: "epoch-1", startSeq: 1, endSeq: 40 },
       payload: {
         ...baseTimelineInput.payload,
@@ -499,35 +493,8 @@ describe("processTimelineResponse", () => {
       },
     });
 
-    expect(getAssistantTexts([...result.tail, ...result.head])).toEqual(["rewound history"]);
+    expect(getAssistantTexts(result.tail)).toEqual(["rewound history"]);
     expect(result.cursor).toEqual({ epoch: "epoch-1", startSeq: 1, endSeq: 10 });
-  });
-
-  it("drops superseded positioned rows when a forced reset tail ends behind the cursor", () => {
-    const result = processTimelineResponse({
-      ...baseTimelineInput,
-      currentTail: [
-        {
-          ...makeAssistantItem("future history", "future-history"),
-          timelineCursor: { epoch: "epoch-1", seq: 40 },
-        },
-      ],
-      currentHead: [makeSubmittedUserMessage("still sending", "sending-prompt")],
-      currentCursor: { epoch: "epoch-1", startSeq: 1, endSeq: 40 },
-      sendingClientMessageIds: ["sending-prompt"],
-      payload: {
-        ...baseTimelineInput.payload,
-        direction: "tail",
-        reset: true,
-        window: { minSeq: 1, maxSeq: 10, nextSeq: 11 },
-        startCursor: { seq: 1 },
-        endCursor: { seq: 10 },
-        entries: [makeTimelineEntry(10, "rewound history")],
-      },
-    });
-
-    expect(getAssistantTexts([...result.tail, ...result.head])).toEqual(["rewound history"]);
-    expect(getUserTexts([...result.tail, ...result.head])).toEqual(["still sending"]);
   });
 
   it("preserves the canonical end cursor on a projected assistant message", () => {
@@ -991,13 +958,6 @@ describe("processTimelineResponse", () => {
           text: "canonical prefix continuation",
           timestamp: new Date(2001),
           timelineCursor: { epoch: "epoch-1", seq: 101 },
-          source: {
-            startSeq: 100,
-            chunks: [
-              { seq: 100, offset: 0 },
-              { seq: 101, offset: "canonical prefix".length },
-            ],
-          },
         },
       ],
       isInitializing: true,
@@ -3078,7 +3038,7 @@ describe("processTimelineResponse", () => {
         })),
     ).toEqual([
       {
-        id: "assistant-message",
+        id: "loaded-assistant",
         text: "projected response",
         messageId: "assistant-message",
         timelineCursor: { epoch: "epoch-1", seq: 500 },
@@ -3235,57 +3195,6 @@ describe("processTimelineResponse", () => {
       startSeq: 1,
       endSeq: 5,
     });
-  });
-
-  it.each([
-    ["older", "newer", ["older chunk ", "newer chunk"]],
-    ["same", "same", ["older chunk newer chunk"]],
-    [undefined, "newer", ["older chunk newer chunk"]],
-    ["older", undefined, ["older chunk newer chunk"]],
-  ])("preserves assistant identity at a prepend boundary (%s, %s)", (olderId, newerId, texts) => {
-    const older = makeTimelineEntry(1, "older chunk ");
-    const result = processTimelineResponse({
-      ...baseTimelineInput,
-      currentTail: [
-        {
-          ...makeAssistantItem("newer chunk", "newer"),
-          messageId: newerId,
-          timelineCursor: { epoch: "epoch-1", seq: 2 },
-          source: { startSeq: 2, chunks: [{ seq: 2, offset: 0 }] },
-        },
-      ],
-      currentCursor: { epoch: "epoch-1", startSeq: 2, endSeq: 2 },
-      payload: {
-        ...baseTimelineInput.payload,
-        direction: "before",
-        epoch: "epoch-1",
-        startCursor: { seq: 1 },
-        endCursor: { seq: 1 },
-        entries: [
-          {
-            ...older,
-            item: { type: "assistant_message", text: "older chunk ", messageId: olderId },
-          },
-        ],
-      },
-    });
-    expect(getAssistantTexts(result.tail)).toEqual(texts);
-    expect(result.tail.map((row) => row.source)).toEqual(
-      texts.length === 2
-        ? [
-            { startSeq: 1, chunks: [{ seq: 1, offset: 0 }] },
-            { startSeq: 2, chunks: [{ seq: 2, offset: 0 }] },
-          ]
-        : [
-            {
-              startSeq: 1,
-              chunks: [
-                { seq: 1, offset: 0 },
-                { seq: 2, offset: 12 },
-              ],
-            },
-          ],
-    );
   });
 
   it("coalesces tool call lifecycle rows across the older-page prepend boundary", () => {
@@ -4437,13 +4346,12 @@ describe("createAgentStreamReducerQueue", () => {
     let currentHead: StreamItem[] = [];
 
     const queue = createAgentStreamReducerQueue({
-      apply: (agentId, events) => {
-        const result = processAgentStreamEvents({
-          events,
-          currentTail,
-          currentHead,
-          currentCursor: undefined,
-        });
+      getSnapshot: () => ({
+        currentTail,
+        currentHead,
+        currentCursor: undefined,
+      }),
+      commit: (agentId, result) => {
         currentTail = result.tail;
         currentHead = result.head;
         commits.push({
@@ -4452,6 +4360,7 @@ describe("createAgentStreamReducerQueue", () => {
           cursorEndSeq: result.cursor?.endSeq ?? null,
         });
       },
+      handleSideEffects: () => {},
       scheduleFlush: scheduler.schedule,
       cancelFlush: scheduler.cancel,
     });
@@ -4478,17 +4387,17 @@ describe("createAgentStreamReducerQueue", () => {
     const scheduler = createManualScheduler();
     const commits: string[] = [];
     const queue = createAgentStreamReducerQueue({
-      apply: (agentId, events) => {
-        const result = processAgentStreamEvents({
-          events,
-          currentTail: [],
-          currentHead: [],
-          currentCursor: undefined,
-        });
+      getSnapshot: () => ({
+        currentTail: [],
+        currentHead: [],
+        currentCursor: undefined,
+      }),
+      commit: (agentId, result) => {
         commits.push(
           `${agentId}:${result.head[0]?.kind === "assistant_message" ? result.head[0].text : ""}`,
         );
       },
+      handleSideEffects: () => {},
       scheduleFlush: scheduler.schedule,
       cancelFlush: scheduler.cancel,
     });
@@ -4507,17 +4416,17 @@ describe("createAgentStreamReducerQueue", () => {
     let currentCursor: TimelineCursor | undefined;
 
     const queue = createAgentStreamReducerQueue({
-      apply: (_agentId, events) => {
-        const result = processAgentStreamEvents({
-          events,
-          currentTail,
-          currentHead,
-          currentCursor,
-        });
+      getSnapshot: () => ({
+        currentTail,
+        currentHead,
+        currentCursor,
+      }),
+      commit: (_agentId, result) => {
         currentTail = result.tail;
         currentHead = result.head;
         currentCursor = result.cursor ?? undefined;
       },
+      handleSideEffects: () => {},
       scheduleFlush: scheduler.schedule,
       cancelFlush: scheduler.cancel,
     });
@@ -4556,17 +4465,17 @@ describe("createAgentStreamReducerQueue", () => {
     const scheduler = createManualScheduler();
     const commits: string[] = [];
     const queue = createAgentStreamReducerQueue({
-      apply: (agentId, events) => {
-        const result = processAgentStreamEvents({
-          events,
-          currentTail: [],
-          currentHead: [],
-          currentCursor: undefined,
-        });
+      getSnapshot: () => ({
+        currentTail: [],
+        currentHead: [],
+        currentCursor: undefined,
+      }),
+      commit: (agentId, result) => {
         commits.push(
           `${agentId}:${result.head[0]?.kind === "assistant_message" ? result.head[0].text : ""}`,
         );
       },
+      handleSideEffects: () => {},
       scheduleFlush: scheduler.schedule,
       cancelFlush: scheduler.cancel,
     });
@@ -4576,708 +4485,5 @@ describe("createAgentStreamReducerQueue", () => {
 
     expect(commits).toEqual(["agent-1:queued"]);
     expect(scheduler.size).toBe(0);
-  });
-});
-
-describe("forward pages reconcile live rows by identity and source position", () => {
-  const detail: ToolCallDetail = { type: "read", filePath: "/tmp/example.ts" };
-  const checkpoint = (n: number) => `\n\n---\n\nReplica QA checkpoint ${n}: saved history`;
-
-  function liveBeyondBootstrap() {
-    return processAgentStreamEvents({
-      events: [
-        makeStreamReducerEvent(makeAssistantTimelineEvent("\n\n---\n\n", "msg-102"), 675),
-        makeStreamReducerEvent(
-          makeAssistantTimelineEvent("Replica QA checkpoint 102: saved history", "msg-102"),
-          679,
-        ),
-        makeStreamReducerEvent(makeToolCallTimelineEvent("exec-1"), 681),
-        makeStreamReducerEvent(makeAssistantTimelineEvent("\n\n---\n\n", "msg-103"), 682),
-        makeStreamReducerEvent(
-          makeAssistantTimelineEvent("Replica QA checkpoint 103: saved history", "msg-103"),
-          685,
-        ),
-        makeStreamReducerEvent(makeToolCallTimelineEvent("exec-2"), 687),
-      ],
-      currentTail: [],
-      currentHead: [],
-      currentCursor: undefined,
-      hasAuthoritativeBaseline: false,
-    });
-  }
-
-  function projectRows(items: StreamItem[]) {
-    return items.map((item) =>
-      item.kind === "assistant_message"
-        ? { kind: item.kind, messageId: item.messageId, text: item.text }
-        : { kind: item.kind, id: item.id },
-    );
-  }
-
-  it("replaces split live blocks wholly beyond the cursor instead of appending them again", () => {
-    const live = liveBeyondBootstrap();
-    expect(getAssistantTexts(live.head)).toHaveLength(4);
-
-    const result = processTimelineResponse({
-      ...baseTimelineInput,
-      currentTail: [
-        {
-          ...makeAssistantItem(checkpoint(101), "msg-101"),
-          messageId: "msg-101",
-          timelineCursor: { epoch: "epoch-1", seq: 672 },
-        },
-      ],
-      currentHead: live.head,
-      currentCursor: { epoch: "epoch-1", startSeq: 600, endSeq: 674 },
-      payload: {
-        ...baseTimelineInput.payload,
-        direction: "after",
-        epoch: "epoch-1",
-        startCursor: { seq: 675 },
-        endCursor: { seq: 691 },
-        entries: [
-          {
-            ...makeTimelineEntry(675, checkpoint(102), "assistant_message", 679),
-            sourceSeqRanges: [{ startSeq: 675, endSeq: 679 }],
-            item: { type: "assistant_message", text: checkpoint(102), messageId: "msg-102" },
-          },
-          makeToolCallTimelineEntry(681, "exec-1", "completed", detail),
-          {
-            ...makeTimelineEntry(682, checkpoint(103), "assistant_message", 685),
-            sourceSeqRanges: [{ startSeq: 682, endSeq: 685 }],
-            item: { type: "assistant_message", text: checkpoint(103), messageId: "msg-103" },
-          },
-          makeToolCallTimelineEntry(687, "exec-2", "completed", detail),
-          {
-            ...makeTimelineEntry(691, checkpoint(104)),
-            item: { type: "assistant_message", text: checkpoint(104), messageId: "msg-104" },
-          },
-        ],
-      },
-    });
-
-    const rows = [...result.tail, ...result.head];
-    expect(projectRows(rows)).toEqual([
-      { kind: "assistant_message", messageId: "msg-101", text: checkpoint(101) },
-      { kind: "assistant_message", messageId: "msg-102", text: checkpoint(102) },
-      { kind: "tool_call", id: "agent_tool_exec-1" },
-      { kind: "assistant_message", messageId: "msg-103", text: checkpoint(103) },
-      { kind: "tool_call", id: "agent_tool_exec-2" },
-      { kind: "assistant_message", messageId: "msg-104", text: checkpoint(104) },
-    ]);
-    expect(new Set(rows.map((item) => item.id)).size).toBe(rows.length);
-    expect(getAgentToolCalls(rows).map((item) => item.payload.data.status)).toEqual([
-      "completed",
-      "completed",
-    ]);
-    expect(result.cursor).toEqual({ epoch: "epoch-1", startSeq: 600, endSeq: 691 });
-  });
-
-  it.each(["positioned", "unpositioned", "repeated"] as const)(
-    "preserves same-message segments around a tool (%s)",
-    (delivery) => {
-      const beforeText = delivery === "repeated" ? "Repeat" : "Before tool";
-      const afterText = delivery === "repeated" ? "Repeat" : "After tool";
-      const live = processAgentStreamEvents({
-        events: [
-          makeStreamReducerEvent(makeAssistantTimelineEvent(beforeText, "msg-a"), 675),
-          makeStreamReducerEvent(makeToolCallTimelineEvent("exec-1"), 676),
-          makeStreamReducerEvent(makeAssistantTimelineEvent(afterText, "msg-a"), 677),
-        ].map((event) =>
-          delivery === "positioned" || (delivery === "repeated" && event.seq === 676)
-            ? event
-            : Object.assign(event, { seq: undefined, epoch: undefined }),
-        ),
-        currentTail: [],
-        currentHead: [],
-        currentCursor: undefined,
-        hasAuthoritativeBaseline: false,
-      });
-      const result = processTimelineResponse({
-        ...baseTimelineInput,
-        currentTail: live.tail,
-        currentHead: live.head,
-        currentCursor: { epoch: "epoch-1", startSeq: 600, endSeq: 674 },
-        payload: {
-          ...baseTimelineInput.payload,
-          direction: "after",
-          window: { minSeq: 1, maxSeq: 677, nextSeq: 678 },
-          startCursor: { seq: 675 },
-          endCursor: { seq: 677 },
-          entries: [
-            {
-              ...makeTimelineEntry(675, beforeText),
-              item: { type: "assistant_message", text: beforeText, messageId: "msg-a" },
-            },
-            makeToolCallTimelineEntry(676, "exec-1", "running", detail),
-            {
-              ...makeTimelineEntry(677, afterText),
-              item: { type: "assistant_message", text: afterText, messageId: "msg-a" },
-            },
-          ],
-        },
-      });
-      const ids = [...result.tail, ...result.head].map((row) => row.id);
-      expect(new Set(ids).size).toBe(ids.length);
-      expect(projectRows([...result.tail, ...result.head])).toEqual([
-        { kind: "assistant_message", messageId: "msg-a", text: beforeText },
-        { kind: "tool_call", id: "agent_tool_exec-1" },
-        { kind: "assistant_message", messageId: "msg-a", text: afterText },
-      ]);
-    },
-  );
-
-  it("records each unit's first source position on bootstrap", () => {
-    const result = processTimelineResponse({
-      ...baseTimelineInput,
-      isInitializing: true,
-      hasActiveInitDeferred: true,
-      payload: {
-        ...baseTimelineInput.payload,
-        direction: "tail",
-        reset: true,
-        window: { minSeq: 1, maxSeq: 700, nextSeq: 701 },
-        startCursor: { seq: 675 },
-        endCursor: { seq: 700 },
-        entries: [
-          {
-            ...makeTimelineEntry(675, "Before tool"),
-            item: { type: "assistant_message", text: "Before tool", messageId: "msg-a" },
-          },
-          {
-            ...makeToolCallTimelineEntry(676, "exec-1", "completed", detail),
-            seqEnd: 700,
-            sourceSeqRanges: [
-              { startSeq: 676, endSeq: 676 },
-              { startSeq: 700, endSeq: 700 },
-            ],
-            collapsed: ["tool_lifecycle"],
-          },
-          {
-            ...makeTimelineEntry(677, "After tool"),
-            item: { type: "assistant_message", text: "After tool", messageId: "msg-a" },
-          },
-        ],
-      },
-    });
-    const rows = [...result.tail, ...result.head];
-    expect(rows.map((row) => row.kind)).toEqual([
-      "assistant_message",
-      "tool_call",
-      "assistant_message",
-    ]);
-    expect(rows.map(rowStartSeq)).toEqual([675, 676, 677]);
-  });
-
-  it("keeps parallel tools in the order they started when their completions are reversed", () => {
-    const result = processTimelineResponse({
-      ...baseTimelineInput,
-      isInitializing: true,
-      hasActiveInitDeferred: true,
-      payload: {
-        ...baseTimelineInput.payload,
-        direction: "tail",
-        reset: true,
-        window: { minSeq: 1, maxSeq: 700, nextSeq: 701 },
-        startCursor: { seq: 676 },
-        endCursor: { seq: 700 },
-        entries: [
-          {
-            ...makeToolCallTimelineEntry(676, "first", "completed", detail),
-            seqEnd: 700,
-            sourceSeqRanges: [
-              { startSeq: 676, endSeq: 676 },
-              { startSeq: 700, endSeq: 700 },
-            ],
-            collapsed: ["tool_lifecycle"],
-          },
-          {
-            ...makeToolCallTimelineEntry(677, "second", "completed", detail),
-            seqEnd: 690,
-            sourceSeqRanges: [
-              { startSeq: 677, endSeq: 677 },
-              { startSeq: 690, endSeq: 690 },
-            ],
-            collapsed: ["tool_lifecycle"],
-          },
-        ],
-      },
-    });
-    const tools = getAgentToolCalls([...result.tail, ...result.head]);
-    expect(tools.map((tool) => tool.payload.data.callId)).toEqual(["first", "second"]);
-    expect(tools.map(rowStartSeq)).toEqual([676, 677]);
-    expect(tools.map((tool) => tool.timelineCursor?.seq)).toEqual([700, 690]);
-  });
-
-  it("keeps an interleaved tool in place when the page arrives with no live rows", () => {
-    const result = processTimelineResponse({
-      ...baseTimelineInput,
-      currentCursor: { epoch: "epoch-1", startSeq: 600, endSeq: 674 },
-      payload: {
-        ...baseTimelineInput.payload,
-        direction: "after",
-        window: { minSeq: 1, maxSeq: 700, nextSeq: 701 },
-        startCursor: { seq: 675 },
-        endCursor: { seq: 700 },
-        entries: [
-          {
-            ...makeTimelineEntry(675, "Before tool"),
-            item: { type: "assistant_message", text: "Before tool", messageId: "msg-a" },
-          },
-          {
-            ...makeToolCallTimelineEntry(676, "exec-1", "completed", detail),
-            seqEnd: 700,
-            sourceSeqRanges: [
-              { startSeq: 676, endSeq: 676 },
-              { startSeq: 700, endSeq: 700 },
-            ],
-            collapsed: ["tool_lifecycle"],
-          },
-          {
-            ...makeTimelineEntry(677, "After tool"),
-            item: { type: "assistant_message", text: "After tool", messageId: "msg-a" },
-          },
-        ],
-      },
-    });
-    const rows = [...result.tail, ...result.head];
-    expect(projectRows(rows)).toEqual([
-      { kind: "assistant_message", messageId: "msg-a", text: "Before tool" },
-      { kind: "tool_call", id: "agent_tool_exec-1" },
-      { kind: "assistant_message", messageId: "msg-a", text: "After tool" },
-    ]);
-    expect(rows.map(rowStartSeq)).toEqual([675, 676, 677]);
-  });
-
-  it("keeps an interleaved tool whose completion is newer than text on both sides", () => {
-    const live = processAgentStreamEvents({
-      events: [
-        makeStreamReducerEvent(makeAssistantTimelineEvent("Before tool", "msg-a"), 675),
-        makeStreamReducerEvent(makeToolCallTimelineEvent("exec-1"), 676),
-        makeStreamReducerEvent(makeAssistantTimelineEvent("After tool", "msg-a"), 677),
-        makeStreamReducerEvent(
-          {
-            ...makeToolCallTimelineEvent("exec-1"),
-            item: makeToolCallTimelineEntry(676, "exec-1", "completed", detail).item,
-          } as AgentStreamEventPayload,
-          700,
-        ),
-      ],
-      currentTail: [],
-      currentHead: [],
-      currentCursor: undefined,
-      hasAuthoritativeBaseline: false,
-    });
-    const result = processTimelineResponse({
-      ...baseTimelineInput,
-      currentTail: live.tail,
-      currentHead: live.head,
-      currentCursor: { epoch: "epoch-1", startSeq: 600, endSeq: 674 },
-      payload: {
-        ...baseTimelineInput.payload,
-        direction: "after",
-        window: { minSeq: 1, maxSeq: 700, nextSeq: 701 },
-        startCursor: { seq: 675 },
-        endCursor: { seq: 700 },
-        entries: [
-          {
-            ...makeTimelineEntry(675, "Before tool"),
-            item: { type: "assistant_message", text: "Before tool", messageId: "msg-a" },
-          },
-          {
-            ...makeToolCallTimelineEntry(676, "exec-1", "completed", detail),
-            seqEnd: 700,
-            sourceSeqRanges: [
-              { startSeq: 676, endSeq: 676 },
-              { startSeq: 700, endSeq: 700 },
-            ],
-            collapsed: ["tool_lifecycle"],
-          },
-          {
-            ...makeTimelineEntry(677, "After tool"),
-            item: { type: "assistant_message", text: "After tool", messageId: "msg-a" },
-          },
-        ],
-      },
-    });
-    const rows = [...result.tail, ...result.head];
-    expect(projectRows(rows)).toEqual([
-      { kind: "assistant_message", messageId: "msg-a", text: "Before tool" },
-      { kind: "tool_call", id: "agent_tool_exec-1" },
-      { kind: "assistant_message", messageId: "msg-a", text: "After tool" },
-    ]);
-    expect(getAgentToolCalls(rows)[0]?.payload.data.status).toBe("completed");
-  });
-
-  it("keeps a tool call at the position it appeared even when its completion is newer", () => {
-    const live = processAgentStreamEvents({
-      events: [
-        makeStreamReducerEvent(makeToolCallTimelineEvent("exec-1"), 676),
-        makeStreamReducerEvent(makeAssistantTimelineEvent("While the tool runs", "msg-a"), 680),
-        makeStreamReducerEvent(
-          {
-            ...makeToolCallTimelineEvent("exec-1"),
-            item: { ...makeToolCallTimelineEntry(676, "exec-1", "completed", detail).item },
-          } as AgentStreamEventPayload,
-          700,
-        ),
-      ],
-      currentTail: [],
-      currentHead: [],
-      currentCursor: undefined,
-      hasAuthoritativeBaseline: false,
-    });
-    const result = processTimelineResponse({
-      ...baseTimelineInput,
-      currentHead: live.head,
-      currentCursor: { epoch: "epoch-1", startSeq: 600, endSeq: 674 },
-      payload: {
-        ...baseTimelineInput.payload,
-        direction: "after",
-        window: { minSeq: 1, maxSeq: 700, nextSeq: 701 },
-        startCursor: { seq: 675 },
-        endCursor: { seq: 700 },
-        entries: [
-          {
-            ...makeToolCallTimelineEntry(676, "exec-1", "completed", detail),
-            seqEnd: 700,
-            sourceSeqRanges: [
-              { startSeq: 676, endSeq: 676 },
-              { startSeq: 700, endSeq: 700 },
-            ],
-            collapsed: ["tool_lifecycle"],
-          },
-          {
-            ...makeTimelineEntry(680, "While the tool runs"),
-            item: { type: "assistant_message", text: "While the tool runs", messageId: "msg-a" },
-          },
-        ],
-      },
-    });
-
-    expect(projectRows([...result.tail, ...result.head])).toEqual([
-      { kind: "tool_call", id: "agent_tool_exec-1" },
-      { kind: "assistant_message", messageId: "msg-a", text: "While the tool runs" },
-    ]);
-    expect(getAgentToolCalls([...result.tail, ...result.head])[0]?.payload.data.status).toBe(
-      "completed",
-    );
-  });
-
-  it("does not duplicate a notification the page delivers again", () => {
-    const live = processAgentStreamEvents({
-      events: [
-        makeStreamReducerEvent(
-          {
-            type: "timeline",
-            provider: "claude",
-            item: { type: "error", message: "Rate limited" },
-          } as AgentStreamEventPayload,
-          680,
-        ),
-      ],
-      currentTail: [],
-      currentHead: [],
-      currentCursor: undefined,
-      hasAuthoritativeBaseline: false,
-    });
-    const result = processTimelineResponse({
-      ...baseTimelineInput,
-      currentHead: live.head,
-      currentCursor: { epoch: "epoch-1", startSeq: 600, endSeq: 674 },
-      payload: {
-        ...baseTimelineInput.payload,
-        direction: "after",
-        window: { minSeq: 1, maxSeq: 680, nextSeq: 681 },
-        startCursor: { seq: 675 },
-        endCursor: { seq: 680 },
-        entries: [
-          {
-            ...makeTimelineEntry(680, "Rate limited"),
-            item: { type: "error", message: "Rate limited" },
-          },
-        ],
-      },
-    });
-
-    const notifications = [...result.tail, ...result.head].filter(
-      (item) => item.kind === "notification",
-    );
-    expect(notifications).toHaveLength(1);
-    expect(notifications[0]?.id).toBe(live.head[0]?.id);
-  });
-
-  it("inserts missed canonical history before newer live messages during reconnect", () => {
-    const live = processAgentStreamEvents({
-      events: [makeStreamReducerEvent(makeAssistantTimelineEvent("Arrived live", "msg-new"), 700)],
-      currentTail: [],
-      currentHead: [],
-      currentCursor: undefined,
-      hasAuthoritativeBaseline: false,
-    });
-    const result = processTimelineResponse({
-      ...baseTimelineInput,
-      currentTail: [],
-      currentHead: live.head,
-      currentCursor: { epoch: "epoch-1", startSeq: 600, endSeq: 674 },
-      payload: {
-        ...baseTimelineInput.payload,
-        direction: "after",
-        window: { minSeq: 1, maxSeq: 690, nextSeq: 691 },
-        startCursor: { seq: 675 },
-        endCursor: { seq: 690 },
-        hasNewer: false,
-        entries: [
-          {
-            ...makeTimelineEntry(675, "Missed while closed", "assistant_message", 679),
-            item: { type: "assistant_message", text: "Missed while closed", messageId: "msg-old" },
-          },
-        ],
-      },
-    });
-    expect(getAssistantTexts([...result.tail, ...result.head])).toEqual([
-      "Missed while closed",
-      "Arrived live",
-    ]);
-  });
-
-  it.each([
-    {
-      name: "partially overlaps the canonical prefix",
-      events: [
-        makeStreamReducerEvent(makeAssistantTimelineEvent("llo", "msg-a"), 680),
-        makeStreamReducerEvent(makeAssistantTimelineEvent(" world", "msg-a"), 700),
-      ],
-      canonical: "Hello",
-      expected: "Hello world",
-    },
-    {
-      name: "repeats the prefix after its coverage",
-      events: [makeStreamReducerEvent(makeAssistantTimelineEvent("Ha", "msg-a"), 700)],
-      canonical: "Ha",
-      expected: "HaHa",
-    },
-  ])(
-    "reconciles by source coverage when newer live text $name",
-    ({ events, canonical, expected }) => {
-      const live = processAgentStreamEvents({
-        events,
-        currentTail: [],
-        currentHead: [],
-        currentCursor: undefined,
-        hasAuthoritativeBaseline: false,
-      });
-      const result = processTimelineResponse({
-        ...baseTimelineInput,
-        currentHead: live.head,
-        currentCursor: { epoch: "epoch-1", startSeq: 600, endSeq: 674 },
-        payload: {
-          ...baseTimelineInput.payload,
-          direction: "after",
-          window: { minSeq: 1, maxSeq: 690, nextSeq: 691 },
-          startCursor: { seq: 675 },
-          endCursor: { seq: 690 },
-          hasNewer: false,
-          entries: [
-            {
-              ...makeTimelineEntry(675, canonical, "assistant_message", 690),
-              item: { type: "assistant_message", text: canonical, messageId: "msg-a" },
-            },
-          ],
-        },
-      });
-      expect(getAssistantTexts([...result.tail, ...result.head])).toEqual([expected]);
-    },
-  );
-
-  it("fills a missing prefix when a lagging final page meets a newer live suffix", () => {
-    const live = processAgentStreamEvents({
-      events: [makeStreamReducerEvent(makeAssistantTimelineEvent(" world", "msg-a"), 700)],
-      currentTail: [],
-      currentHead: [],
-      currentCursor: undefined,
-      hasAuthoritativeBaseline: false,
-    });
-    const result = processTimelineResponse({
-      ...baseTimelineInput,
-      currentHead: live.head,
-      currentCursor: { epoch: "epoch-1", startSeq: 600, endSeq: 674 },
-      payload: {
-        ...baseTimelineInput.payload,
-        direction: "after",
-        startCursor: { seq: 675 },
-        endCursor: { seq: 690 },
-        hasNewer: false,
-        entries: [
-          {
-            ...makeTimelineEntry(675, "Hello", "assistant_message", 690),
-            item: { type: "assistant_message", text: "Hello", messageId: "msg-a" },
-          },
-        ],
-      },
-    });
-    expect(getAssistantTexts([...result.tail, ...result.head])).toEqual(["Hello world"]);
-  });
-
-  it("prefixes only the first block of a split live suffix", () => {
-    const live = processAgentStreamEvents({
-      events: [
-        makeStreamReducerEvent(makeAssistantTimelineEvent(" world.\n\n", "msg-a"), 700),
-        makeStreamReducerEvent(makeAssistantTimelineEvent("Second paragraph", "msg-a"), 701),
-      ],
-      currentTail: [],
-      currentHead: [],
-      currentCursor: undefined,
-      hasAuthoritativeBaseline: false,
-    });
-    expect(getAssistantTexts(live.head)).toEqual([" world.", "Second paragraph"]);
-
-    const result = processTimelineResponse({
-      ...baseTimelineInput,
-      currentHead: live.head,
-      currentCursor: { epoch: "epoch-1", startSeq: 600, endSeq: 674 },
-      payload: {
-        ...baseTimelineInput.payload,
-        direction: "after",
-        startCursor: { seq: 675 },
-        endCursor: { seq: 690 },
-        hasNewer: false,
-        entries: [
-          {
-            ...makeTimelineEntry(675, "Hello", "assistant_message", 690),
-            item: { type: "assistant_message", text: "Hello", messageId: "msg-a" },
-          },
-        ],
-      },
-    });
-
-    const rows = [...result.tail, ...result.head].filter(
-      (item) => item.kind === "assistant_message",
-    );
-    expect(rows.map((item) => item.text)).toEqual(["Hello world.", "Second paragraph"]);
-    expect(rows.map((item) => item.id)).toEqual(live.head.map((item) => item.id));
-    expect(rows.every((item) => item.messageId === "msg-a")).toBe(true);
-  });
-
-  it.each([true, false])("keeps newer text beyond a lagging page (positioned=%s)", (positioned) => {
-    const live = processAgentStreamEvents({
-      events: [
-        makeStreamReducerEvent(makeAssistantTimelineEvent("Hello", "msg-a"), 690),
-        makeStreamReducerEvent(makeAssistantTimelineEvent(" world", "msg-a"), 700),
-      ].map((event) =>
-        positioned ? event : Object.assign(event, { seq: undefined, epoch: undefined }),
-      ),
-      currentTail: [],
-      currentHead: [],
-      currentCursor: undefined,
-      hasAuthoritativeBaseline: false,
-    });
-
-    const result = processTimelineResponse({
-      ...baseTimelineInput,
-      currentHead: live.head,
-      currentCursor: { epoch: "epoch-1", startSeq: 600, endSeq: 674 },
-      payload: {
-        ...baseTimelineInput.payload,
-        direction: "after",
-        epoch: "epoch-1",
-        startCursor: { seq: 675 },
-        endCursor: { seq: 690 },
-        hasNewer: true,
-        entries: [
-          {
-            ...makeTimelineEntry(690, "Hello"),
-            item: { type: "assistant_message", text: "Hello", messageId: "msg-a" },
-          },
-        ],
-      },
-    });
-
-    const assistants = [...result.tail, ...result.head].filter(
-      (item) => item.kind === "assistant_message",
-    );
-    expect(assistants).toHaveLength(1);
-    expect(assistants[0]).toMatchObject({
-      messageId: "msg-a",
-      text: "Hello world",
-    });
-    expect(assistants[0]?.timelineCursor).toEqual(
-      positioned ? { epoch: "epoch-1", seq: 700 } : undefined,
-    );
-  });
-
-  it.each([true, false])(
-    "keeps distinct identities with identical text (positioned=%s)",
-    (positioned) => {
-      const live = processAgentStreamEvents({
-        events: [makeStreamReducerEvent(makeAssistantTimelineEvent("Done.", "msg-a"), 680)].map(
-          (event) =>
-            positioned ? event : Object.assign(event, { seq: undefined, epoch: undefined }),
-        ),
-        currentTail: [],
-        currentHead: [],
-        currentCursor: undefined,
-        hasAuthoritativeBaseline: false,
-      });
-
-      const result = processTimelineResponse({
-        ...baseTimelineInput,
-        currentHead: live.head,
-        currentCursor: { epoch: "epoch-1", startSeq: 600, endSeq: 674 },
-        payload: {
-          ...baseTimelineInput.payload,
-          direction: "after",
-          epoch: "epoch-1",
-          startCursor: { seq: 675 },
-          endCursor: { seq: 681 },
-          entries: [
-            {
-              ...makeTimelineEntry(681, "Done."),
-              item: { type: "assistant_message", text: "Done.", messageId: "msg-b" },
-            },
-          ],
-        },
-      });
-
-      expect(
-        [...result.tail, ...result.head]
-          .filter((item) => item.kind === "assistant_message")
-          .map((item) => item.messageId),
-      ).toEqual(["msg-a", "msg-b"]);
-    },
-  );
-  it("does not guess which identical unpositioned segment a partial page covers", () => {
-    const live = processAgentStreamEvents({
-      events: [
-        makeStreamReducerEvent(makeAssistantTimelineEvent("Repeat", "msg-a"), 675),
-        makeStreamReducerEvent(makeToolCallTimelineEvent("exec-1"), 676),
-        makeStreamReducerEvent(makeAssistantTimelineEvent("Repeat", "msg-a"), 677),
-      ].map((event) => Object.assign(event, { seq: undefined, epoch: undefined })),
-      currentTail: [],
-      currentHead: [],
-      currentCursor: undefined,
-      hasAuthoritativeBaseline: false,
-    });
-    const result = processTimelineResponse({
-      ...baseTimelineInput,
-      currentTail: live.tail,
-      currentHead: live.head,
-      currentCursor: { epoch: "epoch-1", startSeq: 600, endSeq: 674 },
-      payload: {
-        ...baseTimelineInput.payload,
-        direction: "after",
-        startCursor: { seq: 675 },
-        endCursor: { seq: 675 },
-        entries: [
-          {
-            ...makeTimelineEntry(675, "Repeat"),
-            item: { type: "assistant_message", text: "Repeat", messageId: "msg-a" },
-          },
-        ],
-      },
-    });
-    const rows = [...result.tail, ...result.head];
-    expect(rows.filter((row) => !row.timelineCursor)).toEqual([...live.tail, ...live.head]);
-    expect(rows.filter((row) => row.timelineCursor).map((row) => rowStartSeq(row))).toEqual([675]);
   });
 });

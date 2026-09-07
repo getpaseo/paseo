@@ -1,4 +1,3 @@
-import { createTimelineReplica } from "@/timeline/replica";
 import { afterEach, expect, test } from "vitest";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { useSessionStore } from "@/stores/session-store";
@@ -41,17 +40,10 @@ afterEach(() => {
 test("tracks submissions when canonical prompts are supported", () => {
   initializeSession(CANONICAL_ONLY_SERVER_ID, { canonicalSubmittedPrompts: true });
 
-  createMessageSubmissionWriter(
-    CANONICAL_ONLY_SERVER_ID,
-    createTimelineReplica({
-      serverId: CANONICAL_ONLY_SERVER_ID,
-      storage: {
-        removeTimeline: () => undefined,
-        readTimeline: async () => undefined,
-        commitTimeline: () => undefined,
-      },
-    }),
-  ).begin("agent-1", submittedMessage("canonical-only-message"));
+  createMessageSubmissionWriter(CANONICAL_ONLY_SERVER_ID).begin(
+    "agent-1",
+    submittedMessage("canonical-only-message"),
+  );
 
   expect(submissionIds(CANONICAL_ONLY_SERVER_ID)).toEqual(["canonical-only-message"]);
 });

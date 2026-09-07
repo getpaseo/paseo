@@ -94,18 +94,14 @@ interface PopoverFrameRecorderWindow extends Window {
   __stopComposerAutocompleteFrameRecorder?: () => void;
 }
 
-async function expectAutocompleteCoveredAtPoint(page: Page, x: number, y: number): Promise<void> {
-  await expect
-    .poll(() =>
-      page.evaluate(
-        ([pointX, pointY]) => {
-          const element = document.elementFromPoint(pointX, pointY);
-          return element?.closest("[data-testid]")?.getAttribute("data-testid") ?? null;
-        },
-        [x, y],
-      ),
-    )
-    .not.toBe("composer-autocomplete-popover");
+async function getTopTestIdAtPoint(page: Page, x: number, y: number) {
+  return page.evaluate(
+    ([pointX, pointY]) => {
+      const element = document.elementFromPoint(pointX, pointY);
+      return element?.closest("[data-testid]")?.getAttribute("data-testid") ?? null;
+    },
+    [x, y],
+  );
 }
 
 async function installListCommandsStub(page: Page): Promise<void> {
@@ -680,11 +676,13 @@ test.describe("Composer autocomplete", () => {
         const popoverBox = await popover.boundingBox();
         expect(popoverBox).not.toBeNull();
 
-        await expectAutocompleteCoveredAtPoint(
+        const topTestId = await getTopTestIdAtPoint(
           page,
           popoverBox!.x + popoverBox!.width / 2,
           popoverBox!.y + popoverBox!.height / 2,
         );
+
+        expect(topTestId).not.toBe("composer-autocomplete-popover");
       } finally {
         await agent.cleanup();
       }

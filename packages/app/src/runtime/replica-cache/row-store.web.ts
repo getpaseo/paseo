@@ -136,6 +136,38 @@ export function createIndexedDbReplicaRowStore(
     return Array.from(hosts, ([serverId, hostRows]) => ({ serverId, rows: hostRows }));
   }
 
+  async function read(
+    serverId: string,
+    kinds: readonly ReplicaRow["kind"][],
+    ids?: readonly string[],
+  ): Promise<ReplicaRow[]> {
+    if (kinds.length === 0 || ids?.length === 0) return [];
+    const transaction = getDatabase().transaction(ROWS_STORE, "readonly");
+    const completion = transactionComplete(transaction);
+    const store = transaction.objectStore(ROWS_STORE);
+    const requests = ids
+      ? kinds.flatMap((kind) =>
+          ids.map(async (id) => {
+            const row = await requestResult<ReplicaRow | undefined>(
+              store.get([serverId, kind, id]),
+            );
+            return row ? [row] : [];
+          }),
+        )
+      : kinds.map((kind) =>
+          requestResult<ReplicaRow[]>(
+            store.getAll(IDBKeyRange.bound([serverId, kind], [serverId, kind, []])),
+          ),
+        );
+    const rows = (await Promise.all(requests)).flat();
+    await completion;
+    return rows.sort((left, right) =>
+      left.kind === right.kind
+        ? left.id.localeCompare(right.id)
+        : left.kind.localeCompare(right.kind),
+    );
+  }
+
   async function apply(changes: ReplicaRowChanges): Promise<void> {
     await runTransaction(getDatabase(), ROWS_STORE, async (transaction) => {
       const rows = transaction.objectStore(ROWS_STORE);
@@ -146,39 +178,6 @@ export function createIndexedDbReplicaRowStore(
         await requestResult(rows.put(row));
       }
     });
-  }
-
-  async function read(
-    serverIds: readonly string[],
-    kinds: readonly ReplicaRow["kind"][],
-    ids?: readonly string[],
-  ): Promise<ReplicaRow[]> {
-    const transaction = getDatabase().transaction(ROWS_STORE, "readonly");
-    const completion = transactionComplete(transaction);
-    const store = transaction.objectStore(ROWS_STORE);
-    const requests: Promise<ReplicaRow[]>[] = [];
-    for (const serverId of serverIds) {
-      for (const kind of kinds) {
-        if (ids) {
-          for (const id of ids) {
-            requests.push(
-              requestResult<ReplicaRow | undefined>(store.get([serverId, kind, id])).then((row) =>
-                row ? [row] : [],
-              ),
-            );
-          }
-        } else {
-          requests.push(
-            requestResult<ReplicaRow[]>(
-              store.getAll(IDBKeyRange.bound([serverId, kind], [serverId, kind, []])),
-            ),
-          );
-        }
-      }
-    }
-    const rows = (await Promise.all(requests)).flat();
-    await completion;
-    return rows;
   }
 
   async function deleteHost(serverId: string): Promise<void> {

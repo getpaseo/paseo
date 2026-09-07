@@ -494,19 +494,18 @@ export async function holdAgentOlderTimelinePages(
   };
 }
 
-export async function delayAgentBootstrapTimelineResponse(
+export async function delayAgentBootstrapTailResponse(
   page: Page,
   agentId: string,
 ): Promise<BootstrapTimelineGate> {
-  let bootstrapReleased = false;
-  let bootstrapResponseSeen = false;
+  let tailReleased = false;
   let catchUpReleased = false;
-  const delayedBootstrapForwards: Array<() => void> = [];
+  const delayedTailForwards: Array<() => void> = [];
   const delayedCatchUpForwards: Array<() => void> = [];
-  let resolveDelayedBootstrap: (() => void) | null = null;
+  let resolveDelayedTail: (() => void) | null = null;
   let resolveDelayedCatchUp: (() => void) | null = null;
-  const delayedBootstrap = new Promise<void>((resolve) => {
-    resolveDelayedBootstrap = resolve;
+  const delayedTail = new Promise<void>((resolve) => {
+    resolveDelayedTail = resolve;
   });
   const delayedCatchUp = new Promise<void>((resolve) => {
     resolveDelayedCatchUp = resolve;
@@ -520,16 +519,10 @@ export async function delayAgentBootstrapTimelineResponse(
       const payload = sessionMessage ? getPayload(sessionMessage) : null;
       const isTimelineResponse =
         sessionMessage?.type === "fetch_agent_timeline_response" && payload?.agentId === agentId;
-      // A certified replica bootstraps with after; an empty/display-only replica uses tail.
-      if (
-        isTimelineResponse &&
-        !bootstrapResponseSeen &&
-        (payload.direction === "tail" || payload.direction === "after")
-      ) {
-        bootstrapResponseSeen = true;
-        resolveDelayedBootstrap?.();
-        if (bootstrapReleased) ws.send(message);
-        else delayedBootstrapForwards.push(() => ws.send(message));
+      if (isTimelineResponse && payload.direction === "tail") {
+        resolveDelayedTail?.();
+        if (tailReleased) ws.send(message);
+        else delayedTailForwards.push(() => ws.send(message));
         return;
       }
       if (isTimelineResponse && payload.direction === "after") {
@@ -544,14 +537,14 @@ export async function delayAgentBootstrapTimelineResponse(
 
   return {
     release() {
-      bootstrapReleased = true;
-      for (const forward of delayedBootstrapForwards.splice(0)) forward();
+      tailReleased = true;
+      for (const forward of delayedTailForwards.splice(0)) forward();
     },
     releaseCatchUp() {
       catchUpReleased = true;
       for (const forward of delayedCatchUpForwards.splice(0)) forward();
     },
-    waitForDelayedResponse: () => delayedBootstrap,
+    waitForDelayedResponse: () => delayedTail,
     waitForDelayedCatchUp: () => delayedCatchUp,
   };
 }

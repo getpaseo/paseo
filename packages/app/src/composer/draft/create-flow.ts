@@ -6,7 +6,7 @@ import {
   splitComposerAttachmentsForSubmit,
 } from "@/composer/attachments/submit";
 import { useCreateFlowStore } from "@/stores/create-flow-store";
-import { getHostRuntimeStore } from "@/runtime/host-runtime";
+import { handoffCreatedAgentMessageSubmission } from "@/composer/submission/writer";
 import { useSessionStore } from "@/stores/session-store";
 import {
   createUserMessage,
@@ -214,18 +214,17 @@ export function useDraftAgentCreateFlow<TDraftAgent, TCreateResult>({
 
         if (createResult.agentId) {
           updatePendingAgentId({ draftId, agentId: createResult.agentId });
-          getHostRuntimeStore()
-            .getTimelineReplica(pendingServerId)
-            .handoffSubmission(
-              createResult.agentId,
-              createUserMessage({
-                clientMessageId: attempt.clientMessageId,
-                text: attempt.text,
-                timestamp: attempt.timestamp,
-                images: attempt.images,
-                attachments: attempt.attachments,
-              }),
-            );
+          handoffCreatedAgentMessageSubmission(
+            pendingServerId,
+            createResult.agentId,
+            createUserMessage({
+              clientMessageId: attempt.clientMessageId,
+              text: attempt.text,
+              timestamp: attempt.timestamp,
+              images: attempt.images,
+              attachments: attempt.attachments,
+            }),
+          );
           markPendingCreateLifecycle({ draftId, lifecycle: "sent" });
         }
 

@@ -2,33 +2,16 @@
  * @vitest-environment jsdom
  */
 import { act, renderHook } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useCreateFlowStore } from "@/stores/create-flow-store";
 import type { UserMessageImageAttachment } from "@/types/stream";
 import type { AgentAttachment } from "@getpaseo/protocol/messages";
 import { useDraftAgentCreateFlow, type DraftCreateAttempt } from "./create-flow";
 
-import { getHostRuntimeStore } from "@/runtime/host-runtime";
-import { defaultHostAppearance } from "@/hosts/appearance";
-
 describe("useDraftAgentCreateFlow", () => {
   beforeEach(() => {
     useCreateFlowStore.setState({ pendingByDraftId: {} });
-    getHostRuntimeStore().syncHosts([
-      {
-        serverId: "server-1",
-        label: "test",
-        appearance: defaultHostAppearance(),
-        lifecycle: {},
-        connections: [],
-        preferredConnectionId: null,
-        createdAt: new Date(0).toISOString(),
-        updatedAt: new Date(0).toISOString(),
-      },
-    ]);
   });
-
-  afterEach(() => getHostRuntimeStore().syncHosts([]));
 
   it("renders a prepared new-workspace submission before continuing it", async () => {
     const image: UserMessageImageAttachment = {

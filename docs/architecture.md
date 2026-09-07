@@ -113,14 +113,21 @@ Cross-platform React Native app that connects to one or more daemons.
 - Timeline sync correctness is documented in [docs/timeline-sync.md](timeline-sync.md): live streams are for immediacy, `fetch_agent_timeline_request` is authoritative, and catch-up is paged but complete.
 - Voice features: dictation (STT) and voice agent (realtime)
 
-Consumers request data from host-lived owners without choosing memory, disk or network. Cached rows
-satisfy the same readiness projection as network rows, including offline. Directory restoration
-merges under live/local changes; network refresh waits for that baseline. Only completed catch-up
-advances the directory checkpoint because a live sequence can follow an offline gap. The owner
-retains surface demand across reconnects; React does not track connection generations. Storage
-commit and scoped-read guarantees belong to [data-model.md](data-model.md#replica-row-store);
-timeline display, resume and lifetime contracts belong to
-[timeline-sync.md](timeline-sync.md#client-replica-lifetime).
+Consumers request directory or timeline data without choosing memory, cache, or network. The owner
+publishes an accepted cache hit and then reconciles it over the existing network path. A miss or an
+invalid row uses that same path. Offline demand still publishes an accepted cache hit and defers
+network reconciliation. Cache loading is demand-driven: opening a chat reads its agent row and
+focused timeline row, plus the workspace and project rows needed by the route; opening a directory
+reads directory rows for that host and establishes its live subscription when connected. Accepted
+cached rows satisfy the same consumer-readiness projection as network rows. Host registry startup and
+host connection do not create directory demand or install replicas. The directory owner retains
+declared surface demand and re-establishes network reconciliation after reconnect; React does not
+track connection generations. Late cache reads cannot replace state already advanced by live or
+authoritative network data. Owners explicitly persist accepted commits; directory rows and their
+checkpoint share one storage transaction. See
+[data-model.md](data-model.md#replica-row-store)
+for the storage shape and [timeline-sync.md](timeline-sync.md#client-replica-lifetime) for timeline
+resume behavior.
 
 The three directory entity types have independent monotonic sequences and share one daemon
 generation. The daemon retains only the latest projection per entity and bounded tombstones, not an

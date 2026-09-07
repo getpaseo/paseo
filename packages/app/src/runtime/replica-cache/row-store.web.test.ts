@@ -24,41 +24,28 @@ runReplicaRowStoreContract("IndexedDB", async () => {
   };
 });
 
-it("reads requested IndexedDB keys without scanning unrelated rows", async () => {
-  const options = {
+it("uses exact IndexedDB keys for targeted rows instead of scanning the host", async () => {
+  const store = createIndexedDbReplicaRowStore({
     databaseName: `replica-row-store-targeted-${databaseSequence++}`,
     schemaVersion: 1,
-  };
-  const writer = createIndexedDbReplicaRowStore(options);
-  await writer.open();
-  await writer.apply({
+  });
+  await store.open();
+  await store.apply({
     upserts: [
-      { serverId: "host-a", kind: "timeline", id: "agent", payload: "a" },
-      { serverId: "host-b", kind: "timeline", id: "agent", payload: "b" },
-      { serverId: "host-a", kind: "timeline", id: "unrelated", payload: "large history" },
-      { serverId: "host-a", kind: "agent", id: "agent", payload: "metadata" },
+      { serverId: "server-a", kind: "agent", id: "agent-1", payload: "agent" },
+      { serverId: "server-a", kind: "workspace", id: "workspace-1", payload: "workspace" },
     ],
     deletes: [],
   });
-  const reader = createIndexedDbReplicaRowStore(options);
-  await reader.open();
   const get = vi.spyOn(FakeIDBObjectStore.prototype, "get");
   const getAll = vi.spyOn(FakeIDBObjectStore.prototype, "getAll");
-  const openCursor = vi.spyOn(FakeIDBObjectStore.prototype, "openCursor");
-  try {
-    expect(await reader.read(["host-a", "host-b"], ["timeline"], ["agent"])).toEqual([
-      { serverId: "host-a", kind: "timeline", id: "agent", payload: "a" },
-      { serverId: "host-b", kind: "timeline", id: "agent", payload: "b" },
-    ]);
-    expect(get.mock.calls).toEqual([
-      [["host-a", "timeline", "agent"]],
-      [["host-b", "timeline", "agent"]],
-    ]);
-    expect(getAll).not.toHaveBeenCalled();
-    expect(openCursor).not.toHaveBeenCalled();
-  } finally {
-    get.mockRestore();
-    getAll.mockRestore();
-    openCursor.mockRestore();
-  }
+
+  expect(await store.read("server-a", ["agent"], ["agent-1"])).toEqual([
+    { serverId: "server-a", kind: "agent", id: "agent-1", payload: "agent" },
+  ]);
+  expect(get).toHaveBeenCalledWith(["server-a", "agent", "agent-1"]);
+  expect(getAll).not.toHaveBeenCalled();
+
+  get.mockRestore();
+  getAll.mockRestore();
 });

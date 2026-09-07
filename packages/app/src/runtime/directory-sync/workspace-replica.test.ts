@@ -213,7 +213,7 @@ it("does not invent a null-key project from a workspace update", () => {
   store.clearSession(serverId);
 });
 
-it("does not restore a cached workspace while its archive is pending", () => {
+it("does not restore a targeted cached workspace while its archive is pending", () => {
   const serverId = "cached-workspace-during-archive";
   const workspaceId = "archived-workspace";
   const store = useSessionStore.getState();
@@ -222,10 +222,7 @@ it("does not restore a cached workspace while its archive is pending", () => {
   markWorkspaceArchivePending({ serverId, workspaceId });
 
   try {
-    replica.commitCached({
-      workspaces: new Map([[workspaceId, normalizeWorkspaceDescriptor(workspace(workspaceId))]]),
-      projects: new Map(),
-    });
+    replica.commitCachedWorkspace(normalizeWorkspaceDescriptor(workspace(workspaceId)), undefined);
 
     expect(useSessionStore.getState().sessions[serverId]?.workspaces.has(workspaceId)).toBe(false);
   } finally {

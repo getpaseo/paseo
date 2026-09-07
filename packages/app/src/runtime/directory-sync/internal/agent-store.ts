@@ -2,11 +2,7 @@ import equal from "fast-deep-equal";
 import type { FetchAgentsEntry } from "@getpaseo/client/internal/daemon-client";
 import { useSessionStore, type Agent } from "@/stores/session-store";
 import { acceptAgentDirectoryUpdate } from "@/utils/agent-directory-update-policy";
-import {
-  buildAgentDirectoryState,
-  type AgentDirectoryDelta,
-  type AgentRemovalReason,
-} from "@/utils/agent-directory-sync";
+import { buildAgentDirectoryState, type AgentDirectoryDelta } from "@/utils/agent-directory-sync";
 import { derivePendingPermissionKey, normalizeAgentSnapshot } from "@/utils/agent-snapshots";
 import { resolveProjectPlacement } from "@/utils/project-placement";
 import { clearArchiveAgentPending } from "@/hooks/use-archive-agent";
@@ -27,10 +23,7 @@ function mergeSnapshotTurn(previous: Agent | undefined, incoming: Agent): Agent 
 }
 
 export class AgentStoreProjection {
-  constructor(
-    private readonly serverId: string,
-    private readonly removeTimeline: (agentId: string, reason: AgentRemovalReason) => void,
-  ) {}
+  constructor(private readonly serverId: string) {}
 
   snapshot(): Map<string, Agent> {
     return useSessionStore.getState().sessions[this.serverId]?.agents ?? new Map();
@@ -72,7 +65,7 @@ export class AgentStoreProjection {
     agent?: Agent;
   } {
     if (delta.kind === "remove") {
-      this.remove(delta.agentId, "scope");
+      this.remove(delta.agentId);
       return { agentId: delta.agentId, stoppedRunning: false };
     }
     const normalized = normalizeAgentSnapshot(delta.agent, this.serverId);
@@ -148,7 +141,7 @@ export class AgentStoreProjection {
     useSessionStore.getState().setPendingPermissions(this.serverId, pending);
   }
 
-  remove(agentId: string, reason: AgentRemovalReason): void {
+  remove(agentId: string): void {
     const store = useSessionStore.getState();
     const removeKey = <T>(current: Map<string, T>): Map<string, T> => {
       if (!current.has(agentId)) return current;
@@ -160,13 +153,16 @@ export class AgentStoreProjection {
     store.setAgents(this.serverId, removeKey);
     store.setAgentDetails(this.serverId, removeKey);
     store.setQueuedMessages(this.serverId, removeKey);
-    this.removeTimeline(agentId, reason);
+    store.setAgentTimelineCursor(this.serverId, removeKey);
     store.setInitializingAgents(this.serverId, removeKey);
     store.setPendingPermissions(this.serverId, (current) => {
       const next = new Map(current);
       for (const [key, pending] of next) if (pending.agentId === agentId) next.delete(key);
       return next.size === current.size ? current : next;
     });
+    store.setAgentAuthoritativeHistoryApplied(this.serverId, agentId, false);
+    store.setAgentStreamTail(this.serverId, removeKey);
+    store.clearAgentStreamHead(this.serverId, agentId);
     useSessionStore.setState((state) => {
       if (!state.agentLastActivity.has(agentId)) return state;
       const agentLastActivity = new Map(state.agentLastActivity);

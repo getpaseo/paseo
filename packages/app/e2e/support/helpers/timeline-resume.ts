@@ -48,14 +48,6 @@ export function expectOneResumeCheckWithoutTail(
   expect(gate.getTimelineRequestCount("tail") - before.tail).toBe(0);
 }
 
-export function expectEmptyBaselineBootstrapsWithOneTail(
-  gate: DaemonWebSocketGate,
-  before: TimelineRequestCounts,
-): void {
-  expect(gate.getTimelineRequestCount("after") - before.after).toBe(0);
-  expect(gate.getTimelineRequestCount("tail") - before.tail).toBe(1);
-}
-
 export function expectResumeOverflowFallsBackToOneTail(
   gate: DaemonWebSocketGate,
   before: TimelineRequestCounts,

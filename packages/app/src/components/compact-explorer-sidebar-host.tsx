@@ -21,7 +21,6 @@ import {
   resolveCompactExplorerSidebarHostModel,
   type CompactExplorerSidebarHostModel,
 } from "@/components/compact-explorer-sidebar-host-state";
-import { AppearanceStyleBoundary } from "@/components/appearance-style-boundary";
 
 interface CompactExplorerOpenGestureSurfaceProps {
   children: ReactNode;
@@ -178,16 +177,11 @@ export function CompactExplorerSidebarHost({
       </DiffDocumentWorkspaceCacheProvider>
     ) : null;
 
-  let themedExplorer = explorer;
-  if (isWeb) {
-    themedExplorer = <AppearanceStyleBoundary>{explorer}</AppearanceStyleBoundary>;
-  }
-
   if (presentation === "dock") {
     return (
       <View style={styles.row} onLayout={handleContainerLayout}>
         <View style={styles.fill}>{children}</View>
-        {themedExplorer}
+        {explorer}
       </View>
     );
   }
@@ -200,7 +194,7 @@ export function CompactExplorerSidebarHost({
       >
         {children}
       </CompactExplorerOpenGestureSurface>
-      {themedExplorer}
+      {explorer}
     </>
   );
 }

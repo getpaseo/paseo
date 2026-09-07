@@ -25,58 +25,41 @@ class MemoryStorage implements ReplicaRowStore {
   readonly rows = new Map<string, ReplicaRow>();
   readonly changes: ReplicaRowChanges[] = [];
   readonly reads: Array<{
-    serverIds: readonly string[];
+    serverId: string;
     kinds: readonly ReplicaRow["kind"][];
     ids?: readonly string[];
   }> = [];
   writes = 0;
-  readAlls = 0;
   cleanups = 0;
   nextWriteFailure: Error | null = null;
-  nextOpenFailure: Error | null = null;
-  nextReadAllFailure: Error | null = null;
-  nextDeleteFailure: Error | null = null;
   readGate: Promise<void> | null = null;
-  readAllGate: Promise<void> | null = null;
-  writeGate: Promise<void> | null = null;
-  renameGate: Promise<void> | null = null;
+  onRead: (() => void) | null = null;
 
   private key(row: Pick<ReplicaRow, "serverId" | "kind" | "id">): string {
     return `${row.serverId}:${row.kind}:${row.id}`;
   }
 
-  async open(): Promise<void> {
-    if (this.nextOpenFailure) {
-      const error = this.nextOpenFailure;
-      this.nextOpenFailure = null;
-      throw error;
-    }
-  }
+  async open(): Promise<void> {}
 
   async read(
-    serverIds: readonly string[],
+    serverId: string,
     kinds: readonly ReplicaRow["kind"][],
     ids?: readonly string[],
   ): Promise<ReplicaRow[]> {
-    this.reads.push({ serverIds, kinds, ids });
-    const rows = [...this.rows.values()];
+    this.reads.push({ serverId, kinds, ...(ids ? { ids } : {}) });
+    this.onRead?.();
     await this.readGate;
-    return rows.filter(
+    const acceptedKinds = new Set(kinds);
+    const acceptedIds = ids ? new Set(ids) : null;
+    return [...this.rows.values()].filter(
       (row) =>
-        serverIds.includes(row.serverId) &&
-        kinds.includes(row.kind) &&
-        (!ids || ids.includes(row.id)),
+        row.serverId === serverId &&
+        acceptedKinds.has(row.kind) &&
+        (!acceptedIds || acceptedIds.has(row.id)),
     );
   }
 
   async readAll(): Promise<ReplicaHostRows[]> {
-    this.readAlls += 1;
-    await this.readAllGate;
-    if (this.nextReadAllFailure) {
-      const error = this.nextReadAllFailure;
-      this.nextReadAllFailure = null;
-      throw error;
-    }
     const hosts = new Map<string, ReplicaRow[]>();
     for (const row of this.rows.values()) {
       const rows = hosts.get(row.serverId) ?? [];
@@ -88,7 +71,6 @@ class MemoryStorage implements ReplicaRowStore {
 
   async apply(changes: ReplicaRowChanges): Promise<void> {
     this.writes += 1;
-    await this.writeGate;
     if (this.nextWriteFailure) {
       const error = this.nextWriteFailure;
       this.nextWriteFailure = null;
@@ -100,16 +82,10 @@ class MemoryStorage implements ReplicaRowStore {
   }
 
   async deleteHost(serverId: string): Promise<void> {
-    if (this.nextDeleteFailure) {
-      const error = this.nextDeleteFailure;
-      this.nextDeleteFailure = null;
-      throw error;
-    }
     for (const [key, row] of this.rows) if (row.serverId === serverId) this.rows.delete(key);
   }
 
   async renameHost(oldServerId: string, newServerId: string): Promise<void> {
-    await this.renameGate;
     for (const [key, row] of this.rows) {
       if (row.serverId !== oldServerId) continue;
       this.rows.delete(key);
@@ -194,7 +170,6 @@ function timelineItem(text = "Cached"): StreamItem {
     text,
     timestamp: new Date("2026-07-18T08:02:00.000Z"),
     timelineCursor: { epoch: "epoch-1", seq: 12 },
-    source: { startSeq: 12, chunks: [{ seq: 12, offset: 0 }] },
   };
 }
 
@@ -266,359 +241,6 @@ function deleteDirectory(cache: ReplicaCache, serverId: string): void {
 }
 
 describe("ReplicaCache", () => {
-  it("paints requested rows while the unrelated global index is unavailable", async () => {
-    const storage = new MemoryStorage();
-    const writer = createCache(storage);
-    commitDirectory(writer, SERVER_ID, directory());
-    writer.commitTimeline(SERVER_ID, "agent-1", timeline("Requested"));
-    await writer.flush();
-    const release = deferred();
-    storage.readAllGate = release.promise;
-    storage.reads.length = 0;
-    const reader = createCache(storage);
-    reader.setHosts([SERVER_ID, "unrelated"]);
-    reader.commitTimeline("unrelated", "other", { ...timeline("Pending"), agentId: "other" });
-    const writing = reader.flush();
-    let painted = false;
-    const reading = Promise.all([
-      reader.readTimeline(SERVER_ID, "agent-1"),
-      reader.readDirectory(SERVER_ID),
-    ]).then(([saved, restoredDirectory]) => {
-      expect(saved?.items).toEqual([timelineItem("Requested")]);
-      expect(restoredDirectory.agents.has("agent-1")).toBe(true);
-      painted = true;
-      return undefined;
-    });
-    try {
-      await expect.poll(() => painted, { timeout: 200 }).toBe(true);
-      expect(storage.reads).toEqual([
-        { serverIds: [SERVER_ID], kinds: ["timeline"], ids: ["agent-1"] },
-        {
-          serverIds: [SERVER_ID],
-          kinds: ["agent", "workspace", "project", "checkpoint"],
-          ids: undefined,
-        },
-      ]);
-    } finally {
-      release.resolve();
-      await Promise.all([writing, reading]);
-    }
-  });
-
-  it("overlays a commit that settles after a scoped read captures old disk rows", async () => {
-    const storage = new MemoryStorage();
-    const writer = createCache(storage);
-    writer.commitTimeline(SERVER_ID, "agent-1", timeline("Old"));
-    await writer.flush();
-    const reader = createCache(storage);
-    const release = deferred();
-    storage.readGate = release.promise;
-    const reading = reader.readTimeline(SERVER_ID, "agent-1");
-    await expect.poll(() => storage.reads.length).toBe(1);
-    reader.commitTimeline(SERVER_ID, "agent-1", timeline("New"));
-    await reader.flush();
-    release.resolve();
-    expect((await reading)?.items).toEqual([timelineItem("New")]);
-  });
-
-  it("invalidates an old scoped read across removal and immediate re-registration", async () => {
-    const storage = new MemoryStorage();
-    const writer = createCache(storage);
-    writer.commitTimeline(SERVER_ID, "agent-1", timeline("Old lifetime"));
-    await writer.flush();
-    const reader = createCache(storage);
-    const release = deferred();
-    storage.readGate = release.promise;
-    const reading = reader.readTimeline(SERVER_ID, "agent-1");
-    await expect.poll(() => storage.reads.length).toBe(1);
-    reader.setHosts([]);
-    reader.setHosts([SERVER_ID]);
-    release.resolve();
-    expect(await reading).toBeUndefined();
-    expect(await reader.readTimeline(SERVER_ID, "agent-1")).toBeUndefined();
-    await reader.flush();
-  });
-
-  it.each([false, true])(
-    "uses the same certification for accepted and persisted rows (provenance=%s)",
-    async (provenance) => {
-      const storage = new MemoryStorage();
-      const cache = createCache(storage);
-      const items = ["block-1", "block-2"].map((id) => {
-        const item = timelineItem("Repeated markdown");
-        item.id = id;
-        if (item.kind === "assistant_message") item.messageId = "same-message";
-        item.source = provenance ? { startSeq: 12, chunks: [{ seq: 12, offset: 0 }] } : undefined;
-        return item;
-      });
-      const value = { ...timeline(), items };
-      cache.commitTimeline(SERVER_ID, "agent-1", value);
-      const accepted = await cache.readTimeline(SERVER_ID, "agent-1");
-      expect(accepted?.range).toEqual(provenance ? value.range : null);
-      expect(accepted?.items).toEqual(items);
-      await cache.flush();
-      const persisted = await createCache(storage).readTimeline(SERVER_ID, "agent-1");
-      expect(persisted).toEqual(accepted);
-    },
-  );
-
-  it("serializes only the coalesced certified page, including reads of accepted commits", async () => {
-    const storage = new MemoryStorage();
-    const cache = createCache(storage);
-    let encodings = 0;
-    class MeasuredDate extends Date {
-      override toISOString(): string {
-        encodings += 1;
-        return super.toISOString();
-      }
-    }
-    for (let seq = 1; seq <= 10; seq++) {
-      const item = {
-        ...timelineItem(`row ${seq}`),
-        timestamp: new MeasuredDate("2026-07-18T08:02:00.000Z"),
-        timelineCursor: { epoch: "epoch", seq },
-        source: { startSeq: seq, chunks: [{ seq, offset: 0 }] },
-      };
-      cache.commitTimeline(
-        SERVER_ID,
-        "agent-1",
-        {
-          agentId: "agent-1",
-          items: [item],
-          range: { epoch: "epoch", startSeq: seq, endSeq: seq },
-          hasOlder: true,
-        },
-        true,
-      );
-      expect((await cache.readTimeline(SERVER_ID, "agent-1"))?.items).toEqual([item]);
-    }
-    expect(encodings).toBe(0);
-    await cache.flush();
-    expect(encodings).toBe(1);
-    expect((await createCache(storage).readTimeline(SERVER_ID, "agent-1"))?.range?.endSeq).toBe(10);
-  });
-
-  it("does not resurrect a removed host when its in-flight write completes", async () => {
-    const storage = new MemoryStorage();
-    const cache = createCache(storage);
-    const release = deferred();
-    storage.writeGate = release.promise;
-    cache.commitTimeline(SERVER_ID, "agent-1", timeline("Removed history"));
-    const writing = cache.flush();
-    await expect.poll(() => storage.writes).toBe(1);
-    cache.setHosts([]);
-    release.resolve();
-    await writing;
-    cache.setHosts([SERVER_ID]);
-    await cache.flush();
-    expect(await cache.readTimeline(SERVER_ID, "agent-1")).toBeUndefined();
-    expect(storage.rows.size).toBe(0);
-  });
-
-  it("keeps rows written under a host renamed during their write", async () => {
-    const storage = new MemoryStorage();
-    const cache = createCache(storage);
-    const release = deferred();
-    storage.writeGate = release.promise;
-    cache.commitTimeline(SERVER_ID, "agent-1", timeline("Renamed while writing"));
-    const writing = cache.flush();
-    await expect.poll(() => storage.writes).toBe(1);
-    cache.reconcileServerId(SERVER_ID, "resolved-host");
-    release.resolve();
-    await writing;
-    await cache.flush();
-
-    expect((await cache.readTimeline("resolved-host", "agent-1"))?.items).toEqual([
-      timelineItem("Renamed while writing"),
-    ]);
-    expect(await cache.readTimeline(SERVER_ID, "agent-1")).toBeUndefined();
-    expect([...storage.rows.keys()]).toEqual(["resolved-host:timeline:agent-1"]);
-  });
-
-  it("writes a row replaced during its own write again", async () => {
-    const storage = new MemoryStorage();
-    const cache = createCache(storage);
-    const release = deferred();
-    storage.writeGate = release.promise;
-    cache.commitTimeline(SERVER_ID, "agent-1", timeline("First"));
-    const writing = cache.flush();
-    await expect.poll(() => storage.writes).toBe(1);
-    cache.commitTimeline(SERVER_ID, "agent-1", timeline("Second"));
-    release.resolve();
-    await writing;
-    await cache.flush();
-
-    expect(storage.writes).toBe(2);
-    expect((await createCache(storage).readTimeline(SERVER_ID, "agent-1"))?.items).toEqual([
-      timelineItem("Second"),
-    ]);
-  });
-
-  it("restores a timeline while another host's disk write is blocked", async () => {
-    const storage = new MemoryStorage();
-    const cache = createCache(storage);
-    cache.setHosts([SERVER_ID, "other-host"]);
-    cache.commitTimeline(SERVER_ID, "agent-1", timeline("Saved before restart"));
-    await cache.flush();
-    const release = deferred();
-    storage.writeGate = release.promise;
-    commitDirectory(cache, "other-host", directory());
-    const writing = cache.flush();
-    await expect.poll(() => storage.writes).toBe(2);
-    let restored: Awaited<ReturnType<ReplicaCache["readTimeline"]>>;
-    const reading = cache.readTimeline(SERVER_ID, "agent-1").then((value) => {
-      restored = value;
-      return value;
-    });
-    try {
-      await expect
-        .poll(() => restored?.items, { timeout: 200 })
-        .toEqual([timelineItem("Saved before restart")]);
-    } finally {
-      release.resolve();
-      await Promise.all([writing, reading]);
-    }
-  });
-
-  it("reads rows under a resolved host identity before the disk rename finishes", async () => {
-    const storage = new MemoryStorage();
-    const writer = createCache(storage);
-    writer.commitTimeline(SERVER_ID, "agent-1", timeline("Saved under temporary host ID"));
-    await writer.flush();
-    const reader = createCache(storage);
-    const release = deferred();
-    storage.renameGate = release.promise;
-    reader.reconcileServerId(SERVER_ID, "resolved-host");
-    expect((await reader.readTimeline("resolved-host", "agent-1"))?.items).toEqual([
-      timelineItem("Saved under temporary host ID"),
-    ]);
-    release.resolve();
-    await reader.flush();
-    expect(storage.rows.has("resolved-host:timeline:agent-1")).toBe(true);
-  });
-
-  it("keeps rename collision precedence and accepted baselines during lazy reads", async () => {
-    const storage = new MemoryStorage();
-    const writer = createCache(storage);
-    writer.setHosts([SERVER_ID, "resolved-host"]);
-    writer.commitTimeline(SERVER_ID, "agent-1", timeline("Moved"));
-    writer.commitTimeline("resolved-host", "agent-1", timeline("Superseded target"));
-    commitDirectory(writer, SERVER_ID, directory());
-    await writer.flush();
-    const reader = createCache(storage);
-    reader.setHosts([SERVER_ID, "resolved-host"]);
-    const release = deferred();
-    storage.renameGate = release.promise;
-    reader.replaceDirectoryBaseline(SERVER_ID, {
-      ...directory(),
-      workspaces: new Map(),
-      projects: new Map(),
-    });
-    reader.reconcileServerId(SERVER_ID, "resolved-host");
-    try {
-      expect((await reader.readTimeline("resolved-host", "agent-1"))?.items).toEqual([
-        timelineItem("Moved"),
-      ]);
-      const accepted = await reader.readDirectory("resolved-host");
-      expect(accepted.agents.get("agent-1")?.serverId).toBe("resolved-host");
-      expect(accepted.workspaces.size).toBe(0);
-    } finally {
-      release.resolve();
-      await reader.flush();
-    }
-    const reopened = new ReplicaCache(storage, noLegacyCleanup);
-    reopened.setHosts(["resolved-host"]);
-    expect((await reopened.readDirectory("resolved-host")).workspaces.size).toBe(0);
-    expect((await reopened.readTimeline("resolved-host", "agent-1"))?.items).toEqual([
-      timelineItem("Moved"),
-    ]);
-  });
-
-  it("returns a committed timeline before it is written", async () => {
-    const storage = new MemoryStorage();
-    const cache = createCache(storage);
-    cache.commitTimeline(SERVER_ID, "agent-1", timeline("Accepted"));
-
-    expect((await cache.readTimeline(SERVER_ID, "agent-1"))?.items).toEqual([
-      timelineItem("Accepted"),
-    ]);
-    expect(storage.writes).toBe(0);
-  });
-
-  it("round-trips a row's source start and chunk provenance", async () => {
-    const storage = new MemoryStorage();
-    const cache = createCache(storage);
-    cache.commitTimeline(SERVER_ID, "agent-1", {
-      ...timeline(),
-      items: [
-        {
-          ...timelineItem("Streamed"),
-          source: {
-            startSeq: 10,
-            chunks: [
-              { seq: 10, offset: 0 },
-              { seq: 12, offset: 4 },
-            ],
-          },
-        },
-      ],
-    });
-    await cache.flush();
-
-    const restored = await createCache(storage).readTimeline(SERVER_ID, "agent-1");
-    expect(restored?.items[0]).toMatchObject({ source: { startSeq: 10 } });
-    expect(restored?.items[0]?.source?.chunks).toEqual([
-      { seq: 10, offset: 0 },
-      { seq: 12, offset: 4 },
-    ]);
-  });
-
-  it("persists the owner's forty-entry restart page from a long synced history", async () => {
-    const storage = new MemoryStorage();
-    const cache = createCache(storage);
-    const items = Array.from({ length: 40 }, (_, index) => ({
-      ...timelineItem(`Message ${index}`),
-      id: `message-${index}`,
-      timelineCursor: { epoch: "epoch-1", seq: index + 201 },
-      source: { startSeq: index + 201, chunks: [{ seq: index + 201, offset: 0 }] },
-    }));
-    cache.commitTimeline(SERVER_ID, "agent-1", {
-      agentId: "agent-1",
-      items,
-      range: { epoch: "epoch-1", startSeq: 201, endSeq: 240 },
-      hasOlder: true,
-    });
-    await cache.flush();
-
-    const restored = await createCache(storage).readTimeline(SERVER_ID, "agent-1");
-    expect(restored?.items).toHaveLength(40);
-    expect(restored?.range).toEqual({ epoch: "epoch-1", startSeq: 201, endSeq: 240 });
-    expect(restored?.hasOlder).toBe(true);
-  });
-
-  it("encodes the owner's certified page without a per-timeline byte ceiling", async () => {
-    const storage = new MemoryStorage();
-    const cache = createCache(storage);
-    const items = Array.from({ length: 40 }, (_, index) => ({
-      ...timelineItem("x".repeat(20_000)),
-      id: `message-${index}`,
-      timelineCursor: { epoch: "epoch-1", seq: index + 1 },
-      source: { startSeq: index + 1, chunks: [{ seq: index + 1, offset: 0 }] },
-    }));
-    cache.commitTimeline(SERVER_ID, "agent-1", {
-      agentId: "agent-1",
-      items,
-      range: { epoch: "epoch-1", startSeq: 1, endSeq: 40 },
-      hasOlder: true,
-    });
-    await cache.flush();
-
-    const restored = await createCache(storage).readTimeline(SERVER_ID, "agent-1");
-    expect(restored?.items.map((item) => item.id)).toEqual(items.map((item) => item.id));
-    expect(restored?.range).toEqual({ epoch: "epoch-1", startSeq: 1, endSeq: 40 });
-    expect(restored?.hasOlder).toBe(true);
-  });
-
   it("does nothing until an owner explicitly commits data", async () => {
     const storage = new MemoryStorage();
     const cache = createCache(storage);
@@ -787,10 +409,9 @@ describe("ReplicaCache", () => {
 
     deleteDirectory(cache, SERVER_ID);
 
-    const restored = await cache.readDirectory(SERVER_ID);
-    expect(restored.agents.size).toBe(0);
-    expect(restored.workspaces.size).toBe(0);
-    expect(restored.projects.size).toBe(0);
+    expect(await cache.readAgent(SERVER_ID, "agent-1")).toBeUndefined();
+    expect(await cache.readWorkspace(SERVER_ID, "workspace-1")).toBeUndefined();
+    expect((await cache.readDirectory(SERVER_ID)).projects.size).toBe(0);
   });
 
   it("fails closed when an accepted deletion cannot be persisted before a read", async () => {
@@ -802,23 +423,25 @@ describe("ReplicaCache", () => {
 
     deleteDirectory(cache, SERVER_ID);
 
-    expect((await cache.readDirectory(SERVER_ID)).workspaces.size).toBe(0);
+    expect(await cache.readWorkspace(SERVER_ID, "workspace-1")).toBeUndefined();
   });
 
-  it("applies a deletion accepted while a scoped directory read is still loading", async () => {
+  it("discards a durable read when the host changes while it is in flight", async () => {
     const storage = new MemoryStorage();
-    const writer = createCache(storage);
-    commitDirectory(writer, SERVER_ID, directory());
-    await writer.flush();
-    const release = deferred();
-    storage.readGate = release.promise;
     const cache = createCache(storage);
+    commitDirectory(cache, SERVER_ID, directory());
+    await cache.flush();
+    const started = deferred();
+    const release = deferred();
+    storage.onRead = started.resolve;
+    storage.readGate = release.promise;
 
-    const reading = cache.readDirectory(SERVER_ID);
+    const reading = cache.readAgent(SERVER_ID, "agent-1");
+    await started.promise;
     deleteDirectory(cache, SERVER_ID);
     release.resolve();
 
-    expect((await reading).agents.size).toBe(0);
+    expect(await reading).toBeUndefined();
   });
 
   it("never reads a timeline older than an accepted deferred replacement", async () => {
@@ -890,6 +513,39 @@ describe("ReplicaCache", () => {
     expect(await createCache(storage).readTimeline(SERVER_ID, "agent-1")).toBeUndefined();
   });
 
+  it("reads one requested agent and the focused timeline without scanning directory rows", async () => {
+    const storage = new MemoryStorage();
+    const writer = createCache(storage);
+    commitDirectory(writer, SERVER_ID, directory());
+    writer.commitTimeline(SERVER_ID, "agent-1", timeline());
+    await writer.flush();
+
+    const reader = createCache(storage);
+    expect((await reader.readAgent(SERVER_ID, "agent-1"))?.id).toBe("agent-1");
+    expect((await reader.readTimeline(SERVER_ID, "agent-1"))?.items).toEqual([timelineItem()]);
+    expect(storage.reads).toEqual([
+      { serverId: SERVER_ID, kinds: ["agent"], ids: ["agent-1"] },
+      { serverId: SERVER_ID, kinds: ["timeline"], ids: ["agent-1"] },
+    ]);
+  });
+
+  it("reads one requested workspace and its project without scanning the directory", async () => {
+    const storage = new MemoryStorage();
+    const writer = createCache(storage);
+    commitDirectory(writer, SERVER_ID, directory());
+    await writer.flush();
+
+    const reader = createCache(storage);
+    const restored = await reader.readWorkspace(SERVER_ID, "workspace-1");
+
+    expect(restored?.workspace.id).toBe("workspace-1");
+    expect(restored?.project?.projectId).toBe("project-1");
+    expect(storage.reads).toEqual([
+      { serverId: SERVER_ID, kinds: ["workspace"], ids: ["workspace-1"] },
+      { serverId: SERVER_ID, kinds: ["project"], ids: ["project-1"] },
+    ]);
+  });
+
   it("treats a corrupt row as a scoped miss", async () => {
     const storage = new MemoryStorage();
     storage.rows.set(`${SERVER_ID}:agent:agent-1`, {
@@ -914,7 +570,6 @@ describe("ReplicaCache", () => {
     const cache = createCache(storage);
 
     const restored = await cache.readDirectory(SERVER_ID);
-    await cache.flush();
 
     expect(restored.agents.size).toBe(0);
     expect(restored.projects.get("project-1")?.projectDisplayName).toBe("Paseo");
@@ -946,7 +601,7 @@ describe("ReplicaCache", () => {
     commitDirectory(cache, otherServerId, directory());
     await cache.flush();
 
-    expect((await cache.readDirectory(SERVER_ID)).agents.has("agent-1")).toBe(false);
+    expect(await cache.readAgent(SERVER_ID, "agent-1")).toBeUndefined();
     cache.commitTimeline(otherServerId, "agent-1", timeline("x".repeat(1_000)));
     await cache.flush();
 
@@ -972,9 +627,7 @@ describe("ReplicaCache", () => {
       payload: "{bad",
     });
 
-    const cache = createCache(storage);
-    expect((await cache.readDirectory(SERVER_ID)).agents.has("agent-1")).toBe(false);
-    await cache.flush();
+    expect(await createCache(storage).readAgent(SERVER_ID, "agent-1")).toBeUndefined();
 
     expect(storage.changes.at(-1)).toMatchObject({
       deletes: [{ serverId: SERVER_ID, kind: "agent", id: "agent-1" }],
@@ -1004,9 +657,7 @@ describe("ReplicaCache", () => {
       payload: "{bad",
     });
 
-    const cache = createCache(storage);
-    const restored = await cache.readDirectory(SERVER_ID);
-    await cache.flush();
+    const restored = await createCache(storage).readDirectory(SERVER_ID);
 
     expect(restored.checkpoint).toEqual({
       projects: { generation: "g", afterSeq: 4 },
@@ -1037,66 +688,6 @@ describe("ReplicaCache", () => {
     ]);
   });
 
-  it.each(["nextOpenFailure", "nextReadAllFailure"] as const)(
-    "persists an accepted commit automatically after %s",
-    async (failure) => {
-      const storage = new MemoryStorage();
-      const cache = createCache(storage);
-      storage[failure] = new Error("storage busy");
-      cache.commitTimeline(SERVER_ID, "agent-1", timeline("Retry me"));
-
-      await cache.flush();
-      expect(storage.rows.size).toBe(0);
-      expect(await cache.readTimeline(SERVER_ID, "agent-1")).toEqual(timeline("Retry me"));
-      await expect.poll(() => storage.rows.size, { timeout: 2500 }).toBe(1);
-
-      const reopened = createCache(storage);
-      expect(await reopened.readTimeline(SERVER_ID, "agent-1")).toEqual(timeline("Retry me"));
-    },
-  );
-
-  it("recovers a partial index load with queued host changes and the exact surviving budget", async () => {
-    const storage = new MemoryStorage();
-    const writer = createCache(storage);
-    writer.setHosts([SERVER_ID, "stale", "old", "removed"]);
-    for (const host of [SERVER_ID, "stale", "old", "removed"]) {
-      writer.commitTimeline(host, "agent-1", timeline("Stored"));
-    }
-    await writer.flush();
-    const survivorBytes = [...storage.rows.values()]
-      .filter((row) => row.serverId === SERVER_ID || row.serverId === "old")
-      .reduce((bytes, row) => bytes + Buffer.byteLength(row.payload), 0);
-    const cache = createCache(storage, survivorBytes);
-    cache.setHosts([SERVER_ID, "old", "removed"]);
-    const release = deferred();
-    storage.readAllGate = release.promise;
-    storage.nextDeleteFailure = new Error("stale host cleanup busy");
-    const loadsBefore = storage.readAlls;
-    cache.commitTimeline(SERVER_ID, "agent-1", timeline("Newest"));
-    const writing = cache.flush();
-    try {
-      await expect.poll(() => storage.readAlls).toBe(loadsBefore + 1);
-      cache.reconcileServerId("old", "renamed");
-      cache.setHosts([SERVER_ID, "renamed"]);
-    } finally {
-      release.resolve();
-      await writing;
-    }
-    expect(await cache.readTimeline(SERVER_ID, "agent-1")).toEqual(timeline("Newest"));
-    expect(await cache.readTimeline("renamed", "agent-1")).toEqual(timeline("Stored"));
-    expect(await cache.readTimeline("removed", "agent-1")).toBeUndefined();
-    await expect.poll(() => storage.changes.length, { timeout: 2500 }).toBe(2);
-
-    const reopened = createCache(storage);
-    reopened.setHosts([SERVER_ID, "renamed"]);
-    expect([...storage.rows.values()].map((row) => row.serverId).sort()).toEqual([
-      SERVER_ID,
-      "renamed",
-    ]);
-    expect(await reopened.readTimeline(SERVER_ID, "agent-1")).toEqual(timeline("Newest"));
-    expect(await reopened.readTimeline("renamed", "agent-1")).toEqual(timeline("Stored"));
-  });
-
   it("retries an explicit commit after a storage failure", async () => {
     const storage = new MemoryStorage();
     const cache = createCache(storage);
@@ -1109,6 +700,21 @@ describe("ReplicaCache", () => {
 
     expect((await cache.readTimeline(SERVER_ID, "agent-1"))?.items).toEqual([
       timelineItem("Retry me"),
+    ]);
+  });
+
+  it("retries a timeline read invalidated by a concurrent directory commit", async () => {
+    const storage = new MemoryStorage();
+    const cache = createCache(storage);
+    cache.commitTimeline(SERVER_ID, "agent-1", timeline("Persisted timeline"));
+    await cache.flush();
+    storage.onRead = () => {
+      storage.onRead = null;
+      commitDirectory(cache, SERVER_ID, directory());
+    };
+
+    expect((await cache.readTimeline(SERVER_ID, "agent-1"))?.items).toEqual([
+      timelineItem("Persisted timeline"),
     ]);
   });
 
@@ -1153,7 +759,7 @@ describe("ReplicaCache", () => {
     });
     cache.setHosts([SERVER_ID]);
 
-    await cache.readTimeline(SERVER_ID, "missing");
+    await cache.readAgent(SERVER_ID, "missing");
     commitDirectory(cache, SERVER_ID, directory());
     await cache.flush();
 

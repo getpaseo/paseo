@@ -1,25 +1,16 @@
-import { splitMarkdownBlocks } from "@/utils/split-markdown-blocks";
 import type { AgentTimelineItem } from "@getpaseo/protocol/agent-types";
 import type { AgentStreamEventPayload } from "@getpaseo/protocol/messages";
-import type {
-  AssistantMessageItem,
-  StreamItem,
-  SourcedPosition,
-  ThoughtItem,
-  TodoEntry,
-  UserMessageItem,
-} from "@/types/stream";
+import { selectAgentTimelineState, useSessionStore } from "@/stores/session-store";
+import type { AssistantMessageItem, StreamItem, TodoEntry } from "@/types/stream";
 import type { TurnLivenessTransition } from "@/timeline/turn-liveness";
 import {
   applyStreamEvent,
+  flushHeadToTail,
   hydrateStreamState,
   isAgentToolCallItem,
-  joinTextRows,
   mergeAgentToolCallItem,
-  mergeCanonicalText,
   replaceWithCanonicalStream,
   reduceStreamUpdate,
-  rowStartSeq,
   streamTimelineItemIdentity,
   upsertUserMessageAcrossStream,
 } from "@/types/stream";
@@ -50,14 +41,12 @@ export interface TimelineCursor {
 // ---------------------------------------------------------------------------
 
 export type TimelineReducerSideEffect =
-  // `observedSeq` is the sequence the live stream reached that coverage must still catch up to.
-  | { type: "catch_up"; cursor: { epoch: string; endSeq: number }; observedSeq?: number }
+  | { type: "catch_up"; cursor: { epoch: string; endSeq: number } }
   | { type: "flush_pending_updates" };
 
 export interface AgentStreamReducerSideEffect {
   type: "catch_up";
   cursor: { epoch: string; endSeq: number };
-  observedSeq?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -147,7 +136,6 @@ interface TimelineResponseEntry {
 }
 
 export interface ProcessTimelineResponseInput {
-  replaceTail?: boolean;
   payload: {
     agentId: string;
     direction: TimelineDirection;
@@ -192,12 +180,6 @@ interface TimelineUnit {
   sourceSeqRanges: TimelineSeqRange[];
   event: AgentStreamEventPayload;
   timestamp: Date;
-}
-
-interface HydratedTimelineEvent {
-  event: AgentStreamEventPayload;
-  timestamp: Date;
-  timelineCursor: SourcedPosition;
 }
 
 interface TimelinePathResult {
@@ -324,7 +306,6 @@ function classifySessionTimelineSeq({
 function deriveBootstrapTailTimelinePolicy({
   direction,
   reset,
-  replaceTail,
   epoch,
   endCursor,
   isInitializing,
@@ -332,7 +313,6 @@ function deriveBootstrapTailTimelinePolicy({
 }: {
   direction: TimelineDirection;
   reset: boolean;
-  replaceTail: boolean;
   epoch: string;
   endCursor: { seq: number } | null;
   isInitializing: boolean;
@@ -341,7 +321,7 @@ function deriveBootstrapTailTimelinePolicy({
   replace: boolean;
   catchUpCursor: { epoch: string; endSeq: number } | null;
 } {
-  if (reset || (replaceTail && direction === "tail")) {
+  if (reset) {
     return { replace: true, catchUpCursor: null };
   }
 
@@ -408,7 +388,11 @@ function mergeTimelineWindow(args: {
   currentTail: StreamItem[];
   currentHead: StreamItem[];
   currentCursor: TimelineCursor | undefined;
-  toHydratedEvents: (units: TimelineUnit[]) => HydratedTimelineEvent[];
+  toHydratedEvents: (units: TimelineUnit[]) => Array<{
+    event: AgentStreamEventPayload;
+    timestamp: Date;
+    timelineCursor: { epoch: string; seq: number };
+  }>;
 }): TimelinePathResult {
   const { timelineUnits, payload, currentTail, currentHead, currentCursor, toHydratedEvents } =
     args;
@@ -460,9 +444,9 @@ function mergeTimelineWindow(args: {
   const tail = [...reconciled.tail, ...reconciled.page]
     .map((item, order) => ({ item, order }))
     .sort((left, right) => {
-      const leftStart = rowStartSeq(left.item) ?? Number.POSITIVE_INFINITY;
-      const rightStart = rowStartSeq(right.item) ?? Number.POSITIVE_INFINITY;
-      return leftStart - rightStart || left.order - right.order;
+      const leftSeq = left.item.timelineCursor?.seq ?? Number.POSITIVE_INFINITY;
+      const rightSeq = right.item.timelineCursor?.seq ?? Number.POSITIVE_INFINITY;
+      return leftSeq - rightSeq || left.order - right.order;
     })
     .map(({ item }) => item);
   const cursor = mergeTimelineCoverage(currentCursor, {
@@ -517,58 +501,17 @@ function shouldResolveTimelineInit({
   return responseDirection === initRequestDirection;
 }
 
-export function processTimelineResponseCompletion(
-  input: Pick<
-    ProcessTimelineResponseInput,
-    "payload" | "isInitializing" | "hasActiveInitDeferred" | "initRequestDirection"
-  >,
-): Pick<ProcessTimelineResponseOutput, "initResolution" | "clearInitializing" | "error"> {
-  const { payload, isInitializing, hasActiveInitDeferred, initRequestDirection } = input;
-  if (payload.error)
-    return {
-      initResolution: hasActiveInitDeferred ? "reject" : null,
-      clearInitializing: isInitializing,
-      error: payload.error,
-    };
-  const resolves = shouldResolveTimelineInit({
-    hasActiveInitDeferred,
-    hasNewer: payload.hasNewer,
-    isInitializing,
-    initRequestDirection,
-    responseDirection: payload.direction,
-    reset: payload.reset,
-  });
-  const complete = payload.direction !== "after" || !payload.hasNewer;
-  return {
-    error: null,
-    initResolution: resolves ? "resolve" : null,
-    clearInitializing: (resolves || (isInitializing && !hasActiveInitDeferred)) && complete,
-  };
-}
-
-// A tail whose window ends behind the local cursor is a rewind: the daemon no longer has the rows
-// between its head and that cursor, so the response supersedes everything up to the cursor it
-// rewound behind. Any other page certifies only the positions it carries.
-function resolveCanonicalCoverageEnd(
-  payload: ProcessTimelineResponseInput["payload"],
-  currentCursor: TimelineCursor | undefined,
-): number | null {
-  if (currentCursor?.epoch === payload.epoch && payload.window.maxSeq < currentCursor.endSeq) {
-    return currentCursor.endSeq;
-  }
-  return payload.endCursor?.seq ?? null;
-}
-
 function applyTimelineReplacePath(args: {
   timelineUnits: TimelineUnit[];
   payload: ProcessTimelineResponseInput["payload"];
   bootstrapPolicy: ReturnType<typeof deriveBootstrapTailTimelinePolicy>;
   currentTail: StreamItem[];
   currentHead: StreamItem[];
-  currentCursor: TimelineCursor | undefined;
   sendingClientMessageIds: readonly string[];
   preserveContinuity: boolean;
-  toHydratedEvents: (units: TimelineUnit[]) => HydratedTimelineEvent[];
+  toHydratedEvents: (
+    units: TimelineUnit[],
+  ) => Array<{ event: AgentStreamEventPayload; timestamp: Date }>;
 }): TimelinePathResult {
   const {
     timelineUnits,
@@ -576,7 +519,6 @@ function applyTimelineReplacePath(args: {
     bootstrapPolicy,
     currentTail,
     currentHead,
-    currentCursor,
     sendingClientMessageIds,
     preserveContinuity,
     toHydratedEvents,
@@ -592,7 +534,7 @@ function applyTimelineReplacePath(args: {
     preserveContinuity,
     canonicalCoverage: {
       epoch: payload.epoch,
-      endSeq: resolveCanonicalCoverageEnd(payload, currentCursor),
+      endSeq: payload.endCursor?.seq ?? null,
     },
   });
   const cursor: TimelineCursor | null =
@@ -756,17 +698,14 @@ function mergePrependedCanonicalTail(olderTail: StreamItem[], currentTail: Strea
   const identityMerge = mergeTimelineIdentityBoundary(olderTail, currentTail);
   if (identityMerge) return identityMerge;
 
-  if (
-    olderLast?.kind !== "assistant_message" ||
-    currentFirst?.kind !== "assistant_message" ||
-    (olderLast.messageId !== undefined &&
-      currentFirst.messageId !== undefined &&
-      olderLast.messageId !== currentFirst.messageId)
-  ) {
+  if (olderLast?.kind !== "assistant_message" || currentFirst?.kind !== "assistant_message") {
     return [...olderTail, ...currentTail];
   }
 
-  const mergedAssistant: AssistantMessageItem = joinTextRows(olderLast, currentFirst);
+  const mergedAssistant: AssistantMessageItem = {
+    ...currentFirst,
+    text: `${olderLast.text}${currentFirst.text}`,
+  };
   if (mergedAssistant.messageId === undefined && olderLast.messageId !== undefined) {
     mergedAssistant.messageId = olderLast.messageId;
   }
@@ -818,372 +757,161 @@ function mergeOlderTimelinePage(input: {
   return [...retainedBefore, ...mergePrependedCanonicalTail(input.page, currentAtOrAfterPage)];
 }
 
-// ---------------------------------------------------------------------------
-// Forward pages merge into the ordered timeline
-//
-// Both lanes together are one sequence ordered by source start. A canonical unit first looks for
-// the rows it owns: text units own rows sharing their provider message id or holding a chunk
-// inside their source coverage, tool and plugin units own rows with their timeline identity, user
-// units own the local row they acknowledge, and every other unit owns the row of its kind at its
-// start position. An owned row is replaced or merged where it stands. A unit nobody owns is
-// inserted at its start position, so history missed while the client was away lands before rows
-// the live stream delivered later, and a tool call keeps the position it first appeared at even
-// though its completion carries a newer sequence.
-// ---------------------------------------------------------------------------
-
-interface OrderedLanes {
-  rows: StreamItem[];
-  // rows[0, boundary) is the tail lane; the rest is the live head.
-  boundary: number;
+function replaceLiveAssistantWithProjectedText(params: {
+  head: StreamItem[];
+  event: AgentStreamEventPayload;
+  timestamp: Date;
+  timelineCursor: { epoch: string; seq: number };
+}): StreamItem[] | null {
+  const { head, event, timestamp, timelineCursor } = params;
+  if (event.type !== "timeline" || event.item.type !== "assistant_message") {
+    return null;
+  }
+  const index = head.findLastIndex((item) => item.kind === "assistant_message");
+  const current = head[index];
+  if (!current || current.kind !== "assistant_message") {
+    return null;
+  }
+  if (!event.item.text.startsWith(current.text)) {
+    return null;
+  }
+  const next = [...head];
+  next[index] = {
+    ...current,
+    text: event.item.text,
+    timestamp,
+    timelineCursor,
+  };
+  return next;
 }
 
-function unitPosition(unit: TimelineUnit, epoch: string): SourcedPosition {
-  return { epoch, seq: unit.seqEnd, startSeq: unit.seq };
-}
-
-function insertionIndex(rows: readonly StreamItem[], epoch: string, startSeq: number): number {
-  const index = rows.findIndex((row) => {
-    const start = rowStartSeq(row);
-    return row.timelineCursor?.epoch === epoch && start !== undefined && start > startSeq;
-  });
-  return index < 0 ? rows.length : index;
-}
-
-function spliceLanes(
-  lanes: OrderedLanes,
-  index: number,
-  removeCount: number,
-  inserted: readonly StreamItem[],
-): OrderedLanes {
-  const rows = [...lanes.rows];
-  rows.splice(index, removeCount, ...inserted);
-  const removedFromTail = Math.max(0, Math.min(removeCount, lanes.boundary - index));
-  // Rows land in the tail when they replace tail rows, sit before the head, or when there is no
-  // live head to join.
-  const insertedIntoTail =
-    index < lanes.boundary || removedFromTail > 0 || lanes.boundary === lanes.rows.length
-      ? inserted.length
-      : 0;
-  return { rows, boundary: lanes.boundary - removedFromTail + insertedIntoTail };
-}
-
-function hydrateUnitAfter(
-  prefix: readonly StreamItem[],
-  unit: TimelineUnit,
-  epoch: string,
-  reservedItemIds?: ReadonlySet<string>,
-): StreamItem[] {
-  return reduceStreamUpdate([...prefix], unit.event, unit.timestamp, {
-    source: "canonical",
-    timelineCursor: unitPosition(unit, epoch),
-    reservedItemIds,
-  });
-}
-
-function textUnitKind(unit: TimelineUnit): "assistant_message" | "thought" | null {
-  if (unit.event.type !== "timeline") return null;
-  if (unit.event.item.type === "assistant_message") return "assistant_message";
-  if (unit.event.item.type === "reasoning") return "thought";
-  return null;
-}
-
-function unitText(unit: TimelineUnit): string {
-  if (unit.event.type !== "timeline") return "";
-  const item = unit.event.item;
-  return item.type === "assistant_message" || item.type === "reasoning" ? item.text : "";
-}
-
-function unitMessageId(unit: TimelineUnit): string | undefined {
-  return unit.event.type === "timeline" && unit.event.item.type === "assistant_message"
-    ? unit.event.item.messageId
-    : undefined;
-}
-
-function straddlesAuthoritativeCursor(
-  unit: TimelineUnit,
-  currentEndSeq: number | undefined,
-): boolean {
-  return (
-    currentEndSeq !== undefined &&
-    unit.sourceSeqRanges.some(
-      (range) => range.startSeq <= currentEndSeq && range.endSeq > currentEndSeq,
+function reconcileOverlappingProjectedAssistant(params: {
+  tail: StreamItem[];
+  head: StreamItem[];
+  unit: TimelineUnit;
+  epoch: string;
+  currentEndSeq: number;
+}): { tail: StreamItem[]; head: StreamItem[]; reconciled: boolean } {
+  const { unit } = params;
+  if (
+    unit.event.type !== "timeline" ||
+    unit.event.item.type !== "assistant_message" ||
+    !unit.sourceSeqRanges.some(
+      (range) => range.startSeq <= params.currentEndSeq && range.endSeq > params.currentEndSeq,
     )
-  );
-}
-
-// Identified unpositioned markdown blocks form a contiguous segment, not an entire message:
-// a tool can divide two segments with the same message id. Block text resolves coverage only
-// after identity matches. Ambiguous repeated segments remain unverified rather than guessed away.
-function unpositionedTextRowIndexes(
-  rows: readonly StreamItem[],
-  unit: TimelineUnit,
-  epoch: string,
-): number[] {
-  const messageId = unitMessageId(unit);
-  if (!messageId) return [];
-  const canonical = splitMarkdownBlocks(unitText(unit)).join("\n\n");
-  const candidates: number[][] = [];
-  for (let index = 0; index < rows.length; index++) {
-    const indexes: number[] = [];
-    const blocks: string[] = [];
-    while (index < rows.length) {
-      const row = rows[index]!;
-      if (row.kind !== "assistant_message" || row.messageId !== messageId || row.timelineCursor)
-        break;
-      indexes.push(index++);
-      blocks.push(...splitMarkdownBlocks(row.text));
-    }
-    if (indexes.length === 0) continue;
-    const previous = rows[indexes[0]! - 1];
-    const next = rows[index];
-    const afterStart =
-      previous?.timelineCursor?.epoch === epoch && rowStartSeq(previous)! > unit.seq;
-    const beforeStart = next?.timelineCursor?.epoch === epoch && rowStartSeq(next)! <= unit.seq;
-    const live = blocks.join("\n\n");
-    if (!afterStart && !beforeStart && (canonical.startsWith(live) || live.startsWith(canonical))) {
-      candidates.push(indexes);
-    }
+  ) {
+    return { tail: params.tail, head: params.head, reconciled: false };
   }
-  return candidates.length === 1 ? candidates[0]! : [];
-}
 
-// Positioned units own covered chunks and adjacent continuations. Idless unpositioned rows keep
-// the conservative cursor-straddle rule; an identified segment does not need cursor straddling.
-function ownedTextRowIndexes(
-  rows: readonly StreamItem[],
-  unit: TimelineUnit,
-  epoch: string,
-  currentEndSeq: number | undefined,
-): number[] {
-  const kind = textUnitKind(unit);
-  if (!kind) return [];
-  const messageId = unitMessageId(unit);
-  const sameMessage = (row: StreamItem): boolean =>
-    row.kind === kind &&
-    (row.kind !== "assistant_message" ||
-      !messageId ||
-      !row.messageId ||
-      row.messageId === messageId);
-  const covered = rows
-    .map((row, index) =>
-      sameMessage(row) &&
-      row.timelineCursor?.epoch === epoch &&
-      rowSourceSeqs(row).some((seq) => seq >= unit.seq && seq <= unit.seqEnd)
-        ? index
-        : -1,
-    )
-    .filter((index) => index >= 0);
-  if (covered.length === 0) {
-    const unpositioned = unpositionedTextRowIndexes(rows, unit, epoch);
-    if (unpositioned.length > 0) return unpositioned;
-  }
-  const [firstCovered, lastCovered] = [covered[0], covered.at(-1)];
-  const neighbours =
-    firstCovered !== undefined && lastCovered !== undefined
-      ? [firstCovered - 1, lastCovered + 1]
-      : (() => {
-          const index = insertionIndex(rows, epoch, unit.seq);
-          return [index - 1, index];
-        })();
-  const owned = new Set(covered);
-  if (messageId) {
-    for (const index of neighbours) {
-      const row = rows[index];
-      if (row?.kind === "assistant_message" && row.messageId === messageId && row.timelineCursor)
-        owned.add(index);
-    }
-  }
-  if (owned.size > 0) return [...owned].sort((left, right) => left - right);
-  if (!straddlesAuthoritativeCursor(unit, currentEndSeq)) return [];
-  const text = unitText(unit);
-  const legacy = rows.findLastIndex(
-    (row) =>
-      row.kind === kind &&
-      !row.timelineCursor &&
-      (!messageId || row.kind !== "assistant_message" || !row.messageId) &&
-      text.startsWith(row.text),
-  );
-  return legacy >= 0 ? [legacy] : [];
-}
+  const projectedText = unit.event.item.text;
+  const projectedMessageId = unit.event.item.messageId;
+  const matches = (item: StreamItem) => {
+    if (item.kind !== "assistant_message") return false;
+    if (projectedMessageId && item.messageId) return item.messageId === projectedMessageId;
+    return projectedText.startsWith(item.text);
+  };
+  const findMatch = (items: StreamItem[]) => {
+    const index = items.findLastIndex(matches);
+    const current = items[index];
+    return current?.kind === "assistant_message" ? { current, index } : null;
+  };
 
-function rowSourceSeqs(row: StreamItem): number[] {
-  const chunks =
-    row.kind === "assistant_message" || row.kind === "thought" ? row.source?.chunks : undefined;
-  if (chunks) return chunks.map((chunk) => chunk.seq);
-  return row.timelineCursor ? [row.timelineCursor.seq] : [];
-}
-
-// Fully accepted identified segments use the same representation as fresh hydration. Reserve
-// other rows' identities, not the transient markdown blocks this unit replaces.
-function replaceTextUnit(
-  lanes: OrderedLanes,
-  indexes: number[],
-  unit: TimelineUnit,
-  epoch: string,
-): OrderedLanes {
-  const first = indexes[0]!;
-  const last = indexes.at(-1)!;
-  const otherRows = lanes.rows.filter((_row, index) => index < first || index > last);
-  const reserved = new Set(
-    otherRows.flatMap((row) =>
-      row.kind === "assistant_message" && row.blockGroupId ? [row.id, row.blockGroupId] : [row.id],
-    ),
-  );
-  return spliceLanes(lanes, first, last - first + 1, hydrateUnitAfter([], unit, epoch, reserved));
-}
-
-function applyTextUnit(
-  lanes: OrderedLanes,
-  unit: TimelineUnit,
-  epoch: string,
-  currentEndSeq: number | undefined,
-): { lanes: OrderedLanes; owned: boolean } {
-  const kind = textUnitKind(unit);
-  if (!kind) return { lanes, owned: false };
-  const ownedIndexes = ownedTextRowIndexes(lanes.rows, unit, epoch, currentEndSeq);
-  if (ownedIndexes.length === 0) {
-    return { lanes: insertUnitInOrder(lanes, unit, epoch), owned: false };
+  const headMatch = findMatch(params.head);
+  const tailMatch = headMatch ? null : findMatch(params.tail);
+  const match = headMatch ?? tailMatch;
+  if (!match) {
+    return { tail: params.tail, head: params.head, reconciled: false };
   }
-  const owned = ownedIndexes
-    .map((index) => lanes.rows[index])
-    .filter((row): row is AssistantMessageItem | ThoughtItem => row?.kind === kind);
-  const messageId = unitMessageId(unit);
-  if (messageId && owned.every((row) => !row.timelineCursor)) {
-    const canonical = splitMarkdownBlocks(unitText(unit)).join("\n\n");
-    const live = owned.flatMap((row) => splitMarkdownBlocks(row.text)).join("\n\n");
-    // A lagging canonical prefix cannot position text delivered without a cursor. Keep the
-    // newer segment unverified; otherwise replace all its markdown blocks with exact page text.
-    if (live.length > canonical.length && live.startsWith(canonical)) return { lanes, owned: true };
-    return { lanes: replaceTextUnit(lanes, ownedIndexes, unit, epoch), owned: true };
-  }
-  const fullyCovered = owned.every(
-    (row) =>
-      row.timelineCursor?.epoch === epoch &&
-      rowStartSeq(row)! >= unit.seq &&
-      row.timelineCursor.seq <= unit.seqEnd,
-  );
-  if (messageId && fullyCovered)
-    return { lanes: replaceTextUnit(lanes, ownedIndexes, unit, epoch), owned: true };
-  const merged: StreamItem[] = [];
-  for (const row of mergeCanonicalText(owned, {
-    text: unitText(unit),
-    epoch,
-    startSeq: unit.seq,
-    endSeq: unit.seqEnd,
+
+  const blockGroupId = match.current.blockGroupId;
+  const messageId = projectedMessageId ?? match.current.messageId;
+  const replacement: AssistantMessageItem = {
+    kind: "assistant_message",
+    id: blockGroupId ?? match.current.id,
+    ...(messageId !== undefined ? { messageId } : {}),
+    text: projectedText,
     timestamp: unit.timestamp,
-  })) {
-    merged.push(
-      row.kind === "assistant_message" && messageId && row.messageId === undefined
-        ? { ...row, messageId }
-        : row,
-    );
-  }
-  // Owned rows are adjacent by construction; the merge takes their place.
-  const first = ownedIndexes[0]!;
-  const last = ownedIndexes.at(-1)!;
-  return { lanes: spliceLanes(lanes, first, last - first + 1, merged), owned: true };
-}
+    timelineCursor: { epoch: params.epoch, seq: unit.seqEnd },
+  };
+  const belongsToBlockGroup = (item: StreamItem) =>
+    blockGroupId !== undefined &&
+    item.kind === "assistant_message" &&
+    item.blockGroupId === blockGroupId;
+  const removeBlockGroup = (items: StreamItem[]) =>
+    blockGroupId !== undefined ? items.filter((item) => !belongsToBlockGroup(item)) : items;
+  const replaceMatch = (items: StreamItem[], index: number) => {
+    if (!blockGroupId) {
+      const next = [...items];
+      next[index] = replacement;
+      return next;
+    }
+    const next: StreamItem[] = [];
+    let inserted = false;
+    for (const item of items) {
+      if (!belongsToBlockGroup(item)) {
+        next.push(item);
+      } else if (!inserted) {
+        next.push(replacement);
+        inserted = true;
+      }
+    }
+    return next;
+  };
 
-// Reducing against the rows before the position lets kind-specific rules (todo diffs,
-// compaction completion, idless assistant continuation) see their predecessor while the unit
-// still lands in source order. Ids stay unique against the rows after it.
-function insertUnitInOrder(lanes: OrderedLanes, unit: TimelineUnit, epoch: string): OrderedLanes {
-  const index = insertionIndex(lanes.rows, epoch, unit.seq);
-  const rest = lanes.rows.slice(index);
-  const identifiedText = Boolean(unitMessageId(unit));
-  const reserved = new Set(
-    (identifiedText ? lanes.rows : rest).flatMap((row) =>
-      row.kind === "assistant_message" && row.blockGroupId ? [row.id, row.blockGroupId] : [row.id],
-    ),
-  );
-  // Reconciliation already declined ownership. Do not let ordinary live continuation merge
-  // this identified canonical segment into an ambiguous same-id predecessor during insertion.
-  if (identifiedText)
-    return spliceLanes(lanes, index, 0, hydrateUnitAfter([], unit, epoch, reserved));
-  const created = hydrateUnitAfter(lanes.rows.slice(0, index), unit, epoch, reserved);
-  const prefixReplaced = { ...lanes, rows: [...created.slice(0, index), ...rest] };
-  return spliceLanes(prefixReplaced, index, 0, created.slice(index));
-}
-
-function applyUserUnit(
-  lanes: OrderedLanes,
-  unit: TimelineUnit,
-  epoch: string,
-): { lanes: OrderedLanes; acknowledgedClientMessageIds: string[] } {
-  if (unit.event.type !== "timeline" || unit.event.item.type !== "user_message") {
-    return { lanes, acknowledgedClientMessageIds: [] };
+  if (headMatch) {
+    return {
+      tail: removeBlockGroup(params.tail),
+      head: replaceMatch(params.head, headMatch.index),
+      reconciled: true,
+    };
   }
-  const probe = hydrateUnitAfter([], unit, epoch).find(
-    (row): row is UserMessageItem => row.kind === "user_message",
-  );
-  if (!probe) return { lanes, acknowledgedClientMessageIds: [] };
-  const matched = upsertUserMessageAcrossStream({
-    tail: lanes.rows.slice(0, lanes.boundary),
-    head: lanes.rows.slice(lanes.boundary),
-    message: probe,
-    insert: "none",
-    presentation: "existing",
-  });
-  const location = matched.location;
-  if (!location?.matched) {
-    return { lanes: insertUnitInOrder(lanes, unit, epoch), acknowledgedClientMessageIds: [] };
-  }
-  const existingIndex = location.lane === "tail" ? location.index : lanes.boundary + location.index;
-  const message = withCanonicalTurn(location.message, unit.event.turnId);
-  const removed = spliceLanes(lanes, existingIndex, 1, []);
-  const index = insertionIndex(removed.rows, epoch, unit.seq);
   return {
-    lanes: spliceLanes(removed, index, 0, [message]),
-    acknowledgedClientMessageIds: message.clientMessageId ? [message.clientMessageId] : [],
+    tail: replaceMatch(params.tail, match.index),
+    head: removeBlockGroup(params.head),
+    reconciled: true,
   };
 }
 
-// A canonical user row is authoritative for turn membership.
-function withCanonicalTurn(message: UserMessageItem, turnId: string | undefined): UserMessageItem {
-  if (message.turnId === turnId) return message;
-  if (turnId) return { ...message, turnId };
-  const { turnId: _, ...withoutTurn } = message;
-  return withoutTurn;
-}
-
-function applyOtherUnit(lanes: OrderedLanes, unit: TimelineUnit, epoch: string): OrderedLanes {
-  const probe = hydrateUnitAfter([], unit, epoch).at(-1);
-  if (!probe) return lanes;
-  const identity = streamTimelineItemIdentity(probe);
-  const existingIndex = lanes.rows.findIndex((row) =>
-    identity !== null
-      ? streamTimelineItemIdentity(row) === identity
-      : row.kind === probe.kind &&
-        row.timelineCursor?.epoch === epoch &&
-        rowStartSeq(row) === unit.seq,
-  );
-  if (existingIndex >= 0) {
-    const existing = lanes.rows[existingIndex]!;
-    const replacement =
-      probe.kind === "notification"
-        ? { ...probe, id: existing.id }
-        : (hydrateUnitAfter([existing], unit, epoch).at(-1) ?? existing);
-    return spliceLanes(lanes, existingIndex, 1, [{ ...replacement, id: existing.id }]);
+function reconcileOverlappingProjectedReasoning(params: {
+  tail: StreamItem[];
+  head: StreamItem[];
+  unit: TimelineUnit;
+  currentEndSeq: number;
+}): { tail: StreamItem[]; head: StreamItem[]; reconciled: boolean } {
+  const { unit } = params;
+  if (
+    unit.event.type !== "timeline" ||
+    unit.event.item.type !== "reasoning" ||
+    !unit.sourceSeqRanges.some(
+      (range) => range.startSeq <= params.currentEndSeq && range.endSeq > params.currentEndSeq,
+    )
+  ) {
+    return { tail: params.tail, head: params.head, reconciled: false };
   }
-  return insertUnitInOrder(lanes, unit, epoch);
-}
 
-function applyForwardUnit(
-  lanes: OrderedLanes,
-  unit: TimelineUnit,
-  epoch: string,
-  currentEndSeq: number | undefined,
-): { lanes: OrderedLanes; acknowledgedClientMessageIds: string[] } {
-  if (textUnitKind(unit)) {
-    return {
-      lanes: applyTextUnit(lanes, unit, epoch, currentEndSeq).lanes,
-      acknowledgedClientMessageIds: [],
+  const projectedText = unit.event.item.text;
+  const replaceIn = (items: StreamItem[]): StreamItem[] | null => {
+    const index = items.findLastIndex(
+      (item) => item.kind === "thought" && projectedText.startsWith(item.text),
+    );
+    const current = items[index];
+    if (!current || current.kind !== "thought") return null;
+    const next = [...items];
+    next[index] = {
+      ...current,
+      text: projectedText,
+      timestamp: unit.timestamp,
+      status: "loading",
     };
-  }
-  if (unit.event.type === "timeline" && unit.event.item.type === "user_message") {
-    return applyUserUnit(lanes, unit, epoch);
-  }
-  return { lanes: applyOtherUnit(lanes, unit, epoch), acknowledgedClientMessageIds: [] };
+    return next;
+  };
+
+  const nextHead = replaceIn(params.head);
+  if (nextHead) return { tail: params.tail, head: nextHead, reconciled: true };
+  const nextTail = replaceIn(params.tail);
+  return nextTail
+    ? { tail: nextTail, head: params.head, reconciled: true }
+    : { tail: params.tail, head: params.head, reconciled: false };
 }
 
 function reconcileOverlappingProjectedStreamItems(params: {
@@ -1193,22 +921,109 @@ function reconcileOverlappingProjectedStreamItems(params: {
   epoch: string;
   currentEndSeq: number | undefined;
 }): { tail: StreamItem[]; head: StreamItem[]; reconciledUnits: Set<TimelineUnit> } {
-  let lanes: OrderedLanes = {
-    rows: [...params.tail, ...params.head],
-    boundary: params.tail.length,
-  };
+  let tail = params.tail;
+  let head = params.head;
   const reconciledUnits = new Set<TimelineUnit>();
+  if (params.currentEndSeq === undefined) return { tail, head, reconciledUnits };
+
   for (const unit of params.units) {
-    if (!textUnitKind(unit)) continue;
-    if (ownedTextRowIndexes(lanes.rows, unit, params.epoch, params.currentEndSeq).length === 0)
-      continue;
-    lanes = applyTextUnit(lanes, unit, params.epoch, params.currentEndSeq).lanes;
-    reconciledUnits.add(unit);
+    let reconciled = reconcileOverlappingProjectedAssistant({
+      tail,
+      head,
+      unit,
+      epoch: params.epoch,
+      currentEndSeq: params.currentEndSeq,
+    });
+    if (!reconciled.reconciled) {
+      reconciled = reconcileOverlappingProjectedReasoning({
+        tail,
+        head,
+        unit,
+        currentEndSeq: params.currentEndSeq,
+      });
+    }
+    tail = reconciled.tail;
+    head = reconciled.head;
+    if (reconciled.reconciled) reconciledUnits.add(unit);
   }
+  return { tail, head, reconciledUnits };
+}
+
+function applyCanonicalForwardUnit(params: {
+  tail: StreamItem[];
+  head: StreamItem[];
+  unit: TimelineUnit;
+  epoch: string;
+}): { tail: StreamItem[]; head: StreamItem[]; acknowledgedClientMessageIds: string[] } {
+  const { event, timestamp, seqEnd } = params.unit;
+  const timelineCursor = { epoch: params.epoch, seq: seqEnd };
+  if (event.type === "timeline" && event.item.type === "user_message") {
+    const applied = applyStreamEvent({
+      tail: params.tail,
+      head: params.head,
+      event,
+      timestamp,
+      source: "canonical",
+      timelineCursor,
+    });
+    return {
+      tail: applied.tail,
+      head: applied.head,
+      acknowledgedClientMessageIds: applied.acknowledgedClientMessageIds ?? [],
+    };
+  }
+  if (params.head.length === 0) {
+    return {
+      tail: reduceStreamUpdate(params.tail, event, timestamp, {
+        source: "canonical",
+        timelineCursor,
+      }),
+      head: params.head,
+      acknowledgedClientMessageIds: [],
+    };
+  }
+  const replacedHead = replaceLiveAssistantWithProjectedText({
+    head: params.head,
+    event,
+    timestamp,
+    timelineCursor,
+  });
+  if (replacedHead) {
+    return { tail: params.tail, head: replacedHead, acknowledgedClientMessageIds: [] };
+  }
+
+  const activeAssistant = params.head.findLast(
+    (item): item is Extract<StreamItem, { kind: "assistant_message" }> =>
+      item.kind === "assistant_message",
+  );
+  if (
+    event.type === "timeline" &&
+    event.item.type === "assistant_message" &&
+    event.item.messageId !== undefined &&
+    event.item.messageId !== activeAssistant?.messageId
+  ) {
+    return {
+      tail: flushHeadToTail(params.tail, params.head),
+      head: reduceStreamUpdate([], event, timestamp, {
+        source: "canonical",
+        timelineCursor,
+      }),
+      acknowledgedClientMessageIds: [],
+    };
+  }
+
+  const applied = applyStreamEvent({
+    tail: params.tail,
+    head: params.head,
+    event,
+    timestamp,
+    source: "canonical",
+    timelineCursor,
+  });
   return {
-    tail: lanes.rows.slice(0, lanes.boundary),
-    head: lanes.rows.slice(lanes.boundary),
-    reconciledUnits,
+    tail: applied.tail,
+    head: applied.head,
+    acknowledgedClientMessageIds: applied.acknowledgedClientMessageIds ?? [],
   };
 }
 
@@ -1219,22 +1034,37 @@ function applyAcceptedForwardTimelineUnits(params: {
   currentHead: StreamItem[];
   currentEndSeq: number | undefined;
 }): { tail: StreamItem[]; head: StreamItem[]; acknowledgedClientMessageIds: string[] } {
-  let lanes: OrderedLanes = {
-    rows: [...params.currentTail, ...params.currentHead],
-    boundary: params.currentTail.length,
-  };
-  const acknowledged = new Set<string>();
+  const reconciled = reconcileOverlappingProjectedStreamItems({
+    tail: params.currentTail,
+    head: params.currentHead,
+    units: params.units,
+    epoch: params.epoch,
+    currentEndSeq: params.currentEndSeq,
+  });
+  let tail = reconciled.tail;
+  let head = reconciled.head;
+
   for (const unit of params.units) {
-    const applied = applyForwardUnit(lanes, unit, params.epoch, params.currentEndSeq);
-    lanes = applied.lanes;
-    for (const clientMessageId of applied.acknowledgedClientMessageIds) {
-      acknowledged.add(clientMessageId);
-    }
+    if (reconciled.reconciledUnits.has(unit)) continue;
+    const applied = applyCanonicalForwardUnit({
+      tail,
+      head,
+      unit,
+      epoch: params.epoch,
+    });
+    tail = applied.tail;
+    head = applied.head;
   }
+
   return {
-    tail: lanes.rows.slice(0, lanes.boundary),
-    head: lanes.rows.slice(lanes.boundary),
-    acknowledgedClientMessageIds: [...acknowledged],
+    tail,
+    head,
+    acknowledgedClientMessageIds: deriveCanonicalAcknowledgements({
+      units: params.units,
+      epoch: params.epoch,
+      currentTail: params.currentTail,
+      currentHead: params.currentHead,
+    }),
   };
 }
 
@@ -1244,15 +1074,14 @@ function deriveCanonicalAcknowledgements(params: {
   currentTail: StreamItem[];
   currentHead: StreamItem[];
 }): string[] {
-  let lanes: OrderedLanes = {
-    rows: [...params.currentTail, ...params.currentHead],
-    boundary: params.currentTail.length,
-  };
+  let tail = params.currentTail;
+  let head = params.currentHead;
   const acknowledged = new Set<string>();
   for (const unit of params.units) {
     if (unit.event.type !== "timeline" || unit.event.item.type !== "user_message") continue;
-    const applied = applyUserUnit(lanes, unit, params.epoch);
-    lanes = applied.lanes;
+    const applied = applyCanonicalForwardUnit({ tail, head, unit, epoch: params.epoch });
+    tail = applied.tail;
+    head = applied.head;
     for (const clientMessageId of applied.acknowledgedClientMessageIds) {
       acknowledged.add(clientMessageId);
     }
@@ -1326,10 +1155,10 @@ function applyAcceptedTimelinePage(input: {
     });
   }
   const olderTail = hydrateStreamState(
-    acceptedUnits.map((unit) => ({
-      event: unit.event,
-      timestamp: unit.timestamp,
-      timelineCursor: unitPosition(unit, payload.epoch),
+    acceptedUnits.map(({ event, timestamp, seqEnd }) => ({
+      event,
+      timestamp,
+      timelineCursor: { epoch: payload.epoch, seq: seqEnd },
     })),
     {
       source: "canonical",
@@ -1430,6 +1259,7 @@ export function processTimelineResponse(
     currentCursor,
     isInitializing,
     hasActiveInitDeferred,
+    initRequestDirection,
     sendingClientMessageIds,
   } = input;
 
@@ -1444,7 +1274,9 @@ export function processTimelineResponse(
       cursor: currentCursor,
       cursorChanged: false,
       older: "unchanged",
-      ...processTimelineResponseCompletion(input),
+      initResolution: hasActiveInitDeferred ? "reject" : null,
+      clearInitializing: isInitializing,
+      error: payload.error,
       sideEffects: [],
       acknowledgedClientMessageIds: [],
     };
@@ -1469,18 +1301,23 @@ export function processTimelineResponse(
     timestamp: new Date(entry.timestamp),
   }));
 
-  const toHydratedEvents = (units: TimelineUnit[]): HydratedTimelineEvent[] =>
-    units.map((unit) => ({
-      event: unit.event,
-      timestamp: unit.timestamp,
-      timelineCursor: unitPosition(unit, payload.epoch),
+  const toHydratedEvents = (
+    units: TimelineUnit[],
+  ): Array<{
+    event: AgentStreamEventPayload;
+    timestamp: Date;
+    timelineCursor: { epoch: string; seq: number };
+  }> =>
+    units.map(({ event, timestamp, seqEnd }) => ({
+      event,
+      timestamp,
+      timelineCursor: { epoch: payload.epoch, seq: seqEnd },
     }));
 
   // ------------------------------------------------------------------
   // Derive bootstrap policy (replace vs incremental)
   // ------------------------------------------------------------------
   const bootstrapPolicy = deriveBootstrapTailTimelinePolicy({
-    replaceTail: input.replaceTail === true,
     direction: payload.direction,
     reset: payload.reset,
     epoch: payload.epoch,
@@ -1535,7 +1372,6 @@ export function processTimelineResponse(
         : bootstrapPolicy,
       currentTail,
       currentHead,
-      currentCursor,
       sendingClientMessageIds,
       preserveContinuity: shouldPreserveReplacementContinuity({
         isResumeReplacement,
@@ -1574,6 +1410,20 @@ export function processTimelineResponse(
   // ------------------------------------------------------------------
   // Init resolution
   // ------------------------------------------------------------------
+  const shouldResolveDeferredInit = shouldResolveTimelineInit({
+    hasActiveInitDeferred,
+    hasNewer: payload.hasNewer,
+    isInitializing,
+    initRequestDirection,
+    responseDirection: payload.direction,
+    reset: payload.reset,
+  });
+  const timelineResponseComplete = payload.direction !== "after" || !payload.hasNewer;
+  const clearInitializing =
+    (shouldResolveDeferredInit || (isInitializing && !hasActiveInitDeferred)) &&
+    timelineResponseComplete;
+
+  const initResolution: "resolve" | "reject" | null = shouldResolveDeferredInit ? "resolve" : null;
   const commit = discard ? "discard" : "apply";
 
   return {
@@ -1583,7 +1433,9 @@ export function processTimelineResponse(
     cursor: nextCursor,
     cursorChanged,
     older: timelineResult.older,
-    ...processTimelineResponseCompletion(input),
+    initResolution,
+    clearInitializing,
+    error: null,
     sideEffects,
     acknowledgedClientMessageIds: timelineResult.acknowledgedClientMessageIds,
   };
@@ -1650,7 +1502,13 @@ export interface AgentStreamReducerQueue {
 }
 
 export interface CreateAgentStreamReducerQueueInput {
-  apply: (agentId: string, events: AgentStreamReducerEvent[]) => void;
+  getSnapshot: (agentId: string) => AgentStreamReducerSnapshot;
+  commit: (
+    agentId: string,
+    result: ProcessAgentStreamEventOutput,
+    events: AgentStreamReducerEvent[],
+  ) => void;
+  handleSideEffects: (agentId: string, sideEffects: AgentStreamReducerSideEffect[]) => void;
   scheduleFlush: (callback: () => void) => number;
   cancelFlush: (id: number) => void;
 }
@@ -1710,7 +1568,6 @@ function processTimelineSequencingGate(input: {
             {
               type: "catch_up",
               cursor: { epoch: currentCursor.epoch, endSeq: currentCursor.endSeq },
-              observedSeq: seq,
             },
           ]
         : [],
@@ -1912,7 +1769,15 @@ export function createAgentStreamReducerQueue(
       cancelScheduledFlush();
     }
 
-    input.apply(agentId, events);
+    const result = processAgentStreamEvents({
+      events,
+      ...input.getSnapshot(agentId),
+    });
+
+    input.commit(agentId, result, events);
+    if (result.sideEffects.length > 0) {
+      input.handleSideEffects(agentId, result.sideEffects);
+    }
   };
 
   const flush = () => {
@@ -1955,6 +1820,13 @@ export function createAgentStreamReducerQueue(
   };
 }
 
+interface StreamStatePatch {
+  tail?: StreamItem[];
+  head?: StreamItem[];
+  acknowledgedClientMessageIds?: readonly string[];
+  taskSnapshot?: TodoEntry[];
+}
+
 export function deriveAgentStreamTurnLiveness(
   events: readonly AgentStreamReducerEvent[],
 ): TurnLivenessTransition[] {
@@ -1976,6 +1848,17 @@ export function deriveAgentStreamTurnLiveness(
   return transitions;
 }
 
+export interface CreateSessionAgentStreamReducerQueueInput {
+  serverId: string;
+  setAgentStreamState: (serverId: string, agentId: string, state: StreamStatePatch) => void;
+  setAgentTimelineCursor: (
+    serverId: string,
+    state: (prev: Map<string, TimelineCursor>) => Map<string, TimelineCursor>,
+  ) => void;
+  recoverTimelineGap: (agentId: string, cursor: { epoch: string; endSeq: number }) => void;
+  onCommitted?: (agentId: string) => void;
+}
+
 interface ScheduledReducerFlush {
   frameId: number | null;
   timerId: ReturnType<typeof setTimeout>;
@@ -1995,7 +1878,7 @@ function clearScheduledReducerFlush(handle: ScheduledReducerFlush): void {
 // an arbitrary timer that drifts on and off the display beat. A frame callback
 // never fires in a hidden tab, so a timer races it and wins when nothing is
 // painting — the store has to keep advancing either way.
-export function scheduleAgentStreamReducerFlush(callback: () => void): number {
+function scheduleAgentStreamReducerFlush(callback: () => void): number {
   const id = nextScheduledReducerFlushId;
   nextScheduledReducerFlushId += 1;
 
@@ -2015,11 +1898,88 @@ export function scheduleAgentStreamReducerFlush(callback: () => void): number {
   return id;
 }
 
-export function cancelAgentStreamReducerFlush(id: number) {
+function cancelAgentStreamReducerFlush(id: number) {
   const handle = scheduledReducerFlushes.get(id);
   if (!handle) {
     return;
   }
   scheduledReducerFlushes.delete(id);
   clearScheduledReducerFlush(handle);
+}
+
+export function createSessionAgentStreamReducerQueue(
+  input: CreateSessionAgentStreamReducerQueueInput,
+): AgentStreamReducerQueue {
+  const { serverId, setAgentStreamState, setAgentTimelineCursor, recoverTimelineGap, onCommitted } =
+    input;
+
+  return createAgentStreamReducerQueue({
+    getSnapshot: (agentId) => {
+      const session = useSessionStore.getState().sessions[serverId];
+      const timeline = selectAgentTimelineState(session, agentId);
+      return {
+        currentTail: timeline.status === "cold" ? [] : timeline.items,
+        currentHead: session?.agentStreamHead.get(agentId) ?? [],
+        currentCursor: timeline.status === "synced" ? (timeline.range ?? undefined) : undefined,
+        hasAuthoritativeBaseline: timeline.status === "synced",
+        isDetached: timeline.status === "synced" && timeline.newer === "available",
+      };
+    },
+    commit: (agentId, result, events) => {
+      if (
+        result.changedTail ||
+        result.changedHead ||
+        result.acknowledgedClientMessageIds.length > 0 ||
+        result.taskSnapshot !== undefined
+      ) {
+        setAgentStreamState(serverId, agentId, {
+          ...(result.changedTail ? { tail: result.tail } : {}),
+          ...(result.changedHead ? { head: result.head } : {}),
+          ...(result.acknowledgedClientMessageIds.length > 0
+            ? { acknowledgedClientMessageIds: result.acknowledgedClientMessageIds }
+            : {}),
+          ...(result.taskSnapshot !== undefined ? { taskSnapshot: result.taskSnapshot } : {}),
+        });
+      }
+      if (result.cursorChanged && result.cursor) {
+        const nextCursor = result.cursor;
+        const lastEvent = events.at(-1);
+        setAgentTimelineCursor(serverId, (prev) => {
+          const current = prev.get(agentId);
+          if (
+            current &&
+            lastEvent &&
+            typeof lastEvent.seq === "number" &&
+            typeof lastEvent.epoch === "string" &&
+            current.epoch === lastEvent.epoch &&
+            lastEvent.seq >= current.startSeq &&
+            lastEvent.seq <= current.endSeq
+          ) {
+            return prev;
+          }
+          if (
+            current &&
+            current.epoch === nextCursor.epoch &&
+            current.startSeq === nextCursor.startSeq &&
+            current.endSeq === nextCursor.endSeq
+          ) {
+            return prev;
+          }
+          const next = new Map(prev);
+          next.set(agentId, nextCursor);
+          return next;
+        });
+      }
+      onCommitted?.(agentId);
+    },
+    handleSideEffects: (agentId, sideEffects) => {
+      for (const effect of sideEffects) {
+        if (effect.type === "catch_up") {
+          recoverTimelineGap(agentId, effect.cursor);
+        }
+      }
+    },
+    scheduleFlush: scheduleAgentStreamReducerFlush,
+    cancelFlush: cancelAgentStreamReducerFlush,
+  });
 }

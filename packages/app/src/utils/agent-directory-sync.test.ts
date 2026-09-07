@@ -1,4 +1,3 @@
-import { createTimelineReplica } from "@/timeline/replica";
 import { describe, expect, it } from "vitest";
 import type { DaemonClient, FetchAgentsEntry } from "@getpaseo/client/internal/daemon-client";
 import type { AgentSnapshotPayload } from "@getpaseo/protocol/messages";
@@ -66,26 +65,18 @@ function permission(id: string): AgentPermissionRequest {
   return { id, provider: "codex", name: id, kind: "tool", title: id };
 }
 
-function beginPendingSubmission(serverId: string, agentId: string) {
+function beginPendingSubmission(serverId: string, agentId: string): string {
   const clientMessageId = `client-${agentId}`;
-  const replica = createTimelineReplica({
+  useSessionStore.getState().beginAgentMessageSubmission(
     serverId,
-    storage: {
-      removeTimeline: () => undefined,
-      readTimeline: async () => undefined,
-      commitTimeline: () => undefined,
-    },
-  });
-  replica.beginSubmission(
     agentId,
     createUserMessage({
       clientMessageId,
       text: "Run this",
       timestamp: new Date("2026-07-27T10:00:00.000Z"),
     }),
-    true,
   );
-  return { clientMessageId, replica };
+  return clientMessageId;
 }
 
 describe("message submission authority", () => {
@@ -94,11 +85,9 @@ describe("message submission authority", () => {
     const agentId = "agent-1";
     const store = useSessionStore.getState();
     store.initializeSession(serverId, null as unknown as DaemonClient);
-    const { clientMessageId } = beginPendingSubmission(serverId, agentId);
+    const clientMessageId = beginPendingSubmission(serverId, agentId);
     const agent = createAgentPayload({ id: agentId, status: "running" });
-    new AgentStoreProjection(serverId, (removedAgentId) =>
-      useSessionStore.getState().removeAgentTimeline(serverId, removedAgentId),
-    ).applyDelta({
+    new AgentStoreProjection(serverId).applyDelta({
       kind: "upsert",
       agent,
       project: createEntry(agent).project,
@@ -119,44 +108,28 @@ describe("message submission authority", () => {
     const agentId = "agent-1";
     const store = useSessionStore.getState();
     store.initializeSession(serverId, null as unknown as DaemonClient);
-    const { clientMessageId, replica } = beginPendingSubmission(serverId, agentId);
-    replica.handoffSubmission(
-      agentId,
-      createUserMessage({
-        id: "provider-message",
-        messageId: "provider-message",
-        clientMessageId,
-        text: "Run this",
-        timestamp: new Date("2026-07-27T10:00:01.000Z"),
-      }),
-    );
+    const clientMessageId = beginPendingSubmission(serverId, agentId);
+    store.setAgentStreamState(serverId, agentId, {
+      tail: [
+        createUserMessage({
+          id: "provider-message",
+          messageId: "provider-message",
+          clientMessageId,
+          text: "Run this",
+          timestamp: new Date("2026-07-27T10:00:01.000Z"),
+        }),
+      ],
+      head: [],
+    });
 
     expect(
       useSessionStore.getState().sessions[serverId]?.messageSubmissions.get(agentId)?.[0]
         ?.providerAcknowledged,
     ).toBe(false);
 
-    replica.applyEvents(
-      agentId,
-      [
-        {
-          seq: 1,
-          epoch: "epoch",
-          timestamp: new Date("2026-07-27T10:00:01.000Z"),
-          event: {
-            type: "timeline",
-            provider: "codex",
-            item: {
-              type: "user_message",
-              messageId: "provider-message",
-              clientMessageId,
-              text: "Run this",
-            },
-          },
-        },
-      ],
-      () => undefined,
-    );
+    store.setAgentStreamState(serverId, agentId, {
+      acknowledgedClientMessageIds: [clientMessageId],
+    });
 
     expect(
       useSessionStore.getState().sessions[serverId]?.messageSubmissions.get(agentId)?.[0]
@@ -173,9 +146,9 @@ describe("replaceFetchedAgentDirectory", () => {
     store.initializeSession(serverId, null as unknown as DaemonClient);
     store.setInitializingAgents(serverId, new Map([["agent", true]]));
 
-    new AgentStoreProjection(serverId, (removedAgentId) =>
-      useSessionStore.getState().removeAgentTimeline(serverId, removedAgentId),
-    ).replaceFetched([createEntry(createAgentPayload({ id: "agent" }))]);
+    new AgentStoreProjection(serverId).replaceFetched([
+      createEntry(createAgentPayload({ id: "agent" })),
+    ]);
 
     expect(useSessionStore.getState().sessions[serverId]?.initializingAgents.get("agent")).toBe(
       true,
@@ -188,9 +161,7 @@ describe("replaceFetchedAgentDirectory", () => {
     const store = useSessionStore.getState();
     store.initializeSession(serverId, null as unknown as DaemonClient);
 
-    const projection = new AgentStoreProjection(serverId, (removedAgentId) =>
-      useSessionStore.getState().removeAgentTimeline(serverId, removedAgentId),
-    );
+    const projection = new AgentStoreProjection(serverId);
     projection.replaceFetched([
       createEntry(
         createAgentPayload({
@@ -231,15 +202,10 @@ describe("replaceFetchedAgentDirectory", () => {
       serverId,
       new Map([[agentId, [{ id: "queued", text: "next", attachments: [] }]]]),
     );
-    store.applyAgentTimelineResponseState(serverId, agentId, {
-      items: [],
-      head: [],
-      range: { epoch: "epoch", startSeq: 1, endSeq: 2 },
-      older: "none",
-      newer: false,
-      synchronized: false,
-      submissions: [],
-    });
+    store.setAgentTimelineCursor(
+      serverId,
+      new Map([[agentId, { epoch: "epoch", startSeq: 1, endSeq: 2 }]]),
+    );
     store.setPendingPermissions(
       serverId,
       new Map([["permission", { key: "permission", agentId, request: null as never }]]),
@@ -247,9 +213,7 @@ describe("replaceFetchedAgentDirectory", () => {
     store.setInitializingAgents(serverId, new Map([[agentId, true]]));
     setAgentArchiving({ queryClient, serverId, agentId, isArchiving: true });
 
-    new AgentStoreProjection(serverId, (removedAgentId) =>
-      useSessionStore.getState().removeAgentTimeline(serverId, removedAgentId),
-    ).applyDelta({ kind: "remove", agentId });
+    new AgentStoreProjection(serverId).applyDelta({ kind: "remove", agentId });
 
     const session = useSessionStore.getState().sessions[serverId];
     expect({
@@ -309,9 +273,7 @@ describe("replaceFetchedAgentDirectory", () => {
       lastUsage: { inputTokens: 10, outputTokens: 5 },
       pendingPermissions: [permission("current-permission")],
     });
-    const projection = new AgentStoreProjection(serverId, (removedAgentId) =>
-      useSessionStore.getState().removeAgentTimeline(serverId, removedAgentId),
-    );
+    const projection = new AgentStoreProjection(serverId);
     projection.applyDelta({
       kind: "upsert",
       agent: current,
