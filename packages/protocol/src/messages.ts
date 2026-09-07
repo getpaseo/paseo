@@ -6777,13 +6777,6 @@ export type ProviderUsageDetail = z.infer<typeof ProviderUsageDetailSchema>;
 export type ProviderUsageListResponseMessage = z.infer<
   typeof ProviderUsageListResponseMessageSchema
 >;
-export type ChatCreateResponse = z.infer<typeof ChatCreateResponseSchema>;
-export type ChatListResponse = z.infer<typeof ChatListResponseSchema>;
-export type ChatInspectResponse = z.infer<typeof ChatInspectResponseSchema>;
-export type ChatDeleteResponse = z.infer<typeof ChatDeleteResponseSchema>;
-export type ChatPostResponse = z.infer<typeof ChatPostResponseSchema>;
-export type ChatReadResponse = z.infer<typeof ChatReadResponseSchema>;
-export type ChatWaitResponse = z.infer<typeof ChatWaitResponseSchema>;
 export type ScheduleCreateResponse = z.infer<typeof ScheduleCreateResponseSchema>;
 export type ScheduleListResponse = z.infer<typeof ScheduleListResponseSchema>;
 export type ScheduleInspectResponse = z.infer<typeof ScheduleInspectResponseSchema>;
@@ -6793,11 +6786,6 @@ export type ScheduleResumeResponse = z.infer<typeof ScheduleResumeResponseSchema
 export type ScheduleDeleteResponse = z.infer<typeof ScheduleDeleteResponseSchema>;
 export type ScheduleRunOnceResponse = z.infer<typeof ScheduleRunOnceResponseSchema>;
 export type ScheduleUpdateResponse = z.infer<typeof ScheduleUpdateResponseSchema>;
-export type LoopRunResponse = z.infer<typeof LoopRunResponseSchema>;
-export type LoopListResponse = z.infer<typeof LoopListResponseSchema>;
-export type LoopInspectResponse = z.infer<typeof LoopInspectResponseSchema>;
-export type LoopLogsResponse = z.infer<typeof LoopLogsResponseSchema>;
-export type LoopStopResponse = z.infer<typeof LoopStopResponseSchema>;
 
 // Type exports for payload types
 export type ActivityLogPayload = z.infer<typeof ActivityLogPayloadSchema>;
@@ -6845,13 +6833,6 @@ export type RefreshProvidersSnapshotRequestMessage = z.infer<
 export type ProviderDiagnosticRequestMessage = z.infer<
   typeof ProviderDiagnosticRequestMessageSchema
 >;
-export type ChatCreateRequest = z.infer<typeof ChatCreateRequestSchema>;
-export type ChatListRequest = z.infer<typeof ChatListRequestSchema>;
-export type ChatInspectRequest = z.infer<typeof ChatInspectRequestSchema>;
-export type ChatDeleteRequest = z.infer<typeof ChatDeleteRequestSchema>;
-export type ChatPostRequest = z.infer<typeof ChatPostRequestSchema>;
-export type ChatReadRequest = z.infer<typeof ChatReadRequestSchema>;
-export type ChatWaitRequest = z.infer<typeof ChatWaitRequestSchema>;
 export type ScheduleCreateRequest = z.infer<typeof ScheduleCreateRequestSchema>;
 export type ScheduleListRequest = z.infer<typeof ScheduleListRequestSchema>;
 export type ScheduleInspectRequest = z.infer<typeof ScheduleInspectRequestSchema>;
@@ -6861,11 +6842,6 @@ export type ScheduleResumeRequest = z.infer<typeof ScheduleResumeRequestSchema>;
 export type ScheduleDeleteRequest = z.infer<typeof ScheduleDeleteRequestSchema>;
 export type ScheduleRunOnceRequest = z.infer<typeof ScheduleRunOnceRequestSchema>;
 export type ScheduleUpdateRequest = z.infer<typeof ScheduleUpdateRequestSchema>;
-export type LoopRunRequest = z.infer<typeof LoopRunRequestSchema>;
-export type LoopListRequest = z.infer<typeof LoopListRequestSchema>;
-export type LoopInspectRequest = z.infer<typeof LoopInspectRequestSchema>;
-export type LoopLogsRequest = z.infer<typeof LoopLogsRequestSchema>;
-export type LoopStopRequest = z.infer<typeof LoopStopRequestSchema>;
 export type ResumeAgentRequestMessage = z.infer<typeof ResumeAgentRequestMessageSchema>;
 export type DeleteAgentRequestMessage = z.infer<typeof DeleteAgentRequestMessageSchema>;
 export type UpdateAgentRequestMessage = z.infer<typeof UpdateAgentRequestMessageSchema>;
