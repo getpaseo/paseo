@@ -1,6 +1,7 @@
+
 import { describe, expect, test } from "vitest";
 
-import { parseListenString } from "./listen-target.js";
+import { parseListenString } from "@server/utils/listen-target";
 
 describe("parseListenString", () => {
   test("parses whitespace-padded numeric port strings", () => {
