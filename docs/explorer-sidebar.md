@@ -38,10 +38,12 @@ The persisted layout still contains the Explorer pane so tabs survive reloads. T
 that pane from the workspace split tree and docks it separately. Persisted identifiers retain the
 literal `"explorer"` pane id and `explorerPaneIdByWorkspace` key for compatibility.
 
-The tab rail has no inline add or close controls. Its context menu opens a New Tab launcher and
-toggles the singleton Files and Changes views. Individual tab menus close instances or move
-compatible tabs to main. Explorer tabs can be reordered, but the dock cannot be split. Selecting
-an Explorer tab does not change workspace focus.
+The tab rail has no inline add or close controls. Its trailing **More actions** button and
+blank-area context menu open the same configuration menu: a New Tab launcher plus toggles for the
+singleton Files and Changes views. In Electron the button is no-drag while the remaining
+non-interactive rail stays draggable. Individual tab menus close instances or move compatible tabs
+to main. Explorer tabs can be reordered, but the dock cannot be split. Selecting an Explorer tab
+does not change workspace focus.
 
 Cmd+E shows or hides Explorer without changing its selected view. Compact layouts use the combined
 full-screen Explorer overlay for Changes, Files, and pull requests, and close it after a file opens.
