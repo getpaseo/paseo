@@ -111,6 +111,7 @@ test.skipIf(process.platform !== "linux")(
     });
     const logger = pino({ level: "info" }, destination);
     const daemon = await createTestPaseoDaemon({
+      daemonVersion: "0.8.0",
       logger,
       agentClients: {
         claude: new ClaudeAgentClient({ logger }),
@@ -120,7 +121,7 @@ test.skipIf(process.platform !== "linux")(
     });
     const client = new DaemonClient({
       url: `ws://127.0.0.1:${daemon.port}/ws`,
-      appVersion: "0.7.2",
+      appVersion: "0.8.0",
     });
     const proof: Record<string, unknown> = {
       port: daemon.port,

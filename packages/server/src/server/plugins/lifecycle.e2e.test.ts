@@ -7,10 +7,13 @@ import { createTestPaseoDaemon } from "../test-utils/paseo-daemon.js";
 
 test("a plugin transforms workspace creation and observes its committed lifecycle", async () => {
   const directory = await mkdtemp(path.join(tmpdir(), "paseo-lifecycle-"));
-  const daemon = await createTestPaseoDaemon();
-  const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws`, appVersion: "0.7.2" });
+  const daemon = await createTestPaseoDaemon({ daemonVersion: "0.8.0" });
+  const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws`, appVersion: "0.8.0" });
   try {
-    await writeFile(path.join(directory, "paseo-plugin.json"), JSON.stringify({ id: "lifecycle" }));
+    await writeFile(
+      path.join(directory, "paseo-plugin.json"),
+      JSON.stringify({ id: "lifecycle", requirements: { paseo: ">=0.8.0" } }),
+    );
     await writeFile(
       path.join(directory, "index.server.ts"),
       `
@@ -65,12 +68,12 @@ export default function contribute(server) {
 
 test("plugins observe turns, answer permissions, and observe archive without blocking the agent", async () => {
   const directory = await mkdtemp(path.join(tmpdir(), "paseo-turn-hooks-"));
-  const daemon = await createTestPaseoDaemon();
-  const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws`, appVersion: "0.7.2" });
+  const daemon = await createTestPaseoDaemon({ daemonVersion: "0.8.0" });
+  const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws`, appVersion: "0.8.0" });
   try {
     await writeFile(
       path.join(directory, "paseo-plugin.json"),
-      JSON.stringify({ id: "turn-hooks" }),
+      JSON.stringify({ id: "turn-hooks", requirements: { paseo: ">=0.8.0" } }),
     );
     await writeFile(
       path.join(directory, "index.server.ts"),
@@ -120,12 +123,14 @@ export default function contribute(server) {
             })
             .map((entry) => {
               return JSON.parse(entry.message);
+            })
+            .sort((left, right) => {
+              return left.hook.localeCompare(right.hook);
             });
         },
         { timeout: 10_000 },
       )
       .toMatchObject([
-        { hook: "agent.turn_started", event: { agent: { id: agent.id } } },
         {
           hook: "agent.permission_requested",
           event: { request: { input: { command: "rm -f permission.txt" } } },
@@ -135,6 +140,7 @@ export default function contribute(server) {
           hook: "agent.turn_ended",
           event: { outcome: { kind: "completed" }, timeline: expect.any(Array) },
         },
+        { hook: "agent.turn_started", event: { agent: { id: agent.id } } },
       ]);
     await client.archiveAgent(agent.id);
     await expect
@@ -154,12 +160,12 @@ export default function contribute(server) {
 
 test("agent creation hooks change the provider and environment before the session opens", async () => {
   const directory = await mkdtemp(path.join(tmpdir(), "paseo-agent-hooks-"));
-  const daemon = await createTestPaseoDaemon();
-  const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws`, appVersion: "0.7.2" });
+  const daemon = await createTestPaseoDaemon({ daemonVersion: "0.8.0" });
+  const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws`, appVersion: "0.8.0" });
   try {
     await writeFile(
       path.join(directory, "paseo-plugin.json"),
-      JSON.stringify({ id: "agent-hooks" }),
+      JSON.stringify({ id: "agent-hooks", requirements: { paseo: ">=0.8.0" } }),
     );
     await writeFile(
       path.join(directory, "index.server.ts"),

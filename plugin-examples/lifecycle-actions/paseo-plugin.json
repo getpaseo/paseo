@@ -1,1 +1,6 @@
-{ "id": "lifecycle-actions" }
+{
+  "id": "lifecycle-actions",
+  "requirements": {
+    "paseo": ">=0.8.0"
+  }
+}

@@ -1,1 +1,6 @@
-{ "id": "lifecycle-logger" }
+{
+  "id": "lifecycle-logger",
+  "requirements": {
+    "paseo": ">=0.8.0"
+  }
+}
