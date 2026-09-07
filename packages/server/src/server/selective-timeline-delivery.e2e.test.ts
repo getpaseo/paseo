@@ -420,11 +420,7 @@ test("subscription acknowledgements stay on the requesting socket of a retained 
 test("real WebSocket sessions enforce selective delivery, retained resets, downgrade, and dedicated attention", async () => {
   const legacy = await connect({ clientId: "legacy-client", selective: false });
   let capable = await connect({ clientId: "capable-client", selective: true });
-  const workspace = await legacy.client.createWorkspace({
-    source: { kind: "directory", path: daemon.paseoHome },
-  });
-  if (!workspace.workspace) throw new Error(workspace.error ?? "Expected workspace");
-  const workspaceId = workspace.workspace.id;
+  const workspaceId = await createAttentionWorkspace(legacy.client);
   const agents = await Promise.all(
     ["A", "B", "C"].map((title) =>
       legacy.client.createAgent({
@@ -681,20 +677,24 @@ test("plugin items are gated in provider child streams, child fetches, and rewin
       item: { type: "assistant_message", text: "Child result" },
     },
   });
-  const childResult = (message: SessionOutboundMessage) =>
-    message.type === "agent.provider_subagents.update" &&
-    message.payload.kind === "timeline" &&
-    message.payload.item.type === "assistant_message";
+  function childResult(message: SessionOutboundMessage): boolean {
+    return (
+      message.type === "agent.provider_subagents.update" &&
+      message.payload.kind === "timeline" &&
+      message.payload.item.type === "assistant_message"
+    );
+  }
   await Promise.all([
     capable.next(childResult, "capable child result"),
     legacy.next(childResult, "legacy child result"),
   ]);
-  const childItems = (client: ConnectedClient) =>
-    client.messages.flatMap((message) =>
+  function childItems(client: ConnectedClient) {
+    return client.messages.flatMap((message) =>
       message.type === "agent.provider_subagents.update" && message.payload.kind === "timeline"
         ? [message.payload.item]
         : [],
     );
+  }
   expect(childItems(capable)).toContainEqual(plugin);
   expect(childItems(legacy)).toEqual([{ type: "assistant_message", text: "Child result" }]);
   const oldChild = await legacy.client.fetchProviderSubagentTimeline(agent.id, "child");
@@ -711,20 +711,36 @@ test("plugin items are gated in provider child streams, child fetches, and rewin
     direction: "tail",
     projection: "canonical",
   });
-  const target = timeline.entries.find((entry) => entry.item.type === "user_message");
-  if (target?.item.type !== "user_message" || !target.item.messageId)
-    throw new Error("Expected rewind target");
+  const targetMessageId = rewindMessageId(timeline);
   capable.clear();
   legacy.clear();
-  await capable.client.rewindAgent(agent.id, target.item.messageId, "conversation");
+  await capable.client.rewindAgent(agent.id, targetMessageId, "conversation");
   await Promise.all([capable.barrier("provider-rewind"), legacy.barrier("provider-rewind")]);
-  const replayItems = (client: ConnectedClient) =>
-    client.messages.flatMap((message) =>
+  function replayItems(client: ConnectedClient) {
+    return client.messages.flatMap((message) =>
       message.type === "agent_stream" && message.payload.event.type === "timeline"
         ? [message.payload.event.item]
         : [],
     );
+  }
   expect(replayItems(capable)).toContainEqual(plugin);
   expect(replayItems(legacy).some((item) => item.type === "plugin")).toBe(false);
   expect(replayItems(legacy)).toContainEqual(expect.objectContaining({ type: "user_message" }));
 });
+
+async function createAttentionWorkspace(client: DaemonClient): Promise<string> {
+  const result = await client.createWorkspace({
+    source: { kind: "directory", path: daemon.paseoHome },
+  });
+  if (!result.workspace) throw new Error(result.error ?? "Expected workspace");
+  return result.workspace.id;
+}
+
+function rewindMessageId(
+  timeline: Awaited<ReturnType<DaemonClient["fetchAgentTimeline"]>>,
+): string {
+  const target = timeline.entries.find((entry) => entry.item.type === "user_message");
+  if (target?.item.type !== "user_message" || !target.item.messageId)
+    throw new Error("Expected rewind target");
+  return target.item.messageId;
+}
