@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { buildDocsNavTree, getDocs, getLegacyDocsRedirect } from "./docs";
 
 describe("versioned plugin documentation", () => {
-  it("keeps current and preview releases together in the Plugins navigation", () => {
+  it("keeps stable and beta releases together in the Plugins navigation", () => {
     const plugins = buildDocsNavTree(getDocs()).find(
       (node) => node.type === "category" && node.label === "Plugins",
     );
@@ -19,11 +19,12 @@ describe("versioned plugin documentation", () => {
         },
         {
           type: "group",
-          label: "Paseo v0.8 — Preview",
+          label: "Paseo v0.8 — Beta",
           href: "/docs/plugins/v0.8",
           children: [
-            { type: "page", label: "Reference", href: "/docs/plugins/v0.8/reference" },
+            { type: "page", label: "Provider plugins", href: "/docs/plugins/v0.8/providers" },
             { type: "page", label: "Migration", href: "/docs/plugins/v0.8/migration" },
+            { type: "page", label: "Reference", href: "/docs/plugins/v0.8/reference" },
           ],
         },
       ],

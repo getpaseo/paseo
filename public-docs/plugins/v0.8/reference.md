@@ -8,7 +8,7 @@ category: Plugins
 
 # Plugin reference
 
-> **For the upcoming Paseo v0.8 release.** Return to the [v0.8 quickstart](/docs/plugins/v0.8).
+> **For Paseo v0.8 beta.** Return to the [v0.8 quickstart](/docs/plugins/v0.8).
 
 Migrating an existing plugin? Follow the standalone [runtime-entry migration guide](/docs/plugins/v0.8/migration).
 
@@ -45,7 +45,7 @@ my-plugin/
 The required root manifest is `paseo-plugin.json`. It contains the default plugin ID and supported Paseo versions:
 
 ```json
-{ "id": "my-plugin", "requirements": { "paseo": ">=0.8.0" } }
+{ "id": "my-plugin", "requirements": { "paseo": ">=0.8.0-beta.1" } }
 ```
 
 ### Requirements
@@ -81,10 +81,10 @@ and cannot show this new diagnostic.
 
 ### Runtime entries
 
-| Entry              | Runtime               | Receives              | Required                                                          |
-| ------------------ | --------------------- | --------------------- | ----------------------------------------------------------------- |
-| `index.client.tsx` | Paseo app, per client | `PluginClientContext` | When the plugin has any UI, callback, theme, or attachment source |
-| `index.server.ts`  | Daemon subprocess     | `PluginServerContext` | When the plugin handles RPCs                                      |
+| Entry              | Runtime               | Receives              | Required                                                                        |
+| ------------------ | --------------------- | --------------------- | ------------------------------------------------------------------------------- |
+| `index.client.tsx` | Paseo app, per client | `PluginClientContext` | When the plugin has any UI, callback, theme, or attachment source               |
+| `index.server.ts`  | Daemon subprocess     | `PluginServerContext` | When the plugin contributes handlers, hooks, settings persistence, or providers |
 
 At least one entry is required; both accept `.ts` or `.tsx`. A directory that still has only the
 old `index.ts` fails to load and points at the [migration guide](/docs/plugins/v0.8/migration).
@@ -346,7 +346,9 @@ and directory lookup/import operations are unaffected.
 ### Send a follow-up when a turn ends
 
 Copy [server/inspect.ts](https://github.com/getpaseo/paseo/blob/main/plugin-examples/lifecycle-actions/server/inspect.ts)
-into your plugin. `latestOutputText` joins text chunks after the latest user message.
+into your plugin. The helper imports types from `@getpaseo/protocol/agent-types`; add
+`@getpaseo/protocol` at the same version as your plugin SDK to your development dependencies
+and install them before loading the plugin. `latestOutputText` joins text chunks after the latest user message.
 
 ```ts
 import type { PluginServerContext } from "@getpaseo/plugin/server";
@@ -1215,7 +1217,7 @@ import { z } from "zod";
 
 const refreshReview = defineRpc({
   name: "review.refresh",
-  input: z.object({ agentId: z.string() }),
+  input: z.object({ agentId: z.string(), scope: z.string().optional() }),
   output: z.object({ refreshed: z.boolean() }),
 });
 
@@ -1376,10 +1378,10 @@ registered by the same plugin.
 Use `usePaseo()` for ordinary Paseo operations from a surface. It borrows the selected host's existing connection; do not create another client.
 
 ```tsx
-import { usePaseo } from "@getpaseo/plugin/client";
+import { type PluginSurfaceProps, usePaseo } from "@getpaseo/plugin/client";
 import { Pressable, Text } from "react-native";
 
-function PullRequestAction() {
+function PullRequestAction({ theme }: PluginSurfaceProps) {
   const paseo = usePaseo();
 
   async function createReviewWorkspace() {
@@ -1400,7 +1402,7 @@ function PullRequestAction() {
 
   return (
     <Pressable accessibilityRole="button" onPress={() => void createReviewWorkspace()}>
-      <Text>Create review workspace</Text>
+      <Text style={{ color: theme.colors.foreground }}>Create review workspace</Text>
     </Pressable>
   );
 }
@@ -1644,7 +1646,7 @@ step:
 ```json
 {
   "id": "review",
-  "requirements": { "paseo": ">=0.8.0" },
+  "requirements": { "paseo": ">=0.8.0-beta.1" },
   "build": [
     ["npm", "ci"],
     ["npm", "run", "build"]
@@ -1659,7 +1661,7 @@ compilation, activation, or replacement. A failing command reports its output, d
 candidate, and leaves the installed/running version intact. The daemon log records each command and
 output; with the global `--host` option, execution is on that daemon host.
 
-Run `npm run typecheck` before install or reload. Never edit the daemon config directly.
+Run `npm run typecheck` before install or reload. Manage plugin source entries with the CLI or Settings.
 
 The daemon-wide **Enable plugins** switch lives under **Settings → Plugins**. A configured plugin remains `disabled` until that switch and the plugin's own enabled state are both on.
 
@@ -1673,8 +1675,8 @@ Use `paseo plugin ls` to read the current status and error.
 | --------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
 | `This plugin was made for an older version of Paseo`                  | The directory has only an `index.ts` entry. Follow the [migration guide](/docs/plugins/v0.8/migration).                                 |
 | `Plugin entry points are missing`                                     | Neither `index.client.tsx` nor `index.server.ts` exists with that exact name.                                                           |
-| `server-only module cannot be imported into the plugin client bundle` | Client code imports `server/` or a `*.server.*` file. Move the work behind an RPC and import its contract from `shared/`.               |
-| `client-only module cannot be imported into the plugin server bundle` | Server code imports `client/` or a `*.client.*` file. Register that contribution from `index.client.tsx` instead.                       |
+| `server-only module cannot be imported into the plugin client bundle` | Client code imports `server/`. Move the work behind an RPC and import its contract from `shared/`.                                      |
+| `client-only module cannot be imported into the plugin server bundle` | Server code imports `client/`. Register that contribution from `index.client.tsx` instead.                                              |
 | `Node module cannot be imported into the plugin client bundle`        | Client code imports `node:*`. Move the operation to `server/` and call it through an RPC.                                               |
 | Sidebar item is missing                                               | The plugin is `running`, the item references an existing surface, the icon name is valid, and the client is on the installation's host. |
 | Client module is unavailable                                          | Import only the host-provided client modules listed above.                                                                              |

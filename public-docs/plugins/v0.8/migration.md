@@ -8,7 +8,7 @@ category: Plugins
 
 # Migrate a plugin to runtime entries
 
-> **For the upcoming Paseo v0.8 release.** This migration is not required for Paseo v0.7.
+> **For Paseo v0.8 beta.** This migration is not required for Paseo v0.7.
 
 Give this page to a coding agent with the plugin directory as its working directory. Execute the
 steps in order. Do not keep a compatibility entry.
@@ -246,7 +246,7 @@ After migrating the entries and imports, add the minimum runtime version to `pas
 ```json
 {
   "id": "my-plugin",
-  "requirements": { "paseo": ">=0.8.0" }
+  "requirements": { "paseo": ">=0.8.0-beta.1" }
 }
 ```
 
