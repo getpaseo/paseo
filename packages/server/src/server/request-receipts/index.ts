@@ -2,36 +2,57 @@ import { createHash, randomUUID } from "node:crypto";
 import { readFile, rm } from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
-import { writeJsonFileAtomic } from "../../atomic-file.js";
+import { writeJsonFileAtomic } from "../atomic-file.js";
 
-const ReceiptSchema = z.object({
+const ReceiptStateSchema = z.object({
   fingerprint: z.string(),
-  agentId: z.string(),
   state: z.enum(["pending", "completed"]),
 });
-type Receipt = z.infer<typeof ReceiptSchema>;
+// Preserve existing agent receipt files while giving workspaces their own identity.
+const ReceiptSchema = z.union([
+  ReceiptStateSchema.extend({ agentId: z.string() }),
+  ReceiptStateSchema.extend({ workspaceId: z.string() }),
+]);
+type Receipt = z.infer<typeof ReceiptStateSchema> & {
+  resource: { kind: "agent" | "workspace"; id: string };
+};
 
 /** One daemon-owned request journal, shared by all of its socket sessions. */
-export class AgentRequests {
+export class RequestReceipts {
   private readonly pending = new Map<string, Promise<string>>();
 
   constructor(private readonly directory: string) {}
 
-  create(input: {
+  createAgent(input: {
     key: string;
     request: unknown;
     findAgent: (agentId: string) => Promise<boolean>;
     create: (agentId: string) => Promise<void>;
   }): Promise<string> {
     return this.execute(["create", input.key], input.request, {
-      agentId: randomUUID(),
+      resource: { kind: "agent", id: randomUUID() },
       recover: input.findAgent,
       run: input.create,
       retrySafe: async (agentId) => !(await input.findAgent(agentId)),
     });
   }
 
-  async send(input: {
+  createWorkspace(input: {
+    key: string;
+    request: unknown;
+    workspaceId: string;
+    findWorkspace: (workspaceId: string) => Promise<boolean>;
+    create: (workspaceId: string) => Promise<void>;
+  }): Promise<string> {
+    return this.execute(["create-workspace", input.key], input.request, {
+      resource: { kind: "workspace", id: input.workspaceId },
+      recover: input.findWorkspace,
+      run: input.create,
+      retrySafe: async (workspaceId) => !(await input.findWorkspace(workspaceId)),
+    });
+  }
+
+  async sendMessage(input: {
     agentId: string;
     messageId: string;
     request: unknown;
@@ -39,7 +60,7 @@ export class AgentRequests {
     prepare?: () => Promise<void>;
   }): Promise<void> {
     await this.execute(["send", input.agentId, input.messageId], input.request, {
-      agentId: input.agentId,
+      resource: { kind: "agent", id: input.agentId },
       // A provider call can take effect before the daemon records its outcome.
       // Never repeat that call merely because a process died in this window.
       recover: async () => false,
@@ -52,7 +73,7 @@ export class AgentRequests {
     identity: string[],
     request: unknown,
     operation: {
-      agentId: string;
+      resource: Receipt["resource"];
       recover: (agentId: string) => Promise<boolean>;
       run: (agentId: string) => Promise<void>;
       prepare?: (() => Promise<void>) | undefined;
@@ -79,7 +100,7 @@ export class AgentRequests {
     key: string,
     fingerprint: string,
     operation: {
-      agentId: string;
+      resource: Receipt["resource"];
       recover: (agentId: string) => Promise<boolean>;
       run: (agentId: string) => Promise<void>;
       prepare?: (() => Promise<void>) | undefined;
@@ -89,37 +110,56 @@ export class AgentRequests {
     const file = path.join(this.directory, `${key}.json`);
     const existing = await readReceipt(file);
     if (existing) {
-      if (existing.fingerprint !== fingerprint) throw new Error("agent_request_key_conflict");
-      if (existing.state === "completed") return existing.agentId;
-      if (!(await operation.recover(existing.agentId))) {
-        throw new Error("agent_request_outcome_unknown");
+      if (existing.fingerprint !== fingerprint)
+        throw new Error(`${operation.resource.kind}_request_key_conflict`);
+      if (existing.state === "completed") return existing.resource.id;
+      if (!(await operation.recover(existing.resource.id))) {
+        throw new Error(`${operation.resource.kind}_request_outcome_unknown`);
       }
-      await writeJsonFileAtomic(file, { ...existing, state: "completed" });
-      return existing.agentId;
+      await writeReceipt(file, { ...existing, state: "completed" });
+      return existing.resource.id;
     }
     await operation.prepare?.();
-    const receipt: Receipt = { fingerprint, agentId: operation.agentId, state: "pending" };
-    await writeJsonFileAtomic(file, receipt);
+    const receipt: Receipt = { fingerprint, resource: operation.resource, state: "pending" };
+    await writeReceipt(file, receipt);
     try {
-      await operation.run(receipt.agentId);
+      await operation.run(receipt.resource.id);
     } catch (error) {
-      // Keyed creation has no initial prompt. Once its normal cleanup finished,
-      // absence of an agent confirms that retrying cannot duplicate one.
-      if (await operation.retrySafe?.(receipt.agentId)) await rm(file, { force: true });
+      // Once creation cleanup finished, absence of its persisted resource
+      // confirms that retrying cannot duplicate it.
+      if (await operation.retrySafe?.(receipt.resource.id)) await rm(file, { force: true });
       throw error;
     }
-    await writeJsonFileAtomic(file, { ...receipt, state: "completed" });
-    return receipt.agentId;
+    await writeReceipt(file, { ...receipt, state: "completed" });
+    return receipt.resource.id;
   }
 }
 
 async function readReceipt(file: string): Promise<Receipt | null> {
   try {
-    return ReceiptSchema.parse(JSON.parse(await readFile(file, "utf8")));
+    const stored = ReceiptSchema.parse(JSON.parse(await readFile(file, "utf8")));
+    return {
+      fingerprint: stored.fingerprint,
+      state: stored.state,
+      resource:
+        "agentId" in stored
+          ? { kind: "agent", id: stored.agentId }
+          : { kind: "workspace", id: stored.workspaceId },
+    };
   } catch (error) {
     if (error instanceof Error && "code" in error && error.code === "ENOENT") return null;
     throw error;
   }
+}
+
+async function writeReceipt(file: string, receipt: Receipt): Promise<void> {
+  await writeJsonFileAtomic(file, {
+    fingerprint: receipt.fingerprint,
+    state: receipt.state,
+    ...(receipt.resource.kind === "agent"
+      ? { agentId: receipt.resource.id }
+      : { workspaceId: receipt.resource.id }),
+  });
 }
 
 function digest(value: unknown): string {

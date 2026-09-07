@@ -1,3 +1,4 @@
+import { createAgentWithInitialMessage } from "@/agent-creation";
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import { Keyboard, ScrollView, StyleSheet as RNStyleSheet, Text, View } from "react-native";
 import { useTranslation } from "react-i18next";
@@ -24,7 +25,7 @@ import type { Agent } from "@/stores/session-store";
 import { useWorkspaceFields } from "@/stores/session-store-hooks";
 import { useWorkspaceDraftSubmissionStore } from "@/stores/workspace-draft-submission-store";
 import { useAgentControlCommandCenterActions } from "@/command-center/agent-control-registration";
-import { requestWorkspaceDraftAgent } from "@/composer/draft/create-agent-request";
+import { encodeImages } from "@/utils/encode-images";
 import type { WorkspaceFileOpenRequest } from "@/workspace/file-open";
 import { shouldAutoFocusWorkspaceDraftComposer } from "@/screens/workspace/workspace-draft-pane-focus";
 import {
@@ -136,6 +137,7 @@ function resolveDraftModeId(input: {
 }
 
 async function submitDraftCreateRequest(input: {
+  draftId: string;
   attempt: { clientMessageId: string };
   text: string;
   images?: UserMessageImageAttachment[];
@@ -195,12 +197,14 @@ async function submitDraftCreateRequest(input: {
   });
 
   const attachmentsArray = Array.isArray(attachments) ? attachments : undefined;
-  const result = await requestWorkspaceDraftAgent(client, {
+  const imagesData = await encodeImages(images);
+  const result = await createAgentWithInitialMessage(client, {
+    idempotencyKey: input.draftId,
     config,
     workspaceId,
-    text,
+    initialPrompt: text,
     clientMessageId: attempt.clientMessageId,
-    ...(images ? { images } : {}),
+    ...(imagesData && imagesData.length > 0 ? { images: imagesData } : {}),
     ...(attachmentsArray ? { attachments: attachmentsArray } : {}),
   });
 
@@ -389,10 +393,7 @@ export function WorkspaceDraftAgentTab({
   );
   const autoSubmitConfig = resolveAutoSubmitConfig(pendingAutoSubmit);
   const initialCreateAttempt = useMemo<DraftCreateAttempt | null>(() => {
-    if (!pendingAutoSubmit || !pendingCreateAttempt) {
-      return null;
-    }
-    if (pendingAutoSubmit.clientMessageId !== pendingCreateAttempt.clientMessageId) {
+    if (!pendingCreateAttempt) {
       return null;
     }
     return {
@@ -406,7 +407,7 @@ export function WorkspaceDraftAgentTab({
         ? { attachments: pendingCreateAttempt.attachments }
         : {}),
     };
-  }, [pendingAutoSubmit, pendingCreateAttempt]);
+  }, [pendingCreateAttempt]);
   const allowsEmptyAutoSubmit = pendingAutoSubmit?.allowEmptyText === true;
   const isCompactFormFactor = useIsCompactFormFactor();
   const { onLayout: onInputAreaLayout, isBelow: isCompactComposerLayout } = useContainerWidthBelow(
@@ -488,6 +489,7 @@ export function WorkspaceDraftAgentTab({
       }),
     createRequest: async ({ attempt, text, images, attachments, cwd }) =>
       submitDraftCreateRequest({
+        draftId,
         attempt,
         text,
         images,

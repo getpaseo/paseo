@@ -2563,6 +2563,7 @@ export const ArchiveWorkspaceRequestSchema = z.object({
 export const WorkspaceCreateRequestSchema = z.object({
   type: z.literal("workspace.create.request"),
   requestId: z.string(),
+  idempotencyKey: z.string().min(1).max(512).optional(),
   // Optional user-set title applied to the created workspace.
   title: z.string().optional(),
   // Optional prompt context for workspace-level name/branch generation.
@@ -3480,6 +3481,7 @@ export const ServerInfoStatusPayloadSchema = z
       .object({
         // COMPAT(agentRequestReceipts): added in v0.8.0; remove gate after 2027-03-05.
         agentRequestReceipts: z.boolean().optional(),
+        workspaceRequestReceipts: z.boolean().optional(),
         // COMPAT(hubAgentRpc): added in v0.8.0; remove gate after 2027-03-05.
         hubAgentRpc: z.boolean().optional(),
         providersSnapshot: z.boolean().optional(),

@@ -96,8 +96,10 @@ export const useWorkspaceDraftSubmissionStore = create<WorkspaceDraftSubmissionS
         if (!matchesPendingSubmission(state.pendingByDraftId[input.draftId], input)) {
           return state;
         }
-        const { [input.draftId]: _removed, ...rest } = state.pendingByDraftId;
-        return { pendingByDraftId: rest };
+        // Expo miscompiles computed member-key rest omissions; test the emitted code.
+        const pendingByDraftId = { ...state.pendingByDraftId };
+        delete pendingByDraftId[input.draftId];
+        return { pendingByDraftId };
       });
       return pending;
     },
