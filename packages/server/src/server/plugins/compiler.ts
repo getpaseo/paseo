@@ -151,8 +151,18 @@ function lexicalBoundaryError(
 ): OnResolveResult | null {
   if (!specifier.startsWith(".") && !path.isAbsolute(specifier)) return null;
   const lexicalPath = path.resolve(resolveDirectory, specifier);
-  if (!containsPath(pluginDirectory, lexicalPath)) return null;
-  return moduleBoundaryError(directoryTarget(lexicalPath, pluginDirectory), target, lexicalPath);
+  if (containsPath(pluginDirectory, lexicalPath)) {
+    return moduleBoundaryError(directoryTarget(lexicalPath, pluginDirectory), target, lexicalPath);
+  }
+  // Normalize only a containing root alias. Resolving the whole import would erase
+  // an authored server/ or client/ location when the final file is a symlink.
+  for (let ancestor = path.dirname(lexicalPath); ; ancestor = path.dirname(ancestor)) {
+    if (existsSync(ancestor) && realpathSync.native(ancestor) === pluginDirectory) {
+      const ownedPath = path.join(pluginDirectory, path.relative(ancestor, lexicalPath));
+      return moduleBoundaryError(directoryTarget(ownedPath, pluginDirectory), target, lexicalPath);
+    }
+    if (path.dirname(ancestor) === ancestor) return null;
+  }
 }
 
 function createRuntimeBoundaryPlugin(target: PluginBuildTarget, pluginDirectory: string): Plugin {
@@ -164,11 +174,12 @@ function createRuntimeBoundaryPlugin(target: PluginBuildTarget, pluginDirectory:
       const checked = new Set<string>();
       const imports = createPluginImportReader(pluginDirectory);
       function resolvedBoundaryError(
-        file: string,
+        resolvedFile: string,
         specifier: string,
         importer: string,
         owner: PluginBuildTarget | "shared",
       ) {
+        const file = realpathSync.native(resolvedFile);
         const location = directoryTarget(file, pluginDirectory);
         if (location === "invalid") {
           if (
@@ -209,14 +220,15 @@ function createRuntimeBoundaryPlugin(target: PluginBuildTarget, pluginDirectory:
           // esbuild owns missing-runtime errors: erased imports and guarded optional
           // requires are legal. Inspect every dependency that actually resolves.
           if (!resolution.errors.length && !resolution.external && resolution.namespace === "file")
-            dependencyFiles.add(resolution.path);
+            dependencyFiles.add(realpathSync.native(resolution.path));
         }
         return dependencyFiles;
       }
       async function checkSourceImports(
-        file: string,
+        sourcePath: string,
         inheritedOwner: PluginBuildTarget | "shared",
       ): Promise<OnResolveResult | null> {
+        const file = realpathSync.native(sourcePath);
         const owner =
           directoryTarget(file, pluginDirectory) === "shared" ? "shared" : inheritedOwner;
         const key = `${owner}:${file}`;
@@ -256,21 +268,18 @@ function createRuntimeBoundaryPlugin(target: PluginBuildTarget, pluginDirectory:
       buildContext.onResolve({ filter: /.*/ }, async (args) => {
         if (args.kind === "entry-point") return null;
         if (args.pluginData === boundaryResolution) return null;
-        const owner =
-          directoryTarget(args.importer, pluginDirectory) === "shared" ? "shared" : target;
-        const specifierError = runtimeSpecifierError(args.path, owner, args.importer);
+        const importer =
+          args.namespace === "file" ? realpathSync.native(args.importer) : args.importer;
+        const resolveDir = args.namespace === "file" ? path.dirname(importer) : args.resolveDir;
+        const owner = directoryTarget(importer, pluginDirectory) === "shared" ? "shared" : target;
+        const specifierError = runtimeSpecifierError(args.path, owner, importer);
         if (specifierError) return specifierError;
-        const lexicalError = lexicalBoundaryError(
-          args.path,
-          args.resolveDir,
-          pluginDirectory,
-          owner,
-        );
+        const lexicalError = lexicalBoundaryError(args.path, resolveDir, pluginDirectory, owner);
         if (lexicalError) return lexicalError;
         const resolution = await buildContext.resolve(args.path, {
-          importer: args.importer,
+          importer,
           namespace: args.namespace,
-          resolveDir: args.resolveDir,
+          resolveDir,
           kind: args.kind,
           pluginData: boundaryResolution,
           with: args.with,
@@ -282,7 +291,7 @@ function createRuntimeBoundaryPlugin(target: PluginBuildTarget, pluginDirectory:
         ) {
           return null;
         }
-        return resolvedBoundaryError(resolution.path, args.path, args.importer, owner);
+        return resolvedBoundaryError(resolution.path, args.path, importer, owner);
       });
     },
   };
@@ -337,16 +346,23 @@ function runtimeSpecifierError(
 }
 
 function checkSharedDependencies(inputs: Metafile["inputs"], pluginDirectory: string): void {
-  const pending = Object.keys(inputs).filter(
-    (file) => directoryTarget(path.resolve(file), pluginDirectory) === "shared",
-  );
+  function inputLocation(file: string): PluginModuleLocation | null {
+    const absolutePath = path.resolve(file);
+    // Metafile keys must stay unchanged for graph traversal. Only filesystem
+    // inputs have canonical paths; data URLs and external specifiers do not.
+    return directoryTarget(
+      existsSync(absolutePath) ? realpathSync.native(absolutePath) : absolutePath,
+      pluginDirectory,
+    );
+  }
+  const pending = Object.keys(inputs).filter((file) => inputLocation(file) === "shared");
   const visited = new Set<string>();
   while (pending.length) {
     const file = pending.pop()!;
     if (visited.has(file)) continue;
     visited.add(file);
     for (const dependency of inputs[file]?.imports ?? []) {
-      const location = directoryTarget(path.resolve(dependency.path), pluginDirectory);
+      const location = dependency.external ? null : inputLocation(dependency.path);
       const error =
         runtimeSpecifierError(dependency.original ?? dependency.path, "shared", file) ??
         (dependency.external

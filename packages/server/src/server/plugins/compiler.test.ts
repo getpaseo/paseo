@@ -1,3 +1,4 @@
+import { realpathSync } from "node:fs";
 import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -80,6 +81,8 @@ async function createSplitPlugin(): Promise<{
   client: string;
   server: string;
 }> {
+  // Keep the platform's original spelling (including Windows short names) in symlink
+  // targets. Only diagnostic expectations use canonical paths.
   const directory = await mkdtemp(path.join(tmpdir(), "paseo-plugin-compiler-"));
   temporaryDirectories.push(directory);
   await Promise.all([
@@ -124,6 +127,14 @@ export default function contribute(server) {
     ),
   ]);
   return { directory, client, server };
+}
+
+async function createRootAlias(directory: string): Promise<string> {
+  const aliases = await mkdtemp(path.join(tmpdir(), "paseo-plugin-root-alias-"));
+  temporaryDirectories.push(aliases);
+  const rootAlias = path.join(aliases, "plugin");
+  await symlink(directory, rootAlias, process.platform === "win32" ? "junction" : "dir");
+  return rootAlias;
 }
 
 describe("plugin runtime entries", () => {
@@ -511,7 +522,7 @@ export default function contribute() { void Surface; return () => undefined; }`,
 export default function contribute() { void value; return () => undefined; }`,
     );
     await expect(compilePlugin(entries)).rejects.toThrow(
-      `Plugin modules belong in client/, server/, or shared/: ${path.join(entries.directory, "helper")}`,
+      `Plugin modules belong in client/, server/, or shared/: ${path.join(realpathSync.native(entries.directory), "helper")}`,
     );
   });
 
@@ -531,7 +542,7 @@ export default function contribute() { void secret; return () => undefined; }`,
     ]);
 
     await expect(compilePlugin({ client: null, server })).rejects.toThrow(
-      `Plugin modules belong in client/, server/, or shared/: ${path.join(parent, "secret")}`,
+      `Plugin modules belong in client/, server/, or shared/: ${path.join(realpathSync.native(parent), "secret")}`,
     );
   });
 
@@ -548,7 +559,7 @@ export default function contribute() { void secret; return () => undefined; }`,
     );
 
     await expect(compilePlugin(entries)).rejects.toThrow(
-      `Plugin modules belong in client/, server/, or shared/: ${outside}`,
+      `Plugin modules belong in client/, server/, or shared/: ${realpathSync.native(outside)}`,
     );
   });
 
@@ -569,7 +580,7 @@ export default function contribute() { void secret; return () => undefined; }`,
     ]);
 
     await expect(compilePlugin({ client: null, server })).rejects.toThrow(
-      `Plugin modules belong in client/, server/, or shared/: ${path.join(parent, "node_modules", "secret")}`,
+      `Plugin modules belong in client/, server/, or shared/: ${path.join(realpathSync.native(parent), "node_modules", "secret")}`,
     );
   });
 
@@ -669,10 +680,69 @@ export default function contribute() { void handler; return () => undefined; }`,
     );
   });
 
-  it("classifies symlinks by their canonical target", async () => {
+  it.each(["file", "directory"])(
+    "preserves authored ownership through root and %s aliases",
+    async (aliasKind) => {
+      const entries = await createSplitPlugin();
+      const rootAlias = await createRootAlias(entries.directory);
+      const sharedValue = path.join(entries.directory, "shared/value.ts");
+      await writeFile(sharedValue, 'export const value = "shared";');
+      if (aliasKind === "file") {
+        await symlink(sharedValue, path.join(entries.directory, "server/alias.ts"));
+      } else {
+        await rm(path.join(entries.directory, "server"), { recursive: true });
+        await symlink(
+          path.join(entries.directory, "shared"),
+          path.join(entries.directory, "server"),
+          process.platform === "win32" ? "junction" : "dir",
+        );
+      }
+      await writeFile(
+        entries.client,
+        `export { value } from ${JSON.stringify(path.join(rootAlias, "server", aliasKind === "file" ? "alias.ts" : "value.ts"))};`,
+      );
+      await expect(compilePlugin({ client: entries.client, server: null })).rejects.toThrow(
+        "server-only module",
+      );
+      await writeFile(
+        entries.client,
+        `export { value } from ${JSON.stringify(path.join(rootAlias, "shared/value.ts"))};`,
+      );
+      await expect(compilePlugin({ client: entries.client, server: null })).resolves.toMatchObject({
+        clientBundle: expect.stringContaining("shared"),
+      });
+    },
+  );
+
+  it("rejects generated React imports in dependencies reached through shared symlinks", async () => {
     const entries = await createSplitPlugin();
+    const rootAlias = await createRootAlias(entries.directory);
+    const dependency = path.join(entries.directory, "node_modules/decoration");
+    await mkdir(dependency, { recursive: true });
+    await writeFile(
+      path.join(dependency, "package.json"),
+      JSON.stringify({ name: "decoration", main: "index.tsx" }),
+    );
+    await writeFile(path.join(dependency, "index.tsx"), "export const decoration = <></>;");
+    await writeFile(
+      path.join(entries.directory, "shared/decoration.ts"),
+      'export { decoration } from "decoration";',
+    );
+    await symlink(
+      path.join(rootAlias, "shared/decoration.ts"),
+      path.join(entries.directory, "client/decoration.ts"),
+    );
+    await writeFile(entries.client, 'export { decoration } from "./client/decoration";');
+    await expect(compilePlugin({ client: entries.client, server: null })).rejects.toThrow(
+      "plugin shared",
+    );
+  });
+
+  it.each([false, true])("classifies symlink targets through a root alias: %s", async (aliased) => {
+    const entries = await createSplitPlugin();
+    const targetRoot = aliased ? await createRootAlias(entries.directory) : entries.directory;
     const link = path.join(entries.directory, "client", "handler.ts");
-    await symlink(path.join(entries.directory, "server", "handler.ts"), link);
+    await symlink(path.join(targetRoot, "server", "handler.ts"), link);
     await writeFile(
       entries.client,
       `import { handler } from "./client/handler";
@@ -738,33 +808,37 @@ export default function contribute() { void value; return () => undefined; }`,
     expect(serverBundle).toContain("linked dependency");
   });
 
-  it("does not treat the plugin package manifest as a linked dependency root", async () => {
-    const entries = await createSplitPlugin();
-    const dependency = path.join(entries.directory, "node_modules", "fixture-dependency");
-    const secret = path.join(entries.directory, "secret.ts");
-    await mkdir(dependency, { recursive: true });
-    await Promise.all([
-      writeFile(
-        path.join(entries.directory, "package.json"),
-        JSON.stringify({ name: "fixture-dependency" }),
-      ),
-      writeFile(
-        path.join(dependency, "package.json"),
-        JSON.stringify({ name: "fixture-dependency", main: "index.js" }),
-      ),
-      writeFile(secret, `export const secret = "plugin root";`),
-      symlink(secret, path.join(dependency, "index.js")),
-      writeFile(
-        entries.client,
-        `import { secret } from "fixture-dependency";
+  it.each([false, true])(
+    "rejects plugin manifests as linked roots through an alias: %s",
+    async (aliased) => {
+      const entries = await createSplitPlugin();
+      const targetRoot = aliased ? await createRootAlias(entries.directory) : entries.directory;
+      const dependency = path.join(entries.directory, "node_modules", "fixture-dependency");
+      const secret = path.join(entries.directory, "secret.ts");
+      await mkdir(dependency, { recursive: true });
+      await Promise.all([
+        writeFile(
+          path.join(entries.directory, "package.json"),
+          JSON.stringify({ name: "fixture-dependency" }),
+        ),
+        writeFile(
+          path.join(dependency, "package.json"),
+          JSON.stringify({ name: "fixture-dependency", main: "index.js" }),
+        ),
+        writeFile(secret, `export const secret = "plugin root";`),
+        symlink(path.join(targetRoot, "secret.ts"), path.join(dependency, "index.js")),
+        writeFile(
+          entries.client,
+          `import { secret } from "fixture-dependency";
 export default function contribute() { void secret; return () => undefined; }`,
-      ),
-    ]);
+        ),
+      ]);
 
-    await expect(compilePlugin(entries)).rejects.toThrow(
-      `Plugin modules belong in client/, server/, or shared/: ${secret}`,
-    );
-  });
+      await expect(compilePlugin(entries)).rejects.toThrow(
+        `Plugin modules belong in client/, server/, or shared/: ${realpathSync.native(secret)}`,
+      );
+    },
+  );
 
   it("does not let remembered linked roots hide plugin-local runtime boundaries", async () => {
     const entries = await createSplitPlugin();
