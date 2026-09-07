@@ -272,6 +272,12 @@ export default function contribute(server: PluginServerContext) {
 }
 ```
 
+Implement optional `ProviderRegistration.getCatalogCacheKey(options)` to share equivalent catalogue
+probes. The callback runs in the plugin process before discovery and receives the actual global or
+workspace target. Return a key covering effective configuration and execution environment, or
+`undefined` for target-specific caching. Ignore `force` when choosing identity. Existing providers
+need no change. See [catalogue ownership](providers.md#provider-snapshot-refresh-contract).
+
 `send()` resolves after acceptance. Publish operation completion, prompt disposition, turn state,
 configuration, permissions, persistence, and complete timeline snapshots through `onEvent()`.
 Route messages, structured commands, steering, and command side effects through `session.prompt`.

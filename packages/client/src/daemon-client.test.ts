@@ -6169,3 +6169,52 @@ test("waitForFinish with timeout=0 omits timeoutMs and has no client deadline", 
     vi.useRealTimers();
   }
 });
+
+test("wire snapshot callers own expansion and receive hash references unchanged", async () => {
+  const transport = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "wire-catalog",
+    providerSnapshots: "wire",
+    reconnect: { enabled: false },
+    transportFactory: () => transport.transport,
+  });
+  clients.push(client);
+  const connected = client.connect();
+  transport.triggerOpen({ preserveSent: true });
+  await connected;
+  expect(JSON.parse(assertStr(transport.sent[0])).capabilities.provider_snapshot_references).toBe(
+    true,
+  );
+  const received: unknown[] = [];
+  client.on("providers_snapshot_update", (message) => received.push(message.payload));
+  const payload = {
+    entries: [],
+    snapshotHash: "content",
+    fetchedAt: { codex: "2026-09-06T12:00:00.000Z" },
+    generatedAt: "2026-09-06T12:00:00.000Z",
+  };
+  transport.triggerMessage(wrapSessionMessage({ type: "providers_snapshot_update", payload }));
+  expect(received).toEqual([payload]);
+  const request = client.getProvidersSnapshot();
+  const sent = parseSentFrame(transport.sent.at(-1)!);
+  const body = {
+    ...payload,
+    compactSnapshot: {
+      entries: [
+        {
+          provider: "codex",
+          enabled: true,
+          status: "ready",
+          models: [{ id: "astra", label: "Astra" }],
+        },
+      ],
+      thinkingSets: [],
+    },
+    requestId: sent.requestId,
+  };
+  transport.triggerMessage(
+    wrapSessionMessage({ type: "get_providers_snapshot_response", payload: body }),
+  );
+  expect(await request).toEqual(body);
+});

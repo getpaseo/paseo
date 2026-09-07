@@ -26,6 +26,8 @@ export const PROVIDER_CAPABILITIES = [
 export type ProviderCapability = (typeof PROVIDER_CAPABILITIES)[number];
 
 export interface ProviderRegistration {
+  /** Equal keys share discovery within this provider. Include effective configuration and execution environment. */
+  getCatalogCacheKey?(options: ProviderCatalogOptions): Promise<string | undefined>;
   id: string;
   label: string;
   description?: string;
@@ -33,6 +35,10 @@ export interface ProviderRegistration {
   icon?: string;
   connect(request: ProviderConnectRequest): Promise<ProviderConnection>;
 }
+
+export type ProviderCatalogOptions =
+  | { scope: "global"; force?: boolean }
+  | { scope: "workspace"; cwd: string; force?: boolean };
 
 export interface ProviderConnectRequest {
   versions: readonly number[];

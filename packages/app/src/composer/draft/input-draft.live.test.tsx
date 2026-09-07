@@ -34,8 +34,6 @@ vi.mock("@/attachments/service", () => ({
 vi.mock("@/hooks/use-agent-form-state", () => ({
   useAgentFormState: () => ({
     selectedServerId: "host-1",
-    setSelectedServerId: () => undefined,
-    setSelectedServerIdFromUser: () => undefined,
     selectedProvider: "codex",
     setProviderFromUser: () => undefined,
     selectedMode: "auto",
@@ -45,8 +43,6 @@ vi.mock("@/hooks/use-agent-form-state", () => ({
     selectedThinkingOptionId: "",
     setThinkingOptionFromUser: () => undefined,
     workingDir: "/repo",
-    setWorkingDir: () => undefined,
-    setWorkingDirFromUser: () => undefined,
     providerDefinitions: [{ id: "codex", label: "Codex", modes: [{ id: "auto", label: "Auto" }] }],
     providerDefinitionMap: new Map(),
     agentDefinition: undefined,
@@ -179,9 +175,7 @@ describe("useAgentInputDraft live contract", () => {
         draftKey,
         composer: {
           initialServerId: "host-1",
-          initialValues: { workingDir: "/repo" },
           isVisible: true,
-          onlineServerIds: ["host-1"],
           lockedWorkingDir: "/repo",
         },
       });

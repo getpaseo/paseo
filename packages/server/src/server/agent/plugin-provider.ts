@@ -837,7 +837,10 @@ class PluginAgentClient implements AgentClient {
   private readonly rootsBySession = new Map<string, PluginAgentSession>();
   private readonly pendingChildren: PendingChild[] = [];
 
+  readonly getCatalogCacheKey?: AgentClient["getCatalogCacheKey"];
+
   constructor(registration: ProviderRegistration) {
+    this.getCatalogCacheKey = registration.getCatalogCacheKey?.bind(registration);
     this.provider = registration.id;
     this.runtime = new ProviderRuntime(registration);
     this.runtime.onSessionOpened((session, opened) => this.acceptChild(session, opened));
