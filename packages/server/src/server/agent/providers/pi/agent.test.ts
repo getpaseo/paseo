@@ -253,6 +253,13 @@ class SessionEvents {
     );
   }
 
+  providerSubagentEvents() {
+    return this.events.filter(
+      (event): event is Extract<AgentStreamEvent, { type: "provider_subagent" }> =>
+        event.type === "provider_subagent",
+    );
+  }
+
   nextTurnCompletion(): Promise<Extract<AgentStreamEvent, { type: "turn_completed" }>> {
     return this.nextEvent(
       (event): event is Extract<AgentStreamEvent, { type: "turn_completed" }> =>
@@ -1388,6 +1395,49 @@ describe("PiRpcAgentSession", () => {
     await expect(events.nextTurnFailure()).resolves.toMatchObject({
       error: "Pi exited",
     });
+  });
+
+  test("cancels tracked subagents when the Pi process exits", async () => {
+    const { pi, session, events } = await createSession();
+
+    await session.startTurn("hello");
+    pi.latestSession().emit({
+      type: "tool_execution_start",
+      toolCallId: "sub-1",
+      toolName: "subagent",
+      args: { agent: "explore", task: "Find auth code" },
+    });
+    pi.latestSession().emit({ type: "process_exit", error: "Pi exited" });
+
+    await expect(events.nextTurnFailure()).resolves.toMatchObject({
+      error: "Pi exited",
+    });
+    expect(events.providerSubagentEvents()).toEqual([
+      {
+        type: "provider_subagent",
+        provider: "pi",
+        event: {
+          type: "upsert",
+          id: "sub-1",
+          title: "explore",
+          description: "Find auth code",
+          status: "running",
+          toolCallId: "sub-1",
+        },
+      },
+      {
+        type: "provider_subagent",
+        provider: "pi",
+        event: {
+          type: "upsert",
+          id: "sub-1",
+          title: "explore",
+          description: "Find auth code",
+          status: "canceled",
+          toolCallId: "sub-1",
+        },
+      },
+    ]);
   });
 
   test("completes locally handled slash commands when agentInvoked is false", async () => {

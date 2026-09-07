@@ -2167,6 +2167,9 @@ export class PiRpcAgentSession implements AgentSession {
 
   private handleProcessExit(error: string): void {
     this.rejectAllExtensionResults(new Error(error));
+    for (const subagentEvent of this.subagentTracker.cancelAll()) {
+      this.emit(subagentEvent);
+    }
     if (!this.activeTurnId) {
       return;
     }
