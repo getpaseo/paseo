@@ -1,3 +1,4 @@
+import type { PluginLifecycleRegistration } from "./lifecycle.js";
 import type { ComponentType } from "react";
 import type { PaseoApi } from "@getpaseo/client";
 import type { AgentTimelineItem, JsonValue } from "@getpaseo/protocol/agent-types";
@@ -319,7 +320,7 @@ export interface PluginHandlerContext {
   paseo: PaseoApi;
 }
 
-export interface PluginServerContext {
+export interface PluginServerContext extends PluginLifecycleRegistration {
   registerSettings<Schema extends ZodType>(
     definition: import("./settings.js").SettingsDefinition<Schema>,
   ): void;

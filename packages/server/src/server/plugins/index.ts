@@ -1,3 +1,4 @@
+import type { PluginLifecycle } from "./lifecycle/index.js";
 import path from "node:path";
 import { stat, rm } from "node:fs/promises";
 import type pino from "pino";
@@ -24,6 +25,8 @@ import { readPluginProviderIcon } from "./provider-icon.js";
 const BUILTIN_PROVIDER_ID_SET: ReadonlySet<string> = new Set(BUILTIN_PROVIDER_IDS);
 
 interface PluginRuntimePort {
+  emit?: PluginLifecycle["emit"];
+  before?: PluginLifecycle["before"];
   catalog: PluginRuntime["catalog"];
   invoke(pluginId: string, method: string, input: unknown): Promise<unknown>;
   getLogs(pluginId: string): PluginLogEntry[];
@@ -90,6 +93,17 @@ export class PluginService {
       this.notify(pluginId);
     });
   }
+
+  readonly emit: PluginLifecycle["emit"] = (name, event) => {
+    this.runtime.emit?.(name, event);
+  };
+
+  readonly before: PluginLifecycle["before"] = async (name, request) => {
+    if (this.runtime.before) {
+      return this.runtime.before(name, request);
+    }
+    return request;
+  };
 
   subscribeSettings(listener: (pluginId: string, settingsId: string) => void): () => void {
     this.settingsListeners.add(listener);

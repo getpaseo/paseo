@@ -262,6 +262,17 @@ optional client-owned agent and workspace navigation; its absence is the compati
 older clients. Other navigation remains limited to registered global surfaces and workspace panels.
 Plugins do not receive Expo Router or workspace-layout store access.
 
+## Lifecycle hooks
+
+Server entries register lifecycle observers with `server.on()` and request transforms with
+`server.before()`. The [public reference](../public-docs/plugins/v0.8/reference.md#lifecycle-hooks)
+owns callback shapes, ordering, and failure behavior. `plugin-examples/lifecycle-logger` registers all
+eleven hooks; `plugin-examples/lifecycle-actions` demonstrates common automation callbacks.
+
+Emit from the operation owner, not a client subscription. Provider history replay must not trigger
+live hooks. Observers must not be awaited inside agent mutations: a callback can send a prompt or
+answer a permission through its own daemon session. Awaiting it there deadlocks that command.
+
 ## Contribute a provider
 
 Register a provider from `index.server.ts`. The provider connection is callback-based and owns all
