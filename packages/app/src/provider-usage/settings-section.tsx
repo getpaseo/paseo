@@ -6,7 +6,7 @@ import { StyleSheet } from "react-native-unistyles";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { settingsStyles } from "@/styles/settings";
-import { SettingsSection } from "@/screens/settings/settings-section";
+import { SettingsSection } from "@/components/settings/headings/settings-section";
 import { ProviderUsageList } from "./list";
 import type { ProviderUsageView } from "./types";
 
