@@ -56,9 +56,6 @@ export default function contribute(server) {
         { hook: "workspace.created", event: { workspace: { id: workspaceId, cwd: directory } } },
         { hook: "workspace.archived", event: { workspace: { id: workspaceId } } },
       ]);
-  } catch (error) {
-    console.error(await client.getPluginLogs("lifecycle"));
-    throw error;
   } finally {
     await client.close();
     await daemon.close();
