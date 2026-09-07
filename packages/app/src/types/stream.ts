@@ -476,6 +476,15 @@ function mergeRetainedLifecycleItem(tail: StreamItem[], retained: StreamItem): S
   if (retained.kind === "plugin") {
     return replaceTimelineIdentityItem(tail, retained);
   }
+  if (retained.kind === "compaction" && retained.status === "loading") {
+    // A "loading" compaction marker never carries a timelineCursor (it is a synthetic,
+    // unpositioned status notice), so it cannot be certified by canonical coverage and would
+    // otherwise survive every reload as a spinner that nothing ever resolves: the boundary event
+    // that would complete it, if it already happened, is replayed as a standalone "completed" row
+    // by history hydration rather than as an update to this row. Drop the stale marker instead;
+    // if the compaction is still genuinely in flight, the live stream will re-announce it.
+    return tail;
+  }
   if (!retained.timelineCursor) {
     return null;
   }

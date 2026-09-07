@@ -10,8 +10,10 @@ import {
   mergeToolCallDetail,
   mergeCanonicalText,
   reduceStreamUpdate,
+  replaceWithCanonicalStream,
   streamTimelineItemIdentity,
   type AgentToolCallItem,
+  type CompactionItem,
   type StreamItem,
   isAgentToolCallItem,
   upsertUserMessage,
@@ -1487,6 +1489,50 @@ describe("stream reducer canonical tool calls", () => {
       state.some((item) => item.kind === "compaction" && item.status === "loading"),
       false,
     );
+  });
+
+  it("drops a stale loading compaction marker instead of leaving it stuck across a reload", () => {
+    // Reproduces a reload/reconnect: the live view had an unresolved "loading" compaction
+    // marker (no timelineCursor, since it is a synthetic status notice) sitting in `head` when
+    // the page refreshed. History hydration replays the boundary as a standalone "completed" row
+    // with a real cursor, since replay never reconstructs the transient "loading" phase. Without
+    // reconciliation, the stale marker used to survive in `head` forever with no event left that
+    // could ever resolve it.
+    const staleLoadingMarker: CompactionItem = {
+      kind: "compaction",
+      id: "compaction-loading-stale",
+      timestamp: new Date("2025-01-01T10:50:00Z"),
+      status: "loading",
+      trigger: "auto",
+    };
+    const canonicalCompleted: CompactionItem = {
+      kind: "compaction",
+      id: "compaction-completed-canonical",
+      timelineCursor: { epoch: "epoch-1", seq: 5 },
+      timestamp: new Date("2025-01-01T10:50:01Z"),
+      status: "completed",
+      trigger: "auto",
+    };
+
+    const result = replaceWithCanonicalStream({
+      canonical: [canonicalCompleted],
+      previousTail: [],
+      previousHead: [staleLoadingMarker],
+      sendingClientMessageIds: [],
+      preserveContinuity: true,
+      canonicalCoverage: { epoch: "epoch-1", endSeq: null },
+    });
+
+    const allItems = [...result.tail, ...result.head];
+    assert.strictEqual(
+      allItems.some((item) => item.kind === "compaction" && item.status === "loading"),
+      false,
+    );
+    const compactions = allItems.filter(
+      (item): item is CompactionItem => item.kind === "compaction",
+    );
+    assert.strictEqual(compactions.length, 1);
+    assert.strictEqual(compactions[0].status, "completed");
   });
 
   it("renders Claude TodoWrite as todo_list and suppresses tool call badge", () => {
