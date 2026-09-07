@@ -180,20 +180,22 @@ test("workspace receipts serialize concurrent requests and survive reconstructio
   ).not.toBe("wks_first");
 });
 
-test("a workspace persisted before a lost acknowledgement is recovered", async () => {
+test("a workspace record left by failed provisioning is not mistaken for completion", async () => {
   const { requests, directory } = await fixture();
   const workspaces = new Set<string>();
   const input = {
-    key: "lost-workspace",
+    key: "partial-workspace",
     workspaceId: "wks_created",
     request: {},
     findWorkspace: async (id: string) => workspaces.has(id),
     create: async (id: string) => {
       workspaces.add(id);
-      throw new Error("acknowledgement lost");
+      throw new Error("checkout rolled back");
     },
   };
-  await expect(requests.createWorkspace(input)).rejects.toThrow("acknowledgement lost");
-  expect(await new RequestReceipts(directory).createWorkspace(input)).toBe("wks_created");
+  await expect(requests.createWorkspace(input)).rejects.toThrow("checkout rolled back");
+  await expect(new RequestReceipts(directory).createWorkspace(input)).rejects.toThrow(
+    "workspace_request_outcome_unknown",
+  );
   expect([...workspaces]).toEqual(["wks_created"]);
 });

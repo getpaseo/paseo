@@ -35,6 +35,7 @@ export function isActiveCreateFlowForDraft(input: {
 interface CreateFlowState {
   pendingByDraftId: Record<string, PendingCreateAttempt>;
   setPending: (pending: Omit<PendingCreateAttempt, "lifecycle">) => void;
+  trySetPending: (pending: Omit<PendingCreateAttempt, "lifecycle">) => boolean;
   updateAgentId: (input: { draftId: string; agentId: string }) => void;
   markLifecycle: (input: {
     draftId: string;
@@ -47,7 +48,7 @@ interface CreateFlowState {
   clearAll: () => void;
 }
 
-export const useCreateFlowStore = create<CreateFlowState>((set) => ({
+export const useCreateFlowStore = create<CreateFlowState>((set, get) => ({
   pendingByDraftId: {},
   setPending: (pending) =>
     set((state) => ({
@@ -59,6 +60,12 @@ export const useCreateFlowStore = create<CreateFlowState>((set) => ({
         },
       },
     })),
+  trySetPending: (pending) => {
+    const existing = get().pendingByDraftId[pending.draftId];
+    if (existing?.serverId === pending.serverId && existing.lifecycle !== "abandoned") return false;
+    get().setPending(pending);
+    return true;
+  },
   updateAgentId: ({ draftId, agentId }) =>
     set((state) => {
       const current = state.pendingByDraftId[draftId];

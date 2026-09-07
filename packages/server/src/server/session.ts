@@ -6350,19 +6350,6 @@ export class Session {
     request: Extract<SessionInboundMessage, { type: "workspace.create.request" }>,
   ): Promise<void> {
     try {
-      const create = async (workspaceId?: string) => {
-        let creationRequest = request;
-        // Hooks belong to the operation: retries fingerprint the caller's input
-        // and must not rerun hooks or compare their potentially changing output.
-        if (this.pluginRuntime) {
-          const { type, requestId, ...input } = request;
-          const transformed = await this.pluginRuntime.before("workspace.create", input);
-          creationRequest = { ...transformed, type, requestId };
-        }
-        return creationRequest.source.kind === "directory"
-          ? this.handleWorkspaceCreateLocal(creationRequest, workspaceId)
-          : this.handleWorkspaceCreateWorktree(creationRequest, workspaceId);
-      };
       let descriptor: WorkspaceDescriptorPayload | undefined;
       if (request.idempotencyKey !== undefined) {
         const { requestId: _requestId, idempotencyKey, ...payload } = request;
@@ -6372,16 +6359,24 @@ export class Session {
           workspaceId: generateWorkspaceId(),
           findWorkspace: async (id) => (await this.workspaceRegistry.get(id)) !== null,
           create: async (id) => {
-            descriptor = await create(id);
+            descriptor = await this.createRequestedWorkspace(request, id);
           },
         });
         if (!descriptor) {
           const workspace = await this.workspaceRegistry.get(workspaceId);
           if (!workspace) throw new Error("Previously created workspace no longer exists");
+          if (!(await this.filesystem.isDirectory(workspace.cwd))) {
+            throw new SessionRequestError(
+              "directory_not_found",
+              `Directory not found: ${workspace.cwd}`,
+            );
+          }
+          await this.syncWorkspaceGitObserverForWorkspace(workspace);
           descriptor = await this.describeWorkspaceRecordWithGitData(workspace);
+          await this.emitCreatedWorkspaceUpdate(descriptor);
         }
       } else {
-        descriptor = await create();
+        descriptor = await this.createRequestedWorkspace(request);
       }
       const workspace = await this.workspaceRegistry.get(descriptor.id);
       this.emit({
@@ -6421,6 +6416,23 @@ export class Session {
         },
       });
     }
+  }
+
+  private async createRequestedWorkspace(
+    request: Extract<SessionInboundMessage, { type: "workspace.create.request" }>,
+    workspaceId?: string,
+  ): Promise<WorkspaceDescriptorPayload> {
+    let creationRequest = request;
+    // Hooks belong to the operation: retries fingerprint the caller's input
+    // and must not rerun hooks or compare their potentially changing output.
+    if (this.pluginRuntime) {
+      const { type, requestId, ...input } = request;
+      const transformed = await this.pluginRuntime.before("workspace.create", input);
+      creationRequest = { ...transformed, type, requestId };
+    }
+    return creationRequest.source.kind === "directory"
+      ? this.handleWorkspaceCreateLocal(creationRequest, workspaceId)
+      : this.handleWorkspaceCreateWorktree(creationRequest, workspaceId);
   }
 
   private async handleWorkspaceCreateLocal(

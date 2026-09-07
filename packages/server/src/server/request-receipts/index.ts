@@ -46,7 +46,9 @@ export class RequestReceipts {
   }): Promise<string> {
     return this.execute(["create-workspace", input.key], input.request, {
       resource: { kind: "workspace", id: input.workspaceId },
-      recover: input.findWorkspace,
+      // A registry entry can survive failed provisioning and checkout rollback.
+      // Only a completed receipt proves that the entire operation succeeded.
+      recover: async () => false,
       run: input.create,
       retrySafe: async (workspaceId) => !(await input.findWorkspace(workspaceId)),
     });

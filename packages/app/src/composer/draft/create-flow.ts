@@ -135,14 +135,17 @@ export function useDraftAgentCreateFlow<TDraftAgent, TCreateResult>({
   );
 
   const pending = useCreateFlowStore((state) => state.pendingByDraftId[draftId]);
-  // A remounted view observes completion from the same attempt as its original view.
-  const machine = useMemo<DraftAgentMachineState<TDraftAgent>>(
-    () =>
-      localMachine.tag === "creating" && pending?.lifecycle === "abandoned"
-        ? { tag: "draft", errorMessage: pending.errorMessage ?? "" }
-        : localMachine,
-    [pending, localMachine],
-  );
+  // Remounts can precede model hydration. Rebuild the preview when its inputs
+  // arrive, and observe the original request's failure through shared state.
+  const machine = useMemo<DraftAgentMachineState<TDraftAgent>>(() => {
+    if (pending?.lifecycle === "abandoned") {
+      return { tag: "draft", errorMessage: pending.errorMessage ?? "" };
+    }
+    if (pending?.lifecycle === "active" && localMachine.tag === "draft" && initialAttempt) {
+      return prepareCreateAttempt(initialAttempt, buildDraftAgent);
+    }
+    return localMachine;
+  }, [pending, localMachine, initialAttempt, buildDraftAgent]);
 
   const setPendingCreateAttempt = useCreateFlowStore((state) => state.setPending);
   const updatePendingAgentId = useCreateFlowStore((state) => state.updateAgentId);

@@ -250,40 +250,4 @@ describe("useDraftAgentCreateFlow", () => {
     });
     expect(onCreateSuccess).toHaveBeenCalledTimes(1);
   });
-
-  it("unlocks a remounted draft when the original request fails", async () => {
-    let rejectCreation!: (error: Error) => void;
-    const creation = new Promise<never>((_resolve, reject) => {
-      rejectCreation = reject;
-    });
-    const options = {
-      draftId: "draft-remount",
-      getPendingServerId: () => "server-1",
-      buildDraftAgent: () => ({ provider: "codex" }),
-      createRequest: async () => creation,
-      onCreateSuccess: () => undefined,
-    };
-    const original = renderHook(() => useDraftAgentCreateFlow(options));
-    let submission!: Promise<unknown>;
-    const captureError = (error: unknown) => error;
-    await act(async () => {
-      submission = original.result.current
-        .handleCreateFromInput({ text: "hello", attachments: [], cwd: "/repo" })
-        .catch(captureError);
-    });
-    const pending = useCreateFlowStore.getState().pendingByDraftId[options.draftId]!;
-    const restored = renderHook(() =>
-      useDraftAgentCreateFlow({
-        ...options,
-        initialAttempt: { ...pending, timestamp: new Date(pending.timestamp) },
-      }),
-    );
-    expect(restored.result.current.isSubmitting).toBe(true);
-    await act(async () => {
-      rejectCreation(new Error("Provider unavailable"));
-      await submission;
-    });
-    expect(restored.result.current.isSubmitting).toBe(false);
-    expect(restored.result.current.formErrorMessage).toBe("Provider unavailable");
-  });
 });

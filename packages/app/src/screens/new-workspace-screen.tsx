@@ -1068,8 +1068,6 @@ async function submitWorkspaceDraft(input: SubmitDraftInput): Promise<SubmitOutc
     initialSetup,
   } = input;
   const draftId = draftIdInput?.trim() || generateDraftId();
-  const existing = useCreateFlowStore.getState().pendingByDraftId[draftId];
-  if (existing?.serverId === serverId) return;
   const clientMessageId = `${draftId}:initial-message`;
   const timestamp = Date.now();
   const wirePayload = splitComposerAttachmentsForSubmit(attachments, {
@@ -1111,7 +1109,7 @@ async function submitWorkspaceDraft(input: SubmitDraftInput): Promise<SubmitOutc
     return "background";
   }
 
-  useCreateFlowStore.getState().setPending({
+  const started = useCreateFlowStore.getState().trySetPending({
     serverId,
     draftId,
     workspaceId,
@@ -1122,6 +1120,7 @@ async function submitWorkspaceDraft(input: SubmitDraftInput): Promise<SubmitOutc
     ...(wirePayload.images.length > 0 ? { images: wirePayload.images } : {}),
     ...(wirePayload.attachments.length > 0 ? { attachments: wirePayload.attachments } : {}),
   });
+  if (!started) return "navigated";
   useWorkspaceDraftSubmissionStore.getState().setPending({
     serverId,
     workspaceId,
