@@ -96,8 +96,9 @@ test.describe("Model B sidebar shape", () => {
     try {
       // Open the workspace and materialize both an agent tab and a terminal tab.
       await gotoWorkspace(page, mock.workspaceId);
-      const agentTabs = await getVisibleWorkspaceAgentTabIds(page);
-      expect(agentTabs).toContain(`workspace-tab-agent_${mock.agentId}`);
+      await expect
+        .poll(() => getVisibleWorkspaceAgentTabIds(page))
+        .toContain(`workspace-tab-agent_${mock.agentId}`);
 
       await clickNewTerminal(page);
       await expect(

@@ -1,4 +1,4 @@
-import { test } from "../support/fixtures";
+import { test, expect, type Page } from "../support/fixtures";
 import { gotoAppShell } from "../support/helpers/app";
 import { waitForSidebarHydration } from "../support/helpers/workspace-ui";
 import {
@@ -30,8 +30,9 @@ const PROMPT_PROFILE: TerminalProfile = {
   args: ["-c", 'echo remembered: "$0"; exec cat', "{{{prompt}}}"],
 };
 
-function hasLeftNewWorkspaceRoute(url: URL): boolean {
-  return !/\/new(?:\?.*)?$/.test(`${url.pathname}${url.search}`);
+async function expectChatLaunchComplete(page: Page): Promise<void> {
+  const agentTab = page.getByTestId(/^workspace-tab-agent_/).filter({ visible: true });
+  await expect(agentTab).toHaveAttribute("aria-selected", "true", { timeout: 30_000 });
 }
 
 test.describe("New workspace: launch target memory", () => {
@@ -78,10 +79,8 @@ test.describe("New workspace: launch target memory", () => {
       await selectChatLaunch(page);
       await expectChatLaunchSelected(page);
       await submitNewWorkspacePrompt(page, "hello from chat");
-      // The chat handoff navigates asynchronously (draft -> created agent). Let
-      // it fully settle before moving on, so it can't fire a late redirect
-      // that races the next step's navigation.
-      await page.waitForURL(hasLeftNewWorkspaceRoute, { timeout: 30_000 });
+      // Leaving /new can expose a previous workspace before the submitted draft opens.
+      await expectChatLaunchComplete(page);
 
       await openNewWorkspace();
       await expectChatLaunchSelected(page);
