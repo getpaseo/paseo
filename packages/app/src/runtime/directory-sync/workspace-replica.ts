@@ -58,15 +58,6 @@ export class WorkspaceDirectoryReplica {
     useSessionStore.getState().setHasWorkspaceDirectorySnapshot(this.serverId, true);
   }
 
-  commitCachedWorkspace(
-    workspace: WorkspaceDescriptor,
-    project: ProjectDescriptor | undefined,
-  ): void {
-    if (shouldSuppressWorkspaceForLocalArchive({ serverId: this.serverId, workspace })) return;
-    if (project) this.setProject(project);
-    this.setWorkspace(workspace);
-  }
-
   commitSnapshot(
     snapshot: WorkspaceDirectorySnapshot,
     deltas: readonly WorkspaceDirectoryDelta[],

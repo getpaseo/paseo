@@ -2,7 +2,7 @@ import { expect, type Page } from "@playwright/test";
 import { buildAgentRoute, seedMockAgentWorkspace, type MockAgentWorkspace } from "./mock-agent";
 import { readReplicaCache } from "./replica-cache-storage";
 import {
-  delayAgentBootstrapTailResponse,
+  delayAgentBootstrapTimelineResponse,
   delayAgentOlderTimelineResponse,
   holdDaemonHydration,
   holdAgentOlderTimelinePages,
@@ -296,9 +296,10 @@ export async function reloadAgentTimelineFromPersistedReplica(
       const timeline = cache?.hosts
         ?.flatMap((host) => host.timelines)
         .find((candidate) => candidate.agentId === agent.agentId);
-      return timeline?.items?.length === 50;
+      // This long fixture fills the latest 40-entry restart page, even after loading scrollback.
+      return timeline?.items?.length;
     })
-    .toBe(true);
+    .toBe(40);
 
   await page.reload();
   await expectTimelinePromptVisible(page, agent.newestPrompt);
@@ -503,7 +504,7 @@ export async function holdBootstrapTimelinePage(
   page: Page,
   agent: LongTimelineAgent,
 ): Promise<BootstrapTimelineGate> {
-  return delayAgentBootstrapTailResponse(page, agent.agentId);
+  return delayAgentBootstrapTimelineResponse(page, agent.agentId);
 }
 
 export async function sendLiveTurnBeforeHydration(agent: LongTimelineAgent): Promise<string> {

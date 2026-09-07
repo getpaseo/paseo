@@ -1,0 +1,44 @@
+{
+  "entry": {
+    "provider": "codex",
+    "item": {
+      "type": "assistant_message",
+      "text": "\n\n---\n\nThe pending-tail check passed: the app requested catch-up after 10197 and recovered the live paragraph, with no subsequent live row delivered. I’m now checking that unpositioned updates can coexist with sequencing in the same session.\n",
+      "messageId": "msg_050818abff3697f1016a9e2d065a4487d287f39b8cdf226b1a"
+    },
+    "timestamp": "2026-09-07T03:18:31.760Z",
+    "seqStart": 10223,
+    "seqEnd": 10243,
+    "sourceSeqRanges": [
+      {
+        "startSeq": 10223,
+        "endSeq": 10243
+      }
+    ],
+    "turnId": "codex-turn-64",
+    "collapsed": ["assistant_merge"]
+  },
+  "chunks": [
+    "\n\n---\n\nThe",
+    " pending-tail",
+    " check passed",
+    ": the",
+    " app requested",
+    " catch-up",
+    " after ",
+    "10197",
+    " and recovered the",
+    " live paragraph",
+    ", with no",
+    " subsequent live",
+    " row delivered",
+    ". I",
+    "’m now checking that",
+    " unposition",
+    "ed",
+    " updates can coexist with",
+    " sequencing in",
+    " the same",
+    " session.\n"
+  ]
+}

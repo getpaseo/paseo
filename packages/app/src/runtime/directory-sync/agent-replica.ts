@@ -4,7 +4,7 @@ import { clearArchiveAgentPending } from "@/hooks/use-archive-agent";
 import { queryClient } from "@/data/query-client";
 import type { Agent } from "@/stores/session-store";
 import { normalizeAgentSnapshot, projectAgentSnapshot } from "@/utils/agent-snapshots";
-import { type AgentDirectoryDelta } from "@/utils/agent-directory-sync";
+import { type AgentDirectoryDelta, type AgentRemovalReason } from "@/utils/agent-directory-sync";
 import { reconcileAgentDirectory } from "@/utils/agent-directory-reconciliation";
 import { applyLegacyDaemonWorkspaceOwnership } from "@/workspace/legacy-daemon-workspaces";
 import type { DirectoryReplicaMutation } from "@/runtime/replica-cache";
@@ -25,52 +25,47 @@ export interface AgentLifecycleToken {
 export class AgentDirectoryReplica {
   private readonly lifecycleVersions = new Map<string, number>();
   private readonly members = new Set<string>();
-  private readonly pendingCacheReads = new Set<string>();
   private readonly storeProjection: AgentStoreProjection;
 
   constructor(
     private readonly serverId: string,
     private readonly onStoppedRunning: (agentId: string) => void,
     private readonly persist: (mutations: readonly DirectoryReplicaMutation[]) => void,
+    removeTimeline: (agentId: string, reason: AgentRemovalReason) => void,
+    private readonly acceptTimeline: (agentId: string) => void = () => undefined,
   ) {
-    this.storeProjection = new AgentStoreProjection(serverId);
+    this.storeProjection = new AgentStoreProjection(serverId, removeTimeline);
   }
 
   captureTimeline(agentId: string): AgentLifecycleToken {
     return { agentId, version: this.lifecycleVersions.get(agentId) ?? 0 };
   }
 
+  isTimelineCurrent(token: AgentLifecycleToken): boolean {
+    return token.version === (this.lifecycleVersions.get(token.agentId) ?? 0);
+  }
+
   snapshot(): Map<string, Agent> {
     return this.storeProjection.snapshot();
   }
 
-  captureCache(agentId: string): AgentLifecycleToken {
-    this.pendingCacheReads.add(agentId);
-    return this.captureTimeline(agentId);
-  }
-
+  // Saved rows sit under whatever the live stream already delivered for this connection.
   commitCached(agents: Map<string, Agent>): void {
-    const merged = this.storeProjection.commitCached(agents);
+    const current = new Map(
+      [...agents].filter(([id]) => !this.lifecycleVersions.has(id) || this.members.has(id)),
+    );
+    const merged = this.storeProjection.commitCached(current);
     this.members.clear();
     for (const agentId of merged.keys()) {
       this.members.add(agentId);
     }
   }
 
-  commitCachedAgent(token: AgentLifecycleToken, agent: Agent): boolean {
-    this.pendingCacheReads.delete(token.agentId);
-    if (token.version !== (this.lifecycleVersions.get(token.agentId) ?? 0)) return false;
-    if (this.members.has(agent.id)) return false;
-    this.members.add(agent.id);
-    this.storeProjection.accept(agent);
-    this.storeProjection.publishActivity(agent);
-    return true;
-  }
-
   submitTimelineAgent(token: AgentLifecycleToken, payload: AgentSnapshotPayload): boolean {
-    if (token.version !== (this.lifecycleVersions.get(token.agentId) ?? 0)) {
+    if (!this.isTimelineCurrent(token)) {
       return false;
     }
+    const startsLifetime = !this.members.has(token.agentId);
     const existing = this.storeProjection.get(token.agentId);
     const timelineAgent = applyLegacyDaemonWorkspaceOwnership({
       serverId: this.serverId,
@@ -81,6 +76,10 @@ export class AgentDirectoryReplica {
       projectPlacement: timelineAgent.projectPlacement ?? existing?.projectPlacement,
     };
     const accepted = this.storeProjection.accept(normalized);
+    if (startsLifetime) {
+      this.resume(accepted.id);
+      this.acceptTimeline(accepted.id);
+    }
     this.members.add(accepted.id);
     this.storeProjection.replacePendingPermissions(accepted);
     this.storeProjection.publishActivity(accepted);
@@ -99,7 +98,10 @@ export class AgentDirectoryReplica {
       this.advance(delta.agentId);
     } else {
       this.members.add(delta.agent.id);
-      if (!before) this.advance(delta.agent.id);
+      if (!before) {
+        this.resume(delta.agent.id);
+        this.acceptTimeline(delta.agent.id);
+      }
     }
     if (result.stoppedRunning) this.onStoppedRunning(result.agentId);
     this.persist(
@@ -110,7 +112,12 @@ export class AgentDirectoryReplica {
   }
 
   accept(agent: Agent): Agent {
+    const startsLifetime = !this.members.has(agent.id);
     const accepted = this.storeProjection.accept(agent);
+    if (startsLifetime) {
+      this.resume(accepted.id);
+      this.acceptTimeline(accepted.id);
+    }
     this.members.add(accepted.id);
     this.persist([this.agentUpsert(accepted)]);
     return accepted;
@@ -124,22 +131,23 @@ export class AgentDirectoryReplica {
     const previous = this.storeProjection.snapshot();
     const reconciled = reconcileAgentDirectory({ snapshot: entries, deltas });
     const nextIds = new Set(reconciled.map((entry) => entry.agent.id));
-    for (const agentId of this.pendingCacheReads) {
-      if (!nextIds.has(agentId)) this.advance(agentId);
-    }
+    const startedLifetimes = new Set<string>();
     for (const agentId of this.members) {
       if (!nextIds.has(agentId)) this.advance(agentId);
     }
     for (const agentId of nextIds) {
-      if (!this.members.has(agentId)) this.advance(agentId);
+      if (!this.members.has(agentId)) {
+        this.resume(agentId);
+        startedLifetimes.add(agentId);
+      }
     }
     for (const agentId of previous.keys()) {
-      if (!nextIds.has(agentId)) this.storeProjection.remove(agentId);
+      if (!nextIds.has(agentId)) this.storeProjection.remove(agentId, "scope");
     }
     this.members.clear();
-    this.pendingCacheReads.clear();
     for (const agentId of nextIds) this.members.add(agentId);
     const agents = this.storeProjection.replaceFetched(reconciled);
+    for (const agentId of startedLifetimes) this.acceptTimeline(agentId);
     for (const [agentId, previousAgent] of previous) {
       if (previousAgent.turn.phase === "open" && agents.get(agentId)?.turn.phase === "idle") {
         this.onStoppedRunning(agentId);
@@ -201,7 +209,7 @@ export class AgentDirectoryReplica {
   remove(agentId: string): void {
     this.members.delete(agentId);
     this.advance(agentId);
-    this.storeProjection.remove(agentId);
+    this.storeProjection.remove(agentId, "deleted");
     this.persist([{ kind: "agent", type: "delete", id: agentId }]);
   }
 
@@ -223,6 +231,12 @@ export class AgentDirectoryReplica {
       id: agent.id,
       value: agent,
     };
+  }
+
+  private resume(agentId: string): void {
+    // First admission keeps requests already in flight. Re-entry invalidates work issued
+    // during the excluded lifetime as well as work issued before its removal.
+    if (this.lifecycleVersions.has(agentId)) this.advance(agentId);
   }
 
   private advance(agentId: string): void {

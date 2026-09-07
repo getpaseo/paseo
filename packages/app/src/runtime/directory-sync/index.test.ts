@@ -6,9 +6,17 @@ import {
   normalizeWorkspaceDescriptor,
   useSessionStore,
 } from "@/stores/session-store";
-import { normalizeAgentSnapshot } from "@/utils/agent-snapshots";
+import { normalizeAgentSnapshot, projectAgentSnapshot } from "@/utils/agent-snapshots";
 import { selectWorkspaceDirectoryServerIds } from "@/stores/session-store-hooks/selectors";
-import type { DirectoryReplicaMutation } from "@/runtime/replica-cache";
+import { ReplicaCache, type DirectoryReplicaMutation } from "@/runtime/replica-cache";
+import { createTimelineReplica } from "@/timeline/replica";
+import { createViewedTimelineOwner } from "@/timeline/viewed-timeline-sync";
+import type {
+  ReplicaHostRows,
+  ReplicaRow,
+  ReplicaRowChanges,
+  ReplicaRowStore,
+} from "@/runtime/replica-cache/row-store";
 import {
   DirectoryRefreshSupersededError,
   DirectorySync,
@@ -18,6 +26,7 @@ import {
 type WorkspaceFetchResult = Awaited<ReturnType<DaemonClient["fetchWorkspaces"]>>;
 type ProjectListResult = Awaited<ReturnType<DaemonClient["listProjects"]>>;
 type AgentFetchResult = Awaited<ReturnType<DaemonClient["fetchAgents"]>>;
+type TimelineFetchResult = Awaited<ReturnType<DaemonClient["fetchAgentTimeline"]>>;
 
 class FakeDirectoryClient {
   fetchAgentsCalls = 0;
@@ -29,6 +38,10 @@ class FakeDirectoryClient {
   projectResult: ProjectListResult | null = null;
   private pendingAgentFetch: Promise<AgentFetchResult> | null = null;
   private pendingWorkspaceFetch: Promise<WorkspaceFetchResult> | null = null;
+  private readonly pendingTimelineFetches: Array<{
+    promise: Promise<TimelineFetchResult>;
+    resolve(result: TimelineFetchResult): void;
+  }> = [];
   private readonly handlers = new Map<
     SessionOutboundMessage["type"],
     Set<(message: SessionOutboundMessage) => void>
@@ -98,6 +111,21 @@ class FakeDirectoryClient {
     };
   }
 
+  fetchAgentTimeline(): Promise<TimelineFetchResult> {
+    let resolve!: (result: TimelineFetchResult) => void;
+    const promise = new Promise<TimelineFetchResult>((complete) => {
+      resolve = complete;
+    });
+    this.pendingTimelineFetches.push({ promise, resolve });
+    return promise;
+  }
+
+  nextTimelineFetch(): { resolve(result: TimelineFetchResult): void } {
+    const pending = this.pendingTimelineFetches.shift();
+    if (!pending) throw new Error("Expected a pending timeline fetch");
+    return { resolve: pending.resolve };
+  }
+
   async listProjects(options?: unknown): Promise<ProjectListResult> {
     this.listProjectsCalls += 1;
     this.lastProjectOptions = options;
@@ -121,20 +149,102 @@ class FakeDirectoryClient {
   }
 }
 
+class MemoryRowStore implements ReplicaRowStore {
+  readonly rows = new Map<string, ReplicaRow>();
+  readAllGate: Promise<void> | null = null;
+
+  private key(row: Pick<ReplicaRow, "serverId" | "kind" | "id">): string {
+    return `${row.serverId}:${row.kind}:${row.id}`;
+  }
+
+  async open(): Promise<void> {}
+
+  async read(
+    serverIds: readonly string[],
+    kinds: readonly ReplicaRow["kind"][],
+    ids?: readonly string[],
+  ): Promise<ReplicaRow[]> {
+    await this.readAllGate;
+    return [...this.rows.values()].filter(
+      (row) =>
+        serverIds.includes(row.serverId) &&
+        kinds.includes(row.kind) &&
+        (!ids || ids.includes(row.id)),
+    );
+  }
+
+  async readAll(): Promise<ReplicaHostRows[]> {
+    await this.readAllGate;
+    const hosts = new Map<string, ReplicaRow[]>();
+    for (const row of this.rows.values()) {
+      hosts.set(row.serverId, [...(hosts.get(row.serverId) ?? []), row]);
+    }
+    return [...hosts].map(([serverId, rows]) => ({ serverId, rows }));
+  }
+
+  async apply(changes: ReplicaRowChanges): Promise<void> {
+    for (const key of changes.deletes) this.rows.delete(this.key(key));
+    for (const row of changes.upserts) this.rows.set(this.key(row), row);
+  }
+
+  async deleteHost(serverId: string): Promise<void> {
+    for (const [key, row] of this.rows) if (row.serverId === serverId) this.rows.delete(key);
+  }
+
+  async renameHost(oldServerId: string, newServerId: string): Promise<void> {
+    for (const [key, row] of this.rows) {
+      if (row.serverId !== oldServerId) continue;
+      this.rows.delete(key);
+      const renamed = { ...row, serverId: newServerId };
+      this.rows.set(this.key(renamed), renamed);
+    }
+  }
+
+  async clear(): Promise<void> {
+    this.rows.clear();
+  }
+}
+
+// A saved directory on disk, read back through the real storage owner with its load gated.
+async function savedDirectory(
+  serverId: string,
+  directory: Parameters<ReplicaCache["replaceDirectoryBaseline"]>[1],
+): Promise<{ cache: ReplicaCache; releaseLoad: () => void }> {
+  const rowStore = new MemoryRowStore();
+  const writer = new ReplicaCache(rowStore, { clearLegacyCache: async () => undefined });
+  writer.setHosts([serverId]);
+  writer.replaceDirectoryBaseline(serverId, directory);
+  await writer.flush();
+  let releaseLoad!: () => void;
+  rowStore.readAllGate = new Promise((resolve) => {
+    releaseLoad = resolve;
+  });
+  const cache = new ReplicaCache(rowStore, { clearLegacyCache: async () => undefined });
+  cache.setHosts([serverId]);
+  return { cache, releaseLoad };
+}
+
+const noopCallbacks = {
+  onTimelineRequest: () => () => undefined,
+  onAgentStoppedRunning: () => undefined,
+  onAgentRemoved: () => undefined,
+  markAgentLoading: () => undefined,
+  markAgentReady: () => undefined,
+  markAgentError: () => undefined,
+};
+
 const serverIds = new Set<string>();
 
-function createDirectory(serverId: string): {
+function createDirectory(
+  serverId: string,
+  callbacks: ConstructorParameters<typeof DirectorySync>[1] = noopCallbacks,
+): {
   client: FakeDirectoryClient;
   directory: DirectorySync;
 } {
   serverIds.add(serverId);
   const client = new FakeDirectoryClient();
-  const directory = new DirectorySync(serverId, {
-    onAgentStoppedRunning: () => undefined,
-    markAgentLoading: () => undefined,
-    markAgentReady: () => undefined,
-    markAgentError: () => undefined,
-  });
+  const directory = new DirectorySync(serverId, callbacks);
   directory.connectionChanged({
     client: client as unknown as DaemonClient,
     status: "online",
@@ -176,12 +286,343 @@ function createAgent(serverId: string, id: string) {
   };
 }
 
+it.each(["snapshot", "changes", "live"] as const)(
+  "%s scope exclusion retains the saved page but invalidates old work; deletion removes it",
+  async (exclusion) => {
+    const serverId = `timeline-scope-${exclusion}`;
+    serverIds.add(serverId);
+    useSessionStore.getState().initializeSession(serverId, null);
+    const rows = new MemoryRowStore();
+    const cache = new ReplicaCache(rows, { clearLegacyCache: async () => undefined });
+    cache.setHosts([serverId]);
+    const saved = {
+      agentId: "agent",
+      range: { epoch: "epoch", startSeq: 1, endSeq: 1 },
+      hasOlder: false,
+      items: [
+        {
+          kind: "assistant_message" as const,
+          id: "saved",
+          text: "saved history",
+          timestamp: new Date("2026-09-06T00:00:00Z"),
+          timelineCursor: { epoch: "epoch", seq: 1 },
+          source: { startSeq: 1 },
+        },
+      ],
+    };
+    cache.commitTimeline(serverId, "agent", saved);
+    await cache.flush();
+    const replica = createTimelineReplica({ serverId, storage: cache });
+    const viewed = createViewedTimelineOwner({
+      serverId,
+      replica,
+      replaceDemandedAgentIds: () => undefined,
+      drainQueuedAgentMessage: () => undefined,
+    });
+    const directory = new DirectorySync(
+      serverId,
+      {
+        ...noopCallbacks,
+        onAgentRemoved: (...args) => viewed.removeAgent(...args),
+        onAgentAccepted: (id) => viewed.acceptAgent(id),
+      },
+      cache,
+    );
+    const client = new FakeDirectoryClient();
+    useSessionStore.getState().updateSessionClient(serverId, client as unknown as DaemonClient, 1);
+    useSessionStore.getState().updateSessionServerInfo(serverId, {
+      serverId,
+      hostname: null,
+      version: "test",
+      features: { workspaceMultiplicity: true, directorySync: true },
+    });
+    directory.connectionChanged({
+      client: client as unknown as DaemonClient,
+      status: "online",
+      source: { clientGeneration: 1, connectionEpoch: 1 },
+    });
+    directory.acceptAgent(createAgent(serverId, "agent"));
+    await replica.prepare("agent");
+    const stale = directory.fetchTimeline("agent", {
+      direction: "tail",
+      limit: 40,
+      projection: "projected",
+    });
+    const staleReply = client.nextTimelineFetch();
+    if (exclusion === "live") {
+      client.emit({ type: "agent_update", payload: { kind: "remove", agentId: "agent" } });
+    } else {
+      const reply = client.holdAgentFetch();
+      const refreshing = directory.refreshAgents();
+      await expect.poll(() => client.fetchAgentsCalls).toBe(1);
+      reply({
+        requestId: "scope",
+        entries: [],
+        pageInfo: { hasMore: false, nextCursor: null, prevCursor: null },
+        ...(exclusion === "changes"
+          ? {
+              sync: {
+                generation: "g",
+                headSeq: 1,
+                mode: "changes" as const,
+                removals: [{ id: "agent", seq: 1 }],
+              },
+            }
+          : {}),
+      });
+      await refreshing;
+    }
+    expect(useSessionStore.getState().sessions[serverId]?.agentStreamTail.has("agent")).toBe(false);
+    expect(useSessionStore.getState().sessions[serverId]?.agents.has("agent")).toBe(false);
+    viewed.enqueueStreamEvent("agent", {
+      epoch: "epoch",
+      seq: 2,
+      timestamp: new Date("2026-09-06T00:00:01Z"),
+      event: {
+        type: "timeline",
+        provider: "codex",
+        item: { type: "assistant_message", text: "late work", messageId: "late" },
+      },
+    });
+    viewed.flushStreamAgent("agent");
+    expect(useSessionStore.getState().sessions[serverId]?.agentStreamTail.has("agent")).toBe(false);
+    await cache.flush();
+    const reopened = new ReplicaCache(rows, { clearLegacyCache: async () => undefined });
+    reopened.setHosts([serverId]);
+    expect(await reopened.readTimeline(serverId, "agent")).toEqual(saved);
+    directory.acceptAgent(createAgent(serverId, "agent"));
+    await replica.prepare("agent");
+    staleReply.resolve({ agent: null, hasNewer: false } as TimelineFetchResult);
+    await expect(stale).rejects.toBeInstanceOf(DirectoryRefreshSupersededError);
+    expect(useSessionStore.getState().sessions[serverId]?.agentStreamTail.get("agent")).toEqual(
+      saved.items,
+    );
+    // Deletion must also remove a saved page whose agent is already out of scope.
+    client.emit({ type: "agent_update", payload: { kind: "remove", agentId: "agent" } });
+    client.emit({ type: "agent_deleted", payload: { agentId: "agent", requestId: "delete" } });
+    // The subsequent directory remove must not recreate the deleted row.
+    client.emit({ type: "agent_update", payload: { kind: "remove", agentId: "agent" } });
+    await cache.flush();
+    const afterDeletion = new ReplicaCache(rows, { clearLegacyCache: async () => undefined });
+    afterDeletion.setHosts([serverId]);
+    expect(await afterDeletion.readTimeline(serverId, "agent")).toBeUndefined();
+    viewed.dispose();
+    directory.dispose();
+  },
+);
+
+it.each(["snapshot-first", "page-first", "live-first"] as const)(
+  "first admission preserves the first timeline page (%s)",
+  async (ordering) => {
+    const serverId = `first-admission-${ordering}`;
+    serverIds.add(serverId);
+    useSessionStore.getState().initializeSession(serverId, null);
+    const rows = new MemoryRowStore();
+    const cache = new ReplicaCache(rows, { clearLegacyCache: async () => undefined });
+    cache.setHosts([serverId]);
+    const replica = createTimelineReplica({ serverId, storage: cache });
+    const viewed = createViewedTimelineOwner({
+      serverId,
+      replica,
+      replaceDemandedAgentIds: () => undefined,
+      drainQueuedAgentMessage: () => undefined,
+    });
+    let applications = 0;
+    const { directory, client } = createDirectory(serverId, {
+      ...noopCallbacks,
+      onAgentAccepted: (id) => viewed.acceptAgent(id),
+      onTimelineRequest: (id) => {
+        const apply = viewed.beginTimelineRequest(id);
+        return (page) => {
+          applications++;
+          apply(page);
+        };
+      },
+    });
+    useSessionStore.getState().updateSessionClient(serverId, client as unknown as DaemonClient, 1);
+    useSessionStore.getState().updateSessionServerInfo(serverId, {
+      serverId,
+      hostname: null,
+      version: "test",
+      features: { workspaceMultiplicity: true },
+    });
+    await directory.ready();
+    const request = { direction: "tail" as const, limit: 40, projection: "projected" as const };
+    const fetching = directory.fetchTimeline("agent", request);
+    const concurrent = directory.fetchTimeline("agent", request);
+    const reply = client.nextTimelineFetch();
+    const agent = projectAgentSnapshot(createAgent(serverId, "agent"));
+    const page: TimelineFetchResult = {
+      requestId: "first",
+      agentId: "agent",
+      agent,
+      direction: "tail",
+      projection: "projected",
+      reset: false,
+      staleCursor: false,
+      gap: false,
+      epoch: "epoch",
+      window: { minSeq: 1, maxSeq: 1, nextSeq: 2 },
+      startCursor: { epoch: "epoch", seq: 1 },
+      endCursor: { epoch: "epoch", seq: 1 },
+      hasOlder: false,
+      hasNewer: false,
+      error: null,
+      entries: [
+        {
+          provider: "codex",
+          item: { type: "assistant_message", text: "first page", messageId: "first" },
+          timestamp: "2026-09-06T00:00:00Z",
+          seqStart: 1,
+          seqEnd: 1,
+          sourceSeqRanges: [{ startSeq: 1, endSeq: 1 }],
+          collapsed: [],
+        },
+      ],
+    };
+    if (ordering === "page-first") {
+      reply.resolve(page);
+      await fetching;
+    }
+    if (ordering === "live-first")
+      client.emit({ type: "agent_update", payload: { kind: "upsert", agent } });
+    else {
+      const release = client.holdAgentFetch();
+      const refreshing = directory.refreshAgents();
+      await expect.poll(() => client.fetchAgentsCalls).toBe(1);
+      release({
+        requestId: "directory",
+        entries: [
+          {
+            agent,
+            project: {
+              projectKey: "/repo",
+              projectName: "repo",
+              checkout: {
+                cwd: "/repo",
+                isGit: false,
+                currentBranch: null,
+                remoteUrl: null,
+                worktreeRoot: null,
+                isPaseoOwnedWorktree: false,
+                mainRepoRoot: null,
+              },
+            },
+          },
+        ],
+        pageInfo: { hasMore: false, nextCursor: null, prevCursor: null },
+      });
+      await refreshing;
+    }
+    if (ordering !== "page-first") reply.resolve(page);
+    await expect(Promise.all([fetching, concurrent])).resolves.toEqual([page, page]);
+    expect(applications).toBe(1);
+    expect(() => client.nextTimelineFetch()).toThrow("Expected a pending timeline fetch");
+    expect(
+      useSessionStore.getState().sessions[serverId]?.agentStreamTail.get("agent")?.[0],
+    ).toMatchObject({ text: "first page" });
+    viewed.dispose();
+    directory.dispose();
+  },
+);
+
+it("rejects an old timeline reply after authoritative agent re-entry", async () => {
+  const serverId = "timeline-lifetime";
+  serverIds.add(serverId);
+  useSessionStore.getState().initializeSession(serverId, null);
+  const client = new FakeDirectoryClient();
+  const lifetimes: string[] = [];
+  const directory = new DirectorySync(serverId, {
+    onTimelineRequest: () => () => undefined,
+    onAgentStoppedRunning: () => undefined,
+    onAgentRemoved: (agentId) => lifetimes.push(`remove:${agentId}`),
+    onAgentAccepted: (agentId) => lifetimes.push(`accept:${agentId}`),
+    markAgentLoading: () => undefined,
+    markAgentReady: () => undefined,
+    markAgentError: () => undefined,
+  });
+  directory.connectionChanged({
+    client: client as unknown as DaemonClient,
+    status: "online",
+    source: { clientGeneration: 1, connectionEpoch: 1 },
+  });
+  directory.acceptAgent(createAgent(serverId, "agent"));
+  const request = { direction: "tail" as const, limit: 40, projection: "projected" as const };
+  const oldFetch = directory.fetchTimeline("agent", request);
+  const oldReply = client.nextTimelineFetch();
+
+  directory.removeAgent("agent");
+  const excludedFetch = directory.fetchTimeline("agent", request);
+  const excludedReply = client.nextTimelineFetch();
+  directory.acceptAgent(createAgent(serverId, "agent"));
+  const freshFetch = directory.fetchTimeline("agent", request);
+  const freshReply = client.nextTimelineFetch();
+  const page = { agent: null, hasNewer: false } as TimelineFetchResult;
+
+  oldReply.resolve(page);
+  await expect(oldFetch).rejects.toBeInstanceOf(DirectoryRefreshSupersededError);
+  excludedReply.resolve(page);
+  await expect(excludedFetch).rejects.toBeInstanceOf(DirectoryRefreshSupersededError);
+  freshReply.resolve(page);
+  await expect(freshFetch).resolves.toBe(page);
+  expect(lifetimes).toEqual(["accept:agent", "remove:agent", "accept:agent"]);
+});
+
 afterEach(() => {
   for (const serverId of serverIds) useSessionStore.getState().clearSession(serverId);
   serverIds.clear();
 });
 
 describe("DirectorySync session readiness", () => {
+  it("restores other cached workspaces when a live removal arrives during startup", async () => {
+    const serverId = "cache-with-live-removal";
+    serverIds.add(serverId);
+    const client = new FakeDirectoryClient();
+    const workspace = normalizeWorkspaceDescriptor({
+      id: "cached-workspace",
+      projectId: "cached-project",
+      projectDisplayName: "Cached project",
+      projectRootPath: "/repo/cached",
+      workspaceDirectory: "/repo/cached",
+      projectKind: "git",
+      workspaceKind: "local_checkout",
+      name: "cached",
+      status: "done",
+      statusEnteredAt: null,
+      activityAt: null,
+      archivingAt: null,
+      diffStat: null,
+      scripts: [],
+    });
+    const { cache, releaseLoad } = await savedDirectory(serverId, {
+      agents: new Map(),
+      projects: new Map(),
+      workspaces: new Map([
+        [workspace.id, workspace],
+        ["deleted-live", { ...workspace, id: "deleted-live" }],
+      ]),
+    });
+    useSessionStore.getState().initializeSession(serverId, client as unknown as DaemonClient, 1);
+    const directory = new DirectorySync(serverId, noopCallbacks, cache);
+    directory.connectionChanged({
+      client: client as unknown as DaemonClient,
+      status: "online",
+      source: { clientGeneration: 1, connectionEpoch: 1 },
+    });
+    client.emit({ type: "workspace_update", payload: { kind: "remove", id: "deleted-live" } });
+    releaseLoad();
+    await directory.ready();
+
+    expect([...useSessionStore.getState().sessions[serverId]!.workspaces.keys()]).toEqual([
+      workspace.id,
+    ]);
+    expect(selectWorkspaceDirectoryServerIds(useSessionStore.getState(), [serverId])).toEqual([
+      serverId,
+    ]);
+    expect(client.fetchWorkspacesCalls).toBe(0);
+    directory.dispose();
+  });
+
   it("restores the cached directory before network demand", async () => {
     const serverId = "offline-cached-directory";
     serverIds.add(serverId);
@@ -208,32 +649,24 @@ describe("DirectorySync session readiness", () => {
       projectRootPath: "/repo/cached",
       projectKind: "git",
     });
-    const directory = new DirectorySync(
-      serverId,
-      {
-        onAgentStoppedRunning: () => undefined,
-        markAgentLoading: () => undefined,
-        markAgentReady: () => undefined,
-        markAgentError: () => undefined,
-      },
-      {
-        readAgent: async () => undefined,
-        readWorkspace: async () => undefined,
-        readDirectory: async () => ({
-          agents: new Map(),
-          workspaces: new Map([[cachedWorkspace.id, cachedWorkspace]]),
-          projects: new Map([[cachedProject.projectId, cachedProject]]),
-        }),
-        commitDirectoryMutations: () => undefined,
-      },
-    );
+    const cachedAgent = createAgent(serverId, "agent-1");
+    cachedAgent.workspaceId = cachedWorkspace.id;
+    const directory = new DirectorySync(serverId, noopCallbacks, {
+      readDirectory: async () => ({
+        agents: new Map([[cachedAgent.id, cachedAgent]]),
+        workspaces: new Map([[cachedWorkspace.id, cachedWorkspace]]),
+        projects: new Map([[cachedProject.projectId, cachedProject]]),
+      }),
+      commitDirectoryMutations: () => undefined,
+    });
     useSessionStore.getState().initializeSession(serverId, client as unknown as DaemonClient, 1);
 
-    await directory.restoreCachedDirectory();
+    await directory.ready();
 
-    expect(
-      useSessionStore.getState().sessions[serverId]?.workspaces.get(cachedWorkspace.id),
-    ).toEqual(cachedWorkspace);
+    const session = useSessionStore.getState().sessions[serverId];
+    expect(session?.hasHydratedAgents).toBe(false);
+    expect(session?.agents.get(cachedAgent.id)).toEqual(cachedAgent);
+    expect(session?.workspaces.get(cachedWorkspace.id)).toEqual(cachedWorkspace);
     expect(selectWorkspaceDirectoryServerIds(useSessionStore.getState(), [serverId])).toEqual([
       serverId,
     ]);
@@ -242,62 +675,7 @@ describe("DirectorySync session readiness", () => {
     directory.dispose();
   });
 
-  it("prepares a cached agent workspace route without sidebar demand", async () => {
-    const serverId = "cached-agent-route";
-    serverIds.add(serverId);
-    const client = new FakeDirectoryClient();
-    const cachedAgent = createAgent(serverId, "agent-1");
-    const cachedWorkspace = normalizeWorkspaceDescriptor({
-      id: "workspace-1",
-      projectId: "project-1",
-      projectDisplayName: "Paseo",
-      projectRootPath: "/repo",
-      workspaceDirectory: "/repo",
-      projectKind: "git",
-      workspaceKind: "local_checkout",
-      name: "main",
-      status: "done",
-      statusEnteredAt: null,
-      activityAt: null,
-      archivingAt: null,
-      diffStat: null,
-      scripts: [],
-    });
-    cachedAgent.workspaceId = cachedWorkspace.id;
-    const directory = new DirectorySync(
-      serverId,
-      {
-        onAgentStoppedRunning: () => undefined,
-        markAgentLoading: () => undefined,
-        markAgentReady: () => undefined,
-        markAgentError: () => undefined,
-      },
-      {
-        readAgent: async () => cachedAgent,
-        readWorkspace: async () => ({ workspace: cachedWorkspace }),
-        readDirectory: async () => ({
-          agents: new Map(),
-          workspaces: new Map(),
-          projects: new Map(),
-        }),
-        commitDirectoryMutations: () => undefined,
-      },
-    );
-    useSessionStore.getState().initializeSession(serverId, client as unknown as DaemonClient, 1);
-
-    await directory.prepareAgentRoute(cachedAgent.id);
-
-    const session = useSessionStore.getState().sessions[serverId];
-    expect(session?.hasHydratedAgents).toBe(false);
-    expect(session?.hasWorkspaceDirectorySnapshot).toBe(false);
-    expect(session?.agents.get(cachedAgent.id)).toEqual(cachedAgent);
-    expect(session?.workspaces.get(cachedWorkspace.id)).toEqual(cachedWorkspace);
-    expect(client.fetchAgentsCalls).toBe(0);
-    expect(client.fetchWorkspacesCalls).toBe(0);
-    directory.dispose();
-  });
-
-  it("persists accepted script status updates through the directory owner", () => {
+  it("persists accepted script status updates through the directory owner", async () => {
     const serverId = "script-status-owner";
     serverIds.add(serverId);
     const client = new FakeDirectoryClient();
@@ -305,14 +683,14 @@ describe("DirectorySync session readiness", () => {
     const directory = new DirectorySync(
       serverId,
       {
+        onTimelineRequest: () => () => undefined,
         onAgentStoppedRunning: () => undefined,
+        onAgentRemoved: () => undefined,
         markAgentLoading: () => undefined,
         markAgentReady: () => undefined,
         markAgentError: () => undefined,
       },
       {
-        readAgent: async () => undefined,
-        readWorkspace: async () => undefined,
         readDirectory: async () => ({
           agents: new Map(),
           workspaces: new Map(),
@@ -344,6 +722,7 @@ describe("DirectorySync session readiness", () => {
     });
     const store = useSessionStore.getState();
     store.initializeSession(serverId, client as unknown as DaemonClient, 1);
+    await directory.ready();
     directory.acceptWorkspaces([workspace]);
     commits.length = 0;
 
@@ -471,14 +850,14 @@ describe("DirectorySync session readiness", () => {
     const directory = new DirectorySync(
       serverId,
       {
+        onTimelineRequest: () => () => undefined,
         onAgentStoppedRunning: () => undefined,
+        onAgentRemoved: () => undefined,
         markAgentLoading: () => undefined,
         markAgentReady: () => undefined,
         markAgentError: () => undefined,
       },
       {
-        readAgent: async () => undefined,
-        readWorkspace: async () => undefined,
         readDirectory: async () => {
           cacheReads += 1;
           return {
@@ -553,14 +932,14 @@ describe("DirectorySync session readiness", () => {
     const directory = new DirectorySync(
       serverId,
       {
+        onTimelineRequest: () => () => undefined,
         onAgentStoppedRunning: () => undefined,
+        onAgentRemoved: () => undefined,
         markAgentLoading: () => undefined,
         markAgentReady: () => undefined,
         markAgentError: () => undefined,
       },
       {
-        readAgent: async () => undefined,
-        readWorkspace: async () => undefined,
         readDirectory: async () => ({
           agents: new Map(),
           workspaces: new Map([[cachedWorkspace.id, cachedWorkspace]]),
@@ -604,7 +983,7 @@ describe("DirectorySync session readiness", () => {
     directory.dispose();
   });
 
-  it("does not use a cached checkpoint when the corresponding cache read loses its race", async () => {
+  it("advances the saved cursor only through completed catch-up", async () => {
     const serverId = "late-directory-cache";
     serverIds.add(serverId);
     const client = new FakeDirectoryClient();
@@ -619,14 +998,14 @@ describe("DirectorySync session readiness", () => {
     const directory = new DirectorySync(
       serverId,
       {
+        onTimelineRequest: () => () => undefined,
         onAgentStoppedRunning: () => undefined,
+        onAgentRemoved: () => undefined,
         markAgentLoading: () => undefined,
         markAgentReady: () => undefined,
         markAgentError: () => undefined,
       },
       {
-        readAgent: async () => undefined,
-        readWorkspace: async () => undefined,
         readDirectory: () => cacheRead,
         commitDirectoryMutations: () => undefined,
       },
@@ -645,133 +1024,95 @@ describe("DirectorySync session readiness", () => {
       features: { workspaceMultiplicity: true, directorySync: true },
     });
 
+    const releaseNetwork = client.holdWorkspaceFetch();
     const refresh = directory.refreshWorkspaces();
     await Promise.resolve();
     client.emit({
       type: "workspace_update",
-      payload: { kind: "remove", id: "deleted-live" },
+      payload: { kind: "remove", id: "deleted-live", generation: "g", seq: 20 },
     });
     releaseCache({
       agents: new Map(),
       workspaces: new Map(),
       projects: new Map(),
-      checkpoint: { workspaces: { generation: "stale", afterSeq: 99 } },
+      checkpoint: { workspaces: { generation: "g", afterSeq: 7 } },
+    });
+    releaseNetwork({
+      requestId: "catch-up",
+      entries: [],
+      emptyProjects: [],
+      pageInfo: { hasMore: false, nextCursor: null, prevCursor: null },
+      sync: { generation: "g", headSeq: 20, mode: "changes", removals: [] },
     });
     await refresh;
 
-    expect(client.lastWorkspaceOptions).not.toHaveProperty("sync.generation");
+    expect(client.lastWorkspaceOptions).toMatchObject({
+      sync: { generation: "g", afterSeq: 7 },
+    });
+    client.emit({
+      type: "workspace_update",
+      payload: { kind: "remove", id: "another-removal", generation: "g", seq: 21 },
+    });
+    directory.connectionChanged({
+      client: client as unknown as DaemonClient,
+      status: "offline",
+      source: { clientGeneration: 1, connectionEpoch: 1 },
+    });
+    directory.connectionChanged({
+      client: client as unknown as DaemonClient,
+      status: "online",
+      source: { clientGeneration: 1, connectionEpoch: 2 },
+    });
+    client.emit({
+      type: "workspace_update",
+      payload: { kind: "remove", id: "after-offline-gap", generation: "g", seq: 40 },
+    });
+    await directory.refreshWorkspaces();
+    expect(client.lastWorkspaceOptions).toMatchObject({
+      sync: { generation: "g", afterSeq: 20 },
+    });
     directory.dispose();
   });
 
-  it("does not resurrect an agent deleted while its targeted cache row is loading", async () => {
+  it("does not resurrect an agent deleted while the baseline is loading", async () => {
     const serverId = "late-agent-cache";
     serverIds.add(serverId);
     const client = new FakeDirectoryClient();
-    const cachedAgent = {
-      ...normalizeAgentSnapshot(
-        {
-          id: "agent-1",
-          provider: "codex",
-          cwd: "/repo",
-          model: null,
-          createdAt: "2026-08-26T00:00:00.000Z",
-          updatedAt: "2026-08-26T00:00:00.000Z",
-          lastUserMessageAt: null,
-          status: "idle",
-          capabilities: {
-            supportsStreaming: true,
-            supportsSessionPersistence: true,
-            supportsDynamicModes: true,
-            supportsMcpServers: true,
-            supportsReasoningStream: true,
-            supportsToolInvocations: true,
-          },
-          currentModeId: null,
-          availableModes: [],
-          pendingPermissions: [],
-          persistence: null,
-          title: "Cached",
-          labels: {},
-        },
-        serverId,
-      ),
-      projectPlacement: null,
-    };
-    let releaseAgent!: (agent: typeof cachedAgent) => void;
-    const agentRead = new Promise<typeof cachedAgent>((resolve) => {
-      releaseAgent = resolve;
+    const cachedAgent = createAgent(serverId, "agent-1");
+    const { cache, releaseLoad } = await savedDirectory(serverId, {
+      agents: new Map([[cachedAgent.id, cachedAgent]]),
+      workspaces: new Map(),
+      projects: new Map(),
     });
-    const directory = new DirectorySync(
-      serverId,
-      {
-        onAgentStoppedRunning: () => undefined,
-        markAgentLoading: () => undefined,
-        markAgentReady: () => undefined,
-        markAgentError: () => undefined,
-      },
-      {
-        readAgent: () => agentRead,
-        readWorkspace: async () => undefined,
-        readDirectory: async () => ({
-          agents: new Map(),
-          workspaces: new Map(),
-          projects: new Map(),
-        }),
-        commitDirectoryMutations: () => undefined,
-      },
-    );
+    useSessionStore.getState().initializeSession(serverId, client as unknown as DaemonClient, 1);
+    const directory = new DirectorySync(serverId, noopCallbacks, cache);
     directory.connectionChanged({
       client: client as unknown as DaemonClient,
       status: "online",
       source: { clientGeneration: 1, connectionEpoch: 1 },
     });
-    useSessionStore.getState().initializeSession(serverId, client as unknown as DaemonClient, 1);
 
-    const load = directory.loadCachedAgent(cachedAgent.id);
     client.emit({
       type: "agent_deleted",
       payload: { agentId: cachedAgent.id, requestId: "delete-live" },
     });
-    releaseAgent(cachedAgent);
-    await load;
+    releaseLoad();
+    await directory.ready();
 
     expect(useSessionStore.getState().sessions[serverId]?.agents.has(cachedAgent.id)).toBe(false);
     directory.dispose();
   });
 
-  it("does not resurrect an agent removed by an authoritative snapshot while cache loads", async () => {
+  it("requests the authoritative snapshot only after the baseline is restored", async () => {
     const serverId = "late-agent-authoritative-snapshot";
     serverIds.add(serverId);
     const client = new FakeDirectoryClient();
     const cachedAgent = createAgent(serverId, "agent-1");
-    const releaseNetwork = client.holdAgentFetch();
-    let releaseAgent!: (agent: typeof cachedAgent) => void;
-    const agentRead = new Promise<typeof cachedAgent>((resolve) => {
-      releaseAgent = resolve;
-    });
-    const directory = new DirectorySync(
-      serverId,
-      {
-        onAgentStoppedRunning: () => undefined,
-        markAgentLoading: () => undefined,
-        markAgentReady: () => undefined,
-        markAgentError: () => undefined,
-      },
-      {
-        readAgent: () => agentRead,
-        readWorkspace: async () => undefined,
-        readDirectory: async () => ({
-          agents: new Map(),
-          workspaces: new Map(),
-          projects: new Map(),
-        }),
-        commitDirectoryMutations: () => undefined,
-      },
-    );
-    directory.connectionChanged({
-      client: client as unknown as DaemonClient,
-      status: "online",
-      source: { clientGeneration: 1, connectionEpoch: 1 },
+    const { cache, releaseLoad } = await savedDirectory(serverId, {
+      agents: new Map([[cachedAgent.id, cachedAgent]]),
+      workspaces: new Map(),
+      projects: new Map(),
+      checkpoint: { agents: { generation: "g", afterSeq: 5 } },
     });
     const store = useSessionStore.getState();
     store.initializeSession(serverId, client as unknown as DaemonClient, 1);
@@ -781,18 +1122,22 @@ describe("DirectorySync session readiness", () => {
       version: "test",
       features: { directorySync: true, workspaceMultiplicity: true },
     });
+    const directory = new DirectorySync(serverId, noopCallbacks, cache);
+    directory.connectionChanged({
+      client: client as unknown as DaemonClient,
+      status: "online",
+      source: { clientGeneration: 1, connectionEpoch: 1 },
+    });
 
     const refresh = directory.refreshAgents();
-    const load = directory.loadCachedAgent(cachedAgent.id);
-    releaseNetwork({
-      requestId: "authoritative-snapshot",
-      entries: [],
-      pageInfo: { hasMore: false, nextCursor: null, prevCursor: null },
-    });
+    await Promise.resolve();
+    expect(client.fetchAgentsCalls).toBe(0);
+    releaseLoad();
     await refresh;
-    releaseAgent(cachedAgent);
-    await load;
 
+    expect(client.lastAgentOptions).toMatchObject({
+      sync: { generation: "g", afterSeq: 5 },
+    });
     expect(useSessionStore.getState().sessions[serverId]?.agents.has(cachedAgent.id)).toBe(false);
     directory.dispose();
   });
@@ -804,14 +1149,14 @@ describe("DirectorySync session readiness", () => {
     const directory = new DirectorySync(
       serverId,
       {
+        onTimelineRequest: () => () => undefined,
         onAgentStoppedRunning: () => undefined,
+        onAgentRemoved: () => undefined,
         markAgentLoading: () => undefined,
         markAgentReady: () => undefined,
         markAgentError: () => undefined,
       },
       {
-        readAgent: async () => undefined,
-        readWorkspace: async () => undefined,
         readDirectory: async () => ({
           agents: new Map(),
           workspaces: new Map(),
@@ -929,14 +1274,14 @@ describe("DirectorySync session readiness", () => {
     const directory = new DirectorySync(
       serverId,
       {
+        onTimelineRequest: () => () => undefined,
         onAgentStoppedRunning: () => undefined,
+        onAgentRemoved: () => undefined,
         markAgentLoading: () => undefined,
         markAgentReady: () => undefined,
         markAgentError: () => undefined,
       },
       {
-        readAgent: async () => undefined,
-        readWorkspace: async () => undefined,
         readDirectory: async () => ({
           agents: new Map(),
           workspaces: new Map(),

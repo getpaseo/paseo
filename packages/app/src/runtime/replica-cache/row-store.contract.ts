@@ -55,20 +55,23 @@ export function runReplicaRowStoreContract(
       ]);
     });
 
-    it("reads only requested kinds for one host", async () => {
+    it("reads only requested hosts, kinds and identities", async () => {
+      const selected = row("server-a", "timeline", "wanted", "page");
       await store.apply({
-        upserts: [
-          row("server-a", "agent", "agent-1", "agent"),
-          row("server-a", "timeline", "singleton", "timeline"),
-          row("server-b", "agent", "agent-2", "other host"),
-        ],
         deletes: [],
+        upserts: [
+          selected,
+          row("server-a", "timeline", "other", "unrelated timeline"),
+          row("server-a", "agent", "wanted", "directory"),
+          row("server-b", "timeline", "wanted", "other host"),
+        ],
       });
-
-      expect(await store.read("server-a", ["timeline"])).toEqual([
-        row("server-a", "timeline", "singleton", "timeline"),
+      expect(await store.read(["server-a"], ["timeline"], ["wanted"])).toEqual([selected]);
+      expect(await store.read(["server-a"], ["agent"])).toEqual([
+        row("server-a", "agent", "wanted", "directory"),
       ]);
-      expect(await store.read("server-a", ["agent"], ["missing"])).toEqual([]);
+      expect(await store.read([], ["timeline"])).toEqual([]);
+      expect(await store.read(["server-a"], ["timeline"], [])).toEqual([]);
     });
 
     it("overwrites an existing row on upsert", async () => {

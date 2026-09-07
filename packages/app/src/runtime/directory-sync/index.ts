@@ -3,7 +3,6 @@ import type {
   FetchAgentsEntry,
   FetchAgentsOptions,
 } from "@getpaseo/client/internal/daemon-client";
-import { fetchAgentTimelineOnce } from "@/timeline/fetch-agent-timeline-once";
 import {
   normalizeProjectDescriptor,
   normalizeWorkspaceDescriptor,
@@ -18,7 +17,7 @@ import {
   shouldUseLegacyDaemonWorkspaceDirectory,
   stampLegacyWorkspaceIds,
 } from "@/workspace/legacy-daemon-workspaces";
-import type { AgentDirectoryDelta } from "@/utils/agent-directory-sync";
+import type { AgentDirectoryDelta, AgentRemovalReason } from "@/utils/agent-directory-sync";
 import { AgentDirectoryReplica } from "./agent-replica";
 import {
   WorkspaceDirectoryReplica,
@@ -33,12 +32,13 @@ import {
 import { workspaceLabels } from "@/workspace-labels";
 import type {
   CachedDirectory,
-  CachedWorkspace,
   DirectoryCheckpoint,
   DirectoryCursor,
   DirectoryReplicaMutation,
 } from "@/runtime/replica-cache";
 import type { TurnLivenessTransition } from "@/timeline/turn-liveness";
+
+type TimelinePage = Awaited<ReturnType<DaemonClient["fetchAgentTimeline"]>>;
 
 const PAGE_LIMIT = 200;
 const AGENT_SORT: NonNullable<FetchAgentsOptions["sort"]> = [
@@ -108,8 +108,6 @@ export interface DirectoryConnection {
 }
 
 export interface DirectoryCheckpointStorage {
-  readAgent(serverId: string, agentId: string): Promise<Agent | undefined>;
-  readWorkspace(serverId: string, workspaceId: string): Promise<CachedWorkspace | undefined>;
   readDirectory(serverId: string): Promise<CachedDirectory>;
   commitDirectoryMutations(
     serverId: string,
@@ -139,6 +137,7 @@ export class DirectorySync {
     WorkspaceDirectorySnapshot,
     WorkspaceDirectoryDelta
   >();
+  private readonly timelineRequests = new Map<string, Promise<TimelinePage>>();
   private readonly agents: AgentDirectoryReplica;
   private readonly workspaces: WorkspaceDirectoryReplica;
   private connection: DirectoryConnection = {
@@ -148,10 +147,10 @@ export class DirectorySync {
   };
   private unsubscribe: (() => void) | null = null;
   private readonly abortSessionWaits = new Set<() => void>();
-  private cacheLoad: Promise<void> | null = null;
-  private cacheAccepted = false;
-  private revision = 0;
-  private workspaceRevision = 0;
+  // The saved baseline is restored once, at construction. Live mutations apply as they arrive and
+  // the baseline merges under them; network refreshes wait for it so their transactions and
+  // cursors start from the saved state.
+  private readonly baseline: Promise<void>;
   private readonly routeDemandIds = new Set<string>();
   private readonly fullDemandSources = new Set<object>();
   private demandRefresh: Promise<void> | null = null;
@@ -161,7 +160,10 @@ export class DirectorySync {
   constructor(
     private readonly serverId: string,
     private readonly callbacks: {
+      onTimelineRequest: (agentId: string, replaceTail: boolean) => (page: TimelinePage) => void;
       onAgentStoppedRunning: (agentId: string) => void;
+      onAgentRemoved: (agentId: string, reason: AgentRemovalReason) => void;
+      onAgentAccepted?: (agentId: string) => void;
       markAgentLoading: () => void;
       markAgentReady: () => void;
       markAgentError: (error: string) => void;
@@ -170,8 +172,19 @@ export class DirectorySync {
   ) {
     const persist = (mutations: readonly DirectoryReplicaMutation[]) =>
       this.checkpoints?.commitDirectoryMutations(this.serverId, mutations);
-    this.agents = new AgentDirectoryReplica(serverId, callbacks.onAgentStoppedRunning, persist);
+    this.agents = new AgentDirectoryReplica(
+      serverId,
+      callbacks.onAgentStoppedRunning,
+      persist,
+      callbacks.onAgentRemoved,
+      callbacks.onAgentAccepted,
+    );
     this.workspaces = new WorkspaceDirectoryReplica(serverId);
+    this.baseline = this.restoreBaseline().catch(() => undefined);
+  }
+
+  ready(): Promise<void> {
+    return this.baseline;
   }
 
   connectionChanged(connection: DirectoryConnection): boolean {
@@ -185,6 +198,7 @@ export class DirectorySync {
       return false;
     }
     this.flushAbortedTransactions();
+    this.timelineRequests.clear();
     this.unsubscribe?.();
     this.unsubscribe = null;
     workspaceLabels.disconnect(this.serverId);
@@ -196,63 +210,39 @@ export class DirectorySync {
     const subscriptions = [
       client.on("agent_update", (message) => {
         if (message.type !== "agent_update" || !this.isCurrent(client, source)) return;
-        this.revision += 1;
-        const recorded = this.agentTransactions.record(source, message.payload);
-        if (!recorded) {
+        if (!this.agentTransactions.record(source, message.payload)) {
           this.agents.applyDelta(message.payload);
-          this.noteLiveCursor("agents", message.payload);
-          this.persistCheckpoint();
         }
       }),
       client.on("workspace_update", (message) => {
         if (message.type !== "workspace_update" || !this.isCurrent(client, source)) return;
-        this.revision += 1;
-        this.workspaceRevision += 1;
-        const recorded = this.workspaceTransactions.record(source, message.payload);
-        if (!recorded) {
+        if (!this.workspaceTransactions.record(source, message.payload)) {
           this.applyWorkspaceDelta(message.payload);
-          this.noteLiveCursor("workspaces", message.payload);
-          this.persistCheckpoint();
         }
       }),
       client.on("project.update", (message) => {
         if (message.type !== "project.update" || !this.isCurrent(client, source)) return;
-        this.revision += 1;
-        this.workspaceRevision += 1;
-        const recorded = this.workspaceTransactions.record(source, message.payload);
-        if (!recorded) {
+        if (!this.workspaceTransactions.record(source, message.payload)) {
           this.applyWorkspaceDelta(message.payload);
-          this.noteLiveCursor("projects", message.payload);
-          this.persistCheckpoint();
         }
       }),
       client.on("script_status_update", (message) => {
         if (message.type !== "script_status_update" || !this.isCurrent(client, source)) return;
-        this.revision += 1;
-        this.workspaceRevision += 1;
         const delta: WorkspaceDirectoryDelta = {
           kind: "script_status",
           update: message.payload,
         };
-        const recorded = this.workspaceTransactions.record(source, delta);
-        if (!recorded) {
+        if (!this.workspaceTransactions.record(source, delta)) {
           this.applyWorkspaceDelta(delta);
-          this.persistCheckpoint();
         }
       }),
       client.on("agent_deleted", (message) => {
-        if (message.type === "agent_deleted" && this.isCurrent(client, source)) {
-          this.revision += 1;
-          this.agents.remove(message.payload.agentId);
-          this.persistCheckpoint();
-        }
+        if (message.type !== "agent_deleted" || !this.isCurrent(client, source)) return;
+        this.agents.remove(message.payload.agentId);
       }),
       client.on("agent_archived", (message) => {
-        if (message.type === "agent_archived" && this.isCurrent(client, source)) {
-          this.revision += 1;
-          this.agents.archive(message.payload.agentId, message.payload.archivedAt);
-          this.persistCheckpoint();
-        }
+        if (message.type !== "agent_archived" || !this.isCurrent(client, source)) return;
+        this.agents.archive(message.payload.agentId, message.payload.archivedAt);
       }),
     ];
     this.unsubscribe = () => {
@@ -266,9 +256,8 @@ export class DirectorySync {
     const wasDemanded = this.fullDemandSources.size > 0;
     if (demanded) this.fullDemandSources.add(source);
     else this.fullDemandSources.delete(source);
-    if (!wasDemanded && this.fullDemandSources.size > 0) {
-      void this.loadCachedDirectory().catch(() => undefined);
-      if (this.getOnlineConnection()) void this.requestDemandRefresh().catch(() => undefined);
+    if (!wasDemanded && this.fullDemandSources.size > 0 && this.getOnlineConnection()) {
+      void this.requestDemandRefresh().catch(() => undefined);
     }
   }
 
@@ -288,6 +277,8 @@ export class DirectorySync {
   }
 
   dispose(): void {
+    this.connection = { ...this.connection, status: "offline" };
+    this.timelineRequests.clear();
     this.flushAbortedTransactions();
     this.abortPendingSessionWaits();
     this.unsubscribe?.();
@@ -304,9 +295,7 @@ export class DirectorySync {
   private requestDemandRefresh(force = false): Promise<void> {
     if (this.demandRefresh) return this.demandRefresh;
     if (!this.hasDemand()) return Promise.resolve();
-    if (!this.getOnlineConnection()) {
-      return this.fullDemandSources.size > 0 ? this.loadCachedDirectory() : Promise.resolve();
-    }
+    if (!this.getOnlineConnection()) return this.baseline;
     const source = this.connection.source;
     if (
       !force &&
@@ -319,8 +308,8 @@ export class DirectorySync {
       this.fullDemandSources.size > 0
         ? this.refreshAll()
         : Promise.all([
-            this.refreshAgentsInternal({ subscribe: {} }, false),
-            this.refreshWorkspacesInternal({ subscribe: true }, false),
+            this.refreshAgents({ subscribe: {} }),
+            this.refreshWorkspaces({ subscribe: true }),
           ]).then(() => undefined);
     this.demandRefresh = refresh
       .then(() => {
@@ -345,57 +334,13 @@ export class DirectorySync {
     return this.requestDemandRefresh(true);
   }
 
-  async loadCachedAgent(agentId: string): Promise<void> {
+  private async restoreBaseline(): Promise<void> {
     if (!this.checkpoints) return;
-    if (useSessionStore.getState().sessions[this.serverId]?.agents.has(agentId)) return;
-    const token = this.agents.captureCache(agentId);
-    const agent = await this.checkpoints.readAgent(this.serverId, agentId);
-    if (!agent) return;
-    const session = useSessionStore.getState().sessions[this.serverId];
-    if (!session || session.agents.has(agentId)) return;
-    this.agents.commitCachedAgent(token, agent);
-  }
-
-  async prepareAgentRoute(agentId: string): Promise<void> {
-    await this.loadCachedAgent(agentId);
-    const agent = useSessionStore.getState().sessions[this.serverId]?.agents.get(agentId);
-    if (agent?.workspaceId) await this.loadCachedWorkspace(agent.workspaceId);
-  }
-
-  async prepareWorkspaceRoute(workspaceId: string): Promise<void> {
-    await this.loadCachedWorkspace(workspaceId);
-  }
-
-  private async loadCachedWorkspace(workspaceId: string): Promise<void> {
-    if (!this.checkpoints) return;
-    if (useSessionStore.getState().sessions[this.serverId]?.workspaces.has(workspaceId)) return;
-    const revision = this.workspaceRevision;
-    const cached = await this.checkpoints.readWorkspace(this.serverId, workspaceId);
-    if (!cached) return;
-    if (this.workspaceRevision !== revision) return;
-    const session = useSessionStore.getState().sessions[this.serverId];
-    if (!session) return;
-    this.workspaces.commitCachedWorkspace(cached.workspace, cached.project);
-  }
-
-  private loadCachedDirectory(): Promise<void> {
-    const checkpoints = this.checkpoints;
-    if (!checkpoints) return Promise.resolve();
-    this.cacheLoad ??= (async () => {
-      const revision = this.revision;
-      const cached = await checkpoints.readDirectory(this.serverId);
-      if (this.cacheAccepted || this.revision !== revision) return;
-      if (!useSessionStore.getState().sessions[this.serverId]) return;
-      this.agents.commitCached(cached.agents);
-      this.workspaces.commitCached(cached);
-      this.cursors = cached.checkpoint ?? {};
-      this.cacheAccepted = true;
-    })();
-    return this.cacheLoad;
-  }
-
-  restoreCachedDirectory(): Promise<void> {
-    return this.loadCachedDirectory();
+    const cached = await this.checkpoints.readDirectory(this.serverId);
+    if (!useSessionStore.getState().sessions[this.serverId]) return;
+    this.agents.commitCached(cached.agents);
+    this.workspaces.commitCached(cached);
+    this.cursors = cached.checkpoint ?? {};
   }
 
   applyAgentTurnLiveness(
@@ -412,33 +357,36 @@ export class DirectorySync {
   async fetchTimeline(
     agentId: string,
     request: Parameters<DaemonClient["fetchAgentTimeline"]>[1],
-  ): Promise<Awaited<ReturnType<DaemonClient["fetchAgentTimeline"]>>> {
-    const { client } = this.requireOnline();
+    replaceTail = false,
+  ): Promise<TimelinePage> {
+    const { client, source } = this.requireOnline();
     const token = this.agents.captureTimeline(agentId);
-    const page = await fetchAgentTimelineOnce(client, agentId, request);
-    if (page.agent && this.agents.submitTimelineAgent(token, page.agent)) {
-      this.revision += 1;
-      this.persistCheckpoint();
-    }
-    return page;
+    const key = JSON.stringify({ agentId, lifetime: token.version, request, replaceTail });
+    const existing = this.timelineRequests.get(key);
+    if (existing) return existing;
+    const apply = this.callbacks.onTimelineRequest(agentId, replaceTail);
+    const fetching = client.fetchAgentTimeline(agentId, request).then((page) => {
+      if (!this.isCurrent(client, source) || !this.agents.isTimelineCurrent(token)) {
+        throw new DirectoryRefreshSupersededError("timeline page no longer current");
+      }
+      if (page.agent) this.agents.submitTimelineAgent(token, page.agent);
+      apply(page);
+      return page;
+    });
+    this.timelineRequests.set(key, fetching);
+    const clear = () => {
+      if (this.timelineRequests.get(key) === fetching) this.timelineRequests.delete(key);
+    };
+    void fetching.then(clear, clear);
+    return fetching;
   }
 
   async refreshAgents(
     input: RefreshAgentDirectoryInput = {},
   ): Promise<RefreshAgentDirectoryResult> {
-    return this.refreshAgentsInternal(input, true);
-  }
-
-  private async refreshAgentsInternal(
-    input: RefreshAgentDirectoryInput,
-    loadDirectoryCache: boolean,
-  ): Promise<RefreshAgentDirectoryResult> {
-    if (loadDirectoryCache) {
-      this.primeAgentTransactionForCacheLoad();
-      await this.loadCachedDirectory();
-    }
     const onlineConnection = this.getOnlineConnection();
     if (!onlineConnection) {
+      await this.baseline;
       this.callbacks.markAgentReady();
       return {
         agents: new Map(useSessionStore.getState().sessions[this.serverId]?.agents),
@@ -446,6 +394,8 @@ export class DirectorySync {
       };
     }
     const { client, source } = onlineConnection;
+    // The transaction spans the whole refresh, so a live delta that arrives while the saved
+    // baseline or the session is still pending is replayed on top of whatever snapshot lands.
     const transaction = this.agentTransactions.begin(source, () => ({
       entries: [],
       subscriptionId: null,
@@ -454,6 +404,7 @@ export class DirectorySync {
     }));
     this.callbacks.markAgentLoading();
     try {
+      await this.baseline;
       await this.waitForSession(client, source);
       const session = useSessionStore.getState().sessions[this.serverId];
       if (!input.filter && shouldUseLegacyDaemonWorkspaceDirectory(session?.serverInfo)) {
@@ -510,9 +461,8 @@ export class DirectorySync {
               : delta,
           )
         : completion.deltas;
-      this.revision += 1;
       const agents = this.commitAgentSnapshot(completion.snapshot, deltas);
-      this.persistAgentCursors(completion.snapshot, completion.deltas);
+      this.persistAgentCursors(completion.snapshot);
       this.persistCheckpoint();
       this.callbacks.markAgentReady();
       return { agents, subscriptionId: completion.snapshot.subscriptionId };
@@ -527,26 +477,27 @@ export class DirectorySync {
   }
 
   async refreshWorkspaces(input?: { subscribe?: boolean }): Promise<void> {
-    return this.refreshWorkspacesInternal(input, true);
-  }
-
-  private async refreshWorkspacesInternal(
-    input: { subscribe?: boolean } | undefined,
-    loadDirectoryCache: boolean,
-  ): Promise<void> {
-    if (loadDirectoryCache) await this.loadCachedDirectory();
     const onlineConnection = this.getOnlineConnection();
-    if (!onlineConnection) return;
+    if (!onlineConnection) {
+      await this.baseline;
+      return;
+    }
     const { client, source } = onlineConnection;
+    // The transaction spans the whole refresh. Its base for a changes-mode page is the store once
+    // the saved baseline is in it, so it is captured after that wait rather than at begin.
     const transaction = this.workspaceTransactions.begin(source, () => ({
-      workspaces: new Map(useSessionStore.getState().sessions[this.serverId]?.workspaces),
-      projects: new Map(useSessionStore.getState().sessions[this.serverId]?.projects),
+      workspaces: new Map(),
+      projects: new Map(),
       syncCursors: {},
       syncModes: {},
       touchedWorkspaceIds: new Set(),
       touchedProjectIds: new Set(),
     }));
     try {
+      await this.baseline;
+      const session = useSessionStore.getState().sessions[this.serverId];
+      transaction.snapshot.workspaces = new Map(session?.workspaces);
+      transaction.snapshot.projects = new Map(session?.projects);
       await this.waitForSessionMetadata(client, source);
       const serverInfo = useSessionStore.getState().sessions[this.serverId]?.serverInfo;
       if (serverInfo?.features?.workspaceMultiplicity !== true) {
@@ -725,17 +676,6 @@ export class DirectorySync {
     return { client: this.connection.client, source: this.connection.source };
   }
 
-  private primeAgentTransactionForCacheLoad(): void {
-    const connection = this.getOnlineConnection();
-    if (!connection) return;
-    this.agentTransactions.begin(connection.source, () => ({
-      entries: [],
-      subscriptionId: null,
-      legacy: false,
-      syncRemovals: [],
-    }));
-  }
-
   private supportsDirectorySync(): boolean {
     return (
       useSessionStore.getState().sessions[this.serverId]?.serverInfo?.features?.directorySync ===
@@ -752,12 +692,8 @@ export class DirectorySync {
       : this.agents.commitSnapshot(snapshot.entries, deltas);
   }
 
-  private persistAgentCursors(
-    snapshot: AgentSnapshot,
-    deltas: readonly AgentDirectoryDelta[],
-  ): void {
+  private persistAgentCursors(snapshot: AgentSnapshot): void {
     if (snapshot.syncCursor) this.writeCursor("agents", snapshot.syncCursor);
-    for (const delta of deltas) this.noteLiveCursor("agents", delta);
   }
 
   private async fetchProjectSnapshot(
@@ -801,8 +737,6 @@ export class DirectorySync {
     if (completion.kind === "stale") {
       throw new DirectoryRefreshSupersededError("workspace completion was superseded");
     }
-    this.revision += 1;
-    this.workspaceRevision += 1;
     const previous = this.readWorkspaceState();
     const deltaMutations = this.workspaces.commitSnapshot(completion.snapshot, completion.deltas);
     const next = this.workspaces.snapshot();
@@ -822,14 +756,11 @@ export class DirectorySync {
     for (const [entity, cursor] of Object.entries(completion.snapshot.syncCursors ?? {})) {
       if (cursor) this.writeCursor(entity as "projects" | "workspaces", cursor);
     }
-    for (const delta of completion.deltas) {
-      if (delta.kind === "script_status") continue;
-      const entity = "projectId" in delta || "project" in delta ? "projects" : "workspaces";
-      this.noteLiveCursor(entity, delta);
-    }
     this.persistCheckpoint();
   }
 
+  // Only a completed catch-up may advance the saved cursor. A live sequence can follow an offline
+  // gap, so saving it would claim intermediate changes the client never received.
   private persistCheckpoint(): void {
     this.checkpoints?.commitDirectoryMutations(this.serverId, [], this.cursors);
   }
@@ -872,17 +803,6 @@ export class DirectorySync {
     snapshot.syncMode = sync.mode;
     snapshot.syncRemovals.push(...sync.removals);
     snapshot.syncCursor = { generation: sync.generation, afterSeq: sync.headSeq };
-  }
-
-  private noteLiveCursor(
-    entity: keyof DirectoryCheckpoint,
-    payload: { generation?: string; seq?: number },
-  ): void {
-    if (!payload.generation || payload.seq === undefined) return;
-    this.writeCursor(entity, {
-      generation: payload.generation,
-      afterSeq: payload.seq,
-    });
   }
 
   private readCursors(): DirectoryCheckpoint {

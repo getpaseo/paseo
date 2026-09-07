@@ -4,22 +4,10 @@ import { subscribeWithSelector } from "zustand/middleware";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import type { ViewedTimelineUiBridge } from "@/timeline/viewed-timeline-sync";
 import type { AgentDirectoryEntry } from "@/types/agent-directory";
+import { type StreamItem, type TodoEntry } from "@/types/stream";
 import {
-  appendSubmittedUserMessage,
-  handoffCreatedAgentUserMessageToStream,
-  removeSubmittedUserMessage,
-  type StreamItem,
-  type TodoEntry,
-  type UserMessageItem,
-} from "@/types/stream";
-import {
-  acceptMessageSubmission,
-  beginMessageSubmission,
   getActiveMessageSubmissions,
-  observeMessageSubmissionCanonical,
-  rejectMessageSubmission,
   type MessageSubmissionRecord,
-  type MessageSubmissionRejectionOutcome,
 } from "@/composer/submission/model";
 import type { PendingPermission } from "@/types/shared";
 import type { ComposerAttachment } from "@/attachments/types";
@@ -296,6 +284,18 @@ export interface AgentTimelineCursorState {
   }>;
 }
 
+function sameTimelineRange(
+  current: AgentTimelineCursorState | undefined,
+  next: AgentTimelineCursorState | null,
+): boolean {
+  return (
+    current?.epoch === next?.epoch &&
+    current?.startSeq === next?.startSeq &&
+    current?.endSeq === next?.endSeq &&
+    current?.retainedRanges === next?.retainedRanges
+  );
+}
+
 export type AgentTimelineState =
   | { status: "cold" }
   | { status: "painted"; items: StreamItem[] }
@@ -453,74 +453,13 @@ interface SessionStoreActions {
   setFocusedTerminalId: (serverId: string, terminalId: string | null) => void;
 
   // Stream state (head/tail model)
-  setAgentStreamTail: (
-    serverId: string,
-    state:
-      | Map<string, StreamItem[]>
-      | ((prev: Map<string, StreamItem[]>) => Map<string, StreamItem[]>),
-  ) => void;
-  setAgentStreamHead: (
-    serverId: string,
-    state:
-      | Map<string, StreamItem[]>
-      | ((prev: Map<string, StreamItem[]>) => Map<string, StreamItem[]>),
-  ) => void;
-  setAgentStreamState: (
-    serverId: string,
-    agentId: string,
-    state: {
-      tail?: StreamItem[];
-      head?: StreamItem[];
-      acknowledgedClientMessageIds?: readonly string[];
-      taskSnapshot?: TodoEntry[];
-    },
-  ) => void;
-  beginAgentMessageSubmission: (
-    serverId: string,
-    agentId: string,
-    message: UserMessageItem,
-  ) => void;
-  acceptAgentMessageSubmission: (
-    serverId: string,
-    agentId: string,
-    clientMessageId: string,
-  ) => void;
-  rejectAgentMessageSubmission: (
-    serverId: string,
-    agentId: string,
-    clientMessageId: string,
-  ) => MessageSubmissionRejectionOutcome;
-  handoffCreatedAgentUserMessage: (
-    serverId: string,
-    agentId: string,
-    message: UserMessageItem,
-  ) => boolean;
-  clearAgentStreamHead: (serverId: string, agentId: string) => void;
-  setAgentTimelineCursor: (
-    serverId: string,
-    state:
-      | Map<string, AgentTimelineCursorState>
-      | ((prev: Map<string, AgentTimelineCursorState>) => Map<string, AgentTimelineCursorState>),
-  ) => void;
-  setAgentTimelineHasOlder: (
-    serverId: string,
-    state: Map<string, boolean> | ((prev: Map<string, boolean>) => Map<string, boolean>),
-  ) => void;
-  setAgentTimelineHasNewer: (
-    serverId: string,
-    state: Map<string, boolean> | ((prev: Map<string, boolean>) => Map<string, boolean>),
-  ) => void;
+
   setAgentTimelineOlderFetchInFlight: (
     serverId: string,
     state: Map<string, boolean> | ((prev: Map<string, boolean>) => Map<string, boolean>),
   ) => void;
   bumpHistorySyncGeneration: (serverId: string) => void;
-  markAgentHistorySynchronized: (serverId: string, agentId: string) => void;
-  setAgentAuthoritativeHistoryApplied: (
-    serverId: string,
-    agentId: string,
-    applied: boolean,
-  ) => void;
+
   applyAgentTimelineResponseState: (
     serverId: string,
     agentId: string,
@@ -531,9 +470,11 @@ interface SessionStoreActions {
       older: "available" | "none" | "unchanged";
       newer: boolean;
       synchronized: boolean;
-      acknowledgedClientMessageIds: string[];
+      submissions: MessageSubmissionRecord[];
     },
   ) => void;
+
+  removeAgentTimeline: (serverId: string, agentId: string) => void;
 
   // Initializing agents
   setInitializingAgents: (
@@ -931,354 +872,6 @@ export const useSessionStore = create<SessionStore>()(
       },
 
       // Stream state (head/tail model)
-      setAgentStreamTail: (serverId, state) => {
-        set((prev) => {
-          const session = prev.sessions[serverId];
-          if (!session) {
-            return prev;
-          }
-          const nextState = typeof state === "function" ? state(session.agentStreamTail) : state;
-          if (session.agentStreamTail === nextState) {
-            return prev;
-          }
-          return {
-            ...prev,
-            sessions: {
-              ...prev.sessions,
-              [serverId]: { ...session, agentStreamTail: nextState },
-            },
-          };
-        });
-      },
-
-      setAgentStreamHead: (serverId, state) => {
-        set((prev) => {
-          const session = prev.sessions[serverId];
-          if (!session) {
-            return prev;
-          }
-          const nextState = typeof state === "function" ? state(session.agentStreamHead) : state;
-          if (session.agentStreamHead === nextState) {
-            return prev;
-          }
-          return {
-            ...prev,
-            sessions: {
-              ...prev.sessions,
-              [serverId]: { ...session, agentStreamHead: nextState },
-            },
-          };
-        });
-      },
-
-      setAgentStreamState: (serverId, agentId, state) => {
-        set((prev) => {
-          const session = prev.sessions[serverId];
-          if (!session) {
-            return prev;
-          }
-
-          let nextTail = session.agentStreamTail;
-          let nextHead = session.agentStreamHead;
-          let changedTail = false;
-          let changedHead = false;
-
-          if (state.tail !== undefined) {
-            const existingTail = session.agentStreamTail.get(agentId);
-            if (existingTail !== state.tail) {
-              nextTail = new Map(session.agentStreamTail);
-              nextTail.set(agentId, state.tail);
-              changedTail = true;
-            }
-          }
-
-          if (state.head !== undefined) {
-            const existingHead = session.agentStreamHead.get(agentId);
-            const shouldDeleteHead = state.head.length === 0;
-            if (shouldDeleteHead) {
-              if (session.agentStreamHead.has(agentId)) {
-                nextHead = new Map(session.agentStreamHead);
-                nextHead.delete(agentId);
-                changedHead = true;
-              }
-            } else if (existingHead !== state.head) {
-              nextHead = new Map(session.agentStreamHead);
-              nextHead.set(agentId, state.head);
-              changedHead = true;
-            }
-          }
-
-          const currentSubmissions = session.messageSubmissions.get(agentId) ?? [];
-          const observedSubmissions = observeMessageSubmissionCanonical(
-            currentSubmissions,
-            state.acknowledgedClientMessageIds ?? [],
-          );
-          const changedSubmissions = observedSubmissions !== currentSubmissions;
-          const agentTasks = updateAgentTasks(session.agentTasks, agentId, state.taskSnapshot);
-          const changedTasks = agentTasks !== session.agentTasks;
-
-          if (!changedTail && !changedHead && !changedSubmissions && !changedTasks) {
-            return prev;
-          }
-
-          let messageSubmissions = session.messageSubmissions;
-          if (changedSubmissions) {
-            messageSubmissions = new Map(session.messageSubmissions);
-            if (observedSubmissions.length > 0) {
-              messageSubmissions.set(agentId, observedSubmissions);
-            } else {
-              messageSubmissions.delete(agentId);
-            }
-          }
-
-          return {
-            ...prev,
-            sessions: {
-              ...prev.sessions,
-              [serverId]: {
-                ...session,
-                agentStreamTail: nextTail,
-                agentStreamHead: nextHead,
-                agentTasks,
-                messageSubmissions,
-              },
-            },
-          };
-        });
-      },
-
-      beginAgentMessageSubmission: (serverId, agentId, message) => {
-        set((prev) => {
-          const session = prev.sessions[serverId];
-          if (!session) return prev;
-          if (!message.clientMessageId) {
-            throw new Error("Beginning a message submission requires client identity");
-          }
-          const currentTail = session.agentStreamTail.get(agentId) ?? [];
-          const currentHead = session.agentStreamHead.get(agentId) ?? [];
-          const stream = appendSubmittedUserMessage({
-            tail: currentTail,
-            head: currentHead,
-            message,
-          });
-          const submissions = beginMessageSubmission(
-            session.messageSubmissions.get(agentId) ?? [],
-            { clientMessageId: message.clientMessageId },
-          );
-          const messageSubmissions = new Map(session.messageSubmissions);
-          messageSubmissions.set(agentId, submissions);
-          return {
-            ...prev,
-            sessions: {
-              ...prev.sessions,
-              [serverId]: {
-                ...session,
-                agentStreamTail:
-                  stream.tail === currentTail
-                    ? session.agentStreamTail
-                    : new Map(session.agentStreamTail).set(agentId, stream.tail),
-                agentStreamHead:
-                  stream.head === currentHead
-                    ? session.agentStreamHead
-                    : new Map(session.agentStreamHead).set(agentId, stream.head),
-                messageSubmissions,
-              },
-            },
-          };
-        });
-      },
-
-      acceptAgentMessageSubmission: (serverId, agentId, clientMessageId) => {
-        set((prev) => {
-          const session = prev.sessions[serverId];
-          if (!session) return prev;
-          const currentSubmissions = session.messageSubmissions.get(agentId) ?? [];
-          const submissions = acceptMessageSubmission(currentSubmissions, clientMessageId);
-          if (submissions === currentSubmissions) return prev;
-          const messageSubmissions = new Map(session.messageSubmissions);
-          if (submissions.length > 0) {
-            messageSubmissions.set(agentId, submissions);
-          } else {
-            messageSubmissions.delete(agentId);
-          }
-          return {
-            ...prev,
-            sessions: {
-              ...prev.sessions,
-              [serverId]: { ...session, messageSubmissions },
-            },
-          };
-        });
-      },
-
-      rejectAgentMessageSubmission: (serverId, agentId, clientMessageId) => {
-        let outcome: MessageSubmissionRejectionOutcome = "unknown";
-        set((prev) => {
-          const session = prev.sessions[serverId];
-          if (!session) return prev;
-          const currentTail = session.agentStreamTail.get(agentId) ?? [];
-          const currentHead = session.agentStreamHead.get(agentId) ?? [];
-          const currentSubmissions = session.messageSubmissions.get(agentId) ?? [];
-          const result = rejectMessageSubmission(currentSubmissions, clientMessageId);
-          outcome = result.outcome;
-          if (outcome === "unknown") return prev;
-          const stream =
-            outcome === "rejected"
-              ? removeSubmittedUserMessage({
-                  tail: currentTail,
-                  head: currentHead,
-                  clientMessageId,
-                })
-              : { tail: currentTail, head: currentHead };
-          const messageSubmissions = new Map(session.messageSubmissions);
-          if (result.submissions.length > 0) {
-            messageSubmissions.set(agentId, result.submissions);
-          } else {
-            messageSubmissions.delete(agentId);
-          }
-          return {
-            ...prev,
-            sessions: {
-              ...prev.sessions,
-              [serverId]: {
-                ...session,
-                agentStreamTail:
-                  stream.tail === currentTail
-                    ? session.agentStreamTail
-                    : new Map(session.agentStreamTail).set(agentId, stream.tail),
-                agentStreamHead:
-                  stream.head === currentHead
-                    ? session.agentStreamHead
-                    : new Map(session.agentStreamHead).set(agentId, stream.head),
-                messageSubmissions,
-              },
-            },
-          };
-        });
-        return outcome;
-      },
-
-      handoffCreatedAgentUserMessage: (serverId, agentId, message) => {
-        let didHandoff = false;
-        set((prev) => {
-          const session = prev.sessions[serverId];
-          if (!session) {
-            return prev;
-          }
-
-          const currentTail = session.agentStreamTail.get(agentId) ?? [];
-          const currentHead = session.agentStreamHead.get(agentId) ?? [];
-          const result = handoffCreatedAgentUserMessageToStream({
-            tail: currentTail,
-            head: currentHead,
-            message,
-          });
-          if (!result.changedTail && !result.changedHead) {
-            return prev;
-          }
-
-          const nextTail = result.changedTail
-            ? new Map(session.agentStreamTail).set(agentId, result.tail)
-            : session.agentStreamTail;
-          const nextHead = result.changedHead
-            ? new Map(session.agentStreamHead).set(agentId, result.head)
-            : session.agentStreamHead;
-          didHandoff = true;
-
-          return {
-            ...prev,
-            sessions: {
-              ...prev.sessions,
-              [serverId]: {
-                ...session,
-                agentStreamTail: nextTail,
-                agentStreamHead: nextHead,
-              },
-            },
-          };
-        });
-        return didHandoff;
-      },
-
-      clearAgentStreamHead: (serverId, agentId) => {
-        set((prev) => {
-          const session = prev.sessions[serverId];
-          if (!session) {
-            return prev;
-          }
-          if (!session.agentStreamHead.has(agentId)) {
-            return prev;
-          }
-          const nextHead = new Map(session.agentStreamHead);
-          nextHead.delete(agentId);
-          return {
-            ...prev,
-            sessions: {
-              ...prev.sessions,
-              [serverId]: { ...session, agentStreamHead: nextHead },
-            },
-          };
-        });
-      },
-
-      setAgentTimelineCursor: (serverId, state) => {
-        set((prev) => {
-          const session = prev.sessions[serverId];
-          if (!session) {
-            return prev;
-          }
-          const nextState =
-            typeof state === "function" ? state(session.agentTimelineCursor) : state;
-          if (session.agentTimelineCursor === nextState) {
-            return prev;
-          }
-          return {
-            ...prev,
-            sessions: {
-              ...prev.sessions,
-              [serverId]: { ...session, agentTimelineCursor: nextState },
-            },
-          };
-        });
-      },
-
-      setAgentTimelineHasOlder: (serverId, state) => {
-        set((prev) => {
-          const session = prev.sessions[serverId];
-          if (!session) {
-            return prev;
-          }
-          const nextState =
-            typeof state === "function" ? state(session.agentTimelineHasOlder) : state;
-          if (session.agentTimelineHasOlder === nextState) {
-            return prev;
-          }
-          return {
-            ...prev,
-            sessions: {
-              ...prev.sessions,
-              [serverId]: { ...session, agentTimelineHasOlder: nextState },
-            },
-          };
-        });
-      },
-
-      setAgentTimelineHasNewer: (serverId, state) => {
-        set((prev) => {
-          const session = prev.sessions[serverId];
-          if (!session) return prev;
-          const nextState =
-            typeof state === "function" ? state(session.agentTimelineHasNewer) : state;
-          if (session.agentTimelineHasNewer === nextState) return prev;
-          return {
-            ...prev,
-            sessions: {
-              ...prev.sessions,
-              [serverId]: { ...session, agentTimelineHasNewer: nextState },
-            },
-          };
-        });
-      },
 
       setAgentTimelineOlderFetchInFlight: (serverId, state) => {
         set((prev) => {
@@ -1321,107 +914,58 @@ export const useSessionStore = create<SessionStore>()(
         });
       },
 
-      markAgentHistorySynchronized: (serverId, agentId) => {
-        set((prev) => {
-          const session = prev.sessions[serverId];
-          if (!session) {
-            return prev;
-          }
-          const currentGeneration = session.historySyncGeneration;
-          const previousGeneration = session.agentHistorySyncGeneration.get(agentId);
-          if (previousGeneration === currentGeneration) {
-            return prev;
-          }
-          const nextMap = new Map(session.agentHistorySyncGeneration);
-          nextMap.set(agentId, currentGeneration);
-          return {
-            ...prev,
-            sessions: {
-              ...prev.sessions,
-              [serverId]: {
-                ...session,
-                agentHistorySyncGeneration: nextMap,
-              },
-            },
-          };
-        });
-      },
-
-      setAgentAuthoritativeHistoryApplied: (serverId, agentId, applied) => {
-        set((prev) => {
-          const session = prev.sessions[serverId];
-          if (!session) {
-            return prev;
-          }
-
-          const previousApplied = session.agentAuthoritativeHistoryApplied.get(agentId) ?? false;
-          if (previousApplied === applied) {
-            return prev;
-          }
-
-          const nextApplied = new Map(session.agentAuthoritativeHistoryApplied);
-          if (applied) {
-            nextApplied.set(agentId, true);
-          } else {
-            nextApplied.delete(agentId);
-          }
-
-          return {
-            ...prev,
-            sessions: {
-              ...prev.sessions,
-              [serverId]: {
-                ...session,
-                agentAuthoritativeHistoryApplied: nextApplied,
-              },
-            },
-          };
-        });
-      },
-
       applyAgentTimelineResponseState: (serverId, agentId, state) => {
         set((prev) => {
           const session = prev.sessions[serverId];
           if (!session) return prev;
 
-          const nextTail = new Map(session.agentStreamTail);
-          nextTail.set(agentId, state.items);
-          const nextHead = new Map(session.agentStreamHead);
-          if (state.head.length > 0) nextHead.set(agentId, state.head);
-          else nextHead.delete(agentId);
-          const nextCursor = new Map(session.agentTimelineCursor);
-          if (state.range) nextCursor.set(agentId, state.range);
-          else nextCursor.delete(agentId);
-          const nextHasOlder = new Map(session.agentTimelineHasOlder);
-          if (state.older !== "unchanged") {
-            nextHasOlder.set(agentId, state.older === "available");
-          }
-          const nextHasNewer = new Map(session.agentTimelineHasNewer);
-          nextHasNewer.set(agentId, state.newer);
-          const nextAuthoritative = new Map(session.agentAuthoritativeHistoryApplied);
-          const nextSyncGeneration = new Map(session.agentHistorySyncGeneration);
-          const currentSubmissions = session.messageSubmissions.get(agentId) ?? [];
-          const observedSubmissions = observeMessageSubmissionCanonical(
-            currentSubmissions,
-            state.acknowledgedClientMessageIds,
+          let changed = false;
+          const update = <T>(map: Map<string, T>, value: T | undefined): Map<string, T> => {
+            if (map.get(agentId) === value) return map;
+            changed = true;
+            const next = new Map(map);
+            if (value === undefined) next.delete(agentId);
+            else next.set(agentId, value);
+            return next;
+          };
+          const currentTail = session.agentStreamTail.get(agentId);
+          const items =
+            currentTail?.length === 0 && state.items.length === 0 ? currentTail : state.items;
+          const nextTail = update(session.agentStreamTail, items);
+          const nextHead = update(
+            session.agentStreamHead,
+            state.head.length > 0 ? state.head : undefined,
           );
-          let messageSubmissions = session.messageSubmissions;
-          if (observedSubmissions !== currentSubmissions) {
-            messageSubmissions = new Map(session.messageSubmissions);
-            if (observedSubmissions.length > 0) {
-              messageSubmissions.set(agentId, observedSubmissions);
-            } else {
-              messageSubmissions.delete(agentId);
-            }
-          }
-          if (state.synchronized) {
-            nextAuthoritative.set(agentId, true);
-            nextSyncGeneration.set(agentId, session.historySyncGeneration);
-          }
-          const tasks = latestTasksFromStream([...state.items, ...state.head]);
-          const agentTasks = new Map(session.agentTasks);
-          if (tasks.length > 0) agentTasks.set(agentId, tasks);
-          else agentTasks.delete(agentId);
+          const currentRange = session.agentTimelineCursor.get(agentId);
+          const rangeUnchanged = sameTimelineRange(currentRange, state.range);
+          const nextCursor = rangeUnchanged
+            ? session.agentTimelineCursor
+            : update(session.agentTimelineCursor, state.range ?? undefined);
+          const nextHasOlder =
+            state.older === "unchanged"
+              ? session.agentTimelineHasOlder
+              : update(session.agentTimelineHasOlder, state.older === "available");
+          const nextHasNewer = update(session.agentTimelineHasNewer, state.newer);
+          const nextAuthoritative = state.synchronized
+            ? update(session.agentAuthoritativeHistoryApplied, true)
+            : session.agentAuthoritativeHistoryApplied;
+          const nextSyncGeneration = state.synchronized
+            ? update(session.agentHistorySyncGeneration, session.historySyncGeneration)
+            : session.agentHistorySyncGeneration;
+          const messageSubmissions = update(
+            session.messageSubmissions,
+            state.submissions.length > 0 ? state.submissions : undefined,
+          );
+          const rowsChanged =
+            nextTail !== session.agentStreamTail || nextHead !== session.agentStreamHead;
+          const agentTasks = rowsChanged
+            ? updateAgentTasks(
+                session.agentTasks,
+                agentId,
+                latestTasksFromStream([...state.items, ...state.head]),
+              )
+            : session.agentTasks;
+          if (!changed && agentTasks === session.agentTasks) return prev;
 
           return {
             ...prev,
@@ -1438,6 +982,37 @@ export const useSessionStore = create<SessionStore>()(
                 agentAuthoritativeHistoryApplied: nextAuthoritative,
                 agentHistorySyncGeneration: nextSyncGeneration,
                 messageSubmissions,
+              },
+            },
+          };
+        });
+      },
+
+      removeAgentTimeline: (serverId, agentId) => {
+        set((previous) => {
+          const session = previous.sessions[serverId];
+          if (!session) return previous;
+          const remove = <T>(map: Map<string, T>): Map<string, T> => {
+            const next = new Map(map);
+            next.delete(agentId);
+            return next;
+          };
+          return {
+            ...previous,
+            sessions: {
+              ...previous.sessions,
+              [serverId]: {
+                ...session,
+                agentStreamTail: remove(session.agentStreamTail),
+                agentStreamHead: remove(session.agentStreamHead),
+                agentTimelineCursor: remove(session.agentTimelineCursor),
+                agentTimelineHasOlder: remove(session.agentTimelineHasOlder),
+                agentTimelineHasNewer: remove(session.agentTimelineHasNewer),
+                agentTimelineOlderFetchInFlight: remove(session.agentTimelineOlderFetchInFlight),
+                agentAuthoritativeHistoryApplied: remove(session.agentAuthoritativeHistoryApplied),
+                agentHistorySyncGeneration: remove(session.agentHistorySyncGeneration),
+                messageSubmissions: remove(session.messageSubmissions),
+                agentTasks: remove(session.agentTasks),
               },
             },
           };

@@ -25,7 +25,7 @@ export interface ReplicaHostRows {
 export interface ReplicaRowStore {
   open(): Promise<void>;
   read(
-    serverId: string,
+    serverIds: readonly string[],
     kinds: readonly ReplicaRowKind[],
     ids?: readonly string[],
   ): Promise<ReplicaRow[]>;

@@ -108,20 +108,17 @@ export function createSqliteReplicaRowStore(
   }
 
   async function read(
-    serverId: string,
+    serverIds: readonly string[],
     kinds: readonly ReplicaRow["kind"][],
     ids?: readonly string[],
   ): Promise<ReplicaRow[]> {
-    if (kinds.length === 0 || ids?.length === 0) return [];
-    const placeholders = kinds.map(() => "?").join(", ");
-    const idClause = ids ? ` AND id IN (${ids.map(() => "?").join(", ")})` : "";
-    const storedRows = await getConnection().all<StoredRow>(
-      `SELECT server_id, kind, id, payload FROM rows
-       WHERE server_id = ? AND kind IN (${placeholders})${idClause}
-       ORDER BY kind, id`,
-      [serverId, ...kinds, ...(ids ?? [])],
+    if (!serverIds.length || !kinds.length || ids?.length === 0) return [];
+    const placeholders = (values: readonly string[]) => values.map(() => "?").join(",");
+    const rows = await getConnection().all<StoredRow>(
+      `SELECT server_id, kind, id, payload FROM rows WHERE server_id IN (${placeholders(serverIds)}) AND kind IN (${placeholders(kinds)})${ids ? ` AND id IN (${placeholders(ids)})` : ""} ORDER BY server_id, kind, id`,
+      [...serverIds, ...kinds, ...(ids ?? [])],
     );
-    return storedRows.map((row) => ({
+    return rows.map((row) => ({
       serverId: row.server_id,
       kind: row.kind,
       id: row.id,

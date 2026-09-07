@@ -97,6 +97,7 @@ export interface UserMessageItem {
   messageId?: string;
   turnId?: string;
   timelineCursor?: TimelinePosition;
+  source?: RowSource;
   text: string;
   timestamp: Date;
   images?: UserMessageImageAttachment[];
@@ -109,6 +110,7 @@ export interface UserMessageInput {
   messageId?: string;
   turnId?: string;
   timelineCursor?: TimelinePosition;
+  source?: RowSource;
   text: string;
   timestamp: Date;
   images?: UserMessageImageAttachment[];
@@ -127,6 +129,7 @@ export function createUserMessage(input: UserMessageInput): UserMessageItem {
     ...(input.messageId ? { messageId: input.messageId } : {}),
     ...(input.turnId ? { turnId: input.turnId } : {}),
     ...(input.timelineCursor ? { timelineCursor: input.timelineCursor } : {}),
+    ...(input.source ? { source: input.source } : {}),
     text: input.text,
     timestamp: input.timestamp,
     ...(input.images && input.images.length > 0 ? { images: input.images } : {}),
@@ -261,12 +264,14 @@ function produceUserMessage(
     clientMessageId: incoming.clientMessageId ?? existing.clientMessageId,
     messageId: incoming.messageId ?? existing.messageId,
     timelineCursor: incoming.timelineCursor ?? existing.timelineCursor,
+    source: incoming.source ?? existing.source,
   });
   if (
     existing.id === merged.id &&
     existing.clientMessageId === merged.clientMessageId &&
     existing.messageId === merged.messageId &&
     existing.timelineCursor === merged.timelineCursor &&
+    existing.source === merged.source &&
     existing.text === merged.text &&
     existing.timestamp === merged.timestamp &&
     existing.images === merged.images &&
@@ -412,13 +417,19 @@ function placeCanonicalUserMessageAtTail(
   };
 }
 
+// What canonical rows certify about source positions. A certified range replaces every positioned
+// row inside it and drops rows from other epochs. Rows-only canonical data, such as a display-only
+// cache, replaces only rows sharing a canonical row's position or an older-or-equal copy of its
+// message identity; it never drops rows it did not cover.
+export type CanonicalCoverage = { epoch: string; endSeq: number | null } | "rows-only";
+
 export interface CanonicalStreamReplacementInput {
   canonical: StreamItem[];
   previousTail: StreamItem[];
   previousHead: StreamItem[];
   sendingClientMessageIds: readonly string[];
   preserveContinuity: boolean;
-  canonicalCoverage: { epoch: string; endSeq: number | null };
+  canonicalCoverage: CanonicalCoverage;
 }
 
 export interface CanonicalStreamReplacementResult {
@@ -427,13 +438,33 @@ export interface CanonicalStreamReplacementResult {
   acknowledgedClientMessageIds: string[];
 }
 
-function isAfterCanonicalCoverage(
-  position: TimelinePosition,
-  coverage: CanonicalStreamReplacementInput["canonicalCoverage"],
+function isSamePosition(left: TimelinePosition | undefined, right: TimelinePosition): boolean {
+  return left !== undefined && left.epoch === right.epoch && left.seq === right.seq;
+}
+
+function isCoveredByCanonical(
+  item: StreamItem,
+  canonical: readonly StreamItem[],
+  coverage: CanonicalCoverage,
 ): boolean {
-  return (
-    position.epoch === coverage.epoch &&
-    (coverage.endSeq === null || position.seq > coverage.endSeq)
+  const position = item.timelineCursor;
+  if (!position) return false;
+  if (coverage !== "rows-only") {
+    return (
+      position.epoch !== coverage.epoch ||
+      (coverage.endSeq !== null && position.seq <= coverage.endSeq)
+    );
+  }
+  return canonical.some(
+    (row) =>
+      isSamePosition(row.timelineCursor, position) ||
+      (row.kind === "assistant_message" &&
+        item.kind === "assistant_message" &&
+        row.messageId !== undefined &&
+        row.messageId === item.messageId &&
+        row.timelineCursor !== undefined &&
+        row.timelineCursor.epoch === position.epoch &&
+        row.timelineCursor.seq >= position.seq),
   );
 }
 
@@ -543,29 +574,53 @@ function reconcileReplacementHeadAgainstTail(
   };
 }
 
+// Positioned rows beyond canonical coverage are daemon history the page did not carry, so they
+// survive every replacement. Continuity decides only what happens to rows without a position.
+function retainsAcrossReplacement(
+  item: StreamItem,
+  input: {
+    canonical: readonly StreamItem[];
+    tail: readonly StreamItem[];
+    preserveContinuity: boolean;
+    sendingClientMessageIds: ReadonlySet<string>;
+    canonicalCoverage: CanonicalCoverage;
+  },
+): boolean {
+  if (item.timelineCursor) {
+    if (!isCoveredByCanonical(item, input.canonical, input.canonicalCoverage)) return true;
+    const canonicalTailAssistant = input.tail.at(-1);
+    return (
+      input.preserveContinuity &&
+      item.kind === "assistant_message" &&
+      canonicalTailAssistant?.kind === "assistant_message" &&
+      item.text.startsWith(canonicalTailAssistant.text)
+    );
+  }
+  return (
+    input.preserveContinuity ||
+    (item.kind === "user_message" &&
+      item.clientMessageId !== undefined &&
+      input.sendingClientMessageIds.has(item.clientMessageId))
+  );
+}
+
 function preserveReplacementHead(
+  canonical: readonly StreamItem[],
   tail: StreamItem[],
   currentHead: StreamItem[],
   preserveContinuity: boolean,
   sendingClientMessageIds: ReadonlySet<string>,
-  canonicalCoverage: CanonicalStreamReplacementInput["canonicalCoverage"],
+  canonicalCoverage: CanonicalCoverage,
 ): CanonicalStreamReplacementResult {
-  const canonicalTailAssistant = tail.at(-1);
-  const retainedHead = preserveContinuity
-    ? currentHead.filter(
-        (item) =>
-          !item.timelineCursor ||
-          isAfterCanonicalCoverage(item.timelineCursor, canonicalCoverage) ||
-          (item.kind === "assistant_message" &&
-            canonicalTailAssistant?.kind === "assistant_message" &&
-            item.text.startsWith(canonicalTailAssistant.text)),
-      )
-    : currentHead.filter(
-        (item) =>
-          item.kind === "user_message" &&
-          item.clientMessageId !== undefined &&
-          sendingClientMessageIds.has(item.clientMessageId),
-      );
+  const retainedHead = currentHead.filter((item) =>
+    retainsAcrossReplacement(item, {
+      canonical,
+      tail,
+      preserveContinuity,
+      sendingClientMessageIds,
+      canonicalCoverage,
+    }),
+  );
   const { tail: reconciledTail, head: unreconciledHead } = reconcileReplacementHeadAgainstTail(
     tail,
     retainedHead,
@@ -584,7 +639,29 @@ function preserveReplacementHead(
   ) {
     return { tail: reconciledTail, head: unreconciledHead, acknowledgedClientMessageIds: [] };
   }
+  const continued = continueCanonicalAssistant(liveAssistant, tailAssistant);
+  if (!continued) {
+    return { tail: reconciledTail, head: unreconciledHead, acknowledgedClientMessageIds: [] };
+  }
+  return {
+    tail: reconciledTail.slice(0, -1),
+    head: [
+      ...unreconciledHead.slice(0, liveAssistantIndex),
+      continued,
+      ...unreconciledHead.slice(liveAssistantIndex + 1),
+    ],
+    acknowledgedClientMessageIds: [],
+  };
+}
 
+// The live head row that continues the canonical tail's last assistant, merged so the canonical
+// text owns the positions it certifies and the live row keeps what came after. Rows without
+// provider ids cannot tell a continuation from the next message, so they keep the conservative
+// legacy rule and merge only when the live text visibly extends the canonical one.
+function continueCanonicalAssistant(
+  liveAssistant: AssistantMessageItem,
+  tailAssistant: AssistantMessageItem,
+): AssistantMessageItem | null {
   const hasNewerCursor =
     liveAssistant.timelineCursor !== undefined &&
     tailAssistant.timelineCursor !== undefined &&
@@ -592,41 +669,29 @@ function preserveReplacementHead(
     liveAssistant.timelineCursor.seq > tailAssistant.timelineCursor.seq;
   const hasMatchingProviderMessageId =
     liveAssistant.messageId !== undefined && liveAssistant.messageId === tailAssistant.messageId;
+  const extendsText = liveAssistant.text.startsWith(tailAssistant.text);
   const hasIdlessTextContinuation =
-    liveAssistant.messageId === undefined &&
-    tailAssistant.messageId === undefined &&
-    liveAssistant.text.startsWith(tailAssistant.text);
-  const isNewerContinuation =
-    hasNewerCursor && (hasMatchingProviderMessageId || hasIdlessTextContinuation);
-  if (isNewerContinuation) {
-    const text = liveAssistant.text.startsWith(tailAssistant.text)
-      ? liveAssistant.text
-      : `${tailAssistant.text}${liveAssistant.text}`;
-    const head = [
-      ...unreconciledHead.slice(0, liveAssistantIndex),
-      { ...liveAssistant, text },
-      ...unreconciledHead.slice(liveAssistantIndex + 1),
-    ];
+    liveAssistant.messageId === undefined && tailAssistant.messageId === undefined && extendsText;
+  if (hasNewerCursor && (hasMatchingProviderMessageId || hasIdlessTextContinuation)) {
+    if (liveAssistant.timelineCursor && tailAssistant.timelineCursor) {
+      return (
+        mergeCanonicalText([liveAssistant], {
+          text: tailAssistant.text,
+          epoch: tailAssistant.timelineCursor.epoch,
+          startSeq: rowStartSeq(tailAssistant) ?? tailAssistant.timelineCursor.seq,
+          endSeq: tailAssistant.timelineCursor.seq,
+          timestamp: tailAssistant.timestamp,
+        })[0] ?? liveAssistant
+      );
+    }
     return {
-      tail: reconciledTail.slice(0, -1),
-      head,
-      acknowledgedClientMessageIds: [],
+      ...liveAssistant,
+      text: extendsText ? liveAssistant.text : `${tailAssistant.text}${liveAssistant.text}`,
     };
   }
-  if (!liveAssistant.text.startsWith(tailAssistant.text)) {
-    return { tail: reconciledTail, head: unreconciledHead, acknowledgedClientMessageIds: [] };
-  }
-
-  const head = [
-    ...unreconciledHead.slice(0, liveAssistantIndex),
-    { ...liveAssistant, text: tailAssistant.text },
-    ...unreconciledHead.slice(liveAssistantIndex + 1),
-  ];
-  return {
-    tail: reconciledTail.slice(0, -1),
-    head,
-    acknowledgedClientMessageIds: [],
-  };
+  // A live prefix of the canonical text is the same message still streaming from the client's
+  // view; the canonical text is complete as of the page.
+  return extendsText ? { ...liveAssistant, text: tailAssistant.text } : null;
 }
 
 export function replaceWithCanonicalStream(
@@ -673,24 +738,29 @@ export function replaceWithCanonicalStream(
     nextTail.push(item);
   }
 
-  const retainedTailMessages: UserMessageItem[] = [];
-  for (const local of unmatchedTailMessages) {
-    const preserveLocal = input.preserveContinuity
-      ? isUnreconciledLocalUserMessage(local)
-      : local.clientMessageId !== undefined && sendingClientMessageIds.has(local.clientMessageId);
-    if (preserveLocal) {
-      nextTail.push(local);
-    } else if (
-      input.preserveContinuity &&
-      local.timelineCursor &&
-      isAfterCanonicalCoverage(local.timelineCursor, input.canonicalCoverage)
+  const retainedTailRows: StreamItem[] = [];
+  for (const item of input.previousTail) {
+    if (item.kind === "user_message" && item.clientMessageId !== undefined) {
+      if (!unmatchedTailMessages.includes(item)) continue;
+      const preserveLocal = input.preserveContinuity
+        ? isUnreconciledLocalUserMessage(item)
+        : sendingClientMessageIds.has(item.clientMessageId);
+      if (preserveLocal) {
+        nextTail.push(item);
+        continue;
+      }
+    }
+    if (
+      item.timelineCursor &&
+      !isCoveredByCanonical(item, input.canonical, input.canonicalCoverage)
     ) {
-      retainedTailMessages.push(local);
+      retainedTailRows.push(item);
     }
   }
-  nextHead = [...retainedTailMessages, ...nextHead];
+  nextHead = [...retainedTailRows, ...nextHead];
 
   const replacement = preserveReplacementHead(
+    input.canonical,
     nextTail,
     nextHead,
     input.preserveContinuity,
@@ -713,12 +783,32 @@ export interface AssistantMessageItem {
   timestamp: Date;
   blockGroupId?: string;
   blockIndex?: number;
+  source?: RowSource;
 }
 
 export interface TimelinePosition {
   epoch: string;
   seq: number;
 }
+
+// Where a row's content came from. `startSeq` is the first source position the row covers; rows
+// display in start order because a tool call completes long after it appeared. `chunks` records,
+// for streamed text, the sequence that produced each piece and the offset it begins at, so a
+// canonical page owns exactly the chunks inside its source coverage and text merges cut on chunk
+// boundaries instead of comparing strings. Rows saved before provenance existed order by `seq`.
+export interface RowSource {
+  startSeq: number;
+  chunks?: SourceChunk[];
+}
+
+export interface SourceChunk {
+  seq: number;
+  offset: number;
+}
+
+// Reducers receive the position of the source rows an event covers; canonical units start before
+// they end. Rows keep only the anchor position; the start goes into `source`.
+export type SourcedPosition = TimelinePosition & { startSeq?: number };
 
 export type ThoughtStatus = "loading" | "ready";
 
@@ -730,6 +820,159 @@ export interface ThoughtItem {
   text: string;
   timestamp: Date;
   status: ThoughtStatus;
+  source?: RowSource;
+}
+
+type TextRow = AssistantMessageItem | ThoughtItem;
+
+function anchorOf(cursor: SourcedPosition): TimelinePosition;
+function anchorOf(cursor: SourcedPosition | undefined): TimelinePosition | undefined;
+function anchorOf(cursor: SourcedPosition | undefined): TimelinePosition | undefined {
+  if (!cursor) return undefined;
+  return cursor.startSeq === undefined ? cursor : { epoch: cursor.epoch, seq: cursor.seq };
+}
+
+// The source of a row after an event at `cursor` touches it. A row keeps its start while the
+// event stays in its epoch; a new epoch starts it over.
+function sourceFor(cursor: SourcedPosition, existing?: StreamItem): RowSource {
+  if (existing?.timelineCursor?.epoch === cursor.epoch) {
+    const startSeq = existing.source?.startSeq ?? existing.timelineCursor.seq;
+    return existing.source?.startSeq === startSeq && existing.source.chunks === undefined
+      ? existing.source
+      : { startSeq };
+  }
+  return { startSeq: cursor.startSeq ?? cursor.seq };
+}
+
+function positionedRow(
+  cursor: SourcedPosition | undefined,
+): Pick<UserMessageItem, "timelineCursor" | "source"> {
+  return cursor ? { timelineCursor: anchorOf(cursor), source: sourceFor(cursor) } : {};
+}
+
+export function rowStartSeq(item: StreamItem): number | undefined {
+  return item.source?.startSeq ?? item.timelineCursor?.seq;
+}
+
+function rowChunks(row: TextRow): SourceChunk[] {
+  if (row.source?.chunks) return row.source.chunks;
+  return row.timelineCursor ? [{ seq: row.timelineCursor.seq, offset: 0 }] : [];
+}
+
+function chunkTexts(row: TextRow): Array<{ seq: number; text: string }> {
+  const chunks = rowChunks(row);
+  return chunks.map((chunk, index) => ({
+    seq: chunk.seq,
+    text: row.text.slice(chunk.offset, chunks[index + 1]?.offset ?? row.text.length),
+  }));
+}
+
+function chunksOf(parts: ReadonlyArray<{ seq: number; text: string }>): SourceChunk[] {
+  let offset = 0;
+  return parts.map((part) => {
+    const chunk = { seq: part.seq, offset };
+    offset += part.text.length;
+    return chunk;
+  });
+}
+
+function sliceChunks(chunks: readonly SourceChunk[], start: number, end: number): SourceChunk[] {
+  const inside = chunks
+    .filter((chunk) => chunk.offset >= start && chunk.offset < end)
+    .map((chunk) => ({ seq: chunk.seq, offset: chunk.offset - start }));
+  const spanning = chunks.findLast((chunk) => chunk.offset < start);
+  if (spanning && inside[0]?.offset !== 0) inside.unshift({ seq: spanning.seq, offset: 0 });
+  return inside;
+}
+
+export interface CanonicalTextUnit {
+  text: string;
+  epoch: string;
+  startSeq: number;
+  endSeq: number;
+  timestamp: Date;
+}
+
+// A canonical text unit owns the source positions from `startSeq` through `endSeq`. Among the rows
+// that belong to the same message it replaces exactly the chunks inside that coverage, keeps chunks
+// before it and after it, and lands where the covered chunks were, so a page that lags the live
+// stream restores the prefix it certifies without touching text the stream delivered later. Rows
+// keep their identity and split; rows left with no text are dropped.
+function coverageOf(seq: number, unit: CanonicalTextUnit): "before" | "covered" | "after" {
+  if (seq < unit.startSeq) return "before";
+  return seq > unit.endSeq ? "after" : "covered";
+}
+
+export function mergeCanonicalText<Row extends TextRow>(
+  owned: readonly Row[],
+  unit: CanonicalTextUnit,
+): Row[] {
+  const parts = owned.map((row) => {
+    const positioned = row.timelineCursor?.epoch === unit.epoch;
+    return chunkTexts(row).map((part, index) => ({
+      seq: part.seq,
+      startSeq: index === 0 ? (rowStartSeq(row) ?? part.seq) : part.seq,
+      text: part.text,
+      where: positioned ? coverageOf(part.seq, unit) : ("covered" as const),
+    }));
+  });
+  let anchor = parts.findIndex((rowParts) => rowParts.some((part) => part.where !== "before"));
+  if (anchor < 0) anchor = owned.length - 1;
+  const result: Row[] = [];
+  for (const [index, row] of owned.entries()) {
+    const rowParts = parts[index] ?? [];
+    if (index < anchor) {
+      result.push(row);
+      continue;
+    }
+    const before = index === anchor ? rowParts.filter((part) => part.where === "before") : [];
+    const after = rowParts.filter((part) => part.where === "after");
+    const kept =
+      index === anchor
+        ? [
+            ...before,
+            {
+              seq: unit.endSeq,
+              startSeq: unit.startSeq,
+              text: unit.text,
+              where: "covered" as const,
+            },
+            ...after,
+          ]
+        : after;
+    if (kept.length === 0) continue;
+    const text = kept.map((part) => part.text).join("");
+    const last = kept.at(-1);
+    const first = kept[0];
+    result.push({
+      ...row,
+      text,
+      timestamp: index === anchor && after.length === 0 ? unit.timestamp : row.timestamp,
+      timelineCursor: { epoch: unit.epoch, seq: last?.seq ?? unit.endSeq },
+      source: {
+        startSeq: first?.startSeq ?? unit.startSeq,
+        chunks: chunksOf(kept),
+      },
+    });
+  }
+  return result;
+}
+
+// Appends one text row's content to another, keeping every chunk position.
+export function joinTextRows<Row extends TextRow>(first: Row, second: Row): Row {
+  const parts = [...chunkTexts(first), ...chunkTexts(second)];
+  return {
+    ...second,
+    text: `${first.text}${second.text}`,
+    ...(second.timelineCursor
+      ? {
+          source: {
+            startSeq: rowStartSeq(first) ?? second.timelineCursor.seq,
+            chunks: chunksOf(parts),
+          },
+        }
+      : {}),
+  };
 }
 
 export type OrchestratorToolCallStatus = "executing" | "completed" | "failed";
@@ -762,6 +1005,7 @@ export interface ToolCallItem {
   kind: "tool_call";
   id: string;
   timelineCursor?: TimelinePosition;
+  source?: RowSource;
   turnId?: string;
   timestamp: Date;
   payload: ToolCallPayload;
@@ -782,6 +1026,7 @@ export interface NotificationItem {
   sourceType: "error" | "notification";
   id: string;
   timelineCursor?: TimelinePosition;
+  source?: RowSource;
   turnId?: string;
   timestamp: Date;
   level: NotificationLevel;
@@ -792,6 +1037,7 @@ export interface CompactionItem {
   kind: "compaction";
   id: string;
   timelineCursor?: TimelinePosition;
+  source?: RowSource;
   turnId?: string;
   timestamp: Date;
   status: "loading" | "completed";
@@ -803,6 +1049,7 @@ export interface PluginTimelineStreamItem {
   kind: "plugin";
   id: string;
   timelineCursor?: TimelinePosition;
+  source?: RowSource;
   turnId?: string;
   timestamp: Date;
   pluginId: string;
@@ -828,6 +1075,7 @@ export interface TodoListItem {
   kind: "todo_list";
   id: string;
   timelineCursor?: TimelinePosition;
+  source?: RowSource;
   turnId?: string;
   timestamp: Date;
   provider: AgentProvider;
@@ -840,7 +1088,7 @@ export type StreamUpdateSource = "live" | "canonical";
 interface StreamUpdateOptions {
   source?: StreamUpdateSource;
   reservedItemIds?: ReadonlySet<string>;
-  timelineCursor?: TimelinePosition;
+  timelineCursor?: SourcedPosition;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -901,7 +1149,7 @@ function appendUserMessage(
     id: messageId ?? createUniqueTimelineId(state, "user", chunkSeed, timestamp),
     clientMessageId,
     messageId,
-    timelineCursor,
+    ...positionedRow(timelineCursor),
     turnId,
     text: chunk,
     timestamp,
@@ -916,7 +1164,7 @@ function appendAssistantMessage(
   source: StreamUpdateSource,
   messageId?: string,
   reservedItemIds?: ReadonlySet<string>,
-  timelineCursor?: TimelinePosition,
+  timelineCursor?: SourcedPosition,
 ): StreamItem[] {
   const { chunk, hasContent } = normalizeChunk(text);
   if (!chunk) {
@@ -929,13 +1177,7 @@ function appendAssistantMessage(
     last.kind === "assistant_message" &&
     (messageId === undefined || last.messageId === messageId);
   if (shouldAppendToLast) {
-    const updated: AssistantMessageItem = {
-      ...last,
-      text: `${last.text}${chunk}`,
-      timestamp,
-      ...(timelineCursor ? { timelineCursor } : {}),
-    };
-    return [...state.slice(0, -1), updated];
+    return [...state.slice(0, -1), extendTextRow(last, chunk, timestamp, timelineCursor)];
   }
 
   // A submitted user row can follow the streaming assistant during interrupt.
@@ -947,13 +1189,11 @@ function appendAssistantMessage(
     secondLast?.kind === "assistant_message" &&
     (messageId === undefined || secondLast.messageId === messageId)
   ) {
-    const updated: AssistantMessageItem = {
-      ...secondLast,
-      text: `${secondLast.text}${chunk}`,
-      timestamp,
-      ...(timelineCursor ? { timelineCursor } : {}),
-    };
-    return [...state.slice(0, -2), updated, last];
+    return [
+      ...state.slice(0, -2),
+      extendTextRow(secondLast, chunk, timestamp, timelineCursor),
+      last,
+    ];
   }
 
   if (!hasContent) {
@@ -966,18 +1206,53 @@ function appendAssistantMessage(
     kind: "assistant_message",
     id: entryId,
     ...(messageId ? { messageId } : {}),
-    ...(timelineCursor ? { timelineCursor } : {}),
+    ...startedTextRow(timelineCursor),
     text: chunk,
     timestamp,
   };
   return [...state, item];
 }
 
+function startedTextRow(
+  timelineCursor: SourcedPosition | undefined,
+): Pick<TextRow, "timelineCursor" | "source"> {
+  if (!timelineCursor) return {};
+  return {
+    timelineCursor: anchorOf(timelineCursor),
+    source: {
+      startSeq: timelineCursor.startSeq ?? timelineCursor.seq,
+      chunks: [{ seq: timelineCursor.seq, offset: 0 }],
+    },
+  };
+}
+
+function extendTextRow<Row extends TextRow>(
+  row: Row,
+  chunk: string,
+  timestamp: Date,
+  timelineCursor: SourcedPosition | undefined,
+): Row {
+  return {
+    ...row,
+    text: `${row.text}${chunk}`,
+    timestamp,
+    ...(timelineCursor
+      ? {
+          timelineCursor: anchorOf(timelineCursor),
+          source: {
+            startSeq: sourceFor(timelineCursor, row).startSeq,
+            chunks: [...rowChunks(row), { seq: timelineCursor.seq, offset: row.text.length }],
+          },
+        }
+      : {}),
+  };
+}
+
 function appendThought(
   state: StreamItem[],
   text: string,
   timestamp: Date,
-  timelineCursor?: TimelinePosition,
+  timelineCursor?: SourcedPosition,
 ): StreamItem[] {
   const { chunk, hasContent } = normalizeChunk(text);
   if (!chunk) {
@@ -986,14 +1261,10 @@ function appendThought(
 
   const last = state[state.length - 1];
   if (last && last.kind === "thought") {
-    const updated: ThoughtItem = {
-      ...last,
-      ...(timelineCursor ? { timelineCursor } : {}),
-      text: `${last.text}${chunk}`,
-      timestamp,
-      status: "loading",
-    };
-    return [...state.slice(0, -1), updated];
+    return [
+      ...state.slice(0, -1),
+      { ...extendTextRow(last, chunk, timestamp, timelineCursor), status: "loading" },
+    ];
   }
 
   if (!hasContent) {
@@ -1004,7 +1275,7 @@ function appendThought(
   const item: ThoughtItem = {
     kind: "thought",
     id: createUniqueTimelineId(state, "thought", idSeed, timestamp),
-    ...(timelineCursor ? { timelineCursor } : {}),
+    ...startedTextRow(timelineCursor),
     text: chunk,
     timestamp,
     status: "loading",
@@ -1156,7 +1427,7 @@ export function mergeAgentToolCallItem(
   existing: AgentToolCallItem,
   data: AgentToolCallData,
   timestamp: Date,
-  timelineCursor?: TimelinePosition,
+  timelineCursor?: SourcedPosition,
 ): AgentToolCallItem {
   const mergedStatus = mergeAgentToolCallStatus(existing.payload.data.status, data.status);
   const mergedError =
@@ -1168,7 +1439,9 @@ export function mergeAgentToolCallItem(
 
   return {
     ...existing,
-    ...(timelineCursor ? { timelineCursor } : {}),
+    ...(timelineCursor
+      ? { timelineCursor: anchorOf(timelineCursor), source: sourceFor(timelineCursor, existing) }
+      : {}),
     timestamp,
     payload: {
       source: "agent",
@@ -1189,7 +1462,7 @@ interface AppendAgentToolCallInput {
   data: AgentToolCallData;
   timestamp: Date;
   turnId?: string;
-  timelineCursor?: TimelinePosition;
+  timelineCursor?: SourcedPosition;
 }
 
 function appendAgentToolCall(input: AppendAgentToolCallInput): StreamItem[] {
@@ -1225,7 +1498,9 @@ function appendAgentToolCall(input: AppendAgentToolCallInput): StreamItem[] {
   const item: ToolCallItem = {
     kind: "tool_call",
     id: `agent_tool_${identity}`,
-    ...(timelineCursor ? { timelineCursor } : {}),
+    ...(timelineCursor
+      ? { timelineCursor: anchorOf(timelineCursor), source: sourceFor(timelineCursor) }
+      : {}),
     ...(turnId ? { turnId } : {}),
     timestamp,
     payload: {
@@ -1254,7 +1529,7 @@ function appendPluginTimelineItem(
   state: StreamItem[],
   item: Extract<AgentTimelineItem, { type: "plugin" }>,
   timestamp: Date,
-  timelineCursor?: TimelinePosition,
+  timelineCursor?: SourcedPosition,
 ): StreamItem[] {
   const identity = timelineItemIdentity(item);
   if (identity === null) return state;
@@ -1267,14 +1542,22 @@ function appendPluginTimelineItem(
     version: item.version,
     data: item.data,
     timestamp,
-    ...(timelineCursor ? { timelineCursor } : {}),
+    ...(timelineCursor
+      ? { timelineCursor: anchorOf(timelineCursor), source: sourceFor(timelineCursor) }
+      : {}),
   };
   const existingIndex = findExistingTimelineIdentityIndex(state, identity);
   if (existingIndex < 0) return [...state, nextItem];
   const existing = state[existingIndex];
   if (!existing || existing.kind !== "plugin") return state;
   const next = [...state];
-  next[existingIndex] = { ...nextItem, id: existing.id };
+  next[existingIndex] = {
+    ...nextItem,
+    id: existing.id,
+    ...(timelineCursor
+      ? { timelineCursor: anchorOf(timelineCursor), source: sourceFor(timelineCursor, existing) }
+      : {}),
+  };
   return next;
 }
 
@@ -1283,7 +1566,7 @@ function appendTodoList(
   provider: AgentProvider,
   items: TodoEntry[],
   timestamp: Date,
-  timelineCursor?: TimelinePosition,
+  timelineCursor?: SourcedPosition,
 ): StreamItem[] {
   const normalizedItems = items.map((item) => ({
     text: item.text,
@@ -1305,7 +1588,9 @@ function appendTodoList(
     const next = [...state];
     next[previousIndex] = {
       ...previous,
-      ...(timelineCursor ? { timelineCursor } : {}),
+      ...(timelineCursor
+        ? { timelineCursor: anchorOf(timelineCursor), source: sourceFor(timelineCursor, previous) }
+        : {}),
       items: normalizedItems,
       timestamp,
     };
@@ -1324,7 +1609,9 @@ function appendTodoList(
     const next = [...state];
     next[next.length - 1] = {
       ...lastItem,
-      ...(timelineCursor ? { timelineCursor } : {}),
+      ...(timelineCursor
+        ? { timelineCursor: anchorOf(timelineCursor), source: sourceFor(timelineCursor, lastItem) }
+        : {}),
       items: normalizedItems,
       activity: { type: "created", count: normalizedItems.length },
       timestamp,
@@ -1338,7 +1625,9 @@ function appendTodoList(
     next.push({
       kind: "todo_list",
       id: createUniqueTimelineId(next, "todo", idSeed, timestamp),
-      ...(timelineCursor ? { timelineCursor } : {}),
+      ...(timelineCursor
+        ? { timelineCursor: anchorOf(timelineCursor), source: sourceFor(timelineCursor) }
+        : {}),
       timestamp,
       provider,
       items: normalizedItems,
@@ -1393,7 +1682,7 @@ function reduceTimelineToolCall(
     { type: "tool_call" }
   >,
   timestamp: Date,
-  timelineCursor?: TimelinePosition,
+  timelineCursor?: SourcedPosition,
 ): StreamItem[] {
   const normalizedToolName = item.name
     .trim()
@@ -1464,7 +1753,7 @@ function reduceTimelineCompaction(
     { type: "compaction" }
   >,
   timestamp: Date,
-  timelineCursor?: TimelinePosition,
+  timelineCursor?: SourcedPosition,
 ): StreamItem[] {
   if (item.status === "completed") {
     const loadingIdx = state.findIndex((s) => s.kind === "compaction" && s.status === "loading");
@@ -1472,7 +1761,12 @@ function reduceTimelineCompaction(
     if (loadingIdx >= 0 && existing && existing.kind === "compaction") {
       const updated: CompactionItem = {
         ...existing,
-        ...(timelineCursor ? { timelineCursor } : {}),
+        ...(timelineCursor
+          ? {
+              timelineCursor: anchorOf(timelineCursor),
+              source: sourceFor(timelineCursor, existing),
+            }
+          : {}),
         status: "completed",
         trigger: item.trigger ?? existing.trigger,
         preTokens: item.preTokens ?? existing.preTokens,
@@ -1486,7 +1780,9 @@ function reduceTimelineCompaction(
   const compaction: CompactionItem = {
     kind: "compaction",
     id: createUniqueTimelineId(state, "compaction", item.status, timestamp),
-    ...(timelineCursor ? { timelineCursor } : {}),
+    ...(timelineCursor
+      ? { timelineCursor: anchorOf(timelineCursor), source: sourceFor(timelineCursor) }
+      : {}),
     timestamp,
     status: item.status,
     trigger: item.trigger,
@@ -1501,7 +1797,7 @@ function reduceTimelineEvent(
   timestamp: Date,
   source: StreamUpdateSource,
   reservedItemIds?: ReadonlySet<string>,
-  timelineCursor?: TimelinePosition,
+  timelineCursor?: SourcedPosition,
 ): StreamItem[] {
   const item = event.item;
   switch (item.type) {
@@ -1553,7 +1849,9 @@ function reduceTimelineEvent(
         kind: "notification",
         sourceType: "error",
         id: createUniqueTimelineId(state, "error", item.message ?? "", timestamp),
-        ...(timelineCursor ? { timelineCursor } : {}),
+        ...(timelineCursor
+          ? { timelineCursor: anchorOf(timelineCursor), source: sourceFor(timelineCursor) }
+          : {}),
         timestamp,
         level: "error",
         message: item.message ?? "Unknown error",
@@ -1565,7 +1863,9 @@ function reduceTimelineEvent(
         kind: "notification",
         sourceType: "notification",
         id: createUniqueTimelineId(state, "notification", item.message, timestamp),
-        ...(timelineCursor ? { timelineCursor } : {}),
+        ...(timelineCursor
+          ? { timelineCursor: anchorOf(timelineCursor), source: sourceFor(timelineCursor) }
+          : {}),
         timestamp,
         level: item.level,
         message: item.message,
@@ -1674,7 +1974,7 @@ export function hydrateStreamState(
   events: Array<{
     event: AgentStreamEventPayload;
     timestamp: Date;
-    timelineCursor?: TimelinePosition;
+    timelineCursor?: SourcedPosition;
   }>,
   options?: Pick<StreamUpdateOptions, "source" | "reservedItemIds">,
 ): StreamItem[] {
@@ -1828,28 +2128,39 @@ function promoteCompletedAssistantBlocks(params: { tail: StreamItem[]; head: Str
   const firstBlockIndex = activeItem.blockIndex ?? 0;
   const completedBlocks = blocks.slice(0, -1);
   const liveBlock = `${blocks[blocks.length - 1] ?? ""}${getTrailingNewlineSuffix(activeItem.text)}`;
-  const promotedItems = completedBlocks.map<AssistantMessageItem>((block, offset) => ({
-    ...activeItem,
-    id: createAssistantBlockId({
-      groupId: blockGroupId,
-      blockIndex: firstBlockIndex + offset,
-    }),
-    blockGroupId,
-    blockIndex: firstBlockIndex + offset,
-    text: block,
-  }));
+  // Blocks are substrings of the row in order; each keeps the chunks that produced it.
+  const chunks = rowChunks(activeItem);
+  let searchFrom = 0;
+  const blockRow = (block: string, blockIndex: number): AssistantMessageItem => {
+    const start = activeItem.text.indexOf(block, searchFrom);
+    searchFrom = start + block.length;
+    const blockChunks = sliceChunks(chunks, start, start + block.length);
+    return {
+      ...activeItem,
+      id: createAssistantBlockId({ groupId: blockGroupId, blockIndex }),
+      blockGroupId,
+      blockIndex,
+      text: block,
+      ...(activeItem.timelineCursor && blockChunks.length > 0
+        ? {
+            timelineCursor: {
+              epoch: activeItem.timelineCursor.epoch,
+              seq: blockChunks.at(-1)?.seq ?? activeItem.timelineCursor.seq,
+            },
+            source: {
+              startSeq: blockChunks[0]?.seq ?? activeItem.timelineCursor.seq,
+              chunks: blockChunks,
+            },
+          }
+        : {}),
+    };
+  };
+  const promotedItems = completedBlocks.map((block, offset) =>
+    blockRow(block, firstBlockIndex + offset),
+  );
 
   const nextTail = flushHeadToTail(params.tail, promotedItems);
-  const liveItem: AssistantMessageItem = {
-    ...activeItem,
-    id: createAssistantBlockId({
-      groupId: blockGroupId,
-      blockIndex: firstBlockIndex + completedBlocks.length,
-    }),
-    blockGroupId,
-    blockIndex: firstBlockIndex + completedBlocks.length,
-    text: liveBlock,
-  };
+  const liveItem = blockRow(liveBlock, firstBlockIndex + completedBlocks.length);
   const nextHead = [
     ...params.head.slice(0, assistantIndex),
     liveItem,
@@ -1945,7 +2256,7 @@ function applyCanonicalUserMessageEvent(params: {
   head: StreamItem[];
   event: AgentStreamEventPayload;
   timestamp: Date;
-  timelineCursor?: TimelinePosition;
+  timelineCursor?: SourcedPosition;
   unmatchedInsert?: "tail" | "head";
 }): ApplyStreamEventResult | null {
   const { tail, head, event, timestamp, timelineCursor, unmatchedInsert = "tail" } = params;
@@ -1961,7 +2272,7 @@ function applyCanonicalUserMessageEvent(params: {
     messageId: event.item.messageId,
     clientMessageId: event.item.clientMessageId,
     turnId: event.turnId,
-    timelineCursor,
+    ...positionedRow(timelineCursor),
     text: normalized.chunk,
     timestamp,
   });
@@ -2035,7 +2346,7 @@ export function applyStreamEvent(params: {
   event: AgentStreamEventPayload;
   timestamp: Date;
   source?: StreamUpdateSource;
-  timelineCursor?: TimelinePosition;
+  timelineCursor?: SourcedPosition;
   unmatchedUserMessageInsert?: "tail" | "head";
 }): ApplyStreamEventResult {
   const { tail, head, event, timestamp } = params;

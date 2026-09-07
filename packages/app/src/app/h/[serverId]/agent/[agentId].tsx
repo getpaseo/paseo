@@ -38,12 +38,6 @@ function HostAgentReadyRouteContent() {
     }
     return state.sessions[serverId]?.agents?.get(agentId)?.workspaceId ?? null;
   });
-  useEffect(() => {
-    if (!serverId || !agentId || agentWorkspaceId) return;
-    void getHostRuntimeStore()
-      .prepareAgentRoute(serverId, agentId)
-      .catch(() => undefined);
-  }, [agentId, agentWorkspaceId, serverId]);
   const shouldLookupAgent = Boolean(
     serverId && agentId && client && connectionStatus === "online" && !agentWorkspaceId,
   );

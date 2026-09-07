@@ -36,11 +36,24 @@ Large unbounded timeline responses can exceed relay frame limits, so catch-up us
 
 Page limits are projected-item targets. A tool call lifecycle is one projected item even if it spans many source sequence numbers, and assistant/reasoning chunks are merged before counting. The response carries `seqStart`, `seqEnd`, `sourceSeqRanges`, and `collapsed` so clients can advance sequence cursors without rendering delta rows.
 
-When live delivery detects a sequence gap, the app fetches `direction: "after"`. If the daemon
-responds with `hasNewer: true`, the app immediately fetches the next page from `endCursor`. Gap
-recovery is complete only when `hasNewer: false`.
+When live delivery detects a sequence gap, the app fetches `direction: "after"` from its current
+cursor and remembers the sequence the live row reached. If the daemon responds with
+`hasNewer: true`, the app immediately fetches the next page from `endCursor`. A catch-up is
+complete only when the daemon reports `hasNewer: false` and the accepted coverage has reached
+every sequence the live stream reported while the catch-up ran: a page the daemon built before
+those rows existed cannot settle them, however it was requested, so the owner continues from the
+cursor that page established. One catch-up runs per agent; a gap observed while it is running
+raises its obligation instead of starting another request. A non-advancing reply cannot disprove
+activity observed while the request was in flight. A newly raised obligation starts the next
+page immediately, without an error. A reply that makes no progress against an obligation already
+known when it started retains that obligation and uses bounded error backoff. Cancellation (the agent leaves view,
+the connection drops) forgets the observed head; the next catch-up starts from the cursor and the
+daemon returns everything after it.
 
 Initialization timeouts guard lack of catch-up progress, not the full multi-page sync. A successful page that queues the next `after` page refreshes the watchdog.
+Response completion is independent of row admission: an obsolete tail can finish its initialization
+without replacing newer accepted rows. Requests carry the existing init-promise identity, so an old
+response cannot settle a replacement initialization.
 
 Opening or resuming an agent fetches one bounded latest tail page. Older history remains
 user-driven by scrolling upward.
@@ -82,7 +95,9 @@ authoritative range first.
   that cursor are applied. Already-covered rows are not replayed.
 - A true middle gap, epoch change, or rewind atomically replaces stale canonical history with the
   latest tail. The replacement reconciles positioned live rows beyond its coverage and unresolved
-  local submissions; it never retains two discontiguous canonical ranges.
+  local submissions; it never retains two discontiguous canonical ranges. A tail whose window ends
+  behind the local cursor is a rewind, so it supersedes every positioned row up to that cursor
+  rather than only the positions it carries; a gap replacement covers only what it carries.
 
 The installed tail carries `hasOlder`, so history skipped by a replacement remains reachable through
 ordinary backward pagination. A backward page is accepted only when it is adjacent to the current
@@ -90,39 +105,51 @@ history start; a response requested from a pre-replacement range is stale and is
 
 ## Client replica lifetime
 
-The session projection remains host-scoped for as long as the host is registered. The viewed-timeline
-owner wraps cached preparation, network catch-up, accepted timeline application, and persistence
-behind one interface. React supplies transport and projection operations without selecting a cache
-path or issuing a separate persistence notification.
+`timeline/replica.ts` is the host-lived timeline write authority. Cache restore, pages, live batches,
+submissions and removal publish atomically into the existing Zustand read projection; unchanged
+facts retain their references. `viewed-timeline-sync.ts` owns demand and fetch scheduling, available
+before a network client so saved history can paint offline. Matching display and verified inputs
+share one reduction. Fully covered identified text adopts canonical row identity and metadata;
+partial coverage preserves live rows and newer text. Persistence uses the accepted transition,
+never mutable UI state.
 
-Removing the host from the registry is the destructive boundary: it stops the runtime and clears the
-session and host-scoped setup state together.
+Unpositioned live updates do not revoke known in-session source coverage or sequencing: current
+daemons also emit out-of-band timeline updates. They can make the restart page display-only, which
+grants no resume coverage when reopened. Display pagination remains available, and older pages
+cannot certify unpositioned content. Positioned activity ahead of incomplete catch-up preserves the
+preceding certified baseline. A cold overflow awaiting its latest tail still accepts live observations;
+only an intentionally detached, synchronized history window excludes them.
+Epoch changes invalidate old display positions; authoritative resets, including empty windows,
+invalidate the old durable baseline. A delayed old-epoch cache cannot replace newer live display.
 
-The timeline owner asks durable replica storage for an agent when that agent becomes visible. An
-accepted row paints immediately before subscription acknowledgement or timeline fetch. The stored
-range describes those exact items: `startSeq` drives older pagination and `endSeq` drives forward
-catch-up. The owner requests `after endSeq`, and requests `before startSeq` when the user loads older
-history. Code outside the owner does not distinguish cached and network timelines.
+The restart window holds at most the latest40 complete entries in source-start order. Loading older
+scrollback cannot populate or enlarge it, even when projection merging leaves a short page or its
+certificate has been withdrawn. Retained messages can gain complete continuations; overlapping
+older tool lifetimes do not pull earlier entries into the window. `startSeq` identifies the source-start
+boundary for `before` pagination; `endSeq` is the independently established synchronization position
+for `after`. A discarded older tool may finish last, so the latter can exceed every retained row's
+completion position. `hasOlder` preserves access to omitted history.
 
-The first resume request is bounded. If it reports more newer history, fetch one latest bounded tail
-instead of replaying every missed page. Live gap recovery still pages forward until current.
+Cache values without source provenance paint verbatim but cannot authorize resume, including after
+new live activity. Canonical replacement restores certification through the ordinary bounded tail
+bootstrap; no local sorting or text deduplication repairs saved rows. Disjoint retained ranges keep
+the preceding certified baseline. The codec preserves complete text, source chunks and attachment
+references; unreconciled local submissions and UI sync generations are not durable. Cache budgeting
+and write-behind guarantees belong to [data-model.md](data-model.md#replica-row-store).
 
-If the canonical window exceeds the cache item limit, contains a discontiguous retained range, has a
-live head, or includes presentation data the cache cannot encode losslessly, persistence drops the
-range and keeps a display-only tail. Never slice items while retaining the pre-slice range; that
-falsely certifies discarded source rows. A display-only row paints without granting synchronization
-authority, so the owner uses the ordinary bounded `tail` bootstrap.
+Preparation keeps one promise per agent lifetime. Host identity transfer immediately republishes
+retained state; a pending read repeats only when identity changed during that read, because physical
+rename may have retired its key. Settled transfers perform no storage read. Directory scope exclusion
+ends the lifetime and rejects delayed work but retains the saved timeline; only explicit deletion
+removes it. First admission preserves in-flight work; re-admission begins a fresh lifetime. Retained
+timeline data alone does not provide offline archived-route metadata.
 
-Live rows received between cache paint and catch-up stay in the separate live head and reconcile with
-the authoritative range through the existing forward-page path. The cache does not persist sync
-generation or unreconciled local submissions.
-
-Every daemon-derived live item carries its timeline epoch and sequence position. Bootstrap
-replacement keeps only positioned rows newer than the page it installs, while unresolved local
-user presentations identify themselves by having client identity without a timeline position. This
-prevents a page from duplicating rows it already covers without coupling display continuity to the
-shorter-lived submission registry. Unreconciled local presentations are not persisted in the durable
-replica cache.
+DirectorySync coalesces fetch and acceptance into one operation. The first resume is bounded: a reply
+with more history leads to one latest tail, while live gap recovery still pages to completion. A tail
+passed by activity accepted during its request is obsolete; a tail behind the request's starting
+cursor demonstrates rewind. Client window-replacement intent remains separate from daemon reset.
+Covered canonical positions replace matching display history, while positioned rows beyond the page
+survive as an unverified overlay. Submission continuity follows the rules below.
 
 ## Selective and legacy delivery
 
@@ -144,12 +171,18 @@ version.
 
 ## Projected pages reconcile with live presentation
 
-A projected page is canonical state, not a sequence of live deltas. One projected item can overlap
-rows already received live—for example, a tool call retained at its original display position while
-its completion advances `seqEnd`, followed by a merged assistant message. The app uses
-`sourceSeqRanges` to replace overlapping assistant and reasoning projections before applying the
-remaining page through the existing stream reducer. It must not append full projected text to a
-live prefix.
+A projected page is canonical state, not live deltas. Positioned rows carry their source start and
+text chunk offsets so page reconciliation replaces covered text while retaining newer chunks.
+Tools keep their first-appearance order even when their completion arrives later. Both display lanes
+share this source order; a missing canonical unit lands at its source start.
+
+Message identity alone does not identify a segment: tools can divide same-ID text, and markdown can
+split one segment into several rows. For unpositioned text, reconcile only a uniquely matching
+contiguous segment using the same markdown boundaries as live rendering. A lagging canonical prefix
+leaves newer text unpositioned. Known tool positions constrain ownership; identical unpositioned
+segments without a distinguishing position remain ambiguous and are preserved. Text alone never
+establishes message identity. Anonymous rows retain the conservative cursor-straddle fallback.
+Insertion must not merge an identified segment whose ownership reconciliation already declined.
 
 Every path that sends a message to an agent — composer send, dictation accept-and-send, queued
 send-now, and the host runtime's automatic queue drain — goes through
@@ -230,6 +263,7 @@ canonical assistant prefix, it stays in the head lane. No row may be returned in
 
 - Server live stream forwarding: `packages/server/src/server/session.ts`
 - App sync planning: `packages/app/src/timeline/timeline-sync-plan.ts`
+- App timeline write authority: `packages/app/src/timeline/replica.ts`
 - App viewed-agent synchronization: `packages/app/src/timeline/viewed-timeline-sync.ts`
 - App stream/timeline reducer: `packages/app/src/timeline/session-stream-reducers.ts`
 - Session wiring: `packages/app/src/contexts/session-context.tsx`

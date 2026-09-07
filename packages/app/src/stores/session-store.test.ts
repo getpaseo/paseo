@@ -1,3 +1,4 @@
+import { createTimelineReplica, type TimelineReplica } from "@/timeline/replica";
 import { afterEach, describe, expect, it } from "vitest";
 
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
@@ -85,8 +86,37 @@ afterEach(() => {
   useSessionStore.getState().clearSession("test-server");
 });
 
+let timelineReplica: TimelineReplica;
+
 function initializeTestSession(): void {
   useSessionStore.getState().initializeSession("test-server", null as unknown as DaemonClient);
+  timelineReplica = createTimelineReplica({
+    serverId: "test-server",
+    storage: {
+      removeTimeline: () => undefined,
+      readTimeline: async () => undefined,
+      commitTimeline: () => undefined,
+    },
+  });
+}
+
+function acknowledgeSubmission(agentId: string, clientMessageId: string): void {
+  timelineReplica.applyEvents(
+    agentId,
+    [
+      {
+        seq: undefined,
+        epoch: undefined,
+        timestamp: new Date("2026-07-31T10:00:01.000Z"),
+        event: {
+          type: "timeline",
+          provider: "claude",
+          item: { type: "user_message", text: clientMessageId, messageId: clientMessageId },
+        },
+      },
+    ],
+    () => undefined,
+  );
 }
 
 function getTestSessionReferences() {
@@ -141,16 +171,38 @@ describe("agent task state", () => {
     );
 
     const tasks = [{ id: "1", text: "Inspect", status: "pending" as const, completed: false }];
-    useSessionStore
-      .getState()
-      .setAgentStreamState("test-server", "agent-1", { taskSnapshot: tasks });
+    const applyTasks = (items: typeof tasks) =>
+      timelineReplica.applyEvents(
+        "agent-1",
+        [
+          {
+            seq: undefined,
+            epoch: undefined,
+            timestamp: new Date("2026-08-11T10:00:00.000Z"),
+            event: { type: "timeline", provider: "claude", item: { type: "todo", items } },
+          },
+        ],
+        () => undefined,
+      );
+    applyTasks(tasks);
     useSessionStore.getState().setIsPlayingAudio("test-server", true);
-    useSessionStore
-      .getState()
-      .setAgentStreamState("test-server", "agent-1", { taskSnapshot: [...tasks] });
-    useSessionStore.getState().setAgentStreamState("test-server", "agent-1", {
-      taskSnapshot: [{ ...tasks[0], status: "completed", completed: true }],
-    });
+    applyTasks([...tasks]);
+    timelineReplica.applyEvents(
+      "agent-1",
+      [
+        {
+          seq: undefined,
+          epoch: undefined,
+          timestamp: new Date("2026-08-11T10:00:01.000Z"),
+          event: {
+            type: "timeline",
+            provider: "claude",
+            item: { type: "todo", items: [{ ...tasks[0], status: "completed", completed: true }] },
+          },
+        },
+      ],
+      () => undefined,
+    );
     unsubscribe();
 
     expect(snapshots).toEqual([["Inspect"], ["Inspect"]]);
@@ -174,7 +226,7 @@ describe("agent task state", () => {
       older: "none",
       newer: false,
       synchronized: true,
-      acknowledgedClientMessageIds: [],
+      submissions: [],
     });
 
     expect(useSessionStore.getState().sessions["test-server"]?.agentTasks.get("agent-1")).toEqual(
@@ -184,6 +236,107 @@ describe("agent task state", () => {
 });
 
 describe("agent timeline state", () => {
+  it("preserves unchanged projection maps and only rescans tasks when rows change", () => {
+    initializeTestSession();
+    const store = useSessionStore.getState();
+    let scans = 0;
+    const item: StreamItem = {
+      get kind() {
+        scans++;
+        return "assistant_message" as const;
+      },
+      id: "row",
+      text: "text",
+      timestamp: new Date(0),
+    };
+    const input = {
+      items: [item],
+      head: [],
+      range: { epoch: "epoch", startSeq: 1, endSeq: 1 },
+      older: "available" as const,
+      newer: false,
+      synchronized: true,
+      submissions: [],
+    };
+    store.applyAgentTimelineResponseState("test-server", "agent-1", input);
+    const before = useSessionStore.getState();
+    const session = before.sessions["test-server"]!;
+    const scanned = scans;
+    let notices = 0;
+    const unsubscribe = useSessionStore.subscribe(() => notices++);
+    store.applyAgentTimelineResponseState("test-server", "agent-1", {
+      ...input,
+      head: [],
+      range: { ...input.range },
+      submissions: [],
+    });
+    expect(useSessionStore.getState()).toBe(before);
+    expect(notices).toBe(0);
+    store.applyAgentTimelineResponseState("test-server", "agent-1", { ...input, newer: true });
+    const changed = useSessionStore.getState().sessions["test-server"]!;
+    expect(changed.agentTimelineHasNewer).not.toBe(session.agentTimelineHasNewer);
+    for (const key of [
+      "agentStreamTail",
+      "agentStreamHead",
+      "agentTimelineCursor",
+      "agentTimelineHasOlder",
+      "agentAuthoritativeHistoryApplied",
+      "agentHistorySyncGeneration",
+      "messageSubmissions",
+      "agentTasks",
+    ] as const)
+      expect(changed[key]).toBe(session[key]);
+    expect(notices).toBe(1);
+    expect(scans).toBe(scanned);
+    store.bumpHistorySyncGeneration("test-server");
+    const stale = useSessionStore.getState().sessions["test-server"]!;
+    store.applyAgentTimelineResponseState("test-server", "agent-1", { ...input, newer: true });
+    const synced = useSessionStore.getState().sessions["test-server"]!;
+    expect(synced.agentHistorySyncGeneration.get("agent-1")).toBe(synced.historySyncGeneration);
+    expect(synced.agentHistorySyncGeneration).not.toBe(stale.agentHistorySyncGeneration);
+    expect(synced.agentStreamTail).toBe(stale.agentStreamTail);
+    expect(scans).toBe(scanned);
+    unsubscribe();
+  });
+
+  it("settles submissions and deletes optional entries while retaining an empty authoritative tail", () => {
+    initializeTestSession();
+    const store = useSessionStore.getState();
+    const input = {
+      items: [],
+      head: [],
+      range: null,
+      older: "none" as const,
+      newer: false,
+      synchronized: true,
+      submissions: [{ clientMessageId: "local", providerAcknowledged: false, rpcSettled: false }],
+    };
+    store.applyAgentTimelineResponseState("test-server", "agent-1", input);
+    const pending = useSessionStore.getState().sessions["test-server"]!;
+    store.applyAgentTimelineResponseState("test-server", "agent-1", {
+      ...input,
+      submissions: [{ ...input.submissions[0]!, rpcSettled: true }],
+    });
+    const settled = useSessionStore.getState().sessions["test-server"]!;
+    expect(settled.messageSubmissions.get("agent-1")?.[0]?.rpcSettled).toBe(true);
+    expect(settled.agentStreamTail).toBe(pending.agentStreamTail);
+    store.applyAgentTimelineResponseState("test-server", "agent-1", { ...input, submissions: [] });
+    const empty = useSessionStore.getState();
+    const session = empty.sessions["test-server"]!;
+    expect(session.agentStreamTail.has("agent-1")).toBe(true);
+    expect(session.agentStreamHead.has("agent-1")).toBe(false);
+    expect(session.agentTimelineCursor.has("agent-1")).toBe(false);
+    expect(session.messageSubmissions.has("agent-1")).toBe(false);
+    expect(session.agentTasks.has("agent-1")).toBe(false);
+    store.applyAgentTimelineResponseState("test-server", "agent-1", {
+      ...input,
+      items: [],
+      head: [],
+      submissions: [],
+    });
+    expect(useSessionStore.getState()).toBe(empty);
+  });
+
   it("commits canonical items, range, and older availability as one synced state", () => {
     initializeTestSession();
     const items: StreamItem[] = [
@@ -202,7 +355,7 @@ describe("agent timeline state", () => {
       older: "available",
       newer: false,
       synchronized: true,
-      acknowledgedClientMessageIds: [],
+      submissions: [],
     });
 
     expect(
@@ -225,7 +378,7 @@ describe("agent timeline state", () => {
       older: "none",
       newer: false,
       synchronized: true,
-      acknowledgedClientMessageIds: [],
+      submissions: [],
     });
 
     expect(
@@ -243,7 +396,7 @@ describe("agent timeline state", () => {
       older: "available",
       newer: false,
       synchronized: true,
-      acknowledgedClientMessageIds: [],
+      submissions: [],
     });
 
     store.applyAgentTimelineResponseState("test-server", "agent-1", {
@@ -253,7 +406,7 @@ describe("agent timeline state", () => {
       older: "unchanged",
       newer: false,
       synchronized: false,
-      acknowledgedClientMessageIds: [],
+      submissions: [],
     });
 
     expect(
@@ -306,15 +459,12 @@ describe("message submission ordering", () => {
   ] as const;
 
   function applyStep(step: (typeof steps)[number]): void {
-    const store = useSessionStore.getState();
     if (step === "accept") {
-      store.acceptAgentMessageSubmission("test-server", agentId, clientMessageId);
+      timelineReplica.acceptSubmission(agentId, clientMessageId);
       return;
     }
     if (step === "canonical-row") {
-      store.setAgentStreamState("test-server", agentId, {
-        acknowledgedClientMessageIds: [clientMessageId],
-      });
+      acknowledgeSubmission(agentId, clientMessageId);
       return;
     }
     if (step === "stream-open") {
@@ -351,9 +501,7 @@ describe("message submission ordering", () => {
     for (const ordering of permutations(steps)) {
       useSessionStore.getState().clearSession("test-server");
       initializeTestSession();
-      useSessionStore
-        .getState()
-        .beginAgentMessageSubmission("test-server", agentId, submittedMessage(clientMessageId));
+      timelineReplica.beginSubmission(agentId, submittedMessage(clientMessageId), true);
       let canonicalObserved = false;
 
       for (const step of ordering) {
@@ -368,11 +516,8 @@ describe("message submission ordering", () => {
         }
       }
 
-      const store = useSessionStore.getState();
-      store.acceptAgentMessageSubmission("test-server", agentId, clientMessageId);
-      store.setAgentStreamState("test-server", agentId, {
-        acknowledgedClientMessageIds: [clientMessageId],
-      });
+      timelineReplica.acceptSubmission(agentId, clientMessageId);
+      acknowledgeSubmission(agentId, clientMessageId);
       applyTestTurn("test-server", agentId, [
         { type: "stream_close", turnId: "turn-1" },
         { type: "snapshot", activeTurn: null },
@@ -402,9 +547,7 @@ describe("message submission ordering", () => {
       });
     });
 
-    useSessionStore
-      .getState()
-      .beginAgentMessageSubmission("test-server", agentId, submittedMessage(clientMessageId));
+    timelineReplica.beginSubmission(agentId, submittedMessage(clientMessageId), true);
     unsubscribe();
 
     expect(notifications).toEqual([{ hasOptimisticRow: true, isActive: true }]);
@@ -412,13 +555,10 @@ describe("message submission ordering", () => {
 
   it("keeps another unacknowledged submission active after one row is acknowledged", () => {
     initializeTestSession();
-    const store = useSessionStore.getState();
-    store.beginAgentMessageSubmission("test-server", agentId, submittedMessage(clientMessageId));
-    store.beginAgentMessageSubmission("test-server", agentId, submittedMessage("client-2"));
-    store.acceptAgentMessageSubmission("test-server", agentId, clientMessageId);
-    store.setAgentStreamState("test-server", agentId, {
-      acknowledgedClientMessageIds: [clientMessageId],
-    });
+    timelineReplica.beginSubmission(agentId, submittedMessage(clientMessageId), true);
+    timelineReplica.beginSubmission(agentId, submittedMessage("client-2"), true);
+    timelineReplica.acceptSubmission(agentId, clientMessageId);
+    acknowledgeSubmission(agentId, clientMessageId);
 
     expect(
       selectAgentTurnPresentation(useSessionStore.getState().sessions["test-server"], agentId)
@@ -430,9 +570,7 @@ describe("message submission ordering", () => {
     initializeTestSession();
     const message = submittedMessage(clientMessageId);
 
-    const handedOff = useSessionStore
-      .getState()
-      .handoffCreatedAgentUserMessage("test-server", agentId, message);
+    const handedOff = timelineReplica.handoffSubmission(agentId, message);
 
     const session = useSessionStore.getState().sessions["test-server"];
     expect({

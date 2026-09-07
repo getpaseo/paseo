@@ -1484,7 +1484,10 @@ function ComposerContentImpl({
           supportsForgeAttachments: supportsForgeSearch,
         }),
         encodeImages,
-        submission: createMessageSubmissionWriter(serverId),
+        submission: createMessageSubmissionWriter(
+          serverId,
+          getHostRuntimeStore().getTimelineReplica(serverId),
+        ),
         activeTurnBehavior,
         activeTurnId:
           activeTurnBehavior === "steer"

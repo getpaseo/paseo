@@ -53,13 +53,15 @@ describe("ensureAgentIsInitialized", () => {
     const client = new FakeDaemonClient();
     const runtime = new FakeTimelineRuntime();
     useSessionStore.getState().initializeSession(serverId, client as never);
-    useSessionStore
-      .getState()
-      .setAgentTimelineCursor(
-        serverId,
-        new Map([[agentId, { epoch: "epoch-1", startSeq: 1, endSeq: 42 }]]),
-      );
-    useSessionStore.getState().setAgentAuthoritativeHistoryApplied(serverId, agentId, true);
+    useSessionStore.getState().applyAgentTimelineResponseState(serverId, agentId, {
+      items: [],
+      head: [],
+      range: { epoch: "epoch-1", startSeq: 1, endSeq: 42 },
+      older: "none",
+      newer: false,
+      synchronized: true,
+      submissions: [],
+    });
 
     void ensureAgentIsInitialized({
       serverId,
@@ -129,7 +131,7 @@ describe("ensureAgentIsInitialized", () => {
       older: "none",
       newer: false,
       synchronized: false,
-      acknowledgedClientMessageIds: [],
+      submissions: [],
     });
 
     void ensureAgentIsInitialized({
@@ -172,7 +174,7 @@ describe("ensureAgentIsInitialized", () => {
       older: "available",
       newer: false,
       synchronized: true,
-      acknowledgedClientMessageIds: [],
+      submissions: [],
     });
 
     void ensureAgentIsInitialized({

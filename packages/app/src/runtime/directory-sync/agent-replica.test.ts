@@ -61,6 +61,7 @@ describe("AgentDirectoryReplica", () => {
       serverId,
       () => undefined,
       () => undefined,
+      (agentId) => useSessionStore.getState().removeAgentTimeline(serverId, agentId),
     );
     replica.commitSnapshot([entry(payload("live"))], []);
     replica.applyTurnLiveness("agent", {
@@ -84,6 +85,7 @@ describe("AgentDirectoryReplica", () => {
       serverId,
       () => undefined,
       () => undefined,
+      (agentId) => useSessionStore.getState().removeAgentTimeline(serverId, agentId),
     );
 
     expect(replica.submitTimelineAgent(replica.captureTimeline("agent"), payload("network"))).toBe(
@@ -104,6 +106,7 @@ describe("AgentDirectoryReplica", () => {
       serverId,
       () => undefined,
       (mutations) => commits.push([...mutations]),
+      (agentId) => useSessionStore.getState().removeAgentTimeline(serverId, agentId),
     );
     replica.commitSnapshot([entry(payload("agent"))], []);
     commits.length = 0;
@@ -144,6 +147,7 @@ describe("AgentDirectoryReplica", () => {
       serverId,
       (agentId) => stopped.push(agentId),
       () => undefined,
+      (agentId) => useSessionStore.getState().removeAgentTimeline(serverId, agentId),
     );
     replica.commitSnapshot([entry(payload("agent"))], []);
     replica.applyTurnLiveness("agent", {
@@ -166,6 +170,7 @@ describe("AgentDirectoryReplica", () => {
       serverId,
       () => undefined,
       () => undefined,
+      (agentId) => useSessionStore.getState().removeAgentTimeline(serverId, agentId),
     );
     replica.commitSnapshot(
       [
@@ -219,6 +224,7 @@ describe("AgentDirectoryReplica", () => {
       serverId,
       (agentId) => stopped.push(agentId),
       () => undefined,
+      (agentId) => useSessionStore.getState().removeAgentTimeline(serverId, agentId),
     );
     replica.commitSnapshot(
       [
@@ -262,6 +268,7 @@ describe("AgentDirectoryReplica", () => {
       serverId,
       () => undefined,
       () => undefined,
+      (agentId) => useSessionStore.getState().removeAgentTimeline(serverId, agentId),
     );
     replica.commitSnapshot(
       [
@@ -289,10 +296,16 @@ describe("AgentDirectoryReplica", () => {
     const serverId = "agent-replica";
     const store = useSessionStore.getState();
     store.initializeSession(serverId, null as unknown as DaemonClient);
+    const timelineLifetimes: string[] = [];
     const replica = new AgentDirectoryReplica(
       serverId,
       () => undefined,
       () => undefined,
+      (agentId) => {
+        timelineLifetimes.push(`remove:${agentId}`);
+        useSessionStore.getState().removeAgentTimeline(serverId, agentId);
+      },
+      (agentId) => timelineLifetimes.push(`accept:${agentId}`),
     );
     replica.commitSnapshot([entry(payload("directory"))], []);
     const directoryPlacement = useSessionStore
@@ -319,6 +332,7 @@ describe("AgentDirectoryReplica", () => {
     expect(
       useSessionStore.getState().sessions[serverId]?.agents.get("agent")?.projectPlacement,
     ).toEqual(directoryPlacement);
+    expect(timelineLifetimes).toEqual(["accept:agent", "remove:agent", "accept:agent"]);
     store.clearSession(serverId);
   });
 });

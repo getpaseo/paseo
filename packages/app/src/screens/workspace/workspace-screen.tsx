@@ -61,6 +61,7 @@ import { openWorkspacePullRequest } from "@/workspace-tabs/open-supporting-view"
 import { type ExplorerCheckoutContext } from "@/stores/explorer-checkout-context";
 import { traceInstant } from "@/performance/native-trace";
 import { useSessionStore, type WorkspaceDescriptor } from "@/stores/session-store";
+import type { ViewedTimelineDemandDeclaration } from "@/timeline/viewed-timeline-sync";
 import {
   canDismissPaneInLayout,
   collectAllTabs,
@@ -1546,12 +1547,6 @@ function WorkspaceScreenContent({
     [workspaceId],
   );
   const workspaceDescriptor = useWorkspace(normalizedServerId, normalizedWorkspaceId);
-  useEffect(() => {
-    if (!normalizedServerId || !normalizedWorkspaceId || workspaceDescriptor) return;
-    void getHostRuntimeStore()
-      .prepareWorkspaceRoute(normalizedServerId, normalizedWorkspaceId)
-      .catch(() => undefined);
-  }, [normalizedServerId, normalizedWorkspaceId, workspaceDescriptor]);
   const workspaceScripts = getWorkspaceScripts(workspaceDescriptor);
   const { handleRetryHost, handleManageHost, handleDismissMissingWorkspace } =
     useWorkspaceRouteActions(normalizedServerId);
@@ -1914,25 +1909,23 @@ function WorkspaceScreenContent({
     routeFocused: isRouteFocused,
     focusedPaneOnly: syncFocusedPaneOnly,
   });
-  useEffect(() => {
-    for (const agentId of visibleAgentIds) {
-      void getHostRuntimeStore()
-        .prepareAgentTimeline(normalizedServerId, agentId)
-        .catch(() => undefined);
-    }
-  }, [normalizedServerId, visibleAgentIds]);
+  const visibleTimelineDeclarationRef = useRef<ViewedTimelineDemandDeclaration | null>(null);
   useLayoutEffect(() => {
     if (!persistenceKey || !viewedTimelineSync) {
       return;
     }
-    viewedTimelineSync.replaceVisibleAgentIds(persistenceKey, visibleAgentIds);
-  }, [persistenceKey, viewedTimelineSync, visibleAgentIds]);
-  useEffect(() => {
-    if (!persistenceKey || !viewedTimelineSync) {
-      return;
-    }
-    return () => viewedTimelineSync.replaceVisibleAgentIds(persistenceKey, []);
+    const declaration = viewedTimelineSync.registerVisibleAgentIds(persistenceKey, []);
+    visibleTimelineDeclarationRef.current = declaration;
+    return () => {
+      if (visibleTimelineDeclarationRef.current === declaration) {
+        visibleTimelineDeclarationRef.current = null;
+      }
+      declaration.dispose();
+    };
   }, [persistenceKey, viewedTimelineSync]);
+  useLayoutEffect(() => {
+    visibleTimelineDeclarationRef.current?.replace(visibleAgentIds);
+  }, [persistenceKey, viewedTimelineSync, visibleAgentIds]);
   const setFocusedAgentId = useSessionStore((state) => state.setFocusedAgentId);
   const setFocusedTerminalId = useSessionStore((state) => state.setFocusedTerminalId);
   const focusedPaneAgentId = useMemo(() => {

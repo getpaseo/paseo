@@ -10,6 +10,9 @@ export type AgentDirectoryDelta = Extract<
   { type: "agent_update" }
 >["payload"];
 
+// Directory membership can disappear without the underlying agent being deleted.
+export type AgentRemovalReason = "scope" | "deleted";
+
 interface PendingPermissionEntry {
   key: string;
   agentId: string;

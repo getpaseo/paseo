@@ -8,6 +8,7 @@ import {
   handoffCreatedAgentUserMessageToStream,
   hydrateStreamState,
   mergeToolCallDetail,
+  mergeCanonicalText,
   reduceStreamUpdate,
   streamTimelineItemIdentity,
   type AgentToolCallItem,
@@ -22,6 +23,122 @@ import { buildToolCallDisplayModel } from "@getpaseo/protocol/tool-call-display"
 import { timelineItemIdentity } from "@getpaseo/protocol/timeline-identity";
 
 type CanonicalToolStatus = "running" | "completed" | "failed" | "canceled";
+
+describe("canonical text source boundaries", () => {
+  it("keeps the canonical start independently of its completion chunk", () => {
+    const rows = mergeCanonicalText(
+      [
+        {
+          kind: "assistant_message",
+          id: "m",
+          messageId: "m",
+          text: "ab",
+          timestamp: new Date(0),
+          timelineCursor: { epoch: "e", seq: 2 },
+          source: {
+            startSeq: 1,
+            chunks: [
+              { seq: 1, offset: 0 },
+              { seq: 2, offset: 1 },
+            ],
+          },
+        },
+      ],
+      { text: "ab", epoch: "e", startSeq: 1, endSeq: 2, timestamp: new Date(1) },
+    );
+    expect(rows[0]).toMatchObject({
+      text: "ab",
+      timelineCursor: { epoch: "e", seq: 2 },
+      source: { startSeq: 1, chunks: [{ seq: 2, offset: 0 }] },
+    });
+  });
+
+  it("keeps exact offsets when canonical text replaces the middle of a row", () => {
+    const [row] = mergeCanonicalText(
+      [
+        {
+          kind: "assistant_message",
+          id: "m",
+          text: "abOLDyz",
+          timestamp: new Date(0),
+          timelineCursor: { epoch: "e", seq: 8 },
+          source: {
+            startSeq: 1,
+            chunks: [
+              { seq: 2, offset: 0 },
+              { seq: 4, offset: 2 },
+              { seq: 8, offset: 5 },
+            ],
+          },
+        },
+      ],
+      { text: "C", epoch: "e", startSeq: 3, endSeq: 6, timestamp: new Date(1) },
+    );
+    expect(row).toMatchObject({
+      text: "abCyz",
+      timelineCursor: { epoch: "e", seq: 8 },
+      source: {
+        startSeq: 1,
+        chunks: [
+          { seq: 2, offset: 0 },
+          { seq: 6, offset: 2 },
+          { seq: 8, offset: 3 },
+        ],
+      },
+    });
+  });
+
+  it("preserves source starts and exact text before and after covered chunks", () => {
+    const rows = mergeCanonicalText(
+      [
+        {
+          kind: "assistant_message",
+          id: "before",
+          text: "before",
+          timestamp: new Date(0),
+          timelineCursor: { epoch: "e", seq: 2 },
+          source: { startSeq: 1, chunks: [{ seq: 2, offset: 0 }] },
+        },
+        {
+          kind: "assistant_message",
+          id: "covered",
+          text: "old",
+          timestamp: new Date(0),
+          timelineCursor: { epoch: "e", seq: 4 },
+          source: { startSeq: 3, chunks: [{ seq: 4, offset: 0 }] },
+        },
+        {
+          kind: "assistant_message",
+          id: "after",
+          text: "after",
+          timestamp: new Date(0),
+          timelineCursor: { epoch: "e", seq: 8 },
+          source: { startSeq: 7, chunks: [{ seq: 8, offset: 0 }] },
+        },
+      ],
+      { text: "canonical", epoch: "e", startSeq: 3, endSeq: 6, timestamp: new Date(1) },
+    );
+    expect(
+      rows.map((row) => ({ text: row.text, source: row.source, cursor: row.timelineCursor })),
+    ).toEqual([
+      {
+        text: "before",
+        source: { startSeq: 1, chunks: [{ seq: 2, offset: 0 }] },
+        cursor: { epoch: "e", seq: 2 },
+      },
+      {
+        text: "canonical",
+        source: { startSeq: 3, chunks: [{ seq: 6, offset: 0 }] },
+        cursor: { epoch: "e", seq: 6 },
+      },
+      {
+        text: "after",
+        source: { startSeq: 7, chunks: [{ seq: 8, offset: 0 }] },
+        cursor: { epoch: "e", seq: 8 },
+      },
+    ]);
+  });
+});
 
 describe("plugin timeline rows", () => {
   it("uses the protocol identity format for stream tool and plugin rows", () => {

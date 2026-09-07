@@ -22,6 +22,8 @@ import {
   type HostRuntimeStorage,
 } from "./host-runtime";
 import type { ReplicaRow, ReplicaRowStore } from "./replica-cache/row-store";
+import { ReplicaCache } from "./replica-cache";
+import { planTimelineTailFetch } from "@/timeline/timeline-sync-plan";
 
 class FakeDaemonClient {
   private state: ConnectionState = { status: "idle" };
@@ -37,6 +39,13 @@ class FakeDaemonClient {
   public fetchAgentsResponses: Array<
     Awaited<ReturnType<DaemonClient["fetchAgents"]>> | ReturnType<DaemonClient["fetchAgents"]>
   > = [];
+  public timelineCalls = 0;
+  public timelineResponse: ReturnType<DaemonClient["fetchAgentTimeline"]> | null = null;
+  fetchAgentTimeline(): ReturnType<DaemonClient["fetchAgentTimeline"]> {
+    this.timelineCalls++;
+    if (!this.timelineResponse) throw new Error("Missing timeline response");
+    return this.timelineResponse;
+  }
   public sentAgentMessages: Array<Parameters<DaemonClient["sendAgentMessage"]>> = [];
   public sendAgentMessageFailures: Error[] = [];
   public sendAgentMessageResponses: Promise<void>[] = [];
@@ -466,16 +475,13 @@ function createMemoryReplicaRowStore(): ReplicaRowStore {
     `${row.serverId}:${row.kind}:${row.id}`;
   return {
     open: async () => undefined,
-    read: async (serverId, kinds, ids) => {
-      const acceptedKinds = new Set(kinds);
-      const acceptedIds = ids ? new Set(ids) : null;
-      return [...rows.values()].filter(
+    read: async (serverIds, kinds, ids) =>
+      [...rows.values()].filter(
         (row) =>
-          row.serverId === serverId &&
-          acceptedKinds.has(row.kind) &&
-          (!acceptedIds || acceptedIds.has(row.id)),
-      );
-    },
+          serverIds.includes(row.serverId) &&
+          kinds.includes(row.kind) &&
+          (!ids || ids.includes(row.id)),
+      ),
     readAll: async () => {
       const hosts = new Map<string, ReplicaRow[]>();
       for (const row of rows.values()) {
@@ -1599,15 +1605,74 @@ describe("HostRuntimeStore", () => {
     expect(store.getHosts()).toEqual([]);
   });
 
+  it("exposes timeline demand and paints saved history before a network client exists", async () => {
+    const host = makeHost();
+    const storage = createMemoryHostRuntimeStorage({
+      "@paseo:daemon-registry": JSON.stringify([host]),
+      "@paseo:e2e": "1",
+    });
+    const replicaRowStore = createMemoryReplicaRowStore();
+    const disk = new ReplicaCache(replicaRowStore, { clearLegacyCache: async () => undefined });
+    disk.setHosts([host.serverId]);
+    disk.commitTimeline(host.serverId, "offline-agent", {
+      agentId: "offline-agent",
+      hasOlder: false,
+      range: { epoch: "offline-epoch", startSeq: 1, endSeq: 1 },
+      items: [
+        {
+          kind: "assistant_message",
+          id: "saved-message",
+          messageId: "saved-message",
+          text: "Saved history is available offline",
+          timestamp: new Date("2026-09-06T10:00:00.000Z"),
+          timelineCursor: { epoch: "offline-epoch", seq: 1 },
+          source: { startSeq: 1 },
+        },
+      ],
+    });
+    await disk.flush();
+    const store = new HostRuntimeStore({
+      storage,
+      replicaRowStore,
+      deps: {
+        createClient: () => {
+          throw new Error("Offline demand must not need a client");
+        },
+        connectToDaemon: async () => {
+          throw new Error("Offline demand must not need a connection");
+        },
+        getClientId: async () => "cid_test_runtime",
+      },
+    });
+    try {
+      const registryLoaded = onceHostListMatches(store, () => store.isHostRegistryLoaded());
+      store.boot();
+      await registryLoaded;
+      expect(useSessionStore.getState().sessions[host.serverId]?.client).toBeNull();
+      const demand = useSessionStore.getState().sessions[host.serverId]?.viewedTimelineSync;
+      expect(demand).not.toBeNull();
+      if (!demand) throw new Error("Registered hosts must expose offline timeline demand");
+      demand.registerVisibleAgentIds("workspace", ["offline-agent"]);
+      await vi.waitFor(() => {
+        expect(
+          useSessionStore.getState().sessions[host.serverId]?.agentStreamTail.get("offline-agent"),
+        ).toMatchObject([{ text: "Saved history is available offline" }]);
+      });
+    } finally {
+      store.syncHosts([]);
+      useSessionStore.getState().clearSession(host.serverId);
+    }
+  });
+
   it("loads the host registry and restores its cached directory", async () => {
     const host = makeHost();
     const storage = createMemoryHostRuntimeStorage();
-    let fullScans = 0;
+    let directoryReads = 0;
     const backingStore = createMemoryReplicaRowStore();
     const replicaRowStore: ReplicaRowStore = {
       ...backingStore,
       read: async (...args) => {
-        fullScans += 1;
+        directoryReads += 1;
         return backingStore.read(...args);
       },
     };
@@ -1632,7 +1697,7 @@ describe("HostRuntimeStore", () => {
     store.boot();
     await registryLoaded;
 
-    await vi.waitFor(() => expect(fullScans).toBe(1));
+    await vi.waitFor(() => expect(directoryReads).toBe(1));
     expect(useSessionStore.getState().sessions[host.serverId]).toMatchObject({
       client: null,
       hasHydratedAgents: false,
@@ -2329,10 +2394,15 @@ describe("HostRuntimeStore", () => {
       host.serverId,
       new Map([[recoveredAgent.agent.id, replicaAgent(recoveredAgent.agent, host.serverId)]]),
     );
-    sessionStore.setAgentTimelineCursor(
-      host.serverId,
-      new Map([[recoveredAgent.agent.id, { epoch: "epoch", startSeq: 10, endSeq: 20 }]]),
-    );
+    sessionStore.applyAgentTimelineResponseState(host.serverId, recoveredAgent.agent.id, {
+      items: [],
+      head: [],
+      range: { epoch: "epoch", startSeq: 10, endSeq: 20 },
+      older: "none",
+      newer: false,
+      synchronized: false,
+      submissions: [],
+    });
     store.syncHosts([host]);
     await waitForHostOnline(store, host.serverId);
     const load = store.refreshAgentDirectory({
@@ -2755,8 +2825,9 @@ describe("HostRuntimeStore", () => {
         getClientId: async () => "cid_drain_submission",
       },
     });
+    store.syncHosts([{ ...host, connections: [] }]);
     const sessionStore = useSessionStore.getState();
-    sessionStore.initializeSession(host.serverId, fakeClient as unknown as DaemonClient, 1);
+    sessionStore.updateSessionClient(host.serverId, fakeClient as unknown as DaemonClient, 1);
     sessionStore.updateSessionServerInfo(host.serverId, {
       serverId: host.serverId,
       hostname: null,
@@ -2802,7 +2873,7 @@ describe("HostRuntimeStore", () => {
     expect(session?.messageSubmissions.get("agent")).toBeDefined();
 
     send.resolve();
-    useSessionStore.getState().clearSession(host.serverId);
+    store.syncHosts([]);
   });
 
   it("restores an automatically drained message when sending fails", async () => {
@@ -2820,8 +2891,9 @@ describe("HostRuntimeStore", () => {
         getClientId: async () => "cid_failed_queue_drain",
       },
     });
+    store.syncHosts([{ ...host, connections: [] }]);
     const sessionStore = useSessionStore.getState();
-    sessionStore.initializeSession(host.serverId, fakeClient as unknown as DaemonClient, 1);
+    sessionStore.updateSessionClient(host.serverId, fakeClient as unknown as DaemonClient, 1);
     sessionStore.setQueuedMessages(
       host.serverId,
       new Map([
@@ -2847,7 +2919,7 @@ describe("HostRuntimeStore", () => {
       ]);
     });
 
-    useSessionStore.getState().clearSession(host.serverId);
+    store.syncHosts([]);
   });
 
   it("serializes queued-message drains for the same agent", async () => {
@@ -2866,8 +2938,9 @@ describe("HostRuntimeStore", () => {
         getClientId: async () => "cid_serialized_queue_drain",
       },
     });
+    store.syncHosts([{ ...host, connections: [] }]);
     const sessionStore = useSessionStore.getState();
-    sessionStore.initializeSession(host.serverId, fakeClient as unknown as DaemonClient, 1);
+    sessionStore.updateSessionClient(host.serverId, fakeClient as unknown as DaemonClient, 1);
     sessionStore.setQueuedMessages(
       host.serverId,
       new Map([["agent", [{ id: "first", text: "send once", attachments: [] }]]]),
@@ -2884,7 +2957,7 @@ describe("HostRuntimeStore", () => {
         useSessionStore.getState().sessions[host.serverId]?.queuedMessages.get("agent"),
       ).toEqual([]);
     });
-    useSessionStore.getState().clearSession(host.serverId);
+    store.syncHosts([]);
   });
 
   it("uses legacy GitHub attachments when draining a queue for an old daemon", async () => {
@@ -2901,8 +2974,9 @@ describe("HostRuntimeStore", () => {
         getClientId: async () => "cid_legacy_queue_attachment",
       },
     });
+    store.syncHosts([{ ...host, connections: [] }]);
     const sessionStore = useSessionStore.getState();
-    sessionStore.initializeSession(host.serverId, fakeClient as unknown as DaemonClient, 1);
+    sessionStore.updateSessionClient(host.serverId, fakeClient as unknown as DaemonClient, 1);
     sessionStore.updateSessionServerInfo(host.serverId, {
       serverId: host.serverId,
       hostname: null,
@@ -3140,6 +3214,235 @@ describe("HostRuntimeStore", () => {
     store.syncHosts([]);
     useSessionStore.getState().clearSession(host.serverId);
   });
+
+  it.each(["coalesced", "late-tail", "rewind", "daemon-reset"] as const)(
+    "owns timeline request application (%s)",
+    async (scenario) => {
+      const host = makeHost({
+        serverId: `request-${scenario}`,
+        connections: [makeHost().connections[0]!],
+      });
+      const client = new FakeDaemonClient();
+      client.setConnectionState({ status: "connected" });
+      const store = new HostRuntimeStore({
+        replicaRowStore: createMemoryReplicaRowStore(),
+        deps: {
+          createClient: () => client as unknown as DaemonClient,
+          connectToDaemon: async ({ host: current }) => ({
+            client: client as unknown as DaemonClient,
+            serverId: current.serverId,
+            hostname: null,
+          }),
+          getClientId: async () => "test",
+        },
+      });
+      store.syncHosts([host]);
+      await waitForHostOnline(store, host.serverId);
+      const page: Awaited<ReturnType<DaemonClient["fetchAgentTimeline"]>> = {
+        requestId: "page",
+        agentId: "agent",
+        agent: null,
+        direction: "tail",
+        projection: "projected",
+        reset: false,
+        staleCursor: false,
+        gap: false,
+        epoch: "epoch",
+        window: { minSeq: 1, maxSeq: 1, nextSeq: 2 },
+        startCursor: { epoch: "epoch", seq: 1 },
+        endCursor: { epoch: "epoch", seq: 1 },
+        hasOlder: false,
+        hasNewer: false,
+        error: null,
+        entries: [
+          {
+            provider: "codex",
+            item: { type: "assistant_message", text: "first", messageId: "first" },
+            timestamp: "2026-09-06T00:00:00Z",
+            seqStart: 1,
+            seqEnd: 1,
+            sourceSeqRanges: [{ startSeq: 1, endSeq: 1 }],
+            collapsed: [],
+          },
+        ],
+      };
+      const viewed = store.getViewedTimelineOwner(host.serverId);
+      if (scenario !== "coalesced") viewed.applyTimelineResponse(page);
+      const response = createDeferred<Awaited<ReturnType<DaemonClient["fetchAgentTimeline"]>>>();
+      client.timelineResponse = response.promise;
+      let publications = 0;
+      const unsubscribe = useSessionStore.subscribe((state, previous) => {
+        if (
+          state.sessions[host.serverId]?.agentStreamTail !==
+          previous.sessions[host.serverId]?.agentStreamTail
+        )
+          publications++;
+      });
+      const appendLive = () => {
+        viewed.enqueueStreamEvent("agent", {
+          epoch: "epoch",
+          seq: 2,
+          timestamp: new Date("2026-09-06T00:00:01Z"),
+          event: {
+            type: "timeline",
+            provider: "codex",
+            item: { type: "assistant_message", text: "new live", messageId: "new-live" },
+          },
+        });
+        viewed.flushStreamAgent("agent");
+      };
+      if (scenario === "rewind") appendLive();
+      const request = planTimelineTailFetch();
+      const first = store.fetchAgentTimeline(
+        host.serverId,
+        "agent",
+        request,
+        scenario === "late-tail",
+      );
+      const second =
+        scenario === "coalesced"
+          ? store.fetchAgentTimeline(host.serverId, "agent", request)
+          : first;
+      if (scenario === "late-tail" || scenario === "daemon-reset") appendLive();
+      if (scenario === "daemon-reset") page.reset = true;
+      response.resolve(page);
+      await expect(Promise.all([first, second])).resolves.toEqual([page, page]);
+      expect(client.timelineCalls).toBe(1);
+      if (scenario === "coalesced") expect(publications).toBe(1);
+      else {
+        const session = useSessionStore.getState().sessions[host.serverId];
+        expect(
+          [
+            ...(session?.agentStreamTail.get("agent") ?? []),
+            ...(session?.agentStreamHead.get("agent") ?? []),
+          ].map((item) => item.id),
+        ).toEqual(scenario === "late-tail" ? ["first", "new-live"] : ["first"]);
+        expect(store.getTimelineReplica(host.serverId).readCursor("agent")?.endSeq).toBe(
+          scenario === "late-tail" ? 2 : 1,
+        );
+      }
+      unsubscribe();
+      store.syncHosts([]);
+    },
+  );
+
+  it.each(["settled", "captured", "renamed"] as const)(
+    "retains scoped-out history after host identity reconciliation (%s) and deletes it only explicitly",
+    async (ordering) => {
+      const host = makeHost({
+        serverId: "srv_temporary",
+        connections: [makeHost().connections[0]!],
+      });
+      const resolvedId = "srv_resolved";
+      const rows = createMemoryReplicaRowStore();
+      const seed = new ReplicaCache(rows, { clearLegacyCache: async () => undefined });
+      seed.setHosts([host.serverId]);
+      const saved = {
+        agentId: "agent",
+        hasOlder: false,
+        range: { epoch: "epoch", startSeq: 1, endSeq: 1 },
+        items: [
+          {
+            kind: "assistant_message" as const,
+            id: "saved",
+            text: "saved history",
+            timestamp: new Date("2026-09-06T00:00:00Z"),
+            timelineCursor: { epoch: "epoch", seq: 1 },
+            source: { startSeq: 1 },
+          },
+        ],
+      };
+      seed.commitTimeline(host.serverId, "agent", saved);
+      await seed.flush();
+      const client = new FakeDaemonClient();
+      client.setConnectionState({ status: "connected" });
+      const store = new HostRuntimeStore({
+        replicaRowStore: rows,
+        deps: {
+          createClient: () => client as unknown as DaemonClient,
+          connectToDaemon: async ({ host: current }) => ({
+            client: client as unknown as DaemonClient,
+            serverId: current.serverId,
+            hostname: null,
+          }),
+          getClientId: async () => "test",
+        },
+      });
+      const storedRows = async () =>
+        (await rows.readAll()).find((entry) => entry.serverId === resolvedId)?.rows ?? [];
+      const hasStoredKind = async (kind: ReplicaRow["kind"]) =>
+        (await storedRows()).some((row) => row.kind === kind);
+      try {
+        store.syncHosts([host]);
+        await waitForHostOnline(store, host.serverId);
+        const replica = store.getTimelineReplica(host.serverId);
+        const started = Promise.withResolvers<void>();
+        const release = Promise.withResolvers<void>();
+        const readRows = rows.read.bind(rows);
+        let reads = 0;
+        rows.read = async (...args) => {
+          if (!args[1].includes("timeline")) return readRows(...args);
+          reads++;
+          if (ordering === "settled" || reads !== 1) return readRows(...args);
+          const captured = ordering === "captured" ? await readRows(...args) : undefined;
+          started.resolve();
+          await release.promise;
+          return captured ?? readRows(...args);
+        };
+        const preparation = replica.prepare("agent");
+        if (ordering === "settled") {
+          await preparation;
+          expect(
+            useSessionStore.getState().sessions[host.serverId]?.agentStreamTail.get("agent"),
+          ).toEqual(saved.items);
+        } else await started.promise;
+        store.reconcileServerId(host.serverId, resolvedId);
+        if (ordering !== "settled") {
+          await vi.waitFor(async () => expect(await hasStoredKind("timeline")).toBe(true));
+          release.resolve();
+          await preparation;
+        }
+        expect(replica.prepare("agent")).toBe(preparation);
+        expect(reads).toBe(ordering === "settled" ? 1 : 2);
+        expect(store.getTimelineReplica(resolvedId)).toBe(replica);
+        expect(
+          useSessionStore.getState().sessions[resolvedId]?.agentStreamTail.get("agent"),
+        ).toEqual(saved.items);
+        expect(replica.readCursor("agent")).toEqual({ epoch: "epoch", endSeq: 1 });
+        await waitForHostOnline(store, resolvedId);
+        useSessionStore.getState().updateSessionServerInfo(resolvedId, {
+          serverId: resolvedId,
+          hostname: null,
+          version: "test",
+          features: { workspaceMultiplicity: true },
+        });
+        store.acceptAgentSnapshot(
+          resolvedId,
+          normalizeAgentSnapshot(
+            makeFetchAgentsEntry({ id: "agent", cwd: "/repo", updatedAt: "2026-09-06T00:00:00Z" })
+              .agent,
+            resolvedId,
+          ),
+        );
+        await vi.waitFor(async () => expect(await hasStoredKind("agent")).toBe(true), {
+          timeout: 3000,
+        });
+        await store.refreshAgentDirectory({ serverId: resolvedId });
+        store.setAppVisible(false);
+        await vi.waitFor(async () => expect(await hasStoredKind("agent")).toBe(false));
+        const reopened = new ReplicaCache(rows, { clearLegacyCache: async () => undefined });
+        reopened.setHosts([resolvedId]);
+        expect(await reopened.readTimeline(resolvedId, "agent")).toEqual(saved);
+        store.restoreAgentSnapshot(resolvedId, "agent", undefined);
+        store.setAppVisible(false);
+        await vi.waitFor(async () => expect(await hasStoredKind("timeline")).toBe(false));
+      } finally {
+        store.syncHosts([]);
+        useSessionStore.getState().clearSession(host.serverId);
+        useSessionStore.getState().clearSession(resolvedId);
+      }
+    },
+  );
 
   it("replaces stale active session state when active bootstrap omits an agent", async () => {
     const host = makeHost({

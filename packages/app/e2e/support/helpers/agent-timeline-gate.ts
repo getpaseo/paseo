@@ -494,18 +494,19 @@ export async function holdAgentOlderTimelinePages(
   };
 }
 
-export async function delayAgentBootstrapTailResponse(
+export async function delayAgentBootstrapTimelineResponse(
   page: Page,
   agentId: string,
 ): Promise<BootstrapTimelineGate> {
-  let tailReleased = false;
+  let bootstrapReleased = false;
+  let bootstrapResponseSeen = false;
   let catchUpReleased = false;
-  const delayedTailForwards: Array<() => void> = [];
+  const delayedBootstrapForwards: Array<() => void> = [];
   const delayedCatchUpForwards: Array<() => void> = [];
-  let resolveDelayedTail: (() => void) | null = null;
+  let resolveDelayedBootstrap: (() => void) | null = null;
   let resolveDelayedCatchUp: (() => void) | null = null;
-  const delayedTail = new Promise<void>((resolve) => {
-    resolveDelayedTail = resolve;
+  const delayedBootstrap = new Promise<void>((resolve) => {
+    resolveDelayedBootstrap = resolve;
   });
   const delayedCatchUp = new Promise<void>((resolve) => {
     resolveDelayedCatchUp = resolve;
@@ -519,10 +520,16 @@ export async function delayAgentBootstrapTailResponse(
       const payload = sessionMessage ? getPayload(sessionMessage) : null;
       const isTimelineResponse =
         sessionMessage?.type === "fetch_agent_timeline_response" && payload?.agentId === agentId;
-      if (isTimelineResponse && payload.direction === "tail") {
-        resolveDelayedTail?.();
-        if (tailReleased) ws.send(message);
-        else delayedTailForwards.push(() => ws.send(message));
+      // A certified replica bootstraps with after; an empty/display-only replica uses tail.
+      if (
+        isTimelineResponse &&
+        !bootstrapResponseSeen &&
+        (payload.direction === "tail" || payload.direction === "after")
+      ) {
+        bootstrapResponseSeen = true;
+        resolveDelayedBootstrap?.();
+        if (bootstrapReleased) ws.send(message);
+        else delayedBootstrapForwards.push(() => ws.send(message));
         return;
       }
       if (isTimelineResponse && payload.direction === "after") {
@@ -537,14 +544,14 @@ export async function delayAgentBootstrapTailResponse(
 
   return {
     release() {
-      tailReleased = true;
-      for (const forward of delayedTailForwards.splice(0)) forward();
+      bootstrapReleased = true;
+      for (const forward of delayedBootstrapForwards.splice(0)) forward();
     },
     releaseCatchUp() {
       catchUpReleased = true;
       for (const forward of delayedCatchUpForwards.splice(0)) forward();
     },
-    waitForDelayedResponse: () => delayedTail,
+    waitForDelayedResponse: () => delayedBootstrap,
     waitForDelayedCatchUp: () => delayedCatchUp,
   };
 }
