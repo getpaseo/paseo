@@ -34,11 +34,13 @@ export function shouldShowWorkspaceSetup(snapshot: WorkspaceSetupSnapshot | null
   if (!snapshot) {
     return false;
   }
-  return snapshot.error !== null || snapshot.detail.commands.length > 0;
+  return (
+    snapshot.status === "blocked" || snapshot.error !== null || snapshot.detail.commands.length > 0
+  );
 }
 
 export function shouldSeedWorkspaceSetupTab(snapshot: WorkspaceSetupSnapshot | null): boolean {
-  return snapshot?.status === "failed";
+  return snapshot?.status === "failed" || snapshot?.status === "blocked";
 }
 
 interface WorkspaceSetupStoreState {
@@ -82,7 +84,7 @@ export const useWorkspaceSetupStore = create<WorkspaceSetupStoreState>()((set, g
 
     set((state) => {
       const surfacedFailedSetupKeys = new Set(state.surfacedFailedSetupKeys);
-      if (payload.status !== "failed") {
+      if (payload.status !== "failed" && payload.status !== "blocked") {
         surfacedFailedSetupKeys.delete(key);
       }
       return {
@@ -105,7 +107,10 @@ export const useWorkspaceSetupStore = create<WorkspaceSetupStoreState>()((set, g
 
     let claimed = false;
     set((state) => {
-      if (state.snapshots[key]?.status !== "failed" || state.surfacedFailedSetupKeys.has(key)) {
+      if (
+        !["failed", "blocked"].includes(state.snapshots[key]?.status ?? "") ||
+        state.surfacedFailedSetupKeys.has(key)
+      ) {
         return state;
       }
       claimed = true;

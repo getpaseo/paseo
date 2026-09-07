@@ -129,12 +129,16 @@ async function connect(input: {
   clientId: string;
   selective: boolean;
   timelineReplacementInvalidation?: boolean;
+  timelineNotifications?: boolean;
 }): Promise<ConnectedClient> {
   const client = new DaemonClient({
     url: `ws://127.0.0.1:${daemon.port}/ws`,
     clientId: input.clientId,
     capabilities: {
       [CLIENT_CAPS.selectiveAgentTimeline]: input.selective,
+      ...(input.timelineNotifications === undefined
+        ? {}
+        : { [CLIENT_CAPS.timelineNotifications]: input.timelineNotifications }),
       ...(input.timelineReplacementInvalidation
         ? { [CLIENT_CAPS.timelineReplacementInvalidation]: true }
         : {}),
@@ -146,6 +150,83 @@ async function connect(input: {
   clients.push(connected);
   return connected;
 }
+
+test("notification timeline items are sent only to clients that advertise support", async () => {
+  await daemon.close();
+  daemon = await createTestPaseoDaemon({
+    isDev: true,
+    agentClients: { mock: new MockLoadTestAgentClient() },
+  });
+  const capable = await connect({
+    clientId: "notification-capable",
+    selective: false,
+    timelineNotifications: true,
+  });
+  const legacy = await connect({
+    clientId: "notification-legacy",
+    selective: false,
+    timelineNotifications: false,
+  });
+  const agent = await capable.client.createAgent({
+    provider: "mock",
+    cwd: "/tmp",
+    title: "Notification compatibility",
+    model: "ten-second-stream",
+  });
+  capable.clear();
+  legacy.clear();
+
+  await daemon.daemon.agentManager.appendTimelineItem(agent.id, {
+    type: "notification",
+    level: "warning",
+    message: "Capable clients only",
+  });
+  await daemon.daemon.agentManager.appendTimelineItem(agent.id, {
+    type: "assistant_message",
+    text: "Visible to every client",
+  });
+  await Promise.all([
+    capable.next(isAgentStream(agent.id), "capable timeline delivery"),
+    legacy.next(isAgentStream(agent.id), "legacy timeline delivery"),
+  ]);
+  await Promise.all([
+    capable.barrier("notification-capable"),
+    legacy.barrier("notification-legacy"),
+  ]);
+
+  const capableLiveItems = capable.messages.flatMap((message) =>
+    message.type === "agent_stream" && message.payload.event.type === "timeline"
+      ? [message.payload.event.item]
+      : [],
+  );
+  const legacyLiveItems = legacy.messages.flatMap((message) =>
+    message.type === "agent_stream" && message.payload.event.type === "timeline"
+      ? [message.payload.event.item]
+      : [],
+  );
+  expect(capableLiveItems.some((item) => item.type === "notification")).toBe(true);
+  expect(legacyLiveItems.some((item) => item.type === "notification")).toBe(false);
+  expect(legacyLiveItems).toContainEqual(
+    expect.objectContaining({ type: "assistant_message", text: "Visible to every client" }),
+  );
+
+  const [capableTimeline, legacyTimeline] = await Promise.all([
+    capable.client.fetchAgentTimeline(agent.id, { direction: "tail", projection: "canonical" }),
+    legacy.client.fetchAgentTimeline(agent.id, { direction: "tail", projection: "canonical" }),
+  ]);
+  expect(capableTimeline.entries.some((entry) => entry.item.type === "notification")).toBe(true);
+  expect(legacyTimeline.entries.some((entry) => entry.item.type === "notification")).toBe(false);
+  expect(legacyTimeline.entries).toContainEqual(
+    expect.objectContaining({
+      item: expect.objectContaining({
+        type: "assistant_message",
+        text: "Visible to every client",
+      }),
+    }),
+  );
+  expect(legacyTimeline.window).toEqual(capableTimeline.window);
+  expect(legacyTimeline.endCursor).toEqual(capableTimeline.endCursor);
+});
 
 test("rewind routes replacement completion by source capability and subscription", async () => {
   await daemon.close();

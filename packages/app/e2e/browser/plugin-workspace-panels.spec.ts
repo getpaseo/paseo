@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import type { TestInfo } from "@playwright/test";
@@ -12,10 +12,7 @@ import { buildAgentRoute } from "../support/helpers/mock-agent";
 import { connectNewWorkspaceDaemonClient } from "../support/helpers/new-workspace";
 import { seedWorkspace } from "../support/helpers/seed-client";
 import { getServerId } from "../support/helpers/server-id";
-import {
-  closeMobileAgentSidebar,
-  expectMobileAgentSidebarHidden,
-} from "../support/helpers/sidebar";
+import { expectMobileAgentSidebarHidden } from "../support/helpers/sidebar";
 import {
   switchWorkspaceViaSidebar,
   waitForWorkspaceInSidebar,
@@ -29,18 +26,11 @@ function isSettledWorkspaceUrl(url: URL): boolean {
   return url.pathname.includes("/workspace/") && !url.searchParams.has("open");
 }
 
-function pluginSource(input: { workspaceId: string; agentId: string }): string {
+function pluginClientSource(input: { workspaceId: string; agentId: string }): string {
   return `import React, { useRef } from "react";
 import { Pressable, Text, View } from "react-native";
 import { Icon, useAgent, useWorkspace } from "@getpaseo/plugin";
-import { defineRpc } from "@getpaseo/plugin/server";
-import { z } from "zod";
-
-const recordComposerOpen = defineRpc({
-  name: "composer.open",
-  input: z.object({ workspaceId: z.string() }),
-  output: z.object({ opened: z.boolean() }),
-});
+import { recordComposerOpen } from "./shared/rpc";
 
 function WorkspacePanel({ workspaceId, host, layout }) {
   const workspace = useWorkspace(workspaceId, (value) => ({ id: value.id }));
@@ -114,23 +104,49 @@ function contributeClient(client) {
   };
 }
 
-export default function contribute(plugin) {
-  plugin.handle(recordComposerOpen, async ({ workspaceId }, { paseo }) => {
+export default function contribute(client) {
+  client.addSurface("collision", DirectCollisionSurface);
+  client.addSurface("sidebar-destination", SidebarCollisionSurface);
+  client.addSidebarItem({ id: "collision", title: "Collision sidebar", icon: "Blocks", surface: "sidebar-destination" });
+  client.addWorkspacePanel({ id: "workspace", title: "Workspace inspector", icon: "PanelsTopLeft", context: "workspace", Component: WorkspacePanel });
+  client.addWorkspacePanel({ id: "agent", title: "Agent inspector", icon: "PanelTop", context: "agent", Component: AgentPanel });
+  client.addCommandCenterItem({ id: "global", title: "Plugin global action", icon: "Blocks", context: "global", onSelect() {} });
+  client.addCommandCenterItem({ id: "surface", title: "Open direct collision surface", icon: "Blocks", context: "workspace", onSelect({ openSurface }) { openSurface("collision"); } });
+  client.addCommandCenterItem({ id: "workspace", title: "Open plugin workspace", icon: "PanelsTopLeft", context: "workspace", onSelect({ openPanel }) { openPanel("workspace"); } });
+  client.addCommandCenterItem({ id: "agent", title: "Open plugin agent", icon: "PanelTop", context: "agent", onSelect({ openPanel }) { openPanel("agent"); } });
+  return contributeClient(client);
+}`;
+}
+
+const pluginSharedSource = `import { defineRpc } from "@getpaseo/plugin";
+import { z } from "zod";
+
+export const recordComposerOpen = defineRpc({
+  name: "composer.open",
+  input: z.object({ workspaceId: z.string() }),
+  output: z.object({ opened: z.boolean() }),
+});`;
+
+const pluginServerSource = `import { recordComposerOpen } from "./shared/rpc";
+
+export default function contribute(server) {
+  server.handle(recordComposerOpen, async ({ workspaceId }, { paseo }) => {
     await paseo.workspaces.ref(workspaceId).setTitle("Opened from composer pill");
     return { opened: true };
   });
-  plugin.addSurface("collision", DirectCollisionSurface);
-  plugin.addSurface("sidebar-destination", SidebarCollisionSurface);
-  plugin.addSidebarItem({ id: "collision", title: "Collision sidebar", icon: "Blocks", surface: "sidebar-destination" });
-  plugin.addWorkspacePanel({ id: "workspace", title: "Workspace inspector", icon: "PanelsTopLeft", context: "workspace", Component: WorkspacePanel });
-  plugin.addWorkspacePanel({ id: "agent", title: "Agent inspector", icon: "PanelTop", context: "agent", Component: AgentPanel });
-  plugin.addCommandCenterItem({ id: "global", title: "Plugin global action", icon: "Blocks", context: "global", onSelect() {} });
-  plugin.addCommandCenterItem({ id: "surface", title: "Open direct collision surface", icon: "Blocks", context: "workspace", onSelect({ openSurface }) { openSurface("collision"); } });
-  plugin.addCommandCenterItem({ id: "workspace", title: "Open plugin workspace", icon: "PanelsTopLeft", context: "workspace", onSelect({ openPanel }) { openPanel("workspace"); } });
-  plugin.addCommandCenterItem({ id: "agent", title: "Open plugin agent", icon: "PanelTop", context: "agent", onSelect({ openPanel }) { openPanel("agent"); } });
-  plugin.addClientSide(contributeClient);
   return () => {};
 }`;
+
+async function writePluginSources(
+  directory: string,
+  input: { workspaceId: string; agentId: string },
+): Promise<void> {
+  await mkdir(path.join(directory, "shared"), { recursive: true });
+  await Promise.all([
+    writeFile(path.join(directory, "index.client.tsx"), pluginClientSource(input)),
+    writeFile(path.join(directory, "index.server.ts"), pluginServerSource),
+    writeFile(path.join(directory, "shared", "rpc.ts"), pluginSharedSource),
+  ]);
 }
 
 async function searchCommands(page: Page, query: string) {
@@ -159,7 +175,7 @@ async function runCommand(page: Page, title: string): Promise<void> {
 
 async function openCompactSidebar(page: Page): Promise<void> {
   await page.getByRole("button", { name: "Open menu", exact: true }).click();
-  await expect(page.getByTestId("sidebar-command-center-search")).toBeVisible();
+  await expect(page.getByTestId("sidebar-search")).toBeVisible();
 }
 
 async function capture(page: Page, testInfo: TestInfo, name: string): Promise<void> {
@@ -184,10 +200,10 @@ test.describe("plugin workspace panels and Command Center", () => {
       port: secondaryDaemon.port,
     });
     await writeFile(path.join(directory, "paseo-plugin.json"), JSON.stringify({ id: PLUGIN_ID }));
-    await writeFile(
-      path.join(directory, "index.tsx"),
-      pluginSource({ workspaceId: primary.workspaceId, agentId: "missing-agent" }),
-    );
+    await writePluginSources(directory, {
+      workspaceId: primary.workspaceId,
+      agentId: "missing-agent",
+    });
 
     try {
       await primaryClient.patchDaemonConfig({ pluginsEnabled: true });
@@ -263,10 +279,10 @@ test.describe("plugin workspace panels and Command Center", () => {
           modeId: "load-test",
         });
         const navigationAgentId = agent.id;
-        await writeFile(
-          path.join(directory, "index.tsx"),
-          pluginSource({ workspaceId: primary.workspaceId, agentId: navigationAgentId }),
-        );
+        await writePluginSources(directory, {
+          workspaceId: primary.workspaceId,
+          agentId: navigationAgentId,
+        });
         await primaryClient.reloadPlugin(PLUGIN_ID);
 
         await runCommand(page, "Open direct collision surface");
@@ -331,8 +347,9 @@ test.describe("plugin workspace panels and Command Center", () => {
         await page.waitForURL(isSettledWorkspaceUrl, { timeout: 60_000 });
         await expect(page.getByRole("button", { name: "Open composer review" })).toHaveCount(0);
         await openCompactSidebar(page);
+        // The sidebar's Search row dismisses the compact sidebar on its way to the
+        // command center, so nothing has to close it after the command runs.
         await runCommand(page, "Open plugin agent");
-        await closeMobileAgentSidebar(page);
         await expectMobileAgentSidebarHidden(page);
         await expect(page.getByText(`Agent bridge ${agent.id}`)).toBeVisible();
         await expect(

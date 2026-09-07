@@ -19,7 +19,6 @@ import {
   fileNameForPath,
   formatDiffCount,
 } from "@/git/file-header-presentation";
-import { resolveVisibleFileSections } from "./header-layout";
 import { reviewBackgroundPaint, reviewDividerHeight, reviewGapTop } from "./review-paint";
 import type {
   DiffCell,
@@ -40,12 +39,14 @@ export interface PaintWebViewportInput {
   model: DiffDocumentModel;
   palette: DiffPalette;
   typography: DiffTypography;
+  headerTypography: DiffHeaderTypography;
   measureText: TextMeasurer;
   scrollTop: number;
   viewportWidth: number;
   viewportHeight: number;
   horizontalOffsets: ReadonlyMap<string, number>;
   selection: DiffSelection | null;
+  activeHeaderPath: string | null;
   devicePixelRatio: number;
   paintTop?: number;
   paintHeight?: number;
@@ -98,42 +99,38 @@ export function paintWebViewport(input: PaintWebViewportInput): void {
     context.fillRect(0, borderTop - input.scrollTop, input.viewportWidth, DIFF_BODY_BORDER_HEIGHT);
   }
 
+  for (const file of input.model.files) {
+    if (
+      file.headerHeight <= 0 ||
+      file.top + file.headerHeight <= paintDocumentTop ||
+      file.top >= paintDocumentBottom
+    ) {
+      continue;
+    }
+    paintWebFileHeader({
+      context,
+      file,
+      palette: input.palette,
+      typography: input.headerTypography,
+      viewportWidth: input.viewportWidth,
+      y: file.top - input.scrollTop,
+      activePath: input.activeHeaderPath,
+    });
+  }
+
   if (input.selection) paintSelection(input, input.selection);
   context.restore();
 }
 
-export function paintWebHeaders(input: {
+export function paintWebFileHeader(input: {
   context: CanvasRenderingContext2D;
-  model: DiffDocumentModel;
+  file: DiffFileSection;
   palette: DiffPalette;
   typography: DiffHeaderTypography;
-  scrollTop: number;
   viewportWidth: number;
-  viewportHeight: number;
-  devicePixelRatio: number;
+  y: number;
   activePath: string | null;
 }): void {
-  const scale = input.devicePixelRatio;
-  input.context.setTransform(scale, 0, 0, scale, 0, 0);
-  input.context.clearRect(0, 0, input.viewportWidth, input.viewportHeight);
-  const window = resolveVisibleFileSections({
-    files: input.model.files,
-    scrollTop: input.scrollTop,
-    viewportHeight: input.viewportHeight,
-    overscan: 0,
-  });
-  for (const file of window.files) {
-    if (file === window.sticky?.file) continue;
-    const y = file.top - input.scrollTop;
-    if (y + file.headerHeight <= 0 || y >= input.viewportHeight) continue;
-    paintWebHeader({ ...input, file, y });
-  }
-  if (window.sticky) paintWebHeader({ ...input, file: window.sticky.file, y: window.sticky.y });
-}
-
-function paintWebHeader(
-  input: Parameters<typeof paintWebHeaders>[0] & { file: DiffFileSection; y: number },
-): void {
   const { context, file, palette, typography, viewportWidth, y } = input;
   context.fillStyle =
     input.activePath === file.path ? palette.headerActiveSurface : palette.headerSurface;

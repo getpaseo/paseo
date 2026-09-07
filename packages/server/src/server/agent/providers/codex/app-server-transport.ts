@@ -257,10 +257,10 @@ export class CodexAppServerClient {
   }
 
   async dispose(): Promise<void> {
-    if (this.disposed) return;
     this.disposed = true;
     this.unexpectedTerminationHandler = null;
     this.rl.close();
+    this.rejectPending(new Error("Codex app-server client is closed"));
     try {
       this.child.stdin.end();
     } catch {
@@ -277,10 +277,7 @@ export class CodexAppServerClient {
       },
     });
     if (result === "kill-timeout") {
-      this.logger.warn(
-        { timeoutMs: APP_SERVER_FORCE_SHUTDOWN_TIMEOUT_MS },
-        "Codex app-server did not report exit after SIGKILL",
-      );
+      throw new Error("Codex app-server did not report exit after SIGKILL");
     }
   }
 
@@ -290,11 +287,7 @@ export class CodexAppServerClient {
     }
     this.disposed = true;
     this.rl.close();
-    for (const pending of this.pending.values()) {
-      clearTimeout(pending.timer);
-      pending.reject(error);
-    }
-    this.pending.clear();
+    this.rejectPending(error);
     const handler = this.unexpectedTerminationHandler;
     this.unexpectedTerminationHandler = null;
     if (!handler) {
@@ -305,6 +298,14 @@ export class CodexAppServerClient {
     } catch (handlerError) {
       this.logger.warn({ err: handlerError }, "Codex app-server termination handler threw");
     }
+  }
+
+  private rejectPending(error: Error): void {
+    for (const pending of this.pending.values()) {
+      clearTimeout(pending.timer);
+      pending.reject(error);
+    }
+    this.pending.clear();
   }
 
   private writeJsonRpcResponse(response: JsonRpcResponse): void {

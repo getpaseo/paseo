@@ -1,21 +1,15 @@
 import type { ReactNode } from "react";
 import type { ViewProps } from "react-native";
-import Animated, { useAnimatedStyle } from "react-native-reanimated";
-import { useKeyboardShift } from "@/hooks/keyboard-shift-context";
+import { KeyboardTranslateView } from "@/components/keyboard-translate-view";
 
 interface KeyboardDockProps extends ViewProps {
   children: ReactNode;
 }
 
 export function KeyboardDock({ children, style, ...props }: KeyboardDockProps) {
-  const { shift } = useKeyboardShift();
-  const keyboardPaddingStyle = useAnimatedStyle(() => ({
-    paddingBottom: shift.value,
-  }));
-
   return (
-    <Animated.View style={[style, keyboardPaddingStyle]} {...props}>
+    <KeyboardTranslateView style={style} {...props}>
       {children}
-    </Animated.View>
+    </KeyboardTranslateView>
   );
 }

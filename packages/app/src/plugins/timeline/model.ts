@@ -7,11 +7,18 @@ import type { AgentTimelineItem } from "@getpaseo/protocol/agent-types";
 import type { InstalledPlugin } from "../types";
 
 export interface InstalledPluginTimelineItem extends PluginTimelineItem {
+  id: string;
   pluginId: string;
 }
 
+export interface TimelineItemTransformInput {
+  item: AgentTimelineItem;
+  phase: "streaming" | "complete";
+  sourceId: string;
+}
+
 export type TimelineItemTransform = (
-  item: AgentTimelineItem,
+  input: TimelineItemTransformInput,
 ) => InstalledPluginTimelineItem[] | undefined;
 
 function isTimelineData(value: unknown, ancestors: Set<object>): value is PluginTimelineData {
@@ -46,9 +53,13 @@ function parseTransformResult(value: unknown): PluginTimelineTransformResult {
       throw new Error('transformed timeline items must have type "plugin"');
     }
     const kind = Reflect.get(item, "kind");
+    const id = Reflect.get(item, "id");
     const version = Reflect.get(item, "version");
     if (typeof kind !== "string" || !/^[a-z][a-z0-9-]*$/.test(kind)) {
       throw new Error(`invalid transformed timeline item kind: ${String(kind)}`);
+    }
+    if (id !== undefined && (typeof id !== "string" || id.length === 0)) {
+      throw new Error(`invalid transformed timeline item id: ${String(id)}`);
     }
     if (!Number.isInteger(version) || Number(version) < 1) {
       throw new Error(`invalid transformed timeline item version: ${String(version)}`);
@@ -61,21 +72,22 @@ function parseTransformResult(value: unknown): PluginTimelineTransformResult {
 }
 
 export function transformTimelineItem(
-  item: AgentTimelineItem,
-  plugins: readonly InstalledPlugin[],
+  input: TimelineItemTransformInput & { plugins: readonly InstalledPlugin[] },
 ): InstalledPluginTimelineItem[] | undefined {
-  for (const plugin of plugins) {
+  for (const plugin of input.plugins) {
     for (const transformer of plugin.timelineTransformers) {
-      if (transformer.query.itemType !== item.type) continue;
+      if (transformer.query.itemType !== input.item.type) continue;
       try {
         const transform = transformer.transform as (input: {
           item: AgentTimelineItem;
+          phase: "streaming" | "complete";
         }) => PluginTimelineTransformResult | undefined;
-        const output = transform({ item });
+        const output = transform({ item: input.item, phase: input.phase });
         if (output === undefined) continue;
         const parsed = parseTransformResult(output);
-        return parsed.items.map((transformedItem) => ({
+        return parsed.items.map((transformedItem, index) => ({
           type: "plugin",
+          id: transformedItem.id ?? `${input.sourceId}/${index}`,
           kind: transformedItem.kind,
           version: transformedItem.version,
           data: JSON.parse(JSON.stringify(transformedItem.data)) as PluginTimelineData,

@@ -59,7 +59,8 @@ export function normalizeListProviderModelsPayload(
 
 export function normalizeProvidersSnapshotPayload<
   T extends GetProvidersSnapshotPayload | ProvidersSnapshotUpdatePayload,
->(payload: T): T {
+>(payload: T, expand = true): T {
+  if (payload.compactSnapshot && !expand) return payload;
   const entries = payload.compactSnapshot
     ? expandProviderSnapshot(payload.compactSnapshot)
     : normalizeProviderSnapshotEntries(payload.entries);
@@ -68,10 +69,11 @@ export function normalizeProvidersSnapshotPayload<
 
 export function normalizeProviderSnapshotUpdateMessage(
   msg: SessionOutboundMessage,
+  expand = true,
 ): SessionOutboundMessage {
   if (msg.type !== "providers_snapshot_update") {
     return msg;
   }
 
-  return { ...msg, payload: normalizeProvidersSnapshotPayload(msg.payload) };
+  return { ...msg, payload: normalizeProvidersSnapshotPayload(msg.payload, expand) };
 }

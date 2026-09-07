@@ -9,7 +9,6 @@ import {
 } from "react";
 import {
   FlatList,
-  Keyboard,
   Platform,
   View,
   type LayoutChangeEvent,
@@ -23,6 +22,8 @@ import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import type { StreamItem } from "@/types/stream";
 import type { Theme } from "@/styles/theme";
 import { useStableEvent } from "@/hooks/use-stable-event";
+import { useSettledKeyboardShift } from "@/hooks/keyboard-shift-context";
+import { resolveStreamKeyboardInset } from "@/hooks/keyboard-shift-policy";
 import { useRevisedHistoryRows } from "./history-row-revision";
 import { useBottomAnchorController } from "./bottom-anchor-controller";
 import { useScrollKeyboardDismiss } from "./scroll-keyboard-dismiss/use-scroll-keyboard-dismiss";
@@ -104,6 +105,7 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
   const scrollOffsetYRef = useRef(0);
   const isUserScrollActiveRef = useRef(false);
   const scrollKeyboardDismiss = useScrollKeyboardDismiss();
+  const settledKeyboardShift = useSettledKeyboardShift();
   const userScrollEndFrameIdRef = useRef<number | null>(null);
   const programmaticScrollEventBudgetRef = useRef(0);
   const [isNativeViewportSettling, setIsNativeViewportSettling] = useState(false);
@@ -273,6 +275,34 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
     Platform.OS === "android" && bottomAnchorController.mode === "sticky-bottom"
       ? undefined
       : DEFAULT_MAINTAIN_VISIBLE_CONTENT_POSITION;
+  const streamKeyboardInset = useMemo(
+    () =>
+      resolveStreamKeyboardInset({
+        platform: Platform.OS === "ios" ? "ios" : "android",
+        settledShift: settledKeyboardShift,
+      }),
+    [settledKeyboardShift],
+  );
+  const listContentContainerStyle = useMemo(
+    () => [
+      baseListContentContainerStyle,
+      { paddingBottom: streamKeyboardInset.contentContainerPaddingBottom },
+    ],
+    [baseListContentContainerStyle, streamKeyboardInset.contentContainerPaddingBottom],
+  );
+  const listInsetProps = useMemo(
+    () =>
+      streamKeyboardInset.contentInset
+        ? {
+            automaticallyAdjustContentInsets: false,
+            automaticallyAdjustsScrollIndicatorInsets: false,
+            contentInsetAdjustmentBehavior: "never" as const,
+            contentInset: streamKeyboardInset.contentInset,
+            scrollIndicatorInsets: streamKeyboardInset.contentInset,
+          }
+        : {},
+    [streamKeyboardInset.contentInset],
+  );
 
   useEffect(() => {
     streamViewportMetricsRef.current = {
@@ -305,27 +335,7 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
     };
   }, [agentId, clearNativeViewportSettling, clearPendingUserScrollEnd, evaluateHistoryStart]);
 
-  useEffect(() => {
-    const keyboardEvents = [
-      "keyboardWillShow",
-      "keyboardWillHide",
-      "keyboardDidShow",
-      "keyboardDidHide",
-      "keyboardWillChangeFrame",
-      "keyboardDidChangeFrame",
-    ] as const;
-    const subscriptions = keyboardEvents.map((eventName) =>
-      Keyboard.addListener(eventName, () => {
-        markNativeViewportSettling();
-      }),
-    );
-    return () => {
-      for (const subscription of subscriptions) {
-        subscription.remove();
-      }
-      clearNativeViewportSettling();
-    };
-  }, [clearNativeViewportSettling, markNativeViewportSettling]);
+  useEffect(() => () => clearNativeViewportSettling(), [clearNativeViewportSettling]);
 
   useEffect(() => {
     bottomAnchorController.prepareForStickyContentChange();
@@ -560,6 +570,7 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
   // data or the live header changes, preserving the row identities above.
   return (
     <FlatList
+      {...listInsetProps}
       ref={flatListRef}
       data={historyRows}
       renderItem={renderItem}
@@ -569,7 +580,7 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
       nativeID="agent-chat-scroll-native-virtualized"
       ListHeaderComponent={liveHeaderContent ?? undefined}
       ListFooterComponent={historyFooterContent ?? undefined}
-      contentContainerStyle={baseListContentContainerStyle}
+      contentContainerStyle={listContentContainerStyle}
       style={listStyle}
       onLayout={handleListLayout}
       onScroll={handleScroll}

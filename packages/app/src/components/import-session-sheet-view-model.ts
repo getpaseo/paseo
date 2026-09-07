@@ -5,6 +5,18 @@ import { i18n } from "@/i18n/i18next";
 export const PER_PROVIDER_LIMIT = 15;
 export const ALL_FILTER_VALUE = "__all__";
 
+/**
+ * Paging grows the per-provider limit instead of carrying an offset. The daemon
+ * ranks the whole candidate set on every request, so an offset into a previous
+ * ranking would drift as sessions move; refetching a larger page cannot. 200 is
+ * the protocol ceiling on `limit`.
+ */
+const PAGE_LIMITS: readonly number[] = [PER_PROVIDER_LIMIT, 45, 90, 200];
+
+export function nextPageLimit(limit: number): number {
+  return PAGE_LIMITS.find((candidate) => candidate > limit) ?? limit;
+}
+
 export function requiresImportSessionsHostUpgrade(input: {
   supportsSnapshot: boolean;
   workspaceId?: string | null;
@@ -18,11 +30,13 @@ export interface SessionsQueryResult {
     | {
         entries: FetchRecentProviderSessionEntry[];
         filteredAlreadyImportedCount?: number;
+        providerErrors?: Array<{ provider: string; message: string }>;
       }
     | undefined;
   isError: boolean;
   isLoading: boolean;
   isPending: boolean;
+  isPlaceholderData?: boolean;
 }
 
 export function resolveProvidersToFetch(
@@ -81,20 +95,132 @@ export function sumFilteredAlreadyImportedCount(
   return total;
 }
 
-export function collectErroredProviderLabels(
+/**
+ * A provider that returned a full page may have more behind it. The daemon
+ * slices to `limit` after dropping already-imported sessions, so a short page is
+ * the end of that provider's list. Placeholder rows belong to the previous page,
+ * so the button holds its place instead of blinking out while the next loads.
+ */
+export function hasMoreSessions(
+  queries: ReadonlyArray<SessionsQueryResult>,
+  limit: number,
+): boolean {
+  if (nextPageLimit(limit) === limit) return false;
+  return queries.some((entryQuery) => {
+    const count = entryQuery.data?.entries.length ?? 0;
+    return entryQuery.isPlaceholderData ? count > 0 : count >= limit;
+  });
+}
+
+export interface ProviderErrorRow {
+  provider: string;
+  label: string;
+}
+
+/**
+ * One row per provider that could not be listed, whether the request itself
+ * failed or the daemon reported the provider as failed in an otherwise good
+ * response. Both mean the same thing to the user, and both retry the same way.
+ */
+export function collectProviderErrorRows(
   providersToFetch: AgentProvider[] | null,
   queries: ReadonlyArray<SessionsQueryResult>,
   providerLabelById: ReadonlyMap<string, string>,
-): string[] {
+): ProviderErrorRow[] {
   if (providersToFetch === null) return [];
-  const labels: string[] = [];
-  for (let index = 0; index < queries.length; index++) {
-    if (queries[index]?.isError) {
-      const provider = providersToFetch[index];
-      labels.push(providerLabelById.get(provider) ?? provider);
-    }
+  const rows: ProviderErrorRow[] = [];
+  for (let index = 0; index < providersToFetch.length; index++) {
+    const query = queries[index];
+    const provider = providersToFetch[index];
+    if (!query || provider === undefined) continue;
+    const failed = query.isError || (query.data?.providerErrors?.length ?? 0) > 0;
+    if (!failed) continue;
+    rows.push({ provider, label: providerLabelById.get(provider) ?? provider });
   }
-  return labels;
+  return rows;
+}
+
+export interface DirectoryProject {
+  rootPath: string;
+  name: string;
+}
+
+export interface DirectoryLabel {
+  /** The owning project's name, or the whole path when no project owns it. */
+  name: string;
+  /**
+   * The directory's path under its project root, absent at the root itself.
+   * Worktrees of one project all resolve to the same name, so without this the
+   * sheet would show several identical headings.
+   */
+  detail?: string;
+}
+
+function withoutTrailingSlash(path: string): string {
+  return path.length > 1 ? path.replace(/\/+$/, "") : path;
+}
+
+/** The project's name when the app knows the directory, else the directory itself. */
+export function resolveDirectoryLabel(
+  directory: string,
+  projects: ReadonlyArray<DirectoryProject>,
+): DirectoryLabel {
+  const normalized = withoutTrailingSlash(directory);
+  let bestRoot: string | null = null;
+  let bestName: string | null = null;
+  for (const project of projects) {
+    const root = withoutTrailingSlash(project.rootPath);
+    if (!root) continue;
+    if (bestRoot !== null && root.length <= bestRoot.length) continue;
+    if (normalized !== root && !normalized.startsWith(`${root}/`)) continue;
+    bestRoot = root;
+    bestName = project.name;
+  }
+  if (bestRoot === null || bestName === null) {
+    return { name: normalized };
+  }
+  const relative = normalized.slice(bestRoot.length + 1);
+  return relative ? { name: bestName, detail: relative } : { name: bestName };
+}
+
+/** The one-line form a row shows under its prompt preview. */
+export function formatDirectoryLabel(label: DirectoryLabel): string {
+  return label.detail ? `${label.name} · ${label.detail}` : label.name;
+}
+
+export interface ImportTarget {
+  /**
+   * Omitted unless the row's directory is the scoped workspace's own: the daemon
+   * rejects an import whose cwd does not match the requested workspace.
+   */
+  workspaceId?: string;
+  /**
+   * The agent lands in a workspace other than the one the sheet was opened from,
+   * so the caller has to open that workspace instead of adding a tab here.
+   */
+  crossWorkspace: boolean;
+}
+
+export function resolveImportTarget(input: {
+  entryCwd: string;
+  /** The directory the sheet was opened for, absent when it was opened host-wide. */
+  workspaceCwd?: string | null;
+  workspaceId?: string | null;
+  /** The listed rows came from a fetch scoped to `workspaceCwd`. */
+  isScopedListing: boolean;
+}): ImportTarget {
+  if (!input.workspaceId || !input.workspaceCwd) {
+    return { crossWorkspace: true };
+  }
+  // A scoped listing only holds rows the daemon already matched to this
+  // workspace's directory with realpaths resolved, which the client cannot do.
+  // "Show all" drops that guarantee, so each row is compared by path instead.
+  const belongsToWorkspace =
+    input.isScopedListing ||
+    withoutTrailingSlash(input.entryCwd) === withoutTrailingSlash(input.workspaceCwd);
+  return belongsToWorkspace
+    ? { workspaceId: input.workspaceId, crossWorkspace: false }
+    : { crossWorkspace: true };
 }
 
 export function getSessionTitle(entry: FetchRecentProviderSessionEntry): string {
@@ -123,6 +249,7 @@ export interface EmptyStateInputs {
   isQueryingProviders: boolean;
   allQueriesSettled: boolean;
   selectedProvider: string;
+  hasQuery: boolean;
   aggregatedCount: number;
   visibleCount: number;
   totalAlreadyImportedCount: number;
@@ -141,6 +268,11 @@ export function computeEmptyState(input: EmptyStateInputs): {
     input.visibleCount === 0;
   if (!showEmptyState) {
     return { showEmptyState, emptyStateTitle: "" };
+  }
+  // A query narrowing the list to nothing is a different answer from a host with
+  // nothing to import, and the recovery is different too.
+  if (input.hasQuery) {
+    return { showEmptyState, emptyStateTitle: i18n.t("importSession.empty.noMatches") };
   }
   const isFilteredEmpty = input.selectedProvider !== ALL_FILTER_VALUE && input.aggregatedCount > 0;
   if (isFilteredEmpty) {

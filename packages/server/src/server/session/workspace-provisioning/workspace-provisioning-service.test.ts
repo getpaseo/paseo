@@ -599,6 +599,55 @@ test("runInImportWorkspace uses an active requested workspace without creating a
   expect(await workspaceRegistry.list()).toEqual([workspace]);
 });
 
+test("runInImportWorkspace reuses an active workspace for an untargeted import", async () => {
+  const cwd = path.join(tmpDir, "active-import");
+  mkdirSync(cwd);
+  const workspace = await provisioning.createWorkspaceForDirectory(cwd);
+
+  const result = await provisioning.runInImportWorkspace(
+    { cwd },
+    async (target) => target.workspaceId,
+  );
+
+  expect(result).toEqual({ value: workspace.workspaceId, createdWorkspace: null });
+  expect(await workspaceRegistry.list()).toEqual([workspace]);
+});
+
+test("runInImportWorkspace unarchives a workspace for an untargeted import", async () => {
+  const cwd = path.join(tmpDir, "archived-import");
+  mkdirSync(cwd);
+  const workspace = await provisioning.createWorkspaceForDirectory(cwd);
+  await workspaceRegistry.archive(workspace.workspaceId, ARCHIVED_AT);
+
+  const result = await provisioning.runInImportWorkspace(
+    { cwd },
+    async (target) => target.workspaceId,
+  );
+
+  expect(result).toEqual({ value: workspace.workspaceId, createdWorkspace: null });
+  expect(await workspaceRegistry.get(workspace.workspaceId)).toMatchObject({
+    workspaceId: workspace.workspaceId,
+    archivedAt: null,
+  });
+  expect(await workspaceRegistry.list()).toHaveLength(1);
+});
+
+test("runInImportWorkspace leaves a reused workspace intact when import fails", async () => {
+  const cwd = path.join(tmpDir, "failed-active-import");
+  mkdirSync(cwd);
+  const workspace = await provisioning.createWorkspaceForDirectory(cwd);
+  const project = await projectRegistry.get(workspace.projectId);
+
+  await expect(
+    provisioning.runInImportWorkspace({ cwd }, async () => {
+      throw new Error("provider session is unavailable");
+    }),
+  ).rejects.toThrow("provider session is unavailable");
+
+  expect(await workspaceRegistry.list()).toEqual([workspace]);
+  expect(await projectRegistry.get(workspace.projectId)).toEqual(project);
+});
+
 test.each(["missing", "archived"] as const)(
   "runInImportWorkspace rejects a %s requested workspace before importing",
   async (state) => {

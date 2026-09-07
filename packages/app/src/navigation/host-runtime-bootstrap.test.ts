@@ -6,6 +6,7 @@ import {
   resolveStartupRoute,
   shouldRunStartupGiveUpTimer,
   startHostRuntimeBootstrap,
+  bindHostRuntimeAppState,
 } from "./host-runtime-bootstrap";
 import type { DaemonStartResult, StartDaemonIfEnabledInput } from "@/runtime/daemon-start-service";
 
@@ -392,4 +393,35 @@ describe("resolveHostIndexRoute", () => {
       }),
     ).toEqual("/open-project");
   });
+});
+
+describe("host runtime app lifecycle", () => {
+  it.each(["inactive", "background"] as const)(
+    "starts with reconnect disabled when mounted %s",
+    (currentState) => {
+      const visibility: boolean[] = [];
+      let listener: ((state: "active" | "background") => void) | undefined;
+      let subscribed = true;
+      const dispose = bindHostRuntimeAppState(
+        { setAppVisible: (visible) => visibility.push(visible) },
+        {
+          currentState,
+          addEventListener: (_event, handler) => {
+            listener = handler;
+            return {
+              remove: () => {
+                subscribed = false;
+              },
+            };
+          },
+        },
+      );
+      expect(visibility).toEqual([false]);
+      listener?.("active");
+      listener?.("background");
+      expect(visibility).toEqual([false, true, false]);
+      dispose();
+      expect(subscribed).toBe(false);
+    },
+  );
 });

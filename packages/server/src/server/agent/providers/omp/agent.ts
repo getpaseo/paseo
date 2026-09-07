@@ -69,7 +69,7 @@ export { formatOmpVersionSupport, resolveOmpDiagnosticPaths } from "./provider-c
 import { OmpSubagentCardTracker, type OmpSubagentCardScheduler } from "./subagent-card-tracker.js";
 import { shouldDisplayOmpCustomMessage } from "./custom-message.js";
 import { getUserMessageText } from "./message-history.js";
-import { mapOmpSystemNoticeToToolCall } from "./system-notice.js";
+import { mapOmpSystemNoticeToNotification } from "./system-notice.js";
 import { materializeProviderImage } from "../provider-image-output.js";
 import { OmpCliRuntime } from "./cli-runtime.js";
 import { listOmpImportableSessions, readOmpImportSessionConfig } from "./session-descriptor.js";
@@ -2019,7 +2019,7 @@ export class OmpAgentSession implements AgentSession {
         if (text) {
           const item =
             mapOmpAdvisorMessageToToolCall(event.message, text) ??
-            mapOmpSystemNoticeToToolCall(text);
+            mapOmpSystemNoticeToNotification(text);
           this.emit({
             type: "timeline",
             provider: this.provider,

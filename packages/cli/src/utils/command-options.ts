@@ -21,3 +21,14 @@ export function addDaemonHostOption<T extends Command>(command: T): T {
 export function addJsonAndDaemonHostOptions<T extends Command>(command: T): T {
   return addDaemonHostOption(addJsonOption(command));
 }
+
+export function withGlobalOptions<Args extends unknown[], Result>(
+  handler: (...args: Args) => Result,
+): (...args: Args) => Result {
+  return (...args) => {
+    const command = args.at(-1) as Command;
+    const mergedArgs = [...args];
+    mergedArgs[mergedArgs.length - 2] = command.optsWithGlobals();
+    return handler(...(mergedArgs as Args));
+  };
+}

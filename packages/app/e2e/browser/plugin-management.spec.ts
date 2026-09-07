@@ -121,7 +121,7 @@ test("installs, reloads, recovers, disables, and removes a trusted local plugin"
   const client = await connectNewWorkspaceDaemonClient({ ownProjects: false });
   const previous = await client.getDaemonConfig();
   await writeFile(path.join(directory, "paseo-plugin.json"), JSON.stringify({ id: "e2e-plugin" }));
-  await writeFile(path.join(directory, "index.tsx"), pluginSource("Plugin v1"));
+  await writeFile(path.join(directory, "index.client.tsx"), pluginSource("Plugin v1"));
 
   try {
     const catalog = observePluginCatalog(page);
@@ -143,14 +143,14 @@ test("installs, reloads, recovers, disables, and removes a trusted local plugin"
     await reloadPlugin(page);
     await openContributionFromSettings(page, "Plugin v1", "Plugin v1 cleanup 1");
 
-    await writeFile(path.join(directory, "index.tsx"), pluginSource("Plugin v2"));
+    await writeFile(path.join(directory, "index.client.tsx"), pluginSource("Plugin v2"));
     await openPluginSettings(page);
     await reloadPlugin(page);
     await openContributionFromSettings(page, "Plugin v2", "Plugin v2 cleanup 2");
     await expect(page.getByRole("button", { name: "Plugin v1", exact: true })).not.toBeVisible();
 
     await writeFile(
-      path.join(directory, "index.tsx"),
+      path.join(directory, "index.client.tsx"),
       pluginSource("Broken surface", "render exploded"),
     );
     await openPluginSettings(page);
@@ -159,13 +159,13 @@ test("installs, reloads, recovers, disables, and removes a trusted local plugin"
     await openContribution(page, "Healthy surface", "Healthy contribution");
     await openContribution(page, "Broken surface", "Plugin failed: render exploded");
 
-    await writeFile(path.join(directory, "index.tsx"), pluginSource("Recovered surface"));
+    await writeFile(path.join(directory, "index.client.tsx"), pluginSource("Recovered surface"));
     await reloadActiveContribution(page, client, "Recovered surface cleanup 4");
     await expect(
       page.getByRole("button", { name: "Broken surface", exact: true }),
     ).not.toBeVisible();
 
-    await writeFile(path.join(directory, "index.tsx"), "export default broken syntax !!!");
+    await writeFile(path.join(directory, "index.client.tsx"), "export default broken syntax !!!");
     await openPluginSettings(page);
     await page.getByRole("button", { name: "Reload", exact: true }).click();
     await expect(page.getByTestId("plugin-management-feedback")).toContainText("Request failed");
@@ -173,7 +173,7 @@ test("installs, reloads, recovers, disables, and removes a trusted local plugin"
     await leavePluginSettings(page);
     await expectContributionRemoved(page, "Recovered surface");
 
-    await writeFile(path.join(directory, "index.tsx"), pluginSource("Plugin v3"));
+    await writeFile(path.join(directory, "index.client.tsx"), pluginSource("Plugin v3"));
     await openPluginSettings(page);
     await page.getByRole("button", { name: "Reload", exact: true }).click();
     await expect(page.getByLabel("e2e-plugin running")).toBeVisible();

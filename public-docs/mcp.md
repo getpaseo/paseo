@@ -16,6 +16,59 @@ Depending on the provider, Paseo delivers the catalog through its native tool in
 
 The MCP server itself is controlled by `daemon.mcp.enabled`. Existing agents may need a reload.
 
+## Limit Paseo tools by provider
+
+Use provider policies when different agent profiles should receive different Paseo tools. Enable
+tool injection globally, then add `paseoTools` to the exact provider IDs you launch:
+
+```json
+{
+  "$schema": "https://paseo.sh/schemas/paseo.config.v1.json",
+  "version": 1,
+  "daemon": {
+    "mcp": {
+      "enabled": true,
+      "injectIntoAgents": true
+    }
+  },
+  "agents": {
+    "providers": {
+      "codex-lead": {
+        "extends": "codex",
+        "label": "Codex Lead"
+      },
+      "codex-worker": {
+        "extends": "codex",
+        "label": "Codex Worker",
+        "paseoTools": {
+          "disabledTools": ["create_agent", "send_agent_prompt", "kill_agent"]
+        }
+      },
+      "codex-isolated": {
+        "extends": "codex",
+        "label": "Codex Isolated",
+        "paseoTools": {
+          "enabled": false
+        }
+      }
+    }
+  }
+}
+```
+
+Run `paseo reload` after editing `~/.paseo/config.json`, then start a new agent or reload an
+existing one. A running session keeps the catalog it received at launch.
+
+Omitting `paseoTools` enables the complete catalog. Set `enabled` to `false` to remove the catalog,
+or list exact tool IDs in `disabledTools` to remove selected tools. Custom profiles do not inherit
+this policy from `extends`; configure each custom provider ID separately.
+
+Browser tools still require browser tools to be enabled and a connected browser host. The
+voice-only `speak` tool is separate from this policy.
+
+This setting limits the catalog presented to an agent. It is not a security boundary for an agent
+that can access the host through a shell.
+
 ## Mental model
 
 Workspaces decide where work happens; agent parentage decides who owns the work.

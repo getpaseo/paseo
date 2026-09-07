@@ -29,15 +29,26 @@ function waitForRuntimeMessage(
   });
 }
 
-async function mountRuntime(): Promise<HTMLIFrameElement> {
+async function mountRuntime(size?: { width: number; height: number }): Promise<HTMLIFrameElement> {
   const frame = document.createElement("iframe");
   frame.sandbox.add("allow-scripts");
+  if (size) {
+    frame.style.width = `${size.width}px`;
+    frame.style.height = `${size.height}px`;
+  }
   const ready = waitForRuntimeMessage(frame, (message) => message.type === "bridgeReady");
   frame.srcdoc = mermaidRuntimeHtml;
   document.body.append(frame);
   mountedFrames.push(frame);
   await ready;
   return frame;
+}
+
+function renderedSize(message: MermaidRuntimeMessage): { height: number; width: number } {
+  if (message.type !== "rendered") {
+    throw new Error(`Expected a rendered diagram, got ${message.type}`);
+  }
+  return { height: message.height, width: message.width };
 }
 
 function render(
@@ -83,6 +94,22 @@ describe("Mermaid sandbox runtime", () => {
     expect(first).toMatchObject({ type: "rendered", revision: 1, source: firstSource });
     expect(invalid).toEqual({ type: "renderError", revision: 2 });
     expect(second).toMatchObject({ type: "rendered", revision: 3, source: secondSource });
+  });
+
+  /**
+   * The host sizes this frame from the reported size, so a size that depends on the frame feeds
+   * back: every re-render measures inside a frame the previous measurement already shrank by the
+   * container's padding, and a streaming diagram ratchets down to a few pixels.
+   */
+  it("reports the same size whatever frame the host gives it", async () => {
+    const source = "flowchart TD\nA[Start] --> B[Middle]\nB --> C[Ship]";
+    const narrowFrame = await mountRuntime({ height: 60, width: 60 });
+    const wideFrame = await mountRuntime({ height: 600, width: 900 });
+
+    const narrow = await render(narrowFrame, { revision: 1, source });
+    const wide = await render(wideFrame, { revision: 1, source });
+
+    expect(renderedSize(narrow)).toEqual(renderedSize(wide));
   });
 
   it("coalesces queued input and never reports an obsolete result", async () => {

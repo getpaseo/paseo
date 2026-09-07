@@ -228,6 +228,7 @@ interface SidebarWorkspaceListProps {
   onRefresh?: () => void;
   onWorkspacePress?: () => void;
   onAddProject?: () => void;
+  onImportSession?: () => void;
   listFooterComponent?: ReactElement | null;
   // Rendered inside the scroll area, below the Pinned section and above the workspace
   // list. Holds the "Workspaces" section header so pinned items sit above it.
@@ -1879,6 +1880,7 @@ export function SidebarWorkspaceList({
   onRefresh: _onRefresh,
   onWorkspacePress,
   onAddProject,
+  onImportSession,
   listFooterComponent,
   listHeaderComponent,
   parentGestureRef,
@@ -1972,6 +1974,7 @@ export function SidebarWorkspaceList({
         shortcutIndexByWorkspaceKey={shortcutIndexByWorkspaceKey}
         onWorkspacePress={onWorkspacePress}
         onAddProject={onAddProject}
+        onImportSession={onImportSession}
         listFooterComponent={listFooterComponent}
         listHeaderComponent={listHeaderComponent}
         sidebarFilterEmpty={sidebarFilterEmpty}
@@ -2067,6 +2070,7 @@ function ProjectModeList({
   shortcutIndexByWorkspaceKey,
   onWorkspacePress,
   onAddProject,
+  onImportSession,
   listFooterComponent,
   listHeaderComponent,
   sidebarFilterEmpty,
@@ -2375,7 +2379,7 @@ function ProjectModeList({
 
   const projectBody =
     projects.length === 0 ? (
-      <SidebarProjectEmptyState onAddProject={onAddProject} />
+      <SidebarProjectEmptyState onAddProject={onAddProject} onImportSession={onImportSession} />
     ) : (
       <DraggableList
         testID="sidebar-project-list"
