@@ -333,8 +333,7 @@ intact. The host reserves bottom safe-area space on compact native layouts; sett
 to zero removes the decorative inset, not that space. Keyboard clearance is handled separately.
 
 With `scrollable={false}`, the body fills the available sheet height, and the centered dialog uses
-85% of the available height. Use `flex: 1, minHeight: 0` on your list. In this mode the body scrolls
-at every sheet height; drag the handle to resize or dismiss the sheet. Default scrolling dialogs stay
+85% of the available height. Use `flex: 1, minHeight: 0` on your list. Default scrolling dialogs stay
 content-sized on wide layouts. Presentation follows window size, including narrow desktop windows
 and wide tablets.
 
@@ -353,6 +352,11 @@ a sheet they use ordinary React Native scrolling. Do not import bottom-sheet lib
 Use one vertical scroll owner: either the default modal body, or your own list with
 `scrollable={false}`. A fixed-height vertical list nested inside the default scrolling body can compete
 with the sheet for gestures on Android. Horizontal scrolling can coexist with the host's vertical body.
+
+Both the default body and SDK lists share native sheet gestures: drag up to expand before scrolling;
+drag down at the top of the list to collapse or dismiss. `scrollable={false}` removes the host's scroll
+container without changing these gestures. Expand the sheet before using list methods such as
+`scrollToEnd`; the sheet locks list offsets below its largest height.
 
 ```tsx
 import { FlatList, Modal } from "@getpaseo/plugin/react-native";
