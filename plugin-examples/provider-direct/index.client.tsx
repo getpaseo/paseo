@@ -1,4 +1,4 @@
-import type { PluginClientContext } from "@getpaseo/plugin";
+import type { PluginClientContext } from "@getpaseo/plugin/client";
 import { ProviderResult } from "./client/provider-result";
 import { providerResultKind, providerResultSchema } from "./shared/provider-result";
 

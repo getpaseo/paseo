@@ -5,7 +5,14 @@ import { expect, it } from "vitest";
 it("keeps React out of the plugin host's runtime dependency graph", async () => {
   await expect(
     build({
-      entryPoints: [fileURLToPath(new URL("./plugin-process.ts", import.meta.url))],
+      entryPoints: [
+        fileURLToPath(new URL("./plugin-process.ts", import.meta.url)),
+        "@getpaseo/plugin",
+        "@getpaseo/plugin/server",
+        "@getpaseo/plugin/provider",
+        "@getpaseo/plugin/acp",
+      ],
+      outdir: "unused",
       conditions: ["source"],
       bundle: true,
       platform: "node",

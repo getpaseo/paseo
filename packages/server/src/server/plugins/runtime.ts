@@ -1,3 +1,5 @@
+import type { PluginBeforeRequests, PluginLifecycleEvents } from "@getpaseo/plugin/server";
+import { validateBeforeRequest, validateBeforeResult } from "./lifecycle/index.js";
 import { fork } from "node:child_process";
 import { stat } from "node:fs/promises";
 import path from "node:path";
@@ -8,6 +10,7 @@ import {
   PROVIDER_CAPABILITIES,
   requireProviderCapabilities,
   type ProviderConnectRequest,
+  type ProviderCatalogOptions,
   type ProviderConnection,
   type ProviderEvent,
   type ProviderInput,
@@ -15,6 +18,8 @@ import {
 import type { PluginLogEntry } from "@getpaseo/protocol/messages";
 import { compilePlugin } from "./compiler.js";
 import { readPluginManifest } from "./manifest.js";
+import type { PluginRequirements } from "@getpaseo/protocol/messages";
+import { assertPluginCompatibility } from "@getpaseo/protocol/plugin-requirements";
 import type {
   PluginProcessMessage,
   PluginProcessRequest,
@@ -55,8 +60,10 @@ interface PendingInvocation {
 
 interface LoadedPlugin {
   id: string;
+  requirements: PluginRequirements | undefined;
   clientBundle: string;
   methods: ReadonlySet<string>;
+  hooks: { events: string[]; before: string[] };
   providers: readonly PluginProviderMetadata[];
   child: PluginChild | null;
   outputCapture: PluginOutputCapture | null;
@@ -89,6 +96,8 @@ interface RemoteProviderConnection {
 }
 
 interface PluginRuntimeDependencies {
+  settingsDirectory?: string;
+  onSettingsChanged?: (pluginId: string, settingsId: string) => void;
   spawnChild?: () => PluginChild;
   sessionHost?: PluginPaseoSessionHost;
 }
@@ -270,7 +279,7 @@ export class PluginRuntime {
   constructor(
     logger: pino.Logger,
     private readonly daemonVersion: string,
-    dependencies: PluginRuntimeDependencies = {},
+    private readonly dependencies: PluginRuntimeDependencies = {},
   ) {
     this.logger = logger.child({ module: "plugins" });
     this.spawnChild = dependencies.spawnChild ?? spawnPluginChild;
@@ -309,7 +318,8 @@ export class PluginRuntime {
 
   async validatePlugin(configuredPath: string): Promise<void> {
     const directory = path.resolve(configuredPath);
-    await readPluginManifest(directory);
+    const manifest = await readPluginManifest(directory);
+    assertPluginCompatibility({ ...manifest, version: this.daemonVersion, runtime: "daemon" });
     const entryPaths = await resolveEntryPaths(directory);
     await compilePlugin(entryPaths);
   }
@@ -323,9 +333,9 @@ export class PluginRuntime {
     return true;
   }
 
-  catalog(): Array<{ id: string; clientBundle: string }> {
+  catalog(): Array<{ id: string; clientBundle: string; requirements?: PluginRequirements }> {
     return [...this.plugins.values()]
-      .map(({ id, clientBundle }) => ({ id, clientBundle }))
+      .map(({ id, clientBundle, requirements }) => ({ id, clientBundle, requirements }))
       .sort((left, right) => left.id.localeCompare(right.id));
   }
 
@@ -413,16 +423,99 @@ export class PluginRuntime {
     if (!loaded) throw new Error(`Plugin is not available: ${pluginId}`);
     if (!loaded.methods.has(method))
       throw new Error(`Plugin ${pluginId} does not contribute RPC ${method}`);
+    return this.request(loaded, { type: "invoke", requestId: randomUUID(), method, input });
+  }
+
+  emit<Name extends keyof PluginLifecycleEvents>(
+    name: Name,
+    event: PluginLifecycleEvents[Name],
+  ): void {
+    for (const loaded of this.plugins.values()) {
+      if (!loaded.hooks.events.includes(name)) {
+        continue;
+      }
+      void this.request(loaded, {
+        type: "hook",
+        requestId: randomUUID(),
+        kind: "event",
+        name,
+        input: event,
+      }).catch((error) => {
+        this.appendLog(
+          loaded.id,
+          "stderr",
+          `Lifecycle hook ${name} failed: ${describeError(error)}`,
+        );
+      });
+    }
+  }
+
+  async before<Name extends keyof PluginBeforeRequests>(
+    name: Name,
+    input: PluginBeforeRequests[Name],
+  ): Promise<PluginBeforeRequests[Name]> {
+    let request = validateBeforeRequest(name, input);
+    const plugins = [...this.plugins.values()].sort((left, right) => {
+      return left.id.localeCompare(right.id);
+    });
+    for (const loaded of plugins) {
+      if (!loaded.hooks.before.includes(name)) {
+        continue;
+      }
+      try {
+        const output = await this.request(loaded, {
+          type: "hook",
+          requestId: randomUUID(),
+          kind: "before",
+          name,
+          input: request,
+        });
+        request = validateBeforeResult(name, request, output);
+      } catch (error) {
+        throw new Error(`Plugin ${loaded.id} before ${name} failed: ${describeError(error)}`, {
+          cause: error,
+        });
+      }
+    }
+    return request;
+  }
+
+  async getProviderCatalogCacheKey(
+    pluginId: string,
+    providerId: string,
+    options: ProviderCatalogOptions,
+  ): Promise<string | undefined> {
+    const loaded = this.plugins.get(pluginId);
+    if (!loaded) throw new Error(`Plugin is not available: ${pluginId}`);
+    const output = await this.request(loaded, {
+      type: "provider.catalog_key",
+      requestId: randomUUID(),
+      providerId,
+      options,
+    });
+    if (output !== undefined && typeof output !== "string")
+      throw new Error("Invalid catalogue key from plugin");
+    return output;
+  }
+
+  private request(
+    loaded: LoadedPlugin,
+    message: Extract<PluginProcessRequest, { requestId: string }>,
+  ): Promise<unknown> {
     const child = loaded.child;
+    const pluginId = loaded.id;
     if (!child) throw new Error(`Plugin ${pluginId} has no server entry`);
-    const requestId = randomUUID();
+    const requestId = message.requestId;
     return new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
         loaded.pending.delete(requestId);
-        reject(new Error(`Plugin RPC timed out: ${pluginId}.${method}`));
+        if (message.type === "hook") {
+          void send(child, { type: "hook.cancel", requestId }).catch(() => {});
+        }
+        reject(new Error(`Plugin RPC timed out: ${pluginId}.${message.type}`));
       }, REQUEST_TIMEOUT_MS);
       loaded.pending.set(requestId, { resolve, reject, timeout });
-      void send(child, { type: "invoke", requestId, method, input }).catch((error) => {
+      void send(child, message).catch((error) => {
         clearTimeout(timeout);
         loaded.pending.delete(requestId);
         reject(error);
@@ -444,7 +537,8 @@ export class PluginRuntime {
     configuredPath: string,
   ): Promise<LoadedPlugin> {
     const directory = path.resolve(configuredPath);
-    await readPluginManifest(directory);
+    const manifest = await readPluginManifest(directory);
+    assertPluginCompatibility({ ...manifest, version: this.daemonVersion, runtime: "daemon" });
     const entryPaths = await resolveEntryPaths(directory);
     const bundles = await compilePlugin(entryPaths);
     const serverBundle = bundles.serverBundle;
@@ -452,7 +546,9 @@ export class PluginRuntime {
       return {
         id: pluginId,
         clientBundle: bundles.clientBundle ?? "",
+        requirements: manifest.requirements,
         methods: new Set(),
+        hooks: { events: [], before: [] },
         providers: [],
         child: null,
         outputCapture: null,
@@ -532,6 +628,9 @@ export class PluginRuntime {
             pluginId,
             appVersion: this.daemonVersion,
             bundle: serverBundle,
+            settingsDirectory: this.dependencies.settingsDirectory
+              ? path.join(this.dependencies.settingsDirectory, pluginId)
+              : undefined,
           }).catch(fail);
         },
       );
@@ -544,7 +643,9 @@ export class PluginRuntime {
     loaded = {
       id: pluginId,
       clientBundle: bundles.clientBundle ?? "",
+      requirements: manifest.requirements,
       methods: new Set(ready.methods),
+      hooks: ready.hooks ?? { events: [], before: [] },
       providers: ready.providers ?? [],
       child,
       outputCapture,
@@ -562,6 +663,14 @@ export class PluginRuntime {
   }
 
   private handleChildMessage(loaded: LoadedPlugin, message: PluginProcessMessage): void {
+    if (message.type === "hooks.changed") {
+      loaded.hooks = message.hooks;
+      return;
+    }
+    if (message.type === "settings.changed") {
+      this.dependencies.onSettingsChanged?.(loaded.id, message.settingsId);
+      return;
+    }
     if (message.type.startsWith("provider.")) {
       this.handleProviderMessage(loaded, message);
       return;

@@ -1,9 +1,10 @@
 import { existsSync, readFileSync } from "node:fs";
-import { createRequire } from "node:module";
+import { createRequire, isBuiltin } from "node:module";
 import path from "node:path";
-import type { OnResolveResult, Plugin } from "esbuild";
+import type { Metafile, OnResolveResult, Plugin } from "esbuild";
 import {
-  PLUGIN_CLIENT_ONLY_SDK_SPECIFIERS,
+  isPluginClientOnlySdkSpecifier,
+  isPluginServerOnlySdkSpecifier,
   PLUGIN_SDK_SPECIFIERS,
 } from "./plugin-sdk-specifiers.js";
 
@@ -120,7 +121,7 @@ function findDependencyRoot(
 
 function moduleBoundaryError(
   moduleLocation: PluginModuleLocation | null,
-  target: PluginBuildTarget,
+  target: PluginBuildTarget | "shared",
   filePath: string,
 ): OnResolveResult | null {
   if (moduleLocation === "invalid") {
@@ -144,7 +145,7 @@ function lexicalBoundaryError(
   specifier: string,
   resolveDirectory: string,
   pluginDirectory: string,
-  target: PluginBuildTarget,
+  target: PluginBuildTarget | "shared",
 ): OnResolveResult | null {
   if (!specifier.startsWith(".") && !path.isAbsolute(specifier)) return null;
   const lexicalPath = path.resolve(resolveDirectory, specifier);
@@ -161,11 +162,15 @@ function createRuntimeBoundaryPlugin(target: PluginBuildTarget, pluginDirectory:
       buildContext.onResolve({ filter: /.*/ }, async (args) => {
         if (args.kind === "entry-point") return null;
         if (args.pluginData === boundaryResolution) return null;
+        const owner =
+          directoryTarget(args.importer, pluginDirectory) === "shared" ? "shared" : target;
+        const specifierError = runtimeSpecifierError(args.path, owner, args.importer);
+        if (specifierError) return specifierError;
         const lexicalError = lexicalBoundaryError(
           args.path,
           args.resolveDir,
           pluginDirectory,
-          target,
+          owner,
         );
         if (lexicalError) return lexicalError;
         const resolution = await buildContext.resolve(args.path, {
@@ -200,9 +205,9 @@ function createRuntimeBoundaryPlugin(target: PluginBuildTarget, pluginDirectory:
               return null;
             }
           }
-          return moduleBoundaryError(importedTarget, target, resolvedPath);
+          return moduleBoundaryError(importedTarget, owner, resolvedPath);
         }
-        return moduleBoundaryError(importedTarget, target, resolvedPath);
+        return moduleBoundaryError(importedTarget, owner, resolvedPath);
       });
     },
   };
@@ -219,50 +224,52 @@ function makeHermesInteropEager(code: string): string {
   return code.replaceAll("get: () => from[key]", "value: from[key]");
 }
 
-function exactSpecifierFilter(specifiers: readonly string[]): RegExp {
-  const alternatives = specifiers.map((specifier) =>
-    specifier.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"),
-  );
-  return new RegExp(`^(${alternatives.join("|")})$`);
-}
-
-function createUnusedPlatformModulePlugin(): Plugin {
-  const filter = exactSpecifierFilter([
-    "@tanstack/react-query",
-    "react",
-    "react/jsx-runtime",
-    "react-native",
-    ...PLUGIN_CLIENT_ONLY_SDK_SPECIFIERS,
-  ]);
-  return {
-    name: "paseo-plugin-server-unused-platform-modules",
-    setup(buildContext) {
-      buildContext.onResolve({ filter }, (args) => ({
-        path: args.path,
-        namespace: "paseo-unused-platform-module",
-        sideEffects: false,
-      }));
-      buildContext.onLoad({ filter: /.*/, namespace: "paseo-unused-platform-module" }, () => ({
-        contents: "module.exports = {};",
-        loader: "js",
-      }));
-    },
-  };
-}
-
-function createClientNodeImportPlugin(): Plugin {
-  return {
-    name: "paseo-plugin-client-node-imports",
-    setup(buildContext) {
-      buildContext.onResolve({ filter: /^node:/ }, (args) => ({
+function runtimeSpecifierError(
+  specifier: string,
+  target: PluginBuildTarget | "shared",
+  importer: string,
+): OnResolveResult | null {
+  let kind: string | null = null;
+  if (specifier === "@getpaseo/plugin/host") kind = "host-private";
+  else if (target !== "server" && isBuiltin(specifier)) kind = "Node";
+  else if (target !== "server" && isPluginServerOnlySdkSpecifier(specifier)) kind = "server-only";
+  else if (
+    target !== "client" &&
+    (isPluginClientOnlySdkSpecifier(specifier) ||
+      /^(react(?:-dom|-native)?|use-sync-external-store|@tanstack\/react-query)(\/|$)/.test(
+        specifier,
+      ))
+  )
+    kind = "client-only";
+  return kind
+    ? {
         errors: [
           {
-            text: `Node module cannot be imported into the plugin client bundle: ${args.path} imported by ${args.importer}`,
+            text: `${kind} module cannot be imported into the plugin ${target} bundle: ${specifier} imported by ${importer}`,
           },
         ],
-      }));
-    },
-  };
+      }
+    : null;
+}
+
+function checkSharedDependencies(inputs: Metafile["inputs"], pluginDirectory: string): void {
+  const pending = Object.keys(inputs).filter(
+    (file) => directoryTarget(path.resolve(file), pluginDirectory) === "shared",
+  );
+  const visited = new Set<string>();
+  while (pending.length) {
+    const file = pending.pop()!;
+    if (visited.has(file)) continue;
+    visited.add(file);
+    for (const dependency of inputs[file]?.imports ?? []) {
+      const location = directoryTarget(path.resolve(dependency.path), pluginDirectory);
+      const error = dependency.external
+        ? runtimeSpecifierError(dependency.path, "shared", file)
+        : moduleBoundaryError(location === "invalid" ? null : location, "shared", dependency.path);
+      if (error?.errors?.length) throw new Error(error.errors[0].text);
+      if (!dependency.external) pending.push(dependency.path);
+    }
+  }
 }
 
 async function compileTarget(entryPath: string, target: PluginBuildTarget): Promise<string> {
@@ -289,16 +296,13 @@ async function compileTarget(entryPath: string, target: PluginBuildTarget): Prom
             "zod",
           ]
         : [...PLUGIN_SDK_SPECIFIERS, "zod"],
-    plugins: [
-      createRuntimeBoundaryPlugin(target, pluginDirectory),
-      ...(target === "client"
-        ? [createClientNodeImportPlugin()]
-        : [createUnusedPlatformModulePlugin()]),
-    ],
+    plugins: [createRuntimeBoundaryPlugin(target, pluginDirectory)],
+    metafile: true,
     logLevel: "silent",
     treeShaking: true,
     write: false,
   });
+  checkSharedDependencies(result.metafile.inputs, pluginDirectory);
   const output = result.outputFiles[0]?.text;
   if (!output) throw new Error(`Plugin ${target} compilation produced no output`);
   return wrapCommonJsBundle(makeHermesInteropEager(output));

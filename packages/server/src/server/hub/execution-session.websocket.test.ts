@@ -35,29 +35,147 @@ test("Hub retries one durable daemon execution across concurrency and reconstruc
   expect(reconstructed.durableAgentCount).toBe(1);
 });
 
-test("Hub session applies its scoped authorization to ordinary protocol messages", async () => {
+test("Hub execute can steer ordinary agents while unrelated administration stays denied", async () => {
   const hub = await launchRelationship();
-  const localAgentId = await hub.createUnrelatedLocalAgent();
-
-  const steeringDenial = await hub.deniedSteering(localAgentId);
-  const browserDenial = await hub.deniedBrowserDispatch();
-
-  expect(steeringDenial).toEqual({
-    requestId: "denied-steer",
-    requestType: "send_agent_message_request",
-    error: "Session is not authorized for send_agent_message_request",
-    code: "access_denied",
+  const agentId = await hub.createUnrelatedLocalAgent();
+  const response = await hub.requestOrdinary({
+    type: "send_agent_message_request",
+    requestId: "ordinary-steer",
+    agentId,
+    text: "hello",
+    messageId: "first-arrival",
+    activeTurnBehavior: "steer",
   });
-  expect(browserDenial).toEqual({
-    requestId: "browser-1",
-    requestType: "browser.automation.execute.response",
-    error: "Session is not authorized for browser.automation.execute.response",
-    code: "access_denied",
+  expect(response).toMatchObject({
+    type: "send_agent_message_response",
+    payload: { accepted: true },
   });
-  expect(hub.observedAgentIds()).not.toContain(localAgentId);
-  expect(hub.observedTrustedLifecycleMessages()).toEqual(["server_info"]);
+  expect(await hub.deniedBrowserDispatch()).toMatchObject({ code: "access_denied" });
   expect(hub.serverInfoPermissions()).toEqual([["hub.execute"]]);
 });
+
+test("ordinary Hub create and message retries do not duplicate agents or prompts", async () => {
+  const hub = await launchRelationship();
+  const create = {
+    type: "create_agent_request",
+    idempotencyKey: "ordinary-create",
+    config: { provider: "codex", cwd: hub.repoRoot() },
+  };
+  const responses = await Promise.all([
+    hub.requestOrdinary({ ...create, requestId: "create-first" }),
+    hub.requestOrdinary({ ...create, requestId: "create-duplicate" }),
+  ]);
+  const first = responses[0];
+  expect(first).toMatchObject({ type: "status", payload: { status: "agent_created" } });
+  if (first?.type !== "status" || first.payload.status !== "agent_created")
+    throw new Error("Agent was not created");
+  const agentId = first.payload.agentId;
+  expect(responses[1]).toMatchObject({ type: "status", payload: { agentId } });
+  expect(
+    await hub.requestOrdinary({
+      type: "fetch_agents_request",
+      requestId: "observe-agents",
+      subscribe: { subscriptionId: "hub-agents" },
+    }),
+  ).toMatchObject({ type: "fetch_agents_response" });
+  expect(
+    await hub.requestOrdinary({
+      type: "agent.timeline.set_subscription.request",
+      requestId: "observe-timeline",
+      agentIds: [agentId],
+    }),
+  ).toMatchObject({ type: "agent.timeline.set_subscription.response" });
+  const message = {
+    type: "send_agent_message_request",
+    agentId,
+    messageId: "ordinary-arrival",
+    text: "hello",
+    activeTurnBehavior: "steer",
+  };
+  expect(await hub.requestOrdinary({ ...message, requestId: "message-first" })).toMatchObject({
+    payload: { accepted: true },
+  });
+  expect(await hub.requestOrdinary({ ...message, requestId: "message-duplicate" })).toMatchObject({
+    payload: { accepted: true },
+  });
+  expect(
+    hub
+      .hubMessages()
+      .some((event) => event.type === "agent_stream" && event.payload.agentId === agentId),
+  ).toBe(true);
+  expect(hub.providerPromptTexts().filter((text) => text === "hello")).toHaveLength(1);
+  expect(
+    await hub.requestOrdinary({ ...message, text: "changed", requestId: "message-conflict" }),
+  ).toMatchObject({ payload: { accepted: false } });
+});
+
+test("ordinary Hub requests survive daemon restart and restore an archived workspace", async () => {
+  const hub = await launchRelationship();
+  const create = {
+    type: "create_agent_request",
+    idempotencyKey: "restorable-agent",
+    config: { provider: "codex", cwd: hub.repoRoot() },
+    worktree: { mode: "branch-off", newBranch: "ordinary-restoration" },
+  };
+  const response = await hub.requestOrdinary({ ...create, requestId: "restorable-create" });
+  if (response.type !== "status" || response.payload.status !== "agent_created")
+    throw new Error("Agent was not created");
+  const { agentId, agent } = response.payload;
+  if (!agent?.workspaceId) throw new Error("Workspace was not created");
+  const workspaceId = agent.workspaceId;
+  const message = {
+    type: "send_agent_message_request",
+    agentId,
+    messageId: "before-restart",
+    text: "hello",
+    activeTurnBehavior: "steer",
+  };
+  expect(await hub.requestOrdinary({ ...message, requestId: "before-restart-send" })).toMatchObject(
+    { payload: { accepted: true } },
+  );
+  await hub.restartDaemon();
+  await hub.socketDialed();
+  hub.connectLatestSocket();
+  expect(await hub.requestOrdinary({ ...create, requestId: "replayed-create" })).toMatchObject({
+    payload: { agentId },
+  });
+  expect(await hub.requestOrdinary({ ...message, requestId: "replayed-send" })).toMatchObject({
+    payload: { accepted: true },
+  });
+  expect(hub.providerPromptTexts().filter((text) => text === "hello")).toHaveLength(1);
+  expect(
+    await hub.requestOrdinary({
+      type: "archive_workspace_request",
+      workspaceId,
+      requestId: "ordinary-archive",
+    }),
+  ).toMatchObject({ payload: { error: null, archivedAt: expect.any(String) } });
+  expect((await hub.worktreeState(agent.cwd)).exists).toBe(false);
+  expect(
+    await hub.requestOrdinary({
+      type: "workspace.recovery.inspect.request",
+      workspaceId,
+      requestId: "inspect-recovery",
+    }),
+  ).toMatchObject({ payload: { state: { kind: "recoverable" } } });
+  expect(
+    await hub.requestOrdinary({
+      type: "workspace.recovery.restore.request",
+      workspaceId,
+      requestId: "restore-workspace",
+    }),
+  ).toMatchObject({ payload: { accepted: true } });
+  expect((await hub.worktreeState(agent.cwd)).exists).toBe(true);
+  expect(
+    await hub.requestOrdinary({
+      ...message,
+      text: "follow up",
+      messageId: "after-restore",
+      requestId: "after-restore-send",
+    }),
+  ).toMatchObject({ payload: { agentId, accepted: true } });
+  expect(hub.providerPromptTexts().filter((text) => text === "follow up")).toHaveLength(1);
+}, 20_000);
 
 test("Hub completes the standard hello before rejecting a second hello", async () => {
   const hub = await launchRelationship();

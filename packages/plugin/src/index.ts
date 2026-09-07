@@ -1,6 +1,6 @@
-import type { ComponentType } from "react";
-import type { PluginIconProps } from "./contracts.js";
-
+// Shared SDK entry. Keep runtime-specific imports and re-exports on /client or /server.
+export type * from "./contracts.js";
+export { defineSettings, settingsRpc, type SettingsDefinition } from "./settings.js";
 export {
   defineAttachmentSource,
   PluginAttachmentItemSchema,
@@ -9,47 +9,3 @@ export {
   type PluginAttachmentSearchPayload,
 } from "./attachments.js";
 export { defineRpc, type PluginRpcContract, type RpcInput, type RpcOutput } from "./rpc.js";
-
-export declare const Icon: ComponentType<PluginIconProps>;
-export type {
-  PluginAttachmentSourceContribution,
-  PluginAgentCommandContext,
-  PluginAgentPanelProps,
-  PluginAgentSnapshot,
-  PluginCleanup,
-  PluginCommandCapabilities,
-  PluginCommandCenterItemContribution,
-  PluginClientContext,
-  PluginClientContribution,
-  PluginClientSlashCommandContribution,
-  PluginClientOpenPanelOptions,
-  PluginComposerPillContribution,
-  PluginComposerPillProps,
-  PluginServerContribution,
-  PluginServerContext,
-  PluginGlobalCommandContext,
-  PluginHandlerContext,
-  PluginHostProps,
-  PluginOpenPanelOptions,
-  PluginIconProps,
-  PluginPanelLocation,
-  PluginTheme,
-  PluginSidebarContribution,
-  PluginSurfaceContribution,
-  PluginSurfaceProps,
-  PluginThemeColors,
-  PluginThemeContribution,
-  PluginTimelineData,
-  PluginTimelineItem,
-  PluginTimelineItemProps,
-  PluginTimelineRendererContribution,
-  PluginTimelineTransformerContribution,
-  PluginTimelineTransformResult,
-  PluginWorkspaceCommandContext,
-  PluginWorkspacePanelContribution,
-  PluginWorkspacePanelProps,
-  PluginWorkspaceSnapshot,
-} from "./contracts.js";
-export { usePaseo } from "./paseo-context.js";
-export { useAgent, useWorkspace } from "./client-state.js";
-export { useRpc } from "./rpc-context.js";

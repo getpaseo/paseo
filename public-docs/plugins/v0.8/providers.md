@@ -34,7 +34,7 @@ Add a server entry:
 
 ```ts
 // index.server.ts
-import type { PluginServerContext } from "@getpaseo/plugin";
+import type { PluginServerContext } from "@getpaseo/plugin/server";
 import { createProvider } from "./server/provider";
 
 export default function contribute(server: PluginServerContext) {
@@ -304,7 +304,7 @@ emit({
 Register the renderer independently in `index.client.tsx`:
 
 ```tsx
-import type { PluginClientContext } from "@getpaseo/plugin";
+import type { PluginClientContext } from "@getpaseo/plugin/client";
 import { z } from "zod";
 import { ReviewVerdict } from "./client/review-verdict";
 
@@ -332,7 +332,7 @@ daemon timeline append. A renderer does not require a provider implementation.
 Use the ACP shim when the agent already speaks ACP:
 
 ```ts
-import type { PluginServerContext } from "@getpaseo/plugin";
+import type { PluginServerContext } from "@getpaseo/plugin/server";
 import { runAcpProvider } from "@getpaseo/plugin/acp";
 
 export default function contribute(server: PluginServerContext) {

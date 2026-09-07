@@ -1,7 +1,7 @@
 # Plugins
 
 Local plugins contribute daemon RPCs, native app surfaces, workspace panels, Command Center items,
-client slash commands, timeline items, composer pills, app themes, and composer attachment sources.
+client slash commands, timeline items, composer pills, app themes, composer attachment sources, and settings screens.
 Paseo executes `index.server.ts` in a subprocess and `index.client.tsx` in every connected app.
 
 > **Trust every plugin you add.** `paseo plugin add` and `paseo plugin install` mean “I trust this codebase.” Plugins are unsandboxed: server code and Git preparation commands run with the daemon user's access on the daemon host, and client contributions run inside Paseo. The repository's dependencies and future updates are part of that trust decision. With `--host`, preparation runs on that remote daemon host.
@@ -41,7 +41,7 @@ runtime-safe: run `paseo reload` after editing `config.json`. Enabling starts ev
 enabled plugin; disabling tears them all down without restarting the daemon. Plugin source entries
 remain lifecycle-owned and do not reload from manual config edits.
 
-The directory contains an identity-only manifest, one optional entry per runtime, runtime-owned
+The directory contains a manifest declaring identity and Paseo requirements, one optional entry per runtime, runtime-owned
 directories, and local typechecking support. At least one entry is required.
 
 ```text
@@ -62,9 +62,14 @@ runtime modules, so consumers do not install these packages when adding the plug
 
 ```json
 {
-  "id": "my-plugin"
+  "id": "my-plugin",
+  "requirements": { "paseo": ">=0.8.0" }
 }
 ```
+
+Declare the supported Paseo range and keep it current when adopting newer APIs. See the
+[requirements contract](../public-docs/plugins/v0.8/reference.md#requirements), including legacy
+manifests and prerelease matching.
 
 The config key is the runtime plugin ID. The manifest ID is the default selected during install;
 `--id` overrides it. Existing configuration is not renamed when the manifest changes, and the
@@ -111,6 +116,7 @@ step:
 ```json
 {
   "id": "review",
+  "requirements": { "paseo": ">=0.8.0" },
   "build": [
     ["npm", "ci"],
     ["npm", "run", "build"]
@@ -155,21 +161,42 @@ Shared files import contract helpers and types from `@getpaseo/plugin`. Server h
 `@getpaseo/plugin/react-native`. Its `Icon` resolves a Lucide name using the client's installed icon
 set; an unknown name renders nothing so it cannot break the plugin surface.
 Its controlled modal keeps presentation metadata on `<Modal title="…" icon={…}>` and body UI in
-`<Modal.Content>`.
+`<Modal.Content>`. Body layout, sheet-aware scrolling, and clipboard actions follow the
+[host UI contract](../public-docs/plugins/v0.8/reference.md#host-ui).
 Plugin UI runs on desktop and mobile across multiple themes: color every `Text` from
 `theme.colors.foreground` or `theme.colors.foregroundMuted`, and size layout from `layout.compact`.
 See `public-docs/plugins/v0.8/reference.md`.
 
-| Module                          | Use it for                                                                                |
-| ------------------------------- | ----------------------------------------------------------------------------------------- |
-| `@getpaseo/plugin`              | contribution contracts, shared definitions, RPC input/output types, and client data hooks |
-| `@getpaseo/plugin/react-native` | Paseo React Native components and UI hooks                                                |
-| `@getpaseo/plugin/server`       | server runtime helpers and handler types such as `PluginHandlerContext`                   |
-| `@getpaseo/plugin/provider`     | provider registration, connection, session, input, event, and timeline contracts          |
-| `@getpaseo/plugin/acp`          | command-backed ACP adapter and focused transformer hooks                                  |
+### SDK import boundaries
 
-The compiler rejects a client import of `server/`, a server import of `client/`, and every `node:`
-import reachable from client code. Shared modules cannot import runtime-owned modules. A relative
+Classify every SDK export before adding it. The package root is shared code: plain data types,
+Zod schemas, and functions that run in both runtimes. A type-only import is still an architectural
+dependency; shared types must not refer to React components, hooks, Node APIs, or server contexts.
+
+| Entry                                  | Owns                                                                       | May depend on          |
+| -------------------------------------- | -------------------------------------------------------------------------- | ---------------------- |
+| `@getpaseo/plugin`                     | Shared data, schemas, RPC/settings definitions, runtime-neutral helpers    | Shared code only       |
+| `@getpaseo/plugin/server`              | Server contribution/handler contexts and lifecycle contracts               | Shared and server code |
+| `@getpaseo/plugin/provider`, `/acp`    | Server provider contracts and adapters                                     | Shared and server code |
+| `@getpaseo/plugin/client`              | Client contribution contexts, hooks, navigation, and UI contribution types | Shared and client code |
+| `@getpaseo/plugin/react-native`, `/ui` | Host-provided UI components                                                | Shared and client code |
+| `@getpaseo/plugin/host`                | App-owned rendering integration; not a plugin-author entry                 | Shared and client code |
+
+Server code imports shared helpers from the root and server capabilities from `/server`. Client
+code imports shared helpers from the root and client capabilities from `/client`. Neither runtime
+imports the other. Re-exports follow the same rule; tree shaking does not establish a boundary.
+React, React Native, JSX runtimes, and client hooks must never be reachable from the root or any
+server entry. Node and platform-specific code must never be reachable from the shared root.
+
+The SDK boundary checks and real plugin-subprocess tests enforce these rules. Every SDK change
+must preserve them and update the public reference, migration guide, scaffold, and examples when
+an author-facing import changes. The plugin compiler enforces the same runtime entry rules for
+plugin-authored code. Keep the package export map and host-provided module maps consistent.
+
+The compiler rejects imports across runtime directories or SDK entries, React dependencies in
+server code, and Node imports in client code (including bare names such as `fs`). Shared modules
+cannot import runtime-owned modules. Forbidden imports fail compilation; never replace them with
+empty module stubs. A relative
 import to any other code file in the plugin root is also rejected; move it into `client/`, `server/`,
 or `shared/`. These are compile errors naming the importing file and boundary rule. Top-level React
 Native calls such as `StyleSheet.create` belong in `client/`.
@@ -183,7 +210,7 @@ pattern.
 
 ```ts
 // index.server.ts
-import type { PluginServerContext } from "@getpaseo/plugin";
+import type { PluginServerContext } from "@getpaseo/plugin/server";
 import { createGreeting } from "./server/greeting";
 import { greetRpc } from "./shared/greeting";
 
@@ -195,7 +222,7 @@ export default function contribute(server: PluginServerContext) {
 
 ```tsx
 // index.client.tsx
-import type { PluginClientContext } from "@getpaseo/plugin";
+import type { PluginClientContext } from "@getpaseo/plugin/client";
 import { Greeting } from "./client/greeting";
 
 export default function contribute(client: PluginClientContext) {
@@ -219,7 +246,7 @@ typed async function. Use the host-provided `@tanstack/react-query` for request 
 Paseo gives each plugin installation its own query client.
 
 `usePaseo()` and the handler's `{ paseo }` context expose the same `PaseoApi`: projects,
-workspaces, agents, providers, and daemon config. They do not expose connection lifecycle. A surface borrows the
+workspaces, agents, terminals, providers, and daemon config. They do not expose connection lifecycle. A surface borrows the
 selected host's existing connection; switching the screen's host changes both `usePaseo()` and
 `useRpc()` to that host. An offline selected host fails there and never falls through to another
 installation. A server handler owns an IPC-backed daemon session for the life of its subprocess.
@@ -255,13 +282,24 @@ optional client-owned agent and workspace navigation; its absence is the compati
 older clients. Other navigation remains limited to registered global surfaces and workspace panels.
 Plugins do not receive Expo Router or workspace-layout store access.
 
+## Lifecycle hooks
+
+Server entries register lifecycle observers with `server.on()` and request transforms with
+`server.before()`. The [public reference](../public-docs/plugins/v0.8/reference.md#lifecycle-hooks)
+owns callback shapes, ordering, and failure behavior. `plugin-examples/lifecycle-logger` registers all
+eleven hooks; `plugin-examples/lifecycle-actions` demonstrates common automation callbacks.
+
+Emit from the operation owner, not a client subscription. Provider history replay must not trigger
+live hooks. Observers must not be awaited inside agent mutations: a callback can send a prompt or
+answer a permission through its own daemon session. Awaiting it there deadlocks that command.
+
 ## Contribute a provider
 
 Register a provider from `index.server.ts`. The provider connection is callback-based and owns all
 of its sessions; plugin RPC is not part of the provider data path.
 
 ```ts
-import type { PluginServerContext } from "@getpaseo/plugin";
+import type { PluginServerContext } from "@getpaseo/plugin/server";
 import type { ProviderRegistration } from "@getpaseo/plugin/provider";
 import { createProvider } from "./server/provider";
 
@@ -270,6 +308,12 @@ export default function contribute(server: PluginServerContext) {
   return () => {};
 }
 ```
+
+Implement optional `ProviderRegistration.getCatalogCacheKey(options)` to share equivalent catalogue
+probes. The callback runs in the plugin process before discovery and receives the actual global or
+workspace target. Return a key covering effective configuration and execution environment, or
+`undefined` for target-specific caching. Ignore `force` when choosing identity. Existing providers
+need no change. See [catalogue ownership](providers.md#provider-snapshot-refresh-contract).
 
 `send()` resolves after acceptance. Publish operation completion, prompt disposition, turn state,
 configuration, permissions, persistence, and complete timeline snapshots through `onEvent()`.
@@ -414,7 +458,7 @@ credentials and vendor API calls stay in the daemon handler.
 
 ```ts
 // index.server.ts
-import type { PluginServerContext } from "@getpaseo/plugin";
+import type { PluginServerContext } from "@getpaseo/plugin/server";
 import { search } from "./server/issues";
 import { searchIssues } from "./shared/issues";
 
@@ -426,7 +470,7 @@ export default function contribute(server: PluginServerContext) {
 
 ```tsx
 // index.client.tsx
-import type { PluginClientContext } from "@getpaseo/plugin";
+import type { PluginClientContext } from "@getpaseo/plugin/client";
 import { issues } from "./shared/issues";
 
 export default function contribute(client: PluginClientContext) {
@@ -439,6 +483,18 @@ Attachment sources stay scoped to the composer's host. Unlike sidebar contributi
 on several hosts are not coalesced. The selected snapshot submits as a text attachment with neutral
 external-resource presentation, so it remains readable if the plugin is removed or an older peer
 drops the optional presentation fields.
+
+## Contribute settings
+
+Register ordinary components with `client.addSettingsScreen` and open them with `openSettings`.
+The host settings shell owns navigation and layout; plugin content must not add another page
+scroll view or header. See the [author contract](../public-docs/plugins/v0.8/reference.md#settings-screens)
+and `plugin-examples/settings` for the named UI components and persistence API.
+
+Settings storage is scoped to the runtime installation ID, never the source path or manifest ID.
+Its writer lives with the plugin subprocess, while its directory lives outside managed sources,
+so updates and reloads retain values. Settings-change notifications must not enter the catalog
+reload path: that path disposes the plugin and would destroy open drafts after every save.
 
 ## Contribute a theme
 

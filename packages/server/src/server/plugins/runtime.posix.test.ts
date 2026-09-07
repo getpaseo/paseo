@@ -89,8 +89,9 @@ function createReloadChild(
 function createTestRuntime(
   dependencies: NonNullable<ConstructorParameters<typeof PluginRuntime>[2]> = {},
   logger = pino({ level: "silent" }),
+  version = "0.4.0",
 ): PluginRuntime {
-  return new PluginRuntime(logger, "0.4.0", {
+  return new PluginRuntime(logger, version, {
     ...dependencies,
     sessionHost: dependencies.sessionHost ?? {
       async attachPluginSocket(_pluginId, socket) {
@@ -108,7 +109,7 @@ function createTestRuntime(
                   status: "server_info",
                   serverId: "plugin-test",
                   hostname: "plugin-test",
-                  version: "0.4.0",
+                  version,
                   features: {},
                 },
               },
@@ -209,7 +210,7 @@ afterEach(async () => {
 describe("PluginRuntime", () => {
   it.each([
     { specifier: "@getpaseo/plugin", moduleDirectory: "shared" },
-    { specifier: "@getpaseo/plugin/server", moduleDirectory: "server" },
+    { specifier: "@getpaseo/plugin", moduleDirectory: "server" },
   ])(
     "loads $specifier contracts without React in the subprocess module graph",
     async ({ specifier, moduleDirectory }) => {
@@ -271,7 +272,7 @@ register(${JSON.stringify(guardUrl)});`;
     const directory = fileURLToPath(
       new URL("../../../../../plugin-examples/provider-direct/", import.meta.url),
     );
-    const runtime = createTestRuntime();
+    const runtime = createTestRuntime({}, undefined, "0.8.0");
     await runtime.startPlugin(pluginId, directory);
     const [metadata] = runtime.getProviderRegistrations(pluginId);
     expect(metadata).toBeDefined();
@@ -312,7 +313,7 @@ register(${JSON.stringify(guardUrl)});`;
   it("runs a provider connection through the real plugin subprocess boundary", async () => {
     const directory = await createPlugin(
       "provider-round-trip",
-      `import type { PluginServerContext } from "@getpaseo/plugin";
+      `import type { PluginServerContext } from "@getpaseo/plugin/server";
 import type { ProviderEvent, ProviderRegistration } from "@getpaseo/plugin/provider";
 
 const provider: ProviderRegistration = {
@@ -520,7 +521,7 @@ export default function contribute(server: PluginServerContext) {
     );
     const directory = await createPlugin(
       "provider-acp-round-trip",
-      `import type { PluginServerContext } from "@getpaseo/plugin";
+      `import type { PluginServerContext } from "@getpaseo/plugin/server";
 import { runAcpProvider } from "@getpaseo/plugin/acp";
 import { vendorEditTransformer } from "./server/vendor-edit.js";
 
@@ -1379,7 +1380,7 @@ export default function contribute(server: { registerProvider(provider: Provider
       path.dirname(fileURLToPath(import.meta.url)),
       "../../../../../plugin-examples/linear",
     );
-    const runtime = createTestRuntime();
+    const runtime = createTestRuntime({}, undefined, "0.8.0");
 
     await runtime.startPlugin("linear", directory);
 
@@ -1552,7 +1553,7 @@ export default function contribute(plugin: any) {
       ),
       writeFile(
         path.join(directory, "index.client.tsx"),
-        `import type { PluginClientContext } from "@getpaseo/plugin";
+        `import type { PluginClientContext } from "@getpaseo/plugin/client";
 import { Surface } from "./client/surface";
 export default function contribute(client: PluginClientContext) {
   client.addSurface("main", Surface);
@@ -1562,7 +1563,7 @@ export default function contribute(client: PluginClientContext) {
       ),
       writeFile(
         path.join(directory, "index.server.ts"),
-        `import type { PluginServerContext } from "@getpaseo/plugin";
+        `import type { PluginServerContext } from "@getpaseo/plugin/server";
 import { inspectRpc } from "./shared/inspect";
 import { inspectHost } from "./server/inspect";
 export default function contribute(server: PluginServerContext) {
@@ -1635,7 +1636,7 @@ export function inspectHost(_input: z.input<typeof inspectRpc.input>) {
       ),
       writeFile(
         path.join(directory, "index.client.tsx"),
-        `import type { PluginClientContext } from "@getpaseo/plugin";
+        `import type { PluginClientContext } from "@getpaseo/plugin/client";
 import { Surface } from "./client/surface";
 
 export default function contribute(client: PluginClientContext) {
@@ -1680,7 +1681,7 @@ export function Surface() { return readSecret(); }`,
       ),
       writeFile(
         path.join(directory, "index.server.ts"),
-        `import type { PluginServerContext } from "@getpaseo/plugin";
+        `import type { PluginServerContext } from "@getpaseo/plugin/server";
 import { inspect } from "./server/inspect";
 import { inspectRpc } from "./shared/inspect";
 

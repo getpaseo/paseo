@@ -6,6 +6,8 @@
 // published — that scope is not ours. Plugins scaffolded against that name still import it, so
 // both spellings resolve. Remove the @paseo/* entries after 2026-11-19.
 export const PLUGIN_CLIENT_ONLY_SDK_SPECIFIERS = [
+  "@getpaseo/plugin/client",
+  "@getpaseo/plugin/ui",
   "@getpaseo/plugin/react-native",
   "@paseo/plugin/react-native",
 ] as const;
@@ -32,4 +34,12 @@ export function isPluginClientOnlySdkSpecifier(name: string): boolean {
 
 export function isPluginServerTypesSdkSpecifier(name: string): boolean {
   return (PLUGIN_SERVER_TYPES_SDK_SPECIFIERS as readonly string[]).includes(name);
+}
+
+export function isPluginServerOnlySdkSpecifier(name: string): boolean {
+  return (
+    isPluginServerTypesSdkSpecifier(name) ||
+    name === "@getpaseo/plugin/provider" ||
+    name === "@getpaseo/plugin/acp"
+  );
 }

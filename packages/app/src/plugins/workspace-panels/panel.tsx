@@ -1,9 +1,9 @@
 import type {
   PluginAgentPanelProps,
   PluginHostProps,
-  PluginTheme,
   PluginWorkspacePanelProps,
-} from "@getpaseo/plugin";
+} from "@getpaseo/plugin/client";
+import type { PluginTheme } from "@getpaseo/plugin";
 import { PluginClientStateProvider } from "@getpaseo/plugin/host";
 import { CircleAlert } from "lucide-react-native";
 import { useMemo } from "react";

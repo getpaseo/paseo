@@ -127,6 +127,77 @@ export default function contribute(server) {
 }
 
 describe("plugin runtime entries", () => {
+  it.each([
+    "react",
+    "react/jsx-runtime",
+    "react-native",
+    "@getpaseo/plugin/client",
+    "@getpaseo/plugin/ui",
+  ])("rejects %s from server code", async (specifier) => {
+    const entries = await createSplitPlugin();
+    await writeFile(
+      entries.server,
+      `import * as value from "${specifier}"; export default function contribute() { return value; }`,
+    );
+    await expect(compilePlugin(entries)).rejects.toThrow("client-only module");
+  });
+
+  it.each(["@getpaseo/plugin/server", "@getpaseo/plugin/provider", "@getpaseo/plugin/acp"])(
+    "rejects %s from client code",
+    async (specifier) => {
+      const entries = await createSplitPlugin();
+      await writeFile(
+        entries.client,
+        `import * as value from "${specifier}"; export default function contribute() { return value; }`,
+      );
+      await expect(compilePlugin(entries)).rejects.toThrow("server-only module");
+    },
+  );
+
+  it.each([
+    "react",
+    "node:fs",
+    "fs",
+    "@getpaseo/plugin/client",
+    "@getpaseo/plugin/server",
+    "../client/surface",
+    "../server/handler",
+  ])("rejects %s from shared code", async (specifier) => {
+    const entries = await createSplitPlugin();
+    await writeFile(
+      path.join(entries.directory, "shared/labels.ts"),
+      `import * as value from "${specifier}"; export const clientLabel = value; export const serverLabel = value;`,
+    );
+    await expect(compilePlugin(entries)).rejects.toThrow("plugin shared");
+  });
+
+  it.each([
+    { target: "client", dependency: "react" },
+    { target: "server", dependency: "node:fs" },
+  ] as const)(
+    "rejects a shared dependency reaching $dependency in the $target bundle",
+    async ({ target, dependency }) => {
+      const entries = await createSplitPlugin();
+      const dependencyDirectory = path.join(entries.directory, "node_modules/impure");
+      await mkdir(dependencyDirectory, { recursive: true });
+      await writeFile(
+        path.join(dependencyDirectory, "package.json"),
+        JSON.stringify({ name: "impure", main: "index.js" }),
+      );
+      await writeFile(path.join(dependencyDirectory, "index.js"), `export * from "${dependency}";`);
+      await writeFile(
+        path.join(entries.directory, "shared/labels.ts"),
+        `import * as value from "impure"; export const clientLabel = value; export const serverLabel = value;`,
+      );
+      await expect(
+        compilePlugin({
+          client: target === "client" ? entries.client : null,
+          server: target === "server" ? entries.server : null,
+        }),
+      ).rejects.toThrow("plugin shared");
+    },
+  );
+
   it("builds each runtime from its own entry and shares neutral modules", async () => {
     const entries = await createSplitPlugin();
 

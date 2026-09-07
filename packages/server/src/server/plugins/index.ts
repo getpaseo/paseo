@@ -1,5 +1,6 @@
+import type { PluginLifecycle } from "./lifecycle/index.js";
 import path from "node:path";
-import { stat } from "node:fs/promises";
+import { stat, rm } from "node:fs/promises";
 import type pino from "pino";
 import type { ProviderRegistration } from "@getpaseo/plugin/provider";
 import {
@@ -11,6 +12,7 @@ import {
   type PluginSourceUpdateItem,
 } from "@getpaseo/protocol/messages";
 import { parsePluginSourceReference } from "@getpaseo/protocol/plugin-source-reference";
+import { assertPluginCompatibility } from "@getpaseo/protocol/plugin-requirements";
 import { BUILTIN_PROVIDER_IDS } from "@getpaseo/protocol/provider-manifest";
 import type { DaemonConfigStore } from "../daemon-config-store.js";
 import { type ManagedPluginCandidate, ManagedPluginSources } from "./managed-source.js";
@@ -23,12 +25,15 @@ import { readPluginProviderIcon } from "./provider-icon.js";
 const BUILTIN_PROVIDER_ID_SET: ReadonlySet<string> = new Set(BUILTIN_PROVIDER_IDS);
 
 interface PluginRuntimePort {
-  catalog(): Array<{ id: string; clientBundle: string }>;
+  emit?: PluginLifecycle["emit"];
+  before?: PluginLifecycle["before"];
+  catalog: PluginRuntime["catalog"];
   invoke(pluginId: string, method: string, input: unknown): Promise<unknown>;
   getLogs(pluginId: string): PluginLogEntry[];
   clearLogs(pluginId: string): void;
   getProviderRegistrations?(pluginId: string): readonly PluginProviderMetadata[];
   connectProvider: PluginRuntime["connectProvider"];
+  getProviderCatalogCacheKey?: PluginRuntime["getProviderCatalogCacheKey"];
   validatePlugin?(path: string): Promise<void>;
   startPlugin(pluginId: string, path: string, canPublish: () => boolean): Promise<void>;
   stopPluginById(pluginId: string): Promise<boolean>;
@@ -38,6 +43,7 @@ interface PluginRuntimePort {
 }
 
 interface PluginServiceDependencies {
+  settingsDirectory?: string;
   runtime?: PluginRuntimePort;
   managedSources?: ManagedPluginSources;
 }
@@ -63,21 +69,45 @@ export class PluginService {
   private lifecycle = Promise.resolve();
   private globalStartsBlocked = true;
   private started = false;
+  private readonly settingsListeners = new Set<(pluginId: string, settingsId: string) => void>();
 
   constructor(
     logger: pino.Logger,
     private readonly configStore: DaemonConfigStore,
-    daemonVersion: string,
-    dependencies: PluginServiceDependencies = {},
+    private readonly daemonVersion: string,
+    private readonly dependencies: PluginServiceDependencies = {},
   ) {
     this.logger = logger.child({ module: "plugin-service" });
-    this.runtime = dependencies.runtime ?? new PluginRuntime(logger, daemonVersion);
+    this.runtime =
+      dependencies.runtime ??
+      new PluginRuntime(logger, daemonVersion, {
+        settingsDirectory: dependencies.settingsDirectory,
+        onSettingsChanged: (pluginId, settingsId) => {
+          for (const listener of this.settingsListeners) listener(pluginId, settingsId);
+        },
+      });
     this.managedSources = dependencies.managedSources ?? null;
     this.runtime.subscribe((pluginId, error) => {
       this.removeProviderRegistrations(pluginId);
       if (error) this.errors.set(pluginId, error);
       this.notify(pluginId);
     });
+  }
+
+  readonly emit: PluginLifecycle["emit"] = (name, event) => {
+    this.runtime.emit?.(name, event);
+  };
+
+  readonly before: PluginLifecycle["before"] = async (name, request) => {
+    if (this.runtime.before) {
+      return this.runtime.before(name, request);
+    }
+    return request;
+  };
+
+  subscribeSettings(listener: (pluginId: string, settingsId: string) => void): () => void {
+    this.settingsListeners.add(listener);
+    return () => this.settingsListeners.delete(listener);
   }
 
   subscribe(listener: (pluginId: string) => void): () => void {
@@ -151,7 +181,7 @@ export class PluginService {
     return this.runtime.getLogs(pluginId);
   }
 
-  catalog(): Array<{ id: string; clientBundle: string }> {
+  catalog(): ReturnType<PluginRuntime["catalog"]> {
     return this.runtime.catalog();
   }
 
@@ -159,6 +189,7 @@ export class PluginService {
     return this.enqueue(async () => {
       const directory = path.resolve(input.path);
       const manifest = await readPluginManifest(directory);
+      assertPluginCompatibility({ ...manifest, version: this.daemonVersion, runtime: "daemon" });
       const pluginId = PluginIdSchema.parse(input.id ?? manifest.id);
       if (this.configStore.get().plugins?.[pluginId]) {
         throw new Error(
@@ -210,6 +241,7 @@ export class PluginService {
       });
       let pluginId: string;
       try {
+        await this.checkRequirements(candidate.directory);
         await runPluginBuild(candidate.directory, candidate.build, this.logger);
         pluginId = PluginIdSchema.parse(input.id ?? candidate.defaultId);
         if (this.configStore.get().plugins?.[pluginId]) {
@@ -318,6 +350,11 @@ export class PluginService {
       this.errors.delete(pluginId);
       this.notify(pluginId);
       await this.managedSources?.remove(pluginId);
+      if (this.dependencies.settingsDirectory)
+        await rm(path.join(this.dependencies.settingsDirectory, pluginId), {
+          recursive: true,
+          force: true,
+        });
     });
   }
 
@@ -437,6 +474,13 @@ export class PluginService {
           id: provider.id,
           label: provider.label,
           description: provider.description,
+          getCatalogCacheKey: provider.hasCatalogCacheKey
+            ? (options) => {
+                if (!this.runtime.getProviderCatalogCacheKey)
+                  throw new Error("Plugin runtime cannot resolve catalogue keys");
+                return this.runtime.getProviderCatalogCacheKey(pluginId, provider.id, options);
+              }
+            : undefined,
           icon: provider.iconPath
             ? await readPluginProviderIcon(pluginDirectory, provider.iconPath)
             : undefined,
@@ -481,6 +525,11 @@ export class PluginService {
     this.errors.set(pluginId, error instanceof Error ? error.message : String(error));
   }
 
+  private async checkRequirements(directory: string): Promise<void> {
+    const manifest = await readPluginManifest(directory);
+    assertPluginCompatibility({ ...manifest, version: this.daemonVersion, runtime: "daemon" });
+  }
+
   private async updateSource(pluginId: string): Promise<PluginSourceUpdateItem> {
     const managedSources = this.requireManagedSources();
     const source = this.requireSource(pluginId);
@@ -498,6 +547,7 @@ export class PluginService {
     }
     let candidate = prepared.candidate;
     try {
+      await this.checkRequirements(candidate.directory);
       await runPluginBuild(candidate.directory, candidate.build, this.logger);
       candidate = await managedSources.place(pluginId, candidate);
       await this.validateCandidate(candidate);

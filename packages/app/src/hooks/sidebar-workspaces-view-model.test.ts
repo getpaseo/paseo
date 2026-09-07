@@ -701,7 +701,10 @@ function agent(input: {
     id: input.id,
     provider: "claude" as Agent["provider"],
     status: input.status,
-    activeTurn: null,
+    turn:
+      input.status === "running"
+        ? { phase: "open", turnId: null, startedAt: null, cancellationRequestId: null }
+        : { phase: "idle", cancellationRequestId: null },
     createdAt: new Date(0),
     updatedAt: input.updatedAt ?? new Date(1_000),
     lastUserMessageAt: null,

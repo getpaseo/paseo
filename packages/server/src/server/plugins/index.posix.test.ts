@@ -165,6 +165,7 @@ describe("PluginService", () => {
     id: "plugin-agent",
     label: "Plugin agent",
     icon: "icon.svg",
+    async getCatalogCacheKey(options) { return options.scope === "workspace" ? "runtime:" + options.cwd : undefined; },
     async connect() { throw new Error("not opened by this test"); },
   });
   return () => {};
@@ -178,8 +179,16 @@ describe("PluginService", () => {
     await service.installDirectory({ path: directory });
 
     expect(service.getProviderRegistrations()).toMatchObject([
-      { id: "plugin-agent", icon: iconSvg },
+      { id: "plugin-agent", icon: iconSvg, getCatalogCacheKey: expect.any(Function) },
     ]);
+    const provider = service.getProviderRegistrations()[0]!;
+    expect(await provider.getCatalogCacheKey!({ scope: "workspace", cwd: "/project-a" })).toBe(
+      "runtime:/project-a",
+    );
+    expect(
+      await provider.getCatalogCacheKey!({ scope: "workspace", cwd: "/project-b", force: true }),
+    ).toBe("runtime:/project-b");
+    expect(await provider.getCatalogCacheKey!({ scope: "global" })).toBeUndefined();
   });
 
   it("publishes provider registrations only while their plugin is running", async () => {

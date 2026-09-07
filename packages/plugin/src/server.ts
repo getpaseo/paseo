@@ -1,3 +1,2 @@
-export type { PluginHandlerContext } from "./contracts.js";
-export { defineAttachmentSource } from "./attachments.js";
-export { defineRpc, type PluginRpcContract, type RpcInput, type RpcOutput } from "./rpc.js";
+export type * from "./server-contracts.js";
+export type * from "./lifecycle.js";

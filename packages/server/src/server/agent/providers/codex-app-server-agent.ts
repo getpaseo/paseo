@@ -4816,12 +4816,12 @@ export class CodexAppServerAgentSession implements AgentSession {
 
   private async disposeClient(): Promise<void> {
     const client = this.client;
-    this.client = null;
     this.connected = false;
     this.currentTurnId = null;
     if (client) {
       await client.dispose();
     }
+    this.client = null;
   }
 
   async listCommands(): Promise<AgentSlashCommand[]> {
@@ -7081,6 +7081,11 @@ export class CodexAppServerAgentClient implements AgentClient {
       context,
       resumeSession: this.resumeSession.bind(this),
     });
+  }
+
+  async getCatalogCacheKey(_options: FetchCatalogOptions): Promise<string> {
+    // This client discovers through host configuration, independent of project cwd.
+    return "host";
   }
 
   async fetchCatalog(

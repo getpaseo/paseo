@@ -1,6 +1,7 @@
 /**
  * @vitest-environment jsdom
  */
+import appPackage from "../../../package.json";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import React, { act } from "react";
 import { createRoot } from "react-dom/client";
@@ -29,16 +30,6 @@ vi.mock("../client-runtime", () => ({
 vi.mock("../icons", () => ({
   Icon: () => null,
   resolvePluginIcon: () => () => null,
-}));
-vi.mock("react-native-unistyles", () => ({
-  StyleSheet: {
-    create: (factory: (theme: object) => object) =>
-      factory({
-        colors: { foregroundMuted: "gray", statusDanger: "red" },
-        spacing: [0, 4, 8, 12, 16],
-      }),
-  },
-  withUnistyles: (Component: React.ComponentType) => Component,
 }));
 
 import { pluginRegistry } from "../registry";
@@ -121,9 +112,13 @@ afterEach(() => {
 
 describe("PluginTimelineItemView", () => {
   it("validates and renders the matching plugin component", () => {
-    pluginRegistry.installCatalog("host-1", [{ id: "reports", clientBundle: bundle }], {
-      client: daemonClient,
-    });
+    pluginRegistry.installCatalog(
+      "host-1",
+      [{ id: "reports", requirements: { paseo: `>=${appPackage.version}` }, clientBundle: bundle }],
+      {
+        client: daemonClient,
+      },
+    );
 
     const markup = renderToStaticMarkup(
       <PluginTimelineItemView serverId="host-1" agentId="agent-1" item={timelineItem} />,
@@ -135,9 +130,19 @@ describe("PluginTimelineItemView", () => {
   it("contains renderer crashes to one timeline item", async () => {
     vi.spyOn(console, "warn").mockImplementation(() => undefined);
     vi.spyOn(console, "error").mockImplementation(() => undefined);
-    pluginRegistry.installCatalog("host-1", [{ id: "reports", clientBundle: failingBundle }], {
-      client: daemonClient,
-    });
+    pluginRegistry.installCatalog(
+      "host-1",
+      [
+        {
+          id: "reports",
+          requirements: { paseo: `>=${appPackage.version}` },
+          clientBundle: failingBundle,
+        },
+      ],
+      {
+        client: daemonClient,
+      },
+    );
     const container = document.createElement("div");
     containers.push(container);
     document.body.appendChild(container);
@@ -162,9 +167,19 @@ describe("PluginTimelineItemView", () => {
   it("recovers when a streaming item's data changes", async () => {
     vi.spyOn(console, "warn").mockImplementation(() => undefined);
     vi.spyOn(console, "error").mockImplementation(() => undefined);
-    pluginRegistry.installCatalog("host-1", [{ id: "reports", clientBundle: recoveringBundle }], {
-      client: daemonClient,
-    });
+    pluginRegistry.installCatalog(
+      "host-1",
+      [
+        {
+          id: "reports",
+          requirements: { paseo: `>=${appPackage.version}` },
+          clientBundle: recoveringBundle,
+        },
+      ],
+      {
+        client: daemonClient,
+      },
+    );
     const container = document.createElement("div");
     containers.push(container);
     document.body.appendChild(container);

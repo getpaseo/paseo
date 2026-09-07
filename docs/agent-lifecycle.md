@@ -21,6 +21,10 @@ the agent runs through `ensureAgentLoaded()`, which resumes the durable provider
 same Paseo agent ID. Provider history is not appended again when the canonical timeline is already
 primed.
 
+Reload releases the old runtime before resuming its durable session: an idle provider process can
+still own an exclusive writer. A close failure retains that runtime for cleanup and blocks the
+replacement. Once closure succeeds, a failed resume leaves the durable agent closed and retryable.
+
 Idle agents remain resident indefinitely. Runtime closure happens only through an explicit lifecycle
 action such as archive, replacement, reload, workspace teardown, or daemon shutdown.
 

@@ -1,3 +1,4 @@
+import appPackage from "../../../package.json";
 import { describe, expect, it, vi } from "vitest";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { pluginRegistry } from "../registry";
@@ -30,9 +31,13 @@ function install(locations: readonly ("workspace" | "explorer")[]) {
       return function() {};
     }};
   })`;
-  pluginRegistry.installCatalog("host-1", [{ id: "review", clientBundle: bundle }], {
-    client: {} as DaemonClient,
-  });
+  pluginRegistry.installCatalog(
+    "host-1",
+    [{ id: "review", requirements: { paseo: `>=${appPackage.version}` }, clientBundle: bundle }],
+    {
+      client: {} as DaemonClient,
+    },
+  );
   return pluginRegistry.getSnapshot()[0]!;
 }
 

@@ -20,7 +20,7 @@ const TSCONFIG = {
   include: ["**/*.ts", "**/*.tsx"],
 };
 
-const CLIENT_ENTRY = `import type { PluginClientContext } from "@getpaseo/plugin";
+const CLIENT_ENTRY = `import type { PluginClientContext } from "@getpaseo/plugin/client";
 import { GreetingSurface } from "./client/greeting";
 
 export default function contribute(client: PluginClientContext) {
@@ -35,7 +35,7 @@ export default function contribute(client: PluginClientContext) {
 }
 `;
 
-const SERVER_ENTRY = `import type { PluginServerContext } from "@getpaseo/plugin";
+const SERVER_ENTRY = `import type { PluginServerContext } from "@getpaseo/plugin/server";
 import { createGreeting } from "./server/greeting";
 import { greetingRpc } from "./shared/greeting";
 
@@ -63,8 +63,8 @@ export function createGreeting({ name }: RpcInput<typeof greetingRpc>) {
 }
 `;
 
-const CLIENT_GREETING = `import type { PluginSurfaceProps } from "@getpaseo/plugin";
-import { useRpc } from "@getpaseo/plugin";
+const CLIENT_GREETING = `import type { PluginSurfaceProps } from "@getpaseo/plugin/client";
+import { useRpc } from "@getpaseo/plugin/client";
 import { useMutation } from "@tanstack/react-query";
 import { useMemo } from "react";
 import { Pressable, Text, View } from "react-native";
@@ -142,13 +142,14 @@ export async function scaffoldPluginDirectory(
     throw new Error(`Plugin directory must be empty: ${directory}`);
   }
 
+  const version = resolveCliVersion();
   const packageJson = {
     name: id,
     private: true,
     version: "0.0.0",
     scripts: { typecheck: "tsc --noEmit" },
     devDependencies: {
-      "@getpaseo/plugin": resolveCliVersion(),
+      "@getpaseo/plugin": version,
       "@tanstack/react-query": "^5.90.11",
       "@types/react": "~19.2.0",
       react: "19.1.0",
@@ -158,7 +159,10 @@ export async function scaffoldPluginDirectory(
     },
   };
   const files = new Map<string, string>([
-    ["paseo-plugin.json", `${JSON.stringify({ id }, null, 2)}\n`],
+    [
+      "paseo-plugin.json",
+      `${JSON.stringify({ id, requirements: { paseo: `>=${version}` } }, null, 2)}\n`,
+    ],
     ["package.json", `${JSON.stringify(packageJson, null, 2)}\n`],
     ["tsconfig.json", `${JSON.stringify(TSCONFIG, null, 2)}\n`],
     ["index.client.tsx", CLIENT_ENTRY],

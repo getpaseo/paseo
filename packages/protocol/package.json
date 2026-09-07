@@ -31,10 +31,12 @@
     "pretest": "npm run generate:validators"
   },
   "dependencies": {
+    "semver": "^7.8.5",
     "zod": "^4.4.3"
   },
   "devDependencies": {
     "@types/node": "^20.9.0",
+    "@types/semver": "^7.8.0",
     "typescript": "^5.2.2",
     "vitest": "^4.1.6",
     "zod-aot": "0.20.4"
