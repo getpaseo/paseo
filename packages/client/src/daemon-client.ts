@@ -5681,6 +5681,8 @@ export class DaemonClient {
             ? { [CLIENT_CAPS.providerSnapshotReferences]: true }
             : {}),
           [CLIENT_CAPS.timelineNotifications]: true,
+          [CLIENT_CAPS.pluginTimelineItems]: true,
+          [CLIENT_CAPS.workspaceSetupBlocked]: true,
           ...this.config.capabilities,
         },
         ...(this.config.appVersion ? { appVersion: this.config.appVersion } : {}),

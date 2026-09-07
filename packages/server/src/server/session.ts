@@ -1175,20 +1175,23 @@ export class Session {
     return true;
   }
 
-  private supportsTimelineNotifications(source?: object): boolean {
-    return source
-      ? this.supportsForSource(CLIENT_CAPS.timelineNotifications, source)
-      : this.supports(CLIENT_CAPS.timelineNotifications);
+  // COMPAT(timelineItemCapabilities): plugin items added in v0.8.0, notifications in v0.7.2.
+  // Remove after 2027-03-07 once the supported client floor is >= v0.8.0.
+  private supportsTimelineItem(item: { type: string }, source?: object): boolean {
+    let capability: ClientCapability;
+    if (item.type === "notification") capability = CLIENT_CAPS.timelineNotifications;
+    else if (item.type === "plugin") capability = CLIENT_CAPS.pluginTimelineItems;
+    else return true;
+    return source ? this.supportsForSource(capability, source) : this.supports(capability);
   }
 
   private forwardAgentStream(
     event: Extract<AgentManagerEvent, { type: "agent_stream" }>,
     serializedEvent: Extract<SessionOutboundMessage, { type: "agent_stream" }>["payload"]["event"],
   ): void {
-    const isNotification =
-      serializedEvent.type === "timeline" && serializedEvent.item.type === "notification";
     if (this.clientCapabilitiesBySource.size === 0 || !this.onMessageToSource) {
-      if (isNotification && !this.supportsTimelineNotifications()) return;
+      if (serializedEvent.type === "timeline" && !this.supportsTimelineItem(serializedEvent.item))
+        return;
       if (this.usesSelectiveTimelineDelivery() && serializedEvent.type === "attention_required") {
         this.emit({
           type: "agent_attention_required",
@@ -1213,7 +1216,11 @@ export class Session {
     }
 
     for (const [source, capabilities] of this.clientCapabilitiesBySource) {
-      if (isNotification && !capabilities.has(CLIENT_CAPS.timelineNotifications)) continue;
+      if (
+        serializedEvent.type === "timeline" &&
+        !this.supportsTimelineItem(serializedEvent.item, source)
+      )
+        continue;
       const supportsSelectiveDelivery = capabilities.has(CLIENT_CAPS.selectiveAgentTimeline);
       if (supportsSelectiveDelivery && serializedEvent.type === "attention_required") {
         this.onMessageToSource(source, {
@@ -1679,11 +1686,10 @@ export class Session {
       };
     }
 
-    const isNotification = update.type === "timeline" && update.row.item.type === "notification";
     if (this.clientCapabilitiesBySource.size === 0 || !this.onMessageToSource) {
       if (
         this.supports(CLIENT_CAPS.providerSubagents) &&
-        (!isNotification || this.supportsTimelineNotifications())
+        (update.type !== "timeline" || this.supportsTimelineItem(update.row.item))
       ) {
         this.emit(message);
       }
@@ -1691,7 +1697,8 @@ export class Session {
     }
     for (const [source, capabilities] of this.clientCapabilitiesBySource) {
       if (!capabilities.has(CLIENT_CAPS.providerSubagents)) continue;
-      if (isNotification && !capabilities.has(CLIENT_CAPS.timelineNotifications)) continue;
+      if (update.type === "timeline" && !this.supportsTimelineItem(update.row.item, source))
+        continue;
       this.onMessageToSource(source, message);
     }
   }
@@ -4128,7 +4135,7 @@ export class Session {
     source?: object,
   ): void {
     for (const row of rows) {
-      if (row.item.type === "notification" && !this.supportsTimelineNotifications(source)) {
+      if (!this.supportsTimelineItem(row.item, source)) {
         continue;
       }
       const event = serializeAgentStreamEvent({
@@ -7175,9 +7182,9 @@ export class Session {
         selectedTimeline.endSeq !== null
           ? { epoch: selectedTimeline.timeline.epoch, seq: selectedTimeline.endSeq }
           : null;
-      const entries = this.supportsTimelineNotifications(source)
-        ? selectedTimeline.entries
-        : selectedTimeline.entries.filter((entry) => entry.item.type !== "notification");
+      const entries = selectedTimeline.entries.filter((entry) =>
+        this.supportsTimelineItem(entry.item, source),
+      );
 
       this.emitForSource(
         {
@@ -7376,9 +7383,7 @@ export class Session {
           limit: msg.limit ?? (direction === "after" ? 0 : 200),
         },
       );
-      const rows = this.supportsTimelineNotifications(source)
-        ? timeline.rows
-        : timeline.rows.filter((row) => row.item.type !== "notification");
+      const rows = timeline.rows.filter((row) => this.supportsTimelineItem(row.item, source));
       this.emitForSource(
         {
           type: "agent.provider_subagents.timeline.get.response",
@@ -7714,7 +7719,41 @@ export class Session {
         "agent.session.outbound",
       );
     }
+    if (msg.type === "workspace_setup_progress" || msg.type === "workspace_setup_status_response") {
+      if (this.clientCapabilitiesBySource.size > 0 && this.onMessageToSource) {
+        for (const [source] of this.clientCapabilitiesBySource) {
+          this.onMessageToSource(source, this.workspaceSetupMessageForClient(msg, source));
+        }
+        return;
+      }
+      msg = this.workspaceSetupMessageForClient(msg);
+    }
     this.onMessage(msg);
+  }
+
+  // COMPAT(workspaceSetupBlocked): added in v0.8.0, remove after 2027-03-07 once client floor >= v0.8.0.
+  private workspaceSetupMessageForClient(
+    message: Extract<
+      SessionOutboundMessage,
+      { type: "workspace_setup_progress" | "workspace_setup_status_response" }
+    >,
+    source?: object,
+  ): SessionOutboundMessage {
+    const supportsBlocked = source
+      ? this.supportsForSource(CLIENT_CAPS.workspaceSetupBlocked, source)
+      : this.supports(CLIENT_CAPS.workspaceSetupBlocked);
+    const snapshot =
+      message.type === "workspace_setup_progress" ? message.payload : message.payload.snapshot;
+    if (supportsBlocked || snapshot?.status !== "blocked") return message;
+    const legacySnapshot = {
+      ...snapshot,
+      status: "failed" as const,
+      error:
+        "Workspace setup is blocked pending approval of code from a fork pull request. Update Paseo to review and run setup.",
+    };
+    return message.type === "workspace_setup_progress"
+      ? { ...message, payload: { ...message.payload, ...legacySnapshot } }
+      : { ...message, payload: { ...message.payload, snapshot: legacySnapshot } };
   }
 
   private emitBinary(frame: Uint8Array): void {

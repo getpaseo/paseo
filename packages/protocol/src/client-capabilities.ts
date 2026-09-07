@@ -34,6 +34,10 @@ export const CLIENT_CAPS = {
   // timeline items for older clients whose strict timeline union rejects them.
   // Remove after 2027-03-03 once the supported client floor is >= v0.7.2.
   timelineNotifications: "timeline_notifications",
+  // COMPAT(pluginTimelineItems): added in v0.8.0, remove after 2027-03-07 once client floor >= v0.8.0.
+  pluginTimelineItems: "plugin_timeline_items",
+  // COMPAT(workspaceSetupBlocked): added in v0.8.0, remove after 2027-03-07 once client floor >= v0.8.0.
+  workspaceSetupBlocked: "workspace_setup_blocked",
   browserHost: "browser_host",
 } as const;
 
