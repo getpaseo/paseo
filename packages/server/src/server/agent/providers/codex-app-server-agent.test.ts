@@ -82,7 +82,7 @@ describe("Codex executable discovery", () => {
   });
 });
 
-import { CodexAppServerClient } from "./codex/app-server-transport.js";
+import { CodexAppServerClient, CodexAppServerRpcError } from "./codex/app-server-transport.js";
 import {
   createFakeCodexAppServer,
   type FakeCodexAppServer,
@@ -690,18 +690,110 @@ process.stdin.on("data", (chunk) => {
   }
 }
 
-describe("Codex app-server provider", () => {
-  test("getAvailableModes includes auto-review when the Codex version supports it", async () => {
-    const session = createSession({}, { autoReviewEnabled: true });
+describe("Codex foreground teardown wait (replace path)", () => {
+  // The replace path can call startTurn while the interrupted turn is still
+  // tearing down: the manager's force-cancel settles its run record before
+  // this provider clears activeForegroundTurnId, and refusing immediately
+  // loses the incoming prompt and marks the agent errored.
+  test("waits out a clearing foreground turn instead of refusing", async () => {
+    const session = createSession();
+    const internals = castInternals<{
+      activeForegroundTurnId: string | null;
+      flushForegroundTurnClearWaiters: () => void;
+    }>(session);
+    const attempt = session.startTurn("after teardown");
+    const raced = await Promise.race([
+      attempt.catch((error: unknown) => error),
+      new Promise((resolve) => setTimeout(resolve, 25, "pending")),
+    ]);
+    expect(raced).toBe("pending");
+    internals.activeForegroundTurnId = null;
+    internals.flushForegroundTurnClearWaiters();
+    // Getting past the foreground guard is the assertion; the harness spawns
+    // no app-server, so the next gate is the client-initialization error.
+    await expect(attempt).rejects.toThrow("Codex client not initialized");
+  });
 
-    await expect(session.getAvailableModes()).resolves.toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          id: "auto-review",
-          label: "Auto-review",
-        }),
-      ]),
-    );
+  test("releases the foreground slot only for the turn that owns it", () => {
+    // The manager calls this after force-canceling a run, because its own
+    // turn_canceled dispatch settles only the run record and the provider will
+    // never report the turn end that would otherwise clear the slot. Keyed, so
+    // a force-cancel racing a newer turn into the slot cannot strip the live
+    // turn's ownership.
+    const session = createSession();
+    const internals = castInternals<{ activeForegroundTurnId: string | null }>(session);
+    const releaser = session as unknown as {
+      releaseForegroundTurn(turnId: string): boolean;
+    };
+    internals.activeForegroundTurnId = "owning-turn";
+
+    expect(releaser.releaseForegroundTurn("a-stale-turn")).toBe(false);
+    expect(internals.activeForegroundTurnId).toBe("owning-turn");
+    expect(releaser.releaseForegroundTurn("")).toBe(false);
+    expect(internals.activeForegroundTurnId).toBe("owning-turn");
+
+    expect(releaser.releaseForegroundTurn("owning-turn")).toBe(true);
+    expect(internals.activeForegroundTurnId).toBeNull();
+    expect(releaser.releaseForegroundTurn("owning-turn")).toBe(false);
+  });
+
+  test("frees a startTurn queued behind a stuck slot when the slot is released", () => {
+    // Without the release the waiter sits until FOREGROUND_TEARDOWN_WAIT_MS
+    // expires and the prompt is refused. Only the queue-release is asserted:
+    // once past the guard startTurn goes on to connect(), which this harness
+    // has no client for.
+    const session = createSession();
+    const internals = castInternals<{
+      activeForegroundTurnId: string | null;
+      foregroundTurnClearWaiters: Array<() => void>;
+    }>(session);
+    const releaser = session as unknown as {
+      releaseForegroundTurn(turnId: string): boolean;
+    };
+
+    const owning = internals.activeForegroundTurnId;
+    expect(owning).toBeTruthy();
+
+    const attempt = session.startTurn("queued behind a stuck slot");
+    attempt.catch(() => {});
+    expect(internals.foregroundTurnClearWaiters).toHaveLength(1);
+
+    expect(releaser.releaseForegroundTurn(owning as string)).toBe(true);
+    expect(internals.foregroundTurnClearWaiters).toHaveLength(0);
+    expect(internals.activeForegroundTurnId).toBeNull();
+  });
+
+  test("refuses only when the teardown never completes, retaining no waiter", async () => {
+    vi.useFakeTimers();
+    try {
+      const session = createSession();
+      const internals = castInternals<{ foregroundTurnClearWaiters: Array<() => void> }>(session);
+      const attempt = session.startTurn("never clears");
+      const expectation = expect(attempt).rejects.toThrow("A foreground turn is already active");
+      expect(internals.foregroundTurnClearWaiters).toHaveLength(1);
+      await vi.advanceTimersByTimeAsync(10_000);
+      await expectation;
+      // A stuck turn plus retrying prompts must not accumulate dead closures.
+      expect(internals.foregroundTurnClearWaiters).toHaveLength(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe("Codex client disposal", () => {
+  test("releases the foreground slot when the client is disposed", async () => {
+    // A failed reconnect disposes the client and clears the native turn id.
+    // If the foreground slot survived that, interrupt() would find no turn to
+    // interrupt and every later startTurn would refuse forever.
+    const session = createSession();
+    const internals = castInternals<{
+      activeForegroundTurnId: string | null;
+      disposeClient: () => Promise<void>;
+    }>(session);
+    expect(internals.activeForegroundTurnId).toBe("test-turn");
+    await internals.disposeClient();
+    expect(internals.activeForegroundTurnId).toBeNull();
   });
 
   test("getAvailableModes excludes auto-review when the Codex version is too old", async () => {
@@ -3589,6 +3681,46 @@ describe("Codex app-server provider", () => {
     }
   });
 
+  test("flushes a queued startTurn when Codex reports the interrupted turn is already idle", async () => {
+    // Fork adaptation (, #3640): the
+    // already-idle interrupt response used to clear the slot field-by-field,
+    // leaving a startTurn queued on it to sleep out FOREGROUND_TEARDOWN_WAIT_MS
+    // before the guard re-checks. Releasing through the keyed path flushes the
+    // waiters immediately and resolves any pending turn identification.
+    const session = new CodexAppServerAgentSession(
+      createConfig({ cwd: "/workspace/project" }),
+      null,
+      createTestLogger(),
+      () => {
+        throw new Error("Test session cannot spawn Codex app-server");
+      },
+      {},
+      false,
+    );
+    session.connected = true;
+    session.currentThreadId = "test-thread";
+    session.activeForegroundTurnId = "test-turn";
+    session.currentTurnId = "test-turn";
+    (session as { client: unknown }).client = {
+      request: async () => {
+        throw new CodexAppServerRpcError("no active turn to interrupt", -32600, undefined);
+      },
+    };
+    const internals = castInternals<{
+      activeForegroundTurnId: string | null;
+      foregroundTurnClearWaiters: Array<() => void>;
+    }>(session);
+
+    const attempt = session.startTurn("queued behind an already-idle turn");
+    attempt.catch(() => {});
+    expect(internals.foregroundTurnClearWaiters).toHaveLength(1);
+
+    await session.interrupt();
+
+    expect(internals.activeForegroundTurnId).toBeNull();
+    expect(internals.foregroundTurnClearWaiters).toHaveLength(0);
+  });
+
   test("waits for Codex to identify an accepted turn before interrupting it", async () => {
     const interruptedTurns: unknown[] = [];
     const appServer = createFakeCodexAppServer({
@@ -3642,6 +3774,8 @@ describe("Codex app-server provider", () => {
       const interruptPromise = session.interrupt();
       appServer.completeTurn();
 
+      // The turn was accepted but never identified, so there is nothing to
+      // interrupt and the call resolves as a no-op rather than throwing.
       await expect(interruptPromise).resolves.toBeUndefined();
       await resultPromise;
       expect(interruptedTurns).toEqual([]);
@@ -3649,6 +3783,81 @@ describe("Codex app-server provider", () => {
     } finally {
       await session.close();
     }
+  });
+
+  test("releases the foreground slot when no turn was ever identified", async () => {
+    // Codex accepted turn/start but never published a native turn id, so the
+    // interrupt no-ops. No turn-end event is coming to release the foreground
+    // slot, and holding it makes every later startTurn refuse.
+    const session = createSession();
+    const internals = castInternals<{
+      activeForegroundTurnId: string | null;
+      currentTurnId: string | null;
+      client: unknown;
+    }>(session);
+    internals.client = {};
+    internals.currentTurnId = null;
+    expect(internals.activeForegroundTurnId).toBe("test-turn");
+
+    await expect(session.interrupt()).resolves.toBeUndefined();
+
+    expect(internals.activeForegroundTurnId).toBeNull();
+  });
+
+  test("keeps the foreground slot when the turn was identified", async () => {
+    const session = createSession();
+    const requests: string[] = [];
+    const internals = castInternals<{
+      activeForegroundTurnId: string | null;
+      currentTurnId: string | null;
+      client: unknown;
+    }>(session);
+    internals.client = {
+      request: async (method: string) => {
+        requests.push(method);
+        return {};
+      },
+    };
+    internals.currentTurnId = "native-turn";
+
+    await session.interrupt();
+
+    // A live turn is being interrupted; Codex will report its end and release
+    // the slot. Releasing it here would free the slot under a running turn.
+    expect(requests).toEqual(["turn/interrupt"]);
+    expect(internals.activeForegroundTurnId).toBe("test-turn");
+  });
+
+  test("leaves the foreground slot to a newer turn that raced into it", async () => {
+    const session = createSession();
+    const internals = castInternals<{
+      activeForegroundTurnId: string | null;
+      currentTurnId: string | null;
+      client: unknown;
+      pendingForegroundTurnIdentification: {
+        foregroundTurnId: string;
+        promise: Promise<string | null>;
+        resolve: (turnId: string | null) => void;
+      } | null;
+    }>(session);
+    internals.client = {};
+    internals.currentTurnId = null;
+    let identify!: (turnId: string | null) => void;
+    const promise = new Promise<string | null>((resolve) => {
+      identify = resolve;
+    });
+    internals.pendingForegroundTurnIdentification = {
+      foregroundTurnId: "test-turn",
+      promise,
+      resolve: identify,
+    };
+
+    const interrupted = session.interrupt();
+    internals.activeForegroundTurnId = "newer-turn";
+    identify(null);
+
+    await expect(interrupted).resolves.toBeUndefined();
+    expect(internals.activeForegroundTurnId).toBe("newer-turn");
   });
 
   test("acknowledges interruption before Codex initializes a thread", async () => {

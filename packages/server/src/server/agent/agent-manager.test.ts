@@ -1194,6 +1194,8 @@ class McpCapableTestAgentClient extends TestAgentClient {
 
 class ControlledInterruptSession extends TestAgentSession {
   interruptCalled = false;
+  releasedForegroundTurnIds: string[] = [];
+  heldForegroundTurnId: string | null = null;
 
   constructor(
     config: AgentSessionConfig,
@@ -1204,6 +1206,7 @@ class ControlledInterruptSession extends TestAgentSession {
   }
 
   override async startTurn(): Promise<{ turnId: string }> {
+    this.heldForegroundTurnId = this.turnId;
     setTimeout(() => {
       this.pushEvent({ type: "turn_started", provider: this.provider, turnId: this.turnId });
     }, 0);
@@ -1213,6 +1216,16 @@ class ControlledInterruptSession extends TestAgentSession {
   override async interrupt(): Promise<void> {
     this.interruptCalled = true;
     await this.interruptBehavior(this);
+  }
+
+  // Mirrors the codex session's keyed release: only the slot this id owns.
+  releaseForegroundTurn(turnId: string): boolean {
+    this.releasedForegroundTurnIds.push(turnId);
+    if (this.heldForegroundTurnId !== turnId) {
+      return false;
+    }
+    this.heldForegroundTurnId = null;
+    return true;
   }
 }
 
@@ -2514,6 +2527,63 @@ test("cancelAgentRun preserves running state when the provider interrupt hangs",
     });
     expect(fixture.session.interruptCalled).toBe(true);
     expect(fixture.manager.getAgent(fixture.agentId)?.lifecycle).toBe("running");
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test("cancelAgentRun force-cancels an acknowledged interrupt whose run never settles", async () => {
+  // The session lost its turn while the manager still tracked a run, so
+  // nothing would ever settle it. With interrupt() resolving as a no-op, the
+  // acknowledged-timeout force-cancel must settle the orphaned run instead of
+  // leaving stop and replace refused for the rest of the session.
+  const fixture = await createControlledInterruptFixture({
+    name: "interrupt-orphaned",
+    agentId: "00000000-0000-4000-8000-000000000305",
+    turnId: "orphaned-turn",
+    interrupt: async () => {},
+  });
+
+  try {
+    await fixture.startForegroundRun();
+
+    await expect(fixture.manager.cancelAgentRun(fixture.agentId)).resolves.toEqual({
+      status: "settled",
+    });
+    expect(fixture.session.interruptCalled).toBe(true);
+    await expect
+      .poll(() => fixture.manager.getAgent(fixture.agentId)?.lifecycle)
+      .not.toBe("running");
+    await expect(fixture.manager.cancelAgentRun(fixture.agentId)).resolves.toEqual({
+      status: "not_running",
+    });
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test("cancelAgentRun force-cancel releases the session's foreground slot", async () => {
+  // The force-cancel dispatches turn_canceled, which resolves
+  // runs.getMatchingWaiters and settles this manager's run record. Nothing on
+  // that path reaches the session, and the session releases its foreground slot
+  // only when the provider reports the turn ended -- which a force-cancel
+  // happens precisely because it did not. Without the release the slot is held
+  // for the rest of the session and every later startTurn is refused.
+  const fixture = await createControlledInterruptFixture({
+    name: "interrupt-foreground-release",
+    agentId: "00000000-0000-4000-8000-000000000306",
+    turnId: "stuck-turn",
+    interrupt: async () => {},
+  });
+
+  try {
+    await fixture.startForegroundRun();
+    expect(fixture.session.heldForegroundTurnId).toBe("stuck-turn");
+
+    await fixture.manager.cancelAgentRun(fixture.agentId);
+
+    expect(fixture.session.releasedForegroundTurnIds).toContain("stuck-turn");
+    expect(fixture.session.heldForegroundTurnId).toBeNull();
   } finally {
     await fixture.cleanup();
   }
