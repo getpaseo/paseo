@@ -1,39 +1,49 @@
 import type { AgentHookPluginFileInstallStrategy } from "../agent-hook-installer.js";
 
-// The plugin must load under both OpenCode generations because both read the
-// same global config directory:
-//
-// - OpenCode 2 rejects V1 hook-object plugins and requires a default-exported
-//   definition object with an id and a setup() function. Unknown keys are
-//   ignored, so the 1.x server entrypoint below is inert there. Events arrive
-//   through ctx.event.subscribe() as decoded payloads shaped { type, data }.
-// - OpenCode 1 accepts a default-exported object exposing a callable server()
-//   entrypoint (an id is required for path plugins). Bus events arrive through
-//   the returned `event` hook as payloads shaped { type, properties }.
+// Both generations discover the same file. Their loaders select the entrypoint:
+// OpenCode 1 calls server(); OpenCode 2 calls setup(). Keep their event contracts
+// separate: V1 publishes status snapshots, V2 publishes execution transitions.
 export const OPENCODE_PLUGIN_SOURCE = [
-  "const STATUS_EVENTS = {",
+  "const V1_STATUS_EVENTS = {",
   '  busy: "session.status.busy",',
   '  retry: "session.status.retry",',
   '  idle: "session.status.idle",',
   "};",
   "",
-  "function paseoEventFor(type, statusType) {",
+  "const V2_EVENTS = {",
+  '  "session.execution.started": "session.status.busy",',
+  '  "session.execution.succeeded": "session.status.idle",',
+  '  "session.execution.failed": "session.status.idle",',
+  '  "session.execution.interrupted": "session.status.idle",',
+  '  "permission.asked": "permission.asked",',
+  '  "permission.replied": "permission.replied",',
+  "};",
+  "",
+  "function paseoEventForV1(event) {",
+  "  const type = event.type;",
   '  if (type === "permission.asked") return "permission.asked";',
   '  if (type === "permission.replied") return "permission.replied";',
   '  if (type !== "session.status") return null;',
-  "  return STATUS_EVENTS[statusType] ?? null;",
+  "  return V1_STATUS_EVENTS[event.properties.status.type] ?? null;",
   "}",
+  "",
+  // CLI processes can finish out of order, especially for immediate failures.
+  // Both entrypoints enqueue reports so an older busy report cannot overwrite idle.
+  "let pendingHook = Promise.resolve();",
   "",
   "function runPaseoHook(event) {",
   "  if (!process.env.PASEO_TERMINAL_ID) return;",
-  "  try {",
-  '    const child = Bun.spawn(["paseo", "hooks", "opencode", event], {',
-  '      stdin: "ignore",',
-  '      stdout: "ignore",',
-  '      stderr: "ignore",',
-  "    });",
-  "    void child.exited.catch(() => {});",
-  "  } catch {}",
+  "  pendingHook = pendingHook.then(async () => {",
+  "    try {",
+  '      const child = Bun.spawn(["paseo", "hooks", "opencode", event], {',
+  '        stdin: "ignore",',
+  '        stdout: "ignore",',
+  '        stderr: "ignore",',
+  "      });",
+  "      await child.exited;",
+  "    } catch {}",
+  "  });",
+  "  return pendingHook;",
   "}",
   "",
   "export default {",
@@ -41,8 +51,8 @@ export const OPENCODE_PLUGIN_SOURCE = [
   "  server() {",
   "    return {",
   "      event: async ({ event }) => {",
-  "        const paseoEvent = paseoEventFor(event?.type, event?.properties?.status?.type);",
-  "        if (paseoEvent) runPaseoHook(paseoEvent);",
+  "        const paseoEvent = paseoEventForV1(event);",
+  "        if (paseoEvent) await runPaseoHook(paseoEvent);",
   "      },",
   "    };",
   "  },",
@@ -50,8 +60,8 @@ export const OPENCODE_PLUGIN_SOURCE = [
   "    const controller = new AbortController();",
   "    void (async () => {",
   "      for await (const event of ctx.event.subscribe({ signal: controller.signal })) {",
-  "        const paseoEvent = paseoEventFor(event?.type, event?.data?.status?.type);",
-  "        if (paseoEvent) runPaseoHook(paseoEvent);",
+  "        const paseoEvent = V2_EVENTS[event.type];",
+  "        if (paseoEvent) await runPaseoHook(paseoEvent);",
   "      }",
   "    })().catch(() => {});",
   "    return () => controller.abort();",
