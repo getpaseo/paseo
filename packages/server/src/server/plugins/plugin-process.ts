@@ -6,20 +6,19 @@ import {
 } from "./plugin-process-protocol.js";
 import { createRequire } from "node:module";
 import * as pluginSharedRuntime from "@getpaseo/plugin";
+import * as pluginProviderRuntime from "@getpaseo/plugin/server/provider";
+import * as pluginAcpRuntime from "@getpaseo/plugin/server/acp";
 import type { SettingsDefinition, PluginRpcContract } from "@getpaseo/plugin";
 import type { PluginHandlerContext } from "@getpaseo/plugin/server";
 import {
   ProviderEventSchema,
   type ProviderConnection,
   type ProviderRegistration,
-} from "@getpaseo/plugin/provider";
+} from "@getpaseo/plugin/server/provider";
 import { createPaseoApi, type PaseoApi } from "@getpaseo/client";
 import { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { createPluginDaemonTransportFactory } from "./daemon-transport.js";
-import {
-  isPluginClientOnlySdkSpecifier,
-  isPluginServerTypesSdkSpecifier,
-} from "./plugin-sdk-specifiers.js";
+import { isPluginClientOnlySdkSpecifier } from "./plugin-sdk-specifiers.js";
 import { createPluginClientId } from "./plugin-session-identity.js";
 
 import { PluginSettingsStore } from "./settings/index.js";
@@ -213,9 +212,12 @@ function runtimeRequire(name: string): unknown {
   if (isPluginClientOnlySdkSpecifier(name)) {
     throw new Error(`${name} is available only in plugin client code`);
   }
-  if (name === "@getpaseo/plugin" || name === "@paseo/plugin") return pluginSharedRuntime;
-  if (isPluginServerTypesSdkSpecifier(name)) return {};
-  if (name === "@getpaseo/plugin/host") throw new Error(`${name} is private to the app host`);
+  if (name === "@getpaseo/plugin") return pluginSharedRuntime;
+  if (name === "@getpaseo/plugin/server") return {};
+  if (name === "@getpaseo/plugin/server/provider") return pluginProviderRuntime;
+  if (name === "@getpaseo/plugin/server/acp") return pluginAcpRuntime;
+  if (name === "@getpaseo/plugin/client/host")
+    throw new Error(`${name} is private to the app host`);
   return nodeRequire(name);
 }
 

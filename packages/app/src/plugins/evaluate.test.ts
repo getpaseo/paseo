@@ -441,11 +441,11 @@ describe("evaluatePluginClientBundle", () => {
     ).toThrow("must return a cleanup function");
   });
 
-  it("provides the host Icon component through @getpaseo/plugin/react-native", () => {
+  it("provides the host Icon component through @getpaseo/plugin/client/react-native", () => {
     const plugin = evaluatePluginClientBundle(
       "example",
       `(function(require) {
-        const { Icon } = require("@getpaseo/plugin/react-native");
+        const { Icon } = require("@getpaseo/plugin/client/react-native");
         const module = { exports: {} };
         module.exports.default = function(plugin) {
           plugin.addSurface("main", function Surface() {
@@ -463,11 +463,11 @@ describe("evaluatePluginClientBundle", () => {
     expect(element).toMatchObject({ props: { size: 18, color: "#123456" } });
   });
 
-  it("provides Paseo UI through @getpaseo/plugin/react-native", () => {
+  it("provides Paseo UI through @getpaseo/plugin/client/react-native", () => {
     const plugin = evaluatePluginClientBundle(
       "example",
       `(function(require) {
-        const { Icon, Modal, useToast } = require("@getpaseo/plugin/react-native");
+        const { Icon, Modal, useToast } = require("@getpaseo/plugin/client/react-native");
         const module = { exports: {} };
         module.exports.default = function(plugin) {
           if (typeof Icon !== "function" || typeof Modal !== "function" || typeof Modal.Content !== "function" || typeof useToast !== "function") {
@@ -502,9 +502,13 @@ describe("evaluatePluginClientBundle", () => {
 
   it.each([
     "@getpaseo/plugin/server",
-    "@getpaseo/plugin/provider",
-    "@getpaseo/plugin/acp",
+    "@getpaseo/plugin/server/provider",
+    "@getpaseo/plugin/server/acp",
+    "@getpaseo/plugin/client/host",
+    "@getpaseo/plugin/react-native",
+    "@getpaseo/plugin/ui",
     "@getpaseo/plugin/host",
+    "@paseo/plugin",
   ])("rejects %s in the client loader", (specifier) => {
     expect(() =>
       evaluatePluginClientBundle(

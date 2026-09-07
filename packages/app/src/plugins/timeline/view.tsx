@@ -1,4 +1,4 @@
-import { PluginClientStateProvider } from "@getpaseo/plugin/host";
+import { PluginClientStateProvider } from "@getpaseo/plugin/client/host";
 import type { PluginHostProps, PluginTimelineItemProps } from "@getpaseo/plugin/client";
 import type { PluginTheme } from "@getpaseo/plugin";
 import React, { type ComponentType, useMemo } from "react";

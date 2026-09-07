@@ -2,7 +2,7 @@ import type { PluginLifecycle } from "./lifecycle/index.js";
 import path from "node:path";
 import { stat, rm } from "node:fs/promises";
 import type pino from "pino";
-import type { ProviderRegistration } from "@getpaseo/plugin/provider";
+import type { ProviderRegistration } from "@getpaseo/plugin/server/provider";
 import {
   PluginIdSchema,
   type PluginLogEntry,

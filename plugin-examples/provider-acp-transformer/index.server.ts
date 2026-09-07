@@ -1,5 +1,5 @@
 import type { PluginServerContext } from "@getpaseo/plugin/server";
-import { runAcpProvider } from "@getpaseo/plugin/acp";
+import { runAcpProvider } from "@getpaseo/plugin/server/acp";
 import { vendorEditTransformer } from "./server/vendor-edit.js";
 
 export default function contribute(server: PluginServerContext) {

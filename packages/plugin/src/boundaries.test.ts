@@ -9,17 +9,16 @@ const sourceDirectory = path.dirname(fileURLToPath(import.meta.url));
 const entries = {
   ".": "shared",
   "./server": "server",
-  "./provider": "server",
-  "./acp": "server",
+  "./server/provider": "server",
+  "./server/acp": "server",
   "./client": "client",
-  "./host": "client",
-  "./react-native": "client",
-  "./ui": "client",
+  "./client/host": "client",
+  "./client/react-native": "client",
+  "./client/ui": "client",
 } as const;
 const uiDependency = /^(react(?:-dom|-native)?|use-sync-external-store)(\/|$)/;
-const serverModule = /^(server(?:-contracts)?|provider|acp|lifecycle)(\.js|\/)/;
-const clientModule =
-  /^(client(?:-contracts|-state)?|host|react-native|ui|paseo-context|rpc-context|runtime-context-bridge)(\.js|\/)/;
+const serverModule = /^server\//;
+const clientModule = /^client\//;
 
 function resolveLocal(importer: string, specifier: string): string {
   const base = path.resolve(path.dirname(importer), specifier.replace(/\.js$/, ""));
@@ -53,15 +52,9 @@ function boundaryViolations(entry: string, runtime: "shared" | "server" | "clien
         if (specifier !== "zod" && specifier !== "@getpaseo/protocol/agent-types")
           violations.push(label);
       } else if (runtime === "server") {
-        if (
-          uiDependency.test(specifier) ||
-          /^@getpaseo\/plugin\/(client|host|react-native|ui)(\/|$)/.test(specifier)
-        )
+        if (uiDependency.test(specifier) || /^@getpaseo\/plugin\/client(\/|$)/.test(specifier))
           violations.push(label);
-      } else if (
-        isBuiltin(specifier) ||
-        /^@getpaseo\/plugin\/(server|provider|acp)(\/|$)/.test(specifier)
-      ) {
+      } else if (isBuiltin(specifier) || /^@getpaseo\/plugin\/server(\/|$)/.test(specifier)) {
         violations.push(label);
       }
     }
@@ -78,7 +71,11 @@ describe("plugin SDK import boundaries", () => {
   it.each(Object.entries(entries))(
     "%s respects its %s boundary, including type dependencies",
     (specifier, runtime) => {
-      const name = specifier === "." ? "index" : specifier.slice(2);
+      const name =
+        specifier === "."
+          ? "index"
+          : specifier.slice(2) +
+            (specifier === "./client" || specifier === "./server" ? "/index" : "");
       expect(boundaryViolations(path.join(sourceDirectory, `${name}.ts`), runtime)).toEqual([]);
     },
   );
@@ -109,7 +106,7 @@ describe("plugin example import boundaries", () => {
       } else if (specifier.startsWith("@getpaseo/plugin")) {
         const entry = specifier.replace("@getpaseo/plugin", ".") as keyof typeof entries;
         if (
-          entry === "./host" ||
+          entry === "./client/host" ||
           !(entry in entries) ||
           (entries[entry] !== "shared" && entries[entry] !== runtime)
         )

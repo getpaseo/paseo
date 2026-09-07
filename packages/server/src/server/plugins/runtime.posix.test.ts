@@ -5,7 +5,7 @@ import { PassThrough } from "node:stream";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import pino from "pino";
-import type { ProviderEvent, ProviderRegistration } from "@getpaseo/plugin/provider";
+import type { ProviderEvent, ProviderRegistration } from "@getpaseo/plugin/server/provider";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AgentStreamEvent } from "../agent/agent-sdk-types.js";
 import { PluginAgentClientRegistry } from "../agent/plugin-provider.js";
@@ -314,7 +314,7 @@ register(${JSON.stringify(guardUrl)});`;
     const directory = await createPlugin(
       "provider-round-trip",
       `import type { PluginServerContext } from "@getpaseo/plugin/server";
-import type { ProviderEvent, ProviderRegistration } from "@getpaseo/plugin/provider";
+import type { ProviderEvent, ProviderRegistration } from "@getpaseo/plugin/server/provider";
 
 const provider: ProviderRegistration = {
   id: "direct-example",
@@ -522,7 +522,7 @@ export default function contribute(server: PluginServerContext) {
     const directory = await createPlugin(
       "provider-acp-round-trip",
       `import type { PluginServerContext } from "@getpaseo/plugin/server";
-import { runAcpProvider } from "@getpaseo/plugin/acp";
+import { runAcpProvider } from "@getpaseo/plugin/server/acp";
 import { vendorEditTransformer } from "./server/vendor-edit.js";
 
 export default function contribute(server: PluginServerContext) {
@@ -658,7 +658,7 @@ lines.on("line", (line) => {
   it("rejects a malformed provider event from a real plugin subprocess", async () => {
     const directory = await createPlugin(
       "malicious-provider",
-      `import type { ProviderEvent, ProviderRegistration } from "@getpaseo/plugin/provider";
+      `import type { ProviderEvent, ProviderRegistration } from "@getpaseo/plugin/server/provider";
 let connectionId = "";
 process.on("message", (message: unknown) => {
   const value = message as { type?: string; connectionId?: string };
@@ -725,7 +725,7 @@ export default function contribute(server: any) { server.registerProvider(provid
   it("emits runtime failure for live sessions when a real plugin process dies", async () => {
     const directory = await createPlugin(
       "dying-provider",
-      `import type { ProviderEvent, ProviderRegistration } from "@getpaseo/plugin/provider";
+      `import type { ProviderEvent, ProviderRegistration } from "@getpaseo/plugin/server/provider";
 const provider: ProviderRegistration = {
   id: "dying",
   label: "Dying",
@@ -1026,7 +1026,7 @@ export default function contribute(plugin: unknown) {
     const directory = await createPlugin(
       "shutdown-connect",
       `import { writeFile } from "node:fs/promises";
-import type { ProviderRegistration } from "@getpaseo/plugin/provider";
+import type { ProviderRegistration } from "@getpaseo/plugin/server/provider";
 
 const provider: ProviderRegistration = {
   id: "delayed",
@@ -1505,34 +1505,6 @@ export default function contribute(server: any) {
       message: "Hello, Paseo",
     });
     await expect(runtime.invoke("hello", "greet", { name: 7 })).rejects.toThrow();
-
-    await runtime.stopAll();
-  });
-
-  // COMPAT(plugin-sdk-scope): plugins scaffolded through 0.5.0-beta.1 import the unpublished
-  // @paseo/plugin name. Drop with the specifiers in plugin-sdk-specifiers.ts.
-  it("loads a plugin that imports the pre-rename @paseo/plugin specifier", async () => {
-    const directory = await createPlugin(
-      "legacy-sdk",
-      `import { z } from "zod";
-import { defineRpc } from "@paseo/plugin";
-
-const pingRpc = defineRpc({
-  name: "ping",
-  input: z.object({}),
-  output: z.object({ ok: z.boolean() }),
-});
-
-export default function contribute(plugin: any) {
-  plugin.handle(pingRpc, async () => ({ ok: true }));
-  return () => undefined;
-}`,
-    );
-    const runtime = createTestRuntime();
-
-    await runtime.startPlugin("legacy-sdk", directory);
-
-    await expect(runtime.invoke("legacy-sdk", "ping", {})).resolves.toMatchObject({ ok: true });
 
     await runtime.stopAll();
   });

@@ -1,4 +1,4 @@
-import type { ProviderEvent } from "@getpaseo/plugin/provider";
+import type { ProviderEvent } from "@getpaseo/plugin/server/provider";
 import { describe, expect, it } from "vitest";
 import { createDirectExampleProvider } from "./provider.js";
 

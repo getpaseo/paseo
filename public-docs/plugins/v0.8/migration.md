@@ -93,10 +93,22 @@ registrations after the entry cleanup runs.
 
 Move hooks (`usePaseo`, `useRpc`, `useSettings`, `useAgent`, `useWorkspace`) and client contribution
 types from `@getpaseo/plugin` to `@getpaseo/plugin/client`. Move `Icon` to
-`@getpaseo/plugin/react-native`. Import server contexts and lifecycle contracts from
+`@getpaseo/plugin/client/react-native`. Import server contexts and lifecycle contracts from
 `@getpaseo/plugin/server`. Shared helpers (`defineRpc`, `defineSettings`, `defineAttachmentSource`),
 schemas, and plain data types stay on the root. These rules include type imports. See
 [Runtime modules](reference#runtime-modules) for the complete contract.
+
+Move the remaining SDK subpaths under their runtime owner:
+
+| Old entry                       | 0.8 entry                              |
+| ------------------------------- | -------------------------------------- |
+| `@getpaseo/plugin/react-native` | `@getpaseo/plugin/client/react-native` |
+| `@getpaseo/plugin/ui`           | `@getpaseo/plugin/client/ui`           |
+| `@getpaseo/plugin/provider`     | `@getpaseo/plugin/server/provider`     |
+| `@getpaseo/plugin/acp`          | `@getpaseo/plugin/server/acp`          |
+
+The old entries and the pre-0.8 `@paseo/plugin` scope are removed. `/client/host` is private to
+Paseo's app integration and is never a plugin-author import.
 
 The client entry imports only `client/`, `shared/`, and client-safe packages. The server entry imports
 only `server/`, `shared/`, and server-safe packages. A `node:` import in the client entry or anything

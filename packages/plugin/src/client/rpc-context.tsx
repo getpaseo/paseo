@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useMemo, type ReactNode } from "react";
 import type { ZodType, input as ZodInput, output as ZodOutput } from "zod";
-import { callPluginRpc, type PluginRpcContract } from "./rpc.js";
+import { callPluginRpc, type PluginRpcContract } from "../rpc.js";
 
 export interface PluginRpcContextValue {
   invoke(method: string, input: unknown): Promise<unknown>;

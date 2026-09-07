@@ -1,6 +1,6 @@
 import { createContext, useContext, type ReactNode } from "react";
 import { useSyncExternalStoreWithSelector } from "use-sync-external-store/shim/with-selector";
-import type { PluginAgentSnapshot, PluginWorkspaceSnapshot } from "./contracts.js";
+import type { PluginAgentSnapshot, PluginWorkspaceSnapshot } from "../contracts.js";
 import { shallowEqual } from "./shallow.js";
 
 export interface PluginClientStateSource {

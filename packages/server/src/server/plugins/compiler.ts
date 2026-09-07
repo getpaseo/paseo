@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { createRequire, isBuiltin } from "node:module";
 import path from "node:path";
+import { readPluginModuleImports } from "./compiler-imports.js";
 import type { Metafile, OnResolveResult, Plugin } from "esbuild";
 import {
   isPluginClientOnlySdkSpecifier,
@@ -159,6 +160,28 @@ function createRuntimeBoundaryPlugin(target: PluginBuildTarget, pluginDirectory:
   return {
     name: `paseo-plugin-${target}-runtime-boundary`,
     setup(buildContext) {
+      const checked = new Set<string>();
+      async function checkSourceImports(file: string): Promise<OnResolveResult | null> {
+        if (checked.has(file) || !/\.[cm]?[jt]sx?$/.test(file)) return null;
+        const location = directoryTarget(file, pluginDirectory);
+        if (location === null || location === "invalid") return null;
+        checked.add(file);
+        for (const { specifier, kind } of readPluginModuleImports(file)) {
+          // Resolve through the same ownership checks, including imports erased from the bundle.
+          const resolution = await buildContext.resolve(specifier, {
+            importer: file,
+            resolveDir: path.dirname(file),
+            kind,
+          });
+          if (resolution.errors.length) return { errors: resolution.errors };
+          if (!resolution.external && resolution.namespace === "file") {
+            const error = await checkSourceImports(resolution.path);
+            if (error) return error;
+          }
+        }
+        return null;
+      }
+      buildContext.onLoad({ filter: /\.[cm]?[jt]sx?$/ }, (args) => checkSourceImports(args.path));
       buildContext.onResolve({ filter: /.*/ }, async (args) => {
         if (args.kind === "entry-point") return null;
         if (args.pluginData === boundaryResolution) return null;
@@ -230,7 +253,15 @@ function runtimeSpecifierError(
   importer: string,
 ): OnResolveResult | null {
   let kind: string | null = null;
-  if (specifier === "@getpaseo/plugin/host") kind = "host-private";
+  if (specifier === "@getpaseo/plugin/client/host") kind = "host-private";
+  else if (
+    (specifier === "@getpaseo/plugin" ||
+      specifier.startsWith("@getpaseo/plugin/") ||
+      specifier === "@paseo/plugin" ||
+      specifier.startsWith("@paseo/plugin/")) &&
+    !(PLUGIN_SDK_SPECIFIERS as readonly string[]).includes(specifier)
+  )
+    kind = "Unknown SDK";
   else if (target !== "server" && isBuiltin(specifier)) kind = "Node";
   else if (target !== "server" && isPluginServerOnlySdkSpecifier(specifier)) kind = "server-only";
   else if (
@@ -263,9 +294,15 @@ function checkSharedDependencies(inputs: Metafile["inputs"], pluginDirectory: st
     visited.add(file);
     for (const dependency of inputs[file]?.imports ?? []) {
       const location = directoryTarget(path.resolve(dependency.path), pluginDirectory);
-      const error = dependency.external
-        ? runtimeSpecifierError(dependency.path, "shared", file)
-        : moduleBoundaryError(location === "invalid" ? null : location, "shared", dependency.path);
+      const error =
+        runtimeSpecifierError(dependency.original ?? dependency.path, "shared", file) ??
+        (dependency.external
+          ? null
+          : moduleBoundaryError(
+              location === "invalid" ? null : location,
+              "shared",
+              dependency.path,
+            ));
       if (error?.errors?.length) throw new Error(error.errors[0].text);
       if (!dependency.external) pending.push(dependency.path);
     }
@@ -279,7 +316,7 @@ async function compileTarget(entryPath: string, target: PluginBuildTarget): Prom
     entryPoints: [entryPath],
     bundle: true,
     format: "cjs",
-    jsx: target === "client" ? "automatic" : undefined,
+    jsx: "automatic",
     platform: target === "server" ? "node" : "neutral",
     target: target === "server" ? "node20" : "es2020",
     // Metro lowers async syntax before Hermes sees app code. Plugin client bundles bypass Metro,

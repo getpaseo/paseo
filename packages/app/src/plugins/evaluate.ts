@@ -349,13 +349,13 @@ export function runPluginClientBundle(
     },
   };
   const runtimeRequire = (name: string): unknown => {
-    if (name === "@getpaseo/plugin/ui") return pluginUiRuntime;
+    if (name === "@getpaseo/plugin/client/ui") return pluginUiRuntime;
     if (name === "react") return React;
     if (name === "react/jsx-runtime") return ReactJsxRuntime;
     if (name === "react-native") return ReactNative;
-    if (name === "@getpaseo/plugin" || name === "@paseo/plugin") return pluginSharedRuntime;
+    if (name === "@getpaseo/plugin") return pluginSharedRuntime;
     if (name === "@getpaseo/plugin/client") return { ...pluginClientRuntime, useSettings };
-    if (name === "@getpaseo/plugin/react-native" || name === "@paseo/plugin/react-native") {
+    if (name === "@getpaseo/plugin/client/react-native") {
       return pluginReactNativeRuntime;
     }
     if (name === "@tanstack/react-query") return ReactQuery;

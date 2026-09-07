@@ -114,24 +114,24 @@ only shared code: no Node, React, runtime-specific SDK entries, or runtime-speci
 
 The SDK root (`@getpaseo/plugin`) contains shared data, schemas, and runtime-neutral helpers only.
 Import client contexts and hooks from `/client`, server contexts and lifecycle contracts from
-`/server`, and UI from `/react-native` or `/ui`. These rules include type imports and transitive
-dependencies. `/host` is private to the app host; plugins cannot import it.
+`/server`, and UI from `/client/react-native` or `/client/ui`. These rules include type imports and transitive
+dependencies. `/client/host` is private to the app host; plugins cannot import it.
 
 ### Client runtime
 
 Paseo provides these modules to client code:
 
-| Module                          | Use it for                                                                                        |
-| ------------------------------- | ------------------------------------------------------------------------------------------------- |
-| `@getpaseo/plugin`              | Shared data, `defineRpc`, `defineSettings`, `defineAttachmentSource`, `RpcInput`, and `RpcOutput` |
-| `@getpaseo/plugin/ui`           | Named, composable settings components                                                             |
-| `@getpaseo/plugin/react-native` | Paseo UI components and UI hooks                                                                  |
-| `@getpaseo/plugin/client`       | Client contribution contexts, `usePaseo`, `useRpc`, `useSettings`, and data hooks                 |
-| `@tanstack/react-query`         | Request state and caching                                                                         |
-| `react`                         | Components and hooks                                                                              |
-| `react/jsx-runtime`             | Compiled JSX                                                                                      |
-| `react-native`                  | Cross-platform UI                                                                                 |
-| `zod`                           | Shared schemas                                                                                    |
+| Module                                 | Use it for                                                                                        |
+| -------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| `@getpaseo/plugin`                     | Shared data, `defineRpc`, `defineSettings`, `defineAttachmentSource`, `RpcInput`, and `RpcOutput` |
+| `@getpaseo/plugin/client/ui`           | Named, composable settings components                                                             |
+| `@getpaseo/plugin/client/react-native` | Paseo UI components and UI hooks                                                                  |
+| `@getpaseo/plugin/client`              | Client contribution contexts, `usePaseo`, `useRpc`, `useSettings`, and data hooks                 |
+| `@tanstack/react-query`                | Request state and caching                                                                         |
+| `react`                                | Components and hooks                                                                              |
+| `react/jsx-runtime`                    | Compiled JSX                                                                                      |
+| `react-native`                         | Cross-platform UI                                                                                 |
+| `zod`                                  | Shared schemas                                                                                    |
 
 The host owns its paired React and renderer versions. The SDK's React peer range permits patch
 versions for tooling and Node consumers; it does not change the app's pinned React version or
@@ -186,7 +186,7 @@ Use `openSettings`, `openSurface`, and `openPanel` for your own registered contr
 ### Server runtime
 
 Paseo provides `@getpaseo/plugin`, `@getpaseo/plugin/server`,
-`@getpaseo/plugin/provider`, `@getpaseo/plugin/acp`, and `zod` to server code. Backend
+`@getpaseo/plugin/server/provider`, `@getpaseo/plugin/server/acp`, and `zod` to server code. Backend
 contributions run in a daemon subprocess with Node access to the host machine. Keep filesystem,
 process, credential, and other machine-local work under `server/`. A plugin without
 `index.server.ts` starts no subprocess.
@@ -197,7 +197,7 @@ Follow [Build a provider plugin](/docs/plugins/v0.8/providers) for direct and AC
 session lifecycle, composer settings, timeline renderers, testing, and distribution.
 
 Call `server.registerProvider()` with a `ProviderRegistration` from
-`@getpaseo/plugin/provider`. Its connection accepts inputs with `send()` and emits complete state
+`@getpaseo/plugin/server/provider`. Its connection accepts inputs with `send()` and emits complete state
 snapshots through `onEvent()`. `send()` reports acceptance only; prompt disposition, turns,
 configuration, persistence, permissions, and failures are events.
 
@@ -212,7 +212,7 @@ session config.
 Paseo refreshes an agent by closing its current provider session and opening it with current
 configuration and persistence. Providers re-read external state during `session.open`.
 
-Use `runAcpProvider()` from `@getpaseo/plugin/acp` to adapt a command-backed ACP. Add transformer
+Use `runAcpProvider()` from `@getpaseo/plugin/server/acp` to adapt a command-backed ACP. Add transformer
 hooks only for a vendor's discovery, configuration, notification, or tool-call differences.
 
 `ProviderRegistration.icon` is a file path relative to the plugin directory, such as `icon.svg`.
@@ -625,12 +625,12 @@ Paseo owns the route, header, close action, host picker, error boundary, and que
 
 ## Host UI
 
-Import Paseo-owned UI from `@getpaseo/plugin/react-native` in client code. This example
+Import Paseo-owned UI from `@getpaseo/plugin/client/react-native` in client code. This example
 opens a controlled modal, renders a host icon, and confirms the action with a toast:
 
 ```tsx
 import type { PluginSurfaceProps } from "@getpaseo/plugin/client";
-import { Icon, Modal, useToast } from "@getpaseo/plugin/react-native";
+import { Icon, Modal, useToast } from "@getpaseo/plugin/client/react-native";
 import { useState } from "react";
 import { Pressable, Text, View } from "react-native";
 
@@ -709,7 +709,7 @@ Modal children keep the plugin runtime context. `usePaseo`, `useRpc`, `useWorksp
 
 ### Scrolling
 
-Import `ScrollView` and `FlatList` from `@getpaseo/plugin/react-native` when content can appear in a
+Import `ScrollView` and `FlatList` from `@getpaseo/plugin/client/react-native` when content can appear in a
 Paseo modal. They accept React Native props and refs and integrate with the sheet's gestures. Outside
 a sheet they use ordinary React Native scrolling. Do not import bottom-sheet libraries directly.
 
@@ -723,7 +723,7 @@ container without changing these gestures. Expand the sheet before using list me
 `scrollToEnd`; the sheet locks list offsets below its largest height.
 
 ```tsx
-import { FlatList, Modal } from "@getpaseo/plugin/react-native";
+import { FlatList, Modal } from "@getpaseo/plugin/client/react-native";
 import { Text } from "react-native";
 
 // Inside your controlled Modal:
@@ -753,7 +753,7 @@ user action and await it before reporting success. It rejects if the platform de
 clipboard is unavailable; browser permissions and secure-context requirements still apply.
 
 ```tsx
-import { copyText, useToast } from "@getpaseo/plugin/react-native";
+import { copyText, useToast } from "@getpaseo/plugin/client/react-native";
 
 // Inside your component:
 const toast = useToast();
@@ -768,7 +768,7 @@ async function copyResult() {
 ```
 
 Programmatic copying and native text selection are separate interactions. Use `<Text selectable>`
-for long-press selection and OS Copy. Import `TextInput` from `@getpaseo/plugin/react-native` for modal forms. It accepts React Native
+for long-press selection and OS Copy. Import `TextInput` from `@getpaseo/plugin/client/react-native` for modal forms. It accepts React Native
 input props and refs, supports OS Paste, and registers focus with the native sheet so the keyboard
 can raise the form. Outside a sheet it uses the ordinary input. A plain React Native input supports
 Paste too, but does not register focus with the sheet; the keyboard can cover it. No clipboard read
@@ -994,12 +994,12 @@ A disabled or removed plugin leaves an unavailable screen with working Back navi
 
 ### Named UI components
 
-Import settings components from `@getpaseo/plugin/ui`. They work with your own state and RPCs;
+Import settings components from `@getpaseo/plugin/client/ui`. They work with your own state and RPCs;
 no form wrapper or storage binding is required.
 
 ```tsx
 import { useState } from "react";
-import { SettingsCard, SettingsSection, SettingsSwitch } from "@getpaseo/plugin/ui";
+import { SettingsCard, SettingsSection, SettingsSwitch } from "@getpaseo/plugin/client/ui";
 
 export function DisplaySettings() {
   const [visible, setVisible] = useState(true);
@@ -1301,7 +1301,7 @@ The client entry owns pill creation and removal. This can live directly in `inde
 a function it imports from `client/`:
 
 ```tsx
-import { Icon } from "@getpaseo/plugin/react-native";
+import { Icon } from "@getpaseo/plugin/client/react-native";
 import {
   type PluginClientContext,
   type PluginComposerPillProps,

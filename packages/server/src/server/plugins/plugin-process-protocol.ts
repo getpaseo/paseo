@@ -3,8 +3,8 @@ import type {
   ProviderCatalogOptions,
   ProviderEvent,
   ProviderInput,
-} from "@getpaseo/plugin/provider";
-import { ProviderEventSchema, ProviderInputSchema } from "@getpaseo/plugin/provider";
+} from "@getpaseo/plugin/server/provider";
+import { ProviderEventSchema, ProviderInputSchema } from "@getpaseo/plugin/server/provider";
 import { z } from "zod";
 
 export interface PluginProviderMetadata {

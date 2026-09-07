@@ -10,7 +10,7 @@ import {
   SettingsSection,
   SettingsSelect,
   SettingsSwitch,
-} from "@getpaseo/plugin/ui";
+} from "@getpaseo/plugin/client/ui";
 import { preferences } from "../shared/preferences";
 
 const grouping = [

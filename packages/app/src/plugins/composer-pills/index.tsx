@@ -1,4 +1,4 @@
-import { PluginClientStateProvider } from "@getpaseo/plugin/host";
+import { PluginClientStateProvider } from "@getpaseo/plugin/client/host";
 import type { PluginComposerPillProps } from "@getpaseo/plugin/client";
 import type { PluginTheme } from "@getpaseo/plugin";
 import { useCallback, useMemo, useState, useSyncExternalStore } from "react";

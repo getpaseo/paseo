@@ -132,7 +132,7 @@ describe("plugin runtime entries", () => {
     "react/jsx-runtime",
     "react-native",
     "@getpaseo/plugin/client",
-    "@getpaseo/plugin/ui",
+    "@getpaseo/plugin/client/ui",
   ])("rejects %s from server code", async (specifier) => {
     const entries = await createSplitPlugin();
     await writeFile(
@@ -142,17 +142,18 @@ describe("plugin runtime entries", () => {
     await expect(compilePlugin(entries)).rejects.toThrow("client-only module");
   });
 
-  it.each(["@getpaseo/plugin/server", "@getpaseo/plugin/provider", "@getpaseo/plugin/acp"])(
-    "rejects %s from client code",
-    async (specifier) => {
-      const entries = await createSplitPlugin();
-      await writeFile(
-        entries.client,
-        `import * as value from "${specifier}"; export default function contribute() { return value; }`,
-      );
-      await expect(compilePlugin(entries)).rejects.toThrow("server-only module");
-    },
-  );
+  it.each([
+    "@getpaseo/plugin/server",
+    "@getpaseo/plugin/server/provider",
+    "@getpaseo/plugin/server/acp",
+  ])("rejects %s from client code", async (specifier) => {
+    const entries = await createSplitPlugin();
+    await writeFile(
+      entries.client,
+      `import * as value from "${specifier}"; export default function contribute() { return value; }`,
+    );
+    await expect(compilePlugin(entries)).rejects.toThrow("server-only module");
+  });
 
   it.each([
     "react",
@@ -174,6 +175,7 @@ describe("plugin runtime entries", () => {
   it.each([
     { target: "client", dependency: "react" },
     { target: "server", dependency: "node:fs" },
+    { target: "server", dependency: "@getpaseo/plugin/server/provider" },
   ] as const)(
     "rejects a shared dependency reaching $dependency in the $target bundle",
     async ({ target, dependency }) => {
@@ -197,6 +199,50 @@ describe("plugin runtime entries", () => {
       ).rejects.toThrow("plugin shared");
     },
   );
+
+  it.each([
+    'import type { PluginClientContext } from "@getpaseo/plugin/client"; export type Context = PluginClientContext;',
+    'export type { PluginClientContext } from "@getpaseo/plugin/client";',
+    'export type Context = import("@getpaseo/plugin/client").PluginClientContext;',
+    'import { type PluginClientContext } from "@getpaseo/plugin/client"; export type Context = PluginClientContext;',
+    'import type { ComponentType } from "react"; export type Component = ComponentType;',
+  ])("rejects runtime-owned types in shared code: %s", async (typeSource) => {
+    const entries = await createSplitPlugin();
+    await writeFile(
+      path.join(entries.directory, "shared/labels.ts"),
+      typeSource + '\nexport const clientLabel = "client"; export const serverLabel = "server";',
+    );
+    await expect(compilePlugin(entries)).rejects.toThrow("plugin shared");
+  });
+
+  it("checks files reached only through type imports", async () => {
+    const entries = await createSplitPlugin();
+    await writeFile(
+      path.join(entries.directory, "shared/types.ts"),
+      'export type { PluginClientContext } from "@getpaseo/plugin/client";',
+    );
+    await writeFile(
+      path.join(entries.directory, "shared/labels.ts"),
+      'export type { PluginClientContext } from "./types"; export const clientLabel = "client"; export const serverLabel = "server";',
+    );
+    await expect(compilePlugin(entries)).rejects.toThrow("plugin shared");
+  });
+
+  it.each([
+    "@paseo/plugin",
+    "@getpaseo/plugin/react-native",
+    "@getpaseo/plugin/ui",
+    "@getpaseo/plugin/provider",
+    "@getpaseo/plugin/acp",
+    "@getpaseo/plugin/host",
+  ])("rejects retired entry %s", async (specifier) => {
+    const entries = await createSplitPlugin();
+    await writeFile(
+      entries.server,
+      `import * as sdk from "${specifier}"; export default function contribute() { return sdk; }`,
+    );
+    await expect(compilePlugin(entries)).rejects.toThrow(specifier);
+  });
 
   it("builds each runtime from its own entry and shares neutral modules", async () => {
     const entries = await createSplitPlugin();

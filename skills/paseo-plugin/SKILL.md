@@ -247,9 +247,9 @@ Icons are Lucide icon names. `theme` is a typed `PluginTheme` on every surface a
 Before writing imports, classify each module as shared, client, or server. Follow the
 [SDK import boundaries](https://paseo.sh/docs/plugins/v0.8/reference.md#runtime-modules), including
 transitive and type dependencies. The root is shared-only; hooks and client contexts belong to
-`@getpaseo/plugin/client`, server contexts to `/server`, and host UI to `/react-native` or `/ui`.
+`@getpaseo/plugin/client`, server contexts to `/server`, and host UI to `/client/react-native` or `/client/ui`.
 Install dependencies locally for typechecking; Paseo supplies host runtime modules. JSX uses the
-automatic runtime. Do not import `/host` from plugin code.
+automatic runtime. Do not import `/client/host` from plugin code.
 
 ## Works on mobile
 
@@ -518,7 +518,7 @@ client.addTimelineRenderer({
 });
 ```
 
-Transformers run while the render model is built, on fetched history and on every live update, so `phase` is `"streaming"` for a loading thought or running tool call. Identity comes from the source item, so a streaming item keeps its mounted component; set an output `id` when one source explodes into several items. Transformers must be synchronous and deterministic, `data` must be JSON, and a transformer that throws is logged and skipped. Use `useRevealedText(text, phase)` from `@getpaseo/plugin/react-native` to pace streaming text. `plugin-examples/inline-thinking` replaces the thinking row with inline text; `plugin-examples/timeline-items` replaces a Pi todo tool call with a task card.
+Transformers run while the render model is built, on fetched history and on every live update, so `phase` is `"streaming"` for a loading thought or running tool call. Identity comes from the source item, so a streaming item keeps its mounted component; set an output `id` when one source explodes into several items. Transformers must be synchronous and deterministic, `data` must be JSON, and a transformer that throws is logged and skipped. Use `useRevealedText(text, phase)` from `@getpaseo/plugin/client/react-native` to pace streaming text. `plugin-examples/inline-thinking` replaces the thinking row with inline text; `plugin-examples/timeline-items` replaces a Pi todo tool call with a task card.
 
 ## Append a timeline row from the daemon
 

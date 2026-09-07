@@ -2,7 +2,7 @@ export type {
   PluginHandlerContext,
   PluginServerContext,
   PluginServerContribution,
-} from "./server-contracts.js";
+} from "./contracts.js";
 export type {
   PluginHookContext,
   PluginHookWorkspace,

@@ -1,4 +1,4 @@
-import type { AcpTransformer } from "@getpaseo/plugin/acp";
+import type { AcpTransformer } from "@getpaseo/plugin/server/acp";
 import { z } from "zod";
 
 const vendorEditInputSchema = z.object({

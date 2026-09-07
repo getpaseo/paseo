@@ -49,7 +49,7 @@ export default function contribute(server: PluginServerContext) {
 import {
   negotiateProviderCapabilities,
   type ProviderRegistration,
-} from "@getpaseo/plugin/provider";
+} from "@getpaseo/plugin/server/provider";
 
 const supported = ["prompt.message"] as const;
 
@@ -333,7 +333,7 @@ Use the ACP shim when the agent already speaks ACP:
 
 ```ts
 import type { PluginServerContext } from "@getpaseo/plugin/server";
-import { runAcpProvider } from "@getpaseo/plugin/acp";
+import { runAcpProvider } from "@getpaseo/plugin/server/acp";
 
 export default function contribute(server: PluginServerContext) {
   server.registerProvider(
@@ -355,7 +355,7 @@ Use `transformers` only for vendor differences ACP cannot describe. Validate ven
 Zod and leave malformed or unrelated values unchanged:
 
 ```ts
-import type { AcpTransformer } from "@getpaseo/plugin/acp";
+import type { AcpTransformer } from "@getpaseo/plugin/server/acp";
 import { z } from "zod";
 
 const editSchema = z.object({

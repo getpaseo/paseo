@@ -1,5 +1,5 @@
 import { useMutation } from "@tanstack/react-query";
-import { Icon } from "@getpaseo/plugin/react-native";
+import { Icon } from "@getpaseo/plugin/client/react-native";
 import {
   type PluginClientContext,
   type PluginComposerPillProps,
