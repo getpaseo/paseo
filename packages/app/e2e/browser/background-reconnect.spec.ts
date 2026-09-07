@@ -1,10 +1,33 @@
-import { expect, test } from "../support/fixtures";
-import type { Page } from "@playwright/test";
+import { expect, test as base } from "../support/fixtures";
+import type { Page, TestInfo } from "@playwright/test";
 import {
   startIsolatedHostDaemon,
   type IsolatedHostDaemon,
 } from "../support/helpers/isolated-host-daemon";
 import { seedSavedSettingsHosts } from "../support/helpers/settings";
+
+const test = base.extend<{ reconnectHost: IsolatedHostDaemon }>({
+  reconnectHost: async ({ e2eWorker }, provide) => {
+    void e2eWorker;
+    const daemon = await startIsolatedHostDaemon("background-reconnect");
+    try {
+      await provide(daemon);
+    } finally {
+      await daemon.close();
+    }
+  },
+});
+
+test.describe.configure({ timeout: 120_000 });
+
+async function captureHost(page: Page, testInfo: TestInfo, name: string): Promise<void> {
+  await page.screenshot({ path: testInfo.outputPath(`${name}.png`) });
+}
+
+async function refocusConnectedTab(page: Page): Promise<void> {
+  await setTabVisibility(page, "visible");
+  await expect(page.getByText("Online", { exact: true })).toBeVisible();
+}
 
 async function setTabVisibility(page: Page, visibility: DocumentVisibilityState): Promise<void> {
   await page.evaluate((state) => {
@@ -43,19 +66,13 @@ async function restartHostWhileHidden(page: Page, daemon: IsolatedHostDaemon): P
 
 test("a hidden tab reconnects after daemon restart and stays connected on refocus", async ({
   page,
+  reconnectHost,
 }, testInfo) => {
-  test.setTimeout(120_000);
-  const daemon = await startIsolatedHostDaemon("background-reconnect");
-  try {
-    await openHostOverview(page, daemon);
-    await page.screenshot({ path: testInfo.outputPath("before-hide.png") });
-    await setTabVisibility(page, "hidden");
-    await restartHostWhileHidden(page, daemon);
-    await page.screenshot({ path: testInfo.outputPath("reconnected-while-hidden.png") });
-    await setTabVisibility(page, "visible");
-    await expect(page.getByText("Online", { exact: true })).toBeVisible();
-    await page.screenshot({ path: testInfo.outputPath("reconnected-after-refocus.png") });
-  } finally {
-    await daemon.close();
-  }
+  await openHostOverview(page, reconnectHost);
+  await captureHost(page, testInfo, "before-hide");
+  await setTabVisibility(page, "hidden");
+  await restartHostWhileHidden(page, reconnectHost);
+  await captureHost(page, testInfo, "reconnected-while-hidden");
+  await refocusConnectedTab(page);
+  await captureHost(page, testInfo, "reconnected-after-refocus");
 });

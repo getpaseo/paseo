@@ -22,7 +22,7 @@ npm run test:e2e --workspace=@getpaseo/app -- background-reconnect.spec.ts --pro
 npm run test:e2e --workspace=@getpaseo/app -- background-reconnect.spec.ts --project=browser --workers=1 --repeat-each=2
 ```
 
-The same journey failed against the baseline: no new WebSocket for 30 seconds after daemon restart. It passed once during development and twice consecutively after restoring the fix. [Baseline output](web-red.txt) / [final output](web-green.txt).
+The same journey failed against the baseline: no new WebSocket for 30 seconds after daemon restart. It passed once during development and twice consecutively after restoring the fix. A further run passed after moving setup and cleanup into a test fixture (1 passed, 34.3s). [Baseline output](web-red.txt) / [final output](web-green.txt).
 
 | Before: hidden tab after restart | After: reconnected while hidden |
 | -------------------------------- | ------------------------------- |
