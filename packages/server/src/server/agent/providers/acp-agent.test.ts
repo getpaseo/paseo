@@ -128,6 +128,19 @@ interface ACPConfiguredOverrideInternals {
   applyConfiguredOverrides(): Promise<void>;
 }
 
+interface ACPSteerInternals {
+  sessionId: string | null;
+  connection: {
+    prompt: (input: {
+      sessionId: string;
+      messageId: string;
+      prompt: Array<{ type: "text"; text: string }>;
+    }) => Promise<unknown>;
+  };
+  activeForegroundTurnId: string | null;
+  activeTurnSteerCommand?: string;
+}
+
 function createSession(terminateProcess?: ProcessTerminator): ACPAgentSession {
   return new ACPAgentSession(
     {
@@ -151,6 +164,29 @@ function createSession(terminateProcess?: ProcessTerminator): ACPAgentSession {
     },
   );
 }
+
+test("ACP forwards an opted-in active-turn steer without replacing the turn", async () => {
+  const session = createSession();
+  const prompt = vi.fn(async () => ({ stopReason: "end_turn" }));
+  const internals = asInternals<ACPSteerInternals>(session);
+  internals.sessionId = "session-1";
+  internals.activeForegroundTurnId = "turn-1";
+  internals.activeTurnSteerCommand = "/steer";
+  internals.connection = { prompt };
+
+  await expect(
+    session.steerActiveTurn?.("change course", {
+      expectedTurnId: "turn-1",
+      clientMessageId: "steer-message-1",
+    }),
+  ).resolves.toEqual({ status: "accepted" });
+  expect(prompt).toHaveBeenCalledWith({
+    sessionId: "session-1",
+    messageId: "steer-message-1",
+    prompt: [{ type: "text", text: "/steer change course" }],
+  });
+  expect(internals.activeForegroundTurnId).toBe("turn-1");
+});
 
 // Typed substitute for the real tree-kill terminator. Records which child
 // processes it was asked to terminate, so tests assert on observable state

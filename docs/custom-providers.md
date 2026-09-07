@@ -503,6 +503,17 @@ Paseo tools such as subagent creation come from the shared internal tool catalog
 }
 ```
 
+ACP does not define native active-turn steering. Agents that expose steering through a slash
+command can opt in without changing the fallback for other ACP providers:
+
+```json
+"params": { "activeTurnSteerCommand": "/steer" }
+```
+
+Paseo sends that command as a concurrent ACP prompt while preserving the foreground turn. Use this
+only when the ACP agent explicitly handles the command as in-place steering; otherwise Paseo keeps
+its normal interrupt-and-replace behavior.
+
 ACP agents execute filesystem operations in their own environment by default,
 while terminal operations run through Paseo on the host. To customize which
 operations Paseo handles, configure client capabilities in provider params:

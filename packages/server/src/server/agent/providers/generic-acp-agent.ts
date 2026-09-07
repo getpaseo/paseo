@@ -21,6 +21,7 @@ import {
 export const GenericACPProviderParamsSchema = z
   .object({
     supportsMcpServers: z.boolean().optional(),
+    activeTurnSteerCommand: z.string().trim().min(1).optional(),
     clientCapabilities: z
       .object({
         fs: z
@@ -77,6 +78,7 @@ export class GenericACPAgentClient extends ACPAgentClient {
       configFeatureOptions: options.configFeatureOptions,
       extensionCommandsParser: options.extensionCommandsParser,
       catalogModelResolver: options.catalogModelResolver,
+      activeTurnSteerCommand: providerParams.activeTurnSteerCommand,
       now: options.now,
     });
 

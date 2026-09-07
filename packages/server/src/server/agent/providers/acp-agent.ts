@@ -84,6 +84,8 @@ import {
   type AgentStreamEvent,
   type AgentTimelineItem,
   type AgentUsage,
+  type SteerActiveTurnOptions,
+  type SteerResult,
   type FetchCatalogOptions,
   type ProviderRefreshContext,
   type ImportableProviderSession,
@@ -443,6 +445,7 @@ interface ACPAgentClientOptions {
   initialCommandsWaitTimeoutMs?: number;
   terminateProcess?: ProcessTerminator;
   now?: () => number;
+  activeTurnSteerCommand?: string;
 }
 
 interface ACPAgentSessionOptions {
@@ -476,6 +479,7 @@ interface ACPAgentSessionOptions {
   waitForInitialCommands?: boolean;
   initialCommandsWaitTimeoutMs?: number;
   terminateProcess?: ProcessTerminator;
+  activeTurnSteerCommand?: string;
 }
 
 export interface SpawnedACPProcess {
@@ -905,6 +909,7 @@ export class ACPAgentClient implements AgentClient {
   private readonly importPromptCache = new Map<string, ACPImportPromptCacheEntry>();
   private readonly now: () => number;
   protected readonly terminateProcess: ProcessTerminator;
+  private readonly activeTurnSteerCommand?: string;
 
   constructor(options: ACPAgentClientOptions) {
     this.provider = options.provider;
@@ -933,6 +938,7 @@ export class ACPAgentClient implements AgentClient {
     this.initialCommandsWaitTimeoutMs = options.initialCommandsWaitTimeoutMs ?? 1500;
     this.extensionCommandsParser = options.extensionCommandsParser;
     this.now = options.now ?? Date.now;
+    this.activeTurnSteerCommand = options.activeTurnSteerCommand;
   }
 
   async createSession(
@@ -965,6 +971,7 @@ export class ACPAgentClient implements AgentClient {
         extensionCommandsParser: this.extensionCommandsParser,
         waitForInitialCommands: this.waitForInitialCommands,
         initialCommandsWaitTimeoutMs: this.initialCommandsWaitTimeoutMs,
+        activeTurnSteerCommand: this.activeTurnSteerCommand,
       },
     );
     await session.initializeNewSession();
@@ -1016,6 +1023,7 @@ export class ACPAgentClient implements AgentClient {
       extensionCommandsParser: this.extensionCommandsParser,
       waitForInitialCommands: this.waitForInitialCommands,
       initialCommandsWaitTimeoutMs: this.initialCommandsWaitTimeoutMs,
+      activeTurnSteerCommand: this.activeTurnSteerCommand,
     });
     await session.initializeResumedSession();
     return session;
@@ -1689,6 +1697,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   private replayingHistory = false;
   private bootstrapThreadEventPending = false;
   private readonly terminateProcess: ProcessTerminator;
+  private readonly activeTurnSteerCommand?: string;
 
   constructor(config: AgentSessionConfig, options: ACPAgentSessionOptions) {
     this.provider = options.provider;
@@ -1721,6 +1730,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     this.waitForInitialCommands = options.waitForInitialCommands ?? false;
     this.initialCommandsWaitTimeoutMs = options.initialCommandsWaitTimeoutMs ?? 1500;
     this.extensionCommandsParser = options.extensionCommandsParser;
+    this.activeTurnSteerCommand = options.activeTurnSteerCommand;
   }
 
   get id(): string | null {
@@ -1879,6 +1889,37 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       });
 
     return { turnId };
+  }
+
+  async steerActiveTurn(
+    prompt: AgentPromptInput,
+    options: SteerActiveTurnOptions,
+  ): Promise<SteerResult> {
+    if (
+      !this.activeTurnSteerCommand ||
+      !this.connection ||
+      !this.sessionId ||
+      this.activeForegroundTurnId !== options.expectedTurnId ||
+      typeof prompt !== "string"
+    ) {
+      return { status: "unavailable" };
+    }
+
+    if (options.clearPendingPermissions) {
+      for (const pending of this.pendingPermissions.values()) {
+        pending.resolve({ outcome: { outcome: "cancelled" } });
+      }
+      this.pendingPermissions.clear();
+    }
+
+    await this.runACPRequest(() =>
+      this.connection!.prompt({
+        sessionId: this.sessionId!,
+        messageId: options.clientMessageId ?? randomUUID(),
+        prompt: [{ type: "text", text: `${this.activeTurnSteerCommand} ${prompt}` }],
+      }),
+    );
+    return { status: "accepted" };
   }
 
   subscribe(callback: (event: AgentStreamEvent) => void): () => void {
