@@ -45,14 +45,15 @@ describe("plugin scaffold", () => {
       expect(config.compilerOptions.lib).toEqual(["ES2023"]);
       expect(config.compilerOptions.types).toEqual(["react"]);
       await expect(typecheckPlugin(directory)).resolves.toBeUndefined();
-      expect(JSON.parse(await readFile(path.join(directory, "paseo-plugin.json"), "utf8"))).toEqual(
-        {
-          id: "hello-plugin",
-        },
-      );
       const cliPackageJson = JSON.parse(
         await readFile(new URL("../../../package.json", import.meta.url), "utf8"),
       ) as { version: string };
+      expect(JSON.parse(await readFile(path.join(directory, "paseo-plugin.json"), "utf8"))).toEqual(
+        {
+          id: "hello-plugin",
+          requirements: { paseo: `>=${cliPackageJson.version}` },
+        },
+      );
       expect(JSON.parse(await readFile(path.join(directory, "package.json"), "utf8"))).toEqual({
         name: "hello-plugin",
         private: true,

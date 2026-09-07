@@ -1,4 +1,4 @@
-import path from "node:path";
+import { copyPluginExample } from "../support/helpers/plugin-fixture";
 import { expect, test as base, type Page } from "../support/fixtures";
 import { gotoAppShell } from "../support/helpers/app";
 import { connectNewWorkspaceDaemonClient } from "../support/helpers/new-workspace";
@@ -95,11 +95,10 @@ const test = base.extend<{ modalExample: Page }>({
   modalExample: async ({ page, context }, provide) => {
     const client = await connectNewWorkspaceDaemonClient({ ownProjects: false });
     const previous = await client.getDaemonConfig();
+    const example = await copyPluginExample("modal-ui");
     try {
       await client.patchDaemonConfig({ pluginsEnabled: true });
-      await client.installDirectoryPlugin(
-        path.resolve(__dirname, "../../../../plugin-examples/modal-ui"),
-      );
+      await client.installDirectoryPlugin(example.directory);
       await context.grantPermissions(["clipboard-read", "clipboard-write"]);
       await provide(page);
     } finally {
@@ -108,6 +107,7 @@ const test = base.extend<{ modalExample: Page }>({
         .patchDaemonConfig({ pluginsEnabled: previous.config.pluginsEnabled ?? false })
         .catch(() => undefined);
       await client.close().catch(() => undefined);
+      await example.cleanup();
     }
   },
 });

@@ -41,7 +41,7 @@ runtime-safe: run `paseo reload` after editing `config.json`. Enabling starts ev
 enabled plugin; disabling tears them all down without restarting the daemon. Plugin source entries
 remain lifecycle-owned and do not reload from manual config edits.
 
-The directory contains an identity-only manifest, one optional entry per runtime, runtime-owned
+The directory contains a manifest declaring identity and Paseo requirements, one optional entry per runtime, runtime-owned
 directories, and local typechecking support. At least one entry is required.
 
 ```text
@@ -62,9 +62,14 @@ runtime modules, so consumers do not install these packages when adding the plug
 
 ```json
 {
-  "id": "my-plugin"
+  "id": "my-plugin",
+  "requirements": { "paseo": ">=0.8.0" }
 }
 ```
+
+Declare the supported Paseo range and keep it current when adopting newer APIs. See the
+[requirements contract](../public-docs/plugins/v0.8/reference.md#requirements), including legacy
+manifests and prerelease matching.
 
 The config key is the runtime plugin ID. The manifest ID is the default selected during install;
 `--id` overrides it. Existing configuration is not renamed when the manifest changes, and the
@@ -111,6 +116,7 @@ step:
 ```json
 {
   "id": "review",
+  "requirements": { "paseo": ">=0.8.0" },
   "build": [
     ["npm", "ci"],
     ["npm", "run", "build"]

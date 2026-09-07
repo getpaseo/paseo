@@ -1,4 +1,5 @@
 import type { QueryClient } from "@tanstack/react-query";
+import type { PluginRequirements } from "@getpaseo/protocol/messages";
 import type {
   PluginAttachmentSourceContribution,
   PluginCommandCenterItemContribution,
@@ -36,6 +37,7 @@ export interface EvaluatedPlugin {
 
 export interface InstalledPlugin extends EvaluatedPlugin {
   serverId: string;
+  requirements?: PluginRequirements;
   clientBundle: string;
   queryClient: QueryClient;
 }

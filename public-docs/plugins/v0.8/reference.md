@@ -42,11 +42,44 @@ my-plugin/
   tsconfig.json
 ```
 
-The required root manifest is `paseo-plugin.json`. It contains the default plugin ID:
+The required root manifest is `paseo-plugin.json`. It contains the default plugin ID and supported Paseo versions:
 
 ```json
-{ "id": "my-plugin" }
+{ "id": "my-plugin", "requirements": { "paseo": ">=0.8.0" } }
 ```
+
+### Requirements
+
+`requirements` is an optional object. Its currently supported key, `paseo`, accepts an npm semver
+range. An omitted `requirements.paseo` means `<0.8.0`: the plugin predates the first breaking
+plugin release. Paseo 0.8 and later reject it with a link to the [migration guide](migration).
+Empty strings, invalid ranges, and unknown manifest requirement keys are rejected.
+
+| Range            | Compatible releases                                                 |
+| ---------------- | ------------------------------------------------------------------- |
+| `>=0.8.0`        | 0.8.0 and later stable releases, including future breaking releases |
+| `^0.8.0`         | 0.8.x stable releases only                                          |
+| `>=0.8.3 <0.9.0` | 0.8.3 through the last 0.8 patch                                    |
+| `>=0.8.0-beta.1` | Betas from 0.8.0-beta.1, then 0.8.0 and later stable releases       |
+
+Standard npm prerelease rules apply: `>=0.8.0` excludes `0.8.0-beta.1`. A prerelease must be
+explicitly included for its major/minor/patch tuple; no version tags are stripped.
+
+`paseo plugin init` writes `>=` followed by the current CLI version and pins the matching SDK
+for typechecking. Raise the minimum when adopting a newer API. Add an upper bound when a later
+release is incompatible; a minimum alone does not promise protection from future breaking changes.
+
+The daemon checks its version before installing, running Git build commands, or loading a plugin,
+and checks again on startup, enable, and reload. A rejected Git update keeps the installed revision.
+Each connected app checks its own version before evaluating client code and shows incompatibility
+in Settings → Plugins. A compatible daemon does not make an older app compatible. A plugin with no
+client entry does not require the connected app to match.
+
+For example: `Plugin "review" requires Paseo >=0.8.0. Your daemon is 0.7.2.` Use a compatible plugin
+revision or update the named runtime. Releases before 0.8 do not understand this manifest field
+and cannot show this new diagnostic.
+
+### Runtime entries
 
 | Entry              | Runtime               | Receives              | Required                                                          |
 | ------------------ | --------------------- | --------------------- | ----------------------------------------------------------------- |
@@ -1276,6 +1309,7 @@ step:
 ```json
 {
   "id": "review",
+  "requirements": { "paseo": ">=0.8.0" },
   "build": [
     ["npm", "ci"],
     ["npm", "run", "build"]

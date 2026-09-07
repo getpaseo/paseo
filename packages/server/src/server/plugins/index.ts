@@ -11,6 +11,7 @@ import {
   type PluginSourceUpdateItem,
 } from "@getpaseo/protocol/messages";
 import { parsePluginSourceReference } from "@getpaseo/protocol/plugin-source-reference";
+import { assertPluginCompatibility } from "@getpaseo/protocol/plugin-requirements";
 import { BUILTIN_PROVIDER_IDS } from "@getpaseo/protocol/provider-manifest";
 import type { DaemonConfigStore } from "../daemon-config-store.js";
 import { type ManagedPluginCandidate, ManagedPluginSources } from "./managed-source.js";
@@ -23,7 +24,7 @@ import { readPluginProviderIcon } from "./provider-icon.js";
 const BUILTIN_PROVIDER_ID_SET: ReadonlySet<string> = new Set(BUILTIN_PROVIDER_IDS);
 
 interface PluginRuntimePort {
-  catalog(): Array<{ id: string; clientBundle: string }>;
+  catalog: PluginRuntime["catalog"];
   invoke(pluginId: string, method: string, input: unknown): Promise<unknown>;
   getLogs(pluginId: string): PluginLogEntry[];
   clearLogs(pluginId: string): void;
@@ -70,7 +71,7 @@ export class PluginService {
   constructor(
     logger: pino.Logger,
     private readonly configStore: DaemonConfigStore,
-    daemonVersion: string,
+    private readonly daemonVersion: string,
     private readonly dependencies: PluginServiceDependencies = {},
   ) {
     this.logger = logger.child({ module: "plugin-service" });
@@ -166,7 +167,7 @@ export class PluginService {
     return this.runtime.getLogs(pluginId);
   }
 
-  catalog(): Array<{ id: string; clientBundle: string }> {
+  catalog(): ReturnType<PluginRuntime["catalog"]> {
     return this.runtime.catalog();
   }
 
@@ -174,6 +175,7 @@ export class PluginService {
     return this.enqueue(async () => {
       const directory = path.resolve(input.path);
       const manifest = await readPluginManifest(directory);
+      assertPluginCompatibility({ ...manifest, version: this.daemonVersion, runtime: "daemon" });
       const pluginId = PluginIdSchema.parse(input.id ?? manifest.id);
       if (this.configStore.get().plugins?.[pluginId]) {
         throw new Error(
@@ -225,6 +227,7 @@ export class PluginService {
       });
       let pluginId: string;
       try {
+        await this.checkRequirements(candidate.directory);
         await runPluginBuild(candidate.directory, candidate.build, this.logger);
         pluginId = PluginIdSchema.parse(input.id ?? candidate.defaultId);
         if (this.configStore.get().plugins?.[pluginId]) {
@@ -508,6 +511,11 @@ export class PluginService {
     this.errors.set(pluginId, error instanceof Error ? error.message : String(error));
   }
 
+  private async checkRequirements(directory: string): Promise<void> {
+    const manifest = await readPluginManifest(directory);
+    assertPluginCompatibility({ ...manifest, version: this.daemonVersion, runtime: "daemon" });
+  }
+
   private async updateSource(pluginId: string): Promise<PluginSourceUpdateItem> {
     const managedSources = this.requireManagedSources();
     const source = this.requireSource(pluginId);
@@ -525,6 +533,7 @@ export class PluginService {
     }
     let candidate = prepared.candidate;
     try {
+      await this.checkRequirements(candidate.directory);
       await runPluginBuild(candidate.directory, candidate.build, this.logger);
       candidate = await managedSources.place(pluginId, candidate);
       await this.validateCandidate(candidate);

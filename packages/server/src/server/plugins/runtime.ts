@@ -16,6 +16,8 @@ import {
 import type { PluginLogEntry } from "@getpaseo/protocol/messages";
 import { compilePlugin } from "./compiler.js";
 import { readPluginManifest } from "./manifest.js";
+import type { PluginRequirements } from "@getpaseo/protocol/messages";
+import { assertPluginCompatibility } from "@getpaseo/protocol/plugin-requirements";
 import type {
   PluginProcessMessage,
   PluginProcessRequest,
@@ -56,6 +58,7 @@ interface PendingInvocation {
 
 interface LoadedPlugin {
   id: string;
+  requirements: PluginRequirements | undefined;
   clientBundle: string;
   methods: ReadonlySet<string>;
   providers: readonly PluginProviderMetadata[];
@@ -312,7 +315,8 @@ export class PluginRuntime {
 
   async validatePlugin(configuredPath: string): Promise<void> {
     const directory = path.resolve(configuredPath);
-    await readPluginManifest(directory);
+    const manifest = await readPluginManifest(directory);
+    assertPluginCompatibility({ ...manifest, version: this.daemonVersion, runtime: "daemon" });
     const entryPaths = await resolveEntryPaths(directory);
     await compilePlugin(entryPaths);
   }
@@ -326,9 +330,9 @@ export class PluginRuntime {
     return true;
   }
 
-  catalog(): Array<{ id: string; clientBundle: string }> {
+  catalog(): Array<{ id: string; clientBundle: string; requirements?: PluginRequirements }> {
     return [...this.plugins.values()]
-      .map(({ id, clientBundle }) => ({ id, clientBundle }))
+      .map(({ id, clientBundle, requirements }) => ({ id, clientBundle, requirements }))
       .sort((left, right) => left.id.localeCompare(right.id));
   }
 
@@ -473,7 +477,8 @@ export class PluginRuntime {
     configuredPath: string,
   ): Promise<LoadedPlugin> {
     const directory = path.resolve(configuredPath);
-    await readPluginManifest(directory);
+    const manifest = await readPluginManifest(directory);
+    assertPluginCompatibility({ ...manifest, version: this.daemonVersion, runtime: "daemon" });
     const entryPaths = await resolveEntryPaths(directory);
     const bundles = await compilePlugin(entryPaths);
     const serverBundle = bundles.serverBundle;
@@ -481,6 +486,7 @@ export class PluginRuntime {
       return {
         id: pluginId,
         clientBundle: bundles.clientBundle ?? "",
+        requirements: manifest.requirements,
         methods: new Set(),
         providers: [],
         child: null,
@@ -576,6 +582,7 @@ export class PluginRuntime {
     loaded = {
       id: pluginId,
       clientBundle: bundles.clientBundle ?? "",
+      requirements: manifest.requirements,
       methods: new Set(ready.methods),
       providers: ready.providers ?? [],
       child,

@@ -142,13 +142,14 @@ export async function scaffoldPluginDirectory(
     throw new Error(`Plugin directory must be empty: ${directory}`);
   }
 
+  const version = resolveCliVersion();
   const packageJson = {
     name: id,
     private: true,
     version: "0.0.0",
     scripts: { typecheck: "tsc --noEmit" },
     devDependencies: {
-      "@getpaseo/plugin": resolveCliVersion(),
+      "@getpaseo/plugin": version,
       "@tanstack/react-query": "^5.90.11",
       "@types/react": "~19.2.0",
       react: "19.1.0",
@@ -158,7 +159,10 @@ export async function scaffoldPluginDirectory(
     },
   };
   const files = new Map<string, string>([
-    ["paseo-plugin.json", `${JSON.stringify({ id }, null, 2)}\n`],
+    [
+      "paseo-plugin.json",
+      `${JSON.stringify({ id, requirements: { paseo: `>=${version}` } }, null, 2)}\n`,
+    ],
     ["package.json", `${JSON.stringify(packageJson, null, 2)}\n`],
     ["tsconfig.json", `${JSON.stringify(TSCONFIG, null, 2)}\n`],
     ["index.client.tsx", CLIENT_ENTRY],

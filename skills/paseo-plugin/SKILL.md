@@ -62,11 +62,18 @@ my-plugin/
   shared/greeting.ts
 ```
 
-The manifest supplies the default install ID:
+The manifest supplies the default install ID and supported Paseo versions:
 
 ```json
-{ "id": "my-plugin" }
+{ "id": "my-plugin", "requirements": { "paseo": ">=0.8.0" } }
 ```
+
+Keep `requirements.paseo` correct whenever creating or editing a plugin. `init` uses `>=` followed
+by the CLI version. Raise the minimum when adopting newer APIs; add an upper bound when a later
+Paseo release is incompatible. Use npm semver ranges and explicitly include beta versions when
+targeting betas. Missing requirements mean `<0.8.0`; complete the 0.8 entry migration before adding
+`>=0.8.0`. Verify compatibility with both the daemon and the app running client contributions.
+See [requirements](https://paseo.sh/docs/plugins/v0.8/reference#requirements).
 
 Each runtime has its own optional entry. A plugin must have at least one. Both entries accept
 `.ts` or `.tsx`; use `.tsx` when an entry imports components.

@@ -102,6 +102,7 @@ its registration; that registration belongs in the client entry.
 
 | Compiler or load error                                                                                                     | Meaning and fix                                                                                                           |
 | -------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| `This plugin has no requirements.paseo`                                                                                    | Complete the migration and declare the range in step 7.                                                                   |
 | `This plugin was made for an older version of Paseo`                                                                       | The directory still has only the old root entry. Create a runtime entry, move registrations, then delete the old file.    |
 | `Plugin entry points are missing: expected index.client.ts or index.client.tsx and/or index.server.ts or index.server.tsx` | No supported entry exists. Add at least one exact filename.                                                               |
 | `server-only module cannot be imported into the plugin client bundle: <file>`                                              | A client import reaches `server/`. Move the call behind an RPC and import its contract from `shared/`.                    |
@@ -221,7 +222,26 @@ Import path changes inside the moved files:
 calls it directly and returns its cleanup. A plugin whose `addClientSide` callback also registered
 pills or subscriptions keeps that code; only the wrapper goes away.
 
-## 7. Verify the migration
+## 7. Declare the Paseo requirement
+
+After migrating the entries and imports, add the minimum runtime version to `paseo-plugin.json`:
+
+```json
+{
+  "id": "my-plugin",
+  "requirements": { "paseo": ">=0.8.0" }
+}
+```
+
+Keep your existing ID and build commands. Missing `requirements.paseo` means `<0.8.0`, so Paseo 0.8
+rejects the plugin even if its files have been moved. Adding the field alone does not migrate the
+code. Update the local `@getpaseo/plugin` development dependency to the version you target and
+reinstall dependencies before typechecking.
+
+For a 0.8 beta, use its explicit version in both the SDK dependency and range, for example
+`>=0.8.0-beta.1`. See [requirements](reference#requirements) for range and prerelease semantics.
+
+## 8. Verify the migration
 
 Run:
 

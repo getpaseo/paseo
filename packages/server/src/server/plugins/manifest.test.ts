@@ -11,6 +11,27 @@ afterEach(async () => {
 });
 
 describe("plugin manifest", () => {
+  it("reads and validates requirements before any plugin code runs", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "paseo-plugin-manifest-"));
+    directories.push(directory);
+    const manifest = path.join(directory, "paseo-plugin.json");
+    await writeFile(manifest, JSON.stringify({ id: "example", requirements: { paseo: "^0.8.0" } }));
+    await expect(readPluginManifest(directory)).resolves.toEqual({
+      id: "example",
+      requirements: { paseo: "^0.8.0" },
+    });
+    for (const requirements of [
+      { paseo: "latest" },
+      { paseo: "" },
+      { paseo: 8 },
+      { node: ">=20" },
+      "0.8.0",
+    ]) {
+      await writeFile(manifest, JSON.stringify({ id: "example", requirements }));
+      await expect(readPluginManifest(directory)).rejects.toThrow();
+    }
+  });
+
   it("accepts only non-empty argv arrays for build commands", async () => {
     const directory = await mkdtemp(path.join(tmpdir(), "paseo-plugin-manifest-"));
     directories.push(directory);
