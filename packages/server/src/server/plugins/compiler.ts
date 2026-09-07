@@ -364,9 +364,11 @@ function checkSharedDependencies(inputs: Metafile["inputs"], pluginDirectory: st
 
 async function compileTarget(entryPath: string, target: PluginBuildTarget): Promise<string> {
   const { build } = loadEsbuild();
-  const pluginDirectory = realpathSync(path.dirname(entryPath));
+  // Use native canonical paths throughout: TypeScript expands Windows short names
+  // when resolving type references, while the JS realpath implementation retains them.
+  const pluginDirectory = realpathSync.native(path.dirname(entryPath));
   const result = await build({
-    entryPoints: [entryPath],
+    entryPoints: [realpathSync.native(entryPath)],
     bundle: true,
     format: "cjs",
     jsx: "automatic",

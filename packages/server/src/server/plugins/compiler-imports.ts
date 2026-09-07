@@ -53,7 +53,7 @@ export function createPluginImportReader(directory: string) {
               undefined,
               kind === "require-call" ? ts.ModuleKind.CommonJS : ts.ModuleKind.ESNext,
             ).resolvedModule?.resolvedFileName;
-      return resolved ? realpathSync(resolved) : undefined;
+      return resolved ? realpathSync.native(resolved) : undefined;
     },
     read(file: string): ModuleImport[] {
       const source = ts.createSourceFile(
