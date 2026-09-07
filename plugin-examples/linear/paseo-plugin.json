@@ -1,3 +1,6 @@
 {
-  "id": "linear"
+  "id": "linear",
+  "requirements": {
+    "paseo": ">=0.8.0"
+  }
 }

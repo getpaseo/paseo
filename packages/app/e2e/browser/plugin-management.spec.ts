@@ -1,3 +1,4 @@
+import { pluginRequirements } from "../support/helpers/plugin-fixture";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -120,7 +121,10 @@ test("installs, reloads, recovers, disables, and removes a trusted local plugin"
   const directory = await mkdtemp(path.join(tmpdir(), "paseo-plugin-e2e-"));
   const client = await connectNewWorkspaceDaemonClient({ ownProjects: false });
   const previous = await client.getDaemonConfig();
-  await writeFile(path.join(directory, "paseo-plugin.json"), JSON.stringify({ id: "e2e-plugin" }));
+  await writeFile(
+    path.join(directory, "paseo-plugin.json"),
+    JSON.stringify({ id: "e2e-plugin", requirements: pluginRequirements }),
+  );
   await writeFile(path.join(directory, "index.client.tsx"), pluginSource("Plugin v1"));
 
   try {

@@ -1,3 +1,4 @@
+import { resolveDaemonVersion } from "../daemon-version.js";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -19,7 +20,10 @@ test("two clients share settings, observe changes, and preserve values through p
   try {
     await writeFile(
       path.join(directory, "paseo-plugin.json"),
-      JSON.stringify({ id: "settings-test" }),
+      JSON.stringify({
+        id: "settings-test",
+        requirements: { paseo: `>=${resolveDaemonVersion(import.meta.url)}` },
+      }),
     );
     await writeFile(
       path.join(directory, "index.server.ts"),

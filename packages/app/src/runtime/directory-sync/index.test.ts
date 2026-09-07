@@ -1,3 +1,10 @@
+import { DatabaseSync } from "node:sqlite";
+import { ReplicaCache } from "@/runtime/replica-cache";
+import {
+  createSqliteReplicaRowStore,
+  type ReplicaSqliteConnection,
+  type SqliteValue,
+} from "@/runtime/replica-cache/row-store-sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import type { SessionOutboundMessage } from "@getpaseo/protocol/messages";
@@ -1131,4 +1138,123 @@ describe("DirectorySync session readiness", () => {
     });
     directory.dispose();
   });
+});
+
+function createSqliteCache() {
+  const database = new DatabaseSync(":memory:");
+  let beforeRead = async () => {};
+  const connection: ReplicaSqliteConnection = {
+    async exec(sql) {
+      database.exec(sql);
+    },
+    async run(sql, params = []) {
+      database.prepare(sql).run(...params);
+    },
+    async all<Row>(sql: string, params: readonly SqliteValue[] = []) {
+      const rows = database.prepare(sql).all(...params) as Row[];
+      if (sql.includes("FROM rows") && sql.includes("WHERE")) await beforeRead();
+      return rows;
+    },
+    async transaction(operation) {
+      database.exec("BEGIN IMMEDIATE");
+      try {
+        await operation(connection);
+        database.exec("COMMIT");
+      } catch (error) {
+        database.exec("ROLLBACK");
+        throw error;
+      }
+    },
+  };
+  const storage = createSqliteReplicaRowStore({ open: async () => connection }, 1);
+  const cache = new ReplicaCache(storage, { clearLegacyCache: async () => {} });
+  return {
+    cache,
+    database,
+    holdRead: (operation: () => Promise<void>) => {
+      beforeRead = operation;
+    },
+  };
+}
+
+it("fills every cached workspace beneath live updates received during the SQLite read", async () => {
+  const serverId = "sqlite-directory-race";
+  serverIds.add(serverId);
+  const { cache, database, holdRead } = createSqliteCache();
+  cache.setHosts([serverId]);
+  const project = normalizeProjectDescriptor({
+    projectId: "project",
+    projectDisplayName: "Cached",
+    projectRootPath: "/repo",
+    projectKind: "git",
+  });
+  const workspaces = ["first", "second", "third"].map((id) =>
+    normalizeWorkspaceDescriptor({
+      id,
+      projectId: "project",
+      projectDisplayName: "Cached",
+      projectRootPath: "/repo",
+      workspaceDirectory: `/repo/${id}`,
+      projectKind: "git",
+      workspaceKind: "local_checkout",
+      name: id,
+      status: "done",
+      statusEnteredAt: null,
+      activityAt: null,
+      archivingAt: null,
+      diffStat: null,
+      scripts: [],
+    }),
+  );
+  cache.replaceDirectoryBaseline(serverId, {
+    agents: new Map([["agent", createAgent(serverId, "agent")]]),
+    workspaces: new Map(workspaces.map((workspace) => [workspace.id, workspace])),
+    projects: new Map([[project.projectId, project]]),
+  });
+  await cache.flush();
+  const client = new FakeDirectoryClient();
+  const directory = new DirectorySync(
+    serverId,
+    {
+      onAgentStoppedRunning: () => {},
+      markAgentLoading: () => {},
+      markAgentReady: () => {},
+      markAgentError: () => {},
+    },
+    cache,
+  );
+  useSessionStore.getState().initializeSession(serverId, client as unknown as DaemonClient, 1);
+  directory.connectionChanged({
+    client: client as unknown as DaemonClient,
+    status: "online",
+    source: { clientGeneration: 1, connectionEpoch: 1 },
+  });
+  let updated = false;
+  holdRead(async () => {
+    if (updated) return;
+    updated = true;
+    client.emit({
+      type: "workspace_update",
+      payload: {
+        kind: "upsert",
+        workspace: { ...workspaces[0], name: "Live", activityAt: null, statusEnteredAt: null },
+      },
+    });
+  });
+  await directory.restoreCachedDirectory();
+  const session = useSessionStore.getState().sessions[serverId];
+  expect(
+    [...session.workspaces.values()]
+      .map(({ id, name }) => ({ id, name }))
+      .sort((a, b) => a.id.localeCompare(b.id)),
+  ).toEqual([
+    { id: "first", name: "Live" },
+    { id: "second", name: "second" },
+    { id: "third", name: "third" },
+  ]);
+  expect(session.agents.get("agent")?.title).toBe("Cached");
+  expect(session.hasWorkspaceDirectorySnapshot).toBe(true);
+  directory.dispose();
+  await cache.flush();
+  database.close();
 });

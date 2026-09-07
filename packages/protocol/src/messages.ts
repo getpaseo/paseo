@@ -192,6 +192,9 @@ const MutableRelayConfigSchema = z
   .passthrough();
 
 export const PluginIdSchema = z.string().regex(/^[a-z][a-z0-9-]*$/);
+// Semver validation belongs at the manifest/runtime boundary, not on the wire.
+export const PluginRequirementsSchema = z.object({ paseo: z.string().optional() });
+export type PluginRequirements = z.infer<typeof PluginRequirementsSchema>;
 
 export const DirectoryPluginSourceSchema = z
   .object({
@@ -6262,6 +6265,7 @@ export const PluginCatalogGetResponseSchema = z.object({
       z.object({
         id: PluginIdSchema,
         clientBundle: z.string(),
+        requirements: PluginRequirementsSchema.optional(),
       }),
     ),
   }),

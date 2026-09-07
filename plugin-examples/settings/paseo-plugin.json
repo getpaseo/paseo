@@ -1,1 +1,6 @@
-{ "id": "settings-example" }
+{
+  "id": "settings-example",
+  "requirements": {
+    "paseo": ">=0.8.0"
+  }
+}

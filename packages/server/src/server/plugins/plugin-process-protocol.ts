@@ -29,6 +29,8 @@ export type PluginProcessRequest =
       providerId: string;
       options: ProviderCatalogOptions;
     }
+  | { type: "hook"; requestId: string; kind: "event" | "before"; name: string; input: unknown }
+  | { type: "hook.cancel"; requestId: string }
   | { type: "invoke"; requestId: string; method: string; input: unknown }
   | {
       type: "provider.connect";
@@ -49,7 +51,13 @@ export type PluginProcessRequest =
 
 export type PluginProcessMessage =
   | { type: "settings.changed"; settingsId: string }
-  | { type: "ready"; methods: string[]; providers: PluginProviderMetadata[] }
+  | { type: "hooks.changed"; hooks: { events: string[]; before: string[] } }
+  | {
+      type: "ready";
+      methods: string[];
+      providers: PluginProviderMetadata[];
+      hooks?: { events: string[]; before: string[] };
+    }
   | { type: "result"; requestId: string; output: unknown }
   | { type: "error"; requestId: string; error: string }
   | { type: "fatal"; error: string }
@@ -71,6 +79,8 @@ export type PluginProcessMessage =
   | { type: "provider.closed"; connectionId: string; error?: string }
   | { type: "paseo_frame"; data: string | Uint8Array; isBinary: boolean }
   | { type: "paseo_close" };
+
+const hooksSchema = z.object({ events: z.array(z.string()), before: z.array(z.string()) }).strict();
 
 const providerMetadataSchema = z
   .object({
@@ -123,6 +133,16 @@ export const PluginProcessRequestSchema: z.ZodType<PluginProcessRequest> = z.dis
       .strict(),
     z
       .object({
+        type: z.literal("hook"),
+        requestId: z.string(),
+        kind: z.enum(["event", "before"]),
+        name: z.string(),
+        input: z.unknown(),
+      })
+      .strict(),
+    z.object({ type: z.literal("hook.cancel"), requestId: z.string() }).strict(),
+    z
+      .object({
         type: z.literal("invoke"),
         requestId: z.string().min(1),
         method: z.string().min(1),
@@ -156,11 +176,13 @@ export const PluginProcessMessageSchema: z.ZodType<PluginProcessMessage> = z.dis
   "type",
   [
     z.object({ type: z.literal("settings.changed"), settingsId: z.string() }).strict(),
+    z.object({ type: z.literal("hooks.changed"), hooks: hooksSchema }).strict(),
     z
       .object({
         type: z.literal("ready"),
         methods: z.array(z.string()),
         providers: z.array(providerMetadataSchema),
+        hooks: hooksSchema.optional(),
       })
       .strict(),
     z

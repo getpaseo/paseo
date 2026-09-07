@@ -41,7 +41,7 @@ runtime-safe: run `paseo reload` after editing `config.json`. Enabling starts ev
 enabled plugin; disabling tears them all down without restarting the daemon. Plugin source entries
 remain lifecycle-owned and do not reload from manual config edits.
 
-The directory contains an identity-only manifest, one optional entry per runtime, runtime-owned
+The directory contains a manifest declaring identity and Paseo requirements, one optional entry per runtime, runtime-owned
 directories, and local typechecking support. At least one entry is required.
 
 ```text
@@ -62,9 +62,14 @@ runtime modules, so consumers do not install these packages when adding the plug
 
 ```json
 {
-  "id": "my-plugin"
+  "id": "my-plugin",
+  "requirements": { "paseo": ">=0.8.0" }
 }
 ```
+
+Declare the supported Paseo range and keep it current when adopting newer APIs. See the
+[requirements contract](../public-docs/plugins/v0.8/reference.md#requirements), including legacy
+manifests and prerelease matching.
 
 The config key is the runtime plugin ID. The manifest ID is the default selected during install;
 `--id` overrides it. Existing configuration is not renamed when the manifest changes, and the
@@ -111,6 +116,7 @@ step:
 ```json
 {
   "id": "review",
+  "requirements": { "paseo": ">=0.8.0" },
   "build": [
     ["npm", "ci"],
     ["npm", "run", "build"]
@@ -255,6 +261,17 @@ They use typed plugin RPC only for plugin-specific backend work. Surface and pan
 optional client-owned agent and workspace navigation; its absence is the compatibility gate for
 older clients. Other navigation remains limited to registered global surfaces and workspace panels.
 Plugins do not receive Expo Router or workspace-layout store access.
+
+## Lifecycle hooks
+
+Server entries register lifecycle observers with `server.on()` and request transforms with
+`server.before()`. The [public reference](../public-docs/plugins/v0.8/reference.md#lifecycle-hooks)
+owns callback shapes, ordering, and failure behavior. `plugin-examples/lifecycle-logger` registers all
+eleven hooks; `plugin-examples/lifecycle-actions` demonstrates common automation callbacks.
+
+Emit from the operation owner, not a client subscription. Provider history replay must not trigger
+live hooks. Observers must not be awaited inside agent mutations: a callback can send a prompt or
+answer a permission through its own daemon session. Awaiting it there deadlocks that command.
 
 ## Contribute a provider
 

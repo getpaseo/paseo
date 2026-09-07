@@ -88,8 +88,9 @@ function createReloadChild(
 function createTestRuntime(
   dependencies: NonNullable<ConstructorParameters<typeof PluginRuntime>[2]> = {},
   logger = pino({ level: "silent" }),
+  version = "0.4.0",
 ): PluginRuntime {
-  return new PluginRuntime(logger, "0.4.0", {
+  return new PluginRuntime(logger, version, {
     ...dependencies,
     sessionHost: dependencies.sessionHost ?? {
       async attachPluginSocket(_pluginId, socket) {
@@ -107,7 +108,7 @@ function createTestRuntime(
                   status: "server_info",
                   serverId: "plugin-test",
                   hostname: "plugin-test",
-                  version: "0.4.0",
+                  version,
                   features: {},
                 },
               },
@@ -211,7 +212,7 @@ describe("PluginRuntime", () => {
     const directory = fileURLToPath(
       new URL("../../../../../plugin-examples/provider-direct/", import.meta.url),
     );
-    const runtime = createTestRuntime();
+    const runtime = createTestRuntime({}, undefined, "0.8.0");
     await runtime.startPlugin(pluginId, directory);
     const [metadata] = runtime.getProviderRegistrations(pluginId);
     expect(metadata).toBeDefined();
@@ -1319,7 +1320,7 @@ export default function contribute(server: { registerProvider(provider: Provider
       path.dirname(fileURLToPath(import.meta.url)),
       "../../../../../plugin-examples/linear",
     );
-    const runtime = createTestRuntime();
+    const runtime = createTestRuntime({}, undefined, "0.8.0");
 
     await runtime.startPlugin("linear", directory);
 

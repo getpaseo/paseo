@@ -42,11 +42,44 @@ my-plugin/
   tsconfig.json
 ```
 
-The required root manifest is `paseo-plugin.json`. It contains the default plugin ID:
+The required root manifest is `paseo-plugin.json`. It contains the default plugin ID and supported Paseo versions:
 
 ```json
-{ "id": "my-plugin" }
+{ "id": "my-plugin", "requirements": { "paseo": ">=0.8.0" } }
 ```
+
+### Requirements
+
+`requirements` is an optional object. Its currently supported key, `paseo`, accepts an npm semver
+range. An omitted `requirements.paseo` means `<0.8.0`: the plugin predates the first breaking
+plugin release. Paseo 0.8 and later reject it with a link to the [migration guide](migration).
+Empty strings, invalid ranges, and unknown manifest requirement keys are rejected.
+
+| Range            | Compatible releases                                                 |
+| ---------------- | ------------------------------------------------------------------- |
+| `>=0.8.0`        | 0.8.0 and later stable releases, including future breaking releases |
+| `^0.8.0`         | 0.8.x stable releases only                                          |
+| `>=0.8.3 <0.9.0` | 0.8.3 through the last 0.8 patch                                    |
+| `>=0.8.0-beta.1` | Betas from 0.8.0-beta.1, then 0.8.0 and later stable releases       |
+
+Standard npm prerelease rules apply: `>=0.8.0` excludes `0.8.0-beta.1`. A prerelease must be
+explicitly included for its major/minor/patch tuple; no version tags are stripped.
+
+`paseo plugin init` writes `>=` followed by the current CLI version and pins the matching SDK
+for typechecking. Raise the minimum when adopting a newer API. Add an upper bound when a later
+release is incompatible; a minimum alone does not promise protection from future breaking changes.
+
+The daemon checks its version before installing, running Git build commands, or loading a plugin,
+and checks again on startup, enable, and reload. A rejected Git update keeps the installed revision.
+Each connected app checks its own version before evaluating client code and shows incompatibility
+in Settings → Plugins. A compatible daemon does not make an older app compatible. A plugin with no
+client entry does not require the connected app to match.
+
+For example: `Plugin "review" requires Paseo >=0.8.0. Your daemon is 0.7.2.` Use a compatible plugin
+revision or update the named runtime. Releases before 0.8 do not understand this manifest field
+and cannot show this new diagnostic.
+
+### Runtime entries
 
 | Entry              | Runtime               | Receives              | Required                                                          |
 | ------------------ | --------------------- | --------------------- | ----------------------------------------------------------------- |
@@ -197,6 +230,327 @@ export default function contribute(client: PluginClientContext) {
 
 Cleanup can be async. Release timers, watchers, sockets, and other resources created by the plugin. Paseo also removes registrations, unmounts surfaces, rejects pending RPCs, closes the plugin's daemon session, and stops its subprocess on reload, disable, removal, disconnect, or daemon shutdown.
 
+## Lifecycle hooks
+
+In `index.server.ts`:
+
+```ts
+import type { PluginServerContext } from "@getpaseo/plugin";
+
+export default function contribute(server: PluginServerContext) {
+  server.on("agent.turn_ended", (event) => {
+    console.log(event.agent.id, event.outcome);
+  });
+
+  return () => {};
+}
+```
+
+| Register                        | Callback receives                  | Return                                                       |
+| ------------------------------- | ---------------------------------- | ------------------------------------------------------------ |
+| `server.on(name, callback)`     | `(event, { paseo, signal })`       | `void` or `Promise<void>`                                    |
+| `server.before(name, callback)` | `({ request }, { paseo, signal })` | Modified request, or `undefined` to keep it; async supported |
+
+Hooks run on the daemon while the plugin is enabled, even with no app connected.
+
+### Change configuration and inject an MCP server
+
+Add this callback inside `contribute(server)`. Replace the placeholder URL with your MCP endpoint.
+
+```ts
+server.before("agent.create", ({ request }) => {
+  if (request.config.provider !== "codex") {
+    return request;
+  }
+
+  return {
+    ...request,
+    config: {
+      ...request.config,
+      providerOptions: {
+        ...request.config.providerOptions,
+        sandbox_mode: "workspace-write",
+        approval_policy: "on-request",
+      },
+      mcpServers: {
+        ...request.config.mcpServers,
+        company: {
+          type: "http",
+          url: "https://tools.example.com/mcp",
+        },
+      },
+    },
+  };
+});
+```
+
+| Input                                       | Result                        |
+| ------------------------------------------- | ----------------------------- |
+| `providerOptions.sandbox_mode: "read-only"` | `"workspace-write"`           |
+| `providerOptions.web_search: "disabled"`    | Preserved by the spread       |
+| Existing `mcpServers.search`                | Preserved by the spread       |
+| Existing `mcpServers.company`               | Replaced with the entry above |
+
+The selected provider validates `providerOptions` and must support the configured MCP servers.
+Explicit Codex sandbox and approval options override its mode presets.
+
+### Inject environment variables on every session opening
+
+```ts
+server.before("agent.session_open", ({ request }) => {
+  return {
+    ...request,
+    env: {
+      ...request.env,
+      COMPANY_ENV: "development",
+    },
+  };
+});
+```
+
+This runs on create, resume, refresh, and import. To inject only on creation, set `env` in an
+`agent.create` callback instead.
+
+### Choose workspace isolation
+
+```ts
+server.before("workspace.create", ({ request }) => {
+  if (request.source.kind !== "directory") {
+    return request;
+  }
+
+  return {
+    ...request,
+    source: {
+      kind: "worktree",
+      cwd: request.source.path,
+      action: "branch-off",
+    },
+  };
+});
+```
+
+**Result:** an explicit directory creation request becomes a worktree request. Existing workspaces
+and directory lookup/import operations are unaffected.
+
+### Send a follow-up when a turn ends
+
+Copy [server/inspect.ts](https://github.com/getpaseo/paseo/blob/main/plugin-examples/lifecycle-actions/server/inspect.ts)
+into your plugin. `latestOutputText` joins text chunks after the latest user message.
+
+```ts
+import type { PluginServerContext } from "@getpaseo/plugin";
+import { latestOutputText } from "./server/inspect";
+
+export default function contribute(server: PluginServerContext) {
+  server.on("agent.turn_ended", async (event, context) => {
+    if (event.outcome.kind === "canceled") {
+      return;
+    }
+
+    const text = latestOutputText(event.timeline);
+    if (/out of credits/i.test(text)) {
+      await context.paseo.agents.ref(event.agent.id).send("Try again.");
+    }
+  });
+
+  return () => {};
+}
+```
+
+```text
+Turn ends: "out of credits"
+  → plugin sends "Try again."
+  → a new turn starts
+```
+
+This sends a new message with the existing SDK. Persistent matches keep sending follow-ups;
+add limits or delays in your plugin when needed. Attachments and tool effects are not replayed.
+
+### Answer a permission request
+
+Using `shellCommand` from the same [helper file](https://github.com/getpaseo/paseo/blob/main/plugin-examples/lifecycle-actions/server/inspect.ts):
+
+```ts
+import type { PluginServerContext } from "@getpaseo/plugin";
+import { shellCommand } from "./server/inspect";
+
+export default function contribute(server: PluginServerContext) {
+  server.on("agent.permission_requested", async (event, context) => {
+    const command = shellCommand(event.request);
+    if (command === null) {
+      return;
+    }
+
+    const agent = context.paseo.agents.ref(event.agent.id);
+    if (/\brm\s+-rf\b/.test(command)) {
+      await agent.respondToPermission({
+        requestId: event.request.id,
+        response: { behavior: "deny", message: "Recursive deletion is blocked." },
+      });
+      return;
+    }
+
+    if (command.trim() === "git status") {
+      await agent.respondToPermission({
+        requestId: event.request.id,
+        response: { behavior: "allow" },
+      });
+    }
+  });
+
+  return () => {};
+}
+```
+
+| Request                  | Result                    |
+| ------------------------ | ------------------------- |
+| `rm -rf build`           | Declined                  |
+| `git status`             | Approved                  |
+| Other command or request | Left pending for the user |
+| Already-resolved request | SDK response fails        |
+
+The regex is an example policy, not a shell parser. Permission requests can also be questions,
+plans, and mode changes; requesting permission does not end the turn.
+
+### Events
+
+| Name                         | Event fields                             | Trigger                                            |
+| ---------------------------- | ---------------------------------------- | -------------------------------------------------- |
+| `agent.created`              | `agent`                                  | Ordinary creation finishes; excludes import/resume |
+| `agent.turn_started`         | `agent`, `turnId`                        | Live turn starts                                   |
+| `agent.turn_ended`           | `agent`, `turnId`, `outcome`, `timeline` | Live turn completes, fails, or is canceled         |
+| `agent.permission_requested` | `agent`, `request`                       | Permission or question becomes pending             |
+| `agent.permission_resolved`  | `agent`, `requestId`, `resolution`       | Pending request is answered or cleared             |
+| `agent.archived`             | `agent`, `archivedAt`                    | Archive state is saved                             |
+| `workspace.created`          | `workspace`                              | Record created; directory available                |
+| `workspace.archived`         | `workspace`                              | Archive state is saved                             |
+
+Agent events exclude internal utility agents. Archive events can precede runtime/worktree cleanup;
+`workspace.created` is not a setup barrier before agent startup.
+
+**Shared payload shapes** (`@getpaseo/plugin/server`):
+
+```ts
+interface PluginHookAgent {
+  id: string;
+  workspaceId: string | null;
+  parentAgentId: string | null;
+  provider: string;
+  cwd: string;
+  title: string | null;
+}
+
+interface PluginHookWorkspace {
+  id: string;
+  projectId: string;
+  cwd: string;
+  name: string | null;
+  archivedAt: string | null;
+}
+
+type PluginTurnOutcome =
+  | { kind: "completed" }
+  | { kind: "failed"; error: { message: string; code?: string } }
+  | { kind: "canceled"; reason: string };
+```
+
+| Field        | Shape / meaning                                                                                       |
+| ------------ | ----------------------------------------------------------------------------------------------------- |
+| `turnId`     | Provider-reported `string` or `null`; can repeat after a session reopens                              |
+| `timeline`   | `readonly AgentTimelineItem[]`; complete snapshot including earlier conversation; text may span items |
+| `request`    | SDK `AgentPermissionRequest`; `kind` is `tool`, `plan`, `question`, `mode`, or `other`                |
+| `resolution` | SDK `AgentPermissionResponse`                                                                         |
+| `archivedAt` | Timestamp string                                                                                      |
+
+### Before hooks
+
+| Name                 | Request fields                                                          | Editable                                |
+| -------------------- | ----------------------------------------------------------------------- | --------------------------------------- |
+| `agent.create`       | `config`, optional `env`                                                | Public agent config except `cwd`; `env` |
+| `agent.session_open` | `agentId`, `workspaceId`, `provider`, `cwd`, `reason`, `purpose`, `env` | Only `env`                              |
+| `workspace.create`   | `source`, optional `title`, `firstAgentContext`                         | Entire explicit creation request        |
+
+**`agent.create.config`** uses `AgentSessionConfig`:
+
+| Fields                                        | Constraint                                                                 |
+| --------------------------------------------- | -------------------------------------------------------------------------- |
+| `provider`, `model`                           | Separate fields; changing provider may require changing model/mode/options |
+| `modeId`, `thinkingOptionId`, `featureValues` | Provider-specific selections                                               |
+| `title`, `systemPrompt`                       | Agent configuration                                                        |
+| `providerOptions`                             | Provider-specific validated options                                        |
+| `mcpServers`, `toolPolicy`                    | MCP configuration and exact-tool preapprovals                              |
+| `cwd`                                         | Cannot change                                                              |
+| `internal`                                    | Daemon-owned; cannot change through this hook                              |
+
+**`agent.session_open` request example:**
+
+```json
+{
+  "agentId": "agent-123",
+  "workspaceId": "workspace-456",
+  "provider": "codex",
+  "cwd": "/projects/shop",
+  "reason": "resume",
+  "purpose": "interactive",
+  "env": { "COMPANY_ENV": "development" }
+}
+```
+
+| Field         | Values                                                                                                                  |
+| ------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| `workspaceId` | String or `null`                                                                                                        |
+| `reason`      | `create`, `resume`, `refresh`, `import`                                                                                 |
+| `purpose`     | `interactive`, `history`                                                                                                |
+| `env`         | Launch override map; excludes the daemon's inherited environment. Replace the map to add, replace, or remove overrides. |
+
+### Ordering and returned values
+
+```text
+Creation request
+  → agent.create hooks (plugin-ID order; registration order within each plugin)
+  → resolve defaults and validate provider configuration
+  → derive launch configuration with Paseo runtime tools and daemon prompt
+  → agent.session_open hooks (same ordering; env only)
+  → set PASEO_AGENT_ID and PASEO_AGENT_CWD
+  → open provider session and save agent configuration
+```
+
+| Callback returns                                        | Next callback receives                              |
+| ------------------------------------------------------- | --------------------------------------------------- |
+| `{ ...request, env: { ...request.env, REGION: "eu" } }` | Prior request with `REGION` added/replaced          |
+| `{ ...request, env: { REGION: "eu" } }`                 | Prior request with the entire override map replaced |
+| `undefined`                                             | Unchanged request                                   |
+| Throws or returns invalid data                          | Operation fails; later callbacks do not run         |
+
+No automatic deep merge. Later callbacks can overwrite earlier values. Agent configuration is
+saved; environment overrides are not persisted with it.
+
+### Context and cleanup
+
+| Contract                           | Behavior                                                                                                  |
+| ---------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| `context.paseo`                    | Existing SDK connected to this daemon                                                                     |
+| `context.signal`                   | Aborted on invocation timeout or plugin stop; pass to external requests                                   |
+| Input data                         | Detached snapshot; change state through returned requests or SDK commands                                 |
+| Registration result                | Idempotent remover, e.g. `const remove = server.on(...); remove();`                                       |
+| Reload, disable, removal, shutdown | Remaining registrations removed                                                                           |
+| Unknown hook name                  | Registration fails                                                                                        |
+| Hook timeout                       | 30 seconds; aborts the signal. A before hook fails the pending operation; an event handler logs an error. |
+| Event-handler error                | Logged against plugin; original operation continues                                                       |
+| Event delivery                     | Live, best effort; no replay, persistence, or automatic retry                                             |
+| Event concurrency                  | Different events may overlap; callback completion order is not guaranteed                                 |
+
+### Complete examples
+
+| Plugin                                                                                                 | Includes                                                                     |
+| ------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------- |
+| [lifecycle-logger](https://github.com/getpaseo/paseo/tree/main/plugin-examples/lifecycle-logger)       | All eleven hooks; JSON logs with environment values redacted                 |
+| [lifecycle-actions](https://github.com/getpaseo/paseo/tree/main/plugin-examples/lifecycle-actions)     | Follow-ups, permissions, environment, provider switching, worktree selection |
+| [agent-configuration](https://github.com/getpaseo/paseo/tree/main/plugin-examples/agent-configuration) | MCP injection and Codex sandbox/approval options                             |
+
+Read logger output with `paseo plugin logs lifecycle-logger` or the host's `daemon.log`.
+
 ## Surfaces and sidebar items
 
 Register a component, then point a sidebar item at its surface ID:
@@ -333,8 +687,7 @@ intact. The host reserves bottom safe-area space on compact native layouts; sett
 to zero removes the decorative inset, not that space. Keyboard clearance is handled separately.
 
 With `scrollable={false}`, the body fills the available sheet height, and the centered dialog uses
-85% of the available height. Use `flex: 1, minHeight: 0` on your list. In this mode the body scrolls
-at every sheet height; drag the handle to resize or dismiss the sheet. Default scrolling dialogs stay
+85% of the available height. Use `flex: 1, minHeight: 0` on your list. Default scrolling dialogs stay
 content-sized on wide layouts. Presentation follows window size, including narrow desktop windows
 and wide tablets.
 
@@ -353,6 +706,11 @@ a sheet they use ordinary React Native scrolling. Do not import bottom-sheet lib
 Use one vertical scroll owner: either the default modal body, or your own list with
 `scrollable={false}`. A fixed-height vertical list nested inside the default scrolling body can compete
 with the sheet for gestures on Android. Horizontal scrolling can coexist with the host's vertical body.
+
+Both the default body and SDK lists share native sheet gestures: drag up to expand before scrolling;
+drag down at the top of the list to collapse or dismiss. `scrollable={false}` removes the host's scroll
+container without changing these gestures. Expand the sheet before using list methods such as
+`scrollToEnd`; the sheet locks list offsets below its largest height.
 
 ```tsx
 import { FlatList, Modal } from "@getpaseo/plugin/react-native";
@@ -1276,6 +1634,7 @@ step:
 ```json
 {
   "id": "review",
+  "requirements": { "paseo": ">=0.8.0" },
   "build": [
     ["npm", "ci"],
     ["npm", "run", "build"]

@@ -1,3 +1,10 @@
+import { DatabaseSync } from "node:sqlite";
+import { ReplicaCache } from "@/runtime/replica-cache";
+import {
+  createSqliteReplicaRowStore,
+  type ReplicaSqliteConnection,
+  type SqliteValue,
+} from "@/runtime/replica-cache/row-store-sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 import type { AgentStreamEventPayload } from "@getpaseo/protocol/messages";
 import type { CachedTimeline } from "@/runtime/replica-cache";
@@ -434,5 +441,114 @@ describe("viewed timeline persistence", () => {
 
     expect(keys).toEqual([AGENT_ID, "agent-2"]);
     owner.dispose();
+  });
+});
+
+function createSqliteCache() {
+  const database = new DatabaseSync(":memory:");
+  let beforeRead = async () => {};
+  const connection: ReplicaSqliteConnection = {
+    async exec(sql) {
+      database.exec(sql);
+    },
+    async run(sql, params = []) {
+      database.prepare(sql).run(...params);
+    },
+    async all<Row>(sql: string, params: readonly SqliteValue[] = []) {
+      const rows = database.prepare(sql).all(...params) as Row[];
+      if (sql.includes("FROM rows") && sql.includes("WHERE")) await beforeRead();
+      return rows;
+    },
+    async transaction(operation) {
+      database.exec("BEGIN IMMEDIATE");
+      try {
+        await operation(connection);
+        database.exec("COMMIT");
+      } catch (error) {
+        database.exec("ROLLBACK");
+        throw error;
+      }
+    },
+  };
+  const storage = createSqliteReplicaRowStore({ open: async () => connection }, 1);
+  const cache = new ReplicaCache(storage, { clearLegacyCache: async () => {} });
+  return {
+    cache,
+    database,
+    holdRead: (operation: () => Promise<void>) => {
+      beforeRead = operation;
+    },
+  };
+}
+
+describe("SQLite baseline restoration", () => {
+  it.each([false, true])(
+    "keeps display-only cached history under a live event (synced=%s)",
+    async (synced) => {
+      useSessionStore.getState().initializeSession(SERVER_ID, null);
+      const { cache, database, holdRead } = createSqliteCache();
+      cache.setHosts([SERVER_ID]);
+      cache.commitTimeline(SERVER_ID, AGENT_ID, {
+        ...cachedTimeline(),
+        items: [item("earlier", "earlier", 1), ...cachedTimeline().items],
+        range: null,
+      });
+      await cache.flush();
+      holdRead(async () => {
+        if (synced) applySynced(AGENT_ID, 8);
+        else
+          useSessionStore.getState().setAgentStreamState(SERVER_ID, AGENT_ID, {
+            head: [item("cached", "cached", 4), item("live", "live", 5)],
+          });
+      });
+      const replica = createTimelineReplica({
+        serverId: SERVER_ID,
+        storage: cache,
+        prepareAgent: async () => {},
+      });
+      await replica.prepare(AGENT_ID);
+      const session = useSessionStore.getState().sessions[SERVER_ID];
+      const timeline = selectAgentTimelineState(session, AGENT_ID);
+      expect(timeline.status).toBe(synced ? "synced" : "painted");
+      expect([
+        ...(timeline.status === "cold" ? [] : timeline.items),
+        ...(session?.agentStreamHead.get(AGENT_ID) ?? []),
+      ]).toEqual(
+        synced
+          ? [item(`network-${AGENT_ID}`, "network", 8)]
+          : [item("earlier", "earlier", 1), item("cached", "cached", 4), item("live", "live", 5)],
+      );
+      expect(replica.readCursor(AGENT_ID)).toBeUndefined();
+      database.close();
+    },
+  );
+
+  it("starts the timeline disk read while agent preparation is pending", async () => {
+    useSessionStore.getState().initializeSession(SERVER_ID, null);
+    const { cache, database, holdRead } = createSqliteCache();
+    cache.setHosts([SERVER_ID]);
+    cache.commitTimeline(SERVER_ID, AGENT_ID, cachedTimeline());
+    await cache.flush();
+    let readStarted = false;
+    let release!: () => void;
+    const agentReady = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    holdRead(async () => {
+      readStarted = true;
+    });
+    const replica = createTimelineReplica({
+      serverId: SERVER_ID,
+      storage: cache,
+      prepareAgent: () => agentReady,
+    });
+    const preparation = replica.prepare(AGENT_ID);
+    try {
+      await expect.poll(() => readStarted, { timeout: 500 }).toBe(true);
+    } finally {
+      release();
+      await preparation;
+      database.close();
+    }
   });
 });

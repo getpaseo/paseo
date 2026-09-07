@@ -1,3 +1,4 @@
+import { PluginHookHandlers } from "./lifecycle/index.js";
 import {
   PluginProcessRequestSchema,
   type PluginProcessMessage,
@@ -48,6 +49,9 @@ interface RegisteredRpc {
   handler: RpcHandler;
 }
 
+const hooks = new PluginHookHandlers(() => {
+  send({ type: "hooks.changed", hooks: hooks.catalog() });
+});
 const handlers = new Map<string, RegisteredRpc>();
 const providers = new Map<string, ProviderRegistration>();
 const providerConnections = new Map<
@@ -239,7 +243,13 @@ function evaluateBundle(bundle: string): void {
   if (typeof setup !== "function") {
     throw new Error("Plugin server bundle must default export a function");
   }
-  const contributedCleanup = setup({ handle: register, registerProvider, registerSettings });
+  const contributedCleanup = setup({
+    handle: register,
+    registerProvider,
+    registerSettings,
+    on: hooks.on,
+    before: hooks.before,
+  });
   if (typeof contributedCleanup !== "function") {
     throw new Error("Plugin contribution must return a cleanup function");
   }
@@ -274,6 +284,7 @@ async function initialize(message: Extract<PluginProcessRequest, { type: "initia
   send({
     type: "ready",
     methods: [...handlers.keys()].sort(),
+    hooks: hooks.catalog(),
     providers: [...providers.values()]
       .sort((left, right) => left.id.localeCompare(right.id))
       .map(providerMetadata),
@@ -283,6 +294,7 @@ async function initialize(message: Extract<PluginProcessRequest, { type: "initia
 async function shutdown(): Promise<void> {
   if (stopping) return;
   stopping = true;
+  hooks.close();
   for (const pending of pendingProviderConnections.values()) pending.tombstoned = true;
   const currentCleanup = cleanup;
   cleanup = null;
@@ -397,6 +409,10 @@ process.on("message", (rawMessage: unknown) => {
     return;
   }
   if (message.type === "paseo_frame" || message.type === "paseo_close") return;
+  if (isHookMessage(message)) {
+    handleHookMessage(message);
+    return;
+  }
   const registered = handlers.get(message.method);
   if (!registered) {
     send({
@@ -418,3 +434,37 @@ process.on("message", (rawMessage: unknown) => {
       (error) => send({ type: "error", requestId: message.requestId, error: describeError(error) }),
     );
 });
+
+function handleHookMessage(
+  message: Extract<PluginProcessRequest, { type: "hook" | "hook.cancel" }>,
+): void {
+  if (message.type === "hook.cancel") {
+    hooks.cancel(message.requestId);
+    return;
+  }
+  if (message.type === "hook") {
+    if (!paseo) {
+      send({
+        type: "error",
+        requestId: message.requestId,
+        error: "Plugin Paseo API is unavailable",
+      });
+      return;
+    }
+    void hooks.invoke(message.requestId, message.kind, message.name, message.input, paseo).then(
+      (output) => {
+        return send({ type: "result", requestId: message.requestId, output });
+      },
+      (error) => {
+        return send({ type: "error", requestId: message.requestId, error: describeError(error) });
+      },
+    );
+    return;
+  }
+}
+
+function isHookMessage(
+  message: PluginProcessRequest,
+): message is Extract<PluginProcessRequest, { type: "hook" | "hook.cancel" }> {
+  return message.type === "hook" || message.type === "hook.cancel";
+}

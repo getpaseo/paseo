@@ -1,21 +1,27 @@
 import { useMemo, useSyncExternalStore } from "react";
 import { QueryClient } from "@tanstack/react-query";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
+import { assertPluginCompatibility } from "@getpaseo/protocol/plugin-requirements";
+import { resolveAppVersion } from "@/utils/app-version";
 import { createPluginClientRuntime } from "./client-runtime";
 import { runPluginClientBundle } from "./evaluate";
 import type { InstalledPlugin } from "./types";
 
-interface CatalogPlugin {
-  id: string;
-  clientBundle: string;
-}
+type CatalogPlugin = Awaited<ReturnType<DaemonClient["getPluginCatalog"]>>[number];
 
-class PluginRegistry {
+export class PluginRegistry {
   private readonly byHost = new Map<string, InstalledPlugin[]>();
   private readonly listeners = new Set<() => void>();
   private snapshot: InstalledPlugin[] = [];
   private readonly disposed = new WeakSet<InstalledPlugin>();
   private readonly evaluationErrors = new Map<string, string>();
+
+  constructor(
+    private readonly dependencies: {
+      version: string | null;
+      createRuntime: typeof createPluginClientRuntime;
+    },
+  ) {}
 
   subscribe = (listener: () => void): (() => void) => {
     this.listeners.add(listener);
@@ -45,7 +51,8 @@ class PluginRegistry {
         (plugin) =>
           plugin.id !== options.replacePluginId &&
           plugin.id === entry.id &&
-          plugin.clientBundle === entry.clientBundle,
+          plugin.clientBundle === entry.clientBundle &&
+          plugin.requirements?.paseo === entry.requirements?.paseo,
       );
       return existing ? [existing] : [];
     });
@@ -59,6 +66,7 @@ class PluginRegistry {
       const key = `${serverId}/${entry.id}`;
       try {
         if (!entry.clientBundle) return [];
+        assertPluginCompatibility({ ...entry, version: this.dependencies.version, runtime: "app" });
         const existing = preserved.find(
           (plugin) => plugin.id === entry.id && plugin.clientBundle === entry.clientBundle,
         );
@@ -70,6 +78,7 @@ class PluginRegistry {
           id: entry.id,
           serverId,
           clientBundle: entry.clientBundle,
+          requirements: entry.requirements,
           queryClient: new QueryClient(),
           cleanup: () => undefined,
           surfaces: [],
@@ -86,7 +95,7 @@ class PluginRegistry {
         const evaluated = runPluginClientBundle(
           entry.id,
           entry.clientBundle,
-          createPluginClientRuntime(installation, options.client),
+          this.dependencies.createRuntime(installation, options.client),
           () => this.publish(),
         );
         Object.assign(installation, evaluated);
@@ -149,7 +158,10 @@ class PluginRegistry {
   }
 }
 
-export const pluginRegistry = new PluginRegistry();
+export const pluginRegistry = new PluginRegistry({
+  version: resolveAppVersion(),
+  createRuntime: createPluginClientRuntime,
+});
 
 export function useInstalledPlugins(): InstalledPlugin[] {
   return useSyncExternalStore(

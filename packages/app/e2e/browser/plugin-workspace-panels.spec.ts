@@ -1,3 +1,4 @@
+import { pluginRequirements } from "../support/helpers/plugin-fixture";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -199,7 +200,10 @@ test.describe("plugin workspace panels and Command Center", () => {
       repoPrefix: "plugin-panel-secondary-",
       port: secondaryDaemon.port,
     });
-    await writeFile(path.join(directory, "paseo-plugin.json"), JSON.stringify({ id: PLUGIN_ID }));
+    await writeFile(
+      path.join(directory, "paseo-plugin.json"),
+      JSON.stringify({ id: PLUGIN_ID, requirements: pluginRequirements }),
+    );
     await writePluginSources(directory, {
       workspaceId: primary.workspaceId,
       agentId: "missing-agent",

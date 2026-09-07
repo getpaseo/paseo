@@ -49,7 +49,7 @@ greeting through an RPC.
 
 ```text
 workspace-plugin/
-  paseo-plugin.json      # { "id": "workspace-plugin" }
+  paseo-plugin.json      # plugin ID and supported Paseo versions
   index.client.tsx       # runs in the Paseo app
   index.server.ts        # runs in a daemon subprocess
   client/greeting.tsx    # the surface component

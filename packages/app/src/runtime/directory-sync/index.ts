@@ -384,11 +384,11 @@ export class DirectorySync {
     this.cacheLoad ??= (async () => {
       const revision = this.revision;
       const cached = await checkpoints.readDirectory(this.serverId);
-      if (this.cacheAccepted || this.revision !== revision) return;
+      if (this.cacheAccepted) return;
       if (!useSessionStore.getState().sessions[this.serverId]) return;
       this.agents.commitCached(cached.agents);
       this.workspaces.commitCached(cached);
-      this.cursors = cached.checkpoint ?? {};
+      if (this.revision === revision) this.cursors = cached.checkpoint ?? {};
       this.cacheAccepted = true;
     })();
     return this.cacheLoad;
