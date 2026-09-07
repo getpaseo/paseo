@@ -1,9 +1,27 @@
 import { afterEach, describe, expect, test } from "vitest";
-import { providerSubagentKey, useProviderSubagentStore } from "./provider-store";
+import type { StateStorage } from "zustand/middleware";
+import {
+  createProviderSubagentStore,
+  providerSubagentKey,
+  useProviderSubagentStore,
+} from "./provider-store";
 
 const SERVER_ID = "server-1";
 const PARENT_ID = "parent-1";
 const SUBAGENT_ID = "child-1";
+
+function createMemoryStorage(): StateStorage {
+  const values = new Map<string, string>();
+  return {
+    getItem: async (name) => values.get(name) ?? null,
+    setItem: async (name, value) => {
+      values.set(name, value);
+    },
+    removeItem: async (name) => {
+      values.delete(name);
+    },
+  };
+}
 
 afterEach(() => {
   useProviderSubagentStore.setState({
@@ -479,5 +497,37 @@ describe("provider subagent client store", () => {
     expect(timeline?.head).toEqual([
       expect.objectContaining({ kind: "assistant_message", text: "Current tail output." }),
     ]);
+  });
+});
+
+describe("provider subagent hidden track persistence", () => {
+  test("survives an app restart instead of resetting Archive finished dismissals", async () => {
+    const storage = createMemoryStorage();
+    const first = createProviderSubagentStore(storage);
+    await first.persist.rehydrate();
+
+    const key = providerSubagentKey(SERVER_ID, PARENT_ID, SUBAGENT_ID);
+    first.getState().applyUpdate(SERVER_ID, {
+      kind: "upsert",
+      subagent: {
+        id: SUBAGENT_ID,
+        parentAgentId: PARENT_ID,
+        provider: "codex",
+        title: "Finished child",
+        description: null,
+        status: "completed",
+        createdAt: "2026-07-12T10:00:00.000Z",
+        updatedAt: "2026-07-12T10:00:02.000Z",
+        toolCallId: "call-1",
+      },
+    });
+    first.getState().hideFromTrack(SERVER_ID, PARENT_ID, [SUBAGENT_ID]);
+    expect(first.getState().hiddenFromTrack.has(key)).toBe(true);
+
+    // Simulates the app restarting: a fresh store backed by the same disk storage.
+    const restored = createProviderSubagentStore(storage);
+    await restored.persist.rehydrate();
+
+    expect(restored.getState().hiddenFromTrack.has(key)).toBe(true);
   });
 });

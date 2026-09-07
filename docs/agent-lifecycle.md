@@ -184,7 +184,9 @@ Claude Code announces subagent lifecycle on the SDK stream (`task_started` / `ta
 
 Archived Paseo subagents disappear from the track, by design. To remove one from the track without closing its tab, use the **archive button** on the row — it opens a confirm dialog and archives the subagent on confirm. Provider-owned rows have no individual Paseo lifecycle controls.
 
-The **Archive finished** row at the foot of the panel covers every finished row. It archives idle or errored managed Paseo subagents one at a time, and hides completed, failed, or canceled provider-owned rows in the current app session. Native sessions and timelines are untouched. Running and initializing children remain in the track. If a hidden provider child starts running again, the app brings it back to the track.
+The **Archive finished** row at the foot of the panel covers every finished row. It archives idle or errored managed Paseo subagents one at a time, and hides completed, failed, or canceled provider-owned rows. Native sessions and timelines are untouched. Running and initializing children remain in the track. If a hidden provider child starts running again, the app brings it back to the track.
+
+Hiding a provider-owned row is client-local, not a daemon lifecycle action: it has no `archivedAt`, does not propagate to other clients, and is keyed by `serverId`/`parentAgentId`/`subagentId` in `useProviderSubagentStore`'s `hiddenFromTrack` set (`packages/app/src/subagents/provider-store.ts`). That set persists to the device's local storage so a dismissal survives an app restart, but it stays scoped to the device that dismissed it — another client, or the same client against another daemon, still shows the row.
 
 To keep the agent alive but remove it from the parent's track, use **detach**. The daemon clears the relationship lifecycle labels, emits the normal agent update, and every client reclassifies the agent from subagent to root/sibling from that updated snapshot.
 
@@ -204,7 +206,7 @@ We considered universal decoupling (no tab close ever archives, archive is alway
 
 ### Subagent accumulation under long-lived parents
 
-A parent that spawns many subagents will see the panel's list grow; the pill only counts them. Managed Paseo subagents can be archived individually or with **Archive finished**. That action hides finished provider-owned rows locally; this presentation state resets when the app restarts.
+A parent that spawns many subagents will see the panel's list grow; the pill only counts them. Managed Paseo subagents can be archived individually or with **Archive finished**. That action hides finished provider-owned rows locally and persists the dismissal on the device, but it is not a daemon-side archive: it does not propagate to other clients, and a dismissal made against one daemon does not follow the same subagent id if it is later seen through another. The dismissed-id set is never pruned against the current provider list, so it grows for as long as the device keeps dismissing rows.
 
 ### Cross-client tab dismissal
 
