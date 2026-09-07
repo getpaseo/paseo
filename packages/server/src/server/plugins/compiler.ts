@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { createRequire, isBuiltin } from "node:module";
 import path from "node:path";
 import { createPluginImportReader } from "./compiler-imports.js";
-import type { Metafile, OnResolveResult, Plugin } from "esbuild";
+import type { ImportKind, Metafile, OnResolveResult, Plugin } from "esbuild";
 import {
   isPluginClientOnlySdkSpecifier,
   isPluginServerOnlySdkSpecifier,
@@ -186,6 +186,34 @@ function createRuntimeBoundaryPlugin(target: PluginBuildTarget, pluginDirectory:
         }
         return moduleBoundaryError(location, owner, file);
       }
+      async function resolveImportFiles(
+        file: string,
+        specifier: string,
+        kind: ImportKind,
+        typeOnly: boolean,
+      ): Promise<Set<string>> {
+        const declaration = imports.resolve(specifier, file, kind);
+        const dependencyFiles = new Set<string>();
+        if (declaration && (typeOnly || /\.d\.[cm]?ts$/.test(declaration)))
+          dependencyFiles.add(declaration);
+        if (typeOnly && !declaration) {
+          throw new Error(`Could not resolve type dependency "${specifier}" imported by ${file}`);
+        }
+        if (!typeOnly) {
+          const resolution = await buildContext.resolve(specifier, {
+            importer: file,
+            resolveDir: path.dirname(file),
+            kind,
+          });
+          // A normal TS import may also be erased. Validate its declarations;
+          // esbuild still rejects missing runtime modules when it emits the import.
+          if (resolution.errors.length && dependencyFiles.size === 0)
+            throw new Error(resolution.errors.map((error) => error.text).join("\n"));
+          if (!resolution.errors.length && !resolution.external && resolution.namespace === "file")
+            dependencyFiles.add(resolution.path);
+        }
+        return dependencyFiles;
+      }
       async function checkSourceImports(
         file: string,
         inheritedOwner: PluginBuildTarget | "shared",
@@ -207,30 +235,13 @@ function createRuntimeBoundaryPlugin(target: PluginBuildTarget, pluginDirectory:
             isBuiltin(specifier)
           )
             continue;
-          let resolvedPath: string;
-          if (typeOnly) {
-            const declaration = imports.resolve(specifier, file, kind);
-            if (!declaration)
-              return {
-                errors: [
-                  { text: `Could not resolve type dependency "${specifier}" imported by ${file}` },
-                ],
-              };
-            resolvedPath = declaration;
-          } else {
-            const resolution = await buildContext.resolve(specifier, {
-              importer: file,
-              resolveDir: path.dirname(file),
-              kind,
-            });
-            if (resolution.errors.length) return { errors: resolution.errors };
-            if (resolution.external || resolution.namespace !== "file") continue;
-            resolvedPath = resolution.path;
+          const dependencyFiles = await resolveImportFiles(file, specifier, kind, typeOnly);
+          for (const dependencyFile of dependencyFiles) {
+            const boundaryError = resolvedBoundaryError(dependencyFile, specifier, file, owner);
+            if (boundaryError) return boundaryError;
+            const dependencyError = await checkSourceImports(dependencyFile, owner);
+            if (dependencyError) return dependencyError;
           }
-          const boundaryError = resolvedBoundaryError(resolvedPath, specifier, file, owner);
-          if (boundaryError) return boundaryError;
-          const dependencyError = await checkSourceImports(resolvedPath, owner);
-          if (dependencyError) return dependencyError;
         }
         return null;
       }

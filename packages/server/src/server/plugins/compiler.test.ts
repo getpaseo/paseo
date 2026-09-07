@@ -240,6 +240,30 @@ describe("plugin runtime entries", () => {
     },
   );
 
+  it("accepts a declaration import used only as a type without import type", async () => {
+    const entries = await createSplitPlugin();
+    const dependency = path.join(entries.directory, "node_modules/neutral-types");
+    await mkdir(dependency, { recursive: true });
+    await writeFile(
+      path.join(dependency, "package.json"),
+      JSON.stringify({ name: "neutral-types", types: "./index.d.ts" }),
+    );
+    await writeFile(path.join(dependency, "index.d.ts"), "export type Value = string;");
+    await writeFile(
+      path.join(entries.directory, "shared/labels.ts"),
+      'import { Value } from "neutral-types"; export const clientLabel: Value = "client"; export const serverLabel: Value = "server";',
+    );
+    await expect(compilePlugin(entries)).resolves.toMatchObject({
+      clientBundle: expect.any(String),
+      serverBundle: expect.any(String),
+    });
+    await writeFile(
+      path.join(entries.directory, "shared/labels.ts"),
+      'import { Value } from "neutral-types"; export const clientLabel = Value; export const serverLabel = Value;',
+    );
+    await expect(compilePlugin(entries)).rejects.toThrow('Could not resolve "neutral-types"');
+  });
+
   it("resolves type-only path aliases from the plugin tsconfig", async () => {
     const entries = await createSplitPlugin();
     await writeFile(
@@ -264,9 +288,14 @@ describe("plugin runtime entries", () => {
     await expect(compilePlugin(entries)).rejects.toThrow("plugin shared");
   });
 
-  it.each(["@getpaseo/plugin/client", "@getpaseo/plugin/server"])(
-    "rejects transitive declaration dependencies on %s",
-    async (specifier) => {
+  it.each([
+    { specifier: "@getpaseo/plugin/client", importKind: "import type" },
+    { specifier: "@getpaseo/plugin/server", importKind: "import type" },
+    { specifier: "@getpaseo/plugin/client", importKind: "import" },
+    { specifier: "@getpaseo/plugin/server", importKind: "import" },
+  ])(
+    "rejects transitive declaration dependencies on $specifier through $importKind",
+    async ({ specifier, importKind }) => {
       const entries = await createSplitPlugin();
       const dependency = path.join(entries.directory, "node_modules/typed-helper");
       await mkdir(dependency, { recursive: true });
@@ -286,7 +315,7 @@ describe("plugin runtime entries", () => {
       );
       await writeFile(
         path.join(entries.directory, "shared/labels.ts"),
-        'export type { Context } from "typed-helper"; export const clientLabel = "client"; export const serverLabel = "server";',
+        `${importKind} { Context } from "typed-helper"; export type Value = Context; export const clientLabel = "client"; export const serverLabel = "server";`,
       );
       await expect(compilePlugin(entries)).rejects.toThrow("plugin shared");
     },
