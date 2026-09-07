@@ -34,7 +34,7 @@ async function createRunningMockAgent(
 }
 
 async function openCommandCenter(page: Page): Promise<void> {
-  await page.getByRole("button", { name: "Open command center" }).click();
+  await page.getByTestId("sidebar-search").click();
 }
 
 export class DirectoryBootstrapScenario {

@@ -16,10 +16,10 @@ vi.mock("child_process", async () => {
       const [command, commandArgs] = args;
       if (command === "git" && Array.isArray(commandArgs)) {
         const normalizedArgs = commandArgs.map((arg) => String(arg));
-        // `runGitCommand` always prepends `-c core.quotepath=false`; skip it to
-        // find the actual git subcommand.
+        // `runGitCommand` always prepends its two config overrides; skip them
+        // to find the actual git subcommand.
         const subcommandIndex =
-          normalizedArgs[0] === "-c" && normalizedArgs[1] === "core.quotepath=false" ? 2 : 0;
+          normalizedArgs[0] === "-c" && normalizedArgs[1] === "core.quotepath=false" ? 4 : 0;
         const isTrackedTextDiff =
           normalizedArgs[subcommandIndex] === "diff" &&
           normalizedArgs.includes("HEAD") &&

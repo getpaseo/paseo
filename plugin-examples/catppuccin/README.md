@@ -3,7 +3,8 @@
 This example adds **Catppuccin Mocha** to Settings → Appearance. Paseo ships Catppuccin as a
 syntax-highlight theme; this contributes it as an app theme.
 
-A theme is data, so the whole plugin is one `addTheme` call in `index.ts` — no client file, no RPC.
+A theme is client data, so the whole plugin is one `addTheme` call in `index.client.ts` and has no
+server entry or subprocess.
 
 Register it in `$PASEO_HOME/config.json`:
 

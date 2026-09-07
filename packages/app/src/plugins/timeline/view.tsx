@@ -89,7 +89,7 @@ function PluginTimelineItemBody({
     },
   };
   return (
-    <SurfaceErrorBoundary installation={plugin} Surface={Component}>
+    <SurfaceErrorBoundary installation={plugin} resetKey={item.data} Surface={Component}>
       <PluginRuntimeBoundary plugin={plugin} runtime={runtime}>
         <PluginClientStateProvider source={stateSource}>
           <Component {...props} />

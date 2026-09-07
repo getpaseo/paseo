@@ -222,7 +222,10 @@ async function waitForFile(filePath, label) {
   const deadline = Date.now() + SMOKE_TIMEOUT_MS;
   while (Date.now() < deadline) {
     if (fs.existsSync(filePath)) {
-      return fs.readFileSync(filePath, "utf8");
+      const contents = fs.readFileSync(filePath, "utf8");
+      if (contents.trim().length > 0) {
+        return contents;
+      }
     }
     await delay(250);
   }

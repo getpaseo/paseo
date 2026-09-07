@@ -1,6 +1,7 @@
 import {
   appendFile,
   chmod,
+  link,
   mkdir,
   mkdtemp,
   readFile,
@@ -547,10 +548,14 @@ describe("file explorer service", () => {
     try {
       await writeFile(path.join(root, "source.txt"), "source", "utf8");
       await writeFile(path.join(root, "existing.txt"), "existing", "utf8");
+      await link(path.join(root, "source.txt"), path.join(root, "source-link.txt"));
 
       await expect(
         renameExplorerEntry({ root, relativePath: "source.txt", name: "existing.txt" }),
       ).resolves.toEqual({ status: "error", error: '"existing.txt" already exists' });
+      await expect(
+        renameExplorerEntry({ root, relativePath: "source.txt", name: "source-link.txt" }),
+      ).resolves.toEqual({ status: "error", error: '"source-link.txt" already exists' });
       await expect(
         renameExplorerEntry({ root, relativePath: "source.txt", name: "../outside.txt" }),
       ).resolves.toEqual({ status: "error", error: "Name cannot contain path separators" });

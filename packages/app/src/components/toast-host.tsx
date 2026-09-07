@@ -43,6 +43,7 @@ export interface ToastApi {
 type ToastViewportPlacement = "app-shell" | "panel";
 
 const DEFAULT_DURATION_MS = 2200;
+const TOAST_MAX_WIDTH = 480;
 
 export function useToastHost(): {
   api: ToastApi;
@@ -265,24 +266,26 @@ export function ToastViewport({
 
   const content = (
     <View style={styles.container} pointerEvents="box-none">
-      <Animated.View
-        testID={toast.testID ?? "app-toast"}
-        onPointerEnter={isWeb ? pauseDismiss : undefined}
-        onPointerLeave={isWeb ? resumeDismiss : undefined}
-        style={toastAnimatedStyle}
-        accessibilityRole="alert"
-      >
-        {icon ? <View style={styles.iconSlot}>{icon}</View> : null}
-        {typeof toast.content === "string" ? (
-          <Text testID="app-toast-message" style={toastMessageStyle}>
-            {toast.content}
-          </Text>
-        ) : (
-          <View testID="app-toast-message" style={styles.contentSlot}>
-            {toast.content}
-          </View>
-        )}
-      </Animated.View>
+      <View style={styles.widthBoundary} pointerEvents="box-none">
+        <Animated.View
+          testID={toast.testID ?? "app-toast"}
+          onPointerEnter={isWeb ? pauseDismiss : undefined}
+          onPointerLeave={isWeb ? resumeDismiss : undefined}
+          style={toastAnimatedStyle}
+          accessibilityRole="alert"
+        >
+          {icon ? <View style={styles.iconSlot}>{icon}</View> : null}
+          {typeof toast.content === "string" ? (
+            <Text testID="app-toast-message" style={toastMessageStyle}>
+              {toast.content}
+            </Text>
+          ) : (
+            <View testID="app-toast-message" style={styles.contentSlot}>
+              {toast.content}
+            </View>
+          )}
+        </Animated.View>
+      </View>
     </View>
   );
 
@@ -302,9 +305,14 @@ const styles = StyleSheet.create((theme) => ({
     zIndex: OVERLAY_Z.toast,
     alignItems: "center",
   },
+  widthBoundary: {
+    width: "92%",
+    maxWidth: TOAST_MAX_WIDTH,
+    alignItems: "center",
+  },
   toast: {
     alignSelf: "center",
-    maxWidth: "92%",
+    maxWidth: "100%",
     flexDirection: "row",
     alignItems: "center",
     gap: theme.spacing[2],

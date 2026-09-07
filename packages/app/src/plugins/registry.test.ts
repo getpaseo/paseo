@@ -1,5 +1,33 @@
-import { afterEach, describe, expect, it } from "vitest";
-import { pluginRegistry } from "./registry";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
+import { pluginRegistry as registry } from "./registry";
+
+vi.mock("./navigation", () => ({
+  createPluginNavigation: () => ({}),
+}));
+vi.mock("./client-runtime", () => ({
+  createPluginClientRuntime: () => ({
+    paseo: {},
+    rpc: async () => undefined,
+    openSurface: () => undefined,
+    openPanel: () => undefined,
+    addComposerPill: () => () => undefined,
+  }),
+}));
+
+const daemonClient = {} as DaemonClient;
+const pluginRegistry = {
+  getSnapshot: registry.getSnapshot,
+  subscribe: registry.subscribe,
+  removeHost: registry.removeHost.bind(registry),
+  installCatalog(
+    serverId: string,
+    catalog: Parameters<typeof registry.installCatalog>[1],
+    options: { replacePluginId?: string } = {},
+  ) {
+    return registry.installCatalog(serverId, catalog, { ...options, client: daemonClient });
+  },
+};
 
 function bundle(marker: string): string {
   return `(function() {
@@ -29,6 +57,10 @@ function timelineBundle(marker: string): string {
   })`;
 }
 
+function installedPluginIds(): string[] {
+  return pluginRegistry.getSnapshot().map(({ id }) => id);
+}
+
 afterEach(() => {
   pluginRegistry.removeHost("host-a");
   pluginRegistry.removeHost("host-b");
@@ -36,6 +68,18 @@ afterEach(() => {
 });
 
 describe("PluginRegistry", () => {
+  it("publishes synchronous setup once after storing the installation", () => {
+    const snapshots: string[][] = [];
+    const unsubscribe = pluginRegistry.subscribe(() => {
+      snapshots.push(installedPluginIds());
+    });
+
+    pluginRegistry.installCatalog("host-a", [{ id: "example", clientBundle: bundle("one") }]);
+    unsubscribe();
+
+    expect(snapshots).toEqual([["example"]]);
+  });
+
   it("reports timeline contribution changes", () => {
     const first = timelineBundle("one");
     expect(pluginRegistry.installCatalog("host-a", [{ id: "reports", clientBundle: first }])).toBe(

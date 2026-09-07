@@ -1,17 +1,15 @@
-import type { AgentTimelineItem } from "@getpaseo/protocol/agent-types";
-import { pluginRegistry } from "../registry";
-import {
-  transformTimelineItem,
-  type InstalledPluginTimelineItem,
-  type TimelineItemTransform,
-} from "./model";
+import { useMemo } from "react";
+import { useInstalledPlugins } from "../registry";
+import { transformTimelineItem, type TimelineItemTransform } from "./model";
 
 export type { InstalledPluginTimelineItem, TimelineItemTransform } from "./model";
 export { PluginTimelineItemView } from "./view";
 
-export function createInstalledTimelineTransform(serverId: string): TimelineItemTransform {
-  return (item: AgentTimelineItem): InstalledPluginTimelineItem[] | undefined => {
-    const plugins = pluginRegistry.getSnapshot().filter((plugin) => plugin.serverId === serverId);
-    return transformTimelineItem(item, plugins);
-  };
+export function useInstalledTimelineTransform(serverId: string): TimelineItemTransform {
+  const installed = useInstalledPlugins();
+  const plugins = useMemo(
+    () => installed.filter((plugin) => plugin.serverId === serverId),
+    [installed, serverId],
+  );
+  return useMemo(() => (input) => transformTimelineItem({ ...input, plugins }), [plugins]);
 }

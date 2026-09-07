@@ -971,8 +971,85 @@ describe("browser MCP tools", () => {
       logger,
     });
 
+    const client = await connectInMemoryMcpClient(server);
+    try {
+      const listedTools = await client.listTools();
+      const toolNames = listedTools.tools.map((tool) => tool.name);
+
+      expect(toolNames).not.toContain("browser_list_tabs");
+      expect(toolNames).not.toContain("browser_snapshot");
+      expect(toolNames).toEqual(expect.arrayContaining(["create_agent", "list_agents"]));
+    } finally {
+      await client.close();
+      await server.close();
+    }
+  });
+
+  it("applies provider policy after the browser-tools host gate", async () => {
+    const agentManager = new BoundaryAgentManagerFake();
+    const agentStorage = new BoundaryAgentStorageFake();
+    const broker = new FakeBrowserToolsBroker({
+      requestId: "req-browser-policy",
+      ok: true,
+      result: { command: "list_tabs", tabs: [] },
+    });
+    const server = await createAgentMcpServer({
+      agentManager: agentManager as AgentManager,
+      agentStorage: agentStorage as AgentStorage,
+      providerSnapshotManager:
+        new BoundaryProviderSnapshotManagerFake() as unknown as ProviderSnapshotManager,
+      browserToolsEnabled: true,
+      browserToolsBroker: broker as BrowserToolsBroker,
+      callerAgentId: "agent-1",
+      paseoToolPolicy: { disabledTools: ["browser_list_tabs"] },
+      logger,
+    });
+
     expect(lookupTool(server, "browser_list_tabs")).toBeUndefined();
-    expect(lookupTool(server, "browser_snapshot")).toBeUndefined();
+    expect(lookupTool(server, "browser_snapshot")).toBeDefined();
+  });
+
+  it("filters policy-disabled tools from MCP listing and calls", async () => {
+    const agentManager = new BoundaryAgentManagerFake();
+    const agentStorage = new BoundaryAgentStorageFake();
+    const broker = new FakeBrowserToolsBroker({
+      requestId: "req-browser-policy-call",
+      ok: true,
+      result: { command: "list_tabs", tabs: [] },
+    });
+    const server = await createAgentMcpServer({
+      agentManager: agentManager as AgentManager,
+      agentStorage: agentStorage as AgentStorage,
+      providerSnapshotManager:
+        new BoundaryProviderSnapshotManagerFake() as unknown as ProviderSnapshotManager,
+      browserToolsEnabled: true,
+      browserToolsBroker: broker as BrowserToolsBroker,
+      callerAgentId: "agent-1",
+      paseoToolPolicy: { disabledTools: ["list_agents", "browser_list_tabs"] },
+      logger,
+    });
+    const client = await connectInMemoryMcpClient(server);
+
+    try {
+      const listedTools = await client.listTools();
+      const toolNames = listedTools.tools.map((tool) => tool.name);
+
+      expect(toolNames).not.toContain("list_agents");
+      expect(toolNames).not.toContain("browser_list_tabs");
+      expect(toolNames).toEqual(expect.arrayContaining(["create_agent", "browser_snapshot"]));
+      await expect(client.callTool({ name: "list_agents", arguments: {} })).resolves.toEqual({
+        content: [{ type: "text", text: "MCP error -32602: Tool list_agents not found" }],
+        isError: true,
+      });
+      await expect(client.callTool({ name: "browser_list_tabs", arguments: {} })).resolves.toEqual({
+        content: [{ type: "text", text: "MCP error -32602: Tool browser_list_tabs not found" }],
+        isError: true,
+      });
+      expect(broker.calls).toEqual([]);
+    } finally {
+      await client.close();
+      await server.close();
+    }
   });
 
   it("wires browser tools through the browser tools broker", async () => {

@@ -119,7 +119,7 @@ test("plugin modal adapts its presentation and preserves host contexts", async (
   const client = await connectNewWorkspaceDaemonClient({ ownProjects: false });
   const previousConfig = await client.getDaemonConfig();
   await writeFile(path.join(directory, "paseo-plugin.json"), JSON.stringify({ id: PLUGIN_ID }));
-  await writeFile(path.join(directory, "index.tsx"), PLUGIN_SOURCE);
+  await writeFile(path.join(directory, "index.client.tsx"), PLUGIN_SOURCE);
 
   try {
     await client.patchDaemonConfig({ pluginsEnabled: true });

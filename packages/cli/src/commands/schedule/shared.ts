@@ -1,4 +1,4 @@
-import { connectToDaemon, getDaemonHost } from "../../utils/client.js";
+import { connectToDaemon, getDaemonHost, getExplicitDaemonHost } from "../../utils/client.js";
 import type { CommandError, CommandOptions } from "../../output/index.js";
 import type {
   CreateScheduleInput,
@@ -168,7 +168,7 @@ export function parseScheduleCreateInput(options: {
   }
 
   const cwdInput = options.cwd?.trim();
-  if (options.host !== undefined && !cwdInput) {
+  if (getExplicitDaemonHost(options.host) !== undefined && !cwdInput) {
     throw {
       code: "MISSING_CWD",
       message:

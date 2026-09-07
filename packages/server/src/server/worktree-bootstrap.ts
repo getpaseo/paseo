@@ -589,6 +589,31 @@ async function runWorktreeTerminalBootstrap(
   );
 }
 
+export async function runWorktreeAutoTerminals(options: {
+  workspaceId: string;
+  worktree: WorktreeConfig;
+  workspaceCwd: string;
+  terminalManager: TerminalManager | null;
+  logger?: Logger;
+}): Promise<void> {
+  const runtimeEnv = await resolveWorktreeRuntimeEnv({
+    worktreePath: options.worktree.worktreePath,
+    branchName: options.worktree.branchName,
+  });
+  await runWorktreeTerminalBootstrap(
+    {
+      agentId: options.workspaceId,
+      workspaceId: options.workspaceId,
+      worktree: options.worktree,
+      workspaceCwd: options.workspaceCwd,
+      terminalManager: options.terminalManager,
+      appendTimelineItem: async () => true,
+      logger: options.logger,
+    },
+    runtimeEnv,
+  );
+}
+
 export async function runAsyncWorktreeBootstrap(
   options: RunAsyncWorktreeBootstrapOptions,
 ): Promise<void> {

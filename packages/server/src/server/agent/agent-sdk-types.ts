@@ -1,6 +1,7 @@
 import type {
   AgentProviderNotice,
   AgentTaskItem,
+  JsonValue,
   ProviderOptions,
   ToolPolicy,
 } from "@getpaseo/protocol/agent-types";
@@ -124,6 +125,7 @@ export interface ProviderSnapshotEntry {
   fetchedAt?: string;
   label?: string;
   description?: string;
+  iconSvg?: string;
   defaultModeId?: string | null;
 }
 
@@ -390,6 +392,15 @@ export interface CompactionTimelineItem {
   preTokens?: number;
 }
 
+export interface PluginTimelineItem {
+  type: "plugin";
+  id: string;
+  pluginId: string;
+  kind: string;
+  version: number;
+  data: JsonValue;
+}
+
 export type AgentTimelineItem =
   | { type: "user_message"; text: string; messageId?: string; clientMessageId?: string }
   | { type: "assistant_message"; text: string; messageId?: string }
@@ -397,7 +408,13 @@ export type AgentTimelineItem =
   | ToolCallTimelineItem
   | { type: "todo"; items: AgentTaskItem[] }
   | { type: "error"; message: string }
-  | CompactionTimelineItem;
+  | {
+      type: "notification";
+      level: "info" | "warning" | "error";
+      message: string;
+    }
+  | CompactionTimelineItem
+  | PluginTimelineItem;
 
 export type AgentStreamEvent =
   | { type: "thread_started"; sessionId: string; provider: AgentProvider }
@@ -533,6 +550,13 @@ export interface AgentSlashCommand {
 
 export interface ListImportableSessionsOptions {
   limit?: number;
+  /** Optional case-insensitive descriptor search text. */
+  query?: string;
+  /**
+   * Maximum number of cheap persisted-session candidates to inspect before
+   * applying the result limit. Providers must cap this at 500.
+   */
+  scanLimit?: number;
   /**
    * Optional cwd hint. Providers that can cheaply pre-filter importable
    * sessions by working directory should do so before doing expensive work.
@@ -724,6 +748,10 @@ export interface AgentClient {
     launchContext?: AgentLaunchContext,
     options?: AgentResumeSessionOptions,
   ): Promise<AgentSession>;
+  /** Equal keys share availability and catalogue discovery within this configured client.
+   * Include the execution environment and effective configuration; omit to use target identity.
+   * force must not affect identity. Resolve before every cache lookup. */
+  getCatalogCacheKey?(options: FetchCatalogOptions): Promise<string | undefined>;
   /**
    * Discover models and modes together. Implementations may use one upstream
    * process, separate upstream calls, static modes, or private helpers; callers
@@ -751,10 +779,10 @@ export interface AgentClient {
     context: ImportProviderSessionContext,
   ): Promise<ImportedProviderSession>;
   /**
-   * Check if this provider is available (CLI binary is installed).
+   * Check availability in the catalogue target when supplied (CLI binary is installed).
    * Returns true if available, false otherwise.
    */
-  isAvailable(signal?: AbortSignal): Promise<boolean>;
+  isAvailable(signal?: AbortSignal, options?: FetchCatalogOptions): Promise<boolean>;
   getDiagnostic?(): Promise<{ diagnostic: string }>;
   /**
    * Archive a durable native session (best-effort). Runtime release belongs to AgentSession.close().

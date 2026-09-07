@@ -55,6 +55,18 @@ sdk:
   - "packages/protocol/**"
 
 browser:
+  - "packages/server/src/server/agent/provider-snapshot-manager.ts"
+  - "packages/server/src/server/session/provider/provider-catalog-session.ts"
+  - "packages/client/src/compat/normalize-provider-models.ts"
+  - "packages/protocol/src/client-capabilities.ts"
+  - "packages/server/src/server/agent/provider-registry.ts"
+  - "packages/server/src/server/agent/agent-sdk-types.ts"
+  - "packages/server/src/server/agent/providers/codex-app-server-agent.ts"
+  - "packages/server/src/server/agent/providers/claude/agent.ts"
+  - "packages/server/src/server/agent/plugin-provider.ts"
+  - "packages/server/src/server/plugins/{index,plugin-process,plugin-process-protocol,runtime}.ts"
+  - "packages/server/src/executable-resolution/**"
+  - "packages/plugin/src/provider.ts"
   - "packages/app/src/!(desktop)/**"
   - "packages/app/e2e/browser/**"
   - "packages/app/e2e/support/**"

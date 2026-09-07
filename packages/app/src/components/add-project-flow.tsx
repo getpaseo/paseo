@@ -1,3 +1,4 @@
+import { getHostRuntimeStore } from "@/runtime/host-runtime";
 import { router } from "expo-router";
 import type { WorkspaceProjectDescriptorPayload } from "@getpaseo/protocol/messages";
 import {
@@ -385,7 +386,15 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
   const recommendedPaths = useRecommendedProjectPaths(hostId);
   const openProject = useOpenProject(hostId);
   const cloneGithubProject = useCloneGithubProject(hostId);
-  const upsertProject = useSessionStore((store) => store.upsertProject);
+  const upsertProject = useCallback(
+    (
+      targetServerId: string,
+      project: Parameters<ReturnType<typeof getHostRuntimeStore>["acceptProjectSnapshot"]>[1],
+    ) => {
+      getHostRuntimeStore().acceptProjectSnapshot(targetServerId, project);
+    },
+    [],
+  );
   const sessionWorkspaces = useSessionStore((store) => store.sessions[hostId ?? ""]?.workspaces);
   const setHasHydratedWorkspaces = useSessionStore((store) => store.setHasHydratedWorkspaces);
   const addExistingWorkspace = useAddExistingWorkspace(hostId);

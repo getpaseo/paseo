@@ -7,11 +7,15 @@ import type { OmpUsagePollScheduler } from "./usage-poller.js";
 import { resolveOmpProviderParams } from "./provider-config.js";
 import { OmpHarness } from "./test-utils/omp-harness.js";
 
-test("OMP RPC timeout defaults to 60 seconds and accepts an override", () => {
-  expect(resolveOmpProviderParams({}).runtimeProviderParams.rpcTimeoutMs).toBe(60_000);
-  expect(
-    resolveOmpProviderParams({ rpcTimeoutMs: 90_000 }).runtimeProviderParams.rpcTimeoutMs,
-  ).toBe(90_000);
+test("OMP ready timeout defaults to 20 seconds and RPC timeout overrides both", () => {
+  expect(resolveOmpProviderParams({}).runtimeProviderParams).toMatchObject({
+    readyTimeoutMs: 20_000,
+    rpcTimeoutMs: 60_000,
+  });
+  expect(resolveOmpProviderParams({ rpcTimeoutMs: 90_000 }).runtimeProviderParams).toMatchObject({
+    readyTimeoutMs: 90_000,
+    rpcTimeoutMs: 90_000,
+  });
 });
 
 class ManualIdleScheduler implements OmpProviderIdleScheduler {
@@ -364,7 +368,7 @@ describe("OMP agent client and session", () => {
     ]);
   });
 
-  test("renders a live system-notice custom message as a synthetic tool call", async () => {
+  test("renders a live system-notice custom message as a notification", async () => {
     const omp = new OmpHarness();
     await omp.start();
 
@@ -383,8 +387,12 @@ describe("OMP agent client and session", () => {
       );
     omp.runtime().acceptCustomMessage("plain custom status text");
 
-    expect(omp.timeline().filter((item) => item.type === "tool_call")).toMatchObject([
-      { callId: "omp-notice:DocsSmokeTwo", name: "task_notification", status: "completed" },
+    expect(omp.timeline().filter((item) => item.type === "notification")).toEqual([
+      {
+        type: "notification",
+        level: "info",
+        message: "Background job DocsSmokeTwo completed",
+      },
     ]);
     // Non-notice custom messages still fall through as assistant messages.
     expect(omp.timeline().filter((item) => item.type === "assistant_message")).toMatchObject([

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { transformPiTodoToolCall } from "./pi-tasks";
+import { transformPiTodoToolCall } from "./shared/pi-tasks";
 
 function completedTodo(output: unknown) {
   return {
@@ -15,6 +15,7 @@ function completedTodo(output: unknown) {
 describe("Pi task timeline example", () => {
   it("maps @juicesharp/rpiv-todo and drops deleted tasks", () => {
     const result = transformPiTodoToolCall({
+      phase: "complete",
       item: completedTodo({
         content: [{ type: "text", text: "Created #2" }],
         details: {
@@ -48,6 +49,7 @@ describe("Pi task timeline example", () => {
 
   it("maps Pi's example todo extension", () => {
     const result = transformPiTodoToolCall({
+      phase: "complete",
       item: completedTodo({
         details: {
           todos: [
@@ -69,11 +71,29 @@ describe("Pi task timeline example", () => {
   it("keeps unrelated and malformed tool calls unchanged", () => {
     expect(
       transformPiTodoToolCall({
+        phase: "complete",
         item: { ...completedTodo({ details: { todos: [] } }), name: "write" },
       }),
     ).toBeUndefined();
     expect(
-      transformPiTodoToolCall({ item: completedTodo({ details: { phases: [] } }) }),
+      transformPiTodoToolCall({
+        phase: "complete",
+        item: completedTodo({ details: { phases: [] } }),
+      }),
     ).toBeUndefined();
+  });
+
+  it("maps a running todo tool call", () => {
+    const result = transformPiTodoToolCall({
+      phase: "streaming",
+      item: {
+        ...completedTodo({ details: { todos: [{ text: "live task", done: false }] } }),
+        status: "running",
+      },
+    });
+
+    expect(result?.items[0]?.data).toEqual({
+      tasks: [{ text: "live task", status: "pending" }],
+    });
   });
 });

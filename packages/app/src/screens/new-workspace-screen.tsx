@@ -1,16 +1,17 @@
+import { getHostRuntimeStore } from "@/runtime/host-runtime";
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import type { ReactElement, RefObject } from "react";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 import { Pressable, StyleSheet as RNStyleSheet, Text, View } from "react-native";
 import type { PressableStateCallbackType } from "react-native";
-import ReanimatedAnimated from "react-native-reanimated";
 import { StyleSheet, useUnistyles, withUnistyles } from "react-native-unistyles";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { createNameId } from "mnemonic-id";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronDown, Folder, FolderPlus, GitBranch, GitPullRequest } from "lucide-react-native";
 import { Composer } from "@/composer";
+import { KeyboardTranslateView } from "@/components/keyboard-translate-view";
 import { FileDropZone } from "@/components/file-drop/file-drop-zone";
 import {
   resolveComposerAttachmentSubmitFormat,
@@ -53,7 +54,7 @@ import {
   navigateToWorkspace,
   useLastWorkspaceSelection,
 } from "@/stores/navigation-active-workspace-store";
-import { normalizeWorkspaceDescriptor, useSessionStore } from "@/stores/session-store";
+import { normalizeWorkspaceDescriptor, type WorkspaceDescriptor } from "@/stores/session-store";
 import { useWorkspace } from "@/stores/session-store-hooks";
 import { buildNewWorkspaceDraftKey, generateDraftId } from "@/stores/draft-keys";
 import { useOpenAddProject } from "@/hooks/use-open-add-project";
@@ -62,7 +63,6 @@ import {
   useWorkspaceDraftSubmissionStore,
   type PendingWorkspaceDraftSetup,
 } from "@/stores/workspace-draft-submission-store";
-import { useKeyboardShiftStyle } from "@/hooks/use-keyboard-shift-style";
 import { useKeyboardActionHandler } from "@/hooks/use-keyboard-action-handler";
 import type { KeyboardActionId } from "@/keyboard/keyboard-action-dispatcher";
 import { useFormPreferences } from "@/hooks/use-form-preferences";
@@ -125,6 +125,11 @@ import {
 } from "./new-workspace-initial-context";
 import { buildNewWorkspaceProjectIconTargets } from "./new-workspace/project-icon-targets";
 import { useNewWorkspaceProjectPicker } from "./new-workspace/project-picker";
+import {
+  buildTerminalsQueryKey,
+  type ListTerminalsPayload,
+  upsertCreatedTerminalPayload,
+} from "./workspace/terminals/state";
 
 const ThemedFolderPlus = withUnistyles(FolderPlus);
 const foregroundMutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
@@ -954,20 +959,15 @@ function buildWorkspaceDraftSetupForCreatedWorkspace(input: {
 }
 
 function buildComposerInitialValues(input: {
-  workingDir: string | undefined;
   initialSetup?: WorkspaceDraftTabSetup | null;
 }): CreateAgentInitialValues | undefined {
   if (input.initialSetup) {
     return {
-      workingDir: input.workingDir ?? input.initialSetup.cwd,
       provider: input.initialSetup.provider,
       modeId: input.initialSetup.modeId,
       model: input.initialSetup.model,
       thinkingOptionId: input.initialSetup.thinkingOptionId,
     };
-  }
-  if (input.workingDir) {
-    return { workingDir: input.workingDir };
   }
   return undefined;
 }
@@ -1018,19 +1018,17 @@ async function runCreateChatAgent(input: CreateChatAgentInput): Promise<void> {
 
 function buildComposerConfig(input: {
   serverId: string;
-  isConnected: boolean;
   workspaceDirectory: string | null;
   sourceDirectory: string | null;
   initialSetup?: WorkspaceDraftTabSetup | null;
 }): Parameters<typeof useAgentInputDraft>[0]["composer"] {
-  const { serverId, isConnected, workspaceDirectory, sourceDirectory, initialSetup } = input;
+  const { serverId, workspaceDirectory, sourceDirectory, initialSetup } = input;
   const workingDir = workspaceDirectory || sourceDirectory || undefined;
   return {
     initialServerId: serverId || null,
-    initialValues: buildComposerInitialValues({ workingDir, initialSetup }),
+    initialValues: buildComposerInitialValues({ initialSetup }),
     initialFeatureValues: initialSetup?.featureValues,
     isVisible: true,
-    onlineServerIds: isConnected && serverId ? [serverId] : [],
     lockedWorkingDir: workingDir,
   };
 }
@@ -1645,7 +1643,12 @@ export function NewWorkspaceScreen({
   const insets = useSafeAreaInsets();
   const isCompact = useIsCompactFormFactor();
   const toast = useToast();
-  const mergeWorkspaces = useSessionStore((state) => state.mergeWorkspaces);
+  const mergeWorkspaces = useCallback(
+    (targetServerId: string, workspaces: Iterable<WorkspaceDescriptor>) => {
+      getHostRuntimeStore().acceptWorkspaceSnapshots(targetServerId, Array.from(workspaces));
+    },
+    [],
+  );
   const {
     allHosts,
     selectedServerId,
@@ -1777,7 +1780,6 @@ export function NewWorkspaceScreen({
     draftKey,
     composer: buildComposerConfig({
       serverId: selectedServerId,
-      isConnected,
       workspaceDirectory: workspace?.workspaceDirectory ?? null,
       sourceDirectory: selectedSourceDirectory,
       initialSetup: forkDraftSetup?.setup,
@@ -2282,10 +2284,20 @@ export function NewWorkspaceScreen({
             undefined,
             { command: input.command, args: input.args, workspaceId: input.workspaceId },
           );
-          if (!createdTerminal.terminal) {
+          const terminal = createdTerminal.terminal;
+          if (!terminal) {
             throw new Error(createdTerminal.error ?? t("newWorkspace.errors.createWorktreeFailed"));
           }
-          return { terminalId: createdTerminal.terminal.id };
+          queryClient.setQueryData<ListTerminalsPayload>(
+            buildTerminalsQueryKey(selectedServerId, input.workspaceDirectory, input.workspaceId),
+            (current) =>
+              upsertCreatedTerminalPayload({
+                current,
+                terminal,
+                workspaceDirectory: input.workspaceDirectory,
+              }),
+          );
+          return { terminalId: terminal.id };
         },
         sendTerminalInput: (terminalId, data) => {
           withConnectedClient().sendTerminalInput(terminalId, { type: "input", data });
@@ -2303,6 +2315,7 @@ export function NewWorkspaceScreen({
   }, [
     ensureWorkspace,
     launchTarget,
+    queryClient,
     selectedServerId,
     selectedSourceDirectory,
     selectedTerminalProfile,
@@ -2372,15 +2385,6 @@ export function NewWorkspaceScreen({
   const contentStyle = useMemo(
     () => getContentStyle({ isCompact, insetBottom: insets.bottom }),
     [isCompact, insets.bottom],
-  );
-
-  const { style: composerKeyboardStyle } = useKeyboardShiftStyle({
-    mode: "translate",
-  });
-
-  const centeredStyle = useMemo(
-    () => [animatedStaticStyles.centered, composerKeyboardStyle],
-    [composerKeyboardStyle],
   );
 
   const agentControlsWithDisabled = useMemo(
@@ -2489,7 +2493,7 @@ export function NewWorkspaceScreen({
       <ScreenHeader left={screenHeaderLeft} borderless />
       <View style={contentStyle}>
         <TitlebarDragRegion />
-        <ReanimatedAnimated.View style={centeredStyle}>
+        <KeyboardTranslateView style={animatedStaticStyles.centered}>
           <View style={styles.composerTitleContainer}>
             <Text style={styles.composerTitle}>{t("newWorkspace.title")}</Text>
           </View>
@@ -2555,7 +2559,7 @@ export function NewWorkspaceScreen({
             />
           )}
           {errorMessage ? <Text style={styles.errorText}>{errorMessage}</Text> : null}
-        </ReanimatedAnimated.View>
+        </KeyboardTranslateView>
       </View>
     </FileDropZone>
   );

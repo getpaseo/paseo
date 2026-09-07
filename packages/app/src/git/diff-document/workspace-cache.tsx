@@ -1,6 +1,6 @@
 import { createContext, useContext, useState, type ReactNode } from "react";
 import invariant from "tiny-invariant";
-import { buildDiffDocumentModel, retainReusableModels } from "./model";
+import { buildDiffDocumentModel, retainReusableModels, reviewGeometryKey } from "./model";
 import type {
   BuildDiffDocumentModelInput,
   DiffDocumentModel,
@@ -117,17 +117,11 @@ function modelVariantKey(input: Omit<BuildDiffDocumentModelInput, "reuseFrom">):
 
 function exactModelKey(input: Omit<BuildDiffDocumentModelInput, "reuseFrom">): string {
   const collapsedFilePaths = [...input.collapsedFilePaths].sort();
-  const reviewGeometry = input.reviewActions
-    ? {
-        comments: [...input.reviewActions.commentsByTarget.entries()]
-          .map(([target, comments]) => [target, comments.map((comment) => comment.id).sort()])
-          .sort(([left], [right]) => String(left).localeCompare(String(right))),
-        editor: input.reviewActions.editor
-          ? [input.reviewActions.editor.target.key, input.reviewActions.editor.commentId]
-          : null,
-      }
+  const reviewGeometry = reviewGeometryKey(input.reviewActions);
+  const materializationWindow = input.materializationWindow
+    ? [input.materializationWindow.top, input.materializationWindow.height]
     : null;
-  return JSON.stringify([collapsedFilePaths, reviewGeometry]);
+  return JSON.stringify([collapsedFilePaths, reviewGeometry, materializationWindow]);
 }
 
 function typographyKey(typography: DiffTypography): string {
@@ -150,6 +144,11 @@ function paletteKey(palette: DiffPalette): string {
     palette.deletionBackground,
     palette.emptyBackground,
     palette.selection,
+    palette.headerActiveSurface,
+    palette.headerBorder,
+    palette.statusSuccess,
+    palette.statusDanger,
+    palette.statusWarning,
     syntax,
   ]);
 }

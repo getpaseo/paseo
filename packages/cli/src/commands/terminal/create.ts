@@ -1,13 +1,14 @@
 import type { Command } from "commander";
-import type { SingleResult, CommandError } from "../../output/index.js";
+import type { SingleResult } from "../../output/index.js";
 import {
   connectTerminalClient,
   toTerminalCommandError,
   type TerminalCommandOptions,
 } from "./shared.js";
-import { terminalSchema, type TerminalRow, toTerminalRow } from "./schema.js";
+import { terminalSchema, type TerminalRow } from "./schema.js";
 
 export interface TerminalCreateOptions extends TerminalCommandOptions {
+  workspace?: string;
   cwd?: string;
   name?: string;
 }
@@ -16,37 +17,26 @@ export async function runCreateCommand(
   options: TerminalCreateOptions,
   _command: Command,
 ): Promise<SingleResult<TerminalRow>> {
-  const { client } = await connectTerminalClient(options.host);
-  const cwd = options.cwd ?? process.cwd();
-
+  const { client, close } = await connectTerminalClient(options.host);
   try {
-    const opened = await client.openProject(cwd);
-    if (!opened.workspace) {
-      const error: CommandError = {
-        code: "WORKSPACE_OPEN_FAILED",
-        message: opened.error ?? "Failed to open workspace",
-      };
-      throw error;
-    }
-
-    const payload = await client.createTerminal(cwd, options.name, undefined, {
-      workspaceId: opened.workspace.id,
+    const cwd = options.cwd ?? (options.workspace ? undefined : process.cwd());
+    const workspaceId =
+      options.workspace ?? (await client.workspaces.open(options.cwd ?? process.cwd())).id;
+    const terminal = await client.terminals.create({
+      workspaceId,
+      cwd,
+      name: options.name,
     });
-    if (!payload.terminal) {
-      const error: CommandError = {
-        code: "TERMINAL_CREATE_FAILED",
-        message: payload.error ?? "Failed to create terminal",
-      };
-      throw error;
-    }
+    const snapshot = terminal.current();
+    if (!snapshot) throw new Error("The daemon did not create a terminal");
     return {
       type: "single",
-      data: toTerminalRow(payload.terminal),
+      data: snapshot,
       schema: terminalSchema,
     };
   } catch (err) {
     throw toTerminalCommandError("TERMINAL_CREATE_FAILED", "create terminal", err);
   } finally {
-    await client.close().catch(() => {});
+    await close().catch(() => {});
   }
 }

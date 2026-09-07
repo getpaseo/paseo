@@ -14,6 +14,7 @@ import {
   switchAwayAndBackWithoutImageInstability,
   userPagesUntilAssistantImageRenders,
 } from "../support/helpers/assistant-images";
+import { expectAgentReadyToInterrupt } from "../support/helpers/agent-stream";
 import { seedWorkspace, type SeededWorkspace } from "../support/helpers/seed-client";
 
 const test = base.extend<{ imageWorkspace: SeededWorkspace }>({
@@ -84,8 +85,15 @@ test("opens a timeline image in a zoomable lightbox", async ({
     .poll(async () => Math.round((await transformedContent.boundingBox())?.width ?? 0))
     .toBe(Math.round(initialBox!.width));
 
-  await canvas.click({ position: { x: 4, y: 4 } });
+  await workspace.client.sendAgentMessage(
+    imageAgent.id,
+    "Stay running while the assistant image lightbox is closed.",
+  );
+  await expectAgentReadyToInterrupt(page);
+
+  await page.keyboard.press("Escape");
   await expect(lightboxImage).toHaveCount(0);
+  await expectAgentReadyToInterrupt(page);
 });
 
 test("reloading a timeline anchors near-tail assistant image growth", async ({

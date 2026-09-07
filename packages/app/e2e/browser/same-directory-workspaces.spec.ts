@@ -69,8 +69,8 @@ test.describe("Same-directory workspaces", () => {
       await expectExplorerEntryVisible(page, "SHARED_CHANGE.md");
       await openChangesPanel(page);
       await expect(
-        page.getByTestId("git-diff-scroll").getByText("SHARED_CHANGE.md", { exact: true }).first(),
-      ).toBeVisible({ timeout: 30_000 });
+        page.getByTestId("working-diff-panel").filter({ visible: true }).getByTestId("diff-file-0"),
+      ).toHaveAccessibleName("SHARED_CHANGE.md, +1, -0", { timeout: 30_000 });
 
       // Workspace B (same directory): the SAME directory-backed content is
       // visible even though the panel tabs belong to a different workspace.
@@ -79,8 +79,8 @@ test.describe("Same-directory workspaces", () => {
       await expectExplorerEntryVisible(page, "SHARED_CHANGE.md");
       await openChangesPanel(page);
       await expect(
-        page.getByTestId("git-diff-scroll").getByText("SHARED_CHANGE.md", { exact: true }).first(),
-      ).toBeVisible({ timeout: 30_000 });
+        page.getByTestId("working-diff-panel").filter({ visible: true }).getByTestId("diff-file-0"),
+      ).toHaveAccessibleName("SHARED_CHANGE.md, +1, -0", { timeout: 30_000 });
     } finally {
       await seeded.cleanup();
     }

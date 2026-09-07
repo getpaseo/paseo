@@ -59,8 +59,6 @@ jobs:
     needs: changes
     if: ${{ !cancelled() && (needs.changes.outputs.full != 'false' || needs.changes.outputs.format != 'false') }}
     runs-on: ubuntu-latest
-    env:
-      ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
     steps:
       - uses: actions/checkout@v4
 
@@ -80,8 +78,6 @@ jobs:
     needs: changes
     if: ${{ !cancelled() && (needs.changes.outputs.full != 'false' || needs.changes.outputs.quality != 'false') }}
     runs-on: ubuntu-latest
-    env:
-      ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
     steps:
       - uses: actions/checkout@v4
 
@@ -107,8 +103,6 @@ jobs:
     needs: changes
     if: ${{ !cancelled() && (needs.changes.outputs.full != 'false' || needs.changes.outputs.quality != 'false') }}
     runs-on: ubuntu-latest
-    env:
-      ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
     steps:
       - uses: actions/checkout@v4
 
@@ -137,8 +131,6 @@ jobs:
     needs: changes
     if: ${{ !cancelled() && (needs.changes.outputs.full != 'false' || needs.changes.outputs.server != 'false' || needs.changes.outputs.hub != 'false') }}
     runs-on: ubuntu-latest
-    env:
-      ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
     steps: &server_test_steps
       - uses: actions/checkout@v4
         with:
@@ -180,8 +172,6 @@ jobs:
     needs: changes
     if: ${{ !cancelled() && (needs.changes.outputs.full != 'false' || needs.changes.outputs.server != 'false' || needs.changes.outputs.hub != 'false') }}
     runs-on: windows-latest
-    env:
-      ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
     steps: *server_test_steps
 
   desktop-tests-ubuntu:
@@ -268,8 +258,6 @@ jobs:
     needs: changes
     if: ${{ !cancelled() && (needs.changes.outputs.full != 'false' || needs.changes.outputs.app != 'false') }}
     runs-on: ubuntu-latest
-    env:
-      ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
     steps:
       - uses: actions/checkout@v4
 
@@ -296,8 +284,6 @@ jobs:
     needs: changes
     if: ${{ !cancelled() && (needs.changes.outputs.full != 'false' || needs.changes.outputs.sdk != 'false') }}
     runs-on: ubuntu-latest
-    env:
-      ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
     steps:
       - uses: actions/checkout@v4
 
@@ -330,7 +316,6 @@ jobs:
     if: ${{ !cancelled() && (needs.changes.outputs.full != 'false' || needs.changes.outputs.browser != 'false') }}
     runs-on: ubuntu-latest
     env:
-      ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
       PLAYWRIGHT_SHARD: "1/4"
       PLAYWRIGHT_ARTIFACT: "1"
     steps: &playwright_test_steps
@@ -378,7 +363,6 @@ jobs:
     if: ${{ !cancelled() && (needs.changes.outputs.full != 'false' || needs.changes.outputs.browser != 'false') }}
     runs-on: ubuntu-latest
     env:
-      ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
       PLAYWRIGHT_SHARD: "2/4"
       PLAYWRIGHT_ARTIFACT: "2"
     steps: *playwright_test_steps
@@ -389,7 +373,6 @@ jobs:
     if: ${{ !cancelled() && (needs.changes.outputs.full != 'false' || needs.changes.outputs.browser != 'false') }}
     runs-on: ubuntu-latest
     env:
-      ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
       PLAYWRIGHT_SHARD: "3/4"
       PLAYWRIGHT_ARTIFACT: "3"
     steps: *playwright_test_steps
@@ -400,7 +383,6 @@ jobs:
     if: ${{ !cancelled() && (needs.changes.outputs.full != 'false' || needs.changes.outputs.browser != 'false') }}
     runs-on: ubuntu-latest
     env:
-      ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
       PLAYWRIGHT_SHARD: "4/4"
       PLAYWRIGHT_ARTIFACT: "4"
     steps: *playwright_test_steps
@@ -410,8 +392,6 @@ jobs:
     needs: changes
     if: ${{ !cancelled() && (needs.changes.outputs.full != 'false' || needs.changes.outputs.relay != 'false') }}
     runs-on: ubuntu-latest
-    env:
-      ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
     steps:
       - uses: actions/checkout@v4
 
@@ -435,7 +415,6 @@ jobs:
     if: ${{ !cancelled() && (needs.changes.outputs.full != 'false' || needs.changes.outputs.cli != 'false') }}
     runs-on: ubuntu-latest
     env:
-      ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
       PASEO_LOCAL_SPEECH_AUTO_DOWNLOAD: "0"
       PASEO_DICTATION_ENABLED: "0"
       PASEO_VOICE_MODE_ENABLED: "0"
@@ -467,7 +446,6 @@ jobs:
     if: ${{ !cancelled() && (needs.changes.outputs.full != 'false' || needs.changes.outputs.cli != 'false') }}
     runs-on: ubuntu-latest
     env:
-      ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
       PASEO_LOCAL_SPEECH_AUTO_DOWNLOAD: "0"
       PASEO_DICTATION_ENABLED: "0"
       PASEO_VOICE_MODE_ENABLED: "0"
@@ -481,7 +459,6 @@ jobs:
     if: ${{ !cancelled() && (needs.changes.outputs.full != 'false' || needs.changes.outputs.cli != 'false') }}
     runs-on: ubuntu-latest
     env:
-      ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
       PASEO_LOCAL_SPEECH_AUTO_DOWNLOAD: "0"
       PASEO_DICTATION_ENABLED: "0"
       PASEO_VOICE_MODE_ENABLED: "0"

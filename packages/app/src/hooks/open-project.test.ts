@@ -43,7 +43,7 @@ describe("addExistingWorkspaceDirectly", () => {
     });
 
     expect(createWorkspace).toHaveBeenCalledWith({
-      source: { kind: "directory", path: "/repo/feature" },
+      source: { kind: "directory", path: "/repo/feature", reuseExisting: true },
     });
     expect(result).toMatchObject({ ok: true, workspace: { id: "workspace-1" } });
     expect(mergeWorkspaces).toHaveBeenCalledWith("server-1", [

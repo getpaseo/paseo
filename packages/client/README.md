@@ -26,7 +26,7 @@ await client.close();
 
 The public API is the package root. Imports under `@getpaseo/client/internal/*` are unsupported implementation details used by Paseo's own packages.
 
-Read the [SDK documentation](https://paseo.sh/docs/sdk) for agents, workspaces, provider discovery, events, recipes, and the API reference. Runnable TypeScript patterns also live in [`examples/`](./examples/README.md).
+Read the [SDK documentation](https://paseo.sh/docs/sdk) for agents, workspaces, terminals, provider discovery, events, recipes, and the API reference. Runnable TypeScript patterns also live in [`examples/`](./examples/README.md).
 
 ## Runtime
 

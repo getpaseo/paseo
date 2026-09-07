@@ -23,6 +23,66 @@ export interface NativeTextLayout {
   paragraphs: Array<Array<Array<SkParagraph | null>>>;
 }
 
+export interface NativeHeaderTextLayout {
+  families: string[] | undefined;
+  fontSize: number;
+  statFontSize: number;
+  palette: Pick<DiffPalette, "foreground" | "foregroundMuted" | "statusSuccess" | "statusDanger">;
+}
+
+export interface NativeShapedHeaderText {
+  paragraph: SkParagraph;
+  width: number;
+  height: number;
+}
+
+export type NativeHeaderTextTone = keyof NativeHeaderTextLayout["palette"];
+
+export function createNativeHeaderTextLayout(input: {
+  configuredFamily: string;
+  fontSize: number;
+  statFontSize: number;
+  palette: NativeHeaderTextLayout["palette"];
+}): NativeHeaderTextLayout {
+  const configured = input.configuredFamily
+    .split(",")
+    .map((family) => family.trim().replace(/^['"]|['"]$/g, ""))
+    // These are React Native's platform-default UI sentinels, not custom faces.
+    // Omitting the family lets Skia resolve the same platform system font.
+    .filter((family) => family && family !== "normal" && family !== "system-ui");
+  const families = configured.length > 0 ? [...new Set(configured)] : undefined;
+  return {
+    families,
+    fontSize: input.fontSize,
+    statFontSize: input.statFontSize,
+    palette: input.palette,
+  };
+}
+
+export function shapeNativeHeaderText(input: {
+  layout: NativeHeaderTextLayout;
+  text: string;
+  size: "body" | "stat";
+  tone: NativeHeaderTextTone;
+  maximumWidth?: number;
+}): NativeShapedHeaderText {
+  const paragraph = Skia.ParagraphBuilder.Make({ maxLines: 1, ellipsis: "…" })
+    .pushStyle({
+      ...(input.layout.families ? { fontFamilies: input.layout.families } : {}),
+      fontSize: input.size === "body" ? input.layout.fontSize : input.layout.statFontSize,
+      color: Skia.Color(input.layout.palette[input.tone]),
+    })
+    .addText(input.text)
+    .pop()
+    .build();
+  paragraph.layout(input.maximumWidth ?? PARAGRAPH_WIDTH);
+  return {
+    paragraph,
+    width: paragraph.getLongestLine(),
+    height: paragraph.getHeight(),
+  };
+}
+
 export interface NativeTextLayoutStore {
   font: SkFont;
   asciiMetrics: CachedAsciiTextMetrics;

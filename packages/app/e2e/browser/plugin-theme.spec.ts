@@ -54,7 +54,7 @@ test("applies a contributed theme and falls back when its plugin is gone", async
   const client = await connectNewWorkspaceDaemonClient({ ownProjects: false });
   const previousConfig = await client.getDaemonConfig();
   await writeFile(path.join(directory, "paseo-plugin.json"), JSON.stringify({ id: PLUGIN_ID }));
-  await writeFile(path.join(directory, "index.ts"), PLUGIN_SOURCE);
+  await writeFile(path.join(directory, "index.client.ts"), PLUGIN_SOURCE);
 
   try {
     await client.patchDaemonConfig({ pluginsEnabled: true });
