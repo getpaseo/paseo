@@ -130,6 +130,7 @@ export const en = {
       addIssueOrPr_mr: "Add issue or MR",
       dropImagesHere: "Drop images here",
       dropFilesHere: "Drop files here",
+      dropTextHere: "Drop text here",
       editQueuedMessage: "Edit queued message",
       sendQueuedMessageNow: "Send queued message now",
       openImage: "Open image attachment",

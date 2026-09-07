@@ -133,6 +133,7 @@ export const ja: TranslationResources = {
       addIssueOrPr_mr: "イシューまたはMRを追加",
       dropImagesHere: "ここに画像をドロップ",
       dropFilesHere: "ここにファイルをドロップ",
+      dropTextHere: "ここにテキストをドロップ",
       editQueuedMessage: "キューに入れたメッセージを編集",
       sendQueuedMessageNow: "キューに入れたメッセージを今すぐ送信",
       openImage: "画像添付ファイルを開く",

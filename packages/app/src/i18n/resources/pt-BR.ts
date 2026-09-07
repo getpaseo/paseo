@@ -133,6 +133,7 @@ export const ptBR: TranslationResources = {
       addIssueOrPr_mr: "Adicionar issue ou MR",
       dropImagesHere: "Solte imagens aqui",
       dropFilesHere: "Solte arquivos aqui",
+      dropTextHere: "Solte o texto aqui",
       editQueuedMessage: "Editar mensagem na fila",
       sendQueuedMessageNow: "Enviar mensagem da fila agora",
       openImage: "Abrir anexo de imagem",

@@ -133,6 +133,7 @@ export const ko: TranslationResources = {
       addIssueOrPr_mr: "이슈 또는 MR 추가",
       dropImagesHere: "여기에 이미지를 끌어다 놓으세요",
       dropFilesHere: "여기에 파일을 끌어다 놓으세요",
+      dropTextHere: "여기에 텍스트를 끌어다 놓으세요",
       editQueuedMessage: "대기 중인 메시지 편집",
       sendQueuedMessageNow: "대기 중인 메시지 지금 보내기",
       openImage: "이미지 첨부 열기",

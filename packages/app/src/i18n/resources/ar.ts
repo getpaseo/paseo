@@ -133,6 +133,7 @@ export const ar: TranslationResources = {
       addIssueOrPr_mr: "أضف مشكلة أو MR",
       dropImagesHere: "إسقاط الصور هنا",
       dropFilesHere: "Drop files here",
+      dropTextHere: "Drop text here",
       editQueuedMessage: "تحرير الرسالة في قائمة الانتظار",
       sendQueuedMessageNow: "إرسال رسالة في قائمة الانتظار الآن",
       openImage: "فتح مرفق الصورة",

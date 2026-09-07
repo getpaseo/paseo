@@ -133,6 +133,7 @@ export const es: TranslationResources = {
       addIssueOrPr_mr: "Agregar problema o MR",
       dropImagesHere: "Suelta imágenes aquí",
       dropFilesHere: "Drop files here",
+      dropTextHere: "Drop text here",
       editQueuedMessage: "Editar mensaje en cola",
       sendQueuedMessageNow: "Enviar mensaje en cola ahora",
       openImage: "Abrir imagen adjunta",
