@@ -5,9 +5,9 @@ import { expect, test } from "../support/fixtures";
 import { composerLocator, expectComposerVisible } from "../support/helpers/composer";
 import { connectNewWorkspaceDaemonClient } from "../support/helpers/new-workspace";
 import { openAgentRoute, seedMockAgentWorkspace } from "../support/helpers/mock-agent";
+import { copyPluginExample, pluginRequirements } from "../support/helpers/plugin-fixture";
 
 const PLUGIN_ID = "command-directories-example";
-const PLUGIN_DIRECTORY = path.resolve(__dirname, "../../../../plugin-examples/command-directories");
 
 async function writeCommand(
   workspaceDirectory: string,
@@ -20,6 +20,7 @@ async function writeCommand(
 }
 
 test("dynamic plugin slash commands follow the active workspace", async ({ page }) => {
+  const example = await copyPluginExample("command-directories");
   const management = await connectNewWorkspaceDaemonClient({ ownProjects: false });
   const previous = await management.getDaemonConfig();
   const first = await seedMockAgentWorkspace({
@@ -43,7 +44,7 @@ test("dynamic plugin slash commands follow the active workspace", async ({ page 
 
   try {
     await management.patchDaemonConfig({ pluginsEnabled: true });
-    await management.installDirectoryPlugin(PLUGIN_DIRECTORY);
+    await management.installDirectoryPlugin(example.directory);
 
     await openAgentRoute(page, first);
     await expectComposerVisible(page);
@@ -74,6 +75,7 @@ test("dynamic plugin slash commands follow the active workspace", async ({ page 
       .patchDaemonConfig({ pluginsEnabled: previous.config.pluginsEnabled ?? false })
       .catch(() => undefined);
     await management.close().catch(() => undefined);
+    await example.cleanup();
     await first.cleanup();
     await second.cleanup();
   }
@@ -91,7 +93,7 @@ test("a pending slash command provider leaves ready commands visible", async ({ 
   });
   await writeFile(
     path.join(pluginDirectory, "paseo-plugin.json"),
-    JSON.stringify({ id: "command-provider-pending" }),
+    JSON.stringify({ id: "command-provider-pending", requirements: pluginRequirements }),
   );
   await writeFile(
     path.join(pluginDirectory, "index.client.ts"),
@@ -150,7 +152,7 @@ test("dynamic plugin slash command failures stay visible in autocomplete", async
   });
   await writeFile(
     path.join(pluginDirectory, "paseo-plugin.json"),
-    JSON.stringify({ id: "command-provider-error" }),
+    JSON.stringify({ id: "command-provider-error", requirements: pluginRequirements }),
   );
   await writeFile(
     path.join(pluginDirectory, "index.client.ts"),
