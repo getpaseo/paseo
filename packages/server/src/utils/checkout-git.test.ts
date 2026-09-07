@@ -502,8 +502,12 @@ describe("checkout git utilities", () => {
     writeFileSync(join(repoDir, "file.txt"), "updated\n");
 
     const status = await getCheckoutStatus(repoDir);
+    const initialHeadOid = execFileSync("git", ["rev-parse", "HEAD"], { cwd: repoDir })
+      .toString()
+      .trim();
     expect(status.isGit).toBe(true);
     expect(status.currentBranch).toBe("main");
+    expect(status.headOid).toBe(initialHeadOid);
     expect(status.isDirty).toBe(true);
     expect(status.hasRemote).toBe(false);
 
@@ -515,6 +519,7 @@ describe("checkout git utilities", () => {
 
     const cleanStatus = await getCheckoutStatus(repoDir);
     expect(cleanStatus.isDirty).toBe(false);
+    expect(cleanStatus.headOid).not.toBe(initialHeadOid);
     const message = execFileSync("git", ["log", "-1", "--pretty=%B"], { cwd: repoDir })
       .toString()
       .trim();
@@ -3649,6 +3654,13 @@ const x = 1;
     });
 
     await expect(resolveRepositoryDefaultBranch(repoDir)).resolves.toBe("main");
+  });
+
+  it("falls back to the currently checked-out branch when origin/HEAD is unset and no main/master branch exists", async () => {
+    execFileSync("git", ["checkout", "-b", "trunk"], { cwd: repoDir });
+    execFileSync("git", ["branch", "-D", "main"], { cwd: repoDir });
+
+    await expect(resolveRepositoryDefaultBranch(repoDir)).resolves.toBe("trunk");
   });
 
   it("merges to stored baseRefName when baseRef is not provided", async () => {

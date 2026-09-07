@@ -5,7 +5,7 @@ import {
   openNewWorkspaceComposer,
   openStartingRefPicker,
   selectBranchInPicker,
-  selectWorkspaceIsolation,
+  selectWorkspaceMode,
 } from "../support/helpers/new-workspace";
 import { seedWorkspace, type SeededWorkspace } from "../support/helpers/seed-client";
 import { getServerId } from "../support/helpers/server-id";
@@ -61,7 +61,7 @@ test.describe("New workspace metadata row layout", () => {
       projectKey: workspace.projectKey,
       projectDisplayName: workspace.projectDisplayName,
     });
-    await selectWorkspaceIsolation(page, "worktree");
+    await selectWorkspaceMode(page, "branch-off");
     await openStartingRefPicker(page);
     await selectBranchInPicker(page, LONG_BRANCH_NAME);
 

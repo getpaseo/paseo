@@ -288,7 +288,7 @@ describe.skipIf(isPlatform("win32"))("worktree POSIX-only", () => {
       const metadata = JSON.parse(readFileSync(metadataPath, "utf8"));
       expect(metadata).toMatchObject({
         version: 1,
-        baseRefName: "dev",
+        baseRefName: "main",
         changeRequestLookupTarget: { headRef: "dev", localBranchName: "dev" },
       });
     });

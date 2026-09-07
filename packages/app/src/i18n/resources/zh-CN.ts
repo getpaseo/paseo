@@ -1201,7 +1201,13 @@ export const zhCN: TranslationResources = {
     isolation: {
       local: "本地",
       worktree: "新建 worktree",
-      label: "隔离",
+      label: "Workspace 模式",
+    },
+    branchMode: {
+      label: "现有分支",
+      branchOff: "新建分支",
+      checkout: "检出",
+      updateHost: "更新 host 后即可从当前选择新建分支。",
     },
     fields: {
       project: "项目",
@@ -1212,8 +1218,12 @@ export const zhCN: TranslationResources = {
     errors: {
       hostDisconnected: "Host 未连接",
       createWorktreeFailed: "创建 worktree 失败",
+      branchAlreadyCheckedOut: "该分支已在别处检出。请改用「新建分支」创建副本，或先释放该分支。",
       composerStateRequired: "Composer 状态必填",
       selectModel: "请选择模型",
+    },
+    notices: {
+      checkoutBranchCopied: "{{requestedBranch}} 已在别处检出，改用副本分支：{{createdBranch}}。",
     },
     tooltips: {
       project: "Choose the project",

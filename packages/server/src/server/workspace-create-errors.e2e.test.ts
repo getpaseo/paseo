@@ -7,9 +7,8 @@ import { DaemonClient } from "./test-utils/index.js";
 import { createTestPaseoDaemon } from "./test-utils/paseo-daemon.js";
 
 // workspace.create has four reject branches before it ever touches the
-// registries; this pins each one's errorCode (or, for project-not-found, its
-// message) as seen by the daemon client, so the CLI/app contract on top of them
-// stays covered.
+// registries; this pins each one's errorCode and message as seen by the daemon
+// client, so the CLI/app contract on top of them stays covered.
 test("workspace.create surfaces each early-reject error branch", async () => {
   const daemon = await createTestPaseoDaemon();
   const missingDir = path.join(tmpdir(), `paseo-workspace-create-missing-${Date.now()}`);
@@ -37,12 +36,14 @@ test("workspace.create surfaces each early-reject error branch", async () => {
     expect(sourceRequired.errorCode).toBe("source_required");
 
     // worktree source with an unknown projectId -> project-not-found message
-    // (surfaced via the generic catch, so it carries an error but no errorCode)
+    // (surfaced via the generic catch, which maps non-worktree errors to the
+    // catch-all "unknown" wire code)
     const projectNotFound = await client.createWorkspace({
       source: { kind: "worktree", projectId: "proj-does-not-exist", worktreeSlug: "feat" },
     });
     expect(projectNotFound.workspace).toBeNull();
     expect(projectNotFound.error).toContain("Project not found: proj-does-not-exist");
+    expect(projectNotFound.errorCode).toBe("unknown");
   } finally {
     await client.close().catch(() => undefined);
     await daemon.close();

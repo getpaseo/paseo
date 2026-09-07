@@ -249,9 +249,18 @@ test("workspace.create suffixes an occupied checkout branch", async () => {
 
     expect(first.error).toBeNull();
     expect(first.workspace?.gitRuntime?.currentBranch).toBe("feature/existing-branch");
+    // The first create took the branch itself, so there is nothing to disclose.
+    expect(first.checkoutBranchCopy).toBeUndefined();
     expect(second.error).toBeNull();
     expect(path.basename(second.workspace?.workspaceDirectory ?? "")).toBe("existing-branch-1");
     expect(second.workspace?.gitRuntime?.currentBranch).toBe("feature/existing-branch-1");
+    // The second create silently landed on a copy before this field existed. It
+    // is the only signal the client can use to tell the user they are not on the
+    // branch they picked.
+    expect(second.checkoutBranchCopy).toEqual({
+      requestedBranch: "feature/existing-branch",
+      createdBranch: "feature/existing-branch-1",
+    });
   } finally {
     await client.close().catch(() => undefined);
     await daemon.close();

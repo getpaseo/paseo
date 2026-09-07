@@ -198,6 +198,7 @@ function createFallbackWorkspaceGitSnapshot(cwd: string): WorkspaceGitRuntimeSna
       repoRoot: null,
       mainRepoRoot: null,
       currentBranch: null,
+      headOid: null,
       remoteUrl: null,
       isPaseoOwnedWorktree: false,
       isDirty: null,
@@ -1700,6 +1701,7 @@ export class VoiceAssistantWebSocketServer {
         checkoutRefresh: true,
         // COMPAT(workspaceMultiplicity): added in v0.1.97, drop the gate when floor >= v0.1.97
         workspaceMultiplicity: true,
+        changeRequestBranchOff: true,
         // COMPAT(projectRemove): added in v0.1.97, drop the gate when floor >= v0.1.97.
         projectRemove: true,
         // COMPAT(projectAdd): added in v0.1.97, drop the gate when floor >= v0.1.97.

@@ -793,10 +793,11 @@ test("does not mark checkout branch worktrees as eligible for first-agent rename
 
   expect(readPaseoWorktreeMetadata(created.worktree.worktreePath)).toMatchObject({
     version: 1,
-    baseRefName: "dev",
+    baseRefName: "main",
   });
-  // A checkout-branch worktree has no distinct base, so the workspace records a
-  // null baseBranch even though worktree.json's baseRefName is the branch itself.
+  // A checkout-branch worktree has no explicit base, so the workspace records a
+  // null baseBranch even though worktree.json's baseRefName resolves to the repo
+  // default branch.
   expect(created.workspace.baseBranch).toBe(null);
   await expect(
     attemptFirstAgentBranchAutoName({

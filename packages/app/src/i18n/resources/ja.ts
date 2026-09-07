@@ -1224,7 +1224,13 @@ export const ja: TranslationResources = {
     isolation: {
       local: "ローカル",
       worktree: "新しいワークツリー",
-      label: "分離方法",
+      label: "ワークスペースモード",
+    },
+    branchMode: {
+      label: "既存ブランチ",
+      branchOff: "新しいブランチ",
+      checkout: "チェックアウト",
+      updateHost: "現在の選択から新しいブランチを作成するには、ホストを更新してください。",
     },
     fields: {
       project: "プロジェクト",
@@ -1235,8 +1241,14 @@ export const ja: TranslationResources = {
     errors: {
       hostDisconnected: "ホストが接続されていません",
       createWorktreeFailed: "ワークツリーの作成に失敗しました",
+      branchAlreadyCheckedOut:
+        "そのブランチは別の場所で既にチェックアウトされています。「新しいブランチ」でコピーを作成するか、先にブランチを解放してください。",
       composerStateRequired: "コンポーザーの状態が必要です",
       selectModel: "モデルを選択してください",
+    },
+    notices: {
+      checkoutBranchCopied:
+        "{{requestedBranch}} は別の場所で既にチェックアウトされています。代わりにコピーを使用します: {{createdBranch}}。",
     },
     tooltips: {
       project: "Choose the project",

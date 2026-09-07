@@ -179,20 +179,23 @@ function makeCheckoutSession(options?: {
 function createGitSnapshot(
   cwd: string,
   currentBranch: string,
-  overrides?: { isDirty?: boolean },
+  overrides?: { isDirty?: boolean; worktreeRevision?: number },
 ): WorkspaceGitRuntimeSnapshot {
   return {
     cwd,
+    worktreeRevision: overrides?.worktreeRevision ?? 0,
     git: {
       isGit: true,
       repoRoot: cwd,
       mainRepoRoot: cwd,
       currentBranch,
+      headOid: "head-1",
       remoteUrl: null,
       isPaseoOwnedWorktree: false,
       isDirty: overrides?.isDirty ?? false,
       baseRef: null,
       aheadBehind: null,
+      upstreamRef: null,
       aheadOfOrigin: null,
       behindOfOrigin: null,
       hasRemote: false,
@@ -654,6 +657,30 @@ describe("CheckoutSession", () => {
       checkout.emitStatusUpdate("/repo", snapshot);
 
       expect(emitted).toHaveLength(1);
+    });
+
+    it("emits a new checkout status when only the working-tree revision changes", () => {
+      const { checkout, emitted } = makeCheckoutSession();
+
+      checkout.emitStatusUpdate(
+        "/repo",
+        createGitSnapshot("/repo", "main", { isDirty: true, worktreeRevision: 1 }),
+      );
+      checkout.emitStatusUpdate(
+        "/repo",
+        createGitSnapshot("/repo", "main", { isDirty: true, worktreeRevision: 2 }),
+      );
+
+      expect(emitted).toEqual([
+        {
+          type: "checkout_status_update",
+          payload: expect.objectContaining({ worktreeRevision: 1 }),
+        },
+        {
+          type: "checkout_status_update",
+          payload: expect.objectContaining({ worktreeRevision: 2 }),
+        },
+      ]);
     });
   });
 

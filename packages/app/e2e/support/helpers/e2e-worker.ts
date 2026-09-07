@@ -102,7 +102,7 @@ if (origin === fixtureRemote) {
   if (command === "api graphql" && args.some((arg) => arg.includes("PullRequestCheckoutTarget"))) {
     const isFork = args.some((arg) => arg === "number=2");
     process.stdout.write(JSON.stringify({
-      data: { repository: { pullRequest: {
+      data: { repository: { url: fixtureRemote, pullRequest: {
         number: isFork ? 2 : 1,
         baseRefName: "main",
         headRefName: isFork ? "pr-branch-2" : "pr-branch-1",

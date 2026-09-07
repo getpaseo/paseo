@@ -3476,6 +3476,8 @@ export const ServerInfoStatusPayloadSchema = z
         checkoutRefresh: z.boolean().optional(),
         // COMPAT(workspaceMultiplicity): added in v0.1.97, drop the gate when floor >= v0.1.97
         workspaceMultiplicity: z.boolean().optional(),
+        // COMPAT(changeRequestBranchOff): added in v0.2.5, remove after 2027-01-31.
+        changeRequestBranchOff: z.boolean().optional(),
         // COMPAT(projectRemove): added in v0.1.97, drop the gate when floor >= v0.1.97.
         projectRemove: z.boolean().optional(),
         // COMPAT(projectAdd): added in v0.1.97, drop the gate when floor >= v0.1.97.
@@ -4622,6 +4624,16 @@ export const ClearAgentAttentionResponseMessageSchema = z.object({
   }),
 });
 
+// Present when a checkout could not take the requested branch — it was already
+// live in another worktree — and the daemon created a copy of it instead. Absent
+// on every other create, including daemons that predate the field.
+const CheckoutBranchCopySchema = z
+  .object({
+    requestedBranch: z.string(),
+    createdBranch: z.string(),
+  })
+  .optional();
+
 export const WorkspaceCreateResponseSchema = z.object({
   type: z.literal("workspace.create.response"),
   payload: z.object({
@@ -4630,6 +4642,7 @@ export const WorkspaceCreateResponseSchema = z.object({
     setupSkippedReason: z.string().optional(),
     error: z.string().nullable(),
     errorCode: z.string().optional(),
+    checkoutBranchCopy: CheckoutBranchCopySchema,
     requestId: z.string(),
   }),
 });
@@ -4916,6 +4929,10 @@ const CheckoutStatusNotGitSchema = CheckoutStatusCommonSchema.extend({
   isPaseoOwnedWorktree: z.literal(false),
   repoRoot: z.null(),
   currentBranch: z.null(),
+  // COMPAT(checkoutHeadOid): added in v0.3.1, remove optional after 2027-02-09.
+  headOid: z.null().optional(),
+  // COMPAT(checkoutWorktreeRevision): added in v0.7.0, remove optional after 2027-02-28.
+  worktreeRevision: z.null().optional(),
   isDirty: z.null(),
   baseRef: z.null(),
   aheadBehind: z.null(),
@@ -4931,6 +4948,10 @@ const CheckoutStatusGitNonPaseoSchema = CheckoutStatusCommonSchema.extend({
   repoRoot: z.string(),
   mainRepoRoot: z.string().nullable().optional().default(null),
   currentBranch: z.string().nullable(),
+  // COMPAT(checkoutHeadOid): added in v0.3.1, remove optional after 2027-02-09.
+  headOid: z.string().nullable().optional(),
+  // COMPAT(checkoutWorktreeRevision): added in v0.7.0, remove optional after 2027-02-28.
+  worktreeRevision: z.number().int().nonnegative().optional(),
   isDirty: z.boolean(),
   baseRef: z.string().nullable(),
   aheadBehind: AheadBehindSchema.nullable(),
@@ -4946,6 +4967,10 @@ const CheckoutStatusGitPaseoSchema = CheckoutStatusCommonSchema.extend({
   repoRoot: z.string(),
   mainRepoRoot: z.string(),
   currentBranch: z.string().nullable(),
+  // COMPAT(checkoutHeadOid): added in v0.3.1, remove optional after 2027-02-09.
+  headOid: z.string().nullable().optional(),
+  // COMPAT(checkoutWorktreeRevision): added in v0.7.0, remove optional after 2027-02-28.
+  worktreeRevision: z.number().int().nonnegative().optional(),
   isDirty: z.boolean(),
   baseRef: z.string(),
   aheadBehind: AheadBehindSchema.nullable(),
@@ -5660,6 +5685,7 @@ export const CreatePaseoWorktreeResponseSchema = z.object({
     error: z.string().nullable(),
     errorCode: z.string().optional(),
     setupTerminalId: z.string().nullable(),
+    checkoutBranchCopy: CheckoutBranchCopySchema,
     setupSkippedReason: z.string().optional(),
     requestId: z.string(),
   }),

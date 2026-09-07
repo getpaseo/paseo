@@ -67,11 +67,7 @@ export async function resolveWorktreeCreationIntent(
   deps: ResolveWorktreeCreationIntentDeps,
 ): Promise<WorktreeCreationIntent> {
   if (input.action === "branch-off") {
-    return {
-      kind: "branch-off",
-      baseBranch: input.refName?.trim() || (await resolveDefaultBranch(repoRoot, deps)),
-      branchName: input.branchName ?? input.worktreeSlug ?? "worktree",
-    };
+    return resolveBranchOffIntent(input, repoRoot, deps);
   }
 
   if (input.action === "checkout") {
@@ -86,12 +82,9 @@ export async function resolveWorktreeCreationIntent(
       });
     }
 
-    const branchName = input.refName?.trim();
-    if (branchName) {
-      return {
-        kind: "checkout-branch",
-        branchName,
-      };
+    const refName = input.refName?.trim();
+    if (refName) {
+      return resolveCheckoutBranchIntent(refName);
     }
 
     throw new MissingCheckoutTargetError();
@@ -123,11 +116,71 @@ export async function resolveWorktreeCreationIntent(
   };
 }
 
+function resolveCheckoutBranchIntent(refName: string): WorktreeCreationIntent {
+  const localPrefix = "refs/heads/";
+  if (refName.startsWith(localPrefix)) {
+    return {
+      kind: "checkout-branch",
+      branchName: refName.slice(localPrefix.length),
+      target: { kind: "local", refName },
+    };
+  }
+
+  const remotePrefix = "refs/remotes/";
+  if (refName.startsWith(remotePrefix)) {
+    const remoteAndHead = refName.slice(remotePrefix.length);
+    const separator = remoteAndHead.indexOf("/");
+    if (separator > 0 && separator < remoteAndHead.length - 1) {
+      const remoteName = remoteAndHead.slice(0, separator);
+      const headRef = remoteAndHead.slice(separator + 1);
+      return {
+        kind: "checkout-branch",
+        branchName: headRef,
+        target: { kind: "remote", refName, remoteName, headRef },
+      };
+    }
+  }
+
+  return { kind: "checkout-branch", branchName: refName };
+}
+
 interface PrCheckoutIntentParams {
   refName?: string;
   changeRequestNumber: number;
   repoRoot: string;
   deps: ResolveWorktreeCreationIntentDeps;
+}
+
+async function resolveBranchOffIntent(
+  input: ResolveWorktreeCreationIntentInput,
+  repoRoot: string,
+  deps: ResolveWorktreeCreationIntentDeps,
+): Promise<WorktreeCreationIntent> {
+  const changeRequest = resolveInputChangeRequest(input);
+  if (!changeRequest) {
+    return {
+      kind: "branch-off",
+      baseBranch: input.refName?.trim() || (await resolveDefaultBranch(repoRoot, deps)),
+      branchName: input.branchName ?? input.worktreeSlug ?? "worktree",
+    };
+  }
+
+  assertCheckoutSourceMatchesResolvedForge(changeRequest, deps);
+  const checkoutIntent = await resolvePrCheckoutIntent({
+    refName: input.refName,
+    changeRequestNumber: changeRequest.number,
+    repoRoot,
+    deps,
+  });
+  return {
+    kind: "branch-off-change-request",
+    forge: checkoutIntent.forge,
+    changeRequestNumber: checkoutIntent.changeRequestNumber,
+    headRef: checkoutIntent.headRef,
+    baseRefName: checkoutIntent.baseRefName,
+    checkoutRefs: checkoutIntent.checkoutRefs ?? [],
+    branchName: input.branchName ?? input.worktreeSlug ?? "worktree",
+  };
 }
 
 function resolveInputChangeRequest(

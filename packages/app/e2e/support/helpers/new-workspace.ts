@@ -323,33 +323,30 @@ export async function selectNewWorkspaceProject(
   await expectNewWorkspaceProjectSelected(page, input.projectDisplayName);
 }
 
-// The isolation trigger renders the active isolation's label ("Local" / "New
-// worktree"), so asserting its text proves what the screen currently remembers.
-const ISOLATION_TRIGGER_LABEL: Record<"local" | "worktree", string> = {
+export type WorkspaceMode = "local" | "branch-off" | "checkout";
+
+// The trigger states the result the user will get, so asserting its text proves
+// which Workspace mode is currently selected.
+const WORKSPACE_MODE_TRIGGER_LABEL: Record<WorkspaceMode, string> = {
   local: "Local",
-  worktree: "New worktree",
+  "branch-off": "New branch",
+  checkout: "Check out",
 };
 
-export async function expectWorkspaceIsolationSelected(
-  page: Page,
-  isolation: "local" | "worktree",
-): Promise<void> {
-  const trigger = page.getByRole("button", { name: "Workspace isolation" });
+export async function expectWorkspaceModeSelected(page: Page, mode: WorkspaceMode): Promise<void> {
+  const trigger = page.getByRole("button", { name: "Workspace mode" });
   await expect(trigger).toBeVisible({ timeout: 30_000 });
-  await expect(trigger).toContainText(ISOLATION_TRIGGER_LABEL[isolation]);
+  await expect(trigger).toContainText(WORKSPACE_MODE_TRIGGER_LABEL[mode]);
 }
 
-export async function selectWorkspaceIsolation(
-  page: Page,
-  isolation: "local" | "worktree",
-): Promise<void> {
-  const trigger = page.getByTestId("workspace-create-isolation-trigger");
+export async function selectWorkspaceMode(page: Page, mode: WorkspaceMode): Promise<void> {
+  const trigger = page.getByTestId("workspace-create-mode-trigger");
   await expect(trigger).toBeVisible({ timeout: 30_000 });
   await trigger.click();
 
-  // Isolation options are derived from project capability. Wait for the option
+  // Workspace mode options are derived from project capability. Wait for the option
   // so this helper also covers route-to-project reconciliation.
-  const option = page.getByTestId(`workspace-create-isolation-${isolation}`);
+  const option = page.getByTestId(`workspace-create-mode-${mode}`);
   await expect(option).toBeVisible({ timeout: 30_000 });
   await option.click();
 }

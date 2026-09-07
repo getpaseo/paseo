@@ -407,12 +407,16 @@ function pullRequestJson(title: string): string {
   ]);
 }
 
-function pullRequestCheckoutTargetJson(): string {
+function pullRequestCheckoutTargetJson(
+  number = 526,
+  repositoryUrl: string | null = "https://github.com/getpaseo/paseo",
+): string {
   return JSON.stringify({
     data: {
       repository: {
+        url: repositoryUrl,
         pullRequest: {
-          number: 526,
+          number,
           baseRefName: "main",
           headRefName: "main",
           isCrossRepository: true,
@@ -425,6 +429,21 @@ function pullRequestCheckoutTargetJson(): string {
       },
     },
   });
+}
+
+function createGitRepositoryWithRemotes(remotes: Array<[string, string]>): {
+  cwd: string;
+  dispose: () => void;
+} {
+  const cwd = mkdtempSync(join(tmpdir(), "github-service-checkout-target-"));
+  execFileSync("git", ["init", "-q", cwd], { stdio: "pipe" });
+  for (const [name, url] of remotes) {
+    execFileSync("git", ["-C", cwd, "remote", "add", name, url], { stdio: "pipe" });
+  }
+  return {
+    cwd,
+    dispose: () => rmSync(cwd, { recursive: true, force: true }),
+  };
 }
 
 function repoViewJson(): string {
@@ -775,6 +794,9 @@ describe("ForgeService", () => {
   });
 
   it("loads pull request checkout target details through GraphQL", async () => {
+    const repository = createGitRepositoryWithRemotes([
+      ["origin", "git@github.com:getpaseo/paseo.git"],
+    ]);
     const runner = createRunner([repoViewJson(), pullRequestCheckoutTargetJson()]);
     const service = createGitHubService({
       runner: runner.runner,
@@ -782,32 +804,148 @@ describe("ForgeService", () => {
       now: () => 100,
     });
 
-    await expect(
-      service.getPullRequestCheckoutTarget?.({ cwd: "/repo", number: 526 }),
-    ).resolves.toEqual({
-      number: 526,
-      baseRefName: "main",
-      headRefName: "main",
-      checkoutRefs: [
-        { remoteName: "origin", remoteRef: "refs/pull/526/head" },
-        { remoteName: "upstream", remoteRef: "refs/pull/526/head" },
+    try {
+      await expect(
+        service.getPullRequestCheckoutTarget?.({ cwd: repository.cwd, number: 526 }),
+      ).resolves.toEqual({
+        number: 526,
+        baseRefName: "main",
+        headRefName: "main",
+        checkoutRefs: [{ remoteName: "origin", remoteRef: "refs/pull/526/head" }],
+        headOwnerLogin: "therainisme",
+        headRepositorySshUrl: "git@github.com:therainisme/paseo.git",
+        headRepositoryUrl: "https://github.com/therainisme/paseo",
+        isCrossRepository: true,
+      });
+
+      expect(runner.calls).toHaveLength(2);
+      expect(runner.calls[0]).toEqual({
+        cwd: repository.cwd,
+        args: ["repo", "view", "--json", "owner,name,parent"],
+      });
+      expect(runner.calls[1]?.cwd).toBe(repository.cwd);
+      expect(runner.calls[1]?.args.slice(0, 3)).toEqual(["api", "graphql", "-f"]);
+      expect(runner.calls[1]?.args).toContain("owner=getpaseo");
+      expect(runner.calls[1]?.args).toContain("name=paseo");
+      expect(runner.calls[1]?.args).toContain("number=526");
+      expect(runner.calls[1]?.args.find((arg) => arg.startsWith("query="))).toContain(
+        "repository(owner: $owner, name: $name) {\n    url",
+      );
+    } finally {
+      repository.dispose();
+    }
+  });
+
+  it("uses the upstream remote for a pull request whose base repository differs from origin", async () => {
+    const repository = createGitRepositoryWithRemotes([
+      ["origin", "git@github.com:dwyanewang/paseo.git"],
+      ["upstream", "https://github.com/getpaseo/paseo.git"],
+    ]);
+    const runner = createRunner([repoViewJson(), pullRequestCheckoutTargetJson(2831)]);
+    const service = createGitHubService({ runner: runner.runner });
+
+    try {
+      await expect(
+        service.getPullRequestCheckoutTarget?.({ cwd: repository.cwd, number: 2831 }),
+      ).resolves.toMatchObject({
+        checkoutRefs: [{ remoteName: "upstream", remoteRef: "refs/pull/2831/head" }],
+      });
+    } finally {
+      repository.dispose();
+    }
+  });
+
+  it("matches the configured remote before Git applies insteadOf URL rewriting", async () => {
+    const repositoryUrl = "https://github.com/getpaseo/paseo.git";
+    const repository = createGitRepositoryWithRemotes([["origin", repositoryUrl]]);
+    execFileSync(
+      "git",
+      [
+        "-C",
+        repository.cwd,
+        "config",
+        "url.file:///local/github-mirror.git.insteadOf",
+        repositoryUrl,
       ],
-      headOwnerLogin: "therainisme",
-      headRepositorySshUrl: "git@github.com:therainisme/paseo.git",
-      headRepositoryUrl: "https://github.com/therainisme/paseo",
-      isCrossRepository: true,
+      { stdio: "pipe" },
+    );
+    const runner = createRunner([repoViewJson(), pullRequestCheckoutTargetJson()]);
+    const service = createGitHubService({ runner: runner.runner });
+
+    try {
+      await expect(
+        service.getPullRequestCheckoutTarget?.({ cwd: repository.cwd, number: 526 }),
+      ).resolves.toMatchObject({
+        checkoutRefs: [{ remoteName: "origin", remoteRef: "refs/pull/526/head" }],
+      });
+    } finally {
+      repository.dispose();
+    }
+  });
+
+  it("resolves a GitHub Enterprise SSH alias before matching the pull request base repository", async () => {
+    const repository = createGitRepositoryWithRemotes([
+      ["origin", "git@github-work:acme/repo.git"],
+    ]);
+    const runner = createRunner([
+      repoViewJson(),
+      pullRequestCheckoutTargetJson(2831, "https://ghe.acme.internal/acme/repo"),
+    ]);
+    const resolveSshHostname = vi.fn(async (host: string) =>
+      host === "github-work" ? "ghe.acme.internal" : null,
+    );
+    const service = createGitHubService({
+      runner: runner.runner,
+      resolveRepoHost: async () => null,
+      resolveSshHostname,
     });
 
-    expect(runner.calls).toHaveLength(2);
-    expect(runner.calls[0]).toEqual({
-      cwd: "/repo",
-      args: ["repo", "view", "--json", "owner,name,parent"],
-    });
-    expect(runner.calls[1]?.cwd).toBe("/repo");
-    expect(runner.calls[1]?.args.slice(0, 3)).toEqual(["api", "graphql", "-f"]);
-    expect(runner.calls[1]?.args).toContain("owner=getpaseo");
-    expect(runner.calls[1]?.args).toContain("name=paseo");
-    expect(runner.calls[1]?.args).toContain("number=526");
+    try {
+      await expect(
+        service.getPullRequestCheckoutTarget?.({ cwd: repository.cwd, number: 2831 }),
+      ).resolves.toMatchObject({
+        checkoutRefs: [{ remoteName: "origin", remoteRef: "refs/pull/2831/head" }],
+      });
+      expect(resolveSshHostname).toHaveBeenCalledWith("github-work");
+    } finally {
+      repository.dispose();
+    }
+  });
+
+  it("falls back to origin when the API omits the base repository URL", async () => {
+    const repository = createGitRepositoryWithRemotes([
+      ["origin", "git@github.com:dwyanewang/paseo.git"],
+    ]);
+    const runner = createRunner([repoViewJson(), pullRequestCheckoutTargetJson(2831, null)]);
+    const service = createGitHubService({ runner: runner.runner });
+
+    try {
+      await expect(
+        service.getPullRequestCheckoutTarget?.({ cwd: repository.cwd, number: 2831 }),
+      ).resolves.toMatchObject({
+        checkoutRefs: [{ remoteName: "origin", remoteRef: "refs/pull/2831/head" }],
+      });
+    } finally {
+      repository.dispose();
+    }
+  });
+
+  it("fails when no local remote matches the pull request base repository", async () => {
+    const repository = createGitRepositoryWithRemotes([
+      ["origin", "git@github.com:dwyanewang/paseo.git"],
+    ]);
+    const runner = createRunner([repoViewJson(), pullRequestCheckoutTargetJson(2831)]);
+    const service = createGitHubService({ runner: runner.runner });
+
+    try {
+      await expect(
+        service.getPullRequestCheckoutTarget?.({ cwd: repository.cwd, number: 2831 }),
+      ).rejects.toThrow(
+        "No local Git remote matches the pull request base repository github.com/getpaseo/paseo",
+      );
+    } finally {
+      repository.dispose();
+    }
   });
 
   it("populates repoOwner/repoName from a GitHub Enterprise PR URL", async () => {

@@ -6,7 +6,7 @@ import {
   connectNewWorkspaceDaemonClient,
   openGlobalNewWorkspaceComposer,
   selectNewWorkspaceProject,
-  selectWorkspaceIsolation,
+  selectWorkspaceMode,
   submitNewWorkspaceEmpty,
 } from "../support/helpers/new-workspace";
 import { seedWorkspace, type SeededWorkspace } from "../support/helpers/seed-client";
@@ -16,10 +16,9 @@ import { openFilesPanel } from "../support/helpers/workspace-tabs";
 import { projectEquivalenceViewKey } from "../support/helpers/project-view-key";
 import { waitForSidebarHydration } from "../support/helpers/workspace-ui";
 
-// Model B reshape: a workspace is the unit, its isolation (local checkout or
-// worktree) is a CHOICE at creation, and creation NEVER dedupes by
-// directory. These specs drive the real creation UI (workspace-create-* test
-// IDs) to prove a single directory can back any number of workspaces.
+// Model B reshape: a workspace is the unit, and creation NEVER dedupes by
+// directory. These specs drive the real Workspace mode control to prove a
+// single directory can back any number of workspaces.
 
 function workspaceRowTestId(workspaceId: string): string {
   return `sidebar-workspace-row-${getServerId()}:${workspaceId}`;
@@ -34,17 +33,17 @@ async function createWorkspaceViaUi(
   page: Page,
   input: {
     project: { projectKey: string; projectDisplayName: string };
-    // null when the project has no git checkout: there is no Isolation control to
-    // touch, the isolation is implicitly local.
-    isolation: "local" | "worktree" | null;
+    // null when the project has no git checkout: there is no Workspace mode
+    // control to touch, and creation is implicitly Local.
+    workspaceMode: "local" | "branch-off" | null;
     previousWorkspaceId: string;
     client: Awaited<ReturnType<typeof connectNewWorkspaceDaemonClient>>;
   },
 ): Promise<{ workspaceId: string; workspaceName: string; workspaceDirectory: string }> {
   await openGlobalNewWorkspaceComposer(page);
   await selectNewWorkspaceProject(page, input.project);
-  if (input.isolation !== null) {
-    await selectWorkspaceIsolation(page, input.isolation);
+  if (input.workspaceMode !== null) {
+    await selectWorkspaceMode(page, input.workspaceMode);
   }
   await submitNewWorkspaceEmpty(page);
 
@@ -92,7 +91,7 @@ test.describe("Workspace multiplicity creation flow", () => {
 
       const second = await createWorkspaceViaUi(page, {
         project,
-        isolation: "local",
+        workspaceMode: "local",
         previousWorkspaceId: seeded.workspaceId,
         client,
       });
@@ -123,7 +122,7 @@ test.describe("Workspace multiplicity creation flow", () => {
     }
   });
 
-  test("New worktree isolation creates a worktree-backed workspace in a distinct directory", async ({
+  test("New branch creates a worktree-backed workspace in a distinct directory", async ({
     page,
   }) => {
     const seeded: SeededWorkspace = await seedWorkspace({
@@ -144,7 +143,7 @@ test.describe("Workspace multiplicity creation flow", () => {
 
       const worktree = await createWorkspaceViaUi(page, {
         project,
-        isolation: "worktree",
+        workspaceMode: "branch-off",
         previousWorkspaceId: seeded.workspaceId,
         client,
       });
@@ -195,8 +194,8 @@ test.describe("Workspace multiplicity creation flow", () => {
 
       const second = await createWorkspaceViaUi(page, {
         project,
-        // Non-git project: no Isolation control, isolation is implicitly local.
-        isolation: null,
+        // Non-git project: no Workspace mode control, so creation is implicitly Local.
+        workspaceMode: null,
         previousWorkspaceId: seeded.workspaceId,
         client,
       });

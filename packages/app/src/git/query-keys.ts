@@ -1,4 +1,8 @@
 import type { Query, QueryClient } from "@tanstack/react-query";
+import {
+  invalidateDraftAgentCommandsForCwd,
+  invalidateDraftAgentCommandsForServer,
+} from "@/hooks/agent-commands-query";
 import { prPanePipelineQueryKind, prPaneTimelineQueryKind } from "./pull-request-panel/query-keys";
 
 interface CheckoutQueryIdentity {
@@ -71,6 +75,12 @@ export async function invalidateCheckoutGitQueriesForClient(
     queryClient.invalidateQueries({
       predicate: checkoutQueryPredicate(prPanePipelineQueryKind, identity),
     }),
+    invalidateDraftAgentCommandsForCwd({
+      queryClient,
+      serverId: identity.serverId,
+      cwd: identity.cwd,
+      timing: "now",
+    }),
   ]);
 }
 
@@ -88,11 +98,16 @@ export async function invalidateCheckoutGitQueriesForServer(
     prPaneTimelineQueryKind,
     prPanePipelineQueryKind,
   ];
-  await Promise.all(
-    kinds.map((kind) =>
+  await Promise.all([
+    ...kinds.map((kind) =>
       queryClient.invalidateQueries({ predicate: checkoutQueryPredicate(kind, { serverId }) }),
     ),
-  );
+    invalidateDraftAgentCommandsForServer({
+      queryClient,
+      serverId,
+      timing: "now",
+    }),
+  ]);
 }
 
 export async function invalidatePrPaneTimelineForCheckout(

@@ -5,7 +5,7 @@ import {
   archiveWorkspaceFromDaemon,
   assertNewWorkspaceSidebarAndHeader,
   connectNewWorkspaceDaemonClient,
-  expectWorkspaceIsolationSelected,
+  expectWorkspaceModeSelected,
   openNewWorkspaceComposer,
   openProjectViaDaemon,
   openStartingRefPicker,
@@ -16,12 +16,10 @@ import { createTempGitRepo } from "../support/helpers/workspace";
 import { getServerId } from "../support/helpers/server-id";
 import { waitForSidebarHydration } from "../support/helpers/workspace-ui";
 
-// Regression for "the local / worktree selection in the new workspace is not
-// remembered." The isolation choice persists in the create-form preferences
-// (FormPreferences.isolation), so it must survive the create→reopen remount:
-// creating a worktree workspace navigates away from /new and unmounts it, and
-// reopening New Workspace has to still show "New worktree".
-test.describe("New workspace isolation memory", () => {
+// The UI exposes Workspace mode, while FormPreferences remembers only its
+// local/worktree isolation. Creating via New branch must therefore reopen on
+// New branch, without persisting a separate action override.
+test.describe("New Workspace mode memory", () => {
   let client: Awaited<ReturnType<typeof connectNewWorkspaceDaemonClient>>;
   const localWorkspaceIds = new Set<string>();
   const createdWorktreeDirectories = new Set<string>();
@@ -46,7 +44,7 @@ test.describe("New workspace isolation memory", () => {
     await client?.close().catch(() => undefined);
   });
 
-  test("remembers the worktree isolation choice after creating a workspace", async ({ page }) => {
+  test("remembers New branch's worktree isolation after creating a workspace", async ({ page }) => {
     const serverId = getServerId();
     const tempRepo = await createTempGitRepo("isolation-memory-", { branches: ["main", "dev"] });
 
@@ -57,18 +55,18 @@ test.describe("New workspace isolation memory", () => {
       await gotoAppShell(page);
       await waitForSidebarHydration(page);
 
-      // First visit: the screen opens on Local, switch it to New worktree and create.
+      // First visit: the screen opens on Local, switch it to New branch and create.
       await openNewWorkspaceComposer(page, {
         projectKey: openedProject.projectKey,
         projectDisplayName: openedProject.projectDisplayName,
       });
-      await expectWorkspaceIsolationSelected(page, "local");
-      await page.getByTestId("workspace-create-isolation-trigger").click();
-      const isolationPopup = page.getByTestId("combobox-desktop-container").last();
-      await expect(isolationPopup).toBeVisible({ timeout: 30_000 });
-      await expectNoTruncation(isolationPopup);
-      await page.getByTestId("workspace-create-isolation-worktree").click();
-      await expectWorkspaceIsolationSelected(page, "worktree");
+      await expectWorkspaceModeSelected(page, "local");
+      await page.getByTestId("workspace-create-mode-trigger").click();
+      const workspaceModePopup = page.getByTestId("combobox-desktop-container").last();
+      await expect(workspaceModePopup).toBeVisible({ timeout: 30_000 });
+      await expectNoTruncation(workspaceModePopup);
+      await page.getByTestId("workspace-create-mode-branch-off").click();
+      await expectWorkspaceModeSelected(page, "branch-off");
 
       await openStartingRefPicker(page);
       await selectBranchInPicker(page, "dev");
@@ -87,12 +85,12 @@ test.describe("New workspace isolation memory", () => {
       });
       createdWorktreeDirectories.add(createdWorkspace.workspaceDirectory);
 
-      // Second visit (fresh mount of /new): the worktree choice must stick.
+      // Second visit (fresh mount of /new): the worktree-backed mode must stick.
       await openNewWorkspaceComposer(page, {
         projectKey: openedProject.projectKey,
         projectDisplayName: openedProject.projectDisplayName,
       });
-      await expectWorkspaceIsolationSelected(page, "worktree");
+      await expectWorkspaceModeSelected(page, "branch-off");
     } finally {
       await tempRepo.cleanup();
     }

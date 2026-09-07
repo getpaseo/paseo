@@ -1527,6 +1527,60 @@ describe("handleCreatePaseoWorktreeRequest", () => {
     expect(readme).toContain("review branch");
   });
 
+  test("discloses the copy when the requested checkout branch is already checked out", async () => {
+    const { tempDir, repoDir } = createGitRepo();
+    cleanupPaths.push(tempDir);
+    execFileSync("git", ["branch", "feature/occupied"], { cwd: repoDir, stdio: "pipe" });
+
+    const emitted: SessionOutboundMessage[] = [];
+    const paseoHome = path.join(tempDir, ".paseo");
+    const dependencies = {
+      paseoHome,
+      describeWorkspaceRecord: async (result: { workspace: PersistedWorkspaceRecord }) =>
+        createWorkspaceDescriptor({ workspace: result.workspace, repoDir }),
+      emit: (message: SessionOutboundMessage) => emitted.push(message),
+      sessionLogger: createLogger(),
+      createPaseoWorktreeWorkflow: createWorkflowForRequestTest({ paseoHome }),
+    };
+
+    // Distinct slugs so the only thing colliding is the branch, not the path.
+    await handleCreatePaseoWorktreeRequest(dependencies, {
+      type: "create_paseo_worktree_request",
+      requestId: "req-first",
+      cwd: repoDir,
+      worktreeSlug: "occupied-a",
+      action: "checkout",
+      refName: "feature/occupied",
+    });
+    await handleCreatePaseoWorktreeRequest(dependencies, {
+      type: "create_paseo_worktree_request",
+      requestId: "req-second",
+      cwd: repoDir,
+      worktreeSlug: "occupied-b",
+      action: "checkout",
+      refName: "feature/occupied",
+    });
+
+    const responses = emitted.filter(
+      (
+        message,
+      ): message is Extract<SessionOutboundMessage, { type: "create_paseo_worktree_response" }> =>
+        message.type === "create_paseo_worktree_response",
+    );
+
+    expect(responses).toHaveLength(2);
+    // The first create owns feature/occupied, so there is nothing to disclose.
+    expect(responses[0]?.payload.error).toBeNull();
+    expect(responses[0]?.payload.checkoutBranchCopy).toBeUndefined();
+    // The second cannot check the same branch out twice and lands on a copy. Without
+    // this field the client would report the workspace as being on feature/occupied.
+    expect(responses[1]?.payload.error).toBeNull();
+    expect(responses[1]?.payload.checkoutBranchCopy).toEqual({
+      requestedBranch: "feature/occupied",
+      createdBranch: "feature/occupied-1",
+    });
+  });
+
   test("buildAgentSessionConfig checks out the GitHub PR branch for agent worktrees", async () => {
     const { tempDir, repoDir } = createGitHubPrRemoteRepo();
     cleanupPaths.push(tempDir);

@@ -2,23 +2,65 @@ import {
   NEW_WORKSPACE_PICKER_ATTACHMENT_OWNER,
   type UserComposerAttachment,
 } from "@/attachments/types";
-import type { PickerItem } from "./new-workspace-picker-item";
+import type { BranchWorktreeMode, PickerItem } from "./new-workspace-picker-item";
 
 export interface PickerSelectionState {
   selectedItem: PickerItem | null;
   allowAutoPrSelection: boolean;
+  actionOverride: BranchWorktreeMode | null;
 }
 
 export type PickerSelectionEvent =
   | { type: "pr-detected" }
   | { type: "pr-added"; item: Extract<PickerItem, { kind: "github-pr" }> }
+  | { type: "pr-auto-selection-cancelled" }
   | { type: "picker-selected"; item: PickerItem }
+  | { type: "workspace-mode-selected"; mode: "local" | BranchWorktreeMode }
   | { type: "target-changed" };
 
 export const initialPickerSelectionState: PickerSelectionState = {
   selectedItem: null,
   allowAutoPrSelection: false,
+  actionOverride: null,
 };
+
+export function effectivePickerWorktreeAction(state: PickerSelectionState): BranchWorktreeMode {
+  return (
+    state.actionOverride ?? (state.selectedItem?.kind === "github-pr" ? "checkout" : "branch-off")
+  );
+}
+
+export function isPickerWorktreeActionSupported(
+  action: BranchWorktreeMode,
+  item: PickerItem | null,
+  supportsChangeRequestBranchOff: boolean,
+): boolean {
+  return action !== "branch-off" || item?.kind !== "github-pr" || supportsChangeRequestBranchOff;
+}
+
+export function doesNewWorkspaceCreateWorktree(
+  supportsWorkspaceMultiplicity: boolean,
+  effectiveIsolation: "local" | "worktree",
+): boolean {
+  return !supportsWorkspaceMultiplicity || effectiveIsolation === "worktree";
+}
+
+export function isNewWorkspaceWorktreeActionSupported(input: {
+  supportsWorkspaceMultiplicity: boolean;
+  effectiveIsolation: "local" | "worktree";
+  action: BranchWorktreeMode;
+  item: PickerItem | null;
+  supportsChangeRequestBranchOff: boolean;
+}): boolean {
+  const createsWorktree = doesNewWorkspaceCreateWorktree(
+    input.supportsWorkspaceMultiplicity,
+    input.effectiveIsolation,
+  );
+  return (
+    !createsWorktree ||
+    isPickerWorktreeActionSupported(input.action, input.item, input.supportsChangeRequestBranchOff)
+  );
+}
 
 export function reducePickerSelection(
   state: PickerSelectionState,
@@ -29,10 +71,14 @@ export function reducePickerSelection(
       return { ...state, allowAutoPrSelection: true };
     case "pr-added":
       return state.allowAutoPrSelection
-        ? { selectedItem: event.item, allowAutoPrSelection: false }
+        ? { ...state, selectedItem: event.item, allowAutoPrSelection: false }
         : state;
+    case "pr-auto-selection-cancelled":
+      return { ...state, allowAutoPrSelection: false };
     case "picker-selected":
-      return { selectedItem: event.item, allowAutoPrSelection: false };
+      return { ...state, selectedItem: event.item, allowAutoPrSelection: false };
+    case "workspace-mode-selected":
+      return event.mode === "local" ? state : { ...state, actionOverride: event.mode };
     case "target-changed":
       return initialPickerSelectionState;
   }

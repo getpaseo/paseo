@@ -2,7 +2,10 @@ import { describe, expect, it } from "vitest";
 import type { UserComposerAttachment } from "@/attachments/types";
 import {
   clearPickerPrAttachmentForTargetChange,
+  effectivePickerWorktreeAction,
   initialPickerSelectionState,
+  isNewWorkspaceWorktreeActionSupported,
+  isPickerWorktreeActionSupported,
   reducePickerSelection,
   syncPickerPrAttachment,
 } from "./new-workspace-picker-state";
@@ -132,6 +135,87 @@ describe("syncPickerPrAttachment", () => {
   });
 });
 
+describe("isNewWorkspaceWorktreeActionSupported", () => {
+  const pr = { kind: "github-pr" as const, item: makePrItem(101, "A") };
+
+  it("fails closed when the host loses change-request branch-off support", () => {
+    const input = {
+      supportsWorkspaceMultiplicity: true,
+      effectiveIsolation: "worktree" as const,
+      action: "branch-off" as const,
+      item: pr,
+    };
+
+    expect(
+      isNewWorkspaceWorktreeActionSupported({
+        ...input,
+        supportsChangeRequestBranchOff: true,
+      }),
+    ).toBe(true);
+    expect(
+      isNewWorkspaceWorktreeActionSupported({
+        ...input,
+        supportsChangeRequestBranchOff: false,
+      }),
+    ).toBe(false);
+  });
+
+  it("rejects unsupported branch-off creation for worktree and legacy hosts", () => {
+    expect(
+      isNewWorkspaceWorktreeActionSupported({
+        supportsWorkspaceMultiplicity: true,
+        effectiveIsolation: "worktree",
+        action: "branch-off",
+        item: pr,
+        supportsChangeRequestBranchOff: false,
+      }),
+    ).toBe(false);
+    expect(
+      isNewWorkspaceWorktreeActionSupported({
+        supportsWorkspaceMultiplicity: false,
+        effectiveIsolation: "local",
+        action: "branch-off",
+        item: pr,
+        supportsChangeRequestBranchOff: false,
+      }),
+    ).toBe(false);
+  });
+
+  it("allows modern Local creation despite a hidden unsupported worktree action", () => {
+    expect(
+      isNewWorkspaceWorktreeActionSupported({
+        supportsWorkspaceMultiplicity: true,
+        effectiveIsolation: "local",
+        action: "branch-off",
+        item: pr,
+        supportsChangeRequestBranchOff: false,
+      }),
+    ).toBe(true);
+  });
+
+  it("allows a PR selection in Local after New branch was previously selected", () => {
+    const branchOff = reducePickerSelection(initialPickerSelectionState, {
+      type: "workspace-mode-selected",
+      mode: "branch-off",
+    });
+    const local = reducePickerSelection(branchOff, {
+      type: "workspace-mode-selected",
+      mode: "local",
+    });
+
+    expect(local.actionOverride).toBe("branch-off");
+    expect(
+      isNewWorkspaceWorktreeActionSupported({
+        supportsWorkspaceMultiplicity: true,
+        effectiveIsolation: "local",
+        action: effectivePickerWorktreeAction(local),
+        item: pr,
+        supportsChangeRequestBranchOff: false,
+      }),
+    ).toBe(true);
+  });
+});
+
 describe("clearPickerPrAttachmentForTargetChange", () => {
   it("keeps the picker selection when the target is reselected", () => {
     const pickerPr = prAttachment(makePrItem(202, "Picker PR"), "new-workspace-picker");
@@ -170,6 +254,7 @@ describe("reducePickerSelection", () => {
     expect(reducePickerSelection(detected, { type: "pr-added", item })).toEqual({
       selectedItem: item,
       allowAutoPrSelection: false,
+      actionOverride: null,
     });
   });
 
@@ -217,6 +302,18 @@ describe("reducePickerSelection", () => {
     ).toEqual(initialPickerSelectionState);
   });
 
+  it("consumes an unsupported auto-PR selection without changing the pinned target", () => {
+    const pinned = reducePickerSelection(initialPickerSelectionState, {
+      type: "workspace-mode-selected",
+      mode: "branch-off",
+    });
+    const detected = reducePickerSelection(pinned, { type: "pr-detected" });
+
+    expect(reducePickerSelection(detected, { type: "pr-auto-selection-cancelled" })).toEqual(
+      pinned,
+    );
+  });
+
   it("lets a newly detected PR replace an earlier explicit branch", () => {
     const branchSelected = reducePickerSelection(initialPickerSelectionState, {
       type: "picker-selected",
@@ -233,5 +330,94 @@ describe("reducePickerSelection", () => {
     expect(reducePickerSelection(detected, { type: "pr-added", item: pr }).selectedItem).toEqual(
       pr,
     );
+  });
+
+  it("auto-follows the selected item kind until the workspace mode is touched", () => {
+    const branchSelected = reducePickerSelection(initialPickerSelectionState, {
+      type: "picker-selected",
+      item: {
+        kind: "branch",
+        name: "main",
+        refName: "refs/heads/main",
+        accessibilityLabel: "main, local branch",
+      },
+    });
+    const prSelected = reducePickerSelection(branchSelected, {
+      type: "picker-selected",
+      item: { kind: "github-pr", item: makePrItem(101, "A") },
+    });
+
+    expect(effectivePickerWorktreeAction(initialPickerSelectionState)).toBe("branch-off");
+    expect(effectivePickerWorktreeAction(branchSelected)).toBe("branch-off");
+    expect(effectivePickerWorktreeAction(prSelected)).toBe("checkout");
+  });
+
+  it("keeps a manual worktree action pinned across ref selections", () => {
+    const pinned = reducePickerSelection(initialPickerSelectionState, {
+      type: "workspace-mode-selected",
+      mode: "branch-off",
+    });
+    const prSelected = reducePickerSelection(pinned, {
+      type: "picker-selected",
+      item: { kind: "github-pr", item: makePrItem(101, "A") },
+    });
+    const branchSelected = reducePickerSelection(prSelected, {
+      type: "picker-selected",
+      item: {
+        kind: "branch",
+        name: "main",
+        refName: "refs/heads/main",
+        accessibilityLabel: "main, local branch",
+      },
+    });
+
+    expect(effectivePickerWorktreeAction(prSelected)).toBe("branch-off");
+    expect(effectivePickerWorktreeAction(branchSelected)).toBe("branch-off");
+  });
+
+  it("does not change the pinned worktree action when Local is selected", () => {
+    const pinned = reducePickerSelection(initialPickerSelectionState, {
+      type: "workspace-mode-selected",
+      mode: "checkout",
+    });
+
+    expect(
+      reducePickerSelection(pinned, { type: "workspace-mode-selected", mode: "local" }),
+    ).toEqual(pinned);
+  });
+
+  it("clears the selection and manual action when the target changes", () => {
+    const pinned = reducePickerSelection(initialPickerSelectionState, {
+      type: "workspace-mode-selected",
+      mode: "checkout",
+    });
+    const selected = reducePickerSelection(pinned, {
+      type: "picker-selected",
+      item: {
+        kind: "branch",
+        name: "main",
+        refName: "refs/heads/main",
+        accessibilityLabel: "main, local branch",
+      },
+    });
+
+    expect(reducePickerSelection(selected, { type: "target-changed" })).toEqual(
+      initialPickerSelectionState,
+    );
+  });
+
+  it("requires the daemon capability only for branch-off change requests", () => {
+    const branch = {
+      kind: "branch" as const,
+      name: "main",
+      refName: "refs/heads/main",
+      accessibilityLabel: "main, local branch",
+    };
+    const pr = { kind: "github-pr" as const, item: makePrItem(101, "A") };
+
+    expect(isPickerWorktreeActionSupported("branch-off", branch, false)).toBe(true);
+    expect(isPickerWorktreeActionSupported("checkout", pr, false)).toBe(true);
+    expect(isPickerWorktreeActionSupported("branch-off", pr, false)).toBe(false);
+    expect(isPickerWorktreeActionSupported("branch-off", pr, true)).toBe(true);
   });
 });
