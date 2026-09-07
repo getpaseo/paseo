@@ -14,7 +14,10 @@ import { createPluginNavigation } from "../navigation";
 import { useInstalledPlugins } from "../registry";
 import { createPluginSurfaceRuntime } from "../surface-runtime";
 import type { InstalledPlugin } from "../types";
-import { normalizePluginSlashCommandProviderCommands } from "./model";
+import {
+  flattenPluginSlashCommandGroups,
+  normalizePluginSlashCommandProviderCommands,
+} from "./model";
 import { pluginSlashCommandProviderQueryKey } from "./query";
 
 const PROVIDER_COMMANDS_STALE_TIME_MS = 5_000;
@@ -40,8 +43,13 @@ interface SlashCommandProviderRequest {
   load(): Promise<PluginClientSlashCommand[]>;
 }
 
+interface SlashCommandPluginGroup {
+  staticCommands: PluginClientSlashCommand[];
+  providerIndexes: number[];
+}
+
 interface ResolvedSlashCommandContributions {
-  commands: PluginClientSlashCommand[];
+  groups: SlashCommandPluginGroup[];
   providers: SlashCommandProviderRequest[];
 }
 
@@ -172,9 +180,9 @@ export function usePluginClientSlashCommands(input: {
   const installed = useInstalledPlugins();
   const retainedPanelActive = useRetainedPanelActive();
   const resolved = useMemo<ResolvedSlashCommandContributions>(() => {
-    const commands: PluginClientSlashCommand[] = [];
+    const groups: SlashCommandPluginGroup[] = [];
     const providers: SlashCommandProviderRequest[] = [];
-    if (!client || !input.workspaceId) return { commands, providers };
+    if (!client || !input.workspaceId) return { groups, providers };
 
     const workspaceId = input.workspaceId;
     const state = createPluginClientStateSource(input.serverId);
@@ -183,6 +191,8 @@ export function usePluginClientSlashCommands(input: {
       if (plugin.serverId !== input.serverId) continue;
       const runtime = createPluginSurfaceRuntime(client, plugin.id);
       if (!runtime) continue;
+      const staticCommands: PluginClientSlashCommand[] = [];
+      const providerIndexes: number[] = [];
       const currentInstallationKey = installationKey(plugin);
       const workspaceContext = createPluginWorkspaceActionContext({
         plugin,
@@ -202,7 +212,7 @@ export function usePluginClientSlashCommands(input: {
 
       for (const contribution of plugin.clientSlashCommands) {
         if (contribution.context === "workspace" && workspaceContext) {
-          commands.push(
+          staticCommands.push(
             staticWorkspaceCommand({
               pluginId: plugin.id,
               contribution,
@@ -211,7 +221,7 @@ export function usePluginClientSlashCommands(input: {
           );
         }
         if (contribution.context === "agent" && agentContext) {
-          commands.push(
+          staticCommands.push(
             staticAgentCommand({ pluginId: plugin.id, contribution, context: agentContext }),
           );
         }
@@ -219,6 +229,7 @@ export function usePluginClientSlashCommands(input: {
 
       for (const provider of plugin.clientSlashCommandProviders) {
         if (provider.context === "workspace" && workspaceContext) {
+          providerIndexes.push(providers.length);
           providers.push(
             workspaceProviderRequest({
               serverId: input.serverId,
@@ -230,6 +241,7 @@ export function usePluginClientSlashCommands(input: {
           );
         }
         if (provider.context === "agent" && agentContext) {
+          providerIndexes.push(providers.length);
           providers.push(
             agentProviderRequest({
               serverId: input.serverId,
@@ -241,8 +253,11 @@ export function usePluginClientSlashCommands(input: {
           );
         }
       }
+      if (staticCommands.length > 0 || providerIndexes.length > 0) {
+        groups.push({ staticCommands, providerIndexes });
+      }
     }
-    return { commands, providers };
+    return { groups, providers };
   }, [client, input.agentId, input.serverId, input.workspaceId, installed]);
 
   const queries = useFetchQueries(
@@ -256,11 +271,13 @@ export function usePluginClientSlashCommands(input: {
       dataShape: "value" as const,
     })),
   );
-  const providerCommands = queries.flatMap((query) => query.data ?? []);
   const queryError = queries.find((query) => query.error)?.error;
   const error = queryError instanceof Error ? queryError : null;
   return {
-    commands: [...resolved.commands, ...providerCommands],
+    commands: flattenPluginSlashCommandGroups({
+      groups: resolved.groups,
+      providerResults: queries.map((query) => query.data),
+    }),
     isLoading: queries.some((query) => query.isLoading),
     error,
   };

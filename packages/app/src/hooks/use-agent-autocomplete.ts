@@ -447,7 +447,7 @@ export function useAgentAutocomplete(input: UseAgentAutocompleteInput): AgentAut
     pluginLoading: pluginClientSlashCommandsLoading,
     pluginError: pluginClientSlashCommandsError,
   });
-  const isVisible = canShowAutocomplete && !(mode === "command" && commandQuery.isLoading);
+  const isVisible = canShowAutocomplete;
 
   const fileSuggestionsQuery = useQuery({
     queryKey: [

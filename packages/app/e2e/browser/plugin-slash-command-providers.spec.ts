@@ -79,6 +79,65 @@ test("dynamic plugin slash commands follow the active workspace", async ({ page 
   }
 });
 
+test("a pending slash command provider leaves ready commands visible", async ({ page }) => {
+  const pluginDirectory = await mkdtemp(
+    path.join(tmpdir(), "paseo-plugin-command-provider-pending-"),
+  );
+  const management = await connectNewWorkspaceDaemonClient({ ownProjects: false });
+  const previous = await management.getDaemonConfig();
+  const session = await seedMockAgentWorkspace({
+    repoPrefix: "plugin-command-provider-pending-",
+    title: "Pending command provider workspace",
+  });
+  await writeFile(
+    path.join(pluginDirectory, "paseo-plugin.json"),
+    JSON.stringify({ id: "command-provider-pending" }),
+  );
+  await writeFile(
+    path.join(pluginDirectory, "index.client.ts"),
+    `export default function contribute(client) {
+      client.addSlashCommand({
+        name: "ready",
+        description: "Ready command",
+        argumentHint: "",
+        context: "agent",
+        async onSubmit() {},
+      });
+      client.addSlashCommandProvider({
+        id: "pending",
+        context: "agent",
+        list() { return new Promise(() => {}); },
+        async onSubmit() {},
+      });
+      return () => {};
+    }`,
+  );
+
+  try {
+    await management.patchDaemonConfig({ pluginsEnabled: true });
+    await management.installDirectoryPlugin(pluginDirectory);
+    await openAgentRoute(page, session);
+    await expectComposerVisible(page);
+    const input = composerLocator(page);
+
+    await input.fill("/cle");
+    await expect(page.getByText("/clear", { exact: true }).first()).toBeVisible({
+      timeout: 30_000,
+    });
+
+    await input.fill("/rea");
+    await expect(page.getByText("/ready", { exact: true }).first()).toBeVisible();
+  } finally {
+    await management.removePlugin("command-provider-pending").catch(() => undefined);
+    await management
+      .patchDaemonConfig({ pluginsEnabled: previous.config.pluginsEnabled ?? false })
+      .catch(() => undefined);
+    await management.close().catch(() => undefined);
+    await session.cleanup();
+    await rm(pluginDirectory, { recursive: true, force: true });
+  }
+});
+
 test("dynamic plugin slash command failures stay visible in autocomplete", async ({ page }) => {
   const pluginDirectory = await mkdtemp(
     path.join(tmpdir(), "paseo-plugin-command-provider-error-"),

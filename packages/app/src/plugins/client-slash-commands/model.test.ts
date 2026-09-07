@@ -1,12 +1,51 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   executePluginClientSlashCommand,
+  flattenPluginSlashCommandGroups,
   mergeSlashCommands,
   normalizePluginSlashCommandProviderCommands,
   resolvePluginClientSlashCommand,
 } from "./model";
 
 describe("plugin client slash commands", () => {
+  it("preserves plugin order when static and dynamic commands collide", () => {
+    const pluginCommands = flattenPluginSlashCommandGroups({
+      groups: [
+        {
+          staticCommands: [{ name: "alpha-static", pluginId: "alpha" }],
+          providerIndexes: [0],
+        },
+        {
+          staticCommands: [{ name: "shared", pluginId: "beta" }],
+          providerIndexes: [1],
+        },
+      ],
+      providerResults: [
+        [{ name: "shared", pluginId: "alpha" }],
+        [{ name: "beta-dynamic", pluginId: "beta" }],
+      ],
+    });
+
+    expect(pluginCommands.map(({ pluginId, name }) => `${pluginId}:${name}`)).toEqual([
+      "alpha:alpha-static",
+      "alpha:shared",
+      "beta:shared",
+      "beta:beta-dynamic",
+    ]);
+
+    const merged = mergeSlashCommands({
+      builtIn: [],
+      plugins: pluginCommands,
+      provider: [],
+      onPluginCollision() {},
+    });
+    expect(merged.map(({ command }) => `${command.pluginId}:${command.name}`)).toEqual([
+      "alpha:alpha-static",
+      "alpha:shared",
+      "beta:beta-dynamic",
+    ]);
+  });
+
   it("uses built-in, plugin, then provider precedence", () => {
     const collision = vi.fn();
     const result = mergeSlashCommands({

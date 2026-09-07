@@ -44,6 +44,19 @@ export function normalizePluginSlashCommandProviderCommands(input: {
   });
 }
 
+export function flattenPluginSlashCommandGroups<Command>(input: {
+  groups: readonly {
+    staticCommands: readonly Command[];
+    providerIndexes: readonly number[];
+  }[];
+  providerResults: readonly (readonly Command[] | undefined)[];
+}): Command[] {
+  return input.groups.flatMap((group) => [
+    ...group.staticCommands,
+    ...group.providerIndexes.flatMap((index) => input.providerResults[index] ?? []),
+  ]);
+}
+
 export type AvailableSlashCommand<
   BuiltIn extends SlashCommandDescriptor,
   Plugin extends SlashCommandDescriptor,
