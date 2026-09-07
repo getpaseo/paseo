@@ -332,7 +332,7 @@ export function HostUsagePage({ serverId }: { serverId: string }) {
   const host = useHostProfile(serverId);
   const { view: providerUsageView, refresh: refreshProviderUsage } = useProviderUsage(serverId);
   const handleRefresh = useCallback(() => {
-    void refreshProviderUsage();
+    void refreshProviderUsage({ forceRefresh: true });
   }, [refreshProviderUsage]);
 
   if (!host) {

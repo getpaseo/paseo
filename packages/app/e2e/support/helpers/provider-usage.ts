@@ -10,6 +10,7 @@ interface ProviderUsageFixturePayload {
 export interface ProviderUsageFixture {
   requestCount(): number;
   waitForRequestCount(count: number): Promise<void>;
+  forceRefreshFlags(): boolean[];
 }
 
 type WebSocketMessage = string | Buffer;
@@ -80,6 +81,7 @@ export async function installProviderUsageFixture(
   payloads: ProviderUsageFixturePayload[],
 ): Promise<ProviderUsageFixture> {
   let requests = 0;
+  const forceRefreshFlags: boolean[] = [];
   const waiters: Array<{ count: number; resolve: () => void }> = [];
 
   function notifyWaiters() {
@@ -108,6 +110,7 @@ export async function installProviderUsageFixture(
       const sessionMessage = getSessionMessage(message);
       if (sessionMessage?.type === "provider.usage.list.request") {
         requests += 1;
+        forceRefreshFlags.push(sessionMessage.forceRefresh === true);
         const requestId = sessionMessage.requestId;
         if (typeof requestId !== "string") {
           throw new Error("provider.usage.list.request missing requestId");
@@ -141,6 +144,9 @@ export async function installProviderUsageFixture(
   return {
     requestCount() {
       return requests;
+    },
+    forceRefreshFlags() {
+      return [...forceRefreshFlags];
     },
     waitForRequestCount(count: number) {
       if (requests >= count) {

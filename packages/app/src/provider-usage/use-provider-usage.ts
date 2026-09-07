@@ -10,11 +10,21 @@ export const PROVIDER_USAGE_STALE_TIME_MS = 5 * 60 * 1000;
 
 type ProviderUsageClient = Pick<DaemonClient, "listProviderUsage">;
 
+export interface RefreshProviderUsageOptions {
+  forceRefresh?: boolean;
+}
+
 export function providerUsageQueryKey(serverId: string | null | undefined) {
   return ["providerUsage", serverId ?? ""] as const;
 }
 
-async function fetchProviderUsage(client: ProviderUsageClient): Promise<ProviderUsageListPayload> {
+async function fetchProviderUsage(
+  client: ProviderUsageClient,
+  options?: RefreshProviderUsageOptions,
+): Promise<ProviderUsageListPayload> {
+  if (options?.forceRefresh === true) {
+    return client.listProviderUsage({ forceRefresh: true });
+  }
   return client.listProviderUsage();
 }
 
@@ -27,7 +37,7 @@ export function useProviderUsage(
   options: UseProviderUsageOptions = {},
 ): {
   view: ProviderUsageView;
-  refresh: () => Promise<void>;
+  refresh: (options?: RefreshProviderUsageOptions) => Promise<void>;
   canFetch: boolean;
 } {
   const queryClient = useQueryClient();
@@ -57,15 +67,17 @@ export function useProviderUsage(
     refetchOnWindowFocus: false,
   });
 
-  const refresh = useCallback(async () => {
-    if (!canFetch) return;
-    await queryClient.invalidateQueries({ queryKey });
-    await queryClient.fetchQuery({
-      queryKey,
-      queryFn,
-      staleTime: PROVIDER_USAGE_STALE_TIME_MS,
-    });
-  }, [canFetch, queryClient, queryFn, queryKey]);
+  const refresh = useCallback(
+    async (refreshOptions?: RefreshProviderUsageOptions) => {
+      if (!canFetch || !client) return;
+      await queryClient.fetchQuery({
+        queryKey,
+        queryFn: () => fetchProviderUsage(client, refreshOptions),
+        staleTime: 0,
+      });
+    },
+    [canFetch, client, queryClient, queryKey],
+  );
 
   const view = useMemo<ProviderUsageView>(() => {
     if (!serverId || !client || !isConnected) {
