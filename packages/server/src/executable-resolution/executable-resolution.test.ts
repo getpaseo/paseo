@@ -58,6 +58,15 @@ afterEach(() => {
 });
 
 describe("findExecutable", () => {
+  test.runIf(isPlatform("linux"))(
+    "propagates a failed lookup process instead of reporting a missing executable",
+    async () => {
+      await expect(findExecutable("x".repeat(1024 * 1024))).rejects.toMatchObject({
+        code: "E2BIG",
+      });
+    },
+  );
+
   describe.skipIf(isPlatform("win32"))("POSIX", () => {
     test("finds an extensionless executable and skips an earlier non-executable candidate", async () => {
       const executableDir = makeTempDir();

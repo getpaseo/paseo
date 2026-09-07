@@ -10,6 +10,7 @@ function installed(serverId: string, contributionId = "main"): InstalledPlugin {
     serverId,
     clientBundle: serverId,
     queryClient: new QueryClient(),
+    settingsScreens: [],
     surfaces: [{ id: "surface", Component: () => null }],
     sidebarItems: [
       {

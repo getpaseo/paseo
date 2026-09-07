@@ -1,16 +1,11 @@
-import { Fragment, useCallback } from "react";
-import { Text, View, type PressableStateCallbackType } from "react-native";
+import { useCallback, useMemo } from "react";
 import { useTranslation } from "react-i18next";
-import { StyleSheet } from "react-native-unistyles";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem } from "@/components/ui/dropdown-menu";
-import { DropdownTrigger } from "@/components/ui/dropdown-trigger";
+import { SettingsSection, SettingsCard, SettingsSelect } from "@/components/settings";
 import {
   useAppSettings,
   type OpenInSidePanePreferences,
   type PullRequestOpenLocation,
 } from "@/hooks/use-settings";
-import { SettingsSection } from "@/screens/settings/settings-section";
-import { settingsStyles } from "@/styles/settings";
 
 const SOURCES = [
   "explorerFiles",
@@ -22,72 +17,38 @@ const SOURCES = [
 
 type LayoutPreferenceSource = keyof OpenInSidePanePreferences | "pullRequests";
 
-function destinationTriggerStyle({
-  pressed,
-  open,
-}: PressableStateCallbackType & { open?: boolean }) {
-  return [styles.destinationTrigger, (pressed || open) && styles.destinationTriggerActive];
-}
-
 function LayoutPreferenceRow({
   source,
   destination,
-  first,
   allowExplorer,
   onDestinationChange,
 }: {
   source: LayoutPreferenceSource;
   destination: PullRequestOpenLocation;
-  first: boolean;
   allowExplorer?: boolean;
-  onDestinationChange: (
-    source: LayoutPreferenceSource,
-    destination: PullRequestOpenLocation,
-  ) => void;
+  onDestinationChange(source: LayoutPreferenceSource, destination: PullRequestOpenLocation): void;
 }) {
   const { t } = useTranslation();
-  const destinationLabel = t(`settings.layout.openInSidePane.destinations.${destination}`);
-  const selectMain = useCallback(
-    () => onDestinationChange(source, "main"),
-    [onDestinationChange, source],
+  const options = useMemo(() => {
+    const destinations = allowExplorer
+      ? (["main", "side", "explorer"] as const)
+      : (["main", "side"] as const);
+    return destinations.map((value) => ({
+      value,
+      label: t(`settings.layout.openInSidePane.destinations.${value}`),
+    }));
+  }, [allowExplorer, t]);
+  const change = useCallback(
+    (value: PullRequestOpenLocation) => onDestinationChange(source, value),
+    [source, onDestinationChange],
   );
-  const selectSide = useCallback(
-    () => onDestinationChange(source, "side"),
-    [onDestinationChange, source],
-  );
-  const selectExplorer = useCallback(
-    () => onDestinationChange(source, "explorer"),
-    [onDestinationChange, source],
-  );
-  const label = t(`settings.layout.openInSidePane.sources.${source}.label`);
   return (
-    <View style={[settingsStyles.row, first ? null : settingsStyles.rowBorder]}>
-      <View style={settingsStyles.rowContent}>
-        <Text style={settingsStyles.rowTitle}>{label}</Text>
-      </View>
-      <DropdownMenu>
-        <DropdownTrigger
-          style={destinationTriggerStyle}
-          accessibilityRole="button"
-          accessibilityLabel={`${label}: ${destinationLabel}`}
-        >
-          <Text style={styles.destinationLabel}>{destinationLabel}</Text>
-        </DropdownTrigger>
-        <DropdownMenuContent side="bottom" align="end" width={180}>
-          <DropdownMenuItem selected={destination === "main"} onSelect={selectMain}>
-            {t("settings.layout.openInSidePane.destinations.main")}
-          </DropdownMenuItem>
-          <DropdownMenuItem selected={destination === "side"} onSelect={selectSide}>
-            {t("settings.layout.openInSidePane.destinations.side")}
-          </DropdownMenuItem>
-          {allowExplorer ? (
-            <DropdownMenuItem selected={destination === "explorer"} onSelect={selectExplorer}>
-              {t("settings.layout.openInSidePane.destinations.explorer")}
-            </DropdownMenuItem>
-          ) : null}
-        </DropdownMenuContent>
-      </DropdownMenu>
-    </View>
+    <SettingsSelect
+      label={t(`settings.layout.openInSidePane.sources.${source}.label`)}
+      value={destination}
+      options={options}
+      onValueChange={change}
+    />
   );
 }
 
@@ -108,42 +69,22 @@ export function LayoutSection() {
   );
   return (
     <SettingsSection title={t("settings.layout.openInSidePane.title")}>
-      <View style={settingsStyles.card}>
-        {SOURCES.map((source, index) => (
-          <Fragment key={source}>
-            <LayoutPreferenceRow
-              source={source}
-              destination={settings.openInSidePane[source] ? "side" : "main"}
-              first={index === 0}
-              onDestinationChange={handleDestinationChange}
-            />
-          </Fragment>
+      <SettingsCard>
+        {SOURCES.map((source) => (
+          <LayoutPreferenceRow
+            key={source}
+            source={source}
+            destination={settings.openInSidePane[source] ? "side" : "main"}
+            onDestinationChange={handleDestinationChange}
+          />
         ))}
         <LayoutPreferenceRow
           source="pullRequests"
           destination={settings.pullRequestOpenLocation}
-          first={false}
           allowExplorer
           onDestinationChange={handleDestinationChange}
         />
-      </View>
+      </SettingsCard>
     </SettingsSection>
   );
 }
-
-const styles = StyleSheet.create((theme) => ({
-  destinationTrigger: {
-    paddingVertical: theme.spacing[1],
-    paddingHorizontal: theme.spacing[2],
-    borderRadius: theme.borderRadius.md,
-    borderWidth: theme.borderWidth[1],
-    borderColor: theme.colors.border,
-  },
-  destinationTriggerActive: {
-    backgroundColor: theme.colors.interactionHighlight,
-  },
-  destinationLabel: {
-    color: theme.colors.foreground,
-    fontSize: theme.fontSize.base,
-  },
-}));

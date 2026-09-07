@@ -7,6 +7,7 @@ import type {
   PluginComposerPillContribution,
   PluginSidebarContribution,
   PluginSurfaceContribution,
+  PluginSettingsScreenContribution,
   PluginThemeContribution,
   PluginTimelineRendererContribution,
   PluginTimelineTransformerContribution,
@@ -22,6 +23,7 @@ export interface EvaluatedPlugin {
   id: string;
   cleanup: PluginCleanup;
   surfaces: PluginSurfaceContribution[];
+  settingsScreens: PluginSettingsScreenContribution[];
   sidebarItems: PluginSidebarContribution[];
   workspacePanels: EvaluatedPluginWorkspacePanelContribution[];
   commandCenterItems: PluginCommandCenterItemContribution[];
@@ -45,6 +47,7 @@ export type {
   PluginComposerPillContribution,
   PluginSidebarContribution,
   PluginSurfaceContribution,
+  PluginSettingsScreenContribution,
   PluginThemeContribution,
   PluginTimelineRendererContribution,
   PluginTimelineTransformerContribution,

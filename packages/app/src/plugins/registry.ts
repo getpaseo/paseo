@@ -73,6 +73,7 @@ class PluginRegistry {
           queryClient: new QueryClient(),
           cleanup: () => undefined,
           surfaces: [],
+          settingsScreens: [],
           sidebarItems: [],
           workspacePanels: [],
           commandCenterItems: [],

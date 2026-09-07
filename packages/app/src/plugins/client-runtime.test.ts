@@ -17,6 +17,7 @@ function installation(): InstalledPlugin {
     clientBundle: "bundle",
     queryClient: new QueryClient(),
     cleanup: () => undefined,
+    settingsScreens: [],
     surfaces: [],
     sidebarItems: [],
     workspacePanels: [],

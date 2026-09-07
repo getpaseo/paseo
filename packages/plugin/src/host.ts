@@ -1,3 +1,4 @@
+export { settingsRpc } from "./settings.js";
 import { PluginAttachmentSearchPayloadSchema } from "./attachments.js";
 export { PluginClientStateProvider, type PluginClientStateSource } from "./client-state.js";
 export {

@@ -3,6 +3,7 @@ import type { PaseoApi } from "@getpaseo/client";
 import type { AgentTimelineItem, JsonValue } from "@getpaseo/protocol/agent-types";
 import type { ZodType, input as ZodInput, output as ZodOutput } from "zod";
 import type { PluginRpcContract } from "./rpc.js";
+import type { ProviderRegistration } from "./provider.js";
 
 export interface PluginTheme {
   readonly colors: {
@@ -127,6 +128,7 @@ export interface PluginClientOpenPanelOptions extends PluginOpenPanelOptions {
 }
 
 export interface PluginClientContext extends PluginCommandCapabilities {
+  addSettingsScreen(contribution: PluginSettingsScreenContribution): PluginCleanup;
   addSurface(id: string, Component: ComponentType<PluginSurfaceProps>): PluginCleanup;
   addSidebarItem(contribution: PluginSidebarContribution): PluginCleanup;
   addWorkspacePanel(contribution: PluginWorkspacePanelContribution): PluginCleanup;
@@ -155,6 +157,13 @@ export type PluginWorkspacePanelContribution =
       context: "agent";
       Component: ComponentType<PluginAgentPanelProps>;
     });
+
+export interface PluginSettingsScreenContribution {
+  id: string;
+  title: string;
+  icon: string;
+  Component: ComponentType<PluginSurfaceProps>;
+}
 
 export interface PluginSurfaceContribution {
   id: string;
@@ -249,6 +258,7 @@ export interface PluginCommandCapabilities {
     input: ZodInput<InputSchema>,
   ): Promise<ZodOutput<OutputSchema>>;
   openSurface(id: string): void;
+  openSettings(id: string): void;
 }
 
 export interface PluginGlobalCommandContext extends PluginCommandCapabilities {
@@ -310,6 +320,9 @@ export interface PluginHandlerContext {
 }
 
 export interface PluginServerContext {
+  registerSettings<Schema extends ZodType>(
+    definition: import("./settings.js").SettingsDefinition<Schema>,
+  ): void;
   handle<InputSchema extends ZodType, OutputSchema extends ZodType>(
     contract: PluginRpcContract<InputSchema, OutputSchema>,
     handler: (
@@ -317,6 +330,7 @@ export interface PluginServerContext {
       context: PluginHandlerContext,
     ) => ZodInput<OutputSchema> | Promise<ZodInput<OutputSchema>>,
   ): void;
+  registerProvider(provider: ProviderRegistration): void;
 }
 
 export type PluginCleanup = () => void | Promise<void>;

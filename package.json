@@ -126,6 +126,7 @@
     "@vercel/nft": "^1.5.0",
     "concurrently": "^9.2.1",
     "cross-env": "^10.1.0",
+    "electron": "44.2.0",
     "get-port-cli": "^3.0.0",
     "js-yaml": "^4.1.1",
     "knip": "^5.82.1",

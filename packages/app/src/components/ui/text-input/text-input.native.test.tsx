@@ -2,7 +2,7 @@
 import React, { act, createRef } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { BottomSheetTextInputScope } from "./bottom-sheet-scope";
+import { BottomSheetScope } from "@/components/ui/bottom-sheet-scope";
 import { EditingTextInput } from "./text-input.native";
 import type { EditingTextInputHandle } from "./types";
 
@@ -62,9 +62,9 @@ describe("EditingTextInputNative", () => {
       root?.render(
         <>
           <EditingTextInput testID="outside" />
-          <BottomSheetTextInputScope>
+          <BottomSheetScope>
             <EditingTextInput testID="inside" />
-          </BottomSheetTextInputScope>
+          </BottomSheetScope>
         </>,
       );
     });

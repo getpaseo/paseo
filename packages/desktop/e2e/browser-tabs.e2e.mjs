@@ -120,7 +120,7 @@ function seedPaseoHome(paseoHome, listen, workspaceRoot) {
     daemon: {
       listen,
       relay: { enabled: false },
-      mcp: { enabled: true, injectIntoAgents: false },
+      mcp: { enabled: true, injectIntoAgents: true },
       browserTools: { enabled: true },
       cors: { allowedOrigins: ["*"] },
     },
@@ -255,6 +255,21 @@ async function waitForGuestSelector(client, browserId) {
       function: "() => Boolean(globalThis.__paseoSelector)",
     });
     if (JSON.parse(evaluated.resultJson) === true) {
+      return true;
+    }
+    await delay(50);
+  }
+  return false;
+}
+
+async function waitForGuestActiveElement(client, browserId, elementId) {
+  const deadline = Date.now() + 5_000;
+  while (Date.now() < deadline) {
+    const evaluated = await callBrowserTool(client, "browser_evaluate", {
+      browserId,
+      function: "() => document.activeElement?.id ?? null",
+    });
+    if (JSON.parse(evaluated.resultJson) === elementId) {
       return true;
     }
     await delay(50);
@@ -492,12 +507,8 @@ async function runRegression({ page, client, serverId, targetUrl, callerAgentId,
   );
 
   await clickGuestElement(page, client, browserId, "#typing-target");
-  const activeGuestElement = await callBrowserTool(client, "browser_evaluate", {
-    browserId,
-    function: "() => document.activeElement?.id ?? null",
-  });
   assert(
-    JSON.parse(activeGuestElement.resultJson) === "typing-target",
+    await waitForGuestActiveElement(client, browserId, "typing-target"),
     "Physical browser click did not focus the guest input",
   );
   const focusedGuest = await page.evaluate(

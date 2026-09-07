@@ -1,13 +1,20 @@
 import fs from "node:fs";
 import { dump, load } from "js-yaml";
 
+// electron-updater compares this with os.release(), which reports the Darwin
+// kernel version. Darwin 22 is macOS 13 Ventura.
+export const MACOS_MINIMUM_DARWIN_VERSION = "22.0.0";
+
 export function mergeMacManifest(arm64Path, x64Path, outputPath) {
   const arm64 = load(fs.readFileSync(arm64Path, "utf8"));
   const x64 = load(fs.readFileSync(x64Path, "utf8"));
   const files = [...(arm64.files ?? []), ...(x64.files ?? [])].filter(
     (file, index, all) => all.findIndex((entry) => entry.url === file.url) === index,
   );
-  const output = dump({ ...arm64, files }, { lineWidth: -1, noRefs: true });
+  const output = dump(
+    { ...arm64, files, minimumSystemVersion: MACOS_MINIMUM_DARWIN_VERSION },
+    { lineWidth: -1, noRefs: true },
+  );
   fs.writeFileSync(outputPath, output);
   return output;
 }

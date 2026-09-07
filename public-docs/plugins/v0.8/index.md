@@ -24,7 +24,8 @@ A plugin is a TypeScript project installed into one Paseo daemon. It can add
 [timeline items](/docs/plugins/v0.8/reference#timeline-items),
 [themes](/docs/plugins/v0.8/reference#contribute-a-theme),
 [attachment sources](/docs/plugins/v0.8/reference#add-a-composer-attachment-source), and
-[daemon-side RPCs](/docs/plugins/v0.8/reference#add-plugin-specific-backend-behavior). Client
+[daemon-side RPCs](/docs/plugins/v0.8/reference#add-plugin-specific-backend-behavior). It can also
+[connect a coding agent as a provider](/docs/plugins/v0.8/providers). Client
 contributions run on every Paseo client connected to that daemon, including mobile.
 
 This guide scaffolds a plugin, runs it, and adds a workspace panel to it.
@@ -265,6 +266,8 @@ log.
 
 ## Next
 
+- [Build a provider plugin](/docs/plugins/v0.8/providers): connect an agent directly or through ACP,
+  render provider-owned timeline items, test it, and publish it.
 - [Plugin reference](/docs/plugins/v0.8/reference): every contribution type, its fields, the runtime
   modules, hosts, and the CLI.
 - [Migrate a plugin to runtime entries](/docs/plugins/v0.8/migration): move a plugin written against the

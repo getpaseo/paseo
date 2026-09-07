@@ -1,7 +1,7 @@
 import { useMemo, type ReactNode } from "react";
 import { Text, View, type StyleProp, type ViewStyle } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
-import { SettingsInfoTip } from "@/screens/settings/settings-info-tip";
+import { SettingsInfoTip } from "./settings-info-tip";
 
 interface SettingsGroupProps {
   title: string;

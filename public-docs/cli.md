@@ -128,6 +128,25 @@ paseo workspace archive <workspace-id>
 
 Add `--forge <name>` to PR checkout when Paseo cannot infer the forge from the source checkout. See [Git worktrees](/docs/worktrees) for setup hooks and services.
 
+## Terminals
+
+Use the workspace ID when multiple workspaces share a directory:
+
+```bash
+paseo terminal create --workspace <workspace-id> --name Development
+paseo terminal ls --workspace <workspace-id> --json
+paseo terminal send-keys <terminal-id> -l "echo ready"
+paseo terminal send-keys <terminal-id> Enter
+paseo terminal capture <terminal-id>
+paseo terminal kill <terminal-id>
+```
+
+Creation defaults to the workspace directory. Add `--cwd <absolute-path>` to change the process directory while keeping that workspace as the owner. Unknown and archived workspace IDs fail.
+
+Without `--workspace`, creation opens the project at `--cwd` or the current directory and reuses its oldest active workspace. Listing without `--workspace` filters by `--cwd` or the current directory and can include multiple workspaces. `ls --all` lists every terminal on the host and cannot be combined with directory or workspace filters.
+
+Create and list results include `id`, `name`, `cwd`, and `workspaceId`. Use `--json` for structured output and the global `--host` option to target another daemon. These commands require a host that supports the [workspace terminal API](/docs/sdk/reference#clientterminals); older hosts return an update message.
+
 ## Workspace scripts
 
 List, start, and stop the scripts configured in a workspace's `paseo.json`:
