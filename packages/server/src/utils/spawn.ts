@@ -39,8 +39,13 @@ function hasPathSeparator(value: string): boolean {
   return value.includes("/") || value.includes("\\");
 }
 
+function hasLineBreak(value: string): boolean {
+  return value.includes("\n") || value.includes("\r");
+}
+
 function shouldUseWindowsShell(
   command: string,
+  args: string[],
   requestedShell?: boolean | string,
 ): boolean | string {
   if (isWindowsCommandScript(command)) {
@@ -49,7 +54,12 @@ function shouldUseWindowsShell(
   if (requestedShell !== undefined) {
     return requestedShell;
   }
-  return process.platform === "win32" && !hasPathSeparator(command) && !extname(command);
+  return (
+    process.platform === "win32" &&
+    !hasPathSeparator(command) &&
+    !extname(command) &&
+    !args.some(hasLineBreak)
+  );
 }
 
 export function spawnProcess(
@@ -60,7 +70,7 @@ export function spawnProcess(
   const { baseEnv, env, envOverlay, ...spawnOptions } = options ?? {};
   const resolvedBaseEnv = env ?? baseEnv ?? process.env;
   const isWindows = process.platform === "win32";
-  const shell = shouldUseWindowsShell(command, spawnOptions.shell);
+  const shell = shouldUseWindowsShell(command, args, spawnOptions.shell);
 
   const shouldQuoteForShell = isWindows && shell !== false;
   const resolvedCommand = shouldQuoteForShell ? quoteWindowsCommand(command) : command;
@@ -91,7 +101,7 @@ export async function execCommand(
   const { baseEnv, env, envOverlay } = options ?? {};
   const resolvedBaseEnv = env ?? baseEnv ?? process.env;
   const isWindows = process.platform === "win32";
-  const shell = shouldUseWindowsShell(command, options?.shell);
+  const shell = shouldUseWindowsShell(command, args, options?.shell);
   const shouldQuoteForShell = isWindows && shell !== false;
   const resolvedCommand = shouldQuoteForShell ? quoteWindowsCommand(command) : command;
   const resolvedArgs = shouldQuoteForShell ? args.map(quoteWindowsArgument) : args;
