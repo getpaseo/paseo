@@ -28,7 +28,7 @@ import { useLiveFile } from "./live-file/hook";
 import { useFilePreview } from "./preview-lifecycle/hook";
 import { resolveFilePreviewLifecycle } from "./preview-lifecycle/model";
 import { FilePanelBar } from "./bar";
-import { FileVideoPreview } from "./video-preview";
+import { VideoPreview } from "@/components/video-preview";
 import { resolveVideoMimeType } from "@/attachments/file-types";
 import { FileHtmlPreview } from "./html-preview";
 import { FileMarkdownPreview } from "./markdown-preview";
@@ -167,7 +167,7 @@ function FilePreviewBody({
   }
 
   if (resolveVideoMimeType({ mimeType: preview.mimeType, path: filePath })) {
-    return <FileVideoPreview key={mediaPreviewUri} uri={mediaPreviewUri} />;
+    return <VideoPreview key={mediaPreviewUri} uri={mediaPreviewUri} />;
   }
 
   if (preview.kind === "text") {

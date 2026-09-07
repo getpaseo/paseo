@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { I18nextProvider } from "react-i18next";
 import { i18n } from "@/i18n/i18next";
 import { RetainedPanel } from "@/components/retained-panel";
-import { FileVideoPreview } from "./index";
+import { VideoPreview } from "./index";
 
 const videoUri = new URL("./fixtures/colors.webm", import.meta.url).href;
 const panelStyle = { width: 640, height: 360 };
@@ -22,7 +22,7 @@ function renderPreview(uri: string | null, active = true) {
     root?.render(
       <I18nextProvider i18n={i18n}>
         <RetainedPanel active={active} style={panelStyle} testID="video-test-pane">
-          <FileVideoPreview key={uri} uri={uri} />
+          <VideoPreview key={uri} uri={uri} />
         </RetainedPanel>
       </I18nextProvider>,
     );

@@ -12,7 +12,7 @@ import type { Theme } from "@/styles/theme";
 const ThemedLoadingSpinner = withUnistyles(LoadingSpinner);
 const loadingSpinnerProps = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
 
-export function FileVideoPreview({ uri }: { uri: string | null }) {
+export function VideoPreview({ uri }: { uri: string | null }) {
   const { t } = useTranslation();
   const isPanelActive = useRetainedPanelActive();
   const isAppVisible = useAppVisible();

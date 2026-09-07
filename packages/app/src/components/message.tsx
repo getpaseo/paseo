@@ -91,6 +91,8 @@ import {
   useAssistantLinkPress,
 } from "@/assistant-file-links";
 import { getCompactionMarkerLabel } from "./message-compaction-label";
+import { AssistantVideo } from "@/assistant-video";
+import { assistantVideoMarkdown } from "@/assistant-video/markdown";
 import { useAssistantImage } from "@/assistant-image/use-assistant-image";
 import {
   AttachmentFrame,
@@ -1500,7 +1502,10 @@ export const AssistantMessage = memo(function AssistantMessage({
   phase,
 }: AssistantMessageProps) {
   const { t } = useTranslation();
-  const markdownParser = useMemo(createAssistantMarkdownParser, []);
+  const markdownParser = useMemo(
+    () => createAssistantMarkdownParser().use(assistantVideoMarkdown),
+    [],
+  );
   const renderedMessage = useMemo(() => capAssistantMessageForRender(message), [message]);
   // Paint a paced prefix while the turn is streaming so text arrives at a steady
   // rate instead of in whatever lumps the daemon's coalescing window produced.
@@ -1902,7 +1907,9 @@ export const AssistantMessage = memo(function AssistantMessage({
         <MarkdownParagraphView
           key={node.key}
           paragraphStyle={styles.paragraph}
-          containsImage={markdownNodeContainsType(node, "image")}
+          containsImage={
+            markdownNodeContainsType(node, "image") || markdownNodeContainsType(node, "video")
+          }
         >
           {children}
         </MarkdownParagraphView>
@@ -1915,6 +1922,15 @@ export const AssistantMessage = memo(function AssistantMessage({
         >
           {colorMarkdownLinkChildren(children, styles.link.color)}
         </AssistantMarkdownLink>
+      ),
+      video: (node: ASTNode) => (
+        <AssistantVideo
+          key={node.key}
+          source={String(node.attributes?.src ?? "")}
+          client={client}
+          workspaceRoot={workspaceRoot}
+          serverId={serverId}
+        />
       ),
       image: (
         node: ASTNode,

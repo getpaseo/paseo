@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { LiveFileModel, type LiveFileSession } from "./model";
 import { SOURCE_PRESENTATION_BUDGETS } from "../source/presentation";
 import { getVideoMimeTypeFromPath } from "@/attachments/file-types";
+import { VIDEO_PREVIEW_MAX_BYTES } from "@/attachments/preview-limits";
 import { isWeb } from "@/constants/platform";
 
 export function useLiveFile(input: {
@@ -21,9 +22,8 @@ export function useLiveFile(input: {
         return client.subscribeFile(target, onVersion);
       },
       read(target) {
-        // Videos are cached in full before playback; keep the transfer bounded.
         const maxBytes = getVideoMimeTypeFromPath(target.path)
-          ? 128 * 1024 * 1024
+          ? VIDEO_PREVIEW_MAX_BYTES
           : SOURCE_PRESENTATION_BUDGETS[isWeb ? "web" : "native"].plain;
         return client.readFile(target.cwd, target.path, undefined, maxBytes);
       },
