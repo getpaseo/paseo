@@ -7,7 +7,7 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 import { WebSocket } from "ws";
 
 import { createPaseoDaemon, type PaseoDaemonConfig } from "./bootstrap.js";
-import { parseListenString } from "@server/utils/listen-target";
+import { parseListenString } from "../utils/listen-target.js";
 import { loadConfig } from "./config.js";
 import { AgentManagerShuttingDownError } from "./agent/agent-manager.js";
 import { hashDaemonPassword } from "./auth.js";

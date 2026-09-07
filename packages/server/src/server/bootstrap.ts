@@ -11,10 +11,10 @@ import { z } from "zod";
 import { createBranchChangeRouteHandler } from "./script-route-branch-handler.js";
 import {
   formatListenTarget,
-  parseListenString,
   type ListenTarget,
+  parseListenString,
   resolveBoundListenTarget,
-} from "@server/utils/listen-target";
+} from "../utils/listen-target.js";
 
 
 export async function fanOutReconciledWorkspaceUpdates(input: {
