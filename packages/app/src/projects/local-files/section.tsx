@@ -5,7 +5,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useFetchQuery } from "@/data/query";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { Button } from "@/components/ui/button";
-import { SettingsSection } from "@/screens/settings/settings-section";
+import { SettingsSection } from "@/components/settings/headings/settings-section";
 import { settingsStyles } from "@/styles/settings";
 import { useHostFeature, useHostFeatureMap } from "@/runtime/host-features";
 import { getHostRuntimeStore } from "@/runtime/host-runtime";
