@@ -5,7 +5,7 @@ import { expect, test } from "vitest";
 import { DaemonClient } from "../test-utils/daemon-client.js";
 import { createTestPaseoDaemon } from "../test-utils/paseo-daemon.js";
 
-test("a plugin transforms workspace creation and observes its committed lifecycle", async () => {
+test("a plugin transforms workspace creation once across receipt replays and observes its committed lifecycle", async () => {
   const directory = await mkdtemp(path.join(tmpdir(), "paseo-lifecycle-"));
   const daemon = await createTestPaseoDaemon({ daemonVersion: "0.8.0" });
   const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws`, appVersion: "0.8.0" });
@@ -19,6 +19,7 @@ test("a plugin transforms workspace creation and observes its committed lifecycl
       `
 export default function contribute(server) {
   server.before("workspace.create", ({ request }) => {
+    console.log(JSON.stringify({ hook: "workspace.before" }));
     return { ...request, title: "Created through a hook" };
   });
   server.on("workspace.created", (event) => {
@@ -36,10 +37,17 @@ export default function contribute(server) {
     await client.patchDaemonConfig({ pluginsEnabled: true });
     await client.installDirectoryPlugin(directory);
     const created = await client.createWorkspace({
+      idempotencyKey: "plugin-workspace",
       source: { kind: "directory", path: directory },
     });
     expect(created.workspace?.name).toBe("Created through a hook");
     const workspaceId = created.workspace!.id;
+    const replay = await client.createWorkspace({
+      idempotencyKey: "plugin-workspace",
+      source: { kind: "directory", path: directory },
+    });
+    expect(replay.error).toBeNull();
+    expect(replay.workspace?.id).toBe(workspaceId);
     await client.archiveWorkspace(workspaceId);
     await expect
       .poll(async () => {
@@ -53,6 +61,7 @@ export default function contribute(server) {
           });
       })
       .toMatchObject([
+        { hook: "workspace.before" },
         { hook: "workspace.created", event: { workspace: { id: workspaceId, cwd: directory } } },
         { hook: "workspace.archived", event: { workspace: { id: workspaceId } } },
       ]);

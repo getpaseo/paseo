@@ -21,6 +21,7 @@ interface ClientRequest {
   mode?: unknown;
   path?: unknown;
   agentId?: unknown;
+  messageId?: unknown;
   text?: unknown;
   activeTurnBehavior?: unknown;
 }

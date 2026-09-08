@@ -1,9 +1,9 @@
+import { createAgentWithInitialMessage } from "@/agent-creation";
 import { getHostRuntimeStore } from "@/runtime/host-runtime";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Text, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
-import { createNameId } from "mnemonic-id";
 import { AdaptiveModalSheet, type SheetHeader } from "@/components/adaptive-modal-sheet";
 import { FileDropZone } from "@/components/file-drop/file-drop-zone";
 import { Composer } from "@/composer";
@@ -85,20 +85,22 @@ function buildChatDraftComposerArgs({
 async function callWorkspaceCreation({
   creationMethod,
   connectedClient,
+  creationId,
+  worktreeSlug,
   input,
 }: {
   creationMethod: "create_worktree" | "open_project";
   connectedClient: DaemonClient;
+  creationId: string;
+  worktreeSlug: string;
   input: { cwd: string };
 }) {
-  if (creationMethod === "create_worktree") {
-    return connectedClient.createPaseoWorktree({
-      cwd: input.cwd,
-      worktreeSlug: createNameId(),
-    });
-  }
   return connectedClient.createWorkspace({
-    source: { kind: "directory", path: input.cwd },
+    idempotencyKey: creationId,
+    source:
+      creationMethod === "create_worktree"
+        ? { kind: "worktree", cwd: input.cwd, worktreeSlug }
+        : { kind: "directory", path: input.cwd },
   });
 }
 
@@ -208,7 +210,7 @@ export function WorkspaceSetupDialog() {
     setErrorMessage(null);
     setCreatedWorkspace(null);
     setPendingAction(null);
-  }, [pendingWorkspaceSetup?.creationMethod, serverId, sourceDirectory]);
+  }, [pendingWorkspaceSetup?.creationId]);
 
   const handleClose = useCallback(() => {
     clearWorkspaceSetup();
@@ -261,6 +263,8 @@ export function WorkspaceSetupDialog() {
       const connectedClient = withConnectedClient();
       const payload = await callWorkspaceCreation({
         creationMethod: pendingWorkspaceSetup.creationMethod,
+        creationId: pendingWorkspaceSetup.creationId,
+        worktreeSlug: pendingWorkspaceSetup.worktreeSlug,
         connectedClient,
         input,
       });
@@ -326,8 +330,11 @@ export function WorkspaceSetupDialog() {
           workspaceId: ensuredWorkspace.id,
           workspaceDirectory: ensuredWorkspace.workspaceDirectory,
         });
-        const agent = await connectedClient.createAgent(
-          buildCreateAgentOptions({
+        if (!pendingWorkspaceSetup) throw new Error(t("workspaceSetup.errors.pendingRequired"));
+        const agent = await createAgentWithInitialMessage(connectedClient, {
+          idempotencyKey: pendingWorkspaceSetup.creationId,
+          clientMessageId: `${pendingWorkspaceSetup.creationId}:initial-message`,
+          ...buildCreateAgentOptions({
             composerState,
             text,
             attachments: wirePayload.attachments,
@@ -336,7 +343,7 @@ export function WorkspaceSetupDialog() {
             workspaceId: ensuredWorkspace.id,
             provider: composerState.selectedProvider,
           }),
-        );
+        });
 
         if (!getIsStillActive()) {
           return;
@@ -362,6 +369,7 @@ export function WorkspaceSetupDialog() {
     },
     [
       composerState,
+      pendingWorkspaceSetup,
       getIsStillActive,
       navigateAfterCreation,
       serverId,

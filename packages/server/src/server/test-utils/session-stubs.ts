@@ -278,14 +278,18 @@ export function createProviderSnapshotManagerStub(): {
   };
 }
 
-export function createAgentRequestsStub(): SessionOptions["agentRequests"] {
+export function createRequestReceiptsStub(): SessionOptions["requestReceipts"] {
   return {
-    async create(input) {
+    async createAgent(input) {
       const agentId = randomUUID();
       await input.create(agentId);
       return agentId;
     },
-    send: (input) => input.send(),
+    async createWorkspace(input) {
+      await input.create(input.workspaceId);
+      return input.workspaceId;
+    },
+    sendMessage: (input) => input.send(),
   };
 }
 

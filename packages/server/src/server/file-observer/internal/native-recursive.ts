@@ -139,14 +139,20 @@ class NativeRecursiveBackend implements ObservationBackend {
       const path = resolve(this.host.root, filename.toString());
       if (this.host.isIgnored(path)) return;
       const scope = path === this.host.root ? this.host.root : dirname(path);
+      this.requestChangeAudit(scope);
       if (eventType === "change") {
         this.host.metrics.nativeChangeEventCount += 1;
         this.host.queueEvent("update", path);
-        this.requestChangeAudit(scope);
-        if (this.directories.has(path)) this.requestAudit(path, true);
-        return;
+        if (this.directories.has(path)) {
+          this.requestAudit(path, true);
+          return;
+        }
+        if (this.files.has(path)) return;
+        // A new file may arrive only as a change notification. Classify it so
+        // its later coalesced removal can be recovered from the inventory.
+      } else {
+        this.host.metrics.nativeRenameEventCount += 1;
       }
-      this.host.metrics.nativeRenameEventCount += 1;
       const knownDirectory = this.directories.has(path);
       this.classify(path, (isDirectory) => {
         if (!isDirectory) {
@@ -159,7 +165,6 @@ class NativeRecursiveBackend implements ObservationBackend {
         if (knownDirectory) this.requestAudit(path, true);
         else this.requestAudit(scope);
       });
-      this.requestChangeAudit(scope);
       if (knownDirectory) this.requestAudit(scope);
     });
     watcher.on("error", (error) => {

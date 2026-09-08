@@ -4235,15 +4235,24 @@ export class DaemonClient {
     input: {
       source: WorkspaceCreateRequest["source"];
       title?: string;
+      idempotencyKey?: string;
       firstAgentContext?: WorkspaceCreateRequest["firstAgentContext"];
     },
     requestId?: string,
   ): Promise<WorkspaceCreatePayload> {
+    // COMPAT(workspaceRequestReceipts): added in v0.8.0; remove gate after 2027-03-07.
+    if (
+      input.idempotencyKey !== undefined &&
+      !this.lastServerInfoMessage?.features?.workspaceRequestReceipts
+    ) {
+      throw new Error("Update the host to use retry-safe workspace creation.");
+    }
     return this.sendCorrelatedSessionRequest({
       requestId,
       message: {
         type: "workspace.create.request",
         source: input.source,
+        ...(input.idempotencyKey !== undefined ? { idempotencyKey: input.idempotencyKey } : {}),
         ...(input.title !== undefined ? { title: input.title } : {}),
         ...(input.firstAgentContext !== undefined
           ? { firstAgentContext: input.firstAgentContext }
