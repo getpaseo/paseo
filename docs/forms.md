@@ -101,10 +101,8 @@ Empty states are only typeable inside `loaded` — a fetch that "succeeded"
 before hosts connected is `connecting`, not empty. Query keys carry real fetch
 inputs (host set, connection statuses), never synthetic version counters.
 
-`packages/app/src/schedules/schedule-agent-options.ts` is the worked example of
-deriving that union from per-host runtime status: a cold cache, a connecting
-host, and a first fetch that failed all read as still-resolving, so a picker
-never tells the user a busy host has nothing on it.
+`packages/app/src/schedules/schedule-agent-options.ts` derives this union from
+per-host runtime status.
 
 ## Anti-patterns (reject in review on sight)
 
