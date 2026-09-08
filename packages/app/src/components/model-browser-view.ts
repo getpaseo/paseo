@@ -9,6 +9,16 @@ export type ModelBrowserView =
   | { kind: "all" }
   | { kind: "provider"; providerId: string; providerLabel: string };
 
+export function resolveModelBrowserScrolling({
+  isNative,
+  isCompact,
+}: {
+  isNative: boolean;
+  isCompact: boolean;
+}): "sheet" | "independent" {
+  return isNative && isCompact ? "sheet" : "independent";
+}
+
 /** A profile's model reference; used to match profiles back to model rows. */
 export interface ModelProfileRef {
   provider: string;

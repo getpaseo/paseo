@@ -188,6 +188,19 @@ const CATALOG_DATA = [
     command: ["npx", "-y", "@google/gemini-cli@0.52.0", "--acp"],
   },
   {
+    id: "gjc",
+    title: "Gajae Code",
+    description:
+      "Runs on the Claude/Codex/Gemini subscription you already pay for. Plan-before-mutation workflows, evidence-gated execution, and approval prompts for shell and destructive edits.",
+    version: "manual",
+    iconId: "gjc",
+    installLink: "https://gajae-code.com",
+    command: ["gjc", "acp"],
+    env: {
+      GJC_ACP_PERMISSION_MODE: "prompt",
+    },
+  },
+  {
     id: "glm-acp-agent",
     title: "GLM Agent",
     description:

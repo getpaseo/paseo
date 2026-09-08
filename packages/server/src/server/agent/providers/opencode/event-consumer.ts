@@ -186,6 +186,7 @@ export class OpenCodeEventConsumer implements OpenCodeEventSource {
           this.resolveReady();
           continue;
         }
+        this.logPluginFailure(event);
         this.publish(event);
       }
       let outcome: OpenCodeConnectionOutcome = "ended";
@@ -209,6 +210,20 @@ export class OpenCodeEventConsumer implements OpenCodeEventSource {
       signal.removeEventListener("abort", abortRequest);
       requestAbort.abort();
     }
+  }
+
+  private logPluginFailure(event: GlobalEvent): void {
+    if (event.payload.type !== "session.error") return;
+    const error = event.payload.properties.error;
+    if (!containsPluginError(error)) return;
+    this.logger.warn(
+      {
+        directory: event.directory,
+        sessionId: event.payload.properties.sessionID,
+        error,
+      },
+      "OpenCode plugin failed",
+    );
   }
 
   private logConnectionFailure(
@@ -259,6 +274,14 @@ export class OpenCodeEventConsumer implements OpenCodeEventSource {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function containsPluginError(error: unknown): boolean {
+  try {
+    return JSON.stringify(error).toLowerCase().includes("plugin");
+  } catch {
+    return false;
+  }
 }
 
 export type OpenCodeEventConsumerFactory = (

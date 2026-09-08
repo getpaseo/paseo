@@ -55,7 +55,7 @@ async function executeCaptureCommand(
   terminalId: string,
   options: TerminalCaptureOptions,
 ): Promise<{ terminalId: string; lines: string[]; totalLines: number }> {
-  const { client } = await connectTerminalClient(options.host);
+  const { client, close } = await connectTerminalClient(options.host);
 
   try {
     const resolvedId = await resolveTerminalId(client, terminalId);
@@ -70,7 +70,7 @@ async function executeCaptureCommand(
     const start = options.scrollback ? 0 : parseLineNumber("--start", options.start);
     const end = parseLineNumber("--end", options.end);
 
-    return await client.captureTerminal(resolvedId, {
+    return await client.terminals.ref(resolvedId).capture({
       ...(start === undefined ? {} : { start }),
       ...(end === undefined ? {} : { end }),
       stripAnsi: !options.ansi,
@@ -78,7 +78,7 @@ async function executeCaptureCommand(
   } catch (err) {
     throw toTerminalCommandError("TERMINAL_CAPTURE_FAILED", "capture terminal output", err);
   } finally {
-    await client.close().catch(() => {});
+    await close().catch(() => {});
   }
 }
 

@@ -175,6 +175,22 @@ try {
     console.log("✓ daemon status --json outputs valid JSON\n");
   }
 
+  // Global hosts do not change local daemon lifecycle commands.
+  {
+    console.log("Test 5b: daemon status ignores a global --host");
+    const result = await runLocalPaseo(["--host", "localhost:1", "daemon", "status", "--json"], {
+      PASEO_HOME: paseoHome,
+    });
+    assert.strictEqual(result.exitCode, 0, `daemon status should stay local: ${result.stderr}`);
+    const parsed = JSON.parse(result.stdout);
+    assert.strictEqual(
+      parsed.localDaemon,
+      "stopped",
+      "daemon should report the local stopped state",
+    );
+    console.log("✓ daemon status ignores a global --host\n");
+  }
+
   // Test 6: daemon stop handles daemon not running gracefully
   {
     console.log("Test 6: daemon stop handles daemon not running");

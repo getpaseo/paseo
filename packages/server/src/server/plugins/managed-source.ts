@@ -7,6 +7,7 @@ import { PluginIdSchema, type PluginSourceStatusItem } from "@getpaseo/protocol/
 import { runGitCommand } from "../../utils/run-git-command.js";
 import { ensurePrivateDirectory, writePrivateFileAtomicSync } from "../private-files.js";
 import { readPluginManifest } from "./manifest.js";
+import type { PluginManifest } from "./manifest.js";
 
 const GIT_TIMEOUT_MS = 120_000;
 const GIT_ENV = { GIT_TERMINAL_PROMPT: "0" } as const;
@@ -27,6 +28,7 @@ const ManagedPluginRecordsSchema = z.record(PluginIdSchema, ManagedPluginRecordS
 export interface ManagedPluginRecord extends z.infer<typeof ManagedPluginRecordSchema> {}
 
 export interface ManagedPluginCandidate {
+  build: PluginManifest["build"];
   defaultId: string;
   directory: string;
   record: ManagedPluginRecord;
@@ -76,8 +78,9 @@ export class ManagedPluginSources {
       await checkout(checkoutRoot, resolution.commit);
       const directory = path.resolve(checkoutRoot, pluginPath);
       assertPluginPath(checkoutRoot, directory);
-      const { id: defaultId } = await readPluginManifest(directory);
+      const { id: defaultId, build } = await readPluginManifest(directory);
       return {
+        build,
         defaultId,
         directory,
         record: {
@@ -207,8 +210,9 @@ export class ManagedPluginSources {
       await checkout(checkoutRoot, commit);
       const directory = path.resolve(checkoutRoot, record.pluginPath);
       assertPluginPath(checkoutRoot, directory);
-      const { id: defaultId } = await readPluginManifest(directory);
+      const { id: defaultId, build } = await readPluginManifest(directory);
       return {
+        build,
         defaultId,
         directory,
         versionRoot: stagingRoot,
@@ -259,10 +263,10 @@ function redactRemoteCredentials(remote: string): string {
 function normalizePluginPath(pluginPath: string | undefined): string {
   if (!pluginPath || pluginPath === ".") return ".";
   if (path.isAbsolute(pluginPath))
-    throw new Error("Plugin --path must be relative to the repository");
+    throw new Error("Plugin path must be relative to the repository");
   const normalized = path.normalize(pluginPath);
   if (normalized === ".." || normalized.startsWith(`..${path.sep}`)) {
-    throw new Error("Plugin --path must stay inside the repository");
+    throw new Error("Plugin path must stay inside the repository");
   }
   return normalized;
 }

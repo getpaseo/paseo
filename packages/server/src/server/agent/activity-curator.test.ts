@@ -129,9 +129,9 @@ second line'`,
 
     const result = curateAgentActivity(timeline);
 
-    expect(result).toContain("[Exec Command]");
-    expect(result).toContain("[Read File]");
-    expect(result).toContain("[Web Search]");
+    expect(result).toContain("[Exec command]");
+    expect(result).toContain("[Read file]");
+    expect(result).toContain("[Web search]");
     expect(result).not.toContain("npm run lint");
     expect(result).not.toContain("src/index.ts");
     expect(result).not.toContain("zod union");

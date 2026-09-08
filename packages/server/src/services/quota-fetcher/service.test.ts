@@ -871,7 +871,7 @@ describe("real provider usage fetchers", () => {
     fetchApi = mockFetch(
       new Map([
         [
-          "https://cli-chat-proxy.grok.com/v1/billing",
+          "https://cli-chat-proxy.grok.com/v1/billing?format=credits",
           () =>
             jsonResponse({
               config: { monthlyLimit: { val: 0 }, used: { val: 0 } },
@@ -900,7 +900,7 @@ describe("real provider usage fetchers", () => {
     fetchApi = mockFetch(
       new Map([
         [
-          "https://cli-chat-proxy.grok.com/v1/billing",
+          "https://cli-chat-proxy.grok.com/v1/billing?format=credits",
           () =>
             jsonResponse({
               config: {
@@ -973,7 +973,7 @@ describe("real provider usage fetchers", () => {
     fetchApi = mockFetch(
       new Map([
         [
-          "https://cli-chat-proxy.grok.com/v1/billing",
+          "https://cli-chat-proxy.grok.com/v1/billing?format=credits",
           () =>
             jsonResponse({
               config: { monthlyLimit: { val: 50 } },
@@ -995,6 +995,48 @@ describe("real provider usage fetchers", () => {
           limit: 50,
         }),
       ],
+    });
+  });
+
+  it("fetches Grok unified-billing usage as a weekly window", async () => {
+    process.env["GROK_API_KEY"] = "grok_test_token";
+    fetchApi = mockFetch(
+      new Map([
+        [
+          "https://cli-chat-proxy.grok.com/v1/billing?format=credits",
+          () =>
+            jsonResponse({
+              config: {
+                currentPeriod: {
+                  type: "USAGE_PERIOD_TYPE_WEEKLY",
+                  start: "2026-08-24T09:41:40.001370+00:00",
+                  end: "2026-08-31T09:41:40.001370+00:00",
+                },
+                creditUsagePercent: 76.0,
+                isUnifiedBillingUser: true,
+                billingPeriodStart: "2026-08-24T09:41:40.001370+00:00",
+                billingPeriodEnd: "2026-08-31T09:41:40.001370+00:00",
+              },
+            }),
+        ],
+      ]),
+    );
+
+    const grok = findProvider(await service().listUsage(), "grok");
+
+    expect(grok).toMatchObject({
+      status: "available",
+      windows: [
+        {
+          id: "weekly",
+          label: "Weekly",
+          usedPct: 76,
+          remainingPct: 24,
+          resetsAt: "2026-08-31T09:41:40.001370+00:00",
+          tone: "warning",
+        },
+      ],
+      balances: [],
     });
   });
 

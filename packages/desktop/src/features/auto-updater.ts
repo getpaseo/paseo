@@ -3,10 +3,12 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { app } from "electron";
 import { UUID } from "builder-util-runtime";
+import log from "electron-log/main";
 import { autoUpdater } from "electron-updater";
 import {
   createAppUpdateService,
   type AppUpdateCheckResult,
+  type AppUpdateInstallRequest,
   type AppUpdateInstallResult,
   type AppUpdateRuntime,
   type AppUpdateRuntimeConfiguration,
@@ -34,6 +36,48 @@ export {
 let cachedStagingUserIdPromise: Promise<string> | null = null;
 
 const UPDATE_CHANNEL_NOT_PUBLISHED_CODE = "ERR_UPDATER_CHANNEL_FILE_NOT_FOUND";
+
+interface AppUpdateLogSink {
+  info(message: string, details: object): void;
+}
+
+interface AppUpdateCheckLogDetails {
+  currentVersion: string;
+  releaseChannel: AppReleaseChannel;
+  intent: AppUpdateCheckIntent;
+}
+
+interface AppUpdateCheckCompletedLogDetails extends AppUpdateCheckLogDetails {
+  targetVersion: string;
+  hasUpdate: boolean;
+  readyToInstall: boolean;
+  errorMessage: string | null;
+}
+
+export function createAppUpdateLifecycleLogger(logger: AppUpdateLogSink) {
+  return {
+    checkStarted(details: AppUpdateCheckLogDetails): void {
+      logger.info("[auto-updater] check started", details);
+    },
+    checkCompleted(details: AppUpdateCheckCompletedLogDetails): void {
+      logger.info("[auto-updater] check completed", details);
+    },
+    updateAvailable(targetVersion: string): void {
+      logger.info("[auto-updater] update available", { targetVersion });
+    },
+    updateDownloaded(targetVersion: string): void {
+      logger.info("[auto-updater] update downloaded", { targetVersion });
+    },
+    downloadRequested(targetVersion: string): void {
+      logger.info("[auto-updater] download requested", { targetVersion });
+    },
+    quitAndInstallRequested(details: AppUpdateInstallRequest): void {
+      logger.info("[auto-updater] quitAndInstall requested", details);
+    },
+  };
+}
+
+const updateLifecycleLog = createAppUpdateLifecycleLogger(log);
 
 function isUpdateChannelNotPublished(error: unknown): boolean {
   return (
@@ -133,10 +177,14 @@ class ElectronAppUpdateRuntime implements AppUpdateRuntime {
     };
 
     autoUpdater.on("update-available", (info) => {
-      input.onUpdateAvailable(info as RuntimeUpdateInfo);
+      const updateInfo = info as RuntimeUpdateInfo;
+      updateLifecycleLog.updateAvailable(updateInfo.version);
+      input.onUpdateAvailable(updateInfo);
     });
     autoUpdater.on("update-downloaded", (info) => {
-      input.onUpdateDownloaded(info as RuntimeUpdateInfo);
+      const updateInfo = info as RuntimeUpdateInfo;
+      updateLifecycleLog.updateDownloaded(updateInfo.version);
+      input.onUpdateDownloaded(updateInfo);
     });
     autoUpdater.on("error", (error) => {
       if (isUpdateChannelNotPublished(error)) return;
@@ -158,12 +206,18 @@ class ElectronAppUpdateRuntime implements AppUpdateRuntime {
     }
   }
 
-  downloadUpdate(): Promise<unknown> {
+  downloadUpdate(targetVersion: string): Promise<unknown> {
+    updateLifecycleLog.downloadRequested(targetVersion);
     return autoUpdater.downloadUpdate();
   }
 
-  quitAndInstall(isSilent: boolean, isForceRunAfter: boolean): void {
+  quitAndInstall({ targetVersion, isSilent, isForceRunAfter }: AppUpdateInstallRequest): void {
     autoUpdater.autoRunAppAfterInstall = isForceRunAfter;
+    updateLifecycleLog.quitAndInstallRequested({
+      targetVersion,
+      isSilent,
+      isForceRunAfter,
+    });
     autoUpdater.quitAndInstall(isSilent, isForceRunAfter);
   }
 }
@@ -197,7 +251,22 @@ export async function checkForAppUpdate({
   releaseChannel: AppReleaseChannel;
   intent: AppUpdateCheckIntent;
 }): Promise<AppUpdateCheckResult> {
-  return appUpdateService.checkForAppUpdate({ currentVersion, releaseChannel, intent });
+  updateLifecycleLog.checkStarted({ currentVersion, releaseChannel, intent });
+  const result = await appUpdateService.checkForAppUpdate({
+    currentVersion,
+    releaseChannel,
+    intent,
+  });
+  updateLifecycleLog.checkCompleted({
+    currentVersion,
+    targetVersion: result.latestVersion,
+    releaseChannel,
+    intent,
+    hasUpdate: result.hasUpdate,
+    readyToInstall: result.readyToInstall,
+    errorMessage: result.errorMessage,
+  });
+  return result;
 }
 
 export async function downloadAndInstallUpdate(

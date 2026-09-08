@@ -36,6 +36,18 @@ const projectSchema = z
 
 export const projectsResponseSchema = z.object({ projects: z.array(projectSchema) }).strict();
 
+const triggerSchema = z
+  .object({
+    id: z.string().uuid(),
+    name: z.string().regex(/^[a-z][a-z0-9_-]*$/u),
+    enabled: z.boolean(),
+    format: z.enum(["single_run", "legacy_multistep"]),
+    yaml: z.string(),
+  })
+  .strict();
+
+export const triggersResponseSchema = z.object({ triggers: z.array(triggerSchema) }).strict();
+
 export const configurationResourcesSchema = z
   .object({
     daemons: z.array(z.object({ id: z.string().uuid(), slug: z.string().min(1) }).strict()),
@@ -93,6 +105,7 @@ export const enrollmentTokenSchema = z
 export type CliAuthorization = z.infer<typeof authorizationSchema>;
 export type CliAuthorizationPoll = z.infer<typeof authorizationPollSchema>;
 export type HubProject = z.infer<typeof projectSchema>;
+export type HubTrigger = z.infer<typeof triggerSchema>;
 export type HubConfigurationResources = z.infer<typeof configurationResourcesSchema>;
 export type HubSetupResources = z.infer<typeof setupResourcesSchema>;
 export type HubInstallResult = z.infer<typeof installResponseSchema>;

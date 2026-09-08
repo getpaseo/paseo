@@ -56,4 +56,4 @@ If a workflow accepts requests from GitHub, Slack, Discord, or the API, read [Hu
 
 Start on your machine with the embedded database, then add PostgreSQL or a public deployment only when you need them. [Self-hosting](/docs/hub/self-hosting) covers each step.
 
-[Hosted Hub](/docs/hub/hosted) uses the same projects, workflows, daemons, and activity model. New account registration is currently closed.
+[Hosted Hub](/docs/hub/hosted) uses the same projects, workflows, daemons, and activity model. [Sign in to start a free trial](https://hub.paseo.sh).

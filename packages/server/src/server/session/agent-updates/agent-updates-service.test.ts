@@ -617,6 +617,21 @@ describe("bootstrap buffering", () => {
 });
 
 describe("subscription lifecycle", () => {
+  test("attention eligibility follows the active directory subscription filter", async () => {
+    const h = buildHarness();
+    h.register(makeAgentPayload({ id: "matching", workspaceId: "ws-1", labels: { team: "a" } }));
+    h.register(makeAgentPayload({ id: "excluded", workspaceId: "ws-2", labels: { team: "b" } }));
+
+    expect(await h.service.includesLiveAgent(h.managed("matching"))).toBe(false);
+
+    h.service.beginSubscription({ subscriptionId: "sub", filter: { labels: { team: "a" } } });
+    expect(await h.service.includesLiveAgent(h.managed("matching"))).toBe(true);
+    expect(await h.service.includesLiveAgent(h.managed("excluded"))).toBe(false);
+
+    h.service.clearSubscription("sub");
+    expect(await h.service.includesLiveAgent(h.managed("matching"))).toBe(false);
+  });
+
   test("flushBootstrapped is a no-op for a stale subscription id", async () => {
     const h = buildHarness();
     h.service.beginSubscription({ subscriptionId: "sub", filter: {} });
@@ -665,4 +680,14 @@ describe("subscription lifecycle", () => {
 
     expect(h.agentUpdates()).toEqual([{ kind: "remove", agentId: "a" }]);
   });
+});
+
+test("an idle session skips agent hydration while preserving workspace updates", async () => {
+  const h = buildHarness();
+  const agent = { ...h.managed("unobserved"), workspaceId: "workspace" };
+  // No payload is registered: attempting to hydrate this agent would fail.
+  await h.service.forwardLiveAgent(agent);
+  expect(h.loggedErrors).toEqual([]);
+  expect(h.agentUpdates()).toEqual([]);
+  expect(h.workspaceUpdates).toEqual([agent.workspaceId]);
 });

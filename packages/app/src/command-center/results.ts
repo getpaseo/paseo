@@ -48,6 +48,8 @@ export interface CommandCenterWorkspaceResult {
   id: string;
   title: string;
   subtitle: string;
+  /** PR/MR number backing this workspace, so a number query can match it exactly. */
+  changeRequestNumber: number | null;
   run(): void;
 }
 

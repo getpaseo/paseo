@@ -46,11 +46,18 @@ export const CLAUDE_MODEL_MANIFEST = [
     supportsFastMode: true,
   },
   {
+    id: "claude-fable-5-1",
+    label: "Fable 5.1",
+    description: "Fable 5.1 · Most powerful model",
+    contextWindowMaxTokens: 1_000_000,
+    effortLevels: CLAUDE_EFFORT_LEVELS.xhigh,
+  },
+  {
     id: "claude-fable-5",
     // COMPAT(claudeFable5OneMillionId): added in v0.3.0, remove after 2027-02-06 once pre-v0.3.0 app preferences are outside support.
     aliases: ["claude-fable-5[1m]"],
     label: "Fable 5",
-    description: "Fable 5 · Most powerful model",
+    description: "Fable 5 · Previous release",
     minimumClaudeCodeVersion: "2.1.169",
     contextWindowMaxTokens: 1_000_000,
     effortLevels: CLAUDE_EFFORT_LEVELS.xhigh,
@@ -326,7 +333,7 @@ export function normalizeClaudeManifestModelId(value: string | null | undefined)
   }
 
   const runtimeMatch = trimmed.match(
-    /^(?:claude[-_ ])?(opus|sonnet|haiku)[-_ ]+(\d+)[-.](\d+)(?:\[1m\])?(?:[-_ ]+\d{8})?(?:\[1m\])?$/i,
+    /^(?:claude[-_ ])?(fable|opus|sonnet|haiku)[-_ ]+(\d+)[-.](\d+)(?:\[1m\])?(?:[-_ ]+\d{8})?(?:\[1m\])?$/i,
   );
   if (!runtimeMatch) {
     return null;
@@ -371,7 +378,7 @@ export function normalizeClaudeRuntimeModelId(value: string | null | undefined):
   }
 
   const runtimeMatch = trimmed.match(
-    /claude[-_ ](opus|sonnet|haiku)[-_ ]+(\d+)[-.](\d+)(\[1m\])?/i,
+    /claude[-_ ](fable|opus|sonnet|haiku)[-_ ]+(\d+)[-.](\d+)(\[1m\])?/i,
   );
   if (!runtimeMatch) {
     return null;
@@ -417,6 +424,14 @@ function normalizeMajorMinorClaudeModelId(
 ): string | null {
   const family = familyValue.toLowerCase();
   const suffix = hasOneMillionContext ? "[1m]" : "";
-  const candidate = `claude-${family}-${major}-${minor}${suffix}`;
-  return isClaudeManifestModelId(candidate) ? candidate : null;
+  const candidates = [
+    `claude-${family}-${major}-${minor}${suffix}`,
+    `claude-${family}-${major}-${minor}`,
+  ];
+  for (const candidate of candidates) {
+    if (isClaudeManifestModelId(candidate)) {
+      return candidate;
+    }
+  }
+  return null;
 }

@@ -23,7 +23,7 @@ async function completeSubmittedTurn(
 
   const finish = await agent.client.waitForFinish(agent.agentId, 30_000);
   expect(finish.status).toBe("idle");
-  await expect(page.getByText("(end of synthetic stream)", { exact: true })).toBeVisible();
+  await expect(page.getByText("(end of synthetic stream)", { exact: true }).last()).toBeVisible();
   await expect(userMessage).toHaveAttribute("aria-busy", "false");
   return userMessage;
 }
@@ -40,7 +40,7 @@ async function expectTurnCompletesNormally(
 ): Promise<void> {
   const finish = await agent.client.waitForFinish(agent.agentId, 30_000);
   expect(finish.status).toBe("idle");
-  await expect(page.getByText("(end of synthetic stream)", { exact: true })).toBeVisible();
+  await expect(page.getByText("(end of synthetic stream)", { exact: true }).last()).toBeVisible();
   await expectAgentIdle(page);
 }
 

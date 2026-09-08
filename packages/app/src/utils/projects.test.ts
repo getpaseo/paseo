@@ -136,3 +136,74 @@ describe("buildProjects", () => {
     );
   });
 });
+
+describe("workspace change request number", () => {
+  function summarize(overrides: Partial<WorkspaceDescriptor>) {
+    const result = buildProjects({
+      hosts: [
+        {
+          serverId: "host-a",
+          serverName: "Host A",
+          isOnline: true,
+          projects: [descriptor("prj_a", "shared", "/a/app")],
+          workspaces: [{ ...workspace("ws-a", "prj_a", "/a/app"), ...overrides }],
+        },
+      ],
+    });
+    return result.projects[0]?.hosts[0]?.workspaces[0]?.changeRequestNumber;
+  }
+
+  const pullRequest = {
+    url: "https://github.com/acme/app/pull/42",
+    title: "Refactor payments",
+    state: "open",
+    baseRefName: "main",
+    headRefName: "feature/checkout",
+    isMerged: false,
+  };
+
+  test("prefers the number the daemon sent over parsing the url", () => {
+    expect(
+      summarize({
+        // The url says 999, the authoritative field says 42 — the field wins.
+        githubRuntime: {
+          pullRequest: { ...pullRequest, number: 42, url: "https://example.test/pull/999" },
+        },
+        forge: "github",
+      }),
+    ).toBe(42);
+  });
+
+  test("falls back to the url when the daemon omits the number", () => {
+    expect(summarize({ githubRuntime: { pullRequest }, forge: "github" })).toBe(42);
+  });
+
+  test("parses a gitlab merge request url", () => {
+    expect(
+      summarize({
+        githubRuntime: {
+          pullRequest: { ...pullRequest, url: "https://gitlab.com/acme/app/-/merge_requests/7" },
+        },
+        forge: "gitlab",
+      }),
+    ).toBe(7);
+  });
+
+  test("resolves the number when an old daemon omits the forge", () => {
+    expect(summarize({ githubRuntime: { pullRequest: { ...pullRequest, number: 42 } } })).toBe(42);
+  });
+
+  test("is null when the workspace has no pull request", () => {
+    expect(summarize({})).toBeNull();
+    expect(summarize({ githubRuntime: { pullRequest: null } })).toBeNull();
+  });
+
+  test("is null when the number is absent and the url is unparseable", () => {
+    expect(
+      summarize({
+        githubRuntime: { pullRequest: { ...pullRequest, url: "not-a-url" } },
+        forge: "github",
+      }),
+    ).toBeNull();
+  });
+});

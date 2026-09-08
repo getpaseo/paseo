@@ -5,6 +5,12 @@ import type pino from "pino";
 import { z } from "zod";
 import { ensurePrivateFile, writePrivateFileAtomicSync } from "../private-files.js";
 import type { WebSocketLike } from "../websocket-server.js";
+import {
+  isDaemonPermission,
+  parseDaemonPermissions,
+  permissionsForLegacyHubScopes,
+  type DaemonPermission,
+} from "../authorization/index.js";
 import type { HubExecutionAgents } from "./daemon-executions.js";
 import type {
   HubRelationshipRemote,
@@ -15,8 +21,6 @@ import { HubEnrollmentRejectedError } from "./relationship-remote.js";
 import { BoundedExponentialHubRetryPolicy } from "./relationship-retry.js";
 
 const FILE_NAME = "hub-relationship.json";
-const HUB_EXECUTION_SCOPE = "hub.execution.*";
-const SCOPES = [HUB_EXECUTION_SCOPE] as const;
 const HubOriginSchema = z
   .string()
   .url()
@@ -31,12 +35,22 @@ const HubOriginSchema = z
     }
   });
 
+const DaemonPermissionsSchema = z
+  .array(z.string())
+  .superRefine((permissions, context) => {
+    for (const permission of permissions) {
+      if (!isDaemonPermission(permission)) {
+        context.addIssue({ code: "custom", message: `Invalid daemon permission: ${permission}` });
+      }
+    }
+  })
+  .transform(parseDaemonPermissions);
 const RelationshipSchema = z.object({
   daemonId: z.string().min(1),
   idempotencyKey: z.string().min(1),
   hubOrigin: HubOriginSchema,
   createdAt: z.string(),
-  scopes: z.tuple([z.literal(HUB_EXECUTION_SCOPE)]),
+  permissions: DaemonPermissionsSchema,
 });
 const SanitizedRelationshipSchema = RelationshipSchema.omit({ idempotencyKey: true });
 const CredentialSchema = z.object({ secret: z.string().min(1) });
@@ -49,7 +63,7 @@ const TransportSchema = z.object({
     .refine((value) => new URL(value).hash === ""),
 });
 const PendingSchema = z.object({
-  version: z.literal(1),
+  version: z.literal(2),
   state: z.literal("pending"),
   relationship: RelationshipSchema,
   credential: CredentialSchema,
@@ -57,27 +71,27 @@ const PendingSchema = z.object({
   identity: z.object({ serverId: z.string().min(1), daemonPublicKey: z.string().min(1) }),
 });
 const ActiveSchema = z.object({
-  version: z.literal(1),
+  version: z.literal(2),
   state: z.literal("active"),
   relationship: RelationshipSchema,
   credential: CredentialSchema,
   transport: TransportSchema,
 });
 const DisconnectingSchema = z.object({
-  version: z.literal(1),
+  version: z.literal(2),
   state: z.literal("disconnecting"),
   relationship: RelationshipSchema,
   credential: CredentialSchema,
   transport: TransportSchema.optional(),
 });
 const RevokedSchema = z.object({
-  version: z.literal(1),
+  version: z.literal(2),
   state: z.literal("revoked"),
   relationship: SanitizedRelationshipSchema,
   transport: TransportSchema.optional(),
   reason: z.string().optional(),
 });
-const RecordSchema = z
+const CurrentRecordSchema = z
   .discriminatedUnion("state", [PendingSchema, ActiveSchema, DisconnectingSchema, RevokedSchema])
   .superRefine((record, context) => {
     if (!("transport" in record) || !record.transport) return;
@@ -91,6 +105,7 @@ const RecordSchema = z
       message: "Hub WebSocket URL must match the Hub origin",
     });
   });
+const RecordSchema = z.preprocess(migrateLegacyRecord, CurrentRecordSchema);
 type PendingRecord = z.infer<typeof PendingSchema>;
 type ActiveRecord = z.infer<typeof ActiveSchema>;
 type DisconnectingRecord = z.infer<typeof DisconnectingSchema>;
@@ -109,13 +124,21 @@ export interface HubRelationshipStatus {
   state: HubConnectionState;
   daemonId: string | null;
   hubOrigin: string | null;
-  scopes: string[];
+  permissions: DaemonPermission[];
   connectedAt: string | null;
   lastError: string | null;
 }
 
 export interface HubRelationshipManagement {
-  connect(input: { hubUrl: string; token: string }): Promise<HubRelationshipStatus>;
+  connect(input: {
+    hubUrl: string;
+    token: string;
+    permissions: readonly string[];
+  }): Promise<HubRelationshipStatus>;
+  updatePermissions(input: {
+    grant: readonly string[];
+    revoke: readonly string[];
+  }): Promise<HubRelationshipStatus>;
   status(): HubRelationshipStatus;
   disconnect(input: {
     force: boolean;
@@ -147,8 +170,18 @@ export interface HubRelationshipControllerOptions {
   createDaemonId?: () => string;
   attachSocket: (
     socket: WebSocketLike,
-    options: { daemonId: string; scopes: readonly string[]; agents: HubExecutionAgents },
+    options: {
+      daemonId: string;
+      principalId: string;
+      permissions: readonly DaemonPermission[];
+      agents: HubExecutionAgents;
+      sessionProtocol: "legacy" | "session-v1";
+    },
   ) => Promise<void>;
+  updateAttachedPermissions: (
+    principalId: string,
+    permissions: readonly DaemonPermission[],
+  ) => void;
   createExecutionAgents: (daemonId: string) => HubExecutionAgents;
 }
 
@@ -241,13 +274,18 @@ export class HubRelationshipController implements HubRelationshipManagement {
       state: this.state,
       daemonId: this.record?.relationship.daemonId ?? null,
       hubOrigin: this.record?.relationship.hubOrigin ?? null,
-      scopes: this.record?.relationship.scopes.slice() ?? [],
+      permissions: this.record?.relationship.permissions.slice() ?? [],
       connectedAt: this.connectedAt,
       lastError: this.lastError,
     };
   }
 
-  async connect(input: { hubUrl: string; token: string }): Promise<HubRelationshipStatus> {
+  async connect(input: {
+    hubUrl: string;
+    token: string;
+    permissions: readonly string[];
+  }): Promise<HubRelationshipStatus> {
+    const permissions = parseDaemonPermissions(input.permissions);
     if (this.record?.state === "pending") {
       if (normalizeHubUrl(input.hubUrl) !== this.record.relationship.hubOrigin) {
         throw new Error("A pending Hub enrollment already exists for a different Hub");
@@ -264,14 +302,14 @@ export class HubRelationshipController implements HubRelationshipManagement {
       throw new Error("This daemon already has a Hub relationship");
     }
     const pending: PendingRecord = {
-      version: 1,
+      version: 2,
       state: "pending",
       relationship: {
         daemonId: this.options.createDaemonId?.() ?? randomUUID(),
         idempotencyKey: randomUUID(),
         hubOrigin: normalizeHubUrl(input.hubUrl),
         createdAt: this.clock.now().toISOString(),
-        scopes: [...SCOPES],
+        permissions,
       },
       credential: { secret: randomBytes(32).toString("base64url") },
       enrollment: { token: input.token },
@@ -282,6 +320,37 @@ export class HubRelationshipController implements HubRelationshipManagement {
     this.state = "connecting";
     this.lastError = null;
     await this.tryEnrollment(pending, this.beginEnrollmentAttempt());
+    return this.status();
+  }
+
+  async updatePermissions(input: {
+    grant: readonly string[];
+    revoke: readonly string[];
+  }): Promise<HubRelationshipStatus> {
+    if (!this.record || this.record.state !== "active") {
+      throw new Error("This daemon is not connected to a Hub");
+    }
+    const grant = parseDaemonPermissions(input.grant);
+    const revoke = parseDaemonPermissions(input.revoke);
+    const permissions = parseDaemonPermissions([
+      ...this.record.relationship.permissions.filter((permission) => !revoke.includes(permission)),
+      ...grant,
+    ]);
+    const result = await this.options.remote.updatePermissions({
+      daemonId: this.record.relationship.daemonId,
+      hubOrigin: this.record.relationship.hubOrigin,
+      credential: this.record.credential.secret,
+      permissions,
+    });
+    if (!samePermissions(result.permissions, permissions)) {
+      throw new Error("Hub permission response did not match the local grant");
+    }
+    this.record = {
+      ...this.record,
+      relationship: { ...this.record.relationship, permissions },
+    };
+    this.persist(this.record);
+    this.options.updateAttachedPermissions(hubPrincipalId(this.record), permissions);
     return this.status();
   }
 
@@ -299,7 +368,7 @@ export class HubRelationshipController implements HubRelationshipManagement {
       return { status: this.status() };
     }
     const disconnecting: DisconnectingRecord = {
-      version: 1,
+      version: 2,
       state: "disconnecting",
       relationship: this.record.relationship,
       credential: this.record.credential,
@@ -345,7 +414,7 @@ export class HubRelationshipController implements HubRelationshipManagement {
       serverId: pending.identity.serverId,
       daemonPublicKey: pending.identity.daemonPublicKey,
       credentialVerifier: verifier,
-      scopes: pending.relationship.scopes,
+      permissions: pending.relationship.permissions,
     });
     const settled = request.then(
       () => undefined,
@@ -357,12 +426,12 @@ export class HubRelationshipController implements HubRelationshipManagement {
       if (enrollmentGeneration !== this.enrollmentGeneration) return;
       if (
         enrollment.daemonId !== pending.relationship.daemonId ||
-        !enrollment.scopes.includes(HUB_EXECUTION_SCOPE)
+        !samePermissions(enrollment.permissions, pending.relationship.permissions)
       ) {
         throw new Error("Hub enrollment response did not match the pending relationship");
       }
       const active: ActiveRecord = {
-        version: 1,
+        version: 2,
         state: "active",
         relationship: pending.relationship,
         credential: pending.credential,
@@ -390,7 +459,8 @@ export class HubRelationshipController implements HubRelationshipManagement {
     const generation = ++this.generation;
     this.state = reconnecting ? "reconnecting" : "connecting";
     const events: HubSocketEvents = {
-      connected: (socket) => this.socketConnected(generation, record, socket),
+      connected: (socket, sessionProtocol) =>
+        this.socketConnected(generation, record, socket, sessionProtocol),
       rejected: (statusCode) => this.socketRejected(generation, statusCode),
       closed: (code) => this.socketClosed(generation, record, code),
       failed: (error) => this.socketFailed(generation, record, error),
@@ -405,7 +475,12 @@ export class HubRelationshipController implements HubRelationshipManagement {
     );
   }
 
-  private socketConnected(generation: number, record: ActiveRecord, socket: WebSocketLike): void {
+  private socketConnected(
+    generation: number,
+    record: ActiveRecord,
+    socket: WebSocketLike,
+    sessionProtocol: "legacy" | "session-v1",
+  ): void {
     if (generation !== this.generation) {
       socket.close();
       return;
@@ -416,8 +491,10 @@ export class HubRelationshipController implements HubRelationshipManagement {
     this.lastError = null;
     void this.options.attachSocket(socket, {
       daemonId: record.relationship.daemonId,
-      scopes: record.relationship.scopes,
+      principalId: hubPrincipalId(record),
+      permissions: record.relationship.permissions,
       agents: this.executionAgentsFor(record.relationship.daemonId),
+      sessionProtocol,
     });
   }
 
@@ -487,13 +564,13 @@ export class HubRelationshipController implements HubRelationshipManagement {
     this.cancelLifecycle();
     if (!this.record) return;
     const revoked: RevokedRecord = {
-      version: 1,
+      version: 2,
       state: "revoked",
       relationship: {
         daemonId: this.record.relationship.daemonId,
         hubOrigin: this.record.relationship.hubOrigin,
         createdAt: this.record.relationship.createdAt,
-        scopes: this.record.relationship.scopes,
+        permissions: this.record.relationship.permissions,
       },
       transport: "transport" in this.record ? this.record.transport : undefined,
       reason,
@@ -536,7 +613,9 @@ export class HubRelationshipController implements HubRelationshipManagement {
     if (!existsSync(this.filePath)) return null;
     let record: HubRelationshipRecord;
     try {
-      record = RecordSchema.parse(JSON.parse(readFileSync(this.filePath, "utf8")));
+      const raw = JSON.parse(readFileSync(this.filePath, "utf8"));
+      record = RecordSchema.parse(raw);
+      if (isLegacyRecord(raw)) this.persist(record);
     } catch (error) {
       const quarantinePath = path.join(
         path.dirname(this.filePath),
@@ -553,4 +632,39 @@ export class HubRelationshipController implements HubRelationshipManagement {
     ensurePrivateFile(this.filePath);
     return record;
   }
+}
+
+function hubPrincipalId(record: ActiveRecord): string {
+  const credentialFingerprint = createHash("sha256")
+    .update(record.credential.secret)
+    .digest("base64url");
+  return `hub:${record.relationship.daemonId}:${credentialFingerprint}`;
+}
+
+function samePermissions(actual: readonly string[], expected: readonly string[]): boolean {
+  return actual.length === expected.length && expected.every((scope) => actual.includes(scope));
+}
+
+function isLegacyRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && Reflect.get(value, "version") === 1;
+}
+
+function migrateLegacyRecord(value: unknown): unknown {
+  if (!isLegacyRecord(value)) return value;
+  const relationship = Reflect.get(value, "relationship");
+  if (typeof relationship !== "object" || relationship === null) return value;
+  const scopes = Reflect.get(relationship, "scopes");
+  if (!Array.isArray(scopes) || !scopes.every((scope) => typeof scope === "string")) return value;
+  const { scopes: _legacyScopes, ...relationshipWithoutScopes } = relationship as Record<
+    string,
+    unknown
+  >;
+  return {
+    ...(value as Record<string, unknown>),
+    version: 2,
+    relationship: {
+      ...relationshipWithoutScopes,
+      permissions: permissionsForLegacyHubScopes(scopes),
+    },
+  };
 }

@@ -79,8 +79,12 @@ export async function listOmpImportableSessions(
   const matchesCwd = options.cwd ? createRealpathAwarePathMatcher(options.cwd) : null;
   const limit = options.limit ?? 20;
   const ranked = await rankSessionFilesByMtime(files);
-  const candidateLimit = Math.max(limit * IMPORT_CANDIDATE_OVERSCAN, IMPORT_CANDIDATE_MIN);
-  const candidates = matchesCwd ? ranked : ranked.slice(0, candidateLimit);
+  const candidateLimit = Math.min(
+    options.scanLimit ?? Math.max(limit * IMPORT_CANDIDATE_OVERSCAN, IMPORT_CANDIDATE_MIN),
+    500,
+  );
+  const candidates =
+    options.scanLimit === undefined && matchesCwd ? ranked : ranked.slice(0, candidateLimit);
   const sessions: ImportableProviderSession[] = [];
 
   for (const entry of candidates) {

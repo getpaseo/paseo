@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Pressable, Text, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useTranslation } from "react-i18next";
 import { useRetainedPanelActive } from "@/components/retained-panel";
 import { useCheckoutCommitsQuery, type CheckoutCommitsQueryResult } from "@/git/use-commits-query";
@@ -91,6 +92,7 @@ export function CommitsSection({
   onCollapsedChange,
 }: CommitsSectionProps) {
   const { t } = useTranslation();
+  const insets = useSafeAreaInsets();
   const isPanelActive = useRetainedPanelActive();
   const [now, setNow] = useState(() => new Date());
   const displayNow = useMemo(() => (isPanelActive ? new Date() : now), [isPanelActive, now]);
@@ -119,6 +121,10 @@ export function CommitsSection({
     () => [styles.headerChevron, !collapsed && styles.headerChevronExpanded],
     [collapsed],
   );
+  const containerStyle = useMemo(
+    () => [styles.container, { paddingBottom: insets.bottom }],
+    [insets.bottom],
+  );
 
   if (query.status === "unsupported") {
     return null;
@@ -129,7 +135,7 @@ export function CommitsSection({
       : null;
 
   return (
-    <View style={styles.container}>
+    <View style={containerStyle}>
       <Pressable
         accessibilityRole="button"
         testID="commits-section-header"

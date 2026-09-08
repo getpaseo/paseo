@@ -96,7 +96,8 @@ export function useAgentControlCommandCenterActions(input: {
         provider: controls.provider ?? null,
         labels: buildAgentControlContributionLabels(t),
         icons: {
-          provider: (provider) => getCommandCenterIcon(getProviderIcon(provider)),
+          provider: (provider) =>
+            getCommandCenterIcon(getProviderIcon(provider, controls.serverId)),
           thinking: getCommandCenterIcon(ThinkingIcon),
           planMode: getCommandCenterIcon(PlanModeIcon),
           mode: (modeId) =>

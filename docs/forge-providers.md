@@ -218,3 +218,8 @@ are stale, run `npm run build:server`.
   (`manual`) from blocking jobs (`manual` plus `action_required`). A failed
   allowed-failure job carries the `warning` trait, and `canceling` remains active
   until GitLab reports a terminal status.
+- GitHub PR polling owns one account-wide GraphQL budget. Coordinate retained
+  targets per host, batch their reads, and stop until GitHub's reset time when
+  the reserve is exhausted. Never add a per-target GitHub request to the poll
+  path. Resolve fork PRs through their parent repository without abandoning the
+  shared batch.

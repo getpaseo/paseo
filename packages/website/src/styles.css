@@ -664,6 +664,7 @@
   --color-foreground: #fafafa;
   --color-muted: #1a1f1e;
   --color-muted-foreground: #a8adac;
+  --color-extra-muted-foreground: #717574;
   --color-card: #171d1c;
   --color-border: #252b2a;
   --color-scrollbar-handle: #717574;
@@ -672,26 +673,73 @@
   --color-secondary: #252b2a;
   --color-secondary-foreground: #fafafa;
 
-  /* Mockup palette (from app unistyles theme) */
+  /* Mockup palette. Every value below is copied from the app's default dark
+     theme — `paseoDarkColors` in packages/app/src/styles/theme.ts. Do not
+     eyeball these from a screenshot; re-read theme.ts and copy. */
+
+  /* Surfaces */
   --color-mock-surface0: #181b1a;
   --color-mock-surface1: #1e2120;
   --color-mock-surface2: #272a29;
   --color-mock-surface3: #434645;
+  --color-mock-surface4: #595b5b;
+  --color-mock-surface-diff-empty: #252827;
   --color-mock-sidebar: #141716;
+
+  /* Foregrounds */
   --color-mock-fg: #fafafa;
   --color-mock-fg-muted: #a1a5a4;
-  --color-mock-border: #272a29;
-  --color-mock-border-accent: #313433;
+  --color-mock-fg-xmuted: #717574;
+
+  /* Borders and accent */
+  --color-mock-border: #252b2a;
+  --color-mock-border-accent: #2f3534;
   --color-mock-accent: #20744a;
-  --color-mock-green: #22c55e;
-  --color-mock-green-400: #4ade80;
-  --color-mock-red: #f87171;
-  --color-mock-amber: #f59e0b;
-  --color-mock-blue: #3b82f6;
-  --color-mock-zinc500: #a1a5a4;
-  --color-mock-zinc600: #52525b;
-  --color-mock-diff-add: rgba(46, 160, 67, 0.15);
-  --color-mock-diff-remove: rgba(248, 81, 73, 0.1);
+  --color-mock-accent-bright: #7ccba0;
+  --color-mock-destructive: #c64f43;
+
+  /* Status band (dark: L=0.70). One token per signal — diff stats, PR state,
+     CI checks, badges. theme.ts:154-160. */
+  --color-mock-success: #6cb17b;
+  --color-mock-danger: #d8847b;
+  --color-mock-warning: #c09664;
+  --color-mock-merged: #a890d5;
+
+  /* Project identity tiles — the letter-avatar fills the mobile sidebar hashes
+     a project name into. Verbatim from the app's identity palette,
+     packages/app/src/styles/identity-colors.ts (white letter drawn on top). */
+  --color-mock-tile-red: #b06260;
+  --color-mock-tile-violet: #7a6aa8;
+  --color-mock-tile-amber: #8f7838;
+  --color-mock-tile-teal: #368080;
+  --color-mock-host-teal: #6cacab;
+
+  /* Status *dot* band (dark: L=0.72, chroma 90%). Sidebar row state dots only.
+     theme.ts:198-204. */
+  --color-mock-dot-success: #35c264;
+  --color-mock-dot-danger: #f7796d;
+  --color-mock-dot-warning: #db932e;
+  --color-mock-dot-running: #5caaf6;
+
+  /* Diff rows. The row fills are the status colors at the alphas the real diff
+     renderer uses — git/diff-document/palette.ts:14-15. The *-fg pair is the
+     diffAddition/diffDeletion tier from theme.ts:121-124. */
+  --color-mock-diff-add: rgba(108, 177, 123, 0.08);
+  --color-mock-diff-remove: rgba(216, 132, 123, 0.07);
+  --color-mock-diff-add-fg: #4ade80;
+  --color-mock-diff-remove-fg: #ef4444;
+
+  /* The one darkHighlightColors role the --color-syn-* block below is missing.
+     @getpaseo/highlight src/colors.ts, `class`. */
+  --color-mock-syn-class: #ffa657;
+
+  /* Terminal ANSI — darkTerminalAnsi, theme.ts:358-373 */
+  --color-mock-term-red: #e07070;
+  --color-mock-term-green: #5dba80;
+  --color-mock-term-yellow: #d4a44a;
+  --color-mock-term-blue: #6a9de0;
+  --color-mock-term-magenta: #b07ad0;
+  --color-mock-term-cyan: #4aabb8;
 
   /* Syntax highlighting */
   --color-syn-keyword: #ff7b72;

@@ -68,7 +68,7 @@ describe("Hub init planning", () => {
       state: "connected",
       daemonId: "daemon-1",
       hubOrigin: "https://hub.test",
-      scopes: ["hub.execution.*"],
+      permissions: ["hub.execute"],
       connectedAt: null,
       lastError: null,
     };

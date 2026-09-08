@@ -151,6 +151,12 @@ export interface ForgeCommandFailureParams {
   cwd: string;
   exitCode: number | null;
   stderr: string;
+  /**
+   * Whatever the failing command printed to stdout. GraphQL batch callers use
+   * this to salvage partial `data` when one aliased sub-query errors but the
+   * others succeeded (the CLI exits non-zero yet still prints the body).
+   */
+  stdout?: string;
 }
 
 export class ForgeCommandError extends Error {
@@ -159,6 +165,7 @@ export class ForgeCommandError extends Error {
   readonly cwd: string;
   readonly exitCode: number | null;
   readonly stderr: string;
+  readonly stdout?: string;
 
   constructor(label: { brand: string; binary: string }, params: ForgeCommandFailureParams) {
     super(`${label.brand} CLI command failed: ${label.binary} ${params.args.join(" ")}`);
@@ -166,6 +173,9 @@ export class ForgeCommandError extends Error {
     this.cwd = params.cwd;
     this.exitCode = params.exitCode;
     this.stderr = params.stderr;
+    if (params.stdout !== undefined) {
+      this.stdout = params.stdout;
+    }
   }
 }
 
@@ -227,6 +237,7 @@ export function normalizeCliCommandError(options: NormalizeCliCommandErrorOption
     return options.createMissingError();
   }
   const stderr = bufferOrStringToString(failure.stderr);
+  const stdout = bufferOrStringToString(failure.stdout);
   const message = failure.message ?? "";
   if (options.isAuthFailureText(stderr) || options.isAuthFailureText(message)) {
     return options.createAuthError(stderr);
@@ -239,6 +250,7 @@ export function normalizeCliCommandError(options: NormalizeCliCommandErrorOption
       stderr:
         stderr ||
         `${options.commandName} was terminated before completing (timed out after ${options.timeoutMs}ms or exceeded the output limit)`,
+      ...(stdout ? { stdout } : {}),
     });
   }
   return options.createCommandError({
@@ -246,6 +258,7 @@ export function normalizeCliCommandError(options: NormalizeCliCommandErrorOption
     cwd: options.cwd,
     exitCode: typeof failure.code === "number" ? failure.code : null,
     stderr: stderr || message,
+    ...(stdout ? { stdout } : {}),
   });
 }
 

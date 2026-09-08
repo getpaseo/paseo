@@ -35,6 +35,7 @@ export interface PiCliRuntimeOptions {
   runtimeSettings?: ProviderRuntimeSettings;
   command?: [string, ...string[]];
   commandsRpcName?: string;
+  requestTimeoutMs?: number;
   spawnProcess?: (launch: PiRuntimeLaunch) => ChildProcessWithoutNullStreams;
 }
 
@@ -67,6 +68,7 @@ export class PiCliRuntime implements PiRuntime {
       launch: processLaunch,
       logger: this.options.logger,
       diagnosticName: "Pi RPC",
+      defaultRequestTimeoutMs: this.options.requestTimeoutMs,
       ...(spawn ? { spawn: () => spawn(launch) } : {}),
     };
     const process = new JsonlRpcProcess(processOptions);
@@ -117,6 +119,21 @@ class PiCliRuntimeSession implements PiRuntimeSession {
       }
     }
     return { requestId };
+  }
+
+  async steer(
+    message: string,
+    images?: Array<{ type: "image"; data: string; mimeType: string }>,
+  ): Promise<void> {
+    await this.request({
+      type: "steer",
+      message,
+      ...(images?.length ? { images } : {}),
+    });
+  }
+
+  async clearQueue(): Promise<void> {
+    await this.request({ type: "clear_queue" });
   }
 
   async compact(customInstructions?: string): Promise<void> {

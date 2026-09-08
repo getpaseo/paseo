@@ -10,6 +10,7 @@ function installed(): InstalledPlugin {
     clientBundle: "bundle",
     queryClient: new QueryClient(),
     cleanup: () => {},
+    settingsScreens: [],
     surfaces: [],
     sidebarItems: [],
     workspacePanels: [
@@ -23,6 +24,7 @@ function installed(): InstalledPlugin {
       },
     ],
     commandCenterItems: [],
+    clientSlashCommands: [],
     attachmentSources: [],
     themes: [],
     timelineTransformers: [],

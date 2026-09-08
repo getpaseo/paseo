@@ -1,3 +1,4 @@
+import { createPaseoApi } from "@getpaseo/client";
 import { connectToDaemon, getDaemonHost } from "../../utils/client.js";
 import type { CommandError, CommandOptions } from "../../output/index.js";
 
@@ -14,7 +15,7 @@ export async function connectTerminalClient(host?: string) {
   const daemonHost = getDaemonHost({ host });
   try {
     const client = await connectToDaemon({ host });
-    return { client, daemonHost };
+    return { client: createPaseoApi(client), daemonHost, close: () => client.close() };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     const error: CommandError = {
@@ -44,11 +45,11 @@ export function toTerminalCommandError(code: string, action: string, err: unknow
 }
 
 export async function resolveTerminalId(
-  client: Awaited<ReturnType<typeof connectToDaemon>>,
+  client: Awaited<ReturnType<typeof connectTerminalClient>>["client"],
   idOrName: string,
 ): Promise<string | null> {
-  const payload = await client.listTerminals();
-  return resolveTerminalIdentifier(idOrName, payload.terminals);
+  const payload = await client.terminals.list();
+  return resolveTerminalIdentifier(idOrName, payload.entries);
 }
 
 function resolveTerminalIdentifier(idOrName: string, terminals: TerminalLike[]): string | null {

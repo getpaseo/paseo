@@ -34,9 +34,7 @@ function Sponsor() {
 
         <p>
           Paseo started as a personal project: I wanted to run coding agents from anywhere without
-          giving up control of my code, my keys, or my workflow. It grew into something bigger
-          because developers felt the same need: a single place to orchestrate agents across
-          devices, without vendor lock-in.
+          giving up control of my code, my keys, or my workflow.
         </p>
 
         <p>

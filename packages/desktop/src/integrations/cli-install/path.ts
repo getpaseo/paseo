@@ -22,6 +22,7 @@ export function resolveCliInstallSourcePath(input: {
     if (appImagePath) {
       return appImagePath;
     }
+    return input.shimPath;
   }
 
   return input.executablePath;

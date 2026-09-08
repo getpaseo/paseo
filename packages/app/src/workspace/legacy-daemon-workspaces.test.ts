@@ -5,7 +5,6 @@ import { deriveWorkspaceAgentVisibility } from "@/workspace-tabs/agent-visibilit
 import { buildWorkspaceStructureProjects } from "@/projects/workspace-structure";
 import {
   applyLegacyDaemonWorkspaceOwnership,
-  backfillLegacyDaemonWorkspaceDirectoryIfEmpty,
   buildLegacyDaemonWorkspaceSnapshot,
 } from "./legacy-daemon-workspaces";
 
@@ -196,48 +195,5 @@ describe("buildLegacyDaemonWorkspaceSnapshot", () => {
 
     expect(stampedUpdate.workspaceId).toBe("/repo/app");
     expect(visibility.activeAgentIds).toEqual(new Set(["agent-running"]));
-  });
-
-  it("does not backfill path-backed workspaces after hydration is cancelled", async () => {
-    const store = useSessionStore.getState();
-    store.initializeSession(SERVER_ID, null as unknown as DaemonClient);
-    store.updateSessionServerInfo(SERVER_ID, {
-      serverId: SERVER_ID,
-      hostname: null,
-      version: "0.1.96",
-    });
-    let cancelled = false;
-    let didFetchAgents = false;
-    const client: Pick<DaemonClient, "fetchAgents"> = {
-      fetchAgents: async () => {
-        didFetchAgents = true;
-        cancelled = true;
-        return {
-          requestId: "req_cancelled_backfill",
-          subscriptionId: null,
-          entries: [legacyAgent({ id: "agent-cancelled", cwd: "/repo/app" })],
-          pageInfo: {
-            nextCursor: null,
-            prevCursor: null,
-            hasMore: false,
-          },
-        };
-      },
-    };
-
-    const didBackfill = await backfillLegacyDaemonWorkspaceDirectoryIfEmpty({
-      client,
-      serverId: SERVER_ID,
-      workspaces: new Map(),
-      projects: new Map(),
-      isCancelled: () => cancelled,
-    });
-
-    const session = useSessionStore.getState().sessions[SERVER_ID];
-    expect(didFetchAgents).toBe(true);
-    expect(didBackfill).toBe(true);
-    expect(session?.agents.size).toBe(0);
-    expect(session?.workspaces.size).toBe(0);
-    expect(session?.hasHydratedWorkspaces).toBe(false);
   });
 });

@@ -187,12 +187,7 @@ async function resolvePrCheckoutIntent(
     headRef,
   }) ?? [{ remoteName: "origin", remoteRef: `refs/heads/${headRef}` }];
   const localBranchName = service.buildPrLocalBranchName?.({ headRef, checkoutTarget });
-  const headRepositoryOwner = checkoutTarget.isCrossRepository
-    ? checkoutTarget.headOwnerLogin?.trim() || undefined
-    : undefined;
-  const pushRemoteUrl = checkoutTarget.isCrossRepository
-    ? checkoutTarget.headRepositorySshUrl || checkoutTarget.headRepositoryUrl || undefined
-    : undefined;
+  const crossRepository = resolveCrossRepositoryFields(checkoutTarget);
   const trackOriginHead = !checkoutTarget.isCrossRepository;
 
   return {
@@ -200,13 +195,40 @@ async function resolvePrCheckoutIntent(
     forge: deps.forge,
     changeRequestNumber: params.changeRequestNumber,
     headRef,
-    ...(headRepositoryOwner ? { headRepositoryOwner } : {}),
+    ...crossRepository,
     baseRefName,
     checkoutRefs: checkoutTarget.checkoutRefs ?? defaultRefs,
     ...(localBranchName && localBranchName !== headRef ? { localBranchName } : {}),
-    ...(pushRemoteUrl ? { pushRemoteUrl } : {}),
     ...(trackOriginHead ? { trackOriginHead } : {}),
   };
+}
+
+function resolveCrossRepositoryFields(target: PullRequestCheckoutTarget): {
+  headRepositoryOwner?: string;
+  headRepository?: string;
+  pushRemoteUrl?: string;
+} {
+  if (!target.isCrossRepository) return {};
+  const headRepositoryOwner = target.headOwnerLogin?.trim() || undefined;
+  const headRepository = resolveHeadRepository(target);
+  const pushRemoteUrl = target.headRepositorySshUrl || target.headRepositoryUrl || undefined;
+  return {
+    ...(headRepositoryOwner ? { headRepositoryOwner } : {}),
+    ...(headRepository ? { headRepository } : {}),
+    ...(pushRemoteUrl ? { pushRemoteUrl } : {}),
+  };
+}
+
+function resolveHeadRepository(target: PullRequestCheckoutTarget): string | undefined {
+  const url = target.headRepositoryUrl ?? target.headRepositorySshUrl;
+  if (!url) return target.headOwnerLogin?.trim() || "unknown repository";
+  const path = url
+    .replace(/\.git$/, "")
+    .split(/[/:]/)
+    .filter(Boolean);
+  const repository = path.at(-1);
+  const owner = target.headOwnerLogin?.trim() || path.at(-2);
+  return (owner && repository ? `${owner}/${repository}` : repository) ?? "unknown repository";
 }
 
 function hasCheckoutRefs(target: PullRequestCheckoutTarget): boolean {

@@ -28,10 +28,10 @@ From a terminal or agent, request the same diagnostic from the affected daemon:
 
 ```bash
 paseo provider diagnostic <provider>
-paseo provider diagnostic <provider> --host <host:port> --json
+paseo --host <host:port> provider diagnostic <provider> --json
 ```
 
-Use `--host` when the affected daemon is not the CLI's default local daemon.
+Use the global `--host` option when the affected daemon is not the CLI's default local daemon.
 
 `not found` together with a **Daemon PATH** that's missing your binary's directory is the common case: that directory is on your terminal's `PATH` but not on Paseo's.
 

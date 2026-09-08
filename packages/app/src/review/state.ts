@@ -13,23 +13,10 @@ export interface ReviewDraftComment {
   updatedAt: string;
 }
 
-// A manual mode selection is valid only while the checkout's dirty state matches the
-// value at the time of selection. serverId/cwd identify the checkout so the override can
-// be expired when its dirty state changes (see expireStaleDiffModeOverridesInState).
-export interface DiffModeOverride {
-  serverId: string;
-  cwd: string;
-  mode: ReviewDraftMode;
-  isDirtyAtSelection: boolean;
-}
-
 export interface ReviewDraftStoreState {
   drafts: Record<string, ReviewDraftComment[]>;
-  // In-memory only — not persisted. Keyed by scope key.
-  diffModeOverrides: Record<string, DiffModeOverride>;
 }
 
-// Only drafts are persisted; diffModeOverrides is intentionally excluded.
 export interface SerializedReviewDraftState {
   drafts: Record<string, ReviewDraftComment[]>;
   activeModesByScope?: Record<string, ReviewDraftMode>;
@@ -52,59 +39,6 @@ export const SerializedReviewDraftStateSchema: z.ZodType<SerializedReviewDraftSt
     // COMPAT(reviewDraftModes): v1 persisted this field; v2 discards it during migration.
     activeModesByScope: z.record(z.string(), z.enum(["uncommitted", "base"])).optional(),
   });
-
-export function setDiffModeOverrideInState(
-  state: ReviewDraftStoreState,
-  input: { scopeKey: string; override: DiffModeOverride },
-): ReviewDraftStoreState {
-  return {
-    ...state,
-    diffModeOverrides: {
-      ...state.diffModeOverrides,
-      [input.scopeKey]: input.override,
-    },
-  };
-}
-
-// Drops every override for the checkout whose dirty state no longer matches the value it
-// was selected under. Called whenever a checkout status enters the app (push or fetch),
-// so expiry does not depend on any screen being mounted.
-export function expireStaleDiffModeOverridesInState(
-  state: ReviewDraftStoreState,
-  input: { serverId: string; cwd: string; isDirty: boolean },
-): ReviewDraftStoreState {
-  const staleScopeKeys = Object.entries(state.diffModeOverrides)
-    .filter(
-      ([, override]) =>
-        override.serverId === input.serverId &&
-        override.cwd === input.cwd &&
-        override.isDirtyAtSelection !== input.isDirty,
-    )
-    .map(([scopeKey]) => scopeKey);
-  if (staleScopeKeys.length === 0) {
-    return state;
-  }
-  const next = { ...state.diffModeOverrides };
-  for (const scopeKey of staleScopeKeys) {
-    delete next[scopeKey];
-  }
-  return { ...state, diffModeOverrides: next };
-}
-
-// Pure read — returns the effective mode without mutating state. The staleness check is
-// kept even though stale overrides are expired at the data boundary: a render can observe
-// a fresh dirty state before the expiry lands, and resolution must be correct under any
-// interleaving.
-export function resolveDiffMode(input: {
-  override: DiffModeOverride | undefined;
-  hasUncommittedChanges: boolean;
-}): ReviewDraftMode {
-  const { override, hasUncommittedChanges } = input;
-  if (override && override.isDirtyAtSelection === hasUncommittedChanges) {
-    return override.mode;
-  }
-  return hasUncommittedChanges ? "uncommitted" : "base";
-}
 
 export function addCommentToState(
   state: ReviewDraftStoreState,
@@ -184,7 +118,6 @@ export function normalizePersistedState(state: unknown): ReviewDraftStoreState {
   const result = SerializedReviewDraftStateSchema.safeParse(state);
   return {
     drafts: result.success ? result.data.drafts : {},
-    diffModeOverrides: {},
   };
 }
 

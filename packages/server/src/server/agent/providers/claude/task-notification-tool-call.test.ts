@@ -7,6 +7,18 @@ import {
 } from "./task-notification-tool-call.js";
 
 describe("task-notification-tool-call", () => {
+  it.each([undefined, "ordinary queued prompt"])(
+    "ignores queue bookkeeping without a task notification (%s)",
+    (content) => {
+      expect(
+        mapTaskNotificationSystemRecordToToolCall({
+          type: "queue-operation",
+          operation: "enqueue",
+          content,
+        }),
+      ).toBeNull();
+    },
+  );
   it("detects task notification user content in string payloads", () => {
     expect(
       isTaskNotificationUserContent(

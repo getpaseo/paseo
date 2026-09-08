@@ -1,10 +1,6 @@
 import type { ModelBrowserView } from "@/components/model-browser-view";
 import type { ProviderSelectorProvider } from "@/provider-selection/provider-selection";
 
-export function resolveModelBrowserScrolling(usesBottomSheet: boolean): "sheet" | "independent" {
-  return usesBottomSheet ? "sheet" : "independent";
-}
-
 export function resolveModelSheetOpening({
   canSwitchProvider,
   providers,
