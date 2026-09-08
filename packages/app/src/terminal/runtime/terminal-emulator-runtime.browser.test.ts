@@ -40,6 +40,7 @@ interface MountedTerminal {
   sizes: TerminalSize[];
   terminalKeys: TerminalKeyRecord[];
   inputModeChanges: TerminalInputModeState[];
+  externalUrls: string[];
 }
 
 const mountedTerminals: MountedTerminal[] = [];
@@ -95,6 +96,7 @@ function createTerminalHost(input: {
   const inputs: string[] = [];
   const terminalKeys: TerminalKeyRecord[] = [];
   const inputModeChanges: TerminalInputModeState[] = [];
+  const externalUrls: string[] = [];
   const runtime = new TerminalEmulatorRuntime();
   runtime.setCallbacks({
     callbacks: {
@@ -110,6 +112,9 @@ function createTerminalHost(input: {
       onInputModeChange: (state) => {
         inputModeChanges.push(state);
       },
+      onOpenExternalUrl: (url) => {
+        externalUrls.push(url);
+      },
     },
   });
   runtime.mount({
@@ -124,7 +129,16 @@ function createTerminalHost(input: {
     },
   });
 
-  const mounted = { host, root, runtime, inputs, sizes, terminalKeys, inputModeChanges };
+  const mounted = {
+    host,
+    root,
+    runtime,
+    inputs,
+    sizes,
+    terminalKeys,
+    inputModeChanges,
+    externalUrls,
+  };
   mountedTerminals.push(mounted);
   return mounted;
 }
@@ -162,6 +176,25 @@ function getBrowserTerminal(): BrowserTerminal {
   return terminal;
 }
 
+async function waitForRenderedText(input: {
+  host: HTMLElement;
+  text: string;
+}): Promise<HTMLElement> {
+  let match: HTMLElement | undefined;
+  await waitFor({
+    predicate: () => {
+      match = [...input.host.querySelectorAll<HTMLElement>(".xterm-rows span")].find(
+        (candidate) => candidate.textContent === input.text,
+      );
+      return match !== undefined;
+    },
+  });
+  if (!match) {
+    throw new Error(`Expected xterm to render ${input.text}`);
+  }
+  return match;
+}
+
 function dispatchTerminalKey(input: {
   host: HTMLElement;
   key: string;
@@ -196,6 +229,37 @@ afterEach(() => {
 });
 
 describe("terminal emulator runtime in a real browser", () => {
+  it("hands OSC 8 hyperlinks to the external opener", async () => {
+    await page.viewport(900, 600);
+    const mounted = createTerminalHost({ width: 720, height: 360 });
+
+    await waitFor({ predicate: () => window.__paseoTerminal !== undefined });
+
+    // OSC 8 is how CLIs print clickable text. xterm linkifies the escape sequence itself,
+    // then routes the link to options.linkHandler — WebLinksAddon never sees it, so without
+    // a handler xterm falls back to confirm() + window.open, which escapes the opener that
+    // owns the http(s) allowlist.
+    mounted.runtime.write({
+      data: terminalOutput("\u001b]8;;https://example.com\u0007osc8-link\u001b]8;;\u0007"),
+    });
+    const rendered = await waitForRenderedText({ host: mounted.host, text: "osc8-link" });
+    expect(rendered.className).toContain("xterm-underline");
+
+    const linkHandler = window.__paseoTerminal?.options.linkHandler;
+    if (!linkHandler) {
+      throw new Error("Expected xterm to be mounted with a link handler for OSC 8 links");
+    }
+    const activation = new MouseEvent("click", { cancelable: true });
+    linkHandler.activate(activation, "https://example.com", {
+      start: { x: 1, y: 1 },
+      end: { x: 9, y: 1 },
+    });
+
+    await waitFor({ predicate: () => mounted.externalUrls.length > 0 });
+    expect(mounted.externalUrls).toEqual(["https://example.com"]);
+    expect(activation.defaultPrevented).toBe(true);
+  });
+
   it("passes configured scrollback to xterm", async () => {
     await page.viewport(900, 600);
     createTerminalHost({ width: 720, height: 360, scrollback: 42_000 });
