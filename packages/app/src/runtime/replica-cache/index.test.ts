@@ -513,6 +513,48 @@ describe("ReplicaCache", () => {
     expect(await createCache(storage).readTimeline(SERVER_ID, "agent-1")).toBeUndefined();
   });
 
+  it("restores blocked reasons, phase groups, and abandoned activity after a cache reload", async () => {
+    const storage = new MemoryStorage();
+    const writer = createCache(storage);
+    const todo: StreamItem = {
+      kind: "todo_list",
+      id: "todo-1",
+      provider: "omp",
+      timestamp: new Date("2026-09-07T10:00:00Z"),
+      activity: { type: "abandoned", task: "Old rollout" },
+      items: [
+        { text: "Legacy task", completed: true },
+        {
+          text: "Deploy",
+          completed: false,
+          status: "pending",
+          state: "blocked",
+          phase: "Release",
+          phaseIndex: 0,
+          blocker: "Approval",
+        },
+        {
+          text: "Old rollout",
+          completed: true,
+          status: "completed",
+          state: "abandoned",
+          phase: "Release",
+          phaseIndex: 1,
+        },
+      ],
+    };
+    writer.commitTimeline(SERVER_ID, "agent-1", {
+      agentId: "agent-1",
+      items: [todo],
+      range: { epoch: "epoch-1", startSeq: 12, endSeq: 12 },
+      hasOlder: false,
+    });
+    await writer.flush();
+
+    const reader = createCache(storage);
+    expect((await reader.readTimeline(SERVER_ID, "agent-1"))?.items).toEqual([todo]);
+  });
+
   it("reads one requested agent and the focused timeline without scanning directory rows", async () => {
     const storage = new MemoryStorage();
     const writer = createCache(storage);

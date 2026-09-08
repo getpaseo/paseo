@@ -347,11 +347,14 @@ export const ru: TranslationResources = {
       title: "Задачи",
       empty: "Задач пока нет.",
       tasksProgress: "Задачи: {{completed}}/{{total}}",
+      tasksProgressWithAbandoned: "Задачи: {{settled}}/{{total}} · отменено: {{abandoned}}",
       activity: {
         created: "Создано задач: {{count}}",
         added: "Добавлена",
         started: "Начата",
         completed: "Завершена",
+        blocked: "Заблокирована",
+        abandoned: "Отменена",
       },
     },
     compaction: {

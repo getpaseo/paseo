@@ -16,7 +16,7 @@ import {
   upsertUserMessage,
   upsertUserMessageAcrossStream,
 } from "./stream";
-import type { AgentProvider, ToolCallDetail } from "@getpaseo/protocol/agent-types";
+import type { AgentProvider, AgentTaskItem, ToolCallDetail } from "@getpaseo/protocol/agent-types";
 import type { AgentStreamEventPayload } from "@getpaseo/protocol/messages";
 import { buildToolCallDisplayModel } from "@getpaseo/protocol/tool-call-display";
 import { timelineItemIdentity } from "@getpaseo/protocol/timeline-identity";
@@ -357,13 +357,7 @@ function canonicalToolTimeline(params: {
 }
 
 function todoTimeline(
-  items: Array<{
-    id?: string;
-    text: string;
-    completed: boolean;
-    status?: "pending" | "in_progress" | "completed";
-    activeForm?: string;
-  }>,
+  items: AgentTaskItem[],
   provider: AgentProvider = "codex",
 ): AgentStreamEventPayload {
   return {
@@ -1285,6 +1279,78 @@ describe("stream reducer canonical tool calls", () => {
       { type: "started", task: "Ship fix" },
       { type: "completed", task: "Ship fix" },
     ]);
+  });
+
+  it("preserves rich snapshots and presents blocked and abandoned transitions distinctly", () => {
+    const legacy: AgentTaskItem = { text: "Legacy task", completed: true };
+    const abandoned: AgentTaskItem = {
+      text: "Verify",
+      completed: true,
+      status: "completed",
+      state: "abandoned",
+      phase: "Delivery",
+      phaseIndex: 1,
+    };
+    const initial: AgentTaskItem[] = [
+      legacy,
+      {
+        text: "Ship",
+        completed: false,
+        status: "in_progress",
+        state: "in_progress",
+        phase: "Delivery",
+        phaseIndex: 0,
+      },
+      {
+        text: "Verify",
+        completed: false,
+        status: "pending",
+        state: "pending",
+        phase: "Delivery",
+        phaseIndex: 1,
+      },
+    ];
+    const settled: AgentTaskItem[] = [
+      legacy,
+      {
+        text: "Ship",
+        completed: false,
+        status: "pending",
+        state: "blocked",
+        phase: "Delivery",
+        phaseIndex: 0,
+        blocker: "Approval",
+      },
+      abandoned,
+    ];
+    const updated: AgentTaskItem[] = [
+      legacy,
+      {
+        text: "Ship",
+        completed: false,
+        status: "pending",
+        state: "blocked",
+        phase: "Release",
+        phaseIndex: 2,
+        blocker: "Credentials",
+      },
+      abandoned,
+    ];
+    const state = hydrateStreamState([
+      { event: todoTimeline(initial, "omp"), timestamp: new Date("2026-09-07T10:00:00Z") },
+      { event: todoTimeline(settled, "omp"), timestamp: new Date("2026-09-07T10:00:01Z") },
+      { event: todoTimeline(updated, "omp"), timestamp: new Date("2026-09-07T10:00:02Z") },
+    ]);
+    const lists = state.filter(
+      (item): item is Extract<StreamItem, { kind: "todo_list" }> => item.kind === "todo_list",
+    );
+
+    expect(lists.map((item) => item.activity)).toEqual([
+      { type: "created", count: 3 },
+      { type: "blocked", task: "Ship" },
+      { type: "abandoned", task: "Verify" },
+    ]);
+    expect(lists.at(-1)?.items).toEqual(updated);
   });
 
   it("reports new work after completed tasks without reopening anything", () => {

@@ -343,11 +343,14 @@ export const en = {
       title: "Tasks",
       empty: "No tasks yet.",
       tasksProgress: "{{completed}}/{{total}} tasks",
+      tasksProgressWithAbandoned: "{{settled}}/{{total}} tasks · {{abandoned}} abandoned",
       activity: {
         created: "Created {{count}} tasks",
         added: "Added",
         started: "Started",
         completed: "Completed",
+        blocked: "Blocked",
+        abandoned: "Abandoned",
       },
     },
     compaction: {

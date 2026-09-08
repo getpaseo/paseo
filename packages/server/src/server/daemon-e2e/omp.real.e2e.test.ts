@@ -318,9 +318,9 @@ describe("daemon E2E (real OMP)", () => {
         const hasFreshPair = (snapshot: { completed: boolean }[]): boolean =>
           snapshot.length === 2 && snapshot.every((entry) => !entry.completed);
         expect(snapshots.some(hasFreshPair)).toBe(true);
-        expect(snapshots.at(-1)).toEqual([
-          { text: "verify first child", completed: true },
-          { text: "verify second child", completed: true },
+        expect(snapshots.at(-1)).toMatchObject([
+          { text: "verify first child", completed: true, status: "completed", state: "completed" },
+          { text: "verify second child", completed: true, status: "completed", state: "completed" },
         ]);
       } finally {
         await closeHarness(harness);

@@ -19,7 +19,12 @@ import {
   type OmpProviderIdleScheduler,
 } from "../agent.js";
 import type { OmpUsagePollScheduler } from "../usage-poller.js";
-import type { OmpAgentMessage, OmpRpcSlashCommand } from "../rpc-types.js";
+import type {
+  OmpAgentMessage,
+  OmpRpcSlashCommand,
+  OmpTodoItem,
+  OmpTodoPhase,
+} from "../rpc-types.js";
 import { FakeOmp } from "./fake-omp.js";
 
 const CWD = "/tmp/paseo-omp-agent-test";
@@ -32,6 +37,12 @@ interface OmpHistoryMessage {
 interface OmpResumeHistory {
   user: OmpHistoryMessage;
   assistant: OmpHistoryMessage;
+}
+
+interface OmpTodoToolCompletion {
+  phases: OmpTodoPhase[];
+  isError?: boolean;
+  transport?: "direct" | "xd";
 }
 
 async function writeOmpHistory(history: OmpResumeHistory): Promise<string> {
@@ -144,6 +155,32 @@ export class OmpHarness {
 
   registeredHostTools() {
     return this.omp.latestSession().hostToolSetRequests;
+  }
+
+  reportTodoPhases(phases: unknown): void {
+    const runtime = this.omp.latestSession();
+    runtime.state = { ...runtime.state, todoPhases: phases };
+  }
+
+  completeTodoTool({ phases, isError = false, transport = "direct" }: OmpTodoToolCompletion): void {
+    if (!isError) this.reportTodoPhases(phases);
+    let toolName = "todo";
+    let details: Record<string, unknown> = { phases };
+    if (transport === "xd") {
+      toolName = "write";
+      details = { xdev: { tool: "todo", mode: "execute", inner: { phases } } };
+    }
+    this.omp.latestSession().emit({
+      type: "tool_execution_end",
+      toolCallId: "todo-update",
+      toolName,
+      result: { content: [], details },
+      isError,
+    });
+  }
+
+  remindTodos(todos: OmpTodoItem[]): void {
+    this.omp.latestSession().emit({ type: "todo_reminder", todos });
   }
 
   capabilities() {
@@ -436,6 +473,10 @@ export class OmpHarness {
 
   async availableModes() {
     return await this.requireSession().getAvailableModes();
+  }
+
+  async runtimeInfo() {
+    return await this.requireSession().getRuntimeInfo();
   }
 
   async commands() {

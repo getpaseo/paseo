@@ -355,6 +355,10 @@ export interface AgentTaskItem {
   id?: string;
   status?: "pending" | "in_progress" | "completed";
   activeForm?: string;
+  state?: "pending" | "in_progress" | "completed" | "abandoned" | "blocked";
+  phase?: string;
+  phaseIndex?: number;
+  blocker?: string;
 }
 
 export type AgentTimelineItem =

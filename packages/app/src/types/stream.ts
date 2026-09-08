@@ -1,5 +1,6 @@
 import type {
   AgentProvider,
+  AgentTaskItem,
   AgentTimelineItem,
   JsonValue,
   ToolCallDetail,
@@ -812,17 +813,11 @@ export interface PluginTimelineStreamItem {
   data: JsonValue;
 }
 
-export interface TodoEntry {
-  text: string;
-  completed: boolean;
-  id?: string;
-  status?: "pending" | "in_progress" | "completed";
-  activeForm?: string;
-}
+export type TodoEntry = AgentTaskItem;
 
 export type TaskActivity =
   | { type: "created"; count: number }
-  | { type: "added" | "started" | "completed"; task: string };
+  | { type: "added" | "started" | "completed" | "blocked" | "abandoned"; task: string };
 
 export interface TodoListItem {
   kind: "todo_list";
@@ -1285,20 +1280,12 @@ function appendTodoList(
   timestamp: Date,
   timelineCursor?: TimelinePosition,
 ): StreamItem[] {
-  const normalizedItems = items.map((item) => ({
-    text: item.text,
-    completed: item.completed,
-    ...(item.id ? { id: item.id } : {}),
-    ...(item.status ? { status: item.status } : {}),
-    ...(item.activeForm ? { activeForm: item.activeForm } : {}),
-  }));
-
   const previousIndex = state.findLastIndex(
     (item) => item.kind === "todo_list" && item.provider === provider,
   );
   const previous = state[previousIndex];
   const previousItems = previous?.kind === "todo_list" ? previous.items : [];
-  const activities = deriveTaskActivities(previousItems, normalizedItems);
+  const activities = deriveTaskActivities(previousItems, items);
 
   if (activities.length === 0) {
     if (!previous || previous.kind !== "todo_list") return state;
@@ -1306,7 +1293,7 @@ function appendTodoList(
     next[previousIndex] = {
       ...previous,
       ...(timelineCursor ? { timelineCursor } : {}),
-      items: normalizedItems,
+      items,
       timestamp,
     };
     return next;
@@ -1319,14 +1306,14 @@ function appendTodoList(
     lastItem?.kind === "todo_list" &&
     lastItem.provider === provider &&
     lastItem.activity.type === "created" &&
-    normalizedItems.every((item) => taskStatus(item) === "pending")
+    items.every((item) => taskStatus(item) === "pending")
   ) {
     const next = [...state];
     next[next.length - 1] = {
       ...lastItem,
       ...(timelineCursor ? { timelineCursor } : {}),
-      items: normalizedItems,
-      activity: { type: "created", count: normalizedItems.length },
+      items,
+      activity: { type: "created", count: items.length },
       timestamp,
     };
     return next;
@@ -1334,21 +1321,24 @@ function appendTodoList(
 
   const next = [...state];
   for (const activity of activities) {
-    const idSeed = `${provider}:${JSON.stringify(activity)}:${JSON.stringify(normalizedItems)}`;
+    const idSeed = `${provider}:${JSON.stringify(activity)}:${JSON.stringify(items)}`;
     next.push({
       kind: "todo_list",
       id: createUniqueTimelineId(next, "todo", idSeed, timestamp),
       ...(timelineCursor ? { timelineCursor } : {}),
       timestamp,
       provider,
-      items: normalizedItems,
+      items,
       activity,
     });
   }
   return next;
 }
 
-function taskStatus(task: TodoEntry): NonNullable<TodoEntry["status"]> {
+export function taskStatus(task: TodoEntry): NonNullable<TodoEntry["state"]> {
+  if (task.state) return task.state;
+  // COMPAT(todoState): added after v0.7.2, remove after 2027-03-07 once supported
+  // daemons and all providers send state instead of the legacy completion projection.
   if (task.completed || task.status === "completed") return "completed";
   return task.status === "in_progress" ? "in_progress" : "pending";
 }
@@ -1380,6 +1370,8 @@ function deriveTaskActivities(
       activities.push({ type: "completed", task: task.text });
     } else if (after === "in_progress") {
       activities.push({ type: "started", task: task.text });
+    } else if (after === "blocked" || after === "abandoned") {
+      activities.push({ type: after, task: task.text });
     }
   }
   return activities;
@@ -1537,15 +1529,8 @@ function reduceTimelineEvent(
         reduceTimelineToolCall(state, event, item, timestamp, timelineCursor),
       );
     case "todo": {
-      const items: TodoEntry[] = (item.items ?? []).map((todo) => ({
-        text: todo.text,
-        completed: todo.completed,
-        id: todo.id,
-        status: todo.status,
-        activeForm: todo.activeForm,
-      }));
       return finalizeActiveThoughts(
-        appendTodoList(state, event.provider, items, timestamp, timelineCursor),
+        appendTodoList(state, event.provider, item.items, timestamp, timelineCursor),
       );
     }
     case "error": {

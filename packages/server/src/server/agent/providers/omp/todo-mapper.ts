@@ -1,54 +1,69 @@
+import { z } from "zod";
+
 import type { AgentTimelineItem } from "../../agent-sdk-types.js";
 import type { OmpSessionState } from "./rpc-types.js";
-import type { OmpToolResult } from "./tool-call-detail.js";
-import {
-  OmpTodoPhaseSchema,
-  OmpTodoReminderEventSchema,
-  type OmpTodoItem,
-  type OmpTodoPhase,
-} from "./rpc-types.js";
+import { XdevExecuteDetailsSchema, type OmpToolResult } from "./tool-call-detail.js";
+import { OmpTodoPhaseSchema, type OmpTodoItem, type OmpTodoPhase } from "./rpc-types.js";
 
-export function mapOmpTodoToolResult(result: OmpToolResult): AgentTimelineItem | null {
+interface OmpTodoToolResultInput {
+  toolName: string;
+  result: OmpToolResult;
+}
+
+const TodoPhasesSchema = OmpTodoPhaseSchema.array();
+const XdevTodoDetailsSchema = XdevExecuteDetailsSchema.extend({
+  tool: z.literal("todo"),
+  inner: z.object({ phases: TodoPhasesSchema }),
+});
+
+export function mapOmpTodoToolResult({
+  toolName,
+  result,
+}: OmpTodoToolResultInput): AgentTimelineItem | null {
+  if (result === null || typeof result === "string" || result.isError) return null;
   const details = resultDetails(result);
-  const phases = OmpTodoPhaseSchema.array().safeParse(details?.phases);
+  if (toolName === "write") {
+    const xdev = XdevTodoDetailsSchema.safeParse(details?.xdev);
+    return xdev.success ? mapOmpTodoPhases(xdev.data.inner.phases) : null;
+  }
+  if (toolName !== "todo") return null;
+  const phases = TodoPhasesSchema.safeParse(details?.phases);
   return phases.success ? mapOmpTodoPhases(phases.data) : null;
 }
 
-export function mapOmpTodoReminderEvent(event: unknown): AgentTimelineItem | null {
-  const parsed = OmpTodoReminderEventSchema.safeParse(event);
-  return parsed.success ? mapOmpTodoItems(parsed.data.todos) : null;
-}
-
 export function mapOmpTodoState(state: OmpSessionState): AgentTimelineItem[] {
-  const phases = OmpTodoPhaseSchema.array().safeParse(state.todoPhases);
+  const phases = TodoPhasesSchema.safeParse(state.todoPhases);
   if (!phases.success) {
     return [];
   }
-  const item = mapOmpTodoPhases(phases.data);
-  return item ? [item] : [];
+  return [mapOmpTodoPhases(phases.data)];
 }
 
-export function mapOmpTodoPhases(phases: readonly OmpTodoPhase[]): AgentTimelineItem | null {
-  const todos = phases.flatMap((phase) => phase.tasks);
-  return mapOmpTodoItems(todos);
-}
-
-function mapOmpTodoItems(items: readonly OmpTodoItem[]): AgentTimelineItem | null {
-  if (items.length === 0) {
-    return null;
-  }
+export function mapOmpTodoPhases(phases: readonly OmpTodoPhase[]): AgentTimelineItem {
   return {
     type: "todo",
-    items: items.map((item) => ({
-      text: item.content,
-      status: normalizeOmpTodoStatus(item.status),
-      completed: item.status === "completed",
-    })),
+    items: phases.flatMap((phase, phaseIndex) =>
+      phase.tasks.map((item) => {
+        const status = normalizeOmpTodoStatus(item.status);
+        return {
+          text: item.content,
+          status,
+          completed: status === "completed",
+          state: item.status,
+          phase: phase.name,
+          phaseIndex,
+          ...(item.blocker !== undefined ? { blocker: item.blocker } : {}),
+        };
+      }),
+    ),
   };
 }
 
+// COMPAT(todoState): added after v0.7.2, remove after 2027-03-07 once supported
+// clients read state. The legacy status enum cannot carry blocked or abandoned;
+// abandoned must remain terminal for clients that only read completed/status.
 function normalizeOmpTodoStatus(status: OmpTodoItem["status"]) {
-  if (status === "completed") return "completed" as const;
+  if (status === "completed" || status === "abandoned") return "completed" as const;
   if (status === "in_progress") return "in_progress" as const;
   return "pending" as const;
 }

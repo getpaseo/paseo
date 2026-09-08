@@ -1,4 +1,4 @@
-import type { AgentTimelineItem } from "./agent-sdk-types.js";
+import type { AgentTaskItem, AgentTimelineItem } from "./agent-sdk-types.js";
 import type { AgentAttachment } from "@getpaseo/protocol/messages";
 import type { AgentTimelineRow } from "./agent-timeline-store-types.js";
 import { isLikelyExternalToolName } from "@getpaseo/protocol/tool-name-normalization";
@@ -132,6 +132,25 @@ function formatToolCallEntry(
   return activityEntry(summary ? `[${displayName}] ${summary}` : `[${displayName}]`);
 }
 
+function appendTodoEntries(entries: ActivityEntry[], items: readonly AgentTaskItem[]): void {
+  entries.push(activityEntry("[Tasks]"));
+  let previousPhase: string | undefined;
+  let previousPhaseIndex: number | undefined;
+  for (const entry of items) {
+    const phaseChanged = entry.phase !== previousPhase || entry.phaseIndex !== previousPhaseIndex;
+    if (entry.phase !== undefined && phaseChanged) {
+      entries.push(activityEntry(`[Phase] ${entry.phase}`));
+    }
+    previousPhase = entry.phase;
+    previousPhaseIndex = entry.phaseIndex;
+    const checkbox = entry.completed ? "[x]" : "[ ]";
+    const marker = entry.state ? `[${entry.state}]` : checkbox;
+    let text = `- ${marker} ${entry.text}`;
+    if (entry.blocker !== undefined) text += ` — ${entry.blocker}`;
+    entries.push(activityEntry(text));
+  }
+}
+
 function curateProjectedActivityEntries(
   items: readonly AgentTimelineItem[],
   options?: ActivityCuratorOptions,
@@ -172,12 +191,7 @@ function curateProjectedActivityEntries(
       }
       case "todo":
         flushBuffers(entries, buffers, options);
-        entries.push(activityEntry("[Tasks]"));
-        for (const entry of item.items) {
-          const checkbox = entry.completed ? "[x]" : "[ ]";
-          const text = `- ${checkbox} ${entry.text}`;
-          entries.push(activityEntry(text));
-        }
+        appendTodoEntries(entries, item.items);
         break;
       case "error":
         flushBuffers(entries, buffers, options);

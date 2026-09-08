@@ -11,7 +11,7 @@ import {
   LIVE_HISTORY_FETCH_TIMEOUT_MS,
 } from "../../utils/timeline.js";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
-import type { AgentTimelineItem } from "@getpaseo/protocol/agent-types";
+import type { AgentTaskItem, AgentTimelineItem } from "@getpaseo/protocol/agent-types";
 import type { AgentStreamEventPayload, AgentStreamMessage } from "@getpaseo/protocol/messages";
 
 export interface AgentAttachOptions {
@@ -41,12 +41,9 @@ function printTimelineItem(item: AgentTimelineItem): void {
       break;
     }
 
-    case "todo": {
-      const completed = item.items.filter((i) => i.completed).length;
-      const total = item.items.length;
-      console.log(`\n[Todo] ${completed}/${total} completed`);
+    case "todo":
+      printTodoItems(item.items);
       break;
-    }
 
     case "error":
       console.error(`\n[Error] ${item.message}`);
@@ -59,6 +56,42 @@ function printTimelineItem(item: AgentTimelineItem): void {
     default:
       // Unknown item type, skip
       break;
+  }
+}
+
+function printTodoItems(items: readonly AgentTaskItem[]): void {
+  let completed = 0;
+  let blocked = 0;
+  let abandoned = 0;
+  let hasDetails = false;
+  for (const task of items) {
+    if (task.state === "completed" || (!task.state && task.completed)) completed += 1;
+    if (task.state === "blocked") blocked += 1;
+    if (task.state === "abandoned") abandoned += 1;
+    hasDetails ||=
+      task.state !== undefined || task.phase !== undefined || task.blocker !== undefined;
+  }
+  let summary = `${completed}/${items.length} completed`;
+  if (blocked > 0) summary += `, ${blocked} blocked`;
+  if (abandoned > 0) summary += `, ${abandoned} abandoned`;
+  console.log(`\n[Todo] ${summary}`);
+  if (hasDetails) printTodoDetails(items);
+}
+
+function printTodoDetails(items: readonly AgentTaskItem[]): void {
+  let previousPhase: string | undefined;
+  let previousPhaseIndex: number | undefined;
+  for (const task of items) {
+    const phaseChanged = task.phase !== previousPhase || task.phaseIndex !== previousPhaseIndex;
+    if (task.phase !== undefined && phaseChanged) console.log(`  ${task.phase}`);
+    previousPhase = task.phase;
+    previousPhaseIndex = task.phaseIndex;
+    let state = task.state ?? task.status;
+    if (!task.state && task.completed) state = "completed";
+    state ??= "pending";
+    let line = `  - [${state}] ${task.text}`;
+    if (task.blocker !== undefined) line += ` — ${task.blocker}`;
+    console.log(line);
   }
 }
 

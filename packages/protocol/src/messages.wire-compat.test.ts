@@ -66,6 +66,19 @@ const LegacyAgentSnapshotPayloadSchema = AgentSnapshotPayloadSchema.extend({
   capabilities: LegacyAgentCapabilityFlagsSchema,
 });
 
+const LegacyTodoTimelineItemSchema = z.object({
+  type: z.literal("todo"),
+  items: z.array(
+    z.object({
+      text: z.string(),
+      completed: z.boolean(),
+      id: z.string().optional(),
+      status: z.enum(["pending", "in_progress", "completed"]).optional(),
+      activeForm: z.string().optional(),
+    }),
+  ),
+});
+
 describe("wire schema compatibility", () => {
   test("hello parses with and without the project update capability", () => {
     const legacy = WSHelloMessageSchema.parse({
@@ -195,6 +208,46 @@ describe("wire schema compatibility", () => {
         },
       ],
     });
+  });
+
+  test("rich task metadata preserves the v0.7.2 status and terminal wire contract", () => {
+    const snapshot = {
+      type: "todo",
+      items: [
+        {
+          text: "Deploy",
+          completed: false,
+          status: "pending",
+          state: "blocked",
+          phase: "Delivery",
+          phaseIndex: 1,
+          blocker: "Waiting for approval",
+        },
+        {
+          text: "Old rollout",
+          completed: true,
+          status: "completed",
+          state: "abandoned",
+          phase: "Delivery",
+          phaseIndex: 1,
+        },
+      ],
+    };
+
+    expect(AgentTimelineItemPayloadSchema.parse(snapshot)).toEqual(snapshot);
+    expect(LegacyTodoTimelineItemSchema.parse(snapshot)).toEqual({
+      type: "todo",
+      items: [
+        { text: "Deploy", completed: false, status: "pending" },
+        { text: "Old rollout", completed: true, status: "completed" },
+      ],
+    });
+    expect(
+      AgentTimelineItemPayloadSchema.safeParse({
+        type: "todo",
+        items: [{ text: "Deploy", completed: false, status: "blocked" }],
+      }).success,
+    ).toBe(false);
   });
 
   test("sub_agent tool-call payload still parses against the v0.1.65-beta.3 schema", () => {

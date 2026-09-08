@@ -138,6 +138,448 @@ describe("OMP agent client and session", () => {
     });
   });
 
+  test("publishes status, blocker, and phase-only changes without reopening abandoned tasks", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    try {
+      omp.completeTodoTool({
+        phases: [{ name: "Plan", tasks: [{ content: "Ship", status: "pending" }] }],
+      });
+      omp.completeTodoTool({
+        transport: "xd",
+        phases: [{ name: "Plan", tasks: [{ content: "Ship", status: "in_progress" }] }],
+      });
+      omp.completeTodoTool({
+        transport: "xd",
+        phases: [
+          { name: "Plan", tasks: [{ content: "Ship", status: "blocked", blocker: "Approval" }] },
+        ],
+      });
+      omp.completeTodoTool({
+        phases: [
+          { name: "Plan", tasks: [{ content: "Ship", status: "blocked", blocker: "Credentials" }] },
+        ],
+      });
+      omp.completeTodoTool({
+        phases: [
+          { name: "Preparation", tasks: [] },
+          {
+            name: "Delivery",
+            tasks: [{ content: "Ship", status: "blocked", blocker: "Credentials" }],
+          },
+        ],
+      });
+      omp.completeTodoTool({
+        transport: "xd",
+        phases: [{ name: "Delivery", tasks: [{ content: "Ship", status: "abandoned" }] }],
+      });
+
+      const snapshots = omp
+        .timeline()
+        .flatMap((item) => (item.type === "todo" ? [item.items] : []));
+      expect(snapshots).toEqual([
+        [
+          {
+            text: "Ship",
+            completed: false,
+            status: "pending",
+            state: "pending",
+            phase: "Plan",
+            phaseIndex: 0,
+          },
+        ],
+        [
+          {
+            text: "Ship",
+            completed: false,
+            status: "in_progress",
+            state: "in_progress",
+            phase: "Plan",
+            phaseIndex: 0,
+          },
+        ],
+        [
+          {
+            text: "Ship",
+            completed: false,
+            status: "pending",
+            state: "blocked",
+            phase: "Plan",
+            phaseIndex: 0,
+            blocker: "Approval",
+          },
+        ],
+        [
+          {
+            text: "Ship",
+            completed: false,
+            status: "pending",
+            state: "blocked",
+            phase: "Plan",
+            phaseIndex: 0,
+            blocker: "Credentials",
+          },
+        ],
+        [
+          {
+            text: "Ship",
+            completed: false,
+            status: "pending",
+            state: "blocked",
+            phase: "Delivery",
+            phaseIndex: 1,
+            blocker: "Credentials",
+          },
+        ],
+        [
+          {
+            text: "Ship",
+            completed: true,
+            status: "completed",
+            state: "abandoned",
+            phase: "Delivery",
+            phaseIndex: 0,
+          },
+        ],
+      ]);
+    } finally {
+      await omp.close();
+    }
+  });
+
+  test("retains full lists across reminder subsets and emits authoritative idle reconciliation", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    try {
+      omp.completeTodoTool({
+        phases: [
+          {
+            name: "Delivery",
+            tasks: [
+              { content: "Done", status: "completed" },
+              { content: "Active", status: "in_progress" },
+              { content: "Waiting", status: "blocked", blocker: "Approval" },
+              { content: "Retired", status: "abandoned" },
+            ],
+          },
+        ],
+      });
+      omp.remindTodos([{ content: "Active", status: "in_progress" }]);
+      expect(omp.timeline().flatMap((item) => (item.type === "todo" ? [item.items] : []))).toEqual([
+        [
+          {
+            text: "Done",
+            completed: true,
+            status: "completed",
+            state: "completed",
+            phase: "Delivery",
+            phaseIndex: 0,
+          },
+          {
+            text: "Active",
+            completed: false,
+            status: "in_progress",
+            state: "in_progress",
+            phase: "Delivery",
+            phaseIndex: 0,
+          },
+          {
+            text: "Waiting",
+            completed: false,
+            status: "pending",
+            state: "blocked",
+            phase: "Delivery",
+            phaseIndex: 0,
+            blocker: "Approval",
+          },
+          {
+            text: "Retired",
+            completed: true,
+            status: "completed",
+            state: "abandoned",
+            phase: "Delivery",
+            phaseIndex: 0,
+          },
+        ],
+      ]);
+
+      omp.reportTodoPhases([
+        {
+          name: "Delivery",
+          tasks: [
+            { content: "Done", status: "completed" },
+            { content: "Active", status: "completed" },
+            { content: "Waiting", status: "blocked", blocker: "Approval" },
+            { content: "Retired", status: "abandoned" },
+          ],
+        },
+      ]);
+      await omp.runPrompt("Finish active work", "Active work finished");
+
+      const snapshots = omp
+        .timeline()
+        .flatMap((item) => (item.type === "todo" ? [item.items] : []));
+      expect(snapshots).toHaveLength(2);
+      expect(snapshots[1]).toEqual([
+        {
+          text: "Done",
+          completed: true,
+          status: "completed",
+          state: "completed",
+          phase: "Delivery",
+          phaseIndex: 0,
+        },
+        {
+          text: "Active",
+          completed: true,
+          status: "completed",
+          state: "completed",
+          phase: "Delivery",
+          phaseIndex: 0,
+        },
+        {
+          text: "Waiting",
+          completed: false,
+          status: "pending",
+          state: "blocked",
+          phase: "Delivery",
+          phaseIndex: 0,
+          blocker: "Approval",
+        },
+        {
+          text: "Retired",
+          completed: true,
+          status: "completed",
+          state: "abandoned",
+          phase: "Delivery",
+          phaseIndex: 0,
+        },
+      ]);
+    } finally {
+      await omp.close();
+    }
+  });
+
+  test("ignores absent, malformed, and failed updates but publishes an explicit clear", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    try {
+      const expectedTodo = [
+        {
+          text: "Ship",
+          completed: false,
+          status: "pending",
+          state: "blocked",
+          phase: "Delivery",
+          phaseIndex: 0,
+          blocker: "Approval",
+        },
+      ];
+      omp.completeTodoTool({
+        phases: [
+          {
+            name: "Delivery",
+            tasks: [{ content: "Ship", status: "blocked", blocker: "Approval" }],
+          },
+        ],
+      });
+      omp.completeTodoTool({ phases: [], isError: true });
+      omp.reportTodoPhases(undefined);
+      await omp.runPrompt("Check state", "State has no todo snapshot");
+      omp.reportTodoPhases([{ name: "Bad", tasks: [{}] }]);
+      await omp.runPrompt("Check state again", "State has an invalid todo snapshot");
+      expect(
+        (await omp.history()).flatMap((item) => (item.type === "todo" ? [item.items] : [])).at(-1),
+      ).toEqual(expectedTodo);
+      omp.reportTodoPhases([]);
+      await omp.runPrompt("Clear tasks", "Tasks cleared");
+
+      expect(omp.timeline().flatMap((item) => (item.type === "todo" ? [item.items] : []))).toEqual([
+        expectedTodo,
+        [],
+      ]);
+      expect(
+        (await omp.history()).flatMap((item) => (item.type === "todo" ? [item.items] : [])).at(-1),
+      ).toEqual([]);
+    } finally {
+      await omp.close();
+    }
+  });
+
+  test("does not let an in-flight state response reopen a newer terminal todo update", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    try {
+      omp.completeTodoTool({
+        phases: [{ name: "Delivery", tasks: [{ content: "Old rollout", status: "pending" }] }],
+      });
+      const stateRequested = omp.waitForProviderStateChecks(2);
+      const completion = omp.runPrompt("Retire the rollout", "Rollout retired");
+      await stateRequested;
+      omp.completeTodoTool({
+        transport: "xd",
+        phases: [{ name: "Delivery", tasks: [{ content: "Old rollout", status: "abandoned" }] }],
+      });
+      await completion;
+
+      expect(omp.timeline().flatMap((item) => (item.type === "todo" ? [item.items] : []))).toEqual([
+        [
+          {
+            text: "Old rollout",
+            completed: false,
+            status: "pending",
+            state: "pending",
+            phase: "Delivery",
+            phaseIndex: 0,
+          },
+        ],
+        [
+          {
+            text: "Old rollout",
+            completed: true,
+            status: "completed",
+            state: "abandoned",
+            phase: "Delivery",
+            phaseIndex: 0,
+          },
+        ],
+      ]);
+    } finally {
+      await omp.close();
+    }
+  });
+
+  test.each([
+    { order: "older first", completionOrder: [0, 1] as const, newestState: "abandoned" },
+    { order: "newer first", completionOrder: [1, 0] as const, newestState: "abandoned" },
+    { order: "older first", completionOrder: [0, 1] as const, newestState: "empty" },
+    { order: "newer first", completionOrder: [1, 0] as const, newestState: "empty" },
+  ])(
+    "retains the newest $newestState todo snapshot when refreshes resolve $order",
+    async ({ completionOrder, newestState }) => {
+      const omp = new OmpHarness();
+      await omp.start();
+      try {
+        omp.completeTodoTool({
+          phases: [
+            {
+              name: "Delivery",
+              tasks: [{ content: "Ship", status: "blocked", blocker: "Approval" }],
+            },
+          ],
+        });
+        const newestPhases =
+          newestState === "empty"
+            ? []
+            : [
+                { name: "Preparation", tasks: [] },
+                { name: "Delivery", tasks: [{ content: "Ship", status: "abandoned" }] },
+              ];
+        const expectedTodo =
+          newestState === "empty"
+            ? []
+            : [
+                {
+                  text: "Ship",
+                  completed: true,
+                  status: "completed",
+                  state: "abandoned",
+                  phase: "Delivery",
+                  phaseIndex: 1,
+                },
+              ];
+
+        const releaseOlder = omp.runtime().holdNextStateResponse();
+        omp.reportTodoPhases([
+          { name: "Delivery", tasks: [{ content: "Ship", status: "pending" }] },
+        ]);
+        const olderRefresh = omp.runtimeInfo();
+        await omp.waitForProviderStateChecks(2);
+
+        const releaseNewer = omp.runtime().holdNextStateResponse();
+        omp.reportTodoPhases(newestPhases);
+        const newerRefresh = omp.runtimeInfo();
+        await omp.waitForProviderStateChecks(3);
+
+        const releases = [releaseOlder, releaseNewer] as const;
+        const refreshes = [olderRefresh, newerRefresh] as const;
+        for (const index of completionOrder) {
+          releases[index]();
+          await refreshes[index];
+        }
+
+        expect(
+          omp
+            .timeline()
+            .flatMap((item) => (item.type === "todo" ? [item.items] : []))
+            .at(-1),
+        ).toEqual(expectedTodo);
+        expect(
+          (await omp.history())
+            .flatMap((item) => (item.type === "todo" ? [item.items] : []))
+            .at(-1),
+        ).toEqual(expectedTodo);
+      } finally {
+        await omp.close();
+      }
+    },
+  );
+
+  test.each([
+    {
+      snapshot: "blocked",
+      transport: "direct" as const,
+      phases: [
+        {
+          name: "Delivery",
+          tasks: [{ content: "Ship", status: "blocked" as const, blocker: "Approval" }],
+        },
+      ],
+      expectedTodo: [
+        {
+          text: "Ship",
+          completed: false,
+          status: "pending",
+          state: "blocked",
+          phase: "Delivery",
+          phaseIndex: 0,
+          blocker: "Approval",
+        },
+      ],
+    },
+    { snapshot: "empty", transport: "xd" as const, phases: [], expectedTodo: [] },
+  ])(
+    "keeps an identical live $snapshot snapshot ahead of a stale state response",
+    async ({ transport, phases, expectedTodo }) => {
+      const omp = new OmpHarness();
+      await omp.start();
+      try {
+        omp.completeTodoTool({ phases });
+        const releaseState = omp.runtime().holdNextStateResponse();
+        omp.reportTodoPhases([
+          { name: "Delivery", tasks: [{ content: "Ship", status: "pending" }] },
+        ]);
+        const refresh = omp.runtimeInfo();
+        await omp.waitForProviderStateChecks(2);
+
+        omp.completeTodoTool({ phases, transport });
+        releaseState();
+        await refresh;
+
+        expect(
+          omp.timeline().flatMap((item) => (item.type === "todo" ? [item.items] : [])),
+        ).toEqual([expectedTodo]);
+        expect(
+          (await omp.history())
+            .flatMap((item) => (item.type === "todo" ? [item.items] : []))
+            .at(-1),
+        ).toEqual(expectedTodo);
+      } finally {
+        await omp.close();
+      }
+    },
+  );
+
   test("preserves max as the selected thinking option", async () => {
     const omp = new OmpHarness();
     await omp.start({ thinkingOptionId: "max" });

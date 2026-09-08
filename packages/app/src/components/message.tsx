@@ -2227,6 +2227,10 @@ function taskActivityIcon(activity: TaskActivity) {
       return CircleDot;
     case "completed":
       return Check;
+    case "blocked":
+      return TriangleAlertIcon;
+    case "abandoned":
+      return XCircle;
     default:
       return CheckSquare;
   }
@@ -2276,7 +2280,13 @@ export const TodoListCard = memo(function TodoListCard({
           {items.length === 0 ? (
             <Text style={todoListCardStylesheet.emptyText}>{t("message.todo.empty")}</Text>
           ) : (
-            items.map((item) => <TaskListRow key={item.id ?? item.text} task={item} />)
+            items.map((item, index) => (
+              <TaskListRow
+                key={item.id ?? `${index}:${item.text}`}
+                task={item}
+                previousTask={items[index - 1]}
+              />
+            ))
           )}
         </View>
       </View>

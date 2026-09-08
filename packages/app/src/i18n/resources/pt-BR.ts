@@ -348,11 +348,14 @@ export const ptBR: TranslationResources = {
       title: "Tarefas",
       empty: "Nenhuma tarefa ainda.",
       tasksProgress: "{{completed}}/{{total}} tarefas",
+      tasksProgressWithAbandoned: "{{settled}}/{{total}} tarefas · abandonadas: {{abandoned}}",
       activity: {
         created: "{{count}} tarefas criadas",
         added: "Adicionada",
         started: "Iniciada",
         completed: "Concluída",
+        blocked: "Bloqueada",
+        abandoned: "Abandonada",
       },
     },
     compaction: {

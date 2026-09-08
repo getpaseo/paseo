@@ -54,6 +54,7 @@ interface OmpToolResultObject {
   content?: OmpToolResultContent[];
   exitCode?: number;
   code?: number;
+  isError?: boolean;
   details?: OmpToolResultDetails;
 }
 
@@ -160,7 +161,7 @@ const OmpToolResultDetailsSchema = z
   })
   .passthrough();
 
-const XdevExecuteDetailsSchema = z.object({
+export const XdevExecuteDetailsSchema = z.object({
   tool: z.string().trim().min(1),
   mode: z.literal("execute"),
   args: z.unknown().optional(),
@@ -175,6 +176,7 @@ const OmpToolResultObjectSchema = z
     content: z.array(OmpToolResultContentSchema).optional(),
     exitCode: z.number().optional(),
     code: z.number().optional(),
+    isError: z.boolean().optional(),
     details: OmpToolResultDetailsSchema.optional(),
   })
   .passthrough();

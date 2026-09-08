@@ -345,11 +345,14 @@ export const ar: TranslationResources = {
       title: "المهام",
       empty: "لا توجد مهام حتى الآن.",
       tasksProgress: "{{completed}}/{{total}} مهام",
+      tasksProgressWithAbandoned: "{{settled}}/{{total}} مهام · متروكة: {{abandoned}}",
       activity: {
         created: "تم إنشاء {{count}} مهام",
         added: "أُضيفت",
         started: "بدأت",
         completed: "اكتملت",
+        blocked: "متوقفة بسبب عائق",
+        abandoned: "متروكة",
       },
     },
     compaction: {

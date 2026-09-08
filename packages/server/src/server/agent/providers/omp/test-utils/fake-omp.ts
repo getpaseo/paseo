@@ -141,6 +141,7 @@ export class FakeOmpSession implements OmpRuntimeSession {
 
   private readonly subscribers = new Set<(event: OmpRuntimeEvent) => void>();
   private readonly stateReports: OmpSessionState[] = [];
+  private readonly stateResponseHolds: Array<Promise<void>> = [];
   private readonly stateRequestWaiters: Array<{ count: number; resolve: () => void }> = [];
   private readonly hostToolResultWaiters: Array<(result: OmpRpcHostToolResult) => void> = [];
   private readonly promptWaiters: Array<() => void> = [];
@@ -258,7 +259,20 @@ export class FakeOmpSession implements OmpRuntimeSession {
     if (report) {
       this.state = report;
     }
-    return this.state;
+    const state = this.state;
+    const hold = this.stateResponseHolds.shift();
+    if (hold) await hold;
+    return state;
+  }
+
+  holdNextStateResponse(): () => void {
+    let release!: () => void;
+    this.stateResponseHolds.push(
+      new Promise<void>((resolve) => {
+        release = resolve;
+      }),
+    );
+    return release;
   }
 
   queueStateReports(states: OmpSessionState[]): void {

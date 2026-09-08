@@ -346,11 +346,14 @@ export const ko: TranslationResources = {
       title: "작업",
       empty: "아직 작업이 없습니다.",
       tasksProgress: "작업 {{completed}}/{{total}}개",
+      tasksProgressWithAbandoned: "작업 {{settled}}/{{total}}개 · 포기 {{abandoned}}개",
       activity: {
         created: "작업 {{count}}개 생성",
         added: "추가됨",
         started: "시작됨",
         completed: "완료됨",
+        blocked: "차단됨",
+        abandoned: "포기됨",
       },
     },
     compaction: {

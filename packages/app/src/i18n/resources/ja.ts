@@ -348,11 +348,14 @@ export const ja: TranslationResources = {
       title: "タスク",
       empty: "タスクがまだありません。",
       tasksProgress: "{{completed}}/{{total}}タスク",
+      tasksProgressWithAbandoned: "{{settled}}/{{total}}タスク · 放棄 {{abandoned}}件",
       activity: {
         created: "{{count}}件のタスクを作成",
         added: "追加",
         started: "開始",
         completed: "完了",
+        blocked: "ブロック中",
+        abandoned: "放棄",
       },
     },
     compaction: {

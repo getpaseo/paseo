@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { setImmediate as waitForImmediate, setTimeout as delay } from "node:timers/promises";
+import equal from "fast-deep-equal";
 import type { Logger } from "pino";
 import stripAnsi from "strip-ansi";
 
@@ -92,7 +93,7 @@ import {
 } from "./tool-call-detail.js";
 import { mapOmpAvailableCommandsUpdate, mapOmpRuntimeSlashCommands } from "./commands.js";
 import { streamOmpHistory } from "./history.js";
-import { mapOmpTodoReminderEvent, mapOmpTodoState, mapOmpTodoToolResult } from "./todo-mapper.js";
+import { mapOmpTodoState, mapOmpTodoToolResult } from "./todo-mapper.js";
 import { mapOmpRuntimeEventToTimelineItem } from "./event-mapper.js";
 import { mapOmpAdvisorMessageToToolCall } from "./advisor-message.js";
 import {
@@ -869,6 +870,9 @@ export class OmpAgentSession implements AgentSession {
   private readonly subagentIndex = new OmpSubagentIndex();
   private readonly subagentCardTracker: OmpSubagentCardTracker;
   private lastTodoItem: Extract<AgentTimelineItem, { type: "todo" }> | null = null;
+  private liveTodoRevision = 0;
+  private stateRefreshSequence = 0;
+  private appliedStateRefreshSequence = 0;
   private state: OmpSessionState;
   private readonly currentModeId: string | null;
   private readonly providerIdleScheduler: OmpProviderIdleScheduler;
@@ -1034,7 +1038,9 @@ export class OmpAgentSession implements AgentSession {
       runtimeSession: this.runtimeSession,
       provider: this.provider,
     });
-    for (const item of mapOmpTodoState(this.state)) {
+    // Live tool results can be newer than the last raw state response, including clears.
+    const todoItems = this.lastTodoItem ? [this.lastTodoItem] : mapOmpTodoState(this.state);
+    for (const item of todoItems) {
       yield {
         type: "timeline",
         provider: this.provider,
@@ -1666,12 +1672,8 @@ export class OmpAgentSession implements AgentSession {
       return true;
     }
     if (event.type === "todo_reminder") {
-      const item = mapOmpTodoReminderEvent(event);
-      if (item) {
-        this.emitTodoItem(item);
-      } else {
-        this.logger.debug({ event }, "Dropped malformed OMP todo reminder event");
-      }
+      // Reminder todos are only the unfinished subset, not an authoritative snapshot.
+      // Full phases arrive through todo results and the existing get_state refreshes.
       return true;
     }
     if (event.type === "available_commands_update") {
@@ -1709,16 +1711,7 @@ export class OmpAgentSession implements AgentSession {
 
   private emitTodoItem(item: AgentTimelineItem, turnId?: string): void {
     if (item.type === "todo") {
-      const previous = this.lastTodoItem;
-      const isDuplicate =
-        previous?.items.length === item.items.length &&
-        previous.items.every((previousItem, index) => {
-          const nextItem = item.items[index];
-          return (
-            nextItem?.text === previousItem.text && nextItem.completed === previousItem.completed
-          );
-        });
-      if (isDuplicate) {
+      if (equal(this.lastTodoItem?.items, item.items)) {
         return;
       }
       this.lastTodoItem = item;
@@ -1918,11 +1911,14 @@ export class OmpAgentSession implements AgentSession {
     if (event.toolName === "task") {
       this.subagentCardTracker.delete(event.toolCallId);
     }
-    if (event.toolName === "todo") {
-      const item = mapOmpTodoToolResult(result);
+    const isTodoTransport = event.toolName === "todo" || event.toolName === "write";
+    if (isTodoTransport && !event.isError) {
+      const item = mapOmpTodoToolResult({ toolName: event.toolName, result });
       if (item) {
+        // Even a deduplicated live result supersedes responses requested before it.
+        this.liveTodoRevision += 1;
         this.emitTodoItem(item, turnId);
-      } else {
+      } else if (event.toolName === "todo") {
         this.logger.debug({ event }, "Dropped malformed OMP todo tool result");
       }
     }
@@ -2159,9 +2155,8 @@ export class OmpAgentSession implements AgentSession {
   ): Promise<void> {
     while (!this.closed && this.activeTurnStarted && this.currentTurnIdForEvent() === turnId) {
       try {
-        const state = await this.runtimeSession.getState();
-        this.state = state;
-        if (!state.isStreaming && !state.isCompacting) {
+        await this.refreshState();
+        if (!this.state.isStreaming && !this.state.isCompacting) {
           this.completeTurn(turnId, messages);
           return;
         }
@@ -2173,7 +2168,17 @@ export class OmpAgentSession implements AgentSession {
   }
 
   private async refreshState(): Promise<void> {
-    this.state = await this.runtimeSession.getState();
+    const refreshSequence = ++this.stateRefreshSequence;
+    const liveTodoRevision = this.liveTodoRevision;
+    const state = await this.runtimeSession.getState();
+    if (refreshSequence < this.appliedStateRefreshSequence) return;
+    this.appliedStateRefreshSequence = refreshSequence;
+
+    const todoItems = liveTodoRevision === this.liveTodoRevision ? mapOmpTodoState(state) : [];
+    this.state = todoItems.length > 0 ? state : { ...state, todoPhases: this.state.todoPhases };
+    for (const item of todoItems) {
+      this.emitTodoItem(item, this.currentTurnIdForEvent());
+    }
   }
 
   private async refreshAfterTurn(finalUsage: Promise<void>): Promise<void> {

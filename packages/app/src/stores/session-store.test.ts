@@ -11,7 +11,7 @@ import {
   type Agent,
   type WorkspaceDescriptor,
 } from "./session-store";
-import type { StreamItem } from "../types/stream";
+import type { StreamItem, TodoEntry } from "../types/stream";
 import { reduceTurnLiveness, type TurnLivenessTransition } from "@/timeline/turn-liveness";
 
 function createTestAgent(agentId: string): Agent {
@@ -154,6 +154,55 @@ describe("agent task state", () => {
     unsubscribe();
 
     expect(snapshots).toEqual([["Inspect"], ["Inspect"]]);
+  });
+
+  it("notifies task consumers for blocker and phase changes without changing legacy completion", () => {
+    initializeTestSession();
+    const snapshots: TodoEntry[][] = [];
+    const unsubscribe = useSessionStore.subscribe(
+      (state) => state.sessions["test-server"]?.agentTasks.get("agent-1") ?? [],
+      (tasks) => snapshots.push(tasks),
+    );
+    const blocked: TodoEntry = {
+      text: "Deploy",
+      completed: false,
+      status: "pending",
+      state: "blocked",
+      phase: "Release",
+      phaseIndex: 0,
+      blocker: "Approval",
+    };
+    const changed: TodoEntry = {
+      ...blocked,
+      phase: "Delivery",
+      phaseIndex: 1,
+      blocker: "Credentials",
+    };
+    const abandoned: TodoEntry = {
+      text: "Old rollout",
+      completed: true,
+      status: "completed",
+      state: "abandoned",
+      phase: "Release",
+      phaseIndex: 0,
+    };
+    try {
+      useSessionStore.getState().setAgentStreamState("test-server", "agent-1", {
+        taskSnapshot: [blocked, abandoned],
+      });
+      useSessionStore.getState().setAgentStreamState("test-server", "agent-1", {
+        taskSnapshot: [{ ...blocked }, { ...abandoned }],
+      });
+      useSessionStore.getState().setAgentStreamState("test-server", "agent-1", {
+        taskSnapshot: [changed, abandoned],
+      });
+      expect(snapshots).toEqual([
+        [blocked, abandoned],
+        [changed, abandoned],
+      ]);
+    } finally {
+      unsubscribe();
+    }
   });
 
   it("restores the latest task snapshot from an authoritative timeline", () => {

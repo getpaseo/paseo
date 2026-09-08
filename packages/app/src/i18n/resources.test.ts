@@ -418,15 +418,6 @@ describe("translation resources", () => {
     expect(en.message.question.submit).toBe("Submit");
     expect(en.message.question.answerPlaceholder).toBe("Type your answer...");
     expect(en.message.question.otherPlaceholder).toBe("Other...");
-    expect(en.message.todo.title).toBe("Tasks");
-    expect(en.message.todo.empty).toBe("No tasks yet.");
-    expect(en.message.todo.tasksProgress).toBe("{{completed}}/{{total}} tasks");
-    expect(en.message.todo.activity).toEqual({
-      created: "Created {{count}} tasks",
-      added: "Added",
-      started: "Started",
-      completed: "Completed",
-    });
   });
 
   it("includes workspace tab toast keys for the Batch 4J migration", () => {

@@ -247,6 +247,52 @@ second line'`,
     expect(result).toContain("[Compacted]");
   });
 
+  it("preserves native phase boundaries, blocker reasons, and abandoned state in task context", () => {
+    const timeline: AgentTimelineItem[] = [
+      {
+        type: "todo",
+        items: [
+          { text: "Legacy", completed: true },
+          {
+            text: "Deploy",
+            completed: false,
+            status: "pending",
+            state: "blocked",
+            phase: "Release",
+            phaseIndex: 0,
+            blocker: "Approval",
+          },
+          {
+            text: "Old rollout",
+            completed: true,
+            status: "completed",
+            state: "abandoned",
+            phase: "Release",
+            phaseIndex: 1,
+          },
+          {
+            text: "Prepare",
+            completed: false,
+            status: "in_progress",
+            state: "in_progress",
+            phase: "Release",
+            phaseIndex: 1,
+          },
+        ],
+      },
+    ];
+
+    expect(curateAgentActivity(timeline).split("\n")).toEqual([
+      "[Tasks]",
+      "- [x] Legacy",
+      "[Phase] Release",
+      "- [blocked] Deploy — Approval",
+      "[Phase] Release",
+      "- [abandoned] Old rollout",
+      "- [in_progress] Prepare",
+    ]);
+  });
+
   it("truncates to maxItems", () => {
     const timeline: AgentTimelineItem[] = [
       { type: "user_message", text: "Message 1" },

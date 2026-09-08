@@ -349,11 +349,14 @@ export const fr: TranslationResources = {
       title: "Tâches",
       empty: "Aucune tâche pour l'instant.",
       tasksProgress: "{{completed}}/{{total}} tâches",
+      tasksProgressWithAbandoned: "{{settled}}/{{total}} tâches · abandonnées : {{abandoned}}",
       activity: {
         created: "{{count}} tâches créées",
         added: "Ajoutée",
         started: "Commencée",
         completed: "Terminée",
+        blocked: "Bloquée",
+        abandoned: "Abandonnée",
       },
     },
     compaction: {

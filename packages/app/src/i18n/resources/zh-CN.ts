@@ -345,11 +345,14 @@ export const zhCN: TranslationResources = {
       title: "任务",
       empty: "还没有任务。",
       tasksProgress: "{{completed}}/{{total}} 项任务",
+      tasksProgressWithAbandoned: "{{settled}}/{{total}} 项任务 · 已放弃 {{abandoned}} 项",
       activity: {
         created: "已创建 {{count}} 项任务",
         added: "已添加",
         started: "已开始",
         completed: "已完成",
+        blocked: "受阻",
+        abandoned: "已放弃",
       },
     },
     compaction: {

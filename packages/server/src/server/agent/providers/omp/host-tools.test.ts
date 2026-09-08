@@ -6,11 +6,11 @@ import type { PaseoToolCatalog, PaseoToolDefinition, PaseoToolResult } from "../
 import {
   clearOmpHostToolState,
   handleOmpHostToolRuntimeEvent,
-  serializeOmpHostTools,
+  setOmpHostTools,
   waitForOmpHostToolsIdle,
 } from "./host-tools.js";
-import type { OmpRpcHostToolResult } from "./rpc-types.js";
-import { FakeOmp } from "./test-utils/fake-omp.js";
+import type { OmpRpcHostToolDefinition, OmpRpcHostToolResult } from "./rpc-types.js";
+import { FakeOmp, type FakeOmpSession } from "./test-utils/fake-omp.js";
 
 function createCatalog(tools: PaseoToolDefinition[]): PaseoToolCatalog {
   const toolMap = new Map(tools.map((tool) => [tool.name, tool]));
@@ -36,13 +36,15 @@ class OmpHostToolHarness {
 
   private constructor(
     private readonly catalog: PaseoToolCatalog,
-    private readonly runtimeSession: Awaited<ReturnType<FakeOmp["startSession"]>>,
+    private readonly runtimeSession: FakeOmpSession,
   ) {}
 
   static async withTools(tools: PaseoToolDefinition[]): Promise<OmpHostToolHarness> {
     const omp = new FakeOmp();
     const runtimeSession = await omp.startSession({ cwd: "/workspace/project" });
-    return new OmpHostToolHarness(createCatalog(tools), runtimeSession);
+    const catalog = createCatalog(tools);
+    await setOmpHostTools(runtimeSession, catalog);
+    return new OmpHostToolHarness(catalog, runtimeSession);
   }
 
   static async cancellable(): Promise<OmpHostToolHarness> {
@@ -118,6 +120,12 @@ class OmpHostToolHarness {
     return this.runtimeSession.hostToolResults;
   }
 
+  definitions(): OmpRpcHostToolDefinition[] {
+    const definitions = this.runtimeSession.hostToolSetRequests[0];
+    if (!definitions) throw new Error("Host tools have not been registered");
+    return definitions;
+  }
+
   close(): void {
     clearOmpHostToolState(this.runtimeSession);
   }
@@ -128,37 +136,78 @@ class OmpHostToolHarness {
 }
 
 describe("OMP host tools", () => {
-  test("marks every caller-scoped Paseo tool essential for direct invocation", () => {
-    const catalog = createCatalog([
+  test("registers the complete discoverable catalog and executes its canonical callbacks", async () => {
+    const createdPrompts: string[] = [];
+    const createAgentInput = z.object({
+      initialPrompt: z.string().describe("Prompt for the new agent."),
+    });
+    const omp = await OmpHostToolHarness.withTools([
       {
         name: "create_agent",
         title: "Create agent",
         description: "Create a Paseo agent.",
-        inputSchema: { initialPrompt: z.string().describe("Prompt for the new agent.") },
-        handler: async () => ({ content: [] }),
+        inputSchema: createAgentInput.shape,
+        handler: async (input) => {
+          const { initialPrompt } = createAgentInput.parse(input);
+          createdPrompts.push(initialPrompt);
+          return { content: [{ type: "text", text: `Created child-${createdPrompts.length}` }] };
+        },
       },
       {
         name: "browser_list_tabs",
         description: "List browser tabs.",
-        handler: async () => ({ content: [] }),
+        handler: async () => ({ content: [{ type: "text", text: "No browser tabs" }] }),
       },
     ]);
 
-    expect(serializeOmpHostTools(catalog)).toEqual([
+    const definitions = omp.definitions();
+    expect(definitions).toEqual([
       {
         name: "create_agent",
         label: "Create agent",
         description: "Create a Paseo agent.",
-        loadMode: "essential",
+        loadMode: "discoverable",
         parameters: expect.objectContaining({ type: "object", required: ["initialPrompt"] }),
       },
       {
         name: "browser_list_tabs",
         description: "List browser tabs.",
-        loadMode: "essential",
+        loadMode: "discoverable",
         parameters: expect.objectContaining({ type: "object" }),
       },
     ]);
+
+    const inputs: Record<string, Record<string, unknown>> = {
+      create_agent: { initialPrompt: "Inspect the bug" },
+      browser_list_tabs: {},
+    };
+    const results: OmpRpcHostToolResult[] = [];
+    for (const definition of definitions) {
+      const args = inputs[definition.name];
+      if (!args) throw new Error(`Missing input fixture for ${definition.name}`);
+      results.push(
+        await omp.call({
+          id: `host-${definition.name}`,
+          toolCallId: `tool-${definition.name}`,
+          toolName: definition.name,
+          arguments: args,
+        }),
+      );
+    }
+    expect(createdPrompts).toEqual(["Inspect the bug"]);
+    expect(results).toEqual([
+      {
+        type: "host_tool_result",
+        id: "host-create_agent",
+        result: { content: [{ type: "text", text: "Created child-1" }] },
+      },
+      {
+        type: "host_tool_result",
+        id: "host-browser_list_tabs",
+        result: { content: [{ type: "text", text: "No browser tabs" }] },
+      },
+    ]);
+    omp.close();
   });
 
   test("routes calls and progress through the typed OMP runtime", async () => {

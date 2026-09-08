@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+### Improved
+
+- Made the full OMP host-tool catalog discoverable without removing capabilities or changing execution permissions.
+- Preserved native todo phases, blocker reasons, and abandoned states in the app, CLI, and activity summaries.
+
+### Fixed
+
+- Fixed blocked OMP tasks rejecting entire updates, reminder subsets erasing full lists, and stale refreshes or cache projections losing richer task state.
+
 ## 0.7.2 - 2026-09-02
 
 ### Added

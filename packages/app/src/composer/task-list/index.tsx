@@ -4,7 +4,7 @@ import { useTranslation } from "react-i18next";
 import { StyleSheet } from "react-native-unistyles";
 import { ComposerTrackPill, ComposerTrackRow } from "@/composer/tracks";
 import { TaskListRow } from "@/components/task-list-row";
-import type { TodoEntry } from "@/types/stream";
+import { taskStatus, type TodoEntry } from "@/types/stream";
 
 export const AgentTaskList = memo(function AgentTaskList({
   tasks,
@@ -17,13 +17,28 @@ export const AgentTaskList = memo(function AgentTaskList({
 
 const TaskListCard = memo(function TaskListCard({ tasks }: { tasks: TodoEntry[] }) {
   const { t } = useTranslation();
-  const completed = useMemo(
-    () => tasks.filter((task) => task.completed || task.status === "completed").length,
-    [tasks],
-  );
+  const counts = useMemo(() => {
+    let completed = 0;
+    let abandoned = 0;
+    for (const task of tasks) {
+      const state = taskStatus(task);
+      if (state === "completed") completed += 1;
+      if (state === "abandoned") abandoned += 1;
+    }
+    return { completed, abandoned };
+  }, [tasks]);
   // Counts only. The active task used to ride along in the header, where it was the first thing
   // truncated on a phone; the panel shows it in full, in place, with the rest of the list.
-  const label = t("message.todo.tasksProgress", { completed, total: tasks.length });
+  let label: string;
+  if (counts.abandoned > 0) {
+    label = t("message.todo.tasksProgressWithAbandoned", {
+      settled: counts.completed + counts.abandoned,
+      total: tasks.length,
+      abandoned: counts.abandoned,
+    });
+  } else {
+    label = t("message.todo.tasksProgress", { completed: counts.completed, total: tasks.length });
+  }
   const segments = useMemo(() => [{ bucket: null, text: label }], [label]);
 
   return (
@@ -35,7 +50,7 @@ const TaskListCard = memo(function TaskListCard({ tasks }: { tasks: TodoEntry[] 
       {tasks.map((task, index) => (
         <ComposerTrackRow key={task.id ?? `${index}:${task.text}`}>
           <View style={styles.taskRow}>
-            <TaskListRow task={task} />
+            <TaskListRow task={task} previousTask={tasks[index - 1]} />
           </View>
         </ComposerTrackRow>
       ))}

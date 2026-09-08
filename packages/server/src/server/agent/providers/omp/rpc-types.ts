@@ -333,7 +333,8 @@ export const OmpAgentSessionEventSchema = z.discriminatedUnion("type", [
 export const OmpTodoItemSchema = z
   .object({
     content: z.string(),
-    status: z.enum(["pending", "in_progress", "completed", "abandoned"]),
+    status: z.enum(["pending", "in_progress", "completed", "abandoned", "blocked"]),
+    blocker: z.string().optional(),
   })
   .passthrough();
 export const OmpTodoPhaseSchema = z
