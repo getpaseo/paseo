@@ -15,7 +15,7 @@ import type {
   SettingsSelectProps,
   SettingsInputProps,
   SettingsActionProps,
-} from "@getpaseo/plugin/ui";
+} from "@getpaseo/plugin/client/ui";
 import type { EditingTextInputHandle } from "@/components/ui/text-input";
 import { Switch } from "@/components/ui/switch";
 import { Button } from "@/components/ui/button";

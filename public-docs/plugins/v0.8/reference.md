@@ -8,7 +8,7 @@ category: Plugins
 
 # Plugin reference
 
-> **For the upcoming Paseo v0.8 release.** Return to the [v0.8 quickstart](/docs/plugins/v0.8).
+> **For Paseo v0.8 beta.** Return to the [v0.8 quickstart](/docs/plugins/v0.8).
 
 Migrating an existing plugin? Follow the standalone [runtime-entry migration guide](/docs/plugins/v0.8/migration).
 
@@ -42,16 +42,47 @@ my-plugin/
   tsconfig.json
 ```
 
-The required root manifest is `paseo-plugin.json`. It contains the default plugin ID:
+The required root manifest is `paseo-plugin.json`. It contains the default plugin ID and supported Paseo versions:
 
 ```json
-{ "id": "my-plugin" }
+{ "id": "my-plugin", "requirements": { "paseo": ">=0.8.0" } }
 ```
 
-| Entry              | Runtime               | Receives              | Required                                                          |
-| ------------------ | --------------------- | --------------------- | ----------------------------------------------------------------- |
-| `index.client.tsx` | Paseo app, per client | `PluginClientContext` | When the plugin has any UI, callback, theme, or attachment source |
-| `index.server.ts`  | Daemon subprocess     | `PluginServerContext` | When the plugin handles RPCs                                      |
+### Requirements
+
+`requirements` is an optional object. Its currently supported key, `paseo`, accepts an npm semver
+range. An omitted `requirements.paseo` means `<0.8.0`: the plugin predates the first breaking
+plugin release. Paseo 0.8 and later reject it with a link to the [migration guide](migration).
+Empty strings, invalid ranges, and unknown manifest requirement keys are rejected.
+
+| Range            | Compatible releases                                                          |
+| ---------------- | ---------------------------------------------------------------------------- |
+| `>=0.8.0`        | 0.8.0 and later releases, including prereleases and future breaking releases |
+| `^0.8.0`         | 0.8.x releases, including prereleases                                        |
+| `>=0.8.3 <0.9.0` | 0.8.3 through the last 0.8 patch, including prereleases                      |
+
+Prerelease Paseo versions also satisfy a range their stable core (`major.minor.patch`) satisfies, so `0.8.0-beta.1` satisfies `>=0.8.0` but not `<0.8.0`.
+
+`paseo plugin init` writes `>=` followed by the current CLI version and pins the matching SDK
+for typechecking. Raise the minimum when adopting a newer API. Add an upper bound when a later
+release is incompatible; a minimum alone does not promise protection from future breaking changes.
+
+The daemon checks its version before installing, running Git build commands, or loading a plugin,
+and checks again on startup, enable, and reload. A rejected Git update keeps the installed revision.
+Each connected app checks its own version before evaluating client code and shows incompatibility
+in Settings → Plugins. A compatible daemon does not make an older app compatible. A plugin with no
+client entry does not require the connected app to match.
+
+For example: `Plugin "review" requires Paseo >=0.8.0. Your daemon is 0.7.2.` Use a compatible plugin
+revision or update the named runtime. Releases before 0.8 do not understand this manifest field
+and cannot show this new diagnostic.
+
+### Runtime entries
+
+| Entry              | Runtime               | Receives              | Required                                                                        |
+| ------------------ | --------------------- | --------------------- | ------------------------------------------------------------------------------- |
+| `index.client.tsx` | Paseo app, per client | `PluginClientContext` | When the plugin has any UI, callback, theme, or attachment source               |
+| `index.server.ts`  | Daemon subprocess     | `PluginServerContext` | When the plugin contributes handlers, hooks, settings persistence, or providers |
 
 At least one entry is required; both accept `.ts` or `.tsx`. A directory that still has only the
 old `index.ts` fails to load and points at the [migration guide](/docs/plugins/v0.8/migration).
@@ -75,24 +106,34 @@ plugin root is a compile error.
 ## Runtime modules
 
 Paseo builds each bundle from its matching entry. An import from `client/` into the daemon bundle,
-from `server/` into the app bundle, or of a `node:` module anywhere in the app bundle is a compile
-error. Keep `shared/` free of Node and React Native runtime code.
+from `server/` into the app bundle, or of a Node module anywhere in the app bundle is a compile
+error. Server imports of React, React Native, or client SDK entries also fail. Shared code imports
+only shared code: no Node, React, runtime-specific SDK entries, or runtime-specific types.
+
+The SDK root (`@getpaseo/plugin`) contains shared data, schemas, and runtime-neutral helpers only.
+Import client contexts and hooks from `/client`, server contexts and lifecycle contracts from
+`/server`, and UI from `/client/react-native` or `/client/ui`. These rules include type imports and transitive
+dependencies. `/client/host` is private to the app host; plugins cannot import it.
 
 ### Client runtime
 
 Paseo provides these modules to client code:
 
-| Module                          | Use it for                                                                                             |
-| ------------------------------- | ------------------------------------------------------------------------------------------------------ |
-| `@getpaseo/plugin`              | Contribution contracts, `defineRpc`, `defineAttachmentSource`, `RpcInput`, `RpcOutput`, and data hooks |
-| `@getpaseo/plugin/ui`           | Named, composable settings components                                                                  |
-| `@getpaseo/plugin/react-native` | Paseo UI components and UI hooks                                                                       |
-| `@getpaseo/plugin/server`       | Handler-only types such as `PluginHandlerContext`                                                      |
-| `@tanstack/react-query`         | Request state and caching                                                                              |
-| `react`                         | Components and hooks                                                                                   |
-| `react/jsx-runtime`             | Compiled JSX                                                                                           |
-| `react-native`                  | Cross-platform UI                                                                                      |
-| `zod`                           | Shared schemas                                                                                         |
+| Module                                 | Use it for                                                                                        |
+| -------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| `@getpaseo/plugin`                     | Shared data, `defineRpc`, `defineSettings`, `defineAttachmentSource`, `RpcInput`, and `RpcOutput` |
+| `@getpaseo/plugin/client/ui`           | Named, composable settings components                                                             |
+| `@getpaseo/plugin/client/react-native` | Paseo UI components and UI hooks                                                                  |
+| `@getpaseo/plugin/client`              | Client contribution contexts, `usePaseo`, `useRpc`, `useSettings`, and data hooks                 |
+| `@tanstack/react-query`                | Request state and caching                                                                         |
+| `react`                                | Components and hooks                                                                              |
+| `react/jsx-runtime`                    | Compiled JSX                                                                                      |
+| `react-native`                         | Cross-platform UI                                                                                 |
+| `zod`                                  | Shared schemas                                                                                    |
+
+The host owns its paired React and renderer versions. The SDK's React peer range permits patch
+versions for tooling and Node consumers; it does not change the app's pinned React version or
+guarantee compatibility with another host's renderer.
 
 These exact module specifiers use the host's runtime instances. A client bundle that requests another host module fails with `Module "<name>" is not available in plugin client code`.
 
@@ -143,7 +184,7 @@ Use `openSettings`, `openSurface`, and `openPanel` for your own registered contr
 ### Server runtime
 
 Paseo provides `@getpaseo/plugin`, `@getpaseo/plugin/server`,
-`@getpaseo/plugin/provider`, `@getpaseo/plugin/acp`, and `zod` to server code. Backend
+`@getpaseo/plugin/server/provider`, `@getpaseo/plugin/server/acp`, and `zod` to server code. Backend
 contributions run in a daemon subprocess with Node access to the host machine. Keep filesystem,
 process, credential, and other machine-local work under `server/`. A plugin without
 `index.server.ts` starts no subprocess.
@@ -154,7 +195,7 @@ Follow [Build a provider plugin](/docs/plugins/v0.8/providers) for direct and AC
 session lifecycle, composer settings, timeline renderers, testing, and distribution.
 
 Call `server.registerProvider()` with a `ProviderRegistration` from
-`@getpaseo/plugin/provider`. Its connection accepts inputs with `send()` and emits complete state
+`@getpaseo/plugin/server/provider`. Its connection accepts inputs with `send()` and emits complete state
 snapshots through `onEvent()`. `send()` reports acceptance only; prompt disposition, turns,
 configuration, persistence, permissions, and failures are events.
 
@@ -169,7 +210,7 @@ session config.
 Paseo refreshes an agent by closing its current provider session and opening it with current
 configuration and persistence. Providers re-read external state during `session.open`.
 
-Use `runAcpProvider()` from `@getpaseo/plugin/acp` to adapt a command-backed ACP. Add transformer
+Use `runAcpProvider()` from `@getpaseo/plugin/server/acp` to adapt a command-backed ACP. Add transformer
 hooks only for a vendor's discovery, configuration, notification, or tool-call differences.
 
 `ProviderRegistration.icon` is a file path relative to the plugin directory, such as `icon.svg`.
@@ -186,7 +227,7 @@ receive `PluginClientContext`; server entries receive `PluginServerContext`. Eve
 returns an idempotent remover. The entry cleanup runs before Paseo removes remaining registrations.
 
 ```ts
-import type { PluginClientContext } from "@getpaseo/plugin";
+import type { PluginClientContext } from "@getpaseo/plugin/client";
 import { Main } from "./client/main";
 
 export default function contribute(client: PluginClientContext) {
@@ -197,6 +238,329 @@ export default function contribute(client: PluginClientContext) {
 
 Cleanup can be async. Release timers, watchers, sockets, and other resources created by the plugin. Paseo also removes registrations, unmounts surfaces, rejects pending RPCs, closes the plugin's daemon session, and stops its subprocess on reload, disable, removal, disconnect, or daemon shutdown.
 
+## Lifecycle hooks
+
+In `index.server.ts`:
+
+```ts
+import type { PluginServerContext } from "@getpaseo/plugin/server";
+
+export default function contribute(server: PluginServerContext) {
+  server.on("agent.turn_ended", (event) => {
+    console.log(event.agent.id, event.outcome);
+  });
+
+  return () => {};
+}
+```
+
+| Register                        | Callback receives                  | Return                                                       |
+| ------------------------------- | ---------------------------------- | ------------------------------------------------------------ |
+| `server.on(name, callback)`     | `(event, { paseo, signal })`       | `void` or `Promise<void>`                                    |
+| `server.before(name, callback)` | `({ request }, { paseo, signal })` | Modified request, or `undefined` to keep it; async supported |
+
+Hooks run on the daemon while the plugin is enabled, even with no app connected.
+
+### Change configuration and inject an MCP server
+
+Add this callback inside `contribute(server)`. Replace the placeholder URL with your MCP endpoint.
+
+```ts
+server.before("agent.create", ({ request }) => {
+  if (request.config.provider !== "codex") {
+    return request;
+  }
+
+  return {
+    ...request,
+    config: {
+      ...request.config,
+      providerOptions: {
+        ...request.config.providerOptions,
+        sandbox_mode: "workspace-write",
+        approval_policy: "on-request",
+      },
+      mcpServers: {
+        ...request.config.mcpServers,
+        company: {
+          type: "http",
+          url: "https://tools.example.com/mcp",
+        },
+      },
+    },
+  };
+});
+```
+
+| Input                                       | Result                        |
+| ------------------------------------------- | ----------------------------- |
+| `providerOptions.sandbox_mode: "read-only"` | `"workspace-write"`           |
+| `providerOptions.web_search: "disabled"`    | Preserved by the spread       |
+| Existing `mcpServers.search`                | Preserved by the spread       |
+| Existing `mcpServers.company`               | Replaced with the entry above |
+
+The selected provider validates `providerOptions` and must support the configured MCP servers.
+Explicit Codex sandbox and approval options override its mode presets.
+
+### Inject environment variables on every session opening
+
+```ts
+server.before("agent.session_open", ({ request }) => {
+  return {
+    ...request,
+    env: {
+      ...request.env,
+      COMPANY_ENV: "development",
+    },
+  };
+});
+```
+
+This runs on create, resume, refresh, and import. To inject only on creation, set `env` in an
+`agent.create` callback instead.
+
+### Choose workspace isolation
+
+```ts
+server.before("workspace.create", ({ request }) => {
+  if (request.source.kind !== "directory") {
+    return request;
+  }
+
+  return {
+    ...request,
+    source: {
+      kind: "worktree",
+      cwd: request.source.path,
+      action: "branch-off",
+    },
+  };
+});
+```
+
+**Result:** an explicit directory creation request becomes a worktree request. Existing workspaces
+and directory lookup/import operations are unaffected.
+
+### Send a follow-up when a turn ends
+
+Copy [server/inspect.ts](https://github.com/getpaseo/paseo/blob/main/plugin-examples/lifecycle-actions/server/inspect.ts)
+into your plugin. The helper imports types from `@getpaseo/protocol/agent-types`; add
+`@getpaseo/protocol` at the same version as your plugin SDK to your development dependencies
+and install them before loading the plugin. `latestOutputText` joins text chunks after the latest user message.
+
+```ts
+import type { PluginServerContext } from "@getpaseo/plugin/server";
+import { latestOutputText } from "./server/inspect";
+
+export default function contribute(server: PluginServerContext) {
+  server.on("agent.turn_ended", async (event, context) => {
+    if (event.outcome.kind === "canceled") {
+      return;
+    }
+
+    const text = latestOutputText(event.timeline);
+    if (/out of credits/i.test(text)) {
+      await context.paseo.agents.ref(event.agent.id).send("Try again.");
+    }
+  });
+
+  return () => {};
+}
+```
+
+```text
+Turn ends: "out of credits"
+  → plugin sends "Try again."
+  → a new turn starts
+```
+
+This sends a new message with the existing SDK. Persistent matches keep sending follow-ups;
+add limits or delays in your plugin when needed. Attachments and tool effects are not replayed.
+
+### Answer a permission request
+
+Using `shellCommand` from the same [helper file](https://github.com/getpaseo/paseo/blob/main/plugin-examples/lifecycle-actions/server/inspect.ts):
+
+```ts
+import type { PluginServerContext } from "@getpaseo/plugin/server";
+import { shellCommand } from "./server/inspect";
+
+export default function contribute(server: PluginServerContext) {
+  server.on("agent.permission_requested", async (event, context) => {
+    const command = shellCommand(event.request);
+    if (command === null) {
+      return;
+    }
+
+    const agent = context.paseo.agents.ref(event.agent.id);
+    if (/\brm\s+-rf\b/.test(command)) {
+      await agent.respondToPermission({
+        requestId: event.request.id,
+        response: { behavior: "deny", message: "Recursive deletion is blocked." },
+      });
+      return;
+    }
+
+    if (command.trim() === "git status") {
+      await agent.respondToPermission({
+        requestId: event.request.id,
+        response: { behavior: "allow" },
+      });
+    }
+  });
+
+  return () => {};
+}
+```
+
+| Request                  | Result                    |
+| ------------------------ | ------------------------- |
+| `rm -rf build`           | Declined                  |
+| `git status`             | Approved                  |
+| Other command or request | Left pending for the user |
+| Already-resolved request | SDK response fails        |
+
+The regex is an example policy, not a shell parser. Permission requests can also be questions,
+plans, and mode changes; requesting permission does not end the turn.
+
+### Events
+
+| Name                         | Event fields                             | Trigger                                            |
+| ---------------------------- | ---------------------------------------- | -------------------------------------------------- |
+| `agent.created`              | `agent`                                  | Ordinary creation finishes; excludes import/resume |
+| `agent.turn_started`         | `agent`, `turnId`                        | Live turn starts                                   |
+| `agent.turn_ended`           | `agent`, `turnId`, `outcome`, `timeline` | Live turn completes, fails, or is canceled         |
+| `agent.permission_requested` | `agent`, `request`                       | Permission or question becomes pending             |
+| `agent.permission_resolved`  | `agent`, `requestId`, `resolution`       | Pending request is answered or cleared             |
+| `agent.archived`             | `agent`, `archivedAt`                    | Archive state is saved                             |
+| `workspace.created`          | `workspace`                              | Record created; directory available                |
+| `workspace.archived`         | `workspace`                              | Archive state is saved                             |
+
+Agent events exclude internal utility agents. Archive events can precede runtime/worktree cleanup;
+`workspace.created` is not a setup barrier before agent startup.
+
+**Shared payload shapes** (`@getpaseo/plugin/server`):
+
+```ts
+interface PluginHookAgent {
+  id: string;
+  workspaceId: string | null;
+  parentAgentId: string | null;
+  provider: string;
+  cwd: string;
+  title: string | null;
+}
+
+interface PluginHookWorkspace {
+  id: string;
+  projectId: string;
+  cwd: string;
+  name: string | null;
+  archivedAt: string | null;
+}
+
+type PluginTurnOutcome =
+  | { kind: "completed" }
+  | { kind: "failed"; error: { message: string; code?: string } }
+  | { kind: "canceled"; reason: string };
+```
+
+| Field        | Shape / meaning                                                                                       |
+| ------------ | ----------------------------------------------------------------------------------------------------- |
+| `turnId`     | Provider-reported `string` or `null`; can repeat after a session reopens                              |
+| `timeline`   | `readonly AgentTimelineItem[]`; complete snapshot including earlier conversation; text may span items |
+| `request`    | SDK `AgentPermissionRequest`; `kind` is `tool`, `plan`, `question`, `mode`, or `other`                |
+| `resolution` | SDK `AgentPermissionResponse`                                                                         |
+| `archivedAt` | Timestamp string                                                                                      |
+
+### Before hooks
+
+| Name                 | Request fields                                                          | Editable                                |
+| -------------------- | ----------------------------------------------------------------------- | --------------------------------------- |
+| `agent.create`       | `config`, optional `env`                                                | Public agent config except `cwd`; `env` |
+| `agent.session_open` | `agentId`, `workspaceId`, `provider`, `cwd`, `reason`, `purpose`, `env` | Only `env`                              |
+| `workspace.create`   | `source`, optional `title`, `firstAgentContext`                         | Entire explicit creation request        |
+
+**`agent.create.config`** uses `AgentSessionConfig`:
+
+| Fields                                        | Constraint                                                                 |
+| --------------------------------------------- | -------------------------------------------------------------------------- |
+| `provider`, `model`                           | Separate fields; changing provider may require changing model/mode/options |
+| `modeId`, `thinkingOptionId`, `featureValues` | Provider-specific selections                                               |
+| `title`, `systemPrompt`                       | Agent configuration                                                        |
+| `providerOptions`                             | Provider-specific validated options                                        |
+| `mcpServers`, `toolPolicy`                    | MCP configuration and exact-tool preapprovals                              |
+| `cwd`                                         | Cannot change                                                              |
+| `internal`                                    | Daemon-owned; cannot change through this hook                              |
+
+**`agent.session_open` request example:**
+
+```json
+{
+  "agentId": "agent-123",
+  "workspaceId": "workspace-456",
+  "provider": "codex",
+  "cwd": "/projects/shop",
+  "reason": "resume",
+  "purpose": "interactive",
+  "env": { "COMPANY_ENV": "development" }
+}
+```
+
+| Field         | Values                                                                                                                  |
+| ------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| `workspaceId` | String or `null`                                                                                                        |
+| `reason`      | `create`, `resume`, `refresh`, `import`                                                                                 |
+| `purpose`     | `interactive`, `history`                                                                                                |
+| `env`         | Launch override map; excludes the daemon's inherited environment. Replace the map to add, replace, or remove overrides. |
+
+### Ordering and returned values
+
+```text
+Creation request
+  → agent.create hooks (plugin-ID order; registration order within each plugin)
+  → resolve defaults and validate provider configuration
+  → derive launch configuration with Paseo runtime tools and daemon prompt
+  → agent.session_open hooks (same ordering; env only)
+  → set PASEO_AGENT_ID and PASEO_AGENT_CWD
+  → open provider session and save agent configuration
+```
+
+| Callback returns                                        | Next callback receives                              |
+| ------------------------------------------------------- | --------------------------------------------------- |
+| `{ ...request, env: { ...request.env, REGION: "eu" } }` | Prior request with `REGION` added/replaced          |
+| `{ ...request, env: { REGION: "eu" } }`                 | Prior request with the entire override map replaced |
+| `undefined`                                             | Unchanged request                                   |
+| Throws or returns invalid data                          | Operation fails; later callbacks do not run         |
+
+No automatic deep merge. Later callbacks can overwrite earlier values. Agent configuration is
+saved; environment overrides are not persisted with it.
+
+### Context and cleanup
+
+| Contract                           | Behavior                                                                                                  |
+| ---------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| `context.paseo`                    | Existing SDK connected to this daemon                                                                     |
+| `context.signal`                   | Aborted on invocation timeout or plugin stop; pass to external requests                                   |
+| Input data                         | Detached snapshot; change state through returned requests or SDK commands                                 |
+| Registration result                | Idempotent remover, e.g. `const remove = server.on(...); remove();`                                       |
+| Reload, disable, removal, shutdown | Remaining registrations removed                                                                           |
+| Unknown hook name                  | Registration fails                                                                                        |
+| Hook timeout                       | 30 seconds; aborts the signal. A before hook fails the pending operation; an event handler logs an error. |
+| Event-handler error                | Logged against plugin; original operation continues                                                       |
+| Event delivery                     | Live, best effort; no replay, persistence, or automatic retry                                             |
+| Event concurrency                  | Different events may overlap; callback completion order is not guaranteed                                 |
+
+### Complete examples
+
+| Plugin                                                                                                 | Includes                                                                     |
+| ------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------- |
+| [lifecycle-logger](https://github.com/getpaseo/paseo/tree/main/plugin-examples/lifecycle-logger)       | All eleven hooks; JSON logs with environment values redacted                 |
+| [lifecycle-actions](https://github.com/getpaseo/paseo/tree/main/plugin-examples/lifecycle-actions)     | Follow-ups, permissions, environment, provider switching, worktree selection |
+| [agent-configuration](https://github.com/getpaseo/paseo/tree/main/plugin-examples/agent-configuration) | MCP injection and Codex sandbox/approval options                             |
+
+Read logger output with `paseo plugin logs lifecycle-logger` or the host's `daemon.log`.
+
 ## Surfaces and sidebar items
 
 Register a component, then point a sidebar item at its surface ID:
@@ -204,7 +568,7 @@ Register a component, then point a sidebar item at its surface ID:
 `client/main.tsx`:
 
 ```tsx
-import type { PluginSurfaceProps } from "@getpaseo/plugin";
+import type { PluginSurfaceProps } from "@getpaseo/plugin/client";
 import { useMemo } from "react";
 import { Text, View } from "react-native";
 
@@ -233,7 +597,7 @@ export function Main({ theme, host, layout }: PluginSurfaceProps) {
 `index.client.tsx`:
 
 ```ts
-import type { PluginClientContext } from "@getpaseo/plugin";
+import type { PluginClientContext } from "@getpaseo/plugin/client";
 import { Main } from "./client/main";
 
 export default function contribute(client: PluginClientContext) {
@@ -261,12 +625,12 @@ Paseo owns the route, header, close action, host picker, error boundary, and que
 
 ## Host UI
 
-Import Paseo-owned UI from `@getpaseo/plugin/react-native` in client code. This example
+Import Paseo-owned UI from `@getpaseo/plugin/client/react-native` in client code. This example
 opens a controlled modal, renders a host icon, and confirms the action with a toast:
 
 ```tsx
-import type { PluginSurfaceProps } from "@getpaseo/plugin";
-import { Icon, Modal, useToast } from "@getpaseo/plugin/react-native";
+import type { PluginSurfaceProps } from "@getpaseo/plugin/client";
+import { Icon, Modal, useToast } from "@getpaseo/plugin/client/react-native";
 import { useState } from "react";
 import { Pressable, Text, View } from "react-native";
 
@@ -333,8 +697,7 @@ intact. The host reserves bottom safe-area space on compact native layouts; sett
 to zero removes the decorative inset, not that space. Keyboard clearance is handled separately.
 
 With `scrollable={false}`, the body fills the available sheet height, and the centered dialog uses
-85% of the available height. Use `flex: 1, minHeight: 0` on your list. In this mode the body scrolls
-at every sheet height; drag the handle to resize or dismiss the sheet. Default scrolling dialogs stay
+85% of the available height. Use `flex: 1, minHeight: 0` on your list. Default scrolling dialogs stay
 content-sized on wide layouts. Presentation follows window size, including narrow desktop windows
 and wide tablets.
 
@@ -346,7 +709,7 @@ Modal children keep the plugin runtime context. `usePaseo`, `useRpc`, `useWorksp
 
 ### Scrolling
 
-Import `ScrollView` and `FlatList` from `@getpaseo/plugin/react-native` when content can appear in a
+Import `ScrollView` and `FlatList` from `@getpaseo/plugin/client/react-native` when content can appear in a
 Paseo modal. They accept React Native props and refs and integrate with the sheet's gestures. Outside
 a sheet they use ordinary React Native scrolling. Do not import bottom-sheet libraries directly.
 
@@ -354,8 +717,13 @@ Use one vertical scroll owner: either the default modal body, or your own list w
 `scrollable={false}`. A fixed-height vertical list nested inside the default scrolling body can compete
 with the sheet for gestures on Android. Horizontal scrolling can coexist with the host's vertical body.
 
+Both the default body and SDK lists share native sheet gestures: drag up to expand before scrolling;
+drag down at the top of the list to collapse or dismiss. `scrollable={false}` removes the host's scroll
+container without changing these gestures. Expand the sheet before using list methods such as
+`scrollToEnd`; the sheet locks list offsets below its largest height.
+
 ```tsx
-import { FlatList, Modal } from "@getpaseo/plugin/react-native";
+import { FlatList, Modal } from "@getpaseo/plugin/client/react-native";
 import { Text } from "react-native";
 
 // Inside your controlled Modal:
@@ -385,7 +753,7 @@ user action and await it before reporting success. It rejects if the platform de
 clipboard is unavailable; browser permissions and secure-context requirements still apply.
 
 ```tsx
-import { copyText, useToast } from "@getpaseo/plugin/react-native";
+import { copyText, useToast } from "@getpaseo/plugin/client/react-native";
 
 // Inside your component:
 const toast = useToast();
@@ -400,7 +768,7 @@ async function copyResult() {
 ```
 
 Programmatic copying and native text selection are separate interactions. Use `<Text selectable>`
-for long-press selection and OS Copy. Import `TextInput` from `@getpaseo/plugin/react-native` for modal forms. It accepts React Native
+for long-press selection and OS Copy. Import `TextInput` from `@getpaseo/plugin/client/react-native` for modal forms. It accepts React Native
 input props and refs, supports OS Paste, and registers focus with the native sheet so the keyboard
 can raise the form. Outside a sheet it uses the ordinary input. A plain React Native input supports
 Paste too, but does not register focus with the sheet; the keyboard can cover it. No clipboard read
@@ -446,7 +814,7 @@ registrations are client contributions. Paseo applies the transformer while buil
 model, including every live streaming update.
 
 ```tsx
-import type { PluginClientContext, PluginTimelineItemProps } from "@getpaseo/plugin";
+import type { PluginClientContext, PluginTimelineItemProps } from "@getpaseo/plugin/client";
 import { Text } from "react-native";
 import { z } from "zod";
 
@@ -502,7 +870,7 @@ assistant rows.
 A server handler can add a plugin-owned row to canonical history:
 
 ```ts
-import type { PluginHandlerContext } from "@getpaseo/plugin";
+import type { PluginHandlerContext } from "@getpaseo/plugin/server";
 
 async function publishReview(agentId: string, { paseo }: PluginHandlerContext) {
   await paseo.agents.ref(agentId).timeline.append({
@@ -561,7 +929,7 @@ Workspace and agent panels receive the same `theme`, `layout`, and optional `nav
 `name`. A theme is data, so it needs no component file:
 
 ```ts
-import type { PluginClientContext } from "@getpaseo/plugin";
+import type { PluginClientContext } from "@getpaseo/plugin/client";
 
 export default function contribute(client: PluginClientContext) {
   client.addTheme({
@@ -626,12 +994,12 @@ A disabled or removed plugin leaves an unavailable screen with working Back navi
 
 ### Named UI components
 
-Import settings components from `@getpaseo/plugin/ui`. They work with your own state and RPCs;
+Import settings components from `@getpaseo/plugin/client/ui`. They work with your own state and RPCs;
 no form wrapper or storage binding is required.
 
 ```tsx
 import { useState } from "react";
-import { SettingsCard, SettingsSection, SettingsSwitch } from "@getpaseo/plugin/ui";
+import { SettingsCard, SettingsSection, SettingsSwitch } from "@getpaseo/plugin/client/ui";
 
 export function DisplaySettings() {
   const [visible, setVisible] = useState(true);
@@ -730,7 +1098,7 @@ Register one panel for workspace or agent context:
 `client/review.tsx`:
 
 ```tsx
-import { type PluginAgentPanelProps, useAgent, useWorkspace } from "@getpaseo/plugin";
+import { type PluginAgentPanelProps, useAgent, useWorkspace } from "@getpaseo/plugin/client";
 import { useMemo } from "react";
 import { Text, View } from "react-native";
 
@@ -761,7 +1129,7 @@ export function ReviewPanel({ theme, layout, workspaceId, agentId }: PluginAgent
 `index.client.tsx`:
 
 ```ts
-import type { PluginClientContext } from "@getpaseo/plugin";
+import type { PluginClientContext } from "@getpaseo/plugin/client";
 import { ReviewPanel } from "./client/review";
 
 export default function contribute(client: PluginClientContext) {
@@ -847,7 +1215,7 @@ import { z } from "zod";
 
 const refreshReview = defineRpc({
   name: "review.refresh",
-  input: z.object({ agentId: z.string() }),
+  input: z.object({ agentId: z.string(), scope: z.string().optional() }),
   output: z.object({ refreshed: z.boolean() }),
 });
 
@@ -933,12 +1301,12 @@ The client entry owns pill creation and removal. This can live directly in `inde
 a function it imports from `client/`:
 
 ```tsx
+import { Icon } from "@getpaseo/plugin/client/react-native";
 import {
-  Icon,
   type PluginClientContext,
   type PluginComposerPillProps,
   useAgent,
-} from "@getpaseo/plugin";
+} from "@getpaseo/plugin/client";
 import { Text } from "react-native";
 
 function ReviewPill({ theme, agentId }: PluginComposerPillProps) {
@@ -1008,10 +1376,10 @@ registered by the same plugin.
 Use `usePaseo()` for ordinary Paseo operations from a surface. It borrows the selected host's existing connection; do not create another client.
 
 ```tsx
-import { usePaseo } from "@getpaseo/plugin";
+import { type PluginSurfaceProps, usePaseo } from "@getpaseo/plugin/client";
 import { Pressable, Text } from "react-native";
 
-function PullRequestAction() {
+function PullRequestAction({ theme }: PluginSurfaceProps) {
   const paseo = usePaseo();
 
   async function createReviewWorkspace() {
@@ -1032,7 +1400,7 @@ function PullRequestAction() {
 
   return (
     <Pressable accessibilityRole="button" onPress={() => void createReviewWorkspace()}>
-      <Text>Create review workspace</Text>
+      <Text style={{ color: theme.colors.foreground }}>Create review workspace</Text>
     </Pressable>
   );
 }
@@ -1062,7 +1430,7 @@ export const greeting = defineRpc({
 `client/greeting.tsx`:
 
 ```tsx
-import { useRpc } from "@getpaseo/plugin";
+import { useRpc } from "@getpaseo/plugin/client";
 import { greeting } from "../shared/greeting";
 
 export function GreetingButton() {
@@ -1086,7 +1454,7 @@ export function createGreeting({ name }: RpcInput<typeof greeting>) {
 `index.client.tsx`:
 
 ```ts
-import type { PluginClientContext } from "@getpaseo/plugin";
+import type { PluginClientContext } from "@getpaseo/plugin/client";
 import { GreetingButton } from "./client/greeting";
 
 export default function contribute(client: PluginClientContext) {
@@ -1098,7 +1466,7 @@ export default function contribute(client: PluginClientContext) {
 `index.server.ts`:
 
 ```ts
-import type { PluginServerContext } from "@getpaseo/plugin";
+import type { PluginServerContext } from "@getpaseo/plugin/server";
 import { createGreeting } from "./server/greeting";
 import { greeting } from "./shared/greeting";
 
@@ -1110,7 +1478,7 @@ export default function contribute(server: PluginServerContext) {
 
 Inputs and outputs are validated on both sides. RPC names start with a lowercase letter and contain lowercase letters, numbers, dots, hyphens, or underscores. `useRpc()` returns a typed async function. Use TanStack Query for request state, caching, and mutations.
 
-Backend handlers receive the same `PaseoApi` as `{ paseo }`. Their connection belongs to the subprocess and closes when the plugin stops. Backend code can use Node APIs and dependencies installed in the plugin directory.
+Backend handlers receive the same `PaseoApi` as `{ paseo }`. Their connection belongs to the subprocess and closes when the plugin stops. It does not subscribe to timelines or catalog events until plugin code subscribes. Follow the [SDK event contract](../../sdk/events.md) for cleanup and timeline replacements. Backend code can use Node APIs and dependencies installed in the plugin directory.
 
 ## Debug backend output
 
@@ -1201,7 +1569,7 @@ export function search({ query }: RpcInput<typeof searchIssues>) {
 `index.client.tsx`:
 
 ```ts
-import type { PluginClientContext } from "@getpaseo/plugin";
+import type { PluginClientContext } from "@getpaseo/plugin/client";
 import { issues } from "./shared/issues";
 
 export default function contribute(client: PluginClientContext) {
@@ -1213,7 +1581,7 @@ export default function contribute(client: PluginClientContext) {
 `index.server.ts`:
 
 ```ts
-import type { PluginServerContext } from "@getpaseo/plugin";
+import type { PluginServerContext } from "@getpaseo/plugin/server";
 import { search } from "./server/issues";
 import { searchIssues } from "./shared/issues";
 
@@ -1276,6 +1644,7 @@ step:
 ```json
 {
   "id": "review",
+  "requirements": { "paseo": ">=0.8.0" },
   "build": [
     ["npm", "ci"],
     ["npm", "run", "build"]
@@ -1290,7 +1659,7 @@ compilation, activation, or replacement. A failing command reports its output, d
 candidate, and leaves the installed/running version intact. The daemon log records each command and
 output; with the global `--host` option, execution is on that daemon host.
 
-Run `npm run typecheck` before install or reload. Never edit the daemon config directly.
+Run `npm run typecheck` before install or reload. Manage plugin source entries with the CLI or Settings.
 
 The daemon-wide **Enable plugins** switch lives under **Settings → Plugins**. A configured plugin remains `disabled` until that switch and the plugin's own enabled state are both on.
 
@@ -1304,8 +1673,8 @@ Use `paseo plugin ls` to read the current status and error.
 | --------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
 | `This plugin was made for an older version of Paseo`                  | The directory has only an `index.ts` entry. Follow the [migration guide](/docs/plugins/v0.8/migration).                                 |
 | `Plugin entry points are missing`                                     | Neither `index.client.tsx` nor `index.server.ts` exists with that exact name.                                                           |
-| `server-only module cannot be imported into the plugin client bundle` | Client code imports `server/` or a `*.server.*` file. Move the work behind an RPC and import its contract from `shared/`.               |
-| `client-only module cannot be imported into the plugin server bundle` | Server code imports `client/` or a `*.client.*` file. Register that contribution from `index.client.tsx` instead.                       |
+| `server-only module cannot be imported into the plugin client bundle` | Client code imports `server/`. Move the work behind an RPC and import its contract from `shared/`.                                      |
+| `client-only module cannot be imported into the plugin server bundle` | Server code imports `client/`. Register that contribution from `index.client.tsx` instead.                                              |
 | `Node module cannot be imported into the plugin client bundle`        | Client code imports `node:*`. Move the operation to `server/` and call it through an RPC.                                               |
 | Sidebar item is missing                                               | The plugin is `running`, the item references an existing surface, the icon name is valid, and the client is on the installation's host. |
 | Client module is unavailable                                          | Import only the host-provided client modules listed above.                                                                              |

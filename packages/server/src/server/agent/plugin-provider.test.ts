@@ -3,7 +3,7 @@ import type {
   ProviderEvent,
   ProviderInput,
   ProviderRegistration,
-} from "@getpaseo/plugin/provider";
+} from "@getpaseo/plugin/server/provider";
 import { describe, expect, test } from "vitest";
 import { createTestLogger } from "../../test-utils/test-logger.js";
 import type { AgentStreamEvent } from "./agent-sdk-types.js";

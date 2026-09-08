@@ -10,7 +10,7 @@ category: TypeScript SDK
 
 Subscriptions report changes after they happen. Fetch an initial snapshot first, then apply updates to it.
 
-Every `subscribe()` method returns a local unsubscribe function. It removes your callback; it does not stop or archive the underlying resource.
+Every `subscribe()` method returns an unsubscribe function. Timeline, project, and provider subscriptions establish network demand and restore it after reconnect. Unsubscribing releases that demand when its last listener leaves. Agent and workspace directories use the explicit `list({ subscribe })` bootstrap shown below. Unsubscribing never stops or archives the underlying resource.
 
 ## Follow one agent's status
 
@@ -39,16 +39,24 @@ The handle updates its properties and `current()` value before it calls your han
 ## Follow timeline events
 
 ```ts
-const unsubscribe = agent.timeline.subscribe(({ event, timestamp }) => {
+const unsubscribe = agent.timeline.subscribe((update) => {
+  const { event } = update;
+  if (event.type === "replacement") {
+    // Previously fetched history belongs to an old epoch. Fetch the page your UI needs.
+    void agent.timeline.refetch().then((page) => console.log(page.entries));
+    return;
+  }
   if (event.type === "timeline" && event.item.type === "assistant_message") {
     process.stdout.write(event.item.text);
   }
 
   if (event.type === "turn_completed") {
-    console.log(`\nCompleted at ${timestamp}`);
+    console.log("\nTurn completed");
   }
 });
 ```
+
+Await `unsubscribe.ready` before starting work whose events you need to observe. It resolves when the daemon acknowledges the subscription and rejects if establishment fails. Call `unsubscribe()` to release it.
 
 Assistant messages can arrive in pieces. Concatenate their text when you need a complete message, or use `run()` and read `lastMessage` when you only need the final reply.
 

@@ -1,4 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { AppStateStatus } from "react-native";
+import { bindHostRuntimeAppState } from "@/navigation/host-runtime-bootstrap";
 import type {
   DaemonClient,
   ConnectionState,
@@ -1486,70 +1488,101 @@ describe("HostRuntimeController", () => {
 });
 
 describe("HostRuntimeStore", () => {
-  it("reconnects every registered host immediately on app resume", async () => {
-    const relay = (suffix: string): HostConnection => ({
-      id: `relay:relay-${suffix}.paseo.sh:443`,
-      type: "relay",
-      relayEndpoint: `relay-${suffix}.paseo.sh:443`,
-      daemonPublicKeyB64: `pk_${suffix}`,
-    });
-    const hostAConnection = relay("a");
-    const hostBConnection = relay("b");
-    const hostA = makeHost({
-      serverId: "srv_a",
-      connections: [hostAConnection],
-      preferredConnectionId: hostAConnection.id,
-    });
-    const hostB = makeHost({
-      serverId: "srv_b",
-      connections: [hostBConnection],
-      preferredConnectionId: hostBConnection.id,
-    });
-    const clientA = new FakeDaemonClient();
-    const clientB = new FakeDaemonClient();
-    clientA.setConnectionState({ status: "connected" });
-    clientB.setConnectionState({ status: "connected" });
-    const store = new HostRuntimeStore({
-      storage: createMemoryHostRuntimeStorage(),
-      deps: {
-        createClient: () => {
-          throw new Error("initial clients are supplied");
+  it.each(["active", "inactive", "background"] as const)(
+    "keeps reconnect enabled through inactive/background and resumes immediately (mounted %s)",
+    async (currentState) => {
+      const relay = (suffix: string): HostConnection => ({
+        id: `relay:relay-${suffix}.paseo.sh:443`,
+        type: "relay",
+        relayEndpoint: `relay-${suffix}.paseo.sh:443`,
+        daemonPublicKeyB64: `pk_${suffix}`,
+      });
+      const hostAConnection = relay("a");
+      const hostBConnection = relay("b");
+      const hostA = makeHost({
+        serverId: "srv_a",
+        connections: [hostAConnection],
+        preferredConnectionId: hostAConnection.id,
+      });
+      const hostB = makeHost({
+        serverId: "srv_b",
+        connections: [hostBConnection],
+        preferredConnectionId: hostBConnection.id,
+      });
+      const clientA = new FakeDaemonClient();
+      const clientB = new FakeDaemonClient();
+      clientA.setConnectionState({ status: "connected" });
+      clientB.setConnectionState({ status: "connected" });
+      const store = new HostRuntimeStore({
+        storage: createMemoryHostRuntimeStorage(),
+        deps: {
+          createClient: () => {
+            throw new Error("initial clients are supplied");
+          },
+          connectToDaemon: async () => {
+            throw new Error("single-connection hosts reuse their active clients");
+          },
+          getClientId: async () => "cid_test_runtime",
         },
-        connectToDaemon: async () => {
-          throw new Error("single-connection hosts reuse their active clients");
+      });
+
+      let changeAppState: (state: AppStateStatus) => void = () => {
+        throw new Error("AppState listener not registered");
+      };
+      const unbind = bindHostRuntimeAppState(store, {
+        currentState,
+        addEventListener: (_event, listener) => {
+          changeAppState = listener;
+          return { remove: () => {} };
         },
-        getClientId: async () => "cid_test_runtime",
-      },
-    });
+      });
+      store.syncHosts([hostA, hostB], {
+        initialConnectionByServerId: new Map([
+          [
+            hostA.serverId,
+            {
+              connectionId: hostAConnection.id,
+              existingClient: clientA as unknown as DaemonClient,
+            },
+          ],
+          [
+            hostB.serverId,
+            {
+              connectionId: hostBConnection.id,
+              existingClient: clientB as unknown as DaemonClient,
+            },
+          ],
+        ]),
+      });
+      await waitForHostOnline(store, hostA.serverId);
+      await waitForHostOnline(store, hostB.serverId);
+      expect(clientA.reconnectEnabledChanges.at(-1)).toBe(true);
+      expect(clientB.reconnectEnabledChanges.at(-1)).toBe(true);
+      changeAppState("inactive");
+      expect(clientA.reconnectEnabledChanges.at(-1)).toBe(true);
+      expect(clientB.reconnectEnabledChanges.at(-1)).toBe(true);
+      changeAppState("background");
+      expect(clientA.reconnectEnabledChanges.at(-1)).toBe(true);
+      expect(clientB.reconnectEnabledChanges.at(-1)).toBe(true);
+      expect(clientA.getConnectionState()).toEqual({ status: "connected" });
+      expect(clientB.getConnectionState()).toEqual({ status: "connected" });
+      expect(clientA.ensureConnectedCalls).toBe(0);
+      expect(clientB.ensureConnectedCalls).toBe(0);
+      clientA.setConnectionState({ status: "disconnected", reason: "backgrounded" });
+      clientB.setConnectionState({ status: "disconnected", reason: "backgrounded" });
 
-    store.syncHosts([hostA, hostB], {
-      initialConnectionByServerId: new Map([
-        [
-          hostA.serverId,
-          { connectionId: hostAConnection.id, existingClient: clientA as unknown as DaemonClient },
-        ],
-        [
-          hostB.serverId,
-          { connectionId: hostBConnection.id, existingClient: clientB as unknown as DaemonClient },
-        ],
-      ]),
-    });
-    await waitForHostOnline(store, hostA.serverId);
-    await waitForHostOnline(store, hostB.serverId);
-    store.setAppVisible(false);
-    expect(clientA.reconnectEnabledChanges.at(-1)).toBe(false);
-    expect(clientB.reconnectEnabledChanges.at(-1)).toBe(false);
-    clientA.setConnectionState({ status: "disconnected", reason: "backgrounded" });
-    clientB.setConnectionState({ status: "disconnected", reason: "backgrounded" });
+      changeAppState("active");
+      expect(clientA.reconnectEnabledChanges.at(-1)).toBe(true);
+      expect(clientB.reconnectEnabledChanges.at(-1)).toBe(true);
+      expect(clientA.ensureConnectedCalls).toBe(1);
+      expect(clientB.ensureConnectedCalls).toBe(1);
+      expect(store.getSnapshot(hostA.serverId)?.connectionStatus).toBe("online");
+      expect(store.getSnapshot(hostB.serverId)?.connectionStatus).toBe("online");
 
-    store.setAppVisible(true);
-    expect(clientA.reconnectEnabledChanges.at(-1)).toBe(true);
-    expect(clientB.reconnectEnabledChanges.at(-1)).toBe(true);
-    expect(clientA.ensureConnectedCalls).toBe(1);
-    expect(clientB.ensureConnectedCalls).toBe(1);
-
-    store.syncHosts([]);
-  });
+      unbind();
+      store.syncHosts([]);
+    },
+  );
 
   it("revokes push notifications before removing a host", async () => {
     const host = makeHost({ connections: [makeHost().connections[0]!] });

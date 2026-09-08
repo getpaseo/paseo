@@ -298,6 +298,15 @@ jobs:
       - name: Build client dependencies
         run: npm run build:client
 
+      - name: Build plugin SDK
+        run: npm run build:plugin
+
+      - name: Run plugin SDK tests
+        run: npm run test --workspace=@getpaseo/plugin
+
+      - name: Typecheck plugin examples
+        run: npm run typecheck --workspace=@getpaseo/plugin
+
       - name: Run protocol tests
         run: npm run test --workspace=@getpaseo/protocol
 

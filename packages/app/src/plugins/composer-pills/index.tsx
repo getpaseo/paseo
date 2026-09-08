@@ -1,5 +1,6 @@
-import { PluginClientStateProvider } from "@getpaseo/plugin/host";
-import type { PluginComposerPillProps, PluginTheme } from "@getpaseo/plugin";
+import { PluginClientStateProvider } from "@getpaseo/plugin/client/host";
+import type { PluginComposerPillProps } from "@getpaseo/plugin/client";
+import type { PluginTheme } from "@getpaseo/plugin";
 import { useCallback, useMemo, useState, useSyncExternalStore } from "react";
 import { Platform, Pressable, type PressableStateCallbackType } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";

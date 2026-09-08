@@ -1,3 +1,6 @@
 {
-  "id": "provider-direct-example"
+  "id": "provider-direct-example",
+  "requirements": {
+    "paseo": ">=0.8.0"
+  }
 }

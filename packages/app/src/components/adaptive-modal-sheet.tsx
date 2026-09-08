@@ -449,6 +449,7 @@ export interface AdaptiveModalSheetProps {
   desktopMaxWidth?: number;
   /** Bound an author-owned list without changing content-sized first-party dialogs. */
   desktopHeight?: DimensionValue;
+  /** Whether the host supplies the scroll container. Caller-owned lists still share sheet gestures. */
   scrollable?: boolean;
   presentation?: "push" | "replace";
   /** Full body viewport below the header, including space beyond the content. */
@@ -646,9 +647,6 @@ export function AdaptiveModalSheet({
         onDismiss={handleDismiss}
         backdropComponent={renderBackdrop}
         enablePanDownToClose
-        // A custom scroll owner must also own body gestures. Gorhom otherwise
-        // locks even imperative list offsets until the sheet reaches its top snap.
-        enableContentPanningGesture={scrollable}
         backgroundComponent={SheetBackground}
         handleIndicatorStyle={handleIndicatorStyle}
         keyboardBehavior="extend"

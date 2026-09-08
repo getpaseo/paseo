@@ -1,3 +1,6 @@
 {
-  "id": "inline-thinking"
+  "id": "inline-thinking",
+  "requirements": {
+    "paseo": ">=0.8.0"
+  }
 }

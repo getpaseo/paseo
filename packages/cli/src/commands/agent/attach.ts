@@ -12,7 +12,7 @@ import {
 } from "../../utils/timeline.js";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import type { AgentTimelineItem } from "@getpaseo/protocol/agent-types";
-import type { AgentStreamEventPayload, AgentStreamMessage } from "@getpaseo/protocol/messages";
+import type { AgentStreamEventPayload } from "@getpaseo/protocol/messages";
 
 export interface AgentAttachOptions {
   host?: string;
@@ -134,7 +134,7 @@ export async function runAttachCommand(
     const resolvedId = fetchResult.agent.id;
 
     // Print header
-    console.log(`Attaching to agent ${resolvedId.substring(0, 7)}...`);
+    console.log(`Fetching history for agent ${resolvedId.substring(0, 7)}...`);
     console.log(`(Press Ctrl+C to detach)\n`);
 
     // Print existing output from timeline fetch.
@@ -152,13 +152,16 @@ export async function runAttachCommand(
     }
 
     // Subscribe to new events
-    const unsubscribe = client.on("agent_stream", (msg: unknown) => {
-      const message = msg as AgentStreamMessage;
-      if (message.type !== "agent_stream") return;
-      if (message.payload.agentId !== resolvedId) return;
-
-      printStreamEvent(message.payload.event);
+    const unsubscribe = client.subscribeAgentTimeline(resolvedId, (message) => {
+      if (message.type === "agent.timeline.replacement") {
+        console.log("\n[Timeline replaced; earlier output is no longer current]");
+      } else {
+        printStreamEvent(message.payload.event);
+      }
     });
+
+    await unsubscribe.ready;
+    console.log(`Attached to agent ${resolvedId.substring(0, 7)}.`);
 
     // Handle Ctrl+C to detach gracefully
     let detached = false;

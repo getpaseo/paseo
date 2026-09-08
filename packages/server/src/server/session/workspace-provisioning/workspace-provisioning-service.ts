@@ -1,3 +1,5 @@
+import type { PluginLifecycle } from "../../plugins/lifecycle/index.js";
+import { describeHookWorkspace } from "../../plugins/lifecycle/index.js";
 import { basename, resolve } from "node:path";
 import type { Logger } from "pino";
 import {
@@ -92,6 +94,7 @@ export function createWorkspaceProvisioningService(deps: {
   projectRegistry: ProjectRegistry;
   workspaceGitService: Pick<WorkspaceGitService, "getCheckout" | "getSnapshot" | "peekSnapshot">;
   logger: Logger;
+  lifecycle?: PluginLifecycle;
 }): WorkspaceProvisioningService {
   const { serverId, workspaceRegistry, projectRegistry, workspaceGitService, logger } = deps;
 
@@ -216,6 +219,7 @@ export function createWorkspaceProvisioningService(deps: {
       updatedAt: timestamp,
     });
     await workspaceRegistry.upsert(workspace, context);
+    deps.lifecycle?.emit("workspace.created", { workspace: describeHookWorkspace(workspace) });
     return workspace;
   }
 
@@ -251,6 +255,7 @@ export function createWorkspaceProvisioningService(deps: {
     await workspaceRegistry.upsert(workspace, {
       expectsInitialAgent: input.expectsInitialAgent,
     });
+    deps.lifecycle?.emit("workspace.created", { workspace: describeHookWorkspace(workspace) });
     return workspace;
   }
 

@@ -4,9 +4,9 @@ import { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import {
   defineRpc,
   type PluginAgentSnapshot,
-  type PluginCommandCenterItemContribution,
   type PluginWorkspaceSnapshot,
 } from "@getpaseo/plugin";
+import { type PluginCommandCenterItemContribution } from "@getpaseo/plugin/client";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import type { InstalledPlugin } from "../types";

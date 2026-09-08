@@ -2487,6 +2487,8 @@ test.each(["hang", "reject"])(
       expect(client.resumeSessionCalls).toBe(0);
       expect(manager.getAgent(snapshot.id)?.session).toBe(client.firstSession);
     } finally {
+      await manager.flush();
+      await storage.flush();
       rmSync(workdir, { recursive: true, force: true });
     }
   },

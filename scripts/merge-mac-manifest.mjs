@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import { dump, load } from "js-yaml";
+import { isMainModule } from "./is-main-module.mjs";
 
 // electron-updater compares this with os.release(), which reports the Darwin
 // kernel version. Darwin 22 is macOS 13 Ventura.
@@ -19,7 +20,7 @@ export function mergeMacManifest(arm64Path, x64Path, outputPath) {
   return output;
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (isMainModule(import.meta.url)) {
   const [, , arm64Path, x64Path, outputPath] = process.argv;
   if (!arm64Path || !x64Path || !outputPath) {
     throw new Error("Usage: node scripts/merge-mac-manifest.mjs <arm64.yml> <x64.yml> <out.yml>");

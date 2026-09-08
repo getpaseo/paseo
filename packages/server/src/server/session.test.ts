@@ -489,6 +489,10 @@ test("routes plugin requests and releases its owned catalog subscription on clea
     status: "running" as const,
   };
   const pluginRuntime: NonNullable<SessionOptions["pluginRuntime"]> = {
+    before: async (_name, request) => {
+      return request;
+    },
+    emit: () => {},
     listPlugins: () => [plugin],
     getLogs: () => [
       {
