@@ -1,3 +1,4 @@
+import type { SessionEventSubscription } from "@getpaseo/protocol/messages";
 import type { AgentRequests } from "./agent/requests/index.js";
 import equal from "fast-deep-equal";
 import { v4 as uuidv4 } from "uuid";
@@ -715,6 +716,8 @@ export class Session {
     unsubscribe: () => void;
   } | null = null;
   private projectSyncEnabled = false;
+  private readonly defaultEventSubscriptionSource = {};
+  private readonly eventSubscriptions = new Map<object, Set<SessionEventSubscription>>();
   private readonly workspaceUpdateTails = new Map<string, Promise<void>>();
   private clientActivity: {
     deviceType: "web" | "mobile";
@@ -925,6 +928,7 @@ export class Session {
         isProviderVisibleToClient: (provider) => this.isProviderVisibleToClient(provider),
         supportsCustomModeIcons: () => this.supports(CLIENT_CAPS.customModeIcons),
         supportsCompactProviderSnapshots: () => this.supports(CLIENT_CAPS.compactProviderSnapshots),
+        wantsSnapshotChanges: () => this.wantsEvent("providers_snapshot_update"),
         supportsProviderSnapshotReferences: () =>
           this.supports(CLIENT_CAPS.providerSnapshotReferences),
         listProviderAvailability: () => this.agentManager.listProviderAvailability(),
@@ -1135,6 +1139,7 @@ export class Session {
   updateClientCapabilities(capabilities: Record<string, unknown> | null, source?: object): void {
     this.clientCapabilities = parseClientCapabilities(capabilities);
     if (source) {
+      this.eventSubscriptions.delete(source);
       this.clientCapabilitiesBySource.set(source, this.clientCapabilities);
     }
     if (!source && !this.supports(CLIENT_CAPS.selectiveAgentTimeline)) {
@@ -1145,6 +1150,7 @@ export class Session {
 
   clearAgentTimelineSubscription(source: object): void {
     this.clientCapabilitiesBySource.delete(source);
+    this.eventSubscriptions.delete(source);
     if (this.viewedTimelineAgentIdsBySource.delete(source)) {
       this.rebuildViewedTimelineAgentIds();
     }
@@ -1223,6 +1229,7 @@ export class Session {
         continue;
       const supportsSelectiveDelivery = capabilities.has(CLIENT_CAPS.selectiveAgentTimeline);
       if (supportsSelectiveDelivery && serializedEvent.type === "attention_required") {
+        if (!this.wantsEvent("agent_attention_required", source)) continue;
         this.onMessageToSource(source, {
           type: "agent_attention_required",
           payload: {
@@ -1267,6 +1274,7 @@ export class Session {
   }
 
   private async publishProjectUpdate(update: ProjectUpdate): Promise<void> {
+    if (!this.wantsEvent("project.update")) return;
     const projectedPayload =
       update.kind === "upsert"
         ? { kind: "upsert" as const, project: await this.buildProjectDescriptor(update.project) }
@@ -1275,15 +1283,7 @@ export class Session {
       type: "project.update",
       payload: this.directorySync.sequenceProjectUpdate(projectedPayload, this.projectSyncEnabled),
     };
-    if (this.clientCapabilitiesBySource.size === 0 || !this.onMessageToSource) {
-      if (this.supports(CLIENT_CAPS.projectUpdates)) this.emit(message);
-      return;
-    }
-    for (const [source, capabilities] of this.clientCapabilitiesBySource) {
-      if (capabilities.has(CLIENT_CAPS.projectUpdates)) {
-        this.onMessageToSource(source, message);
-      }
-    }
+    this.emit(message);
   }
 
   async syncWorkspaceGitObserverForWorkspace(workspace: PersistedWorkspaceRecord): Promise<void> {
@@ -2333,6 +2333,20 @@ export class Session {
         return this.handleProviderSubagentListRequest(msg);
       case "agent.provider_subagents.timeline.get.request":
         return this.handleProviderSubagentTimelineRequest(msg, source);
+      case "session.events.set_subscription.request": {
+        this.eventSubscriptions.set(
+          source ?? this.defaultEventSubscriptionSource,
+          new Set(msg.events),
+        );
+        this.emitForSource(
+          {
+            type: "session.events.set_subscription.response",
+            payload: { requestId: msg.requestId },
+          },
+          source,
+        );
+        return undefined;
+      }
       case "agent.timeline.set_subscription.request": {
         const agentIds = [...new Set(msg.agentIds)].sort();
         if (
@@ -7703,9 +7717,42 @@ export class Session {
   /**
    * Emit a message to the client
    */
+  // COMPAT(explicitEventSubscriptions): added in v0.8.0, remove legacy broadcasts after 2027-03-08.
+  private wantsEvent(event: SessionEventSubscription, source?: object): boolean {
+    if (!source && this.clientCapabilitiesBySource.size > 0) {
+      return [...this.clientCapabilitiesBySource.keys()].some((candidate) =>
+        this.wantsEvent(event, candidate),
+      );
+    }
+    const capabilities = source
+      ? this.clientCapabilitiesBySource.get(source)!
+      : this.clientCapabilities;
+    if (event === "project.update" && !capabilities.has(CLIENT_CAPS.projectUpdates)) return false;
+    return (
+      !capabilities.has(CLIENT_CAPS.explicitEventSubscriptions) ||
+      this.eventSubscriptions.get(source ?? this.defaultEventSubscriptionSource)?.has(event) ===
+        true
+    );
+  }
+
   private emit(msg: SessionOutboundMessage): void {
     if (!this.authorization.allowsOutbound(msg)) {
       return;
+    }
+    if (
+      msg.type === "project.update" ||
+      msg.type === "providers_snapshot_update" ||
+      msg.type === "agent_attention_required" ||
+      msg.type === "agent_permission_request" ||
+      msg.type === "agent_permission_resolved"
+    ) {
+      if (this.clientCapabilitiesBySource.size > 0 && this.onMessageToSource) {
+        for (const source of this.clientCapabilitiesBySource.keys()) {
+          if (this.wantsEvent(msg.type, source)) this.onMessageToSource(source, msg);
+        }
+        return;
+      }
+      if (!this.wantsEvent(msg.type)) return;
     }
     // JSON.stringify(msg) is only computed when trace is enabled — it runs for
     // every outbound message otherwise, and trace is disabled by default.

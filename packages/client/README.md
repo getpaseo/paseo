@@ -34,6 +34,11 @@ The client needs a WebSocket implementation. Modern browsers and Node.js 22 prov
 
 Use a WebSocket URL ending in `/ws`, such as `ws://127.0.0.1:6767/ws`. Pass `password` when the daemon requires authentication.
 
+The client advertises its supported protocol capabilities by default. Optional `capabilities`
+overrides extend or override that declaration; browser hosting must be supplied by the caller.
+Connecting alone does not subscribe to agent timelines or catalog events. See the
+[event guide](https://paseo.sh/docs/sdk/events) for subscription lifetimes and timeline replacements.
+
 ## Stability
 
 The high-level API exported from `@getpaseo/client` is the supported SDK surface. The SDK and daemon remain protocol-compatible across versions, but newly added capabilities can require a newer daemon.

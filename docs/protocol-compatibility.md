@@ -38,6 +38,18 @@ The app checks for the capability and either runs the feature or tells the user 
 
 Existing functionality keeps working across versions because of the protocol contract. Gating a new feature never substitutes for that.
 
+## Client capability ownership
+
+The client package advertises the protocol behavior it implements. Add each new capability to
+its exhaustive defaults and implement the associated subscription or decoding behavior there.
+The app, CLI, and plugins inherit those defaults; they supply only host resources such as browser
+automation, or explicit overrides. A schema accepting a message does not establish support for
+its delivery semantics.
+
+Connecting creates no timeline or event demand. Client subscriptions own their network membership,
+release it on unsubscribe, and restore it after reconnect. Raw message observers inspect traffic
+without requesting streams. Application caches and which agents are visible remain caller-owned.
+
 ## Every shim is tagged and dated
 
 A shim that exists for old-app or old-daemon support carries a comment naming it, the version it arrived in, and when it can go:

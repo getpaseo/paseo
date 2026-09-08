@@ -96,7 +96,8 @@ code imports from `@getpaseo/client`.
 
 `PaseoApi` is the capability-only boundary over workspaces, agents, terminals, providers, and config.
 `PaseoClient` adds connection lifecycle. App plugin surfaces borrow an API over their selected
-host's client; plugin subprocesses use the same facade over a host-owned IPC transport.
+host's client; plugin subprocesses use the same facade over a host-owned IPC transport. Protocol capability ownership and subscription lifetimes follow
+[the client contract](protocol-compatibility.md#client-capability-ownership).
 
 ### `packages/app` — Mobile + web client (Expo)
 

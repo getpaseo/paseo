@@ -501,8 +501,6 @@ function createDefaultDeps(): HostRuntimeControllerDeps {
       }
     : undefined;
   const appCapabilities = {
-    [CLIENT_CAPS.selectiveAgentTimeline]: true,
-    [CLIENT_CAPS.timelineReplacementInvalidation]: true,
     ...browserAutomationCapabilities,
   };
 
