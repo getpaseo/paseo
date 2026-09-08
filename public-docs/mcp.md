@@ -161,17 +161,17 @@ MCP heartbeats are ephemeral: create or delete them. To change one, delete it an
 
 Before delegating, read each profile's `notes` and choose the profile the user named or the one that fits the task. See [Agent profiles](/docs/agent-profiles) for setup and example notes.
 
-`create_agent` has no profile parameter. Apply the chosen profile's values to the launch request:
+`create_agent` has no profile parameter and requires a `provider/model` pair. If the profile has no model, call `list_models` for its provider and choose an available model for the task before launching. Apply the chosen profile's values to the launch request:
 
 | Profile field                   | `create_agent` field                                                        |
 | ------------------------------- | --------------------------------------------------------------------------- |
-| `provider` and optional `model` | `provider` as `provider/model`, or just `provider` when no model is saved   |
+| `provider` and optional `model` | `provider` as `provider/model`, using the saved or discovered model ID      |
 | `modeId`                        | `settings.modeId`                                                           |
 | `thinkingOptionId`              | `settings.thinkingOptionId`                                                 |
 | `featureValues`                 | `settings.features`                                                         |
 | `notes`                         | Selection guidance for the orchestrator; supply the task in `initialPrompt` |
 
-Omit absent values. If no profile fits, use provider discovery to choose available settings.
+Omit absent optional settings. If no profile fits, use provider discovery to choose available settings.
 
 ### Providers
 

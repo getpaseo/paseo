@@ -193,10 +193,10 @@ behavior.
 ## Listing agents
 
 ```bash
-paseo ls                    # Running agents in current directory
-paseo ls -a                 # Include completed/stopped agents
-paseo ls -g                 # All directories
-paseo ls -a -g --json       # Full list as JSON
+paseo ls                    # Non-archived agents in active workspaces
+paseo ls -a                 # Also include archived agents
+paseo ls -g                 # Non-archived agents across all workspaces
+paseo ls -a -g --json       # All agents, including archived, as JSON
 ```
 
 ## Streaming output
