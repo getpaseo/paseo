@@ -53,6 +53,129 @@ export function formatAgentActivityTranscript(
   );
 }
 
+type StreamingTextType = "assistant_message" | "reasoning";
+
+const THOUGHT_PREFIX = "[Thought] ";
+
+interface PendingStreamingText {
+  type: StreamingTextType;
+  turnId: string | undefined;
+  messageId: string | undefined;
+  buffer: string;
+  emitted: boolean;
+}
+
+export interface FollowTranscriptWriter {
+  push(item: AgentTimelineItem, turnId?: string): void;
+  end(): void;
+}
+
+function lastNonWhitespaceIndex(text: string): number {
+  for (let index = text.length - 1; index >= 0; index -= 1) {
+    if (!/\s/.test(text[index])) {
+      return index;
+    }
+  }
+  return -1;
+}
+
+/**
+ * Follow mode receives one streaming fragment per event, while the one-shot
+ * transcript sees the whole timeline and merges consecutive assistant and
+ * reasoning fragments with exact concatenation (`projectTimelineRows`). Printing
+ * each fragment on its own line splits words at fragment boundaries and
+ * reprints the reasoning prefix, so a chain of fragments is written as one
+ * stream instead: text goes out as it arrives, and only the trailing whitespace
+ * is held back so the message ends trimmed the way the transcript does.
+ */
+export function createFollowTranscriptWriter(
+  write: (chunk: string) => void = (chunk) => void process.stdout.write(chunk),
+): FollowTranscriptWriter {
+  let pending: PendingStreamingText | null = null;
+
+  const emit = (chain: PendingStreamingText, text: string): void => {
+    if (!chain.emitted) {
+      chain.emitted = true;
+      if (chain.type === "reasoning") {
+        write(THOUGHT_PREFIX);
+      }
+    }
+    write(text);
+  };
+
+  const flushContent = (chain: PendingStreamingText): void => {
+    if (!chain.emitted) {
+      chain.buffer = chain.buffer.replace(/^\s+/, "");
+    }
+    const lastContent = lastNonWhitespaceIndex(chain.buffer);
+    if (lastContent < 0) {
+      return;
+    }
+    emit(chain, chain.buffer.slice(0, lastContent + 1));
+    chain.buffer = chain.buffer.slice(lastContent + 1);
+  };
+
+  const closePending = (): void => {
+    const chain = pending;
+    pending = null;
+    if (!chain) {
+      return;
+    }
+    const tail = chain.emitted ? chain.buffer.trimEnd() : chain.buffer.trim();
+    if (tail) {
+      emit(chain, tail);
+    }
+    if (chain.emitted) {
+      write("\n");
+    }
+  };
+
+  const continuesChain = (item: AgentTimelineItem, turnId: string | undefined): boolean => {
+    if (!pending || pending.type !== item.type || pending.turnId !== turnId) {
+      return false;
+    }
+    if (item.type !== "assistant_message") {
+      return true;
+    }
+    return item.messageId === undefined || item.messageId === pending.messageId;
+  };
+
+  const startChain = (
+    item: Extract<AgentTimelineItem, { type: StreamingTextType }>,
+    turnId: string | undefined,
+  ): PendingStreamingText => {
+    closePending();
+    const chain: PendingStreamingText = {
+      type: item.type,
+      turnId,
+      messageId: item.type === "assistant_message" ? item.messageId : undefined,
+      buffer: "",
+      emitted: false,
+    };
+    pending = chain;
+    return chain;
+  };
+
+  return {
+    push(item, turnId) {
+      if (item.type === "assistant_message" || item.type === "reasoning") {
+        const chain = continuesChain(item, turnId) && pending ? pending : startChain(item, turnId);
+        chain.buffer += item.text;
+        flushContent(chain);
+        return;
+      }
+      closePending();
+      const transcript = formatAgentActivityTranscript([item]);
+      if (transcript && transcript !== NO_ACTIVITY_MESSAGE) {
+        write(`${transcript}\n`);
+      }
+    },
+    end() {
+      closePending();
+    },
+  };
+}
+
 function parseTailCount(raw: string | undefined): number | undefined {
   if (raw === undefined) return undefined;
   const parsed = Number.parseInt(raw, 10);
@@ -204,6 +327,8 @@ async function runFollowMode(
     tailCount === 0 ? "no history" : `last ${tailCount} entr${tailCount === 1 ? "y" : "ies"}`;
   console.log(`\n--- Following logs (${tailLabel}; Ctrl+C to stop) ---\n`);
 
+  const writer = createFollowTranscriptWriter();
+
   const unsubscribe = client.on("agent_stream", (msg: unknown) => {
     const message = msg as AgentStreamMessage;
     if (message.type !== "agent_stream") return;
@@ -215,17 +340,14 @@ async function runFollowMode(
       if (options.filter && !matchesFilter(item, options.filter)) {
         return;
       }
-      // Print each timeline item as it arrives using the curator format
-      const transcript = formatAgentActivityTranscript([item]);
-      if (transcript !== NO_ACTIVITY_MESSAGE) {
-        console.log(transcript);
-      }
+      writer.push(item, message.payload.event.turnId);
     }
   });
 
   // Wait for interrupt
   await new Promise<void>((resolve) => {
     const cleanup = () => {
+      writer.end();
       unsubscribe();
       resolve();
     };
