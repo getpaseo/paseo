@@ -246,7 +246,7 @@ After migrating the entries and imports, add the minimum runtime version to `pas
 ```json
 {
   "id": "my-plugin",
-  "requirements": { "paseo": ">=0.8.0-beta.1" }
+  "requirements": { "paseo": ">=0.8.0" }
 }
 ```
 
@@ -255,8 +255,8 @@ rejects the plugin even if its files have been moved. Adding the field alone doe
 code. Update the local `@getpaseo/plugin` development dependency to the version you target and
 reinstall dependencies before typechecking.
 
-For a 0.8 beta, use its explicit version in both the SDK dependency and range, for example
-`>=0.8.0-beta.1`. See [requirements](reference#requirements) for range and prerelease semantics.
+For a 0.8 beta, use its explicit version in the SDK dependency and `>=0.8.0` in the manifest.
+See [requirements](reference#requirements) for range and prerelease semantics.
 
 ## 8. Verify the migration
 
