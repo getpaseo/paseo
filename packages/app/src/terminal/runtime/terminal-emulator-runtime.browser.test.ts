@@ -371,6 +371,43 @@ describe("terminal emulator runtime in a real browser", () => {
     expect(refreshCalls.at(-1)).toEqual([0, terminal.rows - 1]);
   });
 
+  it("refreshes after a retained tab goes display:none then becomes visible again", async () => {
+    await page.viewport(900, 600);
+    const mounted = createTerminalHost({ width: 720, height: 360 });
+
+    await waitFor({ predicate: () => mounted.sizes.length > 0 });
+    await settleMountRefits();
+
+    const terminal = getBrowserTerminal();
+    const refreshCalls: Array<[number, number]> = [];
+    const originalRefresh = terminal.refresh.bind(terminal);
+    terminal.refresh = (start, end) => {
+      refreshCalls.push([start, end]);
+      originalRefresh(start, end);
+    };
+    refreshCalls.length = 0;
+
+    // RetainedPanel hides inactive tabs with display:none. That measures 0x0 and
+    // used to make the next same-size fit skip xterm.refresh().
+    mounted.root.style.display = "none";
+    await nextFrame();
+    expect(mounted.root.offsetWidth).toBe(0);
+    expect(mounted.root.offsetHeight).toBe(0);
+    mounted.runtime.resize({ shouldClaim: false });
+    expect(refreshCalls).toEqual([]);
+
+    mounted.root.style.display = "";
+    await nextFrame();
+    expect(mounted.root.offsetWidth).toBeGreaterThan(0);
+    mounted.runtime.resize({ shouldClaim: false });
+
+    await waitFor({
+      predicate: () => refreshCalls.length > 0,
+      timeoutMs: 4_000,
+    });
+    expect(refreshCalls.at(-1)).toEqual([0, terminal.rows - 1]);
+  });
+
   it("intercepts Shift+Enter only after enhanced terminal input mode is active", async () => {
     await page.viewport(900, 600);
     const mounted = createTerminalHost({ width: 720, height: 360 });

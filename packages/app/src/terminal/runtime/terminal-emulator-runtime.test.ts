@@ -8,7 +8,6 @@ vi.mock("@xterm/addon-clipboard", () => ({
 
 vi.mock("@xterm/addon-fit", () => ({
   FitAddon: class FitAddon {
-    fit(): void {}
     dispose(): void {}
   },
 }));
@@ -61,7 +60,6 @@ vi.mock("@xterm/xterm", () => ({
     unicode = { activeVersion: "" };
     parser = {
       registerCsiHandler: () => undefined,
-      registerOscHandler: () => undefined,
     };
     constructor(options: unknown) {
       terminalConstructorOptions.values.push(options);
@@ -179,97 +177,8 @@ function decodeTerminalOutput(data: string | Uint8Array): string {
   return new TextDecoder().decode(data);
 }
 
-function createStyleBag(): {
-  overflow: string;
-  width: string;
-  height: string;
-  margin: string;
-  padding: string;
-  backgroundColor: string;
-  getPropertyValue: (name: string) => string;
-  setProperty: (name: string, value: string) => void;
-} {
-  const properties = new Map<string, string>();
-  return {
-    overflow: "",
-    width: "",
-    height: "",
-    margin: "",
-    padding: "",
-    backgroundColor: "",
-    getPropertyValue: (name) => properties.get(name) ?? "",
-    setProperty: (name, value) => {
-      properties.set(name, value);
-    },
-  };
-}
-
-function createFakeElement(): HTMLDivElement {
-  return {
-    innerHTML: "",
-    style: createStyleBag(),
-    parentElement: null,
-    querySelector: () => null,
-    querySelectorAll: () => [],
-    addEventListener: () => {},
-    removeEventListener: () => {},
-  } as unknown as HTMLDivElement;
-}
-
-function installMountWindow(): void {
-  (globalThis as { window?: unknown }).window = {
-    __paseoTerminal: undefined,
-    addEventListener: () => {},
-    removeEventListener: () => {},
-    setTimeout,
-    clearTimeout,
-    requestAnimationFrame: (callback: FrameRequestCallback) =>
-      setTimeout(() => callback(0), 0) as unknown as number,
-    visualViewport: null,
-  };
-  (globalThis as { document?: unknown }).document = {
-    visibilityState: "visible",
-    documentElement: { style: createStyleBag() },
-    body: { style: createStyleBag() },
-    fonts: undefined,
-    addEventListener: () => {},
-    removeEventListener: () => {},
-  };
-}
-
-function createSizedHost(
-  width: number,
-  height: number,
-): {
-  root: HTMLDivElement;
-  host: HTMLDivElement;
-  setSize: (nextWidth: number, nextHeight: number) => void;
-} {
-  const root = createFakeElement();
-  const host = createFakeElement();
-  let currentWidth = width;
-  let currentHeight = height;
-  Object.defineProperty(root, "offsetWidth", {
-    configurable: true,
-    get: () => currentWidth,
-  });
-  Object.defineProperty(root, "offsetHeight", {
-    configurable: true,
-    get: () => currentHeight,
-  });
-  return {
-    root,
-    host,
-    setSize: (nextWidth, nextHeight) => {
-      currentWidth = nextWidth;
-      currentHeight = nextHeight;
-    },
-  };
-}
-
 describe("terminal-emulator-runtime", () => {
   const originalWindow = (globalThis as { window?: unknown }).window;
-  const originalDocument = (globalThis as { document?: unknown }).document;
 
   beforeEach(() => {
     (globalThis as { window?: { __paseoTerminal?: unknown } }).window = {
@@ -280,7 +189,6 @@ describe("terminal-emulator-runtime", () => {
 
   afterEach(() => {
     (globalThis as { window?: unknown }).window = originalWindow;
-    (globalThis as { document?: unknown }).document = originalDocument;
     vi.useRealTimers();
   });
 
@@ -728,46 +636,5 @@ describe("terminal-emulator-runtime", () => {
     ).handleVisibilityRestore();
 
     expect(fitAndEmitResize).not.toHaveBeenCalled();
-  });
-
-  it("refreshes visible rows after a zero-size hide even when cols and rows are unchanged", () => {
-    installMountWindow();
-    vi.stubGlobal(
-      "ResizeObserver",
-      class ResizeObserver {
-        observe(): void {}
-        unobserve(): void {}
-        disconnect(): void {}
-      },
-    );
-
-    const { root, host, setSize } = createSizedHost(640, 480);
-    const runtime = new TerminalEmulatorRuntime();
-    runtime.mount({
-      root,
-      host,
-      initialSnapshot: null,
-      scrollback: 1000,
-      theme: { background: "#000" },
-    });
-
-    const terminal = (
-      runtime as unknown as {
-        terminal: { refresh: () => void; rows: number };
-      }
-    ).terminal;
-    const refresh = vi.spyOn(terminal, "refresh");
-    refresh.mockClear();
-
-    setSize(0, 0);
-    runtime.resize({ shouldClaim: false });
-    expect(refresh).not.toHaveBeenCalled();
-
-    setSize(640, 480);
-    runtime.resize({ shouldClaim: false });
-
-    expect(refresh).toHaveBeenCalledWith(0, terminal.rows - 1);
-    runtime.unmount();
-    vi.unstubAllGlobals();
   });
 });
