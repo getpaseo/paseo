@@ -1,15 +1,15 @@
 ---
 title: Plugin quickstart
 description: Build, install, share, and update a trusted Paseo plugin.
-nav: Paseo v0.8 — Preview
+nav: Paseo v0.8 — Beta
 order: 46
 category: Plugins
 ---
 
 # Plugin quickstart
 
-> **For the upcoming Paseo v0.8 release.** Use the [current v0.7 docs](/docs/plugins/v0.7)
-> unless you are preparing a plugin for v0.8.
+> **For Paseo v0.8 beta.** Use the [v0.7 docs](/docs/plugins/v0.7)
+> if you run the stable release.
 
 > **Experimental:** The plugin API is still evolving, so expect breaking changes and updates to
 > your plugins as Paseo evolves. See the [plugin roadmap](https://github.com/getpaseo/paseo/labels/plugins)
