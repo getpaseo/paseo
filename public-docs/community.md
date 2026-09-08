@@ -19,6 +19,7 @@ These projects are related to Paseo and built by the community.
 | [Paseo Icon](https://github.com/gpambrozio/paseo-menubar)                                    | Shows workspace status across Paseo hosts in the macOS menu bar and opens a workspace with one click.                                |
 | [Paseo Cross-Daemon Comms](https://github.com/xpufx/paseo-cross-daemon-comms)                | Lets agents communicate with agents on another Paseo daemon through an MCP server.                                                   |
 | [Paseo Antigravity ACP](https://github.com/tiezbro/paseo-agy-acp)                            | Connects Google Antigravity CLI to Paseo through ACP, with Paseo-specific context, permissions, and concurrency handling.            |
+| [paseo-plugin-zcode](https://github.com/lianxin255/paseo-plugin-zcode)                        | Registers ZCode (Z.ai's GLM coding agent) as a Paseo provider by wrapping the npm zcode-acp-server ACP bridge.                        |
 | [Desvio](https://github.com/cleiter/desvio)                                                  | Rebuilds a personal fork from a set of branches, using an agent to resolve new conflicts and Git rerere to replay known resolutions. |
 
 ## Hosting and infrastructure

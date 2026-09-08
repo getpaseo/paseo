@@ -331,6 +331,30 @@ For an ACP command, register `runAcpProvider({ id, label, command })` from
 whole provider event stream. The direct and ACP examples live in `plugin-examples/provider-direct`
 and `plugin-examples/provider-acp-transformer`.
 
+
+Agents distributed through npm should be resolved at runtime instead of relying on `PATH`. Plugin
+server code runs without `__dirname` or a usable `import.meta`, and the injected `require` exposes
+no `resolve`. Built-ins still load through it: grab `node:module`, anchor `createRequire` at
+`process.argv[1]` — the plugin worker script inside the Paseo server package, whose `node_modules`
+ancestor chain covers the npm global install directory — and launch the resolved entry with
+`process.execPath`:
+
+```ts
+const { createRequire } = require("node:module");
+const nodeRequire = createRequire(process.argv[1]);
+const cli = nodeRequire.resolve("zcode-acp-server/dist/cli.js");
+
+runAcpProvider({
+  id: "zcode",
+  label: "ZCode",
+  command: [process.execPath, cli],
+});
+```
+
+The community plugin [`paseo-plugin-zcode`](https://github.com/lianxin255/paseo-plugin-zcode) ships
+this pattern end to end, including a sanitized provider icon and the wider handshake timeout an
+npm-launched bridge needs on its first run.
+
 Provider-emitted plugin timeline items use the same renderer registration as transformed and
 daemon-appended plugin items. The direct example includes both sides. The renderer-only
 `plugin-examples/inline-thinking` example shows that timeline presentation remains independent of a
