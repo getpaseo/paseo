@@ -263,14 +263,35 @@ export const OmpSubagentProgressPayloadSchema = z
   .passthrough();
 
 export const OmpAssistantMessageEventSchema = z.discriminatedUnion("type", [
-  z.object({ type: z.literal("text_delta"), delta: z.string().optional() }).passthrough(),
-  z.object({ type: z.literal("thinking_delta"), delta: z.string().optional() }).passthrough(),
-  z.object({ type: z.literal("start") }).passthrough(),
-  z.object({ type: z.literal("text_start") }).passthrough(),
-  z.object({ type: z.literal("text_end") }).passthrough(),
-  z.object({ type: z.literal("thinking_start") }).passthrough(),
-  z.object({ type: z.literal("thinking_end") }).passthrough(),
-  z.object({ type: z.literal("done") }).passthrough(),
+  z
+    .object({
+      type: z.literal("text_delta"),
+      contentIndex: z.number().optional(),
+      delta: z.string().optional(),
+    })
+    .passthrough(),
+  z
+    .object({
+      type: z.literal("thinking_delta"),
+      contentIndex: z.number().optional(),
+      delta: z.string().optional(),
+    })
+    .passthrough(),
+  z.object({ type: z.literal("start"), contentIndex: z.number().optional() }).passthrough(),
+  z.object({ type: z.literal("text_start"), contentIndex: z.number().optional() }).passthrough(),
+  z.object({ type: z.literal("text_end"), contentIndex: z.number().optional() }).passthrough(),
+  z
+    .object({ type: z.literal("thinking_start"), contentIndex: z.number().optional() })
+    .passthrough(),
+  z.object({ type: z.literal("thinking_end"), contentIndex: z.number().optional() }).passthrough(),
+  z
+    .object({ type: z.literal("toolcall_start"), contentIndex: z.number().optional() })
+    .passthrough(),
+  z
+    .object({ type: z.literal("toolcall_delta"), contentIndex: z.number().optional() })
+    .passthrough(),
+  z.object({ type: z.literal("toolcall_end"), contentIndex: z.number().optional() }).passthrough(),
+  z.object({ type: z.literal("done"), contentIndex: z.number().optional() }).passthrough(),
 ]);
 
 export const OmpAgentSessionEventSchema = z.discriminatedUnion("type", [

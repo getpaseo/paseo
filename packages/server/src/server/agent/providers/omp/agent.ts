@@ -72,6 +72,7 @@ import { getUserMessageText } from "./message-history.js";
 import { mapOmpSystemNoticeToNotification } from "./system-notice.js";
 import { materializeProviderImage } from "../provider-image-output.js";
 import { OmpCliRuntime } from "./cli-runtime.js";
+import { OmpMessageContentStream, type OmpMessageContentChunk } from "./message-content-stream.js";
 import { listOmpImportableSessions, readOmpImportSessionConfig } from "./session-descriptor.js";
 import type { OmpRuntime, OmpRuntimeSession, OmpStartSessionInput } from "./runtime.js";
 import type {
@@ -852,6 +853,7 @@ export class OmpAgentSession implements AgentSession {
   private activeTurnId: string | null = null;
   private activeClientMessageId: string | null = null;
   private activeAssistantMessageId: string | null = null;
+  private readonly activeAssistantContent = new OmpMessageContentStream();
   private activeTurnTerminalAssistantMessage: OmpAgentMessage | null = null;
   private activeTurnStarted = false;
   private activeTurnHasUserMessage = false;
@@ -961,6 +963,7 @@ export class OmpAgentSession implements AgentSession {
     this.activeTurnId = turnId;
     this.activeClientMessageId = options?.clientMessageId ?? null;
     this.activeAssistantMessageId = null;
+    this.activeAssistantContent.reset();
     this.activeTurnTerminalAssistantMessage = null;
     this.activeTurnStarted = false;
     this.activeTurnHasUserMessage = false;
@@ -1822,7 +1825,7 @@ export class OmpAgentSession implements AgentSession {
         });
         return;
       case "message_start":
-        this.handleMessageStart(event);
+        this.handleMessageStart(event, turnId);
         return;
       case "message_end":
         if (event.message.role === "user") {
@@ -1966,29 +1969,41 @@ export class OmpAgentSession implements AgentSession {
     if (event.message.role !== "assistant") {
       return;
     }
-    if (event.assistantMessageEvent.type === "text_delta") {
-      // Omp-compatible runtimes may emit updates without a preceding message_start.
-      this.activeAssistantMessageId ??= event.message.responseId || randomUUID();
-      this.emit({
-        type: "timeline",
-        provider: this.provider,
-        turnId,
-        item: {
-          type: "assistant_message",
-          text: event.assistantMessageEvent.delta ?? "",
-          messageId: this.activeAssistantMessageId,
-        },
-      });
-      return;
-    }
-    if (event.assistantMessageEvent.type === "thinking_delta") {
+    this.emitMessageContentChunks(
+      this.activeAssistantContent.update(event.assistantMessageEvent, event.message),
+      turnId,
+      event.message.responseId,
+    );
+  }
+
+  private emitMessageContentChunks(
+    chunks: OmpMessageContentChunk[],
+    turnId: string | undefined,
+    responseId?: string,
+  ): void {
+    for (const chunk of chunks) {
+      if (chunk.type === "text") {
+        // Omp-compatible runtimes may emit updates without a preceding message_start.
+        this.activeAssistantMessageId ??= responseId || randomUUID();
+        this.emit({
+          type: "timeline",
+          provider: this.provider,
+          turnId,
+          item: {
+            type: "assistant_message",
+            text: chunk.text,
+            messageId: this.activeAssistantMessageId,
+          },
+        });
+        continue;
+      }
       this.emit({
         type: "timeline",
         provider: this.provider,
         turnId,
         item: {
           type: "reasoning",
-          text: event.assistantMessageEvent.delta ?? "",
+          text: chunk.text,
         },
       });
     }
@@ -1996,9 +2011,12 @@ export class OmpAgentSession implements AgentSession {
 
   private handleMessageStart(
     event: Extract<OmpAgentSessionEvent, { type: "message_start" }>,
+    turnId: string | undefined,
   ): void {
     if (event.message.role === "assistant") {
+      this.emitMessageContentChunks(this.activeAssistantContent.finish(), turnId);
       this.activeAssistantMessageId = event.message.responseId || null;
+      this.activeAssistantContent.start(event.message.content);
     }
   }
 
@@ -2007,6 +2025,7 @@ export class OmpAgentSession implements AgentSession {
     turnId: string | undefined,
   ): void {
     if (event.message.role === "assistant") {
+      this.emitMessageContentChunks(this.activeAssistantContent.finish(), turnId);
       this.activeAssistantMessageId = null;
       if (turnId) {
         this.activeTurnTerminalAssistantMessage = event.message;
@@ -2126,6 +2145,7 @@ export class OmpAgentSession implements AgentSession {
   }
 
   private completeTurn(turnId: string | undefined, messages: OmpAgentMessage[]): void {
+    this.emitMessageContentChunks(this.activeAssistantContent.finish(), turnId);
     this.activeTurnId = null;
     this.activeClientMessageId = null;
     this.activeAssistantMessageId = null;

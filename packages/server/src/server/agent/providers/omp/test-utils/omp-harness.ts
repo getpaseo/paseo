@@ -20,8 +20,7 @@ import {
 } from "../agent.js";
 import type { OmpUsagePollScheduler } from "../usage-poller.js";
 import type { OmpAgentMessage, OmpRpcSlashCommand } from "../rpc-types.js";
-import { FakeOmp } from "./fake-omp.js";
-
+import { FakeOmp, type FakeOmpSession } from "./fake-omp.js";
 const CWD = "/tmp/paseo-omp-agent-test";
 
 interface OmpHistoryMessage {
@@ -166,6 +165,22 @@ export class OmpHarness {
     runtime.queueStateReports(
       providerStatesAfterEnd.map((state) => ({ ...runtime.state, ...state })),
     );
+    runtime.finishTurn();
+    return await run;
+  }
+
+  async runPromptWithEvents(
+    input: string,
+    stream: (runtime: FakeOmpSession) => void,
+  ): Promise<unknown> {
+    const session = this.requireSession();
+    const promptStarted = this.omp.latestSession().nextPrompt();
+    const run = session.run(input);
+    await promptStarted;
+    const runtime = this.omp.latestSession();
+    runtime.beginTurn();
+    runtime.acceptPrompt(input, "user-1");
+    stream(runtime);
     runtime.finishTurn();
     return await run;
   }

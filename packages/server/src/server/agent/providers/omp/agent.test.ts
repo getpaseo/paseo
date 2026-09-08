@@ -245,6 +245,108 @@ describe("OMP agent client and session", () => {
     expect(omp.completedTurnCount()).toBe(1);
   });
 
+  test("streams OMP content blocks by content index when an earlier thinking delta arrives late", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+
+    await omp.runPromptWithEvents("hello OMP", (runtime) => {
+      const message = {
+        role: "assistant" as const,
+        responseId: "response-1",
+        content: [
+          { type: "thinking" as const, thinking: "" },
+          { type: "text" as const, text: "" },
+        ],
+      };
+      runtime.emit({ type: "message_start", message });
+      runtime.emit({
+        type: "message_update",
+        message,
+        assistantMessageEvent: { type: "thinking_start", contentIndex: 0 },
+      });
+      runtime.emit({
+        type: "message_update",
+        message,
+        assistantMessageEvent: { type: "thinking_delta", contentIndex: 0, delta: "verify" },
+      });
+      runtime.emit({
+        type: "message_update",
+        message,
+        assistantMessageEvent: { type: "text_start", contentIndex: 1 },
+      });
+      runtime.emit({
+        type: "message_update",
+        message,
+        assistantMessageEvent: { type: "text_delta", contentIndex: 1, delta: "Answer" },
+      });
+      runtime.emit({
+        type: "message_update",
+        message,
+        assistantMessageEvent: { type: "thinking_delta", contentIndex: 0, delta: "." },
+      });
+      runtime.emit({
+        type: "message_update",
+        message,
+        assistantMessageEvent: { type: "thinking_end", contentIndex: 0 },
+      });
+      runtime.emit({
+        type: "message_update",
+        message,
+        assistantMessageEvent: { type: "text_delta", contentIndex: 1, delta: " complete." },
+      });
+      runtime.emit({
+        type: "message_update",
+        message,
+        assistantMessageEvent: { type: "text_end", contentIndex: 1 },
+      });
+    });
+
+    expect(omp.timeline()).toEqual([
+      { type: "user_message", text: "hello OMP", messageId: "user-1" },
+      { type: "reasoning", text: "verify" },
+      { type: "reasoning", text: "." },
+      { type: "assistant_message", text: "Answer", messageId: "response-1" },
+      { type: "assistant_message", text: " complete.", messageId: "response-1" },
+    ]);
+  });
+
+  test("flushes indexed OMP blocks under the previous message id when its end event is missing", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+
+    await omp.runPromptWithEvents("hello OMP", (runtime) => {
+      const first = {
+        role: "assistant" as const,
+        responseId: "response-1",
+        content: [
+          { type: "thinking" as const, thinking: "" },
+          { type: "text" as const, text: "" },
+        ],
+      };
+      runtime.emit({ type: "message_start", message: first });
+      runtime.emit({
+        type: "message_update",
+        message: first,
+        assistantMessageEvent: { type: "thinking_delta", contentIndex: 0, delta: "think" },
+      });
+      runtime.emit({
+        type: "message_update",
+        message: first,
+        assistantMessageEvent: { type: "text_delta", contentIndex: 1, delta: "answer" },
+      });
+      runtime.emit({
+        type: "message_start",
+        message: { role: "assistant" as const, responseId: "response-2", content: [] },
+      });
+    });
+
+    expect(omp.timeline()).toEqual([
+      { type: "user_message", text: "hello OMP", messageId: "user-1" },
+      { type: "reasoning", text: "think" },
+      { type: "assistant_message", text: "answer", messageId: "response-1" },
+    ]);
+  });
+
   test("starts and stops context usage polling with the active turn", async () => {
     const scheduler = new ManualUsagePollScheduler();
     const omp = new OmpHarness({ usagePollScheduler: scheduler });
