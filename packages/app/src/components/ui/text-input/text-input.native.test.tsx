@@ -57,6 +57,26 @@ afterEach(() => {
 function noop() {}
 
 describe("EditingTextInputNative", () => {
+  it("keeps the focused input mounted when the terminal clears its input buffer", () => {
+    const handleRef = createRef<EditingTextInputHandle>();
+    act(() => {
+      root?.render(<EditingTextInput ref={handleRef} initialValue="typed" multiline />);
+    });
+    const input = container?.querySelector("textarea");
+    if (!input) throw new Error("Expected terminal input");
+    act(() => input.focus());
+
+    act(() => {
+      handleRef.current?.replaceText("");
+      handleRef.current?.focus();
+    });
+
+    expect(container?.querySelector("textarea")).toBe(input);
+    expect(document.activeElement).toBe(input);
+    expect(input.value).toBe("");
+    expect(handleRef.current?.getText()).toBe("");
+  });
+
   it("uses the bottom-sheet input only inside a bottom sheet", () => {
     act(() => {
       root?.render(
@@ -92,7 +112,7 @@ describe("EditingTextInputNative", () => {
     expect(handleRef.current?.getText()).toBe("");
   });
 
-  it("replaces the native input when clearing text", () => {
+  it("replaces the native input when resetting the editor", () => {
     const handleRef = createRef<EditingTextInputHandle>();
 
     act(() => {
@@ -107,13 +127,13 @@ describe("EditingTextInputNative", () => {
     const grownInput = container?.querySelector("input");
 
     act(() => {
-      handleRef.current?.replaceText("");
+      handleRef.current?.reset();
     });
 
     expect(container?.querySelector("input")).not.toBe(grownInput);
   });
 
-  it("restores focus after replacing a cleared native input", () => {
+  it("restores focus after replacing a reset native input", () => {
     const handleRef = createRef<EditingTextInputHandle>();
 
     act(() => {
@@ -125,13 +145,13 @@ describe("EditingTextInputNative", () => {
     originalInput.focus();
 
     act(() => {
-      handleRef.current?.replaceText("");
+      handleRef.current?.reset();
     });
 
     expect(document.activeElement).toBe(container?.querySelector("input"));
   });
 
-  it("focuses the replacement input when focus is requested before a cleared input remounts", () => {
+  it("focuses the replacement input when focus is requested before an editor reset remounts", () => {
     const handleRef = createRef<EditingTextInputHandle>();
 
     act(() => {
@@ -142,7 +162,7 @@ describe("EditingTextInputNative", () => {
     const originalFocus = vi.spyOn(originalInput, "focus");
 
     act(() => {
-      handleRef.current?.replaceText("");
+      handleRef.current?.reset();
       handleRef.current?.focus();
     });
 
@@ -152,7 +172,7 @@ describe("EditingTextInputNative", () => {
     expect(document.activeElement).toBe(replacementInput);
   });
 
-  it("drops a pending focus restore when blur is requested before a cleared input remounts", () => {
+  it("drops a pending focus restore when blur is requested before an editor reset remounts", () => {
     const handleRef = createRef<EditingTextInputHandle>();
 
     act(() => {
@@ -164,7 +184,7 @@ describe("EditingTextInputNative", () => {
     originalInput.focus();
 
     act(() => {
-      handleRef.current?.replaceText("");
+      handleRef.current?.reset();
       handleRef.current?.blur();
     });
 
