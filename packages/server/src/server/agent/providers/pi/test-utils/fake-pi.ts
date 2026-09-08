@@ -103,6 +103,12 @@ export class FakePiSession implements PiRuntimeSession {
   readonly subagentSubscriptionRequests: FakePiSubagentSubscriptionLevel[] = [];
   readonly subagentMessageRequests: FakePiSubagentMessagesSelector[] = [];
   readonly setModelRequests: Array<{ provider: string; modelId: string }> = [];
+  readonly fastModeRequests: Array<{
+    enabled?: boolean;
+    eligible: boolean;
+    setRequested?: boolean;
+  }> = [];
+  fastModeEnabled = false;
   readonly setThinkingLevelRequests: string[] = [];
   readonly treeNavigationRequests: string[] = [];
   readonly handoffRequests: Array<{ customInstructions?: string }> = [];
@@ -181,6 +187,7 @@ export class FakePiSession implements PiRuntimeSession {
     }
     this.handleTreeNavigationCommand(message);
     this.handleEntryCaptureCommand(message);
+    this.handleFastModeCommand(message);
     return this.promptAck;
   }
 
@@ -443,6 +450,41 @@ export class FakePiSession implements PiRuntimeSession {
       payload.requestId,
       typeof payload.reason === "string" ? payload.reason : "command",
     );
+  }
+
+  private handleFastModeCommand(message: string): void {
+    const prefix = "/paseo_fast_mode ";
+    if (!message.startsWith(prefix)) {
+      return;
+    }
+    const payload = JSON.parse(
+      Buffer.from(message.slice(prefix.length), "base64url").toString("utf8"),
+    ) as {
+      requestId?: unknown;
+      enabled?: unknown;
+      eligible?: unknown;
+      setRequested?: unknown;
+    };
+    if (typeof payload.requestId !== "string" || typeof payload.eligible !== "boolean") {
+      return;
+    }
+    this.fastModeRequests.push({
+      ...(typeof payload.enabled === "boolean" ? { enabled: payload.enabled } : {}),
+      eligible: payload.eligible,
+      ...(payload.setRequested === false ? { setRequested: false } : {}),
+    });
+    if (payload.setRequested !== false) {
+      this.fastModeEnabled = payload.enabled === true && payload.eligible;
+    } else if (!payload.eligible) {
+      this.fastModeEnabled = false;
+    }
+    this.emitExtensionCommandResult(payload.requestId, {
+      ok: true,
+      result: {
+        enabled: this.fastModeEnabled,
+        eligible: payload.eligible,
+      },
+    });
   }
 
   emitEntryCapture(requestId?: string, reason = "test"): void {

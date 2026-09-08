@@ -87,6 +87,10 @@ import {
   type PiToolResult,
   type PiTrackedToolCall,
 } from "./tool-call-mapper.js";
+import {
+  CODEX_FAST_MODE_FEATURE,
+  codexModelSupportsFastMode,
+} from "../codex-feature-definitions.js";
 
 const PI_PROVIDER = "pi";
 const DEFAULT_PI_THINKING_LEVEL: PiThinkingLevel = "medium";
@@ -96,6 +100,7 @@ const PASEO_PI_CAPTURE_EXTENSION_COMMAND = "paseo_capture_entries";
 const PASEO_PI_ENTRY_CAPTURE_MARKER = "PASEO_ENTRY_CAPTURE";
 const PASEO_PI_SUBMITTED_USER_ENTRY_MARKER = "PASEO_SUBMITTED_USER_ENTRY";
 const PASEO_PI_COMMAND_RESULT_MARKER = "PASEO_COMMAND_RESULT";
+const PASEO_PI_FAST_MODE_EXTENSION_COMMAND = "paseo_fast_mode";
 const DEFAULT_PI_EXTENSION_RESULT_TIMEOUT_MS = 30_000;
 const DEFAULT_PI_RPC_TIMEOUT_MS = 60_000;
 const QUESTION_RESPONSE_HEADER = "Response";
@@ -614,7 +619,10 @@ function createPiMcpConfigFile(
   };
 }
 
-function createPiPaseoExtensionFile(systemPrompt?: string): PiTempFile {
+function createPiPaseoExtensionFile(
+  systemPrompt?: string,
+  options?: { fastModeEnabled?: boolean; fastModeEligible?: boolean },
+): PiTempFile {
   const dir = mkdtempSync(join(tmpdir(), "paseo-pi-extension-"));
   const filePath = join(dir, "paseo-integration.mjs");
   writeFileSync(
@@ -669,6 +677,34 @@ function createPiPaseoExtensionFile(systemPrompt?: string): PiTempFile {
 
 	export default function paseoIntegration(pi) {
 	  const submittedUserMessages = [];
+	  let fastModeRequested = ${options?.fastModeEnabled === true ? "true" : "false"};
+	  let fastModeEligible = ${options?.fastModeEligible === true ? "true" : "false"};
+	  let fastModeEnabled = fastModeRequested && fastModeEligible;
+
+	  pi.on("before_provider_request", (event) => {
+	    if (
+	      !fastModeEnabled ||
+	      !fastModeEligible ||
+	      !event.payload ||
+	      typeof event.payload !== "object" ||
+	      Array.isArray(event.payload)
+	    ) {
+	      return event.payload;
+	    }
+	    return { ...event.payload, service_tier: "priority" };
+	  });
+
+	  pi.on("model_select", (event) => {
+	    const provider = event?.model?.provider;
+	    const modelId = event?.model?.id;
+	    fastModeEligible =
+	      provider === "openai-codex" &&
+	      typeof modelId === "string" &&
+	      ["gpt-5", "gpt-4.1", "o3", "o4-mini"].some(
+	        (prefix) => modelId === prefix || modelId.startsWith(prefix),
+	      );
+	    fastModeEnabled = fastModeRequested && fastModeEligible;
+	  });
 
 	  function emitSubmittedUserEntries(ctx) {
 	    const entries = ctx.sessionManager.getEntries();
@@ -744,6 +780,36 @@ function createPiPaseoExtensionFile(systemPrompt?: string): PiTempFile {
 	      }
 	    },
 	  });
+
+	  pi.registerCommand("${PASEO_PI_FAST_MODE_EXTENSION_COMMAND}", {
+	    description: "Internal Paseo Fast-mode bridge",
+	    handler: async (args, ctx) => {
+	      const payload = decodePayload(args.trim());
+	      if (payload.setRequested !== false) {
+	        if (typeof payload.enabled !== "boolean") {
+	          emitCommandResult(ctx, payload.requestId, {
+	            ok: false,
+	            error: "Pi Fast mode requires a boolean enabled value",
+	          });
+	          return;
+	        }
+	        fastModeRequested = payload.enabled;
+	      }
+	      if (typeof payload.eligible !== "boolean") {
+	        emitCommandResult(ctx, payload.requestId, {
+	          ok: false,
+	          error: "Pi Fast mode requires a boolean eligible value",
+	        });
+	        return;
+	      }
+	      fastModeEligible = payload.eligible;
+	      fastModeEnabled = fastModeRequested && fastModeEligible;
+	      emitCommandResult(ctx, payload.requestId, {
+	        ok: true,
+	        result: { enabled: fastModeEnabled, eligible: fastModeEligible },
+	      });
+	    },
+	  });
 	}
 `.trimStart(),
     "utf8",
@@ -801,6 +867,14 @@ function resolveThinkingOptionId(
 
 function modelToId(model: PiModel | null | undefined): string | null {
   return model?.provider && model.id ? `${model.provider}/${model.id}` : null;
+}
+
+function piFastModeSupportedForModelId(modelId: string | null | undefined): boolean {
+  if (typeof modelId !== "string" || modelId.trim().length === 0) {
+    return false;
+  }
+  const reference = parseModelReference(modelId);
+  return reference?.provider === "openai-codex" && codexModelSupportsFastMode(reference.id);
 }
 
 function piAssistantText(message: Extract<PiAgentMessage, { role: "assistant" }>): string | null {
@@ -1306,6 +1380,19 @@ export class PiRpcAgentSession implements AgentSession {
     return this.state.sessionId;
   }
 
+  get features(): AgentFeature[] {
+    const modelId = modelToId(this.state.model) ?? this.config.model ?? null;
+    if (!piFastModeSupportedForModelId(modelId)) {
+      return [];
+    }
+    return [
+      {
+        ...CODEX_FAST_MODE_FEATURE,
+        value: this.config.featureValues?.fast_mode === true,
+      },
+    ];
+  }
+
   async run(prompt: AgentPromptInput, options?: AgentRunOptions): Promise<AgentRunResult> {
     return runProviderTurn({
       prompt,
@@ -1694,6 +1781,41 @@ export class PiRpcAgentSession implements AgentSession {
       model,
     };
     this.config.model = `${model.provider}/${model.id}`;
+    const fastModeEligible = piFastModeSupportedForModelId(modelToId(model));
+    if (typeof this.config.featureValues?.fast_mode === "boolean") {
+      await this.updateFastModeEligibility(fastModeEligible);
+    }
+    if (!fastModeEligible) {
+      const featureValues = this.config.featureValues;
+      if (featureValues && "fast_mode" in featureValues) {
+        const nextFeatureValues = { ...featureValues };
+        delete nextFeatureValues.fast_mode;
+        this.config.featureValues =
+          Object.keys(nextFeatureValues).length > 0 ? nextFeatureValues : undefined;
+      }
+    }
+  }
+
+  async setFeature(featureId: string, value: unknown): Promise<void> {
+    if (featureId !== "fast_mode") {
+      throw new Error(`Unknown Pi feature: ${featureId}`);
+    }
+    if (typeof value !== "boolean") {
+      throw new Error(`Pi fast mode requires a boolean value, received ${typeof value}`);
+    }
+    const modelId = modelToId(this.state.model) ?? this.config.model ?? null;
+    const fastModeEligible = piFastModeSupportedForModelId(modelId);
+    if (value && !fastModeEligible) {
+      throw new Error(`Pi fast mode is not available for model '${modelId ?? "default"}'`);
+    }
+    const result = await this.sendFastModeCommand({
+      enabled: value,
+      eligible: fastModeEligible,
+    });
+    this.config.featureValues = {
+      ...this.config.featureValues,
+      fast_mode: result.enabled,
+    };
   }
 
   async setThinkingOption(thinkingOptionId: string | null): Promise<void> {
@@ -1922,6 +2044,45 @@ export class PiRpcAgentSession implements AgentSession {
     const payload = Buffer.from(JSON.stringify({ requestId, reason })).toString("base64url");
     await this.runtimeSession.prompt(`/${PASEO_PI_CAPTURE_EXTENSION_COMMAND} ${payload}`);
     await resultPromise;
+  }
+
+  private async updateFastModeEligibility(eligible: boolean): Promise<void> {
+    await this.sendFastModeCommand({ setRequested: false, eligible });
+  }
+
+  private async sendFastModeCommand(input: {
+    enabled?: boolean;
+    eligible: boolean;
+    setRequested?: boolean;
+  }): Promise<{ enabled: boolean; eligible: boolean }> {
+    const requestId = randomUUID();
+    const resultPromise = this.waitForExtensionResult(requestId);
+    const payload = Buffer.from(
+      JSON.stringify({
+        requestId,
+        eligible: input.eligible,
+        ...(input.setRequested === false ? { setRequested: false } : { enabled: input.enabled }),
+      }),
+    ).toString("base64url");
+    try {
+      await this.runtimeSession.prompt(`/${PASEO_PI_FAST_MODE_EXTENSION_COMMAND} ${payload}`);
+    } catch (error) {
+      this.rejectExtensionResult(
+        requestId,
+        error instanceof Error ? error : new Error(String(error)),
+      );
+      throw error;
+    }
+    const result = await resultPromise;
+    if (
+      !result ||
+      typeof result !== "object" ||
+      typeof (result as { enabled?: unknown }).enabled !== "boolean" ||
+      typeof (result as { eligible?: unknown }).eligible !== "boolean"
+    ) {
+      throw new Error("Pi fast mode returned an invalid extension result");
+    }
+    return result as { enabled: boolean; eligible: boolean };
   }
 
   private waitForExtensionResult(requestId: string): Promise<unknown> {
@@ -2536,6 +2697,10 @@ export class PiRpcAgentClient implements AgentClient {
     const mcpConfig = await this.prepareMcpConfig(config.cwd, config.mcpServers, mcpEnv);
     const paseoExtension = createPiPaseoExtensionFile(
       composeSystemPromptParts(config.systemPrompt, config.daemonAppendSystemPrompt),
+      {
+        fastModeEnabled: config.featureValues?.fast_mode === true,
+        fastModeEligible: piFastModeSupportedForModelId(config.model),
+      },
     );
     let runtimeSession: PiRuntimeSession;
     try {
@@ -2600,6 +2765,10 @@ export class PiRpcAgentClient implements AgentClient {
         resumeConfig.config.systemPrompt,
         resumeConfig.config.daemonAppendSystemPrompt,
       ),
+      {
+        fastModeEnabled: resumeConfig.config.featureValues?.fast_mode === true,
+        fastModeEligible: piFastModeSupportedForModelId(resumeConfig.config.model),
+      },
     );
     let runtimeSession: PiRuntimeSession;
     try {
@@ -2673,8 +2842,16 @@ export class PiRpcAgentClient implements AgentClient {
     }
   }
 
-  async listFeatures(_config: AgentSessionConfig): Promise<AgentFeature[]> {
-    return [];
+  async listFeatures(config: AgentSessionConfig): Promise<AgentFeature[]> {
+    if (!piFastModeSupportedForModelId(config.model)) {
+      return [];
+    }
+    return [
+      {
+        ...CODEX_FAST_MODE_FEATURE,
+        value: config.featureValues?.fast_mode === true,
+      },
+    ];
   }
 
   async listImportableSessions(
