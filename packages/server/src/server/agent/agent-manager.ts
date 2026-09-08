@@ -2047,6 +2047,25 @@ export class AgentManager {
     }
   }
 
+  /**
+   * Set attention on an agent without broadcasting an attention notification.
+   * Manual unread shares the attention state so badges and status derivation keep
+   * working, but unlike lifecycle-driven attention it never sends a push or
+   * in-app notification.
+   */
+  async markAgentUnread(agentId: string): Promise<void> {
+    const agent = this.requireAgent(agentId);
+    if (!agent.attention.requiresAttention) {
+      agent.attention = {
+        requiresAttention: true,
+        attentionReason: "finished",
+        attentionTimestamp: new Date(),
+      };
+      await this.persistSnapshot(agent);
+      this.emitState(agent, { persist: false });
+    }
+  }
+
   async archiveSnapshot(agentId: string, archivedAt: string): Promise<StoredAgentRecord> {
     const registry = this.requireRegistry();
     const liveAgent = this.getAgent(agentId);

@@ -1187,6 +1187,8 @@ export const en = {
         rename: "Rename workspace",
         pin: "Pin to top",
         unpin: "Unpin",
+        markAsRead: "Mark as read",
+        markAsUnread: "Mark as unread",
         archive: "Archive",
         archiveWorkspace: "Archive workspace",
         hideFromSidebar: "Hide from sidebar",

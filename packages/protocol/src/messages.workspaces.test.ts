@@ -73,6 +73,32 @@ describe("workspace message schemas", () => {
     expect(parsed.type).toBe("fetch_workspaces_request");
   });
 
+  test("parses workspace mark unread request and response", () => {
+    expect(
+      SessionInboundMessageSchema.parse({
+        type: "workspace.mark_unread.request",
+        workspaceId: "ws-1",
+        requestId: "req-1",
+      }),
+    ).toMatchObject({ type: "workspace.mark_unread.request", workspaceId: "ws-1" });
+
+    expect(
+      SessionOutboundMessageSchema.parse({
+        type: "workspace.mark_unread.response",
+        payload: {
+          requestId: "req-1",
+          workspaceId: "ws-1",
+          markedAgentIds: ["agent-1"],
+          success: true,
+          error: null,
+        },
+      }),
+    ).toMatchObject({
+      type: "workspace.mark_unread.response",
+      payload: { requestId: "req-1", workspaceId: "ws-1", markedAgentIds: ["agent-1"] },
+    });
+  });
+
   test("parses project.add request and response", () => {
     expect(
       SessionInboundMessageSchema.parse({

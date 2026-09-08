@@ -2584,6 +2584,8 @@ export class Session {
         return this.handleWorkspaceCreateRequest(msg);
       case "workspace.clear_attention.request":
         return this.handleWorkspaceClearAttentionRequest(msg);
+      case "workspace.mark_unread.request":
+        return this.handleWorkspaceMarkUnreadRequest(msg);
       case "workspace.title.set.request":
         return this.handleWorkspaceTitleSetRequest(msg.workspaceId, msg.title, msg.requestId);
       case "workspace.pin.set.request":
@@ -7024,6 +7026,94 @@ export class Session {
                 .join("; "),
       },
     });
+  }
+
+  /**
+   * Mark a workspace's agents as unread: sets the same attention state the
+   * lifecycle sets on finish, but without broadcasting an attention
+   * notification. Only agents that do not already require attention are
+   * marked; permission-pending agents are left untouched.
+   */
+  private async handleWorkspaceMarkUnreadRequest(
+    request: Extract<SessionInboundMessage, { type: "workspace.mark_unread.request" }>,
+  ): Promise<void> {
+    const { requestId, workspaceId } = request;
+    let markedAgentIds: string[] = [];
+    try {
+      const workspace = await this.workspaceRegistry.get(workspaceId);
+      if (!workspace || workspace.archivedAt) {
+        throw new Error(`Workspace not found: ${workspaceId}`);
+      }
+
+      // Scoping mirrors clear attention: ownership by workspaceId, never by cwd.
+      const agents = await this.listAgentPayloads();
+      const markableAgentIds = agents
+        .filter((agent) => !agent.archivedAt)
+        .filter((agent) => agent.workspaceId === workspace.workspaceId)
+        .filter((agent) => agent.requiresAttention !== true)
+        .filter((agent) => (agent.pendingPermissions?.length ?? 0) === 0)
+        .filter((agent) => agent.attentionReason !== "permission")
+        .filter((agent) => agent.status !== "running" && agent.status !== "initializing")
+        .map((agent) => agent.id);
+
+      for (const agentId of markableAgentIds) {
+        const liveAgent = this.agentManager.getAgent(agentId);
+        if (liveAgent) {
+          await this.agentManager.markAgentUnread(agentId);
+          markedAgentIds.push(agentId);
+          continue;
+        }
+
+        const record = await this.agentStorage.get(agentId);
+        if (!record || record.internal || record.archivedAt || record.requiresAttention === true) {
+          continue;
+        }
+        const nextRecord: StoredAgentRecord = {
+          ...record,
+          updatedAt: new Date().toISOString(),
+          requiresAttention: true,
+          attentionReason: "finished",
+          attentionTimestamp: new Date().toISOString(),
+        };
+        await this.agentStorage.upsert(nextRecord);
+        const agent = this.buildStoredAgentPayload(nextRecord);
+        const project = await this.buildProjectPlacementForWorkspace(workspace);
+        this.emit({
+          type: "agent_update",
+          payload: {
+            kind: "upsert",
+            agent,
+            project,
+          },
+        });
+        markedAgentIds.push(agentId);
+      }
+
+      await this.emitWorkspaceUpdateForWorkspaceId(workspace.workspaceId);
+      this.emit({
+        type: "workspace.mark_unread.response",
+        payload: {
+          requestId,
+          workspaceId,
+          markedAgentIds,
+          success: true,
+          error: null,
+        },
+      });
+    } catch (error) {
+      const message = getErrorMessage(error);
+      this.sessionLogger.error({ err: error, workspaceId }, "Failed to mark workspace unread");
+      this.emit({
+        type: "workspace.mark_unread.response",
+        payload: {
+          requestId,
+          workspaceId,
+          markedAgentIds,
+          success: false,
+          error: message,
+        },
+      });
+    }
   }
 
   private async handleFetchAgent(agentIdOrIdentifier: string, requestId: string): Promise<void> {

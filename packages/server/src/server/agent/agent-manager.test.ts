@@ -7344,6 +7344,61 @@ test("subscribe fails when filter agentId is not a UUID", () => {
   ).toThrow("subscribe: agentId must be a UUID");
 });
 
+test("markAgentUnread sets attention without broadcasting an attention callback", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-mark-unread-"));
+  const storagePath = join(workdir, "agents");
+  const storage = new AgentStorage(storagePath, logger);
+  const attentionCalls: string[] = [];
+  const manager = new AgentManager({
+    clients: {
+      codex: new TestAgentClient(),
+    },
+    registry: storage,
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000135",
+    onAgentAttention: ({ agentId }) => {
+      attentionCalls.push(agentId);
+    },
+  });
+
+  const agent = await manager.createAgent(
+    {
+      provider: "codex",
+      cwd: workdir,
+      title: "Manual unread test",
+    },
+    undefined,
+    { workspaceId: undefined },
+  );
+
+  await manager.runAgent(agent.id, "hello");
+  await manager.flush();
+
+  // Simulate the user having cleared attention.
+  await manager.clearAgentAttention(agent.id);
+
+  const beforeUnread = await storage.get(agent.id);
+  expect(beforeUnread?.requiresAttention).toBe(false);
+  // The initial run fired one legitimate finished-attention callback.
+  const attentionCallsBeforeUnread = attentionCalls.length;
+
+  await manager.markAgentUnread(agent.id);
+  await manager.flush();
+
+  const persisted = await storage.get(agent.id);
+  expect(persisted?.requiresAttention).toBe(true);
+  expect(persisted?.attentionReason).toBe("finished");
+  expect(persisted?.attentionTimestamp).toEqual(expect.any(String));
+  // Manual unread shares the attention state but must not notify.
+  expect(attentionCalls.length).toBe(attentionCallsBeforeUnread);
+
+  // Marking unread again is a no-op.
+  const persistedAfterSecondCall = await storage.get(agent.id);
+  await manager.markAgentUnread(agent.id);
+  const persistedFinal = await storage.get(agent.id);
+  expect(persistedFinal?.attentionTimestamp).toBe(persistedAfterSecondCall?.attentionTimestamp);
+});
+
 test("onAgentAttention is not called for internal agents", async () => {
   const internalAgentId = "00000000-0000-4000-8000-000000000111";
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));

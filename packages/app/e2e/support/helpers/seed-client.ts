@@ -155,6 +155,9 @@ export interface SeedDaemonClient {
   fetchAgent(options: {
     agentId: string;
   }): Promise<{ agent: { id: string; archivedAt?: string | null } } | null>;
+  markWorkspaceUnread(workspaceId: string): Promise<string[]>;
+  clearWorkspaceAttention(workspaceId: string): Promise<void>;
+  clearAgentAttention(agentId: string): Promise<void>;
   getLastServerInfoMessage(): {
     features?: {
       projectAdd?: boolean;
