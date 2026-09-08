@@ -3,7 +3,7 @@ import { useTranslation } from "react-i18next";
 import { Platform, Text, View } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { router } from "expo-router";
-import type { PluginHostProps } from "@getpaseo/plugin";
+import type { PluginHostProps } from "@getpaseo/plugin/client";
 import { SettingsAction } from "@/components/settings";
 import { Button } from "@/components/ui/button";
 import { useIsCompactFormFactor } from "@/constants/layout";

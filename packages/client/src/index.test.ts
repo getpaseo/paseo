@@ -83,7 +83,10 @@ function parseSentFrame(
 }
 
 async function connectClient(
-  features: Record<string, boolean> = { providersSnapshotCwd: true },
+  features: Record<string, boolean> = {
+    providerUsageList: true,
+    providersSnapshotCwd: true,
+  },
 ): Promise<{ client: PaseoClient; ws: FakeWebSocket }> {
   vi.stubGlobal("WebSocket", FakeWebSocket);
   const client = createPaseoClient({
@@ -1257,6 +1260,62 @@ test("provider actions delegate to existing provider RPCs and local snapshot upd
     provider: "codex",
     diagnostic: "Codex is ready.",
   });
+  const usagePromise = client.providers.listUsage({
+    requestId: "provider-usage-request",
+  });
+  expect(parseSentSessionMessage(ws.sent.at(-1))).toMatchObject({
+    type: "provider.usage.list.request",
+    requestId: "provider-usage-request",
+  });
+  ws.message(
+    sessionMessage({
+      type: "provider.usage.list.response",
+      payload: {
+        requestId: "provider-usage-request",
+        fetchedAt: "2026-05-16T00:10:00.000Z",
+        providers: [
+          {
+            providerId: "codex",
+            displayName: "Codex",
+            status: "available",
+            planLabel: "pro",
+            windows: [
+              {
+                id: "weekly",
+                label: "Weekly limit",
+                usedPct: 25,
+                remainingPct: 75,
+                resetsAt: "2026-05-20T00:00:00.000Z",
+                tone: "ok",
+              },
+            ],
+          },
+        ],
+      },
+    }),
+  );
+  await expect(usagePromise).resolves.toEqual({
+    requestId: "provider-usage-request",
+    fetchedAt: "2026-05-16T00:10:00.000Z",
+    providers: [
+      {
+        providerId: "codex",
+        displayName: "Codex",
+        status: "available",
+        planLabel: "pro",
+        windows: [
+          {
+            id: "weekly",
+            label: "Weekly limit",
+            usedPct: 25,
+            remainingPct: 75,
+            resetsAt: "2026-05-20T00:00:00.000Z",
+            tone: "ok",
+          },
+        ],
+      },
+    ],
+  });
 
   const snapshotUpdates: string[] = [];
   const snapshotModelDefaults: Array<string | undefined> = [];
@@ -1303,6 +1362,18 @@ test("waitForReady requires canonical provider snapshot identity from the host",
     "Update the host to wait for provider discovery.",
   );
   expect(ws.sent).toHaveLength(sentBeforeWait);
+
+  await client.close();
+});
+
+test("provider usage requires the advertised host capability", async () => {
+  const { client, ws } = await connectClient({});
+  const sentBeforeUsage = ws.sent.length;
+
+  await expect(client.providers.listUsage()).rejects.toThrow(
+    "Update the host to list provider usage.",
+  );
+  expect(ws.sent).toHaveLength(sentBeforeUsage);
 
   await client.close();
 });

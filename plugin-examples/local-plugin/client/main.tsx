@@ -1,13 +1,13 @@
 import { useMutation } from "@tanstack/react-query";
+import { Icon } from "@getpaseo/plugin/client/react-native";
 import {
-  Icon,
   type PluginClientContext,
   type PluginComposerPillProps,
   type PluginWorkspacePanelProps,
   useAgent,
   useRpc,
   useWorkspace,
-} from "@getpaseo/plugin";
+} from "@getpaseo/plugin/client";
 import { useCallback, useMemo } from "react";
 import { Pressable, Text, View } from "react-native";
 import { incrementRpc } from "../shared/increment";

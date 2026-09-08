@@ -1,4 +1,4 @@
-import type { PluginClientContext } from "@getpaseo/plugin";
+import type { PluginClientContext } from "@getpaseo/plugin/client";
 import { ModalExamples } from "./client/examples";
 
 export default function contribute(plugin: PluginClientContext) {

@@ -65,12 +65,18 @@ Codex hook mapping:
 - `PermissionRequest` → `needs-input`
 - `Stop` → `idle`
 
-OpenCode uses a server plugin instead of command hooks. The plugin listens to OpenCode bus events and emits these Paseo hook events:
+OpenCode uses a server plugin instead of command hooks. Both generations discover the same global plugin file. Their loaders select separate entrypoints: OpenCode 1 calls `server()` with `{ type, properties }` bus events; OpenCode 2 calls `setup()` and subscribes to decoded `{ type, data }` events. Do not share their status mapping: V1 publishes `session.status` snapshots, while V2 publishes `session.execution.*` transitions.
 
-- `session.status` with `busy` or `retry` → `running`
-- `session.status` with `idle` → `idle`
-- `permission.asked` → `needs-input`
-- `permission.replied` → `running`
+| OpenCode event                                              | Generation | Activity    |
+| ----------------------------------------------------------- | ---------- | ----------- |
+| `session.status` with `busy` or `retry`                     | 1          | running     |
+| `session.status` with `idle`                                | 1          | idle        |
+| `session.execution.started`                                 | 2          | running     |
+| `session.execution.succeeded`, `.failed`, or `.interrupted` | 2          | idle        |
+| `permission.asked`                                          | Both       | needs-input |
+| `permission.replied`                                        | Both       | running     |
+
+The plugin translates both event contracts into the existing Paseo hook events. OpenCode 2 disposes its event subscription when the plugin unloads.
 
 The daemon maps hook states onto terminal activity like an agent lifecycle plus unread attention: `running` → `state: working`, `idle` → `state: idle`, and `needs-input` → `state: idle` with `attentionReason: needs_input`. A `working` → `idle` transition records `state: idle` with `attentionReason: finished` until the user focuses that terminal; plain idle terminals still contribute no workspace status.
 

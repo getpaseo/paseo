@@ -1,9 +1,17 @@
+import type { AgentStreamEvent, AgentSessionConfig } from "./agent/agent-sdk-types.js";
+import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { createPersistedWorkspaceRecord } from "./workspace-registry.js";
 import { afterEach, beforeEach, expect, test } from "vitest";
 import { CLIENT_CAPS } from "@getpaseo/protocol/client-capabilities";
 import type { SessionOutboundMessage } from "@getpaseo/protocol/messages";
 import { DaemonClient } from "./test-utils/daemon-client.js";
 import { createTestPaseoDaemon, type TestPaseoDaemon } from "./test-utils/paseo-daemon.js";
-import { MockLoadTestAgentClient } from "./agent/providers/mock-load-test-agent.js";
+import {
+  MockLoadTestAgentClient,
+  MockLoadTestAgentSession,
+} from "./agent/providers/mock-load-test-agent.js";
 
 interface MessageWaiter {
   predicate(message: SessionOutboundMessage): boolean;
@@ -130,12 +138,16 @@ async function connect(input: {
   selective: boolean;
   timelineReplacementInvalidation?: boolean;
   timelineNotifications?: boolean;
+  pluginTimelineItems?: boolean;
+  workspaceSetupBlocked?: boolean;
 }): Promise<ConnectedClient> {
   const client = new DaemonClient({
     url: `ws://127.0.0.1:${daemon.port}/ws`,
     clientId: input.clientId,
     capabilities: {
       [CLIENT_CAPS.selectiveAgentTimeline]: input.selective,
+      [CLIENT_CAPS.pluginTimelineItems]: input.pluginTimelineItems ?? false,
+      [CLIENT_CAPS.workspaceSetupBlocked]: input.workspaceSetupBlocked ?? false,
       ...(input.timelineNotifications === undefined
         ? {}
         : { [CLIENT_CAPS.timelineNotifications]: input.timelineNotifications }),
@@ -226,6 +238,94 @@ test("notification timeline items are sent only to clients that advertise suppor
   );
   expect(legacyTimeline.window).toEqual(capableTimeline.window);
   expect(legacyTimeline.endCursor).toEqual(capableTimeline.endCursor);
+});
+
+test("plugin timeline items are sent only to clients that advertise support", async () => {
+  await daemon.close();
+  daemon = await createTestPaseoDaemon({
+    isDev: true,
+    agentClients: { mock: new MockLoadTestAgentClient() },
+  });
+  const capable = await connect({
+    clientId: "plugin-shared",
+    selective: false,
+    pluginTimelineItems: true,
+  });
+  const legacy = await connect({
+    clientId: "plugin-shared",
+    selective: false,
+    pluginTimelineItems: false,
+  });
+  const agent = await capable.client.createAgent({
+    provider: "mock",
+    cwd: "/tmp",
+    title: "Plugin compatibility",
+    model: "ten-second-stream",
+  });
+  capable.clear();
+  legacy.clear();
+
+  await daemon.daemon.agentManager.appendTimelineItem(agent.id, {
+    type: "plugin",
+    id: "compat-row",
+    pluginId: "timeline-items",
+    kind: "notice",
+    version: 1,
+    data: { text: "Capable clients only" },
+  });
+  await daemon.daemon.agentManager.appendTimelineItem(agent.id, {
+    type: "plugin",
+    id: "compat-row",
+    pluginId: "timeline-items",
+    kind: "notice",
+    version: 1,
+    data: { text: "Updated" },
+  });
+  await daemon.daemon.agentManager.appendTimelineItem(agent.id, {
+    type: "assistant_message",
+    text: "Visible to every client",
+  });
+  await Promise.all([
+    capable.next(isAgentStream(agent.id), "capable timeline delivery"),
+    legacy.next(isAgentStream(agent.id), "legacy timeline delivery"),
+  ]);
+  await Promise.all([capable.barrier("plugin-capable"), legacy.barrier("plugin-legacy")]);
+
+  const capableLiveItems = capable.messages.flatMap((message) =>
+    message.type === "agent_stream" && message.payload.event.type === "timeline"
+      ? [message.payload.event.item]
+      : [],
+  );
+  const legacyLiveItems = legacy.messages.flatMap((message) =>
+    message.type === "agent_stream" && message.payload.event.type === "timeline"
+      ? [message.payload.event.item]
+      : [],
+  );
+  expect(capableLiveItems.some((item) => item.type === "plugin")).toBe(true);
+  expect(legacyLiveItems.some((item) => item.type === "plugin")).toBe(false);
+  expect(legacyLiveItems).toContainEqual(
+    expect.objectContaining({ type: "assistant_message", text: "Visible to every client" }),
+  );
+
+  for (const projection of ["canonical", "projected"] as const) {
+    const [capableTimeline, legacyTimeline] = await Promise.all([
+      capable.client.fetchAgentTimeline(agent.id, { direction: "tail", projection }),
+      legacy.client.fetchAgentTimeline(agent.id, { direction: "tail", projection }),
+    ]);
+    expect(capableTimeline.entries.some((entry) => entry.item.type === "plugin")).toBe(true);
+    expect(legacyTimeline.entries.some((entry) => entry.item.type === "plugin")).toBe(false);
+    expect(legacyTimeline.entries).toContainEqual(
+      expect.objectContaining({
+        item: expect.objectContaining({
+          type: "assistant_message",
+          text: "Visible to every client",
+        }),
+      }),
+    );
+    expect(legacyTimeline.window).toEqual(capableTimeline.window);
+    expect(legacyTimeline.endCursor).toEqual(capableTimeline.endCursor);
+    expect(legacyTimeline.entries.flatMap((entry) => entry.collapsed)).not.toContain("identity");
+  }
 });
 
 test("rewind routes replacement completion by source capability and subscription", async () => {
@@ -320,12 +420,14 @@ test("subscription acknowledgements stay on the requesting socket of a retained 
 test("real WebSocket sessions enforce selective delivery, retained resets, downgrade, and dedicated attention", async () => {
   const legacy = await connect({ clientId: "legacy-client", selective: false });
   let capable = await connect({ clientId: "capable-client", selective: true });
+  const workspaceId = await createAttentionWorkspace(legacy.client);
   const agents = await Promise.all(
     ["A", "B", "C"].map((title) =>
       legacy.client.createAgent({
         provider: "codex",
-        cwd: "/tmp",
+        cwd: daemon.paseoHome,
         title: `Selective ${title}`,
+        workspaceId,
         modeId: "full-access",
       }),
     ),
@@ -397,6 +499,10 @@ test("real WebSocket sessions enforce selective delivery, retained resets, downg
   await capable.barrier("resumed-membership-reset");
   expect(capable.hasTimeline(agentB.id)).toBe(false);
 
+  await Promise.all([
+    legacy.client.fetchAgents({ subscribe: { subscriptionId: "legacy-directory" } }),
+    capable.client.fetchAgents({ subscribe: { subscriptionId: "capable-directory" } }),
+  ]);
   capable.client.sendHeartbeat({
     deviceType: "mobile",
     focusedAgentId: null,
@@ -451,3 +557,190 @@ test("real WebSocket sessions enforce selective delivery, retained resets, downg
 
   expect(downgradedDelivery.type).toBe("agent_stream");
 }, 30_000);
+
+test("blocked setup remains readable on mixed-capability sockets sharing a session", async () => {
+  await daemon.close();
+  const root = await mkdtemp(path.join(os.tmpdir(), "paseo-blocked-compat-"));
+  const projects = path.join(root, ".paseo", "projects");
+  await mkdir(projects, { recursive: true });
+  const workspace = createPersistedWorkspaceRecord({
+    workspaceId: "blocked-workspace",
+    projectId: "project",
+    cwd: root,
+    kind: "directory",
+    displayName: "Fork PR",
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    untrustedSource: {
+      kind: "change_request",
+      forge: "github",
+      number: 42,
+      headRepository: "contributor/project",
+    },
+  });
+  await writeFile(path.join(projects, "workspaces.json"), JSON.stringify([workspace]));
+  daemon = await createTestPaseoDaemon({ paseoHomeRoot: root });
+  const legacy = await connect({ clientId: "setup-shared", selective: false });
+  const capable = await connect({
+    clientId: "setup-shared",
+    selective: false,
+    workspaceSetupBlocked: true,
+  });
+  const oldStatus = await legacy.client.fetchWorkspaceSetupStatus(workspace.workspaceId);
+  const newStatus = await capable.client.fetchWorkspaceSetupStatus(workspace.workspaceId);
+  expect(oldStatus.snapshot).toMatchObject({
+    status: "failed",
+    error:
+      "Workspace setup is blocked pending approval of code from a fork pull request. Update Paseo to review and run setup.",
+  });
+  expect(newStatus.snapshot).toMatchObject({
+    status: "blocked",
+    error: null,
+    blockedSource: workspace.untrustedSource,
+  });
+  expect(oldStatus.snapshot?.detail).toEqual(newStatus.snapshot?.detail);
+});
+
+// A provider adapter with controllable events and durable provider history.
+class CompatibilityProviderSession extends MockLoadTestAgentSession {
+  private readonly observers = new Set<(event: AgentStreamEvent) => void>();
+  private readonly injectedHistory: AgentStreamEvent[] = [];
+  override subscribe(callback: (event: AgentStreamEvent) => void): () => void {
+    const unsubscribe = super.subscribe(callback);
+    this.observers.add(callback);
+    return () => {
+      unsubscribe();
+      this.observers.delete(callback);
+    };
+  }
+  push(event: AgentStreamEvent): void {
+    this.injectedHistory.push(event);
+    for (const callback of this.observers) callback(event);
+  }
+  override async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
+    yield* this.injectedHistory;
+    yield* super.streamHistory();
+  }
+}
+
+class CompatibilityProvider extends MockLoadTestAgentClient {
+  session!: CompatibilityProviderSession;
+  override async createSession(config: AgentSessionConfig): Promise<CompatibilityProviderSession> {
+    this.session = new CompatibilityProviderSession({
+      config,
+      sessionId: "compat-provider-session",
+    });
+    return this.session;
+  }
+}
+
+test("plugin items are gated in provider child streams, child fetches, and rewind replay", async () => {
+  await daemon.close();
+  const provider = new CompatibilityProvider();
+  daemon = await createTestPaseoDaemon({ isDev: true, agentClients: { mock: provider } });
+  const legacy = await connect({ clientId: "provider-shared", selective: false });
+  const capable = await connect({
+    clientId: "provider-shared",
+    selective: false,
+    pluginTimelineItems: true,
+  });
+  const agent = await capable.client.createAgent({
+    provider: "mock",
+    cwd: "/tmp",
+    model: "ten-second-stream",
+  });
+  const plugin = {
+    type: "plugin" as const,
+    id: "provider-row",
+    pluginId: "provider",
+    kind: "notice",
+    version: 1,
+    data: { text: "Provider notice" },
+  };
+  provider.session.push({ type: "timeline", provider: "mock", item: plugin });
+  provider.session.push({
+    type: "provider_subagent",
+    provider: "mock",
+    event: { type: "upsert", id: "child", title: "Child", status: "running" },
+  });
+  provider.session.push({
+    type: "provider_subagent",
+    provider: "mock",
+    event: { type: "timeline", id: "child", item: plugin },
+  });
+  provider.session.push({
+    type: "provider_subagent",
+    provider: "mock",
+    event: {
+      type: "timeline",
+      id: "child",
+      item: { type: "assistant_message", text: "Child result" },
+    },
+  });
+  function childResult(message: SessionOutboundMessage): boolean {
+    return (
+      message.type === "agent.provider_subagents.update" &&
+      message.payload.kind === "timeline" &&
+      message.payload.item.type === "assistant_message"
+    );
+  }
+  await Promise.all([
+    capable.next(childResult, "capable child result"),
+    legacy.next(childResult, "legacy child result"),
+  ]);
+  function childItems(client: ConnectedClient) {
+    return client.messages.flatMap((message) =>
+      message.type === "agent.provider_subagents.update" && message.payload.kind === "timeline"
+        ? [message.payload.item]
+        : [],
+    );
+  }
+  expect(childItems(capable)).toContainEqual(plugin);
+  expect(childItems(legacy)).toEqual([{ type: "assistant_message", text: "Child result" }]);
+  const oldChild = await legacy.client.fetchProviderSubagentTimeline(agent.id, "child");
+  const newChild = await capable.client.fetchProviderSubagentTimeline(agent.id, "child");
+  expect(newChild.rows.map((row) => row.item)).toContainEqual(plugin);
+  expect(oldChild.rows.map((row) => row.item)).toEqual([
+    { type: "assistant_message", text: "Child result" },
+  ]);
+  expect(oldChild.window).toEqual(newChild.window);
+
+  await capable.client.sendMessage(agent.id, "Rewind target");
+  await capable.client.cancelAgent(agent.id);
+  const timeline = await capable.client.fetchAgentTimeline(agent.id, {
+    direction: "tail",
+    projection: "canonical",
+  });
+  const targetMessageId = rewindMessageId(timeline);
+  capable.clear();
+  legacy.clear();
+  await capable.client.rewindAgent(agent.id, targetMessageId, "conversation");
+  await Promise.all([capable.barrier("provider-rewind"), legacy.barrier("provider-rewind")]);
+  function replayItems(client: ConnectedClient) {
+    return client.messages.flatMap((message) =>
+      message.type === "agent_stream" && message.payload.event.type === "timeline"
+        ? [message.payload.event.item]
+        : [],
+    );
+  }
+  expect(replayItems(capable)).toContainEqual(plugin);
+  expect(replayItems(legacy).some((item) => item.type === "plugin")).toBe(false);
+  expect(replayItems(legacy)).toContainEqual(expect.objectContaining({ type: "user_message" }));
+});
+
+async function createAttentionWorkspace(client: DaemonClient): Promise<string> {
+  const result = await client.createWorkspace({
+    source: { kind: "directory", path: daemon.paseoHome },
+  });
+  if (!result.workspace) throw new Error(result.error ?? "Expected workspace");
+  return result.workspace.id;
+}
+
+function rewindMessageId(
+  timeline: Awaited<ReturnType<DaemonClient["fetchAgentTimeline"]>>,
+): string {
+  const target = timeline.entries.find((entry) => entry.item.type === "user_message");
+  if (target?.item.type !== "user_message" || !target.item.messageId)
+    throw new Error("Expected rewind target");
+  return target.item.messageId;
+}

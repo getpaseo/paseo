@@ -45,14 +45,15 @@ describe("plugin scaffold", () => {
       expect(config.compilerOptions.lib).toEqual(["ES2023"]);
       expect(config.compilerOptions.types).toEqual(["react"]);
       await expect(typecheckPlugin(directory)).resolves.toBeUndefined();
-      expect(JSON.parse(await readFile(path.join(directory, "paseo-plugin.json"), "utf8"))).toEqual(
-        {
-          id: "hello-plugin",
-        },
-      );
       const cliPackageJson = JSON.parse(
         await readFile(new URL("../../../package.json", import.meta.url), "utf8"),
       ) as { version: string };
+      expect(JSON.parse(await readFile(path.join(directory, "paseo-plugin.json"), "utf8"))).toEqual(
+        {
+          id: "hello-plugin",
+          requirements: { paseo: `>=${cliPackageJson.version}` },
+        },
+      );
       expect(JSON.parse(await readFile(path.join(directory, "package.json"), "utf8"))).toEqual({
         name: "hello-plugin",
         private: true,
@@ -140,16 +141,8 @@ export async function inspectConfig(
         path.join(directory, "client", "main.tsx"),
         `import React from "react";
 import { Text } from "react-native";
-import { Icon, Modal, useToast } from "@getpaseo/plugin/react-native";
-import {
-  type PluginAgentPanelProps,
-  type PluginClientContext,
-  type PluginComposerPillProps,
-  type PluginSurfaceProps,
-  useAgent,
-  usePaseo,
-  useWorkspace,
-} from "@getpaseo/plugin";
+import { Icon, Modal, useToast } from "@getpaseo/plugin/client/react-native";
+import { type PluginAgentPanelProps, type PluginClientContext, type PluginComposerPillProps, type PluginSurfaceProps, useAgent, usePaseo, useWorkspace } from "@getpaseo/plugin/client";
 import { inspect } from "../shared/inspect";
 
 export function Surface({ navigation }: PluginSurfaceProps) {
@@ -199,7 +192,7 @@ export function contributeClient(client: PluginClientContext) {
       ),
       writeFile(
         path.join(directory, "index.client.tsx"),
-        `import type { PluginClientContext } from "@getpaseo/plugin";
+        `import type { PluginClientContext } from "@getpaseo/plugin/client";
 import { AgentPanel, contributeClient, Surface } from "./client/main";
 import { inspect } from "./shared/inspect";
 
@@ -229,7 +222,7 @@ export default function contribute(client: PluginClientContext) {
       ),
       writeFile(
         path.join(directory, "index.server.ts"),
-        `import type { PluginServerContext } from "@getpaseo/plugin";
+        `import type { PluginServerContext } from "@getpaseo/plugin/server";
 import { inspectConfig } from "./server/inspect";
 import { inspect } from "./shared/inspect";
 

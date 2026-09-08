@@ -8,7 +8,7 @@ category: Plugins
 
 # Build a provider plugin
 
-> **For the upcoming Paseo v0.8 release.** Start with the
+> **For Paseo v0.8 beta.** Start with the
 > [plugin quickstart](/docs/plugins/v0.8) if you have not built a Paseo plugin before.
 
 A provider plugin connects a coding agent to Paseo without adding it to Paseo core. Publish the
@@ -22,10 +22,10 @@ Choose one implementation path:
 | It already implements ACP                                         | Register it with `runAcpProvider()` and add only narrow vendor transformers. |
 | It has a TypeScript SDK, JSON-RPC API, or custom process protocol | Implement `ProviderRegistration` directly.                                   |
 
-The complete examples are:
+The examples are:
 
 - [`provider-direct`](https://github.com/getpaseo/paseo/tree/main/plugin-examples/provider-direct): sessions, settings, prompts, persistence, child sessions, and a provider-owned timeline renderer;
-- [`provider-acp-transformer`](https://github.com/getpaseo/paseo/tree/main/plugin-examples/provider-acp-transformer): an ACP command with a Zod-validated vendor edit transformer;
+- [`provider-acp-transformer`](https://github.com/getpaseo/paseo/tree/main/plugin-examples/provider-acp-transformer): an ACP command template with a Zod-validated vendor edit transformer. Replace `example-acp --stdio` with an installed ACP agent before loading it;
 - [`inline-thinking`](https://github.com/getpaseo/paseo/tree/main/plugin-examples/inline-thinking): a renderer-only plugin that does not implement a provider.
 
 ## Register a direct provider
@@ -34,7 +34,7 @@ Add a server entry:
 
 ```ts
 // index.server.ts
-import type { PluginServerContext } from "@getpaseo/plugin";
+import type { PluginServerContext } from "@getpaseo/plugin/server";
 import { createProvider } from "./server/provider";
 
 export default function contribute(server: PluginServerContext) {
@@ -49,7 +49,7 @@ export default function contribute(server: PluginServerContext) {
 import {
   negotiateProviderCapabilities,
   type ProviderRegistration,
-} from "@getpaseo/plugin/provider";
+} from "@getpaseo/plugin/server/provider";
 
 const supported = ["prompt.message"] as const;
 
@@ -304,7 +304,7 @@ emit({
 Register the renderer independently in `index.client.tsx`:
 
 ```tsx
-import type { PluginClientContext } from "@getpaseo/plugin";
+import type { PluginClientContext } from "@getpaseo/plugin/client";
 import { z } from "zod";
 import { ReviewVerdict } from "./client/review-verdict";
 
@@ -332,8 +332,8 @@ daemon timeline append. A renderer does not require a provider implementation.
 Use the ACP shim when the agent already speaks ACP:
 
 ```ts
-import type { PluginServerContext } from "@getpaseo/plugin";
-import { runAcpProvider } from "@getpaseo/plugin/acp";
+import type { PluginServerContext } from "@getpaseo/plugin/server";
+import { runAcpProvider } from "@getpaseo/plugin/server/acp";
 
 export default function contribute(server: PluginServerContext) {
   server.registerProvider(
@@ -355,7 +355,7 @@ Use `transformers` only for vendor differences ACP cannot describe. Validate ven
 Zod and leave malformed or unrelated values unchanged:
 
 ```ts
-import type { AcpTransformer } from "@getpaseo/plugin/acp";
+import type { AcpTransformer } from "@getpaseo/plugin/server/acp";
 import { z } from "zod";
 
 const editSchema = z.object({

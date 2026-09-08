@@ -216,7 +216,9 @@ test.describe("Agent stream UI", () => {
     await expect(page.getByRole("button", { name: /stop|cancel/i }).first()).toBeVisible({
       timeout: 30_000,
     });
-    await awaitAssistantMessage(page);
+    // Reasoning rows collapse when the mock starts its next assistant response. Wait past
+    // that transition so their temporary height cannot satisfy the scroll-away setup.
+    await awaitAssistantMessage(page, "Now I have a clearer picture.");
     await waitForScrollableChat(page, {
       minScrollableDistance: SCROLL_AWAY_MIN_SCROLLABLE_DISTANCE,
       timeout: 45_000,

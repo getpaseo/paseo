@@ -1,3 +1,4 @@
+import { resolveDaemonVersion } from "../daemon-version.js";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -18,11 +19,15 @@ test("plugin handlers create workspaces and agents through their Paseo API", asy
   roots.push(pluginDirectory, workspaceDirectory);
   await writeFile(
     path.join(pluginDirectory, "paseo-plugin.json"),
-    JSON.stringify({ id: "paseo-api" }),
+    JSON.stringify({
+      id: "paseo-api",
+      requirements: { paseo: `>=${resolveDaemonVersion(import.meta.url)}` },
+    }),
   );
   await writeFile(
     path.join(pluginDirectory, "index.server.ts"),
-    `import { defineRpc, type PluginServerContext } from "@getpaseo/plugin";
+    `import { defineRpc } from "@getpaseo/plugin";
+import { type PluginServerContext } from "@getpaseo/plugin/server";
 import { z } from "zod";
 
 const create = defineRpc({
@@ -141,7 +146,10 @@ test("daemon config reload enables and disables configured plugins without resta
   roots.push(pluginDirectory, paseoHomeRoot);
   await writeFile(
     path.join(pluginDirectory, "paseo-plugin.json"),
-    JSON.stringify({ id: "reloadable-plugin" }),
+    JSON.stringify({
+      id: "reloadable-plugin",
+      requirements: { paseo: `>=${resolveDaemonVersion(import.meta.url)}` },
+    }),
   );
   await writeFile(
     path.join(pluginDirectory, "index.server.ts"),

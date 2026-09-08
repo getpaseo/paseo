@@ -48,7 +48,7 @@ import {
   type AgentConfigurationValidationInput,
   validateAgentConfigurationAgainstProvider,
 } from "./agent-configuration-validator.js";
-import type { ProviderRegistration } from "@getpaseo/plugin/provider";
+import type { ProviderRegistration } from "@getpaseo/plugin/server/provider";
 import { PluginAgentClientRegistry } from "./plugin-provider.js";
 
 const DEFAULT_REFRESH_TIMEOUT_MS = 120_000;

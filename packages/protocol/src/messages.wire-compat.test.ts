@@ -6,6 +6,9 @@ import {
   ServerInfoStatusPayloadSchema,
   SessionOutboundMessageSchema,
   WSHelloMessageSchema,
+  WorkspaceSetupSnapshotSchema,
+  WorkspaceSetupProgressMessageSchema,
+  AgentTimelineEntryPayloadSchema,
 } from "./messages.js";
 
 test("terminal listings accept older rows and retain new per-terminal directories", () => {
@@ -301,4 +304,88 @@ describe("wire schema compatibility", () => {
       message: "Command blocked by user",
     });
   });
+});
+
+test("0.8 timeline and setup capabilities remain optional in the hello", () => {
+  const hello = { type: "hello", clientId: "compat", clientType: "mobile", protocolVersion: 1 };
+  expect(WSHelloMessageSchema.safeParse(hello).success).toBe(true);
+  expect(
+    WSHelloMessageSchema.parse({
+      ...hello,
+      capabilities: { plugin_timeline_items: true, workspace_setup_blocked: true },
+    }).capabilities,
+  ).toEqual({ plugin_timeline_items: true, workspace_setup_blocked: true });
+});
+
+test("plugin rows and identity merges require a capable receiver", () => {
+  const item = {
+    type: "plugin",
+    id: "task",
+    pluginId: "tasks",
+    kind: "tasks",
+    version: 1,
+    data: { text: "Working" },
+  };
+  expect(AgentTimelineItemPayloadSchema.parse(item)).toEqual(item);
+  const legacyItems = z.object({
+    type: z.enum([
+      "user_message",
+      "assistant_message",
+      "reasoning",
+      "tool_call",
+      "todo",
+      "error",
+      "notification",
+      "compaction",
+    ]),
+  });
+  expect(legacyItems.safeParse(item).success).toBe(false);
+  const entry = {
+    provider: "codex",
+    item,
+    timestamp: "2026-09-07T00:00:00.000Z",
+    seqStart: 1,
+    seqEnd: 2,
+    sourceSeqRanges: [{ startSeq: 1, endSeq: 2 }],
+    collapsed: ["identity"],
+  };
+  expect(AgentTimelineEntryPayloadSchema.parse(entry)).toEqual(entry);
+  const legacyCollapsed = z.array(z.enum(["assistant_merge", "reasoning_merge", "tool_lifecycle"]));
+  expect(legacyCollapsed.safeParse(entry.collapsed).success).toBe(false);
+});
+
+test("blocked setup preserves the legacy failed shape and optional provenance", () => {
+  const snapshot = {
+    status: "blocked",
+    error: null,
+    detail: {
+      type: "worktree_setup",
+      worktreePath: "/workspace",
+      branchName: "fork",
+      log: "",
+      commands: [],
+    },
+    blockedSource: {
+      kind: "change_request",
+      forge: "github",
+      number: 42,
+      headRepository: "contributor/project",
+    },
+  };
+  expect(WorkspaceSetupSnapshotSchema.parse(snapshot)).toEqual(snapshot);
+  const legacyStatus = z.enum(["running", "completed", "failed"]);
+  const legacySnapshot = WorkspaceSetupSnapshotSchema.omit({ blockedSource: true }).extend({
+    status: legacyStatus,
+  });
+  expect(legacySnapshot.safeParse(snapshot).success).toBe(false);
+  const failed = { ...snapshot, status: "failed", error: "Update Paseo to review and run setup." };
+  expect(legacySnapshot.safeParse(failed).success).toBe(true);
+  const progress = {
+    type: "workspace_setup_progress",
+    payload: { ...failed, workspaceId: "workspace" },
+  };
+  expect(WorkspaceSetupProgressMessageSchema.parse(progress)).toEqual(progress);
+  expect(WorkspaceSetupSnapshotSchema.parse(legacySnapshot.parse(failed))).toEqual(
+    legacySnapshot.parse(failed),
+  );
 });

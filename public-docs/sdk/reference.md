@@ -108,7 +108,7 @@ Creation options include `config`, `cwd`, `parent`, `title`, `prompt`, `env`, `o
 
 `agent.timeline.refetch(options?)` fetches a page. Options are `direction`, `cursor`, `limit`, `projection`, and `requestId`.
 
-`agent.timeline.subscribe(handler)` listens for stream events belonging to the agent and returns a local unsubscribe function.
+`agent.timeline.subscribe(handler)` establishes network demand for this agent and restores it after reconnect. Its unsubscribe function releases that demand; await `unsubscribe.ready` for initial daemon acknowledgement before starting work. The handler also receives `{ agentId, event: { type: "replacement", epoch } }` when history is replaced; refetch the page you need. See [events](./events.md#follow-timeline-events).
 
 ## `client.projects`
 
@@ -184,6 +184,7 @@ Use `workspace.terminals.create(options?)` and `workspace.terminals.list(options
 | `listModes(provider, options?)`  | Modes result                  | Discovers permission or operating modes.                                                                                                                 |
 | `listFeatures(draftConfig)`      | Features result               | Discovers features for the current draft provider configuration.                                                                                         |
 | `diagnostic(provider)`           | Diagnostic result             | Returns human-readable setup diagnostics.                                                                                                                |
+| `listUsage(options?)`            | `PaseoProviderUsageResult`    | Returns normalized subscription windows, balances, and provider details. Rejects with an update-host error when unsupported. Options: `requestId`.       |
 | `subscribe(handler)`             | Unsubscribe function          | Listens for catalog updates.                                                                                                                             |
 
 ## `client.config`

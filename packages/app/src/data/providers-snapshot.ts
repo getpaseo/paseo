@@ -1,4 +1,4 @@
-import type { QueryClient } from "@tanstack/react-query";
+import { CancelledError, type QueryClient } from "@tanstack/react-query";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import type { GetProvidersSnapshotResponseMessage } from "@getpaseo/protocol/messages";
 import {
@@ -100,7 +100,7 @@ export async function fetchProvidersSnapshot(input: {
       }
     }
   }
-  input.signal?.throwIfAborted();
+  if (input.signal?.aborted) throw new CancelledError();
   snapshot = await cache.materialize(input.serverId, snapshot);
   if (snapshot.compactSnapshot && snapshot.snapshotHash) {
     await cache.write({
@@ -113,7 +113,7 @@ export async function fetchProvidersSnapshot(input: {
       signal: input.signal,
     });
   }
-  input.signal?.throwIfAborted();
+  if (input.signal?.aborted) throw new CancelledError();
   replaceProviderSnapshotIcons(input.serverId, snapshot.entries);
   return snapshot;
 }

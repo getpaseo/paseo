@@ -7,6 +7,21 @@ import {
 } from "./messages.js";
 
 describe("plugin protocol compatibility", () => {
+  it.each([undefined, { paseo: ">=0.8.0" }])(
+    "parses plugin catalogs with requirements %j",
+    (requirements) => {
+      const message = {
+        type: "plugin.catalog.get.response",
+        payload: {
+          requestId: "catalog",
+          plugins: [
+            { id: "example", clientBundle: "bundle", ...(requirements ? { requirements } : {}) },
+          ],
+        },
+      };
+      expect(SessionOutboundMessageSchema.parse(message)).toEqual(message);
+    },
+  );
   it("parses plugin timeline append messages and advertises the capability", () => {
     expect(
       SessionInboundMessageSchema.parse({

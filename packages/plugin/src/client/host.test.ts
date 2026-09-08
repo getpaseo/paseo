@@ -1,6 +1,6 @@
 import { describe, expect, expectTypeOf, it } from "vitest";
 import { z } from "zod";
-import { defineAttachmentSource, defineRpc, type RpcInput, type RpcOutput } from "./index.js";
+import { defineAttachmentSource, defineRpc, type RpcInput, type RpcOutput } from "../index.js";
 import { callPluginRpc, searchPluginAttachments } from "./host.js";
 
 const contract = defineRpc({

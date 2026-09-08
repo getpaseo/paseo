@@ -48,6 +48,7 @@ export interface ProviderCatalogSessionHost {
   supportsCustomModeIcons(): boolean;
   supportsCompactProviderSnapshots(): boolean;
   supportsProviderSnapshotReferences(): boolean;
+  wantsSnapshotChanges(): boolean;
   listProviderAvailability(): Promise<ProviderAvailability[]>;
   listDraftFeatures(config: AgentSessionConfig): Promise<AgentFeature[]>;
 }
@@ -82,6 +83,7 @@ export class ProviderCatalogSession {
 
   start(): void {
     const handleProviderSnapshotChange = (transition: ProviderSnapshotTransition) => {
+      if (!this.host.wantsSnapshotChanges()) return;
       const previous = this.visibleSnapshot(transition.previous);
       const current = this.visibleSnapshot(transition.current);
       if (sameSnapshotRecords(previous.records, current.records)) return;

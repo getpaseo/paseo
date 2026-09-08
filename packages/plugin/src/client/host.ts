@@ -1,14 +1,13 @@
-export { settingsRpc } from "./settings.js";
-import { PluginAttachmentSearchPayloadSchema } from "./attachments.js";
+import { PluginAttachmentSearchPayloadSchema } from "../attachments.js";
 export { PluginClientStateProvider, type PluginClientStateSource } from "./client-state.js";
 export {
   usePluginRuntimeContextBridge,
   type PluginRuntimeContextBridge,
 } from "./runtime-context-bridge.js";
-import type { PluginAttachmentSourceContribution } from "./contracts.js";
+import type { PluginAttachmentSourceContribution } from "../contracts.js";
 import { PluginRpcProvider } from "./rpc-context.js";
 import { PaseoApiProvider } from "./paseo-context.js";
-import { callPluginRpc } from "./rpc.js";
+import { callPluginRpc } from "../rpc.js";
 
 export async function searchPluginAttachments(
   source: PluginAttachmentSourceContribution,

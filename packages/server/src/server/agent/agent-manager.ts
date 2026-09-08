@@ -1,3 +1,6 @@
+import type { PluginLifecycle } from "../plugins/lifecycle/index.js";
+import { describeHookAgent, publishAgentStream } from "../plugins/lifecycle/index.js";
+import type { PluginSessionOpenRequest } from "@getpaseo/plugin/server";
 import { randomUUID } from "node:crypto";
 import { basename, resolve } from "node:path";
 import { stat } from "node:fs/promises";
@@ -286,6 +289,7 @@ export interface CreateAgentOptions {
 }
 
 export interface AgentManagerOptions {
+  pluginLifecycle?: PluginLifecycle;
   clients?: ProviderClientMap;
   providerDefinitions?: ProviderEnabledMap;
   idFactory?: () => string;
@@ -685,6 +689,7 @@ function detachedAgentLabelPatch(labels: Record<string, string>): AgentLabelPatc
 }
 
 export class AgentManager {
+  private readonly pluginLifecycle: PluginLifecycle | undefined;
   private readonly clients = new Map<AgentProvider, AgentClient>();
   private readonly providerEnabled = new Map<AgentProvider, boolean>();
   private readonly providerDefinitions = new Map<AgentProvider, ProviderEnabledFlag>();
@@ -725,6 +730,7 @@ export class AgentManager {
   private acceptingAgentRegistrations = true;
 
   constructor(options: AgentManagerOptions) {
+    this.pluginLifecycle = options.pluginLifecycle;
     this.idFactory = options?.idFactory ?? (() => randomUUID());
     this.registry = options?.registry;
     this.durableTimelineStore = options?.durableTimelineStore;
@@ -1192,6 +1198,14 @@ export class AgentManager {
   ): Promise<ManagedAgent> {
     this.assertAcceptingAgentRegistrations();
     const resolvedAgentId = validateAgentId(agentId ?? this.idFactory(), "createAgent");
+    if (this.pluginLifecycle && !config.internal) {
+      const request = await this.pluginLifecycle.before("agent.create", {
+        config,
+        env: options.env,
+      });
+      config = { ...request.config, internal: config.internal };
+      options = { ...options, env: request.env };
+    }
     await this.deleteAgentState(resolvedAgentId);
     const { storedConfig, launchConfig, paseoToolPolicy } = await this.prepareSessionConfig(
       config,
@@ -1209,18 +1223,25 @@ export class AgentManager {
       storedConfig.cwd,
       paseoToolPolicy,
       options?.env,
+      { reason: "create", purpose: "interactive", workspaceId: options.workspaceId ?? null },
     );
     const providerLaunchConfig = this.resolveProviderLaunchConfig(launchConfig, launchContext);
     const createOptions = this.buildCreateSessionOptions(options);
     const session = await client.createSession(providerLaunchConfig, launchContext, createOptions);
     await this.requireExternalMcpSupport(session, storedConfig);
-    return this.registerSession(session, storedConfig, resolvedAgentId, {
+    const agent = await this.registerSession(session, storedConfig, resolvedAgentId, {
       labels: options.labels,
       initialTitle: options.initialTitle,
       workspaceId: options.workspaceId,
       owner: options.owner,
       historyPrimed: true,
     });
+    if (!agent.internal) {
+      this.pluginLifecycle?.emit("agent.created", {
+        agent: describeHookAgent({ ...agent, title: agent.config.title }),
+      });
+    }
+    return agent;
   }
 
   private buildCreateSessionOptions(options?: {
@@ -1295,6 +1316,12 @@ export class AgentManager {
       client,
       storedConfig.cwd,
       paseoToolPolicy,
+      undefined,
+      {
+        reason: "resume",
+        purpose: resumeOptions?.purpose ?? "interactive",
+        workspaceId: options?.workspaceId ?? null,
+      },
     );
     const providerLaunchConfig = this.resolveProviderLaunchConfig(launchConfig, launchContext);
     const session = await client.resumeSession(
@@ -1349,6 +1376,8 @@ export class AgentManager {
       client,
       storedConfig.cwd,
       paseoToolPolicy,
+      undefined,
+      { reason: "import", purpose: "interactive", workspaceId: input.workspaceId },
     );
     const providerLaunchConfig = this.resolveProviderLaunchConfig(launchConfig, launchContext);
     const imported = await client.importSession(
@@ -1442,6 +1471,8 @@ export class AgentManager {
       client,
       storedConfig.cwd,
       paseoToolPolicy,
+      undefined,
+      { reason: "refresh", purpose: "interactive", workspaceId: existing.workspaceId },
     );
     const providerLaunchConfig = this.resolveProviderLaunchConfig(launchConfig, launchContext);
     if (
@@ -1725,11 +1756,11 @@ export class AgentManager {
   }
 
   private async markRecordArchived(record: StoredAgentRecord): Promise<ArchivedStoredAgentRecord> {
-    const registry = this.requireRegistry();
     const archivedAt = new Date().toISOString();
-    const archivedRecord = buildArchivedAgentRecord(record, { archivedAt, updatedAt: archivedAt });
-
-    await registry.upsert(archivedRecord);
+    const archivedRecord = await this.persistArchivedRecord(record, {
+      archivedAt,
+      updatedAt: archivedAt,
+    });
 
     await this.syncNativeArchiveState(record.provider, record.persistence, "archive");
 
@@ -1741,6 +1772,21 @@ export class AgentManager {
 
     await this.fireAgentArchived(record.id);
 
+    return archivedRecord;
+  }
+
+  private async persistArchivedRecord(
+    record: StoredAgentRecord,
+    options: { archivedAt: string; updatedAt?: string },
+  ): Promise<ArchivedStoredAgentRecord> {
+    const archivedRecord = buildArchivedAgentRecord(record, options);
+    await this.requireRegistry().upsert(archivedRecord);
+    if (!record.archivedAt && !record.internal) {
+      this.pluginLifecycle?.emit("agent.archived", {
+        agent: describeHookAgent(archivedRecord),
+        archivedAt: archivedRecord.archivedAt,
+      });
+    }
     return archivedRecord;
   }
 
@@ -2015,8 +2061,7 @@ export class AgentManager {
       throw new Error(`Agent not found: ${agentId}`);
     }
 
-    const nextRecord = buildArchivedAgentRecord(record, { archivedAt });
-    await registry.upsert(nextRecord);
+    const nextRecord = await this.persistArchivedRecord(record, { archivedAt });
 
     await this.syncNativeArchiveState(record.provider, record.persistence, "archive");
 
@@ -4757,6 +4802,14 @@ export class AgentManager {
       "agent.manager.dispatch_stream",
     );
     this.dispatch({ type: "agent_stream", agentId, event, ...metadata });
+    if (this.pluginLifecycle && agent && !agent.internal && event.type !== "timeline") {
+      publishAgentStream(
+        this.pluginLifecycle,
+        describeHookAgent({ ...agent, title: agent.config.title }),
+        event,
+        this.timelineStore.getItems(agentId),
+      );
+    }
   }
 
   private dispatch(event: AgentManagerEvent): void {
@@ -4941,7 +4994,25 @@ export class AgentManager {
     cwd: string,
     paseoToolPolicy: ProviderPaseoToolsPolicy | undefined,
     env?: Record<string, string>,
+    opening?: {
+      reason: PluginSessionOpenRequest["reason"];
+      purpose: PluginSessionOpenRequest["purpose"];
+      workspaceId?: string | null;
+    },
   ): Promise<AgentLaunchContext> {
+    if (this.pluginLifecycle) {
+      const request: PluginSessionOpenRequest = {
+        agentId,
+        provider: client.provider,
+        cwd,
+        workspaceId: opening?.workspaceId ?? null,
+        reason: opening?.reason ?? "resume",
+        purpose: opening?.purpose ?? "interactive",
+        env: { ...env },
+      };
+      const transformed = await this.pluginLifecycle.before("agent.session_open", request);
+      env = transformed.env;
+    }
     const context: AgentLaunchContext = {
       agentId,
       env: {

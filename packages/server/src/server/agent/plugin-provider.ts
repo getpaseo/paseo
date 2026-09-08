@@ -21,7 +21,7 @@ import {
   type ProviderSessionConfig,
   type ProviderContent,
   type ProviderTimelineItem,
-} from "@getpaseo/plugin/provider";
+} from "@getpaseo/plugin/server/provider";
 import type {
   AgentCapabilityFlags,
   AgentClient,
