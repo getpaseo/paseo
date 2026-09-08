@@ -1,4 +1,4 @@
-import { useCallback } from "react";
+import { useCallback, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { Terminal } from "lucide-react-native";
@@ -14,6 +14,7 @@ import { buildTerminalsQueryKey } from "@/screens/workspace/terminals/state";
 import { usePanelStore } from "@/stores/panel-store";
 import { useSessionStore } from "@/stores/session-store";
 import { useWorkspaceDirectory, useWorkspaceFields } from "@/stores/session-store-hooks";
+import { resolveTerminalTabLabel } from "@/utils/terminal-tab-label";
 
 type ListTerminalsPayload = ListTerminalsResponse["payload"];
 
@@ -24,14 +25,6 @@ const CENTERED_PADDED_STYLE = {
   padding: 16,
 } as const;
 
-function trimNonEmpty(value: string | null | undefined): string | null {
-  if (typeof value !== "string") {
-    return null;
-  }
-  const trimmed = value.trim();
-  return trimmed.length > 0 ? trimmed : null;
-}
-
 function useTerminalPanelDescriptor(
   target: { kind: "terminal"; terminalId: string },
   context: { serverId: string; workspaceId: string },
@@ -39,6 +32,7 @@ function useTerminalPanelDescriptor(
   const { t } = useTranslation();
   const client = useSessionStore((state) => state.sessions[context.serverId]?.client ?? null);
   const workspaceDirectory = useWorkspaceDirectory(context.serverId, context.workspaceId);
+  const rememberedLabelRef = useRef<string | null>(null);
   const terminalsQuery = useQuery(
     {
       queryKey: buildTerminalsQueryKey(
@@ -61,9 +55,14 @@ function useTerminalPanelDescriptor(
   );
   const terminal =
     terminalsQuery.data?.terminals.find((entry) => entry.id === target.terminalId) ?? null;
-  const label =
-    trimNonEmpty(terminal?.title ?? terminal?.name ?? null) ??
-    t("workspace.tabs.fallback.terminal");
+  const resolved = resolveTerminalTabLabel({
+    title: terminal?.title,
+    name: terminal?.name,
+    rememberedLabel: rememberedLabelRef.current,
+    fallback: t("workspace.tabs.fallback.terminal"),
+  });
+  rememberedLabelRef.current = resolved.rememberedLabel;
+  const label = resolved.label;
 
   return {
     label,
@@ -89,7 +88,11 @@ function TerminalPanel() {
     if (!workspaceDirectory) {
       return;
     }
-    openCompactFileExplorer({ serverId, cwd: workspaceDirectory, isGit: isGitCheckout });
+    openCompactFileExplorer({
+      serverId,
+      cwd: workspaceDirectory,
+      isGit: isGitCheckout,
+    });
   }, [isGitCheckout, openCompactFileExplorer, serverId, workspaceDirectory]);
   invariant(target.kind === "terminal", "TerminalPanel requires terminal target");
 

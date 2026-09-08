@@ -50,7 +50,11 @@ function createFakeClient(config: { rejectCheckoutDiffSubscribe?: boolean } = {}
   emit: <K extends RouterMessageType>(message: Extract<RouterMessage, { type: K }>) => void;
   subscribeCheckoutDiffCalls: Array<{
     cwd: string;
-    compare: { mode: "uncommitted" | "base"; baseRef?: string; ignoreWhitespace?: boolean };
+    compare: {
+      mode: "uncommitted" | "base";
+      baseRef?: string;
+      ignoreWhitespace?: boolean;
+    };
     subscriptionId: string;
   }>;
   unsubscribeCheckoutDiffCalls: string[];
@@ -66,7 +70,11 @@ function createFakeClient(config: { rejectCheckoutDiffSubscribe?: boolean } = {}
   };
   const subscribeCheckoutDiffCalls: Array<{
     cwd: string;
-    compare: { mode: "uncommitted" | "base"; baseRef?: string; ignoreWhitespace?: boolean };
+    compare: {
+      mode: "uncommitted" | "base";
+      baseRef?: string;
+      ignoreWhitespace?: boolean;
+    };
     subscriptionId: string;
   }> = [];
   const unsubscribeCheckoutDiffCalls: string[] = [];
@@ -151,8 +159,15 @@ describe("server data push router", () => {
     const fake = createFakeClient();
     const serverId = "server-1";
     const pairingOfferKey = daemonPairingOfferQueryKey(serverId);
-    queryClient.setQueryData(pairingOfferKey, { relayEnabled: true, url: "https://pairing" });
-    const unmount = mountServerDataPushRouter({ client: fake.client, queryClient, serverId });
+    queryClient.setQueryData(pairingOfferKey, {
+      relayEnabled: true,
+      url: "https://pairing",
+    });
+    const unmount = mountServerDataPushRouter({
+      client: fake.client,
+      queryClient,
+      serverId,
+    });
 
     fake.emit(providerUpdate("2026-01-01T00:00:00.000Z"));
     fake.emit({
@@ -204,7 +219,11 @@ describe("server data push router", () => {
       }),
     });
     const unsubscribeObserver = observer.subscribe(() => undefined);
-    const unmount = mountServerDataPushRouter({ client: fake.client, queryClient, serverId });
+    const unmount = mountServerDataPushRouter({
+      client: fake.client,
+      queryClient,
+      serverId,
+    });
 
     expect(fake.subscribeCheckoutDiffCalls).toEqual([
       {
@@ -236,7 +255,13 @@ describe("server data push router", () => {
 
     fake.emit({
       type: "checkout_diff_update",
-      payload: { subscriptionId, cwd, files: [], error: null, diffTooLarge: true },
+      payload: {
+        subscriptionId,
+        cwd,
+        files: [],
+        error: null,
+        diffTooLarge: true,
+      },
     });
 
     expect(queryClient.getQueryData(queryKey)).toEqual({
@@ -276,7 +301,11 @@ describe("server data push router", () => {
       }),
     });
     const unsubscribeObserver = observer.subscribe(() => undefined);
-    const unmount = mountServerDataPushRouter({ client: fake.client, queryClient, serverId });
+    const unmount = mountServerDataPushRouter({
+      client: fake.client,
+      queryClient,
+      serverId,
+    });
 
     expect(fake.subscribeCheckoutDiffCalls).toHaveLength(1);
 
@@ -312,7 +341,11 @@ describe("server data push router", () => {
       }),
     });
     const unsubscribeObserver = observer.subscribe(() => undefined);
-    const unmount = mountServerDataPushRouter({ client: fake.client, queryClient, serverId });
+    const unmount = mountServerDataPushRouter({
+      client: fake.client,
+      queryClient,
+      serverId,
+    });
 
     expect(fake.subscribeTerminalCalls).toEqual([{ cwd, workspaceId }]);
 
@@ -378,7 +411,11 @@ describe("server data push router", () => {
     });
     const unsubscribeCheckoutDiffObserver = checkoutDiffObserver.subscribe(() => undefined);
     const unsubscribeTerminalObserver = terminalObserver.subscribe(() => undefined);
-    const unmount = mountServerDataPushRouter({ client: fake.client, queryClient, serverId });
+    const unmount = mountServerDataPushRouter({
+      client: fake.client,
+      queryClient,
+      serverId,
+    });
     const plainCheckoutDiffObserver = new QueryObserver(queryClient, {
       queryKey: checkoutDiffKey,
       queryFn: skipToken,
@@ -462,7 +499,11 @@ describe("server data push router", () => {
       }),
     });
     const unsubscribePushObserver = pushObserver.subscribe(() => undefined);
-    const unmount = mountServerDataPushRouter({ client: fake.client, queryClient, serverId });
+    const unmount = mountServerDataPushRouter({
+      client: fake.client,
+      queryClient,
+      serverId,
+    });
     expect(fake.subscribeTerminalCalls).toEqual([{ cwd, workspaceId }]);
 
     const plainObserver = new QueryObserver(queryClient, {
@@ -483,7 +524,11 @@ describe("server data push router", () => {
             id: "terminal-a",
             name: "Main",
             workspaceId,
-            activity: { state: "idle", attentionReason: "needs_input", changedAt: 1 },
+            activity: {
+              state: "idle",
+              attentionReason: "needs_input",
+              changedAt: 1,
+            },
           },
         ],
       },
@@ -496,7 +541,11 @@ describe("server data push router", () => {
           id: "terminal-a",
           name: "Main",
           workspaceId,
-          activity: { state: "idle", attentionReason: "needs_input", changedAt: 1 },
+          activity: {
+            state: "idle",
+            attentionReason: "needs_input",
+            changedAt: 1,
+          },
         },
       ],
       requestId: expect.stringMatching(/^terminals-changed-/),
@@ -505,6 +554,63 @@ describe("server data push router", () => {
 
     unsubscribePlainObserver();
     unsubscribePushObserver();
+    unmount();
+  });
+
+  it("keeps workspace terminals whose push payload omits workspaceId", () => {
+    const queryClient = new QueryClient();
+    const fake = createFakeClient();
+    const serverId = "server-1";
+    const cwd = "/repo";
+    const workspaceId = "workspace-a";
+    const queryKey = buildTerminalsQueryKey(serverId, cwd, workspaceId);
+    const observer = new QueryObserver(queryClient, {
+      queryKey,
+      queryFn: skipToken,
+      enabled: true,
+      gcTime: Infinity,
+      staleTime: Infinity,
+      meta: workspaceTerminalsPushRoute({
+        enabled: true,
+        serverId,
+        cwd,
+        workspaceId,
+      }),
+    });
+    const unsubscribeObserver = observer.subscribe(() => undefined);
+    const unmount = mountServerDataPushRouter({
+      client: fake.client,
+      queryClient,
+      serverId,
+    });
+
+    queryClient.setQueryData(queryKey, {
+      cwd,
+      terminals: [{ id: "terminal-a", name: "Shell", title: "npm test", workspaceId }],
+      requestId: "seed",
+    });
+
+    // Title/activity pushes sometimes omit workspaceId. Strict equality against the
+    // route workspace must not wipe the terminal from the cache (tab label falls
+    // back to "Terminal" when the entry disappears).
+    fake.emit({
+      type: "terminals_changed",
+      payload: {
+        cwd,
+        terminals: [
+          { id: "terminal-a", name: "Shell", title: "npm test" },
+          { id: "terminal-b", name: "Other", workspaceId: "workspace-b" },
+        ],
+      },
+    });
+
+    expect(queryClient.getQueryData(queryKey)).toEqual({
+      cwd,
+      terminals: [{ id: "terminal-a", name: "Shell", title: "npm test" }],
+      requestId: "seed",
+    });
+
+    unsubscribeObserver();
     unmount();
   });
 
@@ -519,11 +625,24 @@ describe("server data push router", () => {
     const terminalKey = buildTerminalsQueryKey(serverId, "/repo", "workspace-a");
     const otherProviderKey = providersSnapshotQueryKey(otherServerId);
 
-    queryClient.setQueryData(providerKey, { entries: [], generatedAt: "now", requestId: "p" });
+    queryClient.setQueryData(providerKey, {
+      entries: [],
+      generatedAt: "now",
+      requestId: "p",
+    });
     queryClient.setQueryData(daemonConfigKey, daemonConfig);
     queryClient.setQueryData(pairingOfferKey, { relayEnabled: false, url: "" });
-    queryClient.setQueryData(diffKey, { cwd: "/repo", files: [], error: null, requestId: "d" });
-    queryClient.setQueryData(terminalKey, { cwd: "/repo", terminals: [], requestId: "t" });
+    queryClient.setQueryData(diffKey, {
+      cwd: "/repo",
+      files: [],
+      error: null,
+      requestId: "d",
+    });
+    queryClient.setQueryData(terminalKey, {
+      cwd: "/repo",
+      terminals: [],
+      requestId: "t",
+    });
     queryClient.setQueryData(otherProviderKey, {
       entries: [],
       generatedAt: "now",

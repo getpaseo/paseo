@@ -104,19 +104,25 @@ const RECONNECT_REPAIR_POLICIES: ReconnectRepairPolicy[] = [
   {
     domain: "providersSnapshot",
     invalidate: ({ queryClient, serverId }) => {
-      void queryClient.invalidateQueries({ queryKey: providersSnapshotQueryRoot(serverId) });
+      void queryClient.invalidateQueries({
+        queryKey: providersSnapshotQueryRoot(serverId),
+      });
     },
   },
   {
     domain: "daemonConfig",
     invalidate: ({ queryClient, serverId }) => {
-      void queryClient.invalidateQueries({ queryKey: daemonConfigQueryKey(serverId) });
+      void queryClient.invalidateQueries({
+        queryKey: daemonConfigQueryKey(serverId),
+      });
     },
   },
   {
     domain: "daemonPairingOffer",
     invalidate: ({ queryClient, serverId }) => {
-      void queryClient.invalidateQueries({ queryKey: daemonPairingOfferQueryKey(serverId) });
+      void queryClient.invalidateQueries({
+        queryKey: daemonPairingOfferQueryKey(serverId),
+      });
     },
   },
   {
@@ -194,7 +200,10 @@ export async function applyProvidersSnapshotUpdate(input: {
   client: Pick<ServerDataPushClient, "getProvidersSnapshot">;
   cache?: ProviderSnapshotCache;
 }): Promise<void> {
-  const snapshot = { ...input.message.payload, requestId: "providers_snapshot_update" };
+  const snapshot = {
+    ...input.message.payload,
+    requestId: "providers_snapshot_update",
+  };
   const cwd = normalizeProvidersSnapshotCwd(snapshot.cwd);
   const queryKey = providersSnapshotQueryKey(input.serverId, cwd);
   const previous = input.queryClient.getQueryData<{ snapshotHash?: string }>(queryKey);
@@ -300,7 +309,11 @@ export function mountServerDataPushRouter(input: PushRouterInput): () => void {
     });
   });
   const unsubscribeDaemonConfig = input.client.on("status", (message) => {
-    applyDaemonConfigStatus({ queryClient: input.queryClient, serverId: input.serverId, message });
+    applyDaemonConfigStatus({
+      queryClient: input.queryClient,
+      serverId: input.serverId,
+      message,
+    });
   });
   const unsubscribeCheckoutDiffUpdate = input.client.on("checkout_diff_update", (message) => {
     applyCheckoutDiffUpdate({
@@ -534,8 +547,8 @@ function applyTerminalsChanged(input: {
       continue;
     }
 
-    const matchingTerminals = input.message.payload.terminals.filter(
-      (terminal) => terminal.workspaceId === route.workspaceId,
+    const matchingTerminals = input.message.payload.terminals.filter((terminal) =>
+      terminalMatchesWorkspaceTerminalRoute(terminal, route.workspaceId),
     );
 
     input.queryClient.setQueryData<ListTerminalsPayload>(query.queryKey, (current) => ({
@@ -544,6 +557,24 @@ function applyTerminalsChanged(input: {
       requestId: current?.requestId ?? `terminals-changed-${Date.now()}`,
     }));
   }
+}
+
+/**
+ * Workspace-scoped terminal queries must keep terminals that omit `workspaceId`
+ * on a push. Title/activity updates sometimes leave it unset; strict equality
+ * wiped those entries and tab labels fell back to "Terminal".
+ *
+ * Sibling workspaces (a different non-empty id) stay filtered out. An unscoped
+ * route keeps every terminal for the cwd.
+ */
+function terminalMatchesWorkspaceTerminalRoute(
+  terminal: { workspaceId?: string },
+  routeWorkspaceId: string | undefined,
+): boolean {
+  if (!routeWorkspaceId) {
+    return true;
+  }
+  return terminal.workspaceId === undefined || terminal.workspaceId === routeWorkspaceId;
 }
 
 function getActiveServerDataRoute(
