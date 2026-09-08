@@ -889,6 +889,7 @@ function TabChip({
             <Pressable
               {...(closeButtonDragBlockers as object | undefined)}
               testID={closeButtonTestId}
+              accessibilityRole="button"
               disabled={isClosingTab}
               onPressIn={handleCloseButtonPressIn}
               onHoverIn={handleCloseButtonHoverIn}

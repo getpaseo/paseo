@@ -27,7 +27,10 @@ import { FileExplorerPane } from "./file-explorer-pane";
 import { useKeyboardShiftStyle } from "@/hooks/use-keyboard-shift-style";
 import { shouldUseCompactExplorerKeyboardPadding } from "@/hooks/keyboard-shift-policy";
 import { WindowChromeSafeArea } from "@/utils/desktop-window";
-import { TitlebarDragRegion } from "@/components/desktop/titlebar-drag-region";
+import {
+  TitlebarDragRegion,
+  titlebarDragRegionDataSet,
+} from "@/components/desktop/titlebar-drag-region";
 import { RetainedPanel, RetainedPanelActivity } from "@/components/retained-panel";
 import { useMountedTabSet } from "@/screens/workspace/use-mounted-tab-set";
 import { usePullRequestPanelAvailability } from "@/panels/pull-request-availability";
@@ -283,7 +286,13 @@ function ExplorerTabButton({
   const tabStyle = useMemo(() => [styles.tab, active && styles.tabActive], [active]);
   const tabTextStyle = useMemo(() => [styles.tabText, active && styles.tabTextActive], [active]);
   return (
-    <Pressable testID={testID} style={tabStyle} onPress={handlePress}>
+    <Pressable
+      testID={testID}
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      style={tabStyle}
+      onPress={handlePress}
+    >
       {children}
       {label !== undefined ? <Text style={tabTextStyle}>{label}</Text> : null}
     </Pressable>
@@ -346,6 +355,7 @@ function ExplorerSidebarContent({
         horizontalPadding={theme.spacing[2]}
         style={styles.header}
         testID="explorer-header"
+        dataSet={titlebarDragRegionDataSet}
       >
         <TitlebarDragRegion />
         <View style={styles.tabsContainer}>

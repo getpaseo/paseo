@@ -15,7 +15,10 @@ import Animated, { runOnJS, useAnimatedStyle, useSharedValue } from "react-nativ
 import { scheduleOnRN } from "react-native-worklets";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
-import { TitlebarDragRegion } from "@/components/desktop/titlebar-drag-region";
+import {
+  TitlebarDragRegion,
+  titlebarDragRegionDataSet,
+} from "@/components/desktop/titlebar-drag-region";
 import { resolveDesktopSidebarWidth } from "@/components/desktop-sidebar-layout";
 import {
   SIDEBAR_RESIZE_ACTIVATION_OFFSET,
@@ -730,7 +733,7 @@ function DesktopSidebar({
       style={desktopSidebarStyle}
     >
       <View style={desktopSidebarBorderStyle}>
-        <View style={styles.sidebarDragArea}>
+        <View style={styles.sidebarDragArea} dataSet={titlebarDragRegionDataSet}>
           {ownsTopLeft || DEV_BUILD_LABEL ? (
             <View style={styles.desktopChromeRow}>
               <TitlebarDragRegion />

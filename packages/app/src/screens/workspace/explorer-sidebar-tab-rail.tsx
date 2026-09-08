@@ -17,7 +17,7 @@ import {
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { titlebarDragSurfaceStyle } from "@/components/desktop/titlebar-drag-region";
+import { titlebarDragRegionDataSet } from "@/components/desktop/titlebar-drag-region";
 import { WORKSPACE_SECONDARY_HEADER_HEIGHT } from "@/constants/layout";
 import { iconButtonChromeGlyphSize } from "@/components/ui/icon-button-chrome";
 import { HEADER_CONTROL_HEIGHT } from "@/components/ui/control-geometry";
@@ -337,7 +337,8 @@ export function ExplorerSidebarTabRail({
     <ContextMenu>
       <ContextMenuTrigger
         contextOnly
-        style={[styles.track, titlebarDragSurfaceStyle as never]}
+        style={styles.track}
+        dataSet={titlebarDragRegionDataSet}
         testID="explorer-sidebar-tab-rail"
       >
         <View style={styles.scrollContainer}>

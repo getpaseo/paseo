@@ -17,7 +17,10 @@ import {
   HEADER_INNER_HEIGHT_MOBILE,
   HEADER_TOP_PADDING_MOBILE,
 } from "@/constants/layout";
-import { TitlebarDragRegion } from "@/components/desktop/titlebar-drag-region";
+import {
+  TitlebarDragRegion,
+  titlebarDragRegionDataSet,
+} from "@/components/desktop/titlebar-drag-region";
 import { useLocalDaemonServerId } from "@/hooks/use-is-local-daemon";
 import { PairDeviceModal } from "@/desktop/components/pair-device-modal";
 import { buildSettingsHostSectionRoute } from "@/utils/host-routes";
@@ -59,7 +62,7 @@ export function OpenProjectScreen() {
   return (
     <View style={styles.container}>
       <MenuHeader borderless />
-      <View style={styles.content}>
+      <View dataSet={titlebarDragRegionDataSet} style={styles.content}>
         <TitlebarDragRegion />
         <View style={styles.logo}>
           <PaseoLogo size={52} />
@@ -141,6 +144,7 @@ function HomeTile({ icon: Icon, title, description, onPress, testID, accent }: H
 
   return (
     <Pressable
+      accessibilityRole="button"
       onPress={onPress}
       onHoverIn={handleHoverIn}
       onHoverOut={handleHoverOut}

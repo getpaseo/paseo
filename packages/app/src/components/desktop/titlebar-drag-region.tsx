@@ -2,61 +2,41 @@ import { getIsElectronRuntime } from "@/constants/layout";
 import { isNative } from "@/constants/platform";
 
 /**
- * VS Code-style titlebar drag region for Electron.
+ * Electron titlebar drag region plumbing.
  *
- * Copied from VS Code at commit daa0a70:
- *   - titlebarPart.ts:463-464  → prepend(container, $('div.titlebar-drag-region'))
- *   - titlebarpart.css:57-64   → position: absolute, full size, -webkit-app-region: drag
- *   - titlebarpart.css:249-260 → top-edge resizer, no-drag, 4px
+ * The drag surface is the container itself: `-webkit-app-region: drag` on the
+ * marked container propagates to all non-`no-drag` descendants, and app-region
+ * hit-testing follows the DOM ancestor chain. The attribute is applied via
+ * `dataSet` because RNW's style compiler drops unknown CSS properties like
+ * `-webkit-app-region` when compiling atomic classes.
  *
- * VS Code's drag region is a static DOM element — no z-index, no pointer-events,
- * no state, no event listeners. Interactive elements get no-drag from their own
- * CSS (global backstop in index.html). The drag region never re-renders.
- *
- * The resizer is Windows/Linux only (titlebarpart.css:249 scopes to .windows/.linux).
- * On macOS, Electron handles edge resize natively.
+ * An earlier VS Code-style absolute overlay (first-child sibling) does not
+ * work under RNW 0.21: every View defaults to `position: relative; z-index: 0`
+ * and paints above the overlay, and app-region never applies to siblings.
  */
 
-export const titlebarDragSurfaceStyle: React.CSSProperties = {
-  cursor: "default",
-  // @ts-expect-error — WebkitAppRegion is not in CSSProperties
-  WebkitAppRegion: "drag",
-};
-
-const DRAG_OVERLAY_STYLE: React.CSSProperties = {
-  ...titlebarDragSurfaceStyle,
-  top: 0,
-  left: 0,
-  display: "block",
-  position: "absolute",
-  width: "100%",
-  height: "100%",
-};
+export const titlebarDragRegionDataSet = { titlebarDragRegion: "true" };
 
 const TOP_RESIZER_STYLE: React.CSSProperties = {
   position: "absolute",
   top: 0,
+  left: 0,
   width: "100%",
   height: 4,
+  zIndex: 1000,
   // @ts-expect-error — WebkitAppRegion is not in CSSProperties
   WebkitAppRegion: "no-drag",
 };
 
 /**
- * Static drag overlay and top-edge resizer. Returns null on non-Electron.
- * Place as FIRST child of any positioned container that should be draggable.
+ * Top-edge resizer keeping the window resizable under the drag region
+ * (VS Code titlebarpart.css:249-256). Returns null on non-Electron.
+ * Pair with `titlebarDragRegionDataSet` on the positioned container.
  */
 export function TitlebarDragRegion() {
   if (isNative || !getIsElectronRuntime()) {
     return null;
   }
 
-  return (
-    <>
-      {/* Drag overlay — VS Code .titlebar-drag-region (titlebarpart.css:57-64) */}
-      <div style={DRAG_OVERLAY_STYLE} />
-      {/* Top-edge resizer — VS Code .resizer (titlebarpart.css:249-256) */}
-      <div style={TOP_RESIZER_STYLE} />
-    </>
-  );
+  return <div style={TOP_RESIZER_STYLE} />;
 }

@@ -18,7 +18,10 @@ import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { PaseoLogo } from "@/components/icons/paseo-logo";
 import { Button } from "@/components/ui/button";
 import { getDesktopDaemonLogs, type DesktopDaemonLogs } from "@/desktop/daemon/desktop-daemon";
-import { TitlebarDragRegion } from "@/components/desktop/titlebar-drag-region";
+import {
+  TitlebarDragRegion,
+  titlebarDragRegionDataSet,
+} from "@/components/desktop/titlebar-drag-region";
 import { isNative, isWeb } from "@/constants/platform";
 import { CODE_SURFACE_DATASET } from "@/styles/code-surface";
 
@@ -383,7 +386,7 @@ export function StartupSplashScreen({ bootstrapState }: StartupSplashScreenProps
 
   if (!isError) {
     return (
-      <View testID="startup-splash" style={styles.container}>
+      <View testID="startup-splash" style={styles.container} dataSet={titlebarDragRegionDataSet}>
         <TitlebarDragRegion />
         <LogoShimmer />
       </View>
@@ -391,7 +394,7 @@ export function StartupSplashScreen({ bootstrapState }: StartupSplashScreenProps
   }
 
   return (
-    <View style={styles.errorScreen}>
+    <View style={styles.errorScreen} dataSet={titlebarDragRegionDataSet}>
       <TitlebarDragRegion />
       <ScrollView
         style={styles.errorScrollView}

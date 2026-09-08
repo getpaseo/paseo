@@ -10,7 +10,10 @@ import {
   useIsCompactFormFactor,
 } from "@/constants/layout";
 import { WindowChromeSafeArea } from "@/utils/desktop-window";
-import { TitlebarDragRegion } from "@/components/desktop/titlebar-drag-region";
+import {
+  TitlebarDragRegion,
+  titlebarDragRegionDataSet,
+} from "@/components/desktop/titlebar-drag-region";
 
 interface ScreenHeaderProps {
   left?: ReactNode;
@@ -56,6 +59,7 @@ export function ScreenHeader({
           horizontalPadding={baseHorizontalPadding}
           onLayout={onRowLayout}
           style={rowStyle}
+          dataSet={titlebarDragRegionDataSet}
         >
           <TitlebarDragRegion />
           <View style={leftCombinedStyle}>{left}</View>

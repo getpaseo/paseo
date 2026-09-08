@@ -2,7 +2,10 @@ import { useCallback, useMemo, type ReactNode } from "react";
 import { View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { RetainedPanel } from "@/components/retained-panel";
-import { TitlebarDragRegion } from "@/components/desktop/titlebar-drag-region";
+import {
+  TitlebarDragRegion,
+  titlebarDragRegionDataSet,
+} from "@/components/desktop/titlebar-drag-region";
 import type { TabDropPreview } from "@/components/split-container-tab-drop-preview";
 import { ExplorerSidebarTabRail } from "@/screens/workspace/explorer-sidebar-tab-rail";
 import { WorkspacePanelHost } from "@/screens/workspace/workspace-panel-host";
@@ -84,7 +87,11 @@ export function ExplorerSidebarDock({
     <RetainedPanel active>
       <WindowChromeRegion corners="top-right">
         <View style={styles.dock} testID="workspace-explorer-sidebar">
-          <WindowChromeSafeArea placement="inline" style={styles.tabRail}>
+          <WindowChromeSafeArea
+            placement="inline"
+            style={styles.tabRail}
+            dataSet={titlebarDragRegionDataSet}
+          >
             <TitlebarDragRegion />
             <ExplorerSidebarTabRail
               paneId={pane.id}
