@@ -1507,6 +1507,36 @@ describe("PiRpcAgentSession", () => {
     expect(fakeSession.setThinkingLevelRequests).toEqual(["high"]);
   });
 
+  test("clears requested Fast when switching to an ineligible model", async () => {
+    const pi = new FakePi();
+    const client = createClient(pi);
+    const session = (await client.createSession(
+      createConfig({
+        model: "openai-codex/gpt-5.6-luna",
+        featureValues: { fast_mode: true },
+      }),
+    )) as PiRpcAgentSession;
+    const fakeSession = pi.latestSession();
+
+    await session.setFeature("fast_mode", true);
+    expect(fakeSession.fastModeRequested).toBe(true);
+
+    fakeSession.setModelResult = { provider: "openrouter", id: "model-a", name: "Model A" };
+    await session.setModel("openrouter/model-a");
+    expect(fakeSession.fastModeRequests).toContainEqual({ enabled: false, eligible: false });
+    expect(fakeSession.fastModeRequested).toBe(false);
+
+    fakeSession.setModelResult = {
+      provider: "openai-codex",
+      id: "gpt-5.6-luna",
+      name: "GPT-5.6 Luna",
+    };
+    await session.setModel("openai-codex/gpt-5.6-luna");
+    expect(fakeSession.fastModeRequested).toBe(false);
+    expect(session.features).toEqual([expect.objectContaining({ id: "fast_mode", value: false })]);
+    await session.close();
+  });
+
   test("materializes image prompts as text hints for text-only Pi models", async () => {
     const { pi, session } = await createSession();
     const fakeSession = pi.latestSession();

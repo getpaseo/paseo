@@ -235,8 +235,6 @@ describe("OMP agent client and session", () => {
     });
     expect(oldOmp.runtime().setFastModeRequests).toEqual([]);
     expect(oldOmp.runtime().getStateRequestCount).toBe(1);
-    delete oldOmp.runtime().state.fastModeEnabled;
-    delete oldOmp.runtime().state.fastModeActive;
     expect(oldOmp.features()).toEqual([]);
   });
   test("hides draft Fast features on old or unknown OMP versions", async () => {

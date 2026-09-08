@@ -108,6 +108,7 @@ export class FakePiSession implements PiRuntimeSession {
     eligible: boolean;
     setRequested?: boolean;
   }> = [];
+  fastModeRequested = false;
   fastModeEnabled = false;
   readonly setThinkingLevelRequests: string[] = [];
   readonly treeNavigationRequests: string[] = [];
@@ -474,10 +475,9 @@ export class FakePiSession implements PiRuntimeSession {
       ...(payload.setRequested === false ? { setRequested: false } : {}),
     });
     if (payload.setRequested !== false) {
-      this.fastModeEnabled = payload.enabled === true && payload.eligible;
-    } else if (!payload.eligible) {
-      this.fastModeEnabled = false;
+      this.fastModeRequested = payload.enabled === true;
     }
+    this.fastModeEnabled = this.fastModeRequested && payload.eligible;
     this.emitExtensionCommandResult(payload.requestId, {
       ok: true,
       result: {

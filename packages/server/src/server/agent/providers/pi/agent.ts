@@ -2047,7 +2047,11 @@ export class PiRpcAgentSession implements AgentSession {
   }
 
   private async updateFastModeEligibility(eligible: boolean): Promise<void> {
-    await this.sendFastModeCommand({ setRequested: false, eligible });
+    if (!eligible) {
+      await this.sendFastModeCommand({ enabled: false, eligible: false });
+      return;
+    }
+    await this.sendFastModeCommand({ setRequested: false, eligible: true });
   }
 
   private async sendFastModeCommand(input: {

@@ -193,6 +193,7 @@ interface OmpAgentSessionOptions {
   noTurnScheduler?: OmpNoTurnScheduler;
   usagePollScheduler?: OmpUsagePollScheduler;
   paseoTools?: PaseoToolCatalog;
+  nativeFastModeSupported: boolean;
   /**
    * When false (resumed sessions), replayed session events are dropped until
    * the first prompt or agent_start so history is not re-emitted as live
@@ -414,6 +415,16 @@ function parsePersistenceMetadata(metadata: AgentMetadata | undefined): OmpPersi
     ...(typeof metadata.modeId === "string" ? { modeId: metadata.modeId } : {}),
     ...(typeof metadata.systemPrompt === "string" ? { systemPrompt: metadata.systemPrompt } : {}),
   };
+}
+
+function clearConfiguredFastMode(config: AgentSessionConfig): void {
+  const featureValues = config.featureValues;
+  if (!featureValues || !("fast_mode" in featureValues)) {
+    return;
+  }
+  const nextFeatureValues = { ...featureValues };
+  delete nextFeatureValues.fast_mode;
+  config.featureValues = Object.keys(nextFeatureValues).length > 0 ? nextFeatureValues : undefined;
 }
 
 function buildResumeConfig(
@@ -889,6 +900,7 @@ export class OmpAgentSession implements AgentSession {
   private readonly providerIdleScheduler: OmpProviderIdleScheduler;
   private readonly noTurnScheduler: OmpNoTurnScheduler;
   private readonly usagePoller: OmpUsagePoller;
+  private readonly nativeFastModeSupported: boolean;
   private closed = false;
   private live: boolean;
   private readonly emittedUserMessageIds = new Set<string>();
@@ -900,6 +912,7 @@ export class OmpAgentSession implements AgentSession {
     this.currentModeId = options.currentModeId ?? null;
     this.logger = options.logger;
     this.paseoTools = options.paseoTools;
+    this.nativeFastModeSupported = options.nativeFastModeSupported;
     this.live = options.live ?? true;
     this.providerIdleScheduler = options.providerIdleScheduler ?? createOmpProviderIdleScheduler();
     this.noTurnScheduler = options.noTurnScheduler ?? createOmpNoTurnScheduler();
@@ -954,6 +967,9 @@ export class OmpAgentSession implements AgentSession {
   }
 
   get features(): AgentFeature[] {
+    if (!this.nativeFastModeSupported) {
+      return [];
+    }
     const modelId = modelToId(this.state.model) ?? this.config.model ?? null;
     if (!ompFastModeSupportedForModelId(modelId)) {
       return [];
@@ -2318,11 +2334,12 @@ export class OmpAgentClient implements AgentClient {
       const reportedState = await runtimeSession.getState();
       const effectiveModel = modelToId(reportedState.model) ?? config.model ?? null;
       const configuredFastMode = config.featureValues?.fast_mode;
+      const nativeFastModeSupported = await this.supportsNativeFastMode();
       let fastModeApplied = false;
       if (
         typeof configuredFastMode === "boolean" &&
         ompFastModeSupportedForModelId(effectiveModel) &&
-        (await this.supportsNativeFastMode())
+        nativeFastModeSupported
       ) {
         try {
           const fastModeResult = await runtimeSession.setFastMode(configuredFastMode);
@@ -2336,7 +2353,10 @@ export class OmpAgentClient implements AgentClient {
             { err: error },
             "OMP fast mode restore failed; continuing without Fast",
           );
+          clearConfiguredFastMode(config);
         }
+      } else if (typeof configuredFastMode === "boolean") {
+        clearConfiguredFastMode(config);
       }
       const initialState = fastModeApplied ? await runtimeSession.getState() : reportedState;
       return new OmpAgentSession({
@@ -2350,6 +2370,7 @@ export class OmpAgentClient implements AgentClient {
         noTurnScheduler: this.noTurnScheduler,
         usagePollScheduler: this.usagePollScheduler,
         paseoTools: launchContext?.paseoTools,
+        nativeFastModeSupported,
       });
     } catch (error) {
       await runtimeSession.close().catch(() => undefined);
@@ -2384,11 +2405,12 @@ export class OmpAgentClient implements AgentClient {
       const reportedState = await runtimeSession.getState();
       const effectiveModel = modelToId(reportedState.model) ?? resumeConfig.config.model ?? null;
       const configuredFastMode = resumeConfig.config.featureValues?.fast_mode;
+      const nativeFastModeSupported = await this.supportsNativeFastMode();
       let fastModeApplied = false;
       if (
         typeof configuredFastMode === "boolean" &&
         ompFastModeSupportedForModelId(effectiveModel) &&
-        (await this.supportsNativeFastMode())
+        nativeFastModeSupported
       ) {
         try {
           const fastModeResult = await runtimeSession.setFastMode(configuredFastMode);
@@ -2402,7 +2424,10 @@ export class OmpAgentClient implements AgentClient {
             { err: error },
             "OMP fast mode restore failed; continuing without Fast",
           );
+          clearConfiguredFastMode(resumeConfig.config);
         }
+      } else if (typeof configuredFastMode === "boolean") {
+        clearConfiguredFastMode(resumeConfig.config);
       }
       const initialState = fastModeApplied ? await runtimeSession.getState() : reportedState;
       return new OmpAgentSession({
@@ -2416,6 +2441,7 @@ export class OmpAgentClient implements AgentClient {
         noTurnScheduler: this.noTurnScheduler,
         usagePollScheduler: this.usagePollScheduler,
         paseoTools: launchContext?.paseoTools,
+        nativeFastModeSupported,
         live: false,
       });
     } catch (error) {
