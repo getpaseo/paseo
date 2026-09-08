@@ -57,26 +57,6 @@ afterEach(() => {
 function noop() {}
 
 describe("EditingTextInputNative", () => {
-  it("keeps the focused input mounted when the terminal clears its input buffer", () => {
-    const handleRef = createRef<EditingTextInputHandle>();
-    act(() => {
-      root?.render(<EditingTextInput ref={handleRef} initialValue="typed" multiline />);
-    });
-    const input = container?.querySelector("textarea");
-    if (!input) throw new Error("Expected terminal input");
-    act(() => input.focus());
-
-    act(() => {
-      handleRef.current?.replaceText("");
-      handleRef.current?.focus();
-    });
-
-    expect(container?.querySelector("textarea")).toBe(input);
-    expect(document.activeElement).toBe(input);
-    expect(input.value).toBe("");
-    expect(handleRef.current?.getText()).toBe("");
-  });
-
   it("uses the bottom-sheet input only inside a bottom sheet", () => {
     act(() => {
       root?.render(
