@@ -1775,6 +1775,10 @@ function readStreamRequestOutputTokens(event: Record<string, unknown>): number |
   return readRequestOutputTokens(event.usage);
 }
 
+function readStreamDeltaInputTokens(event: Record<string, unknown>): number | undefined {
+  return readRequestInputTokens(event.usage);
+}
+
 function readLastUsageIteration(usage: unknown): Record<string, unknown> | undefined {
   const iterations = toObjectRecord(usage)?.iterations;
   if (!Array.isArray(iterations)) {
@@ -1843,6 +1847,7 @@ class ClaudeContextUsageState {
   private streamRequestOutputTokens: number | undefined;
   private compactedContextWindowUsedTokens: number | undefined;
   private completedResultTurns = 0;
+  private sawRequestStart = false;
 
   constructor(initialContextWindowMaxTokens?: number) {
     this.contextWindowMaxTokens = initialContextWindowMaxTokens;
@@ -1852,6 +1857,7 @@ class ClaudeContextUsageState {
     this.streamRequestInputTokens = undefined;
     this.streamRequestOutputTokens = undefined;
     this.compactedContextWindowUsedTokens = undefined;
+    this.sawRequestStart = false;
   }
 
   setInitialContextWindowMaxTokens(contextWindowMaxTokens: number | undefined): void {
@@ -1874,6 +1880,7 @@ class ClaudeContextUsageState {
     const eventType = readTrimmedString(streamEvent.type);
     if (eventType === "message_start") {
       const inputTokens = readStreamRequestInputTokens(streamEvent);
+      this.sawRequestStart = true;
       this.streamRequestInputTokens = inputTokens;
       this.streamRequestOutputTokens = inputTokens === undefined ? undefined : 0;
       if (typeof inputTokens !== "number") {
@@ -1885,6 +1892,18 @@ class ClaudeContextUsageState {
         return null;
       }
       this.streamRequestOutputTokens = outputTokens;
+      // Zero-usage gateways can also zero the completed assistant frame's usage and publish
+      // accurate per-request usage only on the terminal message_delta. A request's input total
+      // is constant, so the largest nonzero observation wins; stragglers from a canceled
+      // request never see a start here and stay inert.
+      const deltaInputTokens = readStreamDeltaInputTokens(streamEvent);
+      if (
+        this.sawRequestStart &&
+        typeof deltaInputTokens === "number" &&
+        deltaInputTokens > (this.streamRequestInputTokens ?? 0)
+      ) {
+        this.streamRequestInputTokens = deltaInputTokens;
+      }
     } else {
       return null;
     }
@@ -1901,12 +1920,15 @@ class ClaudeContextUsageState {
     // assistant frame accurate. Reconcile from that per-request frame before the result aggregate.
     const inputTokens = readRequestInputTokens(usage);
     const outputTokens = readRequestOutputTokens(usage);
-    if (inputTokens === undefined || outputTokens === undefined) {
+    if (inputTokens === undefined || outputTokens === undefined || !this.sawRequestStart) {
       return null;
     }
 
     const previousUsedTokens = this.streamUsedTokens();
-    this.streamRequestInputTokens = inputTokens;
+    // Same merge policy as the terminal message_delta: a request's input total is constant,
+    // so keep the largest nonzero observation instead of letting a partially-populated frame
+    // regress a value already reconciled from the delta.
+    this.streamRequestInputTokens = Math.max(inputTokens, this.streamRequestInputTokens ?? 0);
     this.streamRequestOutputTokens = outputTokens;
     const usedTokens = this.streamUsedTokens();
     if (usedTokens === undefined || usedTokens === previousUsedTokens) {
@@ -1977,6 +1999,7 @@ class ClaudeContextUsageState {
   buildCompactionUsageEvent(postTokens: number | undefined): AgentStreamEvent {
     this.streamRequestInputTokens = undefined;
     this.streamRequestOutputTokens = undefined;
+    this.sawRequestStart = false;
     this.compactedContextWindowUsedTokens = postTokens;
     const usage: AgentUsage = {};
     if (this.contextWindowMaxTokens !== undefined) {

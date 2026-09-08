@@ -1439,13 +1439,15 @@ describe("ClaudeAgentSession context window usage", () => {
   }
 
   function createMessageDeltaEvent(outputTokens: number): Record<string, unknown> {
+    return createMessageDeltaUsageEvent({ output_tokens: outputTokens });
+  }
+
+  function createMessageDeltaUsageEvent(usage: Record<string, unknown>): Record<string, unknown> {
     return {
       type: "stream_event",
       event: {
         type: "message_delta",
-        usage: {
-          output_tokens: outputTokens,
-        },
+        usage,
       },
       session_id: "session-1",
     };
@@ -2252,6 +2254,291 @@ describe("ClaudeAgentSession context window usage", () => {
           usage: expect.objectContaining({
             contextWindowMaxTokens: 1_000_000,
             contextWindowUsedTokens: 181_065,
+          }),
+        }),
+      );
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("terminal message_delta usage corrects zeroed Anthropic-compatible stream usage", async () => {
+    // Mirrors a captured GLM (open.bigmodel.cn /api/anthropic) stream in SDK order
+    // (stream events first, completed assistant message last): message_start and the
+    // completed assistant frame both carry zeroed usage; only the terminal message_delta
+    // reports accurate per-request input, cache-read, and output tokens.
+    const session = await createSessionForTurns(
+      [
+        [
+          createInitMessage(),
+          createMessageStartEvent({
+            input_tokens: 0,
+            cache_creation_input_tokens: 0,
+            cache_read_input_tokens: 0,
+          }),
+          createMessageDeltaUsageEvent({
+            input_tokens: 38_917,
+            output_tokens: 205,
+            cache_creation_input_tokens: 0,
+            cache_read_input_tokens: 0,
+          }),
+          {
+            type: "assistant",
+            parent_tool_use_id: null,
+            message: {
+              id: "assistant-zero-usage-1",
+              role: "assistant",
+              content: [{ type: "text", text: "OK" }],
+              usage: {
+                input_tokens: 0,
+                cache_creation_input_tokens: 0,
+                cache_read_input_tokens: 0,
+                output_tokens: 0,
+              },
+            },
+            uuid: "assistant-zero-usage-event-1",
+            session_id: "session-1",
+          },
+          createSuccessResult({
+            usage: {
+              input_tokens: 38_917,
+              cache_creation_input_tokens: 0,
+              cache_read_input_tokens: 0,
+              output_tokens: 205,
+              iterations: [],
+            },
+            modelUsage: {
+              "glm-5.3-flash": { contextWindow: 1_000_000 },
+            },
+          }),
+        ],
+      ],
+      { model: "claude-sonnet-5[1m]" },
+    );
+
+    try {
+      const events = await collectStreamEvents(session);
+
+      expect(
+        events.some(
+          (event) => event.type === "usage_updated" && event.usage.contextWindowUsedTokens === 205,
+        ),
+      ).toBe(false);
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          type: "usage_updated",
+          provider: "claude",
+          usage: {
+            contextWindowMaxTokens: 1_000_000,
+            contextWindowUsedTokens: 39_122,
+          },
+        }),
+      );
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          type: "turn_completed",
+          provider: "claude",
+          usage: expect.objectContaining({
+            contextWindowMaxTokens: 1_000_000,
+            contextWindowUsedTokens: 39_122,
+          }),
+        }),
+      );
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("assistant frame cannot regress delta-reconciled stream usage", async () => {
+    // A partially-populated assistant frame (raw input without cache fields) must not
+    // overwrite input already reconciled from an accurate terminal message_delta.
+    const session = await createSessionForTurns(
+      [
+        [
+          createInitMessage(),
+          createMessageStartEvent({
+            input_tokens: 0,
+            cache_creation_input_tokens: 0,
+            cache_read_input_tokens: 0,
+          }),
+          createMessageDeltaUsageEvent({
+            input_tokens: 38_917,
+            output_tokens: 205,
+            cache_creation_input_tokens: 0,
+            cache_read_input_tokens: 0,
+          }),
+          {
+            type: "assistant",
+            parent_tool_use_id: null,
+            message: {
+              id: "assistant-partial-usage-1",
+              role: "assistant",
+              content: [{ type: "text", text: "OK" }],
+              usage: {
+                input_tokens: 1_514,
+                output_tokens: 205,
+              },
+            },
+            uuid: "assistant-partial-usage-event-1",
+            session_id: "session-1",
+          },
+          createSuccessResult({
+            usage: {
+              input_tokens: 38_917,
+              cache_creation_input_tokens: 0,
+              cache_read_input_tokens: 0,
+              output_tokens: 205,
+              iterations: [],
+            },
+            modelUsage: {
+              "glm-5.3-flash": { contextWindow: 1_000_000 },
+            },
+          }),
+        ],
+      ],
+      { model: "claude-sonnet-5[1m]" },
+    );
+
+    try {
+      const events = await collectStreamEvents(session);
+
+      expect(
+        events.some(
+          (event) =>
+            event.type === "usage_updated" &&
+            event.usage.contextWindowUsedTokens !== undefined &&
+            event.usage.contextWindowUsedTokens < 39_122,
+        ),
+      ).toBe(false);
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          type: "turn_completed",
+          provider: "claude",
+          usage: expect.objectContaining({
+            contextWindowUsedTokens: 39_122,
+          }),
+        }),
+      );
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("delta input tokens never downgrade an accurate message_start", async () => {
+    // A delta carrying raw input_tokens without cache fields totals less than the
+    // message_start observation; the smaller total must not replace it.
+    const session = await createSessionForTurns(
+      [
+        [
+          createInitMessage(),
+          createMessageStartEvent({
+            input_tokens: 1_514,
+            cache_creation_input_tokens: 0,
+            cache_read_input_tokens: 178_752,
+          }),
+          createMessageDeltaUsageEvent({
+            input_tokens: 1_514,
+            output_tokens: 799,
+          }),
+          createSuccessResult({
+            usage: {
+              input_tokens: 1_514,
+              cache_creation_input_tokens: 0,
+              cache_read_input_tokens: 178_752,
+              output_tokens: 799,
+              iterations: [],
+            },
+          }),
+        ],
+      ],
+      { model: "claude-sonnet-5[1m]" },
+    );
+
+    try {
+      const events = await collectStreamEvents(session);
+
+      expect(
+        events.some(
+          (event) =>
+            event.type === "usage_updated" &&
+            event.usage.contextWindowUsedTokens !== undefined &&
+            event.usage.contextWindowUsedTokens < 180_266,
+        ),
+      ).toBe(false);
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          type: "usage_updated",
+          provider: "claude",
+          usage: expect.objectContaining({
+            contextWindowUsedTokens: 181_065,
+          }),
+        }),
+      );
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("straggler delta without a request start cannot seed usage", async () => {
+    // After a canceled request, the pump can still deliver that request's terminal delta
+    // once the next turn has already begun, before the new request's message_start. The
+    // adoption requires the current request's message_start, so the stale total stays inert.
+    const session = await createSessionForTurns([
+      [
+        createInitMessage(),
+        createMessageDeltaUsageEvent({
+          input_tokens: 38_917,
+          output_tokens: 205,
+          cache_creation_input_tokens: 0,
+          cache_read_input_tokens: 0,
+        }),
+        createMessageStartEvent({
+          input_tokens: 0,
+          cache_creation_input_tokens: 0,
+          cache_read_input_tokens: 0,
+        }),
+        createMessageDeltaUsageEvent({
+          input_tokens: 30_000,
+          output_tokens: 10,
+          cache_creation_input_tokens: 0,
+          cache_read_input_tokens: 0,
+        }),
+        createSuccessResult({
+          usage: {
+            input_tokens: 30_000,
+            cache_creation_input_tokens: 0,
+            cache_read_input_tokens: 0,
+            output_tokens: 10,
+            iterations: [],
+          },
+        }),
+      ],
+    ]);
+
+    try {
+      const events = await collectStreamEvents(session);
+
+      expect(
+        events.some(
+          (event) =>
+            event.type === "usage_updated" && event.usage.contextWindowUsedTokens === 39_122,
+        ),
+      ).toBe(false);
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          type: "usage_updated",
+          provider: "claude",
+          usage: expect.objectContaining({
+            contextWindowUsedTokens: 30_010,
+          }),
+        }),
+      );
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          type: "turn_completed",
+          provider: "claude",
+          usage: expect.objectContaining({
+            contextWindowUsedTokens: 30_010,
           }),
         }),
       );
