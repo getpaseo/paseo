@@ -1,12 +1,12 @@
 ---
-title: CLI
+title: CLI reference
 description: "Paseo CLI reference: manage projects, workspaces, agents, plugins, scripts, schedules, daemons, and permissions from your terminal."
-nav: CLI
-order: 3
-category: Getting started
+nav: CLI reference
+order: 35
+category: Orchestration
 ---
 
-# CLI
+# CLI reference
 
 The Paseo CLI lets you manage agents from your terminal. It's the same interface exposed by the daemon's API, so anything you can do in the app you can do from the command line.
 
@@ -212,6 +212,8 @@ Agent IDs can be shortened, `abc` works if it's unambiguous.
 ## Sending messages
 
 Send follow-up tasks to a running or idle agent:
+
+Use the recipient's agent ID from `paseo ls`, or [copy it from the agent's tab](/docs/orchestration-workflows#send-a-prompt-to-another-agent).
 
 ```bash
 paseo send <id> "now run the tests"
