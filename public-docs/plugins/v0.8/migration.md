@@ -8,7 +8,7 @@ category: Plugins
 
 # Migrate a plugin to runtime entries
 
-> **For the upcoming Paseo v0.8 release.** This migration is not required for Paseo v0.7.
+> **For Paseo v0.8 beta.** This migration is not required for Paseo v0.7.
 
 Give this page to a coding agent with the plugin directory as its working directory. Execute the
 steps in order. Do not keep a compatibility entry.
@@ -67,30 +67,48 @@ is a compile error.
 
 Use this table as the complete registration checklist.
 
-| Old registration and location                                                                 | New registration and location                                                              |
-| --------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
-| `plugin.handle(contract, handler)` in the old root entry                                      | `server.handle(contract, handler)` in `index.server.ts`                                    |
-| `plugin.addSurface(id, Component)` in the old root entry                                      | `client.addSurface(id, Component)` in `index.client.tsx`                                   |
-| `plugin.addSidebarItem(item)` in the old root entry                                           | `client.addSidebarItem(item)` in `index.client.tsx`                                        |
-| `plugin.addWorkspacePanel(panel)` in the old root entry                                       | `client.addWorkspacePanel(panel)` in `index.client.tsx`                                    |
-| `plugin.addCommandCenterItem(item)` in the old root entry                                     | `client.addCommandCenterItem(item)` in `index.client.tsx`                                  |
-| `plugin.addClientSlashCommand(command)` in the old root entry                                 | `client.addSlashCommand(command)` in `index.client.tsx`                                    |
-| `plugin.addClientSide(fn)` in the old root entry                                              | Delete the wrapper and move the body of `fn` into the default client entry function        |
-| `client.addComposerPill(pill)` inside the old client callback                                 | `client.addComposerPill(pill)` inside `index.client.tsx` or an imported `client/` function |
-| `plugin.addAttachmentSource(source)` in the old root entry                                    | `client.addAttachmentSource(source)` in `index.client.tsx`                                 |
-| `plugin.addTheme(theme)` in the old root entry                                                | `client.addTheme(theme)` in `index.client.tsx`                                             |
-| `plugin.addTimelineTransformer(transformer)` in the old root entry                            | `client.addTimelineTransformer(transformer)` in `index.client.tsx`                         |
-| `plugin.addTimelineRenderer(renderer)` in the old root entry                                  | `client.addTimelineRenderer(renderer)` in `index.client.tsx`                               |
-| `import { defineRpc, defineAttachmentSource } from "@getpaseo/plugin/server"` in shared files | `import { defineRpc, defineAttachmentSource } from "@getpaseo/plugin"`                     |
-| `ZodOutput<typeof contract.input>` handler parameter types                                    | `RpcInput<typeof contract>` from `@getpaseo/plugin`; `RpcOutput` for return types          |
+| Old registration and location                                                                 | New registration and location                                                                                |
+| --------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| `plugin.handle(contract, handler)` in the old root entry                                      | `server.handle(contract, handler)` in `index.server.ts`                                                      |
+| `plugin.addSurface(id, Component)` in the old root entry                                      | `client.addSurface(id, Component)` in `index.client.tsx`                                                     |
+| `plugin.addSidebarItem(item)` in the old root entry                                           | `client.addSidebarItem(item)` in `index.client.tsx`                                                          |
+| `plugin.addWorkspacePanel(panel)` in the old root entry                                       | `client.addWorkspacePanel(panel)` in `index.client.tsx`                                                      |
+| `plugin.addCommandCenterItem(item)` in the old root entry                                     | `client.addCommandCenterItem(item)` in `index.client.tsx`                                                    |
+| `plugin.addClientSlashCommand(command)` in the old root entry                                 | `client.addSlashCommand(command)` in `index.client.tsx`                                                      |
+| `plugin.addClientSide(fn)` in the old root entry                                              | Delete the wrapper and move the body of `fn` into the default client entry function                          |
+| `client.addComposerPill(pill)` inside the old client callback                                 | `client.addComposerPill(pill)` inside `index.client.tsx` or an imported `client/` function                   |
+| `plugin.addAttachmentSource(source)` in the old root entry                                    | `client.addAttachmentSource(source)` in `index.client.tsx`                                                   |
+| New settings screen contribution                                                              | `client.addSettingsScreen(screen)` in `index.client.tsx`; see [settings screens](reference#settings-screens) |
+| `plugin.addTheme(theme)` in the old root entry                                                | `client.addTheme(theme)` in `index.client.tsx`                                                               |
+| `plugin.addTimelineTransformer(transformer)` in the old root entry                            | `client.addTimelineTransformer(transformer)` in `index.client.tsx`                                           |
+| `plugin.addTimelineRenderer(renderer)` in the old root entry                                  | `client.addTimelineRenderer(renderer)` in `index.client.tsx`                                                 |
+| `import { defineRpc, defineAttachmentSource } from "@getpaseo/plugin/server"` in shared files | `import { defineRpc, defineAttachmentSource } from "@getpaseo/plugin"`                                       |
+| `ZodOutput<typeof contract.input>` handler parameter types                                    | `RpcInput<typeof contract>` from `@getpaseo/plugin`; `RpcOutput` for return types                            |
 
-Import `PluginClientContext` in the client entry and `PluginServerContext` in the server entry.
-Remove imports of the old context type. `@getpaseo/plugin/server` now exports only handler-side
-types such as `PluginHandlerContext`. Every client `add*` now returns an idempotent removal
-function. Preserve any remover the plugin calls before teardown; Paseo removes outstanding
+Import `PluginClientContext` from `@getpaseo/plugin/client` and `PluginServerContext` from
+`@getpaseo/plugin/server`. Remove imports of the old context type. Every client `add*` now returns an idempotent removal function. Preserve any remover the plugin calls before teardown; Paseo removes outstanding
 registrations after the entry cleanup runs.
 
 ## 4. Separate imports
+
+Move hooks (`usePaseo`, `useRpc`, `useSettings`, `useAgent`, `useWorkspace`) and client contribution
+types from `@getpaseo/plugin` to `@getpaseo/plugin/client`. Move `Icon` to
+`@getpaseo/plugin/client/react-native`. Import server contexts and lifecycle contracts from
+`@getpaseo/plugin/server`. Shared helpers (`defineRpc`, `defineSettings`, `defineAttachmentSource`),
+schemas, and plain data types stay on the root. These rules include type imports. See
+[Runtime modules](reference#runtime-modules) for the complete contract.
+
+Move the remaining SDK subpaths under their runtime owner:
+
+| Old entry                       | 0.8 entry                              |
+| ------------------------------- | -------------------------------------- |
+| `@getpaseo/plugin/react-native` | `@getpaseo/plugin/client/react-native` |
+| `@getpaseo/plugin/ui`           | `@getpaseo/plugin/client/ui`           |
+| `@getpaseo/plugin/provider`     | `@getpaseo/plugin/server/provider`     |
+| `@getpaseo/plugin/acp`          | `@getpaseo/plugin/server/acp`          |
+
+The old entries and the pre-0.8 `@paseo/plugin` scope are removed. `/client/host` is private to
+Paseo's app integration and is never a plugin-author import.
 
 The client entry imports only `client/`, `shared/`, and client-safe packages. The server entry imports
 only `server/`, `shared/`, and server-safe packages. A `node:` import in the client entry or anything
@@ -101,7 +119,8 @@ its registration; that registration belongs in the client entry.
 
 | Compiler or load error                                                                                                     | Meaning and fix                                                                                                           |
 | -------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
-| `Plugin entry split is required`                                                                                           | The directory still has only the old root entry. Create a runtime entry, move registrations, then delete the old file.    |
+| `This plugin has no requirements.paseo`                                                                                    | Complete the migration and declare the range in step 7.                                                                   |
+| `This plugin was made for an older version of Paseo`                                                                       | The directory still has only the old root entry. Create a runtime entry, move registrations, then delete the old file.    |
 | `Plugin entry points are missing: expected index.client.ts or index.client.tsx and/or index.server.ts or index.server.tsx` | No supported entry exists. Add at least one exact filename.                                                               |
 | `server-only module cannot be imported into the plugin client bundle: <file>`                                              | A client import reaches `server/`. Move the call behind an RPC and import its contract from `shared/`.                    |
 | `client-only module cannot be imported into the plugin server bundle: <file>`                                              | A server import reaches `client/`. Move that registration and import to the client entry.                                 |
@@ -167,7 +186,7 @@ local-plugin/
 
 ```tsx
 // index.client.tsx
-import type { PluginClientContext } from "@getpaseo/plugin";
+import type { PluginClientContext } from "@getpaseo/plugin/client";
 import { contributeClient, ExamplePanel } from "./client/main";
 
 export default function contribute(client: PluginClientContext) {
@@ -194,7 +213,7 @@ export default function contribute(client: PluginClientContext) {
 
 ```ts
 // index.server.ts
-import type { PluginServerContext } from "@getpaseo/plugin";
+import type { PluginServerContext } from "@getpaseo/plugin/server";
 import { increment } from "./server/increment";
 import { incrementRpc } from "./shared/increment";
 
@@ -220,7 +239,26 @@ Import path changes inside the moved files:
 calls it directly and returns its cleanup. A plugin whose `addClientSide` callback also registered
 pills or subscriptions keeps that code; only the wrapper goes away.
 
-## 7. Verify the migration
+## 7. Declare the Paseo requirement
+
+After migrating the entries and imports, add the minimum runtime version to `paseo-plugin.json`:
+
+```json
+{
+  "id": "my-plugin",
+  "requirements": { "paseo": ">=0.8.0" }
+}
+```
+
+Keep your existing ID and build commands. Missing `requirements.paseo` means `<0.8.0`, so Paseo 0.8
+rejects the plugin even if its files have been moved. Adding the field alone does not migrate the
+code. Update the local `@getpaseo/plugin` development dependency to the version you target and
+reinstall dependencies before typechecking.
+
+For a 0.8 beta, use its explicit version in the SDK dependency and `>=0.8.0` in the manifest.
+See [requirements](reference#requirements) for range and prerelease semantics.
+
+## 8. Verify the migration
 
 Run:
 

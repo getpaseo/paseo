@@ -1,3 +1,4 @@
+import { createAgentRequestsStub } from "./test-utils/session-stubs.js";
 import os from "node:os";
 import path from "node:path";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -99,6 +100,7 @@ describe("snapshot mutation ownership boundary", () => {
 
     const session = asInternals<SessionInternals>(
       new Session({
+        agentRequests: createAgentRequestsStub(),
         clientId: "test-client",
         permissions: OWNER_PERMISSIONS,
         onMessage,

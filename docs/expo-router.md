@@ -64,7 +64,10 @@ root host route and pass the nested workspace screen when a host route is
 already mounted, or Expo Router can append extra hidden workspace deck entries.
 The workspace navigation helper inspects the mounted navigation state to make
 that decision; if no host route is mounted yet, it falls back to ordinary route
-navigation.
+navigation. Both paths wait for the root navigation container to be ready. The
+workspace navigation owner keeps the latest pending intent across ref
+re-registration and applies it on the container's `ready` event; routes must not
+add their own readiness retries.
 
 Those hidden entries are not harmless: composer floating panels can measure
 against the wrong deck and disappear offscreen. Follow the
@@ -76,6 +79,9 @@ foregrounded. Active-workspace observers must prefer the current pathname and
 only use local param fallback during cold mount (`/` or empty pathname), or a
 hidden workspace can overwrite the remembered workspace before Settings or
 History returns.
+
+Plugin settings use the distinct `settings/hosts/[serverId]/plugins/[pluginId]/[screenId]` leaf;
+Back returns to that host's Plugins page.
 
 Settings detail routes are separate siblings on purpose. Keep
 `settings/[section]`, the host routes, the projects index, and project detail as
@@ -140,6 +146,14 @@ Do not read the active theme with `useUnistyles()` in a layout to build
 `screenOptions`. `ThemedStack` keeps that third-party prop theme-reactive through
 a small `withUnistyles` boundary without subscribing the route tree itself to
 every Unistyles runtime update.
+
+Navigators keep their identity across appearance changes. `ThemedStack` remounts
+each screen's content below the native stack when appearance tokens change; a
+keyed wrapper above a stack remounts the stack itself, and Android crashes when
+that happens while a FragmentManager transaction is running, which settings
+hydration at startup makes likely. A screen that mounts a nested navigator (the
+root stack's `h/[serverId]`) is passed in `nestedNavigatorScreens` so the nested
+stack owns its own screens. See [unistyles.md](unistyles.md).
 
 ## Regression Shape
 

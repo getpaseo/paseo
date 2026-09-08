@@ -957,7 +957,6 @@ paseo plugin install /absolute/path/to/plugin --id another-runtime-id
 paseo plugin add owner/repository
 paseo plugin add https://git.example.com/owner/repository.git --ref main
 paseo plugin add owner/monorepo:plugins/review
-paseo plugin status [id]
 paseo plugin update <id>
 paseo plugin update --all
 paseo plugin ls

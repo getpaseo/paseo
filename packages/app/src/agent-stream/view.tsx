@@ -32,7 +32,7 @@ import {
   AssistantMessage,
   SpeakMessage,
   UserMessage,
-  ActivityLog,
+  Notification,
   ToolCall,
   TodoListCard,
   CompactionMarker,
@@ -877,15 +877,8 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
           case "tool_call":
             return renderToolCallItem(layoutItem, item);
 
-          case "activity_log":
-            return (
-              <ActivityLog
-                type={item.activityType}
-                message={item.message}
-                timestamp={item.timestamp.getTime()}
-                metadata={item.metadata}
-              />
-            );
+          case "notification":
+            return <Notification level={item.level} message={item.message} />;
 
           case "todo_list":
             return <TodoListCard items={item.items} activity={item.activity} />;

@@ -1,3 +1,4 @@
+import { pluginRequirements } from "../support/helpers/plugin-fixture";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -29,7 +30,8 @@ function isSettledWorkspaceUrl(url: URL): boolean {
 function pluginClientSource(input: { workspaceId: string; agentId: string }): string {
   return `import React, { useRef } from "react";
 import { Pressable, Text, View } from "react-native";
-import { Icon, useAgent, useWorkspace } from "@getpaseo/plugin";
+import { Icon } from "@getpaseo/plugin/client/react-native";
+import { useAgent, useWorkspace } from "@getpaseo/plugin/client";
 import { recordComposerOpen } from "./shared/rpc";
 
 function WorkspacePanel({ workspaceId, host, layout }) {
@@ -199,7 +201,10 @@ test.describe("plugin workspace panels and Command Center", () => {
       repoPrefix: "plugin-panel-secondary-",
       port: secondaryDaemon.port,
     });
-    await writeFile(path.join(directory, "paseo-plugin.json"), JSON.stringify({ id: PLUGIN_ID }));
+    await writeFile(
+      path.join(directory, "paseo-plugin.json"),
+      JSON.stringify({ id: PLUGIN_ID, requirements: pluginRequirements }),
+    );
     await writePluginSources(directory, {
       workspaceId: primary.workspaceId,
       agentId: "missing-agent",

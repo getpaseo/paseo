@@ -9,21 +9,16 @@ Set a personal API key in the daemon environment:
 export LINEAR_API_KEY="lin_api_..."
 ```
 
-Register the extension in `$PASEO_HOME/config.json`:
+Start your daemon with that environment variable set. Then turn on **Enable plugins** in
+**Settings → Plugins** and install the example:
 
-```json
-{
-  "pluginsEnabled": true,
-  "plugins": {
-    "linear": {
-      "source": "directory",
-      "path": "/absolute/path/to/paseo/plugin-examples/linear"
-    }
-  }
-}
+```bash
+paseo plugin add /absolute/path/to/paseo/plugin-examples/linear
+paseo plugin ls linear
 ```
 
-Restart the development daemon after changing its environment or plugin configuration.
+Use `paseo plugin reload linear` after source edits. Changing the API key requires restarting the
+daemon with the new environment; installing or reloading plugin source does not.
 
 The split entry point demonstrates the complete attachment-source pattern:
 

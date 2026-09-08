@@ -11,6 +11,7 @@ import {
 } from "@/utils/host-routes";
 
 export type SettingsView =
+  | { kind: "plugin"; serverId: string; pluginId: string; screenId: string }
   | { kind: "root" }
   | { kind: "section"; section: SettingsSectionSlug }
   | { kind: "host"; serverId: string; section: HostSectionSlug }
@@ -32,7 +33,8 @@ export function returnFromSettings(view: SettingsView): void {
     return;
   }
 
-  const parent =
-    view.kind === "project" ? buildProjectsSettingsRoute(view.serverId) : buildSettingsRoute();
+  let parent: Href = buildSettingsRoute();
+  if (view.kind === "plugin") parent = buildSettingsHostSectionRoute(view.serverId, "plugins");
+  if (view.kind === "project") parent = buildProjectsSettingsRoute(view.serverId);
   router.dismissTo(parent as Href);
 }

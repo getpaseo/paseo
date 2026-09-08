@@ -1,4 +1,8 @@
-import type { NavigationAction, NavigationContainerRefWithCurrent } from "@react-navigation/native";
+import type {
+  NavigationAction,
+  NavigationContainerRef,
+  NavigationContainerRefWithCurrent,
+} from "@react-navigation/native";
 import { router, type Href } from "expo-router";
 import {
   encodeWorkspaceIdForPathSegment,
@@ -19,12 +23,16 @@ const defaultNavigateToHostWorkspaceRouteDeps: NavigateToHostWorkspaceRouteDeps 
 
 let rootNavigationRef: NavigationContainerRefWithCurrent<ReactNavigation.RootParamList> | null =
   null;
+let pendingIntent: { route: string; deps: NavigateToHostWorkspaceRouteDeps } | null = null;
 
 export function registerWorkspaceRouteNavigationRef(
   ref: NavigationContainerRefWithCurrent<ReactNavigation.RootParamList>,
 ): () => void {
   rootNavigationRef = ref;
+  const unsubscribe = ref.addListener("ready", flushPendingIntent);
+  flushPendingIntent();
   return () => {
+    unsubscribe();
     if (rootNavigationRef === ref) {
       rootNavigationRef = null;
     }
@@ -95,10 +103,12 @@ function findStackWithMountedRouteName(
   return null;
 }
 
-function dispatchHostWorkspacePopTo(route: string): boolean {
+function dispatchHostWorkspacePopTo(
+  route: string,
+  navigation: NavigationContainerRef<ReactNavigation.RootParamList>,
+): boolean {
   const selection = parseHostWorkspaceRouteFromPathname(route);
-  const navigation = rootNavigationRef?.current;
-  if (!selection || !navigation?.isReady()) {
+  if (!selection) {
     return false;
   }
 
@@ -137,9 +147,15 @@ export function navigateToHostWorkspaceRoute(
   route: string,
   deps: NavigateToHostWorkspaceRouteDeps = defaultNavigateToHostWorkspaceRouteDeps,
 ): void {
-  if (dispatchHostWorkspacePopTo(route)) {
-    return;
-  }
+  pendingIntent = { route, deps };
+  flushPendingIntent();
+}
 
-  deps.dismissTo(route);
+function flushPendingIntent(): void {
+  const navigation = rootNavigationRef?.current;
+  if (!pendingIntent || !navigation?.isReady()) return;
+
+  const { route, deps } = pendingIntent;
+  pendingIntent = null;
+  if (!dispatchHostWorkspacePopTo(route, navigation)) deps.dismissTo(route);
 }

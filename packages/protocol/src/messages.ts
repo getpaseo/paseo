@@ -4,6 +4,7 @@ import { CLIENT_CAPS } from "./client-capabilities.js";
 import { AGENT_LIFECYCLE_STATUSES } from "./agent-lifecycle.js";
 import { MAX_EXPLICIT_AGENT_TITLE_CHARS } from "./agent-title-limits.js";
 import { AgentProviderSchema } from "./provider-manifest.js";
+import { ProviderPaseoToolsPolicySchema } from "./provider-config.js";
 import { TOOL_CALL_ICON_NAMES } from "./agent-types.js";
 import { WORKSPACE_LABEL_COLORS } from "./workspace-labels.js";
 import {
@@ -118,6 +119,7 @@ const MutableDaemonProviderModelSchema = z
 
 const MutableDaemonProviderConfigSchema = z
   .object({
+    paseoTools: ProviderPaseoToolsPolicySchema.optional(),
     enabled: z.boolean().optional(),
     additionalModels: z.array(MutableDaemonProviderModelSchema).optional(),
   })
@@ -190,6 +192,9 @@ const MutableRelayConfigSchema = z
   .passthrough();
 
 export const PluginIdSchema = z.string().regex(/^[a-z][a-z0-9-]*$/);
+// Semver validation belongs at the manifest/runtime boundary, not on the wire.
+export const PluginRequirementsSchema = z.object({ paseo: z.string().optional() });
+export type PluginRequirements = z.infer<typeof PluginRequirementsSchema>;
 
 export const DirectoryPluginSourceSchema = z
   .object({
@@ -375,6 +380,7 @@ export const ProviderSnapshotEntrySchema = z.object({
   fetchedAt: z.string().optional(),
   label: z.string().optional(),
   description: z.string().optional(),
+  iconSvg: z.string().optional(),
   defaultModeId: z.string().nullable().optional(),
 });
 
@@ -730,6 +736,11 @@ export const AgentTimelineItemPayloadSchema: z.ZodType<AgentTimelineItem, unknow
   }),
   z.object({
     type: z.literal("error"),
+    message: z.string(),
+  }),
+  z.object({
+    type: z.literal("notification"),
+    level: z.enum(["info", "warning", "error"]),
     message: z.string(),
   }),
   z.object({
@@ -1669,6 +1680,8 @@ export type CreateAgentWorktreeTarget = z.infer<typeof CreateAgentWorktreeTarget
 
 export const CreateAgentRequestMessageSchema = z.object({
   type: z.literal("create_agent_request"),
+  // A creation key requires initialPrompt to be sent separately with a stable messageId.
+  idempotencyKey: z.string().min(1).max(512).optional(),
   config: AgentSessionConfigSchema,
   env: z.record(z.string(), z.string()).optional(),
   workspaceId: z.string().optional(),
@@ -3027,7 +3040,27 @@ export const HubExecutionControlRequestSchema = z.object({
 
 export type HubExecutionControlRequest = z.infer<typeof HubExecutionControlRequestSchema>;
 
+// These connection event streams have no directory bootstrap or timeline membership.
+export const SessionEventSubscriptionSchema = z.enum([
+  "project.update",
+  "providers_snapshot_update",
+  "agent_attention_required",
+  "agent_permission_request",
+  "agent_permission_resolved",
+]);
+export type SessionEventSubscription = z.infer<typeof SessionEventSubscriptionSchema>;
+export const SessionEventsSetSubscriptionRequestSchema = z.object({
+  type: z.literal("session.events.set_subscription.request"),
+  requestId: z.string(),
+  events: z.array(SessionEventSubscriptionSchema),
+});
+export const SessionEventsSetSubscriptionResponseSchema = z.object({
+  type: z.literal("session.events.set_subscription.response"),
+  payload: z.object({ requestId: z.string() }),
+});
+
 export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
+  SessionEventsSetSubscriptionRequestSchema,
   HubExecutionAgentCreateRequestSchema,
   HubExecutionAgentValidateRequestSchema,
   HubExecutionControlRequestSchema,
@@ -3391,6 +3424,10 @@ export const ServerInfoStatusPayloadSchema = z
     // COMPAT(providersSnapshot): added in v0.1.48, remove gating when all clients use snapshot
     features: z
       .object({
+        // COMPAT(agentRequestReceipts): added in v0.8.0; remove gate after 2027-03-05.
+        agentRequestReceipts: z.boolean().optional(),
+        // COMPAT(hubAgentRpc): added in v0.8.0; remove gate after 2027-03-05.
+        hubAgentRpc: z.boolean().optional(),
         providersSnapshot: z.boolean().optional(),
         // COMPAT(providersSnapshotCwd): added in v0.3.2, remove gate after 2027-02-10.
         providersSnapshotCwd: z.boolean().optional(),
@@ -3398,8 +3435,10 @@ export const ServerInfoStatusPayloadSchema = z
         directorySync: z.boolean().optional(),
         // COMPAT(workspaceLabels): added in v0.5.0, remove after 2027-08-14.
         workspaceLabels: z.boolean().optional(),
-        // COMPAT(workspaceSetupRun): added in v0.7.3, remove gate after 2027-09-02.
+        // COMPAT(workspaceSetupRun): added in v0.8.0, remove gate after 2027-09-02.
         workspaceSetupRun: z.boolean().optional(),
+        // COMPAT(workspaceTerminals): added in v0.8.0, remove gate after 2027-09-05.
+        workspaceTerminals: z.boolean().optional(),
         // COMPAT(checkoutForgeSetAutoMerge): added in v0.2.0-beta.1. Remove the
         // feature gate and checkoutGithubSetAutoMerge fallback after 2027-01-17
         // once the supported daemon floor is >= v0.2.0.
@@ -3440,6 +3479,7 @@ export const ServerInfoStatusPayloadSchema = z
         // A daemon that predates this flag keeps `addTheme` in the server bundle it compiles,
         // so a theme plugin cannot start there at all.
         pluginThemes: z.boolean().optional(),
+        pluginSettings: z.boolean().optional(),
         pluginTimelineItems: z.boolean().optional(),
         // COMPAT(skillManagement): added in v0.4.0, remove gate after 2027-08-16.
         skillManagement: z.boolean().optional(),
@@ -3485,6 +3525,8 @@ export const ServerInfoStatusPayloadSchema = z
         agentForkContextCursor: z.boolean().optional(),
         // COMPAT(providerSubagents): added in v0.1.107, remove gate after 2027-01-12.
         providerSubagents: z.boolean().optional(),
+        // COMPAT(providerSubagentNesting): added in v0.7, remove gate after 2027-03-04.
+        providerSubagentNesting: z.boolean().optional(),
         // COMPAT(workspacePinning): added in v0.1.107, remove gate after 2027-01-12.
         workspacePinning: z.boolean().optional(),
         // COMPAT(hubRelationship): added in v0.1.X, drop the gate when floor >= v0.1.X.
@@ -3505,7 +3547,7 @@ export const ServerInfoStatusPayloadSchema = z
         providerRemoval: z.boolean().optional(),
         // COMPAT(importSessionWorkspaceTarget): added in v0.1.110, remove gate after 2027-01-16.
         importSessionWorkspaceTarget: z.boolean().optional(),
-        // COMPAT(importSessionSearch): added in v0.7.3, remove gate after 2027-03-02.
+        // COMPAT(importSessionSearch): added in v0.8.0, remove gate after 2027-03-02.
         importSessionSearch: z.boolean().optional(),
         // COMPAT(forgeProviders): added in v0.2.0-beta.1. Drop the gate after
         // 2027-01-17 once the supported daemon floor is >= v0.2.0.
@@ -3514,6 +3556,7 @@ export const ServerInfoStatusPayloadSchema = z
         forgeProviders: z.boolean().optional(),
         // COMPAT(selectiveAgentTimeline): added in v0.1.106, remove after 2027-01-12.
         selectiveAgentTimeline: z.boolean().optional(),
+        explicitEventSubscriptions: z.boolean().optional(),
         // COMPAT(canonicalSubmittedPrompts): added in v0.2.6, remove gate after 2027-01-30.
         canonicalSubmittedPrompts: z.boolean().optional(),
         // COMPAT(agentTurnIdentity): accept peers that observed pre-release v0.2.6 through 2027-01-31.
@@ -3637,6 +3680,12 @@ export const PluginCatalogChangedStatusPayloadSchema = z.object({
   pluginId: PluginIdSchema,
 });
 
+export const PluginSettingsChangedStatusPayloadSchema = z.object({
+  status: z.literal("plugin_settings_changed"),
+  pluginId: PluginIdSchema,
+  settingsId: z.string(),
+});
+
 export const KnownStatusPayloadSchema = z.discriminatedUnion("status", [
   AgentCreatedStatusPayloadSchema,
   AgentCreateFailedStatusPayloadSchema,
@@ -3646,6 +3695,7 @@ export const KnownStatusPayloadSchema = z.discriminatedUnion("status", [
   RestartRequestedStatusPayloadSchema,
   DaemonConfigChangedStatusPayloadSchema,
   PluginCatalogChangedStatusPayloadSchema,
+  PluginSettingsChangedStatusPayloadSchema,
 ]);
 
 export type KnownStatusPayload = z.infer<typeof KnownStatusPayloadSchema>;
@@ -4450,6 +4500,8 @@ export const AgentTimelineListPromptsResponseMessageSchema = z.object({
 export const ProviderSubagentDescriptorPayloadSchema = z.object({
   id: z.string(),
   parentAgentId: z.string(),
+  // COMPAT(providerSubagentNesting): added in v0.7, remove optional after 2027-03-04.
+  parentSubagentId: z.string().nullable().optional(),
   provider: AgentProviderSchema,
   title: z.string().nullable(),
   description: z.string().nullable(),
@@ -5846,6 +5898,7 @@ export const GetProvidersSnapshotResponseMessageSchema = z.object({
     entries: z.array(ProviderSnapshotEntrySchema),
     compactSnapshot: CompactProviderSnapshotSchema.optional(),
     snapshotHash: z.string().optional(),
+    fetchedAt: z.record(z.string(), z.string()).optional(),
     notModified: z.boolean().optional(),
     generatedAt: z.string(),
     requestId: z.string(),
@@ -5860,6 +5913,7 @@ export const ProvidersSnapshotUpdateMessageSchema = z.object({
     entries: z.array(ProviderSnapshotEntrySchema),
     compactSnapshot: CompactProviderSnapshotSchema.optional(),
     snapshotHash: z.string().optional(),
+    fetchedAt: z.record(z.string(), z.string()).optional(),
     generatedAt: z.string(),
   }),
 });
@@ -6012,7 +6066,7 @@ export const ListTerminalsResponseSchema = z.object({
   type: z.literal("list_terminals_response"),
   payload: z.object({
     cwd: z.string().optional(),
-    terminals: z.array(TerminalInfoSchema.omit({ cwd: true })),
+    terminals: z.array(TerminalInfoSchema.partial({ cwd: true })),
     requestId: z.string(),
   }),
 });
@@ -6232,6 +6286,7 @@ export const PluginCatalogGetResponseSchema = z.object({
       z.object({
         id: PluginIdSchema,
         clientBundle: z.string(),
+        requirements: PluginRequirementsSchema.optional(),
       }),
     ),
   }),
@@ -6384,6 +6439,7 @@ export const AgentSkillsImportLegacySelectionResponseSchema = z.object({
 });
 
 export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
+  SessionEventsSetSubscriptionResponseSchema,
   HubExecutionAgentCreateResponseSchema,
   HubExecutionAgentValidateResponseSchema,
   HubExecutionControlResponseSchema,
@@ -7064,6 +7120,8 @@ export const WSHelloMessageSchema = z.object({
     .object({
       voice: z.boolean().optional(),
       pushNotifications: z.boolean().optional(),
+      [CLIENT_CAPS.explicitEventSubscriptions]: z.boolean().optional(),
+      [CLIENT_CAPS.allProviders]: z.boolean().optional(),
       [CLIENT_CAPS.reasoningMergeEnum]: z.boolean().optional(),
       [CLIENT_CAPS.selectiveAgentTimeline]: z.boolean().optional(),
       [CLIENT_CAPS.customModeIcons]: z.boolean().optional(),
@@ -7071,7 +7129,9 @@ export const WSHelloMessageSchema = z.object({
       [CLIENT_CAPS.providerSubagents]: z.boolean().optional(),
       [CLIENT_CAPS.projectUpdates]: z.boolean().optional(),
       [CLIENT_CAPS.compactProviderSnapshots]: z.boolean().optional(),
+      [CLIENT_CAPS.providerSnapshotReferences]: z.boolean().optional(),
       [CLIENT_CAPS.timelineReplacementInvalidation]: z.boolean().optional(),
+      [CLIENT_CAPS.timelineNotifications]: z.boolean().optional(),
       [CLIENT_CAPS.browserHost]: BrowserAutomationHostCapabilitySchema.optional(),
     })
     .passthrough()

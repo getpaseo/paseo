@@ -253,6 +253,15 @@ If you ship N+1 while N is still ramping, N+1 starts a fresh rollout from its ow
 
 If N+1 is a hotfix for a bug in N, dispatch `desktop-rollout.yml -f tag=v0.1.<N+1> -f rollout_hours=0` after N+1 publishes so the users who already got N reach the fix fast.
 
+### macOS system floor
+
+The desktop app requires macOS 13 or newer. Keep both release guards when the floor changes:
+
+- `packages/desktop/electron-builder.yml` writes the macOS version to `LSMinimumSystemVersion` for new installs.
+- `scripts/merge-mac-manifest.mjs` writes the matching Darwin kernel version to `minimumSystemVersion` in the update manifest. Existing clients check this before downloading an update.
+
+macOS 13 maps to Darwin 22. The two values use different version domains; do not copy the macOS version into the update manifest.
+
 ### Limitations
 
 - **No pause / kill switch.** To stop new admissions, ship a superseding release. Clients revalidate on quit and will not install the superseded download, but a client that already completed installation cannot be recalled; ship a hotfix `+1` patch.
@@ -634,6 +643,7 @@ Each beta entry records what its testers receive. Promotion produces the single 
 - [ ] The GitHub Release was published only after the three stable manifests were uploaded, and it has the changelog body and every expected macOS, Linux, Windows, and Android APK asset
 - [ ] GitHub `Desktop Release` workflow for the `v*` tag is green
 - [ ] The GitHub Release contains `latest-mac.yml`, `latest-linux.yml`, and `latest.yml`
+- [ ] `latest-mac.yml` contains the current `minimumSystemVersion` guard
 - [ ] GitHub `Android APK Release` workflow for the same tag is green
 - [ ] GitHub `Docker` workflow is green and both the versioned and `latest` images are published
 - [ ] GitHub `Release Notes Sync` is green and the release body matches the stable changelog entry

@@ -21,6 +21,10 @@ the agent runs through `ensureAgentLoaded()`, which resumes the durable provider
 same Paseo agent ID. Provider history is not appended again when the canonical timeline is already
 primed.
 
+Reload releases the old runtime before resuming its durable session: an idle provider process can
+still own an exclusive writer. A close failure retains that runtime for cleanup and blocks the
+replacement. Once closure succeeds, a failed resume leaves the durable agent closed and retryable.
+
 Idle agents remain resident indefinitely. Runtime closure happens only through an explicit lifecycle
 action such as archive, replacement, reload, workspace teardown, or daemon shutdown.
 
@@ -156,9 +160,9 @@ The rows combine two kinds of children:
 parentAgentId === thisAgent.id  AND  !archivedAt
 ```
 
-- **Provider subagents** are child executions owned by Claude, Codex, or OpenCode. They are not inserted into `AgentManager` as managed agents. Providers emit a separate descriptor and timeline stream through `agent.provider_subagents.*`; the client keeps that state outside the normal agent store and merges only the presentation rows into the track.
+- **Provider subagents** are child executions owned by Claude, Codex, or OpenCode. They are not inserted into `AgentManager` as managed agents. Providers emit a separate descriptor and timeline stream through `agent.provider_subagents.*`; the client keeps that state outside the normal agent store and merges only the presentation rows into the track. A descriptor's optional `parentSubagentId` identifies its direct provider-subagent parent; an absent value identifies a direct child of the managed agent.
 
-Clicking either kind opens a workspace tab. A Paseo subagent tab is a normal interactive agent pane. A provider subagent tab is a read-only timeline pane with no composer, archive, detach, rewind, or fork actions. Both panes use `AgentStreamView`, so message, reasoning, tool-call, and layout rendering stay identical.
+Clicking either kind opens a workspace tab. A Paseo subagent tab is a normal interactive agent pane. A provider subagent tab is a read-only timeline pane with no composer, archive, detach, rewind, or fork actions. It shows its own direct children in a subagents track. Both panes use `AgentStreamView`, so message, reasoning, tool-call, and layout rendering stay identical.
 
 Provider timelines use the same structural timeline item format but deliberately have a separate lifecycle and transport. A provider thread/session identifier is not a Paseo agent identifier, and closing its tab is always layout-only.
 
@@ -174,7 +178,8 @@ Claude Code announces subagent lifecycle on the SDK stream (`task_started` / `ta
 - **A resumed task can be announced again with a new `tool_use_id`.** The first Task tool id remains the canonical descriptor and later ids are routing aliases for the same session-scoped task. The resumed prompt is added to that child timeline.
 - **Effort is only reachable through hooks.** It appears nowhere on the message stream at any depth, and the level Paseo requests is not necessarily the level that runs — a model that does not support it is silently downgraded. A hook firing inside a subagent reports the active post-downgrade level next to its `agent_id`, which is the same id `task_started` calls `task_id`.
 - **Backgrounded subagents emit no frames carrying `parent_tool_use_id` at all.** Everything keyed off that field sees nothing for one; they are visible only because the task protocol announces them.
-- **On replay, `<session>/subagents/` holds every descendant, not just this session's children.** `agent-<id>.meta.json` carries `spawnDepth`: `1` is a direct child, `2+` was spawned by another subagent and its `toolUseId` names a Task call made inside its parent's session, which nothing in this transcript can resolve. Replaying those adds rows the live stream never showed, each with no Task card and no recoverable outcome, so they render as running forever. One recorded session showed 10 subagents live and would have replayed 22.
+- **Nested ownership comes from the launching sidechain, not `spawn_depth` alone.** A sidechain's Agent or Bash tool call records the direct owner of that `tool_use_id`; the following `task_started` inherits it. This routes a grandchild descriptor and child-owned background notifications without relying on labels or flattening them into the managed parent.
+- **On replay, `<session>/subagents/` holds every descendant beside the root.** Resolve the tree one proven generation at a time: the root transcript admits direct children, then each admitted sidechain transcript admits its children by `toolUseId`. `spawnDepth` orders candidates but does not establish ownership. Unresolved sidecars remain excluded as ambient or unrelated work.
 - **Replay `totalTokens` is a context-size reading, not cumulative spend.** Claude Code finalizes a subagent by summing the _last_ assistant message's usage block and shipping that as `usage.total_tokens`. Summing per-entry usage instead multiplies the cached prefix by the turn count and reports a number several times larger than the live path.
 
 Archived Paseo subagents disappear from the track, by design. To remove one from the track without closing its tab, use the **archive button** on the row — it opens a confirm dialog and archives the subagent on confirm. Provider-owned rows have no individual Paseo lifecycle controls.

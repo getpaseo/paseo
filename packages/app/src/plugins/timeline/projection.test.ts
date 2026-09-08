@@ -73,6 +73,48 @@ describe("plugin timeline projection", () => {
     expect(transform).toHaveBeenCalledOnce();
   });
 
+  it("preserves whether a notification row came from an agent error or a notice", () => {
+    const transform: TimelineItemTransform = vi.fn(() => undefined);
+    const timestamp = new Date("2026-01-01T00:00:00.000Z");
+
+    projectPluginTimelineItems(
+      [
+        {
+          kind: "notification",
+          sourceType: "error",
+          id: "error-1",
+          level: "error",
+          message: "Agent failed",
+          timestamp,
+        },
+        {
+          kind: "notification",
+          sourceType: "notification",
+          id: "notice-1",
+          level: "error",
+          message: "Extension reported an error",
+          timestamp,
+        },
+      ],
+      transform,
+    );
+
+    expect(transform).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ item: { type: "error", message: "Agent failed" } }),
+    );
+    expect(transform).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        item: {
+          type: "notification",
+          level: "error",
+          message: "Extension reported an error",
+        },
+      }),
+    );
+  });
+
   it("reprojects when streaming produces a new source row", () => {
     const transform: TimelineItemTransform = vi.fn(() => undefined);
     projectPluginTimelineItems([thought("First")], transform);

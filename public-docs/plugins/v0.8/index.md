@@ -1,15 +1,15 @@
 ---
 title: Plugin quickstart
 description: Build, install, share, and update a trusted Paseo plugin.
-nav: Paseo v0.8 — Preview
+nav: Paseo v0.8 — Beta
 order: 46
 category: Plugins
 ---
 
 # Plugin quickstart
 
-> **For the upcoming Paseo v0.8 release.** Use the [current v0.7 docs](/docs/plugins/v0.7)
-> unless you are preparing a plugin for v0.8.
+> **For Paseo v0.8 beta.** Use the [v0.7 docs](/docs/plugins/v0.7)
+> if you run the stable release.
 
 > **Experimental:** The plugin API is still evolving, so expect breaking changes and updates to
 > your plugins as Paseo evolves. See the [plugin roadmap](https://github.com/getpaseo/paseo/labels/plugins)
@@ -24,7 +24,8 @@ A plugin is a TypeScript project installed into one Paseo daemon. It can add
 [timeline items](/docs/plugins/v0.8/reference#timeline-items),
 [themes](/docs/plugins/v0.8/reference#contribute-a-theme),
 [attachment sources](/docs/plugins/v0.8/reference#add-a-composer-attachment-source), and
-[daemon-side RPCs](/docs/plugins/v0.8/reference#add-plugin-specific-backend-behavior). Client
+[daemon-side RPCs](/docs/plugins/v0.8/reference#add-plugin-specific-backend-behavior). It can also
+[connect a coding agent as a provider](/docs/plugins/v0.8/providers). Client
 contributions run on every Paseo client connected to that daemon, including mobile.
 
 This guide scaffolds a plugin, runs it, and adds a workspace panel to it.
@@ -48,7 +49,7 @@ greeting through an RPC.
 
 ```text
 workspace-plugin/
-  paseo-plugin.json      # { "id": "workspace-plugin" }
+  paseo-plugin.json      # plugin ID and supported Paseo versions
   index.client.tsx       # runs in the Paseo app
   index.server.ts        # runs in a daemon subprocess
   client/greeting.tsx    # the surface component
@@ -63,7 +64,7 @@ Each entry default-exports one function that registers contributions and returns
 function. `index.client.tsx` registers the surface and the sidebar item that opens it:
 
 ```tsx
-import type { PluginClientContext } from "@getpaseo/plugin";
+import type { PluginClientContext } from "@getpaseo/plugin/client";
 import { GreetingSurface } from "./client/greeting";
 
 export default function contribute(client: PluginClientContext) {
@@ -81,7 +82,7 @@ export default function contribute(client: PluginClientContext) {
 `index.server.ts` registers the handler for the contract in `shared/greeting.ts`:
 
 ```ts
-import type { PluginServerContext } from "@getpaseo/plugin";
+import type { PluginServerContext } from "@getpaseo/plugin/server";
 import { createGreeting } from "./server/greeting";
 import { greetingRpc } from "./shared/greeting";
 
@@ -134,7 +135,7 @@ daemon-side output, including load errors.
 A workspace panel opens as a tab next to agents, terminals, and files. Create `client/overview.tsx`:
 
 ```tsx
-import { type PluginWorkspacePanelProps, useWorkspace } from "@getpaseo/plugin";
+import { type PluginWorkspacePanelProps, useWorkspace } from "@getpaseo/plugin/client";
 import { useMemo } from "react";
 import { Text, View } from "react-native";
 
@@ -231,10 +232,12 @@ Append `:relative/path` when the plugin lives below the repository root. Without
 default branch is tracked; a branch tracks updates, while a tag or commit stays pinned.
 
 ```bash
-paseo plugin status
+paseo plugin ls
 paseo plugin update workspace-plugin
 paseo plugin update --all
 ```
+
+`ls` reports runtime state, source details, and the installed commit without contacting the remote.
 
 Paseo compiles TypeScript itself, so most plugins need no build step. A repository that must
 install a dependency Paseo does not provide, or generate files, declares
@@ -263,6 +266,8 @@ log.
 
 ## Next
 
+- [Build a provider plugin](/docs/plugins/v0.8/providers): connect an agent directly or through ACP,
+  render provider-owned timeline items, test it, and publish it.
 - [Plugin reference](/docs/plugins/v0.8/reference): every contribution type, its fields, the runtime
   modules, hosts, and the CLI.
 - [Migrate a plugin to runtime entries](/docs/plugins/v0.8/migration): move a plugin written against the

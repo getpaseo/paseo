@@ -1,3 +1,7 @@
+import * as pluginUiRuntime from "./react-native/ui";
+import { useSettings } from "./settings/use-settings";
+import * as pluginSharedRuntime from "@getpaseo/plugin";
+import * as pluginClientRuntime from "@getpaseo/plugin/client";
 import * as React from "react";
 import * as ReactJsxRuntime from "react/jsx-runtime";
 // eslint-disable-next-line no-restricted-imports -- plugin client runtime injects host ReactNative.
@@ -6,27 +10,23 @@ import * as ReactNative from "react-native";
 import * as ReactQuery from "@tanstack/react-query";
 import * as Zod from "zod";
 import {
-  defineAttachmentSource,
-  defineRpc,
   type PluginAttachmentSourceContribution,
-  type PluginCommandCenterItemContribution,
   type PluginCleanup,
+  type PluginThemeContribution,
+} from "@getpaseo/plugin";
+import {
+  type PluginCommandCenterItemContribution,
   type PluginClientContext,
   type PluginClientSlashCommandContribution,
   type PluginSidebarContribution,
   type PluginSurfaceProps,
-  type PluginThemeContribution,
   type PluginTimelineRendererContribution,
   type PluginTimelineTransformerContribution,
   type PluginWorkspacePanelContribution,
-  usePaseo,
-  useAgent,
-  useWorkspace,
-  useRpc,
-} from "@getpaseo/plugin";
+} from "@getpaseo/plugin/client";
 import type { EvaluatedPlugin } from "./types";
 import type { ComponentType } from "react";
-import { Icon, resolvePluginIcon } from "./icons";
+import { resolvePluginIcon } from "./icons";
 import { pluginReactNativeRuntime } from "./react-native/runtime";
 import { parsePluginThemeContribution } from "./themes";
 
@@ -70,7 +70,7 @@ function requireId(value: string, label: string): string {
 
 export type PluginClientRuntime = Pick<
   PluginClientContext,
-  "paseo" | "rpc" | "openSurface" | "openPanel" | "addComposerPill"
+  "paseo" | "rpc" | "openSettings" | "openSurface" | "openPanel" | "addComposerPill"
 >;
 
 export function runPluginClientBundle(
@@ -81,6 +81,7 @@ export function runPluginClientBundle(
 ): EvaluatedPlugin {
   const collector: Omit<EvaluatedPlugin, "id" | "cleanup"> = {
     surfaces: [],
+    settingsScreens: [],
     sidebarItems: [],
     workspacePanels: [],
     commandCenterItems: [],
@@ -91,6 +92,7 @@ export function runPluginClientBundle(
     timelineRenderers: [],
   };
   const surfaceIds = new Set<string>();
+  const settingsScreenIds = new Set<string>();
   const sidebarItemIds = new Set<string>();
   const workspacePanelIds = new Set<string>();
   const commandCenterItemIds = new Set<string>();
@@ -122,6 +124,17 @@ export function runPluginClientBundle(
   }
   const pluginContext: PluginClientContext = {
     ...runtime,
+    addSettingsScreen(contribution) {
+      const screenId = requireId(contribution.id, "settings screen id");
+      if (settingsScreenIds.has(screenId))
+        throw new Error(`Duplicate settings screen: ${screenId}`);
+      if (!contribution.title.trim()) throw new Error(`Invalid settings screen: ${screenId}`);
+      resolvePluginIcon(contribution.icon);
+      settingsScreenIds.add(screenId);
+      return register(collector.settingsScreens, { ...contribution, id: screenId }, () =>
+        settingsScreenIds.delete(screenId),
+      );
+    },
     addSurface(surfaceId: string, Component: ComponentType<PluginSurfaceProps>) {
       const normalizedId = requireId(surfaceId, "surface id");
       if (surfaceIds.has(normalizedId)) throw new Error(`Duplicate surface: ${normalizedId}`);
@@ -336,25 +349,14 @@ export function runPluginClientBundle(
     },
   };
   const runtimeRequire = (name: string): unknown => {
+    if (name === "@getpaseo/plugin/client/ui") return pluginUiRuntime;
     if (name === "react") return React;
     if (name === "react/jsx-runtime") return ReactJsxRuntime;
     if (name === "react-native") return ReactNative;
-    if (name === "@getpaseo/plugin") {
-      return {
-        defineAttachmentSource,
-        defineRpc,
-        Icon,
-        usePaseo,
-        useAgent,
-        useWorkspace,
-        useRpc,
-      };
-    }
-    if (name === "@getpaseo/plugin/react-native" || name === "@paseo/plugin/react-native") {
+    if (name === "@getpaseo/plugin") return pluginSharedRuntime;
+    if (name === "@getpaseo/plugin/client") return { ...pluginClientRuntime, useSettings };
+    if (name === "@getpaseo/plugin/client/react-native") {
       return pluginReactNativeRuntime;
-    }
-    if (name === "@getpaseo/plugin/server" || name === "@paseo/plugin/server") {
-      return {};
     }
     if (name === "@tanstack/react-query") return ReactQuery;
     if (name === "zod") return Zod;
@@ -406,6 +408,7 @@ export function runPluginClientBundle(
     id,
     cleanup,
     surfaces: collector.surfaces,
+    settingsScreens: collector.settingsScreens,
     sidebarItems: collector.sidebarItems,
     workspacePanels: collector.workspacePanels as EvaluatedPlugin["workspacePanels"],
     commandCenterItems: collector.commandCenterItems,

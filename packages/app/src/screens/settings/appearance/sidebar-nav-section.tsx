@@ -17,7 +17,7 @@ import { Shortcut } from "@/components/ui/shortcut";
 import { Switch } from "@/components/ui/switch";
 import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
 import { resolvePluginIcon } from "@/plugins/icons";
-import { SettingsSection } from "@/screens/settings/settings-section";
+import { SettingsSection } from "@/components/settings/headings/settings-section";
 import {
   builtinSidebarNavLabelKey,
   builtinSidebarNavShortcutAction,

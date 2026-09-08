@@ -137,10 +137,9 @@ paseo plugin add owner/repository --ref main
 Append `:relative/path` to the source when the plugin lives below the repository root.
 
 An omitted `--ref` tracks the default branch. Explicit branches track updates; tags and commits are
-pinned. Check and apply updates with:
+pinned. Apply updates with:
 
 ```bash
-paseo plugin status
 paseo plugin update workspace-plugin
 paseo plugin update --all
 ```

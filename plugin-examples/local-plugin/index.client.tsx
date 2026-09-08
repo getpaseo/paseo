@@ -1,4 +1,4 @@
-import type { PluginClientContext } from "@getpaseo/plugin";
+import type { PluginClientContext } from "@getpaseo/plugin/client";
 import { contributeClient, ExamplePanel } from "./client/main";
 
 export default function contribute(client: PluginClientContext) {
