@@ -1,5 +1,5 @@
 import type { PluginRequirements } from "./messages.js";
-import valid from "semver/functions/valid.js";
+import parse from "semver/functions/parse.js";
 import validRange from "semver/ranges/valid.js";
 import satisfies from "semver/functions/satisfies.js";
 
@@ -21,14 +21,16 @@ interface PluginCompatibilityInput {
 
 export function assertPluginCompatibility(input: PluginCompatibilityInput): void {
   validatePluginRequirements(input.requirements);
-  // COMPAT(plugin-requirements): added in v0.8.0; remove after 2027-03-07 once pre-0.8 plugins and catalogs are unsupported.
+  // COMPAT(plugin-requirements): added in v0.8.0-beta.1; remove after 2027-03-07 once pre-0.8 plugins and catalogs are unsupported. The legacy range excludes 0.8 prereleases and their stable core.
   const range = input.requirements?.paseo ?? "<0.8.0";
-  if (!input.version || !valid(input.version)) {
+  const version = input.version ? parse(input.version) : null;
+  if (!version) {
     throw new Error(
       `Cannot check plugin "${input.id}" requirements: Paseo ${input.runtime} version is unknown. Update the ${input.runtime}.`,
     );
   }
-  if (satisfies(input.version, range)) return;
+  const stableCore = `${version.major}.${version.minor}.${version.patch}`;
+  if (satisfies(version, range) || satisfies(stableCore, range)) return;
   const action =
     input.requirements?.paseo === undefined
       ? "This plugin has no requirements.paseo and targets Paseo before 0.8. Ask its author to migrate it: https://paseo.sh/docs/plugins/v0.8/migration"

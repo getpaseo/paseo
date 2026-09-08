@@ -1,8 +1,5 @@
 {
   "id": "provider-acp-transformer-example",
-  "name": "ACP provider transformer example",
-  "version": "1.0.0",
-  "description": "Wraps an ACP command and normalizes one vendor file-edit shape.",
   "requirements": {
     "paseo": ">=0.8.0"
   }

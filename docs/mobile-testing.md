@@ -35,6 +35,18 @@ PASEO_MOBILE_E2E_METRO_PORT=62093 npm run test:e2e:mobile
 
 [native-terminal-basic.ios.ad](../packages/app/e2e/mobile/agent-device/native-terminal-basic.ios.ad) and [native-terminal-basic.android.ad](../packages/app/e2e/mobile/agent-device/native-terminal-basic.android.ad) are the smallest examples. Each opens a fresh terminal, types a command at zero delay, submits it, and asserts its distinct output. The app must be connected to a daemon with an active workspace.
 
+For Android keyboard continuity, run the current checkout in the app, open an idle terminal
+with an empty prompt, hide its keyboard, and run:
+
+```bash
+ANDROID_SERIAL=emulator-5554 node packages/app/e2e/mobile/terminal-keyboard/android.mjs
+```
+
+Use a real docked software keyboard. The harness taps Ctrl, Esc, and Enter and checks Android's
+focused input identity and IME hide/show events. It saves screenshots and logs under
+`.dev/agent-device-artifacts/terminal-keyboard-android`. Set `PASEO_TERMINAL_KEYBOARD_APP_ID=sh.paseo`
+to test an installed production build. It never submits a chat message.
+
 When replay diverges, read its ranked selector suggestions. Edit the script deliberately and rerun it from the beginning. `--update` is retained for compatibility but no longer rewrites scripts.
 
 ## Maestro compatibility

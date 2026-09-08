@@ -108,7 +108,7 @@ Creation options include `config`, `cwd`, `parent`, `title`, `prompt`, `env`, `o
 
 `agent.timeline.refetch(options?)` fetches a page. Options are `direction`, `cursor`, `limit`, `projection`, and `requestId`.
 
-`agent.timeline.subscribe(handler)` listens for stream events belonging to the agent and returns a local unsubscribe function.
+`agent.timeline.subscribe(handler)` establishes network demand for this agent and restores it after reconnect. Its unsubscribe function releases that demand; await `unsubscribe.ready` for initial daemon acknowledgement before starting work. The handler also receives `{ agentId, event: { type: "replacement", epoch } }` when history is replaced; refetch the page you need. See [events](./events.md#follow-timeline-events).
 
 ## `client.projects`
 
