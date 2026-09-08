@@ -191,6 +191,7 @@ function createSessionWithConfig(
     provider?: string;
     modeId?: string | null;
     model?: string | null;
+    thinkingOptionId?: string;
     featureValues?: Record<string, unknown>;
     sessionOptions?: Partial<ConstructorParameters<typeof ACPAgentSession>[1]>;
   } = {},
@@ -202,6 +203,7 @@ function createSessionWithConfig(
       cwd: "/tmp/paseo-acp-test",
       modeId: config.modeId ?? undefined,
       model: config.model ?? undefined,
+      thinkingOptionId: config.thinkingOptionId,
       featureValues: config.featureValues,
     },
     {
@@ -864,11 +866,17 @@ describe("ACPAgentSession native controls", () => {
   };
 
   async function nativeSession(
-    config: { modeId?: string; featureValues?: Record<string, unknown>; legacy?: boolean } = {},
+    config: {
+      modeId?: string;
+      model?: string;
+      thinkingOptionId?: string;
+      featureValues?: Record<string, unknown>;
+      legacy?: boolean;
+    } = {},
   ) {
     const connection = new FakeGrokConnection({
       currentModelId: model.modelId,
-      availableModels: [model],
+      availableModels: [model, { ...model, modelId: "grok-4.5", name: "Grok 4.5" }],
     });
     const session = createSessionWithConfig({
       ...config,
@@ -918,6 +926,43 @@ describe("ACPAgentSession native controls", () => {
     expect(await session.getCurrentMode()).toBe(expected);
     expect(connection.yolo).toBe(expected === "always-approve");
     expect(session.describePersistence()?.metadata?.modeId).toBe(expected);
+  });
+
+  test.each(["grok-4.6", "grok-4.5"])(
+    "resumes %s with the default when its saved effort is no longer supported",
+    async (modelId) => {
+      const { session, connection } = await nativeSession({
+        model: modelId,
+        thinkingOptionId: "xhigh",
+        legacy: true,
+      });
+      expect(connection.effort).toBe("high");
+      expect(await session.getRuntimeInfo()).toMatchObject({
+        model: modelId,
+        thinkingOptionId: null,
+      });
+      expect(session.describePersistence()?.metadata?.thinkingOptionId).toBeUndefined();
+      await expect(session.setThinkingOption("xhigh")).rejects.toThrow("Grok cannot select effort");
+    },
+  );
+
+  test("retains a supported saved effort when resume switches models", async () => {
+    const { session, connection } = await nativeSession({
+      model: "grok-4.5",
+      thinkingOptionId: "low",
+      legacy: true,
+    });
+    expect(connection.effort).toBe("low");
+    expect(session.describePersistence()?.metadata).toMatchObject({
+      model: "grok-4.5",
+      thinkingOptionId: "low",
+    });
+  });
+
+  test("rejects an unsupported effort when creating a new session", async () => {
+    await expect(nativeSession({ model: "grok-4.5", thinkingOptionId: "xhigh" })).rejects.toThrow(
+      "Grok cannot select effort",
+    );
   });
 
   test("native permissions replace Auto Accept and survive workflow/config updates", async () => {

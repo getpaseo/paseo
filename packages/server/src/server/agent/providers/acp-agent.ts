@@ -2974,8 +2974,22 @@ export class ACPAgentSession implements AgentSession, ACPClient {
         );
       }
     }
-    if (configuredThinkingOptionId && configuredThinkingOptionId !== this.thinkingOptionId) {
-      await this.setThinkingOption(configuredThinkingOptionId);
+    if (configuredThinkingOptionId) {
+      if (
+        this.initialHandle &&
+        this.thinkingOptionWriter &&
+        !deriveSelectorOptions(this.configOptions, "thought_level").some(
+          (option) => option.id === configuredThinkingOptionId,
+        )
+      ) {
+        this.warnInvalidSelection(
+          configuredThinkingOptionId,
+          `${this.provider} no longer supports the saved effort; using the model default`,
+        );
+        await this.setThinkingOption(null);
+      } else if (configuredThinkingOptionId !== this.thinkingOptionId) {
+        await this.setThinkingOption(configuredThinkingOptionId);
+      }
     }
     const configuredFeatureValues = this.config.featureValues ?? {};
     for (const featureOption of this.configFeatureOptions) {
