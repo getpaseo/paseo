@@ -1,8 +1,10 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef } from "react";
 import {
+  Platform,
   StyleSheet,
   type NativeSyntheticEvent,
   type StyleProp,
+  type TextInputChangeEventData,
   type TextInputKeyPressEventData,
   type TextStyle,
 } from "react-native";
@@ -11,6 +13,7 @@ import {
   type EditingTextInputHandle,
 } from "@/components/ui/text-input";
 import { resolveNativeTerminalKey, type NativeTerminalKey } from "./terminal-key-events";
+import { createIosTerminalTextInputState } from "./terminal-input-state.ios";
 
 export const TERMINAL_INPUT_CONTEXT_MENU_HIDDEN = true;
 export const TERMINAL_INPUT_HITBOX_SIZE = 1;
@@ -44,8 +47,8 @@ interface TerminalInputProps {
 }
 
 // Scripts produced by CJK IMEs when they commit or update a candidate. The
-// native input does not expose marked-text ranges, so the committed script is
-// the only reliable distinction between composition and ordinary autocorrect.
+// Android input does not expose marked-text ranges, so this path distinguishes
+// composition from ordinary autocorrect by script. iOS uses native metadata.
 const CJK_COMPOSITION_PATTERN =
   /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}\p{Script=Bopomofo}]/u;
 
@@ -187,7 +190,17 @@ export const TerminalInput = forwardRef<TerminalInputHandle, TerminalInputProps>
     const inputRef = useRef<EditingTextInputHandle>(null);
     const isFocusedRef = useRef(false);
     const pendingFocusFrameRef = useRef<number | null>(null);
-    const inputState = useMemo(() => createTerminalTextInputState(), []);
+    const inputState = useMemo(() => {
+      if (Platform.OS === "ios") {
+        return createIosTerminalTextInputState();
+      }
+      const state = createTerminalTextInputState();
+      return {
+        receiveKeyPress: (event: TextInputKeyPressEventData) => state.receiveKeyPress(event.key),
+        receiveChange: (event: TextInputChangeEventData) => state.receiveTextChange(event.text),
+        reset: state.reset,
+      };
+    }, []);
     const inputStyle = useMemo(() => [styles.input, style], [style]);
 
     const clearPendingFocus = useCallback(() => {
@@ -276,9 +289,9 @@ export const TerminalInput = forwardRef<TerminalInputHandle, TerminalInputProps>
       resetNativeInput();
     }, [resetNativeInput]);
 
-    const handleChangeText = useCallback(
-      (text: string) => {
-        const change = inputState.receiveTextChange(text);
+    const handleChange = useCallback(
+      (event: NativeSyntheticEvent<TextInputChangeEventData>) => {
+        const change = inputState.receiveChange(event.nativeEvent);
         if (change.data.length > 0) {
           onInput?.(change.data);
         }
@@ -291,7 +304,7 @@ export const TerminalInput = forwardRef<TerminalInputHandle, TerminalInputProps>
 
     const handleKeyPress = useCallback(
       (event: NativeSyntheticEvent<TextInputKeyPressEventData>) => {
-        const change = inputState.receiveKeyPress(event.nativeEvent.key);
+        const change = inputState.receiveKeyPress(event.nativeEvent);
         if (change.key) {
           onTerminalKey?.(change.key);
         }
@@ -321,7 +334,7 @@ export const TerminalInput = forwardRef<TerminalInputHandle, TerminalInputProps>
         blurOnSubmit={false}
         importantForAutofill="no"
         multiline={true}
-        onChangeText={handleChangeText}
+        onChange={handleChange}
         onBlur={handleBlur}
         onFocus={handleFocus}
         onKeyPress={handleKeyPress}

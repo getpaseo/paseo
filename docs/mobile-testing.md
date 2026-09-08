@@ -448,6 +448,33 @@ RN init; anything about on-screen behavior needs a human holding the phone.
 
 ## iOS Simulator
 
+### Terminal IME input
+
+Terminal composition uses the iOS Fabric TextInput patch in
+`patches/react-native+0.81.5.patch`. Rebuild the native app after changing it;
+Metro reloads do not update native events. Keep `buildReactNativeFromSource`
+enabled in the iOS build properties so Expo does not bypass the patch with a
+prebuilt React Native binary.
+
+Use the onscreen keyboard for this check. Pasting Chinese text or using an
+automation tool's text injection does not exercise marked-text composition.
+
+1. Open a terminal and select the Simplified Chinese Pinyin keyboard.
+2. Type `nihao`, edit the reading with Backspace, and select a Chinese candidate.
+   Only the confirmed candidate should reach the terminal.
+3. Start another reading and use Return to confirm it. It must not submit the
+   terminal line. Press Return again to submit.
+4. Delete the confirmed Chinese characters, including the final character.
+   Each deletion should reach the terminal once. Also try deleting the reading
+   completely before choosing a candidate.
+5. Repeat with WeChat Pinyin, then switch to English and check typing, Return,
+   repeated Backspace on an empty input, emoji deletion, and focus changes.
+
+Record the keyboard interaction and terminal output on the device. Also check
+composition in an ordinary chat input because the native patch is shared.
+
+### Simulator commands
+
 ```bash
 # Screenshot
 xcrun simctl io booted screenshot /tmp/screenshot.png

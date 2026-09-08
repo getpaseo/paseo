@@ -35,3 +35,225 @@ index f708543..26df5e0 100644
    private int getScrollDelta(View descendent) {
      descendent.getDrawingRect(mTempRect);
      offsetDescendantRectToMyCoords(descendent, mTempRect);
+diff --git a/node_modules/react-native/Libraries/Components/TextInput/TextInput.d.ts b/node_modules/react-native/Libraries/Components/TextInput/TextInput.d.ts
+--- a/node_modules/react-native/Libraries/Components/TextInput/TextInput.d.ts
++++ b/node_modules/react-native/Libraries/Components/TextInput/TextInput.d.ts
+@@ -504,6 +504,9 @@
+  */
+ export interface TextInputKeyPressEventData {
+   key: string;
++  /** Paseo iOS Fabric patch: native state before the edit. */
++  isComposing?: boolean;
++  isTextEmpty?: boolean;
+ }
+
+ /**
+@@ -518,6 +521,8 @@
+ export interface TextInputChangeEventData extends TargetedEvent {
+   eventCount: number;
+   text: string;
++  /** Paseo iOS Fabric patch: includes in-progress marked-text updates. */
++  isComposing?: boolean;
+ }
+
+ /**
+diff --git a/node_modules/react-native/Libraries/Components/TextInput/TextInput.flow.js b/node_modules/react-native/Libraries/Components/TextInput/TextInput.flow.js
+--- a/node_modules/react-native/Libraries/Components/TextInput/TextInput.flow.js
++++ b/node_modules/react-native/Libraries/Components/TextInput/TextInput.flow.js
+@@ -28,6 +28,7 @@
+   eventCount: number,
+   target: number,
+   text: string,
++  isComposing?: boolean,
+ }>;
+
+ export type TextInputChangeEvent =
+@@ -97,6 +98,8 @@
+ type TextInputKeyPressEventData = $ReadOnly<{
+   ...TargetEvent,
+   key: string,
++  isComposing?: boolean,
++  isTextEmpty?: boolean,
+   target?: ?number,
+   eventCount: number,
+   ...
+diff --git a/node_modules/react-native/Libraries/Text/TextInput/Multiline/RCTUITextView.h b/node_modules/react-native/Libraries/Text/TextInput/Multiline/RCTUITextView.h
+--- a/node_modules/react-native/Libraries/Text/TextInput/Multiline/RCTUITextView.h
++++ b/node_modules/react-native/Libraries/Text/TextInput/Multiline/RCTUITextView.h
+@@ -22,6 +22,10 @@
+
+ @property (nonatomic, weak) id<RCTBackedTextInputDelegate> textInputDelegate;
+
++// Includes callbacks inside setMarkedText:, before UIKit installs markedTextRange.
++@property (nonatomic, assign, readonly) BOOL paseoIsComposing;
++@property (nonatomic, assign, readonly) BOOL paseoIsUpdatingText;
++
+ @property (nonatomic, assign) BOOL contextMenuHidden;
+ @property (nonatomic, assign, readonly) BOOL textWasPasted;
+ @property (nonatomic, assign, readonly) BOOL dictationRecognizing;
+diff --git a/node_modules/react-native/Libraries/Text/TextInput/Multiline/RCTUITextView.mm b/node_modules/react-native/Libraries/Text/TextInput/Multiline/RCTUITextView.mm
+--- a/node_modules/react-native/Libraries/Text/TextInput/Multiline/RCTUITextView.mm
++++ b/node_modules/react-native/Libraries/Text/TextInput/Multiline/RCTUITextView.mm
+@@ -14,6 +14,8 @@
+ #import <React/RCTTextAttributes.h>
+
+ @implementation RCTUITextView {
++  NSUInteger _paseoMarkedTextDepth;
++  NSUInteger _paseoTextMutationDepth;
+   UILabel *_placeholderView;
+   UITextView *_detachedTextView;
+   RCTBackedTextViewDelegateAdapter *_textInputDelegateAdapter;
+@@ -60,6 +62,48 @@
+   }
+
+   return self;
++}
++
++- (BOOL)paseoIsComposing
++{
++  return _paseoMarkedTextDepth > 0 || self.markedTextRange != nil;
++}
++
++- (BOOL)paseoIsUpdatingText
++{
++  return _paseoTextMutationDepth > 0;
++}
++
++- (void)setMarkedText:(NSString *)markedText selectedRange:(NSRange)selectedRange
++{
++  _paseoTextMutationDepth += 1;
++  _paseoMarkedTextDepth += 1;
++  [super setMarkedText:markedText selectedRange:selectedRange];
++  _paseoMarkedTextDepth -= 1;
++  _paseoTextMutationDepth -= 1;
++  [self.textInputDelegate textInputDidChange];
++}
++
++- (void)unmarkText
++{
++  const BOOL wasComposing = self.paseoIsComposing;
++  _paseoTextMutationDepth += 1;
++  [super unmarkText];
++  _paseoTextMutationDepth -= 1;
++  // Committing an unchanged candidate does not necessarily change the string.
++  if (wasComposing) {
++    [self.textInputDelegate textInputDidChange];
++  }
++}
++
++- (void)insertText:(NSString *)text
++{
++  // UIKit can unmark the old reading before replacing it with the candidate.
++  // Publish only the snapshot after the outer edit has completed.
++  _paseoTextMutationDepth += 1;
++  [super insertText:text];
++  _paseoTextMutationDepth -= 1;
++  [self.textInputDelegate textInputDidChange];
+ }
+
+ - (void)setDelegate:(id<UITextViewDelegate>)delegate
+diff --git a/node_modules/react-native/React/Fabric/Mounting/ComponentViews/TextInput/RCTTextInputComponentView.mm b/node_modules/react-native/React/Fabric/Mounting/ComponentViews/TextInput/RCTTextInputComponentView.mm
+--- a/node_modules/react-native/React/Fabric/Mounting/ComponentViews/TextInput/RCTTextInputComponentView.mm
++++ b/node_modules/react-native/React/Fabric/Mounting/ComponentViews/TextInput/RCTTextInputComponentView.mm
+@@ -55,6 +55,7 @@
+    * textInputDidChange]` call.
+    */
+   BOOL _ignoreNextTextInputCall;
++  BOOL _paseoLastIsComposing;
+
+   /*
+    * A flag that when set to true, `_mostRecentEventCount` won't be incremented when `[self _updateState]`
+@@ -444,6 +445,8 @@
+       textInputEventEmitter.onKeyPress({
+           .text = RCTStringFromNSString(text),
+           .eventCount = static_cast<int>(_mostRecentEventCount),
++          .isComposing = [self _paseoIsComposing],
++          .isTextEmpty = _backedTextInputView.attributedText.length == 0,
+       });
+     }
+   }
+@@ -477,15 +480,22 @@
+
+ - (void)textInputDidChange
+ {
++  if ([_backedTextInputView isKindOfClass:RCTUITextView.class] &&
++      ((RCTUITextView *)_backedTextInputView).paseoIsUpdatingText) {
++    return;
++  }
+   if (_comingFromJS) {
+     return;
+   }
+
+-  if (_ignoreNextTextInputCall && [_lastStringStateWasUpdatedWith isEqual:_backedTextInputView.attributedText]) {
++  const BOOL isComposing = [self _paseoIsComposing];
++  if (_ignoreNextTextInputCall && _paseoLastIsComposing == isComposing &&
++      [_lastStringStateWasUpdatedWith isEqual:_backedTextInputView.attributedText]) {
+     _ignoreNextTextInputCall = NO;
+     return;
+   }
+
++  _paseoLastIsComposing = isComposing;
+   [self _updateState];
+
+   if (_eventEmitter) {
+@@ -696,6 +706,14 @@
+
+ #pragma mark - Other
+
++- (BOOL)_paseoIsComposing
++{
++  if ([_backedTextInputView isKindOfClass:RCTUITextView.class]) {
++    return ((RCTUITextView *)_backedTextInputView).paseoIsComposing;
++  }
++  return _backedTextInputView.markedTextRange != nil;
++}
++
+ - (TextInputEventEmitter::Metrics)_textInputMetrics
+ {
+   return {
+@@ -707,6 +725,7 @@
+       .contentSize = RCTSizeFromCGSize(_backedTextInputView.contentSize),
+       .layoutMeasurement = RCTSizeFromCGSize(_backedTextInputView.bounds.size),
+       .zoomScale = _backedTextInputView.zoomScale,
++      .isComposing = [self _paseoIsComposing],
+   };
+ }
+
+diff --git a/node_modules/react-native/ReactCommon/react/renderer/components/textinput/TextInputEventEmitter.cpp b/node_modules/react-native/ReactCommon/react/renderer/components/textinput/TextInputEventEmitter.cpp
+--- a/node_modules/react-native/ReactCommon/react/renderer/components/textinput/TextInputEventEmitter.cpp
++++ b/node_modules/react-native/ReactCommon/react/renderer/components/textinput/TextInputEventEmitter.cpp
+@@ -23,6 +23,7 @@
+   payload.setProperty(runtime, "target", textInputMetrics.target);
+
+   payload.setProperty(runtime, "eventCount", textInputMetrics.eventCount);
++  payload.setProperty(runtime, "isComposing", textInputMetrics.isComposing);
+
+   if (includeSelectionState) {
+     auto selection = jsi::Object(runtime);
+@@ -111,6 +112,8 @@
+     const TextInputEventEmitter::KeyPressMetrics& keyPressMetrics) {
+   auto payload = jsi::Object(runtime);
+   payload.setProperty(runtime, "eventCount", keyPressMetrics.eventCount);
++  payload.setProperty(runtime, "isComposing", keyPressMetrics.isComposing);
++  payload.setProperty(runtime, "isTextEmpty", keyPressMetrics.isTextEmpty);
+
+   std::string key;
+   if (keyPressMetrics.text.empty()) {
+diff --git a/node_modules/react-native/ReactCommon/react/renderer/components/textinput/TextInputEventEmitter.h b/node_modules/react-native/ReactCommon/react/renderer/components/textinput/TextInputEventEmitter.h
+--- a/node_modules/react-native/ReactCommon/react/renderer/components/textinput/TextInputEventEmitter.h
++++ b/node_modules/react-native/ReactCommon/react/renderer/components/textinput/TextInputEventEmitter.h
+@@ -28,11 +28,14 @@
+     Size layoutMeasurement;
+     Float zoomScale;
+     Tag target;
++    bool isComposing{false};
+   };
+
+   struct KeyPressMetrics {
+     std::string text;
+     int eventCount;
++    bool isComposing{false};
++    bool isTextEmpty{false};
+   };
+
+   void onFocus(const Metrics& textInputMetrics) const;

@@ -167,6 +167,10 @@ export default {
       [
         "expo-build-properties",
         {
+          ios: {
+            // The terminal needs the patched Fabric TextInput composition events.
+            buildReactNativeFromSource: true,
+          },
           android: {
             minSdkVersion: 29,
             kotlinVersion: "2.1.20",
