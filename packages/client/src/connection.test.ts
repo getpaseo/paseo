@@ -2,7 +2,7 @@ import { expect, test } from "vitest";
 import { CLIENT_CAPS } from "@getpaseo/protocol/client-capabilities";
 import { DaemonClient, type DaemonTransport } from "./daemon-client";
 
-function connection() {
+function connection(options: { acknowledgeSubscriptions?: boolean } = {}) {
   const sent: Array<{
     type: string;
     capabilities?: Record<string, unknown>;
@@ -32,6 +32,7 @@ function connection() {
           }),
         );
       } else if (
+        options.acknowledgeSubscriptions !== false &&
         frame.type === "session" &&
         frame.message.type.endsWith("set_subscription.request")
       ) {
@@ -111,9 +112,9 @@ test("SDK timeline listeners own their union across unsubscribe and reconnect", 
       h.sent
         .filter((f) => f.message?.type === "agent.timeline.set_subscription.request")
         .map((f) => f.message?.agentIds);
-    expect(memberships()).toEqual([["a"], ["a", "b"]]);
+    expect(memberships()).toEqual([["a"], ["a"], ["a", "b"]]);
     first();
-    expect(memberships()).toEqual([["a"], ["a", "b"]]);
+    expect(memberships()).toEqual([["a"], ["a"], ["a", "b"]]);
     same();
     expect(memberships().at(-1)).toEqual(["b"]);
     h.disconnect();
@@ -249,6 +250,141 @@ test("SDK listeners preserve the app's explicit timeline membership", async () =
     expect(h.sent.at(-1)?.message?.agentIds).toEqual(["next", "plugin"]);
     off();
     expect(h.sent.at(-1)?.message?.agentIds).toEqual(["next"]);
+  } finally {
+    await h.client.close();
+  }
+});
+
+test("timeline readiness waits for daemon acknowledgement, including shared listeners", async () => {
+  const h = connection({ acknowledgeSubscriptions: false });
+  try {
+    const connect = h.client.connect();
+    h.open();
+    await connect;
+    const first = h.client.subscribeAgentTimeline("agent", () => {});
+    const second = h.client.subscribeAgentTimeline("agent", () => {});
+    expect(first.ready).toBeInstanceOf(Promise);
+    let ready = false;
+    void second.ready.then(() => {
+      return (ready = true);
+    });
+    await Promise.resolve();
+    expect(ready).toBe(false);
+    const request = h.sent.at(-1)!.message!;
+    h.receive({
+      type: "agent.timeline.set_subscription.response",
+      payload: { requestId: request.requestId, agentIds: ["agent"] },
+    });
+    await Promise.all([first.ready, second.ready]);
+    expect(ready).toBe(true);
+    h.disconnect();
+    const third = h.client.subscribeAgentTimeline("agent", () => {});
+    let reconnected = false;
+    void third.ready.then(() => {
+      return (reconnected = true);
+    });
+    const reconnect = h.client.connect();
+    h.open();
+    await reconnect;
+    expect(reconnected).toBe(false);
+    h.receive({
+      type: "agent.timeline.set_subscription.response",
+      payload: { requestId: h.sent.at(-1)!.message!.requestId, agentIds: ["agent"] },
+    });
+    await third.ready;
+    expect(reconnected).toBe(true);
+    first();
+    second();
+    third();
+  } finally {
+    await h.client.close();
+  }
+});
+
+test("an unresolved provider reference is fetched again after reconnect", async () => {
+  const h = connection();
+  const received: unknown[] = [];
+  const payload = { entries: [], snapshotHash: "updated", generatedAt: "2026-09-08T00:00:00.000Z" };
+  const requests = () => h.sent.filter((f) => f.message?.type === "get_providers_snapshot_request");
+  try {
+    const connect = h.client.connect();
+    h.open();
+    await connect;
+    const off = h.client.on("providers_snapshot_update", (m) =>
+      received.push(m.payload.snapshotHash),
+    );
+    h.receive({ type: "providers_snapshot_update", payload });
+    expect(requests()).toHaveLength(1);
+    h.disconnect();
+    await Promise.resolve();
+    await Promise.resolve();
+    const reconnect = h.client.connect();
+    h.open();
+    await reconnect;
+    expect(requests()).toHaveLength(2);
+    h.receive({
+      type: "get_providers_snapshot_response",
+      payload: {
+        ...payload,
+        requestId: requests()[1].message?.requestId,
+        compactSnapshot: { entries: [], thinkingSets: [] },
+      },
+    });
+    await expect.poll(() => received).toEqual(["updated"]);
+    off();
+  } finally {
+    await h.client.close();
+  }
+});
+
+test("timeline readiness remains pending before connect and rejects when released", async () => {
+  const h = connection();
+  try {
+    const release = h.client.subscribeAgentTimeline("agent", () => {});
+    const canceled = h.client.subscribeAgentTimeline("canceled", () => {});
+    canceled();
+    await expect(canceled.ready).rejects.toThrow("released");
+    let established = false;
+    void release.ready.then(() => {
+      return (established = true);
+    });
+    await Promise.resolve();
+    expect(established).toBe(false);
+    expect(h.sent).toEqual([]);
+    const connect = h.client.connect();
+    h.open();
+    await connect;
+    await release.ready;
+    expect(established).toBe(true);
+    release();
+  } finally {
+    await h.client.close();
+  }
+});
+
+test("unsubscribing while disconnected discards unresolved provider demand", async () => {
+  const h = connection();
+  try {
+    const connect = h.client.connect();
+    h.open();
+    await connect;
+    const off = h.client.on("providers_snapshot_update", () => {});
+    h.receive({
+      type: "providers_snapshot_update",
+      payload: {
+        entries: [],
+        snapshotHash: "updated",
+        generatedAt: "2026-09-08T00:00:00.000Z",
+      },
+    });
+    h.disconnect();
+    off();
+    const reconnect = h.client.connect();
+    h.open();
+    await reconnect;
+    expect(h.sent.filter((f) => f.message?.type === "get_providers_snapshot_request")).toHaveLength(
+      1,
+    );
   } finally {
     await h.client.close();
   }

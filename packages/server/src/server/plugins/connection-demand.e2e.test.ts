@@ -54,8 +54,7 @@ export default function contribute(server) {
     const release = api.agents
       .ref(agent.id)
       .timeline.subscribe((event) => received.push(event.event.type));
-    // A correlated request is a processing barrier for the preceding subscription.
-    await client.getDaemonConfig();
+    await release.ready;
     await daemon.daemon.agentManager.emitLiveTimelineItem(agent.id, {
       type: "assistant_message",
       id: "row",

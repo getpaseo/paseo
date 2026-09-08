@@ -134,7 +134,7 @@ export async function runAttachCommand(
     const resolvedId = fetchResult.agent.id;
 
     // Print header
-    console.log(`Attaching to agent ${resolvedId.substring(0, 7)}...`);
+    console.log(`Fetching history for agent ${resolvedId.substring(0, 7)}...`);
     console.log(`(Press Ctrl+C to detach)\n`);
 
     // Print existing output from timeline fetch.
@@ -159,6 +159,9 @@ export async function runAttachCommand(
         printStreamEvent(message.payload.event);
       }
     });
+
+    await unsubscribe.ready;
+    console.log(`Attached to agent ${resolvedId.substring(0, 7)}.`);
 
     // Handle Ctrl+C to detach gracefully
     let detached = false;

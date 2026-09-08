@@ -1,6 +1,10 @@
 import { ProviderSnapshotUpdates } from "./provider-snapshots/index.js";
 import type { SessionEventSubscription } from "@getpaseo/protocol/messages";
-import { ConnectionSubscriptions, DEFAULT_CLIENT_CAPABILITIES } from "./connection/index.js";
+import {
+  ConnectionSubscriptions,
+  DEFAULT_CLIENT_CAPABILITIES,
+  type TimelineSubscription,
+} from "./connection/index.js";
 import type { z } from "zod";
 import { CLIENT_CAPS, type ClientCapability } from "@getpaseo/protocol/client-capabilities";
 import type { AgentAttentionNotificationPayload } from "@getpaseo/protocol/agent-attention-notification";
@@ -1075,7 +1079,7 @@ export class DaemonClient {
     failed: (error) => this.logger.error({ err: error }, "Failed to resolve provider snapshot"),
   });
   private readonly subscriptions = new ConnectionSubscriptions({
-    timelines: (agentIds) => this.sendTimelineSubscription(agentIds),
+    timelines: (agentIds) => (this.isConnected ? this.sendTimelineSubscription(agentIds) : null),
     events: (events) => this.sendEventSubscription(events),
     failed: (error) =>
       this.logger.error({ err: error }, "Failed to update connection subscriptions"),
@@ -1380,6 +1384,7 @@ export class DaemonClient {
       return;
     }
     this.shouldReconnect = false;
+    this.subscriptions.close();
     this.connectPromise = null;
     this.connectResolve = null;
     this.connectReject = null;
@@ -1389,6 +1394,7 @@ export class DaemonClient {
     }
     this.resetConnectTimeout();
     this.disposeTransport(1000, "Client closed");
+    this.providerSnapshotUpdates.clear();
     this.clearWaiters(new Error("Daemon client closed"));
     this.rejectPendingSendQueue(new Error("Daemon client closed"));
     this.rejectPingProbe(new Error("Daemon client closed"));
@@ -3046,7 +3052,7 @@ export class DaemonClient {
         { type: "agent_stream" | "agent.timeline.replacement" }
       >,
     ) => void,
-  ): () => void {
+  ): TimelineSubscription {
     const stream = this.on("agent_stream", (message) => {
       if (message.payload.agentId === agentId) handler(message);
     });
@@ -3054,11 +3060,14 @@ export class DaemonClient {
       if (message.payload.agentId === agentId) handler(message);
     });
     const release = this.subscriptions.observeTimeline(agentId);
-    return () => {
-      stream();
-      replacement();
-      release();
-    };
+    return Object.assign(
+      () => {
+        stream();
+        replacement();
+        release();
+      },
+      { ready: release.ready },
+    );
   }
 
   private updateEventSubscriptions(): void {
@@ -5776,7 +5785,7 @@ export class DaemonClient {
   }
 
   private disposeTransport(code = 1001, reason = "Reconnecting"): void {
-    this.providerSnapshotUpdates.clear();
+    this.providerSnapshotUpdates.pause();
     this.stopLivenessHeartbeat();
     this.cleanupTransport();
     if (this.transport) {
@@ -6088,6 +6097,8 @@ export class DaemonClient {
       this.lastErrorValue = reason.trim();
     }
 
+    this.providerSnapshotUpdates.pause();
+
     // Clear all pending waiters and queued sends since the connection was lost
     // and responses from the previous connection will never arrive.
     this.clearWaiters(new Error(reason ?? "Connection lost"));
@@ -6216,6 +6227,7 @@ export class DaemonClient {
           this.updateConnectionState({ status: "connected" }, { event: "HELLO_SERVER_INFO" });
           this.startLivenessHeartbeat();
           this.subscriptions.restore();
+          this.providerSnapshotUpdates.resume();
           this.resubscribeCheckoutDiffSubscriptions();
           this.resubscribeTerminalDirectorySubscriptions();
           this.resubscribeFileSubscriptions();

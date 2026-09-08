@@ -56,6 +56,8 @@ const unsubscribe = agent.timeline.subscribe((update) => {
 });
 ```
 
+Await `unsubscribe.ready` before starting work whose events you need to observe. It resolves when the daemon acknowledges the subscription and rejects if establishment fails. Call `unsubscribe()` to release it.
+
 Assistant messages can arrive in pieces. Concatenate their text when you need a complete message, or use `run()` and read `lastMessage` when you only need the final reply.
 
 Turn completion comes from `turn_completed`, `turn_failed`, or `turn_canceled`. Do not infer turn completion from an `agent_update` transition to `idle`.

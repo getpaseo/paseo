@@ -201,7 +201,6 @@ async function runFollowMode(
   // Subscribe to new events
   const tailLabel =
     tailCount === 0 ? "no history" : `last ${tailCount} entr${tailCount === 1 ? "y" : "ies"}`;
-  console.log(`\n--- Following logs (${tailLabel}; Ctrl+C to stop) ---\n`);
 
   const unsubscribe = client.subscribeAgentTimeline(agentId, (message) => {
     if (message.type === "agent.timeline.replacement") {
@@ -222,6 +221,9 @@ async function runFollowMode(
       }
     }
   });
+
+  await unsubscribe.ready;
+  console.log(`\n--- Following logs (${tailLabel}; Ctrl+C to stop) ---\n`);
 
   // Wait for interrupt
   await new Promise<void>((resolve) => {

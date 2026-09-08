@@ -291,6 +291,8 @@ export type PaseoAgentTimelineEvent =
       event: { type: "replacement"; epoch: string };
     };
 
+export type PaseoAgentTimelineSubscription = ReturnType<DaemonClient["subscribeAgentTimeline"]>;
+
 export interface PaseoAgentTimelineHandle {
   append(item: Omit<PluginTimelineItem, "pluginId">): Promise<{ seq: number; epoch: string }>;
   /**
@@ -302,8 +304,10 @@ export interface PaseoAgentTimelineHandle {
   /**
    * Subscribe to this agent and restore demand after reconnect. A replacement
    * event invalidates previously fetched history; refetch the page you need.
+   * Await the returned unsubscribe function's `ready` promise before starting
+   * work that must be observed. It rejects if establishment fails.
    */
-  subscribe(handler: (event: PaseoAgentTimelineEvent) => void): () => void;
+  subscribe(handler: (event: PaseoAgentTimelineEvent) => void): PaseoAgentTimelineSubscription;
 }
 
 export interface PaseoAgentHandle {
