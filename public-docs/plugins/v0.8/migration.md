@@ -8,7 +8,7 @@ category: Plugins
 
 # Migrate a plugin to runtime entries
 
-> **For the upcoming Paseo v0.8 release.** This migration is not required for Paseo v0.7.
+> **For Paseo v0.8 beta.** This migration is not required for Paseo v0.7.
 
 Give this page to a coding agent with the plugin directory as its working directory. Execute the
 steps in order. Do not keep a compatibility entry.
@@ -255,8 +255,8 @@ rejects the plugin even if its files have been moved. Adding the field alone doe
 code. Update the local `@getpaseo/plugin` development dependency to the version you target and
 reinstall dependencies before typechecking.
 
-For a 0.8 beta, use its explicit version in both the SDK dependency and range, for example
-`>=0.8.0-beta.1`. See [requirements](reference#requirements) for range and prerelease semantics.
+For a 0.8 beta, use its explicit version in the SDK dependency and `>=0.8.0` in the manifest.
+See [requirements](reference#requirements) for range and prerelease semantics.
 
 ## 8. Verify the migration
 

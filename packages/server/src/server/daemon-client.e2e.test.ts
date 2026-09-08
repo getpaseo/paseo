@@ -1473,7 +1473,7 @@ test("creates agent and exercises lifecycle", async () => {
       sawAssistantMessage = true;
     }
   });
-  const unsubscribeRawStream = ctx.client.on("agent_stream", (message) => {
+  const unsubscribeRawStream = ctx.client.subscribeAgentTimeline(agent.id, (message) => {
     if (message.type !== "agent_stream") {
       return;
     }

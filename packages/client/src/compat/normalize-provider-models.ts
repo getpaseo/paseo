@@ -61,9 +61,16 @@ export function normalizeProvidersSnapshotPayload<
   T extends GetProvidersSnapshotPayload | ProvidersSnapshotUpdatePayload,
 >(payload: T, expand = true): T {
   if (payload.compactSnapshot && !expand) return payload;
-  const entries = payload.compactSnapshot
+  const decoded = payload.compactSnapshot
     ? expandProviderSnapshot(payload.compactSnapshot)
     : normalizeProviderSnapshotEntries(payload.entries);
+  const freshness = payload.fetchedAt;
+  const entries =
+    freshness && expand
+      ? decoded.map((entry) =>
+          freshness[entry.provider] ? { ...entry, fetchedAt: freshness[entry.provider] } : entry,
+        )
+      : decoded;
   return entries === payload.entries ? payload : { ...payload, entries };
 }
 

@@ -823,10 +823,12 @@ lines.on("line", (line) => {
     await connection.close();
   });
 
-  it("commits transformer config notifications once and discards them on rollback", async () => {
-    const executable = await fakeAcp(`const readline = require("node:readline");
+  it.each([1, 64])(
+    "commits transformer config notifications once and discards them on rollback (%i per response)",
+    async (notificationCount) => {
+      const executable = await fakeAcp(`const readline = require("node:readline");
 const lines = readline.createInterface({ input: process.stdin });
-const send = (message) => process.stdout.write(JSON.stringify(message) + "\\n");
+const send = (...messages) => process.stdout.write(messages.map((message) => JSON.stringify(message) + "\\n").join(""));
 let model = "a";
 const options = () => [
   { id: "model", name: "Model", category: "model", type: "select", currentValue: model, options: [{ name: "A", value: "a" }, { name: "B", value: "b" }] },
@@ -839,66 +841,84 @@ lines.on("line", (line) => {
   else if (message.method === "session/set_config_option" && message.params.configId === "late") send({ jsonrpc: "2.0", id: message.id, error: { code: -32602, message: "late rejected" } });
   else if (message.method === "session/set_config_option") {
     model = message.params.value;
-    send({ jsonrpc: "2.0", method: "vendor/config", params: { model } });
-    send({ jsonrpc: "2.0", id: message.id, result: { configOptions: options() } });
+    send(
+      ...Array.from({ length: ${notificationCount} }, () => ({ jsonrpc: "2.0", method: "vendor/config", params: { model } })),
+      { jsonrpc: "2.0", id: message.id, result: { configOptions: options() } },
+    );
   }
 });`);
-    const transformer = {
-      notification(notification: { method: string; params: unknown }) {
-        if (notification.method !== "vendor/config") return null;
-        const params = notification.params as { model: string };
-        return {
-          type: "config" as const,
-          config: {
-            model: params.model,
-            models: [{ id: params.model, label: `Transformer ${params.model}` }],
-            modes: [],
-            thinkingOptions: [],
-            settings: [],
-          },
-        };
-      },
-    };
-    const { connection, events } = await connect(
-      executable,
-      ["prompt.message", "session.configure"],
-      [transformer],
-    );
-    await connection.send(openInput());
-    await waitForEvent(events, (event) => event.type === "session.ready");
-    const initialConfigCount = events.filter((event) => event.type === "session.config").length;
+      const transformer = {
+        notification(notification: { method: string; params: unknown }) {
+          if (notification.method !== "vendor/config") return null;
+          const params = notification.params as { model: string };
+          return {
+            type: "config" as const,
+            config: {
+              model: params.model,
+              models: [{ id: params.model, label: `Transformer ${params.model}` }],
+              modes: [],
+              thinkingOptions: [],
+              settings: [],
+            },
+          };
+        },
+      };
+      const { connection, events } = await connect(
+        executable,
+        ["prompt.message", "session.configure"],
+        [transformer],
+      );
+      await connection.send(openInput());
+      await waitForEvent(events, (event) => event.type === "session.ready");
+      const initialConfigCount = events.filter((event) => event.type === "session.config").length;
 
-    await connection.send({
-      type: "session.configure",
-      requestId: "transformer-success",
-      sessionId: "session-1",
-      changes: { model: "b" },
-    });
-    await waitForEvent(
-      events,
-      (event) => event.type === "request.completed" && event.requestId === "transformer-success",
-    );
-    let configs = events.filter((event) => event.type === "session.config");
-    expect(configs).toHaveLength(initialConfigCount + 1);
-    expect(configs.at(-1)).toMatchObject({
-      config: { model: "b", models: [{ label: "Transformer b" }] },
-    });
+      await connection.send({
+        type: "session.configure",
+        requestId: "transformer-initial-failure",
+        sessionId: "session-1",
+        changes: { model: "b", settings: { late: "fail" } },
+      });
+      await waitForEvent(
+        events,
+        (event) =>
+          event.type === "request.failed" && event.requestId === "transformer-initial-failure",
+      );
+      expect(events.filter((event) => event.type === "session.config")).toHaveLength(
+        initialConfigCount,
+      );
 
-    await connection.send({
-      type: "session.configure",
-      requestId: "transformer-failure",
-      sessionId: "session-1",
-      changes: { model: "a", settings: { late: "fail" } },
-    });
-    await waitForEvent(
-      events,
-      (event) => event.type === "request.failed" && event.requestId === "transformer-failure",
-    );
-    configs = events.filter((event) => event.type === "session.config");
-    expect(configs).toHaveLength(initialConfigCount + 1);
-    expect(configs.at(-1)).toMatchObject({ config: { model: "b" } });
-    await connection.close();
-  });
+      await connection.send({
+        type: "session.configure",
+        requestId: "transformer-success",
+        sessionId: "session-1",
+        changes: { model: "b" },
+      });
+      await waitForEvent(
+        events,
+        (event) => event.type === "request.completed" && event.requestId === "transformer-success",
+      );
+      let configs = events.filter((event) => event.type === "session.config");
+      expect(configs).toHaveLength(initialConfigCount + 1);
+      expect(configs.at(-1)).toMatchObject({
+        config: { model: "b", models: [{ label: "Transformer b" }] },
+      });
+
+      await connection.send({
+        type: "session.configure",
+        requestId: "transformer-failure",
+        sessionId: "session-1",
+        changes: { model: "a", settings: { late: "fail" } },
+      });
+      await waitForEvent(
+        events,
+        (event) => event.type === "request.failed" && event.requestId === "transformer-failure",
+      );
+      configs = events.filter((event) => event.type === "session.config");
+      expect(configs).toHaveLength(initialConfigCount + 1);
+      expect(configs.at(-1)).toMatchObject({ config: { model: "b" } });
+      await connection.close();
+    },
+  );
 
   it("gives discovery transformers the discovered session configuration facade", async () => {
     const executable = await fakeAcp(`const readline = require("node:readline");
