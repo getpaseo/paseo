@@ -28,6 +28,11 @@ import {
 } from "electron";
 import { registerDaemonManager } from "./daemon/daemon-manager.js";
 import { parsePassthroughCliArgsFromArgv, runPassthroughCli } from "./daemon/cli/passthrough.js";
+import {
+  inheritLoginShellEnvForService,
+  isDaemonOnlyLaunchFromArgv,
+  runDaemonOnly,
+} from "./daemon/daemon-only.js";
 import { closeAllTransportSessions } from "./daemon/local-transport.js";
 import {
   applyDesktopWindowChromeMode,
@@ -89,6 +94,7 @@ import { getDesktopSettingsStore } from "./settings/desktop-settings-electron.js
 import { clampWindowStateToWorkAreas, createWindowStateStore } from "./settings/window-state.js";
 import {
   isDesktopManagedDaemonRunningSync,
+  spawnBundledDaemonForeground,
   stopDesktopDaemonViaCli,
 } from "./daemon/daemon-manager.js";
 import {
@@ -118,6 +124,10 @@ const DESKTOP_WINDOW_CHROME_MODE = resolveDesktopWindowChromeMode({
   isPackaged: app.isPackaged,
 });
 const UPDATE_QUIT_DEADLINE_MS = 5_000;
+// `--daemon-only` runs the packaged app as a headless daemon service. It owns
+// its own quit path, so the GUI quit lifecycle, the auto-updater and window
+// management below stay unregistered for it.
+const IS_DAEMON_ONLY_LAUNCH = isDaemonOnlyLaunchFromArgv(process.argv);
 const pendingBrowserWindowOpenRequests = new PendingBrowserWindowOpenRequests();
 const agentNavigationInbox = new AgentNavigationInbox();
 
@@ -897,6 +907,36 @@ function setupSingleInstanceLock(): boolean {
   return true;
 }
 
+async function runDaemonOnlyIfRequested(): Promise<boolean> {
+  if (!IS_DAEMON_ONLY_LAUNCH) {
+    return false;
+  }
+
+  inheritLoginShellEnvForService({ env: process.env, inheritLoginShellEnv });
+
+  const exitCode = await runDaemonOnly({
+    spawnDaemon: spawnBundledDaemonForeground,
+    onStopRequested: (requestStop) => {
+      app.on("before-quit", () => {
+        // Signal the daemon, then let the quit proceed. Calling
+        // event.preventDefault() here aborts the browser process with SIGTRAP:
+        // Chromium tears down its helper processes as soon as it handles the
+        // signal, and holding the quit open leaves it running without them.
+        // Nothing is lost by exiting first — the daemon shuts down on the
+        // SIGTERM it just received, and a service manager waits for every
+        // process in the unit's cgroup rather than only this one.
+        requestStop();
+      });
+    },
+    onSpawnError: (error) => {
+      log.error("[desktop daemon] --daemon-only failed to start the bundled daemon", error);
+    },
+  });
+
+  app.exit(exitCode);
+  return true;
+}
+
 async function runCliPassthroughIfRequested(): Promise<boolean> {
   const cliArgs = parsePassthroughCliArgsFromArgv(process.argv);
   if (!cliArgs) {
@@ -1008,6 +1048,7 @@ async function bootstrap(): Promise<void> {
 
 void runDesktopStartup({
   hasPendingGuiLaunchRequest: Boolean(pendingOpenProjectPath || pendingAgentNavigation),
+  runDaemonOnlyIfRequested,
   runCliPassthroughIfRequested,
   inheritLoginShellEnv,
   bootstrapGui: bootstrap,
@@ -1050,16 +1091,18 @@ const quitLifecycle = createQuitLifecycle({
   },
 });
 
-// electron-updater forwards this event through Electron's built-in autoUpdater.
-electronAutoUpdater.on("before-quit-for-update", () => {
-  log.info("[auto-updater] before-quit-for-update", { currentVersion: app.getVersion() });
-  quitLifecycle.handleBeforeQuitForUpdate();
-});
-app.on("before-quit", quitLifecycle.handleBeforeQuit);
-registerExternalQuitSignals({ signals: process, quit: () => app.quit() });
+if (!IS_DAEMON_ONLY_LAUNCH) {
+  // electron-updater forwards this event through Electron's built-in autoUpdater.
+  electronAutoUpdater.on("before-quit-for-update", () => {
+    log.info("[auto-updater] before-quit-for-update", { currentVersion: app.getVersion() });
+    quitLifecycle.handleBeforeQuitForUpdate();
+  });
+  app.on("before-quit", quitLifecycle.handleBeforeQuit);
+  registerExternalQuitSignals({ signals: process, quit: () => app.quit() });
 
-app.on("window-all-closed", () => {
-  if (process.platform !== "darwin") {
-    app.quit();
-  }
-});
+  app.on("window-all-closed", () => {
+    if (process.platform !== "darwin") {
+      app.quit();
+    }
+  });
+}

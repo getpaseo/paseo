@@ -348,6 +348,43 @@ async function pollForRunningDaemon(): Promise<DesktopDaemonStatus> {
   return poll(0);
 }
 
+/**
+ * Starts the bundled daemon in the foreground, attached to this process's stdio,
+ * for `--daemon-only` service launches. Unlike the desktop-managed daemon this
+ * one is not marked `PASEO_DESKTOP_MANAGED`: it outlives any app window, and a
+ * desktop instance that later attaches to it must not stop it on quit or update.
+ * The web UI is left at the daemon's own default so browser and phone clients
+ * can reach a machine that has no desktop session.
+ */
+export function spawnBundledDaemonForeground(): ChildProcess {
+  const daemonRunner = resolveDaemonRunnerEntrypoint();
+  const invocation = createNodeEntrypointInvocation({
+    entrypoint: daemonRunner,
+    argvMode: "node-script",
+    args: [],
+    baseEnv: process.env,
+  });
+
+  logDesktopDaemonLifecycle("starting foreground daemon", {
+    appIsPackaged: app.isPackaged,
+    daemonRunnerEntry: daemonRunner.entryPath,
+    command: invocation.command,
+    args: invocation.args,
+    electronRunAsNode: invocation.env.ELECTRON_RUN_AS_NODE ?? null,
+    paseoHome: process.env.PASEO_HOME ?? null,
+    listen: process.env.PASEO_LISTEN ?? null,
+  });
+
+  return spawnProcess(invocation.command, invocation.args, {
+    envMode: "internal",
+    env: invocation.env,
+    envOverlay: {
+      PASEO_CLI: getBundledCliShimPath(),
+    },
+    stdio: "inherit",
+  });
+}
+
 async function startDaemon(): Promise<DesktopDaemonStatus> {
   assertBuiltInDaemonManagementEnabled(await getDesktopSettingsStore().get());
 
