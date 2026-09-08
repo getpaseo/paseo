@@ -1,11 +1,11 @@
 import type { Rectangle } from "electron";
-import { ipcMain } from "electron";
+import { ipcMain, nativeImage } from "electron";
 import { BrowserAutomationExecuteRequestSchema } from "@getpaseo/protocol/browser-automation/rpc-schemas";
 import type {
   BrowserAutomationConsoleLogEntry,
   BrowserAutomationDialogEvent,
 } from "@getpaseo/protocol/browser-automation/rpc-schemas";
-import type { TabContents, BrowserRegistry, TabImage } from "./service.js";
+import type { TabContents, BrowserRegistry } from "./service.js";
 import type { IsolatedKeyboardInputEvent } from "./trusted-input.js";
 import { CdpSessionQueue } from "./cdp-session-queue.js";
 import {
@@ -17,6 +17,10 @@ import {
   promptShimRestoreScript,
 } from "./dialog-handling.js";
 import { executeAutomationCommand } from "./service.js";
+import {
+  captureFullPage as captureFullPageImage,
+  type FullPageCaptureImage,
+} from "./full-page-capture.js";
 import { BrowserSnapshotEngine } from "./snapshot-engine.js";
 import {
   listRegisteredPaseoBrowserIds,
@@ -105,7 +109,7 @@ interface BrowserAutomationWebContents extends ConsoleMessageEmitter {
   goBack(): void;
   goForward(): void;
   reload(): void;
-  capturePage(rect?: Rectangle, options?: { stayHidden?: boolean }): Promise<TabImage>;
+  capturePage(rect?: Rectangle, options?: { stayHidden?: boolean }): Promise<FullPageCaptureImage>;
   invalidate(): void;
   sendInputEvent(event: IsolatedKeyboardInputEvent): void;
 }
@@ -129,6 +133,28 @@ export function adaptWebContents(contents: BrowserAutomationWebContents): TabCon
     goForward: () => contents.goForward(),
     reload: () => contents.reload(),
     capturePage: (captureOptions) => contents.capturePage(undefined, captureOptions),
+    captureFullPage: (options) =>
+      cdpQueue.run(async () => {
+        if (!contents.debugger.isAttached()) {
+          contents.debugger.attach("1.3");
+        }
+        return captureFullPageImage(
+          {
+            executeJavaScript: (code) => contents.executeJavaScript(code),
+            invalidate: () => contents.invalidate(),
+            sendDebugCommand: (command, params) =>
+              contents.debugger.sendCommand(command, params ?? {}),
+            createImageFromPng: (dataBase64) =>
+              nativeImage.createFromBuffer(Buffer.from(dataBase64, "base64")),
+            createImageFromBitmap: (bitmap, size) =>
+              nativeImage.createFromBitmap(Buffer.from(bitmap), {
+                ...size,
+                scaleFactor: 1,
+              }),
+          },
+          options,
+        );
+      }),
     invalidate: () => contents.invalidate(),
     sendInputEvent: (event) => contents.sendInputEvent(event),
     getConsoleMessages: () => consoleMessagesByContentsId.get(contentsId) ?? [],

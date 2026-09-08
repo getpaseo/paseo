@@ -1,12 +1,16 @@
 import type { Rectangle } from "electron";
 import { describe, expect, test, vi } from "vitest";
-import type { TabImage } from "./service.js";
+import type { FullPageCaptureImage } from "./full-page-capture.js";
 import { adaptWebContents, HostSnapshotEngineRegistry } from "./ipc.js";
 import type { IsolatedKeyboardInputEvent } from "./trusted-input.js";
 
-class FakeImage implements TabImage {
+class FakeImage implements FullPageCaptureImage {
   public toPNG(): Uint8Array {
     return new Uint8Array([137, 80, 78, 71]);
+  }
+
+  public toBitmap(): Uint8Array {
+    return new Uint8Array(640 * 480 * 4);
   }
 
   public getSize(): { width: number; height: number } {
@@ -170,7 +174,7 @@ class FakeWebContents {
   public async capturePage(
     rect?: Rectangle,
     options?: { stayHidden?: boolean },
-  ): Promise<TabImage> {
+  ): Promise<FullPageCaptureImage> {
     this.captures.push({ rect, options });
     return new FakeImage();
   }
