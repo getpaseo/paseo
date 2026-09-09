@@ -11,11 +11,13 @@ export function Shortcut({
   chord,
   style,
   textStyle,
+  testID,
 }: {
   keys?: ShortcutKey[];
   chord?: ShortcutKey[][];
   style?: StyleProp<ViewStyle>;
   textStyle?: StyleProp<TextStyle>;
+  testID?: string;
 }): ReactElement | null {
   const shortcutsAvailable = useKeyboardShortcutsAvailable();
   const displayChord = normalizeDisplayChord(chord, keys);
@@ -38,7 +40,7 @@ export function Shortcut({
 
   if (displayChord.length === 1) {
     return (
-      <View style={badgeStyle}>
+      <View style={badgeStyle} testID={testID}>
         <View style={styles.badgeBackground} />
         <Text style={textCombinedStyle}>{formatShortcut(singleCombo, shortcutOs)}</Text>
       </View>
@@ -46,7 +48,7 @@ export function Shortcut({
   }
 
   return (
-    <View style={sequenceStyle}>
+    <View style={sequenceStyle} testID={testID}>
       {displayChord.map(function (combo) {
         return (
           <View key={combo.join("+")} style={styles.badge}>

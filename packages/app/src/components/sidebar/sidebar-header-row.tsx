@@ -69,7 +69,11 @@ export function SidebarHeaderRow({
           />
           <SidebarHeaderRowLabel label={label} isHighlighted={isHighlighted} />
           {shortcutKeys && Boolean(state.hovered) ? (
-            <Shortcut chord={shortcutKeys} style={styles.shortcut} />
+            <Shortcut
+              chord={shortcutKeys}
+              style={styles.shortcut}
+              testID="sidebar-header-row-shortcut"
+            />
           ) : null}
         </>
       );
