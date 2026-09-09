@@ -5,6 +5,7 @@ import { StyleSheet } from "react-native-unistyles";
 import { clampPct, formatPct, formatResetLabel, formatRunsOutLabel } from "./format";
 import { deriveTone } from "./tone";
 import type { ProviderUsageTone, ProviderUsageWindow } from "./types";
+import { useRelativeTimeTick } from "./use-relative-time-tick";
 
 function resolveUsedPct(window: ProviderUsageWindow): number | null {
   if (window.usedPct != null) return window.usedPct;
@@ -37,6 +38,8 @@ export function ProviderUsageWindowBar({ window }: { window: ProviderUsageWindow
   );
 
   const isAtRisk = window.runsOutAt != null && window.shortfallPct != null;
+  const relativeTime = isAtRisk ? window.runsOutAt : window.resetsAt;
+  useRelativeTimeTick(relativeTime != null);
   const trailing = isAtRisk
     ? formatRunsOutLabel(window.runsOutAt)
     : formatResetLabel(window.resetsAt);

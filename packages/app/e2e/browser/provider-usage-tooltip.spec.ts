@@ -5,16 +5,20 @@ import { installProviderUsageFixture } from "../support/helpers/provider-usage";
 
 const MOBILE_VIEWPORT = { width: 390, height: 844 };
 
-async function openMockAgent(page: Page) {
+async function openMockAgent(page: Page, withoutContextTelemetry = false) {
   await page.setViewportSize(MOBILE_VIEWPORT);
   const session = await seedMockAgentWorkspace({
     repoPrefix: "provider-usage-tooltip-",
     title: "Provider usage tooltip e2e",
-    initialPrompt: "emit 1 coalesced agent stream update for provider usage tooltip.",
+    initialPrompt: withoutContextTelemetry
+      ? undefined
+      : "emit 1 coalesced agent stream update for provider usage tooltip.",
   });
   await openAgentRoute(page, session);
   await expectComposerVisible(page);
-  await expect(page.getByTestId("context-window-meter")).toBeVisible({ timeout: 30_000 });
+  if (!withoutContextTelemetry) {
+    await expect(page.getByTestId("context-window-meter")).toBeVisible({ timeout: 30_000 });
+  }
   return session;
 }
 
@@ -65,7 +69,6 @@ test.describe("provider usage tooltip", () => {
 
   test("does not show provider usage without context telemetry", async ({ page }) => {
     test.setTimeout(180_000);
-    await page.setViewportSize(MOBILE_VIEWPORT);
     const usageFixture = await installProviderUsageFixture(page, [
       {
         fetchedAt: "2026-06-19T00:00:00.000Z",
@@ -80,13 +83,8 @@ test.describe("provider usage tooltip", () => {
         ],
       },
     ]);
-    const session = await seedMockAgentWorkspace({
-      repoPrefix: "provider-usage-no-context-",
-      title: "Provider usage without context telemetry",
-    });
+    const session = await openMockAgent(page, true);
     try {
-      await openAgentRoute(page, session);
-      await expectComposerVisible(page);
       await expect(page.getByTestId("context-window-meter")).toHaveCount(0);
       expect(usageFixture.requestCount()).toBe(0);
     } finally {
