@@ -3,6 +3,7 @@ import { i18n } from "@/i18n/i18next";
 import { useHostFeature } from "@/runtime/host-features";
 import { getHostRuntimeStore } from "@/runtime/host-runtime";
 import { useWorkspaceFields } from "@/stores/session-store-hooks";
+import { markWorkspaceUnread } from "@/workspace/mark-unread";
 
 export interface WorkspaceReadStateController {
   hasClearableAttention: boolean;
@@ -38,11 +39,7 @@ export function useWorkspaceReadState({
     if (!canMarkUnread) {
       return;
     }
-    const client = getHostRuntimeStore().getClient(serverId);
-    if (!client) {
-      throw new Error(i18n.t("workspace.terminal.hostDisconnected"));
-    }
-    await client.markWorkspaceUnread(workspaceId);
+    await markWorkspaceUnread(serverId, workspaceId);
   }, [canMarkUnread, serverId, workspaceId]);
 
   return useMemo(
