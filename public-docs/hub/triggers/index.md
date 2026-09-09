@@ -44,7 +44,9 @@ If the daemon is offline or needs a newer Paseo version, the agent selectors sho
 
 Dashboard triggers default to **Same conversation**. Messages in the same Slack or Discord thread, events on the same GitHub issue or pull request, and events on the same Linear issue continue the existing agent in that project. An event without a conversation starts a new agent.
 
-If the agent is busy, the new prompt steers its current work. If its workspace is archived, Hub asks Paseo to restore it before sending the prompt. Each arrival still has its own deadline, output limits, and completion status.
+If the agent is busy, the new prompt steers its current work without extending the original hard runtime deadline. Each arrival keeps its own output limits and completion status. If a reusable workspace is archived, Hub asks Paseo to restore it before sending the prompt.
+
+When requests share temporary environment credentials, those credentials keep their original expiry and remain available until all requests finish. The next arrival after completion starts a fresh agent with newly materialized credentials. See the [continuation reference](/docs/hub/configuration/hub-yml#agent-continuation) for the full lifecycle.
 
 Choose **Custom key** to group arrivals by an input, or **New agent** to keep them separate. A self-contained trigger document can express the same choice:
 

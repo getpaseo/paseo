@@ -37,7 +37,7 @@ steps:
           ${{ paseo.prompt }}
 ```
 
-The agent can use `git` and `gh` within the declared repositories and permissions. Hub mints the token when the step starts and revokes it when execution ends.
+The agent can use `git` and `gh` within the declared repositories and permissions. Hub mints the token when the agent starts. With [agent continuation](/docs/hub/configuration/hub-yml#agent-continuation), overlapping requests share that token until all requests using the agent finish or the token's configured lifetime expires. Steering does not renew the token. After all requests finish, the next credentialed task starts a fresh agent with a new scoped token.
 
 ## Fields
 
@@ -73,4 +73,4 @@ env:
   SOME_TOKEN: "${{ paseo.connections.some-connection.token }}"
 ```
 
-Hub resolves the value for the step and does not persist it. See [Hub security](/docs/hub/security) for provider and host boundaries.
+Hub resolves the value when it prepares the agent's environment. See [Hub security](/docs/hub/security) for provider and host boundaries.
