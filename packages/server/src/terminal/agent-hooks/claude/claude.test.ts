@@ -88,6 +88,24 @@ function installedClaudeHookCommand(event: string): string {
   return commands[0]!;
 }
 
+function claudeEvent(eventName: string) {
+  const definition = AGENT_HOOK_PROVIDERS.claude.events.find(
+    ({ event: candidate }) => candidate === eventName,
+  );
+  if (!definition) {
+    throw new Error(`Claude provider is missing the ${eventName} event`);
+  }
+  return definition;
+}
+
+function hookMatchers(settings: TestClaudeSettings, event: string): unknown[] {
+  const matchers = settings.hooks?.[event];
+  if (!Array.isArray(matchers)) {
+    throw new Error(`Claude settings are missing hooks for ${event}`);
+  }
+  return matchers;
+}
+
 describe("Claude terminal agent hooks", () => {
   it("installs registered provider hooks idempotently", () => {
     const configDir = createTempDir("paseo-claude-config-");
@@ -98,19 +116,43 @@ describe("Claude terminal agent hooks", () => {
 
     const settings = readSettings(configDir);
     for (const event of provider.events) {
-      const expectedCommand = isPlatform("win32")
-        ? buildAgentHookWindowsPowerShellCommand(provider, event)
-        : buildAgentHookShellCommand(provider, event);
-      expect(hookCommands(settings, event.event)).toEqual([expectedCommand]);
+      expect(hookCommands(settings, event.event)).toHaveLength(1);
     }
     expect(firstInstall.every((result) => result.changed)).toBe(true);
     expect(secondInstall.every((result) => !result.changed)).toBe(true);
     expect(registeredAgentHooksAreInstalled({ configDir })).toBe(true);
   });
 
+  it.skipIf(isPlatform("win32"))("installs POSIX hook commands on macOS and Linux", () => {
+    const configDir = createTempDir("paseo-claude-posix-command-");
+    const provider = AGENT_HOOK_PROVIDERS.claude;
+
+    installRegisteredAgentHooks({ configDir });
+
+    const settings = readSettings(configDir);
+    for (const event of provider.events) {
+      expect(hookCommands(settings, event.event)).toEqual([
+        buildAgentHookShellCommand(provider, event),
+      ]);
+    }
+  });
+
+  it.skipIf(!isPlatform("win32"))("installs PowerShell hook commands on Windows", () => {
+    const configDir = createTempDir("paseo-claude-windows-command-");
+    const provider = AGENT_HOOK_PROVIDERS.claude;
+
+    installRegisteredAgentHooks({ configDir });
+
+    const settings = readSettings(configDir);
+    for (const event of provider.events) {
+      expect(hookCommands(settings, event.event)).toEqual([
+        buildAgentHookWindowsPowerShellCommand(provider, event),
+      ]);
+    }
+  });
+
   it("preserves unrelated user hooks", () => {
     const configDir = createTempDir("paseo-claude-config-preserve-");
-    const provider = AGENT_HOOK_PROVIDERS.claude;
     writeFileSync(
       join(configDir, "settings.json"),
       `${JSON.stringify(
@@ -134,25 +176,21 @@ describe("Claude terminal agent hooks", () => {
 
     const settings = readSettings(configDir);
     expect(settings.theme).toBe("dark");
-    const stopEvent = provider.events.find((event) => event.event === "Stop");
-    if (!stopEvent) throw new Error("Claude provider is missing the Stop event");
-    const expectedCommand = isPlatform("win32")
-      ? buildAgentHookWindowsPowerShellCommand(provider, stopEvent)
-      : buildAgentHookShellCommand(provider, stopEvent);
-    expect(hookCommands(settings, "Stop")).toEqual(["say done", expectedCommand]);
+    const commands = hookCommands(settings, "Stop");
+    expect(commands).toHaveLength(2);
+    expect(commands[0]).toBe("say done");
   });
 
   it("uninstalls current and legacy Paseo hooks while preserving user hooks", () => {
     const configDir = createTempDir("paseo-claude-config-uninstall-");
     installRegisteredAgentHooks({ configDir });
     const provider = AGENT_HOOK_PROVIDERS.claude;
-    const stopEvent = provider.events.find((event) => event.event === "Stop");
-    if (!stopEvent) throw new Error("Claude provider is missing the Stop event");
+    const stopEvent = claudeEvent("Stop");
     const settings = readSettings(configDir);
     settings.hooks = {
       ...settings.hooks,
       Stop: [
-        ...(Array.isArray(settings.hooks?.Stop) ? settings.hooks.Stop : []),
+        ...hookMatchers(settings, "Stop"),
         {
           matcher: "",
           hooks: [{ type: "command", command: buildAgentHookShellCommand(provider, stopEvent) }],
@@ -319,8 +357,7 @@ describe("Claude terminal agent hooks", () => {
       writeFileSync(paseoCmd, '@echo off\r\necho %* > "%PASEO_HOOK_TEST_MARKER%"\r\nexit /b 0\r\n');
       const command = installedClaudeHookCommand("UserPromptSubmit");
 
-      const existingPath = process.env.PATH ?? "";
-      const path = existingPath.length > 0 ? [binDir, existingPath].join(delimiter) : binDir;
+      const path = [binDir, process.env.PATH ?? process.env.Path].filter(Boolean).join(delimiter);
 
       const result = runWindowsHook(command, {
         PASEO_TERMINAL_ID: "test-terminal",

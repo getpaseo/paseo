@@ -1,5 +1,7 @@
 import {
   type AgentHookConfigFormat,
+  type AgentHookEventDefinition,
+  type AgentHookProvider,
   buildAgentHookShellCommand,
   buildAgentHookWindowsPowerShellCommand,
 } from "../agent-hook-installer.js";
@@ -38,12 +40,8 @@ export const claudeSettingsFormat: AgentHookConfigFormat<ClaudeSettings> = {
     const install = provider.install;
     const hooks = normalizeHooks(config.hooks);
     for (const event of provider.events) {
-      const expectedCommand =
-        process.platform === "win32"
-          ? buildAgentHookWindowsPowerShellCommand(provider, event)
-          : undefined;
+      const expectedCommand = buildClaudeHookCommand(provider, event);
       const userEntries = removePaseoHooks(hooks[event.event], install.hookMarker, expectedCommand);
-      const hookCommand = expectedCommand ?? buildAgentHookShellCommand(provider, event);
       hooks[event.event] = [
         ...userEntries,
         {
@@ -51,7 +49,7 @@ export const claudeSettingsFormat: AgentHookConfigFormat<ClaudeSettings> = {
           hooks: [
             {
               type: "command",
-              command: hookCommand,
+              command: expectedCommand,
               timeout: 10,
             },
           ],
@@ -64,10 +62,7 @@ export const claudeSettingsFormat: AgentHookConfigFormat<ClaudeSettings> = {
     const install = provider.install;
     const hooks = normalizeHooks(config.hooks);
     for (const event of provider.events) {
-      const expectedCommand =
-        process.platform === "win32"
-          ? buildAgentHookWindowsPowerShellCommand(provider, event)
-          : undefined;
+      const expectedCommand = buildClaudeHookCommand(provider, event);
       const entries = removePaseoHooks(hooks[event.event], install.hookMarker, expectedCommand);
       if (entries.length > 0) {
         hooks[event.event] = entries;
@@ -80,19 +75,25 @@ export const claudeSettingsFormat: AgentHookConfigFormat<ClaudeSettings> = {
   isInstalled(config, provider) {
     const install = provider.install;
     const hooks = normalizeHooks(config.hooks);
-    return provider.events.every((event) =>
-      normalizeMatchers(hooks[event.event]).some((entry) =>
-        normalizeCommandHooks(entry.hooks).some((hook) => {
-          const expectedCommand =
-            process.platform === "win32"
-              ? buildAgentHookWindowsPowerShellCommand(provider, event)
-              : undefined;
-          return commandContainsMarker(hook, install.hookMarker, expectedCommand);
-        }),
-      ),
-    );
+    return provider.events.every((event) => {
+      const expectedCommand = buildClaudeHookCommand(provider, event);
+      return normalizeMatchers(hooks[event.event]).some((entry) =>
+        normalizeCommandHooks(entry.hooks).some((hook) =>
+          commandContainsMarker(hook, install.hookMarker, expectedCommand),
+        ),
+      );
+    });
   },
 };
+
+function buildClaudeHookCommand(
+  provider: AgentHookProvider<ClaudeSettings>,
+  event: AgentHookEventDefinition,
+): string {
+  return process.platform === "win32"
+    ? buildAgentHookWindowsPowerShellCommand(provider, event)
+    : buildAgentHookShellCommand(provider, event);
+}
 
 function normalizeHooks(value: unknown): Record<string, unknown> {
   return isRecord(value) ? { ...value } : {};
@@ -115,7 +116,7 @@ function normalizeCommandHooks(value: unknown): ClaudeCommandHook[] {
 function removePaseoHooks(
   value: unknown,
   marker: string,
-  expectedCommand: string | undefined,
+  expectedCommand: string,
 ): ClaudeHookMatcher[] {
   const entries: ClaudeHookMatcher[] = [];
   for (const entry of normalizeMatchers(value)) {
@@ -132,7 +133,7 @@ function removePaseoHooks(
 function commandContainsMarker(
   hook: ClaudeCommandHook,
   marker: string,
-  expectedCommand: string | undefined,
+  expectedCommand: string,
 ): boolean {
   if (typeof hook.command !== "string") {
     return false;
