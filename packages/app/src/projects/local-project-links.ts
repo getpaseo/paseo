@@ -198,7 +198,10 @@ export function buildProjectLinkSuggestions(input: {
     placements: allPlacements,
     linkedPlacementKeys,
   })) {
-    if (validLinksByIdentity.has(identityKey)) continue;
+    const existingLinks = validLinksByIdentity.get(identityKey);
+    if (existingLinks && !hasUnlinkedPlacementOnExistingLinkHost(placements, existingLinks)) {
+      continue;
+    }
     addUnlinkedProjectLinkSuggestions({
       placements,
       allPlacements,
@@ -207,6 +210,16 @@ export function buildProjectLinkSuggestions(input: {
   }
 
   return collector.suggestions.sort(compareProjectLinkSuggestions);
+}
+
+function hasUnlinkedPlacementOnExistingLinkHost(
+  placements: readonly ProjectLinkPlacement[],
+  links: readonly LocalProjectLink[],
+): boolean {
+  const linkedServerIds = new Set(
+    links.flatMap((link) => link.members.map((member) => member.serverId)),
+  );
+  return placements.some((placement) => linkedServerIds.has(placement.serverId));
 }
 
 interface ProjectLinkSuggestionCollector {
@@ -441,6 +454,8 @@ function areAutomaticallyGrouped(
 export function buildProjectLinkGroupingOverrides(input: {
   placements: Iterable<ProjectLinkPlacement>;
   links: Iterable<LocalProjectLink>;
+  /** Hosts whose project directory has completed hydration in this projection. */
+  hydratedServerIds?: Iterable<string>;
   unhydratedServerIds?: Iterable<string>;
 }): Map<string, ProjectLinkGroupingOverride> {
   const placementsByKey = new Map<string, ProjectLinkPlacement>();
@@ -450,16 +465,27 @@ export function buildProjectLinkGroupingOverrides(input: {
 
   const overrides = new Map<string, ProjectLinkGroupingOverride>();
   const claimedMembers = new Set<string>();
+  const hydratedServerIds = new Set(input.hydratedServerIds ?? []);
   const unhydratedServerIds = new Set(input.unhydratedServerIds ?? []);
   for (const link of input.links) {
     const memberKeys = link.members.map(projectLinkPlacementKey);
-    if (
-      link.members.some((member) => unhydratedServerIds.has(member.serverId)) ||
-      memberKeys.some((memberKey) => !placementsByKey.has(memberKey))
-    ) {
+    if (link.members.some((member) => unhydratedServerIds.has(member.serverId))) {
       continue;
     }
-    for (const memberKey of memberKeys) {
+    const presentMemberKeys = memberKeys.filter((memberKey) => placementsByKey.has(memberKey));
+    const hasMissingMemberOnHydratedHost = link.members.some(
+      (member) =>
+        hydratedServerIds.has(member.serverId) &&
+        !placementsByKey.has(projectLinkPlacementKey(member)),
+    );
+    if (hasMissingMemberOnHydratedHost) {
+      for (const memberKey of presentMemberKeys) {
+        if (!overrides.has(memberKey)) overrides.set(memberKey, { kind: "blocked" });
+      }
+      continue;
+    }
+    if (presentMemberKeys.length !== memberKeys.length) continue;
+    for (const memberKey of presentMemberKeys) {
       if (!overrides.has(memberKey)) overrides.set(memberKey, { kind: "blocked" });
     }
 
