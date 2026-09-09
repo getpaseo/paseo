@@ -16,6 +16,7 @@ import { displayPercent, usageWindowRowLabel } from "./model";
 import type { UsageDisplayAs } from "./preferences";
 import { windowTone } from "./tone";
 import type { UsageTone, UsageWindow } from "./types";
+import { useRelativeTimeTick } from "./use-relative-time-tick";
 
 // Pinned rows carry the pinned surface; hovering an unpinned row previews it at half strength,
 // so a hover never reads as the selection. Pinned rows do not react to hover.
@@ -45,6 +46,10 @@ export function UsageWindowBar({
   const tone = windowTone(window);
 
   const isAtRisk = window.runsOutAt != null && window.shortfallPct != null;
+  const relativeTime = isAtRisk ? window.runsOutAt : window.resetsAt;
+  useRelativeTimeTick(relativeTime != null);
+  const relativeTime = isAtRisk ? window.runsOutAt : window.resetsAt;
+  useRelativeTimeTick(relativeTime != null);
   const trailing = isAtRisk
     ? formatRunsOutLabel(window.runsOutAt)
     : formatResetLabel(window.resetsAt);
