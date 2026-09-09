@@ -1984,6 +1984,12 @@ export const ru: TranslationResources = {
       used: "Использовано: {{percentage}}",
       remaining: "Осталось: {{amount}}",
     },
+    labels: {
+      session: "Сессия",
+      weekly: "Еженедельно",
+      codeReview: "Проверка кода",
+      credits: "Кредиты",
+    },
     duration: {
       days: "{{value}} дн.",
       hours: "{{value}} ч",

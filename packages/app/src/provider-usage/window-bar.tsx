@@ -2,7 +2,13 @@ import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { Text, View, type StyleProp, type ViewStyle } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
-import { clampPct, formatPct, formatResetLabel, formatRunsOutLabel } from "./format";
+import {
+  clampPct,
+  formatPct,
+  formatProviderUsageLabel,
+  formatResetLabel,
+  formatRunsOutLabel,
+} from "./format";
 import { deriveTone } from "./tone";
 import type { ProviderUsageTone, ProviderUsageWindow } from "./types";
 import { useRelativeTimeTick } from "./use-relative-time-tick";
@@ -48,7 +54,7 @@ export function ProviderUsageWindowBar({ window }: { window: ProviderUsageWindow
     <View style={styles.container}>
       <View style={styles.labelRow}>
         <Text style={styles.label} numberOfLines={1}>
-          {window.label}
+          {formatProviderUsageLabel(window.id, window.label)}
         </Text>
         <Text style={styles.value} numberOfLines={1} ellipsizeMode="tail">
           {usedPct != null

@@ -1976,6 +1976,12 @@ export const en = {
       used: "{{percentage}} used",
       remaining: "{{amount}} left",
     },
+    labels: {
+      session: "Session",
+      weekly: "Weekly",
+      codeReview: "Code review",
+      credits: "Credits",
+    },
     duration: {
       days: "{{value}}d",
       hours: "{{value}}h",

@@ -3,7 +3,7 @@ import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
 import { Text, View, type StyleProp, type ViewStyle } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
-import { clampPct, formatAmount, formatResetLabel } from "./format";
+import { clampPct, formatAmount, formatProviderUsageLabel, formatResetLabel } from "./format";
 import type { ProviderUsageBalance, ProviderUsageTone } from "./types";
 import { useRelativeTimeTick } from "./use-relative-time-tick";
 
@@ -67,7 +67,7 @@ export function ProviderUsageBalanceBar({ balance }: { balance: ProviderUsageBal
     <View style={styles.container}>
       <View style={styles.labelRow}>
         <Text style={styles.label} numberOfLines={1}>
-          {balance.label}
+          {formatProviderUsageLabel(balance.id, balance.label)}
         </Text>
         <Text
           style={styles.value}

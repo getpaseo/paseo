@@ -1951,6 +1951,12 @@ export const ar: TranslationResources = {
       used: "تم استخدام {{percentage}}",
       remaining: "متبقٍ {{amount}}",
     },
+    labels: {
+      session: "الجلسة",
+      weekly: "أسبوعي",
+      codeReview: "مراجعة التعليمات البرمجية",
+      credits: "الأرصدة",
+    },
     duration: {
       days: "{{value}} يوم",
       days_zero: "{{value}} يوم",
