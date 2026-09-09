@@ -24,7 +24,8 @@ vi.mock("../client-runtime", () => ({
     rpc: async () => undefined,
     openSurface: () => undefined,
     openPanel: () => undefined,
-    addComposerPill: () => () => undefined,
+    addComposerPill: () => ({ update() {}, remove() {} }),
+    addHeaderButton: () => ({ update() {}, remove() {} }),
   }),
 }));
 vi.mock("../icons", () => ({

@@ -197,6 +197,7 @@ import {
   WorkspaceHeaderMenuDesktop,
   WorkspaceHeaderMenuMobile,
 } from "@/screens/workspace/workspace-header-menu";
+import { PluginHeaderButtons } from "@/plugins";
 import {
   createWorkspaceFileTabTarget,
   normalizeWorkspaceFileLocation,
@@ -3757,6 +3758,7 @@ function WorkspaceScreenContent({
   const headerRight = useMemo(
     () => (
       <View style={styles.headerRight}>
+        <PluginHeaderButtons serverId={normalizedServerId} workspaceId={normalizedWorkspaceId} />
         {!isMobile && workspaceDescriptor && workspaceDescriptor.scripts.length > 0 ? (
           <WorkspaceScriptsButton
             serverId={normalizedServerId}
@@ -4179,7 +4181,7 @@ const styles = StyleSheet.create((theme) => ({
       md: "row",
     },
     alignItems: {
-      xs: "flex-start",
+      xs: "stretch",
       md: "center",
     },
     justifyContent: "flex-start",

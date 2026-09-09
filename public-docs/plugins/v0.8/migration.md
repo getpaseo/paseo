@@ -77,6 +77,7 @@ Use this table as the complete registration checklist.
 | `plugin.addClientSlashCommand(command)` in the old root entry                                 | `client.addSlashCommand(command)` in `index.client.tsx`                                                      |
 | `plugin.addClientSide(fn)` in the old root entry                                              | Delete the wrapper and move the body of `fn` into the default client entry function                          |
 | `client.addComposerPill(pill)` inside the old client callback                                 | `client.addComposerPill(pill)` inside `index.client.tsx` or an imported `client/` function                   |
+| New header contribution                                                                       | `client.addHeaderButton({ id, workspaceId, button })`                                                        |
 | `plugin.addAttachmentSource(source)` in the old root entry                                    | `client.addAttachmentSource(source)` in `index.client.tsx`                                                   |
 | New settings screen contribution                                                              | `client.addSettingsScreen(screen)` in `index.client.tsx`; see [settings screens](reference#settings-screens) |
 | `plugin.addTheme(theme)` in the old root entry                                                | `client.addTheme(theme)` in `index.client.tsx`                                                               |
@@ -86,8 +87,42 @@ Use this table as the complete registration checklist.
 | `ZodOutput<typeof contract.input>` handler parameter types                                    | `RpcInput<typeof contract>` from `@getpaseo/plugin`; `RpcOutput` for return types                            |
 
 Import `PluginClientContext` from `@getpaseo/plugin/client` and `PluginServerContext` from
-`@getpaseo/plugin/server`. Remove imports of the old context type. Every client `add*` now returns an idempotent removal function. Preserve any remover the plugin calls before teardown; Paseo removes outstanding
+`@getpaseo/plugin/server`. Remove imports of the old context type. Client registrations return idempotent removal functions, except header buttons and composer pills, which return `{ update, remove }` handles. Preserve any remover the plugin calls before teardown; Paseo removes outstanding
 registrations after the entry cleanup runs.
+
+### Composer pills
+
+Update the plugin project's `@getpaseo/plugin` dependency, then run `npm run typecheck`.
+The old contribution is missing the required `button` field, `PluginComposerPillProps` is no longer
+exported, and calling the new registration as a function is a TypeScript error. A project pinned
+to the old SDK still checks against the old contract; installing or reloading a plugin does not
+run TypeScript's type checker.
+
+Replace the pill's `Component` with `button.icon` and `button.label`, move `title` into `button`,
+and move `onPress` into `button.behavior`. Cleanup changes from calling the returned function to
+calling its `.remove()` method.
+
+```tsx
+const pill = client.addComposerPill({
+  id: "review",
+  workspaceId,
+  agentId,
+  button: {
+    title: "Open review",
+    icon: "Scan",
+    label: "Review",
+    behavior: { kind: "action", onPress: openReview },
+  },
+});
+
+pill.update({ label: "Review · 3", visible: true });
+// Client entry cleanup:
+pill.remove();
+```
+
+Move dynamic text from the former component into updates from your model or SDK subscription.
+Custom icon components may still use hooks. Composer pills always show icon and label and never
+show chevrons. See [buttons](./reference.md#button-descriptor) for menus, popovers, and visibility.
 
 ## 4. Separate imports
 

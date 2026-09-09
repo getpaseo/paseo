@@ -1,7 +1,7 @@
 # Plugins
 
 Local plugins contribute daemon RPCs, native app surfaces, workspace panels, Command Center items,
-client slash commands, timeline items, composer pills, app themes, composer attachment sources, and settings screens.
+client slash commands, timeline items, header buttons, composer pills, app themes, composer attachment sources, and settings screens.
 Paseo executes `index.server.ts` in a subprocess and `index.client.tsx` in every connected app.
 
 > **Trust every plugin you add.** `paseo plugin add` and `paseo plugin install` mean “I trust this codebase.” Plugins are unsandboxed: server code and Git preparation commands run with the daemon user's access on the daemon host, and client contributions run inside Paseo. The repository's dependencies and future updates are part of that trust decision. With `--host`, preparation runs on that remote daemon host.
@@ -344,48 +344,16 @@ external `href` or `xlink:href` references are rejected. Fragment references suc
 allowed. Paseo reads and sanitizes the file when the plugin starts; the string is never an inline
 SVG or URL.
 
-## Contribute composer pills
+## Contribute buttons
 
-Add and remove targeted pills from the client entry lifecycle. `index.client.tsx` runs once per
-plugin installation in each connected app and never runs in the daemon subprocess. It can subscribe
-to the client API, call plugin RPCs, and own arbitrary client state without mounting a panel or
-surface.
+Header buttons and composer pills share the client-only descriptor and registration lifecycle in
+`packages/app/src/plugins/buttons/`. The [public button reference](../public-docs/plugins/v0.8/reference.md#header-buttons)
+owns the author API and placement rules. Keep presentation policy in this module so another
+placement can reuse behavior without copying registration or action state.
 
-```tsx
-export function contributeClient(client: PluginClientContext) {
-  const pills = new Map<string, () => void>();
-  const unsubscribe = client.paseo.agents.subscribe((update) => {
-    if (update.kind !== "upsert" || !update.agent.workspaceId) return;
-    const { id: agentId, workspaceId } = update.agent;
-    pills.get(agentId)?.();
-    pills.set(
-      agentId,
-      client.addComposerPill({
-        id: "review",
-        title: "Open review",
-        workspaceId,
-        agentId,
-        Component: ReviewPill,
-        async onPress() {
-          await client.rpc(refreshReview, { agentId });
-          client.openPanel("review", { workspaceId, agentId });
-        },
-      }),
-    );
-  });
-  return () => {
-    unsubscribe();
-    for (const remove of pills.values()) remove();
-  };
-}
-```
-
-Call `contributeClient(client)` from `index.client.tsx`, or move its body into that entry.
-`addComposerPill` returns an idempotent removal function. A pill appears only in the
-matching workspace and agent track bar alongside Tasks and Subagents. Paseo owns the pressable,
-shared chrome, pending state, error reporting, and placement. The component owns its icon and text;
-the callback is client code by construction. Removing the pill, reloading the plugin, disconnecting
-the host, or unloading the app tears down the contribution.
+Native sheets teleport their children. Button surfaces rebuild the installation's SDK, state,
+query, and toast providers inside the surface content, including overflow pages from different
+plugins. Providers only around the trigger do not reach those bodies.
 
 ## Contribute timeline items
 
