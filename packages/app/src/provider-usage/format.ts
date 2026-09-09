@@ -3,6 +3,7 @@ import type { ProviderUsageBalanceUnit } from "./types";
 
 const providerUsageLabelKeys = {
   session: "providerUsage.labels.session",
+  five_hour: "providerUsage.labels.session",
   weekly: "providerUsage.labels.weekly",
   code_review: "providerUsage.labels.codeReview",
   credits: "providerUsage.labels.credits",

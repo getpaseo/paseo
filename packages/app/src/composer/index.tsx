@@ -2034,13 +2034,13 @@ function ComposerContentImpl({
     () => resolveContextWindowPlacement(contextWindowMeter, hasAgent, isCompactLayout),
     [contextWindowMeter, hasAgent, isCompactLayout],
   );
-  const shouldReserveCompactContextWindowSlot = shouldRenderCompactContextWindowSlot(
+  const shouldReserveCompactContextWindowSlot = shouldRenderCompactContextWindowSlot({
     isCompactLayout,
     hasAgent,
-    contextWindowMeter !== null,
-    contextWindowAgentKey,
-    reservedCompactContextWindowAgentKey,
-  );
+    hasMeter: contextWindowMeter !== null,
+    activeAgentKey: contextWindowAgentKey,
+    reservedAgentKey: reservedCompactContextWindowAgentKey,
+  });
 
   useEffect(() => {
     if (!isCompactLayout || !hasAgent || contextWindowMeter === null) return;
