@@ -43,7 +43,7 @@ interface ChangelogSheetProps {
 export function ChangelogSheet({ visible, onClose }: ChangelogSheetProps) {
   const { t } = useTranslation();
   const { state, reload } = useChangelog(visible);
-  const { count, showMore } = useRevealedReleases(visible);
+  const { count, showMore } = useRevealedReleases(visible && state.status === "ready");
 
   const handleOpenWebsite = useCallback(() => {
     void openExternalUrl(WEBSITE_CHANGELOG_URL);
