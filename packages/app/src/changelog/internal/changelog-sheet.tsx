@@ -17,7 +17,7 @@ import { StatusBadge } from "@/components/ui/status-badge";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
 import { resolveAppVersion } from "@/utils/app-version";
 import { openExternalUrl } from "@/utils/open-external-url";
-import { useChangelog } from "./changelog-source";
+import { useChangelog, type ChangelogState } from "./changelog-source";
 import { useRevealedReleases } from "./use-revealed-releases";
 import {
   formatChangelogDate,
@@ -90,7 +90,7 @@ export function ChangelogSheet({ visible, onClose }: ChangelogSheetProps) {
 const SNAP_POINTS = ["85%", "95%"];
 
 interface ChangelogBodyProps {
-  state: ReturnType<typeof useChangelog>["state"];
+  state: ChangelogState;
   shownReleases: number;
   onShowMore: () => void;
   onRetry: () => void;

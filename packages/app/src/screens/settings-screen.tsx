@@ -627,7 +627,7 @@ function WhatsNewRow() {
 
   return (
     <Pressable
-      style={whatsNewRowStyle}
+      style={[settingsStyles.row, settingsStyles.rowBorder]}
       onPress={openChangelog}
       accessibilityRole="button"
       testID="settings-whats-new"
@@ -647,8 +647,6 @@ function WhatsNewRow() {
     </Pressable>
   );
 }
-
-const whatsNewRowStyle = [settingsStyles.row, settingsStyles.rowBorder];
 
 function normalizeVersion(version: string | null | undefined): string | null {
   const trimmed = version?.trim();
