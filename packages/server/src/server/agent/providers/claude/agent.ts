@@ -317,6 +317,7 @@ const CLAUDE_CAPABILITIES: AgentCapabilityFlags = {
   supportsRewindConversation: true,
   supportsRewindFiles: true,
   supportsRewindBoth: true,
+  supportsStopProviderSubagent: true,
 };
 
 const DEFAULT_MODES: AgentMode[] = [
@@ -517,6 +518,13 @@ interface ClaudeOptionsLogSummary {
 }
 
 const MAX_RECENT_STDERR_CHARS = 4000;
+/**
+ * How long to wait for a `stop_task` control request to be acknowledged.
+ *
+ * Longer than the 3 s used for teardown operations: this one is user-initiated and its failure is
+ * reported back to that user, so a slow but successful stop should not be shown as a timeout.
+ */
+const STOP_TASK_TIMEOUT_MS = 10_000;
 const STDERR_FLUSH_WAIT_MS = 150;
 const STDERR_FLUSH_POLL_INTERVAL_MS = 10;
 
@@ -2367,6 +2375,45 @@ class ClaudeAgentSession implements AgentSession {
     await this.interruptActiveTurn();
   }
 
+  /**
+   * Stop one running background subagent, leaving the parent turn and its siblings alone.
+   *
+   * The counterpart of `perTaskStopAffordance`: because Paseo declares that flag, `interrupt()`
+   * no longer reaches background children, and this is the only way to stop one.
+   */
+  async stopProviderSubagent(subagentId: string): Promise<boolean> {
+    const taskId = this.taskProtocolSource.runningTaskId(subagentId);
+    if (!taskId) return false;
+    const activeQuery = this.query;
+    if (!activeQuery || typeof activeQuery.stopTask !== "function") {
+      this.logger.trace(
+        { agentId: this.agentId, provider: "claude", subagentId },
+        "provider.claude.stop_subagent.no_query",
+      );
+      return false;
+    }
+    // NOT awaitWithTimeout: that helper swallows both rejection and timeout and resolves, which
+    // would report a stop the provider never accepted. A failure has to reach the caller.
+    try {
+      await withTimeout(activeQuery.stopTask(taskId), STOP_TASK_TIMEOUT_MS, "timeout");
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      this.logger.warn(
+        { err: error, agentId: this.agentId, provider: "claude", subagentId, taskId },
+        "provider.claude.stop_subagent.failed",
+      );
+      // A timeout is not a refusal: the control request may still land, and the subagent's own
+      // terminal status is what settles it. Say so rather than claiming either outcome.
+      throw new Error(
+        reason === "timeout"
+          ? `Timed out asking Claude to stop this subagent after ${STOP_TASK_TIMEOUT_MS} ms; it may still stop.`
+          : `Claude refused to stop this subagent: ${reason}`,
+        { cause: error },
+      );
+    }
+    return true;
+  }
+
   async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
     if (
       !this.historyPending ||
@@ -3308,6 +3355,12 @@ class ClaudeAgentSession implements AgentSession {
       ...settingsOptions,
       // Provider subagent panes render the child's nested transcript.
       forwardSubagentText: true,
+      // Paseo renders a per-subagent stop control (agent.provider_subagents.stop.request), so
+      // the CLI may spare running background subagents when a turn is interrupted. The CLI fails
+      // CLOSED on absence: without this, pressing Stop kills every background subagent, because a
+      // spared one would be unstoppable short of ending the session. Do not drop this flag
+      // without also dropping the stop RPC, and vice versa.
+      perTaskStopAffordance: true,
       hooks: this.buildSubagentEffortHooks(),
       ...(this.persistSession === undefined ? {} : { persistSession: this.persistSession }),
       env: sdkEnv,

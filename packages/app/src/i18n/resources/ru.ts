@@ -1802,6 +1802,10 @@ export const ru: TranslationResources = {
     archiveTooltip: "Архивировать субагента",
     archiveFinishedAction: "Архивировать завершенные субагенты",
     archiveFinishedRetry: "Повторить ({{failed}}/{{total}})",
+    stopAction: "Остановить субагента",
+    stopTooltip: "Остановить этого субагента, а не родительского",
+    stopFailed: "Не удалось остановить субагента: {{reason}}",
+    stopAlreadyFinished: "Этот субагент уже завершился.",
   },
   panels: {
     draft: {

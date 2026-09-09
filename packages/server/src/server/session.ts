@@ -2334,6 +2334,8 @@ export class Session {
         return this.handleProviderSubagentListRequest(msg);
       case "agent.provider_subagents.timeline.get.request":
         return this.handleProviderSubagentTimelineRequest(msg, source);
+      case "agent.provider_subagents.stop.request":
+        return this.handleProviderSubagentStopRequest(msg);
       case "session.events.set_subscription.request": {
         this.eventSubscriptions.set(
           source ?? this.defaultEventSubscriptionSource,
@@ -7428,6 +7430,43 @@ export class Session {
           requestId: msg.requestId,
           parentAgentId: msg.parentAgentId,
           subagents: [],
+          error: error instanceof Error ? error.message : String(error),
+        },
+      });
+    }
+  }
+
+  private async handleProviderSubagentStopRequest(
+    msg: Extract<SessionInboundMessage, { type: "agent.provider_subagents.stop.request" }>,
+  ): Promise<void> {
+    try {
+      await ensureUnarchivedAgentLoaded(msg.parentAgentId, {
+        agentManager: this.agentManager,
+        agentStorage: this.agentStorage,
+        logger: this.sessionLogger,
+      });
+      const stopped = await this.agentManager.stopProviderSubagent(
+        msg.parentAgentId,
+        msg.subagentId,
+      );
+      this.emit({
+        type: "agent.provider_subagents.stop.response",
+        payload: {
+          requestId: msg.requestId,
+          parentAgentId: msg.parentAgentId,
+          subagentId: msg.subagentId,
+          stopped,
+          error: null,
+        },
+      });
+    } catch (error) {
+      this.emit({
+        type: "agent.provider_subagents.stop.response",
+        payload: {
+          requestId: msg.requestId,
+          parentAgentId: msg.parentAgentId,
+          subagentId: msg.subagentId,
+          stopped: false,
           error: error instanceof Error ? error.message : String(error),
         },
       });

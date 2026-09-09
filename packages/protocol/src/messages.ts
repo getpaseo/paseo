@@ -422,6 +422,8 @@ const AgentCapabilityFlagsSchema: z.ZodType<AgentCapabilityFlags> = z
     supportsRewindFiles: z.boolean().optional().default(false),
     // COMPAT(rewind): added in v0.1.X, drop when floor >= v0.1.X.
     supportsRewindBoth: z.boolean().optional().default(false),
+    // COMPAT(providerSubagentStop): added in v0.8.0, remove gate after 2027-03-09.
+    supportsStopProviderSubagent: z.boolean().optional().default(false),
   })
   .catchall(z.boolean());
 
@@ -1834,6 +1836,21 @@ export const ProviderSubagentTimelineRequestMessageSchema = z.object({
   limit: z.number().int().nonnegative().optional(),
 });
 
+/**
+ * Stop one running provider subagent.
+ *
+ * This is the consumer side of Claude's `perTaskStopAffordance` bargain: the CLI only spares
+ * background subagents from a turn interrupt while a client can stop them individually, and it
+ * fails closed without one. Removing this RPC therefore un-spares them — see
+ * `docs/agent-lifecycle.md`.
+ */
+export const ProviderSubagentStopRequestMessageSchema = z.object({
+  type: z.literal("agent.provider_subagents.stop.request"),
+  parentAgentId: z.string(),
+  subagentId: z.string(),
+  requestId: z.string(),
+});
+
 export const SetAgentTimelineSubscriptionRequestMessageSchema = z.object({
   type: z.literal("agent.timeline.set_subscription.request"),
   agentIds: z.array(z.string()),
@@ -3154,6 +3171,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   AgentTimelineListPromptsRequestMessageSchema,
   ProviderSubagentListRequestMessageSchema,
   ProviderSubagentTimelineRequestMessageSchema,
+  ProviderSubagentStopRequestMessageSchema,
   SetAgentTimelineSubscriptionRequestMessageSchema,
   AgentForkContextRequestMessageSchema,
   SetAgentModeRequestMessageSchema,
@@ -3534,6 +3552,8 @@ export const ServerInfoStatusPayloadSchema = z
         providerSubagents: z.boolean().optional(),
         // COMPAT(providerSubagentNesting): added in v0.7, remove gate after 2027-03-04.
         providerSubagentNesting: z.boolean().optional(),
+        // COMPAT(providerSubagentStop): added in v0.8.0, remove gate after 2027-03-09.
+        providerSubagentStop: z.boolean().optional(),
         // COMPAT(workspacePinning): added in v0.1.107, remove gate after 2027-01-12.
         workspacePinning: z.boolean().optional(),
         // COMPAT(workspaceMarkUnread): added in v0.5.0, remove after 2027-08-20.
@@ -4564,6 +4584,19 @@ export const ProviderSubagentTimelineResponseMessageSchema = z.object({
         seq: z.number().int().nonnegative(),
       }),
     ),
+    error: z.string().nullable(),
+  }),
+});
+
+export const ProviderSubagentStopResponseMessageSchema = z.object({
+  type: z.literal("agent.provider_subagents.stop.response"),
+  payload: z.object({
+    requestId: z.string(),
+    parentAgentId: z.string(),
+    subagentId: z.string(),
+    // True once the provider accepted the stop. The subagent's terminal status still arrives
+    // over `agent.provider_subagents.update`, so this is an acknowledgement, not the outcome.
+    stopped: z.boolean(),
     error: z.string().nullable(),
   }),
 });
@@ -6538,6 +6571,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   AgentTimelineListPromptsResponseMessageSchema,
   ProviderSubagentListResponseMessageSchema,
   ProviderSubagentTimelineResponseMessageSchema,
+  ProviderSubagentStopResponseMessageSchema,
   ProviderSubagentUpdateMessageSchema,
   SetAgentTimelineSubscriptionResponseMessageSchema,
   AgentAttentionRequiredMessageSchema,

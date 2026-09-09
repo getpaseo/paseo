@@ -1804,6 +1804,10 @@ export const ptBR: TranslationResources = {
     archiveTooltip: "Arquivar subagente",
     archiveFinishedAction: "Arquivar subagentes concluídos",
     archiveFinishedRetry: "Tentar novamente ({{failed}}/{{total}})",
+    stopAction: "Parar subagente",
+    stopTooltip: "Pare este subagente, não o agente principal",
+    stopFailed: "Não foi possível parar o subagente: {{reason}}",
+    stopAlreadyFinished: "Esse subagente já havia terminado.",
   },
   panels: {
     draft: {

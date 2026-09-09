@@ -1822,6 +1822,10 @@ export const fr: TranslationResources = {
     archiveTooltip: "Sous-agent d'archivage",
     archiveFinishedAction: "Archiver les sous-agents terminés",
     archiveFinishedRetry: "Réessayer ({{failed}}/{{total}})",
+    stopAction: "Arrêter le sous-agent",
+    stopTooltip: "Arrêter ce sous-agent, pas son parent",
+    stopFailed: "Impossible d'arrêter le sous-agent : {{reason}}",
+    stopAlreadyFinished: "Ce sous-agent était déjà terminé.",
   },
   panels: {
     draft: {

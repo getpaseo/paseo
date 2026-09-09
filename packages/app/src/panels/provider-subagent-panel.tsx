@@ -1,9 +1,15 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { Square } from "lucide-react-native";
 import { Text, View } from "react-native";
-import { StyleSheet } from "react-native-unistyles";
+import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import invariant from "tiny-invariant";
 import { useShallow } from "zustand/react/shallow";
+import type { AgentCapabilityFlags } from "@getpaseo/protocol/agent-types";
+import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
+import { useToast } from "@/contexts/toast-context";
 import { AgentStreamView } from "@/agent-stream/view";
+import { LoadingSpinner } from "@/components/ui/loading-spinner";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { getProviderIcon } from "@/components/provider-icons";
 import {
   resolveComposerTrackControlClearance,
@@ -29,6 +35,14 @@ import type { StreamItem } from "@/types/stream";
 import { deriveSidebarStateBucket } from "@/utils/sidebar-agent-state";
 import { TIMELINE_FETCH_PAGE_SIZE } from "@/timeline/timeline-fetch-policy";
 import type { TurnPresentation } from "@/timeline/turn-liveness";
+
+const ThemedSquare = withUnistyles(Square, (theme) => ({
+  color: theme.colors.foregroundMuted,
+  fill: theme.colors.foregroundMuted,
+}));
+const ThemedLoadingSpinner = withUnistyles(LoadingSpinner, (theme) => ({
+  color: theme.colors.foregroundMuted,
+}));
 
 const EMPTY_PERMISSIONS = new Map<string, PendingPermission>();
 const EMPTY_STREAM_ITEMS: StreamItem[] = [];
@@ -62,6 +76,116 @@ function ProviderSubagentChildTrack({
         onArchiveSubagent={NOOP_SUBAGENT}
       />
     </ComposerTrackBar>
+  );
+}
+
+/**
+ * Stop one running subagent, leaving the parent turn alone.
+ *
+ * This control is the consumer half of Claude's `perTaskStopAffordance` bargain: because Paseo
+ * renders it, an interrupt on the parent spares its background subagents instead of killing them.
+ * Removing it without also dropping the declaration in the Claude provider silently restores the
+ * old behavior, where Stop reaped every background child. See docs/agent-lifecycle.md.
+ */
+/**
+ * Whether a per-subagent stop can be offered at all: the daemon must serve the RPC and the
+ * parent's provider must implement it. Several providers announce subagents and only some can stop
+ * one, so gating on "a subagent is running" alone renders a control that cannot work.
+ *
+ * COMPAT(providerSubagentStop): added in v0.8.0, remove gate after 2027-03-09.
+ */
+function canStopProviderSubagent(
+  serverInfo: { features?: { providerSubagentStop?: boolean } } | null,
+  capabilities: AgentCapabilityFlags | undefined,
+): boolean {
+  if (serverInfo?.features?.providerSubagentStop !== true) return false;
+  return capabilities?.supportsStopProviderSubagent === true;
+}
+
+function ProviderSubagentStopControl({
+  client,
+  parentAgentId,
+  subagentId,
+}: {
+  client: DaemonClient | null;
+  parentAgentId: string;
+  subagentId: string;
+}) {
+  const { t } = useTranslation();
+  const toast = useToast();
+  const [isStopping, setIsStopping] = useState(false);
+  const handleStop = useCallback(() => {
+    if (!client || isStopping) return;
+    setIsStopping(true);
+    client
+      .stopProviderSubagent(parentAgentId, subagentId)
+      .then((stopped) => {
+        // `false` is not a failure: the provider could not address this child any more, which in
+        // practice means it settled between the render and the press. Say that, rather than
+        // leaving a spinner that stops for no visible reason.
+        if (!stopped) toast.show(t("subagents.stopAlreadyFinished"));
+        return undefined;
+      })
+      .catch((error: unknown) => {
+        // A rejection means the provider refused, timed out, or the request never arrived. The
+        // subagent is still running, so silence here would be a lie.
+        toast.error(
+          t("subagents.stopFailed", {
+            reason: error instanceof Error ? error.message : String(error),
+          }),
+        );
+      })
+      .finally(() => setIsStopping(false));
+  }, [client, isStopping, parentAgentId, subagentId, t, toast]);
+  return (
+    <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile={false}>
+      <TooltipTrigger
+        onPress={handleStop}
+        disabled={!client || isStopping}
+        accessibilityLabel={t("subagents.stopAction")}
+        accessibilityRole="button"
+        style={styles.stopButton}
+        testID="provider-subagent-pane-stop"
+      >
+        {isStopping ? <ThemedLoadingSpinner size="small" /> : <ThemedSquare size={10} />}
+      </TooltipTrigger>
+      <TooltipContent side="top" align="center" offset={8}>
+        <Text style={styles.tooltipText}>{t("subagents.stopTooltip")}</Text>
+      </TooltipContent>
+    </Tooltip>
+  );
+}
+
+function ProviderSubagentPaneHeader({
+  subtitle,
+  status,
+  canStop,
+  client,
+  parentAgentId,
+  subagentId,
+}: {
+  canStop: boolean;
+  subtitle: string | undefined;
+  status: string | undefined;
+  client: DaemonClient | null;
+  parentAgentId: string;
+  subagentId: string;
+}) {
+  const isRunning = status === "running" && canStop;
+  if (!subtitle && !isRunning) return null;
+  return (
+    <View style={styles.subtitleHeader}>
+      <Text style={styles.subtitleText} numberOfLines={1} testID="provider-subagent-pane-subtitle">
+        {subtitle ?? ""}
+      </Text>
+      {isRunning ? (
+        <ProviderSubagentStopControl
+          client={client}
+          parentAgentId={parentAgentId}
+          subagentId={subagentId}
+        />
+      ) : null}
+    </View>
   );
 }
 
@@ -128,6 +252,7 @@ function ProviderSubagentPanel() {
   const serverInfo = useSessionStore((state) => state.sessions[serverId]?.serverInfo ?? null);
   // COMPAT(providerSubagents): added in v0.2.11, remove after 2027-01-12.
   const supported = serverInfo?.features?.providerSubagents === true;
+  const canStopSubagent = canStopProviderSubagent(serverInfo, parent?.capabilities);
   const [isLoadingOlder, setIsLoadingOlder] = useState(false);
   const isCompact = useIsCompactFormFactor();
   const childRows = useSubagentsForParent({
@@ -237,17 +362,14 @@ function ProviderSubagentPanel() {
 
   return (
     <View style={styles.container} testID="provider-subagent-panel">
-      {subtitle ? (
-        <View style={styles.subtitleHeader}>
-          <Text
-            style={styles.subtitleText}
-            numberOfLines={1}
-            testID="provider-subagent-pane-subtitle"
-          >
-            {subtitle}
-          </Text>
-        </View>
-      ) : null}
+      <ProviderSubagentPaneHeader
+        subtitle={subtitle}
+        status={descriptor?.status}
+        canStop={canStopSubagent}
+        client={client}
+        parentAgentId={target.parentAgentId}
+        subagentId={target.subagentId}
+      />
       <AgentStreamView
         agentId={streamId}
         serverId={serverId}
@@ -275,13 +397,30 @@ function ProviderSubagentPanel() {
 const styles = StyleSheet.create((theme) => ({
   container: { flex: 1, minHeight: 0 },
   subtitleHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
     paddingHorizontal: theme.spacing[3],
     paddingVertical: theme.spacing[1],
     borderBottomWidth: theme.borderWidth[1],
     borderBottomColor: theme.colors.border,
   },
   subtitleText: {
+    flex: 1,
     color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.sm,
+  },
+  stopButton: {
+    alignItems: "center",
+    justifyContent: "center",
+    width: 20,
+    height: 20,
+    borderRadius: theme.borderRadius.sm,
+    borderWidth: theme.borderWidth[1],
+    borderColor: theme.colors.border,
+  },
+  tooltipText: {
+    color: theme.colors.foreground,
     fontSize: theme.fontSize.sm,
   },
   unsupported: { flex: 1, alignItems: "center", justifyContent: "center", padding: 24 },
