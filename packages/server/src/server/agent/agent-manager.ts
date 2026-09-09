@@ -1558,8 +1558,10 @@ export class AgentManager {
   // replacement first, then closes the previous runtime and re-registers under
   // the same agent id while preserving labels, timeline, and durable identity.
   // Resume-first is required for forced-cancel reconcile: if no replacement can
-  // be built, the existing session stays registered. Reload stays close-first
-  // because a persisted thread can have only one writer.
+  // be built, the existing session stays registered. A failed persist or close
+  // after that resume also keeps the existing session registered and closes the
+  // unused replacement. Reload stays close-first because a persisted thread can
+  // have only one writer.
   // Callers are responsible for making sure no run is in flight.
   private async swapRegisteredSessionRuntime(
     agentId: string,
@@ -1610,21 +1612,29 @@ export class AgentManager {
     try {
       this.assertAcceptingAgentRegistrations();
 
-      this.paseoToolPolicies.set(agentId, paseoToolPolicy);
-      this.cancelRunningProviderSubagents(agentId);
-      const closedExisting = this.prepareAgentForClosure(existing, "agent reloaded");
+      // Persist a closed snapshot before touching the live runtime. If this
+      // fails, the existing session stays registered and the replacement is
+      // closed below. Close the suspect runtime next while it is still the
+      // registered session: a failed close must not register a second writer.
+      await this.persistSnapshot(this.asClosedAgentSnapshot(existing));
       try {
-        await this.persistSnapshot(closedExisting);
-      } finally {
+        await this.closeReloadedSession(existing.session, agentId);
+      } catch (error) {
         try {
-          await this.closeReloadedSession(existing.session, agentId);
-        } catch (error) {
+          await this.persistSnapshot(existing);
+        } catch (revertError) {
           this.logger.warn(
-            { err: error, agentId },
-            "Failed to close previous session during forced-cancel reconcile",
+            { err: revertError, agentId },
+            "Failed to revert closed snapshot after previous session close failed",
           );
         }
+        throw error;
       }
+      await this.drainSessionEvents(agentId);
+
+      this.paseoToolPolicies.set(agentId, paseoToolPolicy);
+      this.cancelRunningProviderSubagents(agentId);
+      this.prepareAgentForClosure(existing, "agent reloaded");
 
       if (rehydrateFromDisk) {
         this.timelineStore.delete(agentId);
@@ -2515,7 +2525,26 @@ export class AgentManager {
       throw new Error(`Agent ${agentId} already has an active run`);
     }
 
-    const agent = existingAgent;
+    if (this.foregroundMutationTails.has(agentId) || this.lifecycleMutationTails.has(agentId)) {
+      return async function* streamAfterMutations(this: AgentManager) {
+        await this.foregroundMutationTails.get(agentId);
+        await this.lifecycleMutationTails.get(agentId);
+        yield* this.admitForegroundAgentStream(agentId, prompt, options);
+      }.call(this);
+    }
+
+    return this.admitForegroundAgentStream(agentId, prompt, options);
+  }
+
+  private admitForegroundAgentStream(
+    agentId: string,
+    prompt: AgentPromptInput,
+    options?: AgentRunOptions,
+  ): AsyncGenerator<AgentStreamEvent> {
+    const agent = this.requireSessionAgent(agentId);
+    if (agent.activeForegroundTurnId || this.runs.hasRun(agentId)) {
+      throw new Error(`Agent ${agentId} already has an active run`);
+    }
     const isReplacement = agent.pendingReplacement;
     agent.lastError = undefined;
 
@@ -3713,6 +3742,24 @@ export class AgentManager {
     };
   }
 
+  private asClosedAgentSnapshot(agent: LiveManagedAgent): ManagedAgentClosed {
+    return {
+      ...agent,
+      lifecycle: "closed",
+      session: null,
+      activeForegroundTurnId: null,
+      activeTurnId: null,
+      activeTurnStartedAt: null,
+      pendingPermissions: new Map(),
+      bufferedPermissionResolutions: new Map(),
+      inFlightPermissionResponses: new Set(),
+      pendingReplacement: false,
+      foregroundTurnWaiters: new Set(),
+      finalizedForegroundTurnIds: new Set(),
+      unsubscribeSession: null,
+    };
+  }
+
   private prepareAgentForClosure(
     agent: LiveManagedAgent,
     cancelReason: string,
@@ -3731,21 +3778,7 @@ export class AgentManager {
       turnId,
     }));
     this.runs.clearAgentRun(agent.id);
-    return {
-      ...agent,
-      lifecycle: "closed",
-      session: null,
-      activeForegroundTurnId: null,
-      activeTurnId: null,
-      activeTurnStartedAt: null,
-      pendingPermissions: new Map(),
-      bufferedPermissionResolutions: new Map(),
-      inFlightPermissionResponses: new Set(),
-      pendingReplacement: false,
-      foregroundTurnWaiters: new Set(),
-      finalizedForegroundTurnIds: new Set(),
-      unsubscribeSession: null,
-    };
+    return this.asClosedAgentSnapshot(agent);
   }
 
   private discardRetainedAgentState(agentId: string): void {

@@ -52,9 +52,10 @@ refusing every later `startTurn`. The manager therefore swaps the session in pla
 settlement — resume a replacement from the persistence handle, close the suspect runtime, and
 re-register under the same agent id with timeline and identity intact. Reload itself stays
 close-first because a persisted thread can have only one writer. The provider-side turn is never
-cleared without replacing the runtime that owns it. If no replacement can be built, the existing
-session stays registered: when the provider was actually idle it still works, and when it was wedged
-the agent is no worse off than before the swap attempt.
+cleared without replacing the runtime that owns it. If the replacement cannot be completed safely —
+resume, persist, or close — the existing session stays registered: when the provider was actually
+idle it still works, and when it was wedged the agent is no worse off than before the swap attempt.
+Prompt admission waits for that swap; it does not attach a follow-up to the suspect runtime.
 
 If interruption is rejected or times out, the agent
 keeps its active foreground turn and replacement, reload, rewind, and Stop report the failure.

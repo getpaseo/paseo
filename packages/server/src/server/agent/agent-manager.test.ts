@@ -10414,6 +10414,244 @@ test("forced cancellation keeps the existing session when no replacement can be 
   expect(manager.getAgent(snapshot.id)?.activeForegroundTurnId).toBeNull();
 }, 10_000);
 
+test.each(["hang", "reject"] as const)(
+  "forced-cancel reconcile does not leave two provider runtimes when the old close fails: %s",
+  async (failure) => {
+    const workdir = mkdtempSync(join(tmpdir(), "agent-manager-forced-cancel-close-fail-"));
+    const storagePath = join(workdir, "agents");
+    const storage = new AgentStorage(storagePath, logger);
+
+    class CloseFailingWedgedSession extends WedgedForegroundSession {
+      override async close(): Promise<void> {
+        if (failure === "reject") throw new Error("close rejected");
+        await new Promise(() => {});
+      }
+    }
+
+    class CloseFailingWedgedClient extends TestAgentClient {
+      readonly wedgedSessions: CloseFailingWedgedSession[] = [];
+      readonly resumedSessions: CloseRecordingTestAgentSession[] = [];
+
+      override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+        const session = new CloseFailingWedgedSession(config);
+        this.wedgedSessions.push(session);
+        return session;
+      }
+
+      override async resumeSession(
+        _handle: AgentPersistenceHandle,
+        config?: Partial<AgentSessionConfig>,
+      ): Promise<AgentSession> {
+        const session = new CloseRecordingTestAgentSession({
+          provider: "codex",
+          cwd: config?.cwd ?? workdir,
+        });
+        this.resumedSessions.push(session);
+        return session;
+      }
+    }
+
+    const client = new CloseFailingWedgedClient();
+    const manager = new AgentManager({
+      clients: { codex: client },
+      registry: storage,
+      logger,
+      idFactory: () => "00000000-0000-4000-8000-000000000505",
+      rescueTimeouts: {
+        ...FAST_CANCEL_RESCUE_TIMEOUTS,
+        reloadSessionCloseMs: 10,
+      },
+    });
+
+    const snapshot = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    const firstRun = manager.streamAgent(snapshot.id, "hanging prompt");
+    const firstRunDrain = (async () => {
+      for await (const _event of firstRun) {
+        // Draining — ends when the cancellation force-settles the turn
+      }
+    })();
+    await manager.waitForAgentRunStart(snapshot.id);
+
+    const cancelResult = await manager.cancelAgentRun(snapshot.id);
+    expect(cancelResult.status).toBe("settled");
+    await firstRunDrain;
+
+    const live = manager.getAgent(snapshot.id);
+    const original = client.wedgedSessions[0];
+    const replacement = client.resumedSessions[0];
+    expect(client.resumedSessions).toHaveLength(1);
+    expect(original).toBeDefined();
+    expect(replacement).toBeDefined();
+    // A failed close must not create two authoritative runtimes. Keep the
+    // existing session registered and close the unused replacement.
+    expect(live?.session).toBe(original);
+    expect(live?.lifecycle).toBe("idle");
+    expect(replacement?.closed).toBe(true);
+    const record = await storage.get(snapshot.id);
+    expect(record?.lastStatus).toBe("idle");
+    expect(record?.archivedAt ?? null).toBeNull();
+  },
+  10_000,
+);
+
+test("forced-cancel reconcile serializes an immediate follow-up onto the replacement runtime", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-forced-cancel-followup-"));
+  const storagePath = join(workdir, "agents");
+  const storage = new AgentStorage(storagePath, logger);
+
+  class LatchedResumeWedgedClient extends WedgedForegroundClient {
+    readonly resumeStarted = deferred<void>();
+    readonly resumeAllowed = deferred<void>();
+    readonly resumedSessions: CloseRecordingTestAgentSession[] = [];
+
+    override async resumeSession(
+      _handle: AgentPersistenceHandle,
+      config?: Partial<AgentSessionConfig>,
+    ): Promise<AgentSession> {
+      this.resumeStarted.resolve();
+      await this.resumeAllowed.promise;
+      const session = new CloseRecordingTestAgentSession({
+        provider: "codex",
+        cwd: config?.cwd ?? workdir,
+      });
+      this.resumedSessions.push(session);
+      return session;
+    }
+  }
+
+  const client = new LatchedResumeWedgedClient();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: storage,
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000506",
+    rescueTimeouts: FAST_CANCEL_RESCUE_TIMEOUTS,
+  });
+
+  const snapshot = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+  const firstRun = manager.streamAgent(snapshot.id, "hanging prompt");
+  const firstRunDrain = (async () => {
+    for await (const _event of firstRun) {
+      // Draining — ends when the cancellation force-settles the turn
+    }
+  })();
+  await manager.waitForAgentRunStart(snapshot.id);
+
+  const cancelPromise = manager.cancelAgentRun(snapshot.id);
+  await client.resumeStarted.promise;
+
+  // Pause is after the no-run check and after swap is queued, at resume.
+  // An ordinary follow-up must wait for that swap rather than attaching to
+  // the still-registered wedged runtime or being cleared by it.
+  const followUpEvents: AgentStreamEvent[] = [];
+  let followUpError: unknown;
+  const followUp = manager.streamAgent(snapshot.id, "immediate follow-up");
+  const followUpDrain = (async () => {
+    try {
+      for await (const event of followUp) {
+        followUpEvents.push(event);
+      }
+    } catch (error) {
+      followUpError = error;
+    }
+  })();
+
+  client.resumeAllowed.resolve();
+  await expect(cancelPromise).resolves.toEqual({ status: "settled" });
+  await firstRunDrain;
+  await followUpDrain;
+
+  expect(followUpError).toBeUndefined();
+  expect(followUpEvents.some((event) => event.type === "turn_completed")).toBe(true);
+  expect(client.wedgedSessions[0]?.closed).toBe(true);
+  expect(client.wedgedSessions[0]?.startTurnCalls).toBe(1);
+  expect(manager.getAgent(snapshot.id)?.session).toBe(client.resumedSessions[0]);
+  expect(manager.getAgent(snapshot.id)?.lifecycle).toBe("idle");
+}, 10_000);
+
+test("forced-cancel reconcile keeps the existing session when closed-snapshot persistence fails", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-forced-cancel-persist-fail-"));
+  const storagePath = join(workdir, "agents");
+
+  class FailClosedPersistStorage extends AgentStorage {
+    failClosedSnapshots = false;
+
+    override async applySnapshot(
+      agent: ManagedAgent,
+      options?: { title?: string | null; internal?: boolean },
+    ): Promise<void> {
+      if (this.failClosedSnapshots && agent.lifecycle === "closed") {
+        throw new Error("simulated persist failure");
+      }
+      await super.applySnapshot(agent, options);
+    }
+  }
+
+  const storage = new FailClosedPersistStorage(storagePath, logger);
+
+  class PersistFailWedgedClient extends WedgedForegroundClient {
+    readonly resumedSessions: CloseRecordingTestAgentSession[] = [];
+
+    override async resumeSession(
+      _handle: AgentPersistenceHandle,
+      config?: Partial<AgentSessionConfig>,
+    ): Promise<AgentSession> {
+      const session = new CloseRecordingTestAgentSession({
+        provider: "codex",
+        cwd: config?.cwd ?? workdir,
+      });
+      this.resumedSessions.push(session);
+      return session;
+    }
+  }
+
+  const client = new PersistFailWedgedClient();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: storage,
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000507",
+    rescueTimeouts: FAST_CANCEL_RESCUE_TIMEOUTS,
+  });
+
+  const snapshot = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+  const firstRun = manager.streamAgent(snapshot.id, "hanging prompt");
+  const firstRunDrain = (async () => {
+    for await (const _event of firstRun) {
+      // Draining — ends when the cancellation force-settles the turn
+    }
+  })();
+  await manager.waitForAgentRunStart(snapshot.id);
+  const timelineBefore = manager.getTimeline(snapshot.id);
+
+  storage.failClosedSnapshots = true;
+  const cancelResult = await manager.cancelAgentRun(snapshot.id);
+  expect(cancelResult.status).toBe("settled");
+  await firstRunDrain;
+
+  const live = manager.getAgent(snapshot.id);
+  expect(client.resumedSessions).toHaveLength(1);
+  expect(client.resumedSessions[0]?.closed).toBe(true);
+  expect(client.wedgedSessions[0]?.closed).toBe(false);
+  expect(live?.session).toBe(client.wedgedSessions[0]);
+  expect(live?.lifecycle).toBe("idle");
+  expect(live?.id).toBe(snapshot.id);
+  expect(live?.cwd).toBe(workdir);
+  expect(live?.workspaceId).toBe(snapshot.workspaceId);
+  expect(manager.getTimeline(snapshot.id)).toEqual(timelineBefore);
+  await manager.flushForShutdown();
+  const record = await storage.get(snapshot.id);
+  expect(record?.lastStatus).toBe("idle");
+  expect(record?.archivedAt ?? null).toBeNull();
+  expect(record?.persistence).toEqual(snapshot.persistence);
+}, 10_000);
+
 test("a genuinely running foreground turn still rejects a concurrent prompt", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-concurrent-gate-"));
   const storagePath = join(workdir, "agents");
