@@ -12,6 +12,7 @@ import type { AgentStorage, StoredAgentRecord } from "../agent/agent-storage.js"
 import type { BoundCreateAgentCommand } from "../agent/create-agent/create.js";
 import type { CreatePaseoWorktreeWorkflowResult } from "../worktree-session.js";
 import { buildStoredAgentPayload } from "../agent/agent-projections.js";
+import { resolveCreateAgentTitles } from "../agent/create-agent-title.js";
 import { serializeAgentSnapshot, serializeAgentStreamEvent } from "../messages.js";
 import { daemonExecutionKey, type DaemonAgentOwner } from "../agent/agent-owner.js";
 
@@ -179,6 +180,7 @@ export class DaemonExecutions implements HubExecutionAgents {
     this.requireAuthority(authorityGeneration);
     requireHubMcpNamespace(input.mcpServers);
     requireToolPolicyServers(input.toolPolicy, input.mcpServers);
+    const { provisionalTitle } = resolveCreateAgentTitles({ initialPrompt: input.prompt });
 
     let createdWorktree: CreatePaseoWorktreeWorkflowResult | null = null;
     let createdAgentId: string | null = null;
@@ -187,7 +189,7 @@ export class DaemonExecutions implements HubExecutionAgents {
       result = await this.createAgentCommand({
         kind: "mcp",
         provider: input.model ? `${input.provider}/${input.model}` : input.provider,
-        title: input.prompt,
+        title: provisionalTitle ?? "Hub execution",
         initialPrompt: input.prompt,
         promptFailure: "throw",
         cwd: input.cwd,

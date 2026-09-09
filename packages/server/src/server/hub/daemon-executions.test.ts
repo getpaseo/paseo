@@ -1,4 +1,5 @@
 import { afterEach, expect, test } from "vitest";
+import { MAX_EXPLICIT_AGENT_TITLE_CHARS } from "@getpaseo/protocol/agent-title-limits";
 import { HubRelationshipHarness } from "./test-utils/relationship-harness.js";
 
 let relationship: HubRelationshipHarness | null = null;
@@ -25,6 +26,23 @@ test("sequential replay after reconstruction keeps one durable owned agent", asy
   expect(reconstructed.replay.agent.id).toBe(created.first.agentId);
   expect(reconstructed.replay.agent.status).toBe("closed");
   expect(reconstructed.durableAgentCount).toBe(1);
+});
+
+test("Hub creates an agent from a prompt beyond the explicit title limit", async () => {
+  const hub = await launchRelationship();
+  const prompt = "a".repeat(MAX_EXPLICIT_AGENT_TITLE_CHARS + 1);
+  hub.beginOwnedCreate("long-prompt-create", "long-prompt-execution", { prompt });
+
+  const response = await hub.ownedCreateResult("long-prompt-create");
+  const title = hub.latestProviderCreateConfig()?.title;
+
+  expect(response).toMatchObject({
+    type: "hub.execution.agent.create.response",
+    payload: { success: true, executionId: "long-prompt-execution" },
+  });
+  expect(title).toBe(prompt.slice(0, 60));
+  expect(title?.length).toBeLessThanOrEqual(MAX_EXPLICIT_AGENT_TITLE_CHARS);
+  expect(hub.providerPromptTexts()).toEqual([prompt]);
 });
 
 test("Hub MCP configuration reaches the provider alongside Paseo MCP without entering snapshots", async () => {
