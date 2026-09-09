@@ -103,32 +103,55 @@ export class PluginWorkspaceFileSystemHarness {
     const workspace = path.join(root, "workspace-anchor");
     const plugin = path.join(root, "plugin");
     const backingFile = path.join(root, "remote.txt");
-    await Promise.all([
-      writeFile(backingFile, "remote initial\n", "utf8"),
-      mkdir(workspace),
-      mkdir(plugin),
-    ]);
-    await writeFile(path.join(workspace, "LOCAL_ONLY.txt"), "must stay hidden\n", "utf8");
-    await writeFile(
-      path.join(plugin, "paseo-plugin.json"),
-      JSON.stringify({ id: PLUGIN_ID, requirements: pluginRequirements }),
-    );
-    await writeFile(path.join(plugin, "index.server.ts"), pluginSource({ workspace, backingFile }));
+    let client: Client | null = null;
+    let projectId: string | null = null;
+    let previousPluginsEnabled: boolean | null = null;
+    try {
+      await Promise.all([
+        writeFile(backingFile, "remote initial\n", "utf8"),
+        mkdir(workspace),
+        mkdir(plugin),
+      ]);
+      await writeFile(path.join(workspace, "LOCAL_ONLY.txt"), "must stay hidden\n", "utf8");
+      await writeFile(
+        path.join(plugin, "paseo-plugin.json"),
+        JSON.stringify({ id: PLUGIN_ID, requirements: pluginRequirements }),
+      );
+      await writeFile(
+        path.join(plugin, "index.server.ts"),
+        pluginSource({ workspace, backingFile }),
+      );
 
-    const client = await connectNewWorkspaceDaemonClient({ ownProjects: false });
-    const previousConfig = await client.getDaemonConfig();
-    await client.patchDaemonConfig({ pluginsEnabled: true });
-    await client.installDirectoryPlugin(plugin);
-    const opened = await openProjectViaDaemon(client, workspace);
-    return new PluginWorkspaceFileSystemHarness(
-      page,
-      root,
-      backingFile,
-      opened.workspaceId,
-      opened.projectId,
-      client,
-      previousConfig.config.pluginsEnabled ?? false,
-    );
+      client = await connectNewWorkspaceDaemonClient({ ownProjects: false });
+      const previousConfig = await client.getDaemonConfig();
+      previousPluginsEnabled = previousConfig.config.pluginsEnabled ?? false;
+      await client.patchDaemonConfig({ pluginsEnabled: true });
+      await client.installDirectoryPlugin(plugin);
+      const opened = await openProjectViaDaemon(client, workspace);
+      projectId = opened.projectId;
+      return new PluginWorkspaceFileSystemHarness(
+        page,
+        root,
+        backingFile,
+        opened.workspaceId,
+        opened.projectId,
+        client,
+        previousPluginsEnabled,
+      );
+    } catch (error) {
+      if (client) {
+        if (projectId) await client.removeProject(projectId).catch(() => undefined);
+        await client.removePlugin(PLUGIN_ID).catch(() => undefined);
+        if (previousPluginsEnabled !== null) {
+          await client
+            .patchDaemonConfig({ pluginsEnabled: previousPluginsEnabled })
+            .catch(() => undefined);
+        }
+        await client.close().catch(() => undefined);
+      }
+      await rm(root, { recursive: true, force: true });
+      throw error;
+    }
   }
 
   async openRemoteFile(): Promise<void> {
