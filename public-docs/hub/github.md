@@ -37,7 +37,7 @@ steps:
           ${{ paseo.prompt }}
 ```
 
-The agent can use `git` and `gh` within the declared repositories and permissions. Hub mints the token when the agent starts. With [agent continuation](/docs/hub/configuration/hub-yml#agent-continuation), overlapping requests share that token until all requests using the agent finish or the token's configured lifetime expires. Steering does not renew the token. After all requests finish, the next credentialed task starts a fresh agent with a new scoped token.
+The agent can use `git` and `gh` within the declared repositories and permissions. See [agent continuation](/docs/hub/configuration/hub-yml#agent-continuation) for the token lifecycle when requests continue an agent.
 
 ## Fields
 
