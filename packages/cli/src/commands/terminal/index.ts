@@ -30,7 +30,10 @@ export function createTerminalCommand(): Command {
       .command("create")
       .description("Create a terminal")
       .option("--workspace <id>", "Workspace ID")
-      .option("--cwd <path>", "Working directory")
+      .option(
+        "--cwd <path>",
+        "Working directory (opens or reuses a workspace unless --workspace is set)",
+      )
       .option("--name <name>", "Terminal name"),
   ).action(withOutput(runCreateCommand));
 

@@ -73,6 +73,14 @@ describe("canonical CLI surface", () => {
     expect(open?.helpInformation()).toContain("--server <server-id>");
   });
 
+  it("discloses implicit workspace opening for terminal cwd creation", () => {
+    const terminal = createCli().commands.find((command) => command.name() === "terminal");
+    const create = terminal?.commands.find((command) => command.name() === "create");
+    const help = (create?.helpInformation() ?? "").replace(/\s+/gu, " ");
+
+    expect(help).toContain("opens or reuses a workspace unless --workspace is set");
+  });
+
   it("offers the complete local plugin lifecycle", () => {
     const plugin = createCli().commands.find((command) => command.name() === "plugin");
 
