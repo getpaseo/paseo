@@ -6334,6 +6334,10 @@ function readLastClaudeCustomTitle(content: string): string | null {
   return null;
 }
 
+function isErrnoException(error: unknown): error is NodeJS.ErrnoException {
+  return error instanceof Error && "code" in error;
+}
+
 async function readClaudeRenamedSessionTitle(
   input: ImportProviderSessionInput,
 ): Promise<string | null> {
@@ -6348,7 +6352,7 @@ async function readClaudeRenamedSessionTitle(
   } catch (error) {
     // A session with no transcript on disk has no rename to carry over. Every
     // other read failure is a real fault and stays explicit.
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+    if (isErrnoException(error) && error.code === "ENOENT") {
       return null;
     }
     throw error;
