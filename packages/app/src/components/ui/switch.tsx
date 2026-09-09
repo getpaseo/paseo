@@ -1,3 +1,4 @@
+import { pressSwitch, keyDownSwitch, type SwitchKeyboardEvent } from "./switch-input";
 import { useCallback, useMemo } from "react";
 import {
   Pressable,
@@ -15,11 +16,6 @@ import Animated, {
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { createControlGeometry, switchGeometry } from "@/components/ui/control-geometry";
 import type { Theme } from "@/styles/theme";
-
-interface SwitchKeyboardEvent {
-  nativeEvent?: { code?: string; key?: string };
-  preventDefault?: () => void;
-}
 
 interface SwitchProps {
   value: boolean;
@@ -88,9 +84,7 @@ export function Switch({
 }: SwitchProps) {
   const handlePress = useCallback(
     (event: GestureResponderEvent) => {
-      event.stopPropagation();
-      if (disabled) return;
-      onValueChange?.(!value);
+      pressSwitch({ value, disabled, onValueChange }, event);
     },
     [disabled, onValueChange, value],
   );
@@ -101,12 +95,7 @@ export function Switch({
   // Enter is deliberately left to the press responder to avoid toggling twice.
   const handleKeyDown = useCallback(
     (event: SwitchKeyboardEvent) => {
-      const native = event.nativeEvent;
-      if (native?.code !== "Space" && native?.key !== " ") return;
-      // Stops the page scrolling, which is the browser default for Space.
-      event.preventDefault?.();
-      if (disabled) return;
-      onValueChange?.(!value);
+      keyDownSwitch({ value, disabled, onValueChange }, event);
     },
     [disabled, onValueChange, value],
   );

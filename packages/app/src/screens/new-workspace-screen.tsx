@@ -93,6 +93,8 @@ import type { WorkspaceDraftTabSetup, WorkspaceTabTarget } from "@/workspace-tab
 import { isEmptyWorkspaceSubmission, runCreateEmptyWorkspace } from "./new-workspace-empty";
 import {
   runCreateChatAgent,
+  ModelSelectionValidationError,
+  resolveNewWorkspaceSubmissionError,
   type NewWorkspaceComposerState,
   type SubmitDraftInput,
 } from "./new-workspace-chat";
@@ -1458,7 +1460,9 @@ export function NewWorkspaceScreen({
   // COMPAT(workspaceMultiplicity): added in v0.1.97, drop the gate when floor >= v0.1.97
   const supportsWorkspaceMultiplicity = useHostFeature(selectedServerId, "workspaceMultiplicity");
   const supportsForgeSearch = useHostFeature(selectedServerId, "forgeSearch");
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [submissionError, setErrorMessage] = useState<
+    string | ModelSelectionValidationError | null
+  >(null);
   const [createdWorkspace, setCreatedWorkspace] = useState<ReturnType<
     typeof normalizeWorkspaceDescriptor
   > | null>(null);
@@ -1561,6 +1565,7 @@ export function NewWorkspaceScreen({
     }),
   });
   const composerState = chatDraft.composerState;
+  const errorMessage = resolveNewWorkspaceSubmissionError(submissionError, composerState);
   const [pickerSelection, dispatchPickerSelection] = useReducer(
     reducePickerSelection,
     initialPickerSelectionState,
@@ -1955,7 +1960,7 @@ export function NewWorkspaceScreen({
       } catch (error) {
         const message = toErrorMessage(error);
         setPendingAction(null);
-        setErrorMessage(message);
+        setErrorMessage(error instanceof ModelSelectionValidationError ? error : message);
         toast.error(message);
       }
     },
@@ -2225,7 +2230,11 @@ export function NewWorkspaceScreen({
               agentControls={agentControlsWithDisabled}
             />
           )}
-          {errorMessage ? <Text style={styles.errorText}>{errorMessage}</Text> : null}
+          {errorMessage ? (
+            <Text testID="new-workspace-submit-error" style={styles.errorText}>
+              {errorMessage}
+            </Text>
+          ) : null}
         </KeyboardTranslateView>
       </View>
     </FileDropZone>

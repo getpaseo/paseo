@@ -1,3 +1,4 @@
+import { retryModelSelection } from "@/provider-selection/model-visibility";
 import { useCallback, useEffect, useMemo, useReducer, useRef } from "react";
 import type { AgentProviderDefinition } from "@getpaseo/protocol/provider-manifest";
 import type {
@@ -14,11 +15,7 @@ import {
 } from "@/provider-selection/provider-selection";
 import { filterSelectableModels } from "@/provider-selection/model-catalog";
 import { areAllModelsHidden, filterVisibleModels } from "@/provider-selection/model-visibility";
-import {
-  retryModelSelection,
-  useModelVisibility,
-  type ModelVisibilityStatus,
-} from "./use-model-visibility";
+import { useModelVisibility, type ModelVisibilityStatus } from "./use-model-visibility";
 import { OptimisticFormPreferences } from "@/create-agent-preferences/optimistic-preferences";
 import { applyAgentProfilePreferences } from "@/create-agent-preferences/preferences";
 import { useProvidersSnapshot } from "./use-providers-snapshot";

@@ -330,25 +330,12 @@ export function buildDraftCommandConfig(input: {
   };
 }
 
-export function resolveSubmissionReadiness(input: {
-  text: string;
-  allowsEmptyAutoSubmit: boolean;
-  providerCount: number;
-  selection: {
-    provider: AgentProvider | string | null;
-    modelId: string;
-    availableModels: readonly unknown[];
-    isModelLoading: boolean;
-    /** Every discovered model is hidden, so there is nothing valid to launch. */
-    allModelsHidden?: boolean;
-  };
-  autoSubmitConfig: { provider: string; model: string | null } | null;
-  workspaceDirectory: string | null;
-  hasClient: boolean;
-}): ProviderSelectionReadiness {
-  if (!input.allowsEmptyAutoSubmit && !input.text.trim()) {
-    return { ok: false, reason: i18n.t("providerSelection.readiness.initialPromptRequired") };
-  }
+export function resolveModelSelectionReadiness(
+  input: Pick<
+    Parameters<typeof resolveSubmissionReadiness>[0],
+    "providerCount" | "selection" | "autoSubmitConfig"
+  >,
+): ProviderSelectionReadiness {
   if (input.providerCount === 0) {
     return { ok: false, reason: i18n.t("providerSelection.readiness.noProviders") };
   }
@@ -368,6 +355,30 @@ export function resolveSubmissionReadiness(input: {
   if (!hasSelectedModel && input.selection.availableModels.length > 0) {
     return { ok: false, reason: i18n.t("providerSelection.readiness.noModelAvailable") };
   }
+  return { ok: true };
+}
+
+export function resolveSubmissionReadiness(input: {
+  text: string;
+  allowsEmptyAutoSubmit: boolean;
+  providerCount: number;
+  selection: {
+    provider: AgentProvider | string | null;
+    modelId: string;
+    availableModels: readonly unknown[];
+    isModelLoading: boolean;
+    /** Every discovered model is hidden, so there is nothing valid to launch. */
+    allModelsHidden?: boolean;
+  };
+  autoSubmitConfig: { provider: string; model: string | null } | null;
+  workspaceDirectory: string | null;
+  hasClient: boolean;
+}): ProviderSelectionReadiness {
+  if (!input.allowsEmptyAutoSubmit && !input.text.trim()) {
+    return { ok: false, reason: i18n.t("providerSelection.readiness.initialPromptRequired") };
+  }
+  const modelReadiness = resolveModelSelectionReadiness(input);
+  if (!modelReadiness.ok) return modelReadiness;
   if (!input.workspaceDirectory) {
     return { ok: false, reason: i18n.t("providerSelection.readiness.workspaceDirectoryNotFound") };
   }

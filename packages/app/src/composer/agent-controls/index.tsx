@@ -36,7 +36,8 @@ import {
 } from "@/provider-selection/provider-selection";
 import { filterSelectableModels } from "@/provider-selection/model-catalog";
 import { filterVisibleModels } from "@/provider-selection/model-visibility";
-import { retryModelSelection, useModelVisibility } from "@/hooks/use-model-visibility";
+import { useModelVisibility } from "@/hooks/use-model-visibility";
+import { retryModelSelection } from "@/provider-selection/model-visibility";
 import { useSessionStore } from "@/stores/session-store";
 import { useProvidersSnapshot } from "@/hooks/use-providers-snapshot";
 import { resolveProviderDefinition } from "@/utils/provider-definitions";

@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   runCreateChatAgent,
+  ModelSelectionValidationError,
+  resolveNewWorkspaceSubmissionError,
   type NewWorkspaceComposerState,
   type SubmitDraftInput,
 } from "./new-workspace-chat";
@@ -152,5 +154,40 @@ describe("new workspace chat submission", () => {
     await expect(runCreateChatAgent(input)).rejects.toThrow("Host disconnected");
     expect(effects).toEqual([]);
     expect(drafts).toEqual([]);
+  });
+});
+
+describe("new workspace selection error recovery", () => {
+  it("recomputes only model-selection errors when the selection recovers", () => {
+    const error = new ModelSelectionValidationError("old translated message");
+    expect(resolveNewWorkspaceSubmissionError(error, composer())).toBe(
+      i18n.t("providerSelection.readiness.allModelsHidden"),
+    );
+    expect(
+      resolveNewWorkspaceSubmissionError(error, composer({ effectiveModelId: "hidden-model" })),
+    ).toBeNull();
+    expect(
+      resolveNewWorkspaceSubmissionError(
+        error,
+        composer({ allModelsHidden: false, effectiveModelId: "visible" }),
+      ),
+    ).toBeNull();
+    expect(
+      resolveNewWorkspaceSubmissionError(
+        "Host disconnected",
+        composer({ effectiveModelId: "visible" }),
+      ),
+    ).toBe("Host disconnected");
+    expect(
+      resolveNewWorkspaceSubmissionError(
+        "Workspace creation failed",
+        composer({ effectiveModelId: "visible" }),
+      ),
+    ).toBe("Workspace creation failed");
+  });
+  it("marks rejected hide-all as a selection failure without changing the prompt", async () => {
+    const { input } = submission(composer());
+    await expect(runCreateChatAgent(input)).rejects.toBeInstanceOf(ModelSelectionValidationError);
+    expect(input.payload.text).toBe("Test submission");
   });
 });

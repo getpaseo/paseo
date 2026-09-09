@@ -1,5 +1,6 @@
 import type { AgentModelDefinition } from "@getpaseo/protocol/agent-types";
-import type { ProviderSelectionModelRow } from "./provider-selection";
+import type { MutableDaemonConfig, MutableDaemonConfigPatch } from "@getpaseo/protocol/messages";
+import type { ProviderSelectionModelRow, ModelVisibilitySelection } from "./provider-selection";
 
 /**
  * Per-provider presentation preference keyed by exact model ID. Absent means
@@ -105,4 +106,58 @@ export function buildModelVisibilityByProvider(
     }
   }
   return result;
+}
+
+export function isModelVisibilitySupported(
+  info: { features?: Record<string, boolean>; permissions?: readonly string[] } | null | undefined,
+): boolean {
+  return (
+    info?.features?.modelVisibility === true && (info.permissions?.includes("daemon.read") ?? true)
+  );
+}
+
+export async function setModelVisible(input: {
+  provider: string;
+  modelId: string;
+  visible: boolean;
+  patchConfig: (patch: MutableDaemonConfigPatch) => Promise<MutableDaemonConfig | undefined>;
+  disconnectedMessage: string;
+}): Promise<void> {
+  const result = await input.patchConfig({
+    providers: { [input.provider]: { modelVisibility: { [input.modelId]: input.visible } } },
+  });
+  if (!result) throw new Error(input.disconnectedMessage);
+}
+
+/**
+ * A config the query already delivered wins over a later fetch failure: that is
+ * the acknowledged state for this session, so a dropped refresh does not throw
+ * the picker back into an error.
+ */
+export function resolveVisibilityStatus(input: {
+  isSupported: boolean;
+  hasConfig: boolean;
+  isError: boolean;
+}): ModelVisibilitySelection["status"] {
+  if (!input.isSupported) return "unavailable";
+  if (input.hasConfig) return "ready";
+  if (input.isError) return "error";
+  return "loading";
+}
+
+/**
+ * One Retry, two possible causes. A picker's Retry button is the only recovery
+ * affordance the user has, and a visibility-fetch failure looks exactly like a
+ * discovery failure from the outside. Retrying discovery alone would succeed and
+ * change nothing, leaving the selector stuck.
+ */
+export function retryModelSelection(input: {
+  status: ModelVisibilitySelection["status"];
+  retryVisibility: () => void;
+  refreshDiscovery: () => void;
+}): void {
+  if (input.status === "error") {
+    input.retryVisibility();
+  }
+  input.refreshDiscovery();
 }

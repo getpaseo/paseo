@@ -6,7 +6,7 @@ import type { AgentFeature } from "@getpaseo/protocol/agent-types";
 import type { AgentProfile } from "@getpaseo/protocol/messages";
 import { AdaptiveModalSheet, type SheetHeader } from "@/components/adaptive-modal-sheet";
 import { Button } from "@/components/ui/button";
-import { retryModelSelection } from "@/hooks/use-model-visibility";
+import { retryModelSelection } from "@/provider-selection/model-visibility";
 import { type FieldControlSize } from "@/components/ui/control-geometry";
 import { Field, FormTextInput } from "@/components/ui/form-field";
 import {

@@ -1,3 +1,4 @@
+import { resolveModelSelectionReadiness } from "@/provider-selection/provider-selection";
 import {
   validateDraftSubmission,
   shouldAllowEmptyDraftText,
@@ -102,6 +103,33 @@ function buildWorkspaceDraftSetupForCreatedWorkspace(input: {
   });
 }
 
+export class ModelSelectionValidationError extends Error {}
+
+export function getNewWorkspaceModelSelectionError(
+  composerState: NewWorkspaceComposerState,
+): string | null {
+  const readiness = resolveModelSelectionReadiness({
+    providerCount: composerState.providerDefinitions.length,
+    selection: {
+      provider: composerState.selectedProvider,
+      modelId: composerState.effectiveModelId ?? "",
+      availableModels: composerState.availableModels,
+      isModelLoading: composerState.isModelLoading,
+      allModelsHidden: composerState.allModelsHidden,
+    },
+    autoSubmitConfig: null,
+  });
+  return readiness.reason ?? null;
+}
+
+export function resolveNewWorkspaceSubmissionError(
+  error: string | ModelSelectionValidationError | null,
+  composerState: NewWorkspaceComposerState | null,
+): string | null {
+  if (!(error instanceof ModelSelectionValidationError)) return error;
+  return composerState ? getNewWorkspaceModelSelectionError(composerState) : error.message;
+}
+
 export async function runCreateChatAgent(input: CreateChatAgentInput): Promise<void> {
   const { payload, composerState, ensureWorkspace, serverId, clearDraft } = input;
   const { text, attachments, cwd } = payload;
@@ -110,8 +138,10 @@ export async function runCreateChatAgent(input: CreateChatAgentInput): Promise<v
   }
   const provider = composerState.selectedProvider;
   if (!provider) {
-    throw new Error(input.labels.selectModel);
+    throw new ModelSelectionValidationError(input.labels.selectModel);
   }
+  const modelError = getNewWorkspaceModelSelectionError(composerState);
+  if (modelError) throw new ModelSelectionValidationError(modelError);
   const submissionError = validateDraftSubmission({
     text,
     allowsEmptyAutoSubmit: shouldAllowEmptyDraftText({ allowsEmptyAutoSubmit: false, attachments }),

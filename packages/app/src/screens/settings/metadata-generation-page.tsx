@@ -1,3 +1,4 @@
+import { daemonConfigLoadState } from "@/data/daemon-config";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Alert, Pressable, Text, View } from "react-native";
 import { useTranslation } from "react-i18next";
@@ -14,7 +15,8 @@ import {
   buildSelectableProviderSelectorProviders,
   getProviderModelRows,
 } from "@/provider-selection/provider-selection";
-import { retryModelSelection, useModelVisibility } from "@/hooks/use-model-visibility";
+import { useModelVisibility } from "@/hooks/use-model-visibility";
+import { retryModelSelection } from "@/provider-selection/model-visibility";
 import { SettingsSection } from "@/components/settings/headings/settings-section";
 import { settingsStyles } from "@/styles/settings";
 
@@ -139,8 +141,11 @@ export function MetadataGenerationPage({ serverId }: { serverId: string }) {
     [t],
   );
 
-  if (!config) {
-    return <MetadataGenerationPending isError={isConfigError} onRetry={handleRetryConfig} />;
+  const loadState = daemonConfigLoadState(config, isConfigError);
+  if (loadState !== "ready") {
+    return (
+      <MetadataGenerationPending isError={loadState === "error"} onRetry={handleRetryConfig} />
+    );
   }
 
   return (
