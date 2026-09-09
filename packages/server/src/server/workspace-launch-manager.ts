@@ -156,10 +156,6 @@ export class WorkspaceLaunchManager {
     if (activeLaunchName === launchName && activeRuntime?.lifecycle === "running") {
       return this.toPayload(context, launchName);
     }
-    if (activeLaunchName && activeRuntime?.lifecycle === "running") {
-      await this.stopRuntime(activeRuntime);
-    }
-
     await this.stopSupersededScript(context, launchName);
 
     const environment = await this.deps.workspaceRuntimeEnvironment.ensure({
@@ -180,6 +176,14 @@ export class WorkspaceLaunchManager {
       // Non-interactive Bash must not source an inherited BASH_ENV startup script.
       env: { ...environment.env, PASEO_LAUNCH_NAME: launchName, BASH_ENV: "" },
     });
+    if (activeLaunchName && activeRuntime?.lifecycle === "running") {
+      try {
+        await this.stopRuntime(activeRuntime);
+      } catch (error) {
+        await this.deps.terminalManager.killTerminalAndWait(terminal.id).catch(() => {});
+        throw error;
+      }
+    }
     const runtime: WorkspaceLaunchRuntime = {
       launchName,
       lifecycle: "running",

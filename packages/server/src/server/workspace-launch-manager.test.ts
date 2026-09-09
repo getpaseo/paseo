@@ -80,6 +80,16 @@ describe("WorkspaceLaunchManager", () => {
       PASEO_COMPOSE_PROJECT_NAME: dev.composeProjectName,
     });
 
+    terminalManager.failNextCreate();
+    await expect(manager.start(context, "full")).rejects.toThrow("Failed to create terminal");
+    expect(terminalManager.killed).toEqual([]);
+    expect(manager.buildSnapshot(context)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ launchName: "dev", lifecycle: "running", active: true }),
+        expect.objectContaining({ launchName: "full", lifecycle: "stopped", active: false }),
+      ]),
+    );
+
     const full = await manager.start(context, "full");
     expect(terminalManager.killed).toEqual([dev.terminalId]);
     expect(full).toMatchObject({
@@ -895,6 +905,7 @@ function createTerminalManager(): {
     triggerExit: (exitCode: number | null) => void;
   }>;
   killed: string[];
+  failNextCreate: () => void;
 } {
   const sessions = new Map<string, TerminalSession>();
   const created: Array<{
@@ -903,8 +914,13 @@ function createTerminalManager(): {
   }> = [];
   const killed: string[] = [];
   let nextId = 0;
+  let failNextCreate = false;
   const manager = {
     createTerminal: async (options: { env?: Record<string, string> }) => {
+      if (failNextCreate) {
+        failNextCreate = false;
+        throw new Error("Failed to create terminal");
+      }
       const id = `terminal-${++nextId}`;
       let exitListener: ((info: { exitCode: number | null }) => void) | null = null;
       const terminal = {
@@ -942,7 +958,14 @@ function createTerminalManager(): {
       sessions.delete(id);
     },
   } as unknown as TerminalManager;
-  return { manager, created, killed };
+  return {
+    manager,
+    created,
+    killed,
+    failNextCreate: () => {
+      failNextCreate = true;
+    },
+  };
 }
 
 async function getFreePort(): Promise<number> {
