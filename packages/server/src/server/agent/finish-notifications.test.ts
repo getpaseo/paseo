@@ -350,26 +350,40 @@ test("a temporarily missing reload snapshot waits for later state", async () => 
   await expectDeliveryCount(scenario, 1);
 });
 
-test.each(["skipped", "failed"])("a $s descendant delivery releases its ancestor", async (kind) => {
-  const scenario = createCoordinatorScenario({
-    deliver: async (delivery) => {
-      if (delivery.childAgentId === "child" && kind === "failed") {
-        throw new Error("delivery failed");
-      }
-    },
-  });
-  scenario.addAgent("root");
-  scenario.addAgent("parent", "running");
-  scenario.addAgent("child", "running");
-  scenario.watch("parent", "root");
-  scenario.watch("child", "parent");
+test.each([
+  { kind: "skipped", expectedReason: "finished" },
+  { kind: "failed", expectedReason: "could not receive a delegated result" },
+])(
+  "a $kind descendant delivery releases its ancestor with $expectedReason",
+  async ({ kind, expectedReason }) => {
+    const scenario = createCoordinatorScenario({
+      deliver: async (delivery) => {
+        if (delivery.childAgentId === "child" && kind === "failed") {
+          throw new Error("delivery failed");
+        }
+      },
+    });
+    scenario.addAgent("root");
+    scenario.addAgent("parent", "running");
+    scenario.addAgent("child", "running");
+    scenario.watch("parent", "root");
+    scenario.watch("child", "parent");
 
-  scenario.setState("parent", "idle");
-  scenario.setState("child", "idle");
+    scenario.setState("parent", "idle");
+    scenario.setState("child", "idle");
 
-  await expectDeliveryCount(scenario, 2);
-  expect(scenario.deliveries.map((delivery) => delivery.childAgentId)).toEqual(["child", "parent"]);
-});
+    await expectDeliveryCount(scenario, 2);
+    expect(scenario.deliveries.map((delivery) => delivery.childAgentId)).toEqual([
+      "child",
+      "parent",
+    ]);
+    expect(scenario.deliveries[1]?.reason).toBe(expectedReason);
+    scenario.setState("parent", "running");
+    scenario.setState("parent", "idle");
+    await Promise.resolve();
+    expect(scenario.deliveries).toHaveLength(2);
+  },
+);
 
 test("permission requests deduplicate the same ID", async () => {
   const scenario = createCoordinatorScenario();

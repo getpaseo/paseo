@@ -4,7 +4,12 @@ import type { Logger } from "pino";
 import type { AgentPermissionRequest } from "./agent-sdk-types.js";
 import type { AgentManager, AgentManagerEvent, ManagedAgent } from "./agent-manager.js";
 
-export type FinishNotificationReason = "finished" | "errored" | "needs permission" | "was closed";
+export type FinishNotificationReason =
+  | "finished"
+  | "errored"
+  | "needs permission"
+  | "was closed"
+  | "could not receive a delegated result";
 
 export interface FinishNotificationDelivery {
   reason: FinishNotificationReason;
@@ -22,7 +27,7 @@ export interface WatchAgentFinishParams {
 
 interface FinishWatcher extends WatchAgentFinishParams {
   hasSeenRunning: boolean;
-  terminalReason: "errored" | "was closed" | null;
+  terminalReason: Exclude<FinishNotificationReason, "finished" | "needs permission"> | null;
   notifiedPermissionRequestIds: Set<string>;
   deliveryTail: Promise<void>;
 }
@@ -145,9 +150,15 @@ function handleAgentStream(
   }
 }
 
-function enqueueDelivery(watcher: FinishWatcher, delivery: FinishNotificationDelivery): void {
-  watcher.deliveryTail = watcher.deliveryTail
-    .then(() => watcher.deliver(delivery))
+function enqueueDelivery(
+  watcher: FinishWatcher,
+  delivery: FinishNotificationDelivery,
+): Promise<boolean> {
+  const result = watcher.deliveryTail
+    .then(async () => {
+      await watcher.deliver(delivery);
+      return true;
+    })
     .catch((error: unknown) => {
       watcher.logger.error(
         {
@@ -158,7 +169,10 @@ function enqueueDelivery(watcher: FinishWatcher, delivery: FinishNotificationDel
         },
         "Failed to notify caller agent",
       );
+      return false;
     });
+  watcher.deliveryTail = result.then(() => undefined);
+  return result;
 }
 
 function scheduleEvaluation(coordinator: FinishCoordinator): void {
@@ -311,15 +325,29 @@ function beginTerminalDelivery(coordinator: FinishCoordinator, watcher: FinishWa
   coordinator.watchers.delete(watcher);
   refreshSubscription(coordinator);
 
-  enqueueDelivery(watcher, { reason: watcher.terminalReason ?? "finished" });
-  void watcher.deliveryTail.finally(() => {
-    const remaining = (coordinator.pendingDeliveries.get(watcher.callerAgentId) ?? 1) - 1;
-    if (remaining === 0) {
-      coordinator.pendingDeliveries.delete(watcher.callerAgentId);
-    } else {
-      coordinator.pendingDeliveries.set(watcher.callerAgentId, remaining);
-    }
-    refreshSubscription(coordinator);
-    scheduleEvaluation(coordinator);
-  });
+  void enqueueDelivery(watcher, { reason: watcher.terminalReason ?? "finished" }).then(
+    (delivered) => {
+      if (!delivered) {
+        // Releasing a failed delivery must not publish the caller's stale response
+        // as a successful follow-up. Notify its observers of the broken chain.
+        for (const callerWatcher of coordinator.watchers) {
+          if (
+            callerWatcher.childAgentId === watcher.callerAgentId &&
+            !callerWatcher.terminalReason
+          ) {
+            callerWatcher.terminalReason = "could not receive a delegated result";
+          }
+        }
+      }
+      const remaining = (coordinator.pendingDeliveries.get(watcher.callerAgentId) ?? 1) - 1;
+      if (remaining === 0) {
+        coordinator.pendingDeliveries.delete(watcher.callerAgentId);
+      } else {
+        coordinator.pendingDeliveries.set(watcher.callerAgentId, remaining);
+      }
+      refreshSubscription(coordinator);
+      scheduleEvaluation(coordinator);
+      return;
+    },
+  );
 }

@@ -459,16 +459,18 @@ async function ensureWorkspaceForMcpCreate(
   return dependencies.ensureWorkspaceForCreate(cwd, { prompt: initialPrompt });
 }
 
-async function sendInitialPrompt(
-  dependencies: CreateAgentCommandDependencies,
-  resolved: ResolvedCreateAgent,
-  snapshot: ManagedAgent,
-): Promise<{
+interface InitialPromptSendResult {
   started: boolean;
   disposition: PromptDispatchDisposition | null;
   liveSnapshot: ManagedAgent;
   error?: unknown;
-}> {
+}
+
+async function sendInitialPrompt(
+  dependencies: CreateAgentCommandDependencies,
+  resolved: ResolvedCreateAgent,
+  snapshot: ManagedAgent,
+): Promise<InitialPromptSendResult> {
   try {
     const prompt = resolved.prompt;
     if (prompt === undefined) {

@@ -296,9 +296,14 @@ export async function sendPromptToAgent(
   });
 }
 
+export interface StartCreatedAgentInitialPromptResult {
+  liveSnapshot: ManagedAgent;
+  disposition: PromptDispatchDisposition | null;
+}
+
 export async function startCreatedAgentInitialPrompt(
   params: StartCreatedAgentInitialPromptParams,
-): Promise<{ liveSnapshot: ManagedAgent; disposition: PromptDispatchDisposition | null }> {
+): Promise<StartCreatedAgentInitialPromptResult> {
   const currentSnapshot = params.agentManager.getAgent(params.agentId) ?? params.snapshot ?? null;
   if (!currentSnapshot) {
     throw new Error(`Agent ${params.agentId} not found`);
@@ -351,6 +356,10 @@ interface FinishNotificationBodyInput {
 function formatFinishNotificationBody(params: FinishNotificationBodyInput): string {
   const statusLine = `Agent ${params.childAgentId} (${params.title}) ${params.reason}.`;
   const sections = [statusLine];
+  if (params.reason === "could not receive a delegated result") {
+    sections.push("The delegated result was not delivered. No final follow-up is available.");
+    return sections.join("\n\n");
+  }
   if (params.reason === "needs permission" && params.permissionRequest) {
     sections.push(
       "Respond with `respond_to_permission` using the `agentId` and `requestId` below.",
@@ -399,7 +408,10 @@ export function setupFinishNotification(params: SetupFinishNotificationParams): 
       return;
     }
     const title = record?.title ?? childAgentId;
-    const lastAssistantMessage = await agentManager.getLastAssistantMessage(childAgentId);
+    const lastAssistantMessage =
+      reason === "could not receive a delegated result"
+        ? null
+        : await agentManager.getLastAssistantMessage(childAgentId);
     const body = formatFinishNotificationBody({
       childAgentId,
       title,

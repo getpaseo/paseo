@@ -77,6 +77,7 @@ Users can also detach an existing subagent from the subagents track. Detach is d
 Permission requests are notification checkpoints, not the end of that subscription. The caller is notified again after a permission response when the child finishes, errors, or requests another permission.
 The permission notification includes the normalized request plus the child and request IDs, so the caller can inspect it and respond without fetching agent status.
 A watched child that closes before its finish event also notifies the caller so delegated work cannot disappear silently during archive or workspace teardown.
+If a terminal result cannot be delivered to its caller, active finish observers of that caller receive a delegated-result delivery failure instead of a successful completion with its previous response. This ends those one-shot subscriptions without retrying the failed delivery or changing the caller's lifecycle.
 
 ## Provider-managed child agents
 
