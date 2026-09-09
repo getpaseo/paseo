@@ -68,6 +68,25 @@ function deferred<T>(): Deferred<T> {
   return { promise, resolve, reject };
 }
 
+interface CollectedAgentStream {
+  events: AgentStreamEvent[];
+  error: unknown;
+}
+
+async function collectAgentStream(
+  stream: AsyncIterable<AgentStreamEvent>,
+): Promise<CollectedAgentStream> {
+  const events: AgentStreamEvent[] = [];
+  try {
+    for await (const event of stream) {
+      events.push(event);
+    }
+    return { events, error: undefined };
+  } catch (error) {
+    return { events, error };
+  }
+}
+
 function waitForAgentLifecycle(
   manager: AgentManager,
   agentId: string,
@@ -10615,23 +10634,12 @@ test("forced-cancel reconcile serializes an immediate follow-up onto the replace
   // Pause is after the no-run check and after swap is queued, at resume.
   // An ordinary follow-up must wait for that swap rather than attaching to
   // the still-registered wedged runtime or being cleared by it.
-  const followUpEvents: AgentStreamEvent[] = [];
-  let followUpError: unknown;
-  const followUp = manager.streamAgent(snapshot.id, "immediate follow-up");
-  const followUpDrain = (async () => {
-    try {
-      for await (const event of followUp) {
-        followUpEvents.push(event);
-      }
-    } catch (error) {
-      followUpError = error;
-    }
-  })();
+  const followUpDrain = collectAgentStream(manager.streamAgent(snapshot.id, "immediate follow-up"));
 
   client.resumeAllowed.resolve();
   await expect(cancelPromise).resolves.toEqual({ status: "settled" });
   await firstRunDrain;
-  await followUpDrain;
+  const { events: followUpEvents, error: followUpError } = await followUpDrain;
 
   expect(followUpError).toBeUndefined();
   expect(followUpEvents.some((event) => event.type === "turn_completed")).toBe(true);
@@ -10739,18 +10747,9 @@ test("forced-cancel follow-up waits for a lifecycle mutation chained after the c
   const cancelPromise = manager.cancelAgentRun(snapshot.id);
   await client.resumeStarted.promise;
 
-  const followUpEvents: AgentStreamEvent[] = [];
-  let followUpError: unknown;
-  const followUp = manager.streamAgent(snapshot.id, "follow-up during chained reload");
-  const followUpDrain = (async () => {
-    try {
-      for await (const event of followUp) {
-        followUpEvents.push(event);
-      }
-    } catch (error) {
-      followUpError = error;
-    }
-  })();
+  const followUpDrain = collectAgentStream(
+    manager.streamAgent(snapshot.id, "follow-up during chained reload"),
+  );
 
   // Chain a close-first reload behind the in-flight swap, then chain a second
   // reload while that close is latched. A one-shot wait that captured the first
@@ -10765,7 +10764,7 @@ test("forced-cancel follow-up waits for a lifecycle mutation chained after the c
   await firstRunDrain;
   const reloadedDuringSwap = await reloadDuringSwap;
   const reloadedChained = await chainedReload;
-  await followUpDrain;
+  const { events: followUpEvents, error: followUpError } = await followUpDrain;
 
   expect(followUpError).toBeUndefined();
   expect(followUpEvents.some((event) => event.type === "turn_completed")).toBe(true);
