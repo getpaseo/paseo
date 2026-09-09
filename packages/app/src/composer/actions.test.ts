@@ -1003,7 +1003,7 @@ describe("toggleForgeAttachmentFromPicker", () => {
       markForgeAttachmentRemoved,
     });
 
-    expect(next).toEqual([]);
+    expect(next).toEqual({ attachments: [], addedChangeRequest: null });
     expect(markForgeAttachmentRemoved).toHaveBeenCalledTimes(1);
     expect(markForgeAttachmentRemoved).toHaveBeenCalledWith(attachment);
   });
@@ -1017,8 +1017,34 @@ describe("toggleForgeAttachmentFromPicker", () => {
       markForgeAttachmentRemoved,
     });
 
-    expect(next).toEqual([{ kind: "forge_issue", item: issueItem }]);
+    expect(next).toEqual({
+      attachments: [{ kind: "forge_issue", item: issueItem }],
+      addedChangeRequest: null,
+    });
     expect(markForgeAttachmentRemoved).not.toHaveBeenCalled();
+  });
+
+  it("reports a change request the picker newly attached", () => {
+    const next = toggleForgeAttachmentFromPicker({
+      current: [],
+      item: prItem,
+      markForgeAttachmentRemoved: vi.fn(),
+    });
+
+    expect(next).toEqual({
+      attachments: [{ kind: "forge_change_request", item: prItem }],
+      addedChangeRequest: prItem,
+    });
+  });
+
+  it("does not report a change request the picker toggled off", () => {
+    const next = toggleForgeAttachmentFromPicker({
+      current: [{ kind: "forge_change_request", item: prItem }],
+      item: prItem,
+      markForgeAttachmentRemoved: vi.fn(),
+    });
+
+    expect(next.addedChangeRequest).toBeNull();
   });
 });
 

@@ -384,11 +384,18 @@ interface ToggleForgeAttachmentFromPickerInput {
   markForgeAttachmentRemoved: (attachment: UserComposerAttachment) => void;
 }
 
+export interface ToggleForgeAttachmentFromPickerResult {
+  attachments: UserComposerAttachment[];
+  // The change request this toggle newly attached, so the caller can treat a picker add
+  // the same way as a pasted link. Null when the toggle removed an item or added an issue.
+  addedChangeRequest: ForgeSearchItem | null;
+}
+
 export function toggleForgeAttachmentFromPicker({
   current,
   item,
   markForgeAttachmentRemoved,
-}: ToggleForgeAttachmentFromPickerInput): UserComposerAttachment[] {
+}: ToggleForgeAttachmentFromPickerInput): ToggleForgeAttachmentFromPickerResult {
   const existingAttachment = current.find(
     (attachment) =>
       isForgeAttachment(attachment) &&
@@ -398,7 +405,9 @@ export function toggleForgeAttachmentFromPicker({
   if (existingAttachment) {
     markForgeAttachmentRemoved(existingAttachment);
   }
-  return toggleForgeAttachment(current, item);
+  const attachments = toggleForgeAttachment(current, item);
+  const addedChangeRequest = !existingAttachment && item.kind === "change_request" ? item : null;
+  return { attachments, addedChangeRequest };
 }
 
 export function findForgeItemByOption(

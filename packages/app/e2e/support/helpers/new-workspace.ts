@@ -4,7 +4,9 @@ import { decodeWorkspaceIdFromPathSegment } from "@/utils/host-routes";
 import { connectDaemonClient } from "./daemon-client-loader";
 import { daemonWsRoutePattern } from "./daemon-port";
 import { projectEquivalenceViewKey } from "./project-view-key";
-import { expectWorkspaceHeader } from "./workspace-ui";
+import { gotoAppShell } from "./app";
+import { selectGithubOption } from "./composer";
+import { expectWorkspaceHeader, waitForSidebarHydration } from "./workspace-ui";
 import { withProjectOwnership } from "./project-ownership";
 
 type NewWorkspaceDaemonClient = Pick<
@@ -621,4 +623,39 @@ export async function delayBrowserAgentCreatedStatus(
     waitForCreateRequest: () => createRequestSeen,
     waitForDelayedCreatedStatus: () => delayedCreatedStatusSeen,
   };
+}
+
+/** Land on the New Workspace composer for a project with "New worktree" isolation selected. */
+export async function openNewWorktreeComposer(
+  page: Page,
+  project: Pick<OpenedProject, "projectKey" | "projectDisplayName">,
+): Promise<void> {
+  await gotoAppShell(page);
+  await waitForSidebarHydration(page);
+  await openNewWorkspaceComposer(page, {
+    projectKey: project.projectKey,
+    projectDisplayName: project.projectDisplayName,
+  });
+  await selectWorkspaceIsolation(page, "worktree");
+}
+
+/** Attach a pull request through the composer "+" menu, the same way a user does. */
+export async function addGithubPrFromAttachmentMenu(
+  page: Page,
+  pr: { number: number; title: string },
+): Promise<void> {
+  await selectGithubOption(page, pr.title, `change_request:${pr.number}`);
+}
+
+/** The PR is both the starting ref and the single attachment pill. */
+export async function expectGithubPrCheckout(
+  page: Page,
+  pr: { number: number; title: string; branch: string },
+): Promise<void> {
+  await expectStartingRefPickerTriggerPr(page, {
+    number: pr.number,
+    title: pr.title,
+    headRef: pr.branch,
+  });
+  await expectComposerGithubAttachmentPill(page, { number: pr.number, title: pr.title });
 }
