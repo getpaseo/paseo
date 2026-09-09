@@ -132,6 +132,9 @@ function handleAgentStream(
   for (const watcher of coordinator.watchers) {
     if (watcher.childAgentId !== agentId) continue;
     if (event.type === "permission_requested") {
+      // This watcher stays active, so hasUnsettledDescendant blocks ancestors
+      // during permission delivery. Its eventual terminal delivery also waits
+      // for the same FIFO tail before releasing its pending-delivery count.
       watcher.hasSeenRunning = false;
       if (!watcher.notifiedPermissionRequestIds.has(event.request.id)) {
         watcher.notifiedPermissionRequestIds.add(event.request.id);

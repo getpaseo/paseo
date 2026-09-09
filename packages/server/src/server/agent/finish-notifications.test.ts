@@ -202,6 +202,59 @@ test("permission stream events do not schedule graph evaluation", async () => {
   expect(scenario.evaluationCount()).toBe(1);
 });
 
+test("an idle permission waiter blocks its ancestor until delegated follow-ups finish", async () => {
+  const releasePermissionDelivery = createDeferred<void>();
+  const permissionDeliveryStarted = createDeferred<void>();
+  const permissionFollowupStarted = createDeferred<void>();
+  const scenario = createCoordinatorScenario({
+    deliver: async (delivery, current) => {
+      if (delivery.childAgentId !== "grandchild") return;
+      if (delivery.reason === "needs permission") {
+        permissionDeliveryStarted.resolve();
+        await releasePermissionDelivery.promise;
+        current.setState("dispatcher", "running");
+        permissionFollowupStarted.resolve();
+      } else {
+        current.setState("dispatcher", "running");
+      }
+    },
+  });
+  scenario.addAgent("parent");
+  scenario.addAgent("dispatcher", "running", "parent");
+  scenario.addAgent("grandchild", "running", "dispatcher");
+  scenario.watch("dispatcher", "parent", true);
+  scenario.watch("grandchild", "dispatcher", true);
+
+  scenario.requestPermission("grandchild", "permission-1");
+  scenario.setState("grandchild", "idle", { inFlight: false });
+  scenario.setState("dispatcher", "idle", { inFlight: false });
+  await permissionDeliveryStarted.promise;
+  expect(scenario.deliveries.map(({ childAgentId, reason }) => ({ childAgentId, reason }))).toEqual(
+    [{ childAgentId: "grandchild", reason: "needs permission" }],
+  );
+
+  releasePermissionDelivery.resolve();
+  await permissionFollowupStarted.promise;
+  scenario.setState("dispatcher", "idle");
+  await Promise.resolve();
+  expect(scenario.deliveries).toHaveLength(1);
+
+  scenario.resolvePermission("grandchild", "permission-1");
+  scenario.setState("grandchild", "running");
+  scenario.setState("grandchild", "idle");
+  await expectDeliveryCount(scenario, 2);
+  scenario.setState("dispatcher", "idle");
+  await expectDeliveryCount(scenario, 3);
+  expect(scenario.deliveries.map(({ childAgentId, reason }) => ({ childAgentId, reason }))).toEqual(
+    [
+      { childAgentId: "grandchild", reason: "needs permission" },
+      { childAgentId: "grandchild", reason: "finished" },
+      { childAgentId: "dispatcher", reason: "finished" },
+    ],
+  );
+  expect(scenario.activeSubscriptions()).toBe(0);
+});
+
 test("ordinary completion is delivered exactly once through one global subscription", async () => {
   const scenario = createCoordinatorScenario();
   scenario.addAgent("caller");
