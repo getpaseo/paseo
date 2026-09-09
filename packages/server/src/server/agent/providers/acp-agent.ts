@@ -484,6 +484,8 @@ interface ACPAgentSessionOptions {
   waitForInitialCommands?: boolean;
   initialCommandsWaitTimeoutMs?: number;
   historyReplayIdleMs?: number;
+  now?: () => number;
+  delay?: (ms: number) => Promise<void>;
   terminateProcess?: ProcessTerminator;
 }
 
@@ -974,6 +976,7 @@ export class ACPAgentClient implements AgentClient {
         extensionCommandsParser: this.extensionCommandsParser,
         waitForInitialCommands: this.waitForInitialCommands,
         initialCommandsWaitTimeoutMs: this.initialCommandsWaitTimeoutMs,
+        now: this.now,
       },
     );
     await session.initializeNewSession();
@@ -1025,6 +1028,7 @@ export class ACPAgentClient implements AgentClient {
       extensionCommandsParser: this.extensionCommandsParser,
       waitForInitialCommands: this.waitForInitialCommands,
       initialCommandsWaitTimeoutMs: this.initialCommandsWaitTimeoutMs,
+      now: this.now,
     });
     await session.initializeResumedSession();
     return session;
@@ -1699,6 +1703,8 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   private historyReplaySettled = false;
   private lastHistoryReplayAt = 0;
   private readonly historyReplayIdleMs: number;
+  private readonly now: () => number;
+  private readonly delay: (ms: number) => Promise<void>;
   private bootstrapThreadEventPending = false;
   private readonly terminateProcess: ProcessTerminator;
 
@@ -1733,6 +1739,8 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     this.waitForInitialCommands = options.waitForInitialCommands ?? false;
     this.initialCommandsWaitTimeoutMs = options.initialCommandsWaitTimeoutMs ?? 1500;
     this.historyReplayIdleMs = options.historyReplayIdleMs ?? ACP_HISTORY_REPLAY_IDLE_MS;
+    this.now = options.now ?? Date.now;
+    this.delay = options.delay ?? delay;
     this.extensionCommandsParser = options.extensionCommandsParser;
   }
 
@@ -1793,6 +1801,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
             mcpServers: this.acpMcpServers(),
           }),
         );
+        this.markHistoryReplayActivity();
         this.applySessionState(response);
       } else if (sessionCapabilities?.resume) {
         const response = await this.runACPRequest(() =>
@@ -1922,7 +1931,11 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   private beginHistoryReplay(): void {
     this.replayingHistory = true;
     this.historyReplaySettled = false;
-    this.lastHistoryReplayAt = Date.now();
+    this.markHistoryReplayActivity();
+  }
+
+  private markHistoryReplayActivity(): void {
+    this.lastHistoryReplayAt = this.now();
   }
 
   private finishHistoryReplay(): void {
@@ -1941,14 +1954,14 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     }
     const idleMs = this.historyReplayIdleMs;
     if (idleMs > 0) {
-      const deadline = Date.now() + ACP_HISTORY_REPLAY_MAX_MS;
+      const deadline = this.now() + ACP_HISTORY_REPLAY_MAX_MS;
       for (;;) {
-        const remainingIdle = idleMs - (Date.now() - this.lastHistoryReplayAt);
-        const remainingMax = deadline - Date.now();
+        const remainingIdle = idleMs - (this.now() - this.lastHistoryReplayAt);
+        const remainingMax = deadline - this.now();
         if (remainingIdle <= 0 || remainingMax <= 0) {
           break;
         }
-        await delay(Math.min(remainingIdle, remainingMax));
+        await this.delay(Math.min(remainingIdle, remainingMax));
       }
     }
     this.finishHistoryReplay();
@@ -2577,7 +2590,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     );
     this.deliverTranslatedEvents(events);
     if (this.replayingHistory) {
-      this.lastHistoryReplayAt = Date.now();
+      this.markHistoryReplayActivity();
     }
   }
 
