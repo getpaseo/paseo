@@ -325,7 +325,7 @@ test("finish notification waits for an asynchronously woken dispatcher", async (
   const dispatcher = createAgent("dispatcher-agent", "Dispatcher", "running");
   const grandchild = createAgent("grandchild-agent", "Grandchild", "running");
 
-  const agentManager: AgentManager = Object.create(AgentManager.prototype);
+  const agentManager = new AgentManager({ clients: {}, logger: createTestLogger() });
   Reflect.set(agentManager, "getAgent", (agentId: string) => {
     if (agentId === caller.id) return caller;
     if (agentId === dispatcher.id) return dispatcher;
