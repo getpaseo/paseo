@@ -165,6 +165,9 @@ export function selectWorkspaceStructureProjects(
   const unhydratedProjectLinkServerIds = serverIds.filter((serverId) =>
     hasPendingWorkspaceHydration(state.sessions[serverId]),
   );
+  const hydratedProjectLinkServerIds = serverIds.filter(
+    (serverId) => !hasPendingWorkspaceHydration(state.sessions[serverId]),
+  );
   const sessions: Array<{
     serverId: string;
     workspaces: Iterable<WorkspaceDescriptor>;
@@ -193,6 +196,7 @@ export function selectWorkspaceStructureProjects(
     sessions,
     workspaceSort,
     localProjectLinks,
+    hydratedProjectLinkServerIds,
     unhydratedProjectLinkServerIds,
   });
 }
