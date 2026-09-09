@@ -57,6 +57,7 @@ export interface ProjectHost {
 export interface BuildProjectsInput {
   hosts: ProjectHost[];
   localProjectLinks?: Iterable<LocalProjectLink>;
+  hydratedProjectLinkServerIds?: Iterable<string>;
   unhydratedProjectLinkServerIds?: Iterable<string>;
 }
 
@@ -128,6 +129,7 @@ function findProjectMetadata(
 function buildHostProjectEntries(input: {
   hosts: ProjectHost[];
   localProjectLinks?: Iterable<LocalProjectLink>;
+  hydratedProjectLinkServerIds?: Iterable<string>;
   unhydratedProjectLinkServerIds?: Iterable<string>;
 }): HostProjectListItem[] {
   return buildWorkspaceStructureProjects({
@@ -137,6 +139,7 @@ function buildHostProjectEntries(input: {
       workspaces: host.workspaces,
     })),
     localProjectLinks: input.localProjectLinks,
+    hydratedProjectLinkServerIds: input.hydratedProjectLinkServerIds,
     unhydratedProjectLinkServerIds: input.unhydratedProjectLinkServerIds,
   });
 }
