@@ -5,6 +5,21 @@
 - Node.js (see `.tool-versions` for exact version)
 - npm workspaces (comes with Node)
 
+## First build after `npm install`
+
+`npm install` does not build the workspace packages. `packages/server` and `packages/cli`
+import other workspace packages (`@getpaseo/protocol`, `@getpaseo/client`, `@getpaseo/server`, ...)
+by their built output, not their source, so anything that type-checks or runs them needs that
+output to exist first:
+
+```bash
+npm run build:server
+```
+
+`npm run dev:server` (and `dev`) already do this for you. `npm run typecheck` does not — on a
+fresh clone it fails with `Cannot find module '@getpaseo/server'` (and similar) until you build
+once.
+
 ## Running the dev server
 
 ```bash
