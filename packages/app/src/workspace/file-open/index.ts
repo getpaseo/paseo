@@ -4,8 +4,15 @@ export type OpenFileDisposition = "main" | "preferred" | "side";
 
 export interface WorkspaceFileLocation {
   path: string;
+  /** One-based source line; CRLF, CR and LF each separate lines. */
   lineStart?: number;
   lineEnd?: number;
+  /** One-based UTF-16 column on lineStart. */
+  columnStart?: number;
+  /** Exclusive UTF-16 column on the same line. */
+  columnEnd?: number;
+  /** Original saved occurrence; a mismatch reveals the location without selecting text. */
+  expectedText?: string;
 }
 
 export type WorkspaceFileTabTarget = { kind: "file" } & WorkspaceFileLocation;
@@ -22,16 +29,21 @@ export function normalizeWorkspaceFileLocation(
     return null;
   }
 
-  const path = location.path.trim().replace(/\\/g, "/");
+  const path = location.path.replace(/\\/g, "/");
   if (!path) {
     return null;
   }
 
   const lineStart = normalizeLineNumber(location.lineStart);
   const lineEnd = normalizeLineNumber(location.lineEnd);
+  const columnStart = normalizeLineNumber(location.columnStart);
+  const columnEnd = normalizeLineNumber(location.columnEnd);
   return {
     path,
     ...(lineStart ? { lineStart } : {}),
+    ...(lineStart && columnStart ? { columnStart } : {}),
+    ...(lineStart && columnEnd && columnEnd >= (columnStart ?? 1) ? { columnEnd } : {}),
+    ...(location.expectedText !== undefined ? { expectedText: location.expectedText } : {}),
     ...(lineStart && lineEnd && lineEnd >= lineStart ? { lineEnd } : {}),
   };
 }
@@ -41,7 +53,12 @@ export function workspaceFileLocationsEqual(
   right: WorkspaceFileLocation,
 ): boolean {
   return (
-    left.path === right.path && left.lineStart === right.lineStart && left.lineEnd === right.lineEnd
+    left.path === right.path &&
+    left.lineStart === right.lineStart &&
+    left.lineEnd === right.lineEnd &&
+    left.columnStart === right.columnStart &&
+    left.columnEnd === right.columnEnd &&
+    left.expectedText === right.expectedText
   );
 }
 
@@ -145,8 +162,8 @@ export function resolveWorkspaceFilePaths(input: {
   path: string;
   workspaceRoot: string;
 }): ResolvedWorkspaceFilePaths | null {
-  const filePath = input.path.trim().replace(/\\/g, "/");
-  const workspaceRoot = normalizeAbsolutePath(input.workspaceRoot.trim().replace(/\\/g, "/"));
+  const filePath = input.path.replace(/\\/g, "/");
+  const workspaceRoot = normalizeAbsolutePath(input.workspaceRoot.replace(/\\/g, "/"));
   if (!filePath || !workspaceRoot) {
     return null;
   }
@@ -175,4 +192,27 @@ export function resolveWorkspaceFilePaths(input: {
     return null;
   }
   return { absolutePath: `${workspaceRoot}/${relativePath}`, relativePath };
+}
+
+/** Resolves a saved location without manufacturing a selection when its text has moved. */
+export function resolveWorkspaceFileSelection(
+  content: string,
+  location: WorkspaceFileLocation,
+): { from: number; to: number; changed: boolean } {
+  const lines = content.split("\n");
+  const index = Math.max(0, Math.min((location.lineStart ?? 1) - 1, lines.length - 1));
+  const line = lines[index];
+  const offset = lines.slice(0, index).reduce((sum, value) => sum + value.length + 1, 0);
+  const from = offset + Math.min((location.columnStart ?? 1) - 1, line.length);
+  const endIndex = Math.max(index, Math.min((location.lineEnd ?? index + 1) - 1, lines.length - 1));
+  let to = from;
+  if (location.columnEnd !== undefined) to = offset + Math.min(location.columnEnd - 1, line.length);
+  else if (endIndex > index)
+    to =
+      lines.slice(0, endIndex).reduce((sum, value) => sum + value.length + 1, 0) +
+      lines[endIndex].length;
+  const changed =
+    location.expectedText !== undefined &&
+    (index !== (location.lineStart ?? 1) - 1 || content.slice(from, to) !== location.expectedText);
+  return { from, to: changed ? from : to, changed };
 }

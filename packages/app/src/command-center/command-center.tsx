@@ -1,3 +1,4 @@
+import { WorkspaceContentSearch } from "./workspace-content-search";
 import {
   FlatList,
   Modal,
@@ -91,6 +92,7 @@ const ThemedLoadingSpinner = withUnistyles(LoadingSpinner, (theme) => ({
   color: theme.colors.foregroundMuted,
 }));
 const COMMAND_CENTER_SNAP_POINTS = ["60%", "90%"];
+const CONTENT_SEARCH_SNAP_POINTS = ["90%"];
 const KEYBOARD_SHOULD_PERSIST_TAPS = "always" as const;
 
 function sortAgents(left: AggregatedAgent, right: AggregatedAgent): number {
@@ -259,7 +261,7 @@ function useCommandCenterState(): CommandCenterState {
     error: fileSearchError,
     openFile,
   } = useWorkspaceFileSearch({
-    enabled: open && (scope === "files" || Boolean(query.trim())),
+    enabled: open && scope !== "content" && (scope === "files" || Boolean(query.trim())),
     query,
   });
   const fileSections = useMemo<CommandCenterResultSection[]>(() => {
@@ -584,6 +586,7 @@ export function CommandCenter() {
   const isCompact = useIsCompactFormFactor();
   const showBottomSheet = isCompact && isNative;
   const modalLayer = useGlobalWebOverlayLayer("modal", isWeb && state.open && !showBottomSheet);
+  const contentKeyHandler = useRef<((key: string) => boolean) | null>(null);
   const listRef = useRef<FlatList<CommandCenterListRow>>(null);
   const bottomSheetListRef = useRef<BottomSheetFlatListMethods>(null);
   const bottomSheetInputRef = useRef<EditingTextInputHandle>(null);
@@ -707,7 +710,11 @@ export function CommandCenter() {
   const submit = useCallback(() => state.key("Enter"), [state]);
   const handleWebOverlayKeyDown = useCallback(
     (event: KeyboardEvent) => {
-      if (!state.key(event.key)) return false;
+      const handled =
+        state.scope === "content"
+          ? (contentKeyHandler.current?.(event.key) ?? false)
+          : state.key(event.key);
+      if (!handled) return false;
       event.preventDefault();
       return true;
     },
@@ -730,7 +737,9 @@ export function CommandCenter() {
       <IsolatedBottomSheetModal
         ref={sheetRef}
         contextBridge={null}
-        snapPoints={COMMAND_CENTER_SNAP_POINTS}
+        snapPoints={
+          state.scope === "content" ? CONTENT_SEARCH_SNAP_POINTS : COMMAND_CENTER_SNAP_POINTS
+        }
         index={0}
         enableDynamicSizing={false}
         onChange={handleSheetChange}
@@ -743,54 +752,31 @@ export function CommandCenter() {
         keyboardBlurBehavior="restore"
         accessible={false}
       >
-        <View style={[styles.bottomSheetHeader, styles.searchRow]} testID="command-center-header">
-          {state.scope === "files" ? (
-            <ScopeChip label={t("shell.commandCenter.files")} onRemove={state.clearScope} />
-          ) : null}
-          <ThemedBottomSheetTextInput
-            testID="command-center-input"
-            ref={bottomSheetInputRef}
-            initialValue={state.query}
-            variant="bottom-sheet"
-            onChangeText={state.setQuery}
-            onKeyPress={keyPress}
-            onSubmitEditing={submit}
-            placeholder={
-              state.scope === "files"
-                ? t("shell.commandCenter.filePlaceholder")
-                : t("shell.commandCenter.placeholder")
-            }
-            style={[styles.input, styles.growingInput]}
-            autoCapitalize="none"
-            autoCorrect={false}
-            autoFocus
+        {state.scope === "content" ? (
+          <WorkspaceContentSearch
+            compact={isCompact}
+            bottomSheet
+            close={state.close}
+            clearScope={state.clearScope}
+            keyHandler={contentKeyHandler}
           />
-          <FileSearchLoadingIndicator
-            loading={state.fileSearchLoading}
-            label={t("shell.commandCenter.searchingFiles")}
-          />
-        </View>
-        {fileSearchError}
-        <BottomSheetFlatList ref={bottomSheetListRef} {...commonListProps} />
-      </IsolatedBottomSheetModal>
-    );
-  }
-  if (!state.open) return null;
-  return (
-    <OverlayLayerProvider layer={isWeb ? modalLayer : 0}>
-      <Modal visible transparent animationType="fade" onRequestClose={state.close}>
-        <View style={styles.overlay}>
-          <Pressable style={styles.backdrop} onPress={state.close} />
-          <View ref={setWebOverlayScope} testID="command-center-panel" style={styles.panel}>
-            <View style={[styles.header, styles.searchRow]} testID="command-center-header">
+        ) : (
+          <>
+            <View
+              style={[styles.bottomSheetHeader, styles.searchRow]}
+              testID="command-center-header"
+            >
               {state.scope === "files" ? (
                 <ScopeChip label={t("shell.commandCenter.files")} onRemove={state.clearScope} />
               ) : null}
-              <ThemedTextInput
+              <ThemedBottomSheetTextInput
                 testID="command-center-input"
-                ref={state.inputRef}
+                ref={bottomSheetInputRef}
                 initialValue={state.query}
+                variant="bottom-sheet"
                 onChangeText={state.setQuery}
+                onKeyPress={keyPress}
+                onSubmitEditing={submit}
                 placeholder={
                   state.scope === "files"
                     ? t("shell.commandCenter.filePlaceholder")
@@ -807,7 +793,61 @@ export function CommandCenter() {
               />
             </View>
             {fileSearchError}
-            <FlatList ref={listRef} {...commonListProps} />
+            <BottomSheetFlatList ref={bottomSheetListRef} {...commonListProps} />
+          </>
+        )}
+      </IsolatedBottomSheetModal>
+    );
+  }
+  if (!state.open) return null;
+  return (
+    <OverlayLayerProvider layer={isWeb ? modalLayer : 0}>
+      <Modal visible transparent animationType="fade" onRequestClose={state.close}>
+        <View style={styles.overlay}>
+          <Pressable style={styles.backdrop} onPress={state.close} />
+          <View
+            ref={setWebOverlayScope}
+            testID="command-center-panel"
+            style={[styles.panel, state.scope === "content" && styles.contentPanel]}
+          >
+            {state.scope === "content" ? (
+              <WorkspaceContentSearch
+                compact={isCompact}
+                bottomSheet={false}
+                close={state.close}
+                clearScope={state.clearScope}
+                keyHandler={contentKeyHandler}
+              />
+            ) : (
+              <>
+                <View style={[styles.header, styles.searchRow]} testID="command-center-header">
+                  {state.scope === "files" ? (
+                    <ScopeChip label={t("shell.commandCenter.files")} onRemove={state.clearScope} />
+                  ) : null}
+                  <ThemedTextInput
+                    testID="command-center-input"
+                    ref={state.inputRef}
+                    initialValue={state.query}
+                    onChangeText={state.setQuery}
+                    placeholder={
+                      state.scope === "files"
+                        ? t("shell.commandCenter.filePlaceholder")
+                        : t("shell.commandCenter.placeholder")
+                    }
+                    style={[styles.input, styles.growingInput]}
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    autoFocus
+                  />
+                  <FileSearchLoadingIndicator
+                    loading={state.fileSearchLoading}
+                    label={t("shell.commandCenter.searchingFiles")}
+                  />
+                </View>
+                {fileSearchError}
+                <FlatList ref={listRef} {...commonListProps} />
+              </>
+            )}
           </View>
         </View>
       </Modal>
@@ -858,6 +898,7 @@ const styles = StyleSheet.create((theme) => ({
     paddingTop: theme.spacing[12],
   },
   backdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: "rgba(0, 0, 0, 0.5)" },
+  contentPanel: { width: 1000, maxWidth: "96%", height: "75%" },
   panel: {
     width: 640,
     height: 560,

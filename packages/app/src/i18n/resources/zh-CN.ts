@@ -73,6 +73,21 @@ export const zhCN: TranslationResources = {
       close: "关闭菜单",
     },
     commandCenter: {
+      contentTitle: "搜索文件内容",
+      contentPlaceholder: "搜索已保存的文件内容...",
+      contentUnavailable: "工作区不可用",
+      contentUpdateHost: "请更新此主机以搜索文件内容",
+      contentEmpty: "搜索已保存的文件内容",
+      contentBack: "返回结果",
+      contentPreview: "预览",
+      contentOpen: "打开",
+      contentLoadingPreview: "正在加载预览...",
+      contentLimited: "结果已达上限 — 请缩小搜索范围",
+      contentScopeDetail:
+        "搜索已保存的 UTF-8 文件，包括隐藏和未跟踪的文件。遵循忽略规则，不搜索符号链接和未保存的编辑。",
+      contentScope: "不超过 1 MiB 的已保存文件 · 忽略大小写",
+      contentChanged: "文件已更改 — 此位置不再匹配",
+
       placeholder: "搜索命令、文件、工作区和 Agent...",
       filePlaceholder: "搜索文件...",
       searchingFiles: "正在搜索文件...",

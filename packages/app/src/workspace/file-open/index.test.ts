@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  resolveWorkspaceFileSelection,
   createWorkspaceFileTabTarget,
   normalizeWorkspaceFileLocation,
   resolveWorkspaceFilePaths,
@@ -34,7 +35,7 @@ describe("normalizeWorkspaceFileLocation", () => {
   });
 
   it("rejects empty paths", () => {
-    expect(normalizeWorkspaceFileLocation({ path: " " })).toBeNull();
+    expect(normalizeWorkspaceFileLocation({ path: "" })).toBeNull();
   });
 });
 
@@ -181,5 +182,47 @@ describe("resolveWorkspaceFilePaths", () => {
     expect(
       resolveWorkspaceFilePaths({ path: "/Users/me/repo", workspaceRoot: "/Users/me/repo" }),
     ).toBeNull();
+  });
+});
+
+it("selects exact UTF-16 columns and refuses a stale saved match", () => {
+  const location = {
+    path: "a.ts",
+    lineStart: 2,
+    columnStart: 5,
+    columnEnd: 11,
+    expectedText: "NEEDLE",
+  };
+  expect(resolveWorkspaceFileSelection("first\né🙂 NEEDLE", location)).toEqual({
+    from: 10,
+    to: 16,
+    changed: false,
+  });
+  expect(resolveWorkspaceFileSelection("first\né🙂 change", location)).toEqual({
+    from: 10,
+    to: 10,
+    changed: true,
+  });
+  expect(workspaceFileLocationsEqual(location, { ...location, columnStart: 6 })).toBe(false);
+});
+
+it("does not select an identical occurrence on another line after the saved line disappears", () => {
+  expect(
+    resolveWorkspaceFileSelection("needle", {
+      path: "a.ts",
+      lineStart: 3,
+      columnStart: 1,
+      columnEnd: 7,
+      expectedText: "needle",
+    }),
+  ).toEqual({ from: 0, to: 0, changed: true });
+});
+
+it("preserves literal filename and workspace whitespace through location and host paths", () => {
+  const location = { path: " leading.txt ", lineStart: 1 };
+  expect(normalizeWorkspaceFileLocation(location)).toEqual(location);
+  expect(resolveWorkspaceFilePaths({ path: location.path, workspaceRoot: "/workspace " })).toEqual({
+    absolutePath: "/workspace / leading.txt ",
+    relativePath: " leading.txt ",
   });
 });

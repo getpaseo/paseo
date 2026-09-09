@@ -73,6 +73,21 @@ export const ja: TranslationResources = {
       close: "メニューを閉じる",
     },
     commandCenter: {
+      contentTitle: "ファイル内容を検索",
+      contentPlaceholder: "保存済みファイルの内容を検索...",
+      contentUnavailable: "ワークスペースを利用できません",
+      contentUpdateHost: "ファイル内容を検索するにはホストを更新してください",
+      contentEmpty: "保存済みファイルの内容を検索",
+      contentBack: "検索結果に戻る",
+      contentPreview: "プレビュー",
+      contentOpen: "開く",
+      contentLoadingPreview: "プレビューを読み込み中...",
+      contentLimited: "結果が上限に達しました — 検索を絞り込んでください",
+      contentScopeDetail:
+        "非表示・未追跡のファイルを含む保存済み UTF-8 ファイルを検索します。除外ルールに従い、シンボリックリンクと未保存の編集は検索しません。",
+      contentScope: "1 MiB 以下の保存済みファイル · 大文字小文字を区別しない",
+      contentChanged: "ファイルが変更され、この位置に一致する内容はありません",
+
       placeholder: "コマンド、ファイル、ワークスペース、エージェントを検索...",
       filePlaceholder: "ファイルを検索...",
       searchingFiles: "ファイルを検索中...",

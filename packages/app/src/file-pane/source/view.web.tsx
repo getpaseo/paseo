@@ -1,9 +1,10 @@
+import { useTranslation } from "react-i18next";
 import { useEffect, useRef, useState } from "react";
 import { FileFind, FileFindModel } from "../find/index.web";
 import { Compartment, EditorState } from "@codemirror/state";
-import { EditorView } from "@codemirror/view";
+import { EditorView, drawSelection } from "@codemirror/view";
 import { getLanguageForFile } from "@getpaseo/highlight";
-import type { WorkspaceFileLocation } from "@/workspace/file-open";
+import { resolveWorkspaceFileSelection, type WorkspaceFileLocation } from "@/workspace/file-open";
 import type { EditorVisualTheme } from "../editor/extensions.web";
 import { editorTheme } from "../editor/extensions.web";
 import { selectSourcePresentation, type SourcePresentation } from "./presentation";
@@ -60,6 +61,7 @@ function ReadonlyCodeMirror({
 }: Omit<FileSourceViewProps, "size" | "tooLargeMessage"> & {
   presentation: Exclude<SourcePresentation, "unsupported">;
 }) {
+  const { t } = useTranslation();
   const [find] = useState(() => new FileFindModel());
   const hostRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
@@ -79,6 +81,9 @@ function ReadonlyCodeMirror({
             tabindex: "0",
             "aria-label": `Source for ${values.filename}`,
           }),
+          // The preview is never focused, so the browser draws no selection of its own; the
+          // exact occurrence has to be painted by CodeMirror.
+          drawSelection(),
           EditorView.editable.of(false),
           languageCompartment.of(
             languageFor({ filename: values.filename, presentation: values.presentation }),
@@ -112,13 +117,17 @@ function ReadonlyCodeMirror({
   useEffect(() => {
     const view = viewRef.current;
     if (!view || !location.lineStart) return;
-    const line = Math.min(location.lineStart, view.state.doc.lines);
-    const from = view.state.doc.line(line).from;
-    view.dispatch({ effects: EditorView.scrollIntoView(from, { y: "center" }) });
-  }, [location.lineStart, navigationRevision]);
+    const { from, to } = resolveWorkspaceFileSelection(view.state.doc.toString(), location);
+    view.dispatch({
+      selection: { anchor: from, head: to },
+      effects: EditorView.scrollIntoView(from, { y: "center" }),
+    });
+  }, [content, location, navigationRevision]);
 
+  const changed = resolveWorkspaceFileSelection(content.replace(/\r\n?/g, "\n"), location).changed;
   return (
     <div style={FRAME_STYLE}>
+      {changed ? <div role="status">{t("shell.commandCenter.contentChanged")}</div> : null}
       <div ref={hostRef} data-testid="file-source-editor" style={HOST_STYLE} />
       <FileFind model={find} editor={viewRef} />
     </div>
@@ -134,8 +143,11 @@ function languageFor(input: {
     : [];
 }
 
+// The Find widget floats inside this frame, so it stays relative; the change notice is the
+// only row that shares the column with the editor host.
 const FRAME_STYLE = {
   display: "flex",
+  flexDirection: "column",
   position: "relative",
   flex: 1,
   minHeight: 0,

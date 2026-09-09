@@ -32,3 +32,20 @@ describe("explorerFileFromReadResult", () => {
     expect(embedded.hasBom).toBe(false);
   });
 });
+
+it("keeps SVG image identity and exposes valid UTF-8 source for occurrence navigation", () => {
+  const file = {
+    ...textRead(new TextEncoder().encode("<svg>needle</svg>")),
+    kind: "image" as const,
+    mime: "image/svg+xml",
+    path: "icon.svg",
+  };
+  expect(explorerFileFromReadResult(file)).toMatchObject({
+    kind: "image",
+    content: "<svg>needle</svg>",
+  });
+  expect(explorerFileFromReadResult({ ...file, bytes: new Uint8Array([255]) })).toMatchObject({
+    kind: "image",
+    content: undefined,
+  });
+});

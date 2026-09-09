@@ -2624,6 +2624,11 @@ export class Session {
     source?: object,
   ): Promise<void> | undefined {
     switch (msg.type) {
+      case "fs.content.search.request":
+        return this.workspaceFilesSession.handleContentSearch(msg);
+      case "fs.content.cancel.request":
+        this.workspaceFilesSession.handleContentCancel(msg);
+        return;
       case "file_explorer_request":
         return this.workspaceFilesSession.handleFileExplorerRequest(msg, source);
       case "fs.file.subscribe.request":

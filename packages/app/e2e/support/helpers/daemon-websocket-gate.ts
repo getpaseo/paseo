@@ -104,19 +104,20 @@ function stripAssistantMessageId(
   return JSON.stringify(envelope);
 }
 
-function stripCanonicalSubmittedPrompts(
+function stripServerFeatures(
   message: string | Buffer,
-  enabled: boolean,
+  omittedFeatures: Set<string>,
   messageType: unknown,
 ): string | Buffer {
-  if (!enabled || messageType !== "status" || typeof message !== "string") return message;
+  if (!omittedFeatures.size || messageType !== "status" || typeof message !== "string")
+    return message;
   const envelope = JSON.parse(message) as {
     message?: { payload?: { status?: unknown; features?: Record<string, unknown> } };
     payload?: { status?: unknown; features?: Record<string, unknown> };
   };
   const payload = envelope.message?.payload ?? envelope.payload;
   if (payload?.status !== "server_info" || !payload.features) return message;
-  delete payload.features.canonicalSubmittedPrompts;
+  for (const feature of omittedFeatures) delete payload.features[feature];
   return JSON.stringify(envelope);
 }
 
@@ -299,7 +300,7 @@ export async function installDaemonWebSocketGate(page: Page) {
   let suppressAgentStream = false;
   let forceTimelineEpochReset = false;
   let stripAssistantMessageIds = false;
-  let stripCanonicalSubmittedPromptsFeature = false;
+  const omittedFeatures = new Set<string>();
   let shellToolCommandOverride: string | null = null;
   let failingTimelineAgentId: string | null = null;
   let holdingTimelineAgentId: string | null = null;
@@ -509,11 +510,7 @@ export async function installDaemonWebSocketGate(page: Page) {
         serverMessage?.type,
       );
       outboundMessage = rewriteShellToolCommand(outboundMessage, shellToolCommandOverride);
-      outboundMessage = stripCanonicalSubmittedPrompts(
-        outboundMessage,
-        stripCanonicalSubmittedPromptsFeature,
-        serverMessage?.type,
-      );
+      outboundMessage = stripServerFeatures(outboundMessage, omittedFeatures, serverMessage?.type);
       const isTimelineResponse = serverMessage?.type === "fetch_agent_timeline_response";
       if (isTimelineResponse) {
         outboundMessage = failTimelineResponse(outboundMessage, failingTimelineAgentId);
@@ -823,8 +820,12 @@ export async function installDaemonWebSocketGate(page: Page) {
     setAssistantMessageIdsStripped(stripped: boolean): void {
       stripAssistantMessageIds = stripped;
     },
+    setWorkspaceContentSearchStripped(): void {
+      omittedFeatures.add("workspaceContentSearch");
+    },
     setCanonicalSubmittedPromptsStripped(stripped: boolean): void {
-      stripCanonicalSubmittedPromptsFeature = stripped;
+      if (stripped) omittedFeatures.add("canonicalSubmittedPrompts");
+      else omittedFeatures.delete("canonicalSubmittedPrompts");
     },
     setShellToolCommandOverride(command: string | null): void {
       shellToolCommandOverride = command;

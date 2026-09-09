@@ -73,6 +73,21 @@ export const ar: TranslationResources = {
       close: "إغلاق القائمة",
     },
     commandCenter: {
+      contentTitle: "البحث في محتوى الملفات",
+      contentPlaceholder: "البحث في الملفات المحفوظة...",
+      contentUnavailable: "مساحة العمل غير متاحة",
+      contentUpdateHost: "حدّث هذا المضيف للبحث في محتوى الملفات",
+      contentEmpty: "البحث في الملفات المحفوظة",
+      contentBack: "العودة إلى النتائج",
+      contentPreview: "معاينة",
+      contentOpen: "فتح",
+      contentLoadingPreview: "جارٍ تحميل المعاينة...",
+      contentLimited: "النتائج محدودة — حدّد البحث أكثر",
+      contentScopeDetail:
+        "يبحث في ملفات UTF-8 المحفوظة، بما فيها المخفية وغير المتتبعة. تُطبق قواعد التجاهل. لا يشمل الروابط الرمزية والتعديلات غير المحفوظة.",
+      contentScope: "ملفات محفوظة حتى 1 MiB · تجاهل حالة الأحرف",
+      contentChanged: "تغيّر الملف — لم تعد المطابقة في هذا الموضع",
+
       placeholder: "ابحث في الأوامر والملفات ومساحات العمل والوكلاء...",
       filePlaceholder: "البحث في الملفات...",
       searchingFiles: "جارٍ البحث في الملفات...",

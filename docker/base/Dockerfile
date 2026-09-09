@@ -50,11 +50,13 @@ RUN set -eux; \
       ca-certificates \
       curl \
       git \
+      ripgrep \
       gosu \
       lbzip2 \
       openssh-client \
       procps \
       tini; \
+    rg --version; \
     rm -rf /var/lib/apt/lists/*
 
 COPY --from=source-pack /tmp/paseo-packs /tmp/paseo-packs

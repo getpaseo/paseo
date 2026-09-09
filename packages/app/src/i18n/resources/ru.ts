@@ -73,6 +73,21 @@ export const ru: TranslationResources = {
       close: "Закрыть меню",
     },
     commandCenter: {
+      contentTitle: "Поиск по содержимому файлов",
+      contentPlaceholder: "Поиск в сохранённых файлах...",
+      contentUnavailable: "Рабочее пространство недоступно",
+      contentUpdateHost: "Обновите этот хост для поиска по содержимому",
+      contentEmpty: "Поиск в сохранённых файлах",
+      contentBack: "Назад к результатам",
+      contentPreview: "Предпросмотр",
+      contentOpen: "Открыть",
+      contentLoadingPreview: "Загрузка предпросмотра...",
+      contentLimited: "Результаты ограничены — уточните поиск",
+      contentScopeDetail:
+        "Поиск в сохранённых файлах UTF-8, включая скрытые и неотслеживаемые. Учитываются правила исключения. Символические ссылки и несохранённые изменения исключены.",
+      contentScope: "Сохранённые файлы до 1 МиБ · Без учёта регистра",
+      contentChanged: "Файл изменён — совпадения больше нет в этом месте",
+
       placeholder: "Поиск команд, файлов, рабочих пространств и агентов...",
       filePlaceholder: "Поиск файлов...",
       searchingFiles: "Поиск файлов...",

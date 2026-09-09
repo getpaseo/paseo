@@ -1,3 +1,4 @@
+export type { FileReadResult } from "./daemon-client.js";
 import type { DaemonClientConfig } from "./daemon-client.js";
 import type { AgentPermissionResponse } from "@getpaseo/protocol/agent-types";
 import type {

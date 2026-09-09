@@ -156,6 +156,7 @@ export const SHORTCUT_HELP_ROW_ORDER: Record<ShortcutSectionId, readonly string[
   general: [
     "toggle-command-center",
     "search-files",
+    "search-workspace-content",
     "show-shortcuts",
     "toggle-settings",
     "cycle-theme",
@@ -239,6 +240,7 @@ const SHORTCUT_HELP_LABEL_KEYS: Record<string, string> = {
   "toggle-right-sidebar": "settings.shortcuts.help.toggleRightSidebar",
   "toggle-both-sidebars": "settings.shortcuts.help.toggleBothSidebars",
   "toggle-settings": "settings.shortcuts.help.toggleSettings",
+  "search-workspace-content": "shell.commandCenter.contentTitle",
   "toggle-focus": "settings.shortcuts.help.toggleFocusMode",
   "cycle-theme": "settings.shortcuts.help.cycleTheme",
   "focus-message-input": "settings.shortcuts.help.focusMessageInput",
@@ -1003,7 +1005,7 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
   {
     id: "view-toggle-focus-cmd-shift-f-mac",
     action: "view.toggle.focus",
-    combo: "Cmd+Shift+F",
+    combo: "Cmd+Alt+Shift+F",
     when: { mac: true, commandCenter: false },
     help: {
       id: "toggle-focus",
@@ -1014,13 +1016,28 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
   {
     id: "view-toggle-focus-ctrl-shift-f-non-mac",
     action: "view.toggle.focus",
-    combo: "Ctrl+Shift+F",
+    combo: "Ctrl+Alt+Shift+F",
     when: { mac: false, commandCenter: false, terminal: false },
     help: {
       id: "toggle-focus",
       section: "layout",
       label: "Toggle focus mode",
     },
+  },
+
+  {
+    id: "command-center-content-cmd-shift-f-mac",
+    action: "command-center.content",
+    combo: "Cmd+Shift+F",
+    when: { mac: true, commandCenter: false },
+    help: { id: "search-workspace-content", section: "general", label: "Search file contents" },
+  },
+  {
+    id: "command-center-content-ctrl-shift-f-non-mac",
+    action: "command-center.content",
+    combo: "Ctrl+Shift+F",
+    when: { mac: false, commandCenter: false },
+    help: { id: "search-workspace-content", section: "general", label: "Search file contents" },
   },
 
   // --- Theme cycling ---

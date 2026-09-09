@@ -73,6 +73,21 @@ export const ko: TranslationResources = {
       close: "메뉴 닫기",
     },
     commandCenter: {
+      contentTitle: "파일 내용 검색",
+      contentPlaceholder: "저장된 파일 내용 검색...",
+      contentUnavailable: "작업 공간을 사용할 수 없음",
+      contentUpdateHost: "파일 내용을 검색하려면 호스트를 업데이트하세요",
+      contentEmpty: "저장된 파일 내용 검색",
+      contentBack: "결과로 돌아가기",
+      contentPreview: "미리보기",
+      contentOpen: "열기",
+      contentLoadingPreview: "미리보기 로딩 중...",
+      contentLimited: "결과 제한 — 검색 범위를 좁히세요",
+      contentScopeDetail:
+        "숨김 파일과 추적되지 않은 파일을 포함한 저장된 UTF-8 파일을 검색합니다. 무시 규칙을 따르며 심볼릭 링크와 저장되지 않은 편집은 제외합니다.",
+      contentScope: "1 MiB 이하 저장된 파일 · 대소문자 구분 안 함",
+      contentChanged: "파일이 변경되어 이 위치에 일치하는 내용이 없습니다",
+
       placeholder: "명령, 파일, 워크스페이스 및 에이전트 검색...",
       filePlaceholder: "파일 검색...",
       searchingFiles: "파일 검색 중...",

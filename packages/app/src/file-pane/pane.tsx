@@ -58,14 +58,6 @@ interface FilePreviewBodyProps {
 
 type TextExplorerFile = ExplorerFile & { kind: "text" };
 
-function trimNonEmpty(value: string | null | undefined): string | null {
-  if (typeof value !== "string") {
-    return null;
-  }
-  const trimmed = value.trim();
-  return trimmed.length > 0 ? trimmed : null;
-}
-
 function formatFileSize({ size }: { size: number }): string {
   if (size < 1024) {
     return `${size} B`;
@@ -164,7 +156,7 @@ function FilePreviewBody({
     );
   }
 
-  if (preview.kind === "text") {
+  if (preview.kind === "text" || (location.lineStart && preview.content !== undefined)) {
     if (renderKind === "html") {
       // The HTML document owns its own scrolling, so no ScrollView wrapper here.
       return (
@@ -239,8 +231,8 @@ export function FilePane({
   const supportsEditing = useSessionStore(
     (state) => state.sessions[serverId]?.serverInfo?.features?.workspaceFileEditing === true,
   );
-  const normalizedWorkspaceRoot = useMemo(() => workspaceRoot.trim(), [workspaceRoot]);
-  const normalizedFilePath = useMemo(() => trimNonEmpty(location.path), [location.path]);
+  const normalizedWorkspaceRoot = workspaceRoot;
+  const normalizedFilePath = location.path || null;
   const readTarget = useMemo(
     () =>
       normalizedFilePath
