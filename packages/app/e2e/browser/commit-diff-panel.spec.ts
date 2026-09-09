@@ -105,7 +105,7 @@ async function createFeatureCommit(repoPath: string): Promise<void> {
 async function expectCommitDiffHeaderGeometry(panel: Locator): Promise<void> {
   const [header, canvas] = await Promise.all([
     panel.getByTestId("diff-file-0").boundingBox(),
-    panel.getByTestId("git-diff-header-canvas").boundingBox(),
+    panel.getByTestId("git-diff-sticky-header-0").boundingBox(),
   ]);
   expect(header).not.toBeNull();
   expect(canvas).not.toBeNull();

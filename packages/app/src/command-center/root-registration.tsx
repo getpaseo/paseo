@@ -8,6 +8,7 @@ import {
   FolderPlus,
   History,
   Home,
+  Import,
   Keyboard,
   PanelLeft,
   Plus,
@@ -17,6 +18,7 @@ import { withUnistyles } from "react-native-unistyles";
 import { getIsElectronRuntime, useIsCompactFormFactor } from "@/constants/layout";
 import { useKeyboardShortcutOverrides } from "@/hooks/use-keyboard-shortcut-overrides";
 import { useOpenAddProject } from "@/hooks/use-open-add-project";
+import { useImportSession } from "@/hooks/use-import-session";
 import { useKeyboardActionDispatcher } from "@/keyboard/keyboard-action-dispatcher-context";
 import { useKeyboardShortcutsAvailable } from "@/keyboard/availability";
 import { resolveShortcutKeysForAction } from "@/keyboard/keyboard-shortcuts";
@@ -52,6 +54,7 @@ const ThemedSettings = withUnistyles(Settings, (theme) => ({
   color: theme.colors.foregroundMuted,
 }));
 const ThemedHome = withUnistyles(Home, (theme) => ({ color: theme.colors.foregroundMuted }));
+const ThemedImport = withUnistyles(Import, (theme) => ({ color: theme.colors.foregroundMuted }));
 const ThemedFolder = withUnistyles(Folder, (theme) => ({ color: theme.colors.foregroundMuted }));
 const ThemedCircleDashed = withUnistyles(CircleDashed, (theme) => ({
   color: theme.colors.foregroundMuted,
@@ -88,6 +91,10 @@ function HomeIcon({ size }: CommandCenterIconProps) {
   return <ThemedHome size={size} strokeWidth={2.2} />;
 }
 
+function ImportIcon({ size }: CommandCenterIconProps) {
+  return <ThemedImport size={size} strokeWidth={2.2} />;
+}
+
 function FolderIcon({ size }: CommandCenterIconProps) {
   return <ThemedFolder size={size} strokeWidth={2.2} />;
 }
@@ -106,6 +113,7 @@ export function CommandCenterRootActions() {
   const { overrides } = useKeyboardShortcutOverrides();
   const shortcutsAvailable = useKeyboardShortcutsAvailable();
   const openAddProject = useOpenAddProject();
+  const { open: openImportSession, sheet: importSessionSheet } = useImportSession();
   const settingsRoute = useMemo<Href>(() => buildSettingsRoute(), []);
   const homeRoute = useMemo<Href>(() => buildOpenProjectRoute(), []);
   const sessionsRoute = useMemo<Href>(() => buildSessionsRoute(), []);
@@ -166,11 +174,29 @@ export function CommandCenterRootActions() {
         },
       },
       {
-        id: "home",
+        id: "import-session",
         group: "actions",
         groupRank: 0,
         rank: 2,
-        keywords: ["home", "start", "import", "session", "pair", "device", "providers"],
+        keywords: ["import", "session", "terminal"],
+        visibility: "always",
+        run: () => {
+          clearCommandCenterFocusRestoreElement();
+          openImportSession();
+        },
+        presentation: {
+          kind: "action",
+          title: t("importSession.title"),
+          sectionTitle: t("shell.commandCenter.actions"),
+          icon: ImportIcon,
+        },
+      },
+      {
+        id: "home",
+        group: "actions",
+        groupRank: 0,
+        rank: 3,
+        keywords: ["home", "start", "pair", "device", "providers"],
         visibility: "query",
         run: () => {
           clearCommandCenterFocusRestoreElement();
@@ -187,7 +213,7 @@ export function CommandCenterRootActions() {
         id: "history",
         group: "actions",
         groupRank: 0,
-        rank: 3,
+        rank: 4,
         keywords: ["history", "sessions", "recent"],
         visibility: "always",
         run: () => {
@@ -205,7 +231,7 @@ export function CommandCenterRootActions() {
         id: "schedules",
         group: "actions",
         groupRank: 0,
-        rank: 4,
+        rank: 5,
         keywords: ["schedules", "scheduled", "automation", "recurring"],
         visibility: "always",
         run: () => {
@@ -223,7 +249,7 @@ export function CommandCenterRootActions() {
         id: "settings",
         group: "actions",
         groupRank: 0,
-        rank: 5,
+        rank: 6,
         keywords: ["settings", "preferences", "config", "configuration"],
         visibility: "always",
         run: () => {
@@ -250,7 +276,7 @@ export function CommandCenterRootActions() {
         id: "toggle-left-sidebar",
         group: "actions",
         groupRank: 0,
-        rank: 7,
+        rank: 8,
         keywords: ["toggle", "sidebar", "left", "panel", "workspaces"],
         visibility: "query",
         run: () => {
@@ -274,7 +300,7 @@ export function CommandCenterRootActions() {
         id: "keyboard-shortcuts",
         group: "actions",
         groupRank: 0,
-        rank: 6,
+        rank: 7,
         keywords: ["keyboard", "shortcuts", "keys", "hotkeys"],
         visibility: "always",
         run: () => setShortcutsDialogOpen(true),
@@ -309,6 +335,7 @@ export function CommandCenterRootActions() {
     homeRoute,
     keyboardActionDispatcher,
     openAddProject,
+    openImportSession,
     overrides,
     schedulesRoute,
     sessionsRoute,
@@ -322,5 +349,5 @@ export function CommandCenterRootActions() {
   ]);
 
   useCommandCenterActions({ sourceId: "root", enabled: true, actions });
-  return null;
+  return importSessionSheet;
 }

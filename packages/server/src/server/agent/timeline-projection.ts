@@ -1,5 +1,6 @@
 import type { AgentTimelineItem, ToolCallDetail } from "./agent-sdk-types.js";
 import type { AgentTimelineRow } from "./agent-manager.js";
+import { timelineItemIdentity } from "@getpaseo/protocol/timeline-identity";
 
 export type TimelineProjectionMode = "canonical" | "projected";
 
@@ -8,7 +9,11 @@ export interface TimelineSeqRange {
   endSeq: number;
 }
 
-export type TimelineProjectionKind = "assistant_merge" | "reasoning_merge" | "tool_lifecycle";
+export type TimelineProjectionKind =
+  | "assistant_merge"
+  | "reasoning_merge"
+  | "tool_lifecycle"
+  | "identity";
 export type TimelineLimitDirection = "tail" | "before" | "after";
 
 export interface TimelineProjectionEntry {
@@ -120,43 +125,68 @@ function makeCanonicalEntries(rows: readonly AgentTimelineRow[]): WorkingEntry[]
   }));
 }
 
-function collapseToolLifecycle(entries: readonly WorkingEntry[]): WorkingEntry[] {
+function mergeIdentityMetadata(
+  existing: WorkingEntry,
+  entry: WorkingEntry,
+  collapseKind: TimelineProjectionKind,
+): Pick<WorkingEntry, "sourceSeqRanges" | "collapsed"> {
+  return {
+    sourceSeqRanges: mergeSeqRanges(existing.sourceSeqRanges, entry.sourceSeqRanges),
+    collapsed: existing.collapsed.includes(collapseKind)
+      ? existing.collapsed
+      : [...existing.collapsed, collapseKind],
+  };
+}
+
+function mergeIdentityEntries(existing: WorkingEntry, entry: WorkingEntry): WorkingEntry | null {
+  switch (entry.item.type) {
+    case "tool_call":
+      if (existing.item.type !== "tool_call" || existing.turnId !== entry.turnId) return null;
+      return {
+        ...existing,
+        item: mergeToolCallItems(existing.item, entry.item),
+        timestamp: entry.timestamp,
+        seqEnd: Math.max(existing.seqEnd, entry.seqEnd),
+        ...mergeIdentityMetadata(existing, entry, "tool_lifecycle"),
+      };
+    case "plugin":
+      if (existing.item.type !== "plugin") return null;
+      return {
+        ...entry,
+        seqStart: existing.seqStart,
+        ...mergeIdentityMetadata(existing, entry, "identity"),
+      };
+    default:
+      return null;
+  }
+}
+
+function collapseByIdentity(entries: readonly WorkingEntry[]): WorkingEntry[] {
   const output: WorkingEntry[] = [];
-  const toolIndexByCallId = new Map<string, number>();
+  const indexByIdentity = new Map<string, number>();
 
   for (const entry of entries) {
-    if (entry.item.type !== "tool_call") {
+    const identity = timelineItemIdentity(entry.item);
+    if (identity === null) {
       output.push(entry);
       continue;
     }
 
-    const existingIndex = toolIndexByCallId.get(entry.item.callId);
+    const existingIndex = indexByIdentity.get(identity);
     if (existingIndex === undefined) {
-      toolIndexByCallId.set(entry.item.callId, output.length);
+      indexByIdentity.set(identity, output.length);
       output.push(entry);
       continue;
     }
 
     const existing = output[existingIndex];
-    if (!existing || existing.item.type !== "tool_call" || existing.turnId !== entry.turnId) {
+    const merged = existing ? mergeIdentityEntries(existing, entry) : null;
+    if (!merged) {
+      indexByIdentity.set(identity, output.length);
       output.push(entry);
       continue;
     }
-
-    const mergedItem = mergeToolCallItems(existing.item, entry.item);
-    const mergedRanges = mergeSeqRanges(existing.sourceSeqRanges, entry.sourceSeqRanges);
-    const collapsed = existing.collapsed.includes("tool_lifecycle")
-      ? existing.collapsed
-      : ([...existing.collapsed, "tool_lifecycle"] as TimelineProjectionKind[]);
-
-    output[existingIndex] = {
-      ...existing,
-      item: mergedItem,
-      timestamp: entry.timestamp,
-      seqEnd: Math.max(existing.seqEnd, entry.seqEnd),
-      sourceSeqRanges: mergedRanges,
-      collapsed,
-    };
+    output[existingIndex] = merged;
   }
 
   return output;
@@ -264,7 +294,7 @@ export function projectTimelineRows(input: {
     return canonical;
   }
 
-  const toolCollapsed = collapseToolLifecycle(canonical);
+  const toolCollapsed = collapseByIdentity(canonical);
   const assistantMerged = mergeAssistantChunks(toolCollapsed);
   return mergeReasoningChunks(assistantMerged);
 }
@@ -282,7 +312,7 @@ export function selectTimelineWindowByProjectedLimit(input: {
   const { rows, direction } = input;
   const limit = Math.max(0, Math.floor(input.limit));
   const canonical = makeCanonicalEntries(rows);
-  const projectedAll = mergeReasoningChunks(mergeAssistantChunks(collapseToolLifecycle(canonical)));
+  const projectedAll = mergeReasoningChunks(mergeAssistantChunks(collapseByIdentity(canonical)));
 
   if (projectedAll.length === 0) {
     return {

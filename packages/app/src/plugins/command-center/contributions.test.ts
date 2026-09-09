@@ -4,9 +4,9 @@ import { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import {
   defineRpc,
   type PluginAgentSnapshot,
-  type PluginCommandCenterItemContribution,
   type PluginWorkspaceSnapshot,
 } from "@getpaseo/plugin";
+import { type PluginCommandCenterItemContribution } from "@getpaseo/plugin/client";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import type { InstalledPlugin } from "../types";
@@ -62,6 +62,7 @@ function plugin(onAgentSelect: AgentCommandItem["onSelect"]): InstalledPlugin {
     clientBundle: "bundle",
     queryClient: new QueryClient(),
     cleanup: () => {},
+    settingsScreens: [],
     surfaces: [{ id: "main", Component: () => null }],
     sidebarItems: [],
     workspacePanels: [
@@ -97,7 +98,7 @@ function plugin(onAgentSelect: AgentCommandItem["onSelect"]): InstalledPlugin {
         onSelect: onAgentSelect,
       },
     ],
-    clientSide: null,
+    clientSlashCommands: [],
     attachmentSources: [],
     themes: [],
     timelineTransformers: [],
@@ -143,6 +144,7 @@ describe("plugin Command Center contributions", () => {
       runtime: createRuntime,
       state: stateSource(),
       navigation: {
+        openSettings() {},
         openSurface() {},
         openWorkspacePanel() {},
         openAgentPanel() {},
@@ -193,6 +195,7 @@ describe("plugin Command Center contributions", () => {
       workspaceId: workspace.id,
       agentId: agent.id,
       navigation: {
+        openSettings() {},
         openSurface(pluginId, surfaceId) {
           opened.push(`${pluginId}/surface/${surfaceId}`);
         },
@@ -224,6 +227,7 @@ describe("plugin Command Center contributions", () => {
         workspaceId: workspace.id,
         agentId: agent.id,
         navigation: {
+          openSettings() {},
           openSurface() {},
           openWorkspacePanel() {},
           openAgentPanel() {},

@@ -1,18 +1,22 @@
 import type { QueryClient } from "@tanstack/react-query";
+import type { PluginRequirements } from "@getpaseo/protocol/messages";
 import type {
   PluginAttachmentSourceContribution,
-  PluginCommandCenterItemContribution,
-  PluginClientContribution,
   PluginCleanup,
+  PluginThemeContribution,
+} from "@getpaseo/plugin";
+import type {
+  PluginCommandCenterItemContribution,
+  PluginClientSlashCommandContribution,
   PluginComposerPillContribution,
   PluginSidebarContribution,
   PluginSurfaceContribution,
-  PluginThemeContribution,
+  PluginSettingsScreenContribution,
   PluginTimelineRendererContribution,
   PluginTimelineTransformerContribution,
   PluginPanelLocation,
   PluginWorkspacePanelContribution,
-} from "@getpaseo/plugin";
+} from "@getpaseo/plugin/client";
 
 export type EvaluatedPluginWorkspacePanelContribution = PluginWorkspacePanelContribution & {
   locations: readonly PluginPanelLocation[];
@@ -22,10 +26,11 @@ export interface EvaluatedPlugin {
   id: string;
   cleanup: PluginCleanup;
   surfaces: PluginSurfaceContribution[];
+  settingsScreens: PluginSettingsScreenContribution[];
   sidebarItems: PluginSidebarContribution[];
   workspacePanels: EvaluatedPluginWorkspacePanelContribution[];
   commandCenterItems: PluginCommandCenterItemContribution[];
-  clientSide: PluginClientContribution | null;
+  clientSlashCommands: PluginClientSlashCommandContribution[];
   attachmentSources: PluginAttachmentSourceContribution[];
   themes: PluginThemeContribution[];
   timelineTransformers: PluginTimelineTransformerContribution[];
@@ -34,6 +39,7 @@ export interface EvaluatedPlugin {
 
 export interface InstalledPlugin extends EvaluatedPlugin {
   serverId: string;
+  requirements?: PluginRequirements;
   clientBundle: string;
   queryClient: QueryClient;
 }
@@ -41,9 +47,11 @@ export interface InstalledPlugin extends EvaluatedPlugin {
 export type {
   PluginAttachmentSourceContribution,
   PluginCommandCenterItemContribution,
+  PluginClientSlashCommandContribution,
   PluginComposerPillContribution,
   PluginSidebarContribution,
   PluginSurfaceContribution,
+  PluginSettingsScreenContribution,
   PluginThemeContribution,
   PluginTimelineRendererContribution,
   PluginTimelineTransformerContribution,

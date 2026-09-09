@@ -134,19 +134,39 @@ The fix for transforms is Gotcha 3. The fix for context is Gotcha 7.
 
 ## Gotcha 3 — Keyboard layout and portal anchors
 
-Move the chat surface with worklet-driven bottom padding from
-`KeyboardShiftProvider`. Padding keeps the stream, composer, visual position,
-and native hit testing in the same layout. Do not translate the stream and
-composer independently.
+`KeyboardTranslateView` owns visual keyboard motion. Android uses the
+controller's Reanimated signal. iOS uses its native-driver `Animated.event`
+signal because the stock iOS Reanimated value changes at move start, while
+writing a replacement Reanimated value every frame interrupts UIKit's hide
+animation. Keep this platform choice inside `KeyboardTranslateView`.
 
-Do not use the controller's raw keyboard progress for the padding. It can retain
-a nonzero value after the keyboard closes. The shared provider normalizes that
-state and reconciles native animation-end events.
+`KeyboardDock` always keeps the chat surface at full height and wraps it in
+`KeyboardTranslateView`. The panel root clips it at the header edge, so rows
+slide under the header on open and out from under it on close. Do not swap the
+dock to keyboard padding at rest. Changing its height creates either a blank
+band or a paused transition when the inverted list updates its viewport.
 
-`measureInWindow` already includes the dock's current padding layout. When a
-portal opens, snapshot the current shift and apply only the subsequent shift
-delta to its animated `bottom`. Adding the full shift moves the portal twice and
-can place it over the composer controls.
+Do not animate a layout prop through the keyboard transition. On Android
+Fabric, each animated layout update clones the shadow tree and runs Yoga over
+the dock subtree. This measured about 10 ms per frame on the emulator and the
+mounted layouts arrived in bursts every 2–4 frames. A transform does not dirty
+layout. Preserve the translated dock's history scroll range with a far-end
+content inset on the inverted stream list. Update that inset only when keyboard
+motion settles; never drive it per frame.
+
+Move the stream and composer together through `KeyboardDock`. Do not translate
+them independently.
+
+`KeyboardShiftProvider` owns the normalized shift used for settled insets and
+portal geometry, plus the `isMoving` worklet value. It reconciles native
+animation-end events because the controller can retain a nonzero value after
+the keyboard closes.
+
+Measure portal anchors while the dock is at rest. If a popover opens during
+motion, re-measure when `isMoving` settles. `measureInWindow` includes the
+dock's current layout and transform. Snapshot the shift at measurement time and
+apply only the subsequent shift delta to the animated `bottom`. Adding the full
+shift moves the portal twice and can place it over the composer controls.
 
 The provider also reconciles iOS from the controller's native `onEnd` event.
 The controller's stock iOS shared values update at move start and during an
@@ -154,10 +174,6 @@ interactive move, but not at the terminal event, so JS contention can otherwise
 leave the last height/progress pair stuck in either the open or closed state.
 Keep that terminal reconciliation on the UI thread; a later focus or blur must
 not be required to repair the offset.
-
-Re-measure on `Keyboard.addListener('keyboardDidShow'|'keyboardDidHide')` only
-to refresh the snapshot if the keyboard was mid-transition when the popover
-opened.
 
 ## Gotcha 4 — Host-relative positioning before platform offsets
 

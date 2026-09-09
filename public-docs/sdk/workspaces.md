@@ -81,6 +81,22 @@ const agent = await client.agents.create({
 
 The daemon still creates a project and a fresh workspace. Read `agent.workspaceId` when you need the generated workspace ID.
 
+## Start a terminal in a workspace
+
+```ts
+const terminal = await workspace.terminals.create({ name: "Development" });
+terminal.write("echo ready");
+terminal.sendKeys(["Enter"]);
+
+const { lines } = await terminal.capture();
+const { entries } = await workspace.terminals.list();
+await terminal.kill();
+```
+
+Two workspaces may share a directory. The workspace handle supplies the ID that keeps their terminals separate. To use an ID you already have, call `client.workspaces.ref(workspaceId).terminals.create()`.
+
+See the [terminal API reference](/docs/sdk/reference#clientterminals) for command arguments, working-directory overrides, input, and capture options.
+
 ## List workspaces
 
 ```ts

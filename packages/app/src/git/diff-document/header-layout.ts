@@ -21,20 +21,6 @@ export function diffMaterializationWindow(
   };
 }
 
-export function diffHeaderViewportKey(input: {
-  files: readonly DiffFileSection[];
-  scrollTop: number;
-  viewportHeight: number;
-  activePath: string | null;
-}): string {
-  const window = resolveVisibleFileSections({ ...input, overscan: 0 });
-  const headers = window.files
-    .filter((file) => file !== window.sticky?.file)
-    .map((file) => `${file.fileIndex}:${file.top - input.scrollTop}`);
-  if (window.sticky) headers.push(`${window.sticky.file.fileIndex}:${window.sticky.y}`);
-  return `${input.activePath ?? ""}|${headers.join(",")}`;
-}
-
 export function resolveVisibleFileSections(input: {
   files: readonly DiffFileSection[];
   scrollTop: number;

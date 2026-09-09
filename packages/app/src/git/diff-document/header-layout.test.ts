@@ -1,9 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  diffHeaderViewportKey,
-  diffInteractionWindowTop,
-  resolveVisibleFileSections,
-} from "./header-layout";
+import { diffInteractionWindowTop, resolveVisibleFileSections } from "./header-layout";
 import type { DiffFileSection } from "./types";
 
 describe("diff header viewport", () => {
@@ -47,15 +43,6 @@ describe("diff header viewport", () => {
       resolveVisibleFileSections({ files, scrollTop: 130, viewportHeight: 100, overscan: 0 }).sticky
         ?.y,
     ).toBe(0);
-  });
-
-  it("reuses a fixed sticky header until its visible layout changes", () => {
-    const files = [section(0, 0, 4_000, false), section(1, 4_000, 4_030, true)];
-    const keyAt = (scrollTop: number) =>
-      diffHeaderViewportKey({ files, scrollTop, viewportHeight: 600, activePath: null });
-
-    expect(keyAt(100)).toBe(keyAt(2_000));
-    expect(keyAt(3_985)).not.toBe(keyAt(2_000));
   });
 });
 

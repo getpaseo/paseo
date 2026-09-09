@@ -1,4 +1,4 @@
-import { type Dirent, type FSWatcher, watch } from "node:fs";
+import { type Dirent, watch } from "node:fs";
 import { readdir, stat } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import type { BackendDiagnostics, ObservationBackend, ObservationHost } from "./contracts.js";
@@ -25,15 +25,27 @@ interface Inventory {
   files: Set<string>;
 }
 
+type WatchDirectory = (
+  root: string,
+  listener: (eventType: string, filename: string | null) => void,
+) => {
+  close(): void;
+  on(event: "error", listener: (error: Error) => void): unknown;
+};
+
+const watchDirectory: WatchDirectory = (root, listener) =>
+  watch(root, { recursive: true }, listener);
+
 export function createNativeRecursiveBackend(
   host: ObservationHost,
   paths: ObserverPaths,
+  observe: WatchDirectory = watchDirectory,
 ): ObservationBackend {
-  return new NativeRecursiveBackend(host, paths);
+  return new NativeRecursiveBackend(host, paths, observe);
 }
 
 class NativeRecursiveBackend implements ObservationBackend {
-  private watcher: FSWatcher | null = null;
+  private watcher: ReturnType<WatchDirectory> | null = null;
   private files = new Set<string>();
   private directories = new Set<string>();
   private entries = new Map<string, DirectoryEntry>();
@@ -62,6 +74,7 @@ class NativeRecursiveBackend implements ObservationBackend {
   constructor(
     private readonly host: ObservationHost,
     private readonly paths: ObserverPaths,
+    private readonly observe: WatchDirectory,
   ) {}
 
   async start(): Promise<void> {
@@ -114,7 +127,7 @@ class NativeRecursiveBackend implements ObservationBackend {
   }
 
   private watchRoot(): void {
-    const watcher = watch(this.host.root, { recursive: true }, (eventType, filename) => {
+    const watcher = this.observe(this.host.root, (eventType, filename) => {
       if (!this.host.isActive()) return;
       this.host.metrics.nativeEventCount += 1;
       if (!filename) {
@@ -136,7 +149,13 @@ class NativeRecursiveBackend implements ObservationBackend {
       this.host.metrics.nativeRenameEventCount += 1;
       const knownDirectory = this.directories.has(path);
       this.classify(path, (isDirectory) => {
-        if (!isDirectory) return;
+        if (!isDirectory) {
+          // Remember files as soon as we announce them. A coalesced delete must
+          // still be found by the next audit, even before the first directory scan.
+          this.files.add(path);
+          this.entries.get(scope)?.files.add(path);
+          return;
+        }
         if (knownDirectory) this.requestAudit(path, true);
         else this.requestAudit(scope);
       });
@@ -262,7 +281,8 @@ class NativeRecursiveBackend implements ObservationBackend {
       await this.reconcileSubtree(directory, generation);
       if (!this.canCommit(generation)) return;
     }
-    for (const directory of this.paths.collapse(changeScopes)) {
+    // Parent scans are shallow, so a queued parent cannot cover its children.
+    for (const directory of new Set(changeScopes)) {
       const alreadyCovered =
         forcedLocalScopes.has(directory) ||
         forcedRecursiveScopes.some((scope) => this.host.isPathInside(scope, directory));

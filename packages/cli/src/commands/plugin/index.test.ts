@@ -1,6 +1,23 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const listPlugins = vi.fn(async () => []);
+const listPlugins = vi.fn(async () => [
+  {
+    id: "git-plugin",
+    path: "/plugins/git-plugin",
+    enabled: true,
+    status: "running" as const,
+    source: "git" as const,
+    commit: "1557a34c91e2abcdef",
+    ref: "main",
+  },
+  {
+    id: "legacy-plugin",
+    path: "/plugins/legacy-plugin",
+    enabled: true,
+    status: "failed" as const,
+    error: "This plugin was made for an older version of Paseo",
+  },
+]);
 const getPluginLogs = vi.fn(async () => [
   {
     sequence: 1,
@@ -51,12 +68,43 @@ describe("plugin management commands", () => {
   });
 
   it("requires host support before attempting a management RPC", async () => {
-    await expect(runPluginListCommand({}, {} as never)).rejects.toMatchObject({
+    await expect(runPluginListCommand(undefined, {}, {} as never)).rejects.toMatchObject({
       code: "DAEMON_UPDATE_REQUIRED",
       message: "Update the host to use plugin management.",
     });
     expect(listPlugins).not.toHaveBeenCalled();
     expect(close).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps status as a hidden alias for the network-free plugin list", async () => {
+    features.pluginManagement = true;
+    const command = createPluginCommand();
+
+    await command.parseAsync(["status"], { from: "user" });
+
+    expect(listPlugins).toHaveBeenCalledTimes(1);
+    expect(command.helpInformation()).not.toContain("status");
+  });
+
+  it("lists runtime state and the installed commit without an upstream commit", async () => {
+    features.pluginManagement = true;
+
+    const result = await runPluginListCommand(undefined, {}, {} as never);
+    const output = render(result, { noColor: true });
+
+    expect(output).toContain("SOURCE");
+    expect(output).toContain("COMMIT");
+    expect(output).not.toContain("LATEST");
+    expect(output).toContain("1557a34c91e2");
+    expect(output).toContain("This plugin was made for an older version of Paseo");
+  });
+
+  it("filters the shared ls and status command by plugin ID", async () => {
+    features.pluginManagement = true;
+
+    const result = await runPluginListCommand("legacy-plugin", {}, {} as never);
+
+    expect(result.data.map((plugin) => plugin.id)).toEqual(["legacy-plugin"]);
   });
 
   it("requires plugin log support before attempting the RPC", async () => {

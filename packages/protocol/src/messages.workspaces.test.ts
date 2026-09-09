@@ -10,6 +10,52 @@ import {
 } from "./messages.js";
 
 describe("workspace message schemas", () => {
+  test("parses blocked setup status and the explicit setup run RPC", () => {
+    expect(
+      SessionInboundMessageSchema.parse({
+        type: "workspace.setup.run.request",
+        workspaceId: "workspace-fork",
+        requestId: "run-setup",
+      }),
+    ).toMatchObject({ type: "workspace.setup.run.request", workspaceId: "workspace-fork" });
+
+    expect(
+      SessionOutboundMessageSchema.parse({
+        type: "workspace_setup_progress",
+        payload: {
+          workspaceId: "workspace-fork",
+          status: "blocked",
+          detail: {
+            type: "worktree_setup",
+            worktreePath: "/repo/fork",
+            branchName: "fork",
+            log: "",
+            commands: [],
+          },
+          error: null,
+          blockedSource: {
+            kind: "change_request",
+            forge: "github",
+            number: 42,
+            headRepository: "contributor/paseo",
+          },
+        },
+      }),
+    ).toMatchObject({ payload: { status: "blocked", blockedSource: { number: 42 } } });
+
+    expect(
+      SessionOutboundMessageSchema.parse({
+        type: "workspace.setup.run.response",
+        payload: {
+          requestId: "run-setup",
+          workspaceId: "workspace-fork",
+          started: true,
+          error: null,
+        },
+      }),
+    ).toMatchObject({ type: "workspace.setup.run.response", payload: { started: true } });
+  });
+
   test("parses fetch_workspaces_request", () => {
     const parsed = SessionInboundMessageSchema.parse({
       type: "fetch_workspaces_request",
@@ -264,6 +310,7 @@ describe("workspace message schemas", () => {
 
     expect(request.type).toBe("fetch_recent_provider_sessions_request");
     expect(request.providers).toEqual(["my-claude"]);
+    expect(request.query).toBeUndefined();
     expect(response.payload).toEqual({
       requestId: "req-recent-provider-sessions",
       entries: [
@@ -279,6 +326,30 @@ describe("workspace message schemas", () => {
         },
       ],
     });
+  });
+
+  test("parses session import search requests and per-provider errors", () => {
+    const request = SessionInboundMessageSchema.parse({
+      type: "fetch_recent_provider_sessions_request",
+      requestId: "req-search-provider-sessions",
+      query: "invoice",
+    });
+    const response = SessionOutboundMessageSchema.parse({
+      type: "fetch_recent_provider_sessions_response",
+      payload: {
+        requestId: "req-search-provider-sessions",
+        entries: [],
+        providerErrors: [{ provider: "codex", message: "Codex listing timed out" }],
+      },
+    });
+
+    expect(request.query).toBe("invoice");
+    if (response.type !== "fetch_recent_provider_sessions_response") {
+      throw new Error("expected fetch_recent_provider_sessions_response");
+    }
+    expect(response.payload.providerErrors).toEqual([
+      { provider: "codex", message: "Codex listing timed out" },
+    ]);
   });
 
   test("parses fetch_recent_provider_sessions response with filteredAlreadyImportedCount", () => {

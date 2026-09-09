@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { AgentStreamEventPayload } from "@getpaseo/protocol/messages";
+import type { AgentTimelineItem, ToolCallDetail } from "@getpaseo/protocol/agent-types";
 import {
   createUserMessage,
   hydrateStreamState,
@@ -22,17 +23,23 @@ import {
 // Test helpers
 // ---------------------------------------------------------------------------
 
+type TimelineResponseEntry = ProcessTimelineResponseInput["payload"]["entries"][number];
+
 function makeTimelineEntry(
   seq: number,
   text: string,
-  type: string = "assistant_message",
+  type: "assistant_message" | "user_message" | "reasoning" = "assistant_message",
   seqEnd = seq,
-) {
+): TimelineResponseEntry {
+  let item: AgentTimelineItem;
+  if (type === "assistant_message") item = { type, text };
+  else if (type === "user_message") item = { type, text };
+  else item = { type, text };
   return {
     seqStart: seq,
     seqEnd,
     provider: "claude",
-    item: { type, text },
+    item,
     timestamp: new Date(1000 + seq).toISOString(),
   };
 }
@@ -41,8 +48,9 @@ function makeToolCallTimelineEntry(
   seq: number,
   callId: string,
   status: "running" | "completed",
-  detail: Record<string, unknown>,
-) {
+  detail: ToolCallDetail,
+  turnId?: string,
+): TimelineResponseEntry {
   return {
     seqStart: seq,
     seqEnd: seq,
@@ -54,6 +62,24 @@ function makeToolCallTimelineEntry(
       status,
       detail,
       error: null,
+    },
+    ...(turnId ? { turnId } : {}),
+    timestamp: new Date(1000 + seq).toISOString(),
+  };
+}
+
+function makePluginTimelineEntry(seq: number, status: string): TimelineResponseEntry {
+  return {
+    seqStart: seq,
+    seqEnd: seq,
+    provider: "claude",
+    item: {
+      type: "plugin" as const,
+      id: "review-1",
+      pluginId: "review",
+      kind: "review",
+      version: 1,
+      data: { status },
     },
     timestamp: new Date(1000 + seq).toISOString(),
   };
@@ -3173,12 +3199,14 @@ describe("processTimelineResponse", () => {
 
   it("coalesces tool call lifecycle rows across the older-page prepend boundary", () => {
     const callId = "toolu_boundary";
+    const turnId = "turn-boundary";
     const currentTail = hydrateStreamState(
       [
         {
           event: {
             type: "timeline",
             provider: "claude",
+            turnId,
             item: makeToolCallTimelineEntry(3, callId, "completed", {
               type: "read",
               filePath: "/tmp/example.ts",
@@ -3206,11 +3234,17 @@ describe("processTimelineResponse", () => {
         startCursor: { seq: 1 },
         endCursor: { seq: 2 },
         entries: [
-          makeToolCallTimelineEntry(1, callId, "running", {
-            type: "unknown",
-            input: { file_path: "/tmp/example.ts" },
-            output: null,
-          }),
+          makeToolCallTimelineEntry(
+            1,
+            callId,
+            "running",
+            {
+              type: "unknown",
+              input: { file_path: "/tmp/example.ts" },
+              output: null,
+            },
+            turnId,
+          ),
         ],
       },
     });
@@ -3225,12 +3259,49 @@ describe("processTimelineResponse", () => {
       })),
     ).toEqual([
       {
-        id: `agent_tool_${callId}`,
+        id: `agent_tool_turn:${turnId}/${callId}`,
         callId,
         status: "completed",
         detailType: "read",
       },
     ]);
+  });
+
+  it("keeps the newest plugin row across the older-page prepend boundary", () => {
+    const currentTail = hydrateStreamState(
+      [
+        {
+          event: {
+            type: "timeline",
+            provider: "claude",
+            item: makePluginTimelineEntry(3, "complete").item,
+          },
+          timestamp: new Date(3000),
+        },
+      ],
+      { source: "canonical" },
+    );
+
+    const result = processTimelineResponse({
+      ...baseTimelineInput,
+      currentTail,
+      currentCursor: { epoch: "epoch-1", startSeq: 3, endSeq: 5 },
+      payload: {
+        ...baseTimelineInput.payload,
+        direction: "before",
+        epoch: "epoch-1",
+        startCursor: { seq: 1 },
+        endCursor: { seq: 2 },
+        entries: [makePluginTimelineEntry(1, "running")],
+      },
+    });
+
+    expect(result.tail).toHaveLength(1);
+    expect(result.tail[0]).toMatchObject({
+      kind: "plugin",
+      id: "review/review-1",
+      data: { status: "complete" },
+    });
   });
 
   it("removes a reconciled submitted prompt before coalescing a tool call at the pagination seam", () => {
@@ -3297,6 +3368,8 @@ describe("processTimelineResponse", () => {
 
   it("does not coalesce tool call lifecycle rows away from the prepend boundary", () => {
     const callId = "toolu_not_boundary";
+    const olderTurnId = "autonomous-turn-1";
+    const currentTurnId = "autonomous-turn-2";
     const currentTail = hydrateStreamState(
       [
         {
@@ -3307,6 +3380,7 @@ describe("processTimelineResponse", () => {
           event: {
             type: "timeline",
             provider: "claude",
+            turnId: currentTurnId,
             item: makeToolCallTimelineEntry(4, callId, "completed", {
               type: "read",
               filePath: "/tmp/example.ts",
@@ -3334,11 +3408,17 @@ describe("processTimelineResponse", () => {
         startCursor: { seq: 1 },
         endCursor: { seq: 2 },
         entries: [
-          makeToolCallTimelineEntry(1, callId, "running", {
-            type: "unknown",
-            input: { file_path: "/tmp/example.ts" },
-            output: null,
-          }),
+          makeToolCallTimelineEntry(
+            1,
+            callId,
+            "running",
+            {
+              type: "unknown",
+              input: { file_path: "/tmp/example.ts" },
+              output: null,
+            },
+            olderTurnId,
+          ),
           makeTimelineEntry(2, "older chunk "),
         ],
       },
@@ -3354,7 +3434,7 @@ describe("processTimelineResponse", () => {
     ).toEqual([
       {
         kind: "tool_call",
-        id: `agent_tool_${callId}`,
+        id: `agent_tool_turn:${olderTurnId}/${callId}`,
         status: "running",
         text: null,
       },
@@ -3366,7 +3446,7 @@ describe("processTimelineResponse", () => {
       },
       {
         kind: "tool_call",
-        id: `agent_tool_${callId}`,
+        id: `agent_tool_turn:${currentTurnId}/${callId}`,
         status: "completed",
         text: null,
       },

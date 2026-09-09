@@ -1,4 +1,8 @@
 export const CLIENT_CAPS = {
+  // Clients outside the Paseo app version series can explicitly accept provider IDs.
+  // COMPAT(explicitEventSubscriptions): added in v0.8.0, remove legacy broadcasts after 2027-03-08.
+  explicitEventSubscriptions: "explicit_event_subscriptions",
+  allProviders: "all_providers",
   // COMPAT(selectiveAgentTimeline): added in v0.1.106. Capable clients receive
   // agent streams only for their explicit viewed set. Remove after 2027-01-12
   // once the supported client floor is >= v0.1.106.
@@ -24,9 +28,18 @@ export const CLIENT_CAPS = {
   // provider catalogs with shared thinking sets and may revalidate by content hash.
   // Remove the legacy snapshot encoding after 2027-02-04.
   compactProviderSnapshots: "compact_provider_snapshots",
+  providerSnapshotReferences: "provider_snapshot_references",
   // COMPAT(timelineReplacementInvalidation): added in v0.5.0, remove legacy
   // reconstructed timeline replay after 2027-02-21 once the client floor supports invalidation.
   timelineReplacementInvalidation: "timeline_replacement_invalidation",
+  // COMPAT(timelineNotifications): added in v0.7.2. The daemon omits notification
+  // timeline items for older clients whose strict timeline union rejects them.
+  // Remove after 2027-03-03 once the supported client floor is >= v0.7.2.
+  timelineNotifications: "timeline_notifications",
+  // COMPAT(pluginTimelineItems): added in v0.8.0, remove after 2027-03-07 once client floor >= v0.8.0.
+  pluginTimelineItems: "plugin_timeline_items",
+  // COMPAT(workspaceSetupBlocked): added in v0.8.0, remove after 2027-03-07 once client floor >= v0.8.0.
+  workspaceSetupBlocked: "workspace_setup_blocked",
   browserHost: "browser_host",
 } as const;
 

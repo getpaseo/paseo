@@ -2,6 +2,8 @@ import type { ReactNode } from "react";
 import { createContext, useContext } from "react";
 import { Outlet, createRootRoute, HeadContent, Scripts } from "@tanstack/react-router";
 import type { ReleaseChannels, ReleaseInfo } from "~/latest-release";
+import type { VisitorPlatform } from "~/platform";
+import { getVisitorPlatform } from "~/platform";
 import { getLatestRelease } from "~/release";
 import { getStarCount } from "~/stars";
 
@@ -19,6 +21,7 @@ const ReleaseCtx = createContext<ReleaseChannels>({
   beta: null,
 });
 const StarsCtx = createContext<StarsContext>({ stars: "" });
+const PlatformCtx = createContext<VisitorPlatform>("mac");
 
 const PLAUSIBLE_INIT_SCRIPT = {
   __html: `window.plausible=window.plausible||function(){(plausible.q=plausible.q||[]).push(arguments)},plausible.init=plausible.init||function(i){plausible.o=i||{}};plausible.init()`,
@@ -38,10 +41,19 @@ export function useStars(): StarsContext {
   return useContext(StarsCtx);
 }
 
+/** The platform the visitor is browsing from, resolved from the request user agent during SSR. */
+export function useVisitorPlatform(): VisitorPlatform {
+  return useContext(PlatformCtx);
+}
+
 export const Route = createRootRoute({
   loader: async () => {
-    const [release, stars] = await Promise.all([getLatestRelease(), getStarCount()]);
-    return { release, ...stars };
+    const [release, stars, platform] = await Promise.all([
+      getLatestRelease(),
+      getStarCount(),
+      getVisitorPlatform(),
+    ]);
+    return { release, platform, ...stars };
   },
   head: () => ({
     meta: [
@@ -68,9 +80,11 @@ function RootComponent() {
   return (
     <ReleaseCtx value={data.release}>
       <StarsCtx value={data}>
-        <RootDocument>
-          <Outlet />
-        </RootDocument>
+        <PlatformCtx value={data.platform}>
+          <RootDocument>
+            <Outlet />
+          </RootDocument>
+        </PlatformCtx>
       </StarsCtx>
     </ReleaseCtx>
   );

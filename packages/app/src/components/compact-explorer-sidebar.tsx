@@ -462,7 +462,6 @@ function ChangedFilesPane({
       workspaceId={workspaceId}
       cwd={workspaceRoot}
       enabled={isOpen}
-      modeScope="compact-explorer"
       onOpenFile={onOpenFile}
       onAddToChat={canAddToChat ? addFile : undefined}
       state={changesState}

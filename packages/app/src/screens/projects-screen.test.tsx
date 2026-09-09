@@ -7,27 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ProjectHostEntry, ProjectSummary, WorkspaceSummary } from "@/utils/projects";
 import type { ProjectHostError, UseProjectsResult } from "@/hooks/use-projects";
 
-const { theme, projectsState, push } = vi.hoisted(() => ({
-  theme: {
-    spacing: { 0: 0, 1: 4, "1.5": 6, 2: 8, 3: 12, 4: 16, 6: 24, 8: 32 },
-    iconSize: { sm: 14, md: 20 },
-    fontSize: { xs: 11, sm: 13, base: 15 },
-    fontWeight: { normal: "400" as const, medium: "500" as const },
-    borderRadius: { sm: 4, md: 6, lg: 8, full: 999 },
-    opacity: { 50: 0.5 },
-    colors: {
-      surface0: "#000",
-      surface1: "#111",
-      surface2: "#222",
-      surface3: "#333",
-      surfaceSidebarHover: "#1a1a1a",
-      foreground: "#fff",
-      foregroundMuted: "#aaa",
-      border: "#444",
-      accent: "#0a84ff",
-      palette: { red: { 300: "#ff6b6b" } },
-    },
-  },
+const { projectsState, push } = vi.hoisted(() => ({
   projectsState: {
     current: {
       projects: [],
@@ -40,7 +20,8 @@ const { theme, projectsState, push } = vi.hoisted(() => ({
   push: vi.fn(),
 }));
 
-vi.mock("react-native", () => {
+vi.mock("react-native", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("react-native")>();
   const passthrough = ({
     children,
     testID,
@@ -87,6 +68,7 @@ vi.mock("react-native", () => {
   };
 
   return {
+    ...actual,
     View: ({ children, testID }: { children?: React.ReactNode; testID?: string }) =>
       React.createElement("div", { "data-testid": testID }, children),
     Text: ({ children }: { children?: React.ReactNode }) =>
@@ -101,21 +83,15 @@ vi.mock("react-native", () => {
   };
 });
 
-vi.mock("react-native-unistyles", () => ({
-  StyleSheet: {
-    create: (factory: unknown) =>
-      typeof factory === "function" ? (factory as (t: typeof theme) => unknown)(theme) : factory,
-  },
-  useUnistyles: () => ({ theme }),
-}));
-
-vi.mock("lucide-react-native", () => {
+vi.mock("lucide-react-native", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("lucide-react-native")>();
   const icon = (name: string) => {
     const Icon = () => React.createElement("span", { "data-icon": name });
     Icon.displayName = name;
     return Icon;
   };
   return {
+    ...actual,
     ChevronRight: icon("ChevronRight"),
     MoreVertical: icon("MoreVertical"),
     ExternalLink: icon("ExternalLink"),

@@ -186,6 +186,7 @@ export type WorktreeSource =
       changeRequestNumber: number;
       headRef: string;
       headRepositoryOwner?: string;
+      headRepository?: string;
       baseRefName: string;
       checkoutRefs?: WorktreeCheckoutRef[];
       localBranchName?: string;

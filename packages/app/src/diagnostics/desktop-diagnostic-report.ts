@@ -2,9 +2,12 @@ import {
   getDesktopAppLogs,
   getDesktopDaemonLogs,
   getDesktopDaemonStatus,
+  getDesktopUpdaterDiagnostics,
   type DesktopAppLogs,
   type DesktopDaemonLogs,
   type DesktopDaemonStatus,
+  type DesktopUpdaterDiagnosticFile,
+  type DesktopUpdaterDiagnostics,
 } from "@/desktop/daemon/desktop-daemon";
 import { formatDiagnosticSection } from "./app-diagnostic-report";
 
@@ -19,12 +22,14 @@ export interface DesktopDiagnosticSources {
   getStatus: () => Promise<DesktopDaemonStatus>;
   getDaemonLogs: () => Promise<DesktopDaemonLogs>;
   getAppLogs: () => Promise<DesktopAppLogs>;
+  getUpdaterDiagnostics: () => Promise<DesktopUpdaterDiagnostics>;
 }
 
 const DEFAULT_DESKTOP_DIAGNOSTIC_SOURCES: DesktopDiagnosticSources = {
   getStatus: getDesktopDaemonStatus,
   getDaemonLogs: getDesktopDaemonLogs,
   getAppLogs: getDesktopAppLogs,
+  getUpdaterDiagnostics: getDesktopUpdaterDiagnostics,
 };
 
 export async function collectDesktopDiagnosticSections(
@@ -33,9 +38,10 @@ export async function collectDesktopDiagnosticSections(
   const sections: string[] = [];
   let failed = false;
 
-  const [daemonResult, appLogsResult] = await Promise.allSettled([
+  const [daemonResult, appLogsResult, updaterResult] = await Promise.allSettled([
     Promise.all([sources.getStatus(), sources.getDaemonLogs()]),
     sources.getAppLogs(),
+    sources.getUpdaterDiagnostics(),
   ]);
 
   if (daemonResult.status === "fulfilled") {
@@ -62,10 +68,61 @@ export async function collectDesktopDiagnosticSections(
     );
   }
 
+  if (updaterResult.status === "fulfilled") {
+    sections.push(...formatDesktopUpdaterSections(updaterResult.value));
+  } else {
+    failed = true;
+    sections.push(
+      formatDiagnosticSection("Desktop updater", [
+        { label: "Error", value: toMessage(updaterResult.reason) },
+      ]),
+    );
+  }
+
   return {
     status: failed ? "failed" : "done",
     sections,
   };
+}
+
+function formatDesktopUpdaterSections(diagnostics: DesktopUpdaterDiagnostics): string[] {
+  const updaterDetails = [
+    { label: "Platform", value: diagnostics.platform },
+    { label: "Current version", value: diagnostics.currentVersion },
+    { label: "Target version", value: diagnostics.targetVersion ?? "unknown" },
+    { label: "ShipIt directory", value: diagnostics.shipItDirectory ?? "not applicable" },
+  ];
+  if (diagnostics.targetVersionError) {
+    updaterDetails.push({ label: "Target version error", value: diagnostics.targetVersionError });
+  }
+  const sections = [formatDiagnosticSection("Desktop updater", updaterDetails)];
+
+  if (diagnostics.platform !== "darwin") return sections;
+
+  sections.push(
+    formatUpdaterFileSection("ShipItState.plist", diagnostics.state),
+    formatUpdaterFileSection("ShipIt stdout log tail", diagnostics.stdout),
+    formatUpdaterFileSection("ShipIt stderr log tail", diagnostics.stderr),
+  );
+  return sections;
+}
+
+function formatUpdaterFileSection(
+  title: string,
+  file: DesktopUpdaterDiagnosticFile | null,
+): string {
+  if (!file) {
+    return formatDiagnosticSection(title, [{ label: "Status", value: "unavailable" }]);
+  }
+
+  const header = formatDiagnosticSection(title, [
+    { label: "Path", value: file.path || "unknown" },
+    { label: "Modified", value: file.modifiedAt ?? "unknown" },
+  ]);
+  if (file.error) return `${header}\n  Error: ${file.error}`;
+  if (!file.exists) return `${header}\n  File not found`;
+  if (!file.contents) return `${header}\n  No contents found`;
+  return `${header}\n${indentBlock(file.contents)}`;
 }
 
 function formatDesktopDaemonSections(input: {

@@ -178,8 +178,9 @@ function parseTaskNotificationFromSystemRecord(record: unknown): TaskNotificatio
   const systemRecord: TaskNotificationHistoryRecord = parsedRecord.data;
   const isSystemTaskNotification =
     systemRecord.type === "system" && systemRecord.subtype === "task_notification";
-  const isQueueOperation = systemRecord.type === "queue-operation";
-  if (!isSystemTaskNotification && !isQueueOperation) {
+  const isQueuedTaskNotification =
+    systemRecord.type === "queue-operation" && isTaskNotificationUserContent(systemRecord.content);
+  if (!isSystemTaskNotification && !isQueuedTaskNotification) {
     return null;
   }
   const rawText = toNonEmptyString(systemRecord.content);
@@ -278,6 +279,7 @@ function toTaskNotificationToolCall(
     synthetic: true,
     source: "claude_task_notification",
     ...(envelope.taskId ? { taskId: envelope.taskId } : {}),
+    ...(envelope.toolUseId ? { toolUseId: envelope.toolUseId } : {}),
     ...(envelope.status ? { status: envelope.status } : {}),
     ...(envelope.outputFile ? { outputFile: envelope.outputFile } : {}),
   };

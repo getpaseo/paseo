@@ -1,6 +1,10 @@
-import { Command } from "commander";
+import { Command, Option } from "commander";
 import { withOutput } from "../../output/index.js";
-import { addDaemonHostOption, addJsonAndDaemonHostOptions } from "../../utils/command-options.js";
+import {
+  addDaemonHostOption,
+  addJsonAndDaemonHostOptions,
+  withGlobalOptions,
+} from "../../utils/command-options.js";
 import { runCaptureCommand } from "./capture.js";
 import { runCreateCommand } from "./create.js";
 import { runKillCommand } from "./kill.js";
@@ -14,15 +18,19 @@ export function createTerminalCommand(): Command {
     terminal
       .command("ls")
       .description("List terminals")
-      .option("--all", "List terminals across all workspaces")
-      .option("--cwd <path>", "Workspace directory"),
+      .addOption(
+        new Option("--all", "List terminals across all workspaces").conflicts(["cwd", "workspace"]),
+      )
+      .option("--workspace <id>", "Workspace ID")
+      .option("--cwd <path>", "Working directory"),
   ).action(withOutput(runLsCommand));
 
   addJsonAndDaemonHostOptions(
     terminal
       .command("create")
       .description("Create a terminal")
-      .option("--cwd <path>", "Workspace directory")
+      .option("--workspace <id>", "Workspace ID")
+      .option("--cwd <path>", "Working directory")
       .option("--name <name>", "Terminal name"),
   ).action(withOutput(runCreateCommand));
 
@@ -43,7 +51,7 @@ export function createTerminalCommand(): Command {
       .option("-S, --scrollback", "Capture from the beginning of scrollback")
       .option("--ansi", "Preserve ANSI escape codes")
       .option("--json", "Output in JSON format"),
-  ).action(runCaptureCommand);
+  ).action(withGlobalOptions(runCaptureCommand));
 
   addDaemonHostOption(
     terminal
@@ -53,7 +61,7 @@ export function createTerminalCommand(): Command {
       .argument("<keys...>", "Keys to send")
       .option("-l, --literal", "Send raw keys without interpreting special tokens")
       .option("--json", "Output in JSON format"),
-  ).action(runSendKeysCommand);
+  ).action(withGlobalOptions(runSendKeysCommand));
 
   return terminal;
 }
