@@ -2527,13 +2527,30 @@ export class AgentManager {
 
     if (this.foregroundMutationTails.has(agentId) || this.lifecycleMutationTails.has(agentId)) {
       return async function* streamAfterMutations(this: AgentManager) {
-        await this.foregroundMutationTails.get(agentId);
-        await this.lifecycleMutationTails.get(agentId);
+        await this.waitForAgentMutations(agentId);
         yield* this.admitForegroundAgentStream(agentId, prompt, options);
       }.call(this);
     }
 
     return this.admitForegroundAgentStream(agentId, prompt, options);
+  }
+
+  // Drain every mutation that is queued by the time the previous tail
+  // resolves. A one-shot get() of the tails present at entry misses a
+  // lifecycle mutation chained after that lookup and before admission.
+  // After this returns, has() is false; admitForegroundAgentStream must
+  // install the pending run in the same turn, with no await in between.
+  private async waitForAgentMutations(agentId: string): Promise<void> {
+    while (this.foregroundMutationTails.has(agentId) || this.lifecycleMutationTails.has(agentId)) {
+      const foreground = this.foregroundMutationTails.get(agentId);
+      if (foreground) {
+        await foreground;
+      }
+      const lifecycle = this.lifecycleMutationTails.get(agentId);
+      if (lifecycle) {
+        await lifecycle;
+      }
+    }
   }
 
   private admitForegroundAgentStream(
@@ -3156,6 +3173,9 @@ export class AgentManager {
         "cancelAgentRun: reloaded provider session after forced cancellation",
       );
     } catch (error) {
+      if (!(error instanceof Error) || error instanceof AgentManagerShuttingDownError) {
+        throw error;
+      }
       this.logger.warn(
         { err: error, agentId },
         "cancelAgentRun: failed to swap provider session after forced cancellation",
