@@ -6,7 +6,6 @@ import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { createTestLogger } from "../../../../test-utils/test-logger.js";
 import { ClaudeAgentClient } from "./agent.js";
 import { claudeProjectDirSync } from "./project-dir.js";
-import type { AgentSession, AgentStreamEvent } from "../../agent-sdk-types.js";
 
 const SESSION_CWD = "/tmp/paseo-claude-renamed-import";
 
@@ -36,18 +35,13 @@ async function writeSession(sessionId: string, records: ClaudeTranscriptRecord[]
   );
 }
 
-// Resuming would spawn Claude Code. The import path only reads history from the
-// session it gets back, so an empty history is enough to observe the config.
+// Importing replays the transcript from disk, so this drives the real resume
+// path without starting Claude Code.
 async function importSession(sessionId: string) {
   const client = new ClaudeAgentClient({
     logger: createTestLogger(),
     resolveBinary: async () => "/test/claude/bin",
   });
-  client.resumeSession = async () =>
-    ({
-      async *streamHistory(): AsyncGenerator<AgentStreamEvent> {},
-    }) as unknown as AgentSession;
-
   return client.importSession(
     { providerHandleId: sessionId, cwd: SESSION_CWD },
     {
