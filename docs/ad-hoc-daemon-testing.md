@@ -163,3 +163,37 @@ try {
 ### 7. ACP providers spawn real processes
 
 When testing ACP providers (e.g., Gemini with `extends: "acp"`), the daemon will spawn real processes to probe for models and modes. The binary must be installed and on PATH. Probing can take 5-15 seconds depending on the provider.
+
+### 8. Nested finish-notification regression
+
+`packages/server/src/server/agent/finish-notifications.e2e.test.ts` runs a real isolated daemon,
+MCP clients scoped to a parent and dispatcher, and a WebSocket observer. The provider is the
+existing deterministic test adapter. Its `beforeAssistantResponse` hook holds turns after
+`turn_started`; explicit barriers control when the dispatcher and grandchild may finish. This
+avoids both timing sleeps and permission prompts, which would introduce additional notifications.
+
+Run only that file:
+
+```bash
+npx vitest run packages/server/src/server/agent/finish-notifications.e2e.test.ts --bail=1
+```
+
+The two cases cover `create_agent` and `send_agent_prompt`. They verify that the parent receives
+no intermediate dispatcher response, receives exactly one final follow-up after the grandchild
+finishes, and receives no repeat when the dispatcher completes another turn. System-injected
+prompts are intentionally hidden from the user timeline, so delivery is observed at the parent
+provider session; the final dispatcher response is also verified through the WebSocket timeline.
+
+Before/after evidence collected on macOS on 2026-09-09, using the same test and provider hook:
+
+- On `main` at `c172076bf`, both entrypoints failed: the parent received
+  `WAITING_FOR_GRANDCHILD` before the dispatcher follow-up completed. Run the second case separately
+  with `-t send_agent_prompt` because `--bail=1` stops after the first failure.
+- On the rebased PR checkpoint `31c33bb28`, the test exposed another failure: the delivered response
+  was `WAITING_FOR_GRANDCHILDDISPATCHER_FINAL`. Adjacent assistant chunks crossed a turn boundary.
+- With turn-aware last-response extraction, both daemon cases passed. A separate timeline-store
+  regression verifies that chunks within one turn still join, and legacy rows without turn metadata
+  retain their existing behavior.
+
+These results cover the daemon and its MCP delivery path with a controlled provider, not live
+model behavior or daemon-restart durability.
