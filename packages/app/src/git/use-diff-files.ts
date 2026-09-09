@@ -1,10 +1,14 @@
 import { useMemo } from "react";
 import type { CheckoutCommitFile, ParsedDiffFile } from "@getpaseo/protocol/messages";
 import { useRetainedPanelActive } from "@/components/retained-panel";
-import { useFetchQueries } from "@/data/query";
-import { checkoutCommitFileDiffQueryKey, COMMIT_FILE_DIFF_STALE_TIME } from "@/git/query-keys";
-import { useCheckoutCommitsQuery } from "@/git/use-commits-query";
+import { useFetchQueries, useFetchQuery } from "@/data/query";
+import {
+  checkoutCommitFileDiffQueryKey,
+  checkoutCommitFilesQueryKey,
+  COMMIT_FILE_DIFF_STALE_TIME,
+} from "@/git/query-keys";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
+import { useSessionStore } from "@/stores/session-store";
 
 /**
  * Context needed to resolve a commit diff against a host: which daemon
@@ -56,28 +60,38 @@ export function resolveCommitDiffFiles(
   });
 }
 
+const EMPTY_COMMIT_FILES: CheckoutCommitFile[] = [];
+
 export function useCommitDiffFiles(ctx: CommitDiffFilesContext): CommitDiffFilesResult {
   const { serverId, cwd, sha, enabled = true } = ctx;
   const retainedPanelActive = useRetainedPanelActive();
   const queryEnabled = enabled && retainedPanelActive;
   const client = useHostRuntimeClient(serverId);
   const isConnected = useHostRuntimeIsConnected(serverId);
-  const commitsQuery = useCheckoutCommitsQuery({ serverId, cwd, enabled: queryEnabled });
-  const commitsData = commitsQuery.status === "loaded" ? commitsQuery.data : null;
-  const commitFiles = useMemo(() => {
-    if (!sha || !commitsData) {
-      return [];
-    }
-    return commitsData.commits.find((commit) => commit.sha === sha)?.files ?? [];
-  }, [commitsData, sha]);
+  // COMPAT(commitFiles): added in v0.8.0, remove gate after 2027-03-08.
+  // Single capability-detection site; downstream reads a plain file list.
+  const capabilityPresent = useSessionStore(
+    (state) => state.sessions[serverId]?.serverInfo?.features?.commitFiles === true,
+  );
+  const canFetch = Boolean(cwd) && Boolean(sha) && Boolean(client) && isConnected;
+  // Addressed by sha rather than looked up in the commits list, which only spans
+  // this workspace's commits plus a short window of base history.
+  const commitFilesQuery = useFetchQuery<CheckoutCommitFile[]>({
+    queryKey: checkoutCommitFilesQueryKey(serverId, cwd, sha),
+    queryFn: async () => {
+      if (!client) {
+        throw new Error("Host disconnected");
+      }
+      return (await client.getCommitFiles(cwd, sha)).files;
+    },
+    enabled: queryEnabled && capabilityPresent && canFetch,
+    staleTimeMs: COMMIT_FILE_DIFF_STALE_TIME,
+    dataShape: "value",
+  });
+  const commitFilesLoaded = commitFilesQuery.data !== undefined;
+  const commitFiles = commitFilesQuery.data ?? EMPTY_COMMIT_FILES;
 
-  const fileDiffsEnabled =
-    queryEnabled &&
-    commitsQuery.status === "loaded" &&
-    Boolean(cwd) &&
-    Boolean(sha) &&
-    Boolean(client) &&
-    isConnected;
+  const fileDiffsEnabled = queryEnabled && commitFilesLoaded && capabilityPresent && canFetch;
   const fileDiffResults = useFetchQueries(
     commitFiles.map((file) => ({
       queryKey: checkoutCommitFileDiffQueryKey(serverId, cwd, sha, file.path),
@@ -92,9 +106,10 @@ export function useCommitDiffFiles(ctx: CommitDiffFilesContext): CommitDiffFiles
       dataShape: "value" as const,
     })),
   );
-  const commitsLoading = commitsQuery.status === "connecting" || commitsQuery.status === "loading";
-  const commitsError = commitsQuery.status === "error" ? commitsQuery.error : null;
-  const capabilityMissing = commitsQuery.status === "unsupported";
+  const commitFilesError = commitFilesQuery.error;
+  const commitFilesLoading =
+    queryEnabled && capabilityPresent && !commitFilesLoaded && !commitFilesError;
+  const capabilityMissing = !capabilityPresent;
 
   return useMemo<CommitDiffFilesResult>(() => {
     const resolvedByPath = new Map<string, ParsedDiffFile | null | undefined>();
@@ -112,9 +127,9 @@ export function useCommitDiffFiles(ctx: CommitDiffFilesContext): CommitDiffFiles
     }
     return {
       files,
-      isLoading: commitsLoading || fileDiffResults.some((r) => r.isLoading),
-      error: commitsError ?? firstFileError,
+      isLoading: commitFilesLoading || fileDiffResults.some((r) => r.isLoading),
+      error: commitFilesError ?? firstFileError,
       capabilityMissing,
     };
-  }, [capabilityMissing, commitFiles, commitsError, commitsLoading, fileDiffResults]);
+  }, [capabilityMissing, commitFiles, commitFilesError, commitFilesLoading, fileDiffResults]);
 }

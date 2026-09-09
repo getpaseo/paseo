@@ -39,6 +39,10 @@ export function checkoutCommitsQueryKey(serverId: string, cwd: string) {
   return ["checkoutCommits", serverId, cwd] as const;
 }
 
+export function checkoutCommitFilesQueryKey(serverId: string, cwd: string, sha: string) {
+  return ["checkoutCommitFiles", serverId, cwd, sha] as const;
+}
+
 export function checkoutCommitFileDiffQueryKey(
   serverId: string,
   cwd: string,

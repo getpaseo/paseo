@@ -42,6 +42,7 @@ import type {
   GitSetupOptions,
   CheckoutStatusResponse,
   CheckoutCommit,
+  CheckoutCommitFile,
   ParsedDiffFile,
   CheckoutCommitResponse,
   CheckoutMergeResponse,
@@ -4013,6 +4014,27 @@ export class DaemonClient {
       throw new Error(payload.error.message);
     }
     return { baseRef: payload.baseRef, commits: payload.commits };
+  }
+
+  async getCommitFiles(
+    cwd: string,
+    sha: string,
+    requestId?: string,
+  ): Promise<{ files: CheckoutCommitFile[] }> {
+    const payload =
+      await this.sendNamespacedCorrelatedSessionRequest<"checkout.commits.files.response">({
+        requestId,
+        message: {
+          type: "checkout.commits.files.request",
+          cwd,
+          sha,
+        },
+        timeout: 60000,
+      });
+    if (payload.error) {
+      throw new Error(payload.error.message);
+    }
+    return { files: payload.files };
   }
 
   async getCommitFileDiff(

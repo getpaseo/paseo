@@ -7,6 +7,7 @@ import type {
   BranchSuggestionsRequest,
   CheckoutCommitsListRequest,
   CheckoutCommitFileDiffRequest,
+  CheckoutCommitFilesRequest,
   CheckoutRefreshRequest,
   CheckoutRenameBranchRequest,
   CheckoutStatusRequest,
@@ -51,6 +52,7 @@ import {
   pushCurrentBranch,
   listCheckoutCommits,
   getCommitFileDiff,
+  getCommitFiles,
 } from "../../../utils/checkout-git.js";
 import { runGitCommand } from "../../../utils/run-git-command.js";
 import { expandTilde } from "../../../utils/path.js";
@@ -280,6 +282,24 @@ export class CheckoutSession {
       this.host.emit({
         type: "checkout.commits.list.response",
         payload: { cwd, baseRef: null, commits: [], error: toCheckoutError(error), requestId },
+      });
+    }
+  }
+
+  async handleCommitFilesRequest(msg: CheckoutCommitFilesRequest): Promise<void> {
+    const { cwd, sha, requestId } = msg;
+
+    try {
+      assertSafeGitRef(sha, "commit");
+      const files = await getCommitFiles({ cwd: expandTilde(cwd), sha });
+      this.host.emit({
+        type: "checkout.commits.files.response",
+        payload: { cwd, sha, files, error: null, requestId },
+      });
+    } catch (error) {
+      this.host.emit({
+        type: "checkout.commits.files.response",
+        payload: { cwd, sha, files: [], error: toCheckoutError(error), requestId },
       });
     }
   }

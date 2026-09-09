@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "fs"
 import { tmpdir } from "os";
 import { join } from "path";
 import { afterEach, describe, expect, it } from "vitest";
-import { listCheckoutCommits } from "./checkout-git.js";
+import { getCommitFiles, listCheckoutCommits } from "./checkout-git.js";
 import { writePaseoWorktreeMetadata } from "./worktree-metadata.js";
 
 const tempDirs: string[] = [];
@@ -319,6 +319,46 @@ describe("listCheckoutCommits", () => {
     ]);
     expect(commits[1]?.files).toEqual([
       { path: "README.md", additions: 1, deletions: 0, status: "modified" },
+    ]);
+  });
+});
+
+describe("getCommitFiles", () => {
+  it("reports the files of a commit that falls outside the commits list", async () => {
+    const { repoDir } = initRepoOnMain();
+    const initialSha = execFileSync("git", ["rev-parse", "HEAD"], {
+      cwd: repoDir,
+      encoding: "utf8",
+    }).trim();
+    importLinearHistory({
+      repoDir,
+      branch: "main",
+      file: "base-history.txt",
+      subject: "Base",
+      count: 14,
+    });
+
+    const { commits } = await listCheckoutCommits({ cwd: repoDir });
+    expect(commits.some((entry) => entry.sha === initialSha)).toBe(false);
+
+    expect(await getCommitFiles({ cwd: repoDir, sha: initialSha })).toEqual([
+      { path: "README.md", additions: 1, deletions: 0, status: "added" },
+    ]);
+  });
+
+  it("compares a merge commit against its first parent", async () => {
+    const { repoDir } = initRepoOnMain();
+    git(["checkout", "-b", "feature"], repoDir);
+    commitFile(repoDir, "feature.txt", "feature\n", "Add feature");
+    git(["checkout", "main"], repoDir);
+    git(["merge", "--no-ff", "-m", "Merge feature", "feature"], repoDir);
+    const mergeSha = execFileSync("git", ["rev-parse", "HEAD"], {
+      cwd: repoDir,
+      encoding: "utf8",
+    }).trim();
+
+    expect(await getCommitFiles({ cwd: repoDir, sha: mergeSha })).toEqual([
+      { path: "feature.txt", additions: 1, deletions: 0, status: "added" },
     ]);
   });
 });

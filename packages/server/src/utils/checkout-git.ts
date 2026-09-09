@@ -2541,6 +2541,28 @@ export async function listCheckoutCommits({
 }
 
 /**
+ * Lists the files one commit touches, addressed by sha alone.
+ *
+ * {@link listCheckoutCommits} answers a different question — what this workspace
+ * changed relative to its base, plus a short window of base history — so a commit
+ * outside that window is absent from it. Anything that opens a commit by sha
+ * (a deep link, a plugin panel) needs this instead.
+ *
+ * Merge commits report their first-parent diff, matching {@link getCommitFileDiff}.
+ * Returns an empty array for a commit that changes nothing; throws on an unknown sha.
+ */
+export async function getCommitFiles({
+  cwd,
+  sha,
+}: {
+  cwd: string;
+  sha: string;
+}): Promise<CheckoutCommitFile[]> {
+  const records = await getCheckoutCommitRecords({ cwd, revision: sha, maxCount: 1 });
+  return records[0]?.files ?? [];
+}
+
+/**
  * Fetches the unified diff of a single file as introduced by one commit and
  * parses it into the same {@link ParsedDiffFile} shape the diff subscription
  * emits (so the client can reuse its existing renderer).
