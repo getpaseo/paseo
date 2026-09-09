@@ -1677,6 +1677,8 @@ export default function contribute(server: PluginServerContext) {
 
 Paseo owns the composer menu, search picker, selected pill, draft state, and submission. The `text` value is the complete snapshot sent to the agent.
 
+The complete examples cover both common backend shapes: [Linear](https://github.com/getpaseo/paseo/tree/main/plugin-examples/linear) snapshots a vendor resource, while [agent context](https://github.com/getpaseo/paseo/tree/main/plugin-examples/agent-context) uses `context.paseo` to snapshot a retained agent timeline.
+
 ## Hosts and lifecycle
 
 Plugins are installed per daemon. When the same contribution exists on several connected hosts, Paseo shows one sidebar item and adds a host picker. The selected host supplies the bundle, Paseo API, RPC transport, and query cache. Calls never fall through to another host when the selected host is offline.
