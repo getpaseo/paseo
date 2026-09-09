@@ -598,6 +598,21 @@ test("workspace presentation requires host support", async () => {
   await client.close();
 });
 
+test("clearing workspace presentation requires host support", async () => {
+  const { client, ws } = await connectClient({});
+  const sentBeforeOpen = ws.sent.length;
+
+  await expect(
+    client.workspaces.open({
+      cwd: "/repo/sdk",
+      projectPresentation: { secondaryLabel: null },
+    }),
+  ).rejects.toThrow("Update the host to set project presentation metadata.");
+  expect(ws.sent).toHaveLength(sentBeforeOpen);
+
+  await client.close();
+});
+
 test("empty workspace presentation opens on an older host", async () => {
   const { client, ws } = await connectClient({});
   const openedWorkspace = createWorkspace();

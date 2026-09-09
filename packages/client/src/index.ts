@@ -805,8 +805,10 @@ async function openWorkspace(
   requestId?: string,
 ): Promise<PaseoWorkspaceHandle> {
   const options = typeof input === "string" ? { cwd: input, requestId } : input;
+  // undefined is a no-op; null explicitly clears the persisted label and still requires support.
+  const requestedSecondaryLabel = options.projectPresentation?.secondaryLabel;
   if (
-    options.projectPresentation?.secondaryLabel !== undefined &&
+    requestedSecondaryLabel !== undefined &&
     // COMPAT(projectPresentation): added in v0.8.0, remove gate after 2027-03-10.
     daemonClient.getLastServerInfoMessage()?.features?.projectPresentation !== true
   ) {
