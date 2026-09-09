@@ -2018,6 +2018,12 @@ export const es: TranslationResources = {
       used: "Usado: {{percentage}}",
       remaining: "Quedan {{amount}}",
     },
+    labels: {
+      session: "Sesión",
+      weekly: "Semanal",
+      codeReview: "Revisión de código",
+      credits: "Créditos",
+    },
     duration: {
       days: "{{value}} d",
       hours: "{{value}} h",

@@ -1990,6 +1990,12 @@ export const ja: TranslationResources = {
       used: "{{percentage}} 使用済み",
       remaining: "残り {{amount}}",
     },
+    labels: {
+      session: "セッション",
+      weekly: "週間",
+      codeReview: "コードレビュー",
+      credits: "クレジット",
+    },
     duration: {
       days: "{{value}}日",
       hours: "{{value}}時間",
