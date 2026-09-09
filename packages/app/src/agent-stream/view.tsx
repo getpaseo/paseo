@@ -1316,7 +1316,13 @@ function ToolCallSlot({
     (expanded: boolean) => onInlineDetailsExpandedChangeByItemId(itemId, expanded),
     [onInlineDetailsExpandedChangeByItemId, itemId],
   );
-  return <ToolCall {...rest} onInlineDetailsExpandedChange={handleExpandedChange} />;
+  return (
+    <ToolCall
+      {...rest}
+      followOutputPersistKey={itemId}
+      onInlineDetailsExpandedChange={handleExpandedChange}
+    />
+  );
 }
 
 const ThemedLoadingSpinner = withUnistyles(LoadingSpinner);
