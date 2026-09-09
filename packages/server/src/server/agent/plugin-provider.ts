@@ -130,6 +130,10 @@ class ProviderRuntime {
     return this.connection?.capabilities ?? [];
   }
 
+  get isClosed(): boolean {
+    return this.closed;
+  }
+
   async isAvailable(): Promise<boolean> {
     await this.getConnection();
     return true;
@@ -623,6 +627,8 @@ class ProviderRuntimeSession {
         requestId: randomUUID(),
         sessionId: this.providerSessionId,
       });
+    } catch (error) {
+      if (!this.runtime.isClosed) throw error;
     } finally {
       this.runtime.removeSession(this.id, this.providerSessionId);
     }

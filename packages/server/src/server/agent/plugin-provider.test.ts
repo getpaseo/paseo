@@ -258,6 +258,53 @@ describe("PluginAgentClientRegistry", () => {
     expect(eventsOfType(events, "turn_failed")).toHaveLength(1);
   });
 
+  test("closes a stale session after its plugin provider is replaced", async () => {
+    const old = createProviderHarness();
+    const next = createProviderHarness();
+    const registry = new PluginAgentClientRegistry(createTestLogger());
+
+    try {
+      registry.replace([old.registration]);
+
+      const stale = await registry.clients()[old.registration.id]!.createSession({
+        provider: old.registration.id,
+        cwd: "/workspace",
+      });
+      const persistence = stale.describePersistence();
+      if (!persistence) throw new Error("Expected plugin session persistence");
+
+      registry.replace([next.registration]);
+      await expect.poll(old.closeCount).toBe(1);
+
+      await expect(stale.close()).resolves.toBeUndefined();
+
+      const replacement = registry.clients()[next.registration.id];
+      if (!replacement) throw new Error("Expected replacement plugin client");
+      const resumed = await replacement.resumeSession(persistence, {
+        cwd: "/workspace",
+      });
+
+      await expect(
+        resumed.startTurn("after reload", { clientMessageId: "after-reload" }),
+      ).resolves.toEqual({ turnId: "turn-1" });
+
+      expect(next.inputs).toContainEqual(
+        expect.objectContaining({
+          type: "session.open",
+          history: "replay",
+          persistence: {
+            version: 1,
+            data: { token: "root" },
+          },
+        }),
+      );
+
+      await resumed.close();
+    } finally {
+      await registry.shutdown();
+    }
+  });
+
   test("adapts callback providers into the existing AgentClient and AgentSession path", async () => {
     const harness = createProviderHarness();
     const registry = new PluginAgentClientRegistry(createTestLogger());
