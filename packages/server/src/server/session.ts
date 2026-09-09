@@ -3629,6 +3629,22 @@ export class Session {
     msg: CreateAgentRequestMessage,
     agentId?: string,
   ): Promise<AgentSnapshotPayload> {
+    const coordinatedWorkspaceId =
+      msg.workspaceId && !msg.callerAgentId && !msg.worktreeName && !msg.git && !msg.worktree
+        ? msg.workspaceId
+        : null;
+    if (coordinatedWorkspaceId) {
+      return this.agentStorage.runWithWorkspaceCreateLock(coordinatedWorkspaceId, () =>
+        this.createSessionAgentUncoordinated(msg, agentId),
+      );
+    }
+    return this.createSessionAgentUncoordinated(msg, agentId);
+  }
+
+  private async createSessionAgentUncoordinated(
+    msg: CreateAgentRequestMessage,
+    agentId?: string,
+  ): Promise<AgentSnapshotPayload> {
     const {
       config,
       worktreeName,

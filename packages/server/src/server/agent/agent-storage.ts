@@ -99,6 +99,7 @@ export class AgentStorage {
   private pathById: Map<string, string> = new Map();
   private pathsById: Map<string, Set<string>> = new Map();
   private pendingWrites: Map<string, Promise<void>> = new Map();
+  private workspaceCreateTails: Map<string, Promise<void>> = new Map();
   private deleting: Set<string> = new Set();
   private daemonAgentIdsByExecution: Map<string, string> = new Map();
   private daemonExecutionKeysByAgentId: Map<string, string> = new Map();
@@ -153,6 +154,28 @@ export class AgentStorage {
   async upsert(record: StoredAgentRecord): Promise<void> {
     await this.load();
     await this.queueRecordWrite(record);
+  }
+
+  // Session instances share one AgentStorage. Queue direct creates for the same workspace so a
+  // first-agent decision observes the preceding create after it has been persisted.
+  async runWithWorkspaceCreateLock<T>(workspaceId: string, run: () => Promise<T>): Promise<T> {
+    const predecessor = this.workspaceCreateTails.get(workspaceId) ?? Promise.resolve();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const tail = predecessor.then(() => gate);
+    this.workspaceCreateTails.set(workspaceId, tail);
+
+    await predecessor;
+    try {
+      return await run();
+    } finally {
+      release();
+      if (this.workspaceCreateTails.get(workspaceId) === tail) {
+        this.workspaceCreateTails.delete(workspaceId);
+      }
+    }
   }
 
   private queueRecordWrite(record: StoredAgentRecord): Promise<void> {
