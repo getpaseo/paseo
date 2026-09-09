@@ -2743,6 +2743,36 @@ describe("ClaudeAgentSession context window usage", () => {
     }
   });
 
+  test("message_delta before this request's message_start does not seed usage", async () => {
+    // A canceled request can leave its terminal message_delta queued behind the next turn.
+    // Nothing is known about the new request until its message_start, so that straggler
+    // must not produce a usage_updated event or leak into the next request's counters.
+    const session = await createSessionForTurns([
+      [
+        createInitMessage(),
+        createMessageDeltaEvent(64, { input_tokens: 20_236 }),
+        createMessageStartEvent({
+          input_tokens: 40,
+          cache_creation_input_tokens: 5,
+          cache_read_input_tokens: 10,
+        }),
+        createMessageDeltaEvent(7),
+        createSuccessResult(),
+      ],
+    ]);
+
+    try {
+      const events = await collectStreamEvents(session);
+
+      const usedTokens = events
+        .filter((event) => event.type === "usage_updated")
+        .map((event) => event.usage.contextWindowUsedTokens);
+      expect(usedTokens).toEqual([55, 62]);
+    } finally {
+      await session.close();
+    }
+  });
+
   test("per-request stream usage is not cumulative across API calls in a turn", async () => {
     const session = await createSessionForTurns([
       [
