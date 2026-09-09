@@ -197,3 +197,15 @@ export class PluginWorkspaceFileSystemHarness {
       .locator(".cm-content");
   }
 }
+
+export async function withPluginWorkspaceFileSystem(
+  page: Page,
+  run: (workspace: PluginWorkspaceFileSystemHarness) => Promise<void>,
+): Promise<void> {
+  const workspace = await PluginWorkspaceFileSystemHarness.create(page);
+  try {
+    await run(workspace);
+  } finally {
+    await workspace.dispose();
+  }
+}

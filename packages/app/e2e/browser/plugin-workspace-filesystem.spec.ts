@@ -1,9 +1,8 @@
 import { test } from "../support/fixtures";
-import { PluginWorkspaceFileSystemHarness } from "../support/helpers/plugin-workspace-filesystem";
+import { withPluginWorkspaceFileSystem } from "../support/helpers/plugin-workspace-filesystem";
 
 test("plugin files use the native Explorer, file tab, and editor", async ({ page }) => {
-  const workspace = await PluginWorkspaceFileSystemHarness.create(page);
-  try {
+  await withPluginWorkspaceFileSystem(page, async (workspace) => {
     await workspace.openRemoteFile();
     await workspace.expectEditorText("remote initial");
 
@@ -12,7 +11,5 @@ test("plugin files use the native Explorer, file tab, and editor", async ({ page
 
     await workspace.saveEditorText("saved through native editor\n");
     await workspace.expectRemoteText("saved through native editor\n");
-  } finally {
-    await workspace.dispose();
-  }
+  });
 });
