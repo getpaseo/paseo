@@ -9,6 +9,7 @@ import { openCommandCenter } from "../support/helpers/command-center";
 import { connectNewWorkspaceDaemonClient } from "../support/helpers/new-workspace";
 import { seedWorkspace } from "../support/helpers/seed-client";
 import { pluginRequirements } from "../support/helpers/plugin-fixture";
+import { waitForSettledPosition } from "../support/helpers/sheet-layout";
 
 const PLUGIN_ID = "button-showcase";
 const WIDE = { width: 1440, height: 900 };
@@ -145,11 +146,16 @@ async function command(page: Page, title: string) {
   await expect(panel).not.toBeVisible();
 }
 
-async function capture(page: Page, testInfo: TestInfo, name: string) {
-  // Reanimated drives inline transforms; Playwright's CSS animation suppression cannot settle them.
-  await page.waitForTimeout(450);
+async function capture(
+  page: Page,
+  testInfo: TestInfo,
+  name: string,
+  subject: Locator = page.getByRole("toolbar", { name: "Workspace actions", exact: true }),
+) {
+  await expect(subject).toBeInViewport();
+  await waitForSettledPosition(subject);
   const file = testInfo.outputPath(`${name}.png`);
-  await page.screenshot({ path: file });
+  await page.screenshot({ path: file, animations: "disabled" });
   await testInfo.attach(name, { path: file, contentType: "image/png" });
 }
 
@@ -242,39 +248,79 @@ test("plugin header and composer buttons share actions, menus, content, and upda
       await capture(page, testInfo, "01-wide-buttons");
       await press(page, "Header checks");
       await expect(page.getByRole("menuitem", { name: "Run checks", exact: true })).toBeVisible();
-      await capture(page, testInfo, "02-header-menu");
+      await capture(
+        page,
+        testInfo,
+        "02-header-menu",
+        page.getByRole("menuitem", { name: "Run checks", exact: true }),
+      );
       await choose(page, "Environment");
       await expect(page.getByRole("menuitem", { name: "Staging", exact: true })).toBeVisible();
-      await capture(page, testInfo, "03-header-submenu");
+      await capture(
+        page,
+        testInfo,
+        "03-header-submenu",
+        page.getByRole("menuitem", { name: "Staging", exact: true }),
+      );
       await choose(page, "Staging");
       await openHeaderOverflow(page);
       await expect(
         page.getByRole("menuitem", { name: "Production locked", exact: true }),
       ).toBeDisabled();
-      await capture(page, testInfo, "03b-wide-overflow");
+      await capture(
+        page,
+        testInfo,
+        "03b-wide-overflow",
+        page.getByRole("menuitem", { name: "Production locked", exact: true }),
+      );
       await choose(page, "Open deployment logs");
       await expectDetails(page);
       await press(page, "Close deployment details");
       await press(page, "Header status");
       await expectDetails(page);
-      await capture(page, testInfo, "04-header-popover");
+      await capture(
+        page,
+        testInfo,
+        "04-header-popover",
+        page.getByRole("button", { name: "Close deployment details", exact: true }),
+      );
       await press(page, "Close deployment details");
       await press(page, "Composer checks");
-      await capture(page, testInfo, "05-composer-menu");
+      await capture(
+        page,
+        testInfo,
+        "05-composer-menu",
+        page.getByRole("menuitem", { name: "Run checks", exact: true }),
+      );
       await choose(page, "Deployment details");
       await expectDetails(page);
-      await capture(page, testInfo, "06-composer-menu-content");
+      await capture(
+        page,
+        testInfo,
+        "06-composer-menu-content",
+        page.getByRole("button", { name: "Close deployment details", exact: true }),
+      );
       await press(page, "Close deployment details");
       await press(page, "Composer status");
       await expectDetails(page);
-      await capture(page, testInfo, "07-composer-popover");
+      await capture(
+        page,
+        testInfo,
+        "07-composer-popover",
+        page.getByRole("button", { name: "Close deployment details", exact: true }),
+      );
       await press(page, "Close deployment details");
     });
 
     await test.step("actions fail visibly, retry, and remain busy until completion", async () => {
       await press(page, "Deploy application");
       await expect(page.getByText("Deployment failed. Try again.", { exact: true })).toBeVisible();
-      await capture(page, testInfo, "08-action-error");
+      await capture(
+        page,
+        testInfo,
+        "08-action-error",
+        page.getByText("Deployment failed. Try again.", { exact: true }),
+      );
       await press(page, "Deploy application");
       await expect(
         page.getByRole("button", { name: "Deploy application", exact: true }),
@@ -328,12 +374,27 @@ test("plugin header and composer buttons share actions, menus, content, and upda
       await expect(
         page.getByRole("menuitem", { name: "Production locked", exact: true }),
       ).toBeDisabled();
-      await capture(page, testInfo, "13-compact-header-overflow");
+      await capture(
+        page,
+        testInfo,
+        "13-compact-header-overflow",
+        page.getByRole("menuitem", { name: "Production locked", exact: true }),
+      );
       await choose(page, "Header checks");
-      await capture(page, testInfo, "14-compact-header-menu");
+      await capture(
+        page,
+        testInfo,
+        "14-compact-header-menu",
+        page.getByRole("menuitem", { name: "Run checks", exact: true }),
+      );
       await choose(page, "Deployment details");
       await expectDetails(page);
-      await capture(page, testInfo, "15-compact-header-content");
+      await capture(
+        page,
+        testInfo,
+        "15-compact-header-content",
+        page.getByRole("button", { name: "Close deployment details", exact: true }),
+      );
       await press(page, "Close deployment details");
       await showcase.setTitle("Compact checks");
       await press(page, "Header checks");
@@ -342,15 +403,30 @@ test("plugin header and composer buttons share actions, menus, content, and upda
           .getByRole("button", { name: "Header checks", exact: true })
           .getByTestId("plugin-button-chevron"),
       ).toHaveCount(0);
-      await capture(page, testInfo, "15b-compact-header-direct-menu");
+      await capture(
+        page,
+        testInfo,
+        "15b-compact-header-direct-menu",
+        page.getByRole("menuitem", { name: "Run checks", exact: true }),
+      );
       await choose(page, "Run checks");
       await showcase.setTitle("Button showcase");
       await press(page, "Composer status");
       await expectDetails(page);
-      await capture(page, testInfo, "16-compact-composer-popover");
+      await capture(
+        page,
+        testInfo,
+        "16-compact-composer-popover",
+        page.getByRole("button", { name: "Close deployment details", exact: true }),
+      );
       await press(page, "Close deployment details");
       await press(page, "Composer checks");
-      await capture(page, testInfo, "17-compact-composer-menu");
+      await capture(
+        page,
+        testInfo,
+        "17-compact-composer-menu",
+        page.getByRole("menuitem", { name: "Run checks", exact: true }),
+      );
       await choose(page, "Run checks");
     });
 
@@ -367,7 +443,12 @@ test("plugin header and composer buttons share actions, menus, content, and upda
       await capture(page, testInfo, "18-dark-buttons");
       await press(page, "Header status");
       await expectDetails(page);
-      await capture(page, testInfo, "19-dark-popover");
+      await capture(
+        page,
+        testInfo,
+        "19-dark-popover",
+        page.getByRole("button", { name: "Close deployment details", exact: true }),
+      );
       await showcase.disable();
       await expect(page.getByRole("button", { name: "Header status", exact: true })).toHaveCount(0);
       await expect(page.getByRole("button", { name: "Run review", exact: true })).toHaveCount(0);

@@ -1,4 +1,4 @@
-import type { TestInfo } from "@playwright/test";
+import type { Locator, TestInfo } from "@playwright/test";
 import { test, expect, type Page } from "../support/fixtures";
 import { copyPluginExample } from "../support/helpers/plugin-fixture";
 import { gotoAppShell } from "../support/helpers/app";
@@ -6,6 +6,7 @@ import { buildAgentRoute } from "../support/helpers/mock-agent";
 import { openCommandCenter } from "../support/helpers/command-center";
 import { connectNewWorkspaceDaemonClient } from "../support/helpers/new-workspace";
 import { seedWorkspace } from "../support/helpers/seed-client";
+import { waitForSettledPosition } from "../support/helpers/sheet-layout";
 
 const WIDE = { width: 1440, height: 900 };
 const COMPACT = { width: 390, height: 844 };
@@ -23,12 +24,17 @@ async function exampleCommand(page: Page, name: string) {
   await expect(panel).not.toBeVisible();
 }
 
-async function capture(page: Page, info: TestInfo, name: string) {
+async function capture(
+  page: Page,
+  info: TestInfo,
+  name: string,
+  subject: Locator = headerButtons(page),
+) {
   await expect(headerButtons(page)).toHaveCount(1);
-  // Let the existing Reanimated popover/sheet transitions settle before capturing.
-  await page.waitForTimeout(450);
+  await expect(subject).toBeInViewport();
+  await waitForSettledPosition(subject);
   const file = info.outputPath(`${name}.png`);
-  await page.screenshot({ path: file });
+  await page.screenshot({ path: file, animations: "disabled" });
   await info.attach(name, { path: file, contentType: "image/png" });
 }
 
@@ -84,12 +90,22 @@ test("the button author example shows each capability without a competing overfl
       await expect(
         page.getByRole("menuitem", { name: "Publish (unavailable in example)", exact: true }),
       ).toBeDisabled();
-      await capture(page, info, "03-header-menu");
+      await capture(
+        page,
+        info,
+        "03-header-menu",
+        page.getByRole("menuitem", { name: "Refresh workspace", exact: true }),
+      );
       await page.getByRole("menuitem", { name: "Workspace details", exact: true }).click();
       await expect(page.getByText("Button examples", { exact: true }).last()).toBeVisible();
       await closeDetails(page);
       await page.getByRole("button", { name: "Composer tools", exact: true }).click();
-      await capture(page, info, "04-composer-menu");
+      await capture(
+        page,
+        info,
+        "04-composer-menu",
+        page.getByRole("menuitem", { name: "Refresh workspace", exact: true }),
+      );
       await page.getByRole("menuitem", { name: "Display", exact: true }).click();
       await page.getByRole("menuitem", { name: "Hide example buttons", exact: true }).click();
       await expect(headerButtons(page)).toHaveCount(0);
@@ -109,7 +125,12 @@ test("the button author example shows each capability without a competing overfl
       await expect(
         page.getByRole("menuitem", { name: "Refresh workspace", exact: true }),
       ).toBeInViewport();
-      await capture(page, info, "06-compact-menu");
+      await capture(
+        page,
+        info,
+        "06-compact-menu",
+        page.getByRole("menuitem", { name: "Refresh workspace", exact: true }),
+      );
       await page.getByRole("menuitem", { name: "Refresh workspace", exact: true }).click();
     });
 
@@ -119,19 +140,34 @@ test("the button author example shows each capability without a competing overfl
       await expect(
         page.getByRole("button", { name: "Close workspace details", exact: true }),
       ).toBeVisible();
-      await capture(page, info, "07-header-popover");
+      await capture(
+        page,
+        info,
+        "07-header-popover",
+        page.getByRole("button", { name: "Close workspace details", exact: true }),
+      );
       await client.setWorkspaceTitle(workspace.workspaceId, "Renamed from the daemon");
       await expect(page.getByText("Renamed from the daemon", { exact: true }).last()).toBeVisible();
       await closeDetails(page);
       await page.getByRole("button", { name: "Context details", exact: true }).click();
-      await capture(page, info, "08-composer-popover");
+      await capture(
+        page,
+        info,
+        "08-composer-popover",
+        page.getByRole("button", { name: "Close workspace details", exact: true }),
+      );
       await closeDetails(page);
       await page.setViewportSize(COMPACT);
       await page.getByRole("button", { name: "Context details", exact: true }).click();
       await expect(
         page.getByRole("button", { name: "Close workspace details", exact: true }),
       ).toBeInViewport();
-      await capture(page, info, "09-compact-popover");
+      await capture(
+        page,
+        info,
+        "09-compact-popover",
+        page.getByRole("button", { name: "Close workspace details", exact: true }),
+      );
       await closeDetails(page);
       await client.disablePlugin("button-examples");
       await expect(headerButtons(page)).toHaveCount(0);
