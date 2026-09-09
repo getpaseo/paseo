@@ -18,6 +18,7 @@ import {
 } from "@getpaseo/protocol/binary-frames/index";
 import {
   WorkspaceFilesSession,
+  type RemoteFilePolling,
   type WorkspaceFileSystemResolver,
   type WorkspaceFilesSessionHost,
 } from "./workspace-files-session.js";
@@ -44,6 +45,7 @@ function makeSubsystem(
     emitBinary?: (frame: Uint8Array) => Promise<void> | void;
     fileSystems?: WorkspaceFileSystemResolver;
     remoteFilePollIntervalMs?: number;
+    remoteFilePolling?: RemoteFilePolling;
   } = {},
 ) {
   const emitted: SessionOutboundMessage[] = [];
@@ -65,6 +67,7 @@ function makeSubsystem(
     logger: pino({ level: "silent" }),
     fileSystems: options.fileSystems,
     remoteFilePollIntervalMs: options.remoteFilePollIntervalMs,
+    remoteFilePolling: options.remoteFilePolling,
   });
   return {
     subsystem,
@@ -181,6 +184,17 @@ describe("WorkspaceFilesSession", () => {
   test("publishes external changes to subscribed plugin workspace files", async () => {
     const cwd = makeDir("workspace-files-plugin-subscribe-");
     let revision = 1;
+    let runPoll = async () => {};
+    const clearInterval = vi.fn();
+    const remoteFilePolling: RemoteFilePolling = {
+      setInterval(callback) {
+        runPoll = async () => {
+          await callback();
+        };
+        return { unref: () => undefined } as unknown as ReturnType<typeof setInterval>;
+      },
+      clearInterval,
+    };
     const provider = {
       key: "example.remote",
       writable: true,
@@ -212,6 +226,7 @@ describe("WorkspaceFilesSession", () => {
     const { subsystem, emitted } = makeSubsystem({
       fileSystems: { resolve: async (candidate) => (candidate === cwd ? provider : null) },
       remoteFilePollIntervalMs: 5,
+      remoteFilePolling,
     });
 
     await subsystem.handleFileSubscribeRequest({
@@ -222,24 +237,24 @@ describe("WorkspaceFilesSession", () => {
       requestId: "req-subscribe",
     });
     revision = 2;
+    await runPoll();
 
-    await vi.waitFor(() => {
-      expect(emitted).toContainEqual({
-        type: "fs.file.update",
-        payload: {
-          subscriptionId: "sub-remote",
-          version: {
-            status: "ready",
-            cwd,
-            path: "remote.txt",
-            size: 9,
-            modifiedAt: "2026-09-09T00:00:02.000Z",
-            revision: "remote:2",
-          },
+    expect(emitted).toContainEqual({
+      type: "fs.file.update",
+      payload: {
+        subscriptionId: "sub-remote",
+        version: {
+          status: "ready",
+          cwd,
+          path: "remote.txt",
+          size: 9,
+          modifiedAt: "2026-09-09T00:00:02.000Z",
+          revision: "remote:2",
         },
-      });
+      },
     });
     subsystem.dispose();
+    expect(clearInterval).toHaveBeenCalledTimes(1);
   });
 
   test("routes native file subscriptions and writes through a plugin workspace file system", async () => {

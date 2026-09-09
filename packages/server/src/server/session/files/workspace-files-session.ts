@@ -59,6 +59,7 @@ export interface WorkspaceFilesSessionOptions {
   fileObserver?: FileObserver;
   fileSystems?: WorkspaceFileSystemResolver;
   remoteFilePollIntervalMs?: number;
+  remoteFilePolling?: RemoteFilePolling;
 }
 
 export interface WorkspaceFileSystemProvider {
@@ -80,7 +81,16 @@ export interface WorkspaceFileSystemResolver {
   resolve(cwd: string): Promise<WorkspaceFileSystemProvider | null>;
 }
 
+export interface RemoteFilePolling {
+  setInterval(
+    callback: () => void | Promise<void>,
+    delayMs: number,
+  ): ReturnType<typeof setInterval>;
+  clearInterval(handle: ReturnType<typeof setInterval>): void;
+}
+
 const DEFAULT_REMOTE_FILE_POLL_INTERVAL_MS = 2_000;
+const nodeRemoteFilePolling: RemoteFilePolling = { setInterval, clearInterval };
 
 function fileVersionFingerprint(version: ExplorerFileVersion): string {
   if (version.status === "ready") {
@@ -105,6 +115,7 @@ export class WorkspaceFilesSession {
   private readonly fileObserver: FileObserver;
   private readonly fileSystems: WorkspaceFileSystemResolver | null;
   private readonly remoteFilePollIntervalMs: number;
+  private readonly remoteFilePolling: RemoteFilePolling;
   private readonly fileSubscriptions = new Map<string, () => void>();
 
   constructor(options: WorkspaceFilesSessionOptions) {
@@ -116,6 +127,7 @@ export class WorkspaceFilesSession {
     this.fileSystems = options.fileSystems ?? null;
     this.remoteFilePollIntervalMs =
       options.remoteFilePollIntervalMs ?? DEFAULT_REMOTE_FILE_POLL_INTERVAL_MS;
+    this.remoteFilePolling = options.remoteFilePolling ?? nodeRemoteFilePolling;
   }
 
   async handleFileSubscribeRequest(request: FileSubscribeRequest): Promise<void> {
@@ -127,7 +139,7 @@ export class WorkspaceFilesSession {
         let active = true;
         let checking = false;
         let fingerprint = fileVersionFingerprint(initial);
-        const poll = setInterval(async () => {
+        const poll = this.remoteFilePolling.setInterval(async () => {
           if (!active || checking) return;
           checking = true;
           let version: ExplorerFileVersion;
@@ -155,10 +167,10 @@ export class WorkspaceFilesSession {
             },
           });
         }, this.remoteFilePollIntervalMs);
-        poll.unref();
+        poll.unref?.();
         this.fileSubscriptions.set(request.subscriptionId, () => {
           active = false;
-          clearInterval(poll);
+          this.remoteFilePolling.clearInterval(poll);
         });
         this.host.emit({
           type: "fs.file.subscribe.response",
