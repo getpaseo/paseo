@@ -15,6 +15,25 @@ export interface PluginProviderMetadata {
   iconPath?: string;
 }
 
+export interface PluginWorkspaceFileSystemMetadata {
+  id: string;
+  writable: boolean;
+}
+
+export type PluginWorkspaceFileSystemOperation =
+  | "matches"
+  | "list-directory"
+  | "read-file"
+  | "stat-file"
+  | "write-file";
+
+export function pluginWorkspaceFileSystemMethod(
+  providerId: string,
+  operation: PluginWorkspaceFileSystemOperation,
+): string {
+  return `paseo.workspace-fs.${providerId}.${operation}`;
+}
+
 export type PluginProcessRequest =
   | {
       type: "initialize";
@@ -56,6 +75,7 @@ export type PluginProcessMessage =
       type: "ready";
       methods: string[];
       providers: PluginProviderMetadata[];
+      workspaceFileSystems: PluginWorkspaceFileSystemMetadata[];
       hooks?: { events: string[]; before: string[] };
     }
   | { type: "result"; requestId: string; output: unknown }
@@ -89,6 +109,12 @@ const providerMetadataSchema = z
     description: z.string().optional(),
     iconPath: z.string().optional(),
     hasCatalogCacheKey: z.boolean().optional(),
+  })
+  .strict();
+const workspaceFileSystemMetadataSchema = z
+  .object({
+    id: z.string().min(1),
+    writable: z.boolean(),
   })
   .strict();
 const providerConnectRequestSchema = z
@@ -182,6 +208,7 @@ export const PluginProcessMessageSchema: z.ZodType<PluginProcessMessage> = z.dis
         type: z.literal("ready"),
         methods: z.array(z.string()),
         providers: z.array(providerMetadataSchema),
+        workspaceFileSystems: z.array(workspaceFileSystemMetadataSchema),
         hooks: hooksSchema.optional(),
       })
       .strict(),

@@ -277,6 +277,14 @@ workspace only. Location controls hosting, not context. An agent panel target ke
 when moved between hosts. Explorer configuration can create workspace-context panels and remove
 existing agent-context instances, but it cannot create an agent panel without an agent-aware command.
 
+Plugin-backed workspace file systems are server contributions registered with
+`registerWorkspaceFileSystem`. The daemon resolves them by workspace `cwd` and routes the existing
+Explorer/file-tab list, read, stat, and write messages through the plugin subprocess. The app owns
+all presentation; a file-system provider must not contribute a parallel Explorer panel. Cache
+resolution by `cwd`, invalidate it on every plugin lifecycle transition, and never fall back to the
+local workspace anchor after a provider has matched. The public reference owns the author contract
+and path-safety requirements.
+
 Command Center callbacks use the selected host's existing `PaseoApi` for normal Paseo operations.
 They use typed plugin RPC only for plugin-specific backend work. Surface and panel props expose
 optional client-owned agent and workspace navigation; its absence is the compatibility gate for

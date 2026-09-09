@@ -21,6 +21,7 @@ Local plugins are directory sources installed into one Paseo daemon. A plugin ca
 - transformed and daemon-pushed agent timeline rows;
 - light and dark themes in Settings → Appearance;
 - schema-validated RPC handlers running beside the daemon;
+- workspace file systems rendered by Paseo's native Explorer and file tabs;
 - normal Paseo operations through the TypeScript SDK;
 - searchable external resources in the message composer.
 
@@ -188,6 +189,86 @@ Paseo provides `@getpaseo/plugin`, `@getpaseo/plugin/server`,
 contributions run in a daemon subprocess with Node access to the host machine. Keep filesystem,
 process, credential, and other machine-local work under `server/`. A plugin without
 `index.server.ts` starts no subprocess.
+
+### Workspace file systems
+
+A server plugin can provide the files for selected workspace roots while keeping Paseo's native
+Explorer, file tabs, syntax highlighting, and editor. This is intended for remote workspaces whose
+project record points at a local anchor but whose files live behind SSH, an API, or another transport.
+
+Register a provider with `server.registerWorkspaceFileSystem()`:
+
+```ts
+import type {
+  PluginServerContext,
+  PluginWorkspaceFileSystemProvider,
+} from "@getpaseo/plugin/server";
+
+const files: PluginWorkspaceFileSystemProvider = {
+  id: "example.remote",
+  matches: ({ cwd }) => cwd.startsWith("/var/lib/example-workspaces/"),
+  async listDirectory({ path }) {
+    return {
+      path,
+      entries: [
+        {
+          name: "README.md",
+          path: path === "." ? "README.md" : `${path}/README.md`,
+          kind: "file",
+          size: 14,
+          modifiedAt: "2026-09-09T00:00:00.000Z",
+        },
+      ],
+    };
+  },
+  async readFile({ path }) {
+    return {
+      path,
+      kind: "text",
+      encoding: "utf-8",
+      content: "# Remote file\n",
+      mimeType: "text/markdown",
+      size: 14,
+      modifiedAt: "2026-09-09T00:00:00.000Z",
+      revision: "remote:1",
+    };
+  },
+  async statFile({ cwd, path }) {
+    return {
+      status: "ready",
+      cwd,
+      path,
+      size: 14,
+      modifiedAt: "2026-09-09T00:00:00.000Z",
+      revision: "remote:1",
+    };
+  },
+  async writeFile({ content }) {
+    return {
+      status: "written",
+      size: Buffer.byteLength(content),
+      modifiedAt: new Date().toISOString(),
+      revision: "remote:2",
+    };
+  },
+};
+
+export default function contribute(server: PluginServerContext) {
+  server.registerWorkspaceFileSystem(files);
+  return () => {};
+}
+```
+
+`matches()` runs once per workspace root and selects the first matching provider in plugin catalog
+order. Paseo invalidates that decision when plugins start, stop, reload, or fail. Directory and file
+paths are relative to the workspace root. Providers must reject traversal, symlinks, or other paths
+that escape their own root; the remote endpoint should enforce the same boundary again.
+
+`listDirectory()`, `readFile()`, and `statFile()` are required. Add `writeFile()` to support saves
+from the native file editor, including revision-based conflict handling. A provider without it is
+read-only. Entry creation, rename, duplication, deletion, and downloads are not part of this first
+contract; Paseo rejects those operations for provider-backed workspaces instead of falling back to
+the local anchor.
 
 ### Providers
 

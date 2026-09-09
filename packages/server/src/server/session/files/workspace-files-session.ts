@@ -31,6 +31,10 @@ import {
   renameExplorerEntry,
   streamExplorerFile,
   writeExplorerFile,
+  type ExplorerFileVersion,
+  type ExplorerFileWriteResult,
+  type FileExplorerDirectory,
+  type FileExplorerFile,
 } from "../../file-explorer/service.js";
 import { workspaceFileObserver, type FileObserver } from "../../file-explorer/observer.js";
 import { getProjectIcon } from "../../../utils/project-icon.js";
@@ -53,6 +57,26 @@ export interface WorkspaceFilesSessionOptions {
   paseoHome: string;
   logger: pino.Logger;
   fileObserver?: FileObserver;
+  fileSystems?: WorkspaceFileSystemResolver;
+}
+
+export interface WorkspaceFileSystemProvider {
+  key: string;
+  writable: boolean;
+  listDirectory(input: { cwd: string; path: string }): Promise<FileExplorerDirectory>;
+  readFile(input: { cwd: string; path: string; maxBytes?: number }): Promise<FileExplorerFile>;
+  statFile(input: { cwd: string; path: string }): Promise<ExplorerFileVersion>;
+  writeFile?(input: {
+    cwd: string;
+    path: string;
+    content: string;
+    expectedModifiedAt: string;
+    expectedRevision?: string;
+  }): Promise<ExplorerFileWriteResult>;
+}
+
+export interface WorkspaceFileSystemResolver {
+  resolve(cwd: string): Promise<WorkspaceFileSystemProvider | null>;
 }
 
 /**
@@ -68,6 +92,7 @@ export class WorkspaceFilesSession {
   private readonly logger: pino.Logger;
   private readonly fileUploads: FileUploadStore;
   private readonly fileObserver: FileObserver;
+  private readonly fileSystems: WorkspaceFileSystemResolver | null;
   private readonly fileSubscriptions = new Map<string, () => void>();
 
   constructor(options: WorkspaceFilesSessionOptions) {
@@ -76,11 +101,26 @@ export class WorkspaceFilesSession {
     this.logger = options.logger;
     this.fileUploads = new FileUploadStore({ paseoHome: options.paseoHome });
     this.fileObserver = options.fileObserver ?? workspaceFileObserver;
+    this.fileSystems = options.fileSystems ?? null;
   }
 
   async handleFileSubscribeRequest(request: FileSubscribeRequest): Promise<void> {
     this.fileSubscriptions.get(request.subscriptionId)?.();
     try {
+      const provider = await this.fileSystems?.resolve(request.cwd);
+      if (provider) {
+        const initial = await provider.statFile({ cwd: request.cwd, path: request.path });
+        this.fileSubscriptions.set(request.subscriptionId, () => undefined);
+        this.host.emit({
+          type: "fs.file.subscribe.response",
+          payload: {
+            subscriptionId: request.subscriptionId,
+            initial,
+            requestId: request.requestId,
+          },
+        });
+        return;
+      }
       const subscription = await this.fileObserver.subscribe(
         { cwd: request.cwd, path: request.path },
         (version) => {
@@ -126,13 +166,27 @@ export class WorkspaceFilesSession {
   }
 
   async handleFileWriteRequest(request: FileWriteRequest): Promise<void> {
-    const result = await writeExplorerFile({
-      root: request.cwd,
-      relativePath: request.path,
-      content: request.content,
-      expectedModifiedAt: request.expectedModifiedAt,
-      expectedRevision: request.expectedRevision,
-    });
+    const provider = await this.fileSystems?.resolve(request.cwd);
+    let result: ExplorerFileWriteResult;
+    if (!provider) {
+      result = await writeExplorerFile({
+        root: request.cwd,
+        relativePath: request.path,
+        content: request.content,
+        expectedModifiedAt: request.expectedModifiedAt,
+        expectedRevision: request.expectedRevision,
+      });
+    } else if (!provider.writeFile) {
+      result = { status: "error", error: `Workspace file system ${provider.key} is read-only` };
+    } else {
+      result = await provider.writeFile({
+        cwd: request.cwd,
+        path: request.path,
+        content: request.content,
+        expectedModifiedAt: request.expectedModifiedAt,
+        expectedRevision: request.expectedRevision,
+      });
+    }
     this.host.emit({
       type: "fs.file.write.response",
       payload: { result, requestId: request.requestId },
@@ -140,6 +194,21 @@ export class WorkspaceFilesSession {
   }
 
   async handleFileEntryCreateRequest(request: FileEntryCreateRequest): Promise<void> {
+    const provider = await this.fileSystems?.resolve(request.cwd);
+    if (provider) {
+      this.host.emit({
+        type: "fs.entry.create.response",
+        payload: {
+          cwd: request.cwd,
+          parentPath: request.parentPath,
+          path: null,
+          success: false,
+          error: `Workspace file system ${provider.key} does not support creating entries`,
+          requestId: request.requestId,
+        },
+      });
+      return;
+    }
     const result = await createExplorerEntry({
       root: request.cwd,
       parentPath: request.parentPath,
@@ -160,6 +229,21 @@ export class WorkspaceFilesSession {
   }
 
   async handleFileEntryRenameRequest(request: FileEntryRenameRequest): Promise<void> {
+    const provider = await this.fileSystems?.resolve(request.cwd);
+    if (provider) {
+      this.host.emit({
+        type: "fs.entry.rename.response",
+        payload: {
+          cwd: request.cwd,
+          path: request.path,
+          renamedPath: null,
+          success: false,
+          error: `Workspace file system ${provider.key} does not support renaming entries`,
+          requestId: request.requestId,
+        },
+      });
+      return;
+    }
     const result = await renameExplorerEntry({
       root: request.cwd,
       relativePath: request.path,
@@ -179,6 +263,21 @@ export class WorkspaceFilesSession {
   }
 
   async handleFileEntryDuplicateRequest(request: FileEntryDuplicateRequest): Promise<void> {
+    const provider = await this.fileSystems?.resolve(request.cwd);
+    if (provider) {
+      this.host.emit({
+        type: "fs.entry.duplicate.response",
+        payload: {
+          cwd: request.cwd,
+          path: request.path,
+          duplicatedPath: null,
+          success: false,
+          error: `Workspace file system ${provider.key} does not support duplicating entries`,
+          requestId: request.requestId,
+        },
+      });
+      return;
+    }
     const result = await duplicateExplorerEntry({
       root: request.cwd,
       relativePath: request.path,
@@ -197,6 +296,20 @@ export class WorkspaceFilesSession {
   }
 
   async handleFileEntryDeleteRequest(request: FileEntryDeleteRequest): Promise<void> {
+    const provider = await this.fileSystems?.resolve(request.cwd);
+    if (provider) {
+      this.host.emit({
+        type: "fs.entry.delete.response",
+        payload: {
+          cwd: request.cwd,
+          path: request.path,
+          success: false,
+          error: `Workspace file system ${provider.key} does not support deleting entries`,
+          requestId: request.requestId,
+        },
+      });
+      return;
+    }
     const result = await deleteExplorerEntry({
       root: request.cwd,
       relativePath: request.path,
@@ -241,11 +354,14 @@ export class WorkspaceFilesSession {
     }
 
     try {
+      const provider = await this.fileSystems?.resolve(cwd);
       if (mode === "list") {
-        const directory = await listDirectoryEntries({
-          root: cwd,
-          relativePath: requestedPath,
-        });
+        const directory = provider
+          ? await provider.listDirectory({ cwd, path: requestedPath })
+          : await listDirectoryEntries({
+              root: cwd,
+              relativePath: requestedPath,
+            });
 
         this.host.emit(
           {
@@ -263,6 +379,32 @@ export class WorkspaceFilesSession {
           source,
         );
       } else {
+        if (provider) {
+          const file = await provider.readFile({
+            cwd,
+            path: requestedPath,
+            maxBytes: request.maxBytes,
+          });
+          if (request.maxBytes && file.size > request.maxBytes) {
+            throw new Error("File is too large to display");
+          }
+          this.host.emit(
+            {
+              type: "file_explorer_response",
+              payload: {
+                cwd,
+                path: file.path,
+                mode,
+                directory: null,
+                file,
+                error: null,
+                requestId,
+              },
+            },
+            source,
+          );
+          return;
+        }
         if (request.maxBytes) {
           const file = await getDownloadableFileInfo({ root: cwd, relativePath: requestedPath });
           if (file.size > request.maxBytes) {
@@ -415,6 +557,10 @@ export class WorkspaceFilesSession {
     );
 
     try {
+      const provider = await this.fileSystems?.resolve(cwd);
+      if (provider) {
+        throw new Error(`Workspace file system ${provider.key} does not support downloads`);
+      }
       const info = await getDownloadableFileInfo({
         root: cwd,
         relativePath: requestedPath,

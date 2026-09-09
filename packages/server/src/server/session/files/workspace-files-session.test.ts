@@ -18,6 +18,7 @@ import {
 } from "@getpaseo/protocol/binary-frames/index";
 import {
   WorkspaceFilesSession,
+  type WorkspaceFileSystemResolver,
   type WorkspaceFilesSessionHost,
 } from "./workspace-files-session.js";
 import { DownloadTokenStore } from "../../file-download/token-store.js";
@@ -41,6 +42,7 @@ function makeSubsystem(
   options: {
     hasBinaryChannel?: boolean;
     emitBinary?: (frame: Uint8Array) => Promise<void> | void;
+    fileSystems?: WorkspaceFileSystemResolver;
   } = {},
 ) {
   const emitted: SessionOutboundMessage[] = [];
@@ -60,6 +62,7 @@ function makeSubsystem(
     downloadTokenStore: new DownloadTokenStore({ ttlMs: 60_000 }),
     paseoHome,
     logger: pino({ level: "silent" }),
+    fileSystems: options.fileSystems,
   });
   return {
     subsystem,
@@ -81,6 +84,244 @@ function uploadFrame(args: Parameters<typeof encodeFileTransferFrame>[0]): FileT
 }
 
 describe("WorkspaceFilesSession", () => {
+  test("routes native directory and file requests through a plugin workspace file system", async () => {
+    const cwd = makeDir("workspace-files-plugin-");
+    const provider = {
+      key: "example.remote",
+      writable: true,
+      listDirectory: async () => ({
+        path: ".",
+        entries: [
+          {
+            name: "remote.txt",
+            path: "remote.txt",
+            kind: "file" as const,
+            size: 12,
+            modifiedAt: "2026-09-09T00:00:00.000Z",
+          },
+        ],
+      }),
+      readFile: async () => ({
+        path: "remote.txt",
+        kind: "text" as const,
+        encoding: "utf-8" as const,
+        content: "remote file\n",
+        mimeType: "text/plain",
+        size: 12,
+        modifiedAt: "2026-09-09T00:00:00.000Z",
+        revision: "remote:1",
+      }),
+      statFile: async () => ({
+        status: "ready" as const,
+        cwd,
+        path: "remote.txt",
+        size: 12,
+        modifiedAt: "2026-09-09T00:00:00.000Z",
+        revision: "remote:1",
+      }),
+      writeFile: async () => ({
+        status: "written" as const,
+        modifiedAt: "2026-09-09T00:00:01.000Z",
+        size: 13,
+        revision: "remote:2",
+      }),
+    };
+    const { subsystem, emitted } = makeSubsystem({
+      hasBinaryChannel: true,
+      fileSystems: { resolve: async (candidate) => (candidate === cwd ? provider : null) },
+    });
+
+    await subsystem.handleFileExplorerRequest({
+      type: "file_explorer_request",
+      cwd,
+      path: ".",
+      mode: "list",
+      requestId: "req-list",
+    });
+    await subsystem.handleFileExplorerRequest({
+      type: "file_explorer_request",
+      cwd,
+      path: "remote.txt",
+      mode: "file",
+      acceptBinary: true,
+      requestId: "req-read",
+    });
+
+    expect(emitted).toEqual([
+      {
+        type: "file_explorer_response",
+        payload: {
+          cwd,
+          path: ".",
+          mode: "list",
+          directory: await provider.listDirectory(),
+          file: null,
+          error: null,
+          requestId: "req-list",
+        },
+      },
+      {
+        type: "file_explorer_response",
+        payload: {
+          cwd,
+          path: "remote.txt",
+          mode: "file",
+          directory: null,
+          file: await provider.readFile(),
+          error: null,
+          requestId: "req-read",
+        },
+      },
+    ]);
+  });
+
+  test("routes native file subscriptions and writes through a plugin workspace file system", async () => {
+    const cwd = makeDir("workspace-files-plugin-write-");
+    const writes: unknown[] = [];
+    const provider = {
+      key: "example.remote",
+      writable: true,
+      listDirectory: async () => ({ path: ".", entries: [] }),
+      readFile: async () => ({
+        path: "remote.txt",
+        kind: "text" as const,
+        encoding: "utf-8" as const,
+        content: "before",
+        size: 6,
+        modifiedAt: "2026-09-09T00:00:00.000Z",
+        revision: "remote:1",
+      }),
+      statFile: async () => ({
+        status: "ready" as const,
+        cwd,
+        path: "remote.txt",
+        size: 6,
+        modifiedAt: "2026-09-09T00:00:00.000Z",
+        revision: "remote:1",
+      }),
+      writeFile: async (input: unknown) => {
+        writes.push(input);
+        return {
+          status: "written" as const,
+          modifiedAt: "2026-09-09T00:00:01.000Z",
+          size: 5,
+          revision: "remote:2",
+        };
+      },
+    };
+    const { subsystem, emitted } = makeSubsystem({
+      fileSystems: { resolve: async (candidate) => (candidate === cwd ? provider : null) },
+    });
+
+    await subsystem.handleFileSubscribeRequest({
+      type: "fs.file.subscribe.request",
+      cwd,
+      path: "remote.txt",
+      subscriptionId: "sub-remote",
+      requestId: "req-subscribe",
+    });
+    await subsystem.handleFileWriteRequest({
+      type: "fs.file.write.request",
+      cwd,
+      path: "remote.txt",
+      content: "after",
+      expectedModifiedAt: "2026-09-09T00:00:00.000Z",
+      expectedRevision: "remote:1",
+      requestId: "req-write",
+    });
+
+    expect(writes).toEqual([
+      {
+        cwd,
+        path: "remote.txt",
+        content: "after",
+        expectedModifiedAt: "2026-09-09T00:00:00.000Z",
+        expectedRevision: "remote:1",
+      },
+    ]);
+    expect(emitted).toEqual([
+      {
+        type: "fs.file.subscribe.response",
+        payload: {
+          subscriptionId: "sub-remote",
+          initial: await provider.statFile(),
+          requestId: "req-subscribe",
+        },
+      },
+      {
+        type: "fs.file.write.response",
+        payload: {
+          result: {
+            status: "written",
+            modifiedAt: "2026-09-09T00:00:01.000Z",
+            size: 5,
+            revision: "remote:2",
+          },
+          requestId: "req-write",
+        },
+      },
+    ]);
+  });
+
+  test("does not fall back to the local anchor for unsupported remote entry mutations", async () => {
+    const cwd = makeDir("workspace-files-plugin-guard-");
+    const provider = {
+      key: "example.remote",
+      writable: true,
+      listDirectory: async () => ({ path: ".", entries: [] }),
+      readFile: async () => ({
+        path: "remote.txt",
+        kind: "text" as const,
+        encoding: "utf-8" as const,
+        content: "remote",
+        size: 6,
+        modifiedAt: "2026-09-09T00:00:00.000Z",
+        revision: "remote:1",
+      }),
+      statFile: async () => ({
+        status: "ready" as const,
+        cwd,
+        path: "remote.txt",
+        size: 6,
+        modifiedAt: "2026-09-09T00:00:00.000Z",
+        revision: "remote:1",
+      }),
+      writeFile: async () => ({
+        status: "written" as const,
+        modifiedAt: "2026-09-09T00:00:01.000Z",
+        size: 6,
+        revision: "remote:2",
+      }),
+    };
+    const { subsystem, emitted } = makeSubsystem({
+      fileSystems: { resolve: async () => provider },
+    });
+
+    await subsystem.handleFileEntryCreateRequest({
+      type: "fs.entry.create.request",
+      cwd,
+      parentPath: ".",
+      name: "must-not-be-local.txt",
+      kind: "file",
+      requestId: "req-create-remote",
+    });
+
+    expect(existsSync(join(cwd, "must-not-be-local.txt"))).toBe(false);
+    expect(emitted).toEqual([
+      {
+        type: "fs.entry.create.response",
+        payload: {
+          cwd,
+          parentPath: ".",
+          path: null,
+          success: false,
+          error: "Workspace file system example.remote does not support creating entries",
+          requestId: "req-create-remote",
+        },
+      },
+    ]);
+  });
+
   test("creates an entry and emits the complete success response", async () => {
     const cwd = makeDir("workspace-files-create-");
     const { subsystem, emitted } = makeSubsystem();
