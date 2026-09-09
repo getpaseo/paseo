@@ -1,4 +1,8 @@
-import { type AgentHookConfigFormat, buildAgentHookShellCommand } from "../agent-hook-installer.js";
+import {
+  type AgentHookConfigFormat,
+  buildAgentHookShellCommand,
+  buildAgentHookWindowsPowerShellCommand,
+} from "../agent-hook-installer.js";
 
 interface ClaudeCommandHook {
   type?: unknown;
@@ -34,7 +38,12 @@ export const claudeSettingsFormat: AgentHookConfigFormat<ClaudeSettings> = {
     const install = provider.install;
     const hooks = normalizeHooks(config.hooks);
     for (const event of provider.events) {
-      const userEntries = removePaseoHooks(hooks[event.event], install.hookMarker);
+      const expectedCommand =
+        process.platform === "win32"
+          ? buildAgentHookWindowsPowerShellCommand(provider, event)
+          : undefined;
+      const userEntries = removePaseoHooks(hooks[event.event], install.hookMarker, expectedCommand);
+      const hookCommand = expectedCommand ?? buildAgentHookShellCommand(provider, event);
       hooks[event.event] = [
         ...userEntries,
         {
@@ -42,7 +51,7 @@ export const claudeSettingsFormat: AgentHookConfigFormat<ClaudeSettings> = {
           hooks: [
             {
               type: "command",
-              command: buildAgentHookShellCommand(provider, event),
+              command: hookCommand,
               timeout: 10,
             },
           ],
@@ -55,7 +64,11 @@ export const claudeSettingsFormat: AgentHookConfigFormat<ClaudeSettings> = {
     const install = provider.install;
     const hooks = normalizeHooks(config.hooks);
     for (const event of provider.events) {
-      const entries = removePaseoHooks(hooks[event.event], install.hookMarker);
+      const expectedCommand =
+        process.platform === "win32"
+          ? buildAgentHookWindowsPowerShellCommand(provider, event)
+          : undefined;
+      const entries = removePaseoHooks(hooks[event.event], install.hookMarker, expectedCommand);
       if (entries.length > 0) {
         hooks[event.event] = entries;
       } else {
@@ -69,9 +82,13 @@ export const claudeSettingsFormat: AgentHookConfigFormat<ClaudeSettings> = {
     const hooks = normalizeHooks(config.hooks);
     return provider.events.every((event) =>
       normalizeMatchers(hooks[event.event]).some((entry) =>
-        normalizeCommandHooks(entry.hooks).some((hook) =>
-          commandContainsMarker(hook, install.hookMarker),
-        ),
+        normalizeCommandHooks(entry.hooks).some((hook) => {
+          const expectedCommand =
+            process.platform === "win32"
+              ? buildAgentHookWindowsPowerShellCommand(provider, event)
+              : undefined;
+          return commandContainsMarker(hook, install.hookMarker, expectedCommand);
+        }),
       ),
     );
   },
@@ -95,11 +112,15 @@ function normalizeCommandHooks(value: unknown): ClaudeCommandHook[] {
   return value.filter(isRecord);
 }
 
-function removePaseoHooks(value: unknown, marker: string): ClaudeHookMatcher[] {
+function removePaseoHooks(
+  value: unknown,
+  marker: string,
+  expectedCommand: string | undefined,
+): ClaudeHookMatcher[] {
   const entries: ClaudeHookMatcher[] = [];
   for (const entry of normalizeMatchers(value)) {
     const hooks = normalizeCommandHooks(entry.hooks).filter(
-      (hook) => !commandContainsMarker(hook, marker),
+      (hook) => !commandContainsMarker(hook, marker, expectedCommand),
     );
     if (hooks.length > 0) {
       entries.push(Object.assign({}, entry, { hooks }));
@@ -108,8 +129,15 @@ function removePaseoHooks(value: unknown, marker: string): ClaudeHookMatcher[] {
   return entries;
 }
 
-function commandContainsMarker(hook: ClaudeCommandHook, marker: string): boolean {
-  return typeof hook.command === "string" && hook.command.includes(marker);
+function commandContainsMarker(
+  hook: ClaudeCommandHook,
+  marker: string,
+  expectedCommand: string | undefined,
+): boolean {
+  if (typeof hook.command !== "string") {
+    return false;
+  }
+  return hook.command.includes(marker) || hook.command === expectedCommand;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

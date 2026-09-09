@@ -149,6 +149,26 @@ export function buildAgentHookWindowsCommand<TConfig>(
   return `if defined PASEO_TERMINAL_ID (if defined PASEO_HOOK_CLI ("%PASEO_HOOK_CLI%" ${hookArgs}) else (paseo ${hookArgs})) else (exit /b 0)`;
 }
 
+export function buildAgentHookWindowsPowerShellCommand<TConfig>(
+  provider: AgentHookProvider<TConfig>,
+  event: AgentHookEventDefinition,
+): string {
+  const hookArgs = `${powerShellString(provider.id)} ${powerShellString(event.event)}`;
+  const script = [
+    "if ([string]::IsNullOrEmpty($env:PASEO_TERMINAL_ID)) { exit 0 }",
+    "$cli = $env:PASEO_HOOK_CLI",
+    "if ([string]::IsNullOrEmpty($cli)) { $cli = 'paseo' }",
+    `& $cli 'hooks' ${hookArgs}`,
+    "$hookSucceeded = $?",
+    "$hookExitCode = $LASTEXITCODE",
+    "if ($hookSucceeded) { if ($null -ne $hookExitCode) { exit $hookExitCode }; exit 0 }",
+    "if ($null -ne $hookExitCode) { exit $hookExitCode }",
+    "exit 1",
+  ].join("\n");
+  const encoded = Buffer.from(script, "utf16le").toString("base64");
+  return `powershell.exe -NoProfile -NonInteractive -EncodedCommand ${encoded}`;
+}
+
 function installAgentHookPluginFile(
   install: AgentHookPluginFileInstallStrategy,
   options: AgentHookInstallOptions,
@@ -244,4 +264,8 @@ function windowsToken(value: string): string {
     return value;
   }
   return `"${value.replaceAll('"', '\\"')}"`;
+}
+
+function powerShellString(value: string): string {
+  return `'${value.replaceAll("'", "''")}'`;
 }
