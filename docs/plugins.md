@@ -174,14 +174,14 @@ Classify every SDK export before adding it. All client entry points and implemen
 Zod schemas, and functions that run in both runtimes. A type-only import is still an architectural
 dependency; shared types must not refer to React components, hooks, Node APIs, or server contexts.
 
-| Entry                                                | Owns                                                                       | May depend on          |
-| ---------------------------------------------------- | -------------------------------------------------------------------------- | ---------------------- |
-| `@getpaseo/plugin`                                   | Shared data, schemas, RPC/settings definitions, runtime-neutral helpers    | Shared code only       |
-| `@getpaseo/plugin/server`                            | Server contribution/handler contexts and lifecycle contracts               | Shared and server code |
-| `@getpaseo/plugin/server/provider`, `/server/acp`    | Server provider contracts and adapters                                     | Shared and server code |
-| `@getpaseo/plugin/client`                            | Client contribution contexts, hooks, navigation, and UI contribution types | Shared and client code |
-| `@getpaseo/plugin/client/react-native`, `/client/ui` | Host-provided UI components                                                | Shared and client code |
-| `@getpaseo/plugin/client/host`                       | App-owned rendering integration; not a plugin-author entry                 | Shared and client code |
+| Entry                                                                             | Owns                                                                       | May depend on          |
+| --------------------------------------------------------------------------------- | -------------------------------------------------------------------------- | ---------------------- |
+| `@getpaseo/plugin`                                                                | Shared data, schemas, RPC/settings definitions, runtime-neutral helpers    | Shared code only       |
+| `@getpaseo/plugin/server`                                                         | Server contribution/handler contexts and lifecycle contracts               | Shared and server code |
+| `@getpaseo/plugin/server/provider`, `/server/acp`, `/server/workspace-filesystem` | Server provider, ACP, and workspace file-system contracts                  | Shared and server code |
+| `@getpaseo/plugin/client`                                                         | Client contribution contexts, hooks, navigation, and UI contribution types | Shared and client code |
+| `@getpaseo/plugin/client/react-native`, `/client/ui`                              | Host-provided UI components                                                | Shared and client code |
+| `@getpaseo/plugin/client/host`                                                    | App-owned rendering integration; not a plugin-author entry                 | Shared and client code |
 
 Server code imports shared helpers from the root and server capabilities from `/server`. Client
 code imports shared helpers from the root and client capabilities from `/client`. Neither runtime

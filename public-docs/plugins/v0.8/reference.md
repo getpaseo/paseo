@@ -185,7 +185,8 @@ Use `openSettings`, `openSurface`, and `openPanel` for your own registered contr
 ### Server runtime
 
 Paseo provides `@getpaseo/plugin`, `@getpaseo/plugin/server`,
-`@getpaseo/plugin/server/provider`, `@getpaseo/plugin/server/acp`, and `zod` to server code. Backend
+`@getpaseo/plugin/server/provider`, `@getpaseo/plugin/server/acp`,
+`@getpaseo/plugin/server/workspace-filesystem`, and `zod` to server code. Backend
 contributions run in a daemon subprocess with Node access to the host machine. Keep filesystem,
 process, credential, and other machine-local work under `server/`. A plugin without
 `index.server.ts` starts no subprocess.
@@ -199,10 +200,8 @@ project record points at a local anchor but whose files live behind SSH, an API,
 Register a provider with `server.registerWorkspaceFileSystem()`:
 
 ```ts
-import type {
-  PluginServerContext,
-  PluginWorkspaceFileSystemProvider,
-} from "@getpaseo/plugin/server";
+import type { PluginServerContext } from "@getpaseo/plugin/server";
+import type { PluginWorkspaceFileSystemProvider } from "@getpaseo/plugin/server/workspace-filesystem";
 
 const files: PluginWorkspaceFileSystemProvider = {
   id: "example.remote",

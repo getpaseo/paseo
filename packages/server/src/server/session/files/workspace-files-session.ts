@@ -58,6 +58,7 @@ export interface WorkspaceFilesSessionOptions {
   logger: pino.Logger;
   fileObserver?: FileObserver;
   fileSystems?: WorkspaceFileSystemResolver;
+  maxFileSubscriptions?: number;
   remoteFilePollIntervalMs?: number;
   remoteFilePolling?: RemoteFilePolling;
 }
@@ -90,6 +91,7 @@ export interface RemoteFilePolling {
 }
 
 const DEFAULT_REMOTE_FILE_POLL_INTERVAL_MS = 2_000;
+const DEFAULT_MAX_FILE_SUBSCRIPTIONS = 64;
 const nodeRemoteFilePolling: RemoteFilePolling = { setInterval, clearInterval };
 
 function fileVersionFingerprint(version: ExplorerFileVersion): string {
@@ -114,6 +116,7 @@ export class WorkspaceFilesSession {
   private readonly fileUploads: FileUploadStore;
   private readonly fileObserver: FileObserver;
   private readonly fileSystems: WorkspaceFileSystemResolver | null;
+  private readonly maxFileSubscriptions: number;
   private readonly remoteFilePollIntervalMs: number;
   private readonly remoteFilePolling: RemoteFilePolling;
   private readonly fileSubscriptions = new Map<string, () => void>();
@@ -125,18 +128,59 @@ export class WorkspaceFilesSession {
     this.fileUploads = new FileUploadStore({ paseoHome: options.paseoHome });
     this.fileObserver = options.fileObserver ?? workspaceFileObserver;
     this.fileSystems = options.fileSystems ?? null;
+    this.maxFileSubscriptions = options.maxFileSubscriptions ?? DEFAULT_MAX_FILE_SUBSCRIPTIONS;
     this.remoteFilePollIntervalMs =
       options.remoteFilePollIntervalMs ?? DEFAULT_REMOTE_FILE_POLL_INTERVAL_MS;
     this.remoteFilePolling = options.remoteFilePolling ?? nodeRemoteFilePolling;
   }
 
   async handleFileSubscribeRequest(request: FileSubscribeRequest): Promise<void> {
-    this.fileSubscriptions.get(request.subscriptionId)?.();
+    const previous = this.fileSubscriptions.get(request.subscriptionId);
+    if (previous) {
+      previous();
+      this.fileSubscriptions.delete(request.subscriptionId);
+    } else if (this.fileSubscriptions.size >= this.maxFileSubscriptions) {
+      this.host.emit({
+        type: "fs.file.subscribe.response",
+        payload: {
+          subscriptionId: request.subscriptionId,
+          initial: {
+            status: "error",
+            cwd: request.cwd,
+            path: request.path,
+            error: `Too many file subscriptions (maximum ${this.maxFileSubscriptions})`,
+          },
+          requestId: request.requestId,
+        },
+      });
+      return;
+    }
+
+    let active = true;
+    let cleanup = () => {
+      active = false;
+    };
+    this.fileSubscriptions.set(request.subscriptionId, cleanup);
+
+    const installCleanup = (dispose: () => void): boolean => {
+      if (!active) {
+        dispose();
+        return false;
+      }
+      cleanup = () => {
+        active = false;
+        dispose();
+      };
+      this.fileSubscriptions.set(request.subscriptionId, cleanup);
+      return true;
+    };
+
     try {
       const provider = await this.fileSystems?.resolve(request.cwd);
+      if (!active) return;
       if (provider) {
         const initial = await provider.statFile({ cwd: request.cwd, path: request.path });
-        let active = true;
+        if (!active) return;
         let checking = false;
         let fingerprint = fileVersionFingerprint(initial);
         const poll = this.remoteFilePolling.setInterval(async () => {
@@ -168,10 +212,7 @@ export class WorkspaceFilesSession {
           });
         }, this.remoteFilePollIntervalMs);
         poll.unref?.();
-        this.fileSubscriptions.set(request.subscriptionId, () => {
-          active = false;
-          this.remoteFilePolling.clearInterval(poll);
-        });
+        if (!installCleanup(() => this.remoteFilePolling.clearInterval(poll))) return;
         this.host.emit({
           type: "fs.file.subscribe.response",
           payload: {
@@ -191,7 +232,7 @@ export class WorkspaceFilesSession {
           });
         },
       );
-      this.fileSubscriptions.set(request.subscriptionId, subscription.unsubscribe);
+      if (!installCleanup(subscription.unsubscribe)) return;
       this.host.emit({
         type: "fs.file.subscribe.response",
         payload: {
@@ -201,6 +242,11 @@ export class WorkspaceFilesSession {
         },
       });
     } catch (error) {
+      if (!active) return;
+      if (this.fileSubscriptions.get(request.subscriptionId) === cleanup) {
+        this.fileSubscriptions.delete(request.subscriptionId);
+        cleanup();
+      }
       this.host.emit({
         type: "fs.file.subscribe.response",
         payload: {

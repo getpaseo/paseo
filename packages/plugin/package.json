@@ -28,6 +28,11 @@
       "source": "./src/server/acp.ts",
       "default": "./dist/server/acp.js"
     },
+    "./server/workspace-filesystem": {
+      "types": "./dist/server/workspace-filesystem.d.ts",
+      "source": "./src/server/workspace-filesystem.ts",
+      "default": "./dist/server/workspace-filesystem.js"
+    },
     "./client/react-native": {
       "types": "./dist/client/react-native.d.ts",
       "source": "./src/client/react-native.ts",

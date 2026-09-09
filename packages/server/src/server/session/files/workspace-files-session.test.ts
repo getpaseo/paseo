@@ -44,6 +44,7 @@ function makeSubsystem(
     hasBinaryChannel?: boolean;
     emitBinary?: (frame: Uint8Array) => Promise<void> | void;
     fileSystems?: WorkspaceFileSystemResolver;
+    maxFileSubscriptions?: number;
     remoteFilePollIntervalMs?: number;
     remoteFilePolling?: RemoteFilePolling;
   } = {},
@@ -66,6 +67,7 @@ function makeSubsystem(
     paseoHome,
     logger: pino({ level: "silent" }),
     fileSystems: options.fileSystems,
+    maxFileSubscriptions: options.maxFileSubscriptions,
     remoteFilePollIntervalMs: options.remoteFilePollIntervalMs,
     remoteFilePolling: options.remoteFilePolling,
   });
@@ -255,6 +257,73 @@ describe("WorkspaceFilesSession", () => {
     });
     subsystem.dispose();
     expect(clearInterval).toHaveBeenCalledTimes(1);
+  });
+
+  test("bounds recurring plugin workspace file subscriptions per session", async () => {
+    const cwd = makeDir("workspace-files-plugin-subscription-limit-");
+    const statFile = vi.fn(async ({ path }: { path: string }) => ({
+      status: "ready" as const,
+      cwd,
+      path,
+      size: 1,
+      modifiedAt: "2026-09-09T00:00:00.000Z",
+      revision: `remote:${path}`,
+    }));
+    const setInterval = vi.fn(
+      () => ({ unref: () => undefined }) as unknown as ReturnType<typeof globalThis.setInterval>,
+    );
+    const provider = {
+      key: "example.remote",
+      writable: false,
+      listDirectory: async () => ({ path: ".", entries: [] }),
+      readFile: async () => ({
+        path: "one.txt",
+        kind: "text" as const,
+        encoding: "utf-8" as const,
+        content: "1",
+        size: 1,
+        modifiedAt: "2026-09-09T00:00:00.000Z",
+        revision: "remote:one.txt",
+      }),
+      statFile,
+    };
+    const { subsystem, emitted } = makeSubsystem({
+      fileSystems: { resolve: async () => provider },
+      maxFileSubscriptions: 1,
+      remoteFilePolling: { setInterval, clearInterval: vi.fn() },
+    });
+
+    await subsystem.handleFileSubscribeRequest({
+      type: "fs.file.subscribe.request",
+      cwd,
+      path: "one.txt",
+      subscriptionId: "sub-one",
+      requestId: "req-one",
+    });
+    await subsystem.handleFileSubscribeRequest({
+      type: "fs.file.subscribe.request",
+      cwd,
+      path: "two.txt",
+      subscriptionId: "sub-two",
+      requestId: "req-two",
+    });
+
+    expect(statFile).toHaveBeenCalledTimes(1);
+    expect(setInterval).toHaveBeenCalledTimes(1);
+    expect(emitted.at(-1)).toEqual({
+      type: "fs.file.subscribe.response",
+      payload: {
+        subscriptionId: "sub-two",
+        initial: {
+          status: "error",
+          cwd,
+          path: "two.txt",
+          error: "Too many file subscriptions (maximum 1)",
+        },
+        requestId: "req-two",
+      },
+    });
+    subsystem.dispose();
   });
 
   test("routes native file subscriptions and writes through a plugin workspace file system", async () => {

@@ -11,7 +11,7 @@ import * as pluginProviderRuntime from "@getpaseo/plugin/server/provider";
 import * as pluginAcpRuntime from "@getpaseo/plugin/server/acp";
 import type { SettingsDefinition, PluginRpcContract } from "@getpaseo/plugin";
 import type { PluginHandlerContext } from "@getpaseo/plugin/server";
-import type { PluginWorkspaceFileSystemProvider } from "@getpaseo/plugin/server";
+import type { PluginWorkspaceFileSystemProvider } from "@getpaseo/plugin/server/workspace-filesystem";
 import {
   ProviderEventSchema,
   type ProviderConnection,
@@ -359,6 +359,7 @@ function runtimeRequire(name: string): unknown {
   if (name === "@getpaseo/plugin/server") return {};
   if (name === "@getpaseo/plugin/server/provider") return pluginProviderRuntime;
   if (name === "@getpaseo/plugin/server/acp") return pluginAcpRuntime;
+  if (name === "@getpaseo/plugin/server/workspace-filesystem") return {};
   if (name === "@getpaseo/plugin/client/host")
     throw new Error(`${name} is private to the app host`);
   return nodeRequire(name);
