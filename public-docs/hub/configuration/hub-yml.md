@@ -271,7 +271,11 @@ Keys use the existing expression syntax and must resolve to a non-empty string o
 
 An existing session keeps its daemon, agent configuration, target, environment, and tool contracts. Changing those settings for the same key fails with an explanation; choose a different key or **New agent**. Prompts and output destinations belong to each arrival and may change. A worktree branch is chosen when the session is first created and reused on later arrivals.
 
-Triggers that mint temporary environment credentials, including a `run.github` grant or a connection token in `run.env`, must choose **New agent** when the event has a conversation or uses a custom key. These credentials expire with the execution, and an existing agent's environment cannot be refreshed. Hub-managed reply tools remain available with continuation.
+An arrival while the agent is working steers that agent. It does not extend the active work's original hard runtime deadline. Each arrival keeps its own output destination and completion contract.
+
+Triggers with a `run.github` grant or a connection token in `run.env` can continue an active agent. They keep the existing credentials and their original expiry; steering does not refresh the agent's environment or renew a token. Finishing one request leaves leased credentials available to other active requests sharing that agent. Hub revokes them when all those requests finish, while any configured credential expiry still applies during the work.
+
+After all requests in a session with temporary credentials finish, the next arrival for the same conversation or key starts a fresh agent with newly materialized credentials. Sessions without temporary environment credentials can reuse or restore their agent after completion.
 
 ### Upgrading
 
