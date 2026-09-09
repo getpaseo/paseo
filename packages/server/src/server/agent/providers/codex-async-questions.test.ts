@@ -1,6 +1,10 @@
 import { expect, test } from "vitest";
 import { CodexAppServerAgentSession } from "./codex-app-server-agent.js";
-import { createFakeCodexAppServer } from "./codex/test-utils/fake-app-server.js";
+import {
+  createFakeCodexAppServer,
+  waitForNextEvent,
+  waitForTimelineToolCall,
+} from "./codex/test-utils/fake-app-server.js";
 import { createTestLogger } from "../../../test-utils/test-logger.js";
 import type { AgentStreamEvent } from "../agent-sdk-types.js";
 import { AgentManager } from "../agent-manager.js";
@@ -32,18 +36,40 @@ async function setup(metadata?: Record<string, unknown>, rejectSteer = false) {
   const events: AgentStreamEvent[] = [];
   session.subscribe((event) => events.push(event));
   await session.startTurn("Help me choose a color while you inspect the project.");
+  const started = waitForNextEvent(session, "turn_started");
   appServer.startsTurn({ threadId: "thread-1", turnId: "native-turn" });
-  await new Promise((resolve) => setImmediate(resolve));
+  await started;
   async function ask() {
+    const shown = waitForTimelineToolCall(session, questionItem.id);
     appServer.child.stdout.write(
       JSON.stringify({
         method: "item/completed",
         params: { threadId: "thread-1", turnId: "native-turn", item: questionItem },
       }) + "\n",
     );
-    await new Promise((resolve) => setImmediate(resolve));
+    await shown;
   }
-  return { session, appServer, events, ask };
+  async function say(text: string) {
+    const shown = waitForNextEvent(
+      session,
+      "timeline",
+      (event) => event.item.type === "assistant_message" && event.item.text.includes(text),
+    );
+    appServer.says({ threadId: "thread-1", text });
+    await shown;
+  }
+  async function finish(status: "completed" | "interrupted" = "completed") {
+    const finished = waitForNextEvent(
+      session,
+      status === "completed" ? "turn_completed" : "turn_canceled",
+    );
+    appServer.completeTurn({ status });
+    await finished;
+  }
+  function allowAnswers() {
+    rejectSteer = false;
+  }
+  return { session, appServer, events, ask, say, finish, allowAnswers };
 }
 
 const answer = { behavior: "allow" as const, updatedInput: { answers: { "Question 1": "Green" } } };
@@ -55,11 +81,9 @@ async function setupRewind(fail = false) {
     { item: { ...questionItem, id: "removed-pending" } },
     { item: { ...questionItem, id: "removed-answered" }, resolution: ["Green"] },
   ];
-  const userMessage = (id: string) => ({
-    type: "userMessage",
-    id,
-    content: [{ type: "text", text: id }],
-  });
+  function userMessage(id: string) {
+    return { type: "userMessage", id, content: [{ type: "text", text: id }] };
+  }
   const turns = [
     {
       id: "earlier-turn",
@@ -159,8 +183,7 @@ test("failed rewind preserves question state", async () => {
   }
 });
 
-test("manager publishes and saves the provider state after rewind", async () => {
-  const { session } = await setupRewind();
+async function manage(session: CodexAppServerAgentSession) {
   const manager = new AgentManager({
     clients: {
       codex: {
@@ -179,6 +202,12 @@ test("manager publishes and saves the provider state after rewind", async () => 
     undefined,
     { workspaceId: undefined },
   );
+  return { manager, agent };
+}
+
+test("manager publishes and saves the provider state after rewind", async () => {
+  const { session } = await setupRewind();
+  const { manager, agent } = await manage(session);
   try {
     await manager.rewind(agent.id, "rewind-here", "conversation");
     const snapshot = manager.getAgent(agent.id)!;
@@ -192,24 +221,7 @@ test("manager publishes and saves the provider state after rewind", async () => 
 
 test("manager snapshots capture pending and answered question state before the turn ends", async () => {
   const { session, ask } = await setup();
-  const manager = new AgentManager({
-    clients: {
-      codex: {
-        provider: "codex",
-        capabilities: session.capabilities,
-        createSession: async () => session,
-        resumeSession: async () => session,
-        isAvailable: async () => true,
-        fetchCatalog: async () => ({ models: [], modes: [] }),
-      },
-    },
-    logger: createTestLogger(),
-  });
-  const agent = await manager.createAgent(
-    { provider: "codex", cwd: "/tmp", model: "gpt-5.4" },
-    undefined,
-    { workspaceId: undefined },
-  );
+  const { manager, agent } = await manage(session);
   try {
     await ask();
     const [permission] = session.getPendingPermissions();
@@ -240,8 +252,46 @@ test("manager snapshots capture pending and answered question state before the t
   }
 });
 
+test("concurrent answers deliver only one response to the active Codex turn", async () => {
+  const { session, appServer, ask } = await setup();
+  const { manager, agent } = await manage(session);
+  try {
+    await ask();
+    const [permission] = session.getPendingPermissions();
+    const results = await Promise.allSettled([
+      manager.respondToPermission(agent.id, permission.id, answer),
+      manager.respondToPermission(agent.id, permission.id, answer),
+    ]);
+    expect(results.map((result) => result.status)).toEqual(["fulfilled", "rejected"]);
+    expect(appServer.requests().filter((request) => request.method === "turn/steer")).toHaveLength(
+      1,
+    );
+    expect(session.getPendingPermissions()).toEqual([]);
+  } finally {
+    await manager.closeAgent(agent.id);
+  }
+});
+
+test("a failed submission releases the request so the user can retry", async () => {
+  const { session, ask, allowAnswers } = await setup(undefined, true);
+  const { manager, agent } = await manage(session);
+  try {
+    await ask();
+    const [permission] = session.getPendingPermissions();
+    await expect(manager.respondToPermission(agent.id, permission.id, answer)).rejects.toThrow(
+      "Delivery failed",
+    );
+    expect(session.getPendingPermissions().map((request) => request.id)).toEqual([permission.id]);
+    allowAnswers();
+    await manager.respondToPermission(agent.id, permission.id, answer);
+    expect(session.getPendingPermissions()).toEqual([]);
+  } finally {
+    await manager.closeAgent(agent.id);
+  }
+});
+
 test("shows an async question, keeps streaming, and delivers its answer without interrupting", async () => {
-  const { session, appServer, events, ask } = await setup();
+  const { session, appServer, events, ask, say } = await setup();
   try {
     await ask();
     const [permission] = session.getPendingPermissions();
@@ -258,8 +308,7 @@ test("shows an async question, keeps streaming, and delivers its answer without 
         ],
       },
     });
-    appServer.says({ threadId: "thread-1", text: "I am still inspecting the project." });
-    await new Promise((resolve) => setImmediate(resolve));
+    await say("I am still inspecting the project.");
     expect(
       events.some(
         (event) =>
@@ -319,8 +368,7 @@ test("Stop dismisses async questions before cancellation and keeps them dismisse
       }
     });
     await first.session.interrupt();
-    first.appServer.completeTurn({ status: "interrupted" });
-    await new Promise((resolve) => setImmediate(resolve));
+    await first.finish("interrupted");
     expect(first.session.getPendingPermissions()).toEqual([]);
     expect(metadata?.asyncQuestions).toEqual([
       expect.objectContaining({ resolution: "dismissed" }),
@@ -345,13 +393,12 @@ test("Stop dismisses async questions before cancellation and keeps them dismisse
 });
 
 test("late answers use the existing follow-up prompt and dismissal does not interrupt", async () => {
-  const { session, appServer, ask } = await setup();
+  const { session, appServer, ask, finish } = await setup();
   try {
     await ask();
     const [permission] = session.getPendingPermissions();
     expect(permission).toBeDefined();
-    appServer.completeTurn();
-    await new Promise((resolve) => setImmediate(resolve));
+    await finish();
     expect(session.getPendingPermissions()).toHaveLength(1);
     expect(await session.respondToPermission(permission.id, answer)).toEqual({
       followUpPrompt: "Answers to your questions:\n\nWhich color?\nGreen",
