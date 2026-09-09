@@ -6297,14 +6297,16 @@ function normalizeClaudeSessionTitle(title: string | null): string | null {
   return normalized ? normalized : null;
 }
 
+const CLAUDE_CUSTOM_TITLE_TYPE = "custom-title";
+
 /**
- * A title record is re-emitted every time the session is saved, so the current
- * name is the last usable one in the file. Searching backwards finds it without
+ * The `custom-title` record is re-emitted every time the session is saved, so
+ * the current name is the last usable one in the file. Searching backwards finds it without
  * walking the transcript, which matters because sessions reach tens of
  * megabytes.
  */
-function readLastClaudeTitle(content: string, type: string, field: string): string | null {
-  const needle = `"${type}"`;
+function readLastClaudeCustomTitle(content: string): string | null {
+  const needle = `"${CLAUDE_CUSTOM_TITLE_TYPE}"`;
   let at = content.lastIndexOf(needle);
   while (at >= 0) {
     const lineStart = content.lastIndexOf("\n", at) + 1;
@@ -6317,9 +6319,10 @@ function readLastClaudeTitle(content: string, type: string, field: string): stri
       parsed = undefined;
     }
     const entry = toObjectRecord(parsed);
-    if (entry && !entry.isSidechain && entry.type === type) {
-      const value = entry[field];
-      const title = normalizeClaudeSessionTitle(typeof value === "string" ? value : null);
+    if (entry && !entry.isSidechain && entry.type === CLAUDE_CUSTOM_TITLE_TYPE) {
+      const title = normalizeClaudeSessionTitle(
+        typeof entry.customTitle === "string" ? entry.customTitle : null,
+      );
       if (title) {
         return title;
       }
@@ -6350,7 +6353,7 @@ async function readClaudeRenamedSessionTitle(
     }
     throw error;
   }
-  return readLastClaudeTitle(content, "custom-title", "customTitle");
+  return readLastClaudeCustomTitle(content);
 }
 
 function normalizeImportablePromptPreview(text: string): string | null {
