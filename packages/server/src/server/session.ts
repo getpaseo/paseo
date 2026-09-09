@@ -6301,12 +6301,11 @@ export class Session {
       if (project && requestedSecondaryLabel !== undefined) {
         const secondaryLabel = requestedSecondaryLabel?.trim() || null;
         if (project.secondaryLabel !== secondaryLabel) {
-          project = {
-            ...project,
+          project = await this.projectRegistry.update(project.projectId, (current) => ({
+            ...current,
             secondaryLabel,
             updatedAt: new Date().toISOString(),
-          };
-          await this.projectRegistry.upsert(project);
+          }));
         }
       }
       await this.syncWorkspaceGitObserverForWorkspace(workspace);

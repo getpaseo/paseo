@@ -22,6 +22,7 @@ import {
   DaemonUpdateResponseSchema,
   SessionInboundMessageSchema,
   type ActiveTurnBehavior,
+  type ProjectPresentation,
   type ServerInfoStatusPayload,
 } from "@getpaseo/protocol/messages";
 import { validateWSOutboundMessage } from "@getpaseo/protocol/validation/ws-outbound";
@@ -344,6 +345,11 @@ export interface DaemonClientConfig {
   runtimeMetricsWindowMs?: number;
   trace?: DaemonClientTrace;
   capabilities?: Partial<Record<ClientCapability, unknown>>;
+}
+
+export interface OpenProjectOptions {
+  requestId?: string;
+  projectPresentation?: ProjectPresentation;
 }
 
 export interface DaemonClientTrace {
@@ -2289,17 +2295,15 @@ export class DaemonClient {
     });
   }
 
-  async openProject(
-    cwd: string,
-    requestId?: string,
-    projectPresentation?: { secondaryLabel?: string | null },
-  ): Promise<OpenProjectPayload> {
+  async openProject(cwd: string, options?: OpenProjectOptions): Promise<OpenProjectPayload> {
     return this.sendCorrelatedSessionRequest({
-      requestId,
+      requestId: options?.requestId,
       message: {
         type: "open_project_request",
         cwd,
-        ...(projectPresentation ? { projectPresentation } : {}),
+        ...(options?.projectPresentation
+          ? { projectPresentation: options.projectPresentation }
+          : {}),
       },
       responseType: "open_project_response",
     });

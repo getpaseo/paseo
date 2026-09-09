@@ -22,8 +22,8 @@ class ProjectSecondaryLabelHarness {
     const client = await connectSeedClient();
     let projectId: string | null = null;
     try {
-      const opened = await client.openProject(directory.path, undefined, {
-        secondaryLabel: SECONDARY_LABEL,
+      const opened = await client.openProject(directory.path, {
+        projectPresentation: { secondaryLabel: SECONDARY_LABEL },
       });
       expect(opened.error).toBeNull();
       expect(opened.workspace).not.toBeNull();

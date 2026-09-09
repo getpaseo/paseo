@@ -130,8 +130,8 @@ export class PluginWorkspaceFileSystemHarness {
       await client.patchDaemonConfig({ pluginsEnabled: true });
       await client.installDirectoryPlugin(plugin);
       const opened = await openProjectViaDaemon(client, workspace);
-      const presented = await client.openProject(workspace, undefined, {
-        secondaryLabel: "remote.example.com",
+      const presented = await client.openProject(workspace, {
+        projectPresentation: { secondaryLabel: "remote.example.com" },
       });
       if (presented.error) throw new Error(presented.error);
       const status = await client.getWorkspaceFileSystemStatus(workspace);
