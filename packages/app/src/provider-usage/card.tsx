@@ -9,6 +9,7 @@ import type { Theme } from "@/styles/theme";
 import { ProviderUsageBalanceBar } from "./balance-bar";
 import { formatAgo } from "./format";
 import type { ProviderUsage } from "./types";
+import { useRelativeTimeTick } from "./use-relative-time-tick";
 import { ProviderUsageWindowBar } from "./window-bar";
 
 interface ProviderUsageIconProps {
@@ -50,6 +51,7 @@ export function ProviderUsageCard({
   compact?: boolean;
 }) {
   const { t } = useTranslation();
+  useRelativeTimeTick(usage.fetchedAt != null);
   const status = statusText(usage, t);
   const footer = footerText(usage, t);
   const balances = usage.balances ?? [];

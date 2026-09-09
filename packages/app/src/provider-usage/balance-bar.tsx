@@ -5,6 +5,7 @@ import { Text, View, type StyleProp, type ViewStyle } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { clampPct, formatAmount, formatResetLabel } from "./format";
 import type { ProviderUsageBalance, ProviderUsageTone } from "./types";
+import { useRelativeTimeTick } from "./use-relative-time-tick";
 
 interface ResolvedBalance {
   amountText: string;
@@ -52,6 +53,7 @@ function fillToneStyle(tone: ProviderUsageTone) {
 
 export function ProviderUsageBalanceBar({ balance }: { balance: ProviderUsageBalance }) {
   const { t, i18n } = useTranslation();
+  useRelativeTimeTick(balance.resetsAt != null);
   const { amountText, usedPct } = resolveBalance(balance, t, i18n.resolvedLanguage);
   const tone = balance.tone ?? "default";
   const resetLabel = formatResetLabel(balance.resetsAt);
