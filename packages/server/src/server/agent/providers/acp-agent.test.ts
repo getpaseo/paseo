@@ -3529,6 +3529,7 @@ describe("ACP session/load invariant — cwd and mcpServers always passed", () =
     handle: AgentPersistenceHandle;
     loadSession?: ReturnType<typeof vi.fn>;
     unstableResumeSession?: ReturnType<typeof vi.fn>;
+    historyReplayIdleMs?: number;
   }) {
     const loadSession =
       args.loadSession ??
@@ -3579,7 +3580,7 @@ describe("ACP session/load invariant — cwd and mcpServers always passed", () =
           ...args.capabilities,
         },
         handle: args.handle,
-        historyReplayIdleMs: 0,
+        historyReplayIdleMs: args.historyReplayIdleMs ?? 0,
       },
     );
 
@@ -3844,6 +3845,88 @@ describe("ACP session/load invariant — cwd and mcpServers always passed", () =
         },
       },
     ]);
+  });
+
+  test("keeps session/update replay that arrives during the idle drain", async () => {
+    vi.useFakeTimers();
+    let session!: ACPAgentSession;
+    const loadSession = async () => {
+      await session.sessionUpdate({
+        sessionId: "session-1",
+        update: {
+          sessionUpdate: "user_message_chunk",
+          messageId: "user-1",
+          content: { type: "text", text: "first prompt" },
+        } as SessionUpdate,
+      });
+      return {
+        sessionId: "session-1",
+        modes: null,
+        models: null,
+        configOptions: [],
+      };
+    };
+    try {
+      ({ session } = makeTestSession({
+        capabilities: { loadSession: true },
+        handle: { sessionId: "session-1", provider: "claude-acp" },
+        loadSession,
+        historyReplayIdleMs: 50,
+      }));
+
+      await session.initializeResumedSession();
+
+      const historyPromise = (async () => {
+        const history: AgentStreamEvent[] = [];
+        for await (const event of session.streamHistory()) {
+          history.push(event);
+        }
+        return history;
+      })();
+
+      await vi.advanceTimersByTimeAsync(10);
+      await session.sessionUpdate({
+        sessionId: "session-1",
+        update: {
+          sessionUpdate: "agent_message_chunk",
+          messageId: "assistant-1",
+          content: { type: "text", text: "first reply" },
+        } as SessionUpdate,
+      });
+      await session.sessionUpdate({
+        sessionId: "session-1",
+        update: {
+          sessionUpdate: "user_message_chunk",
+          messageId: "user-2",
+          content: { type: "text", text: "follow up" },
+        } as SessionUpdate,
+      });
+      await vi.advanceTimersByTimeAsync(50);
+
+      expect(await historyPromise).toEqual([
+        {
+          type: "timeline",
+          provider: session.provider,
+          item: { type: "user_message", text: "first prompt", messageId: "user-1" },
+        },
+        {
+          type: "timeline",
+          provider: session.provider,
+          item: {
+            type: "assistant_message",
+            text: "first reply",
+            messageId: "assistant-1",
+          },
+        },
+        {
+          type: "timeline",
+          provider: session.provider,
+          item: { type: "user_message", text: "follow up", messageId: "user-2" },
+        },
+      ]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   test("loadSession is always called with mcpServers even when supportsMcpServers is false", async () => {
