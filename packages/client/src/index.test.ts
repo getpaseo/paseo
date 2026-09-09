@@ -598,6 +598,35 @@ test("workspace presentation requires host support", async () => {
   await client.close();
 });
 
+test("empty workspace presentation opens on an older host", async () => {
+  const { client, ws } = await connectClient({});
+  const openedWorkspace = createWorkspace();
+
+  const openPromise = client.workspaces.open({
+    cwd: "/repo/sdk",
+    projectPresentation: {},
+    requestId: "empty-presentation-request",
+  });
+  expect(parseSentSessionMessage(ws.sent.at(-1))).toMatchObject({
+    type: "open_project_request",
+    cwd: "/repo/sdk",
+  });
+
+  ws.message(
+    sessionMessage({
+      type: "open_project_response",
+      payload: {
+        requestId: "empty-presentation-request",
+        workspace: openedWorkspace,
+        error: null,
+      },
+    }),
+  );
+
+  await expect(openPromise).resolves.toMatchObject({ id: "workspace_sdk" });
+  await client.close();
+});
+
 test("plugin-shaped PR workspace create and agent create use the existing daemon RPCs", async () => {
   const { client, ws } = await connectClient();
   const createdWorkspace = createWorkspace({ id: "workspace_fresh", name: "Issue 42" });

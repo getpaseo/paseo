@@ -806,7 +806,7 @@ async function openWorkspace(
 ): Promise<PaseoWorkspaceHandle> {
   const options = typeof input === "string" ? { cwd: input, requestId } : input;
   if (
-    options.projectPresentation &&
+    options.projectPresentation?.secondaryLabel !== undefined &&
     // COMPAT(projectPresentation): added in v0.8.0, remove gate after 2027-03-10.
     daemonClient.getLastServerInfoMessage()?.features?.projectPresentation !== true
   ) {
