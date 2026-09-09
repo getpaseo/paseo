@@ -105,7 +105,11 @@ function SidebarHeaderRowLabel({
     () => [styles.label, isHighlighted && styles.labelHighlighted],
     [isHighlighted],
   );
-  return <Text style={labelStyle}>{label}</Text>;
+  return (
+    <Text style={labelStyle} numberOfLines={1}>
+      {label}
+    </Text>
+  );
 }
 
 const styles = StyleSheet.create((theme) => ({
@@ -158,5 +162,10 @@ const styles = StyleSheet.create((theme) => ({
   },
   shortcut: {
     marginLeft: "auto",
+    // The badge carries vertical padding, so it is taller than the label's line
+    // box and mounting it on hover grows the row, shifting the whole sidebar
+    // below. Cancel that height so the reveal is pure paint; the pill keeps its
+    // visual size.
+    marginVertical: -theme.spacing[0.5],
   },
 }));
