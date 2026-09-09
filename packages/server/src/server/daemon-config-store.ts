@@ -302,6 +302,16 @@ export function applyMutableProviderConfigToOverrides(
             },
           }
         : {}),
+      // Clients send a single-model patch per toggle, so a spread would drop
+      // every sibling model. Merge the map instead of replacing it.
+      ...(parsedOverride.modelVisibility
+        ? {
+            modelVisibility: {
+              ...previousOverride?.modelVisibility,
+              ...parsedOverride.modelVisibility,
+            },
+          }
+        : {}),
     };
   }
 

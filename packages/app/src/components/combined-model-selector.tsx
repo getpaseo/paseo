@@ -11,7 +11,10 @@ import { ModelBrowser, ModelProviderGlyph, useModelBrowser } from "@/components/
 import { resolveModelBrowserScrolling } from "@/components/model-browser-view";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { isNative, isWeb } from "@/constants/platform";
-import type { ProviderSelectorProvider } from "@/provider-selection/provider-selection";
+import type {
+  ModelLabelSource,
+  ProviderSelectorProvider,
+} from "@/provider-selection/provider-selection";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
 
 const EMPTY_COMBOBOX_OPTIONS: ComboboxOption[] = [];
@@ -29,6 +32,8 @@ interface CombinedModelSelectorProps {
   selectedModel: string;
   onSelect: (provider: AgentProvider, modelId: string) => void;
   isLoading: boolean;
+  /** Every model the provider knows, so a hidden current model keeps its label. */
+  catalogModels?: readonly ModelLabelSource[] | null;
   profiles?: AgentProfilePicker | null;
   onApplyProfile?: (profileId: string) => void;
   onEditProfiles?: () => void;
@@ -71,6 +76,7 @@ export function CombinedModelSelector({
   selectedModel,
   onSelect,
   isLoading,
+  catalogModels = null,
   profiles = null,
   onApplyProfile,
   onEditProfiles,
@@ -99,6 +105,7 @@ export function CombinedModelSelector({
     selectedProvider,
     selectedModel,
     isLoading,
+    catalogModels,
     profiles,
     serverId,
   });

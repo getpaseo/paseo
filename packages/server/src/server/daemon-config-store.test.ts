@@ -41,6 +41,18 @@ function reloadableConfig(
   };
 }
 
+function baseMutableConfig(): MutableDaemonConfig {
+  return {
+    mcp: { injectIntoAgents: false },
+    browserTools: { enabled: false },
+    providers: {},
+    metadataGeneration: { providers: [] },
+    autoArchiveAfterMerge: false,
+    enableTerminalAgentHooks: false,
+    appendSystemPrompt: "",
+  } as MutableDaemonConfig;
+}
+
 describe("applyMutableProviderConfigToOverrides", () => {
   test("merges mutable provider fields onto provider overrides", () => {
     expect(
@@ -744,6 +756,110 @@ describe("DaemonConfigStore", () => {
           label: "claude-custom",
         },
       ],
+    });
+  });
+
+  test("one-model visibility patches merge instead of replacing the map", () => {
+    const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-daemon-config-store-"));
+    tempDirs.push(paseoHome);
+
+    const store = new DaemonConfigStore(paseoHome, baseMutableConfig(), undefined);
+
+    // Every toggle sends exactly one model, the way the app does.
+    store.patch({ providers: { claude: { modelVisibility: { "opus-5": false } } } });
+    store.patch({ providers: { claude: { modelVisibility: { "sonnet-5": false } } } });
+    store.patch({ providers: { codex: { modelVisibility: { "gpt-5.3-codex": false } } } });
+
+    expect(loadPersistedConfig(paseoHome).agents?.providers).toEqual({
+      claude: { modelVisibility: { "opus-5": false, "sonnet-5": false } },
+      codex: { modelVisibility: { "gpt-5.3-codex": false } },
+    });
+    expect(store.get().providers?.claude?.modelVisibility).toEqual({
+      "opus-5": false,
+      "sonnet-5": false,
+    });
+  });
+
+  test("re-enabling one model leaves its hidden siblings alone", () => {
+    const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-daemon-config-store-"));
+    tempDirs.push(paseoHome);
+
+    const store = new DaemonConfigStore(paseoHome, baseMutableConfig(), undefined);
+    store.patch({ providers: { claude: { modelVisibility: { "opus-5": false } } } });
+    store.patch({ providers: { claude: { modelVisibility: { "sonnet-5": false } } } });
+    store.patch({ providers: { claude: { modelVisibility: { "sonnet-5": true } } } });
+
+    expect(loadPersistedConfig(paseoHome).agents?.providers?.claude?.modelVisibility).toEqual({
+      "opus-5": false,
+      "sonnet-5": true,
+    });
+  });
+
+  test("visibility survives a reload with disk and memory in agreement", () => {
+    const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-daemon-config-store-"));
+    tempDirs.push(paseoHome);
+
+    const store = new DaemonConfigStore(paseoHome, baseMutableConfig(), undefined);
+    store.patch({ providers: { opencode: { modelVisibility: { "openai/gpt-5.2": false } } } });
+
+    const persisted = loadPersistedConfig(paseoHome);
+    const reloaded = new DaemonConfigStore(paseoHome, reloadableConfig(persisted), undefined);
+
+    expect(reloaded.get().providers?.["opencode"]?.modelVisibility).toEqual({
+      "openai/gpt-5.2": false,
+    });
+    expect(reloaded.get().providers).toEqual(store.get().providers);
+  });
+
+  test("visibility keys keyed by exact ID keep dots and slashes distinct", () => {
+    const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-daemon-config-store-"));
+    tempDirs.push(paseoHome);
+
+    const store = new DaemonConfigStore(paseoHome, baseMutableConfig(), undefined);
+    store.patch({ providers: { opencode: { modelVisibility: { "openai/gpt-5.2": false } } } });
+    store.patch({ providers: { opencode: { modelVisibility: { "openai/gpt-5": true } } } });
+
+    expect(loadPersistedConfig(paseoHome).agents?.providers?.["opencode"]?.modelVisibility).toEqual(
+      {
+        "openai/gpt-5.2": false,
+        "openai/gpt-5": true,
+      },
+    );
+  });
+
+  test("a visibility patch keeps unrelated provider settings", () => {
+    const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-daemon-config-store-"));
+    tempDirs.push(paseoHome);
+
+    const store = new DaemonConfigStore(paseoHome, baseMutableConfig(), undefined);
+    store.patch({
+      providers: {
+        claude: { additionalModels: [{ id: "claude-custom", label: "claude-custom" }] },
+      },
+    });
+    store.patch({ providers: { claude: { modelVisibility: { "claude-custom": false } } } });
+
+    expect(loadPersistedConfig(paseoHome).agents?.providers?.claude).toEqual({
+      additionalModels: [{ id: "claude-custom", label: "claude-custom" }],
+      modelVisibility: { "claude-custom": false },
+    });
+  });
+
+  test("deleting a custom model keeps its visibility key for an exact-ID return", () => {
+    const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-daemon-config-store-"));
+    tempDirs.push(paseoHome);
+
+    const store = new DaemonConfigStore(paseoHome, baseMutableConfig(), undefined);
+    store.patch({
+      providers: {
+        claude: { additionalModels: [{ id: "claude-custom", label: "claude-custom" }] },
+      },
+    });
+    store.patch({ providers: { claude: { modelVisibility: { "claude-custom": false } } } });
+    store.patch({ providers: { claude: { additionalModels: [] } } });
+
+    expect(loadPersistedConfig(paseoHome).agents?.providers?.claude?.modelVisibility).toEqual({
+      "claude-custom": false,
     });
   });
 

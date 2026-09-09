@@ -1590,11 +1590,15 @@ export const ptBR: TranslationResources = {
     error: "Erro",
     unavailable: "Indisponível",
     unknownError: "Erro desconhecido",
+    visibilityUnavailable:
+      "Nao foi possivel carregar quais modelos estao ocultos. Tente novamente.",
     readiness: {
       initialPromptRequired: "O prompt inicial é obrigatório",
       noProviders: "Nenhum provedor disponível no host selecionado",
       modelDefaultsLoading: "Os modelos padrão ainda estão carregando",
       noModelAvailable: "Nenhum modelo disponível para o provedor selecionado",
+      allModelsHidden:
+        "Todos os modelos deste provedor estao ocultos. Mostre um nas configuracoes do provedor.",
       workspaceDirectoryNotFound: "Diretório do workspace não encontrado",
       hostDisconnected: "Host não está conectado",
     },
@@ -1995,6 +1999,7 @@ export const ptBR: TranslationResources = {
       fallbackHint: "Se ele não estiver disponível, o Paseo usa outro modelo disponível",
       docs: "Documentação",
       saveError: "Não foi possível atualizar a geração de metadados",
+      loadError: "Não foi possível carregar as configurações de geração de metadados",
     },
     general: {
       title: "Geral",
@@ -2453,6 +2458,11 @@ export const ptBR: TranslationResources = {
         noProviders: "Nenhum provedor está disponível neste host",
         modelLabel: "Modelo",
         noModels: "Este provedor não tem modelos para escolher",
+        modelVisibilityLoading: "Carregando quais modelos estao disponiveis...",
+        modelVisibilityError: "Nao foi possivel carregar quais modelos estao ocultos.",
+        modelVisibilityRetry: "Tentar novamente",
+        modelsAllHidden:
+          "Todos os modelos deste provedor estao ocultos. Mostre um nas configuracoes do provedor.",
         modeLabel: "Modo",
         noModes: "Este provedor não tem modos para escolher",
         thinkingLabel: "Raciocínio",
@@ -2590,6 +2600,17 @@ export const ptBR: TranslationResources = {
         discovered: "Descobertos",
         custom: "Modelos personalizados",
         updated: "Atualizado {{time}}",
+        visibilityToggle: "Mostrar {{id}} nos seletores de modelo",
+        visibilityHint:
+          "Desative um modelo para oculta-lo dos seletores de modelo. Ele continua listado aqui, e os agentes que ja o usam seguem em execucao.",
+        visibilitySaveFailed: "Falha ao salvar a visibilidade do modelo: {{error}}",
+        visibility: {
+          unavailable:
+            "Este host nao consegue ocultar modelos individuais. Atualize-o para ligar e desligar modelos aqui.",
+          loading: "Carregando quais modelos estao ocultos...",
+          error:
+            "Nao foi possivel carregar quais modelos estao ocultos. Reabra esta tela para tentar novamente.",
+        },
       },
       diagnostic: {
         title: "Diagnóstico",

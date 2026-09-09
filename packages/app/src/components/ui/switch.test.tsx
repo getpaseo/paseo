@@ -47,6 +47,7 @@ vi.mock("react-native", () => ({
     accessibilityState,
     children,
     disabled,
+    onKeyDown,
     onPress,
     testID,
   }: {
@@ -56,6 +57,7 @@ vi.mock("react-native", () => ({
     accessibilityState?: { checked?: boolean; disabled?: boolean };
     children: React.ReactNode;
     disabled?: boolean;
+    onKeyDown?: (event: unknown) => void;
     onPress?: (event: { stopPropagation: () => void }) => void;
     testID?: string;
   }) =>
@@ -68,6 +70,10 @@ vi.mock("react-native", () => ({
         "data-disabled": disabled,
         "data-testid": testID,
         onClick: () => onPress?.({ stopPropagation: vi.fn() }),
+        // react-native-web forwards onKeyDown to the DOM node, so the mock does
+        // too. This exercises the component's own handler; whether a real
+        // browser delivers Space to role="switch" is browser QA's to prove.
+        onKeyDown,
         role: accessibilityRole,
         type: "button",
       },
@@ -162,6 +168,64 @@ describe("Switch", () => {
     const switchElement = renderSwitch({ value: false, onValueChange, disabled: true });
 
     pressSwitch(switchElement);
+
+    expect(onValueChange).not.toHaveBeenCalled();
+  });
+
+  function keyDown(switchElement: HTMLElement, init: KeyboardEventInit): KeyboardEvent {
+    const event = new window.KeyboardEvent("keydown", { bubbles: true, cancelable: true, ...init });
+    act(() => {
+      switchElement.dispatchEvent(event);
+    });
+    return event;
+  }
+
+  it("toggles exactly once on Space, which react-native-web ignores for role switch", () => {
+    const onValueChange = vi.fn();
+    const switchElement = renderSwitch({ value: false, onValueChange });
+
+    keyDown(switchElement, { code: "Space", key: " " });
+
+    expect(onValueChange).toHaveBeenCalledTimes(1);
+    expect(onValueChange).toHaveBeenCalledWith(true);
+  });
+
+  it("cancels the Space default so the page does not scroll", () => {
+    const switchElement = renderSwitch({ value: false, onValueChange: vi.fn() });
+
+    const event = keyDown(switchElement, { code: "Space", key: " " });
+
+    expect(event.defaultPrevented).toBe(true);
+  });
+
+  it("does not toggle on Space when disabled", () => {
+    const onValueChange = vi.fn();
+    const switchElement = renderSwitch({ value: false, onValueChange, disabled: true });
+
+    keyDown(switchElement, { code: "Space", key: " " });
+
+    expect(onValueChange).not.toHaveBeenCalled();
+  });
+
+  it("leaves Enter to the press responder so it cannot toggle twice", () => {
+    const onValueChange = vi.fn();
+    const switchElement = renderSwitch({ value: false, onValueChange });
+
+    // Enter must not reach the Space handler. The press responder already
+    // accepts Enter, so handling it here as well would toggle twice.
+    keyDown(switchElement, { code: "Enter", key: "Enter" });
+    expect(onValueChange).not.toHaveBeenCalled();
+
+    pressSwitch(switchElement);
+    expect(onValueChange).toHaveBeenCalledTimes(1);
+  });
+
+  it("ignores other keys", () => {
+    const onValueChange = vi.fn();
+    const switchElement = renderSwitch({ value: false, onValueChange });
+
+    keyDown(switchElement, { code: "KeyA", key: "a" });
+    keyDown(switchElement, { code: "Escape", key: "Escape" });
 
     expect(onValueChange).not.toHaveBeenCalled();
   });

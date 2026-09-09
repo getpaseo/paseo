@@ -6,6 +6,7 @@ import type { AgentFeature } from "@getpaseo/protocol/agent-types";
 import type { AgentProfile } from "@getpaseo/protocol/messages";
 import { AdaptiveModalSheet, type SheetHeader } from "@/components/adaptive-modal-sheet";
 import { Button } from "@/components/ui/button";
+import { retryModelSelection } from "@/hooks/use-model-visibility";
 import { type FieldControlSize } from "@/components/ui/control-geometry";
 import { Field, FormTextInput } from "@/components/ui/form-field";
 import {
@@ -140,7 +141,7 @@ function OpenAgentProfileEditModal({
   );
   const model = useAgentProfileFormModel(snapshot);
   const state = useAgentProfileFormState(model);
-  useAgentProfileFormCatalog({ serverId, model });
+  const catalog = useAgentProfileFormCatalog({ serverId, model });
   useAgentProfileFormFeatures({ serverId, model, state });
 
   const sheetHeader = useMemo<SheetHeader>(
@@ -158,6 +159,27 @@ function OpenAgentProfileEditModal({
     [state.providerOptions],
   );
   const modelOptions = useMemo(() => toSelectOptions(state.modelOptions), [state.modelOptions]);
+  // An empty model picker has four different causes and each needs its own
+  // wording. "No models" for all of them sends the user looking in the wrong place.
+  const modelEmptyText = useMemo(() => {
+    switch (state.modelOptionsState) {
+      case "loading":
+        return t("settings.host.agentProfiles.modelVisibilityLoading");
+      case "error":
+        return t("settings.host.agentProfiles.modelVisibilityError");
+      case "all-hidden":
+        return t("settings.host.agentProfiles.modelsAllHidden");
+      default:
+        return t("settings.host.agentProfiles.noModels");
+    }
+  }, [state.modelOptionsState, t]);
+  const handleRetryModelOptions = useCallback(() => {
+    retryModelSelection({
+      status: catalog.modelVisibilityStatus,
+      retryVisibility: catalog.retryModelVisibility,
+      refreshDiscovery: catalog.refreshProviderCatalog,
+    });
+  }, [catalog]);
   const modeOptions = useMemo(() => toSelectOptions(state.modeOptions), [state.modeOptions]);
   const thinkingOptions = useMemo(
     () => toSelectOptions(state.thinkingOptions),
@@ -275,21 +297,39 @@ function OpenAgentProfileEditModal({
         />
 
         {state.disclosure.showModelField ? (
-          <SelectField
-            label={t("settings.host.agentProfiles.modelLabel")}
-            value={state.modelId || UNSET_VALUE}
-            selectedDisplay={state.modelDisplay}
-            options={modelOptions}
-            onChange={handleModelChange}
-            placeholder={t("settings.host.agentProfiles.modelLabel")}
-            emptyText={t("settings.host.agentProfiles.noModels")}
-            disabled={state.isSubmitting}
-            searchable={modelOptions.length > 6}
-            title={t("settings.host.agentProfiles.modelLabel")}
-            size={controlSize}
-            testID="agent-profile-model-field"
-            triggerTestID="agent-profile-model-trigger"
-          />
+          <>
+            <SelectField
+              label={t("settings.host.agentProfiles.modelLabel")}
+              value={state.modelId || UNSET_VALUE}
+              selectedDisplay={state.modelDisplay}
+              options={modelOptions}
+              onChange={handleModelChange}
+              placeholder={t("settings.host.agentProfiles.modelLabel")}
+              emptyText={modelEmptyText}
+              loading={state.modelOptionsState === "loading"}
+              error={
+                state.modelOptionsState === "error"
+                  ? t("settings.host.agentProfiles.modelVisibilityError")
+                  : null
+              }
+              disabled={state.isSubmitting}
+              searchable={modelOptions.length > 6}
+              title={t("settings.host.agentProfiles.modelLabel")}
+              size={controlSize}
+              testID="agent-profile-model-field"
+              triggerTestID="agent-profile-model-trigger"
+            />
+            {state.modelOptionsState === "error" ? (
+              <Button
+                variant="secondary"
+                size="sm"
+                onPress={handleRetryModelOptions}
+                testID="agent-profile-model-retry"
+              >
+                {t("settings.host.agentProfiles.modelVisibilityRetry")}
+              </Button>
+            ) : null}
+          </>
         ) : null}
 
         {state.disclosure.showModeField ? (

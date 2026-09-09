@@ -1575,11 +1575,14 @@ export const ja: TranslationResources = {
     error: "エラー",
     unavailable: "利用不可",
     unknownError: "不明なエラー",
+    visibilityUnavailable: "非表示のモデルを読み込めませんでした。再試行してください。",
     readiness: {
       initialPromptRequired: "初期プロンプトが必要です",
       noProviders: "選択したホストで利用可能なプロバイダーがありません",
       modelDefaultsLoading: "モデルのデフォルトをまだ読み込んでいます",
       noModelAvailable: "選択したプロバイダーで利用可能なモデルがありません",
+      allModelsHidden:
+        "このプロバイダーのモデルはすべて非表示です。プロバイダー設定でいずれかを表示してください。",
       workspaceDirectoryNotFound: "ワークスペースディレクトリが見つかりません",
       hostDisconnected: "ホストが接続されていません",
     },
@@ -1981,6 +1984,7 @@ export const ja: TranslationResources = {
       fallbackHint: "利用できない場合、Paseo は別の利用可能なモデルを使用します",
       docs: "ドキュメント",
       saveError: "メタデータ生成を更新できません",
+      loadError: "メタデータ生成の設定を読み込めません",
     },
     general: {
       title: "一般",
@@ -2437,6 +2441,11 @@ export const ja: TranslationResources = {
         noProviders: "このホストで利用できるプロバイダーがありません",
         modelLabel: "モデル",
         noModels: "このプロバイダーには選択できるモデルがありません",
+        modelVisibilityLoading: "利用可能なモデルを読み込み中...",
+        modelVisibilityError: "非表示のモデルを読み込めませんでした。",
+        modelVisibilityRetry: "再試行",
+        modelsAllHidden:
+          "このプロバイダーのモデルはすべて非表示です。プロバイダー設定でいずれかを表示してください。",
         modeLabel: "モード",
         noModes: "このプロバイダーには選択できるモードがありません",
         thinkingLabel: "思考",
@@ -2574,6 +2583,16 @@ export const ja: TranslationResources = {
         discovered: "検出済み",
         custom: "カスタムモデル",
         updated: "{{time}}に更新",
+        visibilityToggle: "モデル選択に {{id}} を表示",
+        visibilityHint:
+          "モデルをオフにすると、モデル選択から隠れます。ここには残り、すでに使用中のエージェントはそのまま動作します。",
+        visibilitySaveFailed: "モデルの表示設定を保存できませんでした: {{error}}",
+        visibility: {
+          unavailable:
+            "このホストは個別のモデルを非表示にできません。ここで切り替えるにはホストを更新してください。",
+          loading: "非表示のモデルを読み込み中...",
+          error: "非表示のモデルを読み込めませんでした。この画面を開き直して再試行してください。",
+        },
       },
       diagnostic: {
         title: "診断",

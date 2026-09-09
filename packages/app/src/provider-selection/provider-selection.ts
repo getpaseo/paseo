@@ -9,6 +9,7 @@ import type { DraftCommandConfig } from "@/hooks/use-agent-commands-query";
 import { i18n } from "@/i18n/i18next";
 import { compareMatchScores, scoreTextFields } from "@getpaseo/protocol/search/text-match";
 import { filterSelectableModels } from "./model-catalog";
+import { filterVisibleModelRows, type ModelVisibilityByProvider } from "./model-visibility";
 
 export interface ProviderSelectionModelRow {
   /**
@@ -29,6 +30,12 @@ function buildModelRowKey(provider: string, modelId: string): string {
   return `${provider}:${modelId}`;
 }
 
+/** The minimum a model needs to supply a display label. */
+export interface ModelLabelSource {
+  id: string;
+  label: string;
+}
+
 export type ProviderModelSelection =
   | { kind: "models"; rows: ProviderSelectionModelRow[] }
   | { kind: "loading" }
@@ -45,7 +52,13 @@ export interface ProviderSelectionState {
   modelId: string;
   modeId: string;
   thinkingOptionId: string;
+  /** Full selectable catalog. Keeps labels, thinking options and validation working for hidden models. */
   availableModels: AgentModelDefinition[];
+  /**
+   * Models the user has not hidden. Only fresh defaults read this; omit it and
+   * the whole catalog is treated as visible.
+   */
+  visibleModels?: AgentModelDefinition[];
   modeOptions: AgentMode[];
 }
 
@@ -172,6 +185,12 @@ export function resolveSelectedModelLabel(input: {
   selectedProvider: string;
   selectedModel: string;
   isLoading: boolean;
+  /**
+   * Every model the provider knows, pickable or not. `providers` carries only
+   * the rows the user can pick, so without this a hidden current model would
+   * lose its label and read as a raw ID.
+   */
+  catalogModels?: readonly ModelLabelSource[] | null;
 }): string {
   const selectedProvider = input.selectedProvider.trim();
   if (!selectedProvider) {
@@ -199,7 +218,7 @@ export function resolveSelectedModelLabel(input: {
   const model = provider.modelSelection.rows.find((entry) => entry.modelId === input.selectedModel);
   const selectedModel = input.selectedModel.trim();
   if (!model && selectedModel) {
-    return selectedModel;
+    return input.catalogModels?.find((entry) => entry.id === selectedModel)?.label ?? selectedModel;
   }
   const defaultModel = provider.modelSelection.rows.find((row) => row.isDefault);
   return (
@@ -265,11 +284,10 @@ export function resolveEffectiveComposerModelId(selection: ProviderSelectionStat
   if (selectedModelId) {
     return selectedModelId;
   }
-  return (
-    selection.availableModels.find((model) => model.isDefault)?.id ??
-    selection.availableModels[0]?.id ??
-    ""
-  );
+  // Falling back through the full catalog would launch a model the user hid, so
+  // the implicit default is drawn from the visible ones.
+  const candidates = selection.visibleModels ?? selection.availableModels;
+  return candidates.find((model) => model.isDefault)?.id ?? candidates[0]?.id ?? "";
 }
 
 export function resolveEffectiveComposerThinkingOptionId(
@@ -321,6 +339,8 @@ export function resolveSubmissionReadiness(input: {
     modelId: string;
     availableModels: readonly unknown[];
     isModelLoading: boolean;
+    /** Every discovered model is hidden, so there is nothing valid to launch. */
+    allModelsHidden?: boolean;
   };
   autoSubmitConfig: { provider: string; model: string | null } | null;
   workspaceDirectory: string | null;
@@ -339,6 +359,12 @@ export function resolveSubmissionReadiness(input: {
     return { ok: false, reason: i18n.t("providerSelection.readiness.modelDefaultsLoading") };
   }
   const hasSelectedModel = Boolean(input.autoSubmitConfig?.model ?? input.selection.modelId);
+  // Hiding every model stops new implicit choices. It does not revoke a model
+  // the user explicitly chose or a profile they applied, so an existing
+  // selection still sends.
+  if (!hasSelectedModel && input.selection.allModelsHidden) {
+    return { ok: false, reason: i18n.t("providerSelection.readiness.allModelsHidden") };
+  }
   if (!hasSelectedModel && input.selection.availableModels.length > 0) {
     return { ok: false, reason: i18n.t("providerSelection.readiness.noModelAvailable") };
   }
@@ -349,4 +375,56 @@ export function resolveSubmissionReadiness(input: {
     return { ok: false, reason: i18n.t("providerSelection.readiness.hostDisconnected") };
   }
   return { ok: true };
+}
+
+/**
+ * What the picker knows about this host's hidden models.
+ *
+ * `unavailable` is an old daemon or a session without `daemon.read`: the picker
+ * keeps its pre-feature rows. `loading` and `error` mean the host does support
+ * the preference but has not told us what it is, so showing the unfiltered list
+ * would flash models the user hid.
+ */
+export interface ModelVisibilitySelection {
+  status: "unavailable" | "loading" | "error" | "ready";
+  visibilityByProvider: ModelVisibilityByProvider | undefined;
+}
+
+/**
+ * The one place selector rows lose hidden models. Producers that build their own
+ * choice lists call this rather than re-deriving the rule.
+ */
+export function applyModelVisibilityToProviders(
+  providers: ProviderSelectorProvider[],
+  selection: ModelVisibilitySelection | undefined,
+): ProviderSelectorProvider[] {
+  if (!selection || selection.status === "unavailable") return providers;
+  if (selection.status === "loading") {
+    return providers.map((provider) =>
+      provider.modelSelection.kind === "models"
+        ? { ...provider, modelSelection: { kind: "loading" } }
+        : provider,
+    );
+  }
+  if (selection.status === "error") {
+    return providers.map((provider) =>
+      provider.modelSelection.kind === "models"
+        ? {
+            ...provider,
+            modelSelection: {
+              kind: "error",
+              message: i18n.t("providerSelection.visibilityUnavailable"),
+            },
+          }
+        : provider,
+    );
+  }
+  const visibilityByProvider = selection.visibilityByProvider;
+  if (!visibilityByProvider) return providers;
+  return providers.map((provider) => {
+    if (provider.modelSelection.kind !== "models") return provider;
+    const rows = filterVisibleModelRows(provider.modelSelection.rows, visibilityByProvider);
+    if (rows.length === provider.modelSelection.rows.length) return provider;
+    return { ...provider, modelSelection: { kind: "models", rows } };
+  });
 }

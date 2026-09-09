@@ -9,6 +9,8 @@ import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-
 interface UseDaemonConfigResult {
   config: MutableDaemonConfig | null;
   isLoading: boolean;
+  isError: boolean;
+  refetch: () => void;
   patchConfig: (patch: MutableDaemonConfigPatch) => Promise<MutableDaemonConfig | undefined>;
 }
 
@@ -44,9 +46,18 @@ export function useDaemonConfig(serverId: string | null): UseDaemonConfigResult 
     [client, queryClient, queryKey],
   );
 
+  // Depends on the query's own `refetch`, which React Query keeps stable, so
+  // consumers can memoize on this callback.
+  const refetchQuery = configQuery.refetch;
+  const refetch = useCallback(() => {
+    void refetchQuery();
+  }, [refetchQuery]);
+
   return {
     config: configQuery.data ?? null,
     isLoading: configQuery.isLoading,
+    isError: configQuery.isError,
+    refetch,
     patchConfig,
   };
 }

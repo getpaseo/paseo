@@ -1196,3 +1196,39 @@ describe("direct new-tab target shortcuts", () => {
     ).toEqual([["ctrl", "shift", "H"]]);
   });
 });
+
+describe("focused control scope", () => {
+  const spaceEvent = { key: " ", code: "Space" };
+
+  it("routes Space to voice mute when focus is not on a control", () => {
+    const result = resolveShortcut({ event: spaceEvent, context: { focusScope: "other" } });
+
+    expect(result.match?.action).toBe("message-input.action");
+    expect(result.match?.payload).toMatchObject({ kind: "voice-mute-toggle" });
+  });
+
+  it("leaves Space alone when a control has focus, so the control can activate", () => {
+    const result = resolveShortcut({ event: spaceEvent, context: { focusScope: "control" } });
+
+    expect(result.match).toBeNull();
+    expect(result.preventDefault).toBe(false);
+  });
+
+  it("keeps Escape interrupting the agent while a control has focus", () => {
+    const result = resolveShortcut({
+      event: { key: "Escape", code: "Escape" },
+      context: { focusScope: "control" },
+    });
+
+    expect(result.match?.action).toBe("agent.interrupt");
+  });
+
+  it("keeps the shortcuts dialog reachable while a control has focus", () => {
+    const result = resolveShortcut({
+      event: { key: "?", code: "Slash", shiftKey: true },
+      context: { focusScope: "control" },
+    });
+
+    expect(result.match?.action).toBe("shortcuts.dialog.toggle");
+  });
+});

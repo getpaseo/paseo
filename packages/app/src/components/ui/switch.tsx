@@ -16,6 +16,11 @@ import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { createControlGeometry, switchGeometry } from "@/components/ui/control-geometry";
 import type { Theme } from "@/styles/theme";
 
+interface SwitchKeyboardEvent {
+  nativeEvent?: { code?: string; key?: string };
+  preventDefault?: () => void;
+}
+
 interface SwitchProps {
   value: boolean;
   onValueChange?: (value: boolean) => void;
@@ -90,6 +95,28 @@ export function Switch({
     [disabled, onValueChange, value],
   );
 
+  // React Native Web's press responder accepts Space only for a native button
+  // or role="button", so a role="switch" never activates on Space even though
+  // Enter does. WAI-ARIA requires Space on a switch, so it is handled here.
+  // Enter is deliberately left to the press responder to avoid toggling twice.
+  const handleKeyDown = useCallback(
+    (event: SwitchKeyboardEvent) => {
+      const native = event.nativeEvent;
+      if (native?.code !== "Space" && native?.key !== " ") return;
+      // Stops the page scrolling, which is the browser default for Space.
+      event.preventDefault?.();
+      if (disabled) return;
+      onValueChange?.(!value);
+    },
+    [disabled, onValueChange, value],
+  );
+
+  // `onKeyDown` is a DOM prop react-native-web forwards, but React Native's
+  // Pressable types do not declare it. Spreading an `object` keeps the handler
+  // typed above while skipping the JSX excess-property check. It is not gated
+  // to web: React Native ignores the unknown prop on native.
+  const webKeyboardProps: object = useMemo(() => ({ onKeyDown: handleKeyDown }), [handleKeyDown]);
+
   const accessibilityState = useMemo(() => ({ checked: value, disabled }), [value, disabled]);
   const pressableStyle = useMemo(
     () => [styles.switchControl, disabled ? styles.disabled : null, style],
@@ -105,6 +132,7 @@ export function Switch({
       accessibilityState={accessibilityState}
       accessibilityLabel={accessibilityLabel}
       aria-checked={value}
+      {...webKeyboardProps}
       testID={testID}
       style={pressableStyle}
     >

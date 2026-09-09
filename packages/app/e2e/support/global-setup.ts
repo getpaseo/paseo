@@ -157,6 +157,12 @@ function startMetro(port: number, buffer: ReturnType<typeof createLineBuffer>): 
     env: {
       ...process.env,
       BROWSER: "none",
+      // E2E bundles once and never edits source mid-run, so Metro's file watcher
+      // is pure overhead. Expo disables it under CI (instantiateMetro
+      // isWatchEnabled). Set only on this child: CI on the Playwright process
+      // itself would change retries and artifact capture. Opt-in, because it
+      // also disables reloads for anyone debugging a spec against a live edit.
+      ...(process.env.E2E_METRO_NO_WATCH === "1" ? { CI: "1" } : {}),
       ...(process.env.E2E_DESKTOP_RUNTIME === "1" ? { PASEO_WEB_PLATFORM: "electron" } : {}),
     },
     stdio: ["ignore", "pipe", "pipe"],

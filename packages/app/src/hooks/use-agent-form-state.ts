@@ -8,10 +8,17 @@ import type {
 } from "@getpaseo/protocol/agent-types";
 import { buildProviderDefinitions } from "@/utils/provider-definitions";
 import {
+  applyModelVisibilityToProviders,
   buildSelectableProviderSelectorProviders,
   type ProviderSelectorProvider,
 } from "@/provider-selection/provider-selection";
 import { filterSelectableModels } from "@/provider-selection/model-catalog";
+import { areAllModelsHidden, filterVisibleModels } from "@/provider-selection/model-visibility";
+import {
+  retryModelSelection,
+  useModelVisibility,
+  type ModelVisibilityStatus,
+} from "./use-model-visibility";
 import { OptimisticFormPreferences } from "@/create-agent-preferences/optimistic-preferences";
 import { applyAgentProfilePreferences } from "@/create-agent-preferences/preferences";
 import { useProvidersSnapshot } from "./use-providers-snapshot";
@@ -24,7 +31,7 @@ import {
   resolveAgentForm,
   resolveEffectiveModel,
   normalizeSelectedModelId,
-  resolveDefaultModelId,
+  resolveVisibleDefaultModelId,
   mergeSelectedComposerPreferences,
   buildProviderDefinitionMap,
   buildProviderDefinitionMapForStatuses,
@@ -64,6 +71,12 @@ export interface UseAgentFormStateResult {
   allProviderEntries?: ProviderSnapshotEntry[];
   modeOptions: AgentMode[];
   availableModels: AgentModelDefinition[];
+  /** `availableModels` minus the models hidden on this host. */
+  visibleModels: AgentModelDefinition[];
+  /** The provider discovered models but every one of them is hidden. */
+  allModelsHidden: boolean;
+  modelVisibilityStatus: ModelVisibilityStatus;
+  retryModelVisibility: () => void;
   allProviderModels: Map<string, AgentModelDefinition[]>;
   modelSelectorProviders: ProviderSelectorProvider[];
   isAllModelsLoading: boolean;
@@ -219,9 +232,25 @@ export function useAgentFormState(options: UseAgentFormStateOptions): UseAgentFo
     () => buildProviderModelsByProvider(snapshotEntries),
     [snapshotEntries],
   );
+  const modelVisibilityState = useModelVisibility(serverId);
+  const {
+    visibilityByProvider: modelVisibility,
+    status: modelVisibilityStatus,
+    retry: retryModelVisibility,
+  } = modelVisibilityState;
+  // Both states withhold choices, so neither may resolve a fresh default: doing
+  // so would pick from the unfiltered catalog and land on a hidden model. The
+  // picker renders the error with a working Retry, so this is a recoverable
+  // state rather than an indefinite spinner.
+  const isModelVisibilityUnresolved =
+    modelVisibilityStatus === "loading" || modelVisibilityStatus === "error";
   const snapshotModelSelectorProviders = useMemo(
-    () => buildSelectableProviderSelectorProviders(snapshotEntries),
-    [snapshotEntries],
+    () =>
+      applyModelVisibilityToProviders(
+        buildSelectableProviderSelectorProviders(snapshotEntries),
+        modelVisibilityState,
+      ),
+    [snapshotEntries, modelVisibilityState],
   );
   const snapshotSelectedEntry = useMemo(
     () =>
@@ -233,6 +262,9 @@ export function useAgentFormState(options: UseAgentFormStateOptions): UseAgentFo
   const snapshotSelectedProviderModels = filterSelectableModels(
     snapshotSelectedEntry?.models ?? null,
   );
+  const selectedProviderVisibility = formState.provider
+    ? modelVisibility?.[formState.provider]
+    : undefined;
   const selectedProviderIsLoading = snapshotSelectedEntry?.status === "loading";
   const snapshotSelectedProviderModes = resolveSelectedProviderModes({
     selectedEntry: snapshotSelectedEntry,
@@ -245,9 +277,17 @@ export function useAgentFormState(options: UseAgentFormStateOptions): UseAgentFo
   const allProviderModels = snapshotAllProviderModels;
   const modelSelectorProviders = snapshotModelSelectorProviders;
   const availableModels = snapshotSelectedProviderModels;
+  const visibleModels = useMemo(
+    () => filterVisibleModels(availableModels, selectedProviderVisibility) ?? [],
+    [availableModels, selectedProviderVisibility],
+  );
+  const allModelsHidden = areAllModelsHidden(availableModels, selectedProviderVisibility);
   const modeOptions = snapshotSelectedProviderModes;
   const isModelSelectionLoading =
-    resolution.status === "pending" || snapshotIsLoading || selectedProviderIsLoading;
+    resolution.status === "pending" ||
+    snapshotIsLoading ||
+    selectedProviderIsLoading ||
+    isModelVisibilityUnresolved;
   const isAllModelsLoading = isModelSelectionLoading;
 
   useEffect(() => {
@@ -256,23 +296,28 @@ export function useAgentFormState(options: UseAgentFormStateOptions): UseAgentFo
       serverId,
       isVisible,
       isCreateFlow,
-      isPreferencesLoading,
+      // Resolution waits for visibility so a fresh form cannot briefly default to
+      // a hidden model before the preference arrives.
+      isPreferencesLoading: isPreferencesLoading || isModelVisibilityUnresolved,
       hasSnapshot: snapshotEntries !== undefined,
       initialValues,
       preferences,
       providerModelsByProvider: snapshotProviderModelsByProvider,
       allowedProviderMap: snapshotResolvableProviderDefinitionMap,
+      modelVisibility,
     });
   }, [
     serverId,
     isVisible,
     isCreateFlow,
     isPreferencesLoading,
+    isModelVisibilityUnresolved,
     snapshotEntries,
     initialValues,
     preferences,
     snapshotProviderModelsByProvider,
     snapshotResolvableProviderDefinitionMap,
+    modelVisibility,
   ]);
 
   const setProviderAndModelFromUser = useCallback(
@@ -283,8 +328,10 @@ export function useAgentFormState(options: UseAgentFormStateOptions): UseAgentFo
       const providerDef = selectableProviderDefinitionMap.get(provider);
       const providerModels = allProviderModels.get(provider) ?? null;
       const providerPrefs = preferenceOverlayRef.current.current().providerPreferences?.[provider];
+      const providerVisibility = modelVisibility?.[provider];
       const normalizedModelId = normalizeSelectedModelId(modelId);
-      const nextModelId = normalizedModelId || resolveDefaultModelId(providerModels);
+      const nextModelId =
+        normalizedModelId || resolveVisibleDefaultModelId(providerModels, providerVisibility);
 
       dispatch({
         type: "SET_PROVIDER_AND_MODEL_FROM_USER",
@@ -293,6 +340,7 @@ export function useAgentFormState(options: UseAgentFormStateOptions): UseAgentFo
         providerDef,
         providerModels,
         providerPrefs,
+        modelVisibility: providerVisibility,
       });
       void updateCurrentPreferences((current) =>
         mergeSelectedComposerPreferences({
@@ -304,7 +352,7 @@ export function useAgentFormState(options: UseAgentFormStateOptions): UseAgentFo
         }),
       );
     },
-    [allProviderModels, selectableProviderDefinitionMap, updateCurrentPreferences],
+    [allProviderModels, modelVisibility, selectableProviderDefinitionMap, updateCurrentPreferences],
   );
 
   const clearProviderSelectionFromUser = useCallback(() => {
@@ -331,6 +379,7 @@ export function useAgentFormState(options: UseAgentFormStateOptions): UseAgentFo
         providerDef,
         providerModels,
         providerPrefs,
+        modelVisibility: modelVisibility?.[provider],
       };
       const nextState = resolveAgentForm({ form: formState, userModified, resolution }, action);
       const previousProviderModeIds = previousProvider
@@ -357,6 +406,7 @@ export function useAgentFormState(options: UseAgentFormStateOptions): UseAgentFo
     [
       allProviderModels,
       formState,
+      modelVisibility,
       providerDefinitionMap,
       resolution,
       selectableProviderDefinitionMap,
@@ -395,10 +445,13 @@ export function useAgentFormState(options: UseAgentFormStateOptions): UseAgentFo
         modelId,
         availableModels,
         providerPrefs,
+        modelVisibility: selectedProviderVisibility,
       });
       if (provider) {
         const normalizedModelId = normalizeSelectedModelId(modelId);
-        const nextModelId = normalizedModelId || resolveDefaultModelId(availableModels);
+        const nextModelId =
+          normalizedModelId ||
+          resolveVisibleDefaultModelId(availableModels, selectedProviderVisibility);
         void updateCurrentPreferences((current) =>
           mergeSelectedComposerPreferences({
             preferences: current,
@@ -410,7 +463,7 @@ export function useAgentFormState(options: UseAgentFormStateOptions): UseAgentFo
         );
       }
     },
-    [availableModels, formState.provider, updateCurrentPreferences],
+    [availableModels, formState.provider, selectedProviderVisibility, updateCurrentPreferences],
   );
 
   const setThinkingOptionFromUser = useCallback(
@@ -436,9 +489,13 @@ export function useAgentFormState(options: UseAgentFormStateOptions): UseAgentFo
 
   const refreshProviderModels = useCallback(
     (provider?: AgentProvider) => {
-      void refreshSnapshot(provider ? [provider] : undefined);
+      retryModelSelection({
+        status: modelVisibilityStatus,
+        retryVisibility: retryModelVisibility,
+        refreshDiscovery: () => void refreshSnapshot(provider ? [provider] : undefined),
+      });
     },
-    [refreshSnapshot],
+    [modelVisibilityStatus, refreshSnapshot, retryModelVisibility],
   );
 
   const refetchProviderModelsIfStale = useCallback(() => {
@@ -488,6 +545,10 @@ export function useAgentFormState(options: UseAgentFormStateOptions): UseAgentFo
       allProviderEntries,
       modeOptions,
       availableModels: availableModels ?? [],
+      visibleModels,
+      allModelsHidden,
+      modelVisibilityStatus,
+      retryModelVisibility,
       allProviderModels,
       modelSelectorProviders,
       isAllModelsLoading,
@@ -519,6 +580,10 @@ export function useAgentFormState(options: UseAgentFormStateOptions): UseAgentFo
       allProviderEntries,
       modeOptions,
       availableModels,
+      visibleModels,
+      allModelsHidden,
+      modelVisibilityStatus,
+      retryModelVisibility,
       allProviderModels,
       modelSelectorProviders,
       isAllModelsLoading,

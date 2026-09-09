@@ -361,6 +361,7 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
         : {}),
       ...(serverInfo.capabilities ? { capabilities: serverInfo.capabilities } : {}),
       ...(serverInfo.features ? { features: serverInfo.features } : {}),
+      ...(serverInfo.permissions ? { permissions: serverInfo.permissions } : {}),
     });
   }, [client, serverId, updateSessionServerInfo]);
 
@@ -614,6 +615,7 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
             : {}),
           ...(serverInfo.capabilities ? { capabilities: serverInfo.capabilities } : {}),
           ...(serverInfo.features ? { features: serverInfo.features } : {}),
+          ...(serverInfo.permissions ? { permissions: serverInfo.permissions } : {}),
         });
         return;
       }

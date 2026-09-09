@@ -1543,11 +1543,13 @@ export const zhCN: TranslationResources = {
     error: "错误",
     unavailable: "不可用",
     unknownError: "未知错误",
+    visibilityUnavailable: "无法加载被隐藏的模型。请重试。",
     readiness: {
       initialPromptRequired: "初始 prompt 必填",
       noProviders: "所选 Host 上没有可用的 provider",
       modelDefaultsLoading: "模型默认值仍在加载",
       noModelAvailable: "所选 provider 没有可用模型",
+      allModelsHidden: "该 provider 的所有模型都已隐藏。请在 provider 设置中显示其中一个。",
       workspaceDirectoryNotFound: "Workspace 目录未找到",
       hostDisconnected: "Host 未连接",
     },
@@ -1941,6 +1943,7 @@ export const zhCN: TranslationResources = {
       fallbackHint: "如果不可用，Paseo 会改用其他可用模型",
       docs: "文档",
       saveError: "无法更新元数据生成设置",
+      loadError: "无法加载元数据生成设置",
     },
     general: {
       title: "通用",
@@ -2388,6 +2391,10 @@ export const zhCN: TranslationResources = {
         noProviders: "此 Host 上没有可用的 Provider",
         modelLabel: "Model",
         noModels: "此 Provider 没有可选择的 Model",
+        modelVisibilityLoading: "正在加载可用模型...",
+        modelVisibilityError: "无法加载被隐藏的模型。",
+        modelVisibilityRetry: "重试",
+        modelsAllHidden: "该 provider 的所有模型都已隐藏。请在 provider 设置中显示其中一个。",
         modeLabel: "Mode",
         noModes: "此 Provider 没有可选择的 Mode",
         thinkingLabel: "Thinking",
@@ -2518,6 +2525,15 @@ export const zhCN: TranslationResources = {
         discovered: "已发现",
         custom: "自定义 Models",
         updated: "已更新 {{time}}",
+        visibilityToggle: "在模型选择器中显示 {{id}}",
+        visibilityHint:
+          "关闭某个模型即可将其从模型选择器中隐藏。它仍会显示在此列表中，已经在使用它的代理会继续运行。",
+        visibilitySaveFailed: "保存模型可见性失败：{{error}}",
+        visibility: {
+          unavailable: "此主机无法隐藏单个模型。请更新主机后再在此处开关模型。",
+          loading: "正在加载被隐藏的模型...",
+          error: "无法加载被隐藏的模型。请重新打开此页面后重试。",
+        },
       },
       diagnostic: {
         title: "诊断",

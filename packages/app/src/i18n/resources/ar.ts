@@ -1560,11 +1560,13 @@ export const ar: TranslationResources = {
     error: "خطأ",
     unavailable: "غير متاح",
     unknownError: "خطأ غير معروف",
+    visibilityUnavailable: "تعذر تحميل النماذج المخفية. أعد المحاولة.",
     readiness: {
       initialPromptRequired: "مطلوب موجه الأولي",
       noProviders: "لا يوجد موفري خدمة متاحين على المضيف المحدد",
       modelDefaultsLoading: "لا يزال يتم تحميل الإعدادات الافتراضية للنموذج",
       noModelAvailable: "لا يوجد نموذج متاح للموفر المحدد",
+      allModelsHidden: "جميع نماذج هذا الموفر مخفية. أظهر واحدًا من إعدادات الموفر.",
       workspaceDirectoryNotFound: "لم يتم العثور على دليل Workspace",
       hostDisconnected: "Host غير متصل",
     },
@@ -1963,6 +1965,7 @@ export const ar: TranslationResources = {
       fallbackHint: "إذا لم يكن متاحًا، يستخدم Paseo نموذجًا آخر متاحًا",
       docs: "الوثائق",
       saveError: "تعذر تحديث إنشاء البيانات الوصفية",
+      loadError: "تعذر تحميل إعدادات إنشاء البيانات الوصفية",
     },
     general: {
       title: "عام",
@@ -2414,6 +2417,10 @@ export const ar: TranslationResources = {
         noProviders: "لا يوجد مزودون متاحون على هذا المضيف",
         modelLabel: "النموذج",
         noModels: "لا توجد نماذج يمكن الاختيار من بينها لهذا المزود",
+        modelVisibilityLoading: "جارٍ تحميل النماذج المتاحة...",
+        modelVisibilityError: "تعذر تحميل النماذج المخفية.",
+        modelVisibilityRetry: "إعادة المحاولة",
+        modelsAllHidden: "جميع نماذج هذا الموفر مخفية. أظهر واحدًا من إعدادات الموفر.",
         modeLabel: "الوضع",
         noModes: "لا توجد أوضاع يمكن الاختيار من بينها لهذا المزود",
         thinkingLabel: "التفكير",
@@ -2549,6 +2556,15 @@ export const ar: TranslationResources = {
         discovered: "اكتشف",
         custom: "نماذج مخصصة",
         updated: "تم تحديث{{time}}",
+        visibilityToggle: "إظهار {{id}} في محددات النماذج",
+        visibilityHint:
+          "أوقف نموذجًا لإخفائه من محددات النماذج. يظل مدرجًا هنا، وتستمر الوكلاء التي تستخدمه بالفعل في العمل.",
+        visibilitySaveFailed: "تعذر حفظ ظهور النموذج: {{error}}",
+        visibility: {
+          unavailable: "لا يمكن لهذا المضيف إخفاء نماذج فردية. حدّثه لتشغيل النماذج وإيقافها هنا.",
+          loading: "جارٍ تحميل النماذج المخفية...",
+          error: "تعذر تحميل النماذج المخفية. أعد فتح هذه الشاشة للمحاولة مجددًا.",
+        },
       },
       diagnostic: {
         title: "التشخيص",

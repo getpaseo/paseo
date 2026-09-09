@@ -28,6 +28,16 @@ function getFocusCandidateElements(target: EventTarget | null): Element[] {
   return candidates;
 }
 
+const ACTIVATABLE_ROLES = new Set(["switch", "checkbox", "radio", "button"]);
+
+function isActivatableControl(element: Element): boolean {
+  if (element.tagName.toLowerCase() === "button") {
+    return true;
+  }
+  const role = element.getAttribute("role");
+  return role !== null && ACTIVATABLE_ROLES.has(role);
+}
+
 export function resolveKeyboardFocusScope(input: {
   target: EventTarget | null;
   commandCenterOpen: boolean;
@@ -75,6 +85,14 @@ export function resolveKeyboardFocusScope(input: {
     })
   ) {
     return commandCenterOpen ? "command-center" : "editable";
+  }
+
+  // Checked after the editable branch, so native inputs keep their existing
+  // scope. A focused switch or button owns Space and Enter; treating it as
+  // "other" let the global Space binding cancel the key before the control
+  // could act on it.
+  if (candidates.some(isActivatableControl)) {
+    return commandCenterOpen ? "command-center" : "control";
   }
 
   return commandCenterOpen ? "command-center" : "other";
