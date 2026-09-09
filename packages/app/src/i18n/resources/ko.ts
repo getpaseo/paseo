@@ -1924,6 +1924,12 @@ export const ko: TranslationResources = {
       used: "{{percentage}} 사용됨",
       remaining: "{{amount}} 남음",
     },
+    labels: {
+      session: "세션",
+      weekly: "주간",
+      codeReview: "코드 검토",
+      credits: "크레딧",
+    },
     duration: {
       days: "{{value}}일",
       hours: "{{value}}시간",

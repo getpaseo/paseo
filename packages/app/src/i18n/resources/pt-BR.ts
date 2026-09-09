@@ -1946,6 +1946,12 @@ export const ptBR: TranslationResources = {
       used: "{{percentage}} usado",
       remaining: "{{amount}} restantes",
     },
+    labels: {
+      session: "Sessão",
+      weekly: "Semanal",
+      codeReview: "Revisão de código",
+      credits: "Créditos",
+    },
     duration: {
       days: "{{value}} d",
       hours: "{{value}} h",

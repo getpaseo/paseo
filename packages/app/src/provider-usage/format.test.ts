@@ -1,6 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { i18n } from "@/i18n/i18next";
-import { formatAgo, formatAmount, formatPct, formatResetLabel, formatRunsOutLabel } from "./format";
+import {
+  formatAgo,
+  formatAmount,
+  formatPct,
+  formatProviderUsageLabel,
+  formatResetLabel,
+  formatRunsOutLabel,
+} from "./format";
 
 const NOW = Date.parse("2026-07-19T00:00:00.000Z");
 
@@ -62,5 +69,13 @@ describe("provider usage formatting", () => {
   it("uses locale-aware compact notation for token balances", () => {
     expect(formatAmount(1_234, "tokens", "en")).toBe("1.2K");
     expect(formatAmount(1_234, "tokens", "ar")).toBe("1.2\u00a0ألف");
+  });
+
+  it("localizes known provider-usage labels and preserves provider-specific labels", async () => {
+    await i18n.changeLanguage("ko");
+
+    expect(formatProviderUsageLabel("session", "Session")).toBe("세션");
+    expect(formatProviderUsageLabel("credits", "Credits")).toBe("크레딧");
+    expect(formatProviderUsageLabel("custom_limit", "Custom limit")).toBe("Custom limit");
   });
 });

@@ -1,6 +1,18 @@
 import { i18n } from "@/i18n/i18next";
 import type { ProviderUsageBalanceUnit } from "./types";
 
+const providerUsageLabelKeys = {
+  session: "providerUsage.labels.session",
+  weekly: "providerUsage.labels.weekly",
+  code_review: "providerUsage.labels.codeReview",
+  credits: "providerUsage.labels.credits",
+} as const;
+
+export function formatProviderUsageLabel(id: string, fallback: string): string {
+  const key = providerUsageLabelKeys[id as keyof typeof providerUsageLabelKeys];
+  return key ? i18n.t(key) : fallback;
+}
+
 export function clampPct(value: number): number {
   return Math.max(0, Math.min(100, value));
 }

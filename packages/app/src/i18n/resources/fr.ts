@@ -1965,6 +1965,12 @@ export const fr: TranslationResources = {
       used: "Utilisé : {{percentage}}",
       remaining: "Il reste {{amount}}",
     },
+    labels: {
+      session: "Session",
+      weekly: "Hebdomadaire",
+      codeReview: "Révision de code",
+      credits: "Crédits",
+    },
     duration: {
       days: "{{value}} j",
       hours: "{{value}} h",

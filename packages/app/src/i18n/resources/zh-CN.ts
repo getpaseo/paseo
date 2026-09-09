@@ -1893,6 +1893,12 @@ export const zhCN: TranslationResources = {
       used: "已使用 {{percentage}}",
       remaining: "剩余 {{amount}}",
     },
+    labels: {
+      session: "会话",
+      weekly: "每周",
+      codeReview: "代码审查",
+      credits: "积分",
+    },
     duration: {
       days: "{{value}}天",
       hours: "{{value}}小时",
