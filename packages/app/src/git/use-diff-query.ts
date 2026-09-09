@@ -1,3 +1,4 @@
+import { shareCheckoutDiff } from "./diff-sharing";
 import { useMemo } from "react";
 import { useRetainedPanelActive } from "@/components/retained-panel";
 import { useReplicaQuery } from "@/data/query";
@@ -74,6 +75,7 @@ export function useCheckoutDiffQuery({
 
   const query = useReplicaQuery<CheckoutDiffQueryPayload>({
     queryKey,
+    structuralSharing: shareCheckoutDiff,
     enabled: routeEnabled,
     pushEvent: "checkout_diff_update",
     meta: checkoutDiffPushRoute({

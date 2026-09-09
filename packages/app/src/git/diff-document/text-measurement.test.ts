@@ -55,6 +55,7 @@ describe("cached ASCII text metrics", () => {
 
     expect(metrics.measureAdvances(["a", "b", "a"])).toEqual([10, 20, 30]);
     expect(metrics.measureAdvances(["b", "a"])).toEqual([10, 20]);
+    expect(metrics.measure("abba")).toBe(40);
     expect(measured).toEqual(["a", "b"]);
   });
 

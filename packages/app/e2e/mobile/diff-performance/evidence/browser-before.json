@@ -1,0 +1,53 @@
+{
+  "scrollReports": [
+    {
+      "medianFrameMs": 82.89999997615814,
+      "p95FrameMs": 134.20000004768372,
+      "maximumFrameMs": 268.7999999523163,
+      "slowFrames": 74,
+      "endScrollTop": 42578,
+      "maximumScrollTop": 42578
+    },
+    {
+      "medianFrameMs": 83.20000004768372,
+      "p95FrameMs": 132.70000004768372,
+      "maximumFrameMs": 188.09999990463257,
+      "slowFrames": 75,
+      "endScrollTop": 42578,
+      "maximumScrollTop": 42578
+    },
+    {
+      "medianFrameMs": 84.79999995231628,
+      "p95FrameMs": 129,
+      "maximumFrameMs": 200,
+      "slowFrames": 77,
+      "endScrollTop": 42578,
+      "maximumScrollTop": 42578
+    }
+  ],
+  "heapUsage": [
+    {
+      "usedSize": 136550348,
+      "totalSize": 140271616,
+      "embedderHeapUsedSize": 6168264,
+      "backingStorageSize": 47386988
+    },
+    {
+      "usedSize": 136388540,
+      "totalSize": 140271616,
+      "embedderHeapUsedSize": 5894400,
+      "backingStorageSize": 47551756
+    },
+    {
+      "usedSize": 135695320,
+      "totalSize": 138698752,
+      "embedderHeapUsedSize": 6110512,
+      "backingStorageSize": 47551681
+    }
+  ],
+  "renderer": {
+    "reactCommits": 237,
+    "addedElements": 34,
+    "removedElements": 34
+  }
+}
