@@ -80,8 +80,11 @@ function QuestionOptionRow({
   );
 
   const optionLabelStyle = useMemo(
-    () => [styles.optionLabel, { color: theme.colors.foreground }],
-    [theme.colors.foreground],
+    () => [
+      styles.optionLabel,
+      { color: isSelected ? theme.colors.foreground : theme.colors.foregroundMuted },
+    ],
+    [isSelected, theme.colors.foreground, theme.colors.foregroundMuted],
   );
   const optionDescriptionStyle = useMemo(
     () => [styles.optionDescription, { color: theme.colors.foregroundMuted }],
@@ -96,11 +99,11 @@ function QuestionOptionRow({
       styles.selectionControl,
       multiSelect ? styles.selectionControlCheckbox : styles.selectionControlRadio,
       {
-        borderColor: isSelected ? theme.colors.accent : theme.colors.foregroundMuted,
+        borderColor: isSelected ? theme.colors.accent : theme.colors.foregroundExtraMuted,
         backgroundColor: isSelected && multiSelect ? theme.colors.accent : "transparent",
       },
     ],
-    [isSelected, multiSelect, theme.colors.accent, theme.colors.foregroundMuted],
+    [isSelected, multiSelect, theme.colors.accent, theme.colors.foregroundExtraMuted],
   );
   const radioDotStyle = useMemo(
     () => [styles.selectionRadioDot, { backgroundColor: theme.colors.accent }],
@@ -628,7 +631,7 @@ const styles = StyleSheet.create((theme) => ({
   questionText: {
     flex: 1,
     fontSize: theme.fontSize.base,
-    fontWeight: theme.fontWeight.medium,
+    fontWeight: theme.fontWeight.normal,
     lineHeight: 22,
   },
   optionsWrap: {
@@ -653,7 +656,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   questionNavText: {
     fontSize: theme.fontSize.base,
-    fontWeight: theme.fontWeight.medium,
+    fontWeight: theme.fontWeight.normal,
   },
   optionItem: {
     flexDirection: "row",
@@ -677,7 +680,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   optionLabel: {
     fontSize: theme.fontSize.base,
-    fontWeight: theme.fontWeight.semibold,
+    fontWeight: theme.fontWeight.normal,
     lineHeight: 22,
   },
   optionDescription: {
