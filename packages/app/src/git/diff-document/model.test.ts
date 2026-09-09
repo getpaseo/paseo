@@ -71,6 +71,55 @@ function input(overrides: Partial<BuildDiffDocumentModelInput> = {}): BuildDiffD
 }
 
 describe("diff document model", () => {
+  it("materializes only visible rows of a large file while preserving full horizontal extent", () => {
+    const source = file("large.ts");
+    source.hunks[0]!.lines = Array.from({ length: 1000 }, (_, index) => ({
+      type: "add",
+      content: index === 900 ? "a very wide offscreen line ".repeat(20) : `line ${index}`,
+      tokens: [{ text: `line ${index}`, style: null }],
+    }));
+    let advancedCharacters = 0;
+    const measureText: TextMeasurer = {
+      measure: (text) => text.length * 10,
+      measureAdvances(graphemes) {
+        advancedCharacters += graphemes.join("").length;
+        return graphemes.map((_, index) => (index + 1) * 10);
+      },
+    };
+    const base = input({ files: [source], wrapLines: false, viewportWidth: 300, measureText });
+    const eager = buildDiffDocumentModel(base);
+    advancedCharacters = 0;
+    const first = buildDiffDocumentModel({
+      ...base,
+      materializationWindow: { top: FILE_HEADER_HEIGHT, height: 54 },
+    });
+    expect(measuredFragments(first, source.path)).toBe(3);
+    expect(advancedCharacters).toBeLessThan(100);
+    expect(first.height).toBe(eager.height);
+    expect(first.files[0]!.contentWidth).toBe(eager.files[0]!.contentWidth);
+    const priorCells = firstLineCells(first, source.path);
+    advancedCharacters = 0;
+    const next = buildDiffDocumentModel({
+      ...base,
+      reuseFrom: [first],
+      materializationWindow: { top: FILE_HEADER_HEIGHT + 900 * 18, height: 54 },
+    });
+    expect(firstLineCells(next, source.path)).toBe(priorCells);
+    expect(next.rows[900]).toMatchObject({
+      kind: "line",
+      cells: [{ fragments: [{ text: source.hunks[0]!.lines[900]!.content }] }],
+    });
+    expect(advancedCharacters).toBeLessThan(600);
+    expect(next.height).toBe(eager.height);
+    advancedCharacters = 0;
+    buildDiffDocumentModel({
+      ...base,
+      reuseFrom: [next],
+      materializationWindow: { top: FILE_HEADER_HEIGHT, height: 54 },
+    });
+    expect(advancedCharacters).toBe(0);
+  });
+
   it("does not imperatively scroll for a no-op relayout", () => {
     expect(shouldApplyRelayoutScroll(320, 320)).toBe(false);
     expect(shouldApplyRelayoutScroll(320, 320.4)).toBe(false);
