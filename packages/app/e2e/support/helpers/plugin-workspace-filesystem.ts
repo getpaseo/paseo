@@ -12,6 +12,7 @@ import {
   openFileFromExplorer,
 } from "./file-explorer";
 import { pluginRequirements } from "./plugin-fixture";
+import { openMobileAgentSidebar } from "./sidebar";
 
 const PLUGIN_ID = "workspace-filesystem-e2e";
 
@@ -186,6 +187,12 @@ export class PluginWorkspaceFileSystemHarness {
     await expect(row.getByTestId("sidebar-project-location-status-online")).toBeVisible({
       timeout: 30_000,
     });
+  }
+
+  async expectOnlineStatusInCompactSidebar(): Promise<void> {
+    await this.page.setViewportSize({ width: 700, height: 900 });
+    await openMobileAgentSidebar(this.page);
+    await this.expectOnlineStatus();
   }
 
   async saveEditorText(content: string): Promise<void> {

@@ -415,8 +415,6 @@ function ProjectRowTrailingActions({
   onBeginWorkspaceSetup,
   onRemoveProject,
   removeProjectStatus,
-  fileSystemStatus,
-  locationLabel,
 }: {
   projectViewKey: string;
   displayName: string;
@@ -429,29 +427,8 @@ function ProjectRowTrailingActions({
   onBeginWorkspaceSetup: () => void;
   onRemoveProject?: () => void;
   removeProjectStatus: "idle" | "pending" | "success";
-  fileSystemStatus: WorkspaceFileSystemStatus | null;
-  locationLabel: string | null;
 }) {
   const actionsVisible = isHovered || platformIsNative || isMobileBreakpoint;
-  let trailingControl: ReactElement | null = null;
-  if (onRemoveProject && actionsVisible) {
-    trailingControl = (
-      <ProjectKebabMenu
-        projectViewKey={projectViewKey}
-        settingsTarget={settingsTarget}
-        projectPath={projectPath}
-        onRemoveProject={onRemoveProject}
-        removeProjectStatus={removeProjectStatus}
-      />
-    );
-  } else if (fileSystemStatus && locationLabel) {
-    trailingControl = (
-      <View style={styles.projectTrailingControlSlot} pointerEvents="none">
-        <ProjectLocationStatusDot label={locationLabel} status={fileSystemStatus} />
-      </View>
-    );
-  }
-
   return (
     <View style={styles.projectTrailingActions}>
       {worktreeTarget ? (
@@ -463,7 +440,20 @@ function ProjectRowTrailingActions({
           testID={`sidebar-project-new-worktree-${projectViewKey}`}
         />
       ) : null}
-      {trailingControl}
+      {onRemoveProject ? (
+        <View
+          style={!actionsVisible && styles.projectKebabButtonHidden}
+          pointerEvents={actionsVisible ? "auto" : "none"}
+        >
+          <ProjectKebabMenu
+            projectViewKey={projectViewKey}
+            settingsTarget={settingsTarget}
+            projectPath={projectPath}
+            onRemoveProject={onRemoveProject}
+            removeProjectStatus={removeProjectStatus}
+          />
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -996,8 +986,6 @@ function ProjectHeaderRow({
         onBeginWorkspaceSetup={handleBeginWorkspaceSetup}
         onRemoveProject={onRemoveProject}
         removeProjectStatus={removeProjectStatus}
-        fileSystemStatus={fileSystemStatus}
-        locationLabel={project.projectSecondaryLabel ?? null}
       />
       {showShortcutBadge && shortcutNumber !== null ? (
         <View style={styles.projectShortcutBadgeOverlay} pointerEvents="none">
@@ -1105,6 +1093,7 @@ function ProjectLocationLabel({
       >
         {label}
       </Text>
+      {status ? <ProjectLocationStatusDot status={status} /> : null}
     </View>
   );
   if (!statusLabel) return labelView;
@@ -1118,25 +1107,9 @@ function ProjectLocationLabel({
   );
 }
 
-function ProjectLocationStatusDot({
-  label,
-  status,
-}: {
-  label: string;
-  status: WorkspaceFileSystemStatus;
-}) {
-  const { t } = useTranslation();
-  const statusLabel =
-    status.detail ??
-    t(
-      status.state === "unknown"
-        ? "common.connectionStatus.idle"
-        : `common.connectionStatus.${status.state}`,
-    );
+function ProjectLocationStatusDot({ status }: { status: WorkspaceFileSystemStatus }) {
   return (
     <View
-      role="status"
-      accessibilityLabel={`${label}, ${statusLabel}`}
       style={[styles.projectLocationStatusDot, projectLocationStatusDotStyle(status.state)]}
       testID={`sidebar-project-location-status-${status.state}`}
     />
@@ -2721,7 +2694,6 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.foregroundExtraMuted,
     fontSize: theme.fontSize.sm,
     minWidth: 0,
-    maxWidth: "45%",
     flexShrink: 1,
     textAlign: "right",
   },
@@ -2729,6 +2701,7 @@ const styles = StyleSheet.create((theme) => ({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "flex-end",
+    gap: theme.spacing[1],
     minWidth: 0,
     maxWidth: "45%",
     flexShrink: 1,
@@ -2803,6 +2776,9 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: "center",
     justifyContent: "center",
     flexShrink: 0,
+  },
+  projectKebabButtonHidden: {
+    opacity: 0,
   },
   projectKebabButtonHovered: {
     backgroundColor: theme.colors.surface2,

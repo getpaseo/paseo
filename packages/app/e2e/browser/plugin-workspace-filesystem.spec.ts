@@ -12,5 +12,6 @@ test("plugin files use the native Explorer, file tab, and editor", async ({ page
 
     await workspace.saveEditorText("saved through native editor\n");
     await workspace.expectRemoteText("saved through native editor\n");
+    await workspace.expectOnlineStatusInCompactSidebar();
   });
 });
