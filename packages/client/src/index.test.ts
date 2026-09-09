@@ -86,6 +86,7 @@ async function connectClient(
   features: Record<string, boolean> = {
     providerUsageList: true,
     providersSnapshotCwd: true,
+    projectPresentation: true,
   },
 ): Promise<{ client: PaseoClient; ws: FakeWebSocket }> {
   vi.stubGlobal("WebSocket", FakeWebSocket);
@@ -578,6 +579,21 @@ test("workspace handles keep identity and refresh snapshots through existing dri
     }),
   );
   expect(updates).toEqual(["sdk pushed"]);
+
+  await client.close();
+});
+
+test("workspace presentation requires host support", async () => {
+  const { client, ws } = await connectClient({});
+  const sentBeforeOpen = ws.sent.length;
+
+  await expect(
+    client.workspaces.open({
+      cwd: "/repo/sdk",
+      projectPresentation: { secondaryLabel: "devbox.example.com" },
+    }),
+  ).rejects.toThrow("Update the host to set project presentation metadata.");
+  expect(ws.sent).toHaveLength(sentBeforeOpen);
 
   await client.close();
 });

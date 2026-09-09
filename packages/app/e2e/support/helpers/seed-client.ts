@@ -16,6 +16,15 @@ export interface SeedWorkspaceDescriptor {
   labels?: string[];
 }
 
+interface SeedProjectPresentation {
+  secondaryLabel?: string | null;
+}
+
+interface SeedOpenProjectOptions {
+  requestId?: string;
+  projectPresentation?: SeedProjectPresentation;
+}
+
 interface SeedProjectDescriptor {
   projectId: string;
   projectKey?: string;
@@ -41,8 +50,7 @@ export interface SeedDaemonClient {
   }>;
   openProject(
     cwd: string,
-    requestId?: string,
-    projectPresentation?: { secondaryLabel?: string | null },
+    options?: SeedOpenProjectOptions,
   ): Promise<{
     workspace: SeedWorkspaceDescriptor | null;
     error: string | null;

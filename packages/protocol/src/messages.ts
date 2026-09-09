@@ -2493,17 +2493,18 @@ export const LegacyOpenInEditorRequestSchema = z.object({
   requestId: z.string(),
 });
 
+export const ProjectPresentationSchema = z.object({
+  secondaryLabel: z.string().max(128).nullable().optional(),
+});
+export type ProjectPresentation = z.infer<typeof ProjectPresentationSchema>;
+
 export const OpenProjectRequestSchema = z.object({
   type: z.literal("open_project_request"),
   // Path used only for workspace lookup/creation. Use the returned workspace.id for all subsequent references.
   cwd: z.string(),
-  // COMPAT(projectPresentation): optional so older clients and ordinary local workspaces keep
-  // their existing project presentation. A null secondary label explicitly clears it.
-  projectPresentation: z
-    .object({
-      secondaryLabel: z.string().max(128).nullable().optional(),
-    })
-    .optional(),
+  // COMPAT(projectPresentation): added in v0.8.0, remove optional parsing after 2027-03-10
+  // once the daemon floor is >= v0.8.0. A null secondary label explicitly clears it.
+  projectPresentation: ProjectPresentationSchema.optional(),
   requestId: z.string(),
 });
 
@@ -3446,6 +3447,8 @@ export const ServerInfoStatusPayloadSchema = z
         workspaceSetupRun: z.boolean().optional(),
         // COMPAT(workspaceTerminals): added in v0.8.0, remove gate after 2027-09-05.
         workspaceTerminals: z.boolean().optional(),
+        // COMPAT(projectPresentation): added in v0.8.0, remove gate after 2027-03-10.
+        projectPresentation: z.boolean().optional(),
         // COMPAT(checkoutForgeSetAutoMerge): added in v0.2.0-beta.1. Remove the
         // feature gate and checkoutGithubSetAutoMerge fallback after 2027-01-17
         // once the supported daemon floor is >= v0.2.0.
@@ -3863,8 +3866,8 @@ export const WorkspaceDescriptorPayloadSchema = z
     id: z.string(),
     projectId: z.string(),
     projectDisplayName: z.string(),
-    // COMPAT(projectSecondaryLabel): plugin-created and remote projects may use this to
-    // disambiguate equal directory names without folding context into the primary label.
+    // COMPAT(projectSecondaryLabel): added in v0.8.0, remove optional parsing after 2027-03-10
+    // once the daemon floor is >= v0.8.0.
     projectSecondaryLabel: z.string().nullable().optional(),
     // COMPAT(projectCustomName): added in v0.1.76, drop the optional gate when floor >= v0.1.76.
     // When the user has renamed a project, projectDisplayName carries the resolved
@@ -4063,7 +4066,8 @@ export const WorkspaceProjectDescriptorPayloadSchema = z.object({
   // COMPAT(projectKey): added in v0.2.4 on 2026-07-28; remove optional after 2027-01-28.
   projectKey: z.string().optional(),
   projectDisplayName: z.string(),
-  // COMPAT(projectSecondaryLabel): see WorkspaceDescriptorPayloadSchema.
+  // COMPAT(projectSecondaryLabel): added in v0.8.0, remove optional parsing after 2027-03-10
+  // once the daemon floor is >= v0.8.0.
   projectSecondaryLabel: z.string().nullable().optional(),
   projectCustomName: z.string().nullable().optional(),
   // COMPAT(projectCustomIcon): added in v0.2.0, remove after 2027-01-20.

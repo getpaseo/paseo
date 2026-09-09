@@ -4179,6 +4179,14 @@ test("open_project_request registers a workspace and applies project presentatio
   ) => {
     projects.set(record.projectId, record);
   };
+  session.projectRegistry.update = async (projectId, updater) => {
+    const current = projects.get(projectId);
+    if (!current) return null;
+    const concurrent = { ...current, customName: "Concurrent name" };
+    const updated = updater(concurrent);
+    projects.set(projectId, updated);
+    return updated;
+  };
   session.workspaceRegistry.get = async (lookupWorkspaceId: string) =>
     workspaces.get(lookupWorkspaceId) ?? null;
   session.workspaceRegistry.upsert = async (
@@ -4218,6 +4226,7 @@ test("open_project_request registers a workspace and applies project presentatio
   expect(response?.payload.workspace?.id).toBe(registeredWorkspace?.workspaceId);
   expect(response?.payload.workspace?.projectSecondaryLabel).toBe("devbox.example.com");
   expect(projects.get("prj_githubruntime")?.secondaryLabel).toBe("devbox.example.com");
+  expect(projects.get("prj_githubruntime")?.customName).toBe("Concurrent name");
 });
 
 test("import_agent_request registers a workspace for a never-seen cwd", async () => {
