@@ -100,9 +100,9 @@ export const serverLabel = "Server contribution";`,
     ),
     writeFile(
       path.join(directory, "client", "surface.tsx"),
-      `import { Text } from "react-native";
+      `import { Markdown } from "@getpaseo/plugin/client/react-native";
 import { clientLabel } from "../shared/labels";
-export function Surface() { return <Text>{clientLabel}</Text>; }`,
+export function Surface() { return <Markdown text={clientLabel} />; }`,
     ),
     writeFile(
       path.join(directory, "server", "handler.ts"),
@@ -144,6 +144,7 @@ describe("plugin runtime entries", () => {
     "react-native",
     "@getpaseo/plugin/client",
     "@getpaseo/plugin/client/ui",
+    "@getpaseo/plugin/client/react-native",
   ])("rejects %s from server code", async (specifier) => {
     const entries = await createSplitPlugin();
     await writeFile(
@@ -171,6 +172,7 @@ describe("plugin runtime entries", () => {
     "node:fs",
     "fs",
     "@getpaseo/plugin/client",
+    "@getpaseo/plugin/client/react-native",
     "@getpaseo/plugin/server",
     "../client/surface",
     "../server/handler",
