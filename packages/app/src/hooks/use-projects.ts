@@ -142,9 +142,17 @@ export function deriveProjectsFromReplica(input: {
   const unhydratedProjectLinkServerIds = input.replicas
     .filter((replica) => replica.hasHydratedWorkspaces === false)
     .map((replica) => replica.serverId);
+  const hydratedProjectLinkServerIds = input.replicas
+    .filter((replica) => replica.hasHydratedWorkspaces === true)
+    .map((replica) => replica.serverId);
   const projectLinkPlacements = buildProjectLinkPlacements({ hosts });
   return {
-    ...buildProjects({ hosts, localProjectLinks, unhydratedProjectLinkServerIds }),
+    ...buildProjects({
+      hosts,
+      localProjectLinks,
+      hydratedProjectLinkServerIds,
+      unhydratedProjectLinkServerIds,
+    }),
     projectLinkPlacements,
     projectLinkSuggestions: buildProjectLinkSuggestions({
       placements: projectLinkPlacements,

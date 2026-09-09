@@ -345,6 +345,25 @@ describe("local project links", () => {
     expect(overrides).toEqual(new Map());
   });
 
+  test("blocks surviving members when a linked project is absent from a hydrated host", () => {
+    const placements = buildProjectLinkPlacements({ hosts: hosts() });
+    const link = {
+      id: "link-1",
+      members: placements.map(({ serverId, projectId }) => ({ serverId, projectId })),
+      identity: { repository: "github.com/acme/app", subdirectory: "packages/web" },
+    };
+
+    const overrides = buildProjectLinkGroupingOverrides({
+      placements: [placements[0]!],
+      links: [link],
+      hydratedServerIds: ["host-a", "host-b"],
+    });
+
+    expect(overrides).toEqual(
+      new Map([[projectLinkPlacementKey(placements[0]!), { kind: "blocked" }]]),
+    );
+  });
+
   test("keeps a saved cloud SSH-alias link valid after remote canonicalization", () => {
     const placements = buildProjectLinkPlacements({ hosts: hosts() });
     const link = {
@@ -426,6 +445,40 @@ describe("local project links", () => {
 
     expect(suggestions).toHaveLength(2);
     expect(suggestions.every(suggestionIncludesExistingLinkMembers)).toBe(true);
+  });
+
+  test("continues suggesting unmatched clone pairs after another pair is linked", () => {
+    const placements = buildProjectLinkPlacements({ hosts: hosts() });
+    const hostAClone = {
+      ...placements[0]!,
+      projectId: "prj-a-clone",
+      projectName: "acme/app clone",
+      projectRootPath: "/repos/clone/packages/web",
+    };
+    const hostBClone = {
+      ...placements[1]!,
+      projectId: "prj-b-clone",
+      projectName: "acme/app clone",
+      projectRootPath: "/work/clone/packages/web",
+    };
+    const links = [
+      {
+        id: "link-1",
+        members: placements.map(({ serverId, projectId }) => ({ serverId, projectId })),
+        identity: { repository: "github.com/acme/app", subdirectory: "packages/web" },
+      },
+    ];
+
+    expect(
+      buildProjectLinkSuggestions({ placements: [...placements, hostAClone, hostBClone], links }),
+    ).toEqual([
+      expect.objectContaining({
+        placements: [
+          expect.objectContaining({ serverId: "host-a", projectId: "prj-a-clone" }),
+          expect.objectContaining({ serverId: "host-b", projectId: "prj-b-clone" }),
+        ],
+      }),
+    ]);
   });
 
   test("offers separate verified links for the same identity as one merge", () => {
