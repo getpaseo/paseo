@@ -1,3 +1,4 @@
+import { tmpdir } from "node:os";
 import { expect, test } from "vitest";
 import { CodexAppServerAgentSession } from "./codex-app-server-agent.js";
 import {
@@ -28,7 +29,7 @@ async function setup(metadata?: Record<string, unknown>, rejectSteer = false) {
     "thread/read": () => ({ thread: { id: "thread-1", turns: [] } }),
   });
   const session = new CodexAppServerAgentSession(
-    { provider: "codex", cwd: "/tmp", model: "gpt-5.4", modeId: "full-access" },
+    { provider: "codex", cwd: tmpdir(), model: "gpt-5.4", modeId: "full-access" },
     metadata ? { sessionId: "thread-1", metadata } : null,
     createTestLogger(),
     async () => appServer.child,
@@ -108,7 +109,7 @@ async function setupRewind(fail = false) {
       : {}),
   });
   const session = new CodexAppServerAgentSession(
-    { provider: "codex", cwd: "/tmp", model: "gpt-5.4", modeId: "full-access" },
+    { provider: "codex", cwd: tmpdir(), model: "gpt-5.4", modeId: "full-access" },
     { sessionId: "thread-1", metadata: { asyncQuestions: records } },
     createTestLogger(),
     async () => appServer.child,
@@ -198,7 +199,7 @@ async function manage(session: CodexAppServerAgentSession) {
     logger: createTestLogger(),
   });
   const agent = await manager.createAgent(
-    { provider: "codex", cwd: "/tmp", model: "gpt-5.4" },
+    { provider: "codex", cwd: tmpdir(), model: "gpt-5.4" },
     undefined,
     { workspaceId: undefined },
   );
