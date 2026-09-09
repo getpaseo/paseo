@@ -388,7 +388,7 @@ type CreateAgentRequestMessage = Extract<SessionInboundMessage, { type: "create_
 interface ResolvedSessionCreateAgentIntent {
   config: AgentSessionConfig;
   intent: CreateAgentIntent;
-  createdDirectoryWorkspace: boolean;
+  shouldAutoNameDirectoryWorkspace: boolean;
 }
 
 type FetchWorkspacesRequestMessage = Extract<
@@ -3717,7 +3717,7 @@ export class Session {
       );
       createdAgentId = snapshot.id;
       await this.agentUpdates.forwardLiveAgent(snapshot);
-      if (resolvedIntent.createdDirectoryWorkspace && trimmedPrompt) {
+      if (resolvedIntent.shouldAutoNameDirectoryWorkspace && trimmedPrompt) {
         this.workspaceAutoName.scheduleForDirectory(
           {
             workspaceId: resolvedIntent.intent.workspaceId,
@@ -3760,6 +3760,10 @@ export class Session {
     }
 
     let config = request.config;
+    const requestedWorkspace =
+      !createdWorktree && request.workspaceId
+        ? await this.workspaceRegistry.get(request.workspaceId)
+        : null;
 
     const intent = await resolveCreateAgentIntent({
       explicitWorkspaceId: createdWorktree?.workspace.workspaceId ?? request.workspaceId,
@@ -3771,7 +3775,10 @@ export class Session {
         if (createdWorktree?.workspace.workspaceId === workspaceId) {
           return { workspaceId, cwd: createdWorktree.workspace.cwd };
         }
-        const workspace = await this.workspaceRegistry.get(workspaceId);
+        const workspace =
+          requestedWorkspace?.workspaceId === workspaceId
+            ? requestedWorkspace
+            : await this.workspaceRegistry.get(workspaceId);
         if (!workspace || workspace.archivedAt) {
           throw new Error(`Workspace ${workspaceId} not found`);
         }
@@ -3788,10 +3795,24 @@ export class Session {
     });
     config = { ...config, cwd: intent.cwd };
 
+    const createdDirectoryWorkspace = !createdWorktree && !request.workspaceId && !callerAgent;
+    let shouldAutoNameDirectoryWorkspace = createdDirectoryWorkspace;
+    if (
+      !createdWorktree &&
+      request.workspaceId &&
+      !callerAgent &&
+      requestedWorkspace &&
+      requestedWorkspace.kind !== "worktree" &&
+      requestedWorkspace.title === null
+    ) {
+      const existingAgents = await this.agentStorage.listByWorkspace(intent.workspaceId);
+      shouldAutoNameDirectoryWorkspace = existingAgents.every((agent) => agent.internal === true);
+    }
+
     return {
       config,
       intent,
-      createdDirectoryWorkspace: !createdWorktree && !request.workspaceId && !callerAgent,
+      shouldAutoNameDirectoryWorkspace,
     };
   }
 

@@ -1234,7 +1234,20 @@ test("create_agent_request launches from an exact subdirectory in a created work
   }
 });
 
-test("create_agent_request does not title an existing workspace from the agent prompt", async () => {
+test.each([
+  {
+    name: "titles an existing workspace from its first agent prompt",
+    existingAgent: false,
+    expectedGenerateCalls: 1,
+    expectedTitle: "Generated login fix title",
+  },
+  {
+    name: "does not title an existing workspace that already has an agent",
+    existingAgent: true,
+    expectedGenerateCalls: 0,
+    expectedTitle: null,
+  },
+])("create_agent_request $name", async (testCase) => {
   vi.useFakeTimers();
   const workdir = mkdtempSync(path.join(tmpdir(), "paseo-create-agent-existing-title-"));
   try {
@@ -1287,8 +1300,23 @@ test("create_agent_request does not title an existing workspace from the agent p
         updatedAt: "2026-05-07T00:00:00.000Z",
       }),
     );
+    if (testCase.existingAgent) {
+      await agentStorage.upsert({
+        id: "agent-existing",
+        provider: "codex",
+        cwd,
+        workspaceId: "ws-existing",
+        createdAt: "2026-05-07T00:00:00.000Z",
+        updatedAt: "2026-05-07T00:00:00.000Z",
+        labels: {},
+        lastStatus: "closed",
+      });
+    }
 
     let generateCalls = 0;
+    const autoNameCompleted = deferred<void>();
+    const providerSnapshotManager = createProviderSnapshotManagerStub().manager;
+    const workspaceGitService = createNoopWorkspaceGitService();
     const session = asTestSession(
       new Session({
         agentRequests: createAgentRequestsStub(),
@@ -1321,7 +1349,24 @@ test("create_agent_request does not title an existing workspace from the agent p
           }),
           dispose: () => {},
         }),
-        workspaceGitService: createNoopWorkspaceGitService(),
+        workspaceGitService,
+        workspaceAutoName: new WorkspaceAutoName({
+          agentManager,
+          workspaceRegistry,
+          workspaceGitService,
+          providerSnapshotManager,
+          readDaemonConfig: () => ({ metadataGeneration: { providers: [] } }),
+          gitMutation: { notifyGitMutation: async () => {} },
+          emitWorkspaceUpdateForCwd: async () => {},
+          emitWorkspaceUpdateForWorkspaceId: async () => {
+            autoNameCompleted.resolve(undefined);
+          },
+          logger: asSessionLogger(logger),
+          generateWorkspaceName: async () => {
+            generateCalls += 1;
+            return { title: "Generated login fix title", branch: null };
+          },
+        }),
         daemonConfigStore: asDaemonConfigStore({
           get: () => ({ mcp: { injectIntoAgents: false }, providers: {} }),
           onChange: () => () => {},
@@ -1329,11 +1374,7 @@ test("create_agent_request does not title an existing workspace from the agent p
         mcpBaseUrl: null,
         stt: null,
         tts: null,
-        generateWorkspaceName: async () => {
-          generateCalls += 1;
-          return { title: "Generated title that must not be written", branch: null };
-        },
-        providerSnapshotManager: createProviderSnapshotManagerStub().manager,
+        providerSnapshotManager,
         terminalManager: null,
       }),
     );
@@ -1347,13 +1388,15 @@ test("create_agent_request does not title an existing workspace from the agent p
       attachments: [],
     });
     await vi.runAllTimersAsync();
+    if (testCase.expectedGenerateCalls > 0) {
+      await autoNameCompleted.promise;
+    }
 
     const [createdAgent] = agentManager.listAgents();
     expect(createdAgent?.workspaceId).toBe("ws-existing");
-    expect(generateCalls).toBe(0);
+    expect(generateCalls).toBe(testCase.expectedGenerateCalls);
     await expect(workspaceRegistry.get("ws-existing")).resolves.toMatchObject({
-      title: null,
-      updatedAt: "2026-05-07T00:00:00.000Z",
+      title: testCase.expectedTitle,
     });
   } finally {
     vi.useRealTimers();
