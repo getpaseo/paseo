@@ -7,11 +7,13 @@ function project(input: {
   key: string | null;
   root: string;
   name?: string;
+  secondaryLabel?: string | null;
 }): ProjectDescriptor {
   return {
     projectId: input.id,
     projectKey: input.key,
     projectDisplayName: input.name ?? "acme/app",
+    projectSecondaryLabel: input.secondaryLabel ?? null,
     projectCustomName: null,
     projectRootPath: input.root,
     projectKind: "git",
@@ -65,6 +67,28 @@ describe("buildWorkspaceStructureProjects", () => {
       ],
       workspaceKeys: ["host-a:ws-a", "host-b:ws-b"],
     });
+  });
+
+  test("keeps a shared secondary label and drops an ambiguous one", () => {
+    const key = "remote:github.com/acme/app";
+    const build = (secondLabel: string) =>
+      buildWorkspaceStructureProjects({
+        sessions: [
+          {
+            serverId: "host-a",
+            projects: [project({ id: "prj_a", key, root: "/a/app", secondaryLabel: "devbox" })],
+            workspaces: [],
+          },
+          {
+            serverId: "host-b",
+            projects: [project({ id: "prj_b", key, root: "/b/app", secondaryLabel: secondLabel })],
+            workspaces: [],
+          },
+        ],
+      });
+
+    expect(build("devbox")[0]?.projectSecondaryLabel).toBe("devbox");
+    expect(build("another-host")[0]?.projectSecondaryLabel).toBeNull();
   });
 
   test("keeps two clones with the same key on one host separate", () => {

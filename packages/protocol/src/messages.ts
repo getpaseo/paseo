@@ -2497,6 +2497,13 @@ export const OpenProjectRequestSchema = z.object({
   type: z.literal("open_project_request"),
   // Path used only for workspace lookup/creation. Use the returned workspace.id for all subsequent references.
   cwd: z.string(),
+  // COMPAT(projectPresentation): optional so older clients and ordinary local workspaces keep
+  // their existing project presentation. A null secondary label explicitly clears it.
+  projectPresentation: z
+    .object({
+      secondaryLabel: z.string().max(128).nullable().optional(),
+    })
+    .optional(),
   requestId: z.string(),
 });
 
@@ -3865,6 +3872,9 @@ export const WorkspaceDescriptorPayloadSchema = z
     id: z.string(),
     projectId: z.string(),
     projectDisplayName: z.string(),
+    // COMPAT(projectSecondaryLabel): plugin-created and remote projects may use this to
+    // disambiguate equal directory names without folding context into the primary label.
+    projectSecondaryLabel: z.string().nullable().optional(),
     // COMPAT(projectCustomName): added in v0.1.76, drop the optional gate when floor >= v0.1.76.
     // When the user has renamed a project, projectDisplayName carries the resolved
     // value (customName) and projectCustomName mirrors the raw override so the
@@ -4062,6 +4072,8 @@ export const WorkspaceProjectDescriptorPayloadSchema = z.object({
   // COMPAT(projectKey): added in v0.2.4 on 2026-07-28; remove optional after 2027-01-28.
   projectKey: z.string().optional(),
   projectDisplayName: z.string(),
+  // COMPAT(projectSecondaryLabel): see WorkspaceDescriptorPayloadSchema.
+  projectSecondaryLabel: z.string().nullable().optional(),
   projectCustomName: z.string().nullable().optional(),
   // COMPAT(projectCustomIcon): added in v0.2.0, remove after 2027-01-20.
   projectCustomIconRevision: z.string().nullable().optional(),

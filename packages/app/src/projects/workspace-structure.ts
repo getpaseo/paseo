@@ -14,6 +14,7 @@ export interface WorkspaceStructureProject {
   viewKey: string;
   projectKey: string | null;
   projectName: string;
+  projectSecondaryLabel?: string | null;
   projectKind: WorkspaceDescriptor["projectKind"] | "unknown";
   iconWorkingDir: string;
   hosts: WorkspaceStructureHostPlacement[];
@@ -34,6 +35,7 @@ interface ProjectDraft {
   viewKey: string;
   projectKey: string | null;
   projectName: string;
+  projectSecondaryLabel: string | null;
   hasCustomName: boolean;
   projectKind: WorkspaceDescriptor["projectKind"];
   iconWorkingDir: string;
@@ -96,6 +98,7 @@ export function buildWorkspaceStructureProjects(input: {
       viewKey: draft.viewKey,
       projectKey: draft.projectKey,
       projectName: draft.projectName,
+      projectSecondaryLabel: draft.projectSecondaryLabel,
       projectKind: draft.projectKind,
       iconWorkingDir: draft.iconWorkingDir,
       hosts: Array.from(draft.hosts.values()),
@@ -172,6 +175,7 @@ function addProjectToView(input: {
         project.projectCustomName ??
         project.projectDisplayName ??
         projectDisplayNameFromProjectId(project.projectId),
+      projectSecondaryLabel: project.projectSecondaryLabel ?? null,
       hasCustomName: Boolean(project.projectCustomName),
       projectKind: project.projectKind,
       iconWorkingDir: project.projectRootPath,
@@ -182,6 +186,9 @@ function addProjectToView(input: {
     if (project.projectCustomName && !draft.hasCustomName) {
       draft.projectName = project.projectCustomName;
       draft.hasCustomName = true;
+    }
+    if (draft.projectSecondaryLabel !== (project.projectSecondaryLabel ?? null)) {
+      draft.projectSecondaryLabel = null;
     }
     draft.hosts.set(serverId, placement);
   }

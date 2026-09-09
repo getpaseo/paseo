@@ -452,10 +452,15 @@ test("workspace handles keep identity and refresh snapshots through existing dri
   const { client, ws } = await connectClient();
   const openedWorkspace = createWorkspace();
 
-  const openPromise = client.workspaces.open("/repo/sdk", "open-workspace-request");
+  const openPromise = client.workspaces.open({
+    cwd: "/repo/sdk",
+    requestId: "open-workspace-request",
+    projectPresentation: { secondaryLabel: "devbox.example.com" },
+  });
   expect(parseSentSessionMessage(ws.sent.at(-1))).toMatchObject({
     type: "open_project_request",
     cwd: "/repo/sdk",
+    projectPresentation: { secondaryLabel: "devbox.example.com" },
   });
 
   ws.message(

@@ -1244,21 +1244,22 @@ Both hooks return `null` when the record is unavailable. Otherwise they run sync
 
 Workspace snapshot fields:
 
-| Field                | Type                                                              |
-| -------------------- | ----------------------------------------------------------------- |
-| `id`                 | `string`                                                          |
-| `projectId`          | `string`                                                          |
-| `projectDisplayName` | `string`                                                          |
-| `projectRootPath`    | `string`                                                          |
-| `directory`          | `string`                                                          |
-| `projectKind`        | `"git" \| "non_git" \| "directory"`                               |
-| `kind`               | `"directory" \| "local_checkout" \| "checkout" \| "worktree"`     |
-| `name`               | `string`                                                          |
-| `title`              | `string \| null`                                                  |
-| `status`             | `"needs_input" \| "failed" \| "running" \| "attention" \| "done"` |
-| `statusEnteredAt`    | ISO timestamp or `null`                                           |
-| `archivingAt`        | ISO timestamp or `null`                                           |
-| `diffStat`           | `{ additions: number; deletions: number } \| null`                |
+| Field                   | Type                                                              |
+| ----------------------- | ----------------------------------------------------------------- |
+| `id`                    | `string`                                                          |
+| `projectId`             | `string`                                                          |
+| `projectDisplayName`    | `string`                                                          |
+| `projectSecondaryLabel` | `string \| null`                                                  |
+| `projectRootPath`       | `string`                                                          |
+| `directory`             | `string`                                                          |
+| `projectKind`           | `"git" \| "non_git" \| "directory"`                               |
+| `kind`                  | `"directory" \| "local_checkout" \| "checkout" \| "worktree"`     |
+| `name`                  | `string`                                                          |
+| `title`                 | `string \| null`                                                  |
+| `status`                | `"needs_input" \| "failed" \| "running" \| "attention" \| "done"` |
+| `statusEnteredAt`       | ISO timestamp or `null`                                           |
+| `archivingAt`           | ISO timestamp or `null`                                           |
+| `diffStat`              | `{ additions: number; deletions: number } \| null`                |
 
 Agent snapshot fields:
 

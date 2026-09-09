@@ -21,6 +21,7 @@ export interface PluginWorkspaceSnapshot {
   readonly id: string;
   readonly projectId: string;
   readonly projectDisplayName: string;
+  readonly projectSecondaryLabel: string | null;
   readonly projectRootPath: string;
   readonly directory: string;
   readonly projectKind: "git" | "non_git" | "directory";

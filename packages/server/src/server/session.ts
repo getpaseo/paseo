@@ -330,6 +330,12 @@ function clientUsesLegacyWorkspaceRestore(appVersion: string | null): boolean {
   );
 }
 
+function resolveProjectSecondaryLabel(
+  project: PersistedProjectRecord | null | undefined,
+): string | null {
+  return project?.secondaryLabel ?? null;
+}
+
 type DeleteFencedAgentStorage = AgentStorage & {
   beginDelete(agentId: string): void;
 };
@@ -5008,6 +5014,7 @@ export class Session {
       projectDisplayName: resolvedProjectRecord
         ? resolveProjectDisplayName(resolvedProjectRecord)
         : workspace.projectId,
+      projectSecondaryLabel: resolveProjectSecondaryLabel(resolvedProjectRecord),
       projectCustomName: resolvedProjectRecord?.customName ?? null,
       projectCustomIconRevision: resolvedProjectRecord?.customIconRevision ?? null,
       projectRootPath: resolvedProjectRecord?.rootPath ?? workspace.cwd,
@@ -5097,6 +5104,7 @@ export class Session {
       projectDisplayName: projectRecord
         ? resolveProjectDisplayName(projectRecord)
         : result.workspace.projectId,
+      projectSecondaryLabel: resolveProjectSecondaryLabel(projectRecord),
       projectCustomName: projectRecord?.customName ?? null,
       projectCustomIconRevision: projectRecord?.customIconRevision ?? null,
       projectRootPath: projectRecord?.rootPath ?? result.repoRoot,
@@ -5274,6 +5282,7 @@ export class Session {
       projectId: project.projectId,
       ...(project.projectKey ? { projectKey: project.projectKey } : {}),
       projectDisplayName: resolveProjectDisplayName(project),
+      projectSecondaryLabel: project.secondaryLabel,
       projectCustomName: project.customName ?? null,
       projectCustomIconRevision: project.customIconRevision ?? null,
       projectIconRevision: icon.revision,
@@ -6285,9 +6294,21 @@ export class Session {
         workspacesBefore.set(workspaceRecord.workspaceId, workspaceRecord);
       }
       const workspace = await this.workspaceProvisioning.findOrCreateWorkspaceForDirectory(cwd);
-      const project = await this.projectRegistry.get(workspace.projectId);
+      let project = await this.projectRegistry.get(workspace.projectId);
+      const requestedSecondaryLabel = request.projectPresentation?.secondaryLabel;
+      if (project && requestedSecondaryLabel !== undefined) {
+        const secondaryLabel = requestedSecondaryLabel?.trim() || null;
+        if (project.secondaryLabel !== secondaryLabel) {
+          project = {
+            ...project,
+            secondaryLabel,
+            updatedAt: new Date().toISOString(),
+          };
+          await this.projectRegistry.upsert(project);
+        }
+      }
       await this.syncWorkspaceGitObserverForWorkspace(workspace);
-      const descriptor = await this.describeWorkspaceRecord(workspace);
+      const descriptor = await this.describeWorkspaceRecord(workspace, project);
       await this.emitWorkspaceUpdateForWorkspaceId(workspace.workspaceId);
       this.sessionLogger.info(
         {

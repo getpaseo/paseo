@@ -37,6 +37,14 @@ const PersistedProjectRecordSchema = z.object({
     .nullable()
     .optional()
     .transform((value) => value ?? null),
+  // Optional context shown separately from the project name. This is presentation metadata,
+  // not project identity, so reconciliation leaves it unchanged.
+  secondaryLabel: z
+    .string()
+    .max(128)
+    .nullable()
+    .optional()
+    .transform((value) => value ?? null),
   // Identifies the project's stored custom icon; null means automatic.
   customIconRevision: z
     .string()
@@ -646,6 +654,7 @@ export function createPersistedProjectRecord(input: {
   kind: PersistedProjectKind;
   displayName: string;
   customName?: string | null;
+  secondaryLabel?: string | null;
   projectKey?: string | null;
   customIconRevision?: string | null;
   createdAt: string;
@@ -655,6 +664,7 @@ export function createPersistedProjectRecord(input: {
   return PersistedProjectRecordSchema.parse({
     ...input,
     customName: input.customName ?? null,
+    secondaryLabel: input.secondaryLabel ?? null,
     projectKey: input.projectKey ?? null,
     customIconRevision: input.customIconRevision ?? null,
     archivedAt: input.archivedAt ?? null,
