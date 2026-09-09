@@ -2873,23 +2873,25 @@ describe("ClaudeAgentSession context window usage", () => {
   });
 
   test("repeated compacting statuses open a single compaction marker", async () => {
-    const session = await createSessionForTest();
+    const session = await createSessionForTurns([
+      [
+        createCompactingStatus(),
+        createCompactingStatus(),
+        createCompactingStatus(),
+        createCompactBoundary(),
+        createCompactingStatus(),
+        createCompactingStatus(),
+        createCompactBoundary(),
+        createSuccessResult(),
+      ],
+    ]);
 
     try {
-      function markersOpenedBy(message: Record<string, unknown>): number {
-        return session
-          .translateMessageToEvents(message as unknown as SDKMessage)
-          .filter(isLoadingCompactionEvent).length;
-      }
-
-      expect(markersOpenedBy(createCompactingStatus())).toBe(1);
-      // Claude Code repeats the status every 30 seconds until the compaction ends.
-      expect(markersOpenedBy(createCompactingStatus())).toBe(0);
-      expect(markersOpenedBy(createCompactingStatus())).toBe(0);
-
-      session.translateMessageToEvents(createCompactBoundary() as unknown as SDKMessage);
-
-      expect(markersOpenedBy(createCompactingStatus())).toBe(1);
+      const events = await collectStreamEvents(session, "compact twice");
+      const compactions = events.flatMap((event) =>
+        event.type === "timeline" && event.item.type === "compaction" ? [event.item.status] : [],
+      );
+      expect(compactions).toEqual(["loading", "completed", "loading", "completed"]);
     } finally {
       await session.close();
     }
