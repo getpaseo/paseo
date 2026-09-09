@@ -4,7 +4,7 @@ import { PROVIDER, checkModelRowLayout } from "../support/helpers/model-row-layo
 test.use({ catalogProvider: PROVIDER });
 
 for (const compact of [false, true]) {
-  test(`${compact ? "compact" : "desktop"} model rows keep controls aligned and text bounded`, async ({
+  test(`${compact ? "compact" : "desktop"} long model rows keep visibility and removal usable`, async ({
     page,
     modelWorkspace,
   }) => {

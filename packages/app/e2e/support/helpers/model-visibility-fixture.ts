@@ -101,6 +101,7 @@ export const test = base.extend<
         agentProfiles: original.agentProfiles ?? [],
         providers: {
           [catalogProvider.id]: {
+            additionalModels: original.providers?.[catalogProvider.id]?.additionalModels ?? [],
             modelVisibility: Object.fromEntries(
               catalogProvider.models.map((model) => [model.id, true]),
             ),
