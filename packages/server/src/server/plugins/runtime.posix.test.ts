@@ -217,6 +217,7 @@ export default function contribute(server: PluginServerContext) {
   server.registerWorkspaceFileSystem({
     id: "example.remote",
     matches: ({ cwd }) => cwd.startsWith("/virtual/"),
+    getStatus: () => ({ state: "online", detail: "Connected" }),
     listDirectory: ({ path }) => ({
       path,
       entries: [{
@@ -267,7 +268,7 @@ export default function contribute(server: PluginServerContext) {
 
     await runtime.startPlugin("workspace-file-system-round-trip", directory);
     expect(runtime.getWorkspaceFileSystemRegistrations("workspace-file-system-round-trip")).toEqual(
-      [{ id: "example.remote", writable: true }],
+      [{ id: "example.remote", writable: true, hasStatus: true }],
     );
     await expect(
       runtime.invokeWorkspaceFileSystem(
@@ -277,6 +278,14 @@ export default function contribute(server: PluginServerContext) {
         { cwd: "/virtual/project" },
       ),
     ).resolves.toBe(true);
+    await expect(
+      runtime.invokeWorkspaceFileSystem(
+        "workspace-file-system-round-trip",
+        "example.remote",
+        "get-status",
+        { cwd: "/virtual/project" },
+      ),
+    ).resolves.toEqual({ state: "online", detail: "Connected" });
     await expect(
       runtime.invokeWorkspaceFileSystem(
         "workspace-file-system-round-trip",

@@ -206,6 +206,9 @@ import type { PluginWorkspaceFileSystemProvider } from "@getpaseo/plugin/server/
 const files: PluginWorkspaceFileSystemProvider = {
   id: "example.remote",
   matches: ({ cwd }) => cwd.startsWith("/var/lib/example-workspaces/"),
+  async getStatus() {
+    return { state: "online", detail: "Connected to remote.example.com" };
+  },
   async listDirectory({ path }) {
     return {
       path,
@@ -268,6 +271,13 @@ from the native file editor, including revision-based conflict handling. A provi
 read-only. Entry creation, rename, duplication, deletion, and downloads are not part of this first
 contract; Paseo rejects those operations for provider-backed workspaces instead of falling back to
 the local anchor.
+
+Add `getStatus()` when the remote transport has a useful connection state. Return `online`,
+`connecting`, `offline`, `error`, or `unknown`, with an optional short `detail` for the tooltip.
+Paseo refreshes this probe periodically, combines it with the host connection state, and displays a
+small indicator beside `projectPresentation.secondaryLabel` in the sidebar. Keep the probe bounded
+and inexpensive; it should report existing transport state or perform a short health check rather
+than establish a new long-lived connection.
 
 ### Providers
 

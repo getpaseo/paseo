@@ -12,6 +12,7 @@ import type {
   FileEntryDuplicateRequest,
   FileEntryRenameRequest,
   FileExplorerRequest,
+  WorkspaceFileSystemStatusRequest,
   FileUploadRequest,
   FileSubscribeRequest,
   FileUnsubscribeRequest,
@@ -66,6 +67,7 @@ export interface WorkspaceFilesSessionOptions {
 export interface WorkspaceFileSystemProvider {
   key: string;
   writable: boolean;
+  getStatus?(input: { cwd: string }): Promise<WorkspaceFileSystemStatus>;
   listDirectory(input: { cwd: string; path: string }): Promise<FileExplorerDirectory>;
   readFile(input: { cwd: string; path: string; maxBytes?: number }): Promise<FileExplorerFile>;
   statFile(input: { cwd: string; path: string }): Promise<ExplorerFileVersion>;
@@ -76,6 +78,11 @@ export interface WorkspaceFileSystemProvider {
     expectedModifiedAt: string;
     expectedRevision?: string;
   }): Promise<ExplorerFileWriteResult>;
+}
+
+export interface WorkspaceFileSystemStatus {
+  state: "online" | "connecting" | "offline" | "error" | "unknown";
+  detail?: string;
 }
 
 export interface WorkspaceFileSystemResolver {
@@ -132,6 +139,43 @@ export class WorkspaceFilesSession {
     this.remoteFilePollIntervalMs =
       options.remoteFilePollIntervalMs ?? DEFAULT_REMOTE_FILE_POLL_INTERVAL_MS;
     this.remoteFilePolling = options.remoteFilePolling ?? nodeRemoteFilePolling;
+  }
+
+  async handleWorkspaceFileSystemStatusRequest(
+    request: WorkspaceFileSystemStatusRequest,
+  ): Promise<void> {
+    const cwd = request.cwd.trim();
+    if (!cwd) {
+      this.host.emit({
+        type: "fs.workspace.status.response",
+        payload: {
+          cwd: request.cwd,
+          status: null,
+          error: "cwd is required",
+          requestId: request.requestId,
+        },
+      });
+      return;
+    }
+
+    try {
+      const provider = await this.fileSystems?.resolve(cwd);
+      const status = provider?.getStatus ? await provider.getStatus({ cwd }) : null;
+      this.host.emit({
+        type: "fs.workspace.status.response",
+        payload: { cwd, status, error: null, requestId: request.requestId },
+      });
+    } catch (error) {
+      this.host.emit({
+        type: "fs.workspace.status.response",
+        payload: {
+          cwd,
+          status: { state: "error", detail: getErrorMessage(error) },
+          error: null,
+          requestId: request.requestId,
+        },
+      });
+    }
   }
 
   async handleFileSubscribeRequest(request: FileSubscribeRequest): Promise<void> {

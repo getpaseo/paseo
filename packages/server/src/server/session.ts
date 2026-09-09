@@ -2645,6 +2645,8 @@ export class Session {
     switch (msg.type) {
       case "file_explorer_request":
         return this.workspaceFilesSession.handleFileExplorerRequest(msg, source);
+      case "fs.workspace.status.request":
+        return this.workspaceFilesSession.handleWorkspaceFileSystemStatusRequest(msg);
       case "fs.file.subscribe.request":
         return this.workspaceFilesSession.handleFileSubscribeRequest(msg);
       case "fs.file.unsubscribe.request":

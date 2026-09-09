@@ -151,6 +151,8 @@ import type { HostBadgeModel } from "@/hosts/appearance";
 import { useHostBadges } from "@/hosts/use-host-badges";
 import { useSidebarRowItems } from "@/components/sidebar/display-preferences/model";
 import { PullRequestStateIcon } from "@/git/pull-request-state-icon";
+import { useWorkspaceFileSystemStatus } from "@/workspace/use-workspace-file-system-status";
+import type { WorkspaceFileSystemStatus } from "@getpaseo/protocol/messages";
 
 const workspaceKeyExtractor = (workspace: SidebarWorkspacePlacement) => workspace.workspaceKey;
 
@@ -413,6 +415,8 @@ function ProjectRowTrailingActions({
   onBeginWorkspaceSetup,
   onRemoveProject,
   removeProjectStatus,
+  fileSystemStatus,
+  locationLabel,
 }: {
   projectViewKey: string;
   displayName: string;
@@ -425,8 +429,29 @@ function ProjectRowTrailingActions({
   onBeginWorkspaceSetup: () => void;
   onRemoveProject?: () => void;
   removeProjectStatus: "idle" | "pending" | "success";
+  fileSystemStatus: WorkspaceFileSystemStatus | null;
+  locationLabel: string | null;
 }) {
   const actionsVisible = isHovered || platformIsNative || isMobileBreakpoint;
+  let trailingControl: ReactElement | null = null;
+  if (onRemoveProject && actionsVisible) {
+    trailingControl = (
+      <ProjectKebabMenu
+        projectViewKey={projectViewKey}
+        settingsTarget={settingsTarget}
+        projectPath={projectPath}
+        onRemoveProject={onRemoveProject}
+        removeProjectStatus={removeProjectStatus}
+      />
+    );
+  } else if (fileSystemStatus && locationLabel) {
+    trailingControl = (
+      <View style={styles.projectTrailingControlSlot} pointerEvents="none">
+        <ProjectLocationStatusDot label={locationLabel} status={fileSystemStatus} />
+      </View>
+    );
+  }
+
   return (
     <View style={styles.projectTrailingActions}>
       {worktreeTarget ? (
@@ -438,20 +463,7 @@ function ProjectRowTrailingActions({
           testID={`sidebar-project-new-worktree-${projectViewKey}`}
         />
       ) : null}
-      {onRemoveProject ? (
-        <View
-          style={!actionsVisible && styles.projectKebabButtonHidden}
-          pointerEvents={actionsVisible ? "auto" : "none"}
-        >
-          <ProjectKebabMenu
-            projectViewKey={projectViewKey}
-            settingsTarget={settingsTarget}
-            projectPath={projectPath}
-            onRemoveProject={onRemoveProject}
-            removeProjectStatus={removeProjectStatus}
-          />
-        </View>
-      ) : null}
+      {trailingControl}
     </View>
   );
 }
@@ -875,6 +887,7 @@ function ProjectHeaderRow({
   const isMobileBreakpoint = useIsCompactFormFactor();
   const localDaemonServerId = useLocalDaemonServerId();
   const projectPath = resolveSidebarProjectLocalPath(project, localDaemonServerId);
+  const fileSystemStatus = useWorkspaceFileSystemStatus(project);
   const settingsTarget = project.hosts[0] ?? null;
   const handleBeginWorkspaceSetup = useCallback(() => {
     if (!worktreeTarget) {
@@ -963,14 +976,11 @@ function ProjectHeaderRow({
             {displayName}
           </Text>
           {project.projectSecondaryLabel ? (
-            <Text
-              style={styles.projectSecondaryLabel}
-              numberOfLines={1}
-              ellipsizeMode="tail"
-              testID={`sidebar-project-secondary-label-${project.viewKey}`}
-            >
-              {project.projectSecondaryLabel}
-            </Text>
+            <ProjectLocationLabel
+              label={project.projectSecondaryLabel}
+              status={fileSystemStatus}
+              projectViewKey={project.viewKey}
+            />
           ) : null}
         </View>
       </View>
@@ -986,6 +996,8 @@ function ProjectHeaderRow({
         onBeginWorkspaceSetup={handleBeginWorkspaceSetup}
         onRemoveProject={onRemoveProject}
         removeProjectStatus={removeProjectStatus}
+        fileSystemStatus={fileSystemStatus}
+        locationLabel={project.projectSecondaryLabel ?? null}
       />
       {showShortcutBadge && shortcutNumber !== null ? (
         <View style={styles.projectShortcutBadgeOverlay} pointerEvents="none">
@@ -1059,6 +1071,83 @@ function ProjectHeaderRow({
       </ContextMenuContent>
     </ContextMenu>
   );
+}
+
+function ProjectLocationLabel({
+  label,
+  status,
+  projectViewKey,
+}: {
+  label: string;
+  status: WorkspaceFileSystemStatus | null;
+  projectViewKey: string;
+}) {
+  const { t } = useTranslation();
+  const statusLabel = status
+    ? (status.detail ??
+      t(
+        status.state === "unknown"
+          ? "common.connectionStatus.idle"
+          : `common.connectionStatus.${status.state}`,
+      ))
+    : null;
+  const labelView = (
+    <View
+      style={styles.projectLocationLabel}
+      accessibilityLabel={statusLabel ? `${label}, ${statusLabel}` : label}
+      testID={`sidebar-project-location-${projectViewKey}`}
+    >
+      <Text
+        style={styles.projectSecondaryLabel}
+        numberOfLines={1}
+        ellipsizeMode="tail"
+        testID={`sidebar-project-secondary-label-${projectViewKey}`}
+      >
+        {label}
+      </Text>
+    </View>
+  );
+  if (!statusLabel) return labelView;
+  return (
+    <Tooltip delayDuration={300} enabledOnDesktop enabledOnMobile={false}>
+      <TooltipTrigger asChild>{labelView}</TooltipTrigger>
+      <TooltipContent side="bottom" align="center" offset={8}>
+        <Text style={styles.projectLocationStatusTooltip}>{statusLabel}</Text>
+      </TooltipContent>
+    </Tooltip>
+  );
+}
+
+function ProjectLocationStatusDot({
+  label,
+  status,
+}: {
+  label: string;
+  status: WorkspaceFileSystemStatus;
+}) {
+  const { t } = useTranslation();
+  const statusLabel =
+    status.detail ??
+    t(
+      status.state === "unknown"
+        ? "common.connectionStatus.idle"
+        : `common.connectionStatus.${status.state}`,
+    );
+  return (
+    <View
+      role="status"
+      accessibilityLabel={`${label}, ${statusLabel}`}
+      style={[styles.projectLocationStatusDot, projectLocationStatusDotStyle(status.state)]}
+      testID={`sidebar-project-location-status-${status.state}`}
+    />
+  );
+}
+
+function projectLocationStatusDotStyle(state: WorkspaceFileSystemStatus["state"]) {
+  if (state === "online") return styles.projectLocationStatusDotOnline;
+  if (state === "connecting") return styles.projectLocationStatusDotConnecting;
+  if (state === "error") return styles.projectLocationStatusDotError;
+  return styles.projectLocationStatusDotOffline;
 }
 
 function WorkspaceRowInner({
@@ -2636,6 +2725,38 @@ const styles = StyleSheet.create((theme) => ({
     flexShrink: 1,
     textAlign: "right",
   },
+  projectLocationLabel: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "flex-end",
+    minWidth: 0,
+    maxWidth: "45%",
+    flexShrink: 1,
+  },
+  projectLocationStatusDot: {
+    width: 6,
+    height: 6,
+    borderRadius: theme.borderRadius.full,
+    flexShrink: 0,
+    opacity: 0.6,
+  },
+  projectLocationStatusDotOnline: {
+    backgroundColor: theme.colors.statusSuccess,
+  },
+  projectLocationStatusDotConnecting: {
+    backgroundColor: theme.colors.statusWarning,
+  },
+  projectLocationStatusDotOffline: {
+    backgroundColor: theme.colors.foregroundExtraMuted,
+  },
+  projectLocationStatusDotError: {
+    backgroundColor: theme.colors.statusDanger,
+  },
+  projectLocationStatusTooltip: {
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.sm,
+    textAlign: "right",
+  },
   projectActionButton: {
     flexDirection: "row",
     alignItems: "center",
@@ -2682,9 +2803,6 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: "center",
     justifyContent: "center",
     flexShrink: 0,
-  },
-  projectKebabButtonHidden: {
-    opacity: 0,
   },
   projectKebabButtonHovered: {
     backgroundColor: theme.colors.surface2,

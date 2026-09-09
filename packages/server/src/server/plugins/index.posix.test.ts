@@ -164,6 +164,7 @@ describe("PluginService", () => {
   server.registerWorkspaceFileSystem({
     id: "example.remote",
     matches: ({ cwd }) => cwd.startsWith("/virtual/"),
+    getStatus: () => ({ state: "online", detail: "Connected" }),
     listDirectory: ({ path }) => ({
       path,
       entries: [{
@@ -217,6 +218,10 @@ describe("PluginService", () => {
     expect(first).not.toBeNull();
     expect(second).toBe(first);
     expect(first?.key).toBe("workspace-file-system.example.remote");
+    await expect(first?.getStatus?.({ cwd: "/virtual/project" })).resolves.toEqual({
+      state: "online",
+      detail: "Connected",
+    });
     await expect(
       first?.listDirectory({ cwd: "/virtual/project", path: "." }),
     ).resolves.toMatchObject({ entries: [{ name: "remote.txt", path: "remote.txt" }] });

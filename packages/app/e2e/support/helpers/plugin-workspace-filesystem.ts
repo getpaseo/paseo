@@ -37,6 +37,7 @@ export default function contribute(server) {
   server.registerWorkspaceFileSystem({
     id: "example.remote",
     matches: ({ cwd }) => cwd === workspace,
+    getStatus: () => ({ state: "online", detail: "Remote workspace is reachable" }),
     async listDirectory({ path }) {
       if (path !== ".") throw new Error("Directory not found: " + path);
       const metadata = await stat(backingFile);
@@ -128,6 +129,12 @@ export class PluginWorkspaceFileSystemHarness {
       await client.patchDaemonConfig({ pluginsEnabled: true });
       await client.installDirectoryPlugin(plugin);
       const opened = await openProjectViaDaemon(client, workspace);
+      const presented = await client.openProject(workspace, undefined, {
+        secondaryLabel: "remote.example.com",
+      });
+      if (presented.error) throw new Error(presented.error);
+      const status = await client.getWorkspaceFileSystemStatus(workspace);
+      if (status?.state !== "online") throw new Error("Remote workspace status is not online");
       projectId = opened.projectId;
       return new PluginWorkspaceFileSystemHarness(
         page,
@@ -169,6 +176,16 @@ export class PluginWorkspaceFileSystemHarness {
 
   async expectEditorText(content: string): Promise<void> {
     await expect(this.editor()).toContainText(content, { timeout: 10_000 });
+  }
+
+  async expectOnlineStatus(): Promise<void> {
+    const row = this.page
+      .locator('[data-testid^="sidebar-project-row-"]')
+      .filter({ hasText: "workspace-anchor" })
+      .first();
+    await expect(row.getByTestId("sidebar-project-location-status-online")).toBeVisible({
+      timeout: 30_000,
+    });
   }
 
   async saveEditorText(content: string): Promise<void> {

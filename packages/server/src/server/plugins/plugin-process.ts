@@ -125,6 +125,12 @@ function registerProvider(provider: ProviderRegistration): void {
 }
 
 const workspaceFileSystemTargetSchema = z.object({ cwd: z.string().min(1) }).strict();
+const workspaceFileSystemStatusSchema = z
+  .object({
+    state: z.enum(["online", "connecting", "offline", "error", "unknown"]),
+    detail: z.string().optional(),
+  })
+  .strict();
 const workspaceFileSystemPathSchema = workspaceFileSystemTargetSchema
   .extend({ path: z.string() })
   .strict();
@@ -199,6 +205,9 @@ function registerWorkspaceFileSystem(provider: PluginWorkspaceFileSystemProvider
   if (typeof provider.statFile !== "function") {
     throw new Error(`Workspace file system ${id} must implement statFile()`);
   }
+  if (provider.getStatus !== undefined && typeof provider.getStatus !== "function") {
+    throw new Error(`Workspace file system ${id} has an invalid getStatus()`);
+  }
   if (provider.writeFile !== undefined && typeof provider.writeFile !== "function") {
     throw new Error(`Workspace file system ${id} has an invalid writeFile()`);
   }
@@ -212,6 +221,16 @@ function registerWorkspaceFileSystem(provider: PluginWorkspaceFileSystemProvider
     },
     (input) => registered.matches(input as { cwd: string }),
   );
+  if (registered.getStatus) {
+    register(
+      {
+        name: pluginWorkspaceFileSystemMethod(id, "get-status"),
+        input: workspaceFileSystemTargetSchema,
+        output: workspaceFileSystemStatusSchema,
+      },
+      (input) => registered.getStatus!(input as { cwd: string }),
+    );
+  }
   register(
     {
       name: pluginWorkspaceFileSystemMethod(id, "list-directory"),
@@ -423,7 +442,11 @@ async function initialize(message: Extract<PluginProcessRequest, { type: "initia
       .map(providerMetadata),
     workspaceFileSystems: [...workspaceFileSystems.values()]
       .sort((left, right) => left.id.localeCompare(right.id))
-      .map((provider) => ({ id: provider.id, writable: provider.writeFile !== undefined })),
+      .map((provider) => ({
+        id: provider.id,
+        writable: provider.writeFile !== undefined,
+        hasStatus: provider.getStatus !== undefined,
+      })),
   });
 }
 

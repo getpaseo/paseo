@@ -91,6 +91,57 @@ function uploadFrame(args: Parameters<typeof encodeFileTransferFrame>[0]): FileT
 }
 
 describe("WorkspaceFilesSession", () => {
+  test("reports status from the matching plugin workspace file system", async () => {
+    const cwd = makeDir("workspace-files-plugin-status-");
+    const getStatus = vi.fn(async () => ({
+      state: "online" as const,
+      detail: "Remote workspace is reachable",
+    }));
+    const { subsystem, emitted } = makeSubsystem({
+      fileSystems: {
+        resolve: async () => ({
+          key: "example.remote",
+          writable: false,
+          getStatus,
+          listDirectory: async () => ({ path: ".", entries: [] }),
+          readFile: async () => ({
+            path: "remote.txt",
+            kind: "text",
+            encoding: "utf-8",
+            content: "remote",
+            size: 6,
+            modifiedAt: "2026-09-09T00:00:00.000Z",
+          }),
+          statFile: async ({ path }) => ({
+            status: "ready",
+            cwd,
+            path,
+            size: 6,
+            modifiedAt: "2026-09-09T00:00:00.000Z",
+          }),
+        }),
+      },
+    });
+
+    await subsystem.handleWorkspaceFileSystemStatusRequest({
+      type: "fs.workspace.status.request",
+      cwd,
+      requestId: "req-status",
+    });
+
+    expect(getStatus).toHaveBeenCalledWith({ cwd });
+    expect(emitted).toContainEqual({
+      type: "fs.workspace.status.response",
+      payload: {
+        cwd,
+        status: { state: "online", detail: "Remote workspace is reachable" },
+        error: null,
+        requestId: "req-status",
+      },
+    });
+    subsystem.dispose();
+  });
+
   test("routes native directory and file requests through a plugin workspace file system", async () => {
     const cwd = makeDir("workspace-files-plugin-");
     const provider = {

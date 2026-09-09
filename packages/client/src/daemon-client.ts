@@ -35,6 +35,7 @@ import type {
   FileDownloadTokenResponse,
   FileUploadResponse,
   FileExplorerResponse,
+  WorkspaceFileSystemStatus,
   FileVersion,
   FileWriteResult,
   FetchAgentTimelineResponseMessage,
@@ -4494,6 +4495,19 @@ export class DaemonClient {
       throw new Error("Directory listing unavailable.");
     }
     return payload.directory;
+  }
+
+  async getWorkspaceFileSystemStatus(
+    cwd: string,
+    requestId?: string,
+  ): Promise<WorkspaceFileSystemStatus | null> {
+    const payload = await this.sendCorrelatedSessionRequest({
+      requestId,
+      message: { type: "fs.workspace.status.request", cwd },
+      responseType: "fs.workspace.status.response",
+    });
+    if (payload.error) throw new Error(payload.error);
+    return payload.status;
   }
 
   async readFile(

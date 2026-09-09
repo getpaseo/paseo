@@ -2673,6 +2673,17 @@ export const FileExplorerRequestSchema = z.object({
   maxBytes: z.number().int().positive().optional(),
 });
 
+export const WorkspaceFileSystemStatusSchema = z.object({
+  state: z.enum(["online", "connecting", "offline", "error", "unknown"]),
+  detail: z.string().optional(),
+});
+
+export const WorkspaceFileSystemStatusRequestSchema = z.object({
+  type: z.literal("fs.workspace.status.request"),
+  cwd: z.string(),
+  requestId: z.string(),
+});
+
 export const FileVersionSchema = z.discriminatedUnion("status", [
   z.object({
     status: z.literal("ready"),
@@ -3218,6 +3229,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   WorkspaceClearAttentionRequestSchema,
   WorkspaceMarkUnreadRequestSchema,
   FileExplorerRequestSchema,
+  WorkspaceFileSystemStatusRequestSchema,
   FileSubscribeRequestSchema,
   FileUnsubscribeRequestSchema,
   FileWriteRequestSchema,
@@ -5734,6 +5746,16 @@ export const FileExplorerResponseSchema = z.object({
   }),
 });
 
+export const WorkspaceFileSystemStatusResponseSchema = z.object({
+  type: z.literal("fs.workspace.status.response"),
+  payload: z.object({
+    cwd: z.string(),
+    status: WorkspaceFileSystemStatusSchema.nullable(),
+    error: z.string().nullable(),
+    requestId: z.string(),
+  }),
+});
+
 export const FileSubscribeResponseSchema = z.object({
   type: z.literal("fs.file.subscribe.response"),
   payload: z.object({
@@ -6629,6 +6651,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   PaseoWorktreeArchiveResponseSchema,
   CreatePaseoWorktreeResponseSchema,
   FileExplorerResponseSchema,
+  WorkspaceFileSystemStatusResponseSchema,
   FileSubscribeResponseSchema,
   FileUnsubscribeResponseSchema,
   FileWriteResponseSchema,
@@ -7062,6 +7085,13 @@ export type WorkspaceClearAttentionRequest = z.infer<typeof WorkspaceClearAttent
 export type WorkspaceMarkUnreadRequest = z.infer<typeof WorkspaceMarkUnreadRequestSchema>;
 export type FileExplorerRequest = z.infer<typeof FileExplorerRequestSchema>;
 export type FileExplorerResponse = z.infer<typeof FileExplorerResponseSchema>;
+export type WorkspaceFileSystemStatus = z.infer<typeof WorkspaceFileSystemStatusSchema>;
+export type WorkspaceFileSystemStatusRequest = z.infer<
+  typeof WorkspaceFileSystemStatusRequestSchema
+>;
+export type WorkspaceFileSystemStatusResponse = z.infer<
+  typeof WorkspaceFileSystemStatusResponseSchema
+>;
 export type FileVersion = z.infer<typeof FileVersionSchema>;
 export type FileSubscribeRequest = z.infer<typeof FileSubscribeRequestSchema>;
 export type FileSubscribeResponse = z.infer<typeof FileSubscribeResponseSchema>;

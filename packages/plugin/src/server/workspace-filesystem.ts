@@ -2,6 +2,18 @@ export interface PluginWorkspaceFileSystemTarget {
   cwd: string;
 }
 
+export type PluginWorkspaceFileSystemState =
+  | "online"
+  | "connecting"
+  | "offline"
+  | "error"
+  | "unknown";
+
+export interface PluginWorkspaceFileSystemStatus {
+  state: PluginWorkspaceFileSystemState;
+  detail?: string;
+}
+
 export interface PluginWorkspaceFileSystemPath extends PluginWorkspaceFileSystemTarget {
   path: string;
 }
@@ -50,6 +62,9 @@ export type PluginWorkspaceFileWriteResult =
 export interface PluginWorkspaceFileSystemProvider {
   id: string;
   matches(target: PluginWorkspaceFileSystemTarget): boolean | Promise<boolean>;
+  getStatus?(
+    target: PluginWorkspaceFileSystemTarget,
+  ): PluginWorkspaceFileSystemStatus | Promise<PluginWorkspaceFileSystemStatus>;
   listDirectory(
     target: PluginWorkspaceFileSystemPath,
   ): PluginWorkspaceFileSystemDirectory | Promise<PluginWorkspaceFileSystemDirectory>;

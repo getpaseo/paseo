@@ -194,6 +194,9 @@ export class PluginService {
     return {
       key: `${pluginId}.${provider.id}`,
       writable: provider.writable,
+      ...(provider.hasStatus
+        ? { getStatus: (input: { cwd: string }) => call("get-status", input) }
+        : {}),
       listDirectory: (input) => call("list-directory", input),
       readFile: (input) => call("read-file", input),
       statFile: (input) => call("stat-file", input),

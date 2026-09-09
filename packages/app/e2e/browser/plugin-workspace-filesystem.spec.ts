@@ -4,6 +4,7 @@ import { withPluginWorkspaceFileSystem } from "../support/helpers/plugin-workspa
 test("plugin files use the native Explorer, file tab, and editor", async ({ page }) => {
   await withPluginWorkspaceFileSystem(page, async (workspace) => {
     await workspace.openRemoteFile();
+    await workspace.expectOnlineStatus();
     await workspace.expectEditorText("remote initial");
 
     await workspace.replaceRemoteText("remote external\n");

@@ -282,8 +282,10 @@ Plugin-backed workspace file systems are server contributions registered with
 Explorer/file-tab list, read, stat, and write messages through the plugin subprocess. The app owns
 all presentation; a file-system provider must not contribute a parallel Explorer panel. Cache
 resolution by `cwd`, invalidate it on every plugin lifecycle transition, and never fall back to the
-local workspace anchor after a provider has matched. The public reference owns the author contract
-and path-safety requirements.
+local workspace anchor after a provider has matched. Providers may also expose a lightweight
+`getStatus()` probe. Paseo polls that probe for projects with a secondary location label and renders
+the result beside that label in the native sidebar. The public reference owns the author contract,
+status semantics, and path-safety requirements.
 
 Command Center callbacks use the selected host's existing `PaseoApi` for normal Paseo operations.
 They use typed plugin RPC only for plugin-specific backend work. Surface and panel props expose

@@ -2229,6 +2229,49 @@ test("listDirectory sends a list file explorer request and returns directory ent
   });
 });
 
+test("getWorkspaceFileSystemStatus returns a plugin workspace status", async () => {
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_workspace_status",
+    logger: createMockLogger(),
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+
+  const responsePromise = client.getWorkspaceFileSystemStatus(
+    "/virtual/project",
+    "req-workspace-status",
+  );
+  expect(JSON.parse(assertStr(mock.sent[0]))).toEqual({
+    type: "session",
+    message: {
+      type: "fs.workspace.status.request",
+      cwd: "/virtual/project",
+      requestId: "req-workspace-status",
+    },
+  });
+
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "fs.workspace.status.response",
+      payload: {
+        cwd: "/virtual/project",
+        status: { state: "online", detail: "Connected" },
+        error: null,
+        requestId: "req-workspace-status",
+      },
+    }),
+  );
+
+  await expect(responsePromise).resolves.toEqual({ state: "online", detail: "Connected" });
+});
+
 test("readFile hides legacy base64 behind bytes", async () => {
   const logger = createMockLogger();
   const mock = createMockTransport();

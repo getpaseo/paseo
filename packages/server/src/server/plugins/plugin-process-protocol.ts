@@ -18,10 +18,12 @@ export interface PluginProviderMetadata {
 export interface PluginWorkspaceFileSystemMetadata {
   id: string;
   writable: boolean;
+  hasStatus?: boolean;
 }
 
 export type PluginWorkspaceFileSystemOperation =
   | "matches"
+  | "get-status"
   | "list-directory"
   | "read-file"
   | "stat-file"
@@ -115,6 +117,7 @@ const workspaceFileSystemMetadataSchema = z
   .object({
     id: z.string().min(1),
     writable: z.boolean(),
+    hasStatus: z.boolean().optional(),
   })
   .strict();
 const providerConnectRequestSchema = z
