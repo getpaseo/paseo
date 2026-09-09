@@ -225,6 +225,39 @@ describe("PluginService", () => {
     await expect(service.resolveWorkspaceFileSystem("/virtual/project")).resolves.toBeNull();
   });
 
+  it("retries workspace file system matching after a transient failure", async () => {
+    const home = await mkdtemp(path.join(tmpdir(), "paseo-plugin-home-"));
+    roots.push(home);
+    let attempts = 0;
+    const runtime: TestPluginRuntime = {
+      catalog: () => [{ id: "flaky", clientBundle: "bundle" }],
+      invoke: async () => undefined,
+      getLogs: () => [],
+      clearLogs: () => undefined,
+      getWorkspaceFileSystemRegistrations: () => [{ id: "remote", writable: false }],
+      invokeWorkspaceFileSystem: async (_pluginId, _providerId, operation) => {
+        if (operation !== "matches") throw new Error(`Unexpected operation: ${operation}`);
+        attempts += 1;
+        if (attempts === 1) throw new Error("temporary timeout");
+        return true;
+      },
+      startPlugin: async () => undefined,
+      stopPluginById: async () => false,
+      stopAll: async () => undefined,
+      subscribe: () => () => undefined,
+      bindPaseoSessionHost: () => undefined,
+    };
+    const service = createService(home, {}, { runtime });
+
+    await expect(service.resolveWorkspaceFileSystem("/virtual/project")).rejects.toThrow(
+      "temporary timeout",
+    );
+    const provider = await service.resolveWorkspaceFileSystem("/virtual/project");
+
+    expect(provider?.key).toBe("flaky.remote");
+    expect(attempts).toBe(2);
+  });
+
   it("resolves a provider icon path to sanitized inline SVG", async () => {
     const home = await mkdtemp(path.join(tmpdir(), "paseo-plugin-home-"));
     roots.push(home);

@@ -75,7 +75,7 @@ export type PluginProcessMessage =
       type: "ready";
       methods: string[];
       providers: PluginProviderMetadata[];
-      workspaceFileSystems: PluginWorkspaceFileSystemMetadata[];
+      workspaceFileSystems?: PluginWorkspaceFileSystemMetadata[];
       hooks?: { events: string[]; before: string[] };
     }
   | { type: "result"; requestId: string; output: unknown }
@@ -208,7 +208,7 @@ export const PluginProcessMessageSchema: z.ZodType<PluginProcessMessage> = z.dis
         type: z.literal("ready"),
         methods: z.array(z.string()),
         providers: z.array(providerMetadataSchema),
-        workspaceFileSystems: z.array(workspaceFileSystemMetadataSchema),
+        workspaceFileSystems: z.array(workspaceFileSystemMetadataSchema).optional(),
         hooks: hooksSchema.optional(),
       })
       .strict(),

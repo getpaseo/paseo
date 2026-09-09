@@ -149,6 +149,11 @@ export class PluginService {
     if (cached) return cached;
     const resolving = this.findWorkspaceFileSystem(normalized);
     this.workspaceFileSystemsByCwd.set(normalized, resolving);
+    void resolving.catch(() => {
+      if (this.workspaceFileSystemsByCwd.get(normalized) === resolving) {
+        this.workspaceFileSystemsByCwd.delete(normalized);
+      }
+    });
     return resolving;
   }
 
@@ -157,6 +162,7 @@ export class PluginService {
     const registrations = this.runtime.getWorkspaceFileSystemRegistrations;
     if (!invoke || !registrations) return null;
     const plugins = this.runtime.catalog().map((plugin) => plugin.id);
+    let firstError: unknown;
     for (const pluginId of plugins) {
       for (const provider of registrations.call(this.runtime, pluginId)) {
         try {
@@ -166,6 +172,7 @@ export class PluginService {
           if (matches !== true) continue;
           return this.createWorkspaceFileSystem(pluginId, provider, invoke);
         } catch (error) {
+          firstError ??= error;
           this.logger.warn(
             { err: error, pluginId, providerId: provider.id, cwd },
             "Workspace file system match failed",
@@ -173,6 +180,7 @@ export class PluginService {
         }
       }
     }
+    if (firstError) throw firstError;
     return null;
   }
 

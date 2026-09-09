@@ -53,9 +53,7 @@ function createReloadChild(
       callback?.(null);
       if (message.type === "initialize") {
         events.push(`start:${name}`);
-        queueMicrotask(() =>
-          emit("message", { type: "ready", methods, providers, workspaceFileSystems: [] }),
-        );
+        queueMicrotask(() => emit("message", { type: "ready", methods, providers }));
       }
       if (message.type === "shutdown") {
         events.push(`shutdown:${name}`);

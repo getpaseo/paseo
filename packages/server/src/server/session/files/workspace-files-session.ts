@@ -58,6 +58,7 @@ export interface WorkspaceFilesSessionOptions {
   logger: pino.Logger;
   fileObserver?: FileObserver;
   fileSystems?: WorkspaceFileSystemResolver;
+  remoteFilePollIntervalMs?: number;
 }
 
 export interface WorkspaceFileSystemProvider {
@@ -79,6 +80,16 @@ export interface WorkspaceFileSystemResolver {
   resolve(cwd: string): Promise<WorkspaceFileSystemProvider | null>;
 }
 
+const DEFAULT_REMOTE_FILE_POLL_INTERVAL_MS = 2_000;
+
+function fileVersionFingerprint(version: ExplorerFileVersion): string {
+  if (version.status === "ready") {
+    return `ready:${version.revision ?? `${version.size}:${version.modifiedAt}`}`;
+  }
+  if (version.status === "error") return `error:${version.error}`;
+  return version.status;
+}
+
 /**
  * A client's workspace file-access surface: browsing directories, reading file
  * contents (inline JSON or binary frames), receiving uploads, issuing download
@@ -93,6 +104,7 @@ export class WorkspaceFilesSession {
   private readonly fileUploads: FileUploadStore;
   private readonly fileObserver: FileObserver;
   private readonly fileSystems: WorkspaceFileSystemResolver | null;
+  private readonly remoteFilePollIntervalMs: number;
   private readonly fileSubscriptions = new Map<string, () => void>();
 
   constructor(options: WorkspaceFilesSessionOptions) {
@@ -102,6 +114,8 @@ export class WorkspaceFilesSession {
     this.fileUploads = new FileUploadStore({ paseoHome: options.paseoHome });
     this.fileObserver = options.fileObserver ?? workspaceFileObserver;
     this.fileSystems = options.fileSystems ?? null;
+    this.remoteFilePollIntervalMs =
+      options.remoteFilePollIntervalMs ?? DEFAULT_REMOTE_FILE_POLL_INTERVAL_MS;
   }
 
   async handleFileSubscribeRequest(request: FileSubscribeRequest): Promise<void> {
@@ -110,7 +124,42 @@ export class WorkspaceFilesSession {
       const provider = await this.fileSystems?.resolve(request.cwd);
       if (provider) {
         const initial = await provider.statFile({ cwd: request.cwd, path: request.path });
-        this.fileSubscriptions.set(request.subscriptionId, () => undefined);
+        let active = true;
+        let checking = false;
+        let fingerprint = fileVersionFingerprint(initial);
+        const poll = setInterval(async () => {
+          if (!active || checking) return;
+          checking = true;
+          let version: ExplorerFileVersion;
+          try {
+            version = await provider.statFile({ cwd: request.cwd, path: request.path });
+          } catch (error) {
+            version = {
+              status: "error",
+              cwd: request.cwd,
+              path: request.path,
+              error: getErrorMessage(error),
+            };
+          } finally {
+            checking = false;
+          }
+          if (!active) return;
+          const nextFingerprint = fileVersionFingerprint(version);
+          if (nextFingerprint === fingerprint) return;
+          fingerprint = nextFingerprint;
+          this.host.emit({
+            type: "fs.file.update",
+            payload: {
+              subscriptionId: request.subscriptionId,
+              version: { ...version, cwd: request.cwd, path: request.path },
+            },
+          });
+        }, this.remoteFilePollIntervalMs);
+        poll.unref();
+        this.fileSubscriptions.set(request.subscriptionId, () => {
+          active = false;
+          clearInterval(poll);
+        });
         this.host.emit({
           type: "fs.file.subscribe.response",
           payload: {

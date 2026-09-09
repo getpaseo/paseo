@@ -684,7 +684,7 @@ export class PluginRuntime {
       methods: new Set(ready.methods),
       hooks: ready.hooks ?? { events: [], before: [] },
       providers: ready.providers ?? [],
-      workspaceFileSystems: ready.workspaceFileSystems,
+      workspaceFileSystems: ready.workspaceFileSystems ?? [],
       child,
       outputCapture,
       pending,
@@ -698,7 +698,7 @@ export class PluginRuntime {
         pluginId,
         methods: ready.methods,
         providers: ready.providers,
-        workspaceFileSystems: ready.workspaceFileSystems,
+        workspaceFileSystems: ready.workspaceFileSystems ?? [],
       },
       "Loaded plugin",
     );

@@ -126,6 +126,9 @@ test("plugin files use the native Explorer, file tab, and editor", async ({ page
     await expectFileTabOpen(page, "remote.txt");
     await expect(editor(page)).toContainText("remote initial");
 
+    await writeFile(backingFile, "remote external\n", "utf8");
+    await expect(editor(page)).toContainText("remote external", { timeout: 10_000 });
+
     await editor(page).fill("saved through native editor\n");
     await editor(page).press("Control+s");
     await expect.poll(() => readFile(backingFile, "utf8")).toBe("saved through native editor\n");

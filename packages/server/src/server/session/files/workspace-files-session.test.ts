@@ -8,7 +8,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import pino from "pino";
 import {
   decodeFileTransferFrame,
@@ -43,6 +43,7 @@ function makeSubsystem(
     hasBinaryChannel?: boolean;
     emitBinary?: (frame: Uint8Array) => Promise<void> | void;
     fileSystems?: WorkspaceFileSystemResolver;
+    remoteFilePollIntervalMs?: number;
   } = {},
 ) {
   const emitted: SessionOutboundMessage[] = [];
@@ -63,6 +64,7 @@ function makeSubsystem(
     paseoHome,
     logger: pino({ level: "silent" }),
     fileSystems: options.fileSystems,
+    remoteFilePollIntervalMs: options.remoteFilePollIntervalMs,
   });
   return {
     subsystem,
@@ -173,6 +175,71 @@ describe("WorkspaceFilesSession", () => {
         },
       },
     ]);
+    subsystem.dispose();
+  });
+
+  test("publishes external changes to subscribed plugin workspace files", async () => {
+    const cwd = makeDir("workspace-files-plugin-subscribe-");
+    let revision = 1;
+    const provider = {
+      key: "example.remote",
+      writable: true,
+      listDirectory: async () => ({ path: ".", entries: [] }),
+      readFile: async () => ({
+        path: "remote.txt",
+        kind: "text" as const,
+        encoding: "utf-8" as const,
+        content: `version ${revision}`,
+        size: 9,
+        modifiedAt: `2026-09-09T00:00:0${revision}.000Z`,
+        revision: `remote:${revision}`,
+      }),
+      statFile: async () => ({
+        status: "ready" as const,
+        cwd,
+        path: "remote.txt",
+        size: 9,
+        modifiedAt: `2026-09-09T00:00:0${revision}.000Z`,
+        revision: `remote:${revision}`,
+      }),
+      writeFile: async () => ({
+        status: "written" as const,
+        modifiedAt: "2026-09-09T00:00:02.000Z",
+        size: 9,
+        revision: "remote:2",
+      }),
+    };
+    const { subsystem, emitted } = makeSubsystem({
+      fileSystems: { resolve: async (candidate) => (candidate === cwd ? provider : null) },
+      remoteFilePollIntervalMs: 5,
+    });
+
+    await subsystem.handleFileSubscribeRequest({
+      type: "fs.file.subscribe.request",
+      cwd,
+      path: "remote.txt",
+      subscriptionId: "sub-remote",
+      requestId: "req-subscribe",
+    });
+    revision = 2;
+
+    await vi.waitFor(() => {
+      expect(emitted).toContainEqual({
+        type: "fs.file.update",
+        payload: {
+          subscriptionId: "sub-remote",
+          version: {
+            status: "ready",
+            cwd,
+            path: "remote.txt",
+            size: 9,
+            modifiedAt: "2026-09-09T00:00:02.000Z",
+            revision: "remote:2",
+          },
+        },
+      });
+    });
+    subsystem.dispose();
   });
 
   test("routes native file subscriptions and writes through a plugin workspace file system", async () => {
@@ -261,6 +328,7 @@ describe("WorkspaceFilesSession", () => {
         },
       },
     ]);
+    subsystem.dispose();
   });
 
   test("does not fall back to the local anchor for unsupported remote entry mutations", async () => {
