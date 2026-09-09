@@ -2274,12 +2274,17 @@ export class DaemonClient {
     });
   }
 
-  async openProject(cwd: string, requestId?: string): Promise<OpenProjectPayload> {
+  async openProject(
+    cwd: string,
+    requestId?: string,
+    projectPresentation?: { secondaryLabel?: string | null },
+  ): Promise<OpenProjectPayload> {
     return this.sendCorrelatedSessionRequest({
       requestId,
       message: {
         type: "open_project_request",
         cwd,
+        ...(projectPresentation ? { projectPresentation } : {}),
       },
       responseType: "open_project_response",
     });

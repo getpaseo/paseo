@@ -568,6 +568,7 @@ export class WorkspaceDirectory {
         projectId: project.projectId,
         projectKey: project.projectKey ?? undefined,
         projectDisplayName: resolveProjectDisplayName(project),
+        projectSecondaryLabel: project.secondaryLabel,
         projectCustomName: project.customName ?? null,
         projectCustomIconRevision: project.customIconRevision ?? null,
         projectRootPath: project.rootPath,

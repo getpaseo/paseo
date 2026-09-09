@@ -317,6 +317,7 @@ function createNoopProjectRegistry(): ProjectRegistry {
       displayName: input.displayName,
       projectKey: input.projectKey ?? null,
       customName: null,
+      secondaryLabel: null,
       customIconRevision: null,
       createdAt: input.timestamp,
       updatedAt: input.timestamp,

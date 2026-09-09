@@ -3744,6 +3744,7 @@ test("archiving the last workspace emits a remove carrying the now-empty project
     emptyProject: {
       projectId: project.projectId,
       projectDisplayName: "repo",
+      projectSecondaryLabel: null,
       projectCustomName: null,
       projectCustomIconRevision: null,
       projectRootPath: REPO_CWD,
@@ -4151,7 +4152,7 @@ test("workspace updates stay scoped to the matching cwd", async () => {
   expect(archivedWorkspaceIds).toEqual([]);
 });
 
-test("open_project_request registers a workspace before any agent exists", async () => {
+test("open_project_request registers a workspace and applies project presentation", async () => {
   const emitted: SessionOutboundMessage[] = [];
   const session = createSessionForWorkspaceTests();
   const projects = new Map<string, ReturnType<typeof createPersistedProjectRecord>>();
@@ -4204,6 +4205,7 @@ test("open_project_request registers a workspace before any agent exists", async
   await session.handleMessage({
     type: "open_project_request",
     cwd: REPO_CWD,
+    projectPresentation: { secondaryLabel: "  devbox.example.com  " },
     requestId: "req-open",
   });
 
@@ -4214,6 +4216,8 @@ test("open_project_request registers a workspace before any agent exists", async
   const response = findByType(emitted, "open_project_response");
   expect(response?.payload.error).toBeNull();
   expect(response?.payload.workspace?.id).toBe(registeredWorkspace?.workspaceId);
+  expect(response?.payload.workspace?.projectSecondaryLabel).toBe("devbox.example.com");
+  expect(projects.get("prj_githubruntime")?.secondaryLabel).toBe("devbox.example.com");
 });
 
 test("import_agent_request registers a workspace for a never-seen cwd", async () => {

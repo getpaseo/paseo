@@ -39,6 +39,14 @@ export interface SeedDaemonClient {
     } | null;
     error: string | null;
   }>;
+  openProject(
+    cwd: string,
+    requestId?: string,
+    projectPresentation?: { secondaryLabel?: string | null },
+  ): Promise<{
+    workspace: SeedWorkspaceDescriptor | null;
+    error: string | null;
+  }>;
   removeProject(projectId: string): Promise<{ removedWorkspaceIds: string[] }>;
   renameProject(projectId: string, customName: string | null): Promise<void>;
   fetchWorkspaces(options?: { filter?: { projectId?: string } }): Promise<{

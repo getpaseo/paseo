@@ -951,9 +951,23 @@ function ProjectHeaderRow({
         />
 
         <View style={styles.projectTitleGroup}>
-          <Text style={styles.projectTitle} numberOfLines={1}>
+          <Text
+            style={styles.projectTitle}
+            numberOfLines={1}
+            testID={`sidebar-project-primary-label-${project.viewKey}`}
+          >
             {displayName}
           </Text>
+          {project.projectSecondaryLabel ? (
+            <Text
+              style={styles.projectSecondaryLabel}
+              numberOfLines={1}
+              ellipsizeMode="tail"
+              testID={`sidebar-project-secondary-label-${project.viewKey}`}
+            >
+              {project.projectSecondaryLabel}
+            </Text>
+          ) : null}
         </View>
       </View>
       <ProjectRowTrailingActions
@@ -2594,7 +2608,16 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.base,
     fontWeight: "400",
     minWidth: 0,
+    flex: 1,
     flexShrink: 1,
+  },
+  projectSecondaryLabel: {
+    color: theme.colors.foregroundExtraMuted,
+    fontSize: theme.fontSize.sm,
+    minWidth: 0,
+    maxWidth: "45%",
+    flexShrink: 1,
+    textAlign: "right",
   },
   projectActionButton: {
     flexDirection: "row",

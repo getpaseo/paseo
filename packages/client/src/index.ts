@@ -135,6 +135,9 @@ export interface PaseoWorkspaceListResult {
 
 export interface PaseoWorkspaceOpenOptions {
   cwd: string;
+  projectPresentation?: {
+    secondaryLabel?: string | null;
+  };
   requestId?: string;
 }
 
@@ -803,7 +806,11 @@ async function openWorkspace(
   requestId?: string,
 ): Promise<PaseoWorkspaceHandle> {
   const options = typeof input === "string" ? { cwd: input, requestId } : input;
-  const result = await daemonClient.openProject(options.cwd, options.requestId);
+  const result = await daemonClient.openProject(
+    options.cwd,
+    options.requestId,
+    options.projectPresentation,
+  );
   if (result.error || !result.workspace) {
     throw new Error(result.error ?? `The daemon did not open a workspace for ${options.cwd}`);
   }
