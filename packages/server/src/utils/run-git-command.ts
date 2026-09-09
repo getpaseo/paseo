@@ -62,6 +62,15 @@ export interface GitCommandResult {
   signal: NodeJS.Signals | null;
 }
 
+export type RunGitCommand = (
+  args: string[],
+  options: GitCommandOptions,
+) => Promise<GitCommandResult>;
+
+export function createRunGitCommand(provenance: string): RunGitCommand {
+  return (args, options) => runGitCommandWithProvenance(args, options, provenance);
+}
+
 export interface GitCommandMetric {
   args: string[];
   cwd: string;
@@ -249,16 +258,17 @@ function getEnvOverlayKeys(envOverlay: ProcessEnvRecord | undefined): string[] {
   return Object.keys(envOverlay ?? {}).sort();
 }
 
-export function runGitCommand(
+function runGitCommandWithProvenance(
   args: string[],
   options: GitCommandOptions,
+  provenance?: string,
 ): Promise<GitCommandResult> {
   const metricsState = submitGitCommandMetric(args, options.cwd);
   const commandTrace = submitGitCommandTrace(args, options.cwd, {
     active: gitProcessScheduler.activeCount,
     pending: gitProcessScheduler.pendingCount,
   });
-  const runtimeMetric = gitRuntimeMetrics.submit(getGitOperation(args));
+  const runtimeMetric = gitRuntimeMetrics.submit(getGitOperation(args), provenance);
   const startCommand = () => {
     let releaseProcessSlot!: () => void;
     const exited = new Promise<void>((resolve) => {
@@ -367,12 +377,17 @@ export function runGitCommand(
       try {
         // `core.quotepath=false` makes git emit raw UTF-8 paths instead of
         // octal-escaping non-ASCII bytes (e.g. `测试文件.txt` vs `"\346\265\213..."`).
-        child = spawnProcess("git", ["-c", "core.quotepath=false", ...args], {
-          cwd: options.cwd,
-          envOverlay,
-          shell: false,
-          stdio: ["ignore", "pipe", "pipe"],
-        });
+        // `core.fsmonitor=false` prevents repository config from launching a command.
+        child = spawnProcess(
+          "git",
+          ["-c", "core.quotepath=false", "-c", "core.fsmonitor=false", ...args],
+          {
+            cwd: options.cwd,
+            envOverlay,
+            shell: false,
+            stdio: ["ignore", "pipe", "pipe"],
+          },
+        );
         spawnGitCommandTrace(commandTrace, child.pid);
       } catch (error) {
         rejectSpawnFailure(error);
@@ -525,6 +540,8 @@ export function runGitCommand(
   );
   return promise;
 }
+
+export const runGitCommand: RunGitCommand = runGitCommandWithProvenance;
 
 function formatGitCommand(args: string[]): string {
   return ["git", ...args].join(" ");

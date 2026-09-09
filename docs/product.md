@@ -16,7 +16,7 @@ Freedom and flexibility. Every design decision follows from this:
 - **Cross-device** — Desktop, mobile, web, CLI. Start work at your desk, check progress from your phone, script from the terminal.
 - **Self-hosted** — The daemon runs on your machine. Your code, your keys, your environment. No inference markup, no cloud dependency.
 - **Respectful** - No telemetry, no forced cloud, no forced accounts
-- **Open source** — AGPL-3.0. Users can inspect, fork, and contribute.
+- **Open source** — Apache-2.0. Users can inspect, fork, and contribute.
 - **BYOK** — Bring your own keys. Use your subsidized plans and first-party provider pricing. Paseo adds zero cost on top.
 
 ## How it works

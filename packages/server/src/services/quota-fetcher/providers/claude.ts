@@ -436,30 +436,33 @@ export class ClaudeQuotaProvider implements ProviderUsageFetcher {
 
   private async readCredentials(): Promise<ClaudeCredentialRecord | null> {
     const credPath = join(this.claudeHome, ".credentials.json");
+    const fileCredentials = await this.readCredentialFile(credPath);
+    return (
+      fileCredentials ?? (this.platform === "darwin" ? await this.readKeychainCredential() : null)
+    );
+  }
 
-    if (existsSync(credPath)) {
-      try {
-        const creds = ClaudeCredentialsSchema.parse(
-          JSON.parse(await fs.readFile(credPath, "utf8")),
-        );
-        const oauth = creds.claudeAiOauth;
-        if (oauth?.accessToken) {
-          return { oauth: { ...oauth, accessToken: oauth.accessToken } };
-        }
-      } catch {
-        // Fall through to the macOS Keychain below.
-      }
+  private async readCredentialFile(path: string): Promise<ClaudeCredentialRecord | null> {
+    if (!existsSync(path)) return null;
+    try {
+      return this.toCredentialRecord(
+        ClaudeCredentialsSchema.parse(JSON.parse(await fs.readFile(path, "utf8"))),
+      );
+    } catch {
+      return null;
     }
+  }
 
-    if (this.platform === "darwin") {
-      const creds = ClaudeCredentialsSchema.safeParse(await this.readKeychainCredentials());
-      const oauth = creds.success ? creds.data.claudeAiOauth : undefined;
-      if (oauth?.accessToken) {
-        return { oauth: { ...oauth, accessToken: oauth.accessToken } };
-      }
-    }
+  private async readKeychainCredential(): Promise<ClaudeCredentialRecord | null> {
+    const parsed = ClaudeCredentialsSchema.safeParse(await this.readKeychainCredentials());
+    return parsed.success ? this.toCredentialRecord(parsed.data) : null;
+  }
 
-    return null;
+  private toCredentialRecord(
+    credentials: z.infer<typeof ClaudeCredentialsSchema>,
+  ): ClaudeCredentialRecord | null {
+    const oauth = credentials.claudeAiOauth;
+    return oauth?.accessToken ? { oauth: { ...oauth, accessToken: oauth.accessToken } } : null;
   }
 
   private async callClaudeApi(token: string): Promise<ClaudeUsageResponse | "NEEDS_AUTH"> {

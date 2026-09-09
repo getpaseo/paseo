@@ -11,6 +11,7 @@ vi.mock("@react-native-async-storage/async-storage", () => ({
 import { usePanelStore } from "@/stores/panel-store";
 import {
   collectAllTabs,
+  findPaneById,
   selectExplorerSidebarPaneId,
   useWorkspaceLayoutStore,
 } from "@/stores/workspace-layout-store";
@@ -31,7 +32,11 @@ beforeEach(() => {
     sidePaneIdByWorkspace: {},
     splitSizesByWorkspace: {},
   });
-  usePanelStore.setState({ mobilePanel: { target: "agent", revision: 0 } });
+  usePanelStore.setState({
+    mobilePanel: { target: "agent", revision: 0 },
+    explorerTab: "files",
+    explorerTabByCheckout: {},
+  });
 });
 
 describe("Explorer sidebar", () => {
@@ -80,9 +85,35 @@ describe("Explorer sidebar", () => {
       workspaceKey: WORKSPACE_KEY,
       checkout: CHECKOUT,
     };
-    toggleExplorerSidebar(input);
-    expect(isExplorerSidebarOpen(input)).toBe(true);
+    openExplorerSidebarView({ ...input, view: "files" });
     toggleExplorerSidebar(input);
     expect(isExplorerSidebarOpen(input)).toBe(false);
+    toggleExplorerSidebar(input);
+    expect(isExplorerSidebarOpen(input)).toBe(true);
+    const openedState = useWorkspaceLayoutStore.getState();
+    const openedLayout = openedState.layoutByWorkspace[WORKSPACE_KEY];
+    const explorerPaneId = selectExplorerSidebarPaneId(openedState, WORKSPACE_KEY);
+    const explorerPane =
+      openedLayout && explorerPaneId ? findPaneById(openedLayout.root, explorerPaneId) : null;
+    const activeExplorerTarget =
+      openedLayout && explorerPane
+        ? collectAllTabs(openedLayout.root).find((tab) => tab.tabId === explorerPane.focusedTabId)
+            ?.target.kind
+        : null;
+    expect(activeExplorerTarget).toBe("files");
+  });
+
+  it("toggles the compact Explorer without changing its selected view", () => {
+    usePanelStore.getState().setExplorerTabForCheckout({ ...CHECKOUT, tab: "files" });
+    const input = {
+      isCompact: true,
+      workspaceKey: WORKSPACE_KEY,
+      checkout: CHECKOUT,
+    };
+
+    toggleExplorerSidebar(input);
+
+    expect(isExplorerSidebarOpen(input)).toBe(true);
+    expect(usePanelStore.getState().explorerTab).toBe("files");
   });
 });

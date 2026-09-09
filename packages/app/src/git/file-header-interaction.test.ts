@@ -1,51 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
   reduceFileHeaderPress,
-  shouldActivateStickyHeaderPress,
   type FileHeaderPressEvent,
   type FileHeaderPressPhase,
 } from "./file-header-interaction";
 
-const pressOrigin = { startedAt: 1_000, pageX: 20, pageY: 30 };
-
 describe("file header interaction arbitration", () => {
-  it("activates an unhandled native sticky-header tap on press out", () => {
-    expect(
-      shouldActivateStickyHeaderPress({
-        enabled: true,
-        native: true,
-        pressHandled: false,
-        stickyPressFallback: true,
-        pressOrigin,
-        releasedAt: 1_500,
-        pageX: 32,
-        pageY: 30,
-      }),
-    ).toBe(true);
-  });
-
-  it.each([
-    ["an already handled long press", { pressHandled: true }],
-    ["a non-native release", { native: false }],
-    ["a non-sticky header", { stickyPressFallback: false }],
-    ["a held press", { releasedAt: 1_501 }],
-    ["a moved press", { pageX: 33 }],
-  ])("does not activate %s", (_label, override) => {
-    expect(
-      shouldActivateStickyHeaderPress({
-        enabled: true,
-        native: true,
-        pressHandled: false,
-        stickyPressFallback: true,
-        pressOrigin,
-        releasedAt: 1_500,
-        pageX: 32,
-        pageY: 30,
-        ...override,
-      }),
-    ).toBe(false);
-  });
-
   function run(events: FileHeaderPressEvent[]) {
     let phase: FileHeaderPressPhase = "idle";
     const effects: string[] = [];
@@ -57,64 +17,17 @@ describe("file header interaction arbitration", () => {
     return effects;
   }
 
-  it("lets a normal press claim a deferred sticky release exactly once", () => {
-    expect(
-      run([
-        { type: "press-in" },
-        { type: "press-out", stickyFallbackEligible: true },
-        { type: "press" },
-        { type: "fallback" },
-      ]),
-    ).toEqual(["defer-activate", "activate"]);
+  it("activates an actual press", () => {
+    expect(run([{ type: "press-in" }, { type: "press" }])).toEqual(["activate"]);
   });
 
-  it("keeps a duplicated wrapper press-out eligible for one fallback", () => {
-    expect(
-      run([
-        { type: "press-in" },
-        { type: "press-out", stickyFallbackEligible: true },
-        { type: "press-out", stickyFallbackEligible: true },
-        { type: "fallback" },
-      ]),
-    ).toEqual(["defer-activate", "activate"]);
+  it("does not activate when scrolling cancels the press", () => {
+    expect(run([{ type: "press-in" }])).toEqual([]);
   });
 
-  it("falls back once for a canceled sticky press", () => {
-    expect(
-      run([
-        { type: "press-in" },
-        { type: "press-out", stickyFallbackEligible: true },
-        { type: "fallback" },
-      ]),
-    ).toEqual(["defer-activate", "activate"]);
-  });
-
-  it.each([
-    [
-      "canceled non-sticky",
-      [{ type: "press-in" }, { type: "press-out", stickyFallbackEligible: false }],
-    ],
-    [
-      "moved",
-      [
-        { type: "press-in" },
-        { type: "press-out", stickyFallbackEligible: false },
-        { type: "fallback" },
-      ],
-    ],
-  ] as const)("does not activate a %s sequence", (_label, events) => {
-    expect(run([...events])).toEqual([]);
-  });
-
-  it("selects a long press without activating when Pressability later emits press-out/press", () => {
-    expect(
-      run([
-        { type: "press-in" },
-        { type: "long-press" },
-        { type: "press-out", stickyFallbackEligible: false },
-        { type: "press" },
-        { type: "fallback" },
-      ]),
-    ).toEqual(["select"]);
+  it("selects a long press without activating when Pressability later emits press", () => {
+    expect(run([{ type: "press-in" }, { type: "long-press" }, { type: "press" }])).toEqual([
+      "select",
+    ]);
   });
 });

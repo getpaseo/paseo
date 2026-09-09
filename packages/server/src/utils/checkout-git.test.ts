@@ -521,6 +521,14 @@ describe("checkout git utilities", () => {
     expect(message).toBe("update file");
   });
 
+  it("honors commit signing configuration", async () => {
+    execFileSync("git", ["config", "commit.gpgsign", "true"], { cwd: repoDir });
+    execFileSync("git", ["config", "gpg.program", process.execPath], { cwd: repoDir });
+    writeFileSync(join(repoDir, "file.txt"), "signed\n");
+
+    await expect(commitAll(repoDir, "signed update")).rejects.toThrow("failed to sign the data");
+  });
+
   it("includes both paths for a staged rename in structured diffs", async () => {
     execFileSync("git", ["mv", "file.txt", "renamed.txt"], { cwd: repoDir });
 
@@ -3527,6 +3535,21 @@ const x = 1;
 
     await expect(mergeToBase(repoDir, { baseRef: "main" })).rejects.toBeInstanceOf(
       MergeConflictError,
+    );
+  });
+
+  it("honors commit signing configuration for squash merges", async () => {
+    execFileSync("git", ["checkout", "-b", "feature"], { cwd: repoDir });
+    writeFileSync(join(repoDir, "feature.txt"), "feature\n");
+    execFileSync("git", ["add", "feature.txt"], { cwd: repoDir });
+    execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "feature commit"], {
+      cwd: repoDir,
+    });
+    execFileSync("git", ["config", "commit.gpgsign", "true"], { cwd: repoDir });
+    execFileSync("git", ["config", "gpg.program", process.execPath], { cwd: repoDir });
+
+    await expect(mergeToBase(repoDir, { baseRef: "main", mode: "squash" })).rejects.toThrow(
+      "failed to sign the data",
     );
   });
 

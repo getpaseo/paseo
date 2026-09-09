@@ -6,7 +6,7 @@ import { isWeb } from "@/constants/platform";
 import { WindowChromeRootRegion } from "@/utils/desktop-window";
 import { usePanelStore, type MobilePanelView } from "@/stores/panel-store";
 import { getMobilePanelFrame } from "./model";
-import { useIsMobilePanelPresented, useMobilePanelsRuntime } from "./provider";
+import { useIsMobilePanelActive, useMobilePanelsRuntime } from "./provider";
 
 type OverlayPanel = Exclude<MobilePanelView, "agent">;
 
@@ -24,10 +24,8 @@ export function MobilePanelOverlay({
   panelStyle,
 }: MobilePanelOverlayProps) {
   const { position, windowWidth } = useMobilePanelsRuntime();
-  const target = usePanelStore((state) => state.mobilePanel.target);
   const showMobileAgent = usePanelStore((state) => state.showMobileAgent);
-  const isOpen = target === panel;
-  const isPresented = useIsMobilePanelPresented(panel);
+  const isOpen = useIsMobilePanelActive(panel);
   const isLeft = panel === "agent-list";
 
   const sidebarAnimatedStyle = useAnimatedStyle(() => {
@@ -42,10 +40,11 @@ export function MobilePanelOverlay({
     return { opacity: isLeft ? frame.leftBackdropOpacity : frame.rightBackdropOpacity };
   }, [isLeft, windowWidth]);
 
-  const overlayStyle = useMemo(
-    () => [styles.overlay, { display: isPresented ? ("flex" as const) : ("none" as const) }],
-    [isPresented],
-  );
+  const overlayAnimatedStyle = useAnimatedStyle(() => {
+    const isVisible = isLeft ? position.value < 0 : position.value > 0;
+    return { display: isVisible ? ("flex" as const) : ("none" as const) };
+  }, [isLeft]);
+
   const positionedPanelStyle = isLeft ? styles.leftPanel : styles.rightPanel;
   const backdropStyle = useMemo(
     () => [styles.backdrop, backdropAnimatedStyle],
@@ -73,19 +72,25 @@ export function MobilePanelOverlay({
       {/* Fabric needs an always-mounted native host to attach the close handler while the
           retained panel content is hidden. nativeID keeps that host registered. */}
       <View
+        accessibilityElementsHidden={!isOpen}
         collapsable={false}
+        importantForAccessibility={isOpen ? "auto" : "no-hide-descendants"}
         nativeID={`${panel}-gesture-host`}
         pointerEvents={overlayPointerEvents}
         style={styles.overlay}
       >
-        <View style={overlayStyle} pointerEvents={overlayPointerEvents}>
+        <Animated.View
+          pointerEvents={overlayPointerEvents}
+          style={[styles.overlay, overlayAnimatedStyle]}
+        >
           <Pressable
+            accessible={false}
             accessibilityElementsHidden
             importantForAccessibility="no-hide-descendants"
             onPress={showMobileAgent}
             pointerEvents={isOpen ? "auto" : "none"}
             style={StyleSheet.absoluteFillObject}
-            testID={`${panel}-backdrop`}
+            testID={isOpen ? `${panel}-backdrop` : undefined}
           >
             <Animated.View pointerEvents="none" style={backdropStyle} />
           </Pressable>
@@ -93,7 +98,7 @@ export function MobilePanelOverlay({
           <Animated.View pointerEvents={isOpen ? "auto" : "none"} style={combinedPanelStyle}>
             <WindowChromeRootRegion corners="both">{children}</WindowChromeRootRegion>
           </Animated.View>
-        </View>
+        </Animated.View>
       </View>
     </GestureDetector>
   );

@@ -59,8 +59,8 @@ import { useSessionStore } from "@/stores/session-store";
 import { FileActionsContextMenuContent } from "@/components/file-actions-menu";
 import { ContextMenu, ContextMenuTrigger, useContextMenu } from "@/components/ui/context-menu";
 import { useFileDownload } from "@/hooks/use-file-download";
-import { useIsLocalDaemon } from "@/hooks/use-is-local-daemon";
 import { useFileExplorerActions } from "@/hooks/use-file-explorer-actions";
+import { useIsLocalDaemon } from "@/hooks/use-is-local-daemon";
 import { buildWorkspaceExplorerStateKey } from "@/hooks/use-file-explorer-actions";
 import { usePanelStore, type ExpandedPathsUpdate, type SortOption } from "@/stores/panel-store";
 import { buildAbsoluteExplorerPath } from "@/utils/explorer-paths";
@@ -77,6 +77,7 @@ import { useWorkspaceFileDragSource } from "@/attachments/use-workspace-file-dra
 import { confirmDialog } from "@/utils/confirm-dialog";
 import { useToast } from "@/contexts/toast-context";
 import { openDesktopTarget, useDesktopOpenTargets } from "@/workspace/desktop-open-targets";
+import { useOpenDirectoryInEditor } from "@/workspace/open-in-editor/directory";
 
 const SORT_OPTIONS: { value: SortOption }[] = [
   { value: "name" },
@@ -113,6 +114,8 @@ interface TreeRowItemProps {
   onSelectEntry: (entry: ExplorerEntry) => void;
   onCopyPath: (path: string) => void;
   onCopyRelativePath: (path: string) => void;
+  onOpenInEditor?: (entry: ExplorerEntry) => void;
+  editorTargetName?: string;
   onRevealEntry?: (entry: ExplorerEntry) => void;
   revealTargetName?: string;
   onDownloadEntry: (entry: ExplorerEntry) => void;
@@ -237,6 +240,8 @@ function TreeRowItem({
   onSelectEntry,
   onCopyPath,
   onCopyRelativePath,
+  onOpenInEditor,
+  editorTargetName,
   onRevealEntry,
   revealTargetName,
   onDownloadEntry,
@@ -289,6 +294,10 @@ function TreeRowItem({
   const handleCopyRelativePath = useCallback(() => {
     onCopyRelativePath(entry.path);
   }, [onCopyRelativePath, entry.path]);
+
+  const handleOpenInEditor = useCallback(() => {
+    onOpenInEditor?.(entry);
+  }, [entry, onOpenInEditor]);
 
   const handleReveal = useCallback(() => {
     onRevealEntry?.(entry);
@@ -366,6 +375,8 @@ function TreeRowItem({
       </ContextMenuTrigger>
       <FileActionsContextMenuContent
         fileKind={entry.kind}
+        onOpenInEditor={isDirectory && onOpenInEditor ? handleOpenInEditor : undefined}
+        editorTargetName={editorTargetName}
         onCopyPath={handleCopy}
         onCopyRelativePath={handleCopyRelativePath}
         onReveal={onRevealEntry ? handleReveal : undefined}
@@ -439,6 +450,10 @@ export function FileExplorerPane({
     isLocalExecution: isLocalDaemon,
   });
   const fileManagerTarget = desktopOpenTargets.find((target) => target.kind === "file-manager");
+  const openDirectoryInEditor = useOpenDirectoryInEditor({
+    serverId,
+    workspaceDirectory: normalizedWorkspaceRoot,
+  });
   // COMPAT(fsEntryOps): added in v0.3.0, remove gate after 2027-02-08.
   const fsEntryOpsEnabled = useSessionStore(
     (state) => state.sessions[serverId]?.serverInfo?.features?.fsEntryOps === true,
@@ -606,6 +621,11 @@ export function FileExplorerPane({
       }
     },
     [fileManagerTarget, normalizedWorkspaceRoot, t, toast],
+  );
+
+  const handleOpenDirectoryInEditor = useCallback(
+    (entry: ExplorerEntry) => openDirectoryInEditor?.open(entry.path),
+    [openDirectoryInEditor],
   );
 
   const handleDownloadEntry = useCallback(
@@ -959,6 +979,8 @@ export function FileExplorerPane({
           onSelectEntry={handleSelectEntry}
           onCopyPath={handleCopyPath}
           onCopyRelativePath={handleCopyRelativePath}
+          onOpenInEditor={openDirectoryInEditor ? handleOpenDirectoryInEditor : undefined}
+          editorTargetName={openDirectoryInEditor?.targetName}
           onRevealEntry={fileManagerTarget ? handleRevealEntry : undefined}
           revealTargetName={fileManagerTarget?.label}
           onDownloadEntry={handleDownloadEntry}
@@ -979,6 +1001,7 @@ export function FileExplorerPane({
       handleCollapseDirectory,
       handleCopyPath,
       handleCopyRelativePath,
+      handleOpenDirectoryInEditor,
       handleDeleteEntry,
       handleDownloadEntry,
       handleDraftCommit,
@@ -992,6 +1015,7 @@ export function FileExplorerPane({
       handleSelectEntry,
       isDirectoryLoading,
       fileManagerTarget,
+      openDirectoryInEditor,
       selectedEntryPath,
       onAddToChat,
       onOpenFileToSide,
@@ -1424,6 +1448,8 @@ function TreeRowDispatcher({
   onSelectEntry,
   onCopyPath,
   onCopyRelativePath,
+  onOpenInEditor,
+  editorTargetName,
   onRevealEntry,
   revealTargetName,
   onDownloadEntry,
@@ -1446,6 +1472,8 @@ function TreeRowDispatcher({
   onSelectEntry: (entry: ExplorerEntry) => void;
   onCopyPath: (path: string) => void | Promise<void>;
   onCopyRelativePath: (path: string) => void | Promise<void>;
+  onOpenInEditor?: (entry: ExplorerEntry) => void;
+  editorTargetName?: string;
   onRevealEntry?: (entry: ExplorerEntry) => void;
   revealTargetName?: string;
   onDownloadEntry: (entry: ExplorerEntry) => void;
@@ -1477,6 +1505,8 @@ function TreeRowDispatcher({
       onSelectEntry={onSelectEntry}
       onCopyPath={onCopyPath}
       onCopyRelativePath={onCopyRelativePath}
+      onOpenInEditor={onOpenInEditor}
+      editorTargetName={editorTargetName}
       onRevealEntry={onRevealEntry}
       revealTargetName={revealTargetName}
       onDownloadEntry={onDownloadEntry}

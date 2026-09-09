@@ -14,6 +14,12 @@ const shared = {
 export const pluginSettings = {
   ar: {
     ...shared,
+    screens: {
+      open: "فتح",
+      offline: "اتصل بهذا المضيف لفتح إعدادات الإضافة.",
+      update: "حدّث هذا المضيف لاستخدام إعدادات الإضافة.",
+      unavailable: "شاشة إعدادات الإضافة هذه غير متاحة.",
+    },
     title: "الإضافات",
     trustedTitle: "الإضافات تعليمات برمجية موثوقة",
     trustedDescription:
@@ -61,6 +67,12 @@ export const pluginSettings = {
   },
   es: {
     ...shared,
+    screens: {
+      open: "Abrir",
+      offline: "Conéctate a este host para abrir los ajustes del plugin.",
+      update: "Actualiza este host para usar los ajustes del plugin.",
+      unavailable: "Esta pantalla de ajustes del plugin no está disponible.",
+    },
     title: "Plugins",
     trustedTitle: "Los plugins son código de confianza",
     trustedDescription:
@@ -108,6 +120,12 @@ export const pluginSettings = {
   },
   fr: {
     ...shared,
+    screens: {
+      open: "Ouvrir",
+      offline: "Connectez-vous à cet hôte pour ouvrir les paramètres du plugin.",
+      update: "Mettez à jour cet hôte pour utiliser les paramètres du plugin.",
+      unavailable: "Cet écran de paramètres du plugin est indisponible.",
+    },
     title: "Plugins",
     trustedTitle: "Les plugins sont du code de confiance",
     trustedDescription:
@@ -155,6 +173,12 @@ export const pluginSettings = {
   },
   ja: {
     ...shared,
+    screens: {
+      open: "開く",
+      offline: "このホストに接続してプラグイン設定を開いてください。",
+      update: "プラグイン設定を使用するには、このホストを更新してください。",
+      unavailable: "このプラグイン設定画面は利用できません。",
+    },
     title: "プラグイン",
     trustedTitle: "プラグインは信頼済みコードです",
     trustedDescription:
@@ -202,6 +226,12 @@ export const pluginSettings = {
   },
   ko: {
     ...shared,
+    screens: {
+      open: "열기",
+      offline: "플러그인 설정을 열려면 이 호스트에 연결하세요.",
+      update: "플러그인 설정을 사용하려면 이 호스트를 업데이트하세요.",
+      unavailable: "이 플러그인 설정 화면을 사용할 수 없습니다.",
+    },
     title: "플러그인",
     trustedTitle: "플러그인은 신뢰하는 코드입니다",
     trustedDescription: "호스트와 앱 안에서 격리 없이 실행됩니다. 신뢰하는 코드만 설치하세요.",
@@ -248,6 +278,12 @@ export const pluginSettings = {
   },
   "pt-BR": {
     ...shared,
+    screens: {
+      open: "Abrir",
+      offline: "Conecte-se a este host para abrir as configurações do plugin.",
+      update: "Atualize este host para usar as configurações do plugin.",
+      unavailable: "Esta tela de configurações do plugin está indisponível.",
+    },
     title: "Plugins",
     trustedTitle: "Plugins são código confiável",
     trustedDescription:
@@ -295,6 +331,12 @@ export const pluginSettings = {
   },
   ru: {
     ...shared,
+    screens: {
+      open: "Открыть",
+      offline: "Подключитесь к этому хосту, чтобы открыть настройки плагина.",
+      update: "Обновите этот хост, чтобы использовать настройки плагина.",
+      unavailable: "Этот экран настроек плагина недоступен.",
+    },
     title: "Плагины",
     trustedTitle: "Плагины — доверенный код",
     trustedDescription:
@@ -342,6 +384,12 @@ export const pluginSettings = {
   },
   "zh-CN": {
     ...shared,
+    screens: {
+      open: "打开",
+      offline: "连接到此主机以打开插件设置。",
+      update: "更新此主机以使用插件设置。",
+      unavailable: "此插件设置页面不可用。",
+    },
     title: "插件",
     trustedTitle: "插件是受信任的代码",
     trustedDescription: "它们会在此主机和应用内运行，且没有隔离。请仅安装你信任的代码。",

@@ -10,6 +10,7 @@
 
 import { Route as rootRouteImport } from "./routes/__root";
 import { Route as VtcodeRouteImport } from "./routes/vtcode";
+import { Route as TermsRouteImport } from "./routes/terms";
 import { Route as StakpakRouteImport } from "./routes/stakpak";
 import { Route as SponsorRouteImport } from "./routes/sponsor";
 import { Route as SigitRouteImport } from "./routes/sigit";
@@ -72,6 +73,11 @@ import { Route as AlternativesClaudeDesktopRouteImport } from "./routes/alternat
 const VtcodeRoute = VtcodeRouteImport.update({
   id: "/vtcode",
   path: "/vtcode",
+  getParentRoute: () => rootRouteImport,
+} as any);
+const TermsRoute = TermsRouteImport.update({
+  id: "/terms",
+  path: "/terms",
   getParentRoute: () => rootRouteImport,
 } as any);
 const StakpakRoute = StakpakRouteImport.update({
@@ -415,6 +421,7 @@ export interface FileRoutesByFullPath {
   "/sigit": typeof SigitRoute;
   "/sponsor": typeof SponsorRoute;
   "/stakpak": typeof StakpakRoute;
+  "/terms": typeof TermsRoute;
   "/vtcode": typeof VtcodeRoute;
   "/alternatives/claude-desktop": typeof AlternativesClaudeDesktopRoute;
   "/alternatives/codex-app": typeof AlternativesCodexAppRoute;
@@ -474,6 +481,7 @@ export interface FileRoutesByTo {
   "/sigit": typeof SigitRoute;
   "/sponsor": typeof SponsorRoute;
   "/stakpak": typeof StakpakRoute;
+  "/terms": typeof TermsRoute;
   "/vtcode": typeof VtcodeRoute;
   "/alternatives/claude-desktop": typeof AlternativesClaudeDesktopRoute;
   "/alternatives/codex-app": typeof AlternativesCodexAppRoute;
@@ -536,6 +544,7 @@ export interface FileRoutesById {
   "/sigit": typeof SigitRoute;
   "/sponsor": typeof SponsorRoute;
   "/stakpak": typeof StakpakRoute;
+  "/terms": typeof TermsRoute;
   "/vtcode": typeof VtcodeRoute;
   "/alternatives/claude-desktop": typeof AlternativesClaudeDesktopRoute;
   "/alternatives/codex-app": typeof AlternativesCodexAppRoute;
@@ -599,6 +608,7 @@ export interface FileRouteTypes {
     | "/sigit"
     | "/sponsor"
     | "/stakpak"
+    | "/terms"
     | "/vtcode"
     | "/alternatives/claude-desktop"
     | "/alternatives/codex-app"
@@ -658,6 +668,7 @@ export interface FileRouteTypes {
     | "/sigit"
     | "/sponsor"
     | "/stakpak"
+    | "/terms"
     | "/vtcode"
     | "/alternatives/claude-desktop"
     | "/alternatives/codex-app"
@@ -719,6 +730,7 @@ export interface FileRouteTypes {
     | "/sigit"
     | "/sponsor"
     | "/stakpak"
+    | "/terms"
     | "/vtcode"
     | "/alternatives/claude-desktop"
     | "/alternatives/codex-app"
@@ -781,6 +793,7 @@ export interface RootRouteChildren {
   SigitRoute: typeof SigitRoute;
   SponsorRoute: typeof SponsorRoute;
   StakpakRoute: typeof StakpakRoute;
+  TermsRoute: typeof TermsRoute;
   VtcodeRoute: typeof VtcodeRoute;
   AlternativesClaudeDesktopRoute: typeof AlternativesClaudeDesktopRoute;
   AlternativesCodexAppRoute: typeof AlternativesCodexAppRoute;
@@ -798,6 +811,13 @@ declare module "@tanstack/react-router" {
       path: "/vtcode";
       fullPath: "/vtcode";
       preLoaderRoute: typeof VtcodeRouteImport;
+      parentRoute: typeof rootRouteImport;
+    };
+    "/terms": {
+      id: "/terms";
+      path: "/terms";
+      fullPath: "/terms";
+      preLoaderRoute: typeof TermsRouteImport;
       parentRoute: typeof rootRouteImport;
     };
     "/stakpak": {
@@ -1281,6 +1301,7 @@ const rootRouteChildren: RootRouteChildren = {
   SigitRoute: SigitRoute,
   SponsorRoute: SponsorRoute,
   StakpakRoute: StakpakRoute,
+  TermsRoute: TermsRoute,
   VtcodeRoute: VtcodeRoute,
   AlternativesClaudeDesktopRoute: AlternativesClaudeDesktopRoute,
   AlternativesCodexAppRoute: AlternativesCodexAppRoute,

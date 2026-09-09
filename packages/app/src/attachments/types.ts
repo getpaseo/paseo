@@ -110,7 +110,9 @@ export type UserComposerAttachment =
   | PluginResourceComposerAttachment
   | { kind: "forge_issue"; item: ForgeSearchItem }
   | { kind: "forge_change_request"; item: ForgeSearchItem }
-  // COMPAT(githubAttachmentKinds): added in v0.1.106, remove after 2026-12-28 once daemon floor >= v0.1.106
+  // COMPAT(githubAttachmentKinds): legacy persisted attachment kinds retained
+  // when forge-neutral kinds shipped in v0.2.0-beta.1. Remove after 2027-01-17
+  // once supported floors are >= v0.2.0 and old drafts no longer need them.
   | { kind: "github_issue"; item: ForgeSearchItem }
   | {
       kind: "github_pr";

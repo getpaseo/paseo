@@ -47,6 +47,15 @@ Run agents in parallel on your own machines. Ship from your phone or your desk.
 - **Cross-device:** iOS, Android, desktop, web, and CLI. Start work at your desk, check in from your phone, script it from the terminal.
 - **Privacy-first:** Paseo doesn't have any telemetry, tracking, or forced log-ins.
 
+## Plugins
+
+Add themes, workspace panels, commands, settings screens, and coding-agent providers with trusted
+TypeScript plugins. Install from a local directory or Git repository with `paseo plugin add <source>`.
+
+See the [plugin docs](https://paseo.sh/docs/plugins) for your Paseo version, or start with the
+[0.8 beta quickstart](https://paseo.sh/docs/plugins/v0.8). Plugins run with access to your daemon
+machine and inside connected clients; install only code you trust.
+
 ## Getting Started
 
 Paseo runs a local server called the daemon that manages your coding agents. Clients like the desktop app, mobile app, web app, and CLI connect to it.
@@ -111,8 +120,8 @@ paseo ls                           # list running agents
 paseo attach abc123                # stream live output
 paseo send abc123 "also add tests" # follow-up task
 
-# run on a remote daemon
-paseo --host workstation.local:6767 run "run the full test suite"
+# run on a remote daemon; --cwd is a path on that host
+paseo run --host workstation.local:6767 --cwd /workspace "run the full test suite"
 ```
 
 See the [full CLI reference](https://paseo.sh/docs/cli) for more.
@@ -188,9 +197,8 @@ npm run typecheck
 ## Related projects
 
 - [getpaseo/paseo-relay](https://github.com/getpaseo/paseo-relay) — official distributed relay, written in Elixir
-- [paseo-skins](https://github.com/huangguang1999/paseo-skins) — community themes and a zero-patch desktop theme loader with an Agent Skill
 - [paseo-vscode](https://marketplace.visualstudio.com/items?itemName=hinnes.paseo-vscode) — VS Code extension
 
 ## License
 
-AGPL-3.0
+Apache-2.0

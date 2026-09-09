@@ -54,7 +54,7 @@ export function SidebarModelProvider({
   active?: boolean;
   children: ReactNode;
 }) {
-  const list = useSidebarWorkspacesList();
+  const list = useSidebarWorkspacesList({ enabled: active });
   const groupMode = useSidebarViewStore((state) => state.groupMode);
   const labelFilter = useSidebarViewStore((state) => state.labelFilter);
   const projectFilters = useSidebarViewStore((state) => state.projectFilters);

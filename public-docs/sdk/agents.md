@@ -140,6 +140,43 @@ const assessment = JSON.parse(result.lastMessage) as {
 
 Validate the parsed value in your application before using it as trusted input.
 
+## Read the current state of an agent
+
+```ts
+const agent = client.agents.ref("agent_01H8X...");
+await agent.refresh();
+
+if (agent.pendingPermissions?.length) {
+  console.log(`Waiting on ${agent.pendingPermissions.length} permission request(s)`);
+}
+console.log(agent.lastUsage?.totalCostUsd, agent.runtimeInfo?.sessionId);
+```
+
+The handle exposes `status`, `capabilities`, `availableModes`, `pendingPermissions`, `activeTurn`, `lastUsage`, `lastError`, `features`, `runtimeInfo`, `archivedAt`, `workspaceId`, and `cwd` as properties. All of them read the last snapshot the handle observed and never fetch.
+
+A handle from `ref()` has observed nothing, so every one of them is `null` until `refresh()`, `run()`, `waitForFinish()`, a timeline refetch, or `subscribe()` delivers a snapshot. Optional values in an observed snapshot also read as `null`. Use `current()` when you need the whole snapshot or need to distinguish those states.
+
+`subscribe()` keeps the properties current, so a long-lived handle can poll them without another RPC:
+
+```ts
+const unsubscribe = agent.subscribe(() => {
+  if (agent.status === "error") console.error(agent.lastError);
+});
+```
+
+## List the commands a session loaded
+
+```ts
+const { commands, error } = await agent.commands();
+if (error) throw new Error(error);
+
+const skills = commands.filter((command) => command.kind === "skill");
+```
+
+The answer comes from the running session, not from a directory scan, so it includes commands and skills built into the provider that never appear on disk. `kind` is the provider's own classification and is optional; treat a missing `kind` as unclassified rather than assuming `"command"`.
+
+A provider that cannot produce a list reports that in `error` and returns an empty `commands` array. The call does not reject.
+
 ## Archive or detach
 
 ```ts

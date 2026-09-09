@@ -4,8 +4,32 @@ import {
   AgentSnapshotPayloadSchema,
   AgentTimelineItemPayloadSchema,
   ServerInfoStatusPayloadSchema,
+  SessionOutboundMessageSchema,
   WSHelloMessageSchema,
+  WorkspaceSetupSnapshotSchema,
+  WorkspaceSetupProgressMessageSchema,
+  AgentTimelineEntryPayloadSchema,
 } from "./messages.js";
+
+test("terminal listings accept older rows and retain new per-terminal directories", () => {
+  const response = {
+    type: "list_terminals_response",
+    payload: {
+      requestId: "terminal-list",
+      cwd: "/workspace",
+      terminals: [{ id: "terminal", name: "Shell", workspaceId: "workspace" }],
+    },
+  };
+  expect(SessionOutboundMessageSchema.parse(response)).toEqual(response);
+  const withDirectory = {
+    ...response,
+    payload: {
+      ...response.payload,
+      terminals: [{ ...response.payload.terminals[0], cwd: "/workspace/subdirectory" }],
+    },
+  };
+  expect(SessionOutboundMessageSchema.parse(withDirectory)).toEqual(withDirectory);
+});
 
 const LegacySubAgentToolCallSchema = z.object({
   type: z.literal("tool_call"),
@@ -73,6 +97,28 @@ describe("wire schema compatibility", () => {
         capabilities: { project_updates: true },
       },
     ]);
+  });
+
+  test("timeline replacement invalidation is opt-in and carries no timeline rows", () => {
+    expect(
+      WSHelloMessageSchema.parse({
+        type: "hello",
+        clientId: "capable-client",
+        clientType: "mobile",
+        protocolVersion: 1,
+        capabilities: { timeline_replacement_invalidation: true },
+      }).capabilities,
+    ).toEqual({ timeline_replacement_invalidation: true });
+
+    expect(
+      SessionOutboundMessageSchema.parse({
+        type: "agent.timeline.replacement",
+        payload: { agentId: "agent-1", epoch: "epoch-2" },
+      }),
+    ).toEqual({
+      type: "agent.timeline.replacement",
+      payload: { agentId: "agent-1", epoch: "epoch-2" },
+    });
   });
 
   test("server info strips unknown legacy features while accepting former turn identity", () => {
@@ -244,4 +290,102 @@ describe("wire schema compatibility", () => {
     expect(parsed.capabilities.supportsRewindFiles).toBe(false);
     expect(parsed.capabilities.supportsRewindBoth).toBe(false);
   });
+
+  test("notification timeline items parse their level and message", () => {
+    expect(
+      AgentTimelineItemPayloadSchema.parse({
+        type: "notification",
+        level: "warning",
+        message: "Command blocked by user",
+      }),
+    ).toEqual({
+      type: "notification",
+      level: "warning",
+      message: "Command blocked by user",
+    });
+  });
+});
+
+test("0.8 timeline and setup capabilities remain optional in the hello", () => {
+  const hello = { type: "hello", clientId: "compat", clientType: "mobile", protocolVersion: 1 };
+  expect(WSHelloMessageSchema.safeParse(hello).success).toBe(true);
+  expect(
+    WSHelloMessageSchema.parse({
+      ...hello,
+      capabilities: { plugin_timeline_items: true, workspace_setup_blocked: true },
+    }).capabilities,
+  ).toEqual({ plugin_timeline_items: true, workspace_setup_blocked: true });
+});
+
+test("plugin rows and identity merges require a capable receiver", () => {
+  const item = {
+    type: "plugin",
+    id: "task",
+    pluginId: "tasks",
+    kind: "tasks",
+    version: 1,
+    data: { text: "Working" },
+  };
+  expect(AgentTimelineItemPayloadSchema.parse(item)).toEqual(item);
+  const legacyItems = z.object({
+    type: z.enum([
+      "user_message",
+      "assistant_message",
+      "reasoning",
+      "tool_call",
+      "todo",
+      "error",
+      "notification",
+      "compaction",
+    ]),
+  });
+  expect(legacyItems.safeParse(item).success).toBe(false);
+  const entry = {
+    provider: "codex",
+    item,
+    timestamp: "2026-09-07T00:00:00.000Z",
+    seqStart: 1,
+    seqEnd: 2,
+    sourceSeqRanges: [{ startSeq: 1, endSeq: 2 }],
+    collapsed: ["identity"],
+  };
+  expect(AgentTimelineEntryPayloadSchema.parse(entry)).toEqual(entry);
+  const legacyCollapsed = z.array(z.enum(["assistant_merge", "reasoning_merge", "tool_lifecycle"]));
+  expect(legacyCollapsed.safeParse(entry.collapsed).success).toBe(false);
+});
+
+test("blocked setup preserves the legacy failed shape and optional provenance", () => {
+  const snapshot = {
+    status: "blocked",
+    error: null,
+    detail: {
+      type: "worktree_setup",
+      worktreePath: "/workspace",
+      branchName: "fork",
+      log: "",
+      commands: [],
+    },
+    blockedSource: {
+      kind: "change_request",
+      forge: "github",
+      number: 42,
+      headRepository: "contributor/project",
+    },
+  };
+  expect(WorkspaceSetupSnapshotSchema.parse(snapshot)).toEqual(snapshot);
+  const legacyStatus = z.enum(["running", "completed", "failed"]);
+  const legacySnapshot = WorkspaceSetupSnapshotSchema.omit({ blockedSource: true }).extend({
+    status: legacyStatus,
+  });
+  expect(legacySnapshot.safeParse(snapshot).success).toBe(false);
+  const failed = { ...snapshot, status: "failed", error: "Update Paseo to review and run setup." };
+  expect(legacySnapshot.safeParse(failed).success).toBe(true);
+  const progress = {
+    type: "workspace_setup_progress",
+    payload: { ...failed, workspaceId: "workspace" },
+  };
+  expect(WorkspaceSetupProgressMessageSchema.parse(progress)).toEqual(progress);
+  expect(WorkspaceSetupSnapshotSchema.parse(legacySnapshot.parse(failed))).toEqual(
+    legacySnapshot.parse(failed),
+  );
 });

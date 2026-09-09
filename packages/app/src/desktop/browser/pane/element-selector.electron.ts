@@ -13,7 +13,7 @@ export type ElementSelectorOutcome =
 
 export type ElementSelectorStartResult = "started" | "loading" | "unavailable";
 
-interface ElementSelectorWebview extends HTMLElement {
+export interface ElementSelectorWebview extends HTMLElement {
   isLoading?: () => boolean;
   executeJavaScript?: (code: string) => Promise<unknown>;
 }
@@ -35,6 +35,23 @@ export interface ElementSelectorController {
   }): ElementSelectorStartResult;
   cancel(): void;
   stopForWebview(webview: ElementSelectorWebview): void;
+}
+
+export interface ElementSelectorRuntime {
+  token(): string;
+  install(
+    webview: ElementSelectorWebview,
+    sessionToken: string,
+  ): Promise<"installed" | "loading" | "unavailable">;
+  watch(
+    webview: ElementSelectorWebview,
+    sessionToken: string,
+    onResult: (selection: BrowserElementSelection | null) => void,
+  ): () => void;
+  clear(webview: ElementSelectorWebview, sessionToken: string): void;
+  destroy(webview: ElementSelectorWebview, sessionToken: string): void;
+  timeout(callback: () => void): number;
+  cancelTimeout(timeoutId: number): void;
 }
 
 const SELECTOR_TIMEOUT_MS = 30_000;
@@ -82,15 +99,6 @@ function readSelectorInstallation(
     return "installed";
   }
   return Reflect.get(value, "reason") === "document-loading" ? "loading" : "unavailable";
-}
-
-function stopSessionTimers(session: ElementSelectorSession): void {
-  session.stopPolling?.();
-  session.stopPolling = undefined;
-  if (session.timeoutId !== undefined) {
-    window.clearTimeout(session.timeoutId);
-    session.timeoutId = undefined;
-  }
 }
 
 function startSelectorResultPolling(input: {
@@ -373,98 +381,112 @@ function buildElementSelectorScript(sessionToken: string): string {
   `;
 }
 
-export function createElementSelectorController(): ElementSelectorController {
-  let currentSession: ElementSelectorSession | null = null;
-  let sessionCounter = 0;
+function browserSelectorRuntime(): ElementSelectorRuntime {
+  let sequence = 0;
+  return {
+    token() {
+      sequence += 1;
+      return `${sequence}:${crypto.randomUUID()}`;
+    },
+    async install(webview, sessionToken) {
+      const result = await executeWebviewJavaScript(
+        webview,
+        buildElementSelectorScript(sessionToken),
+      );
+      return readSelectorInstallation(result, sessionToken);
+    },
+    watch: (webview, sessionToken, onResult) =>
+      startSelectorResultPolling({ webview, sessionToken, onResult }),
+    clear: clearWebviewSelector,
+    destroy: destroyWebviewSelector,
+    timeout: (callback) => window.setTimeout(callback, SELECTOR_TIMEOUT_MS),
+    cancelTimeout: (timeoutId) => window.clearTimeout(timeoutId),
+  };
+}
 
-  const finish = (
+class ElementSelectorOwner implements ElementSelectorController {
+  private current: ElementSelectorSession | null = null;
+
+  constructor(private readonly runtime: ElementSelectorRuntime) {}
+
+  start({
+    webview,
+    mode,
+    onFinish,
+  }: Parameters<ElementSelectorController["start"]>[0]): ElementSelectorStartResult {
+    if (!webview.isConnected) return "unavailable";
+    if (webview.isLoading?.()) return "loading";
+    if (this.current) this.finish(this.current, { type: "cancelled" }, "clear");
+    const session: ElementSelectorSession = {
+      mode,
+      token: this.runtime.token(),
+      webview,
+      onFinish,
+    };
+    this.current = session;
+    session.timeoutId = this.runtime.timeout(() =>
+      this.finish(session, { type: "failed", reason: "timeout" }, "destroy"),
+    );
+    void this.install(session);
+    return "started";
+  }
+
+  cancel(): void {
+    if (this.current) this.finish(this.current, { type: "cancelled" }, "clear");
+  }
+
+  stopForWebview(webview: ElementSelectorWebview): void {
+    if (this.current?.webview === webview) {
+      this.finish(this.current, { type: "cancelled" }, "destroy");
+    }
+  }
+
+  private async install(session: ElementSelectorSession): Promise<void> {
+    let state: "installed" | "loading" | "unavailable";
+    try {
+      state = await this.runtime.install(session.webview, session.token);
+    } catch {
+      this.finish(session, { type: "failed", reason: "unavailable" }, "destroy");
+      return;
+    }
+    if (this.current !== session) {
+      if (state === "installed") this.runtime.destroy(session.webview, session.token);
+      return;
+    }
+    if (state !== "installed") {
+      this.finish(session, { type: "failed", reason: state }, null);
+      return;
+    }
+    session.stopPolling = this.runtime.watch(session.webview, session.token, (selection) =>
+      this.finish(
+        session,
+        selection ? { type: "selected", mode: session.mode, selection } : { type: "cancelled" },
+        null,
+      ),
+    );
+  }
+
+  private finish(
     session: ElementSelectorSession,
     outcome: ElementSelectorOutcome,
-    guestCleanup: "clear" | "destroy" | null,
-  ): boolean => {
-    stopSessionTimers(session);
-    if (currentSession !== session) {
-      return false;
+    cleanup: "clear" | "destroy" | null,
+  ): boolean {
+    if (this.current !== session) return false;
+    session.stopPolling?.();
+    session.stopPolling = undefined;
+    if (session.timeoutId !== undefined) {
+      this.runtime.cancelTimeout(session.timeoutId);
+      session.timeoutId = undefined;
     }
-    currentSession = null;
-    if (guestCleanup === "clear") {
-      clearWebviewSelector(session.webview, session.token);
-    } else if (guestCleanup === "destroy") {
-      destroyWebviewSelector(session.webview, session.token);
-    }
+    this.current = null;
+    if (cleanup) this.runtime[cleanup](session.webview, session.token);
     session.onFinish(outcome);
     return true;
-  };
+  }
+}
 
-  return {
-    start({ webview, mode, onFinish }) {
-      if (!webview.isConnected) {
-        return "unavailable";
-      }
-      if (webview.isLoading?.()) {
-        return "loading";
-      }
-
-      if (currentSession) {
-        finish(currentSession, { type: "cancelled" }, "clear");
-      }
-
-      sessionCounter += 1;
-      const session: ElementSelectorSession = {
-        mode,
-        token: `${sessionCounter}:${crypto.randomUUID()}`,
-        webview,
-        onFinish,
-      };
-      currentSession = session;
-      session.timeoutId = window.setTimeout(() => {
-        finish(session, { type: "failed", reason: "timeout" }, "destroy");
-      }, SELECTOR_TIMEOUT_MS);
-
-      void executeWebviewJavaScript(webview, buildElementSelectorScript(session.token))
-        .then((installation) => {
-          const installationState = readSelectorInstallation(installation, session.token);
-          if (currentSession !== session) {
-            if (installationState === "installed") {
-              destroyWebviewSelector(webview, session.token);
-            }
-            return undefined;
-          }
-          if (installationState !== "installed") {
-            finish(session, { type: "failed", reason: installationState }, null);
-            return undefined;
-          }
-          session.stopPolling = startSelectorResultPolling({
-            webview,
-            sessionToken: session.token,
-            onResult: (selection) => {
-              finish(
-                session,
-                selection
-                  ? { type: "selected", mode: session.mode, selection }
-                  : { type: "cancelled" },
-                null,
-              );
-            },
-          });
-          return undefined;
-        })
-        .catch(() => {
-          finish(session, { type: "failed", reason: "unavailable" }, "destroy");
-          return undefined;
-        });
-
-      return "started";
-    },
-    cancel() {
-      if (currentSession) {
-        finish(currentSession, { type: "cancelled" }, "clear");
-      }
-    },
-    stopForWebview(webview) {
-      if (currentSession?.webview === webview) {
-        finish(currentSession, { type: "cancelled" }, "destroy");
-      }
-    },
-  };
+export function createElementSelectorController(
+  runtime: ElementSelectorRuntime = browserSelectorRuntime(),
+): ElementSelectorController {
+  return new ElementSelectorOwner(runtime);
 }

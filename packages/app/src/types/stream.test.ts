@@ -9,6 +9,7 @@ import {
   hydrateStreamState,
   mergeToolCallDetail,
   reduceStreamUpdate,
+  streamTimelineItemIdentity,
   type AgentToolCallItem,
   type StreamItem,
   isAgentToolCallItem,
@@ -18,8 +19,98 @@ import {
 import type { AgentProvider, ToolCallDetail } from "@getpaseo/protocol/agent-types";
 import type { AgentStreamEventPayload } from "@getpaseo/protocol/messages";
 import { buildToolCallDisplayModel } from "@getpaseo/protocol/tool-call-display";
+import { timelineItemIdentity } from "@getpaseo/protocol/timeline-identity";
 
 type CanonicalToolStatus = "running" | "completed" | "failed" | "canceled";
+
+describe("plugin timeline rows", () => {
+  it("uses the protocol identity format for stream tool and plugin rows", () => {
+    const tool = {
+      kind: "tool_call",
+      id: "tool-row",
+      timestamp: new Date(1),
+      payload: {
+        source: "agent",
+        data: {
+          provider: "codex",
+          callId: "call-1",
+          name: "read",
+          status: "running",
+          error: null,
+          detail: { type: "unknown", input: null, output: null },
+        },
+      },
+    } satisfies StreamItem;
+    const plugin = {
+      kind: "plugin",
+      id: "review/row-1",
+      pluginId: "review",
+      pluginItemId: "row-1",
+      itemKind: "review",
+      version: 1,
+      data: {},
+      timestamp: new Date(1),
+    } satisfies StreamItem;
+
+    expect(streamTimelineItemIdentity(tool)).toBe(
+      timelineItemIdentity({ type: "tool_call", ...tool.payload.data }),
+    );
+    expect(streamTimelineItemIdentity(plugin)).toBe(
+      timelineItemIdentity({
+        type: "plugin",
+        id: plugin.pluginItemId,
+        pluginId: plugin.pluginId,
+        kind: plugin.itemKind,
+        version: plugin.version,
+        data: plugin.data,
+      }),
+    );
+  });
+
+  it("replaces a live row when the plugin-scoped identity repeats", () => {
+    const first = reduceStreamUpdate(
+      [],
+      {
+        type: "timeline",
+        provider: "codex",
+        item: {
+          type: "plugin",
+          id: "review-1",
+          pluginId: "review",
+          kind: "review",
+          version: 1,
+          data: { status: "running" },
+        },
+      },
+      new Date(1),
+    );
+    const second = reduceStreamUpdate(
+      first,
+      {
+        type: "timeline",
+        provider: "codex",
+        item: {
+          type: "plugin",
+          id: "review-1",
+          pluginId: "review",
+          kind: "review",
+          version: 1,
+          data: { status: "complete" },
+        },
+      },
+      new Date(2),
+    );
+
+    expect(second).toHaveLength(1);
+    expect(second[0]).toMatchObject({
+      kind: "plugin",
+      id: "review/review-1",
+      pluginId: "review",
+      pluginItemId: "review-1",
+      data: { status: "complete" },
+    });
+  });
+});
 
 describe("user message identity", () => {
   it("replaces provisional optimistic turn membership with canonical membership", () => {
@@ -221,6 +312,7 @@ function reasoningTimeline(
 function canonicalToolTimeline(params: {
   provider: AgentProvider;
   callId: string;
+  turnId?: string;
   name: string;
   status: CanonicalToolStatus;
   input?: unknown;
@@ -259,6 +351,7 @@ function canonicalToolTimeline(params: {
   return {
     type: "timeline",
     provider: params.provider,
+    ...(params.turnId ? { turnId: params.turnId } : {}),
     item,
   };
 }
@@ -493,6 +586,106 @@ describe("stream reducer tool call idempotency", () => {
 });
 
 describe("stream reducer canonical tool calls", () => {
+  it("keeps repeated call ids in different turns as distinct timeline rows", () => {
+    const callId = "tool-reused-across-turns";
+    const state = hydrateStreamState([
+      {
+        event: canonicalToolTimeline({
+          provider: "claude",
+          callId,
+          turnId: "autonomous-turn-1",
+          name: "Task",
+          status: "running",
+        }),
+        timestamp: new Date("2025-01-01T09:00:00Z"),
+      },
+      {
+        event: canonicalToolTimeline({
+          provider: "claude",
+          callId,
+          turnId: "autonomous-turn-2",
+          name: "Task",
+          status: "completed",
+        }),
+        timestamp: new Date("2025-01-01T09:01:00Z"),
+      },
+    ]);
+
+    const tools = state.filter(isAgentToolCallItem);
+    expect(tools.map((tool) => tool.turnId)).toEqual(["autonomous-turn-1", "autonomous-turn-2"]);
+    expect(new Set(tools.map((tool) => tool.id)).size).toBe(2);
+  });
+
+  it("merges lifecycle updates for the same call occurrence", () => {
+    const callId = "tool-updated-within-turn";
+    const turnId = "autonomous-turn-1";
+    const state = hydrateStreamState([
+      {
+        event: canonicalToolTimeline({
+          provider: "claude",
+          callId,
+          turnId,
+          name: "Task",
+          status: "running",
+        }),
+        timestamp: new Date("2025-01-01T09:00:00Z"),
+      },
+      {
+        event: canonicalToolTimeline({
+          provider: "claude",
+          callId,
+          turnId,
+          name: "Task",
+          status: "completed",
+        }),
+        timestamp: new Date("2025-01-01T09:01:00Z"),
+      },
+    ]);
+
+    expect(state.filter(isAgentToolCallItem)).toEqual([
+      expect.objectContaining({
+        id: `agent_tool_turn:${turnId}/${callId}`,
+        turnId,
+        payload: expect.objectContaining({
+          data: expect.objectContaining({ callId, status: "completed" }),
+        }),
+      }),
+    ]);
+  });
+
+  it("preserves call-id lifecycle merging for events without turn identity", () => {
+    const callId = "legacy-unscoped-tool";
+    const state = hydrateStreamState([
+      {
+        event: canonicalToolTimeline({
+          provider: "claude",
+          callId,
+          name: "Task",
+          status: "running",
+        }),
+        timestamp: new Date("2025-01-01T09:00:00Z"),
+      },
+      {
+        event: canonicalToolTimeline({
+          provider: "claude",
+          callId,
+          name: "Task",
+          status: "completed",
+        }),
+        timestamp: new Date("2025-01-01T09:01:00Z"),
+      },
+    ]);
+
+    expect(state.filter(isAgentToolCallItem)).toEqual([
+      expect.objectContaining({
+        id: `agent_tool_${callId}`,
+        payload: expect.objectContaining({
+          data: expect.objectContaining({ callId, status: "completed" }),
+        }),
+      }),
+    ]);
+  });
+
   it("is deterministic for equivalent hydration sequences", () => {
     const updates = [
       {
@@ -924,7 +1117,7 @@ describe("stream reducer canonical tool calls", () => {
       detail: tool.payload.data.detail,
     });
     assert.strictEqual(display.summary, undefined);
-    assert.strictEqual(display.displayName, "Exec Command");
+    assert.strictEqual(display.displayName, "Exec command");
   });
 
   it("preserves early input when later updates contain null input", () => {
@@ -1091,6 +1284,30 @@ describe("stream reducer canonical tool calls", () => {
       { type: "completed", task: "Inspect provider" },
       { type: "started", task: "Ship fix" },
       { type: "completed", task: "Ship fix" },
+    ]);
+  });
+
+  it("reports new work after completed tasks without reopening anything", () => {
+    const state = hydrateStreamState([
+      {
+        event: todoTimeline([
+          { id: "0", text: "Finish old work", completed: true, status: "completed" },
+          { id: "1", text: "Verify old work", completed: true, status: "completed" },
+        ]),
+        timestamp: new Date("2025-01-01T10:50:00Z"),
+      },
+      {
+        event: todoTimeline([
+          { id: "0", text: "Investigate unrelated bug", completed: false, status: "in_progress" },
+          { id: "1", text: "Write unrelated test", completed: false, status: "pending" },
+        ]),
+        timestamp: new Date("2025-01-01T10:51:00Z"),
+      },
+    ]);
+
+    expect(state.flatMap((item) => (item.kind === "todo_list" ? [item.activity] : []))).toEqual([
+      { type: "created", count: 2 },
+      { type: "started", task: "Investigate unrelated bug" },
     ]);
   });
 
@@ -1954,5 +2171,98 @@ describe("turn lifecycle events", () => {
       userMessages.map((item) => item.id),
       ["native-1", "native-2"],
     );
+  });
+});
+
+describe("notification timeline items", () => {
+  it("maps notification items to activity log entries with the matching level", () => {
+    const timestamp = new Date("2026-07-26T10:00:00.000Z");
+    const state = hydrateStreamState(
+      [
+        {
+          event: {
+            type: "timeline",
+            provider: "pi",
+            item: { type: "notification", level: "info", message: "Search finished" },
+          },
+          timestamp,
+        },
+        {
+          event: {
+            type: "timeline",
+            provider: "pi",
+            item: { type: "notification", level: "warning", message: "Command blocked" },
+          },
+          timestamp,
+        },
+        {
+          event: {
+            type: "timeline",
+            provider: "pi",
+            item: { type: "notification", level: "error", message: "Turn failed" },
+          },
+          timestamp,
+        },
+        {
+          event: {
+            type: "timeline",
+            provider: "pi",
+            item: { type: "notification", level: "info", message: "Default info" },
+          },
+          timestamp,
+        },
+      ],
+      { source: "canonical" },
+    );
+
+    expect(
+      state.map((item) =>
+        item.kind === "notification"
+          ? { kind: item.kind, level: item.level, message: item.message }
+          : { kind: item.kind },
+      ),
+    ).toEqual([
+      { kind: "notification", level: "info", message: "Search finished" },
+      { kind: "notification", level: "warning", message: "Command blocked" },
+      { kind: "notification", level: "error", message: "Turn failed" },
+      { kind: "notification", level: "info", message: "Default info" },
+    ]);
+  });
+
+  it("keeps repeated notifications with the same text in the same millisecond", () => {
+    const timestamp = new Date("2026-07-26T10:00:00.000Z");
+    const state = hydrateStreamState(
+      [
+        {
+          event: {
+            type: "timeline",
+            provider: "pi",
+            item: { type: "notification", level: "warning", message: "Command blocked" },
+          },
+          timestamp,
+        },
+        {
+          event: {
+            type: "timeline",
+            provider: "pi",
+            item: { type: "notification", level: "error", message: "Command blocked" },
+          },
+          timestamp,
+        },
+      ],
+      { source: "canonical" },
+    );
+
+    expect(
+      state.map((item) =>
+        item.kind === "notification"
+          ? { kind: item.kind, level: item.level, message: item.message }
+          : { kind: item.kind },
+      ),
+    ).toEqual([
+      { kind: "notification", level: "warning", message: "Command blocked" },
+      { kind: "notification", level: "error", message: "Command blocked" },
+    ]);
+    expect(new Set(state.map((item) => item.id)).size).toBe(state.length);
   });
 });

@@ -409,6 +409,20 @@ describe("runGitCommand", () => {
     ]);
   });
 
+  it("binds queue provenance to a Git command runner", async () => {
+    const { createRunGitCommand, snapshotGitCommandRuntimeMetrics } = await loadRunGitCommand(1);
+    enqueueSpawnBehaviors({ stdoutData: "ok" });
+
+    const runWorkspaceRefreshGitCommand = createRunGitCommand("workspace-refresh:watch");
+    await runWorkspaceRefreshGitCommand(["status"], { cwd: process.cwd() });
+
+    expect(snapshotGitCommandRuntimeMetrics()).toMatchObject({
+      provenanceTop: [["workspace-refresh:watch", 1]],
+      pendingProvenanceTop: [],
+      activeProvenanceTop: [],
+    });
+  });
+
   it("resolves truncated stdout, caps output, and kills the child process", async () => {
     const { runGitCommand } = await loadRunGitCommand(1);
 

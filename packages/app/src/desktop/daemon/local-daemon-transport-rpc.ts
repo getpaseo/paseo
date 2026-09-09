@@ -3,7 +3,7 @@ import {
   listenToLocalTransportEvents,
   openLocalTransportSession,
   sendLocalTransportMessage,
-  type LocalTransportTarget,
+  type OpenLocalTransportSessionInput,
 } from "./desktop-daemon";
 
 export interface LocalDaemonTransportEvent {
@@ -17,7 +17,7 @@ export interface LocalDaemonTransportEvent {
 }
 
 export interface LocalDaemonTransportRpc {
-  openSession(target: LocalTransportTarget): Promise<string>;
+  openSession(input: OpenLocalTransportSessionInput): Promise<void>;
   listenToEvents(handler: (event: LocalDaemonTransportEvent) => void): Promise<() => void>;
   sendMessage(input: { sessionId: string; text?: string; binaryBase64?: string }): Promise<void>;
   closeSession(sessionId: string): Promise<void>;

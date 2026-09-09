@@ -18,6 +18,7 @@ function installation(
     clientBundle: serverId,
     queryClient: new QueryClient(),
     cleanup: () => undefined,
+    settingsScreens: [],
     surfaces: surfaces.map((id) => ({ id, Component: () => null })),
     sidebarItems: sidebarItems.map((item) => ({
       ...item,
@@ -26,8 +27,11 @@ function installation(
     })),
     workspacePanels: [],
     commandCenterItems: [],
+    clientSlashCommands: [],
     attachmentSources: [],
     themes: [],
+    timelineTransformers: [],
+    timelineRenderers: [],
   };
 }
 

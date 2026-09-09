@@ -34,10 +34,45 @@ export interface DesktopAppLogs {
   contents: string;
 }
 
+export interface DesktopUpdaterDiagnosticFile {
+  path: string;
+  exists: boolean;
+  modifiedAt: string | null;
+  contents: string;
+  error: string | null;
+}
+
+export interface DesktopUpdaterDiagnostics {
+  platform: string;
+  currentVersion: string;
+  targetVersion: string | null;
+  targetVersionError: string | null;
+  shipItDirectory: string | null;
+  state: DesktopUpdaterDiagnosticFile | null;
+  stdout: DesktopUpdaterDiagnosticFile | null;
+  stderr: DesktopUpdaterDiagnosticFile | null;
+}
+
 export interface LocalTransportTarget {
   [key: string]: unknown;
   transportType: "socket" | "pipe";
   transportPath: string;
+}
+
+export interface RemoteSshTransportTarget {
+  [key: string]: unknown;
+  transportType: "ssh";
+  host: string;
+  sshPort?: number;
+  daemonPort?: number;
+}
+
+export type DesktopDaemonTransportTarget = LocalTransportTarget | RemoteSshTransportTarget;
+
+export interface OpenLocalTransportSessionInput {
+  [key: string]: unknown;
+  sessionId: string;
+  target: DesktopDaemonTransportTarget;
 }
 
 interface LocalTransportEventPayload {
@@ -107,6 +142,36 @@ function parseDesktopDaemonLogs(raw: unknown): DesktopDaemonLogs {
   };
 }
 
+function parseDesktopUpdaterDiagnosticFile(raw: unknown): DesktopUpdaterDiagnosticFile | null {
+  if (raw === null) return null;
+  if (!isRecord(raw)) {
+    throw new Error("Unexpected desktop updater diagnostic file response.");
+  }
+  return {
+    path: toStringOrNull(raw.path) ?? "",
+    exists: raw.exists === true,
+    modifiedAt: toStringOrNull(raw.modifiedAt),
+    contents: typeof raw.contents === "string" ? raw.contents : "",
+    error: toStringOrNull(raw.error),
+  };
+}
+
+function parseDesktopUpdaterDiagnostics(raw: unknown): DesktopUpdaterDiagnostics {
+  if (!isRecord(raw)) {
+    throw new Error("Unexpected desktop updater diagnostics response.");
+  }
+  return {
+    platform: toStringOrNull(raw.platform) ?? "unknown",
+    currentVersion: toStringOrNull(raw.currentVersion) ?? "unknown",
+    targetVersion: toStringOrNull(raw.targetVersion),
+    targetVersionError: toStringOrNull(raw.targetVersionError),
+    shipItDirectory: toStringOrNull(raw.shipItDirectory),
+    state: parseDesktopUpdaterDiagnosticFile(raw.state),
+    stdout: parseDesktopUpdaterDiagnosticFile(raw.stdout),
+    stderr: parseDesktopUpdaterDiagnosticFile(raw.stderr),
+  };
+}
+
 export function shouldUseDesktopDaemon(): boolean {
   return isElectronRuntime();
 }
@@ -144,6 +209,10 @@ export async function getDesktopAppLogs(): Promise<DesktopAppLogs> {
   };
 }
 
+export async function getDesktopUpdaterDiagnostics(): Promise<DesktopUpdaterDiagnostics> {
+  return parseDesktopUpdaterDiagnostics(await invokeDesktopCommand("desktop_update_diagnostics"));
+}
+
 export async function getCliDaemonStatus(): Promise<string> {
   const raw = await invokeDesktopCommand<unknown>("cli_daemon_status");
   if (typeof raw !== "string") {
@@ -179,12 +248,10 @@ export async function listenToLocalTransportEvents(
   return typeof unlisten === "function" ? unlisten : () => {};
 }
 
-export async function openLocalTransportSession(target: LocalTransportTarget): Promise<string> {
-  const raw = await invokeDesktopCommand<unknown>("open_local_daemon_transport", target);
-  if (typeof raw !== "string" || raw.trim().length === 0) {
-    throw new Error("Unexpected local transport session response.");
-  }
-  return raw;
+export async function openLocalTransportSession(
+  input: OpenLocalTransportSessionInput,
+): Promise<void> {
+  await invokeDesktopCommand("open_local_daemon_transport", input);
 }
 
 export async function sendLocalTransportMessage(input: {

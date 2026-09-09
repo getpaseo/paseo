@@ -86,7 +86,13 @@ describe("canonical turn membership", () => {
       assistant("heartbeat-2-reply", 6, "turn-3"),
     ];
 
-    expect(completedFooterIds(layoutFor(items, false).layout)).toEqual(["heartbeat-2-reply"]);
+    const completed = layoutFor(items, false);
+
+    expect(completedFooterIds(completed.layout)).toEqual(["heartbeat-2-reply"]);
+    expect(completed.layout.auxiliaryTurnFooter?.timing).toEqual({
+      completedAt: at(6),
+      durationMs: null,
+    });
   });
 
   it.each([
@@ -118,7 +124,6 @@ describe("canonical turn membership", () => {
     const completed = layoutFor(completedItems, false);
     expect(completedFooterIds(completed.layout)).toEqual(["done"]);
     expect(completed.model.turnTiming.byAssistantId.get("done")).toMatchObject({
-      startedAt: at(1),
       completedAt: at(9),
       durationMs: 8000,
     });

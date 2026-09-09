@@ -1,3 +1,4 @@
+import { setImmediate as scheduleImmediate } from "node:timers";
 import pThrottle from "p-throttle";
 
 export interface GitProcessPolicy {
@@ -50,6 +51,7 @@ export class GitProcessScheduler {
   private admitted = 0;
   private running = 0;
   private waiting = 0;
+  private drainScheduled = false;
 
   constructor(readonly policy: GitProcessPolicy) {
     const throttle = pThrottle({
@@ -79,25 +81,45 @@ export class GitProcessScheduler {
           this.waiting = Math.max(0, this.waiting - 1);
           this.admitted = Math.max(0, this.admitted - 1);
           reject(error);
-          this.drain();
+          this.scheduleDrain();
         });
       };
       const queue =
         options?.priority === "high" ? this.highPriorityQueue : this.normalPriorityQueue;
       queue.push(admit);
-      this.drain();
+      if (this.admitted === 0 && !this.drainScheduled) {
+        this.drainOne();
+      } else {
+        this.scheduleDrain();
+      }
     });
   }
 
-  private drain(): void {
-    while (this.admitted < this.policy.maxProcessConcurrency) {
-      const admit = this.highPriorityQueue.shift() ?? this.normalPriorityQueue.shift();
-      if (!admit) {
-        return;
-      }
-      this.admitted += 1;
-      admit();
+  private scheduleDrain(): void {
+    if (this.drainScheduled || this.admitted >= this.policy.maxProcessConcurrency) {
+      return;
     }
+    if (this.highPriorityQueue.length === 0 && this.normalPriorityQueue.length === 0) {
+      return;
+    }
+    this.drainScheduled = true;
+    scheduleImmediate(() => this.drainOne());
+  }
+
+  private drainOne(): void {
+    this.drainScheduled = false;
+    if (this.admitted >= this.policy.maxProcessConcurrency) {
+      return;
+    }
+    const admit = this.highPriorityQueue.shift() ?? this.normalPriorityQueue.shift();
+    if (!admit) {
+      return;
+    }
+    this.admitted += 1;
+    admit();
+    // Spawning can be synchronous and expensive on a throttled host. Let timers,
+    // sockets, and child exits run before admitting another Git process.
+    this.scheduleDrain();
   }
 
   private async execute<T>(
@@ -116,7 +138,7 @@ export class GitProcessScheduler {
     } finally {
       this.running = Math.max(0, this.running - 1);
       this.admitted = Math.max(0, this.admitted - 1);
-      this.drain();
+      this.scheduleDrain();
     }
   }
 }

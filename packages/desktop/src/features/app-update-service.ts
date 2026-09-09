@@ -38,15 +38,20 @@ export interface AppUpdateRuntimeConfiguration {
   shouldAdmitUpdate(info: RuntimeUpdateInfo): boolean | Promise<boolean>;
   onUpdateAvailable(info: RuntimeUpdateInfo): void;
   onUpdateDownloaded(info: RuntimeUpdateInfo): void;
-  onUpdateNotAvailable(): void;
   onError(error: unknown): void;
+}
+
+export interface AppUpdateInstallRequest {
+  targetVersion: string;
+  isSilent: boolean;
+  isForceRunAfter: boolean;
 }
 
 export interface AppUpdateRuntime {
   configure(input: AppUpdateRuntimeConfiguration): void;
   checkForUpdates(): Promise<RuntimeUpdateCheckResult | null>;
-  downloadUpdate(): Promise<unknown>;
-  quitAndInstall(isSilent: boolean, isForceRunAfter: boolean): void;
+  downloadUpdate(targetVersion: string): Promise<unknown>;
+  quitAndInstall(input: AppUpdateInstallRequest): void;
 }
 
 export interface AppUpdateService {
@@ -102,15 +107,21 @@ function buildCheckResult(input: {
 async function performQuitAndInstall(
   runtime: AppUpdateRuntime,
   {
+    targetVersion,
     onBeforeQuit,
     restart,
   }: {
+    targetVersion: string;
     onBeforeQuit?: () => Promise<void>;
     restart: boolean;
   },
 ): Promise<void> {
   if (onBeforeQuit) await onBeforeQuit();
-  runtime.quitAndInstall(/* isSilent */ !restart, /* isForceRunAfter */ restart);
+  runtime.quitAndInstall({
+    targetVersion,
+    isSilent: !restart,
+    isForceRunAfter: restart,
+  });
 }
 
 function getErrorMessage(error: unknown): string {
@@ -145,6 +156,24 @@ export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateSer
     downloadedUpdateVersion = null;
     preparationError = null;
     preparingUpdateVersion = null;
+  }
+
+  function buildPreviouslyAdmittedUpdateResult(
+    currentVersion: string,
+    checkedInfo: RuntimeUpdateInfo,
+  ): AppUpdateCheckResult | null {
+    const info = cachedUpdateInfo;
+    if (!info || info.version === currentVersion || info.version !== checkedInfo.version) {
+      return null;
+    }
+
+    return buildCheckResult({
+      currentVersion,
+      hasUpdate: true,
+      readyToInstall: isReadyToInstallVersion(info.version),
+      info,
+      errorMessage: preparationError?.version === info.version ? preparationError.message : null,
+    });
   }
 
   function configureRuntime(releaseChannel: AppReleaseChannel, intent: AppUpdateCheckIntent): void {
@@ -185,9 +214,6 @@ export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateSer
         if (preparationError?.version === info.version) {
           preparationError = null;
         }
-      },
-      onUpdateNotAvailable() {
-        clearUpdateState();
       },
       onError(error) {
         if (preparingUpdateVersion) {
@@ -233,7 +259,24 @@ export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateSer
 
       try {
         const result = await deps.runtime.checkForUpdates();
-        if (!result || !result.updateInfo || !result.isUpdateAvailable) {
+        if (!result || !result.updateInfo) {
+          clearUpdateState();
+          return buildCheckResult({
+            currentVersion,
+            hasUpdate: false,
+            readyToInstall: false,
+          });
+        }
+
+        if (!result.isUpdateAvailable) {
+          const admittedUpdate = buildPreviouslyAdmittedUpdateResult(
+            currentVersion,
+            result.updateInfo,
+          );
+          if (admittedUpdate) {
+            return admittedUpdate;
+          }
+
           clearUpdateState();
           return buildCheckResult({
             currentVersion,
@@ -325,7 +368,7 @@ export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateSer
       const attemptedVersion: string = preparingUpdateVersion ?? readyVersion;
       preparingUpdateVersion ??= readyVersion;
       try {
-        await deps.runtime.downloadUpdate();
+        await deps.runtime.downloadUpdate(attemptedVersion);
       } catch (error) {
         if (
           attemptedVersion !== readyVersion &&
@@ -375,7 +418,11 @@ export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateSer
     }
 
     if (isReadyToInstallVersion(readyVersion)) {
-      await performQuitAndInstall(deps.runtime, { onBeforeQuit, restart });
+      await performQuitAndInstall(deps.runtime, {
+        targetVersion: readyVersion,
+        onBeforeQuit,
+        restart,
+      });
       return {
         installed: true,
         version: readyVersion,
@@ -395,7 +442,11 @@ export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateSer
           message: "A newer update was found and will be installed later.",
         };
       }
-      await performQuitAndInstall(deps.runtime, { onBeforeQuit, restart });
+      await performQuitAndInstall(deps.runtime, {
+        targetVersion: readyVersion,
+        onBeforeQuit,
+        restart,
+      });
 
       return {
         installed: true,

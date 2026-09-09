@@ -5,7 +5,9 @@ import { StyleSheet } from "react-native-unistyles";
 interface SurfaceErrorBoundaryProps {
   children: ReactNode;
   installation: object;
+  resetKey?: unknown;
   Surface: unknown;
+  renderError?(error: string): ReactNode;
 }
 
 interface SurfaceErrorBoundaryState {
@@ -29,7 +31,9 @@ export class SurfaceErrorBoundary extends Component<
   componentDidUpdate(previous: SurfaceErrorBoundaryProps): void {
     if (
       this.state.error &&
-      (previous.installation !== this.props.installation || previous.Surface !== this.props.Surface)
+      (previous.installation !== this.props.installation ||
+        previous.resetKey !== this.props.resetKey ||
+        previous.Surface !== this.props.Surface)
     ) {
       this.setState({ error: null });
     }
@@ -37,6 +41,7 @@ export class SurfaceErrorBoundary extends Component<
 
   render() {
     if (this.state.error) {
+      if (this.props.renderError) return this.props.renderError(this.state.error);
       return <Text style={styles.errorText}>Plugin failed: {this.state.error}</Text>;
     }
     return this.props.children;

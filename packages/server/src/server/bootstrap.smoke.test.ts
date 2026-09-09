@@ -1,3 +1,4 @@
+import { resolveDaemonVersion } from "./daemon-version.js";
 import os from "node:os";
 import http from "node:http";
 import path from "node:path";
@@ -536,9 +537,12 @@ describe("paseo daemon bootstrap", () => {
         await enrollmentReleased;
         return {
           daemonId: input.daemonId,
-          scopes: input.scopes,
+          permissions: input.permissions,
           webSocketUrl: "wss://hub.test/daemon",
         };
+      },
+      async updatePermissions(input) {
+        return { permissions: input.permissions };
       },
       async revoke(_input: HubRevocation): Promise<void> {},
       openSocket(_input: HubSocketCredentials, _events: HubSocketEvents): HubSocketConnection {
@@ -669,10 +673,13 @@ describe("paseo daemon bootstrap", () => {
       await mkdir(pluginDirectory);
       await writeFile(
         path.join(pluginDirectory, "paseo-plugin.json"),
-        JSON.stringify({ id: "startup-rollback" }),
+        JSON.stringify({
+          id: "startup-rollback",
+          requirements: { paseo: `>=${resolveDaemonVersion(import.meta.url)}` },
+        }),
       );
       await writeFile(
-        path.join(pluginDirectory, "index.tsx"),
+        path.join(pluginDirectory, "index.server.ts"),
         `import { writeFileSync } from "node:fs";
 export default function contribute(plugin: unknown) {
   void plugin;

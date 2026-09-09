@@ -12,6 +12,7 @@ import { workspaceTabTargetsEqual } from "@/workspace-tabs/identity";
 import type { WorkspaceTabTarget } from "@/workspace-tabs/model";
 
 export type OpenInSidePaneSource = keyof OpenInSidePanePreferences;
+export type WorkspaceTargetOpenLocation = "main" | "side";
 
 interface OpenWorkspaceTargetInput {
   workspaceKey: string | null;
@@ -23,6 +24,11 @@ export interface OpenPreferredWorkspaceTargetInput extends OpenWorkspaceTargetIn
   isCompact: boolean;
   source: OpenInSidePaneSource;
   preferences: OpenInSidePanePreferences;
+}
+
+interface OpenWorkspaceTargetAtLocationInput extends OpenWorkspaceTargetInput {
+  isCompact: boolean;
+  location: WorkspaceTargetOpenLocation;
 }
 
 interface OpenPreferredWorkspacePreviewInput extends OpenPreferredWorkspaceTargetInput {
@@ -78,6 +84,19 @@ function canReplacePreview(input: {
 export function openPreferredWorkspaceTarget(
   input: OpenPreferredWorkspaceTargetInput,
 ): string | null {
+  return openWorkspaceTargetAtLocation({
+    isCompact: input.isCompact,
+    workspaceKey: input.workspaceKey,
+    target: input.target,
+    location: input.preferences[input.source] ? "side" : "main",
+    parentTabId: input.parentTabId,
+  });
+}
+
+/** Opens an implicit target at the user's preferred main or side location. */
+export function openWorkspaceTargetAtLocation(
+  input: OpenWorkspaceTargetAtLocationInput,
+): string | null {
   if (!input.workspaceKey) return null;
   const store = useWorkspaceLayoutStore.getState();
   const layout = store.layoutByWorkspace[input.workspaceKey];
@@ -85,7 +104,7 @@ export function openPreferredWorkspaceTarget(
     layout &&
     collectAllTabs(layout.root).some((tab) => workspaceTabTargetsEqual(tab.target, input.target)),
   );
-  const shouldOpenBeside = !input.isCompact && input.preferences[input.source];
+  const shouldOpenBeside = !input.isCompact && input.location === "side";
   let placement: WorkspaceTabPlacement | undefined;
   if (shouldOpenBeside && !targetAlreadyExists) {
     const paneId = store.ensureSidePane(input.workspaceKey);

@@ -52,6 +52,12 @@ export function SiteFooter({ width = "default" }: SiteFooterProps) {
               Privacy
             </a>
             <a
+              href="/terms"
+              className="block text-muted-foreground hover:text-foreground transition-colors"
+            >
+              Terms
+            </a>
+            <a
               href="/sponsor"
               className="block text-muted-foreground hover:text-foreground transition-colors"
             >

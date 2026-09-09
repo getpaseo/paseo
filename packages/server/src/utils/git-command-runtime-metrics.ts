@@ -21,17 +21,22 @@ export interface GitCommandRuntimeMetricsSnapshot {
   queueWaitMs: GitCommandDurationStats;
   executionMs: GitCommandDurationStats;
   operationsTop: Array<[string, number]>;
+  provenanceTop: Array<[string, number]>;
+  pendingProvenanceTop: Array<[string, number]>;
+  activeProvenanceTop: Array<[string, number]>;
 }
 
 interface GitCommandRuntimeMetric {
   queuedAtMs: number;
   startedAtMs: number | null;
+  provenance: string;
 }
 
 type Clock = () => number;
 
 export class GitCommandRuntimeMetricsWindow {
   private readonly pendingCommands = new Set<GitCommandRuntimeMetric>();
+  private readonly activeCommands = new Set<GitCommandRuntimeMetric>();
   private active = 0;
   private peakActive = 0;
   private peakPending = 0;
@@ -43,6 +48,7 @@ export class GitCommandRuntimeMetricsWindow {
   private readonly queueWaitSamples: number[] = [];
   private readonly executionSamples: number[] = [];
   private readonly operationCounts = new Map<string, number>();
+  private readonly provenanceCounts = new Map<string, number>();
 
   constructor(
     private readonly limits: {
@@ -52,11 +58,12 @@ export class GitCommandRuntimeMetricsWindow {
     private readonly clock: Clock = Date.now,
   ) {}
 
-  submit(operation: string): GitCommandRuntimeMetric {
-    const metric = { queuedAtMs: this.clock(), startedAtMs: null };
+  submit(operation: string, provenance = "unattributed"): GitCommandRuntimeMetric {
+    const metric = { queuedAtMs: this.clock(), startedAtMs: null, provenance };
     this.pendingCommands.add(metric);
     this.submittedCount += 1;
     this.operationCounts.set(operation, (this.operationCounts.get(operation) ?? 0) + 1);
+    this.provenanceCounts.set(provenance, (this.provenanceCounts.get(provenance) ?? 0) + 1);
     return metric;
   }
 
@@ -71,6 +78,7 @@ export class GitCommandRuntimeMetricsWindow {
     }
     const now = this.clock();
     metric.startedAtMs = now;
+    this.activeCommands.add(metric);
     this.active += 1;
     this.startedCount += 1;
     this.peakActive = Math.max(this.peakActive, this.active);
@@ -83,6 +91,7 @@ export class GitCommandRuntimeMetricsWindow {
     }
     const startedAtMs = metric.startedAtMs;
     metric.startedAtMs = null;
+    this.activeCommands.delete(metric);
     this.active = Math.max(0, this.active - 1);
     this.completedCount += 1;
     if (!outcome.success) {
@@ -122,6 +131,9 @@ export class GitCommandRuntimeMetricsWindow {
       operationsTop: [...this.operationCounts.entries()]
         .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))
         .slice(0, 12),
+      provenanceTop: topCounts(this.provenanceCounts),
+      pendingProvenanceTop: topProvenance(this.pendingCommands),
+      activeProvenanceTop: topProvenance(this.activeCommands),
     };
 
     this.peakActive = limiter.active;
@@ -134,8 +146,23 @@ export class GitCommandRuntimeMetricsWindow {
     this.queueWaitSamples.length = 0;
     this.executionSamples.length = 0;
     this.operationCounts.clear();
+    this.provenanceCounts.clear();
     return snapshot;
   }
+}
+
+function topProvenance(commands: ReadonlySet<GitCommandRuntimeMetric>): Array<[string, number]> {
+  const counts = new Map<string, number>();
+  for (const command of commands) {
+    counts.set(command.provenance, (counts.get(command.provenance) ?? 0) + 1);
+  }
+  return topCounts(counts);
+}
+
+function topCounts(counts: ReadonlyMap<string, number>): Array<[string, number]> {
+  return [...counts.entries()]
+    .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))
+    .slice(0, 12);
 }
 
 function summarizeDurations(samples: number[]): GitCommandDurationStats {

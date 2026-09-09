@@ -254,7 +254,7 @@ export function buildLightSemanticColors(tint: LightThemeConfig) {
     surfaceDiffEmpty: tint.surfaceDiffEmpty,
     surfaceSidebar: tint.surfaceSidebar,
     surfaceSidebarHover: tint.surface1,
-    surfaceSidebarSelected: tint.surface2,
+    surfaceSidebarSelected: tint.surface3,
     surfaceWorkspace: tint.surface0,
     interactionHighlight: "rgba(0, 0, 0, 0.06)",
 

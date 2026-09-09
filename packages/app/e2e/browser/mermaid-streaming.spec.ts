@@ -35,6 +35,7 @@ test("keeps a Mermaid diagram rendered while its message streams, completes, and
   page,
 }) => {
   test.setTimeout(120_000);
+  let diagramTurnCompleted!: Promise<void>;
 
   const agent = await seedMockAgentWorkspace({
     repoPrefix: "mermaid-streaming-",
@@ -48,15 +49,16 @@ test("keeps a Mermaid diagram rendered while its message streams, completes, and
     await test.step("Open the conversation and request a diagram", async () => {
       await openAgentRoute(page, agent);
       await requestDiagram(agent);
+      diagramTurnCompleted = waitForDiagramTurnToComplete(agent);
     });
 
     await test.step("The diagram renders and stays rendered while tokens arrive", async () => {
       await expectDiagramWithLabels(page, ["Start", "Middle"]);
-      await expectDiagramRemainsRenderedWhileStreaming(page);
+      await expectDiagramRemainsRenderedWhileStreaming(page, diagramTurnCompleted);
     });
 
     await test.step("The completed diagram shows the final streamed content", async () => {
-      await waitForDiagramTurnToComplete(agent);
+      await diagramTurnCompleted;
       await expectCompletedDiagram(page, ["Start", "Done", "Release"]);
     });
 

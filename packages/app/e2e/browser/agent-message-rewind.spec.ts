@@ -1,8 +1,32 @@
 import type { Locator } from "@playwright/test";
 import { expect, test, type Page } from "../support/fixtures";
 import { expectAgentIdle, expectAgentReadyToInterrupt } from "../support/helpers/agent-stream";
-import { cancelAgent, expectComposerVisible, submitMessage } from "../support/helpers/composer";
+import {
+  cancelAgent,
+  fillComposerDraft,
+  expectComposerDraft,
+  expectComposerVisible,
+  submitMessage,
+} from "../support/helpers/composer";
+import { expectNearBottom, scrollChatAwayFromBottom } from "../support/helpers/agent-bottom-anchor";
+import { holdRewindCompletion } from "../support/helpers/agent-timeline-gate";
 import { openAgentRoute, seedMockAgentWorkspace } from "../support/helpers/mock-agent";
+
+async function completeSubmittedTurn(
+  page: Page,
+  agent: Awaited<ReturnType<typeof seedMockAgentWorkspace>>,
+  prompt: string,
+): Promise<Locator> {
+  await submitMessage(page, prompt);
+  const userMessage = page.getByTestId("user-message").filter({ hasText: prompt });
+  await expect(userMessage).toBeVisible();
+
+  const finish = await agent.client.waitForFinish(agent.agentId, 30_000);
+  expect(finish.status).toBe("idle");
+  await expect(page.getByText("(end of synthetic stream)", { exact: true }).last()).toBeVisible();
+  await expect(userMessage).toHaveAttribute("aria-busy", "false");
+  return userMessage;
+}
 
 async function rewindConversation(page: Page, userMessage: Locator, prompt: string): Promise<void> {
   await userMessage.getByText(prompt, { exact: true }).hover();
@@ -16,11 +40,54 @@ async function expectTurnCompletesNormally(
 ): Promise<void> {
   const finish = await agent.client.waitForFinish(agent.agentId, 30_000);
   expect(finish.status).toBe("idle");
-  await expect(page.getByText("(end of synthetic stream)", { exact: true })).toBeVisible();
+  await expect(page.getByText("(end of synthetic stream)", { exact: true }).last()).toBeVisible();
   await expectAgentIdle(page);
 }
 
 test.describe("Agent message rewind", () => {
+  test("rewinds a submitted prompt without replaying history and preserves a human draft", async ({
+    page,
+  }) => {
+    test.setTimeout(90_000);
+    const retainedPrompt = "Keep this completed turn after rewind.";
+    const rewoundPrompt = "Remove this completed turn after rewind.";
+    const preservedDraft = "Keep this human draft after rewind.";
+    const agent = await seedMockAgentWorkspace({
+      repoPrefix: "message-rewind-roundtrip-",
+      title: "Message rewind roundtrip",
+      model: "ten-second-stream",
+    });
+
+    try {
+      const rewindCompletion = await holdRewindCompletion(page, agent.agentId);
+      await openAgentRoute(page, agent);
+      await expectComposerVisible(page);
+      await completeSubmittedTurn(page, agent, retainedPrompt);
+      const userMessage = await completeSubmittedTurn(page, agent, rewoundPrompt);
+      await scrollChatAwayFromBottom(page, {
+        deltaY: -900,
+        minDistanceFromBottom: 300,
+      });
+      await fillComposerDraft(page, preservedDraft);
+      rewindCompletion.clearTimelineStreamCount();
+
+      const rewind = rewindConversation(page, userMessage, rewoundPrompt);
+      await rewindCompletion.waitForDelayedResponse();
+      await expect(page.getByTestId("rewind-menu-conversation")).toBeDisabled();
+      expect(rewindCompletion.timelineStreamCount()).toBe(0);
+      rewindCompletion.release();
+      await rewind;
+
+      await expect(page.getByTestId("user-message").filter({ hasText: rewoundPrompt })).toHaveCount(
+        0,
+      );
+      await expectComposerDraft(page, preservedDraft);
+      await expectNearBottom(page);
+    } finally {
+      await agent.cleanup();
+    }
+  });
+
   test("keeps a pre-acknowledgement turn running after rewind is rejected", async ({ page }) => {
     test.setTimeout(90_000);
     const prompt = "Delay synthetic user message by 2000ms.";

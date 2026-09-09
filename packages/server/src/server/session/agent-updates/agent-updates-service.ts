@@ -49,6 +49,7 @@ export interface AgentUpdatesService {
   ): void;
   clearSubscription(subscriptionId: string): void;
   hasSubscription(): boolean;
+  includesLiveAgent(agent: ManagedAgent): Promise<boolean>;
   forwardLiveAgent(agent: ManagedAgent): Promise<void>;
   emitStoredRecord(record: StoredAgentRecord): Promise<AgentSnapshotPayload>;
   removeAgent(agentId: string): Promise<void>;
@@ -243,6 +244,28 @@ export function createAgentUpdatesService(deps: AgentUpdatesServiceDeps): AgentU
     return subscription !== null;
   }
 
+  async function includesLiveAgent(agent: ManagedAgent): Promise<boolean> {
+    const activeSubscription = subscription;
+    if (!activeSubscription) return false;
+
+    const payload = await deps.enrichAgentPayload(toAgentPayload(agent));
+    if (subscription !== activeSubscription || !deps.isProviderVisibleToClient(payload.provider)) {
+      return false;
+    }
+    const project = payload.workspaceId
+      ? await deps.buildProjectPlacementForWorkspaceId(payload.workspaceId)
+      : null;
+    return (
+      subscription === activeSubscription &&
+      project !== null &&
+      matchesAgentUpdatesFilter({
+        agent: payload,
+        project,
+        filter: activeSubscription.filter,
+      })
+    );
+  }
+
   async function emitStoredRecord(record: StoredAgentRecord): Promise<AgentSnapshotPayload> {
     const payload = deps.buildStoredAgentPayload(record);
     const sub = subscription;
@@ -367,6 +390,18 @@ export function createAgentUpdatesService(deps: AgentUpdatesServiceDeps): AgentU
   }
 
   function forwardLiveAgent(agent: ManagedAgent): Promise<void> {
+    if (!subscription) {
+      const workspaceId = agent.workspaceId;
+      return workspaceId
+        ? enqueueAgentUpdate(agent.id, async () => {
+            try {
+              await deps.emitWorkspaceUpdateForWorkspaceId(workspaceId);
+            } catch (error) {
+              deps.logger.error({ err: error }, "Failed to emit workspace update");
+            }
+          })
+        : Promise.resolve();
+    }
     const payload = toAgentPayload(agent);
     return enqueueAgentUpdate(payload.id, () => emitLiveAgentUpdate(payload));
   }
@@ -391,6 +426,7 @@ export function createAgentUpdatesService(deps: AgentUpdatesServiceDeps): AgentU
     flushBootstrapped,
     clearSubscription,
     hasSubscription,
+    includesLiveAgent,
     forwardLiveAgent,
     emitStoredRecord,
     removeAgent,

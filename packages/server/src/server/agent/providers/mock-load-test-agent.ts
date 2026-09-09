@@ -117,6 +117,20 @@ const MODELS: AgentModelDefinition[] = [
   },
   {
     provider: MOCK_LOAD_TEST_PROVIDER_ID,
+    id: "bursty-stream",
+    label: "Bursty stream",
+    description:
+      "Emits tokens in uneven bursts separated by idle gaps, reproducing the lumpy arrival pattern real models produce. Use this to measure streaming smoothness.",
+    metadata: {
+      durationMs: 60_000,
+      intervalMs: 0,
+      burstMinTokens: 1,
+      burstMaxTokens: 40,
+      burstGapMs: 90,
+    },
+  },
+  {
+    provider: MOCK_LOAD_TEST_PROVIDER_ID,
     id: "ten-second-stream",
     label: "Ten second stream",
     description: "Fast realistic stream for tests and smoke checks.",
@@ -144,6 +158,28 @@ const MODELS: AgentModelDefinition[] = [
   },
 ];
 
+/**
+ * Bursty emission: instead of one token per interval, emit a run of tokens
+ * back-to-back and then idle. Real models arrive this way, and it is the arrival
+ * pattern the client's paced reveal exists to smooth out. Burst sizes come from a
+ * seeded generator so a run is reproducible.
+ */
+interface BurstProfile {
+  minTokens: number;
+  maxTokens: number;
+  gapMs: number;
+}
+
+function nextBurstSize(profile: BurstProfile, sequence: number): number {
+  // Deterministic hash of the burst index; no Math.random so runs are repeatable.
+  let hash = (sequence + 1) * 2654435761;
+  hash ^= hash >>> 15;
+  hash = Math.imul(hash, 2246822519);
+  hash ^= hash >>> 13;
+  const span = profile.maxTokens - profile.minTokens + 1;
+  return profile.minTokens + ((hash >>> 0) % span);
+}
+
 interface ActiveTurn {
   turnId: string;
   assistantMessageId: string;
@@ -158,6 +194,8 @@ interface ActiveTurn {
   queue: CycleEvent[];
   emittedTokens: number;
   turnStarted: boolean;
+  burst: BurstProfile | null;
+  burstIndex: number;
 }
 
 type CycleEvent =
@@ -277,15 +315,28 @@ function resolveModelProfile(modelId: string | null | undefined): {
   modelId: string;
   durationMs: number;
   intervalMs: number;
+  burst: BurstProfile | null;
 } {
   const model = MODELS.find((entry) => entry.id === modelId) ?? MODELS[0];
   const metadata = model.metadata ?? {};
+  const burstMinTokens =
+    typeof metadata.burstMinTokens === "number" ? metadata.burstMinTokens : null;
+  const burstMaxTokens =
+    typeof metadata.burstMaxTokens === "number" ? metadata.burstMaxTokens : null;
   return {
     modelId: model.id,
     durationMs:
       typeof metadata.durationMs === "number" ? metadata.durationMs : MOCK_LOAD_TEST_DURATION_MS,
     intervalMs:
       typeof metadata.intervalMs === "number" ? metadata.intervalMs : MOCK_LOAD_TEST_INTERVAL_MS,
+    burst:
+      burstMinTokens !== null && burstMaxTokens !== null
+        ? {
+            minTokens: Math.max(1, burstMinTokens),
+            maxTokens: Math.max(Math.max(1, burstMinTokens), burstMaxTokens),
+            gapMs: typeof metadata.burstGapMs === "number" ? metadata.burstGapMs : 90,
+          }
+        : null,
   };
 }
 
@@ -575,6 +626,12 @@ function buildCycleQueue(turnId: string, cycle: number): CycleEvent[] {
   return queue;
 }
 
+function buildBurstyStreamQueue(cycle: number): CycleEvent[] {
+  return tokenize(
+    [buildIntroParagraph(cycle), buildMidParagraph(), buildClosingParagraph()].join("\n\n"),
+  ).map((text) => ({ kind: "assistant_token", text }));
+}
+
 function createToolCall(input: {
   callId: string;
   name: string;
@@ -755,6 +812,8 @@ export class MockLoadTestAgentSession implements AgentSession {
       queue: [],
       emittedTokens: 0,
       turnStarted: false,
+      burst: profile.burst,
+      burstIndex: 0,
     };
     this.activeTurn = turn;
     const largePayload = parseLargeAgentStreamPayloadPrompt(prompt);
@@ -1224,7 +1283,11 @@ export class MockLoadTestAgentSession implements AgentSession {
       title: "Plan",
       description: "Review the proposed plan before implementation starts.",
       input: {
-        plan: "1. Add the README note.\n2. Keep the change scoped.\n3. Verify the diff.",
+        // The (c), the quoted flag and the --- are load-bearing: they trip
+        // three different markdown-it typographer rules, and
+        // plan-card-markdown.spec.ts asserts all three render verbatim. That
+        // is the only guard against the plan card's parser prop going missing.
+        plan: '1. Add the (c) README note.\n2. Run --name="my repo".\n3. Verify ---buzz in the diff.',
       },
       actions: [
         {
@@ -1425,17 +1488,24 @@ export class MockLoadTestAgentSession implements AgentSession {
       return;
     }
 
-    if (turn.queue.length === 0) {
-      turn.cycle += 1;
-      turn.queue = buildCycleQueue(turn.turnId, turn.cycle);
-    }
+    const eventsThisTick = turn.burst ? nextBurstSize(turn.burst, turn.burstIndex) : 1;
+    turn.burstIndex += 1;
 
-    const event = turn.queue.shift();
-    if (event) {
+    for (let emitted = 0; emitted < eventsThisTick; emitted += 1) {
+      if (turn.queue.length === 0) {
+        turn.cycle += 1;
+        turn.queue = turn.burst
+          ? buildBurstyStreamQueue(turn.cycle)
+          : buildCycleQueue(turn.turnId, turn.cycle);
+      }
+      const event = turn.queue.shift();
+      if (!event) {
+        break;
+      }
       this.dispatchCycleEvent(turn, event);
     }
 
-    this.schedule(turn, turn.intervalMs);
+    this.schedule(turn, turn.burst ? turn.burst.gapMs : turn.intervalMs);
   }
 
   private dispatchCycleEvent(turn: ActiveTurn, event: CycleEvent): void {

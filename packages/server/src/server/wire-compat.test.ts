@@ -1,3 +1,4 @@
+import { createAgentRequestsStub } from "./test-utils/session-stubs.js";
 import pino from "pino";
 import { z } from "zod";
 import { describe, expect, test } from "vitest";
@@ -11,6 +12,7 @@ import {
   type SessionOutboundMessage,
 } from "@getpaseo/protocol/messages";
 import { Session, type SessionOptions } from "./session.js";
+import { OWNER_PERMISSIONS } from "./authorization/index.js";
 import { DirectorySyncService } from "./directory-sync/index.js";
 import { createProviderSnapshotManagerStub } from "./test-utils/session-stubs.js";
 import type { AgentTimelineRow } from "./agent/agent-manager.js";
@@ -183,6 +185,7 @@ function createSessionForWireCompatTest(options?: {
   clientCapabilities?: Record<string, unknown> | null;
   directorySync?: DirectorySyncService;
   messages?: SessionOutboundMessage[];
+  onMessageToSource?: SessionOptions["onMessageToSource"];
   rows?: AgentTimelineRow[];
 }): Session {
   const messages = options?.messages ?? [];
@@ -205,10 +208,12 @@ function createSessionForWireCompatTest(options?: {
   ];
 
   const session = new Session({
+    agentRequests: createAgentRequestsStub(),
     clientId: "wire-compat-client",
-    scopes: ["*"],
+    permissions: OWNER_PERMISSIONS,
     clientCapabilities: options?.clientCapabilities ?? null,
     onMessage: (message) => messages.push(message),
+    onMessageToSource: options?.onMessageToSource,
     logger: pino({ level: "silent" }),
     downloadTokenStore: {} as SessionOptions["downloadTokenStore"],
     pushNotifications: {} as SessionOptions["pushNotifications"],
@@ -539,4 +544,52 @@ describe("wire compatibility", () => {
       paseoHome: "/tmp/paseo-home",
     });
   });
+});
+
+test("setup progress is adapted per socket without changing the canonical snapshot", async () => {
+  const legacy = {};
+  const capable = {};
+  const delivered = new Map<object, SessionOutboundMessage[]>();
+  const session = createSessionForWireCompatTest({
+    onMessageToSource: (source, message) =>
+      delivered.set(source, [...(delivered.get(source) ?? []), message]),
+  });
+  session.updateClientCapabilities({}, legacy);
+  session.updateClientCapabilities({ workspace_setup_blocked: true }, capable);
+  const message = {
+    type: "workspace_setup_progress" as const,
+    payload: {
+      workspaceId: "fork-workspace",
+      status: "blocked" as const,
+      error: null,
+      detail: {
+        type: "worktree_setup" as const,
+        worktreePath: "/workspace",
+        branchName: "fork",
+        log: "",
+        commands: [],
+      },
+      blockedSource: {
+        kind: "change_request" as const,
+        forge: "github",
+        number: 42,
+        headRepository: "contributor/project",
+      },
+    },
+  };
+  session.publish(message);
+  expect(delivered.get(capable)).toEqual([message]);
+  expect(delivered.get(legacy)).toEqual([
+    {
+      ...message,
+      payload: {
+        ...message.payload,
+        status: "failed",
+        error:
+          "Workspace setup is blocked pending approval of code from a fork pull request. Update Paseo to review and run setup.",
+      },
+    },
+  ]);
+  expect(message.payload.status).toBe("blocked");
+  await session.cleanup();
 });

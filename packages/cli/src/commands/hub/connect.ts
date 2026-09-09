@@ -14,6 +14,8 @@ interface HubConnectOptions {
   apiKey?: string;
   host?: string;
   json?: boolean;
+  permission?: readonly string[];
+  permissions?: readonly string[];
 }
 
 interface HubConnectDependencies {
@@ -38,8 +40,18 @@ export async function runHubConnect(
   reportHubProgress(dependencies.reporter, options, `Connecting this daemon to ${origin}`);
   const credential = resolveHubCredential({ ...resolution, origin });
   const token = await dependencies.hub.issueEnrollmentToken(origin, credential);
+  const permissions = options.permissions ?? options.permission ?? [];
   return withHubDaemon(dependencies.daemon, options.host, async (daemon) => {
-    const response = await daemon.connectHub(origin, token);
+    const response = await daemon.connectHub(origin, token, permissions);
+    if (
+      response.status.hubOrigin !== null &&
+      !samePermissions(response.status.permissions, permissions)
+    ) {
+      await daemon.disconnectHub(false).catch(() => undefined);
+      throw new Error(
+        "The daemon did not honor the requested Hub access. Update Paseo before connecting it.",
+      );
+    }
     return hubStatusResult(response.status);
   });
 }
@@ -51,7 +63,8 @@ export function addHubConnectCommand(parent: Command, dependencies: HubConnectDe
         .command("connect")
         .description("Enroll this daemon with a Paseo Hub")
         .argument("[origin]", "Paseo Hub origin")
-        .option("--api-key <secret>", "Organization API key"),
+        .option("--api-key <secret>", "Organization API key")
+        .option("--permission <permission...>", "Grant daemon permission during connection"),
     ),
   ).action(
     withOutput(async (...args) => {
@@ -60,4 +73,8 @@ export function addHubConnectCommand(parent: Command, dependencies: HubConnectDe
       return runHubConnect(origin, options, dependencies);
     }),
   );
+}
+
+function samePermissions(actual: readonly string[], expected: readonly string[]): boolean {
+  return actual.length === expected.length && expected.every((scope) => actual.includes(scope));
 }

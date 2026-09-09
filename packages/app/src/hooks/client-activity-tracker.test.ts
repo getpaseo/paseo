@@ -68,26 +68,12 @@ function buildTracker(
     initialFocusedTerminalId: overrides.initialFocusedTerminalId ?? null,
     initialAppVisible: overrides.initialAppVisible ?? true,
     now: clock.now,
-    onUserActivity: overrides.onUserActivity ?? (() => undefined),
     onAppResumed: overrides.onAppResumed,
   });
   return { tracker, client, clock };
 }
 
 describe("client activity tracker", () => {
-  it("notifies local consumers about user activity", () => {
-    let notifications = 0;
-    const { tracker } = buildTracker({
-      onUserActivity: () => {
-        notifications += 1;
-      },
-    });
-
-    tracker.recordUserActivity();
-
-    expect(notifications).toBe(1);
-  });
-
   it("includes the latest user-activity time in the next heartbeat", () => {
     const { tracker, client, clock } = buildTracker();
 

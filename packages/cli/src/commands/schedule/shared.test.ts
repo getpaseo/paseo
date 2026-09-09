@@ -25,6 +25,7 @@ describe("parseScheduleCreateInput cwd/host validation", () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+    vi.unstubAllEnvs();
   });
 
   test("no host, no cwd → defaults to process.cwd()", () => {
@@ -60,6 +61,17 @@ describe("parseScheduleCreateInput cwd/host validation", () => {
       expect.objectContaining({
         code: "MISSING_CWD",
         message: expect.stringContaining("--cwd is required when --host is specified"),
+      }),
+    );
+  });
+
+  test("PASEO_HOST without cwd → throws MISSING_CWD", () => {
+    vi.stubEnv("PASEO_HOST", "dev:6767");
+
+    expect(() => parseScheduleCreateInput(baseOptions)).toThrow(
+      expect.objectContaining({
+        code: "MISSING_CWD",
+        message: expect.stringContaining("--cwd is required"),
       }),
     );
   });

@@ -27,6 +27,13 @@ export interface DaemonHydrationGate {
   release(): void;
 }
 
+export interface RewindCompletionGate {
+  clearTimelineStreamCount(): void;
+  release(): void;
+  timelineStreamCount(): number;
+  waitForDelayedResponse(): Promise<void>;
+}
+
 export interface PromptJumpRequestTracker {
   requests(): Array<{ cursorSeq: number | null; limit: number | null; mergeWindow: boolean }>;
 }
@@ -252,6 +259,62 @@ export async function holdDaemonHydration(page: Page): Promise<DaemonHydrationGa
         forward();
       }
     },
+  };
+}
+
+export async function holdRewindCompletion(
+  page: Page,
+  agentId: string,
+): Promise<RewindCompletionGate> {
+  let released = false;
+  let timelineStreamCount = 0;
+  const delayedForwards: Array<() => void> = [];
+  let resolveDelayedResponse: (() => void) | null = null;
+  const delayedResponse = new Promise<void>((resolve) => {
+    resolveDelayedResponse = resolve;
+  });
+
+  await page.routeWebSocket(daemonWsRoutePattern(), (ws) => {
+    const server = ws.connectToServer();
+    ws.onMessage((message) => server.send(message));
+    server.onMessage((message) => {
+      const sessionMessage = getSessionMessage(message);
+      const payload = sessionMessage ? getPayload(sessionMessage) : null;
+      const streamEvent = payload?.event;
+      if (
+        sessionMessage?.type === "agent_stream" &&
+        payload?.agentId === agentId &&
+        streamEvent &&
+        typeof streamEvent === "object" &&
+        (streamEvent as { type?: unknown }).type === "timeline"
+      ) {
+        timelineStreamCount += 1;
+      }
+      if (
+        !released &&
+        sessionMessage?.type === "agent.rewind.response" &&
+        payload?.agentId === agentId
+      ) {
+        delayedForwards.push(() => ws.send(message));
+        resolveDelayedResponse?.();
+        return;
+      }
+      ws.send(message);
+    });
+  });
+
+  return {
+    clearTimelineStreamCount() {
+      timelineStreamCount = 0;
+    },
+    release() {
+      released = true;
+      for (const forward of delayedForwards.splice(0)) {
+        forward();
+      }
+    },
+    timelineStreamCount: () => timelineStreamCount,
+    waitForDelayedResponse: () => delayedResponse,
   };
 }
 

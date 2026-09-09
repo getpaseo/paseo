@@ -14,6 +14,7 @@ import {
   expectUpdateBanner,
   clickCheckForUpdates,
   expectPendingUpdateCheckResult,
+  expectReadyUpdateCheckResult,
   clickInstallUpdate,
   expectInstallInProgress,
   interceptDaemonManagementConfirmDialog,
@@ -85,6 +86,20 @@ test.describe("Desktop updates", () => {
     await clickCheckForUpdates(page);
 
     await expectPendingUpdateCheckResult(page, "1.2.3");
+  });
+
+  test("manual update remains available after the automatic rollout recheck", async ({ page }) => {
+    await installDesktopRuntime(page, {
+      serverId: getServerId(),
+      latestVersion: "1.2.3",
+      manualUpdateBypassesRollout: true,
+    });
+    await gotoAppShell(page);
+    await openDesktopAboutSettings(page);
+
+    await clickCheckForUpdates(page);
+    await expectPendingUpdateCheckResult(page, "1.2.3");
+    await expectReadyUpdateCheckResult(page, "1.2.3");
   });
 });
 

@@ -179,6 +179,12 @@ async function loadHarnessEnvironment(repoRoot: string): Promise<void> {
 }
 
 export default async function globalSetup() {
+  if (process.env.PASEO_REPLICA_CACHE_MEASUREMENT === "1") {
+    if (!process.env.PASEO_REPLICA_CACHE_MEASUREMENT_URL) {
+      throw new Error("PASEO_REPLICA_CACHE_MEASUREMENT_URL must be set for live measurement");
+    }
+    return;
+  }
   const repoRoot = path.resolve(__dirname, "../../../..");
   await loadHarnessEnvironment(repoRoot);
 

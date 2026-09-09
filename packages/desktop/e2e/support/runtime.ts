@@ -58,6 +58,7 @@ export interface DesktopRuntimeConfig {
   updateAvailable?: boolean;
   latestVersion?: string;
   updateReadyToInstall?: boolean;
+  manualUpdateBypassesRollout?: boolean;
   slowInstall?: boolean;
   /** Initial PID reported by desktop_daemon_status. Defaults to null. */
   daemonPid?: number | null;
@@ -139,6 +140,7 @@ export async function installDesktopRuntime(
     let daemonRunning = true;
     let currentPid: number | null = cfg.daemonPid ?? null;
     let startCount = 0;
+    let manualUpdateAdmitted = false;
     window.__desktopDaemonStartRequested = false;
 
     function buildDaemonStatus() {
@@ -175,6 +177,33 @@ export async function installDesktopRuntime(
       }
     }
 
+    function buildAppUpdateCheckResult(hasUpdate: boolean, readyToInstall: boolean) {
+      return {
+        hasUpdate,
+        readyToInstall,
+        currentVersion: "1.0.0",
+        latestVersion: hasUpdate ? (cfg.latestVersion ?? "1.2.3") : null,
+        body: null,
+        date: null,
+      };
+    }
+
+    function checkAppUpdate(intent: unknown) {
+      if (!cfg.manualUpdateBypassesRollout) {
+        return buildAppUpdateCheckResult(
+          cfg.updateAvailable === true,
+          cfg.updateAvailable === true && (cfg.updateReadyToInstall ?? true),
+        );
+      }
+
+      if (intent === "manual") {
+        manualUpdateAdmitted = true;
+        return buildAppUpdateCheckResult(true, false);
+      }
+
+      return buildAppUpdateCheckResult(manualUpdateAdmitted, manualUpdateAdmitted);
+    }
+
     const desktopBridge: {
       platform: string;
       invoke: (command: string, args?: Record<string, unknown>) => Promise<unknown>;
@@ -192,23 +221,7 @@ export async function installDesktopRuntime(
       platform: "darwin",
       invoke: async (command: string, args?: Record<string, unknown>) => {
         if (command === "check_app_update") {
-          return cfg.updateAvailable
-            ? {
-                hasUpdate: true,
-                readyToInstall: cfg.updateReadyToInstall ?? true,
-                currentVersion: "1.0.0",
-                latestVersion: cfg.latestVersion ?? "1.2.3",
-                body: null,
-                date: null,
-              }
-            : {
-                hasUpdate: false,
-                readyToInstall: false,
-                currentVersion: "1.0.0",
-                latestVersion: null,
-                body: null,
-                date: null,
-              };
+          return checkAppUpdate(args?.intent);
         }
 
         if (command === "install_app_update") {
@@ -351,6 +364,14 @@ export async function expectPendingUpdateCheckResult(page: Page, version: string
   ).toBeVisible();
   await expect(page.getByText(`Ready to install: ${normalizedVersion}`)).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Update" })).toBeDisabled();
+}
+
+export async function expectReadyUpdateCheckResult(page: Page, version: string): Promise<void> {
+  const normalizedVersion = `v${version.replace(/^v/i, "")}`;
+  await expect(page.getByText(`Ready to install: ${normalizedVersion}`)).toBeVisible({
+    timeout: 15_000,
+  });
+  await expect(page.getByRole("button", { name: `Update to ${normalizedVersion}` })).toBeEnabled();
 }
 
 export async function clickInstallUpdate(page: Page): Promise<void> {

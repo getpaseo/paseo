@@ -8,15 +8,11 @@ export interface NativeCanvasSlab {
   height: number;
 }
 
-export function nativeStickyHeaderIndices(fileCount: number): number[] {
-  return Array.from({ length: fileCount }, (_, index) => index * 2 + 1);
-}
-
 export function buildNativeCanvasSlabs(
   model: DiffDocumentModel,
   viewportHeight: number,
 ): NativeCanvasSlab[] {
-  const slabHeight = Math.max(768, viewportHeight * 2);
+  const slabHeight = Math.max(768, viewportHeight);
   return model.files.flatMap((file) => {
     const slabs: NativeCanvasSlab[] = [];
     let slabIndex = 0;
@@ -39,8 +35,8 @@ export function nativeCanvasSlabsForViewport(
   scrollTop: number,
   viewportHeight: number,
 ): NativeCanvasSlab[] {
-  const top = Math.max(0, scrollTop - viewportHeight);
-  const bottom = scrollTop + viewportHeight * 2;
+  const top = Math.max(0, scrollTop - viewportHeight / 2);
+  const bottom = scrollTop + viewportHeight * 1.5;
   return slabs.filter((slab) => slab.top < bottom && slab.top + slab.height > top);
 }
 

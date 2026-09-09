@@ -14,7 +14,7 @@ import {
 
 const RUN_REPLICA_CACHE_PERF = process.env.PASEO_REPLICA_CACHE_PERF_E2E === "1";
 const MAX_STREAM_WRITES = 12;
-const MAX_SERIALIZED_CHARS = 190_000;
+const MAX_SERIALIZED_CHARS = 45_000;
 
 const test = base.extend<{ replicaCacheAgent: MockAgentWorkspace }>({
   replicaCacheAgent: async ({ page: _page }, provide) => {

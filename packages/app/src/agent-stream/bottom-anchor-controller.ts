@@ -10,7 +10,7 @@ export interface BottomAnchorRouteRequest {
 }
 
 export interface BottomAnchorLocalRequest {
-  reason: "jump-to-bottom" | "message-sent";
+  reason: "jump-to-bottom" | "message-sent" | "rewind";
   agentId: string;
 }
 

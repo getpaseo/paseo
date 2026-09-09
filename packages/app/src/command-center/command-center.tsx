@@ -56,6 +56,7 @@ import { navigateToAgent } from "@/utils/navigate-to-agent";
 import { formatTimeAgo } from "@/utils/time";
 import { shortenPath } from "@/utils/shorten-path";
 import { useCommandCenterContributions } from "./provider";
+import { filterAndRankWorkspaces } from "./workspace-search";
 import {
   buildContributionSections,
   filterAndRankBuiltInResults,
@@ -121,10 +122,6 @@ function agentSearchFields(result: CommandCenterAgentResult): CommandCenterSearc
   return { visible: [result.title, result.subtitle], hidden: [result.agent.cwd] };
 }
 
-function workspaceSearchFields(result: CommandCenterWorkspaceResult): CommandCenterSearchFields {
-  return { visible: [result.title, result.subtitle], hidden: [] };
-}
-
 /**
  * Build every pinned row, in its default order. Deliberately not keyed on `query`: none of this
  * work depends on what was typed, and rebuilding it per keystroke means re-running an Intl
@@ -138,7 +135,7 @@ function useBuiltInRows(open: boolean): {
   agents: CommandCenterAgentResult[];
 } {
   const { t } = useTranslation();
-  const { agents } = useAggregatedAgents();
+  const { agents } = useAggregatedAgents({ demand: open });
   const { projects } = useProjects({ enabled: open });
   const showHost = useHosts().length > 1;
 
@@ -158,6 +155,7 @@ function useBuiltInRows(open: boolean): {
               project.projectName,
               workspace.currentBranch,
             ]),
+            changeRequestNumber: workspace.changeRequestNumber,
             run: () => {
               clearCommandCenterFocusRestoreElement();
               navigateToWorkspace({ serverId: host.serverId, workspaceId: workspace.id });
@@ -208,12 +206,7 @@ function useBuiltInSections(open: boolean, query: string): CommandCenterResultSe
         band: PINNED_SECTION_BAND,
         rank: 2,
         title: t("shell.commandCenter.workspaces"),
-        results: filterAndRankBuiltInResults(
-          rows.workspaces,
-          query,
-          workspaceSearchFields,
-          compareWorkspacesByTitle,
-        ),
+        results: filterAndRankWorkspaces(rows.workspaces, query, compareWorkspacesByTitle),
       },
       {
         id: "agents",

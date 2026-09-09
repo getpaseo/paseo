@@ -35,6 +35,18 @@ PASEO_MOBILE_E2E_METRO_PORT=62093 npm run test:e2e:mobile
 
 [native-terminal-basic.ios.ad](../packages/app/e2e/mobile/agent-device/native-terminal-basic.ios.ad) and [native-terminal-basic.android.ad](../packages/app/e2e/mobile/agent-device/native-terminal-basic.android.ad) are the smallest examples. Each opens a fresh terminal, types a command at zero delay, submits it, and asserts its distinct output. The app must be connected to a daemon with an active workspace.
 
+For Android keyboard continuity, run the current checkout in the app, open an idle terminal
+with an empty prompt, hide its keyboard, and run:
+
+```bash
+ANDROID_SERIAL=emulator-5554 node packages/app/e2e/mobile/terminal-keyboard/android.mjs
+```
+
+Use a real docked software keyboard. The harness taps Ctrl, Esc, and Enter and checks Android's
+focused input identity and IME hide/show events. It saves screenshots and logs under
+`.dev/agent-device-artifacts/terminal-keyboard-android`. Set `PASEO_TERMINAL_KEYBOARD_APP_ID=sh.paseo`
+to test an installed production build. It never submits a chat message.
+
 When replay diverges, read its ranked selector suggestions. Edit the script deliberately and rerun it from the beginning. `--update` is retained for compatibility but no longer rewrites scripts.
 
 ## Maestro compatibility
@@ -259,7 +271,9 @@ background music stays paused. On iOS this is not just a "while recording" probl
 `.playAndRecord`/`.voiceChat` category is non-mixing and survives backgrounding, and iOS re-asserts
 it every time the app returns to the foreground — so one dictation turn kills music for the life of
 the process, on every open, until the app is force-quit. Android holds
-`AUDIOFOCUS_GAIN_TRANSIENT_EXCLUSIVE` with the same effect.
+`AUDIOFOCUS_GAIN_TRANSIENT_EXCLUSIVE` with the same effect. It must also reset
+`MODE_IN_COMMUNICATION` and clear the selected communication device; abandoning focus alone can
+leave Bluetooth earbuds on their narrow-band call route without an active microphone indicator.
 
 `createAudioEngine` (`packages/app/src/voice/audio-engine.native.ts`) calls
 `releaseAudioSession()` whenever capture stops and the playback queue drains, and the iOS module
@@ -267,9 +281,9 @@ also releases on `OnAppEntersBackground`. The native side re-guards on `isRecord
 `speechPlayer.isPlaying`, because the native engine is a singleton shared by multiple JS engine
 wrappers (voice provider + dictation) and only it knows the true state.
 
-This cannot be validated by a JS test — verify on a device: play music, open Paseo, use dictation
-once, stop, and confirm the music resumes; then background/foreground the app and confirm it keeps
-playing.
+This cannot be validated by a JS test — verify on a device: play music through Bluetooth earbuds,
+open Paseo, use dictation once, stop, and confirm the music resumes at full quality; then
+background/foreground the app and confirm it keeps playing at full quality.
 
 ## Unistyles + Reanimated
 

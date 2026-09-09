@@ -26,7 +26,16 @@ describe("checkout PR schemas", () => {
     expect(parsed.forge).toBe("github");
   });
 
-  test("round-trips forge and neutral project identity", () => {
+  test("round-trips forge, project identity, and optional check presentation metadata", () => {
+    const checks = [
+      { name: "legacy", status: "success", url: null },
+      {
+        name: "deploy",
+        status: "pending",
+        url: null,
+        traits: ["manual", "action_required", "future-forge-trait"],
+      },
+    ];
     const payload = {
       forge: "github",
       projectPath: "getpaseo/paseo",
@@ -38,7 +47,7 @@ describe("checkout PR schemas", () => {
       isMerged: false,
       isDraft: false,
       mergeable: "UNKNOWN" as const,
-      checks: [],
+      checks,
     };
 
     expect(CheckoutPrStatusSchema.parse(payload)).toEqual(payload);
@@ -633,6 +642,46 @@ describe("checkout PR schemas", () => {
       status: "future_pipeline_status",
       stages: [{ jobs: [{ status: "future_job_status", allowFailure: false }] }],
     });
+  });
+
+  // COMPAT(pipelineRawStatus): released peers <= v0.2.0-rc.1 require rawStatus,
+  // so daemons keep emitting it; this proves newer clients accept its absence
+  // once emission stops.
+  test("parses pipeline details without the compat rawStatus field", () => {
+    const details = CheckoutGithubGetCheckDetailsResponseSchema.parse({
+      type: "checkout.github.get_check_details.response",
+      payload: {
+        cwd: "/tmp/repo",
+        success: true,
+        details: {
+          checkRunId: 307,
+          name: "Pipeline (feat/y)",
+          annotations: [],
+          failedJobs: [],
+          truncated: false,
+          pipeline: {
+            id: 307,
+            status: "running",
+            stages: [
+              {
+                name: "test",
+                status: "running",
+                jobs: [{ id: 930, name: "unit", stage: "test", status: "running" }],
+              },
+            ],
+          },
+        },
+        error: null,
+        requestId: "request-pipeline-no-raw",
+      },
+    }).payload.details;
+
+    expect(details?.pipeline).toMatchObject({
+      id: 307,
+      status: "running",
+      stages: [{ jobs: [{ id: 930, status: "running" }] }],
+    });
+    expect(details?.pipeline?.rawStatus).toBeUndefined();
   });
 
   test("keeps pipeline absent for legacy and GitHub check-details responses", () => {

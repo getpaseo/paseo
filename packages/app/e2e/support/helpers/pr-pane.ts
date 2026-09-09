@@ -19,23 +19,31 @@ export async function expectPrPaneState(
   });
 }
 
-async function assertCheckPill(page: Page, testId: string, count: number): Promise<void> {
-  const locator = page.getByTestId(testId);
-  await expect(locator).toHaveCount(count > 0 ? 1 : 0, { timeout: 15_000 });
-  if (count > 0) {
-    await expect(locator).toContainText(String(count));
+export async function expectPrPaneChecks(
+  page: Page,
+  checks: { success: string[]; failure: string[]; pending: string[] },
+): Promise<void> {
+  const section = page.getByTestId("pr-pane-checks");
+  const groups = [
+    { status: "failure", label: /failing checks?$/, names: checks.failure },
+    { status: "pending", label: /in progress checks?$/, names: checks.pending },
+    { status: "success", label: /successful checks?$/, names: checks.success },
+  ];
+
+  for (const group of groups) {
+    const groupSection = section.getByTestId(`pr-pane-check-group-${group.status}`);
+    await expect(groupSection.getByRole("button", { name: group.label })).toBeVisible({
+      timeout: 15_000,
+    });
+    for (const name of group.names) {
+      await expect(groupSection.getByText(name, { exact: true })).toHaveCount(1);
+    }
   }
 }
 
-export async function expectPrPaneCheckSummary(
-  page: Page,
-  counts: { passed: number; failed: number; pending: number },
-): Promise<void> {
-  await assertCheckPill(page, "pr-pane-check-passed", counts.passed);
-  await assertCheckPill(page, "pr-pane-check-failed", counts.failed);
-  await assertCheckPill(page, "pr-pane-check-pending", counts.pending);
-}
-
-export async function expectPrPaneActivityCount(page: Page, count: number): Promise<void> {
-  await expect(page.getByTestId("pr-pane-activity-row")).toHaveCount(count, { timeout: 15_000 });
+export async function expectPrPaneActivity(page: Page, bodies: string[]): Promise<void> {
+  const activity = page.getByTestId("pr-pane-activity-row");
+  for (const body of bodies) {
+    await expect(activity.getByText(body, { exact: true })).toBeVisible({ timeout: 15_000 });
+  }
 }
