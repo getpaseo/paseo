@@ -2295,7 +2295,16 @@ export class DaemonClient {
     });
   }
 
-  async openProject(cwd: string, options?: OpenProjectOptions): Promise<OpenProjectPayload> {
+  async openProject(cwd: string, requestId?: string): Promise<OpenProjectPayload>;
+  async openProject(cwd: string, options?: OpenProjectOptions): Promise<OpenProjectPayload>;
+  async openProject(
+    cwd: string,
+    requestIdOrOptions?: string | OpenProjectOptions,
+  ): Promise<OpenProjectPayload> {
+    const options =
+      typeof requestIdOrOptions === "string"
+        ? { requestId: requestIdOrOptions }
+        : requestIdOrOptions;
     return this.sendCorrelatedSessionRequest({
       requestId: options?.requestId,
       message: {

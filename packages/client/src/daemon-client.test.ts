@@ -2992,6 +2992,50 @@ test("sends structured first-agent context attachments with create_paseo_worktre
   });
 });
 
+test("openProject preserves the legacy request ID argument", async () => {
+  const logger = createMockLogger();
+  const mock = createMockTransport();
+
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_unit_test",
+    logger,
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+
+  const openPromise = client.openProject("/tmp/project", "req-open-project");
+
+  expect(mock.sent).toHaveLength(1);
+  expect(parseSentFrame(mock.sent[0])).toEqual({
+    type: "open_project_request",
+    requestId: "req-open-project",
+    cwd: "/tmp/project",
+  });
+
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "open_project_response",
+      payload: {
+        requestId: "req-open-project",
+        workspace: null,
+        error: "legacy request ID sentinel",
+      },
+    }),
+  );
+
+  await expect(openPromise).resolves.toEqual({
+    requestId: "req-open-project",
+    workspace: null,
+    error: "legacy request ID sentinel",
+  });
+});
+
 test("sends project.add.request without creating a workspace", async () => {
   const logger = createMockLogger();
   const mock = createMockTransport();
