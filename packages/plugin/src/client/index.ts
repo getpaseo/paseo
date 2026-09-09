@@ -6,8 +6,6 @@ export type {
   PluginOpenPanelOptions,
   PluginWorkspacePanelProps,
   PluginAgentPanelProps,
-  PluginComposerPillProps,
-  PluginComposerPillContribution,
   PluginClientOpenPanelOptions,
   PluginClientContext,
   PluginClientContribution,
@@ -26,6 +24,18 @@ export type {
   PluginClientSlashCommandContribution,
   SettingsState,
 } from "./contracts.js";
+export type {
+  PluginButton,
+  PluginButtonBehavior,
+  PluginButtonContentProps,
+  PluginButtonContext,
+  PluginButtonIcon,
+  PluginButtonIconProps,
+  PluginButtonMenuEntry,
+  PluginButtonRegistration,
+  PluginComposerPillContribution,
+  PluginHeaderButtonContribution,
+} from "./buttons.js";
 export { usePaseo } from "./paseo-context.js";
 export { useAgent, useWorkspace } from "./client-state.js";
 export { useRpc } from "./rpc-context.js";
