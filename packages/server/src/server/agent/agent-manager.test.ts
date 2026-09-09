@@ -4919,6 +4919,56 @@ test("archiveSnapshot dispatches archived state for stored-only agents", async (
   expect(last.lifecycle).toBe("closed");
 });
 
+test("markAgentUnread dispatches stored attention to every subscriber", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-mark-unread-dispatch-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const manager = new AgentManager({
+    clients: { codex: new TestAgentClient() },
+    registry: storage,
+    logger,
+  });
+  const created = await manager.createAgent(
+    { provider: "codex", cwd: workdir, title: "Stored unread dispatch" },
+    undefined,
+    { workspaceId: "workspace-1" },
+  );
+  await manager.closeAgent(created.id);
+
+  const firstClientEvents: ManagedAgent[] = [];
+  const secondClientEvents: ManagedAgent[] = [];
+  for (const events of [firstClientEvents, secondClientEvents]) {
+    manager.subscribe(
+      (event) => {
+        if (event.type === "agent_state" && event.agent.id === created.id) {
+          events.push(event.agent);
+        }
+      },
+      { replayState: false },
+    );
+  }
+
+  await manager.markAgentUnread(created.id);
+
+  for (const events of [firstClientEvents, secondClientEvents]) {
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      id: created.id,
+      lifecycle: "closed",
+      workspaceId: "workspace-1",
+      attention: {
+        requiresAttention: true,
+        attentionReason: "finished",
+        attentionTimestamp: expect.any(Date),
+      },
+    });
+  }
+  expect(await storage.get(created.id)).toMatchObject({
+    requiresAttention: true,
+    attentionReason: "finished",
+    attentionTimestamp: expect.any(String),
+  });
+});
+
 test("reloadAgentSession cancels active run and resumes existing session once thread_started is observed", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-reload-active-"));
   const storagePath = join(workdir, "agents");
