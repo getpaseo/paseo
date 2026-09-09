@@ -176,7 +176,11 @@ import {
 } from "./session/checkout/git-metadata-generator.js";
 import { ScheduleSession } from "./session/schedule/schedule-session.js";
 import { ProviderCatalogSession } from "./session/provider/provider-catalog-session.js";
-import { WorkspaceFilesSession } from "./session/files/workspace-files-session.js";
+import {
+  WorkspaceFilesSession,
+  type WorkspaceFileSystemProvider,
+  type WorkspaceFileSystemResolver,
+} from "./session/files/workspace-files-session.js";
 import { AgentConfigSession } from "./session/agent-config/agent-config-session.js";
 import { ProjectConfigSession } from "./session/project-config/project-config-session.js";
 import { DaemonSession, type DaemonRuntimeConfig } from "./session/daemon/daemon-session.js";
@@ -324,6 +328,12 @@ function clientUsesLegacyWorkspaceRestore(appVersion: string | null): boolean {
   return (
     appVersion !== null && !isAppVersionAtLeast(appVersion, MIN_VERSION_EXPLICIT_WORKSPACE_RECOVERY)
   );
+}
+
+function resolveProjectSecondaryLabel(
+  project: PersistedProjectRecord | null | undefined,
+): string | null {
+  return project?.secondaryLabel ?? null;
 }
 
 type DeleteFencedAgentStorage = AgentStorage & {
@@ -509,6 +519,7 @@ export interface SessionOptions {
     subscribeSettings?(listener: (pluginId: string, settingsId: string) => void): () => void;
     catalog(): Array<{ id: string; clientBundle: string }>;
     invokePluginRpc(pluginId: string, method: string, input: unknown): Promise<unknown>;
+    resolveWorkspaceFileSystem?(cwd: string): Promise<WorkspaceFileSystemProvider | null>;
   };
   orchestrationSkills?: import("./orchestration-skills/index.js").OrchestrationSkills;
   mcpBaseUrl?: string | null;
@@ -623,6 +634,13 @@ interface WorkspaceUpdateOptions {
 
 function resolveDirectorySync(service: DirectorySyncService | undefined): DirectorySyncService {
   return service ?? new DirectorySyncService();
+}
+
+function resolveWorkspaceFileSystems(
+  pluginRuntime: SessionOptions["pluginRuntime"],
+): WorkspaceFileSystemResolver | undefined {
+  if (!pluginRuntime?.resolveWorkspaceFileSystem) return undefined;
+  return { resolve: (cwd) => pluginRuntime.resolveWorkspaceFileSystem!(cwd) };
 }
 
 function describeRegistryTransition(record: ArchivedRecordSnapshot | null): RegistryTransition {
@@ -848,6 +866,7 @@ export class Session {
       downloadTokenStore,
       paseoHome,
       logger: this.sessionLogger,
+      fileSystems: resolveWorkspaceFileSystems(pluginRuntime),
     });
     this.agentManager = agentManager;
     this.agentStorage = agentStorage;
@@ -2626,6 +2645,8 @@ export class Session {
     switch (msg.type) {
       case "file_explorer_request":
         return this.workspaceFilesSession.handleFileExplorerRequest(msg, source);
+      case "fs.workspace.status.request":
+        return this.workspaceFilesSession.handleWorkspaceFileSystemStatusRequest(msg);
       case "fs.file.subscribe.request":
         return this.workspaceFilesSession.handleFileSubscribeRequest(msg);
       case "fs.file.unsubscribe.request":
@@ -4995,6 +5016,7 @@ export class Session {
       projectDisplayName: resolvedProjectRecord
         ? resolveProjectDisplayName(resolvedProjectRecord)
         : workspace.projectId,
+      projectSecondaryLabel: resolveProjectSecondaryLabel(resolvedProjectRecord),
       projectCustomName: resolvedProjectRecord?.customName ?? null,
       projectCustomIconRevision: resolvedProjectRecord?.customIconRevision ?? null,
       projectRootPath: resolvedProjectRecord?.rootPath ?? workspace.cwd,
@@ -5084,6 +5106,7 @@ export class Session {
       projectDisplayName: projectRecord
         ? resolveProjectDisplayName(projectRecord)
         : result.workspace.projectId,
+      projectSecondaryLabel: resolveProjectSecondaryLabel(projectRecord),
       projectCustomName: projectRecord?.customName ?? null,
       projectCustomIconRevision: projectRecord?.customIconRevision ?? null,
       projectRootPath: projectRecord?.rootPath ?? result.repoRoot,
@@ -5261,6 +5284,7 @@ export class Session {
       projectId: project.projectId,
       ...(project.projectKey ? { projectKey: project.projectKey } : {}),
       projectDisplayName: resolveProjectDisplayName(project),
+      projectSecondaryLabel: project.secondaryLabel,
       projectCustomName: project.customName ?? null,
       projectCustomIconRevision: project.customIconRevision ?? null,
       projectIconRevision: icon.revision,
@@ -6272,9 +6296,20 @@ export class Session {
         workspacesBefore.set(workspaceRecord.workspaceId, workspaceRecord);
       }
       const workspace = await this.workspaceProvisioning.findOrCreateWorkspaceForDirectory(cwd);
-      const project = await this.projectRegistry.get(workspace.projectId);
+      let project = await this.projectRegistry.get(workspace.projectId);
+      const requestedSecondaryLabel = request.projectPresentation?.secondaryLabel;
+      if (project && requestedSecondaryLabel !== undefined) {
+        const secondaryLabel = requestedSecondaryLabel?.trim() || null;
+        if (project.secondaryLabel !== secondaryLabel) {
+          project = await this.projectRegistry.update(project.projectId, (current) => ({
+            ...current,
+            secondaryLabel,
+            updatedAt: new Date().toISOString(),
+          }));
+        }
+      }
       await this.syncWorkspaceGitObserverForWorkspace(workspace);
-      const descriptor = await this.describeWorkspaceRecord(workspace);
+      const descriptor = await this.describeWorkspaceRecord(workspace, project);
       await this.emitWorkspaceUpdateForWorkspaceId(workspace.workspaceId);
       this.sessionLogger.info(
         {

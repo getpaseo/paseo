@@ -20,7 +20,12 @@ import { readPluginManifest } from "./manifest.js";
 import { runPluginBuild } from "./preparation.js";
 import { PluginRuntime } from "./runtime.js";
 import type { PluginProviderMetadata } from "./plugin-process-protocol.js";
+import type {
+  PluginWorkspaceFileSystemMetadata,
+  PluginWorkspaceFileSystemOperation,
+} from "./plugin-process-protocol.js";
 import { readPluginProviderIcon } from "./provider-icon.js";
+import type { WorkspaceFileSystemProvider } from "../session/files/workspace-files-session.js";
 
 const BUILTIN_PROVIDER_ID_SET: ReadonlySet<string> = new Set(BUILTIN_PROVIDER_IDS);
 
@@ -32,6 +37,15 @@ interface PluginRuntimePort {
   getLogs(pluginId: string): PluginLogEntry[];
   clearLogs(pluginId: string): void;
   getProviderRegistrations?(pluginId: string): readonly PluginProviderMetadata[];
+  getWorkspaceFileSystemRegistrations?(
+    pluginId: string,
+  ): readonly PluginWorkspaceFileSystemMetadata[];
+  invokeWorkspaceFileSystem?(
+    pluginId: string,
+    providerId: string,
+    operation: PluginWorkspaceFileSystemOperation,
+    input: unknown,
+  ): Promise<unknown>;
   connectProvider: PluginRuntime["connectProvider"];
   getProviderCatalogCacheKey?: PluginRuntime["getProviderCatalogCacheKey"];
   validatePlugin?(path: string): Promise<void>;
@@ -70,6 +84,10 @@ export class PluginService {
   private globalStartsBlocked = true;
   private started = false;
   private readonly settingsListeners = new Set<(pluginId: string, settingsId: string) => void>();
+  private readonly workspaceFileSystemsByCwd = new Map<
+    string,
+    Promise<WorkspaceFileSystemProvider | null>
+  >();
 
   constructor(
     logger: pino.Logger,
@@ -88,6 +106,7 @@ export class PluginService {
       });
     this.managedSources = dependencies.managedSources ?? null;
     this.runtime.subscribe((pluginId, error) => {
+      this.workspaceFileSystemsByCwd.clear();
       this.removeProviderRegistrations(pluginId);
       if (error) this.errors.set(pluginId, error);
       this.notify(pluginId);
@@ -121,6 +140,74 @@ export class PluginService {
 
   getProviderRegistrations(): readonly ProviderRegistration[] {
     return [...this.providers.values()].sort((left, right) => left.id.localeCompare(right.id));
+  }
+
+  resolveWorkspaceFileSystem(cwd: string): Promise<WorkspaceFileSystemProvider | null> {
+    const normalized = cwd.trim();
+    if (!normalized) return Promise.resolve(null);
+    const cached = this.workspaceFileSystemsByCwd.get(normalized);
+    if (cached) return cached;
+    const resolving = this.findWorkspaceFileSystem(normalized);
+    this.workspaceFileSystemsByCwd.set(normalized, resolving);
+    void resolving.catch(() => {
+      if (this.workspaceFileSystemsByCwd.get(normalized) === resolving) {
+        this.workspaceFileSystemsByCwd.delete(normalized);
+      }
+    });
+    return resolving;
+  }
+
+  private async findWorkspaceFileSystem(cwd: string): Promise<WorkspaceFileSystemProvider | null> {
+    const invoke = this.runtime.invokeWorkspaceFileSystem;
+    const registrations = this.runtime.getWorkspaceFileSystemRegistrations;
+    if (!invoke || !registrations) return null;
+    const plugins = this.runtime.catalog().map((plugin) => plugin.id);
+    let firstError: unknown;
+    for (const pluginId of plugins) {
+      for (const provider of registrations.call(this.runtime, pluginId)) {
+        try {
+          const matches = await invoke.call(this.runtime, pluginId, provider.id, "matches", {
+            cwd,
+          });
+          if (matches !== true) continue;
+          return this.createWorkspaceFileSystem(pluginId, provider, invoke);
+        } catch (error) {
+          firstError ??= error;
+          this.logger.warn(
+            { err: error, pluginId, providerId: provider.id, cwd },
+            "Workspace file system match failed",
+          );
+        }
+      }
+    }
+    if (firstError) throw firstError;
+    return null;
+  }
+
+  private createWorkspaceFileSystem(
+    pluginId: string,
+    provider: PluginWorkspaceFileSystemMetadata,
+    invoke: NonNullable<PluginRuntimePort["invokeWorkspaceFileSystem"]>,
+  ): WorkspaceFileSystemProvider {
+    const call = <Output>(operation: PluginWorkspaceFileSystemOperation, input: unknown) =>
+      invoke.call(this.runtime, pluginId, provider.id, operation, input) as Promise<Output>;
+    return {
+      key: `${pluginId}.${provider.id}`,
+      writable: provider.writable,
+      ...(provider.hasStatus
+        ? { getStatus: (input: { cwd: string }) => call("get-status", input) }
+        : {}),
+      listDirectory: (input) => call("list-directory", input),
+      readFile: (input) => call("read-file", input),
+      statFile: (input) => call("stat-file", input),
+      ...(provider.writable
+        ? {
+            writeFile: (
+              input: Parameters<NonNullable<WorkspaceFileSystemProvider["writeFile"]>>[0],
+            ) => call("write-file", input),
+          }
+        : {}),
+    };
   }
 
   subscribeProviderRegistrations(listener: () => void): () => void {
@@ -425,6 +512,7 @@ export class PluginService {
 
   private async startPlugin(pluginId: string, sourcePath: string): Promise<void> {
     await this.runtime.startPlugin(pluginId, sourcePath, () => this.canPublish(pluginId));
+    this.workspaceFileSystemsByCwd.clear();
     try {
       await this.publishProviderRegistrations(pluginId, sourcePath);
     } catch (error) {
@@ -438,11 +526,13 @@ export class PluginService {
   }
 
   private stopPlugin(pluginId: string): Promise<boolean> {
+    this.workspaceFileSystemsByCwd.clear();
     this.removeProviderRegistrations(pluginId);
     return this.runtime.stopPluginById(pluginId);
   }
 
   private async stopAll(): Promise<void> {
+    this.workspaceFileSystemsByCwd.clear();
     for (const pluginId of this.providerIdsByPlugin.keys()) {
       this.removeProviderRegistrations(pluginId);
     }

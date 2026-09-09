@@ -208,6 +208,119 @@ afterEach(async () => {
 });
 
 describe("PluginRuntime", () => {
+  it("runs workspace file system calls through the real plugin subprocess boundary", async () => {
+    const directory = await createPlugin(
+      "workspace-file-system-round-trip",
+      `import type { PluginServerContext } from "@getpaseo/plugin/server";
+
+export default function contribute(server: PluginServerContext) {
+  server.registerWorkspaceFileSystem({
+    id: "example.remote",
+    matches: ({ cwd }) => cwd.startsWith("/virtual/"),
+    getStatus: () => ({ state: "online", detail: "Connected" }),
+    listDirectory: ({ path }) => ({
+      path,
+      entries: [{
+        name: "remote.txt",
+        path: path === "." ? "remote.txt" : path + "/remote.txt",
+        kind: "file",
+        size: 12,
+        modifiedAt: "2026-09-09T00:00:00.000Z",
+      }],
+    }),
+    readFile: ({ path }) => ({
+      path,
+      kind: "text",
+      encoding: "utf-8",
+      content: "remote file\\n",
+      mimeType: "text/plain",
+      size: 12,
+      modifiedAt: "2026-09-09T00:00:00.000Z",
+      revision: "remote:1",
+    }),
+    statFile: ({ cwd, path }) => ({
+      status: "ready",
+      cwd,
+      path,
+      size: 12,
+      modifiedAt: "2026-09-09T00:00:00.000Z",
+      revision: "remote:1",
+    }),
+    writeFile: ({ content }) => ({
+      status: "written",
+      modifiedAt: "2026-09-09T00:00:01.000Z",
+      size: content.length,
+      revision: "remote:2",
+    }),
+  });
+  return () => {};
+}`,
+    );
+    await writeFile(
+      path.join(directory, "paseo-plugin.json"),
+      JSON.stringify({
+        id: "workspace-file-system-round-trip",
+        requirements: { paseo: ">=0.8.0" },
+      }),
+      "utf8",
+    );
+    const runtime = createTestRuntime({}, undefined, "0.8.0");
+
+    await runtime.startPlugin("workspace-file-system-round-trip", directory);
+    expect(runtime.getWorkspaceFileSystemRegistrations("workspace-file-system-round-trip")).toEqual(
+      [{ id: "example.remote", writable: true, hasStatus: true }],
+    );
+    await expect(
+      runtime.invokeWorkspaceFileSystem(
+        "workspace-file-system-round-trip",
+        "example.remote",
+        "matches",
+        { cwd: "/virtual/project" },
+      ),
+    ).resolves.toBe(true);
+    await expect(
+      runtime.invokeWorkspaceFileSystem(
+        "workspace-file-system-round-trip",
+        "example.remote",
+        "get-status",
+        { cwd: "/virtual/project" },
+      ),
+    ).resolves.toEqual({ state: "online", detail: "Connected" });
+    await expect(
+      runtime.invokeWorkspaceFileSystem(
+        "workspace-file-system-round-trip",
+        "example.remote",
+        "read-file",
+        { cwd: "/virtual/project", path: "remote.txt" },
+      ),
+    ).resolves.toMatchObject({
+      path: "remote.txt",
+      content: "remote file\n",
+      revision: "remote:1",
+    });
+    await expect(
+      runtime.invokeWorkspaceFileSystem(
+        "workspace-file-system-round-trip",
+        "example.remote",
+        "write-file",
+        {
+          cwd: "/virtual/project",
+          path: "remote.txt",
+          content: "after",
+          expectedModifiedAt: "2026-09-09T00:00:00.000Z",
+          expectedRevision: "remote:1",
+        },
+      ),
+    ).resolves.toEqual({
+      status: "written",
+      modifiedAt: "2026-09-09T00:00:01.000Z",
+      size: 5,
+      revision: "remote:2",
+    });
+
+    await runtime.stopAll();
+  });
+
   it.each([
     { specifier: "@getpaseo/plugin", moduleDirectory: "shared" },
     { specifier: "@getpaseo/plugin", moduleDirectory: "server" },

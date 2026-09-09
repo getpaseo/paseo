@@ -1,6 +1,8 @@
 import { describe, expect, test } from "vitest";
 import {
   FileExplorerRequestSchema,
+  WorkspaceFileSystemStatusRequestSchema,
+  WorkspaceFileSystemStatusResponseSchema,
   PaseoWorktreeArchiveRequestSchema,
   parseServerInfoStatusPayload,
   SessionInboundMessageSchema,
@@ -434,6 +436,30 @@ describe("file explorer request compatibility", () => {
       requestId: "req-new",
       acceptBinary: true,
     });
+  });
+});
+
+describe("workspace file system status", () => {
+  test("parses correlated status requests and responses", () => {
+    expect(
+      WorkspaceFileSystemStatusRequestSchema.parse({
+        type: "fs.workspace.status.request",
+        cwd: "/virtual/repo",
+        requestId: "req-status",
+      }),
+    ).toMatchObject({ cwd: "/virtual/repo", requestId: "req-status" });
+
+    expect(
+      WorkspaceFileSystemStatusResponseSchema.parse({
+        type: "fs.workspace.status.response",
+        payload: {
+          cwd: "/virtual/repo",
+          status: { state: "online", detail: "Remote workspace is reachable" },
+          error: null,
+          requestId: "req-status",
+        },
+      }),
+    ).toMatchObject({ payload: { status: { state: "online" } } });
   });
 });
 

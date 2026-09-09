@@ -21,6 +21,7 @@ Local plugins are directory sources installed into one Paseo daemon. A plugin ca
 - transformed and daemon-pushed agent timeline rows;
 - light and dark themes in Settings → Appearance;
 - schema-validated RPC handlers running beside the daemon;
+- workspace file systems rendered by Paseo's native Explorer and file tabs;
 - normal Paseo operations through the TypeScript SDK;
 - searchable external resources in the message composer.
 
@@ -184,10 +185,99 @@ Use `openSettings`, `openSurface`, and `openPanel` for your own registered contr
 ### Server runtime
 
 Paseo provides `@getpaseo/plugin`, `@getpaseo/plugin/server`,
-`@getpaseo/plugin/server/provider`, `@getpaseo/plugin/server/acp`, and `zod` to server code. Backend
+`@getpaseo/plugin/server/provider`, `@getpaseo/plugin/server/acp`,
+`@getpaseo/plugin/server/workspace-filesystem`, and `zod` to server code. Backend
 contributions run in a daemon subprocess with Node access to the host machine. Keep filesystem,
 process, credential, and other machine-local work under `server/`. A plugin without
 `index.server.ts` starts no subprocess.
+
+### Workspace file systems
+
+A server plugin can provide the files for selected workspace roots while keeping Paseo's native
+Explorer, file tabs, syntax highlighting, and editor. This is intended for remote workspaces whose
+project record points at a local anchor but whose files live behind SSH, an API, or another transport.
+
+Register a provider with `server.registerWorkspaceFileSystem()`:
+
+```ts
+import type { PluginServerContext } from "@getpaseo/plugin/server";
+import type { PluginWorkspaceFileSystemProvider } from "@getpaseo/plugin/server/workspace-filesystem";
+
+const files: PluginWorkspaceFileSystemProvider = {
+  id: "example.remote",
+  matches: ({ cwd }) => cwd.startsWith("/var/lib/example-workspaces/"),
+  async getStatus() {
+    return { state: "online", detail: "Connected to remote.example.com" };
+  },
+  async listDirectory({ path }) {
+    return {
+      path,
+      entries: [
+        {
+          name: "README.md",
+          path: path === "." ? "README.md" : `${path}/README.md`,
+          kind: "file",
+          size: 14,
+          modifiedAt: "2026-09-09T00:00:00.000Z",
+        },
+      ],
+    };
+  },
+  async readFile({ path }) {
+    return {
+      path,
+      kind: "text",
+      encoding: "utf-8",
+      content: "# Remote file\n",
+      mimeType: "text/markdown",
+      size: 14,
+      modifiedAt: "2026-09-09T00:00:00.000Z",
+      revision: "remote:1",
+    };
+  },
+  async statFile({ cwd, path }) {
+    return {
+      status: "ready",
+      cwd,
+      path,
+      size: 14,
+      modifiedAt: "2026-09-09T00:00:00.000Z",
+      revision: "remote:1",
+    };
+  },
+  async writeFile({ content }) {
+    return {
+      status: "written",
+      size: Buffer.byteLength(content),
+      modifiedAt: new Date().toISOString(),
+      revision: "remote:2",
+    };
+  },
+};
+
+export default function contribute(server: PluginServerContext) {
+  server.registerWorkspaceFileSystem(files);
+  return () => {};
+}
+```
+
+`matches()` runs once per workspace root and selects the first matching provider in plugin catalog
+order. Paseo invalidates that decision when plugins start, stop, reload, or fail. Directory and file
+paths are relative to the workspace root. Providers must reject traversal, symlinks, or other paths
+that escape their own root; the remote endpoint should enforce the same boundary again.
+
+`listDirectory()`, `readFile()`, and `statFile()` are required. Add `writeFile()` to support saves
+from the native file editor, including revision-based conflict handling. A provider without it is
+read-only. Entry creation, rename, duplication, deletion, and downloads are not part of this first
+contract; Paseo rejects those operations for provider-backed workspaces instead of falling back to
+the local anchor.
+
+Add `getStatus()` when the remote transport has a useful connection state. Return `online`,
+`connecting`, `offline`, `error`, or `unknown`, with an optional short `detail` for the tooltip.
+Paseo refreshes this probe periodically, combines it with the host connection state, and displays a
+small indicator beside `projectPresentation.secondaryLabel` in the sidebar. Keep the probe bounded
+and inexpensive; it should report existing transport state or perform a short health check rather
+than establish a new long-lived connection.
 
 ### Providers
 
@@ -1164,21 +1254,22 @@ Both hooks return `null` when the record is unavailable. Otherwise they run sync
 
 Workspace snapshot fields:
 
-| Field                | Type                                                              |
-| -------------------- | ----------------------------------------------------------------- |
-| `id`                 | `string`                                                          |
-| `projectId`          | `string`                                                          |
-| `projectDisplayName` | `string`                                                          |
-| `projectRootPath`    | `string`                                                          |
-| `directory`          | `string`                                                          |
-| `projectKind`        | `"git" \| "non_git" \| "directory"`                               |
-| `kind`               | `"directory" \| "local_checkout" \| "checkout" \| "worktree"`     |
-| `name`               | `string`                                                          |
-| `title`              | `string \| null`                                                  |
-| `status`             | `"needs_input" \| "failed" \| "running" \| "attention" \| "done"` |
-| `statusEnteredAt`    | ISO timestamp or `null`                                           |
-| `archivingAt`        | ISO timestamp or `null`                                           |
-| `diffStat`           | `{ additions: number; deletions: number } \| null`                |
+| Field                   | Type                                                              |
+| ----------------------- | ----------------------------------------------------------------- |
+| `id`                    | `string`                                                          |
+| `projectId`             | `string`                                                          |
+| `projectDisplayName`    | `string`                                                          |
+| `projectSecondaryLabel` | `string \| null`                                                  |
+| `projectRootPath`       | `string`                                                          |
+| `directory`             | `string`                                                          |
+| `projectKind`           | `"git" \| "non_git" \| "directory"`                               |
+| `kind`                  | `"directory" \| "local_checkout" \| "checkout" \| "worktree"`     |
+| `name`                  | `string`                                                          |
+| `title`                 | `string \| null`                                                  |
+| `status`                | `"needs_input" \| "failed" \| "running" \| "attention" \| "done"` |
+| `statusEnteredAt`       | ISO timestamp or `null`                                           |
+| `archivingAt`           | ISO timestamp or `null`                                           |
+| `diffStat`              | `{ additions: number; deletions: number } \| null`                |
 
 Agent snapshot fields:
 

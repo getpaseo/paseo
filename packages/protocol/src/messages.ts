@@ -2493,10 +2493,18 @@ export const LegacyOpenInEditorRequestSchema = z.object({
   requestId: z.string(),
 });
 
+export const ProjectPresentationSchema = z.object({
+  secondaryLabel: z.string().max(128).nullable().optional(),
+});
+export type ProjectPresentation = z.infer<typeof ProjectPresentationSchema>;
+
 export const OpenProjectRequestSchema = z.object({
   type: z.literal("open_project_request"),
   // Path used only for workspace lookup/creation. Use the returned workspace.id for all subsequent references.
   cwd: z.string(),
+  // COMPAT(projectPresentation): added in v0.8.0, remove optional parsing after 2027-03-10
+  // once the daemon floor is >= v0.8.0. A null secondary label explicitly clears it.
+  projectPresentation: ProjectPresentationSchema.optional(),
   requestId: z.string(),
 });
 
@@ -2664,6 +2672,17 @@ export const FileExplorerRequestSchema = z.object({
   requestId: z.string(),
   acceptBinary: z.boolean().optional(),
   maxBytes: z.number().int().positive().optional(),
+});
+
+export const WorkspaceFileSystemStatusSchema = z.object({
+  state: z.enum(["online", "connecting", "offline", "error", "unknown"]),
+  detail: z.string().optional(),
+});
+
+export const WorkspaceFileSystemStatusRequestSchema = z.object({
+  type: z.literal("fs.workspace.status.request"),
+  cwd: z.string(),
+  requestId: z.string(),
 });
 
 export const FileVersionSchema = z.discriminatedUnion("status", [
@@ -3211,6 +3230,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   WorkspaceClearAttentionRequestSchema,
   WorkspaceMarkUnreadRequestSchema,
   FileExplorerRequestSchema,
+  WorkspaceFileSystemStatusRequestSchema,
   FileSubscribeRequestSchema,
   FileUnsubscribeRequestSchema,
   FileWriteRequestSchema,
@@ -3446,6 +3466,8 @@ export const ServerInfoStatusPayloadSchema = z
         workspaceSetupRun: z.boolean().optional(),
         // COMPAT(workspaceTerminals): added in v0.8.0, remove gate after 2027-09-05.
         workspaceTerminals: z.boolean().optional(),
+        // COMPAT(projectPresentation): added in v0.8.0, remove gate after 2027-03-10.
+        projectPresentation: z.boolean().optional(),
         // COMPAT(checkoutForgeSetAutoMerge): added in v0.2.0-beta.1. Remove the
         // feature gate and checkoutGithubSetAutoMerge fallback after 2027-01-17
         // once the supported daemon floor is >= v0.2.0.
@@ -3865,6 +3887,9 @@ export const WorkspaceDescriptorPayloadSchema = z
     id: z.string(),
     projectId: z.string(),
     projectDisplayName: z.string(),
+    // COMPAT(projectSecondaryLabel): added in v0.8.0, remove optional parsing after 2027-03-10
+    // once the daemon floor is >= v0.8.0.
+    projectSecondaryLabel: z.string().nullable().optional(),
     // COMPAT(projectCustomName): added in v0.1.76, drop the optional gate when floor >= v0.1.76.
     // When the user has renamed a project, projectDisplayName carries the resolved
     // value (customName) and projectCustomName mirrors the raw override so the
@@ -4062,6 +4087,9 @@ export const WorkspaceProjectDescriptorPayloadSchema = z.object({
   // COMPAT(projectKey): added in v0.2.4 on 2026-07-28; remove optional after 2027-01-28.
   projectKey: z.string().optional(),
   projectDisplayName: z.string(),
+  // COMPAT(projectSecondaryLabel): added in v0.8.0, remove optional parsing after 2027-03-10
+  // once the daemon floor is >= v0.8.0.
+  projectSecondaryLabel: z.string().nullable().optional(),
   projectCustomName: z.string().nullable().optional(),
   // COMPAT(projectCustomIcon): added in v0.2.0, remove after 2027-01-20.
   projectCustomIconRevision: z.string().nullable().optional(),
@@ -5722,6 +5750,16 @@ export const FileExplorerResponseSchema = z.object({
   }),
 });
 
+export const WorkspaceFileSystemStatusResponseSchema = z.object({
+  type: z.literal("fs.workspace.status.response"),
+  payload: z.object({
+    cwd: z.string(),
+    status: WorkspaceFileSystemStatusSchema.nullable(),
+    error: z.string().nullable(),
+    requestId: z.string(),
+  }),
+});
+
 export const FileSubscribeResponseSchema = z.object({
   type: z.literal("fs.file.subscribe.response"),
   payload: z.object({
@@ -6617,6 +6655,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   PaseoWorktreeArchiveResponseSchema,
   CreatePaseoWorktreeResponseSchema,
   FileExplorerResponseSchema,
+  WorkspaceFileSystemStatusResponseSchema,
   FileSubscribeResponseSchema,
   FileUnsubscribeResponseSchema,
   FileWriteResponseSchema,
@@ -7050,6 +7089,13 @@ export type WorkspaceClearAttentionRequest = z.infer<typeof WorkspaceClearAttent
 export type WorkspaceMarkUnreadRequest = z.infer<typeof WorkspaceMarkUnreadRequestSchema>;
 export type FileExplorerRequest = z.infer<typeof FileExplorerRequestSchema>;
 export type FileExplorerResponse = z.infer<typeof FileExplorerResponseSchema>;
+export type WorkspaceFileSystemStatus = z.infer<typeof WorkspaceFileSystemStatusSchema>;
+export type WorkspaceFileSystemStatusRequest = z.infer<
+  typeof WorkspaceFileSystemStatusRequestSchema
+>;
+export type WorkspaceFileSystemStatusResponse = z.infer<
+  typeof WorkspaceFileSystemStatusResponseSchema
+>;
 export type FileVersion = z.infer<typeof FileVersionSchema>;
 export type FileSubscribeRequest = z.infer<typeof FileSubscribeRequestSchema>;
 export type FileSubscribeResponse = z.infer<typeof FileSubscribeResponseSchema>;

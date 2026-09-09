@@ -9,6 +9,7 @@ const PLUGIN_SERVER_ONLY_SDK_SPECIFIERS = [
   "@getpaseo/plugin/server",
   "@getpaseo/plugin/server/provider",
   "@getpaseo/plugin/server/acp",
+  "@getpaseo/plugin/server/workspace-filesystem",
 ] as const;
 
 export const PLUGIN_SDK_SPECIFIERS = [

@@ -5,11 +5,13 @@ import {
   type PluginProcessRequest,
 } from "./plugin-process-protocol.js";
 import { createRequire } from "node:module";
+import { z } from "zod";
 import * as pluginSharedRuntime from "@getpaseo/plugin";
 import * as pluginProviderRuntime from "@getpaseo/plugin/server/provider";
 import * as pluginAcpRuntime from "@getpaseo/plugin/server/acp";
 import type { SettingsDefinition, PluginRpcContract } from "@getpaseo/plugin";
 import type { PluginHandlerContext } from "@getpaseo/plugin/server";
+import type { PluginWorkspaceFileSystemProvider } from "@getpaseo/plugin/server/workspace-filesystem";
 import {
   ProviderEventSchema,
   type ProviderConnection,
@@ -20,6 +22,7 @@ import { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { createPluginDaemonTransportFactory } from "./daemon-transport.js";
 import { isPluginClientOnlySdkSpecifier } from "./plugin-sdk-specifiers.js";
 import { createPluginClientId } from "./plugin-session-identity.js";
+import { pluginWorkspaceFileSystemMethod } from "./plugin-process-protocol.js";
 
 import { PluginSettingsStore } from "./settings/index.js";
 let settingsStore: PluginSettingsStore | null = null;
@@ -47,6 +50,7 @@ const hooks = new PluginHookHandlers(() => {
 });
 const handlers = new Map<string, RegisteredRpc>();
 const providers = new Map<string, ProviderRegistration>();
+const workspaceFileSystems = new Map<string, PluginWorkspaceFileSystemProvider>();
 const providerConnections = new Map<
   string,
   { connection: ProviderConnection; unsubscribe: () => void }
@@ -118,6 +122,164 @@ function registerProvider(provider: ProviderRegistration): void {
   }
   if (providers.has(id)) throw new Error(`Duplicate plugin provider ID: ${id}`);
   providers.set(id, { ...provider, id });
+}
+
+const workspaceFileSystemTargetSchema = z.object({ cwd: z.string().min(1) }).strict();
+const workspaceFileSystemStatusSchema = z
+  .object({
+    state: z.enum(["online", "connecting", "offline", "error", "unknown"]),
+    detail: z.string().optional(),
+  })
+  .strict();
+const workspaceFileSystemPathSchema = workspaceFileSystemTargetSchema
+  .extend({ path: z.string() })
+  .strict();
+const workspaceFileSystemEntrySchema = z
+  .object({
+    name: z.string(),
+    path: z.string(),
+    kind: z.enum(["file", "directory"]),
+    size: z.number().int().nonnegative(),
+    modifiedAt: z.string(),
+  })
+  .strict();
+const workspaceFileSystemDirectorySchema = z
+  .object({ path: z.string(), entries: z.array(workspaceFileSystemEntrySchema) })
+  .strict();
+const workspaceFileSystemFileSchema = z
+  .object({
+    path: z.string(),
+    kind: z.enum(["text", "image", "binary"]),
+    encoding: z.enum(["utf-8", "base64", "none"]),
+    content: z.string().optional(),
+    mimeType: z.string().optional(),
+    size: z.number().int().nonnegative(),
+    modifiedAt: z.string(),
+    revision: z.string().optional(),
+  })
+  .strict();
+const workspaceFileVersionSchema = z.discriminatedUnion("status", [
+  z
+    .object({
+      status: z.literal("ready"),
+      cwd: z.string(),
+      path: z.string(),
+      size: z.number().int().nonnegative(),
+      modifiedAt: z.string(),
+      revision: z.string().optional(),
+    })
+    .strict(),
+  z.object({ status: z.literal("missing"), cwd: z.string(), path: z.string() }).strict(),
+  z
+    .object({ status: z.literal("error"), cwd: z.string(), path: z.string(), error: z.string() })
+    .strict(),
+]);
+const workspaceFileWriteResultSchema = z.discriminatedUnion("status", [
+  z
+    .object({
+      status: z.literal("written"),
+      modifiedAt: z.string(),
+      size: z.number().int().nonnegative(),
+      revision: z.string().optional(),
+    })
+    .strict(),
+  z.object({ status: z.literal("conflict"), version: workspaceFileVersionSchema }).strict(),
+  z.object({ status: z.literal("error"), error: z.string() }).strict(),
+]);
+
+function registerWorkspaceFileSystem(provider: PluginWorkspaceFileSystemProvider): void {
+  const id = provider.id.trim();
+  if (!/^[a-z][a-z0-9._-]*$/.test(id)) {
+    throw new Error(`Invalid workspace file system ID: ${provider.id}`);
+  }
+  if (workspaceFileSystems.has(id)) throw new Error(`Duplicate workspace file system ID: ${id}`);
+  if (typeof provider.matches !== "function") {
+    throw new Error(`Workspace file system ${id} must implement matches()`);
+  }
+  if (typeof provider.listDirectory !== "function") {
+    throw new Error(`Workspace file system ${id} must implement listDirectory()`);
+  }
+  if (typeof provider.readFile !== "function") {
+    throw new Error(`Workspace file system ${id} must implement readFile()`);
+  }
+  if (typeof provider.statFile !== "function") {
+    throw new Error(`Workspace file system ${id} must implement statFile()`);
+  }
+  if (provider.getStatus !== undefined && typeof provider.getStatus !== "function") {
+    throw new Error(`Workspace file system ${id} has an invalid getStatus()`);
+  }
+  if (provider.writeFile !== undefined && typeof provider.writeFile !== "function") {
+    throw new Error(`Workspace file system ${id} has an invalid writeFile()`);
+  }
+  const registered = { ...provider, id };
+  workspaceFileSystems.set(id, registered);
+  register(
+    {
+      name: pluginWorkspaceFileSystemMethod(id, "matches"),
+      input: workspaceFileSystemTargetSchema,
+      output: z.boolean(),
+    },
+    (input) => registered.matches(input as { cwd: string }),
+  );
+  if (registered.getStatus) {
+    register(
+      {
+        name: pluginWorkspaceFileSystemMethod(id, "get-status"),
+        input: workspaceFileSystemTargetSchema,
+        output: workspaceFileSystemStatusSchema,
+      },
+      (input) => registered.getStatus!(input as { cwd: string }),
+    );
+  }
+  register(
+    {
+      name: pluginWorkspaceFileSystemMethod(id, "list-directory"),
+      input: workspaceFileSystemPathSchema,
+      output: workspaceFileSystemDirectorySchema,
+    },
+    (input) => registered.listDirectory(input as { cwd: string; path: string }),
+  );
+  register(
+    {
+      name: pluginWorkspaceFileSystemMethod(id, "read-file"),
+      input: workspaceFileSystemPathSchema.extend({
+        maxBytes: z.number().int().positive().optional(),
+      }),
+      output: workspaceFileSystemFileSchema,
+    },
+    (input) => registered.readFile(input as { cwd: string; path: string; maxBytes?: number }),
+  );
+  register(
+    {
+      name: pluginWorkspaceFileSystemMethod(id, "stat-file"),
+      input: workspaceFileSystemPathSchema,
+      output: workspaceFileVersionSchema,
+    },
+    (input) => registered.statFile(input as { cwd: string; path: string }),
+  );
+  if (registered.writeFile) {
+    register(
+      {
+        name: pluginWorkspaceFileSystemMethod(id, "write-file"),
+        input: workspaceFileSystemPathSchema.extend({
+          content: z.string(),
+          expectedModifiedAt: z.string(),
+          expectedRevision: z.string().optional(),
+        }),
+        output: workspaceFileWriteResultSchema,
+      },
+      (input) =>
+        registered.writeFile!(
+          input as {
+            cwd: string;
+            path: string;
+            content: string;
+            expectedModifiedAt: string;
+            expectedRevision?: string;
+          },
+        ),
+    );
+  }
 }
 
 function providerMetadata(provider: ProviderRegistration) {
@@ -216,6 +378,7 @@ function runtimeRequire(name: string): unknown {
   if (name === "@getpaseo/plugin/server") return {};
   if (name === "@getpaseo/plugin/server/provider") return pluginProviderRuntime;
   if (name === "@getpaseo/plugin/server/acp") return pluginAcpRuntime;
+  if (name === "@getpaseo/plugin/server/workspace-filesystem") return {};
   if (name === "@getpaseo/plugin/client/host")
     throw new Error(`${name} is private to the app host`);
   return nodeRequire(name);
@@ -234,6 +397,7 @@ function evaluateBundle(bundle: string): void {
   const contributedCleanup = setup({
     handle: register,
     registerProvider,
+    registerWorkspaceFileSystem,
     registerSettings,
     on: hooks.on,
     before: hooks.before,
@@ -276,6 +440,13 @@ async function initialize(message: Extract<PluginProcessRequest, { type: "initia
     providers: [...providers.values()]
       .sort((left, right) => left.id.localeCompare(right.id))
       .map(providerMetadata),
+    workspaceFileSystems: [...workspaceFileSystems.values()]
+      .sort((left, right) => left.id.localeCompare(right.id))
+      .map((provider) => ({
+        id: provider.id,
+        writable: provider.writeFile !== undefined,
+        hasStatus: provider.getStatus !== undefined,
+      })),
   });
 }
 

@@ -440,10 +440,12 @@ describe("workspace message schemas", () => {
     const parsed = SessionInboundMessageSchema.parse({
       type: "open_project_request",
       cwd: "/tmp/repo",
+      projectPresentation: { secondaryLabel: "ssh.example.com" },
       requestId: "req-open",
     });
 
     expect(parsed.type).toBe("open_project_request");
+    expect(parsed.projectPresentation?.secondaryLabel).toBe("ssh.example.com");
   });
 
   test("parses a GitHub clone response that registers a project without a workspace", () => {

@@ -24,8 +24,13 @@ import type {
   PluginProcessMessage,
   PluginProcessRequest,
   PluginProviderMetadata,
+  PluginWorkspaceFileSystemMetadata,
+  PluginWorkspaceFileSystemOperation,
 } from "./plugin-process-protocol.js";
-import { PluginProcessMessageSchema } from "./plugin-process-protocol.js";
+import {
+  PluginProcessMessageSchema,
+  pluginWorkspaceFileSystemMethod,
+} from "./plugin-process-protocol.js";
 import { PluginSessionSocket } from "./session-socket.js";
 
 const CLIENT_ENTRY_FILENAMES = ["index.client.ts", "index.client.tsx"] as const;
@@ -65,6 +70,7 @@ interface LoadedPlugin {
   methods: ReadonlySet<string>;
   hooks: { events: string[]; before: string[] };
   providers: readonly PluginProviderMetadata[];
+  workspaceFileSystems: readonly PluginWorkspaceFileSystemMetadata[];
   child: PluginChild | null;
   outputCapture: PluginOutputCapture | null;
   pending: Map<string, PendingInvocation>;
@@ -343,6 +349,36 @@ export class PluginRuntime {
     return this.plugins.get(pluginId)?.providers ?? [];
   }
 
+  getWorkspaceFileSystemRegistrations(
+    pluginId: string,
+  ): readonly PluginWorkspaceFileSystemMetadata[] {
+    return this.plugins.get(pluginId)?.workspaceFileSystems ?? [];
+  }
+
+  async invokeWorkspaceFileSystem(
+    pluginId: string,
+    providerId: string,
+    operation: PluginWorkspaceFileSystemOperation,
+    input: unknown,
+  ): Promise<unknown> {
+    const loaded = this.plugins.get(pluginId);
+    if (!loaded?.child) throw new Error(`Plugin is not available: ${pluginId}`);
+    const provider = loaded.workspaceFileSystems.find((candidate) => candidate.id === providerId);
+    if (!provider) {
+      throw new Error(`Plugin ${pluginId} does not contribute workspace file system ${providerId}`);
+    }
+    if (operation === "write-file" && !provider.writable) {
+      throw new Error(`Workspace file system ${pluginId}.${providerId} is read-only`);
+    }
+    const method = pluginWorkspaceFileSystemMethod(providerId, operation);
+    if (!loaded.methods.has(method)) {
+      throw new Error(
+        `Workspace file system ${pluginId}.${providerId} does not implement ${operation}`,
+      );
+    }
+    return this.request(loaded, { type: "invoke", requestId: randomUUID(), method, input });
+  }
+
   async connectProvider(
     pluginId: string,
     providerId: string,
@@ -550,6 +586,7 @@ export class PluginRuntime {
         methods: new Set(),
         hooks: { events: [], before: [] },
         providers: [],
+        workspaceFileSystems: [],
         child: null,
         outputCapture: null,
         pending: new Map(),
@@ -647,6 +684,7 @@ export class PluginRuntime {
       methods: new Set(ready.methods),
       hooks: ready.hooks ?? { events: [], before: [] },
       providers: ready.providers ?? [],
+      workspaceFileSystems: ready.workspaceFileSystems ?? [],
       child,
       outputCapture,
       pending,
@@ -656,7 +694,12 @@ export class PluginRuntime {
       sessionClosed: sessionAttachment.closed,
     };
     this.logger.info(
-      { pluginId, methods: ready.methods, providers: ready.providers },
+      {
+        pluginId,
+        methods: ready.methods,
+        providers: ready.providers,
+        workspaceFileSystems: ready.workspaceFileSystems ?? [],
+      },
       "Loaded plugin",
     );
     return loaded;

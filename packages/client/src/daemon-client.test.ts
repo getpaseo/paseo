@@ -2229,6 +2229,49 @@ test("listDirectory sends a list file explorer request and returns directory ent
   });
 });
 
+test("getWorkspaceFileSystemStatus returns a plugin workspace status", async () => {
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_workspace_status",
+    logger: createMockLogger(),
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+
+  const responsePromise = client.getWorkspaceFileSystemStatus(
+    "/virtual/project",
+    "req-workspace-status",
+  );
+  expect(JSON.parse(assertStr(mock.sent[0]))).toEqual({
+    type: "session",
+    message: {
+      type: "fs.workspace.status.request",
+      cwd: "/virtual/project",
+      requestId: "req-workspace-status",
+    },
+  });
+
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "fs.workspace.status.response",
+      payload: {
+        cwd: "/virtual/project",
+        status: { state: "online", detail: "Connected" },
+        error: null,
+        requestId: "req-workspace-status",
+      },
+    }),
+  );
+
+  await expect(responsePromise).resolves.toEqual({ state: "online", detail: "Connected" });
+});
+
 test("readFile hides legacy base64 behind bytes", async () => {
   const logger = createMockLogger();
   const mock = createMockTransport();
@@ -2946,6 +2989,50 @@ test("sends structured first-agent context attachments with create_paseo_worktre
     workspace: null,
     error: "worktree attachment sentinel",
     setupTerminalId: null,
+  });
+});
+
+test("openProject preserves the legacy request ID argument", async () => {
+  const logger = createMockLogger();
+  const mock = createMockTransport();
+
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_unit_test",
+    logger,
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+
+  const openPromise = client.openProject("/tmp/project", "req-open-project");
+
+  expect(mock.sent).toHaveLength(1);
+  expect(parseSentFrame(mock.sent[0])).toEqual({
+    type: "open_project_request",
+    requestId: "req-open-project",
+    cwd: "/tmp/project",
+  });
+
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "open_project_response",
+      payload: {
+        requestId: "req-open-project",
+        workspace: null,
+        error: "legacy request ID sentinel",
+      },
+    }),
+  );
+
+  await expect(openPromise).resolves.toEqual({
+    requestId: "req-open-project",
+    workspace: null,
+    error: "legacy request ID sentinel",
   });
 });
 

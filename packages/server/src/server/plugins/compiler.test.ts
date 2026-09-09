@@ -157,6 +157,7 @@ describe("plugin runtime entries", () => {
     "@getpaseo/plugin/server",
     "@getpaseo/plugin/server/provider",
     "@getpaseo/plugin/server/acp",
+    "@getpaseo/plugin/server/workspace-filesystem",
   ])("rejects %s from client code", async (specifier) => {
     const entries = await createSplitPlugin();
     await writeFile(

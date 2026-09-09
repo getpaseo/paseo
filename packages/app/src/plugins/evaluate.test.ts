@@ -535,6 +535,7 @@ describe("evaluatePluginClientBundle", () => {
     "@getpaseo/plugin/server",
     "@getpaseo/plugin/server/provider",
     "@getpaseo/plugin/server/acp",
+    "@getpaseo/plugin/server/workspace-filesystem",
     "@getpaseo/plugin/client/host",
     "@getpaseo/plugin/react-native",
     "@getpaseo/plugin/ui",

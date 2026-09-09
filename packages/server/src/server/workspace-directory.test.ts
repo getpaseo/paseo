@@ -588,6 +588,7 @@ describe("WorkspaceDirectory empty projects", () => {
       kind: "non_git",
       displayName: input.projectId,
       customName: null,
+      secondaryLabel: null,
       createdAt: NOW,
       updatedAt: NOW,
       archivedAt: null,
@@ -612,6 +613,7 @@ describe("WorkspaceDirectory empty projects", () => {
       {
         projectId: "empty",
         projectDisplayName: "Renamed",
+        projectSecondaryLabel: null,
         projectCustomName: "Renamed",
         projectCustomIconRevision: null,
         projectRootPath: "/workspace/empty",

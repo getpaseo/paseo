@@ -155,6 +155,114 @@ function createPluginSelectivePausedRuntime(pausedPluginId: string) {
 }
 
 describe("PluginService", () => {
+  it("resolves and invalidates a plugin-backed workspace file system", async () => {
+    const home = await mkdtemp(path.join(tmpdir(), "paseo-plugin-home-"));
+    roots.push(home);
+    const directory = await createPlugin(
+      "workspace-file-system",
+      `export default function contribute(server) {
+  server.registerWorkspaceFileSystem({
+    id: "example.remote",
+    matches: ({ cwd }) => cwd.startsWith("/virtual/"),
+    getStatus: () => ({ state: "online", detail: "Connected" }),
+    listDirectory: ({ path }) => ({
+      path,
+      entries: [{
+        name: "remote.txt",
+        path: "remote.txt",
+        kind: "file",
+        size: 12,
+        modifiedAt: "2026-09-09T00:00:00.000Z",
+      }],
+    }),
+    readFile: ({ path }) => ({
+      path,
+      kind: "text",
+      encoding: "utf-8",
+      content: "remote file\\n",
+      size: 12,
+      modifiedAt: "2026-09-09T00:00:00.000Z",
+      revision: "remote:1",
+    }),
+    statFile: ({ cwd, path }) => ({
+      status: "ready",
+      cwd,
+      path,
+      size: 12,
+      modifiedAt: "2026-09-09T00:00:00.000Z",
+      revision: "remote:1",
+    }),
+    writeFile: ({ content }) => ({
+      status: "written",
+      modifiedAt: "2026-09-09T00:00:01.000Z",
+      size: content.length,
+      revision: "remote:2",
+    }),
+  });
+  return () => {};
+}`,
+    );
+    await writeFile(
+      path.join(directory, "paseo-plugin.json"),
+      JSON.stringify({ id: "workspace-file-system", requirements: { paseo: ">=0.8.0" } }),
+    );
+    const service = bindTestSessionHost(
+      new PluginService(pino({ level: "silent" }), createStore(home), "0.8.0"),
+    );
+
+    await service.start();
+    await service.installDirectory({ path: directory });
+    const first = await service.resolveWorkspaceFileSystem("/virtual/project");
+    const second = await service.resolveWorkspaceFileSystem("/virtual/project");
+
+    expect(first).not.toBeNull();
+    expect(second).toBe(first);
+    expect(first?.key).toBe("workspace-file-system.example.remote");
+    await expect(first?.getStatus?.({ cwd: "/virtual/project" })).resolves.toEqual({
+      state: "online",
+      detail: "Connected",
+    });
+    await expect(
+      first?.listDirectory({ cwd: "/virtual/project", path: "." }),
+    ).resolves.toMatchObject({ entries: [{ name: "remote.txt", path: "remote.txt" }] });
+
+    await service.disablePlugin("workspace-file-system");
+    await expect(service.resolveWorkspaceFileSystem("/virtual/project")).resolves.toBeNull();
+  });
+
+  it("retries workspace file system matching after a transient failure", async () => {
+    const home = await mkdtemp(path.join(tmpdir(), "paseo-plugin-home-"));
+    roots.push(home);
+    let attempts = 0;
+    const runtime: TestPluginRuntime = {
+      catalog: () => [{ id: "flaky", clientBundle: "bundle" }],
+      invoke: async () => undefined,
+      getLogs: () => [],
+      clearLogs: () => undefined,
+      getWorkspaceFileSystemRegistrations: () => [{ id: "remote", writable: false }],
+      invokeWorkspaceFileSystem: async (_pluginId, _providerId, operation) => {
+        if (operation !== "matches") throw new Error(`Unexpected operation: ${operation}`);
+        attempts += 1;
+        if (attempts === 1) throw new Error("temporary timeout");
+        return true;
+      },
+      startPlugin: async () => undefined,
+      stopPluginById: async () => false,
+      stopAll: async () => undefined,
+      subscribe: () => () => undefined,
+      bindPaseoSessionHost: () => undefined,
+    };
+    const service = createService(home, {}, { runtime });
+
+    await expect(service.resolveWorkspaceFileSystem("/virtual/project")).rejects.toThrow(
+      "temporary timeout",
+    );
+    const provider = await service.resolveWorkspaceFileSystem("/virtual/project");
+
+    expect(provider?.key).toBe("flaky.remote");
+    expect(attempts).toBe(2);
+  });
+
   it("resolves a provider icon path to sanitized inline SVG", async () => {
     const home = await mkdtemp(path.join(tmpdir(), "paseo-plugin-home-"));
     roots.push(home);

@@ -22,6 +22,7 @@ import {
   DaemonUpdateResponseSchema,
   SessionInboundMessageSchema,
   type ActiveTurnBehavior,
+  type ProjectPresentation,
   type ServerInfoStatusPayload,
 } from "@getpaseo/protocol/messages";
 import { validateWSOutboundMessage } from "@getpaseo/protocol/validation/ws-outbound";
@@ -35,6 +36,7 @@ import type {
   FileDownloadTokenResponse,
   FileUploadResponse,
   FileExplorerResponse,
+  WorkspaceFileSystemStatus,
   FileVersion,
   FileWriteResult,
   FetchAgentTimelineResponseMessage,
@@ -343,6 +345,11 @@ export interface DaemonClientConfig {
   runtimeMetricsWindowMs?: number;
   trace?: DaemonClientTrace;
   capabilities?: Partial<Record<ClientCapability, unknown>>;
+}
+
+export interface OpenProjectOptions {
+  requestId?: string;
+  projectPresentation?: ProjectPresentation;
 }
 
 export interface DaemonClientTrace {
@@ -2288,12 +2295,24 @@ export class DaemonClient {
     });
   }
 
-  async openProject(cwd: string, requestId?: string): Promise<OpenProjectPayload> {
+  async openProject(cwd: string, requestId?: string): Promise<OpenProjectPayload>;
+  async openProject(cwd: string, options?: OpenProjectOptions): Promise<OpenProjectPayload>;
+  async openProject(
+    cwd: string,
+    requestIdOrOptions?: string | OpenProjectOptions,
+  ): Promise<OpenProjectPayload> {
+    const options =
+      typeof requestIdOrOptions === "string"
+        ? { requestId: requestIdOrOptions }
+        : requestIdOrOptions;
     return this.sendCorrelatedSessionRequest({
-      requestId,
+      requestId: options?.requestId,
       message: {
         type: "open_project_request",
         cwd,
+        ...(options?.projectPresentation
+          ? { projectPresentation: options.projectPresentation }
+          : {}),
       },
       responseType: "open_project_response",
     });
@@ -4489,6 +4508,19 @@ export class DaemonClient {
       throw new Error("Directory listing unavailable.");
     }
     return payload.directory;
+  }
+
+  async getWorkspaceFileSystemStatus(
+    cwd: string,
+    requestId?: string,
+  ): Promise<WorkspaceFileSystemStatus | null> {
+    const payload = await this.sendCorrelatedSessionRequest({
+      requestId,
+      message: { type: "fs.workspace.status.request", cwd },
+      responseType: "fs.workspace.status.response",
+    });
+    if (payload.error) throw new Error(payload.error);
+    return payload.status;
   }
 
   async readFile(

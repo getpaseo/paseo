@@ -106,6 +106,7 @@ export interface WorkspaceDescriptor {
   id: string;
   projectId: string;
   projectDisplayName: string;
+  projectSecondaryLabel?: string | null;
   projectCustomName?: string | null;
   projectCustomIconRevision?: string | null;
   projectRootPath: string;
@@ -140,6 +141,7 @@ export function normalizeWorkspaceDescriptor(
     id: normalizeWorkspaceOpaqueId(payload.id) ?? payload.id,
     projectId: payload.projectId,
     projectDisplayName: payload.projectDisplayName,
+    projectSecondaryLabel: payload.projectSecondaryLabel ?? null,
     projectCustomName: payload.projectCustomName ?? null,
     projectCustomIconRevision: payload.projectCustomIconRevision ?? null,
     projectRootPath: payload.projectRootPath,
@@ -171,6 +173,7 @@ export interface ProjectDescriptor {
   projectId: string;
   projectKey?: string | null;
   projectDisplayName: string;
+  projectSecondaryLabel?: string | null;
   projectCustomName: string | null;
   projectCustomIconRevision?: string | null;
   projectIconRevision?: string;
@@ -185,6 +188,7 @@ export function normalizeProjectDescriptor(
     projectId: payload.projectId,
     projectKey: payload.projectKey ?? null,
     projectDisplayName: payload.projectDisplayName,
+    projectSecondaryLabel: payload.projectSecondaryLabel ?? null,
     projectCustomName: payload.projectCustomName ?? null,
     projectCustomIconRevision: payload.projectCustomIconRevision ?? null,
     projectIconRevision: payload.projectIconRevision,

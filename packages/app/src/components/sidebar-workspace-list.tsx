@@ -151,6 +151,8 @@ import type { HostBadgeModel } from "@/hosts/appearance";
 import { useHostBadges } from "@/hosts/use-host-badges";
 import { useSidebarRowItems } from "@/components/sidebar/display-preferences/model";
 import { PullRequestStateIcon } from "@/git/pull-request-state-icon";
+import { useWorkspaceFileSystemStatus } from "@/workspace/use-workspace-file-system-status";
+import type { WorkspaceFileSystemStatus } from "@getpaseo/protocol/messages";
 
 const workspaceKeyExtractor = (workspace: SidebarWorkspacePlacement) => workspace.workspaceKey;
 
@@ -875,6 +877,7 @@ function ProjectHeaderRow({
   const isMobileBreakpoint = useIsCompactFormFactor();
   const localDaemonServerId = useLocalDaemonServerId();
   const projectPath = resolveSidebarProjectLocalPath(project, localDaemonServerId);
+  const fileSystemStatus = useWorkspaceFileSystemStatus(project);
   const settingsTarget = project.hosts[0] ?? null;
   const handleBeginWorkspaceSetup = useCallback(() => {
     if (!worktreeTarget) {
@@ -955,9 +958,20 @@ function ProjectHeaderRow({
         />
 
         <View style={styles.projectTitleGroup}>
-          <Text style={styles.projectTitle} numberOfLines={1}>
+          <Text
+            style={styles.projectTitle}
+            numberOfLines={1}
+            testID={`sidebar-project-primary-label-${project.viewKey}`}
+          >
             {displayName}
           </Text>
+          {project.projectSecondaryLabel ? (
+            <ProjectLocationLabel
+              label={project.projectSecondaryLabel}
+              status={fileSystemStatus}
+              projectViewKey={project.viewKey}
+            />
+          ) : null}
         </View>
       </View>
       <ProjectRowTrailingActions
@@ -1045,6 +1059,68 @@ function ProjectHeaderRow({
       </ContextMenuContent>
     </ContextMenu>
   );
+}
+
+function ProjectLocationLabel({
+  label,
+  status,
+  projectViewKey,
+}: {
+  label: string;
+  status: WorkspaceFileSystemStatus | null;
+  projectViewKey: string;
+}) {
+  const { t } = useTranslation();
+  const statusLabel = status
+    ? (status.detail ??
+      t(
+        status.state === "unknown"
+          ? "common.connectionStatus.idle"
+          : `common.connectionStatus.${status.state}`,
+      ))
+    : null;
+  const labelView = (
+    <View
+      style={styles.projectLocationLabel}
+      accessibilityLabel={statusLabel ? `${label}, ${statusLabel}` : label}
+      testID={`sidebar-project-location-${projectViewKey}`}
+    >
+      <Text
+        style={styles.projectSecondaryLabel}
+        numberOfLines={1}
+        ellipsizeMode="tail"
+        testID={`sidebar-project-secondary-label-${projectViewKey}`}
+      >
+        {label}
+      </Text>
+      {status ? <ProjectLocationStatusDot status={status} /> : null}
+    </View>
+  );
+  if (!statusLabel) return labelView;
+  return (
+    <Tooltip delayDuration={300} enabledOnDesktop enabledOnMobile={false}>
+      <TooltipTrigger asChild>{labelView}</TooltipTrigger>
+      <TooltipContent side="bottom" align="center" offset={8}>
+        <Text style={styles.projectLocationStatusTooltip}>{statusLabel}</Text>
+      </TooltipContent>
+    </Tooltip>
+  );
+}
+
+function ProjectLocationStatusDot({ status }: { status: WorkspaceFileSystemStatus }) {
+  return (
+    <View
+      style={[styles.projectLocationStatusDot, projectLocationStatusDotStyle(status.state)]}
+      testID={`sidebar-project-location-status-${status.state}`}
+    />
+  );
+}
+
+function projectLocationStatusDotStyle(state: WorkspaceFileSystemStatus["state"]) {
+  if (state === "online") return styles.projectLocationStatusDotOnline;
+  if (state === "connecting") return styles.projectLocationStatusDotConnecting;
+  if (state === "error") return styles.projectLocationStatusDotError;
+  return styles.projectLocationStatusDotOffline;
 }
 
 function WorkspaceRowInner({
@@ -2611,7 +2687,48 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.base,
     fontWeight: "400",
     minWidth: 0,
+    flex: 1,
     flexShrink: 1,
+  },
+  projectSecondaryLabel: {
+    color: theme.colors.foregroundExtraMuted,
+    fontSize: theme.fontSize.sm,
+    minWidth: 0,
+    flexShrink: 1,
+    textAlign: "right",
+  },
+  projectLocationLabel: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "flex-end",
+    gap: theme.spacing[1],
+    minWidth: 0,
+    maxWidth: "45%",
+    flexShrink: 1,
+  },
+  projectLocationStatusDot: {
+    width: 6,
+    height: 6,
+    borderRadius: theme.borderRadius.full,
+    flexShrink: 0,
+    opacity: 0.6,
+  },
+  projectLocationStatusDotOnline: {
+    backgroundColor: theme.colors.statusSuccess,
+  },
+  projectLocationStatusDotConnecting: {
+    backgroundColor: theme.colors.statusWarning,
+  },
+  projectLocationStatusDotOffline: {
+    backgroundColor: theme.colors.foregroundExtraMuted,
+  },
+  projectLocationStatusDotError: {
+    backgroundColor: theme.colors.statusDanger,
+  },
+  projectLocationStatusTooltip: {
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.sm,
+    textAlign: "right",
   },
   projectActionButton: {
     flexDirection: "row",
