@@ -18,6 +18,16 @@ export interface PluginWorkspaceFileSystemPath extends PluginWorkspaceFileSystem
   path: string;
 }
 
+export interface PluginWorkspaceFileSystemReadRequest extends PluginWorkspaceFileSystemPath {
+  maxBytes?: number;
+}
+
+export interface PluginWorkspaceFileSystemWriteRequest extends PluginWorkspaceFileSystemPath {
+  content: string;
+  expectedModifiedAt: string;
+  expectedRevision?: string;
+}
+
 export interface PluginWorkspaceFileSystemEntry {
   name: string;
   path: string;
@@ -69,16 +79,12 @@ export interface PluginWorkspaceFileSystemProvider {
     target: PluginWorkspaceFileSystemPath,
   ): PluginWorkspaceFileSystemDirectory | Promise<PluginWorkspaceFileSystemDirectory>;
   readFile(
-    target: PluginWorkspaceFileSystemPath & { maxBytes?: number },
+    target: PluginWorkspaceFileSystemReadRequest,
   ): PluginWorkspaceFileSystemFile | Promise<PluginWorkspaceFileSystemFile>;
   statFile(
     target: PluginWorkspaceFileSystemPath,
   ): PluginWorkspaceFileVersion | Promise<PluginWorkspaceFileVersion>;
   writeFile?(
-    target: PluginWorkspaceFileSystemPath & {
-      content: string;
-      expectedModifiedAt: string;
-      expectedRevision?: string;
-    },
+    target: PluginWorkspaceFileSystemWriteRequest,
   ): PluginWorkspaceFileWriteResult | Promise<PluginWorkspaceFileWriteResult>;
 }
