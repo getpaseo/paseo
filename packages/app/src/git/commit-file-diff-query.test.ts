@@ -61,9 +61,13 @@ describe("commit file diff fetching", () => {
     );
     queryClient.setQueryData(options.queryKey, { file: null });
     const observer = new QueryObserver(queryClient, options);
-    const detach = observer.subscribe(() => {});
+    const settled = Promise.withResolvers<void>();
+    const detach = observer.subscribe((result) => {
+      if (result.fetchStatus === "idle") settled.resolve();
+    });
     try {
-      await expect.poll(() => observer.getCurrentResult().data?.file).toEqual(file);
+      await settled.promise;
+      expect(observer.getCurrentResult().data?.file).toEqual(file);
     } finally {
       detach();
       queryClient.clear();
