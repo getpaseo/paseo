@@ -45,6 +45,36 @@ describe("useChatOutline", () => {
     runtime.on.mockClear();
   });
 
+  it("asks for nothing while disabled, and picks the index up when it is enabled", async () => {
+    // The caller disables the outline for a pane whose id is not a loadable agent — an empty tab,
+    // an unsent draft, or a provider subagent's synthetic stream key. The daemon logs a request
+    // for one of those as a failed request, so "disabled" has to mean no request at all, not a
+    // request whose rejection is swallowed.
+    runtime.listAgentTimelinePrompts.mockResolvedValue({ epoch: "epoch-1", prompts: [] });
+    const viewportRef = createRef<StreamViewportHandle>();
+    const { result, rerender } = renderHook(
+      ({ enabled }) =>
+        useChatOutline({
+          agentId: "draft_msg_1788963805163_i7g3vm0fx",
+          serverId: "server-1",
+          timelineEpoch: "epoch-1",
+          tail: [],
+          head: [],
+          enabled,
+          viewportRef,
+          onJumpError: vi.fn(),
+        }),
+      { initialProps: { enabled: false } },
+    );
+
+    expect(runtime.listAgentTimelinePrompts).not.toHaveBeenCalled();
+    expect(result.current.prompts).toEqual([]);
+
+    // The gate is reactive: the same pane becomes addressable once its agent exists.
+    rerender({ enabled: true });
+    await waitFor(() => expect(runtime.listAgentTimelinePrompts).toHaveBeenCalledTimes(1));
+  });
+
   it("drops a late prompt index after the authoritative timeline epoch changes", async () => {
     const first = deferred<{ epoch: string; prompts: [] }>();
     const second = deferred<{
