@@ -1418,7 +1418,12 @@ function ToolCallSlot({
     [onInlineDetailsExpandedChangeByItemId, itemId],
   );
   return (
-    <ToolCall {...rest} itemId={itemId} onInlineDetailsExpandedChange={handleExpandedChange} />
+    <ToolCall
+      {...rest}
+      itemId={itemId}
+      followOutputPersistKey={itemId}
+      onInlineDetailsExpandedChange={handleExpandedChange}
+    />
   );
 }
 
