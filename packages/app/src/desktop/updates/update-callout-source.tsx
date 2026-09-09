@@ -14,10 +14,9 @@ import {
 } from "@/desktop/updates/resolve-update-callout";
 import { useDesktopAppUpdater } from "@/desktop/updates/use-desktop-app-updater";
 import { useStableEvent } from "@/hooks/use-stable-event";
-import { openExternalUrl } from "@/utils/open-external-url";
+import { openChangelog } from "@/changelog";
 
 const CHECK_INTERVAL_MS = 30 * 60 * 1000;
-const CHANGELOG_URL = "https://paseo.sh/changelog";
 
 function renderBody(body: UpdateCalloutBody, t: ReturnType<typeof useTranslation>["t"]): ReactNode {
   if (body.kind === "installing") return t("desktop.updates.callout.installingDescription");
@@ -52,9 +51,6 @@ export function UpdateCalloutSource() {
   } = useDesktopAppUpdater();
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  const openChangelog = useStableEvent(() => {
-    void openExternalUrl(CHANGELOG_URL);
-  });
   const install = useStableEvent(() => {
     void installUpdate();
   });
@@ -111,7 +107,6 @@ export function UpdateCalloutSource() {
     install,
     isDesktopApp,
     isInstalling,
-    openChangelog,
     retry,
     status,
     theme.colors.foregroundMuted,

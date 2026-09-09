@@ -7,6 +7,34 @@ const DISCORD_DESTINATION =
 const GITHUB_ISSUE_DESTINATION =
   /^https:\/\/github\.com\/(?:getpaseo\/paseo\/issues\/new(?:\/choose)?(?:[/?#]|$)|login\?return_to=https%3A%2F%2Fgithub\.com%2Fgetpaseo%2Fpaseo%2Fissues%2Fnew$)/;
 const CHANGELOG_DESTINATION = /^https:\/\/paseo\.sh\/changelog(?:[/?#]|$)/;
+const CHANGELOG_SOURCE_URL = "https://raw.githubusercontent.com/getpaseo/paseo/main/CHANGELOG.md";
+// Exercises the block kinds the changelog is allowed to grow: a callout, a
+// fenced sample whose contents look like headings, and an unfamiliar section.
+const CHANGELOG_FIXTURE = [
+  "# Changelog",
+  "",
+  "## 9.1.0 - 2026-03-04",
+  "",
+  "Headline release note.",
+  "",
+  "> [!WARNING]",
+  "> Read this before upgrading.",
+  "",
+  "### Sparkles",
+  "",
+  "- Added a brand new thing",
+  "",
+  "```md",
+  "## 0.0.0 - 1999-01-01",
+  "```",
+  "",
+  "## 9.0.0 - 2026-02-01",
+  "",
+  "### Fixed",
+  "",
+  "- Fixed an older thing",
+  "",
+].join("\n");
 // The name and the version are separate cells of a key/value row, so they meet with no space
 // between them in the row's text content.
 const APP_VERSION = /^Paseo\s*v\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
@@ -41,7 +69,7 @@ async function expectExternalPage(
   await popup.close();
 }
 
-test("opens troubleshooting, support, and release destinations", async ({ page }) => {
+test("opens troubleshooting and support destinations", async ({ page }) => {
   await gotoAppShell(page);
   await expect(page.getByTestId("sidebar-help")).toBeVisible();
 
@@ -62,16 +90,40 @@ test("opens troubleshooting, support, and release destinations", async ({ page }
     await closeSheet(page, "keyboard-shortcuts-dialog");
   });
 
-  await test.step("opens support and release pages", async () => {
+  await test.step("opens support pages", async () => {
     await openHelpMenu(page);
     await expectExternalPage(page, "sidebar-help-discord", DISCORD_DESTINATION);
 
     await openHelpMenu(page);
     await expectExternalPage(page, "sidebar-help-github", GITHUB_ISSUE_DESTINATION);
-
-    await openHelpMenu(page);
-    await expectExternalPage(page, "sidebar-help-changelog", CHANGELOG_DESTINATION);
   });
+});
+
+test("renders the changelog in the app and links the website", async ({ page }) => {
+  await page.route(CHANGELOG_SOURCE_URL, (route) =>
+    route.fulfill({ status: 200, contentType: "text/plain", body: CHANGELOG_FIXTURE }),
+  );
+  await gotoAppShell(page);
+
+  await openHelpMenu(page);
+  await page.getByTestId("sidebar-help-changelog").click();
+
+  const sheet = page.getByTestId("changelog-sheet");
+  await expect(sheet).toBeVisible();
+
+  const latest = sheet.getByTestId("changelog-release-9.1.0");
+  await expect(latest.getByText("9.1.0", { exact: true })).toBeVisible();
+  await expect(latest.getByText("March 4, 2026", { exact: true })).toBeVisible();
+  await expect(latest.getByText("Headline release note.")).toBeVisible();
+  await expect(latest.getByText("Read this before upgrading.")).toBeVisible();
+  await expect(latest.getByText("Sparkles", { exact: true })).toBeVisible();
+  await expect(latest.getByText("Added a brand new thing")).toBeVisible();
+  // The heading inside the fenced sample is sample text, not a second release.
+  await expect(sheet.getByTestId("changelog-release-0.0.0")).toHaveCount(0);
+  await expect(sheet.getByTestId("changelog-release-9.0.0")).toBeVisible();
+
+  await expectExternalPage(page, "changelog-open-website", CHANGELOG_DESTINATION);
+  await closeSheet(page, "changelog-sheet");
 });
 
 test("searches keyboard shortcuts from the sidebar help menu", async ({ page }) => {
