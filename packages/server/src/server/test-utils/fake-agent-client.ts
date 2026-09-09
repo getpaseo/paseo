@@ -59,11 +59,13 @@ interface FakeAgentSessionOptions {
   memoryMarker?: string | null;
   closeSession?: () => Promise<void>;
   onStartTurn?: (prompt: AgentPromptInput) => void;
+  beforeAssistantResponse?: (prompt: AgentPromptInput, config: AgentSessionConfig) => Promise<void>;
 }
 
 export interface TestAgentClientOptions {
   closeSession?: () => Promise<void>;
   onStartTurn?: (prompt: AgentPromptInput) => void;
+  beforeAssistantResponse?: (prompt: AgentPromptInput, config: AgentSessionConfig) => Promise<void>;
   supportsMcpServers?: boolean;
 }
 
@@ -337,6 +339,7 @@ class FakeAgentSession implements AgentSession {
 
   private readonly closeSession: (() => Promise<void>) | undefined;
   private readonly onStartTurn: ((prompt: AgentPromptInput) => void) | undefined;
+  private readonly beforeAssistantResponse: TestAgentClientOptions["beforeAssistantResponse"];
 
   constructor(options: FakeAgentSessionOptions) {
     this.capabilities = {
@@ -349,6 +352,7 @@ class FakeAgentSession implements AgentSession {
     this.memoryMarker = options.memoryMarker ?? null;
     this.closeSession = options.closeSession;
     this.onStartTurn = options.onStartTurn;
+    this.beforeAssistantResponse = options.beforeAssistantResponse;
     this.historyPath = path.join(
       tmpdir(),
       "paseo-fake-provider-history",
@@ -768,6 +772,7 @@ class FakeAgentSession implements AgentSession {
         }
       }
 
+      await this.beforeAssistantResponse?.(prompt, this.config);
       const assistantText = this.buildAssistantText(textPrompt);
       const assistantChunkA: AgentStreamEvent = {
         type: "timeline",
@@ -1208,6 +1213,7 @@ class FakeAgentClient implements AgentClient {
       supportsMcpServers: this.options.supportsMcpServers,
       closeSession: this.options.closeSession,
       onStartTurn: this.options.onStartTurn,
+      beforeAssistantResponse: this.options.beforeAssistantResponse,
     });
   }
 
@@ -1233,6 +1239,7 @@ class FakeAgentClient implements AgentClient {
       memoryMarker: typeof marker === "string" ? marker : null,
       closeSession: this.options.closeSession,
       onStartTurn: this.options.onStartTurn,
+      beforeAssistantResponse: this.options.beforeAssistantResponse,
     });
   }
 

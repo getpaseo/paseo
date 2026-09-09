@@ -2,6 +2,33 @@ import { describe, expect, it } from "vitest";
 import { InMemoryAgentTimelineStore } from "./agent-timeline-store.js";
 
 describe("InMemoryAgentTimelineStore", () => {
+  it("joins streamed response chunks only within the final turn", () => {
+    const store = new InMemoryAgentTimelineStore();
+    store.initialize("agent-1");
+    store.append("agent-1", { type: "assistant_message", text: "WAITING" }, { turnId: "first" });
+    store.append("agent-1", { type: "assistant_message", text: "FINAL " }, { turnId: "follow-up" });
+    store.append(
+      "agent-1",
+      { type: "assistant_message", text: "RESPONSE" },
+      { turnId: "follow-up" },
+    );
+
+    expect(store.getLastAssistantMessage("agent-1")).toBe("FINAL RESPONSE");
+  });
+
+  it("keeps joining legacy response chunks without turn metadata", () => {
+    const store = new InMemoryAgentTimelineStore();
+    store.initialize("agent-1", {
+      items: [
+        { type: "user_message", text: "Hello" },
+        { type: "assistant_message", text: "Hello " },
+        { type: "assistant_message", text: "back" },
+      ],
+    });
+
+    expect(store.getLastAssistantMessage("agent-1")).toBe("Hello back");
+  });
+
   it("clamps an overshooting before cursor into the bounded tail window", () => {
     const store = new InMemoryAgentTimelineStore();
     store.initialize("agent-1", {

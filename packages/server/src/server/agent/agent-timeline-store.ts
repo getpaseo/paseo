@@ -22,6 +22,30 @@ interface AgentTimelineState {
 
 const DEFAULT_TIMELINE_FETCH_LIMIT = 200;
 
+export function getLastAssistantMessageSegment(
+  rows: readonly Pick<AgentTimelineRow, "item" | "turnId">[],
+): { text: string; startsAtBeginning: boolean; turnId?: string } | null {
+  const chunks: string[] = [];
+  let startsAtBeginning = false;
+  let turnId: string | undefined;
+  for (let i = rows.length - 1; i >= 0; i -= 1) {
+    const row = rows[i];
+    if (row.item.type !== "assistant_message") {
+      if (chunks.length > 0) break;
+      continue;
+    }
+    // System-injected prompts are hidden from the timeline, so adjacent
+    // assistant chunks can belong to different turns without a user row between them.
+    if (chunks.length > 0 && row.turnId !== turnId) break;
+    turnId = row.turnId;
+    chunks.push(row.item.text);
+    startsAtBeginning = i === 0;
+  }
+  return chunks.length > 0
+    ? { text: chunks.toReversed().join(""), startsAtBeginning, turnId }
+    : null;
+}
+
 function cloneRow(row: AgentTimelineRow): AgentTimelineRow {
   return { ...row };
 }
@@ -285,24 +309,7 @@ export class InMemoryAgentTimelineStore {
   }
 
   getLastAssistantMessage(agentId: string): string | null {
-    const rows = this.requireState(agentId).rows;
-    const chunks: string[] = [];
-    for (let i = rows.length - 1; i >= 0; i -= 1) {
-      const item = rows[i].item;
-      if (item.type !== "assistant_message") {
-        if (chunks.length > 0) {
-          break;
-        }
-        continue;
-      }
-      chunks.push(item.text);
-    }
-
-    if (chunks.length === 0) {
-      return null;
-    }
-
-    return chunks.toReversed().join("");
+    return getLastAssistantMessageSegment(this.requireState(agentId).rows)?.text ?? null;
   }
 
   private requireState(agentId: string): AgentTimelineState {

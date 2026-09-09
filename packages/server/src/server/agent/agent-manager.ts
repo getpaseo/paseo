@@ -57,6 +57,7 @@ import type { StoredAgentRecord, AgentStorage } from "./agent-storage.js";
 import type { AgentOwner } from "./agent-owner.js";
 import {
   InMemoryAgentTimelineStore,
+  getLastAssistantMessageSegment,
   type SeedAgentTimelineOptions,
 } from "./agent-timeline-store.js";
 import type {
@@ -3117,40 +3118,11 @@ export class AgentManager {
   private getLastAssistantMessageFromTimeline(
     timeline: readonly AgentTimelineItem[],
   ): string | null {
-    return this.getLastAssistantMessageSegmentFromTimeline(timeline)?.text ?? null;
-  }
-
-  private getLastAssistantMessageSegmentFromTimeline(
-    timeline: readonly AgentTimelineItem[],
-  ): { text: string; startsAtBeginning: boolean } | null {
-    // Collect the last contiguous assistant messages (Claude streams chunks)
-    const chunks: string[] = [];
-    let startsAtBeginning = false;
-    for (let i = timeline.length - 1; i >= 0; i--) {
-      const item = timeline[i];
-      if (item.type !== "assistant_message") {
-        if (chunks.length) {
-          break;
-        }
-        continue;
-      }
-      chunks.push(item.text);
-      startsAtBeginning = i === 0;
-    }
-
-    if (!chunks.length) {
-      return null;
-    }
-
-    return {
-      text: chunks.toReversed().join(""),
-      startsAtBeginning,
-    };
+    return getLastAssistantMessageSegment(timeline.map((item) => ({ item })))?.text ?? null;
   }
 
   private async getLastAssistantMessageFromStores(agentId: string): Promise<string | null> {
-    const liveTimeline = this.timelineStore.getItems(agentId);
-    const liveSegment = this.getLastAssistantMessageSegmentFromTimeline(liveTimeline);
+    const liveSegment = getLastAssistantMessageSegment(this.timelineStore.getRows(agentId));
     if (!this.durableTimelineStore) {
       return liveSegment?.text ?? null;
     }
@@ -3160,8 +3132,12 @@ export class AgentManager {
     if (!liveSegment.startsAtBeginning) {
       return liveSegment.text;
     }
-    const lastDurableItem = await this.durableTimelineStore.getLastItem(agentId);
-    if (lastDurableItem?.type !== "assistant_message") {
+    const durableTail = await this.durableTimelineStore.fetchCommitted(agentId, { limit: 1 });
+    const lastDurableRow = durableTail.rows.at(-1);
+    if (
+      lastDurableRow?.item.type !== "assistant_message" ||
+      lastDurableRow.turnId !== liveSegment.turnId
+    ) {
       return liveSegment.text;
     }
     const durableMessage = await this.durableTimelineStore.getLastAssistantMessage(agentId);

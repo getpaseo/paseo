@@ -89,7 +89,24 @@ await client.close();
 await daemon.close(); // stops daemon + cleans up temp dirs
 ```
 
-The test helper does **not** expose `providerOverrides`. In test harnesses, use `createPaseoDaemon` directly when you need it (see quick start above).
+For deterministic lifecycle tests, pass `createTestAgentClients(...)` through the helper's
+`agentClients` option. Its `beforeAssistantResponse` hook can hold a provider turn after
+`turn_started` with an explicit barrier. Avoid timing sleeps and permission prompts as
+synchronization tools: permission prompts create additional notifications of their own.
+The daemon and HTTP/MCP/WebSocket paths remain real; the adapter controls model behavior.
+Live-provider and restart-durability tests require separate coverage.
+
+System-injected prompts are hidden from the user timeline. To verify delivery, observe the
+receiving provider session; use the canonical WebSocket timeline to verify the sender's response.
+See `packages/server/src/server/agent/finish-notifications.e2e.test.ts` for two deterministic
+MCP entrypoint cases sharing one isolated harness. Run that file with:
+
+```bash
+npx vitest run packages/server/src/server/agent/finish-notifications.e2e.test.ts --bail=1
+```
+
+The helper also accepts `providerOverrides`; use `createPaseoDaemon` directly when you need
+bootstrap control beyond the helper's options.
 
 ## Common client methods
 
