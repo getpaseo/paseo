@@ -2134,18 +2134,16 @@ describe("ClaudeAgentSession context window usage", () => {
     };
   }
 
-  function createMessageDeltaEvent(
-    outputTokens: number,
-    usage: Record<string, unknown> = {},
-  ): Record<string, unknown> {
+  function createMessageDeltaEvent(outputTokens: number): Record<string, unknown> {
+    return createMessageDeltaUsageEvent({ output_tokens: outputTokens });
+  }
+
+  function createMessageDeltaUsageEvent(usage: Record<string, unknown>): Record<string, unknown> {
     return {
       type: "stream_event",
       event: {
         type: "message_delta",
-        usage: {
-          output_tokens: outputTokens,
-          ...usage,
-        },
+        usage,
       },
       session_id: "session-1",
     };
@@ -2903,7 +2901,7 @@ describe("ClaudeAgentSession context window usage", () => {
           cache_creation_input_tokens: 0,
           cache_read_input_tokens: 0,
         }),
-        createMessageDeltaEvent(64, { input_tokens: 20_236 }),
+        createMessageDeltaUsageEvent({ input_tokens: 20_236, output_tokens: 64 }),
         createSuccessResult({
           usage: {
             input_tokens: 20_236,
@@ -2952,7 +2950,7 @@ describe("ClaudeAgentSession context window usage", () => {
           cache_creation_input_tokens: 0,
           cache_read_input_tokens: 1_000,
         }),
-        createMessageDeltaEvent(64, { input_tokens: 5 }),
+        createMessageDeltaUsageEvent({ input_tokens: 5, output_tokens: 64 }),
         createSuccessResult(),
       ],
     ]);
@@ -2981,7 +2979,7 @@ describe("ClaudeAgentSession context window usage", () => {
     const session = await createSessionForTurns([
       [
         createInitMessage(),
-        createMessageDeltaEvent(64, { input_tokens: 20_236 }),
+        createMessageDeltaUsageEvent({ input_tokens: 20_236, output_tokens: 64 }),
         createMessageStartEvent({
           input_tokens: 40,
           cache_creation_input_tokens: 5,
