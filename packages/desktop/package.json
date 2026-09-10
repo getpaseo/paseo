@@ -1,6 +1,6 @@
 {
   "name": "@getpaseo/desktop",
-  "version": "0.8.0-beta.1",
+  "version": "0.8.0",
   "private": true,
   "description": "Paseo desktop app (Electron wrapper)",
   "homepage": "https://paseo.sh",
@@ -35,6 +35,7 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@electron/asar": "3.4.1",
     "@types/node": "24.6.0",
     "@types/ws": "^8.5.14",
     "electron": "44.2.0",
@@ -43,5 +44,6 @@
     "unzip-crx-3": "^0.2.0",
     "vitest": "^4.1.6",
     "wait-on": "8.0.5"
-  }
+  },
+  "desktopName": "Paseo.desktop"
 }
