@@ -51,6 +51,8 @@ interface FinishNotificationScenarioOptions {
   childParentAgentId?: string | null;
   requireParentOwnership?: boolean;
   parentPromptError?: Error;
+  /** Lifecycle the child already holds when the watch is set up. */
+  initialChildLifecycle?: "idle" | "running" | "error";
   logger?: Logger;
 }
 
@@ -61,6 +63,10 @@ interface FinishNotificationScenario {
   resolveChildPermissionFromState(requestId?: string): void;
   resolveChildPermissionWhileIdle(requestId?: string): void;
   finishChild(): void;
+  failChildRun(): void;
+  repeatChildError(): void;
+  idleChildWithoutRun(): void;
+  closeChild(): void;
   finishChildAndReadParentPrompt(): Promise<string>;
   closeChildAndReadParentPrompt(): Promise<string>;
   parentPrompts(): string[];
@@ -79,7 +85,7 @@ function createFinishNotificationScenario(
 
   const childAgent: ManagedAgent = Object.create(null);
   Reflect.set(childAgent, "id", "child-agent");
-  Reflect.set(childAgent, "lifecycle", "idle");
+  Reflect.set(childAgent, "lifecycle", options?.initialChildLifecycle ?? "idle");
   Reflect.set(childAgent, "config", { title: "Child Agent" });
   Reflect.set(childAgent, "pendingPermissions", new Map());
 
@@ -220,6 +226,40 @@ function createFinishNotificationScenario(
         agent: childAgent,
       });
     },
+    failChildRun() {
+      childAgent.lifecycle = "running";
+      subscriber?.({
+        type: "agent_state",
+        agent: childAgent,
+      });
+
+      childAgent.lifecycle = "error";
+      subscriber?.({
+        type: "agent_state",
+        agent: childAgent,
+      });
+    },
+    repeatChildError() {
+      childAgent.lifecycle = "error";
+      subscriber?.({
+        type: "agent_state",
+        agent: childAgent,
+      });
+    },
+    idleChildWithoutRun() {
+      childAgent.lifecycle = "idle";
+      subscriber?.({
+        type: "agent_state",
+        agent: childAgent,
+      });
+    },
+    closeChild() {
+      childAgent.lifecycle = "closed";
+      subscriber?.({
+        type: "agent_state",
+        agent: childAgent,
+      });
+    },
     async finishChildAndReadParentPrompt() {
       const parentPrompt = new Promise<string>((resolve) => {
         resolveParentPrompt = resolve;
@@ -306,6 +346,107 @@ test("closing a watched child notifies the caller", async () => {
   expect(parentPrompt).toEqual(
     formatSystemNotificationPrompt("Agent child-agent (Child Agent) was closed."),
   );
+});
+
+test("a failed run keeps the watch armed for the next run's finish", async () => {
+  const scenario = createFinishNotificationScenario();
+
+  scenario.startWatchingChild();
+  scenario.failChildRun();
+
+  await vi.waitFor(() => {
+    expect(scenario.parentPrompts()).toHaveLength(1);
+  });
+  expect(scenario.parentPrompts()[0]).toContain("errored.");
+
+  scenario.finishChild();
+
+  await vi.waitFor(() => {
+    expect(scenario.parentPrompts()).toHaveLength(2);
+  });
+  expect(scenario.parentPrompts()[1]).toContain("finished.");
+});
+
+test("an error not followed by a fresh run never reports a finish", async () => {
+  const scenario = createFinishNotificationScenario();
+
+  scenario.startWatchingChild();
+  scenario.failChildRun();
+
+  await vi.waitFor(() => {
+    expect(scenario.parentPrompts()).toHaveLength(1);
+  });
+
+  // A stale "idle" republished after the failed run is not that run finishing.
+  scenario.idleChildWithoutRun();
+  await new Promise((resolve) => setTimeout(resolve, 25));
+
+  expect(scenario.parentPrompts()).toHaveLength(1);
+  expect(scenario.parentPrompts()[0]).not.toContain("finished.");
+});
+
+test("a child republishing an error does not notify per event", async () => {
+  const scenario = createFinishNotificationScenario();
+
+  scenario.startWatchingChild();
+  scenario.failChildRun();
+  scenario.repeatChildError();
+  scenario.repeatChildError();
+  await new Promise((resolve) => setTimeout(resolve, 25));
+
+  expect(scenario.parentPrompts()).toHaveLength(1);
+});
+
+test("each failed run reports once", async () => {
+  const scenario = createFinishNotificationScenario();
+
+  scenario.startWatchingChild();
+  scenario.failChildRun();
+  scenario.failChildRun();
+
+  await vi.waitFor(() => {
+    expect(scenario.parentPrompts()).toHaveLength(2);
+  });
+  expect(scenario.parentPrompts().filter((prompt) => prompt.includes("errored."))).toHaveLength(2);
+});
+
+test("closing an errored child still ends the notification", async () => {
+  const scenario = createFinishNotificationScenario();
+
+  scenario.startWatchingChild();
+  scenario.failChildRun();
+  await vi.waitFor(() => {
+    expect(scenario.parentPrompts()).toHaveLength(1);
+  });
+
+  scenario.closeChild();
+  await vi.waitFor(() => {
+    expect(scenario.parentPrompts()).toHaveLength(2);
+  });
+  expect(scenario.parentPrompts()[1]).toContain("was closed.");
+
+  scenario.finishChild();
+  await new Promise((resolve) => setTimeout(resolve, 25));
+
+  expect(scenario.parentPrompts()).toHaveLength(2);
+});
+
+test("a watch opened on an errored child reports once and stays armed", async () => {
+  const scenario = createFinishNotificationScenario({ initialChildLifecycle: "error" });
+
+  scenario.startWatchingChild();
+
+  await vi.waitFor(() => {
+    expect(scenario.parentPrompts()).toHaveLength(1);
+  });
+  expect(scenario.parentPrompts()[0]).toContain("errored.");
+
+  scenario.finishChild();
+
+  await vi.waitFor(() => {
+    expect(scenario.parentPrompts()).toHaveLength(2);
+  });
+  expect(scenario.parentPrompts()[1]).toContain("finished.");
 });
 
 test("finish notifications survive permission responses", async () => {

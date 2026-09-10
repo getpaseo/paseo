@@ -392,6 +392,12 @@ export function setupFinishNotification(params: SetupFinishNotificationParams): 
     logger,
   } = params;
   let hasSeenRunning = false;
+  // An "error" lifecycle is not an end state: providers surface a failed turn
+  // as "error" and the agent stays usable, so the caller's next prompt can
+  // still finish. The report is spent per run and refreshed by the next
+  // observed run, so a child that flaps in error costs one notification per
+  // run rather than one per state event.
+  let errorReportable = true;
   let stopped = false;
   const notifiedPermissionRequestIds = new Set<string>();
   let unsubscribe: (() => void) | null = null;
@@ -450,6 +456,16 @@ export function setupFinishNotification(params: SetupFinishNotificationParams): 
       });
   }
 
+  // Report an error without ending the watch. Clearing the run gate is the
+  // point: a failed run must never be reported later as that run finishing, so
+  // only a genuinely fresh run can produce the next "finished".
+  function notifyErroredKeepingWatch(): void {
+    hasSeenRunning = false;
+    if (!errorReportable) return;
+    errorReportable = false;
+    notifySafely("errored", { terminal: false });
+  }
+
   unsubscribe = agentManager.subscribe(
     (event) => {
       if (stopped) {
@@ -465,11 +481,13 @@ export function setupFinishNotification(params: SetupFinishNotificationParams): 
         if (event.agent.lifecycle === "running") {
           if (event.agent.pendingPermissions.size === 0) {
             hasSeenRunning = true;
+            // A fresh run refreshes the error report allowance.
+            errorReportable = true;
           }
           return;
         }
         if (event.agent.lifecycle === "error") {
-          notifySafely("errored");
+          notifyErroredKeepingWatch();
           return;
         }
         if (event.agent.lifecycle === "idle" && hasSeenRunning) {
@@ -507,6 +525,9 @@ export function setupFinishNotification(params: SetupFinishNotificationParams): 
         const childAgent = agentManager.getAgent(childAgentId);
         if (childAgent?.pendingPermissions.size === 0) {
           hasSeenRunning = childAgent.lifecycle === "running";
+          // Resuming after a permission pause is a fresh run for the
+          // allowance too.
+          if (hasSeenRunning) errorReportable = true;
         }
       }
     },
@@ -526,6 +547,8 @@ export function setupFinishNotification(params: SetupFinishNotificationParams): 
   if (childSnapshot.lifecycle === "running") {
     hasSeenRunning = true;
   } else if (childSnapshot.lifecycle === "error") {
-    notifySafely("errored");
+    // A watch that opens on an already-errored child reports once and stays
+    // armed, same as the event path.
+    notifyErroredKeepingWatch();
   }
 }
