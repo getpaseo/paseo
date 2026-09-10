@@ -119,6 +119,11 @@ export interface ProviderSnapshotEntry {
   status: ProviderStatus;
   enabled: boolean;
   source?: "builtin" | "custom";
+  /**
+   * For custom providers that extend a built-in provider, the id of the provider
+   * they extend. null or undefined for built-in providers and generic ACP providers.
+   */
+  derivedFromProviderId?: AgentProvider | null;
   error?: string;
   models?: AgentModelDefinition[];
   modes?: AgentMode[];

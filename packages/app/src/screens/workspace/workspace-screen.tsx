@@ -96,7 +96,10 @@ import {
   useHostRuntimeSnapshot,
   useHosts,
 } from "@/runtime/host-runtime";
-import { prefetchProvidersSnapshot } from "@/hooks/use-providers-snapshot";
+import {
+  ensureProvidersSnapshotEntries,
+  prefetchProvidersSnapshot,
+} from "@/hooks/use-providers-snapshot";
 import {
   shouldSeedWorkspaceSetupTab,
   shouldShowWorkspaceSetup,
@@ -2725,11 +2728,18 @@ function WorkspaceScreenContent({
         return;
       }
 
+      const providerSnapshot = await ensureProvidersSnapshotEntries({
+        queryClient,
+        client,
+        serverId: normalizedServerId,
+        cwd: workspaceDirectory ?? null,
+      });
       const command =
         buildProviderCommand({
           provider: agent.provider,
           id: "resume",
           sessionId: providerSessionId,
+          providerSnapshot,
         }) ?? null;
       if (!command) {
         toast.error(t("workspace.tabs.toasts.resumeCommandUnavailable"));
@@ -2742,7 +2752,7 @@ function WorkspaceScreenContent({
         toast.error(t("workspace.tabs.toasts.copyFailed"));
       }
     },
-    [normalizedServerId, toast, t],
+    [client, normalizedServerId, workspaceDirectory, queryClient, toast, t],
   );
 
   const handleReloadAgent = useCallback(

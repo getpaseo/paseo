@@ -1,3 +1,5 @@
+import type { ProviderSnapshotEntry } from "@getpaseo/protocol/agent-types";
+
 export type ProviderCommandId = "resume";
 
 /**
@@ -35,12 +37,33 @@ function renderTemplate(template: string, vars: Record<string, string>): string 
   return template.replace(/\{(\w+)\}/g, (_match, key: string) => vars[key] ?? "");
 }
 
+function resolveProviderCommandTemplate(input: {
+  provider: string;
+  id: ProviderCommandId;
+  providerSnapshot?: readonly Pick<ProviderSnapshotEntry, "provider" | "derivedFromProviderId">[];
+}): string | undefined {
+  const providerTemplate = PROVIDER_COMMAND_TEMPLATES[input.provider]?.[input.id];
+  if (providerTemplate) {
+    return providerTemplate;
+  }
+
+  const derivedFromProviderId = input.providerSnapshot?.find(
+    (entry) => entry.provider === input.provider,
+  )?.derivedFromProviderId;
+  if (derivedFromProviderId) {
+    return PROVIDER_COMMAND_TEMPLATES[derivedFromProviderId]?.[input.id];
+  }
+
+  return undefined;
+}
+
 export function buildProviderCommand(input: {
   provider: string;
   id: ProviderCommandId;
   sessionId: string;
+  providerSnapshot?: readonly Pick<ProviderSnapshotEntry, "provider" | "derivedFromProviderId">[];
 }): string | null {
-  const template = PROVIDER_COMMAND_TEMPLATES[input.provider]?.[input.id] ?? null;
+  const template = resolveProviderCommandTemplate(input) ?? null;
   if (!template) {
     return null;
   }

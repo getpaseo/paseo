@@ -9,7 +9,7 @@ import {
 import { queryClient as singletonQueryClient } from "./query-client";
 import { replaceProviderSnapshotIcons } from "@/components/provider-icon-name";
 import { agentCommandsQueryRoot } from "@/hooks/agent-commands-query";
-import type { AgentProvider } from "@getpaseo/protocol/agent-types";
+import type { AgentProvider, ProviderSnapshotEntry } from "@getpaseo/protocol/agent-types";
 import { normalizeWorkspacePath } from "@/utils/workspace-identity";
 
 export const PROVIDERS_SNAPSHOT_QUERY_ROOT = "providersSnapshot";
@@ -117,6 +117,38 @@ export async function fetchProvidersSnapshot(input: {
   if (input.signal?.aborted) throw new CancelledError();
   replaceProviderSnapshotIcons(input.serverId, snapshot.entries);
   return snapshot;
+}
+
+export async function ensureProvidersSnapshotEntries(input: {
+  queryClient: QueryClient;
+  client: DaemonClient | null;
+  serverId: string;
+  cwd?: string | null;
+}): Promise<ProviderSnapshotEntry[] | undefined> {
+  if (!input.client) {
+    return input.queryClient.getQueryData<Snapshot>(
+      providersSnapshotQueryKey(input.serverId, input.cwd),
+    )?.entries;
+  }
+  const client = input.client;
+  try {
+    const snapshot = await input.queryClient.ensureQueryData({
+      queryKey: providersSnapshotQueryKey(input.serverId, input.cwd),
+      queryFn: ({ signal }) =>
+        fetchProvidersSnapshot({
+          client,
+          serverId: input.serverId,
+          cwd: input.cwd ?? null,
+          queryClient: input.queryClient,
+          signal,
+        }),
+      staleTime: Infinity,
+      structuralSharing: false,
+    });
+    return snapshot.entries;
+  } catch {
+    return undefined;
+  }
 }
 
 export async function refreshAndApplyProvidersSnapshot(input: {

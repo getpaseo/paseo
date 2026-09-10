@@ -374,6 +374,7 @@ export const ProviderSnapshotEntrySchema = z.object({
   status: ProviderStatusSchema,
   enabled: z.boolean().optional().default(true),
   source: z.enum(["builtin", "custom"]).optional(),
+  derivedFromProviderId: AgentProviderSchema.nullable().optional(),
   error: z.string().optional(),
   models: z.array(AgentModelDefinitionSchema).optional(),
   modes: z.array(AgentModeSchema).optional(),

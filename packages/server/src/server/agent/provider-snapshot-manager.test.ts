@@ -282,6 +282,30 @@ describe("ProviderSnapshotManager public surface", () => {
     }
   });
 
+  test("snapshot entries include derivedFromProviderId for custom providers", () => {
+    const manager = new ProviderSnapshotManager({
+      logger: createTestLogger(),
+      providerOverrides: {
+        "zai-claude": { extends: "claude", label: "ZAI", enabled: true },
+        "qwen-codex": { extends: "codex", label: "Qwen Code", enabled: true },
+        "my-acp": { extends: "acp", label: "My ACP", enabled: true, command: ["my-acp"] },
+      },
+    });
+    try {
+      const snapshot = manager.getSnapshot("/tmp/project").records.map(({ entry }) => entry);
+      const claude = snapshot.find((entry) => entry.provider === "claude");
+      const zaiClaude = snapshot.find((entry) => entry.provider === "zai-claude");
+      const qwenCodex = snapshot.find((entry) => entry.provider === "qwen-codex");
+      const myAcp = snapshot.find((entry) => entry.provider === "my-acp");
+      expect(claude?.derivedFromProviderId).toBeNull();
+      expect(zaiClaude?.derivedFromProviderId).toBe("claude");
+      expect(qwenCodex?.derivedFromProviderId).toBe("codex");
+      expect(myAcp?.derivedFromProviderId).toBeNull();
+    } finally {
+      manager.destroy();
+    }
+  });
+
   test("getSnapshot returns loading entries for built-in providers before warmup", () => {
     const manager = new ProviderSnapshotManager({ logger: createTestLogger() });
     try {
