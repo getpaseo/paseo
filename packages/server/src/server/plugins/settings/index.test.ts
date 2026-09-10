@@ -47,6 +47,45 @@ test("defaults, atomic saves, concurrent revisions, and restart persistence", as
   expect(changes).toEqual(["display"]);
 });
 
+test("server settings read current values and notify after successful writes", async () => {
+  const { handlers } = await setup();
+  const notifications: unknown[] = [];
+  const unsubscribe = handlers.settings.subscribe((state) => notifications.push(state));
+
+  expect(await handlers.settings.read()).toEqual({
+    status: "ready",
+    revision: "missing",
+    values: { enabled: true, count: 5 },
+  });
+  const saved = await handlers.write.handle({
+    revision: "missing",
+    values: { enabled: false, count: 10 },
+  });
+  expect(saved).toMatchObject({ status: "saved", values: { enabled: false, count: 10 } });
+  if (saved.status !== "saved") throw new Error("save failed");
+  expect(await handlers.settings.read()).toMatchObject({
+    status: "ready",
+    revision: saved.revision,
+    values: { enabled: false, count: 10 },
+  });
+  expect(notifications).toEqual([
+    {
+      status: "ready",
+      revision: saved.revision,
+      values: { enabled: false, count: 10 },
+    },
+  ]);
+
+  expect(
+    await handlers.write.handle({ revision: saved.revision, values: { count: -1 } }),
+  ).toMatchObject({ status: "invalid" });
+  expect(notifications).toHaveLength(1);
+
+  unsubscribe();
+  await handlers.reset.handle({ revision: saved.revision });
+  expect(notifications).toHaveLength(1);
+});
+
 test("validation failure preserves disk and leaves the writer usable", async () => {
   const { handlers, changes } = await setup();
   expect(await handlers.write.handle({ revision: "missing", values: { count: -1 } })).toMatchObject(

@@ -1044,9 +1044,22 @@ export const preferences = defineSettings({
 });
 ```
 
-Register it with `server.registerSettings(preferences)` in `index.server.ts` before returning
-cleanup. This server entry is required for built-in persistence; a screen using its own data
-can remain client-only.
+Register it in `index.server.ts` before returning cleanup. The returned handle lets server code
+read the document and react to changes. A screen using its own data can remain client-only.
+
+```ts
+export default function contribute(server: PluginServerContext) {
+  const settings = server.registerSettings(preferences);
+
+  settings.subscribe((next) => {
+    if (next.status === "ready") {
+      console.log("Settings changed", next.revision);
+    }
+  });
+
+  return () => {};
+}
+```
 
 | Definition field               | Contract                                                                                                                             |
 | ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------ |
@@ -1064,6 +1077,19 @@ Call `useSettings(preferences)` in any contributed component. It returns a discr
 | `ready`   | Typed `values` and an opaque `revision`.                                 |
 | `invalid` | `error` and `revision`; stored data is preserved.                        |
 | `error`   | `error` from the read/connection.                                        |
+
+The server handle exposes `read()` and `subscribe()`. `read()` returns the same `ready` or
+`invalid` state as the client hook, including the opaque revision. `subscribe()` returns a cleanup
+function and receives a new `ready` state after a successful save, reset, or migration. Invalid
+writes and revision conflicts do not notify subscribers. Listener failures are logged without
+turning a committed write into a failed save.
+
+```ts
+const current = await settings.read();
+if (current.status === "ready") {
+  // Use current.values and current.revision.
+}
+```
 
 Every state also exposes `saving`, `saveError`, and these actions:
 
