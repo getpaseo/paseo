@@ -5,6 +5,7 @@ import path from "node:path";
 import { loadConfig, resolvePaseoHome, spawnProcess } from "@getpaseo/server";
 import treeKill from "tree-kill";
 import { tryConnectToDaemon } from "../../utils/client.js";
+import { requestLifecycleShutdown } from "./lifecycle-shutdown.js";
 
 export interface DaemonStartOptions {
   port?: string;
@@ -497,12 +498,6 @@ async function waitForStopAfterRequest(args: {
   return { stopped, forced: false };
 }
 
-type LifecycleShutdownAttempt = { requested: true } | { requested: false; reason: string };
-
-function getErrorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
 export function resolveLocalPaseoHome(home?: string): string {
   return resolvePaseoHome(envWithHome(home));
 }
@@ -671,43 +666,6 @@ export function startLocalDaemonForeground(
   return result.status ?? 1;
 }
 
-async function requestLifecycleShutdown(
-  state: LocalDaemonState,
-  timeoutMs: number,
-): Promise<LifecycleShutdownAttempt> {
-  const host = resolveTcpHostFromListen(state.listen);
-  if (!host) {
-    return {
-      requested: false,
-      reason: "daemon listen target is not TCP, falling back to owner PID signal",
-    };
-  }
-
-  const deadline = Date.now() + timeoutMs;
-  const remainingTimeoutMs = () => Math.max(1, deadline - Date.now());
-  const client = await tryConnectToDaemon({ host, timeout: Math.min(remainingTimeoutMs(), 5000) });
-  if (!client) {
-    return {
-      requested: false,
-      reason: `daemon websocket at ${host} is not reachable, falling back to owner PID signal`,
-    };
-  }
-
-  try {
-    await client.shutdownServer({ timeout: Math.min(remainingTimeoutMs(), 5000) });
-    return { requested: true };
-  } catch (error) {
-    return {
-      requested: false,
-      reason: `daemon lifecycle shutdown request failed (${getErrorMessage(
-        error,
-      )}), falling back to owner PID signal`,
-    };
-  } finally {
-    await client.close().catch(() => undefined);
-  }
-}
-
 export async function stopLocalDaemon(
   options: StopLocalDaemonOptions = {},
 ): Promise<StopLocalDaemonResult> {
@@ -717,7 +675,18 @@ export async function stopLocalDaemon(
   const deadline = Date.now() + timeoutMs;
   const remainingTimeoutMs = () => Math.max(1, deadline - Date.now());
 
-  const shutdownAttempt = await requestLifecycleShutdown(state, remainingTimeoutMs());
+  const shutdownAttempt = await requestLifecycleShutdown(
+    {
+      home: state.home,
+      hasLiveOwner: state.running,
+      host: resolveTcpHostFromListen(state.listen),
+      timeoutMs: remainingTimeoutMs(),
+    },
+    {
+      readServerId: (home) => readFileSync(path.join(home, "server-id"), "utf8").trim(),
+      connect: tryConnectToDaemon,
+    },
+  );
   const lifecycleRequested = shutdownAttempt.requested;
 
   if (!state.pidInfo || (!state.running && !lifecycleRequested)) {

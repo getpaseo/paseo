@@ -287,7 +287,7 @@ paseo daemon stop              # Stop the daemon
 
 Reload validates the whole file, applies runtime-safe changes, and reports `appliedPaths`, `restartRequiredPaths`, and `overrideControlledPaths`. Human output prints `paseo daemon restart` only when a changed setting needs it. Use `--json` or `--format yaml` for the structured result. Run `paseo --host <target> reload` to reload a remote daemon's own configuration file. An older host that does not support reload returns an update-host error.
 
-Use `PASEO_HOME` to run multiple isolated daemon instances.
+Use `PASEO_HOME` to run multiple isolated daemon instances. See [Configuration](/docs/configuration) for home-scoped shutdown checks and restart address overrides.
 
 ## Hub
 

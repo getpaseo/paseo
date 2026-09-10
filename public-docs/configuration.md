@@ -18,7 +18,9 @@ By default, Paseo uses `~/.paseo` as its home directory. The configuration file 
 ~/.paseo/config.json
 ```
 
-You can change the home directory by setting `PASEO_HOME` or passing `--home` to `paseo daemon start`.
+You can change the home directory by setting `PASEO_HOME` or passing `--home` to `paseo daemon start`. Use the same home for `paseo daemon stop` and `paseo daemon restart`. Shutdown verifies the listening daemon against that home’s saved identity and refuses a different daemon at the same address.
+
+See [Apply changes](#apply-changes) for restart and listen-address overrides.
 
 ## Precedence
 
@@ -63,13 +65,21 @@ The daemon validates the complete file before applying anything. It applies runt
 paseo daemon restart
 ```
 
+A running daemon's recorded listen address is retained across CLI restarts. To change it, including after editing `daemon.listen` in `config.json`, pass the new address explicitly:
+
+```bash
+paseo daemon restart --listen 127.0.0.1:6800
+```
+
+`--port <port>` also overrides the previous address. When there is no live supervisor with a recorded listen address, restart uses the normal environment and file configuration precedence.
+
 Runtime-safe settings include relay enablement, MCP settings, browser tools, hostnames, CORS origins, trusted proxies, Git process limits, agent and terminal profiles, provider definitions, metadata generation, the app base URL, provider catalog timeout, and the global plugin switch. Removing one of these settings applies its omitted-field behavior; removing a provider removes it from future launches.
 
 New homes keep relay disabled when you remove `daemon.relay.enabled`. A daemon whose config already omitted this field when it started keeps the legacy relay-enabled behavior for compatibility. Set `daemon.relay.enabled` explicitly when editing an older config.
 
 Listen addresses, authentication, relay endpoints and TLS, worktree allocation, service-proxy addresses, the bundled web UI, logging, speech, voice, credentials, and local model settings require a restart. Reload applies other valid edits in the same file before reporting those paths.
 
-Environment variables and daemon start flags remain authoritative. Reload reports a changed file setting under `overrideControlledPaths` when a launch override prevents it from taking effect. This includes startup settings such as listen addresses, passwords, relay endpoints and TLS, service-proxy and web UI settings, logging, speech, and voice configuration. List settings such as hostnames and CORS origins still append across sources, so values from `config.json` continue to apply. Remove the override and restart the daemon if you want the file value to become authoritative.
+Environment variables and daemon start flags remain authoritative. Reload reports a changed file setting under `overrideControlledPaths` when a launch override prevents it from taking effect. This includes startup settings such as listen addresses, passwords, relay endpoints and TLS, service-proxy and web UI settings, logging, speech, and voice configuration. List settings such as hostnames and CORS origins still append across sources, so values from `config.json` continue to apply. For the listen address, CLI restart retains the running supervisor’s address as a launch override; use `--listen` or `--port` to change it. To return to file-controlled listening, stop the daemon and start it with the listen override removed. For other settings, remove the override and restart the daemon if you want the file value to become authoritative.
 
 ## Agent providers
 
