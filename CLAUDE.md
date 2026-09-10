@@ -106,9 +106,14 @@ Repo dev commands use checkout-local state by default. In this checkout, `PASEO_
 
 See [docs/development.md](docs/development.md) for full setup, build sync requirements, and debugging.
 
-## Critical rules
+## Release branches
 
-- **Before changing the plugin SDK, compiler, host module maps, scaffold, or examples, read [SDK import boundaries](docs/plugins.md#sdk-import-boundaries).** Classify the export by runtime first and preserve the enforced boundaries.
+When the user says "this goes to next", create or
+retarget the PR to `next` and preserve that destination through delivery. Follow
+[release branch discipline](docs/release.md#release-branch-discipline) for creating
+and updating `next`, integrating it after a release, and releasing a hotfix from a tag.
+
+## Critical rules
 
 - **NEVER restart the main Paseo daemon on port 6767 without permission** — it manages all running agents. If you're an agent, restarting it kills your own process.
 - **NEVER assume a timeout means the service needs restarting** — timeouts can be transient.
