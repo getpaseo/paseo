@@ -1471,9 +1471,17 @@ export function closeTabInLayout(input: CloseTabInLayoutInput): WorkspaceLayout 
   if (!pane) {
     return null;
   }
+  // A workspace always has somewhere to look (see setPaneHiddenInLayout). A pane born
+  // from a split carries a generated id, so when it is the only visible pane left,
+  // dropping it with its last tab would persist a layout whose sole pane is the hidden
+  // explorer; keep it, like the default pane, and let it fall back to a New tab.
+  const visiblePaneIds = listPaneIds(internalLayout.root);
+  const isLastVisiblePane = visiblePaneIds.length === 1 && visiblePaneIds[0] === pane.id;
   const preserveEmptyPaneId =
     input.preserveEmptyPaneId ??
-    (pane.id === DEFAULT_PANE_ID || pane.id === EXPLORER_SIDEBAR_PANE_ID ? pane.id : null);
+    (pane.id === DEFAULT_PANE_ID || pane.id === EXPLORER_SIDEBAR_PANE_ID || isLastVisiblePane
+      ? pane.id
+      : null);
 
   const closeSuccessorTabId = getCloseSuccessorTabId({
     pane,
