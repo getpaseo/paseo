@@ -5121,6 +5121,8 @@ export const ForgeAuthStateSchema = z.unknown().optional();
 
 const CheckoutPrStatusPayloadSchema = z.object({
   cwd: z.string(),
+  // Repository-level metadata: present even when the branch has no PR.
+  repositoryWebUrl: z.string().optional(),
   status: CheckoutPrStatusSchema.nullable(),
   githubFeaturesEnabled: z.boolean(),
   // COMPAT(forgeAuthState): added in v0.2.0-beta.1. Remove the legacy

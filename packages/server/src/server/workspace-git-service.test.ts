@@ -255,6 +255,7 @@ interface CreateServiceTestOptions {
   getCheckoutWorktreeState?: ReturnType<typeof vi.fn>;
   getPullRequestStatus?: ReturnType<typeof vi.fn>;
   github?: ForgeService;
+  forgeOverrides?: Record<string, ForgeService>;
   resolveAbsoluteGitDir?: ReturnType<typeof vi.fn>;
   hasOriginRemote?: ReturnType<typeof vi.fn>;
   runGitFetch?: ReturnType<typeof vi.fn>;
@@ -369,6 +370,49 @@ describe("WorkspaceGitServiceImpl", () => {
 
     workspaceSubscription.unsubscribe();
     service.dispose();
+  });
+
+  test("keeps the repository web URL without a PR and across PR poll updates", async () => {
+    const repositoryWebUrl = "https://projects.example/acme/repo";
+    const adapter = createGitHubServiceStub();
+    adapter.getRepositoryWebUrl = async () => repositoryWebUrl;
+    let poll:
+      | Parameters<NonNullable<ForgeService["retainCurrentPullRequestStatusPoll"]>>[0]
+      | undefined;
+    adapter.retainCurrentPullRequestStatusPoll = (options) => {
+      poll = options;
+      return { unsubscribe() {} };
+    };
+    const service = createService({
+      forgeOverrides: { github: adapter },
+      getPullRequestStatus: vi.fn(async () => createPullRequestStatusResult({ status: null })),
+    });
+    const subscription = service.registerWorkspace({ cwd: REPO_CWD }, () => {});
+    try {
+      const snapshot = await service.getSnapshot(REPO_CWD);
+      expect(snapshot.forge).toMatchObject({ repositoryWebUrl, pullRequest: null });
+      expect(snapshot.git.remoteUrl).toBe("https://github.com/acme/repo.git");
+      expect(poll).not.toBeUndefined();
+      poll?.onStatus?.(null);
+      expect(service.peekSnapshot(REPO_CWD)?.forge.repositoryWebUrl).toBe(repositoryWebUrl);
+    } finally {
+      subscription.unsubscribe();
+      service.dispose();
+    }
+  });
+
+  test("a failed web URL lookup does not discard PR status", async () => {
+    const adapter = createGitHubServiceStub();
+    adapter.getRepositoryWebUrl = async () => {
+      throw new Error("tea unavailable");
+    };
+    const service = createService({ forgeOverrides: { github: adapter } });
+    try {
+      const snapshot = await service.getSnapshot(REPO_CWD);
+      expect(snapshot.forge).toEqual(createSnapshot(REPO_CWD).forge);
+    } finally {
+      service.dispose();
+    }
   });
 
   test("getSnapshot populates github pull request state in the runtime snapshot", async () => {

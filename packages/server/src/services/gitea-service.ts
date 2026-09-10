@@ -1195,7 +1195,10 @@ export async function probeGiteaHost(host: string): Promise<boolean> {
   }
 }
 
-function findTeaLoginNameForHost(stdout: string, host: string): string | null {
+function findTeaLoginForHost(
+  stdout: string,
+  host: string,
+): z.infer<typeof GiteaLoginSchema> | null {
   let data: unknown;
   try {
     data = JSON.parse(stdout);
@@ -1218,11 +1221,11 @@ function findTeaLoginNameForHost(stdout: string, host: string): string | null {
     }
     return candidates.some((candidate) => candidate?.toLowerCase() === target);
   });
-  return match?.name ?? null;
+  return match ?? null;
 }
 
 function hostHasLogin(stdout: string, host: string): boolean {
-  return findTeaLoginNameForHost(stdout, host) !== null;
+  return findTeaLoginForHost(stdout, host) !== null;
 }
 
 export type GiteaFamilySoftware = "gitea" | "forgejo";
@@ -1274,7 +1277,7 @@ async function probeForgejoNamespaceByTea(
   let loginName: string | null;
   try {
     const { stdout } = await runTea(["login", "list", "-o", "json"]);
-    loginName = findTeaLoginNameForHost(stdout, host);
+    loginName = findTeaLoginForHost(stdout, host)?.name ?? null;
   } catch {
     return null;
   }
@@ -1954,6 +1957,37 @@ export function createGiteaService(options: CreateGiteaServiceOptions = {}): For
   }
 
   return {
+    async getRepositoryWebUrl(input) {
+      const location = parseGitRemoteLocation(input.remoteUrl);
+      if (!location) {
+        return null;
+      }
+      const stdout = await run(["login", "list", "-o", "json"], { cwd: input.cwd });
+      const login = findTeaLoginForHost(stdout, location.host);
+      if (!login?.url) {
+        return null;
+      }
+      let url: URL;
+      try {
+        url = new URL(login.url);
+      } catch {
+        return null;
+      }
+      if (url.protocol !== "https:" && url.protocol !== "http:") {
+        return null;
+      }
+      // HTTP remotes already include the deployment prefix; SSH remotes don't.
+      const prefix = url.pathname.replace(/^\/+|\/+$/g, "");
+      const isHttpRemote = location.transport === "http" || location.transport === "https";
+      const includesPrefix = isHttpRemote && prefix && location.path.startsWith(`${prefix}/`);
+      const repoPath = includesPrefix ? location.path.slice(prefix.length + 1) : location.path;
+      url.pathname = `${url.pathname.replace(/\/$/, "")}/${repoPath}`;
+      url.username = "";
+      url.password = "";
+      url.search = "";
+      url.hash = "";
+      return url.toString().replace(/\/$/, "");
+    },
     async isAuthenticated(input: { cwd: string } & ForgeReadOptions): Promise<boolean> {
       const teaPath = await resolveTea();
       if (!teaPath) {
