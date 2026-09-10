@@ -837,9 +837,16 @@ function createPluginProviderDefinition(
   };
 }
 
-interface TimelineSnapshotVersion {
-  historyLengthAfter: number;
+interface TimelineSnapshotNode {
+  id: string;
   item: ProviderTimelineItem;
+  parent: TimelineSnapshotNode | null;
+}
+
+interface TimelineCheckpoint {
+  historyLengthBefore: number;
+  timelineHead: TimelineSnapshotNode | null;
+  childHeads: Map<string, TimelineSnapshotNode | null>;
 }
 
 interface PendingChild {
@@ -1045,13 +1052,11 @@ class PluginAgentSession implements AgentSession {
   >();
   private readonly revertTokens = new Map<string, ProviderTimelineItem["revertToken"]>();
   private readonly timelineSnapshots = new Map<string, ProviderTimelineItem>();
-  private readonly timelineSnapshotVersions = new Map<string, TimelineSnapshotVersion[]>();
+  private readonly timelineCheckpoints = new Map<string, TimelineCheckpoint[]>();
+  private timelineHead: TimelineSnapshotNode | null = null;
   private readonly childUnsubscribes = new Map<string, () => void>();
   private readonly childSnapshots = new Map<string, Map<string, ProviderTimelineItem>>();
-  private readonly childSnapshotVersions = new Map<
-    string,
-    Map<string, TimelineSnapshotVersion[]>
-  >();
+  private readonly childHeads = new Map<string, TimelineSnapshotNode | null>();
   private unsubscribe: (() => void) | null = null;
   private currentTurnId: string | null = null;
   private rewindLane: Promise<void> = Promise.resolve();
@@ -1279,7 +1284,7 @@ class PluginAgentSession implements AgentSession {
     });
     const snapshots = new Map<string, ProviderTimelineItem>();
     this.childSnapshots.set(childId, snapshots);
-    this.childSnapshotVersions.set(childId, new Map());
+    this.childHeads.set(childId, null);
     for (const event of child.history) this.acceptChildEvent(childId, event, snapshots);
     this.childUnsubscribes.set(
       childId,
@@ -1287,16 +1292,35 @@ class PluginAgentSession implements AgentSession {
     );
   }
 
+  private captureTimelineCheckpoint(
+    item: Extract<ProviderTimelineItem, { type: "user_message" }>,
+  ): void {
+    const checkpoint: TimelineCheckpoint = {
+      historyLengthBefore: this.history.length,
+      timelineHead: this.timelineHead,
+      childHeads: new Map(this.childHeads),
+    };
+    const key = item.messageId !== undefined ? `message:${item.messageId}` : `item:${item.id}`;
+    const checkpoints = this.timelineCheckpoints.get(key) ?? [];
+    checkpoints.push(checkpoint);
+    this.timelineCheckpoints.set(key, checkpoints);
+  }
+
   private accept(event: ProviderEvent, live: boolean): void {
+    if (event.type === "timeline.item" && event.item.type === "user_message") {
+      this.captureTimelineCheckpoint(event.item);
+    }
     const translated = this.translate(event);
     for (const next of translated) {
       this.history.push(next);
       if (live) this.emit(next);
     }
     if (event.type === "timeline.item") {
-      const versions = this.timelineSnapshotVersions.get(event.item.id) ?? [];
-      versions.push({ historyLengthAfter: this.history.length, item: event.item });
-      this.timelineSnapshotVersions.set(event.item.id, versions);
+      this.timelineHead = {
+        id: event.item.id,
+        item: event.item,
+        parent: this.timelineHead,
+      };
     }
   }
 
@@ -1488,12 +1512,11 @@ class PluginAgentSession implements AgentSession {
           event: { type: "timeline", id: childId, item, timestamp: event.timestamp },
         });
       }
-      const versionsByItem = this.childSnapshotVersions.get(childId);
-      if (versionsByItem) {
-        const versions = versionsByItem.get(event.item.id) ?? [];
-        versions.push({ historyLengthAfter: this.history.length, item: event.item });
-        versionsByItem.set(event.item.id, versions);
-      }
+      this.childHeads.set(childId, {
+        id: event.item.id,
+        item: event.item,
+        parent: this.childHeads.get(childId) ?? null,
+      });
       return;
     }
     if (event.type === "session.turn" && event.state !== "started") {
@@ -1553,9 +1576,11 @@ class PluginAgentSession implements AgentSession {
         .slice(targetIndex)
         .flatMap((event) => (event.type === "permission_requested" ? [event.request.id] : [])),
     );
+    const checkpoint =
+      this.findTimelineCheckpoint(`message:${messageId}`, targetIndex) ??
+      this.findTimelineCheckpoint(`item:${messageId}`, targetIndex);
     this.history.splice(targetIndex);
-    this.restoreTimelineSnapshots(targetIndex);
-    this.restoreChildSnapshots(targetIndex);
+    this.restoreSnapshots(checkpoint, targetIndex);
     this.detachDiscardedChildren();
 
     let permissionError: Error | null = null;
@@ -1569,40 +1594,43 @@ class PluginAgentSession implements AgentSession {
     if (permissionError) throw permissionError;
   }
 
-  private restoreTimelineSnapshots(targetIndex: number): void {
-    for (const [itemId, versions] of this.timelineSnapshotVersions) {
-      while (
-        versions.length > 0 &&
-        versions[versions.length - 1]!.historyLengthAfter > targetIndex
-      ) {
-        versions.pop();
-      }
-      const retained = versions[versions.length - 1];
-      if (retained) this.timelineSnapshots.set(itemId, retained.item);
-      else {
-        this.timelineSnapshotVersions.delete(itemId);
-        this.timelineSnapshots.delete(itemId);
-      }
+  private restoreSnapshots(checkpoint: TimelineCheckpoint | undefined, targetIndex: number): void {
+    this.timelineHead = checkpoint?.timelineHead ?? null;
+    this.restoreSnapshotMap(this.timelineSnapshots, this.timelineHead);
+
+    this.childHeads.clear();
+    const retainedChildHeads = checkpoint?.childHeads ?? new Map();
+    for (const [childId, head] of retainedChildHeads) {
+      const snapshots = this.childSnapshots.get(childId) ?? new Map();
+      this.restoreSnapshotMap(snapshots, head);
+      this.childSnapshots.set(childId, snapshots);
+      this.childHeads.set(childId, head);
+    }
+    for (const [key, checkpoints] of this.timelineCheckpoints) {
+      const retained = checkpoints.filter(
+        (candidate) => candidate.historyLengthBefore < targetIndex,
+      );
+      if (retained.length > 0) this.timelineCheckpoints.set(key, retained);
+      else this.timelineCheckpoints.delete(key);
     }
   }
 
-  private restoreChildSnapshots(targetIndex: number): void {
-    for (const [childId, versionsByItem] of this.childSnapshotVersions) {
-      const snapshots = this.childSnapshots.get(childId);
-      for (const [itemId, versions] of versionsByItem) {
-        while (
-          versions.length > 0 &&
-          versions[versions.length - 1]!.historyLengthAfter > targetIndex
-        ) {
-          versions.pop();
-        }
-        const retained = versions[versions.length - 1];
-        if (retained && snapshots) snapshots.set(itemId, retained.item);
-        else {
-          versionsByItem.delete(itemId);
-          snapshots?.delete(itemId);
-        }
-      }
+  private findTimelineCheckpoint(key: string, targetIndex: number): TimelineCheckpoint | undefined {
+    return this.timelineCheckpoints
+      .get(key)
+      ?.findLast((checkpoint) => checkpoint.historyLengthBefore === targetIndex);
+  }
+
+  private restoreSnapshotMap(
+    snapshots: Map<string, ProviderTimelineItem>,
+    head: TimelineSnapshotNode | null,
+  ): void {
+    snapshots.clear();
+    const seen = new Set<string>();
+    for (let node = head; node; node = node.parent) {
+      if (seen.has(node.id)) continue;
+      seen.add(node.id);
+      snapshots.set(node.id, node.item);
     }
   }
 
@@ -1615,7 +1643,7 @@ class PluginAgentSession implements AgentSession {
       unsubscribe();
       this.childUnsubscribes.delete(childId);
       this.childSnapshots.delete(childId);
-      this.childSnapshotVersions.delete(childId);
+      this.childHeads.delete(childId);
     }
   }
 
