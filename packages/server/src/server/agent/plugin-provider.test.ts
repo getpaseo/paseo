@@ -29,6 +29,10 @@ interface ProviderHarnessOptions {
 function createProviderHarness(options: ProviderHarnessOptions = {}) {
   let listener: ((event: ProviderEvent) => void) | null = null;
   let closeCount = 0;
+  let resolveClosed!: () => void;
+  const closed = new Promise<void>((resolve) => {
+    resolveClosed = resolve;
+  });
   const inputs: ProviderInput[] = [];
   const emit = (event: ProviderEvent) => listener?.(event);
   const capabilities = options.capabilities ?? CAPABILITIES;
@@ -184,6 +188,7 @@ function createProviderHarness(options: ProviderHarnessOptions = {}) {
     },
     async close() {
       closeCount += 1;
+      resolveClosed();
     },
   };
 
@@ -195,7 +200,12 @@ function createProviderHarness(options: ProviderHarnessOptions = {}) {
     },
   };
 
-  return { registration, inputs, closeCount: () => closeCount };
+  return {
+    registration,
+    inputs,
+    closeCount: () => closeCount,
+    waitForClose: () => closed,
+  };
 }
 
 function eventsOfType(events: AgentStreamEvent[], type: AgentStreamEvent["type"]) {
@@ -278,7 +288,8 @@ describe("PluginAgentClientRegistry", () => {
       expect(persistence).not.toBeNull();
 
       registry.replace([next.registration]);
-      await expect.poll(old.closeCount).toBe(1);
+      await old.waitForClose();
+      expect(old.closeCount()).toBe(1);
 
       await expect(stale.close()).resolves.toBeUndefined();
 
@@ -321,7 +332,8 @@ describe("PluginAgentClientRegistry", () => {
       });
 
       registry.replace([]);
-      await expect.poll(old.closeCount).toBe(1);
+      await old.waitForClose();
+      expect(old.closeCount()).toBe(1);
 
       const failure = await stale
         .startTurn("after reload", { clientMessageId: "after-reload" })
