@@ -837,6 +837,11 @@ function createPluginProviderDefinition(
   };
 }
 
+interface TimelineSnapshotVersion {
+  historyLengthAfter: number;
+  item: ProviderTimelineItem;
+}
+
 interface PendingChild {
   session: ProviderRuntimeSession;
   opened: Extract<ProviderEvent, { type: "session.opened" }>;
@@ -1040,8 +1045,13 @@ class PluginAgentSession implements AgentSession {
   >();
   private readonly revertTokens = new Map<string, ProviderTimelineItem["revertToken"]>();
   private readonly timelineSnapshots = new Map<string, ProviderTimelineItem>();
+  private readonly timelineSnapshotVersions = new Map<string, TimelineSnapshotVersion[]>();
   private readonly childUnsubscribes = new Map<string, () => void>();
   private readonly childSnapshots = new Map<string, Map<string, ProviderTimelineItem>>();
+  private readonly childSnapshotVersions = new Map<
+    string,
+    Map<string, TimelineSnapshotVersion[]>
+  >();
   private unsubscribe: (() => void) | null = null;
   private currentTurnId: string | null = null;
   private rewindLane: Promise<void> = Promise.resolve();
@@ -1269,9 +1279,10 @@ class PluginAgentSession implements AgentSession {
     });
     const snapshots = new Map<string, ProviderTimelineItem>();
     this.childSnapshots.set(childId, snapshots);
+    this.childSnapshotVersions.set(childId, new Map());
     for (const event of child.history) this.acceptChildEvent(childId, event, snapshots);
     this.childUnsubscribes.set(
-      child.id,
+      childId,
       child.onEvent((event) => this.acceptChildEvent(childId, event, snapshots)),
     );
   }
@@ -1281,6 +1292,11 @@ class PluginAgentSession implements AgentSession {
     for (const next of translated) {
       this.history.push(next);
       if (live) this.emit(next);
+    }
+    if (event.type === "timeline.item") {
+      const versions = this.timelineSnapshotVersions.get(event.item.id) ?? [];
+      versions.push({ historyLengthAfter: this.history.length, item: event.item });
+      this.timelineSnapshotVersions.set(event.item.id, versions);
     }
   }
 
@@ -1472,6 +1488,12 @@ class PluginAgentSession implements AgentSession {
           event: { type: "timeline", id: childId, item, timestamp: event.timestamp },
         });
       }
+      const versionsByItem = this.childSnapshotVersions.get(childId);
+      if (versionsByItem) {
+        const versions = versionsByItem.get(event.item.id) ?? [];
+        versions.push({ historyLengthAfter: this.history.length, item: event.item });
+        versionsByItem.set(event.item.id, versions);
+      }
       return;
     }
     if (event.type === "session.turn" && event.state !== "started") {
@@ -1532,6 +1554,9 @@ class PluginAgentSession implements AgentSession {
         .flatMap((event) => (event.type === "permission_requested" ? [event.request.id] : [])),
     );
     this.history.splice(targetIndex);
+    this.restoreTimelineSnapshots(targetIndex);
+    this.restoreChildSnapshots(targetIndex);
+    this.detachDiscardedChildren();
 
     let permissionError: Error | null = null;
     for (const permissionId of removedPermissionIds) {
@@ -1539,6 +1564,62 @@ class PluginAgentSession implements AgentSession {
       if (error && !permissionError) permissionError = error;
     }
 
+    this.pruneRevertTokens();
+    this.prunePermissionState();
+    if (permissionError) throw permissionError;
+  }
+
+  private restoreTimelineSnapshots(targetIndex: number): void {
+    for (const [itemId, versions] of this.timelineSnapshotVersions) {
+      while (
+        versions.length > 0 &&
+        versions[versions.length - 1]!.historyLengthAfter > targetIndex
+      ) {
+        versions.pop();
+      }
+      const retained = versions[versions.length - 1];
+      if (retained) this.timelineSnapshots.set(itemId, retained.item);
+      else {
+        this.timelineSnapshotVersions.delete(itemId);
+        this.timelineSnapshots.delete(itemId);
+      }
+    }
+  }
+
+  private restoreChildSnapshots(targetIndex: number): void {
+    for (const [childId, versionsByItem] of this.childSnapshotVersions) {
+      const snapshots = this.childSnapshots.get(childId);
+      for (const [itemId, versions] of versionsByItem) {
+        while (
+          versions.length > 0 &&
+          versions[versions.length - 1]!.historyLengthAfter > targetIndex
+        ) {
+          versions.pop();
+        }
+        const retained = versions[versions.length - 1];
+        if (retained && snapshots) snapshots.set(itemId, retained.item);
+        else {
+          versionsByItem.delete(itemId);
+          snapshots?.delete(itemId);
+        }
+      }
+    }
+  }
+
+  private detachDiscardedChildren(): void {
+    const retainedChildIds = new Set(
+      this.history.flatMap((event) => (event.type === "provider_subagent" ? [event.event.id] : [])),
+    );
+    for (const [childId, unsubscribe] of this.childUnsubscribes) {
+      if (retainedChildIds.has(childId)) continue;
+      unsubscribe();
+      this.childUnsubscribes.delete(childId);
+      this.childSnapshots.delete(childId);
+      this.childSnapshotVersions.delete(childId);
+    }
+  }
+
+  private pruneRevertTokens(): void {
     const retainedMessageIds = new Set(
       this.history.flatMap((event) =>
         event.type === "timeline" &&
@@ -1551,7 +1632,9 @@ class PluginAgentSession implements AgentSession {
     for (const messageKey of this.revertTokens.keys()) {
       if (!retainedMessageIds.has(messageKey)) this.revertTokens.delete(messageKey);
     }
+  }
 
+  private prunePermissionState(): void {
     const retainedPermissionIds = new Set(
       this.history.flatMap((event) =>
         event.type === "permission_requested" ? [event.request.id] : [],
@@ -1563,7 +1646,6 @@ class PluginAgentSession implements AgentSession {
     for (const permissionId of this.permissionResponses.keys()) {
       if (!retainedPermissionIds.has(permissionId)) this.permissionResponses.delete(permissionId);
     }
-    if (permissionError) throw permissionError;
   }
 
   private async flushRewoundPermissionCleanups(): Promise<void> {
