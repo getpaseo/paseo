@@ -413,6 +413,25 @@ describe("workspace registries", () => {
     expect(record?.displayName).toBe("acme/repo");
   });
 
+  test("project record persists an optional secondary label", async () => {
+    await projectRegistry.initialize();
+
+    await projectRegistry.upsert(
+      createPersistedProjectRecord({
+        projectId: "remote:devbox.example.com/repo",
+        rootPath: "/home/me/work/repo",
+        kind: "non_git",
+        displayName: "repo",
+        secondaryLabel: "devbox.example.com",
+        createdAt: "2026-03-01T00:00:00.000Z",
+        updatedAt: "2026-03-01T00:00:00.000Z",
+      }),
+    );
+
+    const record = await projectRegistry.get("remote:devbox.example.com/repo");
+    expect(record?.secondaryLabel).toBe("devbox.example.com");
+  });
+
   test("creates, updates, archives, deletes, and lists workspace records", async () => {
     await workspaceRegistry.initialize();
     await workspaceRegistry.upsert(

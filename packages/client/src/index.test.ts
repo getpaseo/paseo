@@ -86,6 +86,7 @@ async function connectClient(
   features: Record<string, boolean> = {
     providerUsageList: true,
     providersSnapshotCwd: true,
+    projectPresentation: true,
   },
 ): Promise<{ client: PaseoClient; ws: FakeWebSocket }> {
   vi.stubGlobal("WebSocket", FakeWebSocket);
@@ -452,10 +453,15 @@ test("workspace handles keep identity and refresh snapshots through existing dri
   const { client, ws } = await connectClient();
   const openedWorkspace = createWorkspace();
 
-  const openPromise = client.workspaces.open("/repo/sdk", "open-workspace-request");
+  const openPromise = client.workspaces.open({
+    cwd: "/repo/sdk",
+    requestId: "open-workspace-request",
+    projectPresentation: { secondaryLabel: "devbox.example.com" },
+  });
   expect(parseSentSessionMessage(ws.sent.at(-1))).toMatchObject({
     type: "open_project_request",
     cwd: "/repo/sdk",
+    projectPresentation: { secondaryLabel: "devbox.example.com" },
   });
 
   ws.message(
@@ -574,6 +580,50 @@ test("workspace handles keep identity and refresh snapshots through existing dri
   );
   expect(updates).toEqual(["sdk pushed"]);
 
+  await client.close();
+});
+
+test("workspace presentation requires host support", async () => {
+  const { client, ws } = await connectClient({});
+  const sentBeforeOpen = ws.sent.length;
+
+  await expect(
+    client.workspaces.open({
+      cwd: "/repo/sdk",
+      projectPresentation: { secondaryLabel: "devbox.example.com" },
+    }),
+  ).rejects.toThrow("Update the host to set project presentation metadata.");
+  expect(ws.sent).toHaveLength(sentBeforeOpen);
+
+  await client.close();
+});
+
+test("empty workspace presentation opens on an older host", async () => {
+  const { client, ws } = await connectClient({});
+  const openedWorkspace = createWorkspace();
+
+  const openPromise = client.workspaces.open({
+    cwd: "/repo/sdk",
+    projectPresentation: {},
+    requestId: "empty-presentation-request",
+  });
+  expect(parseSentSessionMessage(ws.sent.at(-1))).toMatchObject({
+    type: "open_project_request",
+    cwd: "/repo/sdk",
+  });
+
+  ws.message(
+    sessionMessage({
+      type: "open_project_response",
+      payload: {
+        requestId: "empty-presentation-request",
+        workspace: openedWorkspace,
+        error: null,
+      },
+    }),
+  );
+
+  await expect(openPromise).resolves.toMatchObject({ id: "workspace_sdk" });
   await client.close();
 });
 

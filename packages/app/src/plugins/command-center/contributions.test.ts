@@ -16,6 +16,7 @@ const workspace: PluginWorkspaceSnapshot = {
   id: "workspace-1",
   projectId: "project-1",
   projectDisplayName: "Paseo",
+  projectSecondaryLabel: null,
   projectRootPath: "/repo/paseo",
   directory: "/repo/paseo/review",
   projectKind: "git",

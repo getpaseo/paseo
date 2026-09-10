@@ -14,6 +14,7 @@ export function createPluginWorkspaceSnapshot(
     id: workspace.id,
     projectId: workspace.projectId,
     projectDisplayName: workspace.projectDisplayName,
+    projectSecondaryLabel: workspace.projectSecondaryLabel ?? null,
     projectRootPath: workspace.projectRootPath,
     directory: workspace.workspaceDirectory,
     projectKind: workspace.projectKind,

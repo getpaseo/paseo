@@ -13,6 +13,7 @@ import type {
   ListProviderModelsResponseMessage,
   ProjectListRequestMessage,
   ProjectListResponseMessage,
+  ProjectPresentation,
   ListProviderModesResponseMessage,
   MutableDaemonConfig,
   MutableDaemonConfigPatch,
@@ -135,6 +136,7 @@ export interface PaseoWorkspaceListResult {
 
 export interface PaseoWorkspaceOpenOptions {
   cwd: string;
+  projectPresentation?: ProjectPresentation;
   requestId?: string;
 }
 
@@ -803,7 +805,17 @@ async function openWorkspace(
   requestId?: string,
 ): Promise<PaseoWorkspaceHandle> {
   const options = typeof input === "string" ? { cwd: input, requestId } : input;
-  const result = await daemonClient.openProject(options.cwd, options.requestId);
+  if (
+    options.projectPresentation?.secondaryLabel !== undefined &&
+    // COMPAT(projectPresentation): added in v0.8.0, remove gate after 2027-03-10.
+    daemonClient.getLastServerInfoMessage()?.features?.projectPresentation !== true
+  ) {
+    throw new Error("Update the host to set project presentation metadata.");
+  }
+  const result = await daemonClient.openProject(options.cwd, {
+    requestId: options.requestId,
+    projectPresentation: options.projectPresentation,
+  });
   if (result.error || !result.workspace) {
     throw new Error(result.error ?? `The daemon did not open a workspace for ${options.cwd}`);
   }

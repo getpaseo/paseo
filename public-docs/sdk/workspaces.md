@@ -21,6 +21,20 @@ console.log(workspace.directory);
 
 `open()` creates the project when needed and reuses the active workspace for that exact directory. Use it when the directory is the identity you care about.
 
+Integrations that represent a remote or otherwise indirect workspace can keep the directory name as
+the project title and add optional context beside it:
+
+```ts
+const workspace = await client.workspaces.open({
+  cwd: "/Users/me/.cache/my-integration/storefront",
+  projectPresentation: { secondaryLabel: "devbox.example.com" },
+});
+```
+
+The secondary label is stored on the project and shown separately in the Projects sidebar. Omitting
+`projectPresentation` preserves the current value; pass `secondaryLabel: null` to clear it. When
+several hosts group equivalent projects, Paseo only shows the label if every placement agrees.
+
 ## Create a fresh workspace
 
 `create()` always creates a new workspace, even when another workspace already uses the directory:

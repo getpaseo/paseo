@@ -121,14 +121,14 @@ To build a complete project cache without an initialization gap, subscribe and b
 
 ## `client.workspaces`
 
-| Method                   | Result                        | Behavior                                                                          |
-| ------------------------ | ----------------------------- | --------------------------------------------------------------------------------- |
-| `list(options?)`         | `PaseoWorkspaceListResult`    | Lists, filters, pages, or subscribes to the workspace directory.                  |
-| `open(cwd)`              | `PaseoWorkspaceHandle`        | Reuses the active workspace for a directory or creates one.                       |
-| `create(options)`        | `PaseoWorkspaceHandle`        | Always creates a fresh directory-backed or Paseo-worktree workspace.              |
-| `ref(workspaceOrId)`     | `PaseoWorkspaceHandle`        | Creates a local handle.                                                           |
-| `archive(workspaceOrId)` | `PaseoWorkspaceArchiveResult` | Archives without first creating a handle.                                         |
-| `subscribe(handler)`     | Unsubscribe function          | Listens for connection-local workspace updates. Call `list({ subscribe })` first. |
+| Method                   | Result                        | Behavior                                                                                                              |
+| ------------------------ | ----------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| `list(options?)`         | `PaseoWorkspaceListResult`    | Lists, filters, pages, or subscribes to the workspace directory.                                                      |
+| `open(cwdOrOptions)`     | `PaseoWorkspaceHandle`        | Reuses the active workspace for a directory or creates one. Options may include `projectPresentation.secondaryLabel`. |
+| `create(options)`        | `PaseoWorkspaceHandle`        | Always creates a fresh directory-backed or Paseo-worktree workspace.                                                  |
+| `ref(workspaceOrId)`     | `PaseoWorkspaceHandle`        | Creates a local handle.                                                                                               |
+| `archive(workspaceOrId)` | `PaseoWorkspaceArchiveResult` | Archives without first creating a handle.                                                                             |
+| `subscribe(handler)`     | Unsubscribe function          | Listens for connection-local workspace updates. Call `list({ subscribe })` first.                                     |
 
 A workspace handle exposes `id`, `projectId`, `directory`, `name`, `status`, `current()`, `refresh()`, `setTitle(title)`, `archive()`, and `subscribe()`. Pass `null` to `setTitle` to restore the derived workspace name. Use `workspace.agents.create(options)` to create an agent without repeating the workspace ID or directory.
 
