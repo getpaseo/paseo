@@ -1,5 +1,5 @@
 import { LRUCache } from "lru-cache";
-import type { CheckoutDiffCompare, CheckoutDiffResult } from "@server/utils/checkout-git.js";
+import type { CheckoutDiffCompare, CheckoutDiffResult } from "../utils/checkout-git.js";
 
 interface ActiveRead {
   promise: Promise<CheckoutDiffResult>;

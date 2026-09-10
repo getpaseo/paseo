@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
 import { LRUCache } from "lru-cache";
-import { CheckoutDiffCache } from "@server/server/checkout-diff-cache.js";
+import { CheckoutDiffCache } from "./checkout-diff-cache.js";
 import pLimit from "p-limit";
 import type pino from "pino";
 import type { ProjectCheckoutLitePayload } from "@getpaseo/protocol/messages";

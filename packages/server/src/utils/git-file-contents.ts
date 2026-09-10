@@ -1,4 +1,4 @@
-import { runGitCommandBytes } from "@server/utils/run-git-command.js";
+import { runGitCommandBytes } from "./run-git-command.js";
 
 // Match the existing git-show ceiling. Oversized batches use bounded per-file reads.
 const MAX_CONTENT_BYTES = 20 * 1024 * 1024;
