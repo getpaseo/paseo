@@ -167,6 +167,7 @@ export const SHORTCUT_HELP_ROW_ORDER: Record<ShortcutSectionId, readonly string[
     "workspace-prev",
     "workspace-next",
     "pin-workspace",
+    "rename-workspace",
     "archive-workspace",
   ],
   "tabs-panes": [
@@ -206,6 +207,7 @@ export const SHORTCUT_HELP_ROW_ORDER: Record<ShortcutSectionId, readonly string[
 const SHORTCUT_HELP_LABEL_KEYS: Record<string, string> = {
   "new-agent": "settings.shortcuts.help.openProject",
   "new-workspace": "settings.shortcuts.help.newWorkspace",
+  "rename-workspace": "settings.shortcuts.help.renameWorkspace",
   "switch-project": "settings.shortcuts.help.switchProject",
   "archive-workspace": "settings.shortcuts.help.archiveWorkspace",
   "workspace-tab-new": "settings.shortcuts.help.newTab",
@@ -381,6 +383,45 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
       id: "pin-workspace",
       section: "workspaces",
       label: "Pin chat",
+    },
+  },
+
+  // --- Rename workspace ---
+  {
+    // Browsers reserve Cmd/Ctrl+Shift+R for hard reload, so browser web gets
+    // its own chord. Listed first so web resolves to it; the desktop bindings
+    // below have no `desktop` constraint and only win where this one is gated
+    // off. Same pattern as close-current-tab's Alt+Shift+W web variant.
+    id: "workspace-rename-alt-shift-r-web",
+    action: "workspace.rename",
+    combo: "Alt+Shift+R",
+    when: { desktop: false, commandCenter: false, terminal: false },
+    help: {
+      id: "rename-workspace",
+      section: "workspaces",
+      label: "Rename workspace",
+    },
+  },
+  {
+    id: "workspace-rename-cmd-shift-r-mac",
+    action: "workspace.rename",
+    combo: "Cmd+Shift+R",
+    when: { mac: true, commandCenter: false },
+    help: {
+      id: "rename-workspace",
+      section: "workspaces",
+      label: "Rename workspace",
+    },
+  },
+  {
+    id: "workspace-rename-ctrl-shift-r-non-mac",
+    action: "workspace.rename",
+    combo: "Ctrl+Shift+R",
+    when: { mac: false, commandCenter: false, terminal: false },
+    help: {
+      id: "rename-workspace",
+      section: "workspaces",
+      label: "Rename workspace",
     },
   },
 

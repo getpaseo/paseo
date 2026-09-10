@@ -2163,6 +2163,7 @@ export const zhCN: TranslationResources = {
         newWorkspace: "新建 workspace",
         newWorktree: "新建 worktree",
         archiveWorkspace: "归档工作区",
+        renameWorkspace: "重命名 workspace",
         newTab: "新建标签",
         closeCurrentTab: "关闭当前标签",
         jumpToWorkspace: "跳转到 workspace",

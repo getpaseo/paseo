@@ -2189,6 +2189,7 @@ export const ar: TranslationResources = {
         newWorkspace: "مساحة عمل جديدة",
         newWorktree: "شجرة عمل جديدة",
         archiveWorkspace: "أرشفة مساحة العمل",
+        renameWorkspace: "إعادة تسمية مساحة العمل",
         newTab: "علامة تبويب جديدة",
         closeCurrentTab: "إغلاق علامة التبويب الحالية",
         jumpToWorkspace: "انتقل إلى مساحة العمل",

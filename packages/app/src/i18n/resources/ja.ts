@@ -2207,6 +2207,7 @@ export const ja: TranslationResources = {
         newWorkspace: "新しいワークスペース",
         newWorktree: "新しいワークツリー",
         archiveWorkspace: "ワークスペースをアーカイブ",
+        renameWorkspace: "ワークスペースの名前を変更",
         newTab: "新しいタブ",
         closeCurrentTab: "現在のタブを閉じる",
         jumpToWorkspace: "ワークスペースにジャンプ",
