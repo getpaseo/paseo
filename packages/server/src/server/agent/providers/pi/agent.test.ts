@@ -156,6 +156,16 @@ test("forwards launch-context env to the Pi process launch", async () => {
   await session.close();
 });
 
+test("approves project-local Pi resources for agent sessions", async () => {
+  const pi = new FakePi();
+  const client = createClient(pi);
+  const session = await client.createSession(createConfig());
+
+  expect(pi.recordedLaunches[0]?.argv).toContain("--approve");
+
+  await session.close();
+});
+
 test("starts internal Pi agents without persisting a native session", async () => {
   const pi = new FakePi();
   const client = createClient(pi);
@@ -165,6 +175,7 @@ test("starts internal Pi agents without persisting a native session", async () =
     noSession: true,
     argv: expect.arrayContaining(["--no-session"]),
   });
+  expect(pi.recordedLaunches[0]?.argv).not.toContain("--approve");
 
   await session.close();
 });
@@ -1359,6 +1370,7 @@ describe("PiRpcAgentSession", () => {
       "pi",
       "--mode",
       "rpc",
+      "--approve",
       "--model",
       "openrouter/model-a",
       "--thinking",
@@ -1436,6 +1448,7 @@ describe("PiRpcAgentSession", () => {
       "pi",
       "--mode",
       "rpc",
+      "--approve",
       "--thinking",
       "medium",
       "--extension",
@@ -1481,6 +1494,7 @@ describe("PiRpcAgentSession", () => {
       "pi",
       "--mode",
       "rpc",
+      "--approve",
       "--model",
       "openrouter/model-a",
       "--thinking",
@@ -2270,6 +2284,7 @@ describe("PiRpcAgentClient", () => {
       "pi",
       "--mode",
       "rpc",
+      "--approve",
       "--model",
       "openrouter/anthropic/claude-sonnet-4.5",
       "--thinking",
@@ -2322,6 +2337,7 @@ describe("PiRpcAgentClient", () => {
       modes: [],
     });
     expect(pi.recordedLaunches[0]).toMatchObject({ cwd: "/workspace/with-extension" });
+    expect(pi.recordedLaunches[0]?.argv).not.toContain("--approve");
   });
 
   test("lists no draft features without starting a Pi session", async () => {
@@ -2622,6 +2638,7 @@ describe("PiRpcAgentClient", () => {
       "pi",
       "--mode",
       "rpc",
+      "--approve",
       "--thinking",
       "medium",
       "--mcp-config",
@@ -2698,12 +2715,14 @@ describe("PiRpcAgentClient", () => {
     );
 
     expect(pi.recordedLaunches).toHaveLength(2);
+    expect(pi.recordedLaunches[0]?.argv).not.toContain("--approve");
     const actualLaunch = pi.recordedLaunches[1]!;
     expect(actualLaunch.extensionPaths).toHaveLength(1);
     expect(actualLaunch.argv).toEqual([
       "pi",
       "--mode",
       "rpc",
+      "--approve",
       "--thinking",
       "medium",
       "--extension",
