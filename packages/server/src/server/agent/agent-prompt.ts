@@ -81,6 +81,14 @@ async function startOrReplaceRun(
   return { iterator, replaced };
 }
 
+async function drainAgentRunIterator(
+  iterator: AsyncGenerator<import("./agent-sdk-types.js").AgentStreamEvent>,
+): Promise<void> {
+  for await (const _ of iterator) {
+    // Events are broadcast via AgentManager subscribers.
+  }
+}
+
 export async function startAgentRun(
   agentManager: AgentRunController,
   agentId: string,
@@ -145,8 +153,17 @@ async function startAgentRunInner(
   );
   void (async () => {
     try {
-      for await (const _ of iterator) {
-        // Events are broadcast via AgentManager subscribers.
+      try {
+        await drainAgentRunIterator(iterator);
+      } catch (error) {
+        if (!isStaleProviderSessionError(error)) throw error;
+        logger.info(
+          { agentId, err: error },
+          "Provider session went stale; reopening from persistence",
+        );
+        await agentManager.reloadAgentSession(agentId);
+        const retry = await startOrReplaceRun(agentManager, agentId, prompt, options);
+        await drainAgentRunIterator(retry.iterator);
       }
       logger.trace(
         {

@@ -275,7 +275,7 @@ describe("PluginAgentClientRegistry", () => {
         cwd: "/workspace",
       });
       const persistence = stale.describePersistence();
-      if (!persistence) throw new Error("Expected plugin session persistence");
+      expect(persistence).not.toBeNull();
 
       registry.replace([next.registration]);
       await expect.poll(old.closeCount).toBe(1);
@@ -283,8 +283,8 @@ describe("PluginAgentClientRegistry", () => {
       await expect(stale.close()).resolves.toBeUndefined();
 
       const replacement = registry.clients()[next.registration.id];
-      if (!replacement) throw new Error("Expected replacement plugin client");
-      const resumed = await replacement.resumeSession(persistence, {
+      expect(replacement).toBeDefined();
+      const resumed = await replacement!.resumeSession(persistence!, {
         cwd: "/workspace",
       });
 
@@ -331,7 +331,7 @@ describe("PluginAgentClientRegistry", () => {
         );
       expect(failure).toBeInstanceOf(StaleProviderSessionError);
       expect(isStaleProviderSessionError(failure)).toBe(true);
-      expect(isStaleProviderSessionError(new Error("Provider connection is closed"))).toBe(true);
+      expect(isStaleProviderSessionError(new Error("Provider connection is closed"))).toBe(false);
       expect(isStaleProviderSessionError(new Error("boom"))).toBe(false);
     } finally {
       await registry.shutdown();

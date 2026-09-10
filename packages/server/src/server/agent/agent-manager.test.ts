@@ -3709,14 +3709,11 @@ test("retires loaded agents when their plugin provider is replaced", async () =>
     registry: storage,
     logger,
   });
-  let createdId: string | null = null;
+  const created = await manager.createAgent({ provider, cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
 
   try {
-    const created = await manager.createAgent({ provider, cwd: workdir }, undefined, {
-      workspaceId: undefined,
-    });
-    createdId = created.id;
-
     manager.updateProviderRegistry({
       providerDefinitions: { [provider]: { enabled: true } },
       clients: { [provider]: replacement },
@@ -3737,7 +3734,7 @@ test("retires loaded agents when their plugin provider is replaced", async () =>
       expect.objectContaining({ cwd: workdir, provider }),
     ]);
   } finally {
-    if (createdId) await manager.closeAgent(createdId).catch(() => undefined);
+    await manager.closeAgent(created.id).catch(() => undefined);
     await manager.flush().catch(() => undefined);
     await storage.flush().catch(() => undefined);
     rmSync(workdir, { recursive: true, force: true });
@@ -3778,34 +3775,22 @@ test("a prompt after provider replacement reopens the stale session", async () =
     registry: storage,
     logger,
   });
-  let createdId: string | null = null;
+  const created = await manager.createAgent({ provider, cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
 
   try {
-    const created = await manager.createAgent({ provider, cwd: workdir }, undefined, {
-      workspaceId: undefined,
-    });
-    createdId = created.id;
-
     manager.updateProviderRegistry({
       providerDefinitions: { [provider]: { enabled: true } },
       clients: { [provider]: replacement },
-      retiredProviders: [provider],
     });
-    await manager.waitForAgentClose(created.id);
-
-    const resumed = await ensureAgentLoaded(created.id, {
-      agentManager: manager,
-      agentStorage: storage,
-      logger,
-    });
-    expect(resumed.id).toBe(created.id);
 
     const dispatch = await startAgentRun(manager, created.id, "continue after reload", logger);
     expect(dispatch.disposition).toBe("turn_started");
-    await manager.waitForAgentEvent(created.id, { waitForActive: false });
-    expect(manager.getAgent(created.id)?.lifecycle).not.toBe("error");
+    await expect.poll(() => replacement.resumeOverrides).toHaveLength(1);
+    await expect.poll(() => manager.getAgent(created.id)?.lifecycle).toBe("idle");
   } finally {
-    if (createdId) await manager.closeAgent(createdId).catch(() => undefined);
+    await manager.closeAgent(created.id).catch(() => undefined);
     await manager.flush().catch(() => undefined);
     await storage.flush().catch(() => undefined);
     rmSync(workdir, { recursive: true, force: true });

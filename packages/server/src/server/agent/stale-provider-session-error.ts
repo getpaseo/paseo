@@ -7,12 +7,5 @@ export class StaleProviderSessionError extends Error {
 }
 
 export function isStaleProviderSessionError(error: unknown): boolean {
-  if (error instanceof StaleProviderSessionError) return true;
-  if (!(error instanceof Error)) return false;
-  return (
-    error.message === "Provider connection is closed" ||
-    error.message === "Provider connection closed" ||
-    error.message === "Provider runtime is closed" ||
-    error.message === "Provider closed"
-  );
+  return error instanceof StaleProviderSessionError;
 }

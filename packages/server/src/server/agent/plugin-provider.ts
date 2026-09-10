@@ -58,10 +58,7 @@ import {
 } from "./create-agent-mode.js";
 import type { ProviderDefinition } from "./provider-registry.js";
 import { runProviderTurn } from "./providers/provider-runner.js";
-import {
-  isStaleProviderSessionError,
-  StaleProviderSessionError,
-} from "./stale-provider-session-error.js";
+import { StaleProviderSessionError } from "./stale-provider-session-error.js";
 
 interface Deferred<Value> {
   promise: Promise<Value>;
@@ -578,7 +575,7 @@ class ProviderRuntimeSession {
       });
       return (await pending.promise).result;
     } catch (error) {
-      if (isStaleProviderSessionError(error)) throw new StaleProviderSessionError(this.id);
+      if (this.terminal || this.runtime.isClosed) throw new StaleProviderSessionError(this.id);
       throw error;
     } finally {
       this.prompts.delete(prompt.clientMessageId);
