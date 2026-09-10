@@ -59,6 +59,15 @@ describe("ACP provider catalog", () => {
     expect(findProvider("minimax-code").iconSvg).toContain("<svg");
   });
 
+  it("offers Antigravity through its pinned ACP bridge", () => {
+    expect(findProvider("antigravity")).toMatchObject({
+      title: "Antigravity CLI",
+      version: "2.3.1",
+      command: ["npx", "-y", "paseo-agy-acp@2.3.1"],
+    });
+    expect(findProvider("antigravity").iconSvg).toContain("<svg");
+  });
+
   it("maps a catalog entry to the daemon provider config patch", () => {
     expect(buildAcpProviderConfigPatch(findProvider("amp-acp"))).toEqual({
       providers: {
