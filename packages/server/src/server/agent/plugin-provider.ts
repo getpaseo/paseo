@@ -1485,6 +1485,44 @@ class PluginAgentSession implements AgentSession {
       token,
       scope,
     });
+    if (scope !== "files") this.truncateHistoryAt(messageId);
+  }
+
+  private truncateHistoryAt(messageId: string): void {
+    const targetIndex = this.history.findLastIndex(
+      (event) =>
+        event.type === "timeline" &&
+        event.item.type === "user_message" &&
+        event.item.messageId === messageId,
+    );
+    if (targetIndex < 0) return;
+
+    this.history.splice(targetIndex);
+
+    const retainedMessageIds = new Set(
+      this.history.flatMap((event) =>
+        event.type === "timeline" &&
+        (event.item.type === "user_message" || event.item.type === "assistant_message") &&
+        event.item.messageId
+          ? [event.item.messageId]
+          : [],
+      ),
+    );
+    for (const messageKey of this.revertTokens.keys()) {
+      if (!retainedMessageIds.has(messageKey)) this.revertTokens.delete(messageKey);
+    }
+
+    const retainedPermissionIds = new Set(
+      this.history.flatMap((event) =>
+        event.type === "permission_requested" ? [event.request.id] : [],
+      ),
+    );
+    for (const permissionId of this.pendingPermissions.keys()) {
+      if (!retainedPermissionIds.has(permissionId)) this.pendingPermissions.delete(permissionId);
+    }
+    for (const permissionId of this.permissionResponses.keys()) {
+      if (!retainedPermissionIds.has(permissionId)) this.permissionResponses.delete(permissionId);
+    }
   }
 
   private publish(event: AgentStreamEvent): void {

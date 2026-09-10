@@ -1,5 +1,6 @@
 import type {
   ProviderConnection,
+  ProviderContent,
   ProviderEvent,
   ProviderInput,
   ProviderRegistration,
@@ -24,6 +25,7 @@ const CAPABILITIES = [
 interface ProviderHarnessOptions {
   capabilities?: ProviderConnection["capabilities"];
   completeTurn?: boolean;
+  rewindable?: boolean;
 }
 
 function createProviderHarness(options: ProviderHarnessOptions = {}) {
@@ -67,6 +69,19 @@ function createProviderHarness(options: ProviderHarnessOptions = {}) {
           persistence: { version: 1, data: { token: "root" } },
           cwd: input.config.cwd,
         });
+        if (options.rewindable) {
+          emit({
+            type: "timeline.item",
+            sessionId: input.sessionId,
+            item: {
+              type: "user_message",
+              id: "rewind-target",
+              messageId: "rewind-target",
+              text: "Discard this branch",
+              revertToken: "rewind-token",
+            },
+          });
+        }
         emit({
           type: "session.config",
           sessionId: input.sessionId,
@@ -124,15 +139,27 @@ function createProviderHarness(options: ProviderHarnessOptions = {}) {
           turnId: "turn-1",
           state: "started",
         });
+        const promptText =
+          input.prompt.input.type === "message"
+            ? input.prompt.input.content
+                .filter(
+                  (part): part is Extract<ProviderContent, { type: "text" }> =>
+                    part.type === "text",
+                )
+                .map((part) => part.text)
+                .join("\n")
+            : "";
+        const answerId = promptText === "replacement" ? "replacement-answer" : "answer";
+        const answerText = promptText === "replacement" ? "Replacement" : "Hello";
         emit({
           type: "timeline.item",
           sessionId: input.sessionId,
-          item: { type: "assistant_message", id: "answer", text: "Hel" },
+          item: { type: "assistant_message", id: answerId, text: answerText.slice(0, 3) },
         });
         emit({
           type: "timeline.item",
           sessionId: input.sessionId,
-          item: { type: "assistant_message", id: "answer", text: "Hello" },
+          item: { type: "assistant_message", id: answerId, text: answerText },
         });
         emit({
           type: "session.permission",
@@ -348,6 +375,35 @@ describe("PluginAgentClientRegistry", () => {
     } finally {
       await registry.shutdown();
     }
+  });
+
+  test("discards abandoned plugin history after conversation rewind", async () => {
+    const harness = createProviderHarness({
+      rewindable: true,
+      capabilities: [...CAPABILITIES, "session.revert.conversation"],
+    });
+    const registry = new PluginAgentClientRegistry(createTestLogger());
+    registry.replace([harness.registration]);
+    const client = registry.clients()[harness.registration.id]!;
+    const session = await client.createSession({
+      provider: harness.registration.id,
+      cwd: "/workspace",
+    });
+
+    await session.startTurn("old branch", { clientMessageId: "old-branch" });
+    await session.revertConversation?.({ messageId: "rewind-target" });
+    await session.startTurn("replacement", { clientMessageId: "replacement" });
+
+    const timeline = [];
+    for await (const event of session.streamHistory()) {
+      if (event.type === "timeline") timeline.push(event.item);
+    }
+    expect(timeline).toEqual([
+      { type: "assistant_message", text: "Rep", messageId: "replacement-answer" },
+      { type: "assistant_message", text: "lacement", messageId: "replacement-answer" },
+    ]);
+
+    await registry.shutdown();
   });
 
   test("adapts callback providers into the existing AgentClient and AgentSession path", async () => {
