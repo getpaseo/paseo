@@ -38,10 +38,6 @@ Each trigger and its ordered steps live in one direct `.paseo/workflows/*.yml` f
 
 Yes, with a manual source. A project using a GitHub source is read-only in the dashboard, since the repository is the source of truth. Switching to manual copies the active revision into the editor and stops syncing.
 
-## Why does the previous page stay visible after I click a dashboard link?
-
-Hub keeps the current page and its navigation labels together while the next page loads. If loading takes longer than a second, the labels switch to your destination and a loading placeholder replaces the previous page. The sidebar stays available, so you can choose another page or use Back while you wait.
-
 ## Who can trigger an agent?
 
 Only the users listed in a trigger's `from_users`. It is required and cannot be empty.
