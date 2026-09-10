@@ -1,3 +1,5 @@
+import type { PackageScript } from "./workspace-scripts/package-scripts.js";
+
 export interface ScriptRuntimeEntry {
   workspaceId: string;
   scriptName: string;
@@ -5,6 +7,7 @@ export interface ScriptRuntimeEntry {
   lifecycle: "running" | "stopped";
   terminalId: string;
   exitCode: number | null;
+  packageJson?: PackageScript["packageJson"];
 }
 
 interface RuntimeEntryKey {
@@ -13,6 +16,16 @@ interface RuntimeEntryKey {
 }
 
 export class WorkspaceScriptRuntimeStore {
+  private readonly packageScripts = new Map<string, Map<string, PackageScript>>();
+
+  getPackageScripts(workspaceId: string): ReadonlyMap<string, PackageScript> {
+    return this.packageScripts.get(workspaceId) ?? new Map();
+  }
+
+  setPackageScripts(workspaceId: string, scripts: Map<string, PackageScript>): void {
+    this.packageScripts.set(workspaceId, scripts);
+  }
+
   private readonly entries = new Map<string, ScriptRuntimeEntry>();
   private readonly scriptsByWorkspace = new Map<string, Set<string>>();
 
@@ -66,6 +79,7 @@ export class WorkspaceScriptRuntimeStore {
   }
 
   removeForWorkspace(workspaceId: string): void {
+    this.packageScripts.delete(workspaceId);
     for (const entry of this.listForWorkspace(workspaceId)) {
       this.entries.delete(this.toEntryKey(entry));
     }

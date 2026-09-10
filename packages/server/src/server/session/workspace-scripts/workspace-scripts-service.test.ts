@@ -170,6 +170,34 @@ describe("buildSnapshot", () => {
     ).toEqual([]);
   });
 
+  test("discovers package scripts without paseo.json and refreshes the cached snapshot", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "workspace-packages-"));
+    tempDirs.push(directory);
+    const workspace = { workspaceId: "ws-1", cwd: directory } as PersistedWorkspaceRecord;
+    const { service } = buildService({ workspace });
+    const manifest = join(directory, "package.json");
+    writeFileSync(manifest, JSON.stringify({ scripts: { build: "echo build" } }));
+    const scripts = await service.list("ws-1");
+    expect(scripts).toEqual([
+      expect.objectContaining({
+        scriptName: "package.json:package.json:build",
+        type: "script",
+        port: null,
+        proxyUrl: null,
+        packageJson: { path: "package.json", script: "build" },
+        lifecycle: "stopped",
+      }),
+    ]);
+    expect(service.buildSnapshot(workspace)).toEqual(scripts);
+    writeFileSync(manifest, JSON.stringify({ scripts: { test: "echo test" } }));
+    expect((await service.list("ws-1")).map((script) => script.packageJson?.script)).toEqual([
+      "test",
+    ]);
+    expect(service.buildSnapshot(workspace).map((script) => script.packageJson?.script)).toEqual([
+      "test",
+    ]);
+  });
+
   test("projects service hostnames without a Git snapshot", async () => {
     const directory = mkdtempSync(join(tmpdir(), "workspace-scripts-"));
     tempDirs.push(directory);

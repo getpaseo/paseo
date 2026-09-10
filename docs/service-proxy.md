@@ -28,7 +28,18 @@ Local and public routes use one combined leftmost label (`script--branch--projec
 
 ## Managing workspace scripts
 
-Configured `paseo.json` scripts can be managed without addressing their backing terminal directly:
+The run menu includes `paseo.json` commands and package.json scripts from the workspace and
+nested packages. Package scripts run as regular terminal commands; declare a service in
+`paseo.json` when you need a managed port and URL. The package's `packageManager` field or
+lockfile selects npm, pnpm, Yarn, or Bun, with the parent package's choice inherited by nested
+packages.
+
+Discovery runs when you open the menu or list scripts. Sidebar snapshots reuse that catalog
+so rendering workspace status never recursively scans the checkout. Dependency, generated,
+hidden, and symlinked directories are excluded. Reopen the menu after adding or removing a
+package or script.
+
+Both sources can be managed without addressing their backing terminal directly:
 
 ```bash
 paseo script ls [--cwd <path> | --workspace <workspace-id>]

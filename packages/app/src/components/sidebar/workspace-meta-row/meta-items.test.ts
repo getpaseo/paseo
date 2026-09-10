@@ -14,7 +14,12 @@ const PR_HINT: PrHint = {
   checksStatus: "success",
 };
 
-const SERVICE: WorkspaceServiceSummary = { name: "web", health: null };
+const SERVICE: WorkspaceServiceSummary = {
+  name: "web",
+  health: null,
+  type: "service",
+  otherScripts: [],
+};
 
 const LABELS: WorkspaceLabelDefinition[] = [{ name: "Urgent", color: "red" }];
 

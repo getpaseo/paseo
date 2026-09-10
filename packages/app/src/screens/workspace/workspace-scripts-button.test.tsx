@@ -3,7 +3,7 @@
  */
 import { i18n as testI18n } from "@/i18n/i18next";
 import React, { type ReactElement } from "react";
-import { act, fireEvent } from "@testing-library/react";
+import { act, fireEvent, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { WorkspaceScriptPayload } from "@getpaseo/protocol/messages";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -14,6 +14,8 @@ void testI18n;
 
 const {
   theme,
+  packageFeatures,
+  listWorkspaceScriptsMock,
   startWorkspaceScriptMock,
   killTerminalMock,
   setStringAsyncMock,
@@ -49,6 +51,8 @@ const {
   });
 
   return {
+    packageFeatures: { packageJsonScripts: false },
+    listWorkspaceScriptsMock: vi.fn(),
     theme: hoistedTheme,
     startWorkspaceScriptMock: vi.fn(async () => ({ terminalId: "terminal-script-1" })),
     killTerminalMock: vi.fn(async () => ({
@@ -118,7 +122,9 @@ vi.mock("@/stores/session-store", () => ({
     selector({
       sessions: {
         "test-server": {
+          serverInfo: { features: packageFeatures },
           client: {
+            listWorkspaceScripts: listWorkspaceScriptsMock,
             startWorkspaceScript: startWorkspaceScriptMock,
             killTerminal: killTerminalMock,
           },
@@ -140,7 +146,17 @@ vi.mock("@/utils/open-external-url", () => ({
 }));
 
 vi.mock("@/components/ui/dropdown-menu", () => ({
-  DropdownMenu: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
+  DropdownMenu: ({
+    children,
+    onOpenChange,
+  }: {
+    children: React.ReactNode;
+    onOpenChange?: (open: boolean) => void;
+  }) => {
+    const open = React.useCallback(() => onOpenChange?.(true), [onOpenChange]);
+    return <div onClick={open}>{children}</div>;
+  },
+  DropdownMenuLabel: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
   DropdownMenuContent: ({ children, testID }: { children: React.ReactNode; testID?: string }) => (
     <div data-testid={testID}>{children}</div>
   ),
@@ -197,6 +213,7 @@ vi.mock("lucide-react-native", () => {
     });
   return {
     ChevronDown: createIcon("ChevronDown"),
+    ChevronRight: createIcon("ChevronRight"),
     Copy: createIcon("Copy"),
     Eye: createIcon("Eye"),
     ExternalLink: createIcon("ExternalLink"),
@@ -218,6 +235,7 @@ function script(
 ): WorkspaceScriptPayload {
   return {
     scriptName: input.scriptName,
+    packageJson: input.packageJson,
     type: input.type ?? "script",
     hostname: input.hostname ?? input.scriptName,
     port: input.port ?? null,
@@ -320,6 +338,8 @@ describe("WorkspaceScriptsButton", () => {
       },
     );
     document.body.innerHTML = "";
+    packageFeatures.packageJsonScripts = false;
+    listWorkspaceScriptsMock.mockReset();
     startWorkspaceScriptMock.mockClear();
     killTerminalMock.mockClear();
     setStringAsyncMock.mockClear();
@@ -334,6 +354,90 @@ describe("WorkspaceScriptsButton", () => {
     current?.unmount();
     current = null;
     vi.unstubAllGlobals();
+  });
+
+  it("discovers scripts without paseo.json and folds nested packages independently", async () => {
+    packageFeatures.packageJsonScripts = true;
+    listWorkspaceScriptsMock.mockResolvedValue({
+      error: null,
+      scripts: [
+        script({
+          scriptName: "root-build",
+          packageJson: { path: "package.json", script: "build" },
+        }),
+        script({
+          scriptName: "web-build",
+          packageJson: { path: "packages/web/package.json", script: "build" },
+        }),
+      ],
+    });
+    current = renderScripts([]);
+    await act(async () => {
+      fireEvent.click(document.querySelector('[data-testid="workspace-scripts-button"]')!);
+    });
+    await waitFor(() =>
+      expect(
+        document.querySelector('[data-testid="workspace-scripts-item-root-build"]'),
+      ).not.toBeNull(),
+    );
+    expect(document.querySelector('[data-testid="workspace-scripts-item-web-build"]')).toBeNull();
+    await act(async () => {
+      fireEvent.click(
+        document.querySelector(
+          '[data-testid="workspace-scripts-group-packages/web/package.json"]',
+        )!,
+      );
+    });
+    expect(requireRow("web-build").textContent).toContain("build");
+    expect(requireRow("web-build").textContent).not.toContain("web-build");
+    startWorkspaceScriptMock.mockResolvedValue({ terminalId: "terminal-script-1" });
+    await act(async () => {
+      fireEvent.click(document.querySelector('[data-testid="workspace-scripts-start-web-build"]')!);
+    });
+    expect(startWorkspaceScriptMock).toHaveBeenCalledWith("workspace-1", "web-build");
+    await act(async () => {
+      fireEvent.click(
+        document.querySelector(
+          '[data-testid="workspace-scripts-group-packages/web/package.json"]',
+        )!,
+      );
+    });
+    expect(document.querySelector('[data-testid="workspace-scripts-item-web-build"]')).toBeNull();
+  });
+
+  it("shows discovery errors and allows retry", async () => {
+    packageFeatures.packageJsonScripts = true;
+    listWorkspaceScriptsMock.mockResolvedValueOnce({ error: "Invalid package.json", scripts: [] });
+    current = renderScripts([]);
+    await act(async () => {
+      fireEvent.click(document.querySelector('[data-testid="workspace-scripts-button"]')!);
+    });
+    await waitFor(() => expect(document.body.textContent).toContain("Invalid package.json"));
+    listWorkspaceScriptsMock.mockResolvedValue({
+      error: null,
+      scripts: [
+        script({
+          scriptName: "root-build",
+          packageJson: { path: "package.json", script: "build" },
+        }),
+      ],
+    });
+    const retry = Array.from(document.querySelectorAll("button")).find((button) =>
+      button.textContent?.includes("Retry"),
+    );
+    expect(retry).toBeDefined();
+    await act(async () => {
+      fireEvent.click(retry!);
+    });
+    await waitFor(() =>
+      expect(
+        document.querySelector('[data-testid="workspace-scripts-item-root-build"]'),
+      ).not.toBeNull(),
+    );
+    expect(document.body.textContent).not.toContain("Invalid package.json");
+    expect(
+      document.querySelector('[data-testid="workspace-scripts-group-package.json"]'),
+    ).toBeNull();
   });
 
   it("keeps completed script row icons visible and muted while the menu content stays mounted", async () => {

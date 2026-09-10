@@ -1,10 +1,20 @@
-import { useCallback, useEffect, useMemo, useRef, type ReactElement } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactElement,
+  type ReactNode,
+} from "react";
 import type { GestureResponderEvent } from "react-native";
 import { Pressable, Text, View } from "react-native";
 import * as Clipboard from "expo-clipboard";
 import { useMutation } from "@tanstack/react-query";
+import { useFetchQuery } from "@/data/query";
 import {
   ChevronDown,
+  ChevronRight,
   Copy,
   Eye,
   Globe,
@@ -22,6 +32,8 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
   useDropdownMenuClose,
 } from "@/components/ui/dropdown-menu";
@@ -56,6 +68,7 @@ interface WorkspaceScriptsButtonProps {
 const ThemedPlay = withUnistyles(Play);
 const ThemedSquareTerminal = withUnistyles(SquareTerminal);
 const ThemedGlobe = withUnistyles(Globe);
+const ThemedChevronRight = withUnistyles(ChevronRight);
 const ThemedChevronDown = withUnistyles(ChevronDown);
 const ThemedEye = withUnistyles(Eye);
 const ThemedCopy = withUnistyles(Copy);
@@ -396,6 +409,7 @@ function ScriptRow({
   onOpenUrlInBrowserTab,
 }: ScriptRowProps): ReactElement {
   const { t } = useTranslation();
+  const scriptLabel = script.packageJson?.script ?? script.scriptName;
   const isRunning = script.lifecycle === "running";
   const isService = (script.type ?? "service") === "service";
   const exitCode = script.exitCode ?? null;
@@ -444,7 +458,7 @@ function ScriptRow({
     isRunning && liveTerminalId ? (
       <ScriptRowActionButton
         accessibilityLabel={t("workspace.scripts.accessibility.viewTerminal", {
-          scriptName: script.scriptName,
+          scriptName: scriptLabel,
         })}
         testID={`workspace-scripts-view-${script.scriptName}`}
         icon="terminal"
@@ -456,7 +470,7 @@ function ScriptRow({
   const openServiceAction = selectedLink ? (
     <ScriptRowActionButton
       accessibilityLabel={t("workspace.scripts.accessibility.openService", {
-        scriptName: script.scriptName,
+        scriptName: scriptLabel,
       })}
       testID={`workspace-scripts-open-${script.scriptName}`}
       icon="open"
@@ -468,7 +482,7 @@ function ScriptRow({
   const lifecycleAction = isRunning ? (
     <ScriptRowActionButton
       accessibilityLabel={t("workspace.scripts.accessibility.stopScript", {
-        scriptName: script.scriptName,
+        scriptName: scriptLabel,
       })}
       testID={`workspace-scripts-stop-${script.scriptName}`}
       disabled={isStopPending}
@@ -479,7 +493,7 @@ function ScriptRow({
   ) : (
     <ScriptRowActionButton
       accessibilityLabel={t("workspace.scripts.accessibility.runScript", {
-        scriptName: script.scriptName,
+        scriptName: scriptLabel,
       })}
       testID={`workspace-scripts-start-${script.scriptName}`}
       disabled={isStartPending}
@@ -493,13 +507,13 @@ function ScriptRow({
     <View
       testID={`workspace-scripts-item-${script.scriptName}`}
       accessibilityLabel={t("workspace.scripts.accessibility.script", {
-        scriptName: script.scriptName,
+        scriptName: scriptLabel,
       })}
     >
       <View style={styles.scriptHeader}>
         <ScriptIcon size={14} uniProps={iconColorMapping} style={styles.scriptIcon} />
         <Text style={scriptNameStyle} numberOfLines={1}>
-          {script.scriptName}
+          {scriptLabel}
         </Text>
         {showExitBadge ? <ExitCodeBadge code={exitCode} /> : null}
         <View style={styles.spacer} />
@@ -508,7 +522,7 @@ function ScriptRow({
         {isRunning ? (
           <ScriptRowActionButton
             accessibilityLabel={t("workspace.scripts.accessibility.restartScript", {
-              scriptName: script.scriptName,
+              scriptName: scriptLabel,
             })}
             testID={`workspace-scripts-restart-${script.scriptName}`}
             disabled={isStopPending}
@@ -534,10 +548,49 @@ function ScriptRow({
   );
 }
 
+function ScriptGroup({
+  path,
+  collapsible,
+  children,
+}: {
+  path: string;
+  collapsible: boolean;
+  children: ReactNode;
+}): ReactNode {
+  const { t } = useTranslation();
+  const [expanded, setExpanded] = useState(path === "package.json");
+  const toggleExpanded = useCallback(() => setExpanded((value) => !value), []);
+  const Icon = expanded ? ThemedChevronDown : ThemedChevronRight;
+  const leading = useMemo(() => <Icon size={14} uniProps={mutedColorMapping} />, [Icon]);
+  if (!path) return children;
+  const directory =
+    path === "package.json"
+      ? t("workspace.scripts.rootPackage")
+      : path.slice(0, -"/package.json".length);
+  return (
+    <>
+      <DropdownMenuSeparator />
+      {collapsible ? (
+        <DropdownMenuItem
+          closeOnSelect={false}
+          onSelect={toggleExpanded}
+          leading={leading}
+          testID={`workspace-scripts-group-${path}`}
+        >
+          {directory}
+        </DropdownMenuItem>
+      ) : (
+        <DropdownMenuLabel>{path}</DropdownMenuLabel>
+      )}
+      {!collapsible || expanded ? children : null}
+    </>
+  );
+}
+
 export function WorkspaceScriptsButton({
   serverId,
   workspaceId,
-  scripts,
+  scripts: workspaceScripts,
   liveTerminalIds = [],
   onScriptTerminalStarted,
   onViewTerminal,
@@ -549,6 +602,55 @@ export function WorkspaceScriptsButton({
   const toast = useToast();
   const client = useSessionStore((state) => state.sessions[serverId]?.client ?? null);
   const activeConnection = useHostRuntimeSnapshot(serverId)?.activeConnection ?? null;
+  // COMPAT(packageJsonScripts): added in v0.8.0, remove gate after 2027-03-10.
+  const supportsPackages = useSessionStore(
+    (state) => state.sessions[serverId]?.serverInfo?.features?.packageJsonScripts === true,
+  );
+  const [menuOpen, setMenuOpen] = useState(false);
+  const packageQuery = useFetchQuery({
+    dataShape: "value",
+    staleTimeMs: 0,
+    queryKey: ["workspace-package-scripts", serverId, workspaceId],
+    enabled: menuOpen && supportsPackages && client !== null,
+    queryFn: async () => {
+      if (!client) throw new Error(t("common.errors.daemonClientUnavailable"));
+      const result = await client.listWorkspaceScripts(workspaceId);
+      if (result.error) throw new Error(result.error);
+      return { scripts: result.scripts ?? [] };
+    },
+  });
+  const retryDiscovery = useCallback(() => {
+    void packageQuery.refetch();
+  }, [packageQuery]);
+  const scripts = useMemo(() => {
+    if (!packageQuery.data) return workspaceScripts;
+    const live = new Map(workspaceScripts.map((script) => [script.scriptName, script]));
+    const discovered = packageQuery.data.scripts.filter((script) => script.packageJson);
+    const packageIds = new Set(discovered.map((script) => script.scriptName));
+    const configured = workspaceScripts.filter(
+      (script) =>
+        !script.packageJson ||
+        (script.lifecycle === "running" && !packageIds.has(script.scriptName)),
+    );
+    return [...configured, ...discovered.map((script) => live.get(script.scriptName) ?? script)];
+  }, [packageQuery.data, workspaceScripts]);
+  const groups = useMemo(() => {
+    const grouped = new Map<string, WorkspaceDescriptor["scripts"]>();
+    for (const script of scripts) {
+      const path = script.packageJson?.path ?? "";
+      const group = grouped.get(path) ?? [];
+      group.push(script);
+      grouped.set(path, group);
+    }
+    return [...grouped.entries()].sort(([left], [right]) => {
+      if (left === "") return -1;
+      if (right === "") return 1;
+      if (left === "package.json") return -1;
+      if (right === "package.json") return 1;
+      return left.localeCompare(right);
+    });
+  }, [scripts]);
+  const packageCount = groups.filter(([path]) => path !== "").length;
   const preferredRouteKind = useWorkspaceServiceRoutePreferencesStore(
     (state) => state.byServerId[serverId] ?? null,
   );
@@ -666,7 +768,7 @@ export function WorkspaceScriptsButton({
     [serverId, setPreferredRoute],
   );
 
-  if (scripts.length === 0) {
+  if (scripts.length === 0 && !supportsPackages) {
     return null;
   }
 
@@ -679,7 +781,7 @@ export function WorkspaceScriptsButton({
   return (
     <View style={styles.row}>
       <View style={presentation === "ghost" ? styles.ghostButtonFrame : styles.splitButton}>
-        <DropdownMenu>
+        <DropdownMenu onOpenChange={setMenuOpen}>
           <DropdownMenuTrigger
             testID="workspace-scripts-button"
             style={triggerStyle}
@@ -706,24 +808,43 @@ export function WorkspaceScriptsButton({
             maxWidth={280}
             testID="workspace-scripts-menu"
           >
-            {scripts.map((script) => (
-              <ScriptRow
-                key={script.scriptName}
-                script={script}
-                liveTerminalIdSet={liveTerminalIdSet}
-                activeConnection={activeConnection}
-                isStartPending={startScriptMutation.isPending}
-                isStopPending={stopScriptMutation.isPending}
-                onStartScript={handleStartScript}
-                onStopScript={handleStopScript}
-                onRestartScript={handleRestartScript}
-                onCopyUrl={handleCopyUrl}
-                preferredRouteKind={preferredRouteKind}
-                onSelectRouteKind={handleSelectRouteKind}
-                onViewTerminal={onViewTerminal}
-                onOpenUrlInBrowserTab={onOpenUrlInBrowserTab}
-              />
+            {groups.map(([path, group]) => (
+              <ScriptGroup key={path} path={path} collapsible={path !== "" && packageCount > 1}>
+                {group.map((script) => (
+                  <ScriptRow
+                    key={script.scriptName}
+                    script={script}
+                    liveTerminalIdSet={liveTerminalIdSet}
+                    activeConnection={activeConnection}
+                    isStartPending={startScriptMutation.isPending}
+                    isStopPending={stopScriptMutation.isPending}
+                    onStartScript={handleStartScript}
+                    onStopScript={handleStopScript}
+                    onRestartScript={handleRestartScript}
+                    onCopyUrl={handleCopyUrl}
+                    preferredRouteKind={preferredRouteKind}
+                    onSelectRouteKind={handleSelectRouteKind}
+                    onViewTerminal={onViewTerminal}
+                    onOpenUrlInBrowserTab={onOpenUrlInBrowserTab}
+                  />
+                ))}
+              </ScriptGroup>
             ))}
+            {supportsPackages && packageQuery.isFetching ? (
+              <DropdownMenuLabel>{t("common.loading")}</DropdownMenuLabel>
+            ) : null}
+            {packageQuery.isError ? (
+              <DropdownMenuItem
+                description={packageQuery.error.message}
+                closeOnSelect={false}
+                onSelect={retryDiscovery}
+              >
+                {t("common.actions.retry")}
+              </DropdownMenuItem>
+            ) : null}
+            {packageQuery.isSuccess && scripts.length === 0 ? (
+              <DropdownMenuLabel>{t("workspace.scripts.states.empty")}</DropdownMenuLabel>
+            ) : null}
           </DropdownMenuContent>
         </DropdownMenu>
       </View>

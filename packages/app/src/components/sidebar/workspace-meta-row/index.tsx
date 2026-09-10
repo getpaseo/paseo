@@ -2,7 +2,7 @@ import { Fragment, useCallback, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { Pressable, Text, View, type GestureResponderEvent } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
-import { ExternalLink, Folder, GitBranch, Globe } from "lucide-react-native";
+import { ExternalLink, Folder, GitBranch, Globe, SquareTerminal } from "lucide-react-native";
 import {
   workspaceLabelKey,
   type WorkspaceLabelDefinition,
@@ -38,6 +38,7 @@ const ThemedExternalLink = withUnistyles(ExternalLink);
 const ThemedFolder = withUnistyles(Folder);
 const ThemedGitBranch = withUnistyles(GitBranch);
 const ThemedGlobe = withUnistyles(Globe);
+const ThemedSquareTerminal = withUnistyles(SquareTerminal);
 
 /** Stable identity so a row without labels doesn't re-select its items on every render. */
 const EMPTY_LABELS: readonly WorkspaceLabelDefinition[] = [];
@@ -284,16 +285,29 @@ const CHECK_STATE_ACCESSIBLE_KEYS = {
 function ServiceItem({ summary }: { summary: WorkspaceServiceSummary }) {
   const { t } = useTranslation();
   const unhealthy = summary.health === "unhealthy";
+  const Icon = summary.type === "script" ? ThemedSquareTerminal : ThemedGlobe;
   return (
     <View
       style={styles.serviceItem}
       accessibilityLabel={t(workspaceServiceLabelKey(summary), { name: summary.name })}
       testID={unhealthy ? "workspace-service-unhealthy" : "workspace-service"}
     >
-      <ThemedGlobe size={META_ICON_SIZE} uniProps={unhealthy ? dangerMapping : successMapping} />
+      <Icon size={META_ICON_SIZE} uniProps={unhealthy ? dangerMapping : successMapping} />
       <Text style={unhealthy ? styles.serviceNameUnhealthy : styles.serviceName} numberOfLines={1}>
         {summary.name}
       </Text>
+      {summary.otherScripts.map((name) => (
+        <View
+          key={name}
+          style={styles.serviceItem}
+          accessibilityLabel={t("sidebar.workspace.status.scriptRunning", { name })}
+        >
+          <ThemedSquareTerminal size={META_ICON_SIZE} uniProps={successMapping} />
+          <Text style={styles.serviceName} numberOfLines={1}>
+            {name}
+          </Text>
+        </View>
+      ))}
     </View>
   );
 }

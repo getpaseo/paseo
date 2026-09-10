@@ -1,3 +1,4 @@
+import { WorkspaceScriptRuntimeStore } from "./workspace-script-runtime-store.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Server as HTTPServer } from "http";
 import type pino from "pino";
@@ -113,7 +114,11 @@ function createWorkspaceRegistry(records: PersistedWorkspaceRecord[]): Workspace
   });
 }
 
-function createServer(terminalManager: TerminalManager, workspaceRegistry?: WorkspaceRegistry) {
+function createServer(
+  terminalManager: TerminalManager,
+  workspaceRegistry?: WorkspaceRegistry,
+  scriptRuntimeStore?: WorkspaceScriptRuntimeStore,
+) {
   const pushNotifications = new RecordingPushNotificationSender();
   const agentManager = {
     setAgentAttentionCallback: vi.fn(),
@@ -168,7 +173,7 @@ function createServer(terminalManager: TerminalManager, workspaceRegistry?: Work
       dispose: vi.fn(),
     }),
     undefined,
-    undefined,
+    scriptRuntimeStore,
     undefined,
     undefined,
     undefined,
@@ -274,6 +279,42 @@ describe("VoiceAssistantWebSocketServer terminal attention notifications", () =>
   afterEach(() => {
     vi.clearAllMocks();
   });
+
+  it.each([0, 1])(
+    "includes a completed script's outcome in notifications (exit %s)",
+    async (exitCode) => {
+      const { manager, emit } = createTerminalManager();
+      const runtime = new WorkspaceScriptRuntimeStore();
+      runtime.set({
+        workspaceId: "ws-1",
+        scriptName: "build",
+        type: "script",
+        lifecycle: "stopped",
+        terminalId: "term-1",
+        exitCode,
+      });
+      const { server, pushNotifications } = createServer(manager, undefined, runtime);
+      const ws = connectClient(server);
+      emit({
+        ...transition({
+          previousState: "working",
+          previousChangedAt: 1000,
+          state: "idle",
+          changedAt: 11001,
+        }),
+        name: "build",
+      });
+      await flushAsync();
+      const payload = readTerminalAttentionMessage(ws);
+      expect(payload.title).toBe(exitCode === 0 ? "Script finished" : "Script failed");
+      expect(payload.body).toBe(`build (exit ${exitCode})`);
+      expect(pushNotifications.sent).toHaveLength(1);
+      expect(pushNotifications.sent[0]?.data).toMatchObject({
+        terminalId: "term-1",
+        workspaceId: "ws-1",
+      });
+    },
+  );
 
   it("does not emit attention without a matching terminal-directory subscription", async () => {
     const { manager, emit } = createTerminalManager();

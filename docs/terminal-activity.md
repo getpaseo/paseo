@@ -6,7 +6,7 @@ Paseo surfaces terminal activity as a tab indicator (the same "running" dot used
 
 Terminal activity is source-agnostic plumbing. `TerminalActivityTracker` holds the current per-terminal state and emits transitions to the manager, worker protocol, websocket subscription, app buckets, dots, and notifications.
 
-The tracker defaults to unknown (`null`). Activity production lives outside terminal stream parsing: agent hook commands report coarse activity to the daemon's local `/api/terminal-activity` endpoint.
+The tracker defaults to unknown (`null`). Agent hook commands report coarse activity to the daemon's local `/api/terminal-activity` endpoint. Managed regular scripts also produce activity: the launcher marks the terminal working and shell command completion marks it idle. This applies to both `paseo.json` commands and package.json scripts; services retain their separate health checks.
 
 ## Architecture
 
@@ -30,7 +30,7 @@ Terminal directory snapshots (`terminalsChanged`) and workspace contribution cha
 
 Each `onChange` delivers both the new snapshot and the `previous` one (`{ state, changedAt }`). The transition flows unchanged up through `TerminalSession.onActivityChange` (as `{ activity, previous }`), the worker protocol's `terminalActivityChange` event, and the manager-level `subscribeTerminalActivity(listener)` stream (`{ terminalId, name, cwd, activity, previous }`).
 
-The daemon consumes these transitions, not snapshots. When a transition moves from `working` to `idle`, the tracker records finished attention, so the terminal shows the same green finished dot as an idle agent that needs review. The websocket layer also fires a "Terminal finished" attention notification. A terminal that exits while still working emits no turn-end notification.
+The daemon consumes these transitions, not snapshots. When a transition moves from `working` to `idle`, the tracker records finished attention, so the terminal shows the same green finished dot as an idle agent that needs review. The websocket layer also fires a completion notification. Managed regular scripts include their name and exit code, distinguishing success from failure. The existing presence policy suppresses notifications while you are viewing that terminal. A terminal that exits while still working emits no turn-end notification.
 
 Terminal list visibility is `workspaceId`-scoped: a terminal belongs to the workspace that created it, and same-`cwd` sibling workspaces do not see it in their terminal lists. Terminal status routing starts from that owning workspace, uses the owning workspace's `cwd`, then fans the status bucket out to every active workspace with the same `cwd`.
 

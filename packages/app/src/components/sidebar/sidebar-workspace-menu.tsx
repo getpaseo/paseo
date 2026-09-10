@@ -378,7 +378,12 @@ export function SidebarWorkspaceContextMenu({
     hostBadgeLabel,
     pullRequestLabel,
     serviceLabel: serviceSummary
-      ? t(workspaceServiceLabelKey(serviceSummary), { name: serviceSummary.name })
+      ? [
+          t(workspaceServiceLabelKey(serviceSummary), { name: serviceSummary.name }),
+          ...serviceSummary.otherScripts.map((name) =>
+            t("sidebar.workspace.status.scriptRunning", { name }),
+          ),
+        ].join(", ")
       : null,
   });
   const workspaceTarget = useMemo<WorkspaceLabelTarget>(

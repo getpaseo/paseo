@@ -734,6 +734,7 @@ export const ptBR: TranslationResources = {
       },
     },
     scripts: {
+      rootPackage: "Raiz",
       title: "Scripts",
       actions: {
         chooseUrl: "Escolher URL",
@@ -761,6 +762,7 @@ export const ptBR: TranslationResources = {
         direct: "Direta",
       },
       states: {
+        empty: "Nenhum script encontrado",
         exitCode: "saída {{code}}",
         startFailed: "Falha ao iniciar {{scriptName}}",
         stopFailed: "Falha ao parar {{scriptName}}",
@@ -1206,6 +1208,7 @@ export const ptBR: TranslationResources = {
     },
     workspace: {
       status: {
+        scriptRunning: "Script {{name}} em execução",
         serviceRunning: "Serviço {{name}} em execução",
         serviceUnhealthy: "Serviço {{name}} com falha",
         creating: "Criando...",

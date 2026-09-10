@@ -317,6 +317,7 @@ describe("runAsyncWorktreeBootstrap", () => {
     triggerExit: (exitCode: number) => void;
     triggerCommandFinished: (exitCode: number) => void;
     sentInputs: string[];
+    activity: string[];
   }
 
   function createStubTerminalManager(
@@ -337,9 +338,11 @@ describe("runAsyncWorktreeBootstrap", () => {
         let exitHandler: ((info: { exitCode: number | null }) => void) | null = null;
         let commandFinishedHandler: ((info: { exitCode: number | null }) => void) | null = null;
         const sentInputs: string[] = [];
+        const activity: string[] = [];
         terminalRecords.push({
           id: terminalId,
           sentInputs,
+          activity,
           triggerCommandFinished: (exitCode) => {
             commandFinishedHandler?.({ exitCode });
           },
@@ -389,7 +392,9 @@ describe("runAsyncWorktreeBootstrap", () => {
           getSize: () => ({ rows: 1, cols: 1 }),
           getTitle: () => undefined,
           getActivity: () => null,
-          setActivity: () => {},
+          setActivity: (state) => {
+            activity.push(state);
+          },
           getExitInfo: () => null,
           killAndWait: async () => {},
         };
@@ -579,6 +584,43 @@ describe("runAsyncWorktreeBootstrap", () => {
       exitCode: 7,
     });
     expect(terminalRecords[0]?.sentInputs).toEqual(['node -e "process.exit(7)"\r']);
+    expect(terminalRecords[0]?.activity).toEqual(["working", "idle"]);
+  });
+
+  it("runs nested package scripts in their package and reports completion activity", async () => {
+    const packageDirectory = join(repoDir, "packages", "web");
+    mkdirSync(packageDirectory, { recursive: true });
+    writeFileSync(
+      join(packageDirectory, "package.json"),
+      JSON.stringify({ scripts: { build: "echo built" } }),
+    );
+    const runtimeStore = new WorkspaceScriptRuntimeStore();
+    const records: StubTerminalRecord[] = [];
+    const calls: CreateTerminalCall[] = [];
+    const scriptName = "package.json:packages%2Fweb%2Fpackage.json:build";
+    await spawnWorkspaceScript({
+      repoRoot: repoDir,
+      workspaceId: repoDir,
+      projectSlug: "repo",
+      branchName: "main",
+      scriptName,
+      daemonPort: 6767,
+      serviceProxy: new ScriptRouteStore(),
+      runtimeStore,
+      terminalManager: createStubTerminalManager(calls, records),
+    });
+    expect(calls[0]).toMatchObject({ cwd: packageDirectory, name: "packages/web: build" });
+    expect(records[0]?.sentInputs[0]).toContain("npm run 'build'");
+    expect(records[0]?.activity).toEqual(["working"]);
+    records[0]?.triggerCommandFinished(1);
+    expect(records[0]?.activity).toEqual(["working", "idle"]);
+    expect(runtimeStore.get({ workspaceId: repoDir, scriptName })).toMatchObject({
+      lifecycle: "stopped",
+      exitCode: 1,
+      packageJson: { path: "packages/web/package.json", script: "build" },
+    });
+    records[0]?.triggerCommandFinished(1);
+    expect(records[0]?.activity).toEqual(["working", "idle"]);
   });
 
   it("reuses a live terminal when rerunning after plain script completion", async () => {

@@ -1692,6 +1692,7 @@ export class VoiceAssistantWebSocketServer {
         // COMPAT(terminalSizeOwnership): added in v0.2.6, remove gate after 2027-02-02.
         "terminal-size-ownership": true,
         workspaceTerminals: true,
+        packageJsonScripts: true,
         // COMPAT(rewind): added in v0.1.X, drop the gate when floor >= v0.1.X.
         rewind: true,
         // COMPAT(agentTimelinePromptIndex): added in v0.2.X, drop the gate when floor >= v0.2.X.
@@ -2642,8 +2643,18 @@ export class VoiceAssistantWebSocketServer {
       nowMs,
     });
 
-    const title = terminalAttentionTitle(params.reason);
-    const body = params.terminalName;
+    const script = workspaceId
+      ? this.scriptRuntimeStore
+          ?.listForWorkspace(workspaceId)
+          .find((entry) => entry.terminalId === params.terminalId && entry.type === "script")
+      : null;
+    const isCompletedScript = script?.lifecycle === "stopped" && params.reason === "finished";
+    let title = terminalAttentionTitle(params.reason);
+    let body = params.terminalName;
+    if (isCompletedScript) {
+      title = script.exitCode === 0 ? "Script finished" : "Script failed";
+      body = `${params.terminalName} (exit ${script.exitCode ?? "unknown"})`;
+    }
 
     if (plan.shouldPush) {
       void this.pushNotificationSender

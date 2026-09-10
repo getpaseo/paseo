@@ -733,6 +733,7 @@ export const ja: TranslationResources = {
       },
     },
     scripts: {
+      rootPackage: "ルート",
       title: "スクリプト",
       actions: {
         chooseUrl: "URLを選択",
@@ -760,6 +761,7 @@ export const ja: TranslationResources = {
         direct: "直接接続",
       },
       states: {
+        empty: "スクリプトが見つかりません",
         exitCode: "終了コード: {{code}}",
         startFailed: "{{scriptName}}の起動に失敗しました",
         stopFailed: "{{scriptName}}の停止に失敗しました",
@@ -1193,6 +1195,7 @@ export const ja: TranslationResources = {
     },
     workspace: {
       status: {
+        scriptRunning: "スクリプト {{name}} を実行中",
         serviceRunning: "サービス {{name}} 実行中",
         serviceUnhealthy: "サービス {{name}} 異常",
         creating: "作成中...",

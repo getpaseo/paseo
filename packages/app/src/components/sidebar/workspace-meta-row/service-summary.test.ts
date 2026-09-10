@@ -29,14 +29,35 @@ describe("selectWorkspaceServiceSummary", () => {
     expect(selectWorkspaceServiceSummary([script({ scriptName: "web" })])).toEqual({
       name: "web",
       health: null,
+      type: "service",
+      otherScripts: [],
     });
   });
 
-  it("ignores plain commands entirely", () => {
-    // A test watcher running says nothing about whether the workspace is up.
+  it("includes running plain commands", () => {
+    expect(selectWorkspaceServiceSummary([script({ scriptName: "test", type: "script" })])).toEqual(
+      { name: "test", health: null, type: "script", otherScripts: [] },
+    );
+  });
+
+  it("keeps regular scripts visible alongside a service and qualifies nested package names", () => {
     expect(
-      selectWorkspaceServiceSummary([script({ scriptName: "test", type: "script" })]),
-    ).toBeNull();
+      selectWorkspaceServiceSummary([
+        script({ scriptName: "web", type: "service" }),
+        script({ scriptName: "build", type: "script" }),
+        script({
+          scriptName: "package-id",
+          type: "script",
+          packageJson: { path: "packages/api/package.json", script: "build" },
+        }),
+        script({ scriptName: "finished", type: "script", lifecycle: "stopped" }),
+      ]),
+    ).toEqual({
+      name: "web",
+      health: null,
+      type: "service",
+      otherScripts: ["build", "packages/api/build"],
+    });
   });
 
   it("prefers an unhealthy service over a healthy one regardless of order", () => {
@@ -45,7 +66,7 @@ describe("selectWorkspaceServiceSummary", () => {
         script({ scriptName: "web", health: "healthy" }),
         script({ scriptName: "api", health: "unhealthy" }),
       ]),
-    ).toEqual({ name: "api", health: "unhealthy" });
+    ).toEqual({ name: "api", health: "unhealthy", type: "service", otherScripts: [] });
   });
 
   it("takes the first running service when none is failing", () => {
@@ -54,7 +75,7 @@ describe("selectWorkspaceServiceSummary", () => {
         script({ scriptName: "web", health: "healthy" }),
         script({ scriptName: "api", health: null }),
       ]),
-    ).toEqual({ name: "web", health: "healthy" });
+    ).toEqual({ name: "web", health: "healthy", type: "service", otherScripts: [] });
   });
 
   it("skips a stopped service to reach a running one", () => {
@@ -63,20 +84,25 @@ describe("selectWorkspaceServiceSummary", () => {
         script({ scriptName: "web", lifecycle: "stopped" }),
         script({ scriptName: "api" }),
       ]),
-    ).toEqual({ name: "api", health: null });
+    ).toEqual({ name: "api", health: null, type: "service", otherScripts: [] });
   });
 });
 
 describe("workspaceServiceLabelKey", () => {
   it("names an unhealthy service differently from a running one", () => {
-    expect(workspaceServiceLabelKey({ name: "web", health: "unhealthy" })).toBe(
-      "workspace.status.serviceUnhealthy",
-    );
+    expect(
+      workspaceServiceLabelKey({
+        name: "web",
+        health: "unhealthy",
+        type: "service",
+        otherScripts: [],
+      }),
+    ).toBe("sidebar.workspace.status.serviceUnhealthy");
   });
 
   it.each([["healthy"], [null]] as const)("treats %s as simply running", (health) => {
-    expect(workspaceServiceLabelKey({ name: "web", health })).toBe(
-      "workspace.status.serviceRunning",
-    );
+    expect(
+      workspaceServiceLabelKey({ name: "web", health, type: "service", otherScripts: [] }),
+    ).toBe("sidebar.workspace.status.serviceRunning");
   });
 });

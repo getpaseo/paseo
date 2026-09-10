@@ -194,6 +194,7 @@ function buildOrphanRuntimePayload(
 
   return {
     scriptName: runtimeEntry.scriptName,
+    packageJson: runtimeEntry.packageJson,
     type,
     hostname,
     port: type === "service" ? (serviceState?.port ?? null) : null,
@@ -219,6 +220,10 @@ export function buildWorkspaceScriptPayloads(
   const projectSlug = options.gitMetadata?.projectSlug ?? deriveProjectSlug(workspaceDirectory);
   const branchName = options.gitMetadata?.currentBranch ?? null;
   const scriptConfigs = getScriptConfigs(options.paseoConfig);
+  const packageScripts = options.runtimeStore.getPackageScripts(workspaceId);
+  for (const [id, config] of packageScripts) {
+    if (!scriptConfigs.has(id)) scriptConfigs.set(id, config);
+  }
   const runtimeEntries = new Map(
     options.runtimeStore
       .listForWorkspace(workspaceId)
@@ -240,9 +245,16 @@ export function buildWorkspaceScriptPayloads(
     const serviceState = isServiceScript(config)
       ? projectWorkspaceServiceState({ workspaceId, scriptName, ctx })
       : null;
-    payloads.push(
-      buildConfiguredScriptPayload(scriptName, config, runtimeEntry, serviceState, ctx),
+    const payload = buildConfiguredScriptPayload(
+      scriptName,
+      config,
+      runtimeEntry,
+      serviceState,
+      ctx,
     );
+    const packageScript = packageScripts.get(scriptName);
+    if (packageScript === config) payload.packageJson = packageScript.packageJson;
+    payloads.push(payload);
   }
 
   for (const runtimeEntry of runtimeEntries.values()) {
