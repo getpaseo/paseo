@@ -190,3 +190,54 @@ export async function openLiteralBackslashFile(page: Page, workspace: CreatedWor
   await expect(source).not.toContainText("THIS IS THE OTHER FILE");
   await expect(page.getByRole("status").filter({ hasText: "File changed" })).toHaveCount(0);
 }
+
+/**
+ * Opening the same occurrence twice has to navigate the pane both times. The tab target is
+ * deliberately identity-stable, so the second activation looks like a no-op unless it asks the
+ * file-opening owner to navigate again.
+ */
+export async function reopenSameOccurrenceAfterMovingAway(page: Page, workspace: CreatedWorkspace) {
+  const lines = Array.from(
+    { length: 1200 },
+    (_value, index) => `export const filler${index} = ${index};`,
+  );
+  lines.push('const marker = "REOPEN_TARGET";');
+  await writeFile(path.join(workspace.repoPath, "reopen.ts"), `${lines.join("\n")}\n`);
+  await workspace.navigateTo();
+
+  const scroller = page.getByTestId("file-source-editor").locator(".cm-scroller");
+  const offset = () => scroller.evaluate((element) => element.scrollTop);
+
+  await openReopenTarget(page);
+  const revealed = await offset();
+  expect(revealed).toBeGreaterThan(0);
+  await expect(
+    page.getByTestId("file-source-editor").locator(".cm-selectionBackground"),
+  ).toBeInViewport();
+
+  // Move the caret to the top of the same file, inside the same editor instance.
+  await page.getByTestId("file-source-editor").locator(".cm-content").click();
+  await page.keyboard.press("ControlOrMeta+Home");
+  await expect.poll(offset).toBeLessThan(revealed / 2);
+
+  await openReopenTarget(page);
+  await expect
+    .poll(offset, { message: "reopening the same occurrence must navigate the pane again" })
+    .toBeGreaterThan(revealed / 2);
+  await expect(
+    page.getByTestId("file-source-editor").locator(".cm-selectionBackground"),
+  ).toBeInViewport();
+  // The editor instance is reused, so its history survives the second navigation.
+  await expect(page.getByTestId("file-source-editor")).toContainText("REOPEN_TARGET");
+}
+
+async function openReopenTarget(page: Page) {
+  await page.keyboard.press("Meta+Shift+F");
+  const panel = page.getByTestId("command-center-panel");
+  await page
+    .getByRole("textbox", { name: "Search saved file contents...", exact: true })
+    .fill("REOPEN_TARGET");
+  await expect(panel.getByRole("button", { name: /reopen\.ts:1201:/ })).toBeVisible();
+  await page.keyboard.press("Enter");
+  await expect(panel).toBeHidden();
+}

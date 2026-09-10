@@ -144,9 +144,24 @@ test("an empty result says which files the host never opened", async ({ page, wi
   await reportSkippedLargeFiles(page, await withWorkspace());
 });
 
+// "a\b.txt" is one file on POSIX and a nested path on Windows, so the fixture only exists here.
+// Windows separator handling is covered by resolveWorkspaceFilePaths and toWorkspaceRelativePath.
+test.skip(
+  process.platform === "win32",
+  "a file name containing a backslash is not a valid Windows fixture",
+);
 test("a file name containing a backslash opens itself, not a same-named nested path", async ({
   page,
   withWorkspace,
 }) => {
   await openLiteralBackslashFile(page, await withWorkspace());
+});
+
+import { reopenSameOccurrenceAfterMovingAway } from "../support/helpers/workspace-content-search";
+
+test("opening the same occurrence again navigates the pane it is already showing", async ({
+  page,
+  withWorkspace,
+}) => {
+  await reopenSameOccurrenceAfterMovingAway(page, await withWorkspace());
 });

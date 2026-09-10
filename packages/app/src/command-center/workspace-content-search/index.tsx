@@ -11,12 +11,12 @@ import { useWorkspaceDirectory } from "@/stores/session-store-hooks";
 import { useSessionStore } from "@/stores/session-store";
 import { useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
 import { usePanelStore } from "@/stores/panel-store";
-import { createWorkspaceFileTabTarget } from "@/workspace/file-open";
 import { buildWorkspaceTabPersistenceKey } from "@/workspace-tabs/model";
+import { openWorkspaceFileInFocusedPane } from "@/screens/workspace/workspace-file-open-command";
 import { clearCommandCenterFocusRestoreElement } from "@/utils/command-center-focus-restore";
 import { WorkspaceFileSource } from "@/file-pane/source";
 import { formatFileSize } from "@/utils/format-file-size";
-import { describeWorkspaceFilePath } from "../workspace-file-search-model";
+import { describeResultPath } from "./internal/result-path";
 import {
   WorkspaceContentSearchModel,
   type ContentSearchSnapshot,
@@ -104,16 +104,17 @@ function ContentSearch({
         transport,
         open(location) {
           clearCommandCenterFocusRestoreElement();
-          const workspaceKey = buildWorkspaceTabPersistenceKey({ serverId, workspaceId });
-          if (!workspaceKey) return;
           const layout = useWorkspaceLayoutStore.getState();
-          const tabId = layout.openTab({
-            workspaceKey,
-            target: createWorkspaceFileTabTarget(location),
-            intent: "reveal",
+          openWorkspaceFileInFocusedPane({
+            location,
+            persistenceKey: buildWorkspaceTabPersistenceKey({ serverId, workspaceId }),
+            closeExplorerAfterOpen: true,
+            showMobileAgent: usePanelStore.getState().showMobileAgent,
+            openWorkspaceTabInFocusedPane: (workspaceKey, target, placement) =>
+              layout.openTab({ workspaceKey, target, intent: "reveal", placement }),
+            focusWorkspaceTab: layout.focusTab,
+            requestFileNavigation: layout.requestFileNavigation,
           });
-          if (tabId) layout.focusTab(workspaceKey, tabId);
-          usePanelStore.getState().showMobileAgent();
           closeRef.current();
         },
       }),
@@ -230,7 +231,7 @@ function ResultRow({
     [selected],
   );
   const line = useMemo(() => describeMatchLine(item), [item]);
-  const file = useMemo(() => describeWorkspaceFilePath(item.path), [item.path]);
+  const file = useMemo(() => describeResultPath(item.path), [item.path]);
   return (
     <Pressable
       accessibilityRole="button"
@@ -245,12 +246,18 @@ function ResultRow({
         <Text style={styles.match}>{line.match}</Text>
         {line.after}
       </Text>
-      <Text style={styles.location} numberOfLines={1}>
-        <Text style={styles.locationFile}>
+      {/* The file name and its coordinates are pinned; only the parent context may shrink, so a
+          deep path loses its middle rather than the identity the reader is scanning for. */}
+      <View style={styles.location}>
+        {file.directory ? (
+          <Text style={styles.locationDirectory} numberOfLines={1}>
+            {file.directory}
+          </Text>
+        ) : null}
+        <Text style={styles.locationFile} numberOfLines={1}>
           {file.name}:{item.line}:{item.columnStart}
         </Text>
-        {file.directory ? <Text style={styles.locationDirectory}> {file.directory}</Text> : null}
-      </Text>
+      </View>
     </Pressable>
   );
 }
@@ -346,13 +353,13 @@ function ContentPreview({
   );
   return (
     <View style={styles.preview}>
-      {match ? (
+      {/* On desktop the selected row already names the file and Enter opens it, so the preview
+          carries no header. The compact flow pages away from the list and still needs both. */}
+      {compact && match ? (
         <View style={styles.previewHeader}>
-          {compact ? (
-            <Button variant="ghost" size="sm" onPress={back}>
-              {t("shell.commandCenter.contentBack")}
-            </Button>
-          ) : null}
+          <Button variant="ghost" size="sm" onPress={back}>
+            {t("shell.commandCenter.contentBack")}
+          </Button>
           <Text style={styles.previewPath} numberOfLines={1} ellipsizeMode="head">
             {match.path}
           </Text>
@@ -391,8 +398,9 @@ function ContentPreview({
   );
 }
 
-// Matches the Command Center's own two-line result row.
-const RESULT_ROW_HEIGHT = 56;
+// Denser than the Command Center's own two-line row: these results are scanned, not read, and a
+// search wants as many occurrences on screen as stay legible.
+const RESULT_ROW_HEIGHT = 44;
 // Characters of the matched line kept ahead of the match itself.
 const SNIPPET_LEAD = 24;
 
@@ -413,22 +421,37 @@ const styles = StyleSheet.create((theme) => ({
     height: RESULT_ROW_HEIGHT,
     justifyContent: "center",
     paddingHorizontal: theme.spacing[4],
-    paddingVertical: theme.spacing[2],
+    paddingVertical: theme.spacing[1],
   },
   hovered: { backgroundColor: theme.colors.surface1 },
   selected: { backgroundColor: theme.colors.surface2 },
-  // The matched line leads, in the code type scale; the location is its subtitle.
+  // Three levels: the match is what the reader is looking for, the rest of the line is the
+  // context it sits in, and the location is context for that.
   snippet: {
-    color: theme.colors.foreground,
+    color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.code,
-    lineHeight: 18,
+    lineHeight: 17,
     fontFamily: theme.fontFamily.mono,
   },
-  match: { backgroundColor: theme.colors.terminal.selectionBackground },
-  // The file name and coordinates lead so that truncation eats the directory, not the identity.
-  location: { fontSize: theme.fontSize.sm, lineHeight: 16 },
-  locationFile: { color: theme.colors.foreground },
-  locationDirectory: { color: theme.colors.foregroundMuted },
+  match: {
+    color: theme.colors.foreground,
+    fontWeight: "600",
+    backgroundColor: theme.colors.terminal.selectionBackground,
+  },
+  location: { flexDirection: "row", alignItems: "baseline" },
+  locationFile: {
+    flexShrink: 0,
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.sm,
+    lineHeight: 15,
+  },
+  locationDirectory: {
+    flexShrink: 1,
+    minWidth: 0,
+    color: theme.colors.foregroundExtraMuted,
+    fontSize: theme.fontSize.sm,
+    lineHeight: 15,
+  },
   preview: { flex: 1, minWidth: 0, minHeight: 0 },
   previewHeader: {
     flexDirection: "row",

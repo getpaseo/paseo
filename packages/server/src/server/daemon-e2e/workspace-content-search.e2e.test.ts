@@ -24,10 +24,13 @@ test("real client searches saved contents, cancels host work and can search agai
     );
     controller.abort();
     expect(await searching).toMatchObject({ status: "error", code: "cancelled" });
+    // A complete empty result also reports the per-file ceiling the host applied, so the client
+    // can say which files it never opened rather than claiming it read the whole workspace.
     expect(await client.searchWorkspaceContent({ cwd, query: "missing" })).toEqual({
       status: "ok",
       matches: [],
       limited: false,
+      maxFileBytes: 1_048_576,
     });
     const preview = await client.readFile(cwd, "a.ts", undefined, 1_048_576);
     expect(new TextDecoder().decode(preview.bytes)).toBe("const original = 'NEEDLE';\n");

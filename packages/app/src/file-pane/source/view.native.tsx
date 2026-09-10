@@ -1,13 +1,12 @@
 import { useTranslation } from "react-i18next";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { FlatList, PixelRatio, Text, View, type LayoutChangeEvent } from "react-native";
+import { useCallback, useEffect, useMemo, useRef } from "react";
+import { FlatList, Text, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { highlightCode, type HighlightToken } from "@getpaseo/highlight";
 import { syntaxTokenStyleFor } from "@/styles/syntax-token-styles";
 import type { WorkspaceFileLocation } from "@/workspace/file-open";
 import type { EditorVisualTheme } from "../editor/extensions.web";
 import { selectSourcePresentation } from "./presentation";
-import { sourceRowOffsets } from "./row-layout";
 
 interface FileSourceViewProps {
   content: string;
@@ -22,8 +21,6 @@ interface FileSourceViewProps {
 interface SourceLine {
   number: number;
   tokens: HighlightToken[];
-  /** The line's own text, which decides how many visual lines its row occupies. */
-  text: string;
 }
 
 export function FileSourceView({
@@ -32,7 +29,6 @@ export function FileSourceView({
   location,
   navigationRevision,
   size,
-  theme,
   tooLargeMessage,
 }: FileSourceViewProps) {
   const presentation = selectSourcePresentation({ size, platform: "native" });
@@ -50,7 +46,6 @@ export function FileSourceView({
       location={location}
       navigationRevision={navigationRevision}
       presentation={presentation}
-      codeFontSize={theme.codeFontSize}
     />
   );
 }
@@ -61,10 +56,8 @@ function VirtualizedSource({
   location,
   navigationRevision,
   presentation,
-  codeFontSize,
 }: Omit<FileSourceViewProps, "size" | "theme" | "tooLargeMessage"> & {
   presentation: "highlighted" | "plain";
-  codeFontSize: number;
 }) {
   const { t } = useTranslation();
   const listRef = useRef<FlatList<SourceLine>>(null);
@@ -74,57 +67,19 @@ function VirtualizedSource({
       return highlightCode(source, filename).map((tokens, index) => ({
         number: index + 1,
         tokens,
-        text: tokens.map((token) => token.text).join(""),
       }));
-    return source.split("\n").map((text, index) => ({
-      number: index + 1,
-      tokens: [{ text, style: null }],
-      text,
-    }));
+    return source
+      .split("\n")
+      .map((text, index) => ({ number: index + 1, tokens: [{ text, style: null }] }));
   }, [content, filename, presentation]);
-  // Jumping to a match thousands of lines in only works if the list is told the truth about row
-  // heights. A row is one visual line at the reader's own code size, rounded the way the device
-  // rounds it, times however many visual lines the text wraps onto. Assuming one line per row put
-  // a match in an ordinary source file hundreds of lines off screen, because ordinary lines wrap.
-  const [columnWidth, setColumnWidth] = useState(0);
-  const [listWidth, setListWidth] = useState(0);
-  const visualLineHeight = PixelRatio.roundToNearestPixel(sourceRowHeight(codeFontSize));
-  const columns =
-    columnWidth > 0 && listWidth > 0
-      ? Math.max(1, Math.floor((listWidth - GUTTER_WIDTH) / columnWidth))
-      : 0;
-  const offsets = useMemo(
-    () => sourceRowOffsets(lines, { columns, visualLineHeight }),
-    [columns, lines, visualLineHeight],
-  );
-  const itemLayout = useCallback(
-    (_data: ArrayLike<SourceLine> | null | undefined, index: number) => ({
-      length: offsets[index + 1] - offsets[index],
-      offset: offsets[index],
-      index,
-    }),
-    [offsets],
-  );
-  const measureColumn = useCallback(
-    (event: LayoutChangeEvent) =>
-      setColumnWidth(event.nativeEvent.layout.width / COLUMN_PROBE.length),
-    [],
-  );
-  const measureList = useCallback(
-    (event: LayoutChangeEvent) => setListWidth(event.nativeEvent.layout.width),
-    [],
-  );
   useEffect(() => {
     if (!location.lineStart) return;
     listRef.current?.scrollToIndex({
       index: Math.min(location.lineStart - 1, lines.length - 1),
       animated: false,
-      // Near the top with a little context above, rather than centred: centring is measured
-      // against the list's own box, which inside a sheet is taller than the part on screen.
-      viewPosition: 0,
-      viewOffset: visualLineHeight * CONTEXT_LINES_ABOVE_MATCH,
+      viewPosition: 0.5,
     });
-  }, [lines.length, location.lineStart, navigationRevision, offsets, visualLineHeight]);
+  }, [lines.length, location.lineStart, navigationRevision]);
   const selectedLine = lines[(location.lineStart ?? 1) - 1]?.tokens
     .map((token) => token.text)
     .join("");
@@ -143,27 +98,22 @@ function VirtualizedSource({
     [changed, location],
   );
   return (
-    <View style={styles.root} onLayout={measureList}>
-      <Text aria-hidden style={styles.columnProbe} onLayout={measureColumn}>
-        {COLUMN_PROBE}
-      </Text>
+    <View style={styles.root}>
       {changed ? (
         <Text accessibilityRole="alert" style={styles.notice}>
           {t("shell.commandCenter.contentChanged")}
         </Text>
       ) : null}
-      {columns > 0 ? (
-        <FlatList
-          ref={listRef}
-          data={lines}
-          keyExtractor={sourceLineKey}
-          initialNumToRender={24}
-          windowSize={9}
-          extraData={location}
-          getItemLayout={itemLayout}
-          renderItem={renderLine}
-        />
-      ) : null}
+      <FlatList
+        ref={listRef}
+        data={lines}
+        keyExtractor={sourceLineKey}
+        initialNumToRender={24}
+        windowSize={9}
+        getItemLayout={sourceLineLayout}
+        extraData={location}
+        renderItem={renderLine}
+      />
     </View>
   );
 }
@@ -196,16 +146,9 @@ function sourceLineKey(line: SourceLine): string {
   return String(line.number);
 }
 
-/** One visual line of code; the stylesheet below builds its row from the same ratio. */
-function sourceRowHeight(codeFontSize: number): number {
-  return codeFontSize * SOURCE_LINE_RATIO;
+function sourceLineLayout(_data: ArrayLike<SourceLine> | null | undefined, index: number) {
+  return { length: 20, offset: index * 20, index };
 }
-
-const SOURCE_LINE_RATIO = 1.45;
-const GUTTER_WIDTH = 56;
-/** Measured once to learn how wide one monospace character is at the reader's code size. */
-const COLUMN_PROBE = "0".repeat(10);
-const CONTEXT_LINES_ABOVE_MATCH = 2;
 
 const styles = StyleSheet.create((theme) => ({
   root: { flex: 1 },
@@ -222,18 +165,12 @@ const styles = StyleSheet.create((theme) => ({
     padding: theme.spacing[4],
   },
   unsupportedText: { color: theme.colors.foregroundMuted, textAlign: "center" },
-  line: { flexDirection: "row", minHeight: sourceRowHeight(theme.fontSize.code) },
+  line: { flexDirection: "row", minHeight: theme.fontSize.code * 1.45 },
   gutter: {
-    width: GUTTER_WIDTH,
+    width: 56,
     paddingRight: theme.spacing[3],
     textAlign: "right",
     color: theme.colors.foregroundMuted,
-    fontFamily: theme.fontFamily.mono,
-    fontSize: theme.fontSize.code,
-  },
-  columnProbe: {
-    position: "absolute",
-    opacity: 0,
     fontFamily: theme.fontFamily.mono,
     fontSize: theme.fontSize.code,
   },
@@ -241,6 +178,6 @@ const styles = StyleSheet.create((theme) => ({
     flex: 1,
     fontFamily: theme.fontFamily.mono,
     fontSize: theme.fontSize.code,
-    lineHeight: sourceRowHeight(theme.fontSize.code),
+    lineHeight: theme.fontSize.code * 1.45,
   },
 }));

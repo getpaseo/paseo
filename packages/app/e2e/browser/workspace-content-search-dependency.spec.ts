@@ -5,6 +5,10 @@ import path from "node:path";
 import { test as base, expect } from "../support/fixtures";
 import { prepareContentSearch } from "../support/helpers/workspace-content-search";
 
+// The missing-rg fixture builds a PATH from `which` and POSIX symlinks. Windows needs its own
+// PATH construction, which belongs to the CI gate rather than to this journey.
+base.skip(process.platform === "win32", "the missing-ripgrep PATH fixture is POSIX-shaped");
+
 const test = base.extend<{}, { searchHostPath: string }>({
   searchHostPath: [
     async ({ browserName }, provide) => {

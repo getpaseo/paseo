@@ -173,9 +173,16 @@ test("states the per-file ceiling so a search that skipped an oversized file is 
   ).toEqual([["small.txt"], 1_048_576]);
 });
 
-test("keeps a literal backslash in a saved file name exactly as the host reported it", async () => {
-  // A backslash is an ordinary character in a Unix file name, never a separator.
-  const cwd = await workspace({ "a\\b.txt": "needle" });
-  const result = await searchWorkspaceContent({ cwd, query: "needle" });
-  expect(result.status === "ok" && result.matches.map((match) => match.path)).toEqual(["a\\b.txt"]);
-});
+// A backslash is an ordinary character in a Unix file name but a separator on Windows, so this
+// file name only exists on POSIX. Windows separator handling is covered by toWorkspaceRelativePath,
+// which runs on every platform.
+test.skipIf(process.platform === "win32")(
+  "keeps a literal backslash in a saved file name exactly as the host reported it",
+  async () => {
+    const cwd = await workspace({ "a\\b.txt": "needle" });
+    const result = await searchWorkspaceContent({ cwd, query: "needle" });
+    expect(result.status === "ok" && result.matches.map((match) => match.path)).toEqual([
+      "a\\b.txt",
+    ]);
+  },
+);
