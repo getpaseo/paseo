@@ -16,6 +16,7 @@ import {
   BrowserWindow,
   ClipboardItem,
   clipboard,
+  dialog,
   Menu,
   ipcMain,
   nativeImage,
@@ -1023,6 +1024,8 @@ function showDaemonShutdownDialog(): void {
   }
 }
 
+let quittingFromSignal = false;
+
 const quitLifecycle = createQuitLifecycle({
   app,
   closeTransportSessions: closeAllTransportSessions,
@@ -1032,6 +1035,20 @@ const quitLifecycle = createQuitLifecycle({
       isDesktopManagedDaemonRunning: isDesktopManagedDaemonRunningSync,
       stopDaemon: () => stopDesktopDaemonViaCli("quit"),
       showShutdownFeedback: showDaemonShutdownDialog,
+      confirmStopDaemon: async (stopByDefault) => {
+        if (quittingFromSignal) return stopByDefault;
+        const { response } = await dialog.showMessageBox({
+          type: "question",
+          title: "Quit Paseo",
+          message: "Stop the daemon before quitting?",
+          detail: "Just quit keeps the daemon and your agents running in the background.",
+          buttons: ["Stop daemon and quit", "Just quit"],
+          defaultId: stopByDefault ? 0 : 1,
+          cancelId: 1,
+          noLink: true,
+        });
+        return response === 0;
+      },
     }),
   installAppUpdateOnQuit: async (signal) => {
     const settings = await getDesktopSettingsStore().get();
@@ -1056,7 +1073,13 @@ electronAutoUpdater.on("before-quit-for-update", () => {
   quitLifecycle.handleBeforeQuitForUpdate();
 });
 app.on("before-quit", quitLifecycle.handleBeforeQuit);
-registerExternalQuitSignals({ signals: process, quit: () => app.quit() });
+registerExternalQuitSignals({
+  signals: process,
+  quit: () => {
+    quittingFromSignal = true;
+    app.quit();
+  },
+});
 
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") {

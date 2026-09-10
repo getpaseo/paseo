@@ -54,11 +54,12 @@ describe("quit-lifecycle", () => {
     expect(shouldStopDesktopManagedDaemonOnQuit(SETTINGS_KEEP_RUNNING)).toBe(false);
   });
 
-  it("short-circuits without inspecting the daemon when keep-running is on", async () => {
+  it("keeps the daemon running when Just quit is chosen", async () => {
     const events: string[] = [];
 
     const stopped = await stopDesktopManagedDaemonOnQuitIfNeeded({
       settingsStore: { get: async () => SETTINGS_KEEP_RUNNING },
+      confirmStopDaemon: async () => false,
       isDesktopManagedDaemonRunning: () => {
         events.push("inspect");
         return true;
@@ -72,7 +73,7 @@ describe("quit-lifecycle", () => {
     });
 
     expect(stopped).toBe(false);
-    expect(events).toEqual([]);
+    expect(events).toEqual(["inspect"]);
   });
 
   it("does not stop a manually started daemon on quit", async () => {
@@ -80,6 +81,7 @@ describe("quit-lifecycle", () => {
 
     const stopped = await stopDesktopManagedDaemonOnQuitIfNeeded({
       settingsStore: { get: async () => SETTINGS_STOP_ON_QUIT },
+      confirmStopDaemon: async () => true,
       isDesktopManagedDaemonRunning: () => false,
       stopDaemon: async () => {
         events.push("stop");
@@ -98,6 +100,7 @@ describe("quit-lifecycle", () => {
 
     const stopped = await stopDesktopManagedDaemonOnQuitIfNeeded({
       settingsStore: { get: async () => SETTINGS_STOP_ON_QUIT },
+      confirmStopDaemon: async () => true,
       isDesktopManagedDaemonRunning: () => true,
       stopDaemon: async () => {
         events.push("stop");
@@ -143,6 +146,16 @@ describe("quit-lifecycle", () => {
     });
 
     expect(events).toEqual(["close-transports", "prevent-default"]);
+
+    let repeatedQuitPrevented = false;
+    quitLifecycle.handleBeforeQuit({
+      preventDefault: () => {
+        repeatedQuitPrevented = true;
+      },
+    });
+    expect(repeatedQuitPrevented).toBe(true);
+    // The repeated request still closes transports, but must wait for the choice.
+    events.pop();
 
     events.push("daemon-stopped");
     stopDecision.resolve(false);

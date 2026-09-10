@@ -33,6 +33,7 @@ export interface StopOnQuitDeps {
   isDesktopManagedDaemonRunning: () => boolean;
   stopDaemon: () => Promise<unknown>;
   showShutdownFeedback: () => void;
+  confirmStopDaemon: (stopByDefault: boolean) => Promise<boolean>;
 }
 
 export function registerExternalQuitSignals({
@@ -59,12 +60,11 @@ export function shouldStopDesktopManagedDaemonOnQuit(settings: QuitLifecycleSett
 export async function stopDesktopManagedDaemonOnQuitIfNeeded(
   deps: StopOnQuitDeps,
 ): Promise<boolean> {
-  const settings = await deps.settingsStore.get();
-  if (!shouldStopDesktopManagedDaemonOnQuit(settings)) {
+  if (!deps.isDesktopManagedDaemonRunning()) {
     return false;
   }
-
-  if (!deps.isDesktopManagedDaemonRunning()) {
+  const settings = await deps.settingsStore.get();
+  if (!(await deps.confirmStopDaemon(shouldStopDesktopManagedDaemonOnQuit(settings)))) {
     return false;
   }
 
@@ -113,12 +113,17 @@ export function createQuitLifecycle({
   // window-all-closed handler, which would veto that second quit.
   let quitting = false;
   let quittingForUpdate = false;
+  let checkingUpdate = false;
   const updateQuit = createDeferredUpdateQuit();
 
   function handleBeforeQuit(event: BeforeQuitEvent): void {
     closeTransportSessions();
     if (quittingForUpdate) return;
     if (quitting) {
+      if (!checkingUpdate) {
+        event.preventDefault();
+        return;
+      }
       // MacUpdater's no-relaunch path calls app.quit() without emitting
       // before-quit-for-update. A second quit is equivalent handoff evidence.
       updateQuit.resolve();
@@ -135,6 +140,7 @@ export function createQuitLifecycle({
       }
 
       const signal = createUpdateDeadlineSignal();
+      checkingUpdate = true;
       const updateInstallation = installAppUpdateOnQuit(signal).catch((error) => {
         onUpdateError(error);
         return false;
