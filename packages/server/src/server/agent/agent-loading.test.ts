@@ -27,13 +27,18 @@ test("loads archived records for history and active records with the interactive
   }
 
   const resumeOptions: Array<AgentResumeSessionOptions | undefined> = [];
+  const launchContexts: AgentLaunchContext[] = [];
+  const resolvedWorkspaceIds: string[] = [];
   const client: AgentClient = {
     provider: baseClient.provider,
     capabilities: baseClient.capabilities,
     createSession: async (
       config: AgentSessionConfig,
       launchContext?: AgentLaunchContext,
-    ): Promise<AgentSession> => await baseClient.createSession(config, launchContext),
+    ): Promise<AgentSession> => {
+      launchContexts.push(launchContext ?? {});
+      return await baseClient.createSession(config, launchContext);
+    },
     resumeSession: async (
       handle: AgentPersistenceHandle,
       overrides?: Partial<AgentSessionConfig>,
@@ -41,6 +46,7 @@ test("loads archived records for history and active records with the interactive
       options?: AgentResumeSessionOptions,
     ): Promise<AgentSession> => {
       resumeOptions.push(options);
+      launchContexts.push(launchContext ?? {});
       return await baseClient.resumeSession(handle, overrides, launchContext);
     },
     fetchCatalog: async (options) => await baseClient.fetchCatalog(options),
@@ -49,6 +55,10 @@ test("loads archived records for history and active records with the interactive
   const manager = new AgentManager({
     clients: { codex: client },
     registry: storage,
+    resolveWorkspaceProjectResourceApproval: async (workspaceId) => {
+      resolvedWorkspaceIds.push(workspaceId);
+      return workspaceId === "workspace-active";
+    },
     logger,
   });
 
@@ -70,6 +80,9 @@ test("loads archived records for history and active records with the interactive
     await ensureAgentLoaded(active.id, { agentManager: manager, agentStorage: storage, logger });
 
     expect(resumeOptions).toEqual([{ purpose: "history" }, undefined]);
+    expect(resolvedWorkspaceIds).toEqual(["workspace-active"]);
+    expect(launchContexts[2]?.approveProjectResources).toBeUndefined();
+    expect(launchContexts[3]?.approveProjectResources).toBe(true);
   } finally {
     await Promise.all([
       manager.closeAgent(archivedId).catch(() => undefined),
