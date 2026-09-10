@@ -1,11 +1,13 @@
-import { useCallback, useMemo, useReducer, useState } from "react";
+import { createContext, useCallback, useContext, useMemo, useReducer, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   FlatList,
+  Platform,
   Pressable,
   ScrollView,
   Text,
   View,
+  type AccessibilityActionEvent,
   type GestureResponderEvent,
   type PressableStateCallbackType,
   type StyleProp,
@@ -15,6 +17,7 @@ import {
   FlatList as SheetFlatList,
   ScrollView as SheetScrollView,
 } from "@/components/ui/scroll-view";
+import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import {
   AlertTriangle,
@@ -125,6 +128,10 @@ function AgentProfilesEditAction({ onPress }: { onPress: () => void }) {
     </Tooltip>
   );
 }
+
+const IndependentScrollGestureContext = createContext<ReturnType<typeof Gesture.Native> | null>(
+  null,
+);
 
 const foregroundMutedMapping = (theme: Theme) => ({
   color: theme.colors.foregroundMuted,
@@ -440,10 +447,37 @@ function ModelBrowserPressable({
   accessibilitySelected,
   testID,
 }: ModelBrowserPressableProps) {
+  const independentScrollGesture = useContext(IndependentScrollGestureContext);
+  const [pressed, setPressed] = useState(false);
+  // Android's scroll handler must keep the pointer stream until release so a
+  // fling survives leaving the short viewport. A simultaneous Tap keeps rows
+  // interactive, while maxDistance makes a real scroll fail instead of select.
+  const tapGesture = useMemo(() => {
+    const gesture = Gesture.Tap()
+      .maxDistance(8)
+      .shouldCancelWhenOutside(true)
+      .runOnJS(true)
+      .onBegin(() => setPressed(true))
+      .onEnd((_event, success) => {
+        if (success) onPress();
+      })
+      .onFinalize(() => setPressed(false));
+    if (hitSlop !== undefined) gesture.hitSlop(hitSlop);
+    if (independentScrollGesture) {
+      gesture.simultaneousWithExternalGesture(independentScrollGesture);
+    }
+    return gesture;
+  }, [hitSlop, independentScrollGesture, onPress]);
   const handlePress = useCallback(
     (event: GestureResponderEvent) => {
       event.stopPropagation();
       onPress();
+    },
+    [onPress],
+  );
+  const handleAccessibilityAction = useCallback(
+    (event: AccessibilityActionEvent) => {
+      if (event.nativeEvent.actionName === "activate") onPress();
     },
     [onPress],
   );
@@ -452,19 +486,42 @@ function ModelBrowserPressable({
     [accessibilitySelected],
   );
 
+  if (!independentScrollGesture) {
+    return (
+      <Pressable
+        onPress={handlePress}
+        hitSlop={hitSlop}
+        style={style}
+        accessibilityRole="button"
+        accessibilityLabel={accessibilityLabel}
+        accessibilityState={accessibilityState}
+        aria-selected={accessibilitySelected}
+        testID={testID}
+      >
+        {children}
+      </Pressable>
+    );
+  }
+
+  const state = { pressed };
+  const resolvedStyle = typeof style === "function" ? style(state) : style;
+  const resolvedChildren = typeof children === "function" ? children(state) : children;
   return (
-    <Pressable
-      onPress={handlePress}
-      hitSlop={hitSlop}
-      style={style}
-      accessibilityRole="button"
-      accessibilityLabel={accessibilityLabel}
-      accessibilityState={accessibilityState}
-      aria-selected={accessibilitySelected}
-      testID={testID}
-    >
-      {children}
-    </Pressable>
+    <GestureDetector gesture={tapGesture}>
+      <View
+        accessible
+        accessibilityRole="button"
+        accessibilityLabel={accessibilityLabel}
+        accessibilityState={accessibilityState}
+        aria-selected={accessibilitySelected}
+        accessibilityActions={[{ name: "activate" }]}
+        onAccessibilityAction={handleAccessibilityAction}
+        style={resolvedStyle}
+        testID={testID}
+      >
+        {resolvedChildren}
+      </View>
+    </GestureDetector>
   );
 }
 
@@ -998,6 +1055,29 @@ function GroupedProviderRows({
   );
 }
 
+function IndependentScrollBoundary({ children }: { children: React.ReactElement }) {
+  // Prevent the parent sheet from cancelling Android's native scroll when the
+  // finger crosses this viewport; receiving ACTION_UP is what preserves fling.
+  const nativeScrollGesture = useMemo(
+    () =>
+      Gesture.Native()
+        .shouldActivateOnStart(true)
+        .shouldCancelWhenOutside(false)
+        .disallowInterruption(true),
+    [],
+  );
+
+  if (Platform.OS !== "android") {
+    return children;
+  }
+
+  return (
+    <IndependentScrollGestureContext.Provider value={nativeScrollGesture}>
+      <GestureDetector gesture={nativeScrollGesture}>{children}</GestureDetector>
+    </IndependentScrollGestureContext.Provider>
+  );
+}
+
 function IndependentModelList({
   rows,
   renderItem,
@@ -1008,19 +1088,21 @@ function IndependentModelList({
   header?: React.ReactElement;
 }) {
   return (
-    <FlatList
-      data={rows}
-      renderItem={renderItem}
-      ListHeaderComponent={header}
-      keyExtractor={getModelRowKey}
-      style={styles.virtualizedModelList}
-      keyboardShouldPersistTaps="handled"
-      keyboardDismissMode="on-drag"
-      showsVerticalScrollIndicator={false}
-      contentContainerStyle={styles.virtualizedModelListContent}
-      nestedScrollEnabled
-      testID="compact-model-list"
-    />
+    <IndependentScrollBoundary>
+      <FlatList
+        data={rows}
+        renderItem={renderItem}
+        ListHeaderComponent={header}
+        keyExtractor={getModelRowKey}
+        style={styles.virtualizedModelList}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="on-drag"
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={styles.virtualizedModelListContent}
+        nestedScrollEnabled
+        testID="compact-model-list"
+      />
+    </IndependentScrollBoundary>
   );
 }
 
@@ -1030,20 +1112,22 @@ function getModelRowKey(row: ProviderSelectionModelRow): string {
 
 function IndependentProviderList({ children }: { children: React.ReactNode }) {
   return (
-    <ScrollView
-      style={styles.virtualizedModelList}
-      contentContainerStyle={[
-        styles.virtualizedModelListContent,
-        styles.virtualizedProviderListContent,
-      ]}
-      keyboardShouldPersistTaps="handled"
-      keyboardDismissMode="on-drag"
-      showsVerticalScrollIndicator={false}
-      nestedScrollEnabled
-      testID="compact-provider-list"
-    >
-      {children}
-    </ScrollView>
+    <IndependentScrollBoundary>
+      <ScrollView
+        style={styles.virtualizedModelList}
+        contentContainerStyle={[
+          styles.virtualizedModelListContent,
+          styles.virtualizedProviderListContent,
+        ]}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="on-drag"
+        showsVerticalScrollIndicator={false}
+        nestedScrollEnabled
+        testID="compact-provider-list"
+      >
+        {children}
+      </ScrollView>
+    </IndependentScrollBoundary>
   );
 }
 

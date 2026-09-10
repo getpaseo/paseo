@@ -68,6 +68,7 @@ export interface SheetHeader {
   search?: SheetHeaderSearch;
 }
 
+// Android modals open a separate native window and need their own gesture root.
 const ModalRoot = isNative ? GestureHandlerRootView : View;
 const SCROLL_CONTENT_GROW = { flexGrow: 1 };
 const ABSOLUTE_FILL_STYLE = { ...StyleSheet.absoluteFillObject };

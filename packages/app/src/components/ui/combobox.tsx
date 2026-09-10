@@ -75,6 +75,7 @@ import { buildDesktopFrameStyle } from "./combobox-frame-style";
 export { buildDesktopFrameStyle } from "./combobox-frame-style";
 
 const IS_WEB = isWeb;
+// Android modals open a separate native window and need their own gesture root.
 const ModalRoot = isNative ? GestureHandlerRootView : View;
 
 export type ComboboxOption = ComboboxOptionModel;
