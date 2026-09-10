@@ -1,13 +1,5 @@
 import { router } from "expo-router";
-import {
-  FolderPlus,
-  GitBranch,
-  Import,
-  MessageSquarePlus,
-  Server,
-  Settings,
-  X,
-} from "lucide-react-native";
+import { FolderPlus, GitBranch, Import, Server, Settings, X } from "lucide-react-native";
 import { useTranslation } from "react-i18next";
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import {
@@ -30,11 +22,6 @@ import {
   SIDEBAR_RESIZE_FAIL_OFFSET,
 } from "@/components/sidebar-resize-handle-layout";
 import { HostPicker } from "@/components/hosts/host-picker";
-import { getHostRuntimeStore } from "@/runtime/host-runtime";
-import {
-  navigateToWorkspace,
-  useActiveWorkspaceSelection,
-} from "@/stores/navigation-active-workspace-store";
 import { SidebarDisplayPreferencesMenu } from "@/components/sidebar/display-preferences/menu";
 import { SidebarNavRows } from "@/components/sidebar/sidebar-nav-rows";
 import { SidebarHelpMenu } from "@/components/sidebar/sidebar-help-menu";
@@ -814,65 +801,10 @@ function DesktopSidebar({
 }
 
 function WorkspacesSectionHeader() {
-  const { theme } = useUnistyles();
-  const activeWorkspaceSelection = useActiveWorkspaceSelection();
-  const allHosts = useHosts();
-  const [isCreatingChat, setIsCreatingChat] = useState(false);
-
-  const handleNewChat = useCallback(async () => {
-    if (isCreatingChat) return;
-    const targetServerId = activeWorkspaceSelection?.serverId ?? allHosts[0]?.serverId;
-    if (!targetServerId) return;
-    const client = getHostRuntimeStore().getClient(targetServerId);
-    if (!client) return;
-    setIsCreatingChat(true);
-    try {
-      const payload = await client.createWorkspace({
-        source: { kind: "chat" },
-      });
-      if (payload.workspace) {
-        navigateToWorkspace({
-          serverId: targetServerId,
-          workspaceId: payload.workspace.id,
-        });
-      }
-    } catch (error) {
-      console.error("Failed to create chat workspace", error);
-    } finally {
-      setIsCreatingChat(false);
-    }
-  }, [activeWorkspaceSelection, allHosts, isCreatingChat]);
-  const newChatButtonStyle = useCallback(
-    ({ hovered = false, pressed = false }: PressableStateCallbackType & { hovered?: boolean }) => [
-      styles.workspacesActionTrigger,
-      hovered && styles.workspacesActionTriggerHovered,
-      pressed && styles.workspacesActionTriggerPressed,
-    ],
-    [],
-  );
-
   return (
     <View style={styles.workspacesSectionHeader}>
       <Text style={styles.workspacesSectionTitle}>Workspaces</Text>
       <View style={styles.workspacesSectionActions}>
-        <Tooltip delayDuration={300}>
-          <TooltipTrigger asChild>
-            <Pressable
-              onPress={handleNewChat}
-              disabled={isCreatingChat}
-              hitSlop={4}
-              style={newChatButtonStyle}
-              testID="sidebar-new-chat-button"
-              accessibilityRole="button"
-              accessibilityLabel="New chat"
-            >
-              <MessageSquarePlus size={14} color={theme.colors.foregroundMuted} />
-            </Pressable>
-          </TooltipTrigger>
-          <TooltipContent side="bottom" align="center" offset={8}>
-            <IconTooltipContent label="New chat" />
-          </TooltipContent>
-        </Tooltip>
         <Tooltip delayDuration={300}>
           <TooltipTrigger asChild>
             <View>

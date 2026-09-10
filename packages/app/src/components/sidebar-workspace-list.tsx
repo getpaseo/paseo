@@ -888,33 +888,7 @@ function ProjectHeaderRow({
   const localDaemonServerId = useLocalDaemonServerId();
   const projectPath = resolveSidebarProjectLocalPath(project, localDaemonServerId);
   const settingsTarget = project.hosts[0] ?? null;
-  const handleBeginWorkspaceSetup = useCallback(async () => {
-    if (displayName === "Chats" || project.viewKey === "__chats__") {
-      const targetServerId =
-        worktreeTarget?.serverId ?? localDaemonServerId ?? project.hosts[0]?.serverId;
-      if (!targetServerId) {
-        return;
-      }
-      const client = getHostRuntimeStore().getClient(targetServerId);
-      if (!client) {
-        return;
-      }
-      onWorkspacePress?.();
-      try {
-        const payload = await client.createWorkspace({
-          source: { kind: "chat" },
-        });
-        if (payload.workspace) {
-          navigateToWorkspace({
-            serverId: targetServerId,
-            workspaceId: payload.workspace.id,
-          });
-        }
-      } catch (error) {
-        console.error("Failed to create chat workspace", error);
-      }
-      return;
-    }
+  const handleBeginWorkspaceSetup = useCallback(() => {
     if (!worktreeTarget) {
       return;
     }
@@ -927,14 +901,7 @@ function ProjectHeaderRow({
         projectId: worktreeTarget.projectId,
       }) as Href,
     );
-  }, [
-    displayName,
-    localDaemonServerId,
-    onWorkspacePress,
-    project.hosts,
-    project.viewKey,
-    worktreeTarget,
-  ]);
+  }, [displayName, onWorkspacePress, worktreeTarget]);
   const interaction = useLongPressDragInteraction({
     drag,
     menuController,
@@ -2010,6 +1977,7 @@ function SidebarChatsSection({
 
   return (
     <View style={styles.chatsSectionContainer} testID="sidebar-chats-section">
+      <View style={styles.chatsSectionDivider} />
       <View style={styles.chatsSectionHeader}>
         <Pressable
           onPress={toggleCollapsed}
@@ -2669,6 +2637,7 @@ function ProjectModeList({
       sidebarFilterEmpty
         ? listHeaderComponent
         : null}
+      {sidebarFilterEmpty ? <SidebarFilterEmptyState /> : projectBody}
       <SidebarChatsSection
         workspaceEntriesByKey={workspaceEntriesByKey}
         onWorkspacePress={onWorkspacePress}
@@ -2681,7 +2650,6 @@ function ProjectModeList({
         shortcutIndexByWorkspaceKey={shortcutIndexByWorkspaceKey}
         selectionEnabled={selectionEnabled}
       />
-      {sidebarFilterEmpty ? <SidebarFilterEmptyState /> : projectBody}
       {listFooterComponent}
     </>
   );
@@ -2713,6 +2681,12 @@ function ProjectModeList({
 }
 
 const styles = StyleSheet.create((theme) => ({
+  chatsSectionDivider: {
+    height: 1,
+    backgroundColor: theme.colors.border,
+    marginVertical: theme.spacing[2],
+    marginHorizontal: theme.spacing[1],
+  },
   container: {
     flex: 1,
   },

@@ -1,6 +1,6 @@
 import { router, usePathname } from "expo-router";
-import { CalendarClock, History, MessageSquare, Plus, Search } from "lucide-react-native";
-import { Fragment, memo, useCallback, useMemo, useState, type ComponentType } from "react";
+import { CalendarClock, History, Plus, Search } from "lucide-react-native";
+import { memo, useCallback, useMemo, type ComponentType } from "react";
 import { useTranslation } from "react-i18next";
 import { View, type StyleProp, type ViewStyle } from "react-native";
 import { SidebarHeaderRow } from "@/components/sidebar/sidebar-header-row";
@@ -8,8 +8,6 @@ import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
 import { PluginSidebarItemRow } from "@/plugins/sidebar-items";
 import { canCreateWorktreeForProjectKind } from "@/projects/host-projects";
 import { useHostFeature } from "@/runtime/host-features";
-import { getHostRuntimeStore, useHosts } from "@/runtime/host-runtime";
-import { navigateToWorkspace } from "@/stores/navigation-active-workspace-store";
 import {
   builtinSidebarNavLabelKey,
   builtinSidebarNavShortcutAction,
@@ -58,14 +56,7 @@ export function SidebarNavRows({ style, onBeforeNavigate }: SidebarNavRowsProps)
           );
         }
         const Row = BUILTIN_ROWS[item.id];
-        return (
-          <Fragment key={item.key}>
-            <Row onBeforeNavigate={onBeforeNavigate} />
-            {item.id === "new-workspace" ? (
-              <SidebarNewChatRow onBeforeNavigate={onBeforeNavigate} />
-            ) : null}
-          </Fragment>
-        );
+        return <Row key={item.key} onBeforeNavigate={onBeforeNavigate} />;
       })}
     </View>
   );
@@ -114,49 +105,6 @@ const SidebarNewWorkspaceRow = memo(function SidebarNewWorkspaceRow({
       testID="sidebar-global-new-workspace"
       variant="compact"
       shortcutKeys={shortcutKeys}
-    />
-  );
-});
-
-const SidebarNewChatRow = memo(function SidebarNewChatRow({
-  onBeforeNavigate,
-}: SidebarNavRowProps) {
-  const allHosts = useHosts();
-  const activeWorkspaceSelection = useActiveWorkspaceSelection();
-  const [isCreating, setIsCreating] = useState(false);
-
-  const handlePress = useCallback(async () => {
-    if (isCreating) return;
-    const targetServerId = activeWorkspaceSelection?.serverId ?? allHosts[0]?.serverId;
-    if (!targetServerId) return;
-    const client = getHostRuntimeStore().getClient(targetServerId);
-    if (!client) return;
-    setIsCreating(true);
-    onBeforeNavigate?.();
-    try {
-      const payload = await client.createWorkspace({
-        source: { kind: "chat" },
-      });
-      if (payload.workspace) {
-        navigateToWorkspace({
-          serverId: targetServerId,
-          workspaceId: payload.workspace.id,
-        });
-      }
-    } catch (error) {
-      console.error("Failed to create chat workspace", error);
-    } finally {
-      setIsCreating(false);
-    }
-  }, [activeWorkspaceSelection, allHosts, isCreating, onBeforeNavigate]);
-
-  return (
-    <SidebarHeaderRow
-      icon={MessageSquare}
-      label="New chat"
-      onPress={handlePress}
-      testID="sidebar-global-new-chat"
-      variant="compact"
     />
   );
 });
