@@ -8,9 +8,14 @@ export interface ProviderListItem {
   provider: ProviderSnapshotEntry["provider"];
   label: string;
   status: string;
-  enabled: "Enabled" | "Disabled";
-  defaultMode: string;
-  modes: string;
+  enabled: boolean;
+  defaultModeId: string | null;
+  modes: ProviderListMode[];
+}
+
+export interface ProviderListMode {
+  id: string;
+  label: string;
 }
 
 /** Derive provider list from the manifest — single source of truth */
@@ -18,9 +23,9 @@ const PROVIDERS: ProviderListItem[] = AGENT_PROVIDER_DEFINITIONS.map((def) => ({
   provider: def.id,
   label: def.label,
   status: "available",
-  enabled: def.enabledByDefault === false ? "Disabled" : "Enabled",
-  defaultMode: def.defaultModeId ?? "-",
-  modes: def.modes.length > 0 ? def.modes.map((m) => m.label).join(", ") : "-",
+  enabled: def.enabledByDefault !== false,
+  defaultModeId: def.defaultModeId,
+  modes: def.modes.map((mode) => ({ id: mode.id, label: mode.label })),
 }));
 
 function getStaticProviders(): ProviderListItem[] {
@@ -43,9 +48,22 @@ export const providerLsSchema: OutputSchema<ProviderListItem> = {
         return undefined;
       },
     },
-    { header: "ENABLED", field: "enabled", width: 10 },
-    { header: "DEFAULT MODE", field: "defaultMode", width: 14 },
-    { header: "MODES", field: "modes", width: 30 },
+    {
+      header: "ENABLED",
+      field: (item) => (item.enabled ? "Enabled" : "Disabled"),
+      width: 10,
+    },
+    {
+      header: "DEFAULT MODE",
+      field: (item) => item.defaultModeId ?? "-",
+      width: 14,
+    },
+    {
+      header: "MODES",
+      field: (item) =>
+        item.modes.length > 0 ? item.modes.map((mode) => mode.label).join(", ") : "-",
+      width: 30,
+    },
   ],
 };
 
@@ -77,9 +95,9 @@ export async function runLsCommand(
         provider: entry.provider,
         label: entry.label ?? entry.provider,
         status: entry.status === "ready" ? "available" : entry.status,
-        enabled: !entry.enabled ? "Disabled" : "Enabled",
-        defaultMode: entry.defaultModeId ?? "default",
-        modes: (entry.modes ?? []).map((mode) => mode.label).join(", "),
+        enabled: entry.enabled,
+        defaultModeId: entry.defaultModeId ?? null,
+        modes: (entry.modes ?? []).map((mode) => ({ id: mode.id, label: mode.label })),
       })),
       schema: providerLsSchema,
     };
