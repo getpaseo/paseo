@@ -259,6 +259,18 @@ export interface ProviderAvailability {
 interface AgentManagerRescueTimeouts {
   reloadSessionCloseMs?: number;
   interruptSessionMs?: number;
+  acknowledgedInterruptSettleMs?: number;
+}
+
+function resolveRescueTimeouts(
+  overrides: AgentManagerRescueTimeouts | undefined,
+): Required<AgentManagerRescueTimeouts> {
+  return {
+    reloadSessionCloseMs: overrides?.reloadSessionCloseMs ?? RELOAD_SESSION_CLOSE_TIMEOUT_MS,
+    interruptSessionMs: overrides?.interruptSessionMs ?? INTERRUPT_SESSION_TIMEOUT_MS,
+    acknowledgedInterruptSettleMs:
+      overrides?.acknowledgedInterruptSettleMs ?? INTERRUPT_SESSION_TIMEOUT_MS,
+  };
 }
 
 interface ProviderEnabledFlag {
@@ -742,12 +754,7 @@ export class AgentManager {
     this.resolvePaseoToolPolicy = options.resolvePaseoToolPolicy ?? (() => undefined);
     this.appendSystemPrompt = options.appendSystemPrompt ?? "";
     this.logger = options.logger.child({ module: "agent", component: "agent-manager" });
-    this.rescueTimeouts = {
-      reloadSessionCloseMs:
-        options.rescueTimeouts?.reloadSessionCloseMs ?? RELOAD_SESSION_CLOSE_TIMEOUT_MS,
-      interruptSessionMs:
-        options.rescueTimeouts?.interruptSessionMs ?? INTERRUPT_SESSION_TIMEOUT_MS,
-    };
+    this.rescueTimeouts = resolveRescueTimeouts(options.rescueTimeouts);
     this.beforeSteerUnavailableFallback = options.beforeSteerUnavailableFallback;
     this.agentStreamCoalescer = new AgentStreamCoalescer({
       windowMs: options.agentStreamCoalesceWindowMs ?? AGENT_STREAM_COALESCE_DEFAULT_WINDOW_MS,
@@ -1543,6 +1550,115 @@ export class AgentManager {
         if (session) {
           await this.closeUnregisteredSession(session);
         }
+      }
+    }
+  }
+
+  // Replaces a registered agent's provider session in place: builds the
+  // replacement first, then closes the previous runtime and re-registers under
+  // the same agent id while preserving labels, timeline, and durable identity.
+  // Resume-first is required for forced-cancel reconcile: if no replacement can
+  // be built, the existing session stays registered. A failed persist or close
+  // after that resume also keeps the existing session registered and closes the
+  // unused replacement. Reload stays close-first because a persisted thread can
+  // have only one writer.
+  // Callers are responsible for making sure no run is in flight.
+  private async swapRegisteredSessionRuntime(
+    agentId: string,
+    overrides?: Partial<AgentSessionConfig>,
+    options?: { rehydrateFromDisk?: boolean },
+  ): Promise<ManagedAgent> {
+    this.assertAcceptingAgentRegistrations();
+    const existing = this.requireSessionAgent(agentId);
+    const rehydrateFromDisk = options?.rehydrateFromDisk ?? false;
+    const preservedHistoryPrimed = existing.historyPrimed;
+    const preservedLastUsage = existing.lastUsage;
+    const preservedLastError = existing.lastError;
+    const preservedAttention = existing.attention;
+    const handle = existing.persistence;
+    const provider = handle?.provider ?? existing.provider;
+    const client = this.requireClient(provider);
+    const refreshConfig = {
+      ...existing.config,
+      ...overrides,
+      provider,
+    } as AgentSessionConfig;
+    const { storedConfig, launchConfig, paseoToolPolicy } = await this.prepareSessionConfig(
+      refreshConfig,
+      agentId,
+    );
+    const launchContext = await this.buildLaunchContext(
+      agentId,
+      client,
+      storedConfig.cwd,
+      paseoToolPolicy,
+      undefined,
+      { reason: "refresh", purpose: "interactive", workspaceId: existing.workspaceId },
+    );
+    const providerLaunchConfig = this.resolveProviderLaunchConfig(launchConfig, launchContext);
+    if (
+      Object.keys(storedConfig.mcpServers ?? {}).length > 0 &&
+      existing.session.capabilities.supportsMcpServers !== true
+    ) {
+      throw new Error(`Provider '${provider}' does not support MCP servers`);
+    }
+
+    const session = handle
+      ? await client.resumeSession(handle, providerLaunchConfig, launchContext)
+      : await client.createSession(providerLaunchConfig, launchContext);
+    await this.requireExternalMcpSupport(session, storedConfig);
+
+    let handedToRegistration = false;
+    try {
+      this.assertAcceptingAgentRegistrations();
+
+      // Persist a closed snapshot before touching the live runtime. If this
+      // fails, the existing session stays registered and the replacement is
+      // closed below. Close the suspect runtime next while it is still the
+      // registered session: a failed close must not register a second writer.
+      await this.persistSnapshot(this.asClosedAgentSnapshot(existing));
+      try {
+        await this.closeReloadedSession(existing.session, agentId);
+      } catch (error) {
+        try {
+          await this.persistSnapshot(existing);
+        } catch (revertError) {
+          this.logger.warn(
+            { err: revertError, agentId },
+            "Failed to revert closed snapshot after previous session close failed",
+          );
+        }
+        throw error;
+      }
+      await this.drainSessionEvents(agentId);
+
+      this.paseoToolPolicies.set(agentId, paseoToolPolicy);
+      this.cancelRunningProviderSubagents(agentId);
+      this.prepareAgentForClosure(existing, "agent reloaded");
+
+      if (rehydrateFromDisk) {
+        this.timelineStore.delete(agentId);
+        for (const event of this.providerSubagents.deleteParent(agentId)) {
+          this.dispatch({ type: "provider_subagent", event });
+        }
+      }
+
+      handedToRegistration = true;
+      return this.registerSession(session, storedConfig, agentId, {
+        labels: existing.labels,
+        workspaceId: existing.workspaceId,
+        owner: existing.owner,
+        createdAt: existing.createdAt,
+        updatedAt: existing.updatedAt,
+        lastUserMessageAt: existing.lastUserMessageAt,
+        historyPrimed: rehydrateFromDisk ? false : preservedHistoryPrimed,
+        lastUsage: preservedLastUsage,
+        lastError: preservedLastError,
+        attention: preservedAttention,
+      });
+    } finally {
+      if (!handedToRegistration) {
+        await this.closeUnregisteredSession(session);
       }
     }
   }
@@ -2409,7 +2525,43 @@ export class AgentManager {
       throw new Error(`Agent ${agentId} already has an active run`);
     }
 
-    const agent = existingAgent;
+    if (this.foregroundMutationTails.has(agentId) || this.lifecycleMutationTails.has(agentId)) {
+      return async function* streamAfterMutations(this: AgentManager) {
+        await this.waitForAgentMutations(agentId);
+        yield* this.admitForegroundAgentStream(agentId, prompt, options);
+      }.call(this);
+    }
+
+    return this.admitForegroundAgentStream(agentId, prompt, options);
+  }
+
+  // Drain every mutation that is queued by the time the previous tail
+  // resolves. A one-shot get() of the tails present at entry misses a
+  // lifecycle mutation chained after that lookup and before admission.
+  // After this returns, has() is false; admitForegroundAgentStream must
+  // install the pending run in the same turn, with no await in between.
+  private async waitForAgentMutations(agentId: string): Promise<void> {
+    while (this.foregroundMutationTails.has(agentId) || this.lifecycleMutationTails.has(agentId)) {
+      const foreground = this.foregroundMutationTails.get(agentId);
+      if (foreground) {
+        await foreground;
+      }
+      const lifecycle = this.lifecycleMutationTails.get(agentId);
+      if (lifecycle) {
+        await lifecycle;
+      }
+    }
+  }
+
+  private admitForegroundAgentStream(
+    agentId: string,
+    prompt: AgentPromptInput,
+    options?: AgentRunOptions,
+  ): AsyncGenerator<AgentStreamEvent> {
+    const agent = this.requireSessionAgent(agentId);
+    if (agent.activeForegroundTurnId || this.runs.hasRun(agentId)) {
+      throw new Error(`Agent ${agentId} already has an active run`);
+    }
     const isReplacement = agent.pendingReplacement;
     agent.lastError = undefined;
 
@@ -2934,7 +3086,7 @@ export class AgentManager {
     const settlement = await this.waitWithTimeout({
       operation: run.settledPromise,
       timeoutMs: interruptAcknowledged
-        ? INTERRUPT_SESSION_TIMEOUT_MS
+        ? this.rescueTimeouts.acknowledgedInterruptSettleMs
         : this.rescueTimeouts.interruptSessionMs,
     });
 
@@ -2942,6 +3094,7 @@ export class AgentManager {
       return { status: settlement === "completed" ? "settled" : "refused" };
     }
 
+    let providerRuntimeSuspect = false;
     const runTurnId = this.runs.getTurnId(agentId);
     if (settlement === "timed_out" && runTurnId) {
       this.logger.warn(
@@ -2955,6 +3108,7 @@ export class AgentManager {
         turnId: runTurnId,
       });
       await run.settledPromise;
+      providerRuntimeSuspect = run.kind === "foreground";
     } else if (settlement === "timed_out" && run.kind === "foreground") {
       this.logger.warn(
         { agentId, kind: run.kind },
@@ -2966,6 +3120,7 @@ export class AgentManager {
         this.touchUpdatedAt(agent);
         this.emitState(agent);
       }
+      providerRuntimeSuspect = true;
     } else if (settlement === "timed_out" && run.kind === "autonomous") {
       this.logger.warn(
         { agentId, kind: run.kind },
@@ -2983,7 +3138,52 @@ export class AgentManager {
       this.touchUpdatedAt(agent);
       this.emitState(agent);
     }
+    if (providerRuntimeSuspect) {
+      await this.reconcileProviderRuntimeAfterForcedCancel(agentId);
+    }
     return { status: "settled" };
+  }
+
+  /**
+   * A forced cancellation settles the daemon's run state, but the provider
+   * session may still own its foreground turn: the interrupt was acknowledged,
+   * yet no terminal event arrived inside the settle window. Leaving that
+   * session registered can strand the agent — real provider sessions guard
+   * their single foreground-turn slot, so every later startTurn is refused
+   * with "A foreground turn is already active" until the runtime is replaced
+   * (#349, #3256). Reload the session in place so provider turn ownership
+   * matches the settled daemon state. Clearing provider turn state without
+   * replacing the runtime is not an option here: a genuinely running turn
+   * must keep refusing concurrent prompts. If no replacement session can be
+   * built, keep the existing runtime registered — when the provider side was
+   * actually idle (rather than wedged) the old session still works, and when
+   * it was wedged the agent is no worse off than before the swap attempt.
+   */
+  private async reconcileProviderRuntimeAfterForcedCancel(agentId: string): Promise<void> {
+    if (this.runs.hasRun(agentId)) {
+      // A new run raced in behind the settlement; its owner drives the session now.
+      return;
+    }
+    if (!this.agents.get(agentId)?.session) {
+      return;
+    }
+    try {
+      await this.trackAgentRegistrationOperation(
+        this.runLifecycleMutation(agentId, () => this.swapRegisteredSessionRuntime(agentId)),
+      );
+      this.logger.info(
+        { agentId },
+        "cancelAgentRun: reloaded provider session after forced cancellation",
+      );
+    } catch (error) {
+      if (!(error instanceof Error) || error instanceof AgentManagerShuttingDownError) {
+        throw error;
+      }
+      this.logger.warn(
+        { err: error, agentId },
+        "cancelAgentRun: failed to swap provider session after forced cancellation",
+      );
+    }
   }
 
   private async cancelAgentRunBefore(
@@ -3568,6 +3768,24 @@ export class AgentManager {
     };
   }
 
+  private asClosedAgentSnapshot(agent: LiveManagedAgent): ManagedAgentClosed {
+    return {
+      ...agent,
+      lifecycle: "closed",
+      session: null,
+      activeForegroundTurnId: null,
+      activeTurnId: null,
+      activeTurnStartedAt: null,
+      pendingPermissions: new Map(),
+      bufferedPermissionResolutions: new Map(),
+      inFlightPermissionResponses: new Set(),
+      pendingReplacement: false,
+      foregroundTurnWaiters: new Set(),
+      finalizedForegroundTurnIds: new Set(),
+      unsubscribeSession: null,
+    };
+  }
+
   private prepareAgentForClosure(
     agent: LiveManagedAgent,
     cancelReason: string,
@@ -3586,21 +3804,7 @@ export class AgentManager {
       turnId,
     }));
     this.runs.clearAgentRun(agent.id);
-    return {
-      ...agent,
-      lifecycle: "closed",
-      session: null,
-      activeForegroundTurnId: null,
-      activeTurnId: null,
-      activeTurnStartedAt: null,
-      pendingPermissions: new Map(),
-      bufferedPermissionResolutions: new Map(),
-      inFlightPermissionResponses: new Set(),
-      pendingReplacement: false,
-      foregroundTurnWaiters: new Set(),
-      finalizedForegroundTurnIds: new Set(),
-      unsubscribeSession: null,
-    };
+    return this.asClosedAgentSnapshot(agent);
   }
 
   private discardRetainedAgentState(agentId: string): void {
