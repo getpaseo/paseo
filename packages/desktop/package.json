@@ -43,5 +43,6 @@
     "unzip-crx-3": "^0.2.0",
     "vitest": "^4.1.6",
     "wait-on": "8.0.5"
-  }
+  },
+  "desktopName": "Paseo.desktop"
 }
