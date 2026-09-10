@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { CheckoutDiffCache } from "./checkout-diff-cache.js";
+import { CheckoutDiffCache } from "@server/server/checkout-diff-cache.js";
 
 function createSequencedLoader<T>(first: Promise<T>, second: Promise<T>) {
   let calls = 0;

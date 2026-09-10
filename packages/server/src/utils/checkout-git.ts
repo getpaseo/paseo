@@ -30,7 +30,7 @@ import {
 } from "../services/forge-cli-command.js";
 import { parseGitRevParsePath, resolveGitRevParsePath } from "./git-rev-parse-path.js";
 import { runGitCommand, type RunGitCommand } from "./run-git-command.js";
-import { readGitFileContents } from "./git-file-contents.js";
+import { readGitFileContents } from "@server/utils/git-file-contents.js";
 import { isPaseoOwnedWorktreeCwd, resolvePaseoWorktreesBaseRoot } from "./worktree.js";
 import {
   branchNameFromRef,

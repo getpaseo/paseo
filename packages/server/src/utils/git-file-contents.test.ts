@@ -3,8 +3,8 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, test } from "vitest";
-import { readGitFileContents } from "./git-file-contents.js";
-import { runGitCommand, runGitCommandBytes } from "./run-git-command.js";
+import { readGitFileContents } from "@server/utils/git-file-contents.js";
+import { runGitCommand, runGitCommandBytes } from "@server/utils/run-git-command.js";
 
 let cwd: string;
 beforeEach(() => {

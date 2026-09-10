@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync, realpathSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeEach, afterEach, describe, expect, it } from "vitest";
-import { startGitCommandMetrics, stopGitCommandMetrics } from "./run-git-command.js";
+import { startGitCommandMetrics, stopGitCommandMetrics } from "@server/utils/run-git-command.js";
 
 import { getCheckoutDiff } from "./checkout-git.js";
 
