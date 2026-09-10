@@ -1181,7 +1181,12 @@ describe("WorkspaceGitServiceImpl primitive refresh entrypoint", () => {
     let nowMs = 0;
     const githubReadCalls: Array<{ reason: string | undefined; tickMs: number }> = [];
     const runner = vi.fn(async () => ({
-      stdout: currentPullRequestJson(),
+      // A passing check makes this PR settled. An open PR reporting no checks at
+      // all stays on the fast window instead, so CI that has not materialized yet
+      // is picked up promptly.
+      stdout: currentPullRequestJson({
+        statusCheckRollup: [{ __typename: "StatusContext", context: "ci", state: "SUCCESS" }],
+      }),
       stderr: "",
     }));
     const github = createGitHubService({
@@ -1236,6 +1241,60 @@ describe("WorkspaceGitServiceImpl primitive refresh entrypoint", () => {
     expect(githubReadCalls).toContainEqual({
       reason: "self-heal-github",
       tickMs: 120_000,
+    });
+
+    subscription.unsubscribe();
+    service.dispose();
+    github.dispose?.();
+  });
+
+  test("an open GitHub PR with no checks yet stays on the fast poll window", async () => {
+    let nowMs = 0;
+    const githubReadCalls: Array<{ reason: string | undefined; tickMs: number }> = [];
+    // statusCheckRollup is empty while GitHub has queued the workflow but not yet
+    // created its check runs — the case the awaiting-checks window exists for.
+    const runner = vi.fn(async () => ({
+      stdout: currentPullRequestJson(),
+      stderr: "",
+    }));
+    const github = createGitHubService({
+      ttlMs: 0,
+      runner,
+      resolveGhPath: async () => "/usr/bin/gh",
+      resolveRepoHost: async () => null,
+      resolveRepoSlug: async () => null,
+      now: () => nowMs,
+    });
+    const getCurrentPullRequestStatus = github.getCurrentPullRequestStatus.bind(github);
+    github.getCurrentPullRequestStatus = vi.fn(
+      async (options): Promise<CurrentPullRequestStatus | null> => {
+        githubReadCalls.push({ reason: options.reason, tickMs: nowMs });
+        return getCurrentPullRequestStatus(options);
+      },
+    );
+    const getCheckoutStatus = vi.fn(async (cwd: string) =>
+      createCheckoutStatus(cwd, { currentBranch: "feature" }),
+    );
+    const service = createService({
+      getCheckoutStatus,
+      github,
+      now: () => new Date(nowMs),
+    });
+    const subscription = service.registerWorkspace({ cwd: REPO_CWD }, vi.fn());
+    await flushPromises();
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.waitFor(() => {
+      expect(githubReadCalls).toContainEqual({ reason: "self-heal-github", tickMs: 0 });
+    });
+    await flushPromises();
+
+    nowMs = 20_000;
+    await vi.advanceTimersByTimeAsync(20_000);
+    await flushPromises();
+
+    expect(githubReadCalls).toContainEqual({
+      reason: "self-heal-github",
+      tickMs: 20_000,
     });
 
     subscription.unsubscribe();

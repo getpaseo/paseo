@@ -58,6 +58,8 @@ interface ForgeSearchQueryInput {
   enabled: boolean;
   supportsForgeSearch?: boolean;
   hostDisconnectedMessage?: string;
+  /** Poll cadence for surfaces that stay open on live results, e.g. PR check pills. */
+  refetchIntervalMs?: number;
 }
 
 export function forgeSearchQueryKey(
@@ -112,6 +114,7 @@ export function buildForgeSearchQueryOptions(input: ForgeSearchQueryInput) {
     enabled: input.enabled && Boolean(input.client),
     dataShape: "list" as const,
     staleTimeMs: FORGE_SEARCH_STALE_TIME,
+    ...(input.refetchIntervalMs ? { refetchInterval: input.refetchIntervalMs } : {}),
   };
 }
 

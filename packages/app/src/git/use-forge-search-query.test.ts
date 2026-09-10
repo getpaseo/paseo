@@ -61,6 +61,26 @@ describe("buildForgeSearchQueryOptions", () => {
     expect(requests).toEqual([{ cwd: "/repo", query: "is:open", limit: 50 }]);
   });
 
+  it("only sets a refetch interval when the caller asks to poll", () => {
+    const input = {
+      client: {
+        async searchForge() {
+          return { items: [], authState: "authenticated" as const, error: null, requestId: "r" };
+        },
+      },
+      serverId: "host",
+      cwd: "/repo",
+      query: "is:open",
+      enabled: true,
+      supportsForgeSearch: true,
+    };
+
+    expect(buildForgeSearchQueryOptions(input)).not.toHaveProperty("refetchInterval");
+    expect(buildForgeSearchQueryOptions({ ...input, refetchIntervalMs: 30_000 })).toMatchObject({
+      refetchInterval: 30_000,
+    });
+  });
+
   it("forwards kinds to the forge search request when specified", async () => {
     const requests: unknown[] = [];
     const query = buildForgeSearchQueryOptions({

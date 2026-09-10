@@ -765,6 +765,22 @@ describe("ForgeService", () => {
     expect(computeGithubNextInterval(null, 0)).toBe(EXPECTED_GITHUB_SLOW_POLL_MS);
   });
 
+  it("keeps an open PR with no checks on the fast cadence only inside the awaiting-checks window", () => {
+    const awaitingStatus = createCurrentPullRequestStatus({ checksStatus: "none", checks: [] });
+    const mergedStatus = createCurrentPullRequestStatus({
+      state: "merged",
+      isMerged: true,
+      checksStatus: "none",
+      checks: [],
+    });
+
+    expect(computeGithubNextInterval(awaitingStatus, 0, true)).toBe(EXPECTED_GITHUB_FAST_POLL_MS);
+    expect(computeGithubNextInterval(awaitingStatus, 0, false)).toBe(EXPECTED_GITHUB_SLOW_POLL_MS);
+    // A closed or merged PR will never grow checks, so the window must not apply.
+    expect(computeGithubNextInterval(mergedStatus, 0, true)).toBe(EXPECTED_GITHUB_SLOW_POLL_MS);
+    expect(computeGithubNextInterval(null, 0, true)).toBe(EXPECTED_GITHUB_SLOW_POLL_MS);
+  });
+
   it("computes exponential error backoff up to the cap", () => {
     const stableStatus = createCurrentPullRequestStatus({ checksStatus: "success" });
 

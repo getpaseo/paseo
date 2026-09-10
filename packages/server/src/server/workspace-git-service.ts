@@ -83,6 +83,11 @@ export const WORKSPACE_GIT_OBSERVATION_REENSURE_INTERVAL_MS = 60_000;
 const FORGE_PR_STATUS_POLL_FAST_INTERVAL_MS = 20_000;
 const FORGE_PR_STATUS_POLL_SLOW_INTERVAL_MS = 120_000;
 const FORGE_PR_STATUS_POLL_ERROR_BACKOFF_CAP_MS = 300_000;
+// Mirrors GITHUB_POLL_AWAITING_CHECKS_WINDOW_MS: a forge reports no checks between
+// accepting a push and creating the pipeline, so an open PR with no checks stays on
+// the fast interval for this long after the poll target (which keys on head sha)
+// was retained.
+const FORGE_PR_STATUS_POLL_AWAITING_CHECKS_WINDOW_MS = 300_000;
 const DEGRADED_GIT_POLL_INTERVAL_MS = 5_000;
 // Keep whole workspace pipelines below the lower-level Git process pool so daemon control work
 // retains subprocess and event-loop headroom during large workspace reconciliation bursts.
@@ -2491,6 +2496,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     let latestStatus: WorkspaceGitRuntimeSnapshot["forge"]["pullRequest"] =
       target.latestForge?.pullRequest ?? null;
     let consecutiveErrors = 0;
+    const headFirstSeenAt = Date.now();
 
     const schedule = (delayMs: number) => {
       if (closed) {
@@ -2537,7 +2543,13 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
           "Failed to run forge PR status self-heal refresh",
         );
       } finally {
-        schedule(computeGenericForgeNextInterval(latestStatus, consecutiveErrors));
+        schedule(
+          computeGenericForgeNextInterval(
+            latestStatus,
+            consecutiveErrors,
+            Date.now() - headFirstSeenAt < FORGE_PR_STATUS_POLL_AWAITING_CHECKS_WINDOW_MS,
+          ),
+        );
       }
     };
 
@@ -3560,13 +3572,16 @@ function buildWorkspaceForgePrStatusPollKey({
 function computeGenericForgeNextInterval(
   status: WorkspaceGitRuntimeSnapshot["forge"]["pullRequest"],
   consecutiveErrors: number,
+  withinAwaitingChecksWindow = false,
 ): number {
   const isPending =
     status?.checksStatus === "pending" ||
     status?.checks?.some((check) => check.status === "pending") === true;
-  const baseInterval = isPending
-    ? FORGE_PR_STATUS_POLL_FAST_INTERVAL_MS
-    : FORGE_PR_STATUS_POLL_SLOW_INTERVAL_MS;
+  const isAwaitingChecks = status?.state === "open" && status.checksStatus === "none";
+  const baseInterval =
+    isPending || (withinAwaitingChecksWindow && isAwaitingChecks)
+      ? FORGE_PR_STATUS_POLL_FAST_INTERVAL_MS
+      : FORGE_PR_STATUS_POLL_SLOW_INTERVAL_MS;
   if (consecutiveErrors <= 1) {
     return baseInterval;
   }

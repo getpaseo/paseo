@@ -19,7 +19,7 @@ import { StatusBadge } from "@/components/ui/status-badge";
 import { ScrollView } from "@/components/ui/scroll-view";
 import { ScreenTitle } from "@/components/headers/screen-title";
 import { PullRequestStateIcon } from "@/git/pull-request-state-icon";
-import { useForgeSearchQuery } from "@/git/use-forge-search-query";
+import { FORGE_SEARCH_STALE_TIME, useForgeSearchQuery } from "@/git/use-forge-search-query";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import { useHostFeature } from "@/runtime/host-features";
 import { OverlayFrame } from "./overlay-frame";
@@ -34,6 +34,10 @@ import { ScreenHeader } from "@/components/headers/screen-header";
 import { pullRequestState, serializeInitialChangeRequest } from "./model";
 
 const RESULT_LIMIT = 50;
+// The overlay stays open while CI runs, and forge search has no push channel, so
+// the check pills only move if the list re-polls. Matching FORGE_SEARCH_STALE_TIME
+// keeps the cadence in step with the daemon's own forge read cache.
+const REFETCH_INTERVAL_MS = FORGE_SEARCH_STALE_TIME;
 const REQUEST_KINDS = ["change_request" as const];
 
 export function ProjectPullRequestsOverlay({
@@ -75,6 +79,7 @@ export function ProjectPullRequestsOverlay({
     limit: RESULT_LIMIT,
     supportsForgeSearch,
     enabled: connected,
+    refetchIntervalMs: REFETCH_INTERVAL_MS,
   });
   const options = useMemo(
     () => [

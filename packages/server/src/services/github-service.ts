@@ -107,6 +107,13 @@ const FAILED_CHECK_JOB_LIMIT = 5;
 export const GITHUB_POLL_FAST_INTERVAL_MS = 20_000;
 export const GITHUB_POLL_SLOW_INTERVAL_MS = 120_000;
 export const GITHUB_POLL_ERROR_BACKOFF_CAP_MS = 300_000;
+// GitHub reports no check runs at all between accepting a push and materializing
+// the queued workflow, so an open PR whose CI is about to start looks settled and
+// would drop to the slow interval — showing the first running check up to two
+// minutes late. Keep such a PR on the fast interval for this long after its head
+// first appeared. The poll target key includes the head sha, so the window
+// restarts on every push and expires for PRs that genuinely never run checks.
+export const GITHUB_POLL_AWAITING_CHECKS_WINDOW_MS = 300_000;
 // The PR status poller batches every due target into aliased GraphQL queries
 // instead of one `gh pr view` + facts query per workspace. Cost scales with the
 // GraphQL point budget (5,000/hour), so the batch size and the shared poll time
@@ -1063,6 +1070,8 @@ interface GitHubPollTarget {
    * rather than at completion time so slow requests don't drift the poll grid.
    */
   pollCycleStartedAt: number | null;
+  /** When this head sha was first retained, bounding the awaiting-checks window. */
+  headFirstSeenAt: number;
   latestStatus: CurrentPullRequestStatus | null;
   consecutiveErrors: number;
   callbacks: Set<(status: CurrentPullRequestStatus | null) => void>;
@@ -1379,7 +1388,11 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
   function scheduleGitHubPoll(target: GitHubPollTarget): void {
     scheduleGitHubPollAfter(
       target,
-      computeGithubNextInterval(target.latestStatus, target.consecutiveErrors),
+      computeGithubNextInterval(
+        target.latestStatus,
+        target.consecutiveErrors,
+        deps.now() - target.headFirstSeenAt < GITHUB_POLL_AWAITING_CHECKS_WINDOW_MS,
+      ),
     );
   }
 
@@ -2569,6 +2582,7 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
           retainCount: 0,
           nextDueAt: null,
           pollCycleStartedAt: null,
+          headFirstSeenAt: deps.now(),
           latestStatus: null,
           consecutiveErrors: 0,
           callbacks: new Set(),
@@ -2754,10 +2768,13 @@ export function isPullRequestMergeMethodAllowed(
 export function computeGithubNextInterval(
   status: CurrentPullRequestStatus | null,
   consecutiveErrors: number,
+  withinAwaitingChecksWindow = false,
 ): number {
-  const baseInterval = isGitHubStatusPending(status)
-    ? GITHUB_POLL_FAST_INTERVAL_MS
-    : GITHUB_POLL_SLOW_INTERVAL_MS;
+  const baseInterval =
+    isGitHubStatusPending(status) ||
+    (withinAwaitingChecksWindow && isGitHubStatusAwaitingChecks(status))
+      ? GITHUB_POLL_FAST_INTERVAL_MS
+      : GITHUB_POLL_SLOW_INTERVAL_MS;
   if (consecutiveErrors <= 1) {
     return baseInterval;
   }
@@ -2773,6 +2790,11 @@ function isGitHubStatusPending(status: CurrentPullRequestStatus | null): boolean
     return true;
   }
   return status.checks.some((check) => check.status === "pending");
+}
+
+/** An open PR reporting no checks yet — CI may still be about to start. */
+function isGitHubStatusAwaitingChecks(status: CurrentPullRequestStatus | null): boolean {
+  return status?.state === "open" && status.checksStatus === "none";
 }
 
 async function resolveGhPath(): Promise<string | null> {
