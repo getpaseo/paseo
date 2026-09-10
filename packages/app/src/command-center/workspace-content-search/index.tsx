@@ -15,6 +15,7 @@ import { createWorkspaceFileTabTarget } from "@/workspace/file-open";
 import { buildWorkspaceTabPersistenceKey } from "@/workspace-tabs/model";
 import { clearCommandCenterFocusRestoreElement } from "@/utils/command-center-focus-restore";
 import { WorkspaceFileSource } from "@/file-pane/source";
+import { formatFileSize } from "@/utils/format-file-size";
 import { describeWorkspaceFilePath } from "../workspace-file-search-model";
 import {
   WorkspaceContentSearchModel,
@@ -293,7 +294,20 @@ function SearchState({ state, retry }: { state: ContentSearchSnapshot; retry(): 
       </View>
     );
   if (state.status === "ready")
-    return <Text style={styles.emptyText}>{t("shell.commandCenter.noMatches")}</Text>;
+    return (
+      <View style={styles.empty}>
+        <Text style={styles.emptyText}>{t("shell.commandCenter.noMatches")}</Text>
+        {/* "No matches" alone claims the whole workspace was read. Files above the host's ceiling
+            are never opened, so the empty state has to say so where the claim is made. */}
+        {state.maxFileBytes ? (
+          <Text style={styles.emptyDetail}>
+            {t("shell.commandCenter.contentSkippedLargeFiles", {
+              size: formatFileSize(state.maxFileBytes),
+            })}
+          </Text>
+        ) : null}
+      </View>
+    );
   return null;
 }
 
@@ -435,12 +449,20 @@ const styles = StyleSheet.create((theme) => ({
   },
   muted: { fontSize: theme.fontSize.sm, color: theme.colors.foregroundMuted },
   error: { color: theme.colors.statusDanger },
-  emptyText: {
+  empty: {
     paddingHorizontal: theme.spacing[4],
     paddingVertical: theme.spacing[6],
+    gap: theme.spacing[1],
+  },
+  emptyText: {
     textAlign: "center",
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.base,
+  },
+  emptyDetail: {
+    textAlign: "center",
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.sm,
   },
   limit: {
     paddingHorizontal: theme.spacing[4],

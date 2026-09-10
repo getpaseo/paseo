@@ -40,6 +40,7 @@ import { confirmDialog } from "@/utils/confirm-dialog";
 import { usePublishPanelInstanceAttributes } from "@/panels/panel-instance-attributes";
 import type { Theme } from "@/styles/theme";
 import { ZoomableImage } from "@/components/zoomable-viewport/image";
+import { formatFileSize } from "@/utils/format-file-size";
 
 const ThemedLoadingSpinner = withUnistyles(LoadingSpinner);
 const foregroundMutedColorMapping = (theme: Theme) => ({
@@ -57,16 +58,6 @@ interface FilePreviewBodyProps {
 }
 
 type TextExplorerFile = ExplorerFile & { kind: "text" };
-
-function formatFileSize({ size }: { size: number }): string {
-  if (size < 1024) {
-    return `${size} B`;
-  }
-  if (size < 1024 * 1024) {
-    return `${(size / 1024).toFixed(1)} KB`;
-  }
-  return `${(size / (1024 * 1024)).toFixed(1)} MB`;
-}
 
 function ReadonlySource({
   preview,
@@ -95,7 +86,7 @@ function TooLargeSource({ size }: { size?: number }) {
   return (
     <View style={styles.centerState} testID="file-source-too-large">
       <Text style={styles.emptyText}>{t("panels.file.tooLargeToDisplay")}</Text>
-      {size ? <Text style={styles.binaryMetaText}>{formatFileSize({ size })}</Text> : null}
+      {size ? <Text style={styles.binaryMetaText}>{formatFileSize(size)}</Text> : null}
     </View>
   );
 }
@@ -187,7 +178,7 @@ function FilePreviewBody({
   return (
     <View style={styles.centerState}>
       <Text style={styles.emptyText}>{t("panels.file.binaryPreviewUnavailable")}</Text>
-      <Text style={styles.binaryMetaText}>{formatFileSize({ size: preview.size })}</Text>
+      <Text style={styles.binaryMetaText}>{formatFileSize(preview.size)}</Text>
     </View>
   );
 }

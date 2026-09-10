@@ -1,4 +1,4 @@
-import { isAbsolutePath } from "@/utils/path";
+import { isAbsolutePath, normalizePathSeparators } from "@/utils/path";
 
 export type OpenFileDisposition = "main" | "preferred" | "side";
 
@@ -29,7 +29,11 @@ export function normalizeWorkspaceFileLocation(
     return null;
   }
 
-  const path = location.path.replace(/\\/g, "/");
+  // The path is an identity the host already produced, so it is kept verbatim: a backslash is a
+  // file name character outside Windows, and rewriting it here opened a different file than the
+  // one a search result or explorer row named. Callers holding a path scraped out of text
+  // normalize it themselves before arriving.
+  const path = location.path;
   if (!path) {
     return null;
   }
@@ -162,8 +166,8 @@ export function resolveWorkspaceFilePaths(input: {
   path: string;
   workspaceRoot: string;
 }): ResolvedWorkspaceFilePaths | null {
-  const filePath = input.path.replace(/\\/g, "/");
-  const workspaceRoot = normalizeAbsolutePath(input.workspaceRoot.replace(/\\/g, "/"));
+  const filePath = normalizePathSeparators(input.path);
+  const workspaceRoot = normalizeAbsolutePath(normalizePathSeparators(input.workspaceRoot));
   if (!filePath || !workspaceRoot) {
     return null;
   }

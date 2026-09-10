@@ -27,6 +27,7 @@ test("searches saved untracked text literally, ignoring case and ignore rules in
   expect(result).toEqual({
     status: "ok",
     limited: false,
+    maxFileBytes: 1_048_576,
     matches: [
       {
         path: ".hidden",
@@ -75,6 +76,7 @@ test("reports missing rg, empty search, cancellation and file/result limits", as
     status: "ok",
     matches: [],
     limited: false,
+    maxFileBytes: 1_048_576,
   });
   expect(await searchWorkspaceContent({ cwd, query: "x" }, { env: { PATH: "" } })).toMatchObject({
     status: "error",
@@ -154,4 +156,26 @@ test("validates UTF-8 beyond the matching record and preserves an embedded BOM c
   expect(
     embedded.status === "ok" && embedded.matches.map((match) => [match.text, match.columnStart]),
   ).toEqual([["\uFEFFneedle", 8]]);
+});
+
+test("states the per-file ceiling so a search that skipped an oversized file is not reported as complete", async () => {
+  const cwd = await workspace({ "large.txt": `needle${" ".repeat(1_048_576)}` });
+  expect(await searchWorkspaceContent({ cwd, query: "needle" })).toEqual({
+    status: "ok",
+    matches: [],
+    limited: false,
+    maxFileBytes: 1_048_576,
+  });
+  await writeFile(path.join(cwd, "small.txt"), "needle");
+  const withSmall = await searchWorkspaceContent({ cwd, query: "needle" });
+  expect(
+    withSmall.status === "ok" && [withSmall.matches.map((m) => m.path), withSmall.maxFileBytes],
+  ).toEqual([["small.txt"], 1_048_576]);
+});
+
+test("keeps a literal backslash in a saved file name exactly as the host reported it", async () => {
+  // A backslash is an ordinary character in a Unix file name, never a separator.
+  const cwd = await workspace({ "a\\b.txt": "needle" });
+  const result = await searchWorkspaceContent({ cwd, query: "needle" });
+  expect(result.status === "ok" && result.matches.map((match) => match.path)).toEqual(["a\\b.txt"]);
 });

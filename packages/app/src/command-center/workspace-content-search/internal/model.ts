@@ -28,6 +28,8 @@ export interface ContentSearchSnapshot {
   message: string;
   matches: WorkspaceContentMatch[];
   limited: boolean;
+  /** Per-file byte ceiling the host applied, so an empty result can say what it did not read. */
+  maxFileBytes: number | null;
   activeIndex: number;
   preview: Preview;
 }
@@ -41,6 +43,7 @@ export class WorkspaceContentSearchModel {
     message: "",
     matches: [],
     limited: false,
+    maxFileBytes: null,
     activeIndex: 0,
     preview: { status: "empty" },
   };
@@ -79,6 +82,7 @@ export class WorkspaceContentSearchModel {
       message: "",
       matches: [],
       limited: false,
+      maxFileBytes: null,
       activeIndex: 0,
       preview: { status: "empty" },
     });
@@ -101,7 +105,12 @@ export class WorkspaceContentSearchModel {
         this.update({ status: "error", message: result.message });
         return;
       }
-      this.update({ status: "ready", matches: result.matches, limited: result.limited });
+      this.update({
+        status: "ready",
+        matches: result.matches,
+        limited: result.limited,
+        maxFileBytes: result.maxFileBytes ?? null,
+      });
       this.select(0);
     } catch (error) {
       if (!this.disposed && !controller.signal.aborted)

@@ -134,3 +134,19 @@ test("CR-only saved occurrences use the source editor line and exact selection",
     testInfo.outputPath("cr-source-open.png"),
   );
 });
+
+import {
+  openLiteralBackslashFile,
+  reportSkippedLargeFiles,
+} from "../support/helpers/workspace-content-search";
+
+test("an empty result says which files the host never opened", async ({ page, withWorkspace }) => {
+  await reportSkippedLargeFiles(page, await withWorkspace());
+});
+
+test("a file name containing a backslash opens itself, not a same-named nested path", async ({
+  page,
+  withWorkspace,
+}) => {
+  await openLiteralBackslashFile(page, await withWorkspace());
+});

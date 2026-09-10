@@ -1,4 +1,5 @@
 import { stat } from "node:fs/promises";
+import { sep } from "node:path";
 import type { ChildProcess } from "node:child_process";
 import type {
   WorkspaceContentMatch,
@@ -6,6 +7,7 @@ import type {
 } from "@getpaseo/protocol/messages";
 import { readExplorerFileBytes } from "../file-explorer/service.js";
 import { spawnProcess } from "../../utils/spawn.js";
+import { toWorkspaceRelativePath } from "../path-utils.js";
 
 const MAX_RESULTS = 200;
 const MAX_FILE_BYTES = 1_048_576;
@@ -23,7 +25,8 @@ export async function searchWorkspaceContent(
   ) {
     return failure("invalid_query", "Search text must be one line, up to 1,024 bytes");
   }
-  if (!input.query) return { status: "ok", matches: [], limited: false };
+  if (!input.query)
+    return { status: "ok", matches: [], limited: false, maxFileBytes: MAX_FILE_BYTES };
   try {
     if (!(await stat(input.cwd)).isDirectory())
       return failure("unavailable", "Workspace directory is unavailable");
@@ -115,7 +118,7 @@ export async function searchWorkspaceContent(
           const event = JSON.parse(record.toString("utf8")) as RgEvent;
           if (event.type === "begin") {
             pending = [];
-            pendingPath = event.data.path?.text?.replace(/^\.\//, "") ?? "";
+            pendingPath = workspacePathFromRg(event.data.path?.text);
           } else if (event.type === "match" && pendingPath) {
             pending.push(
               ...readMatches(
@@ -158,9 +161,17 @@ export async function searchWorkspaceContent(
         error ??= failure("unavailable", "Files changed while searching — retry");
       }
       cleanup();
-      resolve(error ?? { status: "ok", matches: located, limited });
+      resolve(error ?? { status: "ok", matches: located, limited, maxFileBytes: MAX_FILE_BYTES });
     });
   });
+}
+
+/** rg reports paths under the "." root using this host's separator; identities cross the wire
+ * with "/" so a client never has to guess which character was a separator. */
+function workspacePathFromRg(reported: string | undefined): string {
+  if (!reported) return "";
+  const relative = reported.startsWith(`.${sep}`) ? reported.slice(2) : reported;
+  return toWorkspaceRelativePath(relative);
 }
 
 interface RgEvent {

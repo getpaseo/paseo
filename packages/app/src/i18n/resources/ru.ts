@@ -82,6 +82,7 @@ export const ru: TranslationResources = {
       contentOpen: "Открыть",
       contentLoadingPreview: "Загрузка предпросмотра...",
       contentLimited: "Результаты ограничены — уточните поиск",
+      contentSkippedLargeFiles: "Файлы больше {{size}} не искались",
       contentChanged: "Файл изменён — совпадения больше нет в этом месте",
 
       placeholder: "Поиск команд, файлов, рабочих пространств и агентов...",

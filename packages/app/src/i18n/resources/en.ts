@@ -79,6 +79,7 @@ export const en = {
       contentOpen: "Open",
       contentLoadingPreview: "Loading preview...",
       contentLimited: "Results limited — refine your search",
+      contentSkippedLargeFiles: "Files over {{size}} were not searched",
       contentChanged: "File changed — saved match is no longer at this location",
 
       placeholder: "Search commands, files, workspaces, and agents...",

@@ -1,5 +1,5 @@
 import { homedir } from "node:os";
-import { isAbsolute, posix, resolve, win32 } from "node:path";
+import { isAbsolute, posix, resolve, sep, win32 } from "node:path";
 
 export function assertAbsolutePath(cwd: string): void {
   if (!posix.isAbsolute(cwd) && !win32.isAbsolute(cwd)) {
@@ -37,4 +37,13 @@ export function isSameOrDescendantPath(basePath: string, candidatePath: string):
   return (
     normalizedCandidate === normalizedBase || normalizedCandidate.startsWith(normalizedBase + "/")
   );
+}
+
+/**
+ * Renders a host-relative path the way every workspace-relative identity crosses the wire: this
+ * host's separator becomes "/", and every other character survives, so a Unix file name that
+ * contains a backslash stays that file rather than becoming a directory on the client.
+ */
+export function toWorkspaceRelativePath(relative: string): string {
+  return relative.split(sep).join("/");
 }

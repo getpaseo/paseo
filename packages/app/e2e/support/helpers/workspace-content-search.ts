@@ -1,4 +1,4 @@
-import { unlink, writeFile } from "node:fs/promises";
+import { mkdir, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { expect, type Page } from "@playwright/test";
 import type { CreatedWorkspace } from "./with-workspace";
@@ -151,4 +151,42 @@ export async function openLiteralSourceOccurrence(
   await expect(page.getByRole("status").filter({ hasText: "File changed" })).toHaveCount(0);
   if (input.cursor) await expect(page.getByLabel(input.cursor, { exact: true })).toBeVisible();
   await page.screenshot({ path: screenshot });
+}
+
+export async function reportSkippedLargeFiles(page: Page, workspace: CreatedWorkspace) {
+  // rg never opens a file above the host ceiling, so an unqualified "No matches" would claim the
+  // whole workspace was read.
+  await writeFile(path.join(workspace.repoPath, "large.txt"), `needle${" ".repeat(1024 * 1024)}`);
+  await workspace.navigateTo();
+  await page.keyboard.press("Meta+Shift+F");
+  const input = page.getByRole("textbox", { name: "Search saved file contents...", exact: true });
+  await input.fill("needle");
+  const panel = page.getByTestId("command-center-panel");
+  await expect(panel.getByText("No matches", { exact: true })).toBeVisible();
+  await expect(
+    panel.getByText("Files over 1.0 MB were not searched", { exact: true }),
+  ).toBeVisible();
+  // The occurrence-cap notice is a different claim and must not appear here.
+  await expect(panel.getByText(/Results limited/)).toHaveCount(0);
+}
+
+export async function openLiteralBackslashFile(page: Page, workspace: CreatedWorkspace) {
+  // A backslash is an ordinary character in a Unix file name; "a\b.txt" is not "a/b.txt".
+  await writeFile(path.join(workspace.repoPath, "a\\b.txt"), "needle LITERAL FILE");
+  await mkdir(path.join(workspace.repoPath, "a"), { recursive: true });
+  await writeFile(path.join(workspace.repoPath, "a", "b.txt"), "THIS IS THE OTHER FILE");
+  await workspace.navigateTo();
+  await page.keyboard.press("Meta+Shift+F");
+  await page
+    .getByRole("textbox", { name: "Search saved file contents...", exact: true })
+    .fill("needle");
+  const panel = page.getByTestId("command-center-panel");
+  await expect(panel.getByRole("button", { name: /a\\b\.txt:1:1/ })).toBeVisible();
+  await expect(panel.getByTestId("file-source-editor")).toContainText("LITERAL FILE");
+  await page.keyboard.press("Enter");
+  await expect(panel).toBeHidden();
+  const source = page.getByTestId("file-source-editor");
+  await expect(source).toContainText("LITERAL FILE");
+  await expect(source).not.toContainText("THIS IS THE OTHER FILE");
+  await expect(page.getByRole("status").filter({ hasText: "File changed" })).toHaveCount(0);
 }

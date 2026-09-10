@@ -2703,6 +2703,13 @@ export const WorkspaceContentSearchResultSchema = z.discriminatedUnion("status",
     status: z.literal("ok"),
     matches: z.array(WorkspaceContentMatchSchema),
     limited: z.boolean(),
+    /**
+     * Per-file byte ceiling the host applied. Files above it are never opened, so a result set
+     * is complete only for files at or under this size. Absent on hosts that do not report it.
+     */
+    // COMPAT(workspaceContentSearchMaxFileBytes): added in v0.8.0, remove optionality after
+    // 2027-03-10 once the daemon floor reports it.
+    maxFileBytes: z.number().int().positive().optional(),
   }),
   z.object({
     status: z.literal("error"),

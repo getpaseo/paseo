@@ -4,12 +4,12 @@ export interface WorkspaceFileSearchEntry {
   directory: string;
 }
 
+/** Splits a workspace-relative path the host produced, where "/" is the only separator. */
 export function describeWorkspaceFilePath(path: string): WorkspaceFileSearchEntry {
-  const normalized = path.replace(/\\/g, "/");
-  const separator = normalized.lastIndexOf("/");
+  const separator = path.lastIndexOf("/");
   return {
-    path: normalized,
-    name: separator >= 0 ? normalized.slice(separator + 1) : normalized,
-    directory: separator >= 0 ? normalized.slice(0, separator) : "",
+    path,
+    name: separator >= 0 ? path.slice(separator + 1) : path,
+    directory: separator >= 0 ? path.slice(0, separator) : "",
   };
 }

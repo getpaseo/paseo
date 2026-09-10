@@ -82,6 +82,7 @@ export const es: TranslationResources = {
       contentOpen: "Abrir",
       contentLoadingPreview: "Cargando vista previa...",
       contentLimited: "Resultados limitados — precisa la búsqueda",
+      contentSkippedLargeFiles: "No se buscó en archivos de más de {{size}}",
       contentChanged: "El archivo cambió — la coincidencia ya no está aquí",
 
       placeholder: "Buscar comandos, archivos, espacios de trabajo y agentes...",

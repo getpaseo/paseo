@@ -82,6 +82,7 @@ export const ja: TranslationResources = {
       contentOpen: "開く",
       contentLoadingPreview: "プレビューを読み込み中...",
       contentLimited: "結果が上限に達しました — 検索を絞り込んでください",
+      contentSkippedLargeFiles: "{{size}} を超えるファイルは検索されていません",
       contentChanged: "ファイルが変更され、この位置に一致する内容はありません",
 
       placeholder: "コマンド、ファイル、ワークスペース、エージェントを検索...",

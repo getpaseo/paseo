@@ -82,6 +82,7 @@ export const zhCN: TranslationResources = {
       contentOpen: "打开",
       contentLoadingPreview: "正在加载预览...",
       contentLimited: "结果已达上限 — 请缩小搜索范围",
+      contentSkippedLargeFiles: "未搜索大于 {{size}} 的文件",
       contentChanged: "文件已更改 — 此位置不再匹配",
 
       placeholder: "搜索命令、文件、工作区和 Agent...",

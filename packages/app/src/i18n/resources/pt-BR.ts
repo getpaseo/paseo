@@ -82,6 +82,7 @@ export const ptBR: TranslationResources = {
       contentOpen: "Abrir",
       contentLoadingPreview: "Carregando prévia...",
       contentLimited: "Resultados limitados — refine a busca",
+      contentSkippedLargeFiles: "Arquivos maiores que {{size}} não foram pesquisados",
       contentChanged: "Arquivo alterado — a correspondência não está mais neste local",
 
       placeholder: "Buscar comandos, arquivos, espaços de trabalho e agentes...",

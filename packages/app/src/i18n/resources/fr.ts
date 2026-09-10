@@ -83,6 +83,7 @@ export const fr: TranslationResources = {
       contentOpen: "Ouvrir",
       contentLoadingPreview: "Chargement de l’aperçu...",
       contentLimited: "Résultats limités — précisez la recherche",
+      contentSkippedLargeFiles: "Les fichiers de plus de {{size}} n’ont pas été analysés",
       contentChanged: "Fichier modifié — la correspondance n’est plus à cet emplacement",
 
       placeholder: "Rechercher des commandes, fichiers, espaces de travail et agents...",

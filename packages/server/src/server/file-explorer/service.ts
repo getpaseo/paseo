@@ -2,7 +2,7 @@ import { constants, promises as fs, type BigIntStats, type Stats } from "fs";
 import type { FileHandle } from "fs/promises";
 import path from "path";
 import { randomUUID } from "crypto";
-import { expandUserPath, resolvePathFromBase } from "../path-utils.js";
+import { expandUserPath, resolvePathFromBase, toWorkspaceRelativePath } from "../path-utils.js";
 import { runGitCommand } from "../../utils/run-git-command.js";
 
 export type ExplorerEntryKind = "file" | "directory";
@@ -871,7 +871,7 @@ function normalizeRelativePath({ root, targetPath }: { root: string; targetPath:
   const normalizedRoot = expandUserPath(root);
   const normalizedTarget = expandUserPath(targetPath);
   const relative = path.relative(normalizedRoot, normalizedTarget);
-  return relative === "" ? "." : relative.split(path.sep).join("/");
+  return relative === "" ? "." : toWorkspaceRelativePath(relative);
 }
 
 function textMimeTypeForExtension(ext: string): string {

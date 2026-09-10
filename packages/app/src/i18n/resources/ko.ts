@@ -82,6 +82,7 @@ export const ko: TranslationResources = {
       contentOpen: "열기",
       contentLoadingPreview: "미리보기 로딩 중...",
       contentLimited: "결과 제한 — 검색 범위를 좁히세요",
+      contentSkippedLargeFiles: "{{size}}보다 큰 파일은 검색하지 않았습니다",
       contentChanged: "파일이 변경되어 이 위치에 일치하는 내용이 없습니다",
 
       placeholder: "명령, 파일, 워크스페이스 및 에이전트 검색...",

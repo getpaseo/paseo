@@ -8,10 +8,10 @@ import {
 } from ".";
 
 describe("normalizeWorkspaceFileLocation", () => {
-  it("normalizes paths and valid line ranges", () => {
+  it("clamps line ranges and leaves the path as the producer gave it", () => {
     expect(
       normalizeWorkspaceFileLocation({
-        path: "src\\app.ts",
+        path: "src/app.ts",
         lineStart: 12.8,
         lineEnd: 20.2,
       }),
@@ -98,12 +98,32 @@ describe("resolveWorkspaceFilePaths", () => {
     });
   });
 
-  it("normalizes Windows separators in the file path", () => {
+  it("normalizes separators in a Windows-shaped path and leaves every other path literal", () => {
     expect(
-      resolveWorkspaceFilePaths({ path: "src\\app.ts", workspaceRoot: "/Users/me/repo" }),
+      resolveWorkspaceFilePaths({
+        path: "C:\\Users\\me\\repo\\src\\app.ts",
+        workspaceRoot: "C:\\Users\\me\\repo",
+      }),
     ).toEqual({
-      absolutePath: "/Users/me/repo/src/app.ts",
+      absolutePath: "C:/Users/me/repo/src/app.ts",
       relativePath: "src/app.ts",
+    });
+    // A workspace-relative path is the host's own identity, so its backslash is a file name
+    // character. Rewriting it here is what opened a different file than the search result.
+    expect(
+      resolveWorkspaceFilePaths({ path: "a\\b.txt", workspaceRoot: "/Users/me/repo" }),
+    ).toEqual({
+      absolutePath: "/Users/me/repo/a\\b.txt",
+      relativePath: "a\\b.txt",
+    });
+    expect(
+      resolveWorkspaceFilePaths({
+        path: "/Users/me/repo/a\\b.txt",
+        workspaceRoot: "/Users/me/repo",
+      }),
+    ).toEqual({
+      absolutePath: "/Users/me/repo/a\\b.txt",
+      relativePath: "a\\b.txt",
     });
   });
 
@@ -225,4 +245,9 @@ it("preserves literal filename and workspace whitespace through location and hos
     absolutePath: "/workspace / leading.txt ",
     relativePath: " leading.txt ",
   });
+});
+
+it("preserves a literal backslash file name through location identity", () => {
+  const location = { path: "a\\b.txt", lineStart: 1, columnStart: 1, expectedText: "needle" };
+  expect(normalizeWorkspaceFileLocation(location)).toEqual(location);
 });

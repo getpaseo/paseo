@@ -10,11 +10,11 @@ describe("describeWorkspaceFilePath", () => {
     });
   });
 
-  it("normalizes Windows separators before opening or presenting a file", () => {
-    expect(describeWorkspaceFilePath("src\\components\\message.tsx")).toEqual({
-      path: "src/components/message.tsx",
-      name: "message.tsx",
-      directory: "src/components",
+  it("treats a backslash as part of the file name, because the host already sent separators as /", () => {
+    expect(describeWorkspaceFilePath("a\\b.txt")).toEqual({
+      path: "a\\b.txt",
+      name: "a\\b.txt",
+      directory: "",
     });
   });
 

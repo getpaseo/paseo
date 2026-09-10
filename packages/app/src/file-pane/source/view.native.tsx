@@ -29,6 +29,7 @@ export function FileSourceView({
   location,
   navigationRevision,
   size,
+  theme,
   tooLargeMessage,
 }: FileSourceViewProps) {
   const presentation = selectSourcePresentation({ size, platform: "native" });
@@ -46,6 +47,7 @@ export function FileSourceView({
       location={location}
       navigationRevision={navigationRevision}
       presentation={presentation}
+      codeFontSize={theme.codeFontSize}
     />
   );
 }
@@ -56,8 +58,10 @@ function VirtualizedSource({
   location,
   navigationRevision,
   presentation,
+  codeFontSize,
 }: Omit<FileSourceViewProps, "size" | "theme" | "tooLargeMessage"> & {
   presentation: "highlighted" | "plain";
+  codeFontSize: number;
 }) {
   const { t } = useTranslation();
   const listRef = useRef<FlatList<SourceLine>>(null);
@@ -72,6 +76,18 @@ function VirtualizedSource({
       .split("\n")
       .map((text, index) => ({ number: index + 1, tokens: [{ text, style: null }] }));
   }, [content, filename, presentation]);
+  // A row is exactly one line of code at the reader's own code size, so the list can jump straight
+  // to a match thousands of lines in. Hard-coding this height instead of deriving it left every
+  // reader who changed their code size looking at the wrong part of the file.
+  const rowHeight = sourceRowHeight(codeFontSize);
+  const itemLayout = useCallback(
+    (_data: ArrayLike<SourceLine> | null | undefined, index: number) => ({
+      length: rowHeight,
+      offset: index * rowHeight,
+      index,
+    }),
+    [rowHeight],
+  );
   useEffect(() => {
     if (!location.lineStart) return;
     listRef.current?.scrollToIndex({
@@ -110,8 +126,8 @@ function VirtualizedSource({
         keyExtractor={sourceLineKey}
         initialNumToRender={24}
         windowSize={9}
-        getItemLayout={sourceLineLayout}
         extraData={location}
+        getItemLayout={itemLayout}
         renderItem={renderLine}
       />
     </View>
@@ -146,9 +162,12 @@ function sourceLineKey(line: SourceLine): string {
   return String(line.number);
 }
 
-function sourceLineLayout(_data: ArrayLike<SourceLine> | null | undefined, index: number) {
-  return { length: 20, offset: index * 20, index };
+/** One rendered code line; the stylesheet below builds its row from the same ratio. */
+function sourceRowHeight(codeFontSize: number): number {
+  return codeFontSize * SOURCE_LINE_RATIO;
 }
+
+const SOURCE_LINE_RATIO = 1.45;
 
 const styles = StyleSheet.create((theme) => ({
   root: { flex: 1 },
@@ -165,7 +184,7 @@ const styles = StyleSheet.create((theme) => ({
     padding: theme.spacing[4],
   },
   unsupportedText: { color: theme.colors.foregroundMuted, textAlign: "center" },
-  line: { flexDirection: "row", minHeight: theme.fontSize.code * 1.45 },
+  line: { flexDirection: "row", minHeight: sourceRowHeight(theme.fontSize.code) },
   gutter: {
     width: 56,
     paddingRight: theme.spacing[3],
@@ -178,6 +197,6 @@ const styles = StyleSheet.create((theme) => ({
     flex: 1,
     fontFamily: theme.fontFamily.mono,
     fontSize: theme.fontSize.code,
-    lineHeight: theme.fontSize.code * 1.45,
+    lineHeight: sourceRowHeight(theme.fontSize.code),
   },
 }));

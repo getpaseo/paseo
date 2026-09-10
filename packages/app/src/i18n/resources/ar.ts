@@ -82,6 +82,7 @@ export const ar: TranslationResources = {
       contentOpen: "فتح",
       contentLoadingPreview: "جارٍ تحميل المعاينة...",
       contentLimited: "النتائج محدودة — حدّد البحث أكثر",
+      contentSkippedLargeFiles: "لم يتم البحث في الملفات الأكبر من {{size}}",
       contentChanged: "تغيّر الملف — لم تعد المطابقة في هذا الموضع",
 
       placeholder: "ابحث في الأوامر والملفات ومساحات العمل والوكلاء...",
