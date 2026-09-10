@@ -1,8 +1,9 @@
-import { describe, expect, test, vi } from "vitest";
+import { describe, expect, test } from "vitest";
 import type { ProviderSnapshotEntry } from "@getpaseo/protocol/agent-types";
 
 import {
   buildProviderCommand,
+  ProviderResumeCommandUnavailableError,
   resolveProviderResumeCommand,
 } from "@/utils/provider-command-templates";
 
@@ -13,6 +14,9 @@ function snapshotEntry(
 ): Pick<ProviderSnapshotEntry, "provider" | "derivedFromProviderId" | "launchSource"> {
   return { provider, derivedFromProviderId, launchSource };
 }
+
+const neverCalledSnapshot = () =>
+  Promise.reject(new Error("getProviderSnapshot should not have been called"));
 
 describe("buildProviderCommand", () => {
   test("builds Hermes resume commands from native session ids", () => {
@@ -154,84 +158,114 @@ describe("buildProviderCommand", () => {
 
 describe("resolveProviderResumeCommand", () => {
   test("resolves built-in Codex immediately without a snapshot", async () => {
-    const getProviderSnapshot = vi.fn().mockResolvedValue(undefined);
     await expect(
       resolveProviderResumeCommand({
         provider: "codex",
         sessionId: "example-session",
         supportsProviderAncestry: false,
-        getProviderSnapshot,
+        getProviderSnapshot: neverCalledSnapshot,
       }),
     ).resolves.toBe("codex resume example-session");
-    expect(getProviderSnapshot).not.toHaveBeenCalled();
   });
 
   test("resolves built-in Claude immediately without a snapshot", async () => {
-    const getProviderSnapshot = vi.fn().mockResolvedValue(undefined);
     await expect(
       resolveProviderResumeCommand({
         provider: "claude",
         sessionId: "example-session",
         supportsProviderAncestry: false,
-        getProviderSnapshot,
+        getProviderSnapshot: neverCalledSnapshot,
       }),
     ).resolves.toBe("claude --resume example-session");
-    expect(getProviderSnapshot).not.toHaveBeenCalled();
   });
 
-  test("rejects a built-in Codex whose cached snapshot launch source is overridden", async () => {
-    const getProviderSnapshot = vi.fn().mockResolvedValue(undefined);
+  test("resolves built-in Codex with providerAncestry without a snapshot", async () => {
     await expect(
       resolveProviderResumeCommand({
         provider: "codex",
         sessionId: "example-session",
         supportsProviderAncestry: true,
-        cachedProviderSnapshot: [snapshotEntry("codex", null, "override")],
-        getProviderSnapshot,
+        getProviderSnapshot: neverCalledSnapshot,
       }),
-    ).rejects.toThrow("Resume command not available");
-    expect(getProviderSnapshot).not.toHaveBeenCalled();
+    ).resolves.toBe("codex resume example-session");
   });
 
-  test("rejects an inherited custom provider when the daemon does not advertise providerAncestry", async () => {
-    const getProviderSnapshot = vi.fn().mockResolvedValue(undefined);
+  test("rejects a custom provider when providerAncestry is not advertised", async () => {
     await expect(
       resolveProviderResumeCommand({
         provider: "my-codex",
         sessionId: "example-session",
         supportsProviderAncestry: false,
-        getProviderSnapshot,
+        getProviderSnapshot: neverCalledSnapshot,
       }),
-    ).rejects.toThrow("Resume command not available");
-    expect(getProviderSnapshot).not.toHaveBeenCalled();
+    ).rejects.toThrow(ProviderResumeCommandUnavailableError);
   });
 
   test("falls back to the ancestor template for a custom provider when providerAncestry is advertised", async () => {
-    const getProviderSnapshot = vi
-      .fn()
-      .mockResolvedValue([snapshotEntry("my-codex", "codex", "default")]);
     await expect(
       resolveProviderResumeCommand({
         provider: "my-codex",
         sessionId: "example-session",
         supportsProviderAncestry: true,
-        getProviderSnapshot,
+        getProviderSnapshot: () => Promise.resolve([snapshotEntry("my-codex", "codex", "default")]),
       }),
     ).resolves.toBe("codex resume example-session");
-    expect(getProviderSnapshot).toHaveBeenCalledOnce();
   });
 
   test("rejects a custom provider with an overridden command even when ancestry is advertised", async () => {
-    const getProviderSnapshot = vi
-      .fn()
-      .mockResolvedValue([snapshotEntry("my-codex", "codex", "override")]);
     await expect(
       resolveProviderResumeCommand({
         provider: "my-codex",
         sessionId: "example-session",
         supportsProviderAncestry: true,
-        getProviderSnapshot,
+        getProviderSnapshot: () =>
+          Promise.resolve([snapshotEntry("my-codex", "codex", "override")]),
       }),
-    ).rejects.toThrow("Resume command not available");
+    ).rejects.toThrow(ProviderResumeCommandUnavailableError);
+  });
+
+  test("rejects a custom provider that appends to its command", async () => {
+    await expect(
+      resolveProviderResumeCommand({
+        provider: "my-codex",
+        sessionId: "example-session",
+        supportsProviderAncestry: true,
+        getProviderSnapshot: () => Promise.resolve([snapshotEntry("my-codex", "codex", "append")]),
+      }),
+    ).rejects.toThrow(ProviderResumeCommandUnavailableError);
+  });
+
+  test("rejects a custom provider with an absent launchSource", async () => {
+    await expect(
+      resolveProviderResumeCommand({
+        provider: "my-codex",
+        sessionId: "example-session",
+        supportsProviderAncestry: true,
+        getProviderSnapshot: () =>
+          Promise.resolve([{ ...snapshotEntry("my-codex", "codex"), launchSource: undefined }]),
+      }),
+    ).rejects.toThrow(ProviderResumeCommandUnavailableError);
+  });
+
+  test("does not silently reuse a fallback command when the snapshot source is unavailable", async () => {
+    await expect(
+      resolveProviderResumeCommand({
+        provider: "my-codex",
+        sessionId: "example-session",
+        supportsProviderAncestry: true,
+        getProviderSnapshot: () => Promise.resolve(undefined),
+      }),
+    ).rejects.toThrow(ProviderResumeCommandUnavailableError);
+  });
+
+  test("propagates unexpected snapshot errors instead of masking them as unavailable", async () => {
+    await expect(
+      resolveProviderResumeCommand({
+        provider: "my-codex",
+        sessionId: "example-session",
+        supportsProviderAncestry: true,
+        getProviderSnapshot: () => Promise.reject(new Error("network failure")),
+      }),
+    ).rejects.toThrow("network failure");
   });
 });

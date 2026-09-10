@@ -1,6 +1,5 @@
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import type { JsonValue } from "@getpaseo/protocol/agent-types";
-import type { GetProvidersSnapshotResponseMessage } from "@getpaseo/protocol/messages";
 import { getOpenAgentTabLabel } from "@getpaseo/protocol/agent-labels";
 import {
   memo,
@@ -100,7 +99,6 @@ import {
 import {
   ensureProvidersSnapshotEntries,
   prefetchProvidersSnapshot,
-  providersSnapshotQueryKey,
 } from "@/hooks/use-providers-snapshot";
 import {
   shouldSeedWorkspaceSetupTab,
@@ -116,7 +114,10 @@ import { useStableEvent } from "@/hooks/use-stable-event";
 import { removeResidentBrowserWebview } from "@/desktop/browser/resident-webviews";
 import { createWorkspaceBrowser, useBrowserStore } from "@/desktop/browser/store";
 import { getDesktopHost } from "@/desktop/host";
-import { resolveProviderResumeCommand } from "@/utils/provider-command-templates";
+import {
+  ProviderResumeCommandUnavailableError,
+  resolveProviderResumeCommand,
+} from "@/utils/provider-command-templates";
 import { generateDraftId } from "@/stores/draft-keys";
 import { resolveWorkspaceRouteId } from "@/utils/workspace-identity";
 import { useOpenAgentTabLabels } from "@/subagents/use-open-agent-tab-labels";
@@ -1582,6 +1583,7 @@ function WorkspaceScreenContent({
   useWorkspaceTerminalSessionRetention({
     scopeKey: workspaceTerminalScopeKey,
   });
+  const queryClient = useQueryClient();
 
   const client = useHostRuntimeClient(normalizedServerId);
   const isConnected = useHostRuntimeIsConnected(normalizedServerId);
@@ -1705,7 +1707,6 @@ function WorkspaceScreenContent({
     },
     toast,
   });
-  const queryClient = useQueryClient();
   const {
     createMutation: createTerminalMutation,
     createTerminal,
@@ -2720,7 +2721,6 @@ function WorkspaceScreenContent({
 
   const handleCopyResumeCommand = useCallback(
     async (agentId: string) => {
-      if (!agentId) return;
       const agent =
         useSessionStore.getState().sessions[normalizedServerId]?.agents?.get(agentId) ?? null;
       const providerSessionId =
@@ -2734,23 +2734,22 @@ function WorkspaceScreenContent({
         useSessionStore.getState().sessions[normalizedServerId]?.serverInfo?.features
           ?.providerAncestry === true;
 
-      const cachedProviderSnapshot = queryClient.getQueryData<
-        GetProvidersSnapshotResponseMessage["payload"]
-      >(providersSnapshotQueryKey(normalizedServerId, workspaceDirectory ?? null))?.entries;
-
       try {
         const command = await resolveProviderResumeCommand({
           provider: agent.provider,
           sessionId: providerSessionId,
           supportsProviderAncestry,
-          cachedProviderSnapshot,
-          getProviderSnapshot: () =>
-            ensureProvidersSnapshotEntries({
+          getProviderSnapshot: async () => {
+            if (!client) {
+              throw new ProviderResumeCommandUnavailableError();
+            }
+            return ensureProvidersSnapshotEntries({
               queryClient,
               client,
               serverId: normalizedServerId,
-              cwd: workspaceDirectory ?? null,
-            }),
+              cwd: workspaceDirectory,
+            });
+          },
         });
         try {
           await Clipboard.setStringAsync(command);
@@ -2758,8 +2757,12 @@ function WorkspaceScreenContent({
         } catch {
           toast.error(t("workspace.tabs.toasts.copyFailed"));
         }
-      } catch {
-        toast.error(t("workspace.tabs.toasts.resumeCommandUnavailable"));
+      } catch (error) {
+        if (error instanceof ProviderResumeCommandUnavailableError) {
+          toast.error(t("workspace.tabs.toasts.resumeCommandUnavailable"));
+        } else {
+          throw error;
+        }
       }
     },
     [client, normalizedServerId, workspaceDirectory, queryClient, toast, t],
