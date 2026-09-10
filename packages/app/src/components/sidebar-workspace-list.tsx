@@ -40,7 +40,6 @@ import {
   ChevronDown,
   ChevronRight,
   ExternalLink,
-  MessageSquare,
   MoreVertical,
   Plus,
   Settings,
@@ -172,7 +171,6 @@ const ThemedPlus = withUnistyles(Plus);
 const ThemedMoreVertical = withUnistyles(MoreVertical);
 const ThemedTrash2 = withUnistyles(Trash2);
 const ThemedSettings = withUnistyles(Settings);
-const ThemedMessageSquare = withUnistyles(MessageSquare);
 const ThemedChevronDown = withUnistyles(ChevronDown);
 const ThemedChevronRight = withUnistyles(ChevronRight);
 
@@ -1985,11 +1983,7 @@ function SidebarChatsSection({
           accessibilityRole="button"
           accessibilityLabel="Toggle chats"
         >
-          <ThemedMessageSquare size={14} uniProps={foregroundMutedColorMapping} />
           <Text style={styles.chatsSectionTitle}>Chats</Text>
-          <View style={styles.chatsCountBadge}>
-            <Text style={styles.chatsCountBadgeText}>{chatEntries.length}</Text>
-          </View>
           {collapsed ? (
             <ThemedChevronRight size={12} uniProps={foregroundMutedColorMapping} />
           ) : (
@@ -2193,6 +2187,8 @@ export function SidebarWorkspaceList({
  * that needed it — `SidebarStatusModeWrapper` is what made a label-mode reader believe the data
  * above it was status-only.
  */
+const EMPTY_CREATING_SET: ReadonlySet<string> = new Set();
+
 function SidebarGroupedModeList({
   workspaceGroups,
   pinnedGroups,
@@ -2224,6 +2220,7 @@ function SidebarGroupedModeList({
   parentGestureRef?: MutableRefObject<GestureType | undefined>;
   dragGestureHostActive?: boolean;
 }) {
+  const activeWorkspaceSelection = useActiveWorkspaceSelection();
   const showShortcutBadges = useShowShortcutBadges();
   const pinnedWorkspaces = useMemo(
     () =>
@@ -2232,6 +2229,33 @@ function SidebarGroupedModeList({
         return entry ? [entry] : [];
       }),
     [pinnedGroups.pinnedChats, workspaceEntriesByKey],
+  );
+
+  const footerComponent = useMemo(
+    () => (
+      <SidebarChatsSection
+        workspaceEntriesByKey={workspaceEntriesByKey}
+        onWorkspacePress={onWorkspacePress}
+        activeWorkspaceSelection={activeWorkspaceSelection}
+        creatingWorkspaceIds={EMPTY_CREATING_SET}
+        hostBadgeByServerId={hostBadgeByServerId}
+        supportsPinningByServerId={supportsPinningByServerId}
+        onToggleWorkspacePin={onToggleWorkspacePin}
+        showShortcutBadges={showShortcutBadges}
+        shortcutIndexByWorkspaceKey={_projectShortcutIndex}
+        selectionEnabled={true}
+      />
+    ),
+    [
+      workspaceEntriesByKey,
+      onWorkspacePress,
+      activeWorkspaceSelection,
+      hostBadgeByServerId,
+      supportsPinningByServerId,
+      onToggleWorkspacePin,
+      showShortcutBadges,
+      _projectShortcutIndex,
+    ],
   );
 
   return (
@@ -2250,6 +2274,7 @@ function SidebarGroupedModeList({
       sidebarFilterEmpty={sidebarFilterEmpty}
       parentGestureRef={parentGestureRef}
       dragGestureHostActive={dragGestureHostActive}
+      footerComponent={footerComponent}
     />
   );
 }
