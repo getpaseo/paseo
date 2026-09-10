@@ -63,6 +63,22 @@ function createFakeMacBundle(options: { includeHelper: boolean }): {
 }
 
 describe("desktop packaging", () => {
+  it("uses an Electron runtime whose Squirrel handoff explicitly wakes ShipIt", () => {
+    const pkg = JSON.parse(readFileSync(join(packageRoot, "package.json"), "utf8")) as {
+      devDependencies?: Record<string, string>;
+    };
+    const electronVersion = pkg.devDependencies?.electron ?? "0.0.0";
+    const electronMajor = Number(electronVersion.split(".")[0]);
+
+    expect(electronMajor).toBeGreaterThanOrEqual(44);
+  });
+
+  it("requires macOS 13 or newer in the packaged application", () => {
+    const config = readFileSync(join(packageRoot, "electron-builder.yml"), "utf8");
+
+    expect(config).toContain('minimumSystemVersion: "13.0.0"');
+  });
+
   it("unpacks server zsh shell integration files for external shells", () => {
     const config = readFileSync(join(packageRoot, "electron-builder.yml"), "utf8");
 

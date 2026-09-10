@@ -166,7 +166,7 @@ vi.mock("@/components/ui/loading-spinner", () => ({
   LoadingSpinner: () => React.createElement("span", { "data-testid": "loading-spinner" }),
 }));
 
-vi.mock("@/screens/settings/settings-info-tip", () => ({
+vi.mock("@/components/settings/headings/settings-info-tip", () => ({
   SettingsInfoTip: () => null,
 }));
 

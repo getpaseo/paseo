@@ -1,3 +1,4 @@
+import { createAgentRequestsStub } from "./test-utils/session-stubs.js";
 import { execFileSync } from "node:child_process";
 import {
   existsSync,
@@ -232,6 +233,7 @@ function makeAgent(input: {
   requiresAttention?: boolean;
   attentionReason?: AgentSnapshotPayload["attentionReason"];
   attentionTimestamp?: string | null;
+  labels?: Record<string, string>;
 }): AgentSnapshotPayload {
   const pendingPermissionCount = input.pendingPermissions ?? 0;
   return {
@@ -268,7 +270,7 @@ function makeAgent(input: {
       sessionId: null,
     },
     title: null,
-    labels: {},
+    labels: input.labels ?? {},
     requiresAttention: input.requiresAttention ?? false,
     attentionReason: input.attentionReason ?? null,
     attentionTimestamp: input.attentionTimestamp ?? null,
@@ -282,17 +284,20 @@ function makeStoredAgent(input: {
   updatedAt: string;
   requiresAttention?: boolean;
   attentionReason?: StoredAgentRecord["attentionReason"];
+  workspaceId?: string;
+  labels?: Record<string, string>;
 }): StoredAgentRecord {
   return {
     id: input.id,
     provider: "codex",
     cwd: input.cwd,
+    ...(input.workspaceId ? { workspaceId: input.workspaceId } : {}),
     createdAt: input.updatedAt,
     updatedAt: input.updatedAt,
     lastActivityAt: input.updatedAt,
     lastUserMessageAt: null,
     title: null,
-    labels: {},
+    labels: input.labels ?? {},
     lastStatus: "closed",
     lastModeId: null,
     config: { provider: "codex", cwd: input.cwd },
@@ -582,6 +587,7 @@ function createSessionForWorkspaceTests(
     archiveSnapshot: async () => ({}),
     unarchiveSnapshot: async () => true,
     clearAgentAttention: async () => {},
+    markAgentUnread: async () => {},
     notifyAgentState: () => {},
     ...options.agentManager,
   });
@@ -636,6 +642,7 @@ function createSessionForWorkspaceTests(
 
   const session = asTestSession(
     new Session({
+      agentRequests: createAgentRequestsStub(),
       clientId: "test-client",
       permissions: OWNER_PERMISSIONS,
       appVersion: options.appVersion ?? null,
@@ -992,6 +999,7 @@ test("create_agent_request keeps requested child cwd when grouped under an exist
     const emitted: SessionOutboundMessage[] = [];
     const session = asTestSession(
       new Session({
+        agentRequests: createAgentRequestsStub(),
         clientId: "test-client",
         serverId: "test-server",
         permissions: OWNER_PERMISSIONS,
@@ -1145,6 +1153,7 @@ test("create_agent_request launches from an exact subdirectory in a created work
 
     const emitted: SessionOutboundMessage[] = [];
     const session = new Session({
+      agentRequests: createAgentRequestsStub(),
       clientId: "test-client",
       permissions: OWNER_PERMISSIONS,
       appVersion: null,
@@ -1282,6 +1291,7 @@ test("create_agent_request does not title an existing workspace from the agent p
     let generateCalls = 0;
     const session = asTestSession(
       new Session({
+        agentRequests: createAgentRequestsStub(),
         clientId: "test-client",
         permissions: OWNER_PERMISSIONS,
         appVersion: null,
@@ -1551,6 +1561,7 @@ test("archive emits an authoritative agent_update upsert for subscribed clients"
 
   const session = asTestSession(
     new Session({
+      agentRequests: createAgentRequestsStub(),
       clientId: "test-client",
       permissions: OWNER_PERMISSIONS,
       onMessage: (message) => emitted.push(message),
@@ -1765,6 +1776,123 @@ test("workspace clear attention responds with an error instead of timing out", a
   });
 });
 
+test("workspace mark unread selects the newest finished workspace root", async () => {
+  const emitted: SessionOutboundMessage[] = [];
+  const workspace = createPersistedWorkspaceRecord({
+    workspaceId: REPO_CWD,
+    projectId: REPO_CWD,
+    cwd: REPO_CWD,
+    kind: "directory",
+    displayName: "repo",
+    createdAt: "2026-03-30T15:00:00.000Z",
+    updatedAt: "2026-03-30T15:00:00.000Z",
+  });
+  const project = createPersistedProjectRecord({
+    projectId: REPO_CWD,
+    rootPath: REPO_CWD,
+    kind: "non_git",
+    displayName: "repo",
+    createdAt: "2026-03-30T15:00:00.000Z",
+    updatedAt: "2026-03-30T15:00:00.000Z",
+  });
+  const storedRecords = new Map<string, StoredAgentRecord>([
+    [
+      "root-agent",
+      makeStoredAgent({
+        id: "root-agent",
+        cwd: REPO_CWD,
+        workspaceId: workspace.workspaceId,
+        updatedAt: "2026-03-30T16:00:00.000Z",
+      }),
+    ],
+    [
+      "newer-child",
+      makeStoredAgent({
+        id: "newer-child",
+        cwd: REPO_CWD,
+        workspaceId: workspace.workspaceId,
+        updatedAt: "2026-03-30T17:00:00.000Z",
+        labels: { "paseo.parent-agent-id": "root-agent" },
+      }),
+    ],
+  ]);
+  const markedAgentIds: string[] = [];
+  const session = createSessionForWorkspaceTests({
+    onMessage: (message) => emitted.push(message),
+    agentManager: {
+      markAgentUnread: async (agentId: string) => {
+        markedAgentIds.push(agentId);
+      },
+    },
+  });
+
+  session.workspaceRegistry.list = async () => [workspace];
+  session.workspaceRegistry.get = async (id: string) =>
+    id === workspace.workspaceId ? workspace : null;
+  session.projectRegistry.list = async () => [project];
+  session.projectRegistry.get = async (id: string) => (id === project.projectId ? project : null);
+  session.listAgentPayloads = async () =>
+    Array.from(storedRecords.values()).map((record) =>
+      makeAgent({
+        id: record.id,
+        cwd: record.cwd,
+        workspaceId: record.workspaceId,
+        status: record.lastStatus,
+        updatedAt: record.updatedAt,
+        requiresAttention: record.requiresAttention,
+        attentionReason: record.attentionReason,
+        attentionTimestamp: record.attentionTimestamp,
+        labels: record.labels,
+      }),
+    );
+
+  await session.handleMessage({
+    type: "workspace.mark_unread.request",
+    workspaceId: workspace.workspaceId,
+    requestId: "req-mark-unread",
+  });
+
+  expect(markedAgentIds).toEqual(["root-agent"]);
+  expect(findByType(emitted, "workspace.mark_unread.response").payload).toEqual({
+    requestId: "req-mark-unread",
+    workspaceId: workspace.workspaceId,
+    markedAgentId: "root-agent",
+    success: true,
+    error: null,
+  });
+});
+
+test("workspace mark unread rejects workspaces without a finished root agent", async () => {
+  const emitted: SessionOutboundMessage[] = [];
+  const workspace = createPersistedWorkspaceRecord({
+    workspaceId: REPO_CWD,
+    projectId: REPO_CWD,
+    cwd: REPO_CWD,
+    kind: "directory",
+    displayName: "repo",
+    createdAt: "2026-03-30T15:00:00.000Z",
+    updatedAt: "2026-03-30T15:00:00.000Z",
+  });
+  const session = createSessionForWorkspaceTests({ onMessage: (message) => emitted.push(message) });
+  session.workspaceRegistry.get = async (id: string) =>
+    id === workspace.workspaceId ? workspace : null;
+  session.listAgentPayloads = async () => [];
+
+  await session.handleMessage({
+    type: "workspace.mark_unread.request",
+    workspaceId: workspace.workspaceId,
+    requestId: "req-mark-unread",
+  });
+
+  expect(findByType(emitted, "workspace.mark_unread.response").payload).toEqual({
+    requestId: "req-mark-unread",
+    workspaceId: workspace.workspaceId,
+    markedAgentId: null,
+    success: false,
+    error: `Workspace has no finished agent to mark unread: ${workspace.workspaceId}`,
+  });
+});
+
 test("workspace clear attention can clear multiple workspaces in one request", async () => {
   const emitted: SessionOutboundMessage[] = [];
   const workspaces = [
@@ -1916,6 +2044,7 @@ test("close_items_request archives agents and kills terminals in one batch", asy
   const cancelAgentRun = vi.fn(async () => ({ status: "settled" as const }));
   const session = asTestSession(
     new Session({
+      agentRequests: createAgentRequestsStub(),
       clientId: "test-client",
       permissions: OWNER_PERMISSIONS,
       onMessage: (message) => emitted.push(message),
@@ -2084,6 +2213,7 @@ test("close_items_request archives stored agents that are not currently loaded",
 
   const session = asTestSession(
     new Session({
+      agentRequests: createAgentRequestsStub(),
       clientId: "test-client",
       permissions: OWNER_PERMISSIONS,
       onMessage: (message) => emitted.push(message),
@@ -2243,6 +2373,7 @@ test("close_items_request continues after an archive failure", async () => {
   const killTerminalBestEffort = vi.fn();
   const session = asTestSession(
     new Session({
+      agentRequests: createAgentRequestsStub(),
       clientId: "test-client",
       permissions: OWNER_PERMISSIONS,
       onMessage: (message) => emitted.push(message),
@@ -3514,6 +3645,7 @@ test("workspace update stream keeps persisted workspace visible after agents sto
 
   const session = asTestSession(
     new Session({
+      agentRequests: createAgentRequestsStub(),
       clientId: "test-client",
       permissions: OWNER_PERMISSIONS,
       onMessage: (message) => emitted.push(message),

@@ -1,4 +1,4 @@
-import type { PluginClientStateSource } from "@getpaseo/plugin/host";
+import type { PluginClientStateSource } from "@getpaseo/plugin/client/host";
 import { useSessionStore } from "@/stores/session-store";
 import { selectWorkspace } from "@/stores/session-store-hooks/selectors";
 import { normalizeWorkspaceOpaqueId } from "@/utils/workspace-identity";

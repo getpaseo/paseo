@@ -8,7 +8,7 @@ import { normalizeAgentSnapshot } from "@/utils/agent-snapshots";
 import { isAgentArchiving, setAgentArchiving } from "@/hooks/use-archive-agent";
 import { queryClient } from "@/data/query-client";
 import { createUserMessage } from "@/types/stream";
-import { applyAgentDirectoryDelta, replaceFetchedAgentDirectory } from "./agent-directory-sync";
+import { AgentStoreProjection } from "@/runtime/directory-sync/internal/agent-store";
 
 function createAgentPayload(
   input: Partial<Omit<AgentSnapshotPayload, "labels">> & {
@@ -79,79 +79,18 @@ function beginPendingSubmission(serverId: string, agentId: string): string {
   return clientMessageId;
 }
 
-function applyAgentStatus(input: {
-  serverId: string;
-  agentId: string;
-  status: AgentSnapshotPayload["status"];
-  updatedAt: string;
-  lastUserMessageAt?: string;
-}): void {
-  const agent = createAgentPayload({
-    id: input.agentId,
-    status: input.status,
-    updatedAt: input.updatedAt,
-    lastUserMessageAt: input.lastUserMessageAt ?? null,
-  });
-  applyAgentDirectoryDelta({
-    serverId: input.serverId,
-    delta: { kind: "upsert", agent, project: createEntry(agent).project },
-  });
-}
-
-describe("turn liveness authority", () => {
-  it("normalizes old-daemon status into the shared activity replica", () => {
-    const serverId = "server-turn-liveness";
-    const agentId = "agent-1";
-    const startedAt = "2026-07-27T10:00:01.000Z";
-    const store = useSessionStore.getState();
-    store.initializeSession(serverId, null as unknown as DaemonClient);
-    applyAgentStatus({ serverId, agentId, status: "idle", updatedAt: startedAt });
-
-    applyAgentStatus({
-      serverId,
-      agentId,
-      status: "running",
-      updatedAt: "2026-07-27T10:00:02.000Z",
-      lastUserMessageAt: startedAt,
-    });
-    expect(store.getSession(serverId)?.agentTurnLiveness.get(agentId)).toEqual({
-      phase: "open",
-      turnId: null,
-      startedAt: new Date(startedAt),
-      cancellationRequestId: null,
-    });
-
-    applyAgentStatus({
-      serverId,
-      agentId,
-      status: "idle",
-      updatedAt: "2026-07-27T10:00:03.000Z",
-    });
-
-    expect(store.getSession(serverId)?.agentTurnLiveness.has(agentId)).toBe(false);
-    store.clearSession(serverId);
-  });
-});
-
 describe("message submission authority", () => {
   it("does not settle a submission from an unrelated running transition", () => {
     const serverId = "server-running-is-not-submission-ack";
     const agentId = "agent-1";
     const store = useSessionStore.getState();
     store.initializeSession(serverId, null as unknown as DaemonClient);
-    applyAgentStatus({
-      serverId,
-      agentId,
-      status: "idle",
-      updatedAt: "2026-07-27T10:00:00.000Z",
-    });
     const clientMessageId = beginPendingSubmission(serverId, agentId);
-
-    applyAgentStatus({
-      serverId,
-      agentId,
-      status: "running",
-      updatedAt: "2026-07-27T10:00:01.000Z",
+    const agent = createAgentPayload({ id: agentId, status: "running" });
+    new AgentStoreProjection(serverId).applyDelta({
+      kind: "upsert",
+      agent,
+      project: createEntry(agent).project,
     });
 
     expect(useSessionStore.getState().sessions[serverId]?.messageSubmissions.get(agentId)).toEqual([
@@ -169,12 +108,6 @@ describe("message submission authority", () => {
     const agentId = "agent-1";
     const store = useSessionStore.getState();
     store.initializeSession(serverId, null as unknown as DaemonClient);
-    applyAgentStatus({
-      serverId,
-      agentId,
-      status: "idle",
-      updatedAt: "2026-07-27T10:00:00.000Z",
-    });
     const clientMessageId = beginPendingSubmission(serverId, agentId);
     store.setAgentStreamState(serverId, agentId, {
       tail: [
@@ -213,10 +146,9 @@ describe("replaceFetchedAgentDirectory", () => {
     store.initializeSession(serverId, null as unknown as DaemonClient);
     store.setInitializingAgents(serverId, new Map([["agent", true]]));
 
-    replaceFetchedAgentDirectory({
-      serverId,
-      entries: [createEntry(createAgentPayload({ id: "agent" }))],
-    });
+    new AgentStoreProjection(serverId).replaceFetched([
+      createEntry(createAgentPayload({ id: "agent" })),
+    ]);
 
     expect(useSessionStore.getState().sessions[serverId]?.initializingAgents.get("agent")).toBe(
       true,
@@ -229,29 +161,24 @@ describe("replaceFetchedAgentDirectory", () => {
     const store = useSessionStore.getState();
     store.initializeSession(serverId, null as unknown as DaemonClient);
 
-    replaceFetchedAgentDirectory({
-      serverId,
-      entries: [
-        createEntry(
-          createAgentPayload({
-            id: "child-1",
-            labels: { [PARENT_AGENT_ID_LABEL]: "parent-a" },
-          }),
-        ),
-      ],
-    });
+    const projection = new AgentStoreProjection(serverId);
+    projection.replaceFetched([
+      createEntry(
+        createAgentPayload({
+          id: "child-1",
+          labels: { [PARENT_AGENT_ID_LABEL]: "parent-a" },
+        }),
+      ),
+    ]);
 
-    replaceFetchedAgentDirectory({
-      serverId,
-      entries: [
-        createEntry(
-          createAgentPayload({
-            id: "child-1",
-            labels: { [PARENT_AGENT_ID_LABEL]: "parent-b" },
-          }),
-        ),
-      ],
-    });
+    projection.replaceFetched([
+      createEntry(
+        createAgentPayload({
+          id: "child-1",
+          labels: { [PARENT_AGENT_ID_LABEL]: "parent-b" },
+        }),
+      ),
+    ]);
 
     expect(
       useSessionStore.getState().sessions[serverId]?.agents.get("child-1")?.parentAgentId,
@@ -286,7 +213,7 @@ describe("replaceFetchedAgentDirectory", () => {
     store.setInitializingAgents(serverId, new Map([[agentId, true]]));
     setAgentArchiving({ queryClient, serverId, agentId, isArchiving: true });
 
-    applyAgentDirectoryDelta({ serverId, delta: { kind: "remove", agentId } });
+    new AgentStoreProjection(serverId).applyDelta({ kind: "remove", agentId });
 
     const session = useSessionStore.getState().sessions[serverId];
     expect({
@@ -346,28 +273,27 @@ describe("replaceFetchedAgentDirectory", () => {
       lastUsage: { inputTokens: 10, outputTokens: 5 },
       pendingPermissions: [permission("current-permission")],
     });
-    applyAgentDirectoryDelta({
-      serverId,
-      delta: { kind: "upsert", agent: current, project: createEntry(current).project },
+    const projection = new AgentStoreProjection(serverId);
+    projection.applyDelta({
+      kind: "upsert",
+      agent: current,
+      project: createEntry(current).project,
     });
     store.flushAgentLastActivity();
     setAgentArchiving({ queryClient, serverId, agentId, isArchiving: true });
 
-    const staleResult = applyAgentDirectoryDelta({
-      serverId,
-      delta: {
-        kind: "upsert",
-        agent: {
-          ...current,
-          title: "stale",
-          status: "idle",
-          updatedAt: "2026-07-12T10:00:00.000Z",
-          lastUsage: { inputTokens: 20, outputTokens: 8 },
-          pendingPermissions: [permission("stale-permission")],
-          archivedAt: "2026-07-12T10:00:00.000Z",
-        },
-        project: createEntry(current).project,
+    const staleResult = projection.applyDelta({
+      kind: "upsert",
+      agent: {
+        ...current,
+        title: "stale",
+        status: "idle",
+        updatedAt: "2026-07-12T10:00:00.000Z",
+        lastUsage: { inputTokens: 20, outputTokens: 8 },
+        pendingPermissions: [permission("stale-permission")],
+        archivedAt: "2026-07-12T10:00:00.000Z",
       },
+      project: createEntry(current).project,
     });
     store.flushAgentLastActivity();
 

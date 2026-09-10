@@ -7,7 +7,6 @@ import {
 } from "../../utils/timeline.js";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import type { AgentTimelineItem } from "@getpaseo/protocol/agent-types";
-import type { AgentStreamMessage } from "@getpaseo/protocol/messages";
 import { curateAgentActivity } from "@getpaseo/server";
 
 export function addLogsOptions(cmd: Command): Command {
@@ -202,12 +201,12 @@ async function runFollowMode(
   // Subscribe to new events
   const tailLabel =
     tailCount === 0 ? "no history" : `last ${tailCount} entr${tailCount === 1 ? "y" : "ies"}`;
-  console.log(`\n--- Following logs (${tailLabel}; Ctrl+C to stop) ---\n`);
 
-  const unsubscribe = client.on("agent_stream", (msg: unknown) => {
-    const message = msg as AgentStreamMessage;
-    if (message.type !== "agent_stream") return;
-    if (message.payload.agentId !== agentId) return;
+  const unsubscribe = client.subscribeAgentTimeline(agentId, (message) => {
+    if (message.type === "agent.timeline.replacement") {
+      console.log("\n[Timeline replaced; earlier output is no longer current]");
+      return;
+    }
 
     if (message.payload.event.type === "timeline") {
       const item = message.payload.event.item;
@@ -222,6 +221,9 @@ async function runFollowMode(
       }
     }
   });
+
+  await unsubscribe.ready;
+  console.log(`\n--- Following logs (${tailLabel}; Ctrl+C to stop) ---\n`);
 
   // Wait for interrupt
   await new Promise<void>((resolve) => {

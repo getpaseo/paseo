@@ -4,6 +4,7 @@
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
     "lib": ["ES2023", "DOM"],
+    "types": ["node"],
     "jsx": "react-jsx",
     "strict": true,
     "skipLibCheck": true,

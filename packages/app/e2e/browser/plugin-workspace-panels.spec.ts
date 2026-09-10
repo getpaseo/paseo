@@ -1,3 +1,4 @@
+import { pluginRequirements } from "../support/helpers/plugin-fixture";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -29,7 +30,8 @@ function isSettledWorkspaceUrl(url: URL): boolean {
 function pluginClientSource(input: { workspaceId: string; agentId: string }): string {
   return `import React, { useRef } from "react";
 import { Pressable, Text, View } from "react-native";
-import { Icon, useAgent, useWorkspace } from "@getpaseo/plugin";
+import { Icon } from "@getpaseo/plugin/client/react-native";
+import { useAgent, useWorkspace } from "@getpaseo/plugin/client";
 import { recordComposerOpen } from "./shared/rpc";
 
 function WorkspacePanel({ workspaceId, host, layout }) {
@@ -59,12 +61,6 @@ function SidebarCollisionSurface() {
   return <View><Text>Sidebar collision surface</Text></View>;
 }
 
-function ComposerPill({ theme, workspaceId, agentId }) {
-  const workspace = useWorkspace(workspaceId, (value) => ({ title: value.title }));
-  const agent = useAgent(agentId, (value) => ({ title: value.title }));
-  return <><Icon name="Scan" size={14} color={theme.colors.foregroundMuted} /><Text numberOfLines={1} style={{ color: theme.colors.foregroundMuted, flexShrink: 1 }}>Review {workspace?.title}:{agent?.title}</Text></>;
-}
-
 function contributeClient(client) {
   const pills = new Map();
   const remove = (agentId) => {
@@ -79,23 +75,25 @@ function contributeClient(client) {
     const agent = update.agent;
     if (agent.title !== "Plugin panel context agent" || !agent.workspaceId) return;
     remove(agent.id);
-    let removePill = () => {};
-    removePill = client.addComposerPill({
+    const pill = client.addComposerPill({
       id: "review",
-      title: "Open composer review",
       workspaceId: agent.workspaceId,
       agentId: agent.id,
-      Component: ComposerPill,
-      async onPress() {
+      button: {
+        title: "Open composer review",
+        icon: "Scan",
+        label: "Review",
+        behavior: { kind: "action", async onPress() {
         await client.rpc(recordComposerOpen, { workspaceId: agent.workspaceId });
-        removePill();
+        pill.remove();
         client.openPanel("agent", {
           workspaceId: agent.workspaceId,
           agentId: agent.id,
         });
+        } },
       },
     });
-    pills.set(agent.id, removePill);
+    pills.set(agent.id, () => pill.remove());
   });
   return () => {
     unsubscribe();
@@ -199,7 +197,10 @@ test.describe("plugin workspace panels and Command Center", () => {
       repoPrefix: "plugin-panel-secondary-",
       port: secondaryDaemon.port,
     });
-    await writeFile(path.join(directory, "paseo-plugin.json"), JSON.stringify({ id: PLUGIN_ID }));
+    await writeFile(
+      path.join(directory, "paseo-plugin.json"),
+      JSON.stringify({ id: PLUGIN_ID, requirements: pluginRequirements }),
+    );
     await writePluginSources(directory, {
       workspaceId: primary.workspaceId,
       agentId: "missing-agent",
@@ -328,9 +329,7 @@ test.describe("plugin workspace panels and Command Center", () => {
           timeout: 30_000,
         });
         const composerPill = page.getByRole("button", { name: "Open composer review" });
-        await expect(composerPill).toContainText(
-          "Review Unrelated title update:Plugin panel context agent",
-        );
+        await expect(composerPill).toContainText("Review");
         await capture(page, testInfo, "plugin-composer-pill-wide");
         await page.setViewportSize(COMPACT_VIEWPORT);
         await expect(page.getByRole("button", { name: "Open composer review" })).toBeVisible();

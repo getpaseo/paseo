@@ -2,6 +2,21 @@ import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const ko: TranslationResources = {
+  paneFind: {
+    title: "찾기",
+    placeholder: "패널에서 찾기",
+    close: "찾기 닫기",
+    matches: "검색 결과",
+    previous: "이전 일치 항목",
+    next: "다음 일치 항목",
+    toggleReplace: "바꾸기 표시 전환",
+    replaceWith: "바꿀 내용",
+    replace: "바꾸기",
+    replaceAll: "모두 바꾸기",
+    noMatches: "일치 항목 없음",
+    position: "{{current}} / {{total}}",
+    total: "일치 항목 {{total}}개",
+  },
   common: {
     back: "뒤로",
     loading: "불러오는 중...",
@@ -908,11 +923,8 @@ export const ko: TranslationResources = {
         refresh: "새로고침",
         refreshState: "Git 및 {{brand}} 상태 새로고침",
         failedRefresh: "Git 상태를 새로고침하지 못했습니다.",
-        emptyHiddenWhitespace: "공백을 숨긴 후 표시할 변경 사항이 없습니다",
-        emptyUncommitted: "커밋되지 않은 변경 사항이 없습니다",
         seeUncommittedChanges: "커밋되지 않은 변경 사항 보기",
         seeCommittedChanges: "커밋된 변경 사항 보기",
-        emptyAgainstBase: "{{baseRef}} 대비 변경 사항이 없습니다",
         checkingRepository: "저장소 확인 중...",
         notRepository: "Git 저장소가 아닙니다",
         diffMode: "Diff 모드",
@@ -1050,6 +1062,16 @@ export const ko: TranslationResources = {
       deleteMessage_other: "이 호스트의 워크스페이스 {{count}}개에서 레이블을 제거합니다.",
       offline: "이 호스트는 오프라인입니다.",
       updateHost: "레이블을 관리하려면 호스트를 업데이트하세요.",
+    },
+  },
+  changelog: {
+    title: "새로운 소식",
+    installed: "설치됨",
+    showMore: "더 보기",
+    openWebsite: "전체 변경 내역",
+    error: {
+      title: "변경 내역을 불러오지 못했습니다",
+      description: "연결을 확인한 후 다시 시도하세요.",
     },
   },
   sidebar: {
@@ -2081,6 +2103,7 @@ export const ko: TranslationResources = {
     about: {
       title: "정보",
       appVersion: "앱 버전",
+      whatsNewHint: "모든 버전의 릴리스 노트",
       thisDevice: "이 기기",
       connectedHosts: "연결된 호스트",
       offline: "오프라인",

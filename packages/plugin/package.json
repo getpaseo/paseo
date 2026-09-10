@@ -1,6 +1,6 @@
 {
   "name": "@getpaseo/plugin",
-  "version": "0.7.2",
+  "version": "0.8.0-beta.1",
   "description": "Paseo plugin SDK package",
   "files": [
     "dist",
@@ -14,19 +14,39 @@
       "default": "./dist/index.js"
     },
     "./server": {
-      "types": "./dist/server.d.ts",
-      "source": "./src/server.ts",
-      "default": "./dist/server.js"
+      "types": "./dist/server/index.d.ts",
+      "source": "./src/server/index.ts",
+      "default": "./dist/server/index.js"
     },
-    "./react-native": {
-      "types": "./dist/react-native.d.ts",
-      "source": "./src/react-native.ts",
-      "default": "./dist/react-native.js"
+    "./server/provider": {
+      "types": "./dist/server/provider.d.ts",
+      "source": "./src/server/provider.ts",
+      "default": "./dist/server/provider.js"
     },
-    "./host": {
-      "types": "./dist/host.d.ts",
-      "source": "./src/host.ts",
-      "default": "./dist/host.js"
+    "./server/acp": {
+      "types": "./dist/server/acp.d.ts",
+      "source": "./src/server/acp.ts",
+      "default": "./dist/server/acp.js"
+    },
+    "./client/react-native": {
+      "types": "./dist/client/react-native.d.ts",
+      "source": "./src/client/react-native.ts",
+      "default": "./dist/client/react-native.js"
+    },
+    "./client/host": {
+      "types": "./dist/client/host.d.ts",
+      "source": "./src/client/host.ts",
+      "default": "./dist/client/host.js"
+    },
+    "./client/ui": {
+      "types": "./dist/client/ui.d.ts",
+      "source": "./src/client/ui.ts",
+      "default": "./dist/client/ui.js"
+    },
+    "./client": {
+      "types": "./dist/client/index.d.ts",
+      "source": "./src/client/index.ts",
+      "default": "./dist/client/index.js"
     }
   },
   "publishConfig": {
@@ -41,22 +61,30 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@agentclientprotocol/sdk": "^1.4.0",
     "use-sync-external-store": "^1.6.0"
   },
   "devDependencies": {
-    "@getpaseo/client": "0.7.2",
-    "@getpaseo/protocol": "0.7.2",
+    "@getpaseo/client": "0.8.0-beta.1",
+    "@getpaseo/protocol": "0.8.0-beta.1",
     "@types/node": "^20.9.0",
     "@types/react": "~19.2.0",
     "react": "19.1.0",
+    "react-native": "0.81.5",
     "typescript": "^5.9.3",
     "vitest": "^4.1.6",
     "zod": "^4.4.3"
   },
   "peerDependencies": {
-    "@getpaseo/client": "0.7.2",
-    "@getpaseo/protocol": "0.7.2",
-    "react": "19.1.0",
+    "@getpaseo/client": "0.8.0-beta.1",
+    "@getpaseo/protocol": "0.8.0-beta.1",
+    "react": "~19.1.0",
+    "react-native": ">=0.81.5",
     "zod": "^4.4.3"
+  },
+  "peerDependenciesMeta": {
+    "react-native": {
+      "optional": true
+    }
   }
 }

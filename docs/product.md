@@ -1,81 +1,102 @@
 # Product
 
-What Paseo is, who it's for, and where it's going.
+Paseo is an environment for running, monitoring, and interacting with coding agents across desktop, mobile, web, and the command line.
 
-## What is Paseo
+**Paseo has a lean, opinionated core built to be extended.** It should be easy to start using and leave room for people to build far beyond the default experience.
 
-Paseo is a next-generation development environment built around agents. One interface to run, monitor, and interact with coding agents across desktop, mobile, terminal, and web.
+## Agents are the focus
 
-The development workflow is shifting from manually editing files to orchestrating agents that do the editing. Paseo is built for that workflow.
+The central workflow is giving an agent a task, understanding what it is doing, providing direction, and reviewing the result. Files, terminals, diffs, and other supporting tools help you do that.
 
-## Core philosophy
+Paseo should make this workflow coherent across providers and devices. You should be able to use the agent that fits a task and keep working from another device without rebuilding your environment around it.
 
-Freedom and flexibility. Every design decision follows from this:
+This is the basis for product decisions. A familiar feature from another development tool earns its place by improving that experience. Familiarity alone does not make it a requirement for Paseo.
 
-- **Multi-provider** — Use any coding agent harness. Pick the right model for each job, switch freely as the landscape shifts. No vendor lock-in.
-- **Cross-device** — Desktop, mobile, web, CLI. Start work at your desk, check progress from your phone, script from the terminal.
-- **Self-hosted** — The daemon runs on your machine. Your code, your keys, your environment. No inference markup, no cloud dependency.
-- **Respectful** - No telemetry, no forced cloud, no forced accounts
-- **Open source** — Apache-2.0. Users can inspect, fork, and contribute.
-- **BYOK** — Bring your own keys. Use your subsidized plans and first-party provider pricing. Paseo adds zero cost on top.
+## A low floor and a high ceiling
 
-## How it works
+### Easy to start
 
-### Projects and workspaces
+The default experience should be lean, polished, and understandable to someone who has never run a server or configured a VPN.
 
-Projects are grouped in the sidebar, detected automatically from your filesystem and tagged by git remote when available.
+With a supported coding agent installed and authenticated, you can open the desktop app and start working. The app manages its local daemon. To connect your phone through the optional Paseo relay, enable pairing and scan a QR code. You do not need to configure a VPN or understand the networking behind it.
 
-Each project opens as a workspace. For git projects, the default workspace is the main checkout. Users can create additional workspaces, which are isolated copies (git worktrees) where agents work without affecting main.
+You should not need to know that plugins exist to get a useful, complete experience. Extra capability should become discoverable when it helps with something you want to do.
 
-### Inside a workspace
+Keeping this starting point approachable is an ongoing responsibility. A technically correct feature can still make the product harder to understand through extra choices, controls, or setup.
 
-A workspace is a flexible canvas:
+### Room to build your own setup
 
-- Launch multiple agents side by side in split panes
-- Open terminals alongside agents
-- Mix and match providers within the same workspace
+The same product should also work for someone running agents on a home server, using their own network, or building an automated workflow.
 
-### The daemon
+The daemon can run independently of the desktop app. Clients connect to it locally or remotely, and multiple clients can use the same daemon. This separation lets you choose where the work runs and how you interact with it.
 
-Paseo is a client-server system. The daemon (Node.js) runs on your machine, manages agent processes, and streams output in real time over WebSocket. Clients connect to the daemon — locally or remotely.
+For example, someone can use the relay to connect their phone with minimal setup. Someone else can run a daemon on their own infrastructure and connect through SSH or a VPN. Both use the same underlying system.
 
-This architecture means:
+Paseo should provide useful defaults while keeping these choices available. You should not have to adopt every part of the system to benefit from the parts you want.
 
-- The daemon can run on any machine: laptop, VM, remote server
-- Multiple clients can connect simultaneously
-- Agents keep running when a client disconnects — the daemon owns them, not the client
-- Quitting the desktop app stops the daemon it started, so "restart the app" is a real fix; a daemon you run yourself is unaffected
+See the [connectivity guide](https://paseo.sh/docs/connectivity) for supported connection methods and [architecture](architecture.md) for the system design.
 
-## Target user
+## Freedom, ownership, and privacy
 
-Anyone who builds software:
+Paseo's flexibility depends on keeping control with the user:
 
-- Care about owning their tools and their data
-- Use multiple AI providers and want to switch freely
-- Run agents on real tasks across real projects
-- Want to work from multiple devices
+- **Self-hosted:** Run agents on your own machines, with your own environment, files, and credentials.
+- **Provider choice:** Use supported agent harnesses and extend provider support through plugins. Your workflow should be able to evolve as your choice of provider changes.
+- **Cross-device:** Use desktop, mobile, web, and CLI clients according to the situation.
+- **Privacy:** No Paseo telemetry, tracking, or forced account. The relay is optional and end-to-end encrypted.
+- **Open source:** Paseo is Apache-2.0 licensed. You can inspect it, modify it, and build on it.
 
-## What compounds over time
+Convenience and ownership should work together. Offering a straightforward way to connect should preserve the option to operate your own setup.
 
-- **Trust** — Showing up daily, shipping in public, being open source. Earned slowly, lost quickly.
-- **Community contributions** — Code, packaging, skills, agent configs. Contributors become advocates.
-- **Ecosystem** — Skills, integrations, shared configs. Community-built content that makes the platform more valuable.
+## A lean core that keeps improving
 
-## Strategic bets
+The core provides the shared experience: starting work, interacting with agents, understanding their state, and moving between workspaces and devices.
 
-1. **Models commoditize.** Value moves to the orchestration layer. The best model changes monthly — the workflow layer stays.
-2. **Multi-provider wins.** No single provider stays on top. Developers want the best model for each task.
-3. **The daemon as infrastructure.** Server/client architecture enables deployment anywhere.
-4. **Open source outlasts funding.** Open source communities are resilient. Contributors become advocates.
+Core development continues through improvements to reliability, performance, interaction design, and workflows with broad value. A lean core takes ongoing work.
 
-## Current state (May 2026)
+Every addition also has a lasting cost. It needs a place in the interface, an understandable relationship with existing behavior, testing across affected platforms, and maintenance as the rest of the product changes. A feature can work exactly as intended and still be the wrong addition.
 
-- Desktop (Electron), mobile (iOS/Android), web, CLI
-- Built-in providers: Claude Code (Agent SDK), Codex (app-server), GitHub Copilot (ACP), OpenCode, Pi, OMP
-- One-click ACP provider catalog: CodeWhale, Cursor, Hermes, Qwen Coder, Kimi Code, and others — plus custom ACP providers
-- Voice mode: dictate prompts or talk through problems hands-free
-- MCP server exposes the daemon to other agents (workspaces, create/detach agent, schedules, heartbeats, terminals, workspace renaming)
-- Scheduled agents (cron-style triggers) via app, CLI, and MCP
-- Frequent releases (multiple per week)
-- Community contributions across packaging, providers, and bug fixes
-- Key UX: split panes, keybinding customization, workspace model, in-app browser
+The preference is for a small number of well-shaped capabilities that work together. Before adding a specialized workflow, consider whether an existing capability can serve it or whether a reusable extension point would let people build it themselves.
+
+The boundary can evolve. Some built-in capabilities may eventually make more sense as plugins. Any such move needs to preserve a coherent default experience and account for people who already depend on it.
+
+## Extensibility and composition
+
+Plugins are a central part of how Paseo gains capability.
+
+Someone who needs a different agent provider, a specialized workspace panel, or a custom command should be able to build and share it independently. They can make the choices that fit their users and maintain the integration on their own schedule.
+
+Paseo's role is to provide interfaces that make those contributions possible across the daemon and connected clients. The [plugin documentation](https://paseo.sh/docs/plugins) describes what each released API supports.
+
+The [SDK](https://paseo.sh/docs/sdk) lets applications and services use the daemon directly. A separate dashboard, automation service, or client can build on the same agent infrastructure. Those projects do not all need to become features of the main app.
+
+Composition means useful pieces can be combined in ways the maintainer did not have to predict. Keeping the daemon independent, offering multiple connection methods, and exposing agent operations through APIs gives people room to choose those combinations.
+
+The extension interfaces need the same care as the core experience. They should be understandable, reusable, and maintainable. New extension points should follow concrete workflows that need them.
+
+## How Paseo develops
+
+Product, design, architecture, and workflow decisions remain with the maintainer.
+
+Those decisions draw on the history of the product: why a workflow has its current shape, what previous approaches taught us, how it interacts with the rest of the system, and where it is intended to go. Documentation shares that context, but familiarity also develops through sustained use and maintenance.
+
+Development starts with the smallest useful change that can make a substantial difference. After shipping it, leave room to learn:
+
+- Can people discover and understand it?
+- Does it work well in their actual workflows?
+- What friction or missing capability appears with repeated use?
+- Does the next addition improve the shared experience or belong in a plugin?
+
+That feedback guides the next step. Expanding a workflow too far before people use it creates commitments that are difficult to reverse. Users build habits and integrations around what ships, so removing features or changing interfaces has a real cost.
+
+Writing an implementation is one part of this process. Product judgment, design, QA, review, and learning from use determine how quickly a change can responsibly become part of Paseo.
+
+## An ecosystem people can build on
+
+People contribute through reproducible bug reports, testing, workflow discussions, documentation, plugins, integrations, and helping each other.
+
+A plugin can solve a problem for its users without adding that workflow to everyone's default experience. An alternative client can explore a different interface while using the same daemon. These projects let people take ownership of the experience they want.
+
+The aim is an ecosystem that can develop independently of the maintainer's ability to review core changes. Its value comes from useful things people build, maintain, and share.
+
+Paseo is an independent project. Sustainable development, a coherent product, and the freedom to keep building are priorities. See [Contributing](../CONTRIBUTING.md) for how to participate.

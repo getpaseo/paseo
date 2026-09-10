@@ -2,19 +2,22 @@
 title: MCP reference
 description: Reference for the Paseo tools agents use to manage agents, workspaces, scripts, terminals, and schedules.
 nav: MCP reference
-order: 33
+order: 34
 category: Orchestration
 ---
 
 # MCP reference
 
-This is the complete catalog behind the workflows in [Orchestration](/docs/orchestration) and [Common workflows](/docs/orchestration-workflows). You normally ask for an outcome in natural language and let the agent choose the tools.
+[Enable Paseo tools](/docs/orchestration#get-started) to give agents this catalog. Ask for an outcome in natural language, or use the tool interfaces below.
 
-Paseo can inject these tools into every new agent it launches. Open **Settings → your host → Agents** and turn on **Enable Paseo tools**, or set `daemon.mcp.injectIntoAgents` to `true`.
+## Configuration
 
-Depending on the provider, Paseo delivers the catalog through its native tool interface or MCP. The capabilities are the same either way.
+| Setting                       | Default | Purpose                                            |
+| ----------------------------- | ------- | -------------------------------------------------- |
+| `daemon.mcp.enabled`          | `true`  | Run the MCP server.                                |
+| `daemon.mcp.injectIntoAgents` | `false` | Give agents launched by Paseo access to its tools. |
 
-The MCP server itself is controlled by `daemon.mcp.enabled`. Existing agents may need a reload.
+Depending on the provider, Paseo delivers tools through its native tool interface or MCP. The capabilities are the same. Start a new agent or reload an existing one after changing injection settings.
 
 ## Limit Paseo tools by provider
 
@@ -87,7 +90,7 @@ MCP does not expose an agent-detach tool. Detaching is a manual user action in t
 | Tool                 | Function                                                                                |
 | -------------------- | --------------------------------------------------------------------------------------- |
 | `create_agent`       | Create an agent, optionally placing it in an existing workspace with `workspaceId`.     |
-| `send_agent_prompt`  | Send a task to a running agent.                                                         |
+| `send_agent_prompt`  | Send a prompt to an existing agent using its `agentId` and a `prompt`.                  |
 | `get_agent_status`   | Return the latest snapshot for an agent.                                                |
 | `list_agents`        | List recent agents as compact metadata.                                                 |
 | `cancel_agent`       | Abort an agent's current run but keep the agent alive.                                  |
@@ -149,6 +152,26 @@ Both use the same cron engine, but they have deliberately different interfaces.
 | `delete_heartbeat`  | Delete one of the current agent's heartbeats.                                |
 
 MCP heartbeats are ephemeral: create or delete them. To change one, delete it and create a replacement. Pause, resume, update, inspect, logs, and run-once apply to new-agent schedules only.
+
+### Agent profiles
+
+| Tool            | Function                                                                                                                           |
+| --------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `list_profiles` | Return the host's saved agent profiles, including their notes and launch settings. Returns an empty list when none are configured. |
+
+Before delegating, read each profile's `notes` and choose the profile the user named or the one that fits the task. See [Agent profiles](/docs/agent-profiles) for setup and example notes.
+
+`create_agent` has no profile parameter and requires a `provider/model` pair. If the profile has no model, call `list_models` for its provider and choose an available model for the task before launching. Apply the chosen profile's values to the launch request:
+
+| Profile field                   | `create_agent` field                                                        |
+| ------------------------------- | --------------------------------------------------------------------------- |
+| `provider` and optional `model` | `provider` as `provider/model`, using the saved or discovered model ID      |
+| `modeId`                        | `settings.modeId`                                                           |
+| `thinkingOptionId`              | `settings.thinkingOptionId`                                                 |
+| `featureValues`                 | `settings.features`                                                         |
+| `notes`                         | Selection guidance for the orchestrator; supply the task in `initialPrompt` |
+
+Omit absent optional settings. If no profile fits, use provider discovery to choose available settings.
 
 ### Providers
 

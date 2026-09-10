@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 
 describe("plugin runtime-entry migration guide", () => {
   it("maps every client registration method", async () => {
-    const contracts = await readFile(new URL("./contracts.ts", import.meta.url), "utf8");
+    const contracts = await readFile(new URL("./client/contracts.ts", import.meta.url), "utf8");
     const context = /export interface PluginClientContext[^{]*{([\s\S]*?)\n}/.exec(contracts)?.[1];
     if (!context) throw new Error("PluginClientContext was not found");
     const methods = [...context.matchAll(/^\s+(add[A-Z]\w*)\(/gm)].map((match) => match[1]);

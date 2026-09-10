@@ -6,6 +6,23 @@ const globalWithTestShims = globalThis as typeof globalThis & Record<string, unk
 
 globalWithTestShims.__DEV__ = false;
 
+// JSDOM has no CSS media-query engine. Give native-web libraries the browser API
+// with no active preferences; responsive behavior is exercised in Chromium.
+if (typeof window !== "undefined" && typeof window.matchMedia !== "function") {
+  window.matchMedia = (media: string) =>
+    Object.assign(new window.EventTarget(), {
+      media,
+      matches: false,
+      onchange: null,
+      addListener(listener: EventListener) {
+        this.addEventListener("change", listener);
+      },
+      removeListener(listener: EventListener) {
+        this.removeEventListener("change", listener);
+      },
+    });
+}
+
 if (typeof globalThis.self === "undefined") {
   globalWithTestShims.self = globalThis;
 }

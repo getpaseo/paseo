@@ -5,12 +5,11 @@ import {
   type SkFont,
   type SkParagraph,
 } from "@shopify/react-native-skia";
-import { fragmentTextForRange } from "./model";
+import { fragmentTextForRange, visibleRowRange } from "./model";
 import { codeTextColor } from "./palette";
 import {
   createCachedAsciiTextMetrics,
   createChunkedAdvanceMeasurer,
-  createFallbackAwareTextMeasurer,
   requiresShaping,
   type CachedAsciiTextMetrics,
 } from "./text-measurement";
@@ -86,7 +85,8 @@ export function shapeNativeHeaderText(input: {
 export interface NativeTextLayoutStore {
   font: SkFont;
   asciiMetrics: CachedAsciiTextMetrics;
-  paragraphsByCell: WeakMap<DiffCell, Array<SkParagraph | null>>;
+  paragraphsByCell: Map<DiffCell, Array<SkParagraph | null>>;
+  textStyles: Map<string, ReturnType<typeof textStyle>>;
   ownedParagraphs: Set<SkParagraph>;
   families: string[];
   fontSize: number;
@@ -97,6 +97,8 @@ export interface NativeTextLayoutStore {
 export function disposeNativeTextLayout(layout: NativeTextLayoutStore): void {
   for (const paragraph of layout.ownedParagraphs) paragraph.dispose();
   layout.ownedParagraphs.clear();
+  layout.paragraphsByCell.clear();
+  layout.textStyles.clear();
   layout.font.dispose();
 }
 
@@ -114,7 +116,8 @@ export function createNativeTextLayoutStore(input: {
       glyphIds: (text) => font.getGlyphIDs(text),
       measure: (text) => font.getTextWidth(text),
     }),
-    paragraphsByCell: new WeakMap(),
+    paragraphsByCell: new Map(),
+    textStyles: new Map(),
     ownedParagraphs: new Set(),
     families,
     fontSize: input.fontSize,
@@ -126,30 +129,64 @@ export function createNativeTextLayoutStore(input: {
 export function prepareNativeTextLayout(
   store: NativeTextLayoutStore,
   model: DiffDocumentModel,
+  window?: { top: number; height: number },
 ): NativeTextLayout {
-  const paragraphs = model.rows.map((row) => {
-    if (row.kind !== "line") return [];
-    return row.cells.map((cell) => {
+  const range = window
+    ? visibleRowRange(model.rows, window.top, window.height)
+    : { start: 0, end: model.rows.length };
+  const retainedCells = new Set<DiffCell>();
+  const retainedParagraphs = new Set<SkParagraph>();
+  const paragraphs: NativeTextLayout["paragraphs"] = [];
+  paragraphs.length = model.rows.length;
+  for (let index = range.start; index < range.end; index++) {
+    const row = model.rows[index]!;
+    if (row.kind !== "line") continue;
+    paragraphs[index] = row.cells.map((cell) => {
       if (!cell) return [];
+      retainedCells.add(cell);
       const cached = store.paragraphsByCell.get(cell);
-      if (cached) return cached;
-      const cellParagraphs = cell.fragments.map((fragment) => {
-        if (!requiresRetainedParagraph(fragment.text, store.asciiMetrics)) return null;
-        const paragraph = createFragmentParagraph({
-          cell,
-          fragment,
-          families: store.families,
-          fontSize: store.fontSize,
-          lineHeight: store.lineHeight,
-          palette: store.palette,
-        });
+      const start = window ? Math.max(0, Math.floor((window.top - row.top) / model.lineHeight)) : 0;
+      const end = window
+        ? Math.min(
+            cell.fragments.length,
+            Math.ceil((window.top + window.height - row.top) / model.lineHeight),
+          )
+        : cell.fragments.length;
+      const cellParagraphs: Array<SkParagraph | null> = [];
+      cellParagraphs.length = cell.fragments.length;
+      for (let fragmentIndex = start; fragmentIndex < end; fragmentIndex++) {
+        const fragment = cell.fragments[fragmentIndex]!;
+        if (!requiresRetainedParagraph(fragment.text, store.asciiMetrics)) {
+          cellParagraphs[fragmentIndex] = null;
+          continue;
+        }
+        const paragraph =
+          cached?.[fragmentIndex] ??
+          createFragmentParagraph({
+            cell,
+            fragment,
+            families: store.families,
+            fontSize: store.fontSize,
+            lineHeight: store.lineHeight,
+            palette: store.palette,
+            textStyles: store.textStyles,
+          });
         store.ownedParagraphs.add(paragraph);
-        return paragraph;
-      });
+        retainedParagraphs.add(paragraph);
+        cellParagraphs[fragmentIndex] = paragraph;
+      }
       store.paragraphsByCell.set(cell, cellParagraphs);
       return cellParagraphs;
     });
-  });
+  }
+  for (const paragraph of store.ownedParagraphs) {
+    if (retainedParagraphs.has(paragraph)) continue;
+    paragraph.dispose();
+    store.ownedParagraphs.delete(paragraph);
+  }
+  for (const cell of store.paragraphsByCell.keys()) {
+    if (!retainedCells.has(cell)) store.paragraphsByCell.delete(cell);
+  }
   return { font: store.font, paragraphs };
 }
 
@@ -164,23 +201,25 @@ export function createNativeTextMeasurer(input: {
     measure: (text: string) => font.getTextWidth(text),
   };
   const asciiMetrics = createCachedAsciiTextMetrics(primary);
-  const fallbackAware = createFallbackAwareTextMeasurer({
-    primary,
-    measureWithSystemFallback(text) {
-      const paragraph = createParagraph({
-        text,
-        families,
-        fontSize: input.fontSize,
-        lineHeight: Math.round(input.fontSize * 1.5),
-        color: Skia.Color("black"),
-      });
-      const width = paragraph.getLongestLine();
-      paragraph.dispose();
-      return width;
-    },
-  });
+  const black = Skia.Color("black");
+  const measureParagraph = (text: string) => {
+    const paragraph = createParagraph({
+      text,
+      families,
+      fontSize: input.fontSize,
+      lineHeight: Math.round(input.fontSize * 1.5),
+      color: black,
+    });
+    const width = paragraph.getLongestLine();
+    paragraph.dispose();
+    return width;
+  };
   return {
-    ...fallbackAware,
+    measure(text) {
+      return requiresRetainedParagraph(text, asciiMetrics)
+        ? measureParagraph(text)
+        : asciiMetrics.measure(text);
+    },
     measureAdvances: createChunkedAdvanceMeasurer({
       requiresShaping: (text) => requiresRetainedParagraph(text, asciiMetrics),
       measureAdditive: (graphemes) => asciiMetrics.measureAdvances(graphemes),
@@ -190,7 +229,7 @@ export function createNativeTextMeasurer(input: {
           families,
           fontSize: input.fontSize,
           lineHeight: Math.round(input.fontSize * 1.5),
-          color: Skia.Color("black"),
+          color: black,
         });
         let end = 0;
         const advances = graphemes.map((grapheme) => {
@@ -219,23 +258,21 @@ function createFragmentParagraph(input: {
   fontSize: number;
   lineHeight: number;
   palette: DiffPalette;
+  textStyles: NativeTextLayoutStore["textStyles"];
 }): SkParagraph {
   const builder = Skia.ParagraphBuilder.Make(
     paragraphStyle(input.families, input.fontSize, input.lineHeight),
   );
   if (input.cell.tokens.length === 0 || input.cell.type === "header") {
     const color = codeTextColor(input.cell, input.palette);
-    builder
-      .pushStyle(textStyle(input.families, input.fontSize, color))
-      .addText(input.fragment.text)
-      .pop();
+    builder.pushStyle(retainedTextStyle(input, color)).addText(input.fragment.text).pop();
   } else {
     for (const run of input.cell.tokens) {
       const start = Math.max(input.fragment.start, run.start);
       const end = Math.min(input.fragment.end, run.end);
       if (end <= start) continue;
       builder
-        .pushStyle(textStyle(input.families, input.fontSize, run.color))
+        .pushStyle(retainedTextStyle(input, run.color))
         .addText(fragmentTextForRange(input.fragment, start, end))
         .pop();
     }
@@ -279,6 +316,18 @@ function paragraphStyle(families: string[], fontSize: number, lineHeight: number
       halfLeading: true,
     },
   };
+}
+
+function retainedTextStyle(
+  input: { families: string[]; fontSize: number; textStyles: NativeTextLayoutStore["textStyles"] },
+  color: string,
+) {
+  let style = input.textStyles.get(color);
+  if (!style) {
+    style = textStyle(input.families, input.fontSize, color);
+    input.textStyles.set(color, style);
+  }
+  return style;
 }
 
 function textStyle(families: string[], fontSize: number, color: string) {

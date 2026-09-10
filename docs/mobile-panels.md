@@ -33,7 +33,9 @@ The UI worklet owns transient motion:
 React publishes the active panel only when the canonical target and the UI-thread position agree at
 the final anchor. Retained content never observes gesture previews, progress, or an unsettled target.
 The gesture hosts stay mounted; worklets reveal their retained overlays through native styles while
-React owns pointer events and accessibility.
+React owns pointer events and accessibility. Native panel hosts and their dependent draggable lists
+also retain identity across appearance hydration and settings changes. Do not wrap those hosts in
+appearance keys; see [Unistyles appearance boundaries](unistyles.md#runtime-theme-patching-for-user-preferences).
 
 ## Why one position
 

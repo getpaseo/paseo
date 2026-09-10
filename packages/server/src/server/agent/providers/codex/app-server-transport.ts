@@ -257,7 +257,6 @@ export class CodexAppServerClient {
   }
 
   async dispose(): Promise<void> {
-    if (this.disposed) return;
     this.disposed = true;
     this.unexpectedTerminationHandler = null;
     this.rl.close();
@@ -278,10 +277,7 @@ export class CodexAppServerClient {
       },
     });
     if (result === "kill-timeout") {
-      this.logger.warn(
-        { timeoutMs: APP_SERVER_FORCE_SHUTDOWN_TIMEOUT_MS },
-        "Codex app-server did not report exit after SIGKILL",
-      );
+      throw new Error("Codex app-server did not report exit after SIGKILL");
     }
   }
 

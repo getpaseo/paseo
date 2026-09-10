@@ -4,10 +4,14 @@ import { runPluginClientBundle, type PluginClientRuntime } from "./evaluate";
 const runtime = {
   paseo: {},
   async rpc() {},
+  openSettings() {},
   openSurface() {},
   openPanel() {},
+  addHeaderButton() {
+    return { update() {}, remove() {} };
+  },
   addComposerPill() {
-    return () => undefined;
+    return { update() {}, remove() {} };
   },
 } as unknown as PluginClientRuntime;
 
@@ -16,7 +20,7 @@ function evaluatePluginClientBundle(id: string, source: string) {
 }
 
 function bundle(body: string): string {
-  return `(function() {
+  return `(function(require) {
     const module = { exports: {} };
     module.exports.default = function(plugin) { ${body}; return function() {}; };
     return module.exports;
@@ -24,6 +28,42 @@ function bundle(body: string): string {
 }
 
 describe("evaluatePluginClientBundle", () => {
+  it("releases button registrations when client setup throws", () => {
+    let active = 0;
+    function addButton() {
+      active++;
+      return {
+        update() {},
+        remove() {
+          active--;
+        },
+      };
+    }
+    expect(() =>
+      runPluginClientBundle(
+        "failed-buttons",
+        bundle(`
+      plugin.addHeaderButton({ id: "header", workspaceId: "workspace", button: { title: "Header", icon: "Scan", behavior: { kind: "action", onPress() {} } } });
+      plugin.addComposerPill({ id: "pill", workspaceId: "workspace", agentId: "agent", button: { title: "Pill", icon: "Scan", behavior: { kind: "action", onPress() {} } } });
+      throw new Error("Setup failed");
+    `),
+        { ...runtime, addHeaderButton: addButton, addComposerPill: addButton },
+      ),
+    ).toThrow("Setup failed");
+    expect(active).toBe(0);
+  });
+
+  it("accepts memoized settings screens", () => {
+    const plugin = evaluatePluginClientBundle(
+      "settings",
+      bundle(`
+        const Component = require("react").memo(function Settings() { return null; });
+        plugin.addSettingsScreen({ id: "display", title: "Display", icon: "Settings", Component });
+      `),
+    );
+    expect(plugin.settingsScreens.map((screen) => screen.id)).toEqual(["display"]);
+  });
+
   it("returns idempotent removers for every client registration", () => {
     let pillCount = 0;
     const plugin = runPluginClientBundle(
@@ -33,11 +73,12 @@ describe("evaluatePluginClientBundle", () => {
         const schema = { safeParse(value) { return { success: true, data: value }; } };
         globalThis.__pluginRemovals = [
           plugin.addSurface("main", Component),
+          plugin.addSettingsScreen({ id: "display", title: "Display", icon: "Settings", Component }),
           plugin.addSidebarItem({ id: "main", title: "Main", icon: "Blocks", surface: "main" }),
           plugin.addWorkspacePanel({ id: "panel", title: "Panel", icon: "Blocks", context: "workspace", Component }),
           plugin.addCommandCenterItem({ id: "command", title: "Command", icon: "Blocks", context: "global", onSelect() {} }),
           plugin.addSlashCommand({ name: "review", description: "Review", argumentHint: "", context: "workspace", onSubmit() {} }),
-          plugin.addComposerPill({ id: "pill", title: "Pill", workspaceId: "workspace", agentId: "agent", Component, onPress() {} }),
+          plugin.addComposerPill({ id: "pill", workspaceId: "workspace", agentId: "agent", button: { title: "Pill", icon: "Scan", behavior: { kind: "action", onPress() {} } } }).remove,
           plugin.addAttachmentSource({ id: "issues", title: "Issues", icon: "Blocks", pickerTitle: "Attach issue", searchPlaceholder: "Search", search: { name: "issues.search", input: {}, output: {} } }),
           plugin.addTheme({ id: "night", name: "Night", appearance: "dark", colors: { background: "#000", foreground: "#fff", raised: "#111", control: "#222", border: "#333", mutedForeground: "#aaa", ring: "#555" } }),
           plugin.addTimelineTransformer({ id: "transformer", query: { itemType: "tool_call" }, transform() { return { items: [] }; } }),
@@ -48,8 +89,11 @@ describe("evaluatePluginClientBundle", () => {
         ...runtime,
         addComposerPill() {
           pillCount += 1;
-          return () => {
-            pillCount -= 1;
+          return {
+            update() {},
+            remove() {
+              pillCount -= 1;
+            },
           };
         },
       },
@@ -59,6 +103,7 @@ describe("evaluatePluginClientBundle", () => {
     expect(
       [
         plugin.surfaces,
+        plugin.settingsScreens,
         plugin.sidebarItems,
         plugin.workspacePanels,
         plugin.commandCenterItems,
@@ -77,6 +122,7 @@ describe("evaluatePluginClientBundle", () => {
     expect(
       [
         plugin.surfaces,
+        plugin.settingsScreens,
         plugin.sidebarItems,
         plugin.workspacePanels,
         plugin.commandCenterItems,
@@ -426,11 +472,11 @@ describe("evaluatePluginClientBundle", () => {
     ).toThrow("must return a cleanup function");
   });
 
-  it("provides the host Icon component through @getpaseo/plugin", () => {
+  it("provides the host Icon component through @getpaseo/plugin/client/react-native", () => {
     const plugin = evaluatePluginClientBundle(
       "example",
       `(function(require) {
-        const { Icon } = require("@getpaseo/plugin");
+        const { Icon } = require("@getpaseo/plugin/client/react-native");
         const module = { exports: {} };
         module.exports.default = function(plugin) {
           plugin.addSurface("main", function Surface() {
@@ -448,11 +494,11 @@ describe("evaluatePluginClientBundle", () => {
     expect(element).toMatchObject({ props: { size: 18, color: "#123456" } });
   });
 
-  it("provides Paseo UI through @getpaseo/plugin/react-native", () => {
+  it("provides Paseo UI through @getpaseo/plugin/client/react-native", () => {
     const plugin = evaluatePluginClientBundle(
       "example",
       `(function(require) {
-        const { Icon, Modal, useToast } = require("@getpaseo/plugin/react-native");
+        const { Icon, Modal, useToast } = require("@getpaseo/plugin/client/react-native");
         const module = { exports: {} };
         module.exports.default = function(plugin) {
           if (typeof Icon !== "function" || typeof Modal !== "function" || typeof Modal.Content !== "function" || typeof useToast !== "function") {
@@ -466,6 +512,41 @@ describe("evaluatePluginClientBundle", () => {
     );
 
     expect(plugin.surfaces.map((surface) => surface.id)).toEqual(["main"]);
+  });
+
+  it("keeps shared and client runtime exports separate", () => {
+    expect(() =>
+      evaluatePluginClientBundle(
+        "example",
+        `(function(require) {
+      const shared = require("@getpaseo/plugin");
+      const client = require("@getpaseo/plugin/client");
+      for (const name of ["usePaseo", "useRpc", "useSettings", "useAgent", "useWorkspace"]) {
+        if (name in shared || typeof client[name] !== "function") throw new Error(name);
+      }
+      if ("Icon" in shared || typeof shared.PluginAttachmentItemSchema.parse !== "function") throw new Error("shared exports");
+      return { default() { return () => {}; } };
+    })`,
+      ),
+    ).not.toThrow();
+  });
+
+  it.each([
+    "@getpaseo/plugin/server",
+    "@getpaseo/plugin/server/provider",
+    "@getpaseo/plugin/server/acp",
+    "@getpaseo/plugin/client/host",
+    "@getpaseo/plugin/react-native",
+    "@getpaseo/plugin/ui",
+    "@getpaseo/plugin/host",
+    "@paseo/plugin",
+  ])("rejects %s in the client loader", (specifier) => {
+    expect(() =>
+      evaluatePluginClientBundle(
+        "example",
+        `(function(require) { require("${specifier}"); return {}; })`,
+      ),
+    ).toThrow("not available in plugin client code");
   });
 
   it("resolves shared RPC helpers from @getpaseo/plugin", () => {

@@ -72,30 +72,31 @@ Creation options include `config`, `cwd`, `parent`, `title`, `prompt`, `env`, `o
 
 ### Agent handle
 
-| Member                      | Result                            | Behavior                                                                                                |
-| --------------------------- | --------------------------------- | ------------------------------------------------------------------------------------------------------- |
-| `id`                        | `string`                          | Stable daemon agent ID.                                                                                 |
-| `workspaceId`               | `string \| null`                  | Current workspace placement.                                                                            |
-| `cwd`                       | `string \| null`                  | Current working directory.                                                                              |
-| `status`                    | Agent status or `null`            | Current lifecycle status.                                                                               |
-| `capabilities`              | Capability flags or `null`        | What the provider session supports.                                                                     |
-| `availableModes`            | Agent modes or `null`             | Modes the session can switch to.                                                                        |
-| `pendingPermissions`        | Permission requests or `null`     | Requests waiting on an answer.                                                                          |
-| `activeTurn`                | Active turn or `null`             | The turn in flight, with `turnId` and `startedAt`.                                                      |
-| `lastUsage`                 | Usage or `null`                   | Token counts, cost, and context-window use from the last turn.                                          |
-| `lastError`                 | `string \| null`                  | Last error the daemon recorded for the agent.                                                           |
-| `features`                  | Agent features or `null`          | Provider feature toggles and selects with their current values.                                         |
-| `runtimeInfo`               | Runtime info or `null`            | Live provider, session ID, model, thinking option, and mode.                                            |
-| `archivedAt`                | `string \| null`                  | Archive timestamp; `null` while the agent is active.                                                    |
-| `current()`                 | `PaseoAgent \| null`              | Current detailed value observed by this handle; never fetches.                                          |
-| `refresh(requestId?)`       | `PaseoAgentRefetchResult \| null` | Fetches the current agent and project placement.                                                        |
-| `send(text, options?)`      | `Promise<void>`                   | Resolves when the daemon accepts the prompt.                                                            |
-| `run(text, options?)`       | `PaseoAgentRunResult`             | Sends a prompt and waits for that turn. `timeoutMs` controls the wait; it defaults to 10 minutes.       |
-| `waitForFinish(timeoutMs?)` | `PaseoAgentRunResult`             | Waits for the active turn, including an initial prompt. Default timeout: 10 minutes.                    |
-| `commands(options?)`        | `PaseoAgentCommandsResult`        | Asks the live session for its slash commands and skills, including built-in ones. Options: `requestId`. |
-| `subscribe(handler)`        | Unsubscribe function              | Filters agent-directory updates to this ID and refreshes the handle properties.                         |
-| `archive()`                 | `{ archivedAt }`                  | Soft-deletes the agent and closes its runtime.                                                          |
-| `detach()`                  | `Promise<void>`                   | Removes the parent relationship without stopping the agent.                                             |
+| Member                         | Result                            | Behavior                                                                                                |
+| ------------------------------ | --------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| `id`                           | `string`                          | Stable daemon agent ID.                                                                                 |
+| `workspaceId`                  | `string \| null`                  | Current workspace placement.                                                                            |
+| `cwd`                          | `string \| null`                  | Current working directory.                                                                              |
+| `status`                       | Agent status or `null`            | Current lifecycle status.                                                                               |
+| `capabilities`                 | Capability flags or `null`        | What the provider session supports.                                                                     |
+| `availableModes`               | Agent modes or `null`             | Modes the session can switch to.                                                                        |
+| `pendingPermissions`           | Permission requests or `null`     | Requests waiting on an answer.                                                                          |
+| `activeTurn`                   | Active turn or `null`             | The turn in flight, with `turnId` and `startedAt`.                                                      |
+| `lastUsage`                    | Usage or `null`                   | Token counts, cost, and context-window use from the last turn.                                          |
+| `lastError`                    | `string \| null`                  | Last error the daemon recorded for the agent.                                                           |
+| `features`                     | Agent features or `null`          | Provider feature toggles and selects with their current values.                                         |
+| `runtimeInfo`                  | Runtime info or `null`            | Live provider, session ID, model, thinking option, and mode.                                            |
+| `archivedAt`                   | `string \| null`                  | Archive timestamp; `null` while the agent is active.                                                    |
+| `current()`                    | `PaseoAgent \| null`              | Current detailed value observed by this handle; never fetches.                                          |
+| `refresh(requestId?)`          | `PaseoAgentRefetchResult \| null` | Fetches the current agent and project placement.                                                        |
+| `send(text, options?)`         | `Promise<void>`                   | Resolves when the daemon accepts the prompt.                                                            |
+| `respondToPermission(options)` | `Promise<void>`                   | Answers a pending permission by `requestId` with an allow or deny `response`.                           |
+| `run(text, options?)`          | `PaseoAgentRunResult`             | Sends a prompt and waits for that turn. `timeoutMs` controls the wait; it defaults to 10 minutes.       |
+| `waitForFinish(timeoutMs?)`    | `PaseoAgentRunResult`             | Waits for the active turn, including an initial prompt. Default timeout: 10 minutes.                    |
+| `commands(options?)`           | `PaseoAgentCommandsResult`        | Asks the live session for its slash commands and skills, including built-in ones. Options: `requestId`. |
+| `subscribe(handler)`           | Unsubscribe function              | Filters agent-directory updates to this ID and refreshes the handle properties.                         |
+| `archive()`                    | `{ archivedAt }`                  | Soft-deletes the agent and closes its runtime.                                                          |
+| `detach()`                     | `Promise<void>`                   | Removes the parent relationship without stopping the agent.                                             |
 
 `workspaceId` through `archivedAt` mirror the last snapshot the handle observed. A handle from `ref()` reads `null` for all of them until `refresh()`, `run()`, `waitForFinish()`, a timeline refetch, or `subscribe()` delivers a snapshot. Optional values in an observed snapshot also read as `null`. Call `current()` when you need the whole snapshot or need to distinguish those states.
 
@@ -107,13 +108,16 @@ Creation options include `config`, `cwd`, `parent`, `title`, `prompt`, `env`, `o
 
 `agent.timeline.refetch(options?)` fetches a page. Options are `direction`, `cursor`, `limit`, `projection`, and `requestId`.
 
-`agent.timeline.subscribe(handler)` listens for stream events belonging to the agent and returns a local unsubscribe function.
+`agent.timeline.subscribe(handler)` establishes network demand for this agent and restores it after reconnect. Its unsubscribe function releases that demand; await `unsubscribe.ready` for initial daemon acknowledgement before starting work. The handler also receives `{ agentId, event: { type: "replacement", epoch } }` when history is replaced; refetch the page you need. See [events](./events.md#follow-timeline-events).
 
 ## `client.projects`
 
-| Method           | Result                   | Behavior                                                                      |
-| ---------------- | ------------------------ | ----------------------------------------------------------------------------- |
-| `list(options?)` | `PaseoProjectListResult` | Lists every registered project, including projects with no active workspaces. |
+| Method               | Result                   | Behavior                                                                                |
+| -------------------- | ------------------------ | --------------------------------------------------------------------------------------- |
+| `list(options?)`     | `PaseoProjectListResult` | Lists every registered project, including projects with no active workspaces.           |
+| `subscribe(handler)` | Unsubscribe function     | Listens only for future project upserts/removals. Pair with `list()` for initial state. |
+
+To build a complete project cache without an initialization gap, subscribe and buffer updates before awaiting `list()`. Initialize the cache from the list result, then apply buffered updates in arrival order.
 
 ## `client.workspaces`
 
@@ -128,6 +132,46 @@ Creation options include `config`, `cwd`, `parent`, `title`, `prompt`, `env`, `o
 
 A workspace handle exposes `id`, `projectId`, `directory`, `name`, `status`, `current()`, `refresh()`, `setTitle(title)`, `archive()`, and `subscribe()`. Pass `null` to `setTitle` to restore the derived workspace name. Use `workspace.agents.create(options)` to create an agent without repeating the workspace ID or directory.
 
+## `client.terminals`
+
+Terminal operations require a host that supports workspace terminals. An older host receives no terminal request; the SDK throws an update-host error.
+
+| Method              | Result                             | Behavior                                                                           |
+| ------------------- | ---------------------------------- | ---------------------------------------------------------------------------------- |
+| `create(options)`   | `Promise<PaseoTerminalHandle>`     | Creates a terminal owned by the required `workspaceId`.                            |
+| `list(options?)`    | `Promise<PaseoTerminalListResult>` | Returns `{ entries, requestId }`. Omit filters to list all terminals on this host. |
+| `ref(terminalOrId)` | `PaseoTerminalHandle`              | Creates a local handle without fetching or attaching a terminal stream.            |
+
+Creation options:
+
+| Field             | Meaning                                                                                                                  |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| `workspaceId`     | Required active workspace ID. Unknown and archived IDs fail.                                                             |
+| `cwd`             | Optional absolute process working directory. Defaults to the workspace directory; changing it does not change ownership. |
+| `name`            | Optional terminal name.                                                                                                  |
+| `command`, `args` | Optional executable and argument array. Omit them to start the default shell.                                            |
+| `size`            | Optional initial viewport: `{ rows, cols }`.                                                                             |
+| `requestId`       | Optional request correlation ID.                                                                                         |
+
+List options are `workspaceId`, `cwd`, and `requestId`. `workspaceId` selects ownership, including terminals started outside the workspace directory. When it is present, `cwd` does not restrict the results. Without an ID, `cwd` filters by workspace root directory. Each entry contains `id`, `workspaceId`, `cwd`, and `name`; `cwd` is the terminal's actual starting directory.
+
+Terminal handles expose:
+
+| Method              | Result                                | Behavior                                                                                         |
+| ------------------- | ------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| `current()`         | `PaseoTerminal \| null`               | Last snapshot from creation, `ref(snapshot)`, or refresh. A handle made from an ID starts empty. |
+| `refresh(options?)` | `Promise<PaseoTerminal \| null>`      | Fetches the terminal snapshot, or `null` when it no longer exists. Accepts `requestId`.          |
+| `write(data)`       | `number`                              | Sends literal text without interpreting key names. Returns the input's UTF-16 length.            |
+| `sendKeys(keys)`    | `number`                              | Expands key tokens and sends the combined input. Returns its UTF-16 length.                      |
+| `capture(options?)` | `Promise<PaseoTerminalCaptureResult>` | Returns `{ terminalId, lines, totalLines, requestId }`.                                          |
+| `kill(requestId?)`  | `Promise<void>`                       | Waits for terminal teardown. Killing an already-removed terminal succeeds.                       |
+
+`sendKeys()` recognizes `Enter`, `Tab`, `Escape`, `Space`, `BSpace`, `C-c`, `C-d`, `C-z`, `C-l`, `C-a`, and `C-e`. Other strings pass through literally. Input methods send without waiting for command execution or acknowledging that the terminal consumed the input.
+
+Capture accepts optional `start`, `end`, `stripAnsi`, and `requestId`. Line bounds are zero-based and inclusive across scrollback and the viewport. Negative bounds count from the end; omitted bounds capture all lines. `stripAnsi` defaults to `true`. A missing terminal returns empty lines.
+
+Use `workspace.terminals.create(options?)` and `workspace.terminals.list(options?)` to supply the workspace ID from a handle. Creation accepts the same options except `workspaceId`; listing accepts only `requestId`. Plugins get these methods through `usePaseo()` and the handler's `paseo` context.
+
 ## `client.providers`
 
 | Method                           | Result                        | Behavior                                                                                                                                                 |
@@ -140,6 +184,7 @@ A workspace handle exposes `id`, `projectId`, `directory`, `name`, `status`, `cu
 | `listModes(provider, options?)`  | Modes result                  | Discovers permission or operating modes.                                                                                                                 |
 | `listFeatures(draftConfig)`      | Features result               | Discovers features for the current draft provider configuration.                                                                                         |
 | `diagnostic(provider)`           | Diagnostic result             | Returns human-readable setup diagnostics.                                                                                                                |
+| `listUsage(options?)`            | `PaseoProviderUsageResult`    | Returns normalized subscription windows, balances, and provider details. Rejects with an update-host error when unsupported. Options: `requestId`.       |
 | `subscribe(handler)`             | Unsubscribe function          | Listens for catalog updates.                                                                                                                             |
 
 ## `client.config`

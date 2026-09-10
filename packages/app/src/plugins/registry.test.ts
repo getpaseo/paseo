@@ -1,3 +1,4 @@
+import appPackage from "../../package.json";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { pluginRegistry as registry } from "./registry";
@@ -11,7 +12,8 @@ vi.mock("./client-runtime", () => ({
     rpc: async () => undefined,
     openSurface: () => undefined,
     openPanel: () => undefined,
-    addComposerPill: () => () => undefined,
+    addComposerPill: () => ({ update() {}, remove() {} }),
+    addHeaderButton: () => ({ update() {}, remove() {} }),
   }),
 }));
 
@@ -25,7 +27,11 @@ const pluginRegistry = {
     catalog: Parameters<typeof registry.installCatalog>[1],
     options: { replacePluginId?: string } = {},
   ) {
-    return registry.installCatalog(serverId, catalog, { ...options, client: daemonClient });
+    return registry.installCatalog(
+      serverId,
+      catalog.map((entry) => ({ ...entry, requirements: { paseo: `>=${appPackage.version}` } })),
+      { ...options, client: daemonClient },
+    );
   },
 };
 
