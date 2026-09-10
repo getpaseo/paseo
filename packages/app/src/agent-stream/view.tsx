@@ -111,6 +111,7 @@ import { PluginTimelineItemView, useInstalledTimelineTransform } from "@/plugins
 import {
   projectPluginNonToolItems,
   projectPluginToolCallItems,
+  removeOverlappingToolCallItems,
 } from "@/plugins/timeline/projection";
 
 function renderLiveAuxiliaryNode(input: {
@@ -314,6 +315,7 @@ const AGENT_CAPABILITY_FLAG_KEYS: (keyof AgentCapabilityFlags)[] = [
 ];
 
 const EMPTY_STREAM_HEAD: StreamItem[] = [];
+const EMPTY_TOOL_CALL_SOURCE_IDS = new Set<string>();
 
 function useRetainedValue<T>(value: T, active: boolean): T {
   const retainedRef = useRef(value);
@@ -540,11 +542,28 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
     const effectiveStreamHead = useRetainedValue(streamHead, isActive);
     const effectiveTurnPresentation = useRetainedValue(turnPresentation, isActive);
     const isTurnActive = effectiveTurnPresentation.isActive;
+    const toolCallHeadIdsKey = useMemo(
+      () =>
+        JSON.stringify(
+          (effectiveStreamHead ?? EMPTY_STREAM_HEAD)
+            .filter((item) => item.kind === "tool_call")
+            .map((item) => item.id),
+        ),
+      [effectiveStreamHead],
+    );
+    const toolCallHeadIds = useMemo(() => {
+      const ids = JSON.parse(toolCallHeadIdsKey) as string[];
+      return ids.length === 0 ? EMPTY_TOOL_CALL_SOURCE_IDS : new Set(ids);
+    }, [toolCallHeadIdsKey]);
     // Transform individual tool calls before Overview can synthesize a host row. The second pass
     // handles other source types without sending grouped tool-call hosts back through plugins.
     const projectedToolCallTail = useMemo(
-      () => projectPluginToolCallItems(effectiveStreamItems, transformTimelineItem),
-      [effectiveStreamItems, transformTimelineItem],
+      () =>
+        projectPluginToolCallItems(
+          removeOverlappingToolCallItems(effectiveStreamItems, toolCallHeadIds),
+          transformTimelineItem,
+        ),
+      [effectiveStreamItems, toolCallHeadIds, transformTimelineItem],
     );
     const projectedToolCallHead = useMemo(
       () =>

@@ -9,6 +9,7 @@ import {
   projectPluginNonToolItems,
   projectPluginTimelineItems,
   projectPluginToolCallItems,
+  removeOverlappingToolCallItems,
 } from "./projection";
 
 function thought(text: string, status: "loading" | "ready" = "loading"): StreamItem {
@@ -253,6 +254,48 @@ describe("plugin timeline projection", () => {
 
     expect(final).toBe(projected);
     expect(transform).toHaveBeenCalledTimes(2);
+  });
+
+  it("prefers a live head version before tool-call projection", () => {
+    const running = toolCall("call-1", "running");
+    const completed = toolCall("call-1", "completed");
+    const transform: TimelineItemTransform = vi.fn(({ item, phase }) => {
+      if (item.type !== "tool_call") return undefined;
+      return [
+        {
+          type: "plugin" as const,
+          id: item.callId,
+          pluginId: "tool-details",
+          kind: "tool-detail",
+          version: 1,
+          data: { callId: item.callId, phase },
+        },
+      ];
+    });
+
+    const tailSource = removeOverlappingToolCallItems([running], new Set([completed.id]));
+    const projectedTail = projectPluginToolCallItems(tailSource, transform);
+    const projectedHead = projectPluginToolCallItems([completed], transform);
+    const preparedHistory = prepareToolCallHistory("overview", projectedTail);
+    const grouped = projectToolCallDetailLevel({
+      level: "overview",
+      tail: projectedTail,
+      head: projectedHead,
+      preparedHistory,
+      isTurnActive: false,
+    });
+    const finalTail = projectPluginNonToolItems(grouped.tail, transform);
+    const finalHead = projectPluginNonToolItems(grouped.head, transform);
+
+    expect(finalTail).toEqual([]);
+    expect(finalHead.map((item) => item.id)).toEqual(["tool-details/call-1"]);
+    expect(transform).toHaveBeenCalledOnce();
+    expect(transform).toHaveBeenCalledWith(
+      expect.objectContaining({
+        item: expect.objectContaining({ callId: "call-1", status: "completed" }),
+        phase: "complete",
+      }),
+    );
   });
 
   it("keeps unclaimed calls eligible for overview grouping", () => {

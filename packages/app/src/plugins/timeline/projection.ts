@@ -166,3 +166,12 @@ export function projectPluginNonToolItems(
 ): StreamItem[] {
   return projectPluginTimelineItems(items, transformTimelineItem, "non_tool_call");
 }
+
+export function removeOverlappingToolCallItems(
+  items: StreamItem[],
+  sourceIds: ReadonlySet<string>,
+): StreamItem[] {
+  if (sourceIds.size === 0) return items;
+  const filtered = items.filter((item) => item.kind !== "tool_call" || !sourceIds.has(item.id));
+  return filtered.length === items.length ? items : filtered;
+}
