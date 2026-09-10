@@ -11,6 +11,16 @@ function createSequencedLoader<T>(first: Promise<T>, second: Promise<T>) {
   };
 }
 
+async function fillCompletedCache(cache: CheckoutDiffCache) {
+  for (let i = 0; i < 70; i++) {
+    await cache.read({
+      cwd: String(i),
+      compare: { mode: "base" },
+      load: async () => ({ diff: "" }),
+    });
+  }
+}
+
 test("forced reads after a mutation share a fresh build after the active build finishes", async () => {
   const cache = new CheckoutDiffCache(() => 0);
   const first = Promise.withResolvers<{ diff: string }>();
@@ -92,12 +102,7 @@ test("active reads survive completed-payload eviction and failed reads can retry
   const load = () => deferred.promise;
   const first = cache.read({ cwd: "active", compare: { mode: "uncommitted" }, load });
   const rejected = expect(first).rejects.toThrow("read failed");
-  for (let i = 0; i < 70; i++)
-    await cache.read({
-      cwd: String(i),
-      compare: { mode: "base" },
-      load: async () => ({ diff: "" }),
-    });
+  await fillCompletedCache(cache);
   expect(cache.read({ cwd: "active", compare: { mode: "uncommitted" }, load })).toBe(first);
   deferred.reject(new Error("read failed"));
   await rejected;
