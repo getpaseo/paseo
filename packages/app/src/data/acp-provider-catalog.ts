@@ -35,7 +35,8 @@ const CATALOG_DATA = [
   {
     id: "antigravity",
     title: "Antigravity CLI",
-    description: "Google Antigravity via the community paseo-agy-acp bridge",
+    description:
+      "Google Antigravity via the community paseo-agy-acp bridge. Requires the official Antigravity ACP kernel to be installed separately.",
     version: "2.3.1",
     iconId: "agy",
     installLink: "https://github.com/tiezbro/paseo-agy-acp",
