@@ -58,6 +58,10 @@ import {
 } from "./create-agent-mode.js";
 import type { ProviderDefinition } from "./provider-registry.js";
 import { runProviderTurn } from "./providers/provider-runner.js";
+import {
+  isStaleProviderSessionError,
+  StaleProviderSessionError,
+} from "./stale-provider-session-error.js";
 
 interface Deferred<Value> {
   promise: Promise<Value>;
@@ -563,6 +567,7 @@ class ProviderRuntimeSession {
       sessionId: this.providerSessionId,
       prompt,
     });
+    if (this.terminal) throw new StaleProviderSessionError(this.id);
     const pending = deferred<Extract<ProviderEvent, { type: "session.prompt_result" }>>();
     this.prompts.set(prompt.clientMessageId, pending);
     try {
@@ -572,6 +577,9 @@ class ProviderRuntimeSession {
         prompt,
       });
       return (await pending.promise).result;
+    } catch (error) {
+      if (isStaleProviderSessionError(error)) throw new StaleProviderSessionError(this.id);
+      throw error;
     } finally {
       this.prompts.delete(prompt.clientMessageId);
     }

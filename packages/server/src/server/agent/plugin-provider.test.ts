@@ -8,6 +8,10 @@ import { describe, expect, test } from "vitest";
 import { createTestLogger } from "../../test-utils/test-logger.js";
 import type { AgentStreamEvent } from "./agent-sdk-types.js";
 import { PluginAgentClientRegistry } from "./plugin-provider.js";
+import {
+  isStaleProviderSessionError,
+  StaleProviderSessionError,
+} from "./stale-provider-session-error.js";
 
 const CAPABILITIES = [
   "prompt.message",
@@ -300,6 +304,35 @@ describe("PluginAgentClientRegistry", () => {
       );
 
       await resumed.close();
+    } finally {
+      await registry.shutdown();
+    }
+  });
+
+  test("prompting a stale session raises StaleProviderSessionError", async () => {
+    const old = createProviderHarness();
+    const registry = new PluginAgentClientRegistry(createTestLogger());
+
+    try {
+      registry.replace([old.registration]);
+      const stale = await registry.clients()[old.registration.id]!.createSession({
+        provider: old.registration.id,
+        cwd: "/workspace",
+      });
+
+      registry.replace([]);
+      await expect.poll(old.closeCount).toBe(1);
+
+      const failure = await stale
+        .startTurn("after reload", { clientMessageId: "after-reload" })
+        .then(
+          () => null,
+          (error: unknown) => error,
+        );
+      expect(failure).toBeInstanceOf(StaleProviderSessionError);
+      expect(isStaleProviderSessionError(failure)).toBe(true);
+      expect(isStaleProviderSessionError(new Error("Provider connection is closed"))).toBe(true);
+      expect(isStaleProviderSessionError(new Error("boom"))).toBe(false);
     } finally {
       await registry.shutdown();
     }
