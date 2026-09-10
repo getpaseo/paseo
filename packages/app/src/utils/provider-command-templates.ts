@@ -88,8 +88,9 @@ export function buildProviderCommand(input: {
 /**
  * Resolve the resume command for a provider.
  *
- * Built-in providers resolve from the local `PROVIDER_COMMAND_TEMPLATES` without
- * a snapshot. Custom providers that extend a built-in require the daemon's
+ * Built-in providers resolve from the local `PROVIDER_COMMAND_TEMPLATES`, but
+ * the cached provider snapshot is consulted first to detect command overrides.
+ * Custom providers that extend a built-in require the daemon's
  * `providerAncestry` capability and a provider snapshot to derive the inherited
  * template. If the command is not available, the returned promise rejects.
  */
@@ -97,15 +98,23 @@ export async function resolveProviderResumeCommand(input: {
   provider: string;
   sessionId: string;
   supportsProviderAncestry: boolean;
+  cachedProviderSnapshot?: readonly ResumeSnapshot[];
   getProviderSnapshot: () => Promise<readonly ResumeSnapshot[] | undefined>;
 }): Promise<string> {
   const direct = buildProviderCommand({
     provider: input.provider,
     id: "resume",
     sessionId: input.sessionId,
+    providerSnapshot: input.cachedProviderSnapshot,
   });
   if (direct) {
     return direct;
+  }
+
+  // A built-in provider is in the cached snapshot with a non-default launch
+  // source, so the stock resume command is not safe to copy.
+  if (PROVIDER_COMMAND_TEMPLATES[input.provider]?.resume) {
+    throw new Error("Resume command not available");
   }
 
   if (!input.supportsProviderAncestry) {

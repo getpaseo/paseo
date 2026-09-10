@@ -1,5 +1,6 @@
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import type { JsonValue } from "@getpaseo/protocol/agent-types";
+import type { GetProvidersSnapshotResponseMessage } from "@getpaseo/protocol/messages";
 import { getOpenAgentTabLabel } from "@getpaseo/protocol/agent-labels";
 import {
   memo,
@@ -99,6 +100,7 @@ import {
 import {
   ensureProvidersSnapshotEntries,
   prefetchProvidersSnapshot,
+  providersSnapshotQueryKey,
 } from "@/hooks/use-providers-snapshot";
 import {
   shouldSeedWorkspaceSetupTab,
@@ -2732,11 +2734,16 @@ function WorkspaceScreenContent({
         useSessionStore.getState().sessions[normalizedServerId]?.serverInfo?.features
           ?.providerAncestry === true;
 
+      const cachedProviderSnapshot = queryClient.getQueryData<
+        GetProvidersSnapshotResponseMessage["payload"]
+      >(providersSnapshotQueryKey(normalizedServerId, workspaceDirectory ?? null))?.entries;
+
       try {
         const command = await resolveProviderResumeCommand({
           provider: agent.provider,
           sessionId: providerSessionId,
           supportsProviderAncestry,
+          cachedProviderSnapshot,
           getProviderSnapshot: () =>
             ensureProvidersSnapshotEntries({
               queryClient,

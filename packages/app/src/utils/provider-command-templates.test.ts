@@ -179,6 +179,20 @@ describe("resolveProviderResumeCommand", () => {
     expect(getProviderSnapshot).not.toHaveBeenCalled();
   });
 
+  test("rejects a built-in Codex whose cached snapshot launch source is overridden", async () => {
+    const getProviderSnapshot = vi.fn().mockResolvedValue(undefined);
+    await expect(
+      resolveProviderResumeCommand({
+        provider: "codex",
+        sessionId: "example-session",
+        supportsProviderAncestry: true,
+        cachedProviderSnapshot: [snapshotEntry("codex", null, "override")],
+        getProviderSnapshot,
+      }),
+    ).rejects.toThrow("Resume command not available");
+    expect(getProviderSnapshot).not.toHaveBeenCalled();
+  });
+
   test("rejects an inherited custom provider when the daemon does not advertise providerAncestry", async () => {
     const getProviderSnapshot = vi.fn().mockResolvedValue(undefined);
     await expect(
