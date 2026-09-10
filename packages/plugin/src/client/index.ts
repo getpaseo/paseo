@@ -2,6 +2,7 @@ export type {
   PluginHostProps,
   PluginSurfaceProps,
   PluginIconProps,
+  PluginProviderIconProps,
   PluginPanelLocation,
   PluginOpenPanelOptions,
   PluginWorkspacePanelProps,

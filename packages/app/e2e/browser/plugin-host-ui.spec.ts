@@ -13,7 +13,7 @@ import {
 const PLUGIN_ID = "plugin-host-ui-e2e";
 
 const PLUGIN_SOURCE = `import { usePaseo } from "@getpaseo/plugin/client";
-import { Icon, Modal, useToast } from "@getpaseo/plugin/client/react-native";
+import { Icon, Modal, ProviderIcon, useToast } from "@getpaseo/plugin/client/react-native";
 import { useQueryClient } from "@tanstack/react-query";
 import React, { useState } from "react";
 import { Pressable, Text, View } from "react-native";
@@ -36,9 +36,12 @@ function ModalBody({ onSaved }) {
   </View>;
 }
 
-function Surface() {
+function Surface({ host, theme }) {
   const [open, setOpen] = useState(false);
   return <View>
+    <View testID="plugin-provider-icon">
+      <ProviderIcon provider="codex" hostId={host.id} size={18} color={theme.colors.foreground} />
+    </View>
     <Pressable accessibilityRole="button" onPress={() => setOpen(true)}>
       <View style={{ flexDirection: "row" }}>
         <Icon name="Pencil" size={18} />
@@ -130,6 +133,7 @@ test("plugin modal adapts its presentation and preserves host contexts", async (
     await client.installDirectoryPlugin(directory);
     await useNonCompactLayout(page);
     await openHostUiPlugin(page);
+    await expect(page.getByTestId("plugin-provider-icon").locator("svg")).toBeVisible();
 
     await test.step("non-compact layouts use a centered dialog", async () => {
       await openPluginModal(page);

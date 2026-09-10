@@ -46,6 +46,13 @@ export interface PluginIconProps {
   color?: string;
 }
 
+export interface PluginProviderIconProps {
+  provider: string;
+  hostId: string;
+  size?: number;
+  color?: string;
+}
+
 export type PluginPanelLocation = "workspace" | "explorer";
 
 export interface PluginOpenPanelOptions {
