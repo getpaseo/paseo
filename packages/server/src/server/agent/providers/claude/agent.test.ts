@@ -1360,6 +1360,91 @@ describe("normalizeClaudeAskUserQuestionUpdatedInput", () => {
     }
   });
 
+  test("a rejected question answer leaves the request answerable by a corrected retry", async () => {
+    // The question-answer-required rule guards this: the deliverability check runs
+    // before the request is deleted, so a non-deliverable answer costs the caller a
+    // retry rather than the request. Upstream consumed the request on entry and the
+    // retry failed with "No pending permission request".
+    const client = new ClaudeAgentClient({
+      logger: createTestLogger(),
+      resolveBinary: async () => "/test/claude/bin",
+    });
+    const session = await client.createSession({
+      provider: "claude",
+      cwd: process.cwd(),
+    });
+
+    const request = {
+      id: "permission-question-retry",
+      provider: "claude",
+      name: "AskUserQuestion",
+      kind: "question",
+      input: {
+        questions: [
+          {
+            question: "Which colour?",
+            header: "Colour",
+            options: [],
+            multiSelect: false,
+          },
+        ],
+      },
+    };
+
+    const resultPromise = new Promise<unknown>((resolve, reject) => {
+      (
+        session as unknown as {
+          pendingPermissions: Map<
+            string,
+            {
+              request: typeof request;
+              resolve: (value: unknown) => void;
+              reject: (error: Error) => void;
+            }
+          >;
+        }
+      ).pendingPermissions.set(request.id, { request, resolve, reject });
+    });
+
+    try {
+      // A non-deliverable answer: allow with no answers at all.
+      await expect(
+        session.respondToPermission(request.id, {
+          behavior: "allow",
+          updatedInput: {},
+        }),
+      ).rejects.toThrow(/Permission request/);
+
+      // The request survived the rejection: a corrected retry is accepted and the
+      // waiting agent gets the answer. If the request had been consumed, this would
+      // throw "No pending permission request with id ...".
+      await expect(
+        session.respondToPermission(request.id, {
+          behavior: "allow",
+          updatedInput: { answers: { Colour: "Viridian" } },
+        }),
+      ).resolves.toBeUndefined();
+
+      await expect(resultPromise).resolves.toEqual({
+        behavior: "allow",
+        updatedInput: {
+          questions: [
+            {
+              question: "Which colour?",
+              header: "Colour",
+              options: [],
+              multiSelect: false,
+            },
+          ],
+          answers: { "Which colour?": "Viridian" },
+        },
+        updatedPermissions: undefined,
+      });
+    } finally {
+      await session.close();
+    }
+  });
+
   test("denying a plan leaves the plan readable in the timeline", async () => {
     const client = new ClaudeAgentClient({
       logger: createTestLogger(),
