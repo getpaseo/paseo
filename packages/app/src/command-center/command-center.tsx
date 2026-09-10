@@ -11,7 +11,8 @@ import {
   type NativeSyntheticEvent,
   type PressableStateCallbackType,
 } from "react-native";
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactElement } from "react";
+import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import { Check, ChevronRight, Folder, X } from "lucide-react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
@@ -37,6 +38,7 @@ import { isNative, isWeb } from "@/constants/platform";
 import { useAggregatedAgents, type AggregatedAgent } from "@/hooks/use-aggregated-agents";
 import { useProjects } from "@/hooks/use-projects";
 import {
+  getOverlayRoot,
   OverlayLayerProvider,
   useGlobalWebOverlayLayer,
   useWebOverlayRegistration,
@@ -809,54 +811,71 @@ export function CommandCenter() {
     );
   }
   if (!state.open) return null;
-  return (
+  const desktopContent = (
     <OverlayLayerProvider layer={isWeb ? modalLayer : 0}>
-      <Modal visible transparent animationType="fade" onRequestClose={state.close}>
-        <View style={styles.overlay}>
-          <Pressable style={styles.backdrop} onPress={state.close} />
-          <View
-            ref={setWebOverlayScope}
-            testID="command-center-panel"
-            style={[styles.panel, state.scope === "content" && styles.contentPanel]}
-          >
-            <View style={[styles.header, styles.searchRow]} testID="command-center-header">
-              {scopeChipLabel ? (
-                <ScopeChip label={scopeChipLabel} onRemove={state.clearScope} />
-              ) : null}
-              <ThemedTextInput
-                testID="command-center-input"
-                ref={state.inputRef}
-                initialValue={state.query}
-                onChangeText={state.setQuery}
-                placeholder={placeholder}
-                style={[styles.input, styles.growingInput]}
-                autoCapitalize="none"
-                autoCorrect={false}
-                autoFocus
-              />
-              <FileSearchLoadingIndicator
-                loading={state.fileSearchLoading}
-                label={t("shell.commandCenter.searchingFiles")}
-              />
-            </View>
-            {state.scope === "content" ? (
-              <WorkspaceContentSearch
-                query={state.query}
-                compact={isCompact}
-                close={state.close}
-                clearScope={state.clearScope}
-                keyHandler={contentKeyHandler}
-              />
-            ) : (
-              <>
-                {fileSearchError}
-                <FlatList ref={listRef} {...commonListProps} />
-              </>
-            )}
+      <View style={[styles.overlay, isWeb && { zIndex: modalLayer }]}>
+        <Pressable style={styles.backdrop} onPress={state.close} />
+        <View
+          ref={setWebOverlayScope}
+          testID="command-center-panel"
+          style={[styles.panel, state.scope === "content" && styles.contentPanel]}
+        >
+          <View style={[styles.header, styles.searchRow]} testID="command-center-header">
+            {scopeChipLabel ? (
+              <ScopeChip label={scopeChipLabel} onRemove={state.clearScope} />
+            ) : null}
+            <ThemedTextInput
+              testID="command-center-input"
+              ref={state.inputRef}
+              initialValue={state.query}
+              onChangeText={state.setQuery}
+              placeholder={placeholder}
+              style={[styles.input, styles.growingInput]}
+              autoCapitalize="none"
+              autoCorrect={false}
+              autoFocus
+            />
+            <FileSearchLoadingIndicator
+              loading={state.fileSearchLoading}
+              label={t("shell.commandCenter.searchingFiles")}
+            />
           </View>
+          {state.scope === "content" ? (
+            <WorkspaceContentSearch
+              query={state.query}
+              compact={isCompact}
+              close={state.close}
+              clearScope={state.clearScope}
+              keyHandler={contentKeyHandler}
+            />
+          ) : (
+            <>
+              {fileSearchError}
+              <FlatList ref={listRef} {...commonListProps} />
+            </>
+          )}
         </View>
-      </Modal>
+      </View>
     </OverlayLayerProvider>
+  );
+  return hostDesktopOverlay(desktopContent, state.close);
+}
+
+/**
+ * Desktop web hosts the panel in the shared overlay root rather than React Native Web's `Modal`,
+ * which paints in a plane of its own above it. Inside that plane an ordinary portal — the tooltip
+ * on a result row — can never cover the panel however high its own z-index, so the row could not
+ * show a reader its exact path. `adaptive-modal-sheet` already hosts desktop modals this way; see
+ * docs/floating-panels.md. Native keeps the Modal.
+ */
+function hostDesktopOverlay(content: ReactElement, onRequestClose: () => void): ReactElement {
+  if (isWeb && typeof document !== "undefined") {
+    return createPortal(content, getOverlayRoot());
+  }
+  return (
+    <Modal visible transparent animationType="fade" onRequestClose={onRequestClose}>
+      {content}
+    </Modal>
   );
 }
 
@@ -897,10 +916,11 @@ function ScopeChip({ label, onRemove }: { label: string; onRemove(): void }) {
 
 const styles = StyleSheet.create((theme) => ({
   overlay: {
-    flex: 1,
+    ...StyleSheet.absoluteFillObject,
     justifyContent: "flex-start",
     alignItems: "center",
     paddingTop: theme.spacing[12],
+    pointerEvents: "auto",
   },
   backdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: "rgba(0, 0, 0, 0.5)" },
   contentPanel: { width: 1000, maxWidth: "96%", height: "75%" },

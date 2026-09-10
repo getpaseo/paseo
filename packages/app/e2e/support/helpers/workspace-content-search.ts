@@ -1,6 +1,7 @@
 import { mkdir, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { expect, type Page } from "@playwright/test";
+import { expect, type Locator, type Page } from "@playwright/test";
+import { composerLocator } from "./composer";
 import type { CreatedWorkspace } from "./with-workspace";
 
 export async function prepareContentSearch(workspace: CreatedWorkspace) {
@@ -243,13 +244,17 @@ async function openReopenTarget(page: Page) {
 }
 
 /**
- * Two files can share a base name and their nearest parent, so the resting row label cannot name
- * them. Pointing at a row, or selecting it, spells the exact workspace-relative path out.
+ * Two files can share a base name and their nearest parent, and a real path is often wider than
+ * the result column, so the exact workspace-relative path lives in the tooltip. Being in the DOM
+ * is not enough: the tooltip has to be the thing painted at its own coordinates.
  */
 export async function revealExactPathOnHover(page: Page, workspace: CreatedWorkspace) {
+  const deep =
+    "packages/app/src/command-center/workspace-content-search/internal/deeply/nested/result-path-presentation.ts";
   for (const relative of [
     "packages/app/src/utils/index.ts",
     "packages/server/src/utils/index.ts",
+    deep,
   ]) {
     const target = path.join(workspace.repoPath, relative);
     await mkdir(path.dirname(target), { recursive: true });
@@ -262,17 +267,81 @@ export async function revealExactPathOnHover(page: Page, workspace: CreatedWorks
     .fill("SHARED_UTIL");
 
   const panel = page.getByTestId("command-center-panel");
-  const rows = panel.getByRole("button", { name: /index\.ts:1:\d+/ });
-  await expect(rows).toHaveCount(2);
-  // The accessible name always carries the exact path.
-  await expect(rows.first()).toHaveAccessibleName(/^packages\/app\/src\/utils\/index\.ts:1:24 /);
-  await expect(rows.last()).toHaveAccessibleName(/^packages\/server\/src\/utils\/index\.ts:1:24 /);
-  // The second row is at rest and shows only its nearest parent, which both files share.
-  await expect(rows.last()).toContainText("…/utils/index.ts:1:24");
+  const rows = panel.getByRole("button", { name: /:1:24/ });
+  await expect(rows).toHaveCount(3);
+  const tip = page.getByTestId("content-search-row-path");
 
-  await rows.last().hover();
-  await expect(rows.last()).toContainText("packages/server/src/utils/index.ts:1:24");
-  await rows.first().hover();
-  await expect(rows.first()).toContainText("packages/app/src/utils/index.ts:1:24");
-  return { panel, rows };
+  async function expectPaintedPath(row: Locator, expected: string) {
+    await row.hover();
+    await expect(tip).toHaveText(expected);
+    // The reader must actually see it: whatever is painted at the tooltip's own coordinates has
+    // to be the tooltip, not the panel that used to cover it.
+    // A tooltip is pointer-transparent, so elementFromPoint reports the row underneath either
+    // way, and its surface is the same white as the panel. What settles it is whether the pixels
+    // in its own rectangle change when it opens: if the panel still covers it, they do not.
+    const box = await tip.boundingBox();
+    if (!box) throw new Error("tooltip has no box");
+    const clip = { x: box.x, y: box.y, width: box.width, height: box.height };
+    const shown = await page.screenshot({ clip });
+    await page.mouse.move(2, 2);
+    await expect(tip).toBeHidden();
+    const hidden = await page.screenshot({ clip });
+    expect(
+      shown.equals(hidden),
+      "the tooltip's own rectangle must change when it opens, or the reader cannot see it",
+    ).toBe(false);
+  }
+
+  // Same base name and same nearest parent: the resting labels cannot tell these apart.
+  const app = rows.filter({ hasText: "…/utils/index.ts:1:24" }).first();
+  const server = rows.filter({ hasText: "…/utils/index.ts:1:24" }).last();
+  await expect(app).toHaveAccessibleName(/^packages\/app\/src\/utils\/index\.ts:1:24 /);
+  await expect(server).toHaveAccessibleName(/^packages\/server\/src\/utils\/index\.ts:1:24 /);
+  await expectPaintedPath(app, "packages/app/src/utils/index.ts:1:24");
+  await expectPaintedPath(server, "packages/server/src/utils/index.ts:1:24");
+
+  // A path far wider than the result column still reads in full.
+  await expectPaintedPath(
+    rows.filter({ hasText: "result-path-presentation.ts" }).first(),
+    `${deep}:1:24`,
+  );
+  return { panel, rows, tip };
+}
+
+/**
+ * The overlay chrome the desktop panel owns: a backdrop that dismisses it, Escape that dismisses
+ * it, and focus that goes back where it came from. Hosting the panel in the shared overlay root
+ * rather than a native Modal must not change any of it.
+ */
+export async function keepDesktopOverlayChrome(page: Page, workspace: CreatedWorkspace) {
+  await writeFile(path.join(workspace.repoPath, "chrome.ts"), 'const a = "CHROME_TARGET";\n');
+  await workspace.navigateTo();
+  const panel = page.getByTestId("command-center-panel");
+  const input = page.getByRole("textbox", { name: "Search saved file contents...", exact: true });
+
+  // Backdrop dismisses the panel.
+  const composer = composerLocator(page);
+  await composer.click();
+  await expect(composer).toBeFocused();
+  await page.keyboard.press("Meta+Shift+F");
+  await expect(input).toBeFocused();
+  await page.mouse.click(page.viewportSize()!.width - 12, page.viewportSize()!.height - 12);
+  await expect(panel).toBeHidden();
+
+  // Escape dismisses it and hands focus back to the composer it was opened from.
+  await page.keyboard.press("Meta+Shift+F");
+  await input.fill("CHROME_TARGET");
+  await expect(panel.getByRole("button", { name: /chrome\.ts:1:/ })).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(panel).toBeHidden();
+  await expect(composer).toBeFocused();
+
+  // Ordinary commands and the Files scope still open over the same chrome.
+  await page.keyboard.press("Meta+k");
+  await expect(page.getByTestId("command-center-input")).toBeFocused();
+  await page.keyboard.press("Escape");
+  await page.keyboard.press("Meta+p");
+  await expect(page.getByRole("textbox", { name: "Search files...", exact: true })).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(panel).toBeHidden();
 }

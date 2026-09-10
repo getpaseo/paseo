@@ -5,6 +5,7 @@ import { useTranslation } from "react-i18next";
 import type { WorkspaceContentMatch } from "@getpaseo/protocol/messages";
 import { isWeb } from "@/constants/platform";
 import { Button } from "@/components/ui/button";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { useActiveWorkspaceSelection } from "@/stores/navigation-active-workspace-store";
 import { useWorkspaceDirectory } from "@/stores/session-store-hooks";
@@ -234,43 +235,42 @@ function ResultRow({
   const file = useMemo(() => describeResultPath(item.path), [item.path]);
   const location = `${item.path}:${item.line}:${item.columnStart}`;
   return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityLabel={`${location} ${item.snippet}`}
-      accessibilityState={accessibilityState}
-      aria-pressed={isWeb ? selected : undefined}
-      onPress={onPress}
-      style={style}
-    >
-      {({ hovered }: PressableStateCallbackType & { hovered?: boolean }) => {
-        // Pointing at a row, or selecting it, spells every parent out; at rest the row shows only
-        // the nearest one so the column stays scannable.
-        const parents = hovered || selected ? file.head : file.directory;
-        return (
-          <>
-            <Text style={styles.snippet} numberOfLines={1}>
-              {line.before}
-              <Text style={styles.match}>{line.match}</Text>
-              {line.after}
-            </Text>
-            {/* The name and coordinates are pinned; only the parent context may shrink, so a deep
-              path loses its middle rather than the identity the reader is scanning for. Two files
-              can share a name and their nearest parent, so pointing at a row spells the rest of
-              the path out. */}
-            <View style={styles.location}>
-              {parents ? (
-                <Text style={styles.locationDirectory} numberOfLines={1}>
-                  {parents}
-                </Text>
-              ) : null}
-              <Text style={styles.locationFile} numberOfLines={1}>
-                {file.name}:{item.line}:{item.columnStart}
+    // The resting row shows the file and its nearest parent, which two files can share
+    // (packages/app/src/utils/index.ts and packages/server/src/utils/index.ts). The tooltip is
+    // where the exact workspace-relative path lives; it is not bounded by the column's width.
+    <Tooltip delayDuration={400} enabledOnDesktop enabledOnMobile={false}>
+      <TooltipTrigger asChild>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={`${location} ${item.snippet}`}
+          accessibilityState={accessibilityState}
+          aria-pressed={isWeb ? selected : undefined}
+          onPress={onPress}
+          style={style}
+        >
+          <Text style={styles.snippet} numberOfLines={1}>
+            {line.before}
+            <Text style={styles.match}>{line.match}</Text>
+            {line.after}
+          </Text>
+          {/* The name and coordinates are pinned; only the parent context may shrink, so a deep
+              path loses its middle rather than the identity the reader is scanning for. */}
+          <View style={styles.location}>
+            {file.directory ? (
+              <Text style={styles.locationDirectory} numberOfLines={1}>
+                {file.directory}
               </Text>
-            </View>
-          </>
-        );
-      }}
-    </Pressable>
+            ) : null}
+            <Text style={styles.locationFile} numberOfLines={1}>
+              {file.name}:{item.line}:{item.columnStart}
+            </Text>
+          </View>
+        </Pressable>
+      </TooltipTrigger>
+      <TooltipContent side="bottom" align="start" maxWidth={520} testID="content-search-row-path">
+        <Text style={styles.tooltipPath}>{location}</Text>
+      </TooltipContent>
+    </Tooltip>
   );
 }
 

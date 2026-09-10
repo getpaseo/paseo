@@ -168,15 +168,26 @@ test("opening the same occurrence again navigates the pane it is already showing
 
 import { revealExactPathOnHover } from "../support/helpers/workspace-content-search";
 
-test("pointing at a result reveals its exact path when the row label cannot", async ({
+test("a result's tooltip paints the exact path, however deep", async ({
   page,
   withWorkspace,
 }, testInfo) => {
-  const { panel, rows } = await revealExactPathOnHover(page, await withWorkspace());
-  await rows.last().hover();
-  await panel.screenshot({ path: testInfo.outputPath("hover-exact-path.png") });
-  // Pointing must not disturb the keyboard selection or the Enter contract.
+  const { rows, tip } = await revealExactPathOnHover(page, await withWorkspace());
+  await rows.first().hover();
+  await expect(tip).toBeVisible();
+  await page.waitForTimeout(400);
+  await page.screenshot({ path: testInfo.outputPath("tooltip-exact-path.png") });
+  // Pointing must not move the keyboard selection: Enter still opens the first result.
   await page.keyboard.press("Enter");
-  await expect(panel).toBeHidden();
+  await expect(page.getByTestId("command-center-panel")).toBeHidden();
   await expect(page.getByTestId("file-source-editor")).toContainText("SHARED_UTIL");
+});
+
+import { keepDesktopOverlayChrome } from "../support/helpers/workspace-content-search";
+
+test("the desktop panel keeps its backdrop, Escape and focus return in every scope", async ({
+  page,
+  withWorkspace,
+}) => {
+  await keepDesktopOverlayChrome(page, await withWorkspace());
 });
