@@ -77,13 +77,11 @@ including fresh, settled, 75-second soak, multi-tab, viewport, and full-page che
 PNG sizes may be device-pixel scaled; on a Retina display the 1280x800 logical viewport
 is usually saved as 2560x1600.
 
-Run `npm run test:e2e:browser-throttling --workspace=@getpaseo/desktop` to verify
-that hiding the window stops guest animation, viewport screenshots contain fresh
-pixels, and restoring or closing the browser still works. Pass `-- --full-page` to
-also run the below-viewport pixel assertion: this reproduces the existing
-[full-page repetition bug](https://github.com/getpaseo/paseo/issues/3196), which the
-capture harness's frame-availability checks do not detect.
-On Linux, run it under `xvfb-run -a` when no display is available.
+The existing `npm run test:e2e:browser-tabs --workspace=@getpaseo/desktop` journey
+verifies that a hidden window stops guest animation, captures fresh viewport pixels,
+and resumes animation after restoring the window. Its artifacts include the screenshot
+and animation measurements. Full-page content correctness remains separately tracked in
+[the full-page repetition bug](https://github.com/getpaseo/paseo/issues/3196).
 
 ## Mechanism
 

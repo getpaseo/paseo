@@ -211,12 +211,6 @@ jobs:
         if: ${{ runner.os == 'Linux' }}
         run: npm run test:e2e:renderer --workspace=@getpaseo/desktop
 
-      - name: Verify hidden browser throttling and screenshots
-        if: ${{ runner.os == 'Linux' }}
-        run: xvfb-run -a npm run test:e2e:browser-throttling --workspace=@getpaseo/desktop
-        env:
-          PASEO_BROWSER_THROTTLING_ARTIFACT_DIR: ${{ runner.temp }}/desktop-browser-e2e/throttling
-
       - name: Run desktop browser E2E
         if: ${{ runner.os == 'Linux' }}
         run: npm run test:e2e:browser-tabs --workspace=@getpaseo/desktop
