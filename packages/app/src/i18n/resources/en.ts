@@ -70,6 +70,18 @@ export const en = {
       close: "Close menu",
     },
     commandCenter: {
+      contentTitle: "Search file contents",
+      content: "File contents",
+      contentPlaceholder: "Search saved file contents...",
+      contentUnavailable: "Workspace unavailable",
+      contentUpdateHost: "Update this host to search file contents",
+      contentBack: "Back to results",
+      contentOpen: "Open",
+      contentLoadingPreview: "Loading preview...",
+      contentLimited: "Results limited — refine your search",
+      contentSkippedLargeFiles: "Files over {{size}} were not searched",
+      contentChanged: "File changed — saved match is no longer at this location",
+
       placeholder: "Search commands, files, workspaces, and agents...",
       filePlaceholder: "Search files...",
       searchingFiles: "Searching files...",

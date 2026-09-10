@@ -75,7 +75,12 @@ export function usePaneContext(): PaneContextValue {
 }
 
 export function usePaneFocus(): PaneFocusContextValue {
-  const value = useContext(PaneFocusContext);
+  const value = usePaneFocusIfAny();
   invariant(value, "PaneFocusContext is required");
   return value;
+}
+
+/** Pane focus for subtrees that a pane may or may not own, such as an overlay preview. */
+export function usePaneFocusIfAny(): PaneFocusContextValue | null {
+  return useContext(PaneFocusContext);
 }

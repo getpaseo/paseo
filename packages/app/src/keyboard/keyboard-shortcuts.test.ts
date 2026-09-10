@@ -1196,3 +1196,20 @@ describe("direct new-tab target shortcuts", () => {
     ).toEqual([["ctrl", "shift", "H"]]);
   });
 });
+
+it("searches contents from terminal focus while preserving explicit Focus overrides", () => {
+  const event = { key: "F", code: "KeyF", metaKey: true, shiftKey: true };
+  const context = { isMac: true, isDesktop: true, focusScope: "terminal" as const };
+  expect(resolveShortcut({ event, context }).match?.action).toBe("command-center.content");
+  expect(resolveShortcut({ event: { ...event, altKey: true }, context }).match?.action).toBe(
+    "view.toggle.focus",
+  );
+  const bindings = buildEffectiveBindings({ "view-toggle-focus-cmd-shift-f-mac": "Cmd+Shift+F" });
+  expect(resolveShortcut({ event, context, bindings }).match?.action).toBe("view.toggle.focus");
+  const disabled = buildEffectiveBindings({
+    "view-toggle-focus-cmd-shift-f-mac": UNASSIGNED_COMBO,
+  });
+  expect(
+    resolveShortcut({ event: { ...event, altKey: true }, context, bindings: disabled }).match,
+  ).toBeNull();
+});

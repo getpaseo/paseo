@@ -74,6 +74,18 @@ export const fr: TranslationResources = {
       close: "Fermer le menu",
     },
     commandCenter: {
+      contentTitle: "Rechercher dans les fichiers",
+      content: "Contenu des fichiers",
+      contentPlaceholder: "Rechercher dans les fichiers enregistrés...",
+      contentUnavailable: "Espace de travail indisponible",
+      contentUpdateHost: "Mettez cet hôte à jour pour rechercher dans les fichiers",
+      contentBack: "Retour aux résultats",
+      contentOpen: "Ouvrir",
+      contentLoadingPreview: "Chargement de l’aperçu...",
+      contentLimited: "Résultats limités — précisez la recherche",
+      contentSkippedLargeFiles: "Les fichiers de plus de {{size}} n’ont pas été analysés",
+      contentChanged: "Fichier modifié — la correspondance n’est plus à cet emplacement",
+
       placeholder: "Rechercher des commandes, fichiers, espaces de travail et agents...",
       filePlaceholder: "Rechercher des fichiers...",
       searchingFiles: "Recherche de fichiers...",

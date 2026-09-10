@@ -2,7 +2,7 @@ import { constants, promises as fs, type BigIntStats, type Stats } from "fs";
 import type { FileHandle } from "fs/promises";
 import path from "path";
 import { randomUUID } from "crypto";
-import { expandUserPath, resolvePathFromBase } from "../path-utils.js";
+import { expandUserPath, resolvePathFromBase, toWorkspaceRelativePath } from "../path-utils.js";
 import { runGitCommand } from "../../utils/run-git-command.js";
 
 export type ExplorerEntryKind = "file" | "directory";
@@ -15,6 +15,7 @@ export interface ListDirectoryParams {
 }
 
 export interface ReadFileParams {
+  maxBytes?: number;
   root: string;
   relativePath: string;
 }
@@ -193,8 +194,9 @@ export async function listDirectoryEntries({
 export async function readExplorerFile({
   root,
   relativePath,
+  maxBytes,
 }: ReadFileParams): Promise<FileExplorerFile> {
-  const file = await readExplorerFileBytes({ root, relativePath });
+  const file = await readExplorerFileBytes({ root, relativePath, maxBytes });
 
   if (file.kind === "image") {
     return {
@@ -236,6 +238,7 @@ export async function readExplorerFile({
 export async function readExplorerFileBytes({
   root,
   relativePath,
+  maxBytes,
 }: ReadFileParams): Promise<FileExplorerFileBytes> {
   const filePath = await resolveScopedPath({ root, relativePath });
   const handle = await openFileForRead(filePath.resolvedPath);
@@ -247,6 +250,8 @@ export async function readExplorerFileBytes({
       throw new Error("Requested path is not a file");
     }
 
+    if (maxBytes !== undefined && stats.size > BigInt(maxBytes))
+      throw new Error("File is too large to display");
     const ext = path.extname(filePath.resolvedPath).toLowerCase();
     const basePayload = {
       path: normalizeRelativePath({ root, targetPath: filePath.requestedPath }),
@@ -255,7 +260,10 @@ export async function readExplorerFileBytes({
       revision: fileRevision(stats),
     };
 
-    const buffer = await handle.readFile();
+    const chunks: Buffer[] = [];
+    for await (const chunk of readFileHandleChunks(handle, Number(stats.size), fileRevision(stats)))
+      chunks.push(Buffer.from(chunk));
+    const buffer = Buffer.concat(chunks);
     if (ext in IMAGE_MIME_TYPES) {
       return {
         ...basePayload,
@@ -289,7 +297,7 @@ export async function readExplorerFileBytes({
 }
 
 export async function streamExplorerFile(
-  { root, relativePath }: ReadFileParams,
+  { root, relativePath, maxBytes }: ReadFileParams,
   consume: (file: FileExplorerFileStream) => Promise<void>,
 ): Promise<void> {
   const filePath = await resolveScopedPath({ root, relativePath });
@@ -301,6 +309,8 @@ export async function streamExplorerFile(
       throw new Error("Requested path is not a file");
     }
 
+    if (maxBytes !== undefined && stats.size > BigInt(maxBytes))
+      throw new Error("File is too large to display");
     const advertisedSize = Number(stats.size);
     const advertisedRevision = fileRevision(stats);
     const ext = path.extname(filePath.resolvedPath).toLowerCase();
@@ -861,7 +871,7 @@ function normalizeRelativePath({ root, targetPath }: { root: string; targetPath:
   const normalizedRoot = expandUserPath(root);
   const normalizedTarget = expandUserPath(targetPath);
   const relative = path.relative(normalizedRoot, normalizedTarget);
-  return relative === "" ? "." : relative.split(path.sep).join("/");
+  return relative === "" ? "." : toWorkspaceRelativePath(relative);
 }
 
 function textMimeTypeForExtension(ext: string): string {

@@ -1647,17 +1647,13 @@ function WorkspaceScreenContent({
     ) => openTab({ workspaceKey, target, intent: "reveal", parentTabId, placement }),
     [openTab],
   );
-  // File targets stay identity-stable so the same path reuses its tab. Keep navigation
-  // requests separate so clicking an unchanged path:line can still recenter the pane.
-  const [fileNavigationRevisionByTabId, setFileNavigationRevisionByTabId] = useState<
-    Record<string, number>
-  >({});
-  const requestFileNavigation = useCallback((tabId: string) => {
-    setFileNavigationRevisionByTabId((current) => ({
-      ...current,
-      [tabId]: (current[tabId] ?? 0) + 1,
-    }));
-  }, []);
+  // File targets stay identity-stable so the same path reuses its tab. Navigation requests live
+  // with the tabs in the layout store, so an opener outside this screen — the Command Center —
+  // asks for the same reveal through the same capability.
+  const fileNavigationRevisionByTabId = useWorkspaceLayoutStore(
+    (state) => state.fileNavigationRevisionByTabId,
+  );
+  const requestFileNavigation = useWorkspaceLayoutStore((state) => state.requestFileNavigation);
   const focusWorkspacePane = useWorkspaceLayoutStore((state) => state.focusPane);
   const hasHydratedWorkspaces = useSessionStore(
     (state) => state.sessions[normalizedServerId]?.hasHydratedWorkspaces ?? false,

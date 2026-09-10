@@ -73,6 +73,18 @@ export const ptBR: TranslationResources = {
       close: "Fechar menu",
     },
     commandCenter: {
+      contentTitle: "Buscar conteúdo dos arquivos",
+      content: "Conteúdo dos arquivos",
+      contentPlaceholder: "Buscar conteúdo salvo...",
+      contentUnavailable: "Espaço de trabalho indisponível",
+      contentUpdateHost: "Atualize este host para buscar conteúdo",
+      contentBack: "Voltar aos resultados",
+      contentOpen: "Abrir",
+      contentLoadingPreview: "Carregando prévia...",
+      contentLimited: "Resultados limitados — refine a busca",
+      contentSkippedLargeFiles: "Arquivos maiores que {{size}} não foram pesquisados",
+      contentChanged: "Arquivo alterado — a correspondência não está mais neste local",
+
       placeholder: "Buscar comandos, arquivos, espaços de trabalho e agentes...",
       filePlaceholder: "Pesquisar arquivos...",
       searchingFiles: "Pesquisando arquivos...",

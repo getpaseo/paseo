@@ -1,3 +1,4 @@
+import { useKeyboardShortcutsStore } from "@/stores/keyboard-shortcuts-store";
 import { useCallback, useMemo, type ReactElement } from "react";
 import { useTranslation } from "react-i18next";
 import {
@@ -327,10 +328,30 @@ export function useWorkspaceCommandCenterActions(): void {
     ],
   );
 
+  const allActions = useMemo(
+    () => [
+      ...actions,
+      {
+        id: "workspace-content-search",
+        group: "actions" as const,
+        groupRank: 0,
+        rank: 10,
+        visibility: "query" as const,
+        keywords: ["search", "find", "contents", "files", "text"],
+        run: () => useKeyboardShortcutsStore.getState().setCommandCenterOpen(true, "content"),
+        presentation: {
+          kind: "action" as const,
+          title: t("shell.commandCenter.contentTitle"),
+          sectionTitle: t("shell.commandCenter.actions"),
+        },
+      },
+    ],
+    [actions, t],
+  );
   useCommandCenterActions({
     sourceId: "workspace",
     enabled: Boolean(serverId && cwd),
-    actions,
+    actions: allActions,
   });
 }
 

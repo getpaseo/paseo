@@ -72,3 +72,9 @@ describe("resolveFilePreviewReadTarget", () => {
     ).toBeNull();
   });
 });
+
+it("preserves literal whitespace for a source read target", () => {
+  expect(
+    resolveFilePreviewReadTarget({ path: " leading.txt ", workspaceRoot: "/workspace " }),
+  ).toEqual({ cwd: "/workspace ", path: " leading.txt " });
+});

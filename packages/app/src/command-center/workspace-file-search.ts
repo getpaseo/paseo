@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { openWorkspaceFileFromExplorer } from "@/screens/workspace/workspace-file-open-command";
+import { openWorkspaceFileInFocusedPane } from "@/screens/workspace/workspace-file-open-command";
 import { useActiveWorkspaceSelection } from "@/stores/navigation-active-workspace-store";
 import { usePanelStore } from "@/stores/panel-store";
 import { useSessionStore } from "@/stores/session-store";
@@ -128,8 +128,8 @@ export function useWorkspaceFileSearch(input: { enabled: boolean; query: string 
     (path: string) => {
       if (!serverId || !workspaceId) return;
       clearCommandCenterFocusRestoreElement();
-      openWorkspaceFileFromExplorer({
-        filePath: path,
+      openWorkspaceFileInFocusedPane({
+        location: { path },
         persistenceKey: buildWorkspaceTabPersistenceKey({ serverId, workspaceId }),
         closeExplorerAfterOpen: true,
         showMobileAgent: usePanelStore.getState().showMobileAgent,
@@ -141,6 +141,7 @@ export function useWorkspaceFileSearch(input: { enabled: boolean; query: string 
             placement,
           }),
         focusWorkspaceTab: useWorkspaceLayoutStore.getState().focusTab,
+        requestFileNavigation: useWorkspaceLayoutStore.getState().requestFileNavigation,
       });
     },
     [serverId, workspaceId],

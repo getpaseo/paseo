@@ -2688,6 +2688,57 @@ export const FileVersionSchema = z.discriminatedUnion("status", [
   }),
 ]);
 
+export const WorkspaceContentMatchSchema = z.object({
+  path: z.string(),
+  line: z.number().int().positive(),
+  columnStart: z.number().int().positive(),
+  columnEnd: z.number().int().positive(),
+  text: z.string(),
+  snippet: z.string(),
+  snippetMatchStart: z.number().int().nonnegative(),
+  snippetMatchEnd: z.number().int().nonnegative(),
+});
+export const WorkspaceContentSearchResultSchema = z.discriminatedUnion("status", [
+  z.object({
+    status: z.literal("ok"),
+    matches: z.array(WorkspaceContentMatchSchema),
+    limited: z.boolean(),
+    /**
+     * Per-file byte ceiling the host applied. Files above it are never opened, so a result set
+     * is complete only for files at or under this size. Absent on hosts that do not report it.
+     */
+    // COMPAT(workspaceContentSearchMaxFileBytes): added in v0.8.0, remove optionality after
+    // 2027-03-10 once the daemon floor reports it.
+    maxFileBytes: z.number().int().positive().optional(),
+  }),
+  z.object({
+    status: z.literal("error"),
+    code: z.enum(["missing_rg", "timeout", "invalid_query", "unavailable", "busy", "cancelled"]),
+    message: z.string(),
+  }),
+]);
+export const WorkspaceContentSearchRequestSchema = z.object({
+  type: z.literal("fs.content.search.request"),
+  requestId: z.string(),
+  cwd: z.string(),
+  query: z.string(),
+});
+export const WorkspaceContentCancelRequestSchema = z.object({
+  type: z.literal("fs.content.cancel.request"),
+  requestId: z.string(),
+  searchRequestId: z.string(),
+});
+export const WorkspaceContentSearchResponseSchema = z.object({
+  type: z.literal("fs.content.search.response"),
+  payload: z.object({ requestId: z.string(), result: WorkspaceContentSearchResultSchema }),
+});
+export const WorkspaceContentCancelResponseSchema = z.object({
+  type: z.literal("fs.content.cancel.response"),
+  payload: z.object({ requestId: z.string(), searchRequestId: z.string() }),
+});
+export type WorkspaceContentMatch = z.infer<typeof WorkspaceContentMatchSchema>;
+export type WorkspaceContentSearchResult = z.infer<typeof WorkspaceContentSearchResultSchema>;
+
 export const FileSubscribeRequestSchema = z.object({
   type: z.literal("fs.file.subscribe.request"),
   cwd: z.string(),
@@ -3211,6 +3262,8 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   WorkspaceClearAttentionRequestSchema,
   WorkspaceMarkUnreadRequestSchema,
   FileExplorerRequestSchema,
+  WorkspaceContentSearchRequestSchema,
+  WorkspaceContentCancelRequestSchema,
   FileSubscribeRequestSchema,
   FileUnsubscribeRequestSchema,
   FileWriteRequestSchema,
@@ -3516,6 +3569,7 @@ export const ServerInfoStatusPayloadSchema = z
         workspaceRecovery: z.boolean().optional(),
         // COMPAT(workspaceFileEditing): added in v0.2.0, remove after 2027-01-18 once daemon floor >= v0.2.0.
         workspaceFileEditing: z.boolean().optional(),
+        workspaceContentSearch: z.boolean().optional(),
         // COMPAT(providerUsageList): added in v0.1.98, drop the gate when daemon floor >= v0.1.98.
         providerUsageList: z.boolean().optional(),
         // COMPAT(agentDetach): added in v0.1.98, remove gate after 2026-12-19 once daemon floor >= v0.1.98.
@@ -6617,6 +6671,8 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   PaseoWorktreeArchiveResponseSchema,
   CreatePaseoWorktreeResponseSchema,
   FileExplorerResponseSchema,
+  WorkspaceContentSearchResponseSchema,
+  WorkspaceContentCancelResponseSchema,
   FileSubscribeResponseSchema,
   FileUnsubscribeResponseSchema,
   FileWriteResponseSchema,

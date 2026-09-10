@@ -73,6 +73,18 @@ export const ar: TranslationResources = {
       close: "إغلاق القائمة",
     },
     commandCenter: {
+      contentTitle: "البحث في محتوى الملفات",
+      content: "محتوى الملفات",
+      contentPlaceholder: "البحث في الملفات المحفوظة...",
+      contentUnavailable: "مساحة العمل غير متاحة",
+      contentUpdateHost: "حدّث هذا المضيف للبحث في محتوى الملفات",
+      contentBack: "العودة إلى النتائج",
+      contentOpen: "فتح",
+      contentLoadingPreview: "جارٍ تحميل المعاينة...",
+      contentLimited: "النتائج محدودة — حدّد البحث أكثر",
+      contentSkippedLargeFiles: "لم يتم البحث في الملفات الأكبر من {{size}}",
+      contentChanged: "تغيّر الملف — لم تعد المطابقة في هذا الموضع",
+
       placeholder: "ابحث في الأوامر والملفات ومساحات العمل والوكلاء...",
       filePlaceholder: "البحث في الملفات...",
       searchingFiles: "جارٍ البحث في الملفات...",

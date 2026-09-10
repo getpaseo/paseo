@@ -73,6 +73,18 @@ export const ja: TranslationResources = {
       close: "メニューを閉じる",
     },
     commandCenter: {
+      contentTitle: "ファイル内容を検索",
+      content: "ファイル内容",
+      contentPlaceholder: "保存済みファイルの内容を検索...",
+      contentUnavailable: "ワークスペースを利用できません",
+      contentUpdateHost: "ファイル内容を検索するにはホストを更新してください",
+      contentBack: "検索結果に戻る",
+      contentOpen: "開く",
+      contentLoadingPreview: "プレビューを読み込み中...",
+      contentLimited: "結果が上限に達しました — 検索を絞り込んでください",
+      contentSkippedLargeFiles: "{{size}} を超えるファイルは検索されていません",
+      contentChanged: "ファイルが変更され、この位置に一致する内容はありません",
+
       placeholder: "コマンド、ファイル、ワークスペース、エージェントを検索...",
       filePlaceholder: "ファイルを検索...",
       searchingFiles: "ファイルを検索中...",

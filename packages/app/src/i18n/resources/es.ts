@@ -73,6 +73,18 @@ export const es: TranslationResources = {
       close: "Cerrar menú",
     },
     commandCenter: {
+      contentTitle: "Buscar contenido de archivos",
+      content: "Contenido de archivos",
+      contentPlaceholder: "Buscar contenido guardado...",
+      contentUnavailable: "Espacio de trabajo no disponible",
+      contentUpdateHost: "Actualiza este host para buscar contenido",
+      contentBack: "Volver a resultados",
+      contentOpen: "Abrir",
+      contentLoadingPreview: "Cargando vista previa...",
+      contentLimited: "Resultados limitados — precisa la búsqueda",
+      contentSkippedLargeFiles: "No se buscó en archivos de más de {{size}}",
+      contentChanged: "El archivo cambió — la coincidencia ya no está aquí",
+
       placeholder: "Buscar comandos, archivos, espacios de trabajo y agentes...",
       filePlaceholder: "Buscar archivos...",
       searchingFiles: "Buscando archivos...",

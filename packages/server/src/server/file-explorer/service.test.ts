@@ -592,3 +592,44 @@ describe("file explorer service", () => {
     }
   });
 });
+
+it("enforces the caller byte ceiling at the opened file for inline and streaming reads", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "paseo-read-budget-"));
+  try {
+    await writeFile(path.join(root, "growing.txt"), "small");
+    const budget = (await stat(path.join(root, "growing.txt"))).size;
+    await appendFile(path.join(root, "growing.txt"), " grew after precheck");
+    await expect(
+      readExplorerFile({ root, relativePath: "growing.txt", maxBytes: budget }),
+    ).rejects.toThrow("File is too large to display");
+    await expect(
+      streamExplorerFile({ root, relativePath: "growing.txt", maxBytes: budget }, async () => {
+        throw new Error("Must reject before delivering content");
+      }),
+    ).rejects.toThrow("File is too large to display");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+it("preserves literal whitespace in existing file identities through read and write", async () => {
+  const root = await createTempDir("paseo-literal-path-");
+  try {
+    await writeFile(path.join(root, " leading.txt"), "needle");
+    await writeFile(path.join(root, "leading.txt"), "different file");
+    const file = await readExplorerFile({ root, relativePath: " leading.txt" });
+    expect(file.content).toBe("needle");
+    const written = await writeExplorerFile({
+      root,
+      relativePath: " leading.txt",
+      content: "updated",
+      expectedModifiedAt: file.modifiedAt,
+      expectedRevision: file.revision,
+    });
+    expect(written.status).toBe("written");
+    expect(await readFile(path.join(root, " leading.txt"), "utf8")).toBe("updated");
+    expect(await readFile(path.join(root, "leading.txt"), "utf8")).toBe("different file");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

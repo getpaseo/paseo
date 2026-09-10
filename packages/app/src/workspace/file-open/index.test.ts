@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  resolveWorkspaceFileSelection,
   createWorkspaceFileTabTarget,
   normalizeWorkspaceFileLocation,
   resolveWorkspaceFilePaths,
@@ -7,10 +8,10 @@ import {
 } from ".";
 
 describe("normalizeWorkspaceFileLocation", () => {
-  it("normalizes paths and valid line ranges", () => {
+  it("clamps line ranges and leaves the path as the producer gave it", () => {
     expect(
       normalizeWorkspaceFileLocation({
-        path: "src\\app.ts",
+        path: "src/app.ts",
         lineStart: 12.8,
         lineEnd: 20.2,
       }),
@@ -34,7 +35,7 @@ describe("normalizeWorkspaceFileLocation", () => {
   });
 
   it("rejects empty paths", () => {
-    expect(normalizeWorkspaceFileLocation({ path: " " })).toBeNull();
+    expect(normalizeWorkspaceFileLocation({ path: "" })).toBeNull();
   });
 });
 
@@ -97,12 +98,32 @@ describe("resolveWorkspaceFilePaths", () => {
     });
   });
 
-  it("normalizes Windows separators in the file path", () => {
+  it("normalizes separators in a Windows-shaped path and leaves every other path literal", () => {
     expect(
-      resolveWorkspaceFilePaths({ path: "src\\app.ts", workspaceRoot: "/Users/me/repo" }),
+      resolveWorkspaceFilePaths({
+        path: "C:\\Users\\me\\repo\\src\\app.ts",
+        workspaceRoot: "C:\\Users\\me\\repo",
+      }),
     ).toEqual({
-      absolutePath: "/Users/me/repo/src/app.ts",
+      absolutePath: "C:/Users/me/repo/src/app.ts",
       relativePath: "src/app.ts",
+    });
+    // A workspace-relative path is the host's own identity, so its backslash is a file name
+    // character. Rewriting it here is what opened a different file than the search result.
+    expect(
+      resolveWorkspaceFilePaths({ path: "a\\b.txt", workspaceRoot: "/Users/me/repo" }),
+    ).toEqual({
+      absolutePath: "/Users/me/repo/a\\b.txt",
+      relativePath: "a\\b.txt",
+    });
+    expect(
+      resolveWorkspaceFilePaths({
+        path: "/Users/me/repo/a\\b.txt",
+        workspaceRoot: "/Users/me/repo",
+      }),
+    ).toEqual({
+      absolutePath: "/Users/me/repo/a\\b.txt",
+      relativePath: "a\\b.txt",
     });
   });
 
@@ -182,4 +203,51 @@ describe("resolveWorkspaceFilePaths", () => {
       resolveWorkspaceFilePaths({ path: "/Users/me/repo", workspaceRoot: "/Users/me/repo" }),
     ).toBeNull();
   });
+});
+
+it("selects exact UTF-16 columns and refuses a stale saved match", () => {
+  const location = {
+    path: "a.ts",
+    lineStart: 2,
+    columnStart: 5,
+    columnEnd: 11,
+    expectedText: "NEEDLE",
+  };
+  expect(resolveWorkspaceFileSelection("first\né🙂 NEEDLE", location)).toEqual({
+    from: 10,
+    to: 16,
+    changed: false,
+  });
+  expect(resolveWorkspaceFileSelection("first\né🙂 change", location)).toEqual({
+    from: 10,
+    to: 10,
+    changed: true,
+  });
+  expect(workspaceFileLocationsEqual(location, { ...location, columnStart: 6 })).toBe(false);
+});
+
+it("does not select an identical occurrence on another line after the saved line disappears", () => {
+  expect(
+    resolveWorkspaceFileSelection("needle", {
+      path: "a.ts",
+      lineStart: 3,
+      columnStart: 1,
+      columnEnd: 7,
+      expectedText: "needle",
+    }),
+  ).toEqual({ from: 0, to: 0, changed: true });
+});
+
+it("preserves literal filename and workspace whitespace through location and host paths", () => {
+  const location = { path: " leading.txt ", lineStart: 1 };
+  expect(normalizeWorkspaceFileLocation(location)).toEqual(location);
+  expect(resolveWorkspaceFilePaths({ path: location.path, workspaceRoot: "/workspace " })).toEqual({
+    absolutePath: "/workspace / leading.txt ",
+    relativePath: " leading.txt ",
+  });
+});
+
+it("preserves a literal backslash file name through location identity", () => {
+  const location = { path: "a\\b.txt", lineStart: 1, columnStart: 1, expectedText: "needle" };
+  expect(normalizeWorkspaceFileLocation(location)).toEqual(location);
 });

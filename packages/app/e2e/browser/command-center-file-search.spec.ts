@@ -102,8 +102,8 @@ test("dropping the files scope leaves the search row the same height", async ({ 
     const header = panel.getByTestId("command-center-header");
     const scoped = await header.boundingBox();
 
-    await page.getByTestId("command-center-files-scope").click();
-    await expect(page.getByTestId("command-center-files-scope")).toHaveCount(0);
+    await page.getByTestId("command-center-scope").click();
+    await expect(page.getByTestId("command-center-scope")).toHaveCount(0);
     const unscoped = await header.boundingBox();
 
     expect(scoped?.height).toBe(unscoped?.height);

@@ -1,3 +1,4 @@
+import type { WorkspaceContentSearchResult } from "@getpaseo/protocol/messages";
 import { ProviderSnapshotUpdates } from "./provider-snapshots/index.js";
 import type { SessionEventSubscription } from "@getpaseo/protocol/messages";
 import {
@@ -4489,6 +4490,33 @@ export class DaemonClient {
       throw new Error("Directory listing unavailable.");
     }
     return payload.directory;
+  }
+
+  async searchWorkspaceContent(
+    input: { cwd: string; query: string },
+    options: { signal?: AbortSignal } = {},
+  ): Promise<WorkspaceContentSearchResult> {
+    if (options.signal?.aborted)
+      return { status: "error", code: "cancelled", message: "Search cancelled" };
+    const requestId = this.createRequestId();
+    const cancel = () => {
+      void this.sendCorrelatedSessionRequest({
+        message: { type: "fs.content.cancel.request", searchRequestId: requestId },
+        responseType: "fs.content.cancel.response",
+      }).catch(() => undefined);
+    };
+    const response = this.sendCorrelatedSessionRequest({
+      requestId,
+      message: { type: "fs.content.search.request", ...input },
+      responseType: "fs.content.search.response",
+    });
+    options.signal?.addEventListener("abort", cancel, { once: true });
+    if (options.signal?.aborted) cancel();
+    try {
+      return (await response).result;
+    } finally {
+      options.signal?.removeEventListener("abort", cancel);
+    }
   }
 
   async readFile(

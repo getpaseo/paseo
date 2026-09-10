@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useRef } from "react";
-import { FlatList, Text, View, type ListRenderItem } from "react-native";
+import { useTranslation } from "react-i18next";
+import { useCallback, useEffect, useMemo, useRef } from "react";
+import { FlatList, Text, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { highlightCode, type HighlightToken } from "@getpaseo/highlight";
 import { syntaxTokenStyleFor } from "@/styles/syntax-token-styles";
@@ -58,14 +59,16 @@ function VirtualizedSource({
 }: Omit<FileSourceViewProps, "size" | "theme" | "tooLargeMessage"> & {
   presentation: "highlighted" | "plain";
 }) {
+  const { t } = useTranslation();
   const listRef = useRef<FlatList<SourceLine>>(null);
   const lines = useMemo(() => {
+    const source = content.replace(/\r\n?/g, "\n");
     if (presentation === "highlighted")
-      return highlightCode(content, filename).map((tokens, index) => ({
+      return highlightCode(source, filename).map((tokens, index) => ({
         number: index + 1,
         tokens,
       }));
-    return content
+    return source
       .split("\n")
       .map((text, index) => ({ number: index + 1, tokens: [{ text, style: null }] }));
   }, [content, filename, presentation]);
@@ -77,29 +80,63 @@ function VirtualizedSource({
       viewPosition: 0.5,
     });
   }, [lines.length, location.lineStart, navigationRevision]);
+  const selectedLine = lines[(location.lineStart ?? 1) - 1]?.tokens
+    .map((token) => token.text)
+    .join("");
+  const changed =
+    location.expectedText !== undefined &&
+    selectedLine?.slice((location.columnStart ?? 1) - 1, (location.columnEnd ?? 1) - 1) !==
+      location.expectedText;
+  const renderLine = useCallback(
+    ({ item }: { item: SourceLine }) => (
+      <SourceLineView
+        line={item}
+        start={!changed && item.number === location.lineStart ? location.columnStart : undefined}
+        end={!changed && item.number === location.lineStart ? location.columnEnd : undefined}
+      />
+    ),
+    [changed, location],
+  );
   return (
-    <FlatList
-      ref={listRef}
-      data={lines}
-      keyExtractor={sourceLineKey}
-      initialNumToRender={24}
-      windowSize={9}
-      getItemLayout={sourceLineLayout}
-      renderItem={renderSourceLine}
-    />
+    <View style={styles.root}>
+      {changed ? (
+        <Text accessibilityRole="alert" style={styles.notice}>
+          {t("shell.commandCenter.contentChanged")}
+        </Text>
+      ) : null}
+      <FlatList
+        ref={listRef}
+        data={lines}
+        keyExtractor={sourceLineKey}
+        initialNumToRender={24}
+        windowSize={9}
+        getItemLayout={sourceLineLayout}
+        extraData={location}
+        renderItem={renderLine}
+      />
+    </View>
   );
 }
 
-function SourceLineView({ line }: { line: SourceLine }) {
+function SourceLineView({ line, start, end }: { line: SourceLine; start?: number; end?: number }) {
+  let offset = 0;
   return (
     <View style={styles.line}>
       <Text style={styles.gutter}>{line.number}</Text>
       <Text selectable style={styles.text}>
-        {line.tokens.map((token) => (
-          <Text key={`${token.style}:${token.text}`} style={syntaxTokenStyleFor(token.style)}>
-            {token.text}
-          </Text>
-        ))}
+        {line.tokens.map((token) => {
+          const tokenStart = offset;
+          offset += token.text.length;
+          const from = Math.max(0, Math.min(token.text.length, (start ?? 1) - 1 - tokenStart));
+          const to = Math.max(from, Math.min(token.text.length, (end ?? 1) - 1 - tokenStart));
+          return (
+            <Text key={`${tokenStart}:${token.style}`} style={syntaxTokenStyleFor(token.style)}>
+              {token.text.slice(0, from)}
+              <Text style={styles.match}>{token.text.slice(from, to)}</Text>
+              {token.text.slice(to)}
+            </Text>
+          );
+        })}
       </Text>
     </View>
   );
@@ -113,9 +150,14 @@ function sourceLineLayout(_data: ArrayLike<SourceLine> | null | undefined, index
   return { length: 20, offset: index * 20, index };
 }
 
-const renderSourceLine: ListRenderItem<SourceLine> = ({ item }) => <SourceLineView line={item} />;
-
 const styles = StyleSheet.create((theme) => ({
+  root: { flex: 1 },
+  notice: {
+    padding: theme.spacing[2],
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.sm,
+  },
+  match: { backgroundColor: theme.colors.terminal.selectionBackground },
   unsupported: {
     flex: 1,
     alignItems: "center",

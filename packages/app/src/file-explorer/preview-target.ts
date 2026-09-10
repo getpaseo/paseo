@@ -61,7 +61,7 @@ export function resolveFilePreviewReadTarget(input: {
   path: string;
   workspaceRoot?: string;
 }): FilePreviewReadTarget | null {
-  const previewPath = input.path.trim();
+  const previewPath = input.path;
   if (!previewPath) {
     return null;
   }
@@ -73,7 +73,7 @@ export function resolveFilePreviewReadTarget(input: {
     };
   }
 
-  const workspaceRoot = input.workspaceRoot?.trim();
+  const workspaceRoot = input.workspaceRoot;
   if (!isAbsolutePath(previewPath)) {
     if (!workspaceRoot || !isAbsolutePath(workspaceRoot)) {
       return null;

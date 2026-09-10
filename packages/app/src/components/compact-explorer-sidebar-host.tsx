@@ -14,7 +14,7 @@ import { usePanelStore } from "@/stores/panel-store";
 import { useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
 import type { WorkspaceTabTarget } from "@/workspace-tabs/model";
 import { useWorkspaceCheckoutStatus } from "@/screens/workspace/use-workspace-checkout-status";
-import { openWorkspaceFileFromExplorer } from "@/screens/workspace/workspace-file-open-command";
+import { openWorkspaceFileInFocusedPane } from "@/screens/workspace/workspace-file-open-command";
 import { isWeb } from "@/constants/platform";
 import { DiffDocumentWorkspaceCacheProvider } from "@/git/diff-document/workspace-cache";
 import {
@@ -119,6 +119,7 @@ export function CompactExplorerSidebarHost({
     [openTab],
   );
   const focusWorkspaceTab = useWorkspaceLayoutStore((state) => state.focusTab);
+  const requestFileNavigation = useWorkspaceLayoutStore((state) => state.requestFileNavigation);
 
   const handleOpenExplorer = useCallback(() => {
     if (!model?.workspaceRoot) {
@@ -136,16 +137,24 @@ export function CompactExplorerSidebarHost({
       if (!model) {
         return;
       }
-      openWorkspaceFileFromExplorer({
-        filePath,
+      openWorkspaceFileInFocusedPane({
+        location: { path: filePath },
         persistenceKey: model.persistenceKey,
         closeExplorerAfterOpen: presentation === "overlay",
         showMobileAgent,
         openWorkspaceTabInFocusedPane,
         focusWorkspaceTab,
+        requestFileNavigation,
       });
     },
-    [focusWorkspaceTab, model, openWorkspaceTabInFocusedPane, presentation, showMobileAgent],
+    [
+      focusWorkspaceTab,
+      model,
+      openWorkspaceTabInFocusedPane,
+      presentation,
+      requestFileNavigation,
+      showMobileAgent,
+    ],
   );
 
   const handleContainerLayout = useCallback((event: LayoutChangeEvent) => {
