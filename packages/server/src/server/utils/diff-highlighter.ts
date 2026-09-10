@@ -1,3 +1,4 @@
+import type { ChangeBreakdown } from "@getpaseo/protocol/diff-stat";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { highlightCode, isLanguageSupported, type HighlightToken } from "@getpaseo/highlight";
@@ -19,6 +20,8 @@ export interface DiffHunk {
 }
 
 export interface ParsedDiffFile {
+  oldPath?: string;
+  breakdown?: ChangeBreakdown;
   path: string;
   isNew: boolean;
   isDeleted: boolean;

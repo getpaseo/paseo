@@ -1,3 +1,4 @@
+import { DiffStatSchema } from "@getpaseo/protocol/diff-stat";
 import { z } from "zod";
 import {
   AgentStatusSchema,
@@ -318,7 +319,7 @@ const StoredWorkspaceSchema = z.strictObject({
   statusEnteredAt: IsoDateSchema.nullable(),
   activityAt: z.null(),
   archivingAt: z.string().nullable(),
-  diffStat: z.strictObject({ additions: z.number(), deletions: z.number() }).nullable(),
+  diffStat: DiffStatSchema.nullable(),
   scripts: z.array(WorkspaceScriptSchema),
   gitRuntime: WorkspaceGitRuntimeSchema,
   githubRuntime: WorkspaceGitHubRuntimePayloadSchema,

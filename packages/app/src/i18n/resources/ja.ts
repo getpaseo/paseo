@@ -2,6 +2,32 @@ import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const ja: TranslationResources = {
+  changeStats: {
+    title: "変更の内訳",
+    code: "コード",
+    total: "合計",
+    production: "本番コード",
+    categories: {
+      code: "コード · JS/TS",
+      components: "コンポーネント · JSX/TSX",
+      styles: "スタイル",
+      ci: "CI",
+      config: "設定",
+      tooling: "ツール",
+      otherCode: "その他のコード",
+      comments: "コメント",
+      docs: "ドキュメント",
+      tests: "テスト",
+      generated: "生成ファイル",
+      formatting: "書式",
+      blank: "空行",
+      other: "その他 / 未分類",
+    },
+    commentsIncluded:
+      "本番コードのこの部分にはコメントが含まれます（未対応の構文または解析未完了）",
+    unavailable: "変更の内訳を表示するにはホストを更新してください。",
+  },
+
   common: {
     back: "戻る",
     loading: "読み込み中...",
@@ -1217,6 +1243,29 @@ export const ja: TranslationResources = {
         archiveFailed: "ワークスペースのアーカイブに失敗しました",
       },
     },
+  },
+  projectPullRequests: {
+    checks: {
+      passed: "すべてのチェックに成功",
+      pending: "チェック実行中",
+      skipped: "チェックをスキップ",
+      updateRequired: "CI ステータスを表示するには、このホストを更新してください。",
+    },
+    title: "プルリクエスト",
+    shortcut: "{{project}} のプルリクエストを表示",
+    search: "プルリクエストを検索",
+    clearSearch: "検索をクリア",
+    open: "オープン",
+    closed: "クローズ",
+    results: "{{count}} 件",
+    authRequired:
+      "プルリクエストを表示するには、このホストの Git サービスにサインインしてください。",
+    loading: "プルリクエストを読み込み中…",
+    empty: "一致するプルリクエストはありません。",
+    limit: "最大 {{count}} 件を表示しています。検索条件を絞り込んでください。",
+    start: "#{{number}} から worktree を作成: {{title}}",
+    updated: "更新日 {{date}}",
+    external: "#{{number}} をブラウザーで開く",
   },
   newWorkspace: {
     title: "新しいワークスペース",

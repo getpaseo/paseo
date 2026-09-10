@@ -1,7 +1,8 @@
+import type { ChangeBreakdown } from "@getpaseo/protocol/diff-stat";
 import { useCallback, useMemo, useState } from "react";
 import { View, Text, type LayoutChangeEvent, type PressableStateCallbackType } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
-import { DiffStat } from "@/components/diff-stat";
+import { ChangeStats } from "@/components/change-stats";
 import {
   TreeChevron,
   treeRowPaddingLeft,
@@ -24,6 +25,7 @@ interface DiffFolderRowProps {
   isSelected: boolean;
   additions: number;
   deletions: number;
+  breakdown?: ChangeBreakdown;
   onToggle: (dirPath: string) => void;
   onCollapse: (dirPath: string) => void;
   onSelect: (dirPath: string) => void;
@@ -55,6 +57,7 @@ export function DiffFolderRow({
   isSelected,
   additions,
   deletions,
+  breakdown,
   onToggle,
   onCollapse,
   onSelect,
@@ -167,7 +170,10 @@ export function DiffFolderRow({
             </Text>
           </View>
           <View style={styles.right}>
-            <DiffStat
+            <ChangeStats
+              variant="inline"
+              interactive
+              breakdown={breakdown}
               additions={additions}
               deletions={deletions}
               testID={testID ? `${testID}-stat` : undefined}

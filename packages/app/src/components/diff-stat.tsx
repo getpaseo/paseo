@@ -6,18 +6,36 @@ interface DiffStatProps {
   additions: number;
   deletions: number;
   testID?: string;
+  exact?: boolean;
+  muted?: boolean;
 }
 
-export function DiffStat({ additions, deletions, testID }: DiffStatProps) {
+export function DiffStat({
+  additions,
+  deletions,
+  testID,
+  exact = false,
+  muted = false,
+}: DiffStatProps) {
+  if (additions === 0 && deletions === 0) return null;
   return (
     <View style={styles.row} testID={testID}>
-      <Text style={styles.additions}>+{formatDiffCount(additions)}</Text>
-      <Text style={styles.deletions}>-{formatDiffCount(deletions)}</Text>
+      {additions !== 0 && (
+        <Text style={[styles.additions, muted && styles.muted]}>
+          +{exact ? additions.toLocaleString() : formatDiffCount(additions)}
+        </Text>
+      )}
+      {deletions !== 0 && (
+        <Text style={[styles.deletions, muted && styles.muted]}>
+          -{exact ? deletions.toLocaleString() : formatDiffCount(deletions)}
+        </Text>
+      )}
     </View>
   );
 }
 
 const styles = StyleSheet.create((theme) => ({
+  muted: { color: theme.colors.foregroundMuted },
   row: {
     flexDirection: "row",
     alignItems: "center",

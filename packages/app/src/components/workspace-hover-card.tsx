@@ -24,7 +24,7 @@ import {
 import { getForgePresentation, normalizeForge } from "@/git/forge";
 import { ForgeBrandIcon } from "@/git/forge-icon";
 import type { Theme } from "@/styles/theme";
-import { DiffStat } from "@/components/diff-stat";
+import { ChangeStats } from "@/components/change-stats";
 import { Pressable } from "react-native";
 import type { GestureResponderEvent } from "react-native";
 import { Portal } from "@gorhom/portal";
@@ -94,7 +94,7 @@ function computeHoverCardPosition({
 }
 
 const HOVER_GRACE_MS = 100;
-const HOVER_CARD_WIDTH = 260;
+const HOVER_CARD_WIDTH = 340;
 
 interface WorkspaceHoverCardProps {
   workspace: SidebarWorkspaceEntry;
@@ -301,12 +301,15 @@ function WorkspaceHoverCardContent({
           </View>
           {prHint ? <PrBadge hint={prHint} style={styles.cardInfoRow} /> : null}
           {workspace.diffStat ? (
-            <View style={styles.cardInfoRow}>
+            <View style={[styles.cardInfoRow, styles.cardDiffRow]}>
               <ThemedFileDiff size={12} uniProps={foregroundMutedColorMapping} />
-              <DiffStat
-                additions={workspace.diffStat.additions}
-                deletions={workspace.diffStat.deletions}
-              />
+              <View style={styles.cardDiffStats}>
+                <ChangeStats
+                  {...workspace.diffStat}
+                  variant="detail"
+                  serverId={workspace.serverId}
+                />
+              </View>
             </View>
           ) : null}
           <HostRow serverId={workspace.serverId} />
@@ -597,6 +600,8 @@ const styles = StyleSheet.create((theme) => ({
     flex: 1,
     minWidth: 0,
   },
+  cardDiffRow: { alignItems: "flex-start" },
+  cardDiffStats: { flex: 1, minWidth: 0 },
   cardInfoRow: {
     flexDirection: "row",
     alignItems: "center",

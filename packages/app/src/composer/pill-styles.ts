@@ -6,20 +6,28 @@ export const COMPOSER_PILL_CLEARANCE = {
   wide: 10,
 } as const;
 export const COMPOSER_PILL_MIN_HEIGHT = 32;
+// Two 20px stat rows, vertical padding and borders. Reserve their full overlay height.
+export const COMPOSER_DIFF_STAT_PILL_HEIGHT = 50;
 
 export function resolveComposerPillClearance(isCompact: boolean): number {
   return isCompact ? COMPOSER_PILL_CLEARANCE.compact : COMPOSER_PILL_CLEARANCE.wide;
 }
 
-export function resolveComposerTrackTailClearance(isCompact: boolean): number {
+export function resolveComposerTrackTailClearance(
+  isCompact: boolean,
+  controlHeight = COMPOSER_PILL_MIN_HEIGHT,
+): number {
   const composerClearance = resolveComposerPillClearance(isCompact);
   const transcriptClearance = isCompact ? SPACING[6] : 20;
-  return transcriptClearance + COMPOSER_PILL_MIN_HEIGHT + composerClearance;
+  return transcriptClearance + controlHeight + composerClearance;
 }
 
-export function resolveComposerTrackControlClearance(isCompact: boolean): number {
+export function resolveComposerTrackControlClearance(
+  isCompact: boolean,
+  controlHeight = COMPOSER_PILL_MIN_HEIGHT,
+): number {
   const clearance = resolveComposerPillClearance(isCompact);
-  return clearance + COMPOSER_PILL_MIN_HEIGHT + clearance;
+  return clearance + controlHeight + clearance;
 }
 
 /** Shared visual contract for the compact pills immediately above the composer. */

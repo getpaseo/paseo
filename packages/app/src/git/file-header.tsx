@@ -7,7 +7,7 @@ import {
 } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { useWorkspaceFileDragSource } from "@/attachments/use-workspace-file-drag-source";
-import { DiffStat } from "@/components/diff-stat";
+import { ChangeStats, ChangeStatsDetail } from "@/components/change-stats";
 import { FileActionsContextMenuContent } from "@/components/file-actions-menu";
 import { FileChangeIcon } from "@/components/file-change-icon";
 import { MaterialFileIcon } from "@/components/material-file-icon";
@@ -23,6 +23,8 @@ import { ContextMenu, ContextMenuTrigger } from "@/components/ui/context-menu";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useFileHeaderInteraction } from "@/git/file-header-interaction";
 import {
+  DIFF_FILE_HEADER_RIGHT,
+  DIFF_FILE_HEADER_ICON_SIZE,
   diffFileChangeKind,
   directorySuffix,
   fileNameForPath,
@@ -273,9 +275,10 @@ export const FileHeader = memo(function FileHeader({
         )}
       </View>
       <View style={styles.right}>
-        <DiffStat
-          additions={file.additions}
-          deletions={file.deletions}
+        <ChangeStats
+          variant="inline"
+          interactive
+          {...file}
           testID={testID ? `${testID}-stat` : undefined}
         />
         {changeIcon}
@@ -283,7 +286,11 @@ export const FileHeader = memo(function FileHeader({
     </View>
   );
   const renderedContent = canvasRendered ? (
-    <View ref={dragSourceRef} style={styles.canvasInteractionContent} />
+    <View ref={dragSourceRef} style={styles.canvasInteractionContent}>
+      <View style={styles.canvasStats}>
+        <ChangeStats {...file} variant="inline" interactive painted />
+      </View>
+    </View>
   ) : (
     content
   );
@@ -349,6 +356,7 @@ export const FileHeader = memo(function FileHeader({
           <TooltipTrigger asChild>{trigger}</TooltipTrigger>
           <TooltipContent side="bottom" align="start" offset={6} maxWidth={520}>
             <Text style={styles.tooltip}>{file.path}</Text>
+            <ChangeStatsDetail {...file} />
           </TooltipContent>
         </Tooltip>
         {interactive ? (
@@ -360,6 +368,13 @@ export const FileHeader = memo(function FileHeader({
 });
 
 const styles = StyleSheet.create((theme) => ({
+  canvasStats: {
+    position: "absolute",
+    right: DIFF_FILE_HEADER_RIGHT + DIFF_FILE_HEADER_ICON_SIZE + 8,
+    top: 0,
+    bottom: 1,
+    justifyContent: "center",
+  },
   container: { width: "100%", overflow: "hidden", userSelect: "none" },
   documentContainer: {
     height: 30,

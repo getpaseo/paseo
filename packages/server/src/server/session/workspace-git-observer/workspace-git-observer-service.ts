@@ -84,10 +84,7 @@ export function createWorkspaceGitObserverService(deps: {
     if (!workspace) {
       return WORKSPACE_GIT_WATCH_REMOVED_STATE_KEY;
     }
-    return JSON.stringify([
-      workspace.name,
-      workspace.diffStat ? [workspace.diffStat.additions, workspace.diffStat.deletions] : null,
-    ]);
+    return JSON.stringify([workspace.name, workspace.diffStat]);
   }
 
   function rememberDescriptorState(

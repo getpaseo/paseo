@@ -1123,6 +1123,7 @@ const styles = StyleSheet.create((theme) => ({
   outputContainer: {
     flex: 1,
     minHeight: 0,
+    padding: theme.spacing[2],
     position: "relative",
     backgroundColor: theme.colors.background,
   },

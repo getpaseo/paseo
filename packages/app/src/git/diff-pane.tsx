@@ -1,9 +1,10 @@
+import { sumDiffStats, type DiffStat as DiffStatValue } from "@getpaseo/protocol/diff-stat";
 import { useState, useCallback, useMemo, type ReactElement, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 import { TreeRail } from "@/components/tree-rail";
 import { TreeRailToggle } from "@/components/tree-rail-toggle";
-import { DiffStat } from "@/components/diff-stat";
+import { ChangeStats } from "@/components/change-stats";
 import {
   View,
   Text,
@@ -117,17 +118,11 @@ export function resolveDiffLayout(
 function computeSelectedDiffStat(
   files: ParsedDiffFile[],
   isLoading: boolean,
-): { additions: number; deletions: number } | null {
+): DiffStatValue | null {
   if (isLoading) {
     return null;
   }
-  return files.reduce(
-    (total, file) => ({
-      additions: total.additions + file.additions,
-      deletions: total.deletions + file.deletions,
-    }),
-    { additions: 0, deletions: 0 },
-  );
+  return sumDiffStats(files);
 }
 
 function useDiscardChangesAction({
@@ -472,10 +467,11 @@ interface ChangesRepositoryToolbarModel {
 }
 
 interface ChangesComparisonToolbarModel {
+  serverId: string;
   committedDescription?: string;
   diffMode: "uncommitted" | "base";
   mode: ChangesToolbarMode;
-  selectedDiffStat: { additions: number; deletions: number } | null;
+  selectedDiffStat: DiffStatValue | null;
   onSelectBase: () => void;
   onSelectUncommitted: () => void;
 }
@@ -499,7 +495,7 @@ interface BuildChangesHeaderModelInput {
   onSelectBase: () => void;
   onSelectUncommitted: () => void;
   pullRequest: PrHint | null;
-  selectedDiffStat: { additions: number; deletions: number } | null;
+  selectedDiffStat: DiffStatValue | null;
   serverId: string;
   workspaceId?: string | null;
 }
@@ -520,6 +516,7 @@ function buildChangesHeaderModel(input: BuildChangesHeaderModelInput): {
       workspaceId: input.workspaceId,
     },
     comparison: {
+      serverId: input.serverId,
       committedDescription: input.committedDescription,
       diffMode: input.diffMode,
       mode: input.mode,
@@ -729,9 +726,10 @@ function ChangesComparisonToolbar({
           onSelectBase={model.onSelectBase}
         />
         {model.selectedDiffStat ? (
-          <DiffStat
-            additions={model.selectedDiffStat.additions}
-            deletions={model.selectedDiffStat.deletions}
+          <ChangeStats
+            {...model.selectedDiffStat}
+            serverId={model.serverId}
+            interactive
             testID="changes-selected-diff-stat"
           />
         ) : null}
@@ -1303,6 +1301,7 @@ function ChangedFilesTree({
             isSelected={selectedPath === item.dirPath}
             additions={item.additions}
             deletions={item.deletions}
+            breakdown={item.breakdown}
             onToggle={handleToggleFolder}
             onCollapse={handleCollapseFolder}
             onSelect={handleSelectPath}

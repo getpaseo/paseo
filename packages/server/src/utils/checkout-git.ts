@@ -1,3 +1,9 @@
+import type { DiffStat } from "@getpaseo/protocol/diff-stat";
+import {
+  addFileBreakdowns,
+  readComparisonBreakdown,
+  readFileBreakdown,
+} from "../git/change-stats/read.js";
 import { resolve, dirname, basename } from "path";
 import { existsSync, realpathSync } from "fs";
 import { open as openFile, readFile, stat as statFile } from "fs/promises";
@@ -2591,13 +2597,11 @@ export async function getCommitFileDiff({
     return null;
   }
 
+  file.breakdown = await readFileBreakdown({ cwd, baseRef: `${sha}^`, targetRef: sha, file });
   return file;
 }
 
-export interface CheckoutShortstat {
-  additions: number;
-  deletions: number;
-}
+export type CheckoutShortstat = DiffStat;
 
 function parseCheckoutShortstat(text: string): CheckoutShortstat | null {
   const trimmed = text.trim();
@@ -2728,13 +2732,16 @@ async function getCheckoutShortstatUncached(
       countUntrackedAdditions(cwd, context, options?.throwOnGitError),
     ]);
 
-    const tracked = parseCheckoutShortstat(stdout);
-
-    if (tracked) {
-      return { additions: tracked.additions + untrackedAdditions, deletions: tracked.deletions };
-    }
-    if (untrackedAdditions > 0) {
-      return { additions: untrackedAdditions, deletions: 0 };
+    const total = parseCheckoutShortstat(stdout) ?? { additions: 0, deletions: 0 };
+    total.additions += untrackedAdditions;
+    if (total.additions + total.deletions > 0) {
+      const breakdown = await readComparisonBreakdown({
+        cwd,
+        baseRef: mergeBase,
+        total,
+        runGit: getRunGitCommand(context),
+      });
+      return { ...total, breakdown };
     }
     return null;
   } catch (error) {
@@ -3374,6 +3381,20 @@ export async function getCheckoutDiff(
   }
 
   if (compare.includeStructured) {
+    await addFileBreakdowns({
+      cwd,
+      baseRef: effectiveRefsForDiff.baseRef,
+      targetRef: effectiveRefsForDiff.targetRef,
+      files: structured.files,
+      loadPatch: true,
+    });
+    // Classification adds wire data after the initial diff-size accounting.
+    if (
+      Buffer.byteLength(JSON.stringify(structured.files), "utf8") >
+      CHECKOUT_DIFF_MAX_STRUCTURED_BYTES
+    ) {
+      return { diff: "", structured: [], diffTooLarge: true };
+    }
     return { diff: diffText, structured: structured.files };
   }
   return { diff: diffText };

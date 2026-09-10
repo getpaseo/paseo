@@ -1,3 +1,4 @@
+import { sumDiffStats, type DiffStat } from "@getpaseo/protocol/diff-stat";
 import type { ParsedDiffFile } from "@/git/use-diff-query";
 
 // Builds a directory hierarchy from the `ParsedDiffFile[]` the Changes view
@@ -34,7 +35,7 @@ export interface DiffTreeDirNode {
 
 export type DiffTreeNode = DiffTreeFileNode | DiffTreeDirNode;
 
-export interface DiffTreeFolderRow {
+export interface DiffTreeFolderRow extends DiffStat {
   kind: "folder";
   /** full uncompressed path of the DEEPEST directory this row represents */
   dirPath: string;
@@ -131,10 +132,7 @@ export function compressSingleChildChains(root: DiffTreeDirNode): DiffTreeDirNod
   };
 }
 
-interface DirStats {
-  additions: number;
-  deletions: number;
-}
+type DirStats = DiffStat;
 
 const EMPTY_DIR_STATS: DirStats = { additions: 0, deletions: 0 };
 
@@ -143,17 +141,9 @@ const EMPTY_DIR_STATS: DirStats = { additions: 0, deletions: 0 };
 function computeDirStats(root: DiffTreeDirNode): Map<DiffTreeDirNode, DirStats> {
   const statsByNode = new Map<DiffTreeDirNode, DirStats>();
   function visit(node: DiffTreeDirNode): DirStats {
-    const stats: DirStats = { additions: 0, deletions: 0 };
-    for (const child of node.children) {
-      if (child.kind === "file") {
-        stats.additions += child.file.additions;
-        stats.deletions += child.file.deletions;
-      } else {
-        const childStats = visit(child);
-        stats.additions += childStats.additions;
-        stats.deletions += childStats.deletions;
-      }
-    }
+    const stats = sumDiffStats(
+      node.children.map((child) => (child.kind === "file" ? child.file : visit(child))),
+    );
     statsByNode.set(node, stats);
     return stats;
   }
@@ -187,6 +177,7 @@ export function flattenDiffTree(
         depth,
         additions: stats.additions,
         deletions: stats.deletions,
+        breakdown: stats.breakdown,
       });
       if (!collapsed.has(child.dirPath)) {
         walk(child, depth + 1);

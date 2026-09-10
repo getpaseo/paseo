@@ -35,6 +35,32 @@ describe("forgeSearchQueryKey", () => {
 });
 
 describe("buildForgeSearchQueryOptions", () => {
+  it("keeps the PR browser's larger result set separate from composer searches", async () => {
+    const requests: unknown[] = [];
+    const input = {
+      client: {
+        async searchForge(options: unknown) {
+          requests.push(options);
+          return {
+            items: [],
+            authState: "authenticated" as const,
+            error: null,
+            requestId: "request",
+          };
+        },
+      },
+      serverId: "host",
+      cwd: "/repo",
+      query: "is:open",
+      enabled: true,
+      supportsForgeSearch: true,
+    };
+    const browser = buildForgeSearchQueryOptions({ ...input, limit: 50 });
+    expect(browser.queryKey).not.toEqual(buildForgeSearchQueryOptions(input).queryKey);
+    await browser.queryFn();
+    expect(requests).toEqual([{ cwd: "/repo", query: "is:open", limit: 50 }]);
+  });
+
   it("forwards kinds to the forge search request when specified", async () => {
     const requests: unknown[] = [];
     const query = buildForgeSearchQueryOptions({

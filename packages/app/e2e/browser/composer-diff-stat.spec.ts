@@ -46,7 +46,7 @@ async function seedChangedAgent(repoPrefix: string) {
           workspaces.entries.find((entry) => entry.id === workspace.workspaceId)?.diffStat ?? null
         );
       })
-      .toEqual({ additions: 2, deletions: 0 });
+      .toMatchObject({ additions: 2, deletions: 0 });
     return workspace;
   } catch (error) {
     await workspace.cleanup();
@@ -72,7 +72,8 @@ test("composer diff stat reveals Changes, then opens the diff in the configured 
     const pill = composerChangesPill(page);
     await expect(pill).toBeVisible({ timeout: 30_000 });
     await expect(pill).toContainText("+2");
-    await expect(pill).toContainText("-0");
+    await expect(pill).not.toContainText("+0");
+    await expect(pill).not.toContainText("-0");
     await revealComposerChangesInExplorer(page);
     await openComposerDiff(page);
 
@@ -149,6 +150,70 @@ test("composer diff stat reveals Changes, then opens the diff in the focused pan
     await expect(
       page.locator('[data-testid^="workspace-pane-"]').filter({ visible: true }),
     ).toHaveCount(1);
+  } finally {
+    await workspace.cleanup();
+  }
+});
+
+test("change breakdown separates production, comments, tests and docs", async ({ page }) => {
+  const workspace = await seedChangedAgent("change-breakdown-");
+  try {
+    await writeFile(
+      path.join(workspace.cwd, "app.ts"),
+      "export const value = 1;\n// explanation\n",
+    );
+    await writeFile(path.join(workspace.cwd, "component.tsx"), "export const C = () => <div />;\n");
+    await writeFile(path.join(workspace.cwd, "style.css"), "a { color: red; }\n");
+    await writeFile(path.join(workspace.cwd, "app.test.ts"), "// test fixture\n");
+    await writeFile(path.join(workspace.cwd, "package-lock.json"), "{}\n");
+    await workspace.client.checkoutRefresh(workspace.cwd);
+    await page.setViewportSize({ width: 1400, height: 900 });
+    await openAgentRoute(page, { workspaceId: workspace.workspaceId, agentId: workspace.agentId });
+    const pill = composerChangesPill(page);
+    await expect(pill).toContainText("+3");
+    await expect(pill).toContainText("+8");
+    await page.screenshot({ path: "/tmp/paseo-change-stats-summary.png" });
+    await page.locator('[data-testid^="sidebar-workspace-row-"]').first().hover();
+    await expect(page.getByTestId("workspace-hover-card")).toContainText("Production");
+    await expect(page.getByTestId("workspace-hover-card")).toHaveCSS("opacity", "1");
+    await page.screenshot({ path: "/tmp/paseo-change-stats-hover.png" });
+    await revealComposerChangesInExplorer(page);
+    const header = page.getByTestId("changes-header").filter({ visible: true });
+    await header.getByRole("button", { name: "Change breakdown" }).click();
+    await expect(page.getByText("Production", { exact: true })).toBeVisible();
+    await expect(page.getByText("Code · JS/TS", { exact: true })).toBeVisible();
+    await expect(page.getByText("Components · JSX/TSX", { exact: true })).toBeVisible();
+    await expect(page.getByText("Comments", { exact: true })).toBeVisible();
+    await expect(page.getByText("Generated", { exact: true })).toBeVisible();
+    await page.screenshot({ path: "/tmp/paseo-change-stats-detail.png" });
+    await page
+      .getByTestId("change-breakdown-modal")
+      .getByRole("button", { name: "Close", exact: true })
+      .click();
+    await page
+      .getByTestId("diff-tree-file-2")
+      .getByRole("button", { name: "Change breakdown" })
+      .click();
+    await expect(
+      page.getByTestId("change-breakdown-modal").getByText("Comments", { exact: true }),
+    ).toBeVisible();
+    await page
+      .getByTestId("change-breakdown-modal")
+      .getByRole("button", { name: "Close", exact: true })
+      .click();
+    await page.setViewportSize({ width: 390, height: 844 });
+    await pill.click();
+    await page
+      .getByTestId("changes-header")
+      .filter({ visible: true })
+      .getByRole("button", { name: "Change breakdown" })
+      .click();
+    await expect(page.getByText("Production", { exact: true })).toBeVisible();
+    await expect(page.getByText("Generated", { exact: true })).toBeInViewport();
+    await page.screenshot({ path: "/tmp/paseo-change-stats-compact.png" });
+    await page.getByRole("button", { name: "Close", exact: true }).click();
+    await page.getByTestId("diff-file-2").getByRole("button", { name: "Change breakdown" }).click();
+    await expect(page.getByText("Comments", { exact: true })).toBeVisible();
   } finally {
     await workspace.cleanup();
   }

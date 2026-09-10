@@ -2,6 +2,32 @@ import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const es: TranslationResources = {
+  changeStats: {
+    title: "Desglose de cambios",
+    code: "Código",
+    total: "Total",
+    production: "Producción",
+    categories: {
+      code: "Código · JS/TS",
+      components: "Componentes · JSX/TSX",
+      styles: "Estilos",
+      ci: "CI",
+      config: "Configuración",
+      tooling: "Herramientas",
+      otherCode: "Otro código",
+      comments: "Comentarios",
+      docs: "Documentación",
+      tests: "Pruebas",
+      generated: "Generados",
+      formatting: "Formato",
+      blank: "Líneas vacías",
+      other: "Otros / sin clasificar",
+    },
+    commentsIncluded:
+      "Esta parte de Producción incluye comentarios (sintaxis no compatible o análisis incompleto)",
+    unavailable: "Actualiza el host para ver el desglose de cambios.",
+  },
+
   common: {
     back: "Atrás",
     loading: "Cargando...",
@@ -1239,6 +1265,28 @@ export const es: TranslationResources = {
         archiveFailed: "No se pudo archivar el espacio de trabajo",
       },
     },
+  },
+  projectPullRequests: {
+    checks: {
+      passed: "Todas las comprobaciones pasaron",
+      pending: "Comprobaciones en curso",
+      skipped: "Comprobaciones omitidas",
+      updateRequired: "Actualiza este host para ver el estado de CI.",
+    },
+    title: "Pull requests",
+    shortcut: "Ver pull requests de {{project}}",
+    search: "Buscar pull requests",
+    clearSearch: "Borrar búsqueda",
+    open: "Abiertas",
+    closed: "Cerradas",
+    results: "{{count}} resultados",
+    authRequired: "Inicia sesión en tu forja Git en este host para ver las pull requests.",
+    loading: "Cargando pull requests…",
+    empty: "No hay pull requests coincidentes.",
+    limit: "Se muestran hasta {{count}} resultados. Refina la búsqueda.",
+    start: "Crear worktree desde #{{number}}: {{title}}",
+    updated: "Actualizado {{date}}",
+    external: "Abrir #{{number}} en el navegador",
   },
   newWorkspace: {
     title: "Nuevo espacio de trabajo",

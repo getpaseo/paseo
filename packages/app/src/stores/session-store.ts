@@ -1,3 +1,4 @@
+import type { DiffStat } from "@getpaseo/protocol/diff-stat";
 import equal from "fast-deep-equal";
 import { create } from "zustand";
 import { subscribeWithSelector } from "zustand/middleware";
@@ -120,7 +121,7 @@ export interface WorkspaceDescriptor {
   status: WorkspaceDescriptorPayload["status"];
   statusEnteredAt: Date | null;
   archivingAt: string | null;
-  diffStat: { additions: number; deletions: number } | null;
+  diffStat: DiffStat | null;
   scripts: WorkspaceDescriptorPayload["scripts"];
   gitRuntime?: WorkspaceDescriptorPayload["gitRuntime"];
   githubRuntime?: WorkspaceDescriptorPayload["githubRuntime"];

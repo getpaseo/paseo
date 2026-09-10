@@ -83,6 +83,10 @@ if (origin === fixtureRemote) {
     process.stdout.write("[]");
     process.exit(0);
   }
+  if (command === "pr list" && require("fs").existsSync(".paseo-e2e-pull-requests.json")) {
+    process.stdout.write(require("fs").readFileSync(".paseo-e2e-pull-requests.json", "utf8"));
+    process.exit(0);
+  }
   if (command === "pr list" || command === "pr view") {
     const isFork = args.includes("2");
     const pr = {

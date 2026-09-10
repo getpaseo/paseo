@@ -2,6 +2,32 @@ import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const fr: TranslationResources = {
+  changeStats: {
+    title: "Détail des modifications",
+    code: "Code",
+    total: "Total",
+    production: "Production",
+    categories: {
+      code: "Code · JS/TS",
+      components: "Composants · JSX/TSX",
+      styles: "Styles",
+      ci: "CI",
+      config: "Configuration",
+      tooling: "Outils",
+      otherCode: "Autre code",
+      comments: "Commentaires",
+      docs: "Documentation",
+      tests: "Tests",
+      generated: "Généré",
+      formatting: "Mise en forme",
+      blank: "Lignes vides",
+      other: "Autre / non classé",
+    },
+    commentsIncluded:
+      "Cette partie de Production inclut les commentaires (syntaxe non prise en charge ou analyse incomplète)",
+    unavailable: "Mettez à jour l’hôte pour afficher le détail des modifications.",
+  },
+
   common: {
     back: "Dos",
     loading: "Chargement...",
@@ -1239,6 +1265,28 @@ export const fr: TranslationResources = {
         archiveFailed: "Échec de l'archivage de l'espace de travail",
       },
     },
+  },
+  projectPullRequests: {
+    checks: {
+      passed: "Tous les contrôles ont réussi",
+      pending: "Contrôles en cours",
+      skipped: "Contrôles ignorés",
+      updateRequired: "Mettez à jour cet hôte pour voir l’état CI.",
+    },
+    title: "Pull requests",
+    shortcut: "Parcourir les pull requests de {{project}}",
+    search: "Rechercher des pull requests",
+    clearSearch: "Effacer la recherche",
+    open: "Ouvertes",
+    closed: "Fermées",
+    results: "{{count}} résultats",
+    authRequired: "Connectez-vous à votre forge Git sur cet hôte pour parcourir les pull requests.",
+    loading: "Chargement des pull requests…",
+    empty: "Aucune pull request correspondante.",
+    limit: "Affichage limité à {{count}} résultats. Affinez votre recherche.",
+    start: "Créer un worktree depuis #{{number}} : {{title}}",
+    updated: "Mis à jour le {{date}}",
+    external: "Ouvrir #{{number}} dans le navigateur",
   },
   newWorkspace: {
     title: "Nouvel espace de travail",

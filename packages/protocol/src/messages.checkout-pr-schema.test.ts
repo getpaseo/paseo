@@ -1,3 +1,4 @@
+import { ForgeSearchItemSchema } from "./messages";
 import { describe, expect, test } from "vitest";
 
 import {
@@ -327,6 +328,23 @@ describe("checkout PR schemas", () => {
     });
 
     expect(parsed.forgeSpecific).toEqual({ approvalsRequired: 2 });
+  });
+
+  test("accepts PR search checks while keeping old search items valid", () => {
+    const item = {
+      kind: "change_request",
+      number: 1,
+      title: "CI",
+      url: "https://github.com/acme/repo/pull/1",
+      state: "open",
+      body: null,
+      labels: [],
+    };
+    expect(ForgeSearchItemSchema.parse(item)).toEqual(item);
+    const checks = [
+      { name: "CI / lint", status: "failure", url: "https://github.com/acme/repo/actions/runs/1" },
+    ];
+    expect(ForgeSearchItemSchema.parse({ ...item, checks })).toEqual({ ...item, checks });
   });
 
   test("keeps forge search responses structural", () => {

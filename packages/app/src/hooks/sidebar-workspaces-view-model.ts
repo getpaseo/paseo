@@ -1,3 +1,4 @@
+import type { DiffStat } from "@getpaseo/protocol/diff-stat";
 import type { PrHint } from "@/git/pr-hint";
 import { selectPrHintFromStatus } from "@/git/pr-hint";
 import { type HostProjectListItem } from "@/projects/host-project-model";
@@ -46,7 +47,7 @@ export interface SidebarWorkspaceEntry extends SidebarStatusWorkspacePlacement {
   // Checkout branch (null when not a git checkout or detached HEAD).
   currentBranch: string | null;
   archivingAt: string | null;
-  diffStat: { additions: number; deletions: number } | null;
+  diffStat: DiffStat | null;
   prHint: PrHint | null;
   archiveHasUncommittedChanges: boolean | null;
   archiveUnpushedCommitCount: number | null;

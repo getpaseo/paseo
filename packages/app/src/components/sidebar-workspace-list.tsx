@@ -1,3 +1,4 @@
+import { ProjectPullRequestsShortcut } from "@/screens/project-pull-requests/shortcut";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import {
   View,
@@ -403,6 +404,7 @@ const prBadgeStyles = StyleSheet.create((theme) => ({
 
 function ProjectRowTrailingActions({
   projectViewKey,
+  canBrowsePullRequests,
   displayName,
   worktreeTarget,
   settingsTarget,
@@ -415,6 +417,7 @@ function ProjectRowTrailingActions({
   removeProjectStatus,
 }: {
   projectViewKey: string;
+  canBrowsePullRequests: boolean;
   displayName: string;
   worktreeTarget: SidebarProjectHostTarget | null;
   settingsTarget: { serverId: string; projectId: string } | null;
@@ -429,6 +432,13 @@ function ProjectRowTrailingActions({
   const actionsVisible = isHovered || platformIsNative || isMobileBreakpoint;
   return (
     <View style={styles.projectTrailingActions}>
+      {worktreeTarget && canBrowsePullRequests ? (
+        <ProjectPullRequestsShortcut
+          target={worktreeTarget}
+          displayName={displayName}
+          visible={actionsVisible}
+        />
+      ) : null}
       {worktreeTarget ? (
         <NewWorktreeButton
           displayName={displayName}
@@ -961,6 +971,10 @@ function ProjectHeaderRow({
         </View>
       </View>
       <ProjectRowTrailingActions
+        canBrowsePullRequests={project.hosts.some(
+          (host) =>
+            host.serverId === worktreeTarget?.serverId && host.worktreeSupport !== "unsupported",
+        )}
         projectViewKey={project.viewKey}
         displayName={displayName}
         worktreeTarget={worktreeTarget}

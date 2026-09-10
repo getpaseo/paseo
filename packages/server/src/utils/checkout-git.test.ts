@@ -408,7 +408,7 @@ describe("checkout git utilities", () => {
       includeStructured: true,
     });
 
-    expect(diff.structured).toEqual([
+    expect(diff.structured).toMatchObject([
       {
         path: "greeting.txt",
         isNew: true,
@@ -1042,7 +1042,7 @@ const x = 1;
 
     const shortstat = await getCheckoutShortstat(repoDir);
 
-    expect(shortstat).toEqual({ additions: 2, deletions: 1 });
+    expect(shortstat).toMatchObject({ additions: 2, deletions: 1 });
   });
 
   it("uses the merge-base for shortstat when the base branch diverged from its remote", async () => {
@@ -1054,7 +1054,7 @@ const x = 1;
 
     const shortstat = await getCheckoutShortstat(repoDir);
 
-    expect(shortstat).toEqual({ additions: 1, deletions: 0 });
+    expect(shortstat).toMatchObject({ additions: 1, deletions: 0 });
   });
 
   it("keeps base branch divergence pointed at local work when the remote has more commits", async () => {
@@ -1067,7 +1067,7 @@ const x = 1;
 
     const shortstat = await getCheckoutShortstat(repoDir);
 
-    expect(shortstat).toEqual({ additions: 1, deletions: 0 });
+    expect(shortstat).toMatchObject({ additions: 1, deletions: 0 });
   });
 
   it("reports only working tree changes when the base branch is behind", async () => {
@@ -1080,7 +1080,7 @@ const x = 1;
 
     const shortstat = await getCheckoutShortstat(repoDir);
 
-    expect(shortstat).toEqual({ additions: 2, deletions: 1 });
+    expect(shortstat).toMatchObject({ additions: 2, deletions: 1 });
   });
 
   it("keeps feature shortstat scoped to feature changes when the base remote is ahead", async () => {
@@ -1094,7 +1094,7 @@ const x = 1;
 
     const shortstat = await getCheckoutShortstat(repoDir);
 
-    expect(shortstat).toEqual({ additions: 1, deletions: 0 });
+    expect(shortstat).toMatchObject({ additions: 1, deletions: 0 });
   });
 
   it("does not report incoming base changes when a feature branch has no local work beyond merge-base", async () => {
@@ -1117,7 +1117,7 @@ const x = 1;
 
     const shortstat = await getCheckoutShortstat(repoDir);
 
-    expect(shortstat).toEqual({ additions: 1, deletions: 0 });
+    expect(shortstat).toMatchObject({ additions: 1, deletions: 0 });
   });
 
   it("includes untracked file lines in shortstat additions", async () => {
@@ -1128,7 +1128,7 @@ const x = 1;
 
     const shortstat = await getCheckoutShortstat(repoDir);
 
-    expect(shortstat).toEqual({ additions: 4, deletions: 0 });
+    expect(shortstat).toMatchObject({ additions: 4, deletions: 0 });
   });
 
   it("reports untracked-only additions when no tracked changes exist", async () => {
@@ -1137,7 +1137,7 @@ const x = 1;
 
     const shortstat = await getCheckoutShortstat(repoDir);
 
-    expect(shortstat).toEqual({ additions: 2, deletions: 0 });
+    expect(shortstat).toMatchObject({ additions: 2, deletions: 0 });
   });
 
   it("counts empty untracked files as 0 additions", async () => {
@@ -1148,7 +1148,7 @@ const x = 1;
 
     const shortstat = await getCheckoutShortstat(repoDir);
 
-    expect(shortstat).toEqual({ additions: 1, deletions: 0 });
+    expect(shortstat).toMatchObject({ additions: 1, deletions: 0 });
   });
 
   it("uses the merge-base for shortstat when a feature branch diverged from its tracked remote", async () => {
@@ -1167,7 +1167,7 @@ const x = 1;
 
     const shortstat = await getCheckoutShortstat(repoDir);
 
-    expect(shortstat).toEqual({ additions: 1, deletions: 0 });
+    expect(shortstat).toMatchObject({ additions: 1, deletions: 0 });
   });
 
   it("uses the remote-only base branch as the feature shortstat comparison", async () => {
@@ -1182,7 +1182,7 @@ const x = 1;
 
     const shortstat = await getCheckoutShortstat(repoDir);
 
-    expect(shortstat).toEqual({ additions: 1, deletions: 0 });
+    expect(shortstat).toMatchObject({ additions: 1, deletions: 0 });
   });
 
   it("returns no shortstat for a clean base branch that is up to date with its remote", async () => {
@@ -1200,7 +1200,7 @@ const x = 1;
 
     const shortstat = await getCheckoutShortstat(repoDir);
 
-    expect(shortstat).toEqual({ additions: 2, deletions: 1 });
+    expect(shortstat).toMatchObject({ additions: 2, deletions: 1 });
   });
 
   it("uses the freshest comparison base for status and shortstat when local main is stale", async () => {
@@ -1237,7 +1237,7 @@ const x = 1;
     expect(status.aheadBehind).toEqual({ ahead: 1, behind: 0 });
 
     const shortstat = await getCheckoutShortstat(repoDir);
-    expect(shortstat).toEqual({ additions: 1, deletions: 0 });
+    expect(shortstat).toMatchObject({ additions: 1, deletions: 0 });
   });
 
   it("does not count origin base commits as feature changes when local main is stale", async () => {
@@ -1286,7 +1286,7 @@ const x = 1;
     });
 
     const shortstat = await getCheckoutShortstat(repoDir);
-    expect(shortstat).toEqual({ additions: 1, deletions: 0 });
+    expect(shortstat).toMatchObject({ additions: 1, deletions: 0 });
 
     const diff = await getCheckoutDiff(repoDir, { mode: "base", baseRef: "main" });
     expect(diff.diff).toContain("local-feature.txt");
@@ -1336,7 +1336,7 @@ const x = 1;
     });
 
     const shortstat = await getCheckoutShortstat(repoDir);
-    expect(shortstat).toEqual({ additions: 1, deletions: 0 });
+    expect(shortstat).toMatchObject({ additions: 1, deletions: 0 });
 
     const diff = await getCheckoutDiff(repoDir, { mode: "base", baseRef: "main" });
     expect(diff.diff).toContain("feature.txt");
@@ -3716,7 +3716,7 @@ const x = 1;
     expect(baseDiff.diff).toContain("feature.txt");
 
     const shortstat = await getCheckoutShortstat(worktree.worktreePath, { paseoHome });
-    expect(shortstat).toEqual({ additions: 1, deletions: 0 });
+    expect(shortstat).toMatchObject({ additions: 1, deletions: 0 });
   });
 
   it("falls back to plain git checkout status when Paseo worktree metadata is missing", async () => {

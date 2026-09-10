@@ -9,7 +9,12 @@ export function createPluginWorkspaceSnapshot(
 ): PluginWorkspaceSnapshot {
   const cached = workspaceSnapshots.get(workspace);
   if (cached) return cached;
-  const diffStat = workspace.diffStat ? Object.freeze({ ...workspace.diffStat }) : null;
+  const diffStat = workspace.diffStat
+    ? Object.freeze({
+        additions: workspace.diffStat.additions,
+        deletions: workspace.diffStat.deletions,
+      })
+    : null;
   const snapshot = Object.freeze({
     id: workspace.id,
     projectId: workspace.projectId,

@@ -2,6 +2,32 @@ import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const ptBR: TranslationResources = {
+  changeStats: {
+    title: "Detalhamento das alterações",
+    code: "Código",
+    total: "Total",
+    production: "Produção",
+    categories: {
+      code: "Código · JS/TS",
+      components: "Componentes · JSX/TSX",
+      styles: "Estilos",
+      ci: "CI",
+      config: "Configuração",
+      tooling: "Ferramentas",
+      otherCode: "Outro código",
+      comments: "Comentários",
+      docs: "Documentação",
+      tests: "Testes",
+      generated: "Gerados",
+      formatting: "Formatação",
+      blank: "Linhas em branco",
+      other: "Outros / não classificados",
+    },
+    commentsIncluded:
+      "Esta parte de Produção inclui comentários (sintaxe não suportada ou análise incompleta)",
+    unavailable: "Atualize o host para ver o detalhamento das alterações.",
+  },
+
   common: {
     back: "Voltar",
     loading: "Carregando...",
@@ -1230,6 +1256,28 @@ export const ptBR: TranslationResources = {
         archiveFailed: "Falha ao arquivar workspace",
       },
     },
+  },
+  projectPullRequests: {
+    checks: {
+      passed: "Todas as verificações passaram",
+      pending: "Verificações em andamento",
+      skipped: "Verificações ignoradas",
+      updateRequired: "Atualize este host para ver o status de CI.",
+    },
+    title: "Pull requests",
+    shortcut: "Ver pull requests de {{project}}",
+    search: "Buscar pull requests",
+    clearSearch: "Limpar busca",
+    open: "Abertas",
+    closed: "Fechadas",
+    results: "{{count}} resultados",
+    authRequired: "Entre na sua plataforma Git neste host para ver pull requests.",
+    loading: "Carregando pull requests…",
+    empty: "Nenhuma pull request correspondente.",
+    limit: "Exibindo até {{count}} resultados. Refine sua busca.",
+    start: "Criar worktree a partir de #{{number}}: {{title}}",
+    updated: "Atualizado em {{date}}",
+    external: "Abrir #{{number}} no navegador",
   },
   newWorkspace: {
     title: "Novo workspace",

@@ -107,3 +107,14 @@ describe("getCommitFileDiff", () => {
     expect(file?.deletions).toBe(0);
   });
 });
+
+it("classifies commit comments against committed contents, independent of the working tree", async () => {
+  const cwd = initRepo();
+  commitFile(cwd, "app.ts", "const value = 1; // before\n", "initial");
+  commitFile(cwd, "app.ts", "const value = 1; // after\n", "comment edit");
+  const sha = headSha(cwd);
+  writeFileSync(join(cwd, "app.ts"), "const value = 2; // unrelated working change\n");
+  const file = await getCommitFileDiff({ cwd, sha, path: "app.ts" });
+  expect(file?.breakdown?.comments).toEqual({ additions: 1, deletions: 1 });
+  expect(file?.breakdown?.code).toEqual({ additions: 0, deletions: 0 });
+});

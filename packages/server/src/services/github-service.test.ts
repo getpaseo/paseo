@@ -3838,6 +3838,86 @@ describe("ForgeService", () => {
     });
   });
 
+  it("includes normalized CI checks in PR searches without per-PR requests", async () => {
+    const rollup = [
+      {
+        __typename: "CheckRun",
+        name: "lint",
+        workflowName: "CI",
+        status: "COMPLETED",
+        conclusion: "FAILURE",
+        detailsUrl: "https://github.com/acme/repo/actions/runs/1",
+      },
+      {
+        __typename: "CheckRun",
+        name: "test",
+        status: "COMPLETED",
+        conclusion: "SUCCESS",
+        detailsUrl: "https://github.com/acme/repo/actions/runs/2",
+      },
+    ];
+    const runner = createRunner([
+      JSON.stringify([
+        {
+          number: 42,
+          title: "CI list",
+          url: "https://github.com/acme/repo/pull/42",
+          state: "OPEN",
+          body: null,
+          labels: [],
+          baseRefName: "main",
+          headRefName: "feature",
+          updatedAt: "2026-01-01T00:00:00Z",
+          statusCheckRollup: rollup,
+          additions: 123,
+          deletions: 4,
+        },
+      ]),
+    ]);
+    const service = createGitHubService({
+      runner: runner.runner,
+      resolveGhPath: async () => "/usr/bin/gh",
+    });
+    const result = await service.searchIssuesAndPrs({
+      cwd: "/repo",
+      kinds: ["change_request"],
+      query: "is:open",
+    });
+    expect(result.items[0]?.diffStat).toEqual({ additions: 123, deletions: 4 });
+    expect(result.items[0]?.checks).toEqual([
+      {
+        name: "lint",
+        workflow: "CI",
+        status: "failure",
+        url: "https://github.com/acme/repo/actions/runs/1",
+      },
+      { name: "test", status: "success", url: "https://github.com/acme/repo/actions/runs/2" },
+    ]);
+    expect(runner.calls).toHaveLength(1);
+    expect(runner.calls[0]?.args.join(",")).toContain("statusCheckRollup");
+  });
+
+  it("allows closed and merged PR searches without gh's default open restriction", async () => {
+    const runner = createRunner(["[]"]);
+    const service = createGitHubService({
+      runner: runner.runner,
+      resolveGhPath: async () => "/usr/bin/gh",
+    });
+    await service.listPullRequests({ cwd: "/repo", query: "is:closed", limit: 100 });
+    expect(runner.calls[0]?.args).toEqual([
+      "pr",
+      "list",
+      "--state",
+      "all",
+      "--search",
+      "is:closed",
+      "--json",
+      "number,title,url,state,body,labels,baseRefName,headRefName,updatedAt,statusCheckRollup,additions,deletions",
+      "--limit",
+      "100",
+    ]);
+  });
+
   it("returns cached results for identical calls within the TTL", async () => {
     const runner = createRunner([pullRequestJson("First result")]);
     const service = createGitHubService({
@@ -4017,7 +4097,7 @@ describe("ForgeService", () => {
         "--search",
         "",
         "--json",
-        "number,title,url,state,body,labels,baseRefName,headRefName,updatedAt",
+        "number,title,url,state,body,labels,baseRefName,headRefName,updatedAt,statusCheckRollup,additions,deletions",
         "--limit",
         "20",
       ],
@@ -4091,7 +4171,7 @@ describe("ForgeService", () => {
           "--search",
           "cache",
           "--json",
-          "number,title,url,state,body,labels,baseRefName,headRefName,updatedAt",
+          "number,title,url,state,body,labels,baseRefName,headRefName,updatedAt,statusCheckRollup,additions,deletions",
           "--limit",
           "5",
         ],
@@ -4130,7 +4210,7 @@ describe("ForgeService", () => {
         "--search",
         "793",
         "--json",
-        "number,title,url,state,body,labels,baseRefName,headRefName,updatedAt",
+        "number,title,url,state,body,labels,baseRefName,headRefName,updatedAt,statusCheckRollup,additions,deletions",
         "--limit",
         "5",
       ],
@@ -4169,7 +4249,7 @@ describe("ForgeService", () => {
         "--search",
         "https://gitlab.com/getpaseo/paseo/issues/793",
         "--json",
-        "number,title,url,state,body,labels,baseRefName,headRefName,updatedAt",
+        "number,title,url,state,body,labels,baseRefName,headRefName,updatedAt,statusCheckRollup,additions,deletions",
         "--limit",
         "5",
       ],
@@ -4208,7 +4288,7 @@ describe("ForgeService", () => {
         "--search",
         "793",
         "--json",
-        "number,title,url,state,body,labels,baseRefName,headRefName,updatedAt",
+        "number,title,url,state,body,labels,baseRefName,headRefName,updatedAt,statusCheckRollup,additions,deletions",
         "--limit",
         "5",
       ],
@@ -4259,7 +4339,7 @@ describe("ForgeService", () => {
           "--search",
           "cache",
           "--json",
-          "number,title,url,state,body,labels,baseRefName,headRefName,updatedAt",
+          "number,title,url,state,body,labels,baseRefName,headRefName,updatedAt,statusCheckRollup,additions,deletions",
           "--limit",
           "5",
         ],

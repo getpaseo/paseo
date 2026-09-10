@@ -1,3 +1,4 @@
+import type { DiffStat } from "@getpaseo/protocol/diff-stat";
 import type { ForgeSearchKind } from "@getpaseo/protocol/messages";
 
 export type ForgeSearchRequestKind = ForgeSearchKind | "github-issue" | "github-pr" | "pr";
@@ -18,6 +19,8 @@ export function normalizeForgeSearchKinds(
 }
 
 export interface PullRequestSummary {
+  diffStat?: DiffStat;
+  checks?: PullRequestCheck[];
   number: number;
   title: string;
   url: string;
@@ -384,6 +387,8 @@ export interface CheckDetails {
 
 export interface SearchResult {
   items: Array<{
+    diffStat?: DiffStat;
+    checks?: PullRequestCheck[];
     kind: "issue" | "change_request";
     forge?: string;
     number: number;

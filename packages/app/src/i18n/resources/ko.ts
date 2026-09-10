@@ -2,6 +2,32 @@ import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const ko: TranslationResources = {
+  changeStats: {
+    title: "변경 내역",
+    code: "코드",
+    total: "전체",
+    production: "프로덕션",
+    categories: {
+      code: "코드 · JS/TS",
+      components: "컴포넌트 · JSX/TSX",
+      styles: "스타일",
+      ci: "CI",
+      config: "설정",
+      tooling: "도구",
+      otherCode: "기타 코드",
+      comments: "주석",
+      docs: "문서",
+      tests: "테스트",
+      generated: "생성 파일",
+      formatting: "서식",
+      blank: "빈 줄",
+      other: "기타 / 미분류",
+    },
+    commentsIncluded:
+      "이 프로덕션 부분에는 주석이 포함됩니다 (지원되지 않는 구문 또는 불완전한 분석)",
+    unavailable: "변경 내역을 보려면 호스트를 업데이트하세요.",
+  },
+
   common: {
     back: "뒤로",
     loading: "불러오는 중...",
@@ -1212,6 +1238,28 @@ export const ko: TranslationResources = {
         archiveFailed: "워크스페이스를 보관하지 못했습니다.",
       },
     },
+  },
+  projectPullRequests: {
+    checks: {
+      passed: "모든 검사 통과",
+      pending: "검사 실행 중",
+      skipped: "검사 건너뜀",
+      updateRequired: "CI 상태를 보려면 이 호스트를 업데이트하세요.",
+    },
+    title: "풀 리퀘스트",
+    shortcut: "{{project}}의 풀 리퀘스트 보기",
+    search: "풀 리퀘스트 검색",
+    clearSearch: "검색 지우기",
+    open: "열림",
+    closed: "닫힘",
+    results: "결과 {{count}}개",
+    authRequired: "풀 리퀘스트를 보려면 이 호스트에서 Git 서비스에 로그인하세요.",
+    loading: "풀 리퀘스트 로딩 중…",
+    empty: "일치하는 풀 리퀘스트가 없습니다.",
+    limit: "최대 {{count}}개의 결과를 표시합니다. 검색 범위를 좁히세요.",
+    start: "#{{number}}에서 worktree 만들기: {{title}}",
+    updated: "업데이트 {{date}}",
+    external: "브라우저에서 #{{number}} 열기",
   },
   newWorkspace: {
     title: "새 워크스페이스",

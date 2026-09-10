@@ -2,6 +2,31 @@ import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const zhCN: TranslationResources = {
+  changeStats: {
+    title: "更改明细",
+    code: "代码",
+    total: "总计",
+    production: "生产代码",
+    categories: {
+      code: "代码 · JS/TS",
+      components: "组件 · JSX/TSX",
+      styles: "样式",
+      ci: "CI",
+      config: "配置",
+      tooling: "工具",
+      otherCode: "其他代码",
+      comments: "注释",
+      docs: "文档",
+      tests: "测试",
+      generated: "生成文件",
+      formatting: "格式",
+      blank: "空行",
+      other: "其他 / 未分类",
+    },
+    commentsIncluded: "这部分生产代码包含注释（不支持的语法或分析不完整）",
+    unavailable: "更新主机以查看更改明细。",
+  },
+
   common: {
     back: "返回",
     loading: "加载中...",
@@ -1194,6 +1219,28 @@ export const zhCN: TranslationResources = {
         archiveFailed: "归档工作区失败",
       },
     },
+  },
+  projectPullRequests: {
+    checks: {
+      passed: "所有检查均已通过",
+      pending: "检查正在运行",
+      skipped: "检查已跳过",
+      updateRequired: "请更新此主机以查看 CI 状态。",
+    },
+    title: "拉取请求",
+    shortcut: "浏览 {{project}} 的拉取请求",
+    search: "搜索拉取请求",
+    clearSearch: "清除搜索",
+    open: "未关闭",
+    closed: "已关闭",
+    results: "{{count}} 个结果",
+    authRequired: "请在此主机上登录 Git 托管服务以浏览拉取请求。",
+    loading: "正在加载拉取请求…",
+    empty: "没有匹配的拉取请求。",
+    limit: "最多显示 {{count}} 个结果。请缩小搜索范围。",
+    start: "从 #{{number}} 创建工作树：{{title}}",
+    updated: "更新于 {{date}}",
+    external: "在浏览器中打开 #{{number}}",
   },
   newWorkspace: {
     title: "新建 workspace",

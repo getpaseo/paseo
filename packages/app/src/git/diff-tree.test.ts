@@ -157,3 +157,25 @@ describe("collectDirPaths", () => {
     expect(collectDirPaths(root).sort()).toEqual(["packages", "packages/app", "packages/server"]);
   });
 });
+
+it("aggregates categorized lines for collapsed folders", async () => {
+  const { emptyChangeBreakdown, productionStat } = await import("@getpaseo/protocol/diff-stat");
+  const code = emptyChangeBreakdown();
+  code.code.additions = 2;
+  code.comments.additions = 1;
+  const tests = emptyChangeBreakdown();
+  tests.tests.additions = 4;
+  const files = [
+    { ...createFile("src/a.ts", 3), breakdown: code },
+    { ...createFile("src/a.test.ts", 4), breakdown: tests },
+  ];
+  const root = buildDiffTree(files);
+  const rows = flattenDiffTree(root, new Set(["src"]));
+  expect(rows).toHaveLength(1);
+  const row = rows[0];
+  expect(row.kind).toBe("folder");
+  if (row.kind !== "folder") throw new Error("Expected a folder");
+  expect(row.additions).toBe(7);
+  expect(productionStat(row.breakdown!)).toEqual({ additions: 2, deletions: 0 });
+  expect(row.breakdown!.tests.additions).toBe(4);
+});

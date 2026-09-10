@@ -2,6 +2,31 @@ import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const ar: TranslationResources = {
+  changeStats: {
+    title: "تفاصيل التغييرات",
+    code: "الكود",
+    total: "الإجمالي",
+    production: "الإنتاج",
+    categories: {
+      code: "كود · JS/TS",
+      components: "مكونات · JSX/TSX",
+      styles: "الأنماط",
+      ci: "التكامل المستمر",
+      config: "الإعدادات",
+      tooling: "الأدوات",
+      otherCode: "كود آخر",
+      comments: "التعليقات",
+      docs: "الوثائق",
+      tests: "الاختبارات",
+      generated: "ملفات مولدة",
+      formatting: "التنسيق",
+      blank: "أسطر فارغة",
+      other: "أخرى / غير مصنفة",
+    },
+    commentsIncluded: "يشمل هذا الجزء من كود الإنتاج التعليقات (صيغة غير مدعومة أو تحليل غير مكتمل)",
+    unavailable: "حدّث المضيف لعرض تفاصيل التغييرات.",
+  },
+
   common: {
     back: "خلف",
     loading: "تحميل...",
@@ -1205,6 +1230,28 @@ export const ar: TranslationResources = {
         archiveFailed: "فشل في أرشفة مساحة العمل",
       },
     },
+  },
+  projectPullRequests: {
+    checks: {
+      passed: "نجحت جميع الفحوصات",
+      pending: "الفحوصات قيد التشغيل",
+      skipped: "تم تخطي الفحوصات",
+      updateRequired: "حدّث هذا المضيف لعرض حالة CI.",
+    },
+    title: "طلبات السحب",
+    shortcut: "تصفح طلبات السحب لـ {{project}}",
+    search: "البحث في طلبات السحب",
+    clearSearch: "مسح البحث",
+    open: "مفتوحة",
+    closed: "مغلقة",
+    results: "{{count}} نتيجة",
+    authRequired: "سجّل الدخول إلى خدمة Git على هذا المضيف لتصفح طلبات السحب.",
+    loading: "جارٍ تحميل طلبات السحب…",
+    empty: "لا توجد طلبات سحب مطابقة.",
+    limit: "يتم عرض حتى {{count}} نتيجة. حدّد البحث أكثر.",
+    start: "إنشاء شجرة عمل من #{{number}}: {{title}}",
+    updated: "تم التحديث {{date}}",
+    external: "فتح #{{number}} في المتصفح",
   },
   newWorkspace: {
     title: "مساحة عمل جديدة",

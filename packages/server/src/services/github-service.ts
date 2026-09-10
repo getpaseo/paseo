@@ -142,6 +142,9 @@ const GitHubIssueSummarySchema = z.object({
 });
 
 const GitHubPullRequestSummarySchema = z.object({
+  additions: z.number().optional(),
+  deletions: z.number().optional(),
+  statusCheckRollup: z.unknown().optional(),
   number: z.number(),
   title: z.string().catch(""),
   url: z.string().catch(""),
@@ -2016,10 +2019,13 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
             [
               "pr",
               "list",
+              ...(/(?:^|\s)(?:is|state):(closed|merged|all)\b/i.test(input.query ?? "")
+                ? ["--state", "all"]
+                : []),
               "--search",
               input.query ?? "",
               "--json",
-              "number,title,url,state,body,labels,baseRefName,headRefName,updatedAt",
+              "number,title,url,state,body,labels,baseRefName,headRefName,updatedAt,statusCheckRollup,additions,deletions",
               "--limit",
               String(input.limit ?? 20),
             ],
@@ -2437,6 +2443,8 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
       if (shouldFetchPullRequests && prsResult.status === "fulfilled") {
         for (const item of prsResult.value ?? []) {
           items.push({
+            ...(item.checks !== undefined ? { checks: item.checks } : {}),
+            diffStat: item.diffStat,
             kind: "change_request",
             number: item.number,
             title: item.title,
@@ -3453,6 +3461,12 @@ function toPullRequestSummary(
   item: z.infer<typeof GitHubPullRequestSummarySchema>,
 ): PullRequestSummary {
   return {
+    ...(item.additions !== undefined && item.deletions !== undefined
+      ? { diffStat: { additions: item.additions, deletions: item.deletions } }
+      : {}),
+    ...(item.statusCheckRollup !== undefined
+      ? { checks: parseStatusCheckRollup(item.statusCheckRollup) }
+      : {}),
     number: item.number,
     title: item.title,
     url: item.url,

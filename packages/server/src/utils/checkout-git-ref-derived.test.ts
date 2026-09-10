@@ -130,9 +130,12 @@ test("one comparison refresh updates a shared base and upstream ref", async () =
     ref: "refs/remotes/origin/main",
     aheadBehind: { ahead: 1, behind: 0 },
   });
-  expect(result.diffStat).toEqual({ additions: 1, deletions: 0 });
+  expect(result.diffStat).toMatchObject({ additions: 1, deletions: 0 });
   expect(metrics.submissions.map((command) => command.args[0]).sort()).toEqual([
     "diff",
+    "diff",
+    "diff",
+    "ls-files",
     "ls-files",
     "merge-base",
     "rev-list",

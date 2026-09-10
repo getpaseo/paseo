@@ -1,3 +1,4 @@
+import type { DiffStat } from "@getpaseo/protocol/diff-stat";
 import type { SessionEventSubscription } from "@getpaseo/protocol/messages";
 import type { AgentRequests } from "./agent/requests/index.js";
 import equal from "fast-deep-equal";
@@ -4978,7 +4979,7 @@ export class Session {
     const resolvedProjectRecord =
       projectRecord ?? (await this.projectRegistry.get(workspace.projectId));
 
-    let diffStat: { additions: number; deletions: number } | null = null;
+    let diffStat: DiffStat | null = null;
     const snapshot = this.workspaceGitService.peekSnapshot(workspace.cwd);
     if (snapshot?.git.diffStat) {
       diffStat = snapshot.git.diffStat;

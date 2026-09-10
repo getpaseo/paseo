@@ -2,6 +2,32 @@ import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const ru: TranslationResources = {
+  changeStats: {
+    title: "Состав изменений",
+    code: "Код",
+    total: "Всего",
+    production: "Рабочий код",
+    categories: {
+      code: "Код · JS/TS",
+      components: "Компоненты · JSX/TSX",
+      styles: "Стили",
+      ci: "CI",
+      config: "Конфигурация",
+      tooling: "Инструменты",
+      otherCode: "Другой код",
+      comments: "Комментарии",
+      docs: "Документация",
+      tests: "Тесты",
+      generated: "Сгенерированные",
+      formatting: "Форматирование",
+      blank: "Пустые строки",
+      other: "Прочее / не определено",
+    },
+    commentsIncluded:
+      "Эта часть рабочего кода включает комментарии (неподдерживаемый синтаксис или неполный анализ)",
+    unavailable: "Обновите хост, чтобы увидеть состав изменений.",
+  },
+
   common: {
     back: "Назад",
     loading: "Загрузка...",
@@ -1221,6 +1247,28 @@ export const ru: TranslationResources = {
         archiveFailed: "Не удалось архивировать рабочее пространство",
       },
     },
+  },
+  projectPullRequests: {
+    checks: {
+      passed: "Все проверки пройдены",
+      pending: "Проверки выполняются",
+      skipped: "Проверки пропущены",
+      updateRequired: "Обновите этот хост для просмотра статуса CI.",
+    },
+    title: "Пул-реквесты",
+    shortcut: "Просмотреть пул-реквесты {{project}}",
+    search: "Поиск пул-реквестов",
+    clearSearch: "Очистить поиск",
+    open: "Открытые",
+    closed: "Закрытые",
+    results: "Результатов: {{count}}",
+    authRequired: "Войдите в свой Git-сервис на этом хосте для просмотра пул-реквестов.",
+    loading: "Загрузка пул-реквестов…",
+    empty: "Подходящих пул-реквестов нет.",
+    limit: "Показано до {{count}} результатов. Уточните поиск.",
+    start: "Создать рабочее дерево из #{{number}}: {{title}}",
+    updated: "Обновлено {{date}}",
+    external: "Открыть #{{number}} в браузере",
   },
   newWorkspace: {
     title: "Новое рабочее пространство",

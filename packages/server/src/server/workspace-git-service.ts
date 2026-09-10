@@ -1,3 +1,4 @@
+import type { DiffStat } from "@getpaseo/protocol/diff-stat";
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
@@ -140,7 +141,7 @@ export interface WorkspaceGitRuntimeSnapshot {
     aheadOfOrigin: number | null;
     behindOfOrigin: number | null;
     hasRemote: boolean;
-    diffStat: { additions: number; deletions: number } | null;
+    diffStat: DiffStat | null;
   };
   forge: {
     featuresEnabled: boolean;

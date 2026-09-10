@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { DiffStatSchema, ChangeBreakdownSchema } from "./diff-stat.js";
 import { TerminalActivitySchema } from "./terminal-activity.js";
 import { CLIENT_CAPS } from "./client-capabilities.js";
 import { AGENT_LIFECYCLE_STATUSES } from "./agent-lifecycle.js";
@@ -2349,6 +2350,7 @@ export const BranchSuggestionsRequestSchema = z.object({
 });
 
 export const GitHubSearchItemSchema = z.object({
+  diffStat: DiffStatSchema.optional(),
   kind: z.enum(["issue", "pr"]),
   forge: z.string().optional(),
   number: z.number(),
@@ -2361,6 +2363,16 @@ export const GitHubSearchItemSchema = z.object({
   baseRefName: z.string().nullable().optional(),
   headRefName: z.string().nullable().optional(),
   updatedAt: z.string().optional(),
+  checks: z
+    .array(
+      z.object({
+        name: z.string(),
+        status: z.string(),
+        url: z.string().nullable(),
+        workflow: z.string().optional(),
+      }),
+    )
+    .optional(),
 });
 
 export const ForgeSearchItemSchema = GitHubSearchItemSchema.extend({
@@ -2628,6 +2640,8 @@ const ParsedDiffFileSchema = z.object({
   isDeleted: z.boolean(),
   additions: z.number(),
   deletions: z.number(),
+  // COMPAT(changeBreakdown): added in v0.8.0, remove optional after 2027-03-10.
+  breakdown: ChangeBreakdownSchema.optional(),
   hunks: z.array(DiffHunkSchema),
   status: z.enum(["ok", "too_large", "binary"]).optional(),
 });
@@ -3435,6 +3449,8 @@ export const ServerInfoStatusPayloadSchema = z
         agentRequestReceipts: z.boolean().optional(),
         // COMPAT(hubAgentRpc): added in v0.8.0; remove gate after 2027-03-05.
         hubAgentRpc: z.boolean().optional(),
+        // COMPAT(changeBreakdown): added in v0.8.0, remove gate after 2027-03-10.
+        changeBreakdown: z.boolean().optional(),
         providersSnapshot: z.boolean().optional(),
         // COMPAT(providersSnapshotCwd): added in v0.3.2, remove gate after 2027-02-10.
         providersSnapshotCwd: z.boolean().optional(),
@@ -3466,6 +3482,7 @@ export const ServerInfoStatusPayloadSchema = z
         // and github_search fallback after 2027-01-17 once the supported daemon
         // floor is >= v0.2.0.
         forgeSearch: z.boolean().optional(),
+        forgeSearchChecks: z.boolean().optional(),
         // COMPAT(daemonStatusRpc): added in v0.1.76, remove gate after 2026-11-18.
         daemonStatusRpc: z.boolean().optional(),
         // COMPAT(daemonConfigReload): added in v0.4.0, remove gate after 2027-02-14.
@@ -3903,13 +3920,7 @@ export const WorkspaceDescriptorPayloadSchema = z
       .nullish()
       .transform((value) => value ?? null),
     activityAt: z.string().nullable(),
-    diffStat: z
-      .object({
-        additions: z.number(),
-        deletions: z.number(),
-      })
-      .nullable()
-      .optional(),
+    diffStat: DiffStatSchema.nullable().optional(),
     scripts: z.array(WorkspaceScriptPayloadSchema).default([]),
     gitRuntime: WorkspaceGitRuntimePayloadSchema,
     // COMPAT(githubRuntimeName): legacy wire-field name now carries

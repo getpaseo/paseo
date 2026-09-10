@@ -1,17 +1,26 @@
+import type { ChangeBreakdown } from "@getpaseo/protocol/diff-stat";
 import { memo, useCallback, useMemo, useState, type ReactElement } from "react";
 import { Pressable } from "react-native";
 import { useTranslation } from "react-i18next";
-import { DiffStat } from "@/components/diff-stat";
+import { ChangeStats } from "@/components/change-stats";
 import { composerPillStyles } from "@/composer/pill-styles";
 import { useVisibleWorkspaceDiffStat } from "@/composer/workspace-diff-stat";
 
 interface ComposerDiffStatPillProps {
   additions: number;
   deletions: number;
+  breakdown?: ChangeBreakdown;
+  serverId?: string;
   onPress: () => void;
 }
 
-export function ComposerDiffStatPill({ additions, deletions, onPress }: ComposerDiffStatPillProps) {
+export function ComposerDiffStatPill({
+  additions,
+  deletions,
+  breakdown,
+  serverId,
+  onPress,
+}: ComposerDiffStatPillProps) {
   const { t } = useTranslation();
   const [isHovered, setIsHovered] = useState(false);
   const handleHoverIn = useCallback(() => setIsHovered(true), []);
@@ -31,7 +40,12 @@ export function ComposerDiffStatPill({ additions, deletions, onPress }: Composer
       onHoverOut={handleHoverOut}
       style={bodyStyle}
     >
-      <DiffStat additions={additions} deletions={deletions} />
+      <ChangeStats
+        additions={additions}
+        deletions={deletions}
+        breakdown={breakdown}
+        serverId={serverId}
+      />
     </Pressable>
   );
 }
@@ -49,11 +63,5 @@ export const WorkspaceDiffStatPill = memo(function WorkspaceDiffStatPill({
   if (!diffStat) {
     return null;
   }
-  return (
-    <ComposerDiffStatPill
-      additions={diffStat.additions}
-      deletions={diffStat.deletions}
-      onPress={onPress}
-    />
-  );
+  return <ComposerDiffStatPill {...diffStat} serverId={serverId} onPress={onPress} />;
 });

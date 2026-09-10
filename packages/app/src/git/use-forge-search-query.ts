@@ -49,6 +49,7 @@ export interface ForgeSearchClient {
 type LegacyGitHubSearchKind = "github-issue" | "github-pr";
 
 interface ForgeSearchQueryInput {
+  limit?: number;
   client: ForgeSearchClient | null;
   serverId: string;
   cwd: string;
@@ -85,7 +86,10 @@ export function buildForgeSearchQueryOptions(input: ForgeSearchQueryInput) {
   const transport = input.supportsForgeSearch === true ? "forge" : "github";
 
   return {
-    queryKey: forgeSearchQueryKey(input.serverId, input.cwd, query, input.kinds, transport),
+    queryKey: [
+      ...forgeSearchQueryKey(input.serverId, input.cwd, query, input.kinds, transport),
+      ...(input.limit ? [input.limit] : []),
+    ],
     queryFn: async (): Promise<ForgeSearchPayload> => {
       if (!input.client) {
         throw new Error(
@@ -93,8 +97,8 @@ export function buildForgeSearchQueryOptions(input: ForgeSearchQueryInput) {
         );
       }
       const request = input.kinds
-        ? { cwd: input.cwd, query, limit: 20, kinds: input.kinds }
-        : { cwd: input.cwd, query, limit: 20 };
+        ? { cwd: input.cwd, query, limit: input.limit ?? 20, kinds: input.kinds }
+        : { cwd: input.cwd, query, limit: input.limit ?? 20 };
       // COMPAT(githubSearchRpc): use the legacy GitHub RPC with daemons that
       // predate forge.search.*. Remove after 2027-01-17 once the supported
       // daemon floor is >= v0.2.0.

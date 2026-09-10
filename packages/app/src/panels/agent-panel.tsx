@@ -29,6 +29,8 @@ import { useRetainedPanelActive } from "@/components/retained-panel";
 import { Composer } from "@/composer";
 import { useWorkspaceHasDiffStat } from "@/composer/workspace-diff-stat";
 import {
+  COMPOSER_DIFF_STAT_PILL_HEIGHT,
+  COMPOSER_PILL_MIN_HEIGHT,
   resolveComposerTrackControlClearance,
   resolveComposerTrackTailClearance,
 } from "@/composer/pill-styles";
@@ -1472,11 +1474,14 @@ const AgentStreamSection = memo(function AgentStreamSection({
   const hasWorkspaceDiffStat = useWorkspaceHasDiffStat(serverId, workspaceId);
   const hasVisibleComposerTracks =
     hasActiveComposer && (hasVisibleAgentTracks || hasWorkspaceDiffStat);
+  const trackControlHeight = hasWorkspaceDiffStat
+    ? COMPOSER_DIFF_STAT_PILL_HEIGHT
+    : COMPOSER_PILL_MIN_HEIGHT;
   const bottomOverlayTailClearance = hasVisibleComposerTracks
-    ? resolveComposerTrackTailClearance(isCompactFormFactor)
+    ? resolveComposerTrackTailClearance(isCompactFormFactor, trackControlHeight)
     : 0;
   const bottomOverlayControlClearance = hasVisibleComposerTracks
-    ? resolveComposerTrackControlClearance(isCompactFormFactor)
+    ? resolveComposerTrackControlClearance(isCompactFormFactor, trackControlHeight)
     : 0;
   const streamItemsRaw = useSessionStore((state) =>
     agentId ? state.sessions[serverId]?.agentStreamTail?.get(agentId) : undefined,
