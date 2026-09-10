@@ -1893,6 +1893,20 @@ export class DaemonClient {
     }
   }
 
+  async markWorkspaceUnread(workspaceId: string, requestId?: string): Promise<void> {
+    const response =
+      await this.sendNamespacedCorrelatedSessionRequest<"workspace.mark_unread.response">({
+        requestId,
+        message: {
+          type: "workspace.mark_unread.request",
+          workspaceId,
+        },
+      });
+    if (!response.success) {
+      throw new Error(response.error ?? "Failed to mark workspace unread");
+    }
+  }
+
   sendHeartbeat(params: {
     deviceType: "web" | "mobile";
     focusedAgentId: string | null;

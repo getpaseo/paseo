@@ -223,8 +223,8 @@ SVG or URL.
 ## Entry point and cleanup
 
 Each present entry default-exports one contribution function and returns cleanup. Client entries
-receive `PluginClientContext`; server entries receive `PluginServerContext`. Every client `add*`
-returns an idempotent remover. The entry cleanup runs before Paseo removes remaining registrations.
+receive `PluginClientContext`; server entries receive `PluginServerContext`. Client registration methods return idempotent removers, except header buttons and composer pills,
+which return `{ update, remove }` handles. The entry cleanup runs before Paseo removes remaining registrations.
 
 ```ts
 import type { PluginClientContext } from "@getpaseo/plugin/client";
@@ -1295,81 +1295,165 @@ Precedence is built-in client commands, plugin commands, then provider commands.
 collision is omitted. Built-in aliases also reserve their names. The first plugin in stable catalog
 order wins a collision between plugins. Commands do not run while the composer has attachments.
 
-## Composer pills
+## Header buttons
 
-The client entry owns pill creation and removal. This can live directly in `index.client.tsx` or in
-a function it imports from `client/`:
+Try the [button example](https://github.com/getpaseo/paseo/tree/main/plugin-examples/buttons) for
+actions, menus, custom icons and content, and visibility updates in both the header and composer.
+It switches one header button between modes; additional actions use a named Tools menu.
+
+`client.addHeaderButton({ id, workspaceId, button })` adds a button before the built-in actions on
+the workspace header's right side. It returns a registration with `update(patch)` and `remove()`.
 
 ```tsx
-import { Icon } from "@getpaseo/plugin/client/react-native";
-import {
-  type PluginClientContext,
-  type PluginComposerPillProps,
-  useAgent,
-} from "@getpaseo/plugin/client";
-import { Text } from "react-native";
+const review = client.addHeaderButton({
+  id: "review",
+  workspaceId,
+  button: {
+    title: "Open review",
+    icon: "Scan",
+    label: "Review",
+    behavior: {
+      kind: "action",
+      onPress() {
+        client.openPanel("review", { workspaceId });
+      },
+    },
+  },
+});
 
-function ReviewPill({ theme, agentId }: PluginComposerPillProps) {
-  const agent = useAgent(agentId, ({ title }) => ({ title }));
-  return (
-    <>
-      <Icon name="Scan" size={14} color={theme.colors.foregroundMuted} />
-      <Text numberOfLines={1} style={{ color: theme.colors.foregroundMuted, flexShrink: 1 }}>
-        {agent?.title ?? "Review"}
-      </Text>
-    </>
-  );
-}
-
-export default function contribute(client: PluginClientContext) {
-  const pills = new Map<string, () => void>();
-  const unsubscribe = client.paseo.agents.subscribe((update) => {
-    if (update.kind !== "upsert" || !update.agent.workspaceId) return;
-    const { id: agentId, workspaceId } = update.agent;
-    pills.get(agentId)?.();
-    pills.set(
-      agentId,
-      client.addComposerPill({
-        id: "review",
-        title: "Open review",
-        workspaceId,
-        agentId,
-        Component: ReviewPill,
-        async onPress() {
-          await client.rpc(refreshReview, { agentId });
-          client.openPanel("review", { workspaceId, agentId });
-        },
-      }),
-    );
-  });
-  return () => {
-    unsubscribe();
-    for (const remove of pills.values()) remove();
-  };
-}
+review.update({ label: "Review · 3" });
+review.update({ visible: false });
+review.update({ visible: true });
+review.remove();
 ```
 
-`addComposerPill` fields:
+Omit `label` for an icon-only header button. Menus and popovers show a chevron on wide layouts.
+Compact header buttons use icons without labels or chevrons. Paseo moves excess contributions
+into a shared overflow menu. Placement and overflow are host decisions.
 
-| Field         | Required | Meaning                                                    |
-| ------------- | -------- | ---------------------------------------------------------- |
-| `id`          | Yes      | Plugin-local ID within the target agent.                   |
-| `title`       | Yes      | Accessible button label.                                   |
-| `workspaceId` | Yes      | Workspace whose composer track owns the pill.              |
-| `agentId`     | Yes      | Agent whose composer track owns the pill.                  |
-| `Component`   | Yes      | React Native component rendering the pill's icon and text. |
-| `onPress`     | Yes      | Client-side callback.                                      |
+## Composer pills
 
-The client entry runs once per plugin installation in each connected app. Its context exposes
-`paseo`, typed `rpc`, `openSurface`, explicit-context `openPanel`, and every client registration.
-`addComposerPill` returns an idempotent removal function. Paseo also removes every outstanding pill
-when the plugin installation or host connection is torn down.
+`client.addComposerPill({ id, workspaceId, agentId, button })` uses the same [button descriptor](#button-descriptor)
+and returns the same registration. It targets one agent's composer track alongside Tasks and
+Subagents. Composer pills always show the icon and `label` (or `title` when `label` is omitted).
+They never show a chevron, including for menus and popovers.
 
-Paseo owns the pressable, shared pill chrome, pending state, error reporting, and track-bar
-placement. The component receives `theme`, `host`, `layout`, `workspaceId`, and `agentId`. Read
-current values with `useWorkspace` and `useAgent`. The plugin owns when the pill exists, its icon
-and text, and the callback. `openPanel(id, { workspaceId, agentId? })` opens or focuses a panel
-registered by the same plugin.
+```tsx
+const pill = client.addComposerPill({
+  id: "review",
+  workspaceId,
+  agentId,
+  button: {
+    title: "Open review",
+    icon: "Scan",
+    label: "Review",
+    behavior: {
+      kind: "action",
+      onPress() {
+        client.openPanel("review", { workspaceId, agentId });
+      },
+    },
+  },
+});
+```
+
+## Button descriptor
+
+These contracts are exported from `@getpaseo/plugin/client`.
+
+| Field      | Required | Meaning                                                                 |
+| ---------- | -------- | ----------------------------------------------------------------------- |
+| `title`    | Yes      | Non-empty accessible label, tooltip, and sheet title.                   |
+| `icon`     | Yes      | Lucide name or `ComponentType<PluginButtonIconProps>`.                  |
+| `label`    | No       | Non-empty display text. Omit to use the placement's default.            |
+| `visible`  | No       | Defaults to `true`. False removes the trigger and its layout space.     |
+| `disabled` | No       | Defaults to `false`. Keeps the button visible and prevents interaction. |
+| `behavior` | Yes      | One of the three shapes below.                                          |
+
+```tsx
+type PluginButtonBehavior =
+  | { kind: "action"; onPress(): void | Promise<void> }
+  | { kind: "menu"; items: readonly PluginButtonMenuEntry[] }
+  | { kind: "popover"; Content: React.ComponentType<PluginButtonContentProps> };
+```
+
+An action runs on the client. Paseo marks the button busy until its promise settles, blocks repeated
+presses, and shows failures in a toast. A failed action can be retried. Use the client's `paseo` for
+ordinary operations and `rpc` for plugin-specific backend work.
+
+Menus and popovers open anchored surfaces on wide layouts and bottom sheets on compact layouts.
+The whole trigger opens the surface; there is no split-button behavior.
+
+### Menu entries
+
+A menu contains items and separators. IDs use lowercase letters, digits, and hyphens, start with
+a letter, and are unique within that menu.
+
+```tsx
+const behavior: PluginButtonBehavior = {
+  kind: "menu",
+  items: [
+    {
+      kind: "item",
+      id: "refresh",
+      title: "Refresh review",
+      icon: "RefreshCw",
+      behavior: { kind: "action", onPress: refreshReview },
+    },
+    { kind: "separator", id: "details-divider" },
+    {
+      kind: "item",
+      id: "details",
+      title: "Review details",
+      behavior: { kind: "popover", Content: ReviewDetails },
+    },
+  ],
+};
+```
+
+An item requires `kind: "item"`, `id`, `title`, and `behavior`. Its optional `icon`, `visible`, and
+`disabled` follow the button rules. A separator contains only `kind: "separator"` and `id`.
+Paseo removes leading, trailing, and consecutive separators after filtering hidden items.
+
+Items can use all three behaviors. Nested menus open flyouts on wide layouts and pages with back
+navigation within the same compact sheet. Custom content pages open on selection, never hover.
+Choosing an action closes the menu; opening another page keeps it open.
+
+### Custom icons and popover content
+
+`PluginButtonIconProps` contains `theme`, `host`, `layout`, `size`, `color`, and the target context.
+Render a React Native icon or indicator within the supplied size. Paseo bounds the icon slot and
+owns all pointer interaction. The icon component can use plugin hooks.
+
+`PluginButtonContentProps` contains `theme`, `host`, `layout`, the target context, and `close()`.
+Render the body only; Paseo owns anchoring, scrolling, padding, and sheet presentation. Content can
+use `usePaseo`, `useRpc`, `useWorkspace`, `useAgent`, and the installation's React Query cache.
+
+The target context is one of:
+
+```ts
+{ context: "workspace", workspaceId: string } // Header button
+{ context: "agent", workspaceId: string, agentId: string } // Composer pill
+```
+
+### Updates and lifecycle
+
+Each registration belongs to one plugin installation, placement, workspace, and (for pills) agent.
+`id` is plugin-local within that target and uses the same format as menu IDs. The same ID may be
+used in different targets or placements. Duplicate registration in the same target throws.
+
+`update(patch: Partial<PluginButton>)` changes the descriptor in place, preserving identity and
+order. When changing `behavior`, supply the complete new behavior object. Invalid updates throw
+without changing the existing button. Subscribe to your own model or the client API and call
+`update` to publish reactive changes; mutating the original descriptor does not update the UI.
+
+Hiding or disabling a button closes its surface. Updating its behavior also closes the surface.
+Hiding preserves the registration, so showing it again restores its position. It does not cancel
+an action already in progress.
+
+`remove()` is idempotent. Updates after removal do nothing. Paseo removes outstanding buttons when
+the plugin installation or host connection is torn down. Return cleanup from the client entry for
+your subscriptions, timers, and other resources.
 
 ## Use the Paseo SDK
 

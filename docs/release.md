@@ -47,6 +47,36 @@ commit the prepared inputs locally and run the release command. Its branch and
 tag push is the one remote release batch and starts CI for the complete release
 commit.
 
+## Release branch discipline
+
+While you finalize a release on `main`, use a temporary `next` branch for work intended for the following
+release. This applies to both beta and stable releases.
+
+- Create each new `next` from freshly fetched `origin/main`. Reuse it while active.
+- "This goes to next" means create the PR against `next` or retarget an existing
+  PR, and keep that destination through delivery.
+- Keep `next` current by merging `origin/main` into it as release fixes land.
+  Avoid rebasing this shared branch because agents and open PRs depend on its history.
+- After the release ships, bring `next` up to date and open a `next` → `main` PR.
+  Pass CI and merge without squashing away the individual PR commits needed for
+  the changelog. Retarget remaining PRs based on `next` to `main` and delete the integrated
+  `next`. Create it fresh when needed again.
+
+**Setup still needed:** CI, Docker, and Nix PR checks currently target only `main`,
+and GitHub permits only squash merges. Enable checks and required-check protection
+for `next`, CI on its pushes, and merge commits for the integration PR. Handle PR
+base changes (`edited` events) so retargeting runs checks against the new base;
+GitHub's default PR events do not cover this. Deployment triggers stay unchanged.
+
+### Hotfix from a release tag
+
+If `main` contains changes you do not want to release, branch from the affected
+release tag and cherry-pick only the required fixes. Run CI on that branch, then
+use the normal release flow with it as the explicit source, choosing a new patch
+or beta version. Ensure the fixes and changelog also reach `main` and any active
+`next`, preserving newer development and version changes there. This is a
+short-lived hotfix branch, not another maintained release track.
+
 ## ACP catalog updates
 
 ACP catalog work enters a release through an explicit user request:
@@ -64,7 +94,7 @@ release push as the changelog and version commit.
 
 There are two supported release paths:
 
-1. **Direct stable release**: you are ready to ship the current `main` commit to everyone immediately.
+1. **Direct stable release**: you are ready to ship the resolved release source to everyone immediately (default `origin/main`).
 2. **Beta flow**: release candidates on the `beta` channel. Each beta carries its own changelog entry, publishes npm only on the explicit `beta` dist-tag, and stays behind the Stable/Beta switch on `/download`.
 
 Paseo has one linear release track even though npm dist-tags are independent
@@ -485,6 +515,8 @@ Release notes depend on the changelog heading format. The heading **must** be st
 ```
 
 No prefix (`v`), no extra text. `Release Notes Sync` matches the `## X.Y.Z` (or `## X.Y.Z-beta.N`) line for the pushed tag to extract the version. A malformed heading breaks the release-notes sync for that tag.
+
+`CHANGELOG.md` on `main` is also what the app's **What's new** sheet fetches and renders, so the file is a shipped product surface, not just a release input. `##` starts a release and `###` starts a section; the app reads section titles from the document, so renaming or adding one needs no app change. Everything under a section is rendered as Markdown: prose, lists, links, inline code, fenced code, block quotes, tables, and images. Raw HTML does not render — the shared Markdown parser runs with `html: false`, so a `<video>`, `<iframe>` or `<embed>` tag reaches the reader as visible markup. Keep media out of the changelog, or link to it. A GitHub callout renders as a block quote with its `[!NOTE]` marker still in the text. A release entry is what a user reads on a phone the moment they are offered the update — write it for them.
 
 ## Changelog policy
 

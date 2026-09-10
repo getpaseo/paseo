@@ -1,12 +1,22 @@
 import type { AgentFeature, AgentFeatureToggle } from "../agent-sdk-types.js";
 
-const CODEX_FAST_MODE_SUPPORTED_MODEL_PREFIXES = ["gpt-5", "gpt-4.1", "o3", "o4-mini"] as const;
+// Codex Fast is distinct from API Priority processing. Keep model support aligned with
+// https://developers.openai.com/codex/speed and https://developers.openai.com/codex/models.
+const CODEX_FAST_MODE_SUPPORTED_MODELS = new Set([
+  "gpt-6-astra",
+  "gpt-5.6",
+  "gpt-5.6-sol",
+  "gpt-5.6-terra",
+  "gpt-5.6-luna",
+  "gpt-5.5",
+  "gpt-5.4",
+]);
 
 export const CODEX_FAST_MODE_FEATURE: Omit<AgentFeatureToggle, "value"> = {
   type: "toggle",
   id: "fast_mode",
   label: "Fast",
-  description: "Priority inference at 2x usage",
+  description: "Priority inference at increased usage",
   tooltip: "Toggle fast mode",
   icon: "zap",
 };
@@ -30,9 +40,7 @@ export function codexModelSupportsFastMode(modelId: string | null | undefined): 
   if (!normalizedModelId) {
     return false;
   }
-  return CODEX_FAST_MODE_SUPPORTED_MODEL_PREFIXES.some(
-    (prefix) => normalizedModelId === prefix || normalizedModelId.startsWith(prefix),
-  );
+  return CODEX_FAST_MODE_SUPPORTED_MODELS.has(normalizedModelId);
 }
 
 export function buildCodexFeatures(input: {

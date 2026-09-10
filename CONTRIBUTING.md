@@ -1,142 +1,104 @@
 # Contributing to Paseo
 
-Thank you for taking the time to contribute to Paseo.
+This guide is here to save us both time and help you find a useful way to contribute.
+
+Paseo grows through bug reports, testing, workflow discussions, plugins, documentation, and people helping each other. The sections below explain where each contribution belongs and what to expect.
 
 ## Philosophy
 
-Paseo is an opinionated product, built on freedom and flexibility: any agent provider, any device, running on your own machine. It is meant to be composable, so you can build the workflow you want. Read more about the product vision [here](docs/product.md).
+**Paseo has a lean, opinionated core built to be extended.**
 
-Given Paseo's scope, contributing to it takes a lot of context that is very hard to transfer. That's why product, design, architecture, and workflow decisions are currently all made by the maintainer.
+The goal is a low floor and a high ceiling: a polished default experience that is easy to understand, with the flexibility to choose your providers, run on your own infrastructure, and build your own workflows. Paseo should remain self-hosted and respectful of your privacy and control.
 
-I pick what to build based on whether it fits the product, how many workflows it improves, whether it keeps things composable, whether we can hold the quality bar, and whether I want to build it.
+The core continues to evolve through improvements to the shared experience. Specialized workflows and integrations belong in the extension ecosystem. Product, design, architecture, and workflow decisions remain with the maintainer.
 
-## Report bugs in GitHub issues or Discord
+Read the [product philosophy](docs/product.md) for the reasoning behind these choices and how Paseo develops.
 
-Open an [issue](https://github.com/getpaseo/paseo/issues) or post in [Discord](https://discord.gg/jz8T2uahpH).
+## Build a plugin
 
-> [!IMPORTANT]
-> Feature requests opened as issues will get closed automatically
+Most specialized workflows and integrations are better served by plugins.
 
-If you used an agent to investigate, paste the raw evidence and repro steps it collected, not its diagnosis.
+Plugins let you build what you need, share it, and maintain it independently. Start with the [plugin documentation](https://paseo.sh/docs/plugins). For applications and integrations built around Paseo, see the [SDK documentation](https://paseo.sh/docs/sdk).
 
-You may submit a PR to fix a bug, please read the PR guidelines below.
+If an extension point is missing, describe the workflow in [Discussions](https://github.com/getpaseo/paseo/discussions). A reusable capability that enables several plugins may be a better addition than implementing one particular workflow in core.
 
-## Product discussions go in GitHub Discussions or Discord
+## Report bugs
 
-There's no feature request backlog. Open a product discussion in [Discussions](https://github.com/getpaseo/paseo/discussions) or `#product` in [Discord](https://discord.gg/jz8T2uahpH), and frame it as a workflow:
+Open a [GitHub issue](https://github.com/getpaseo/paseo/issues) and fill out the bug report template.
+
+Include:
+
+- What you did, what you expected, and what happened.
+- Reproduction steps, Paseo version, and platform.
+- Relevant logs, screenshots, or a recording.
+
+If an agent investigated, include the evidence and reproduction steps it collected. Its explanation of the cause still needs verification.
+
+Focused fixes for reproducible bugs are welcome. If you submit one, follow the pull request and QA guidance below.
+
+## Discuss workflows before proposing features
+
+Product discussions, including feature requests, belong in [GitHub Discussions](https://github.com/getpaseo/paseo/discussions). Feature requests opened as issues will be closed.
+
+Explain:
 
 - What are you trying to do?
 - How do you do it today?
 - Where does Paseo get in the way?
-- What would the flow look like if it worked for you?
+- What would a better workflow look like?
 
-"Can you build X" is not useful because it doesn't tell me about your problem.
+This helps other people describe their needs and gives me useful context when deciding what to build.
 
-A discussion also lets other people add their own version of the same problem, and that's what I read when I decide what to build.
+There is no feature request backlog or commitment to implement a discussion. I may read and learn from it without replying.
 
-Due to the volume and my limited bandwidth, I may not participate in all the discussions, if something gains interest it will make it's way to me.
+## If you still want to submit a pull request
 
-## Pull requests
+After considering plugins and discussing the workflow, you may still want to propose a change to core. Focused fixes for reproducible bugs are also welcome.
 
-For plugin changes, start with the [SDK import boundaries](docs/plugins.md#sdk-import-boundaries).
+**Pull requests are closed by default.** I may reopen the ones I want to take forward. Submit one only if you are comfortable with it being closed without a detailed review or explanation.
 
-Anyone can open a pull request, but there are no guarantees of it getting merged, only submit one if you're okay with it being closed.
+Paseo receives more pull requests than I can responsibly review. Reviewing every submission and explaining every decision would consume the time available for developing the product.
 
-Open it as a draft if the work isn't ready for review, if you want to run the checks against it, or if you want feedback on the direction before you finish it. Mark it ready when you want it looked at.
+I can prompt an agent to write code just as you can. The bottlenecks are choosing what to build, shaping it, verifying its behavior, and taking responsibility for its maintenance. A finished implementation still leaves that work to do.
 
-Here is the criteria I use to decide:
+If you choose to submit a PR, these are the basics to cover.
 
-✅ Likely to be accepted
+### What I look for in a core feature
 
-- Fits the product vision
-- One focused change
-- Links the bug it fixes, or the discussion behind it if there is one
-- Addresses bot reviews
-- Explains the problem you're solving
-- QA evidence
-- Automated tests
-- Screenshots or video for UI changes, on every affected platform
-- Says which platforms you tested and which you didn't
-- Maintainer edits enabled
+- **Demonstrated demand.** Link a discussion with concrete examples of other users needing the workflow. A feature for a small, specialized use case belongs in a plugin.
+- **Value across workflows.** The feature should improve how existing capabilities work together and benefit a broad set of users. A reusable improvement is more valuable than an isolated control for one task.
+- **A coherent design across platforms and providers.** Shared capabilities should work across platforms and providers wherever applicable. Do not reshape a shared abstraction around one provider while leaving the others unsupported or inconsistent.
+- **A finished experience.** Follow the [design guidelines](docs/design.md). The feature must look and feel right in Paseo, including loading states, layout stability, and interaction performance. PRs with janky or rushed interfaces will be closed. Design judgment remains with the maintainer.
 
-⛔️ Will be rejected
+### Keep the scope small
 
-- Bundles unrelated changes
-- Fails checks
-- Ignores bot reviews
-- Takes a feature or the design in a direction I don't want
-- No QA evidence
-- No tests
-- Clearly fully AI-generated PR
+Submit one focused change. PRs adding more than roughly **3,000 lines of production code** are unlikely to be accepted. Prefer the smallest complete improvement that can be tested and understood on its own.
 
-### What to expect
+### QA evidence
 
-- PRs that were explicitly approved in a discussion are preferred.
-- Unsolicited PR can be closed without a detailed review.
-- Your PR can be narrowed, refactored, or redesigned.
-- Your PR might be accepted but not merged immediately.
-- You will be attributed for your work in the changelog, even if I redesign your PR
+Run the changed application or service and test the affected workflow yourself. Include detailed QA evidence so I can see what you exercised and what happened. PRs without this verification and evidence will be closed, whether they fix a bug or add a feature.
 
-## QA evidence
+Explain the problem and link the relevant bug report or discussion. Include:
 
-QA is the main bottleneck of Paseo's product development, and it's not just whether the feature works, it's also whether it meets the quality bar.
+- Automated tests that exercise the changed behavior. A bug fix needs a regression test that fails on the broken version.
+- The commands you ran and their output.
+- A recording for interactive UI changes, or before-and-after screenshots for static changes.
+- The platforms you tested and any affected platforms you could not test.
 
-Pull requests without evidence will be closed.
+The [QA guide](docs/qa.md) explains the expected evidence and available tooling.
 
-What's accepted:
+Using an agent is welcome. Sending it to implement a change and submitting its output without trying the result yourself does not meet this bar.
 
-- The shell commands you ran, pasted with their output
-- The tests you added and their results
-- Before and after screenshots
-- A video of the whole interaction
-- Logs, requests, responses
+**Satisfying all of the above does not mean your pull request will be merged.**
 
-Bugs and features both need automated tests, and the tests have to exercise the real thing. UI changes need a video, or a screenshot if it's static.
+### What happens to your contribution
 
-The [QA guide](docs/qa.md) covers what to check for each of these and the tooling to do it.
+If I take a contribution forward, I may narrow it, reshape it, or use it as a reference for my own implementation. **You will be credited for your contribution, including when I reimplement it.**
 
-## I want to become a maintainer
+A closed PR does not necessarily mean the underlying problem was dismissed. It means I am not taking that submission forward. Detailed reviews, individual explanations, and follow-up discussions cannot be provided at this volume.
 
-There's no formal process to become a maintainer, just consistently get involved with the project by answering questions, testing, reproducing bugs, discussing workflows with the community and offer to implement features when we reach an agreement.
+## Help the community
 
-## FAQ
+Testing betas, reproducing bugs, improving documentation, sharing plugins, and answering questions all help Paseo develop.
 
-### I'm blocked, where do I go?
-
-Join [Discord](https://discord.gg/jz8T2uahpH), ask your questions there.
-
-### Do you prefer Github or Discord?
-
-I am more active on Discord for general questions.
-
-I prefer Github for bugs because the template helps collect information more efficiently.
-
-### Why was my feature request closed?
-
-Issues are only for bugs. Open it as a product discussion instead, framed as a workflow.
-
-### Why didn't my PR get a detailed review?
-
-Writing a review is very time consuming and Paseo receives a lot of PRs, I cannot give detailed explanations at volume.
-
-### How long until someone looks at my pull request?
-
-It depends on what else is going on. QA takes longer than reading the diff. You are welcome to join Discord to ask.
-
-### Why do you want tests and a video for a small change?
-
-Because it's faster and safer than me checking out and running every PR myself to test it manually.
-
-QA evidence help me take your PR seriously for a deeper review and maintainer QA.
-
-### I only have one platform, can I still contribute?
-
-Yes. Test what you have, and say what you didn't test.
-
-### Can I use an agent to write my contribution?
-
-Yes, as long as you understand what you're submitting and you tested it yourself.
-
-### Is there a roadmap I can read?
-
-[docs/product.md](docs/product.md) covers the direction. There's no public list of what I'm building next.
+There is no formal process for becoming a maintainer. Consistent involvement and good judgment build the shared context needed to take on more responsibility.

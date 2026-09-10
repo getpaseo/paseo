@@ -4,6 +4,7 @@ import { type PressableStateCallbackType } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import {
   Archive,
+  Circle,
   CircleCheck,
   Copy,
   MoreVertical,
@@ -52,6 +53,7 @@ const foregroundMutedColorMapping = (theme: Theme) => ({
 const ThemedMoreVertical = withUnistyles(MoreVertical);
 const ThemedCopy = withUnistyles(Copy);
 const ThemedArchive = withUnistyles(Archive);
+const ThemedCircle = withUnistyles(Circle);
 const ThemedPencil = withUnistyles(Pencil);
 const ThemedCircleCheck = withUnistyles(CircleCheck);
 const ThemedPin = withUnistyles(Pin);
@@ -63,6 +65,7 @@ const renameLeadingIcon = <ThemedPencil size={14} uniProps={foregroundMutedColor
 const markAsReadLeadingIcon = (
   <ThemedCircleCheck size={14} uniProps={foregroundMutedColorMapping} />
 );
+const markAsUnreadLeadingIcon = <ThemedCircle size={14} uniProps={foregroundMutedColorMapping} />;
 const archiveLeadingIcon = <ThemedArchive size={14} uniProps={foregroundMutedColorMapping} />;
 const pinLeadingIcon = <ThemedPin size={14} uniProps={foregroundMutedColorMapping} />;
 const unpinLeadingIcon = <ThemedPinOff size={14} uniProps={foregroundMutedColorMapping} />;
@@ -85,6 +88,7 @@ export interface SidebarWorkspaceMenuProps {
   onCopyBranchName?: () => void;
   onRename?: () => void;
   onMarkAsRead?: () => void;
+  onMarkAsUnread?: () => void;
   onArchive: () => void;
   archiveLabel?: string;
   archiveStatus?: "idle" | "pending" | "success";
@@ -132,6 +136,7 @@ function SidebarWorkspaceMenuItems({
   onCopyBranchName,
   onRename,
   onMarkAsRead,
+  onMarkAsUnread,
   onArchive,
   archiveLabel,
   archiveStatus,
@@ -193,6 +198,16 @@ function SidebarWorkspaceMenuItems({
           Mark as read
         </WorkspaceMenuItem>
       ) : null}
+      {onMarkAsUnread ? (
+        <WorkspaceMenuItem
+          surface={surface}
+          testID={`sidebar-workspace-menu-mark-as-unread-${workspaceKey}`}
+          leading={markAsUnreadLeadingIcon}
+          onSelect={onMarkAsUnread}
+        >
+          Mark as unread
+        </WorkspaceMenuItem>
+      ) : null}
       {onTogglePin ? (
         <WorkspaceMenuItem
           surface={surface}
@@ -243,6 +258,7 @@ export function SidebarWorkspaceMenu({
   onCopyBranchName,
   onRename,
   onMarkAsRead,
+  onMarkAsUnread,
   onArchive,
   archiveLabel,
   archiveStatus,
@@ -288,6 +304,7 @@ export function SidebarWorkspaceMenu({
           onCopyBranchName={onCopyBranchName}
           onRename={onRename}
           onMarkAsRead={onMarkAsRead}
+          onMarkAsUnread={onMarkAsUnread}
           onArchive={onArchive}
           archiveLabel={archiveLabel}
           archiveStatus={archiveStatus}
@@ -320,6 +337,7 @@ export function SidebarWorkspaceContextMenu({
   onCopyBranchName,
   onRename,
   onMarkAsRead,
+  onMarkAsUnread,
   onArchive,
   archiveLabel,
   archiveStatus,
@@ -399,6 +417,7 @@ export function SidebarWorkspaceContextMenu({
           onCopyBranchName={onCopyBranchName}
           onRename={onRename}
           onMarkAsRead={onMarkAsRead}
+          onMarkAsUnread={onMarkAsUnread}
           onArchive={onArchive}
           archiveLabel={archiveLabel}
           archiveStatus={archiveStatus}

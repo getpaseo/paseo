@@ -1053,6 +1053,16 @@ export const ja: TranslationResources = {
       updateHost: "ラベルを管理するにはホストを更新してください。",
     },
   },
+  changelog: {
+    title: "新着情報",
+    installed: "インストール済み",
+    showMore: "もっと見る",
+    openWebsite: "変更履歴をすべて表示",
+    error: {
+      title: "変更履歴を読み込めません",
+      description: "接続を確認してもう一度お試しください。",
+    },
+  },
   sidebar: {
     display: {
       trigger: "表示設定",
@@ -2084,6 +2094,7 @@ export const ja: TranslationResources = {
     about: {
       title: "アプリ情報",
       appVersion: "アプリバージョン",
+      whatsNewHint: "各バージョンのリリースノート",
       thisDevice: "このデバイス",
       connectedHosts: "接続されているホスト",
       offline: "オフライン",

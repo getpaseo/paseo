@@ -8,7 +8,7 @@ category: Hub
 
 # Daemons in Hub
 
-A daemon is one of your machines running the Paseo daemon. Enroll it once with your Hub organization, then any project can reference it.
+A daemon is one of your machines running the Paseo daemon. Enroll it once with your Hub organization, then triggers can reference it.
 
 ## Connect
 
@@ -20,7 +20,7 @@ paseo hub login https://hub.example.com
 
 The CLI prints a URL and a verification code and opens your browser. The approved login is stored under `PASEO_HOME`.
 
-In an interactive terminal, login then offers to finish setup: whether to connect this daemon, and whether to initialize and deploy a starter workflow. Both default to yes. Declining the connection prints `paseo hub connect <origin>; then paseo hub init`, since connecting alone leaves the project without a workflow. Declining only the starter prints `paseo hub init`. `--json` or non-TTY login only logs in. [Quickstart](/docs/hub/quickstart) walks through the questions.
+In an interactive terminal, login offers to connect this daemon and separately asks whether to allow Hub automations to run agents. Connection defaults to yes; execution permission defaults to no. It then links to **Triggers** and prints `paseo hub init` for creating a starter trigger as code. `--json` or non-TTY login only logs in. [Quickstart](/docs/hub/quickstart) walks through connection and initialization.
 
 Enroll the daemon on its own when you declined, or when the machine is already logged in:
 

@@ -139,15 +139,19 @@ class NativeRecursiveBackend implements ObservationBackend {
       const path = resolve(this.host.root, filename.toString());
       if (this.host.isIgnored(path)) return;
       const scope = path === this.host.root ? this.host.root : dirname(path);
+      const knownDirectory = this.directories.has(path);
+      this.requestChangeAudit(scope);
       if (eventType === "change") {
         this.host.metrics.nativeChangeEventCount += 1;
         this.host.queueEvent("update", path);
-        this.requestChangeAudit(scope);
-        if (this.directories.has(path)) this.requestAudit(path, true);
-        return;
+        if (knownDirectory) this.requestAudit(path, true);
+        if (knownDirectory || this.files.has(path)) return;
+        // A coalesced creation can arrive only as a change. Classify unknown
+        // paths so later deletion scans can find them in the inventory.
+      } else {
+        this.host.metrics.nativeRenameEventCount += 1;
+        if (knownDirectory) this.requestAudit(scope);
       }
-      this.host.metrics.nativeRenameEventCount += 1;
-      const knownDirectory = this.directories.has(path);
       this.classify(path, (isDirectory) => {
         if (!isDirectory) {
           // Remember files as soon as we announce them. A coalesced delete must
@@ -159,8 +163,6 @@ class NativeRecursiveBackend implements ObservationBackend {
         if (knownDirectory) this.requestAudit(path, true);
         else this.requestAudit(scope);
       });
-      this.requestChangeAudit(scope);
-      if (knownDirectory) this.requestAudit(scope);
     });
     watcher.on("error", (error) => {
       if (this.host.isActive()) this.host.fail(toError(error));
