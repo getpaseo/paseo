@@ -9,6 +9,8 @@
 export interface ResultPathParts {
   /** Directory context immediately above the file, already elided at the head when deeper. */
   directory: string;
+  /** Every directory above the file, for the row the reader is pointing at or has selected. */
+  head: string;
   /** File name, which is never truncated away. */
   name: string;
 }
@@ -18,8 +20,12 @@ const PARENTS_KEPT = 1;
 export function describeResultPath(path: string): ResultPathParts {
   const segments = path.split("/");
   const name = segments.pop() ?? path;
-  if (segments.length === 0) return { directory: "", name };
+  if (segments.length === 0) return { directory: "", head: "", name };
   const kept = segments.slice(-PARENTS_KEPT);
   const elided = segments.length > kept.length;
-  return { directory: `${elided ? "…/" : ""}${kept.join("/")}/`, name };
+  return {
+    directory: `${elided ? "…/" : ""}${kept.join("/")}/`,
+    head: `${segments.join("/")}/`,
+    name,
+  };
 }

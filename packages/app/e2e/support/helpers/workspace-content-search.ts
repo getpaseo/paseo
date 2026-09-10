@@ -241,3 +241,38 @@ async function openReopenTarget(page: Page) {
   await page.keyboard.press("Enter");
   await expect(panel).toBeHidden();
 }
+
+/**
+ * Two files can share a base name and their nearest parent, so the resting row label cannot name
+ * them. Pointing at a row, or selecting it, spells the exact workspace-relative path out.
+ */
+export async function revealExactPathOnHover(page: Page, workspace: CreatedWorkspace) {
+  for (const relative of [
+    "packages/app/src/utils/index.ts",
+    "packages/server/src/utils/index.ts",
+  ]) {
+    const target = path.join(workspace.repoPath, relative);
+    await mkdir(path.dirname(target), { recursive: true });
+    await writeFile(target, `export const shared = "SHARED_UTIL";\n`);
+  }
+  await workspace.navigateTo();
+  await page.keyboard.press("Meta+Shift+F");
+  await page
+    .getByRole("textbox", { name: "Search saved file contents...", exact: true })
+    .fill("SHARED_UTIL");
+
+  const panel = page.getByTestId("command-center-panel");
+  const rows = panel.getByRole("button", { name: /index\.ts:1:\d+/ });
+  await expect(rows).toHaveCount(2);
+  // The accessible name always carries the exact path.
+  await expect(rows.first()).toHaveAccessibleName(/^packages\/app\/src\/utils\/index\.ts:1:24 /);
+  await expect(rows.last()).toHaveAccessibleName(/^packages\/server\/src\/utils\/index\.ts:1:24 /);
+  // The second row is at rest and shows only its nearest parent, which both files share.
+  await expect(rows.last()).toContainText("…/utils/index.ts:1:24");
+
+  await rows.last().hover();
+  await expect(rows.last()).toContainText("packages/server/src/utils/index.ts:1:24");
+  await rows.first().hover();
+  await expect(rows.first()).toContainText("packages/app/src/utils/index.ts:1:24");
+  return { panel, rows };
+}

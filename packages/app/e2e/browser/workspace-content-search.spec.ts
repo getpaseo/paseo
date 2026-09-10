@@ -165,3 +165,18 @@ test("opening the same occurrence again navigates the pane it is already showing
 }) => {
   await reopenSameOccurrenceAfterMovingAway(page, await withWorkspace());
 });
+
+import { revealExactPathOnHover } from "../support/helpers/workspace-content-search";
+
+test("pointing at a result reveals its exact path when the row label cannot", async ({
+  page,
+  withWorkspace,
+}, testInfo) => {
+  const { panel, rows } = await revealExactPathOnHover(page, await withWorkspace());
+  await rows.last().hover();
+  await panel.screenshot({ path: testInfo.outputPath("hover-exact-path.png") });
+  // Pointing must not disturb the keyboard selection or the Enter contract.
+  await page.keyboard.press("Enter");
+  await expect(panel).toBeHidden();
+  await expect(page.getByTestId("file-source-editor")).toContainText("SHARED_UTIL");
+});

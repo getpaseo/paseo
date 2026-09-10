@@ -232,32 +232,44 @@ function ResultRow({
   );
   const line = useMemo(() => describeMatchLine(item), [item]);
   const file = useMemo(() => describeResultPath(item.path), [item.path]);
+  const location = `${item.path}:${item.line}:${item.columnStart}`;
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel={`${item.path}:${item.line}:${item.columnStart} ${item.snippet}`}
+      accessibilityLabel={`${location} ${item.snippet}`}
       accessibilityState={accessibilityState}
       aria-pressed={isWeb ? selected : undefined}
       onPress={onPress}
       style={style}
     >
-      <Text style={styles.snippet} numberOfLines={1}>
-        {line.before}
-        <Text style={styles.match}>{line.match}</Text>
-        {line.after}
-      </Text>
-      {/* The file name and its coordinates are pinned; only the parent context may shrink, so a
-          deep path loses its middle rather than the identity the reader is scanning for. */}
-      <View style={styles.location}>
-        {file.directory ? (
-          <Text style={styles.locationDirectory} numberOfLines={1}>
-            {file.directory}
-          </Text>
-        ) : null}
-        <Text style={styles.locationFile} numberOfLines={1}>
-          {file.name}:{item.line}:{item.columnStart}
-        </Text>
-      </View>
+      {({ hovered }: PressableStateCallbackType & { hovered?: boolean }) => {
+        // Pointing at a row, or selecting it, spells every parent out; at rest the row shows only
+        // the nearest one so the column stays scannable.
+        const parents = hovered || selected ? file.head : file.directory;
+        return (
+          <>
+            <Text style={styles.snippet} numberOfLines={1}>
+              {line.before}
+              <Text style={styles.match}>{line.match}</Text>
+              {line.after}
+            </Text>
+            {/* The name and coordinates are pinned; only the parent context may shrink, so a deep
+              path loses its middle rather than the identity the reader is scanning for. Two files
+              can share a name and their nearest parent, so pointing at a row spells the rest of
+              the path out. */}
+            <View style={styles.location}>
+              {parents ? (
+                <Text style={styles.locationDirectory} numberOfLines={1}>
+                  {parents}
+                </Text>
+              ) : null}
+              <Text style={styles.locationFile} numberOfLines={1}>
+                {file.name}:{item.line}:{item.columnStart}
+              </Text>
+            </View>
+          </>
+        );
+      }}
     </Pressable>
   );
 }
@@ -472,6 +484,11 @@ const styles = StyleSheet.create((theme) => ({
   },
   muted: { fontSize: theme.fontSize.sm, color: theme.colors.foregroundMuted },
   error: { color: theme.colors.statusDanger },
+  tooltipPath: {
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.sm,
+    fontFamily: theme.fontFamily.mono,
+  },
   empty: {
     paddingHorizontal: theme.spacing[4],
     paddingVertical: theme.spacing[6],
