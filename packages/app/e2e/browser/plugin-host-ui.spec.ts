@@ -1,10 +1,11 @@
-import { pluginRequirements } from "../support/helpers/plugin-fixture";
+import { copyPluginExample, pluginRequirements } from "../support/helpers/plugin-fixture";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { expect, test, type Page } from "../support/fixtures";
 import { gotoAppShell } from "../support/helpers/app";
 import { connectNewWorkspaceDaemonClient } from "../support/helpers/new-workspace";
+import { expectProviderIcon, readIconPaths } from "../support/helpers/plugin-provider-icons";
 import {
   expectMobileAgentSidebarVisible,
   openMobileAgentSidebar,
@@ -40,7 +41,7 @@ function Surface({ host, theme }) {
   const [open, setOpen] = useState(false);
   return <View>
     <View testID="plugin-provider-icon">
-      <ProviderIcon provider="codex" hostId={host.id} size={18} color={theme.colors.foreground} />
+      <ProviderIcon provider="direct-example" hostId={host.id} size={18} color={theme.colors.foreground} />
     </View>
     <Pressable accessibilityRole="button" onPress={() => setOpen(true)}>
       <View style={{ flexDirection: "row" }}>
@@ -118,8 +119,9 @@ async function savePluginIssue(page: Page): Promise<void> {
   await expect(page.getByText("Plugin modal contexts ready", { exact: true })).not.toBeVisible();
 }
 
-test("plugin modal adapts its presentation and preserves host contexts", async ({ page }) => {
+test("plugin host UI renders provider icons and preserves modal contexts", async ({ page }) => {
   const directory = await mkdtemp(path.join(tmpdir(), "paseo-plugin-host-ui-e2e-"));
+  const providerPlugin = await copyPluginExample("provider-direct");
   const client = await connectNewWorkspaceDaemonClient({ ownProjects: false });
   const previousConfig = await client.getDaemonConfig();
   await writeFile(
@@ -130,10 +132,12 @@ test("plugin modal adapts its presentation and preserves host contexts", async (
 
   try {
     await client.patchDaemonConfig({ pluginsEnabled: true });
+    await client.installDirectoryPlugin(providerPlugin.directory);
     await client.installDirectoryPlugin(directory);
     await useNonCompactLayout(page);
     await openHostUiPlugin(page);
-    await expect(page.getByTestId("plugin-provider-icon").locator("svg")).toBeVisible();
+    const providerIconPaths = await readIconPaths(page, providerPlugin.directory);
+    await expectProviderIcon(page.getByTestId("plugin-provider-icon"), providerIconPaths);
 
     await test.step("non-compact layouts use a centered dialog", async () => {
       await openPluginModal(page);
@@ -150,10 +154,12 @@ test("plugin modal adapts its presentation and preserves host contexts", async (
     });
   } finally {
     await client.removePlugin(PLUGIN_ID).catch(() => undefined);
+    await client.removePlugin("provider-direct-example").catch(() => undefined);
     await client
       .patchDaemonConfig({ pluginsEnabled: previousConfig.config.pluginsEnabled ?? false })
       .catch(() => undefined);
     await client.close().catch(() => undefined);
     await rm(directory, { recursive: true, force: true });
+    await providerPlugin.cleanup();
   }
 });

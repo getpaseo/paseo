@@ -15,7 +15,7 @@ const MODEL_LABEL = "Select model (Example 1)";
 const WIDE = { width: 1400, height: 950 };
 const COMPACT = { width: 390, height: 844 };
 
-async function readIconPaths(page: Page, pluginDirectory: string): Promise<string[]> {
+export async function readIconPaths(page: Page, pluginDirectory: string): Promise<string[]> {
   const svg = await readFile(path.join(pluginDirectory, "icon.svg"), "utf8");
   return page.evaluate(
     (source) =>
@@ -33,7 +33,7 @@ function readIconDrawings(icons: SVGElement[]): string[][] {
   );
 }
 
-async function expectProviderIcon(surface: Locator, paths: string[]): Promise<void> {
+export async function expectProviderIcon(surface: Locator, paths: string[]): Promise<void> {
   await expect(surface).toBeVisible();
   // Provider icons are decorative SVGs without accessible names. Compare the
   // plugin asset's drawing, allowing surface-specific size and theme colours.
