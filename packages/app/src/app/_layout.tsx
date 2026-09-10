@@ -43,6 +43,7 @@ import { WorkspacePinShortcutHandler } from "@/components/workspace-pin-shortcut
 import { WorkspaceRenameHost } from "@/components/workspace-rename-host";
 import { CompactExplorerSidebarHost } from "@/components/compact-explorer-sidebar-host";
 import { ProviderSettingsHost } from "@/components/provider-settings-host";
+import { SettingsChrome } from "@/screens/settings/settings-chrome";
 import { RootErrorBoundary } from "@/components/root-error-boundary";
 import { WorkspaceSetupDialog } from "@/components/workspace-setup-dialog";
 import { WorkspaceShortcutTargetsSubscriber } from "@/components/workspace-shortcut-targets-subscriber";
@@ -943,7 +944,9 @@ function AppShell() {
         <AgentNavigationListener />
         <AppWithSidebar>
           <WorkspaceRouteNavigationBridge />
-          <RootStack />
+          <SettingsChrome>
+            <RootStack />
+          </SettingsChrome>
         </AppWithSidebar>
       </HorizontalScrollProvider>
     </MobilePanelsProvider>
