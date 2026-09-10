@@ -291,6 +291,17 @@ export interface CreateAgentOptions {
   owner?: AgentOwner;
 }
 
+export interface ResumeAgentOptions {
+  createdAt?: Date;
+  updatedAt?: Date;
+  lastUserMessageAt?: Date | null;
+  labels?: Record<string, string>;
+  workspaceId?: string;
+  owner?: AgentOwner;
+  internal?: boolean;
+  approveProjectResources?: boolean;
+}
+
 export interface AgentManagerOptions {
   pluginLifecycle?: PluginLifecycle;
   clients?: ProviderClientMap;
@@ -1286,16 +1297,7 @@ export class AgentManager {
     handle: AgentPersistenceHandle,
     overrides?: Partial<AgentSessionConfig>,
     agentId?: string,
-    options?: {
-      createdAt?: Date;
-      updatedAt?: Date;
-      lastUserMessageAt?: Date | null;
-      labels?: Record<string, string>;
-      workspaceId?: string;
-      owner?: AgentOwner;
-      internal?: boolean;
-      approveProjectResources?: boolean;
-    },
+    options?: ResumeAgentOptions,
     resumeOptions?: AgentResumeSessionOptions,
   ): Promise<ManagedAgent> {
     return this.trackAgentRegistrationOperation(
@@ -1307,16 +1309,7 @@ export class AgentManager {
     handle: AgentPersistenceHandle,
     overrides?: Partial<AgentSessionConfig>,
     agentId?: string,
-    options?: {
-      createdAt?: Date;
-      updatedAt?: Date;
-      lastUserMessageAt?: Date | null;
-      labels?: Record<string, string>;
-      workspaceId?: string;
-      owner?: AgentOwner;
-      internal?: boolean;
-      approveProjectResources?: boolean;
-    },
+    options?: ResumeAgentOptions,
     resumeOptions?: AgentResumeSessionOptions,
   ): Promise<ManagedAgent> {
     this.assertAcceptingAgentRegistrations();
