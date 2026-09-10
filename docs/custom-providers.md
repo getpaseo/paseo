@@ -620,6 +620,16 @@ The model selector offers DSH route tuples, so a model value looks like `["deeps
 
 Stdio MCP servers need absolute command paths. DSH rejects `session/new` when a stdio server command is a bare binary name.
 
+DSH resolves its sandbox and approval policy when the ACP process starts, so its permission presets arrive as agent modes and the selected one is passed as `DSH_PERMISSION_MODE`:
+
+| Mode            | Sandbox              | Approvals  |
+| --------------- | -------------------- | ---------- |
+| Read Only       | `read-only`          | asks       |
+| Workspace Write | `workspace-write`    | asks       |
+| Full Access     | `danger-full-access` | never asks |
+
+Choose the mode when the agent is created. Switching it inside a running session answers with a notice instead of taking effect, because the value is fixed for the life of the process. An agent created without a mode inherits DSH's own default, and an explicit `DSH_PERMISSION_MODE` in the provider or agent environment wins over the mode.
+
 ### How ACP providers work in Paseo
 
 When you launch an agent with an ACP provider:

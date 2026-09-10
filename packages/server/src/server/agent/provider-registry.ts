@@ -38,6 +38,7 @@ import { ClaudeAgentClient } from "./providers/claude/agent.js";
 import { CodexAppServerAgentClient } from "./providers/codex-app-server-agent.js";
 import { CopilotACPAgentClient } from "./providers/copilot-acp-agent.js";
 import { CursorACPAgentClient } from "./providers/cursor-acp-agent.js";
+import { DshACPAgentClient } from "./providers/dsh-acp-agent.js";
 import { GenericACPAgentClient } from "./providers/generic-acp-agent.js";
 import { KimiACPAgentClient } from "./providers/kimi-acp-agent.js";
 import { KiroACPAgentClient } from "./providers/kiro-acp-agent.js";
@@ -803,6 +804,9 @@ function addDerivedProviders(
           };
           if (providerId === "cursor") {
             return new CursorACPAgentClient(acpOptions);
+          }
+          if (providerId === "dsh") {
+            return new DshACPAgentClient(acpOptions);
           }
           if (providerId === "kimi") {
             return new KimiACPAgentClient(acpOptions);

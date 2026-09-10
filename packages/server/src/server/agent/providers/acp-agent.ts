@@ -75,6 +75,7 @@ import {
   type AgentPersistenceHandle,
   type AgentPromptContentBlock,
   type AgentPromptInput,
+  type AgentProviderNotice,
   type AgentRunOptions,
   type AgentRunResult,
   type AgentRuntimeInfo,
@@ -668,6 +669,13 @@ export interface ACPProviderModeWriteResult {
   handled: boolean;
   currentModeId?: string;
   configOptions?: SessionConfigOption[];
+  /**
+   * Refusal the user has to read instead of a silent no-op. A provider whose
+   * modes are baked into the running process (launch-time env or args) cannot
+   * apply a switch in place, so it answers with a notice and keeps its current
+   * mode rather than pretending the switch happened.
+   */
+  notice?: AgentProviderNotice;
 }
 
 export interface ACPBeforeModeWriteResult {
@@ -1982,7 +1990,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     return this.cachedCommands;
   }
 
-  async setMode(modeId: string): Promise<void> {
+  async setMode(modeId: string): Promise<void | AgentProviderNotice> {
     if (!this.connection || !this.sessionId) {
       throw new Error("ACP session not initialized");
     }
@@ -1992,7 +2000,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       availableModes: this.availableModes,
       configOptions: this.configOptions,
     });
-    await this.setModeWithSelection({ modeId, selection });
+    return this.setModeWithSelection({ modeId, selection });
   }
 
   // Mode/model selection updates stay after ACP RPC success; this intentionally diverges from Zed's optimistic rollback path (acp.rs:3080-3104).
@@ -2002,7 +2010,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   }: {
     modeId: string;
     selection: ACPModeSelection;
-  }): Promise<void> {
+  }): Promise<void | AgentProviderNotice> {
     if (!this.connection || !this.sessionId) {
       throw new Error("ACP session not initialized");
     }
@@ -2012,6 +2020,9 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       ? await this.providerModeWriter(context)
       : { handled: false };
     if (providerResult.handled) {
+      if (providerResult.notice) {
+        return providerResult.notice;
+      }
       this.currentMode = providerResult.currentModeId ?? modeId;
       if (providerResult.configOptions) {
         this.configOptions = this.transformConfigOptions(providerResult.configOptions);
