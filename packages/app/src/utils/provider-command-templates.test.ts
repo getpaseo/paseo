@@ -1,13 +1,17 @@
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import type { ProviderSnapshotEntry } from "@getpaseo/protocol/agent-types";
 
-import { buildProviderCommand } from "@/utils/provider-command-templates";
+import {
+  buildProviderCommand,
+  resolveProviderResumeCommand,
+} from "@/utils/provider-command-templates";
 
 function snapshotEntry(
   provider: string,
   derivedFromProviderId?: string | null,
-): Pick<ProviderSnapshotEntry, "provider" | "derivedFromProviderId"> {
-  return { provider, derivedFromProviderId };
+  launchSource: ProviderSnapshotEntry["launchSource"] = "default",
+): Pick<ProviderSnapshotEntry, "provider" | "derivedFromProviderId" | "launchSource"> {
+  return { provider, derivedFromProviderId, launchSource };
 }
 
 describe("buildProviderCommand", () => {
@@ -77,7 +81,7 @@ describe("buildProviderCommand", () => {
         provider: "my-claude",
         id: "resume",
         sessionId: "example-session",
-        providerSnapshot: [snapshotEntry("my-claude", "claude")],
+        providerSnapshot: [snapshotEntry("my-claude", "claude", "default")],
       }),
     ).toBe("claude --resume example-session");
   });
@@ -88,7 +92,7 @@ describe("buildProviderCommand", () => {
         provider: "my-codex",
         id: "resume",
         sessionId: "example-session",
-        providerSnapshot: [snapshotEntry("my-codex", "codex")],
+        providerSnapshot: [snapshotEntry("my-codex", "codex", "default")],
       }),
     ).toBe("codex resume example-session");
   });
@@ -109,8 +113,111 @@ describe("buildProviderCommand", () => {
         provider: "my-agent",
         id: "resume",
         sessionId: "example-session",
-        providerSnapshot: [snapshotEntry("my-agent", null)],
+        providerSnapshot: [snapshotEntry("my-agent", null, "default")],
       }),
     ).toBeNull();
+  });
+
+  test("refuses the built-in template when the snapshot says the command is overridden", () => {
+    expect(
+      buildProviderCommand({
+        provider: "claude",
+        id: "resume",
+        sessionId: "example-session",
+        providerSnapshot: [snapshotEntry("claude", null, "override")],
+      }),
+    ).toBeNull();
+  });
+
+  test("refuses the inherited template for a custom provider that overrides its command", () => {
+    expect(
+      buildProviderCommand({
+        provider: "my-codex",
+        id: "resume",
+        sessionId: "example-session",
+        providerSnapshot: [snapshotEntry("my-codex", "codex", "override")],
+      }),
+    ).toBeNull();
+  });
+
+  test("refuses the inherited template for a custom provider that appends to its command", () => {
+    expect(
+      buildProviderCommand({
+        provider: "my-codex",
+        id: "resume",
+        sessionId: "example-session",
+        providerSnapshot: [snapshotEntry("my-codex", "codex", "append")],
+      }),
+    ).toBeNull();
+  });
+});
+
+describe("resolveProviderResumeCommand", () => {
+  test("resolves built-in Codex immediately without a snapshot", async () => {
+    const getProviderSnapshot = vi.fn().mockResolvedValue(undefined);
+    await expect(
+      resolveProviderResumeCommand({
+        provider: "codex",
+        sessionId: "example-session",
+        supportsProviderAncestry: false,
+        getProviderSnapshot,
+      }),
+    ).resolves.toBe("codex resume example-session");
+    expect(getProviderSnapshot).not.toHaveBeenCalled();
+  });
+
+  test("resolves built-in Claude immediately without a snapshot", async () => {
+    const getProviderSnapshot = vi.fn().mockResolvedValue(undefined);
+    await expect(
+      resolveProviderResumeCommand({
+        provider: "claude",
+        sessionId: "example-session",
+        supportsProviderAncestry: false,
+        getProviderSnapshot,
+      }),
+    ).resolves.toBe("claude --resume example-session");
+    expect(getProviderSnapshot).not.toHaveBeenCalled();
+  });
+
+  test("rejects an inherited custom provider when the daemon does not advertise providerAncestry", async () => {
+    const getProviderSnapshot = vi.fn().mockResolvedValue(undefined);
+    await expect(
+      resolveProviderResumeCommand({
+        provider: "my-codex",
+        sessionId: "example-session",
+        supportsProviderAncestry: false,
+        getProviderSnapshot,
+      }),
+    ).rejects.toThrow("Resume command not available");
+    expect(getProviderSnapshot).not.toHaveBeenCalled();
+  });
+
+  test("falls back to the ancestor template for a custom provider when providerAncestry is advertised", async () => {
+    const getProviderSnapshot = vi
+      .fn()
+      .mockResolvedValue([snapshotEntry("my-codex", "codex", "default")]);
+    await expect(
+      resolveProviderResumeCommand({
+        provider: "my-codex",
+        sessionId: "example-session",
+        supportsProviderAncestry: true,
+        getProviderSnapshot,
+      }),
+    ).resolves.toBe("codex resume example-session");
+    expect(getProviderSnapshot).toHaveBeenCalledOnce();
+  });
+
+  test("rejects a custom provider with an overridden command even when ancestry is advertised", async () => {
+    const getProviderSnapshot = vi
+      .fn()
+      .mockResolvedValue([snapshotEntry("my-codex", "codex", "override")]);
+    await expect(
+      resolveProviderResumeCommand({
+        provider: "my-codex",
+        sessionId: "example-session",
+        supportsProviderAncestry: true,
+        getProviderSnapshot,
+      }),
+    ).rejects.toThrow("Resume command not available");
   });
 });

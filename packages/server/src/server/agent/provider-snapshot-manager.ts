@@ -829,6 +829,7 @@ export class ProviderSnapshotManager {
       const custom =
         this.pluginProviders.has(provider) ||
         (!BUILTIN_PROVIDER_IDS.includes(provider) && !!overrides?.[provider]?.extends);
+      const launchSource = resolveLaunchSource(definition);
       providerStates.set(provider, {
         discoveryLimit: previous?.discoveryLimit ?? pLimit({ concurrency: 4, rejectOnClear: true }),
         initial: identifyEntry({
@@ -837,6 +838,7 @@ export class ProviderSnapshotManager {
           enabled: definition.enabled,
           source: custom ? "custom" : "builtin",
           derivedFromProviderId: definition.derivedFromProviderId,
+          launchSource,
           label: definition.label,
           description: definition.description,
           iconSvg: definition.iconSvg,
@@ -1162,6 +1164,20 @@ function createFetchCatalogOptions(
 
 export function isGlobalProviderSnapshotKey(cwd: string): boolean {
   return cwd === GLOBAL_PROVIDER_SNAPSHOT_KEY;
+}
+
+function resolveLaunchSource(definition: ProviderDefinition): "default" | "append" | "override" {
+  const command = definition.configuration?.runtimeSettings?.command;
+  if (command == null) {
+    return "default";
+  }
+  if (command.mode === "replace") {
+    return "override";
+  }
+  if (command.mode === "append") {
+    return "append";
+  }
+  return "default";
 }
 
 function identifyEntry(entry: ProviderSnapshotEntry): ProviderSnapshotRecord {

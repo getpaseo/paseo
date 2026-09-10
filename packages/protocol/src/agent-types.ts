@@ -112,6 +112,12 @@ export interface ProviderSnapshotEntry {
    * they extend. null or undefined for built-in providers and generic ACP providers.
    */
   derivedFromProviderId?: AgentProvider | null;
+  /**
+   * Whether the provider's launch command is the built-in default, appended to,
+   * or fully overridden by a custom `command` array. Used by the client to decide
+   * whether built-in resume command templates are safe to use.
+   */
+  launchSource?: "default" | "append" | "override";
   error?: string;
   models?: AgentModelDefinition[];
   modes?: AgentMode[];

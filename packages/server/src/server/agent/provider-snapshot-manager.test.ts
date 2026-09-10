@@ -298,9 +298,13 @@ describe("ProviderSnapshotManager public surface", () => {
       const qwenCodex = snapshot.find((entry) => entry.provider === "qwen-codex");
       const myAcp = snapshot.find((entry) => entry.provider === "my-acp");
       expect(claude?.derivedFromProviderId).toBeNull();
+      expect(claude?.launchSource).toBe("default");
       expect(zaiClaude?.derivedFromProviderId).toBe("claude");
+      expect(zaiClaude?.launchSource).toBe("default");
       expect(qwenCodex?.derivedFromProviderId).toBe("codex");
+      expect(qwenCodex?.launchSource).toBe("default");
       expect(myAcp?.derivedFromProviderId).toBeNull();
+      expect(myAcp?.launchSource).toBe("override");
     } finally {
       manager.destroy();
     }

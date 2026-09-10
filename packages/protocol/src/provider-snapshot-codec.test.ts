@@ -68,6 +68,7 @@ describe("provider snapshot codec", () => {
         status: "ready",
         enabled: true,
         derivedFromProviderId: "claude",
+        launchSource: "default",
       },
     ];
     const compact = compactProviderSnapshot(original);
@@ -77,6 +78,8 @@ describe("provider snapshot codec", () => {
     expect(expanded).toEqual(original);
     expect(compact.entries[0]?.derivedFromProviderId).toBe("claude");
     expect(expanded[0]?.derivedFromProviderId).toBe("claude");
+    expect(compact.entries[0]?.launchSource).toBe("default");
+    expect(expanded[0]?.launchSource).toBe("default");
   });
 
   it("shrinks catalogs dominated by one repeated thinking set", () => {

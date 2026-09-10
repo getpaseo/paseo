@@ -146,8 +146,11 @@ export async function ensureProvidersSnapshotEntries(input: {
       structuralSharing: false,
     });
     return snapshot.entries;
-  } catch {
-    return undefined;
+  } catch (error) {
+    if (error instanceof CancelledError) {
+      return undefined;
+    }
+    throw error;
   }
 }
 

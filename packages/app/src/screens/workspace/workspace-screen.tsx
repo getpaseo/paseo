@@ -114,7 +114,7 @@ import { useStableEvent } from "@/hooks/use-stable-event";
 import { removeResidentBrowserWebview } from "@/desktop/browser/resident-webviews";
 import { createWorkspaceBrowser, useBrowserStore } from "@/desktop/browser/store";
 import { getDesktopHost } from "@/desktop/host";
-import { buildProviderCommand } from "@/utils/provider-command-templates";
+import { resolveProviderResumeCommand } from "@/utils/provider-command-templates";
 import { generateDraftId } from "@/stores/draft-keys";
 import { resolveWorkspaceRouteId } from "@/utils/workspace-identity";
 import { useOpenAgentTabLabels } from "@/subagents/use-open-agent-tab-labels";
@@ -2728,28 +2728,31 @@ function WorkspaceScreenContent({
         return;
       }
 
-      const providerSnapshot = await ensureProvidersSnapshotEntries({
-        queryClient,
-        client,
-        serverId: normalizedServerId,
-        cwd: workspaceDirectory ?? null,
-      });
-      const command =
-        buildProviderCommand({
-          provider: agent.provider,
-          id: "resume",
-          sessionId: providerSessionId,
-          providerSnapshot,
-        }) ?? null;
-      if (!command) {
-        toast.error(t("workspace.tabs.toasts.resumeCommandUnavailable"));
-        return;
-      }
+      const supportsProviderAncestry =
+        useSessionStore.getState().sessions[normalizedServerId]?.serverInfo?.features
+          ?.providerAncestry === true;
+
       try {
-        await Clipboard.setStringAsync(command);
-        toast.copied(t("workspace.tabs.toasts.resumeCommandCopiedLabel"));
+        const command = await resolveProviderResumeCommand({
+          provider: agent.provider,
+          sessionId: providerSessionId,
+          supportsProviderAncestry,
+          getProviderSnapshot: () =>
+            ensureProvidersSnapshotEntries({
+              queryClient,
+              client,
+              serverId: normalizedServerId,
+              cwd: workspaceDirectory ?? null,
+            }),
+        });
+        try {
+          await Clipboard.setStringAsync(command);
+          toast.copied(t("workspace.tabs.toasts.resumeCommandCopiedLabel"));
+        } catch {
+          toast.error(t("workspace.tabs.toasts.copyFailed"));
+        }
       } catch {
-        toast.error(t("workspace.tabs.toasts.copyFailed"));
+        toast.error(t("workspace.tabs.toasts.resumeCommandUnavailable"));
       }
     },
     [client, normalizedServerId, workspaceDirectory, queryClient, toast, t],

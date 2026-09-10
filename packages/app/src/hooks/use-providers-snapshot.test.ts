@@ -173,7 +173,7 @@ describe("fetchProvidersSnapshot", () => {
     const compactSnapshot = compactProviderSnapshot(entries);
     const cache = createCache(
       {
-        version: 2,
+        version: 3,
         hash: "snapshot-hash",
         generatedAt: "2026-01-01T00:00:00.000Z",
         compactSnapshot,

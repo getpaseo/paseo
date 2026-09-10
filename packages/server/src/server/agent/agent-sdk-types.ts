@@ -3,12 +3,13 @@ import type {
   AgentTaskItem,
   JsonValue,
   ProviderOptions,
+  ProviderSnapshotEntry,
   ToolPolicy,
 } from "@getpaseo/protocol/agent-types";
 import type { AgentAttachment } from "@getpaseo/protocol/messages";
 import type { PaseoToolCatalog } from "./tools/types.js";
 
-export type { AgentProviderNotice, AgentTaskItem };
+export type { AgentProviderNotice, AgentTaskItem, ProviderSnapshotEntry };
 
 export type AgentProvider = string;
 
@@ -112,26 +113,6 @@ export function filterSelectableAgentModels(
   models: AgentModelDefinition[] | undefined,
 ): AgentModelDefinition[] {
   return models?.filter((model) => model.isSelectable !== false) ?? [];
-}
-
-export interface ProviderSnapshotEntry {
-  provider: AgentProvider;
-  status: ProviderStatus;
-  enabled: boolean;
-  source?: "builtin" | "custom";
-  /**
-   * For custom providers that extend a built-in provider, the id of the provider
-   * they extend. null or undefined for built-in providers and generic ACP providers.
-   */
-  derivedFromProviderId?: AgentProvider | null;
-  error?: string;
-  models?: AgentModelDefinition[];
-  modes?: AgentMode[];
-  fetchedAt?: string;
-  label?: string;
-  description?: string;
-  iconSvg?: string;
-  defaultModeId?: string | null;
 }
 
 export interface AgentCreateConfigParent {
