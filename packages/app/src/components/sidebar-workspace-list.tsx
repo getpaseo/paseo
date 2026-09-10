@@ -36,7 +36,16 @@ import { getSidebarRowBackdrop } from "@/components/sidebar/sidebar-row-backdrop
 import { type GestureType } from "react-native-gesture-handler";
 import { WorkspaceRenameModal } from "@/components/workspace-rename-modal";
 import { useWorkspaceClipboardActions } from "@/hooks/use-workspace-clipboard-actions";
-import { ExternalLink, Settings, MoreVertical, Plus, Trash2 } from "lucide-react-native";
+import {
+  ChevronDown,
+  ChevronRight,
+  ExternalLink,
+  MessageSquare,
+  MoreVertical,
+  Plus,
+  Settings,
+  Trash2,
+} from "lucide-react-native";
 import { NestableScrollContainer } from "react-native-draggable-flatlist";
 import { DraggableList, type DraggableRenderItemInfo } from "./draggable-list";
 import type { DraggableListDragHandleProps } from "./draggable-list.types";
@@ -163,6 +172,9 @@ const ThemedPlus = withUnistyles(Plus);
 const ThemedMoreVertical = withUnistyles(MoreVertical);
 const ThemedTrash2 = withUnistyles(Trash2);
 const ThemedSettings = withUnistyles(Settings);
+const ThemedMessageSquare = withUnistyles(MessageSquare);
+const ThemedChevronDown = withUnistyles(ChevronDown);
+const ThemedChevronRight = withUnistyles(ChevronRight);
 
 const foregroundColorMapping = (theme: Theme) => ({
   color: theme.colors.foreground,
@@ -1914,6 +1926,170 @@ function areProjectBlockSelectionsEqual(
 
 const MemoProjectBlock = memo(ProjectBlock, areProjectBlockPropsEqual);
 
+interface SidebarChatsSectionProps {
+  workspaceEntriesByKey: ReadonlyMap<string, SidebarWorkspaceEntry>;
+  onWorkspacePress?: () => void;
+  activeWorkspaceSelection: ActiveWorkspaceSelection | null;
+  creatingWorkspaceIds: ReadonlySet<string>;
+  hostBadgeByServerId: ReadonlyMap<string, HostBadgeModel>;
+  supportsPinningByServerId: ReadonlyMap<string, boolean>;
+  onToggleWorkspacePin: ToggleSidebarWorkspacePin;
+  showShortcutBadges: boolean;
+  shortcutIndexByWorkspaceKey: Map<string, number>;
+  selectionEnabled: boolean;
+}
+
+function SidebarChatsSection({
+  workspaceEntriesByKey,
+  onWorkspacePress,
+  activeWorkspaceSelection,
+  creatingWorkspaceIds,
+  hostBadgeByServerId,
+  supportsPinningByServerId,
+  onToggleWorkspacePin,
+  showShortcutBadges,
+  shortcutIndexByWorkspaceKey,
+  selectionEnabled,
+}: SidebarChatsSectionProps) {
+  const allHosts = useHosts();
+  const activeSelection = useActiveWorkspaceSelection();
+  const [collapsed, setCollapsed] = useState(false);
+  const [isCreating, setIsCreating] = useState(false);
+
+  const chatEntries = useMemo(() => {
+    return Array.from(workspaceEntriesByKey.values()).filter(
+      (workspace) =>
+        workspace.workspaceKind === "chat" ||
+        workspace.projectName === "Chats" ||
+        workspace.projectViewKey === "__chats__",
+    );
+  }, [workspaceEntriesByKey]);
+
+  const handleCreateChat = useCallback(async () => {
+    if (isCreating) return;
+    const targetServerId = activeSelection?.serverId ?? allHosts[0]?.serverId;
+    if (!targetServerId) return;
+    const client = getHostRuntimeStore().getClient(targetServerId);
+    if (!client) return;
+    setIsCreating(true);
+    try {
+      const payload = await client.createWorkspace({
+        source: { kind: "chat" },
+      });
+      if (payload.workspace) {
+        navigateToWorkspace({
+          serverId: targetServerId,
+          workspaceId: payload.workspace.id,
+        });
+      }
+    } catch (error) {
+      console.error("Failed to create chat", error);
+    } finally {
+      setIsCreating(false);
+    }
+  }, [activeSelection, allHosts, isCreating]);
+
+  const toggleCollapsed = useCallback(() => setCollapsed((prev) => !prev), []);
+
+  const newChatButtonStyle = useCallback(
+    ({ hovered = false, pressed = false }: PressableStateCallbackType & { hovered?: boolean }) => [
+      styles.chatsNewButton,
+      hovered && styles.chatsNewButtonHovered,
+      pressed && styles.chatsNewButtonPressed,
+    ],
+    [],
+  );
+
+  const emptyRowStyle = useCallback(
+    ({ hovered = false }: PressableStateCallbackType & { hovered?: boolean }) => [
+      styles.chatsEmptyRow,
+      hovered && styles.chatsEmptyRowHovered,
+    ],
+    [],
+  );
+
+  return (
+    <View style={styles.chatsSectionContainer} testID="sidebar-chats-section">
+      <View style={styles.chatsSectionHeader}>
+        <Pressable
+          onPress={toggleCollapsed}
+          style={styles.chatsSectionHeaderLeft}
+          accessibilityRole="button"
+          accessibilityLabel="Toggle chats"
+        >
+          <ThemedMessageSquare size={14} uniProps={foregroundMutedColorMapping} />
+          <Text style={styles.chatsSectionTitle}>Chats</Text>
+          <View style={styles.chatsCountBadge}>
+            <Text style={styles.chatsCountBadgeText}>{chatEntries.length}</Text>
+          </View>
+          {collapsed ? (
+            <ThemedChevronRight size={12} uniProps={foregroundMutedColorMapping} />
+          ) : (
+            <ThemedChevronDown size={12} uniProps={foregroundMutedColorMapping} />
+          )}
+        </Pressable>
+        <View style={styles.chatsSectionHeaderRight}>
+          <Tooltip delayDuration={300}>
+            <TooltipTrigger asChild>
+              <Pressable
+                onPress={handleCreateChat}
+                disabled={isCreating}
+                hitSlop={4}
+                style={newChatButtonStyle}
+                testID="sidebar-chats-new-button"
+                accessibilityRole="button"
+                accessibilityLabel="New chat"
+              >
+                <ThemedPlus size={14} uniProps={foregroundMutedColorMapping} />
+              </Pressable>
+            </TooltipTrigger>
+            <TooltipContent side="bottom" align="center" offset={8}>
+              <Text style={styles.projectActionTooltipText}>New chat</Text>
+            </TooltipContent>
+          </Tooltip>
+        </View>
+      </View>
+      {!collapsed && (
+        <View style={styles.chatsSectionBody}>
+          {chatEntries.length === 0 ? (
+            <Pressable
+              onPress={handleCreateChat}
+              disabled={isCreating}
+              style={emptyRowStyle}
+              testID="sidebar-chats-empty-start"
+              accessibilityRole="button"
+              accessibilityLabel="Start a chat"
+            >
+              <ThemedPlus size={12} uniProps={foregroundMutedColorMapping} />
+              <Text style={styles.chatsEmptyText}>No chats yet. Start a chat</Text>
+            </Pressable>
+          ) : (
+            chatEntries.map((entry) => (
+              <MemoWorkspaceRowItem
+                key={entry.workspaceKey}
+                workspace={entry}
+                workspaceEntry={entry}
+                hostBadge={hostBadgeByServerId.get(entry.serverId) ?? null}
+                leadingProjectName="Chats"
+                leadingProjectIconDataUri={null}
+                shortcutNumber={shortcutIndexByWorkspaceKey.get(entry.workspaceKey) ?? null}
+                showShortcutBadge={showShortcutBadges}
+                canCopyBranchName={false}
+                canPin={supportsPinningByServerId.get(entry.serverId) === true}
+                onToggleWorkspacePin={onToggleWorkspacePin}
+                isCreating={creatingWorkspaceIds.has(entry.workspaceId)}
+                selectionEnabled={selectionEnabled}
+                activeWorkspaceSelection={activeWorkspaceSelection}
+                onWorkspacePress={onWorkspacePress}
+              />
+            ))
+          )}
+        </View>
+      )}
+    </View>
+  );
+}
+
 export function SidebarWorkspaceList({
   workspaceGroups,
   projectIconTargets,
@@ -2433,7 +2609,9 @@ function ProjectModeList({
     ) : (
       <DraggableList
         testID="sidebar-project-list"
-        data={unpinnedProjects}
+        data={unpinnedProjects.filter(
+          (project) => project.projectName !== "Chats" && project.viewKey !== "__chats__",
+        )}
         keyExtractor={projectViewKeyExtractor}
         renderItem={renderProject}
         onDragEnd={handleProjectDragEnd}
@@ -2491,6 +2669,18 @@ function ProjectModeList({
       sidebarFilterEmpty
         ? listHeaderComponent
         : null}
+      <SidebarChatsSection
+        workspaceEntriesByKey={workspaceEntriesByKey}
+        onWorkspacePress={onWorkspacePress}
+        activeWorkspaceSelection={activeWorkspaceSelection}
+        creatingWorkspaceIds={creatingWorkspaceIds}
+        hostBadgeByServerId={hostBadgeByServerId}
+        supportsPinningByServerId={supportsPinningByServerId}
+        onToggleWorkspacePin={onToggleWorkspacePin}
+        showShortcutBadges={showShortcutBadges}
+        shortcutIndexByWorkspaceKey={shortcutIndexByWorkspaceKey}
+        selectionEnabled={selectionEnabled}
+      />
       {sidebarFilterEmpty ? <SidebarFilterEmptyState /> : projectBody}
       {listFooterComponent}
     </>
@@ -2525,6 +2715,81 @@ function ProjectModeList({
 const styles = StyleSheet.create((theme) => ({
   container: {
     flex: 1,
+  },
+  chatsSectionContainer: {
+    marginBottom: theme.spacing[2],
+  },
+  chatsSectionHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    minHeight: 32,
+    paddingHorizontal: theme.spacing[2],
+    borderRadius: theme.borderRadius.md,
+  },
+  chatsSectionHeaderLeft: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
+    flex: 1,
+    paddingVertical: 4,
+  },
+  chatsSectionTitle: {
+    fontSize: theme.fontSize.sm,
+    fontWeight: theme.fontWeight.medium,
+    color: theme.colors.foreground,
+  },
+  chatsCountBadge: {
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    borderRadius: 10,
+    backgroundColor: theme.colors.surface2 ?? theme.colors.border,
+  },
+  chatsCountBadgeText: {
+    fontSize: 11,
+    color: theme.colors.foregroundMuted,
+  },
+  chatsSectionHeaderRight: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+  },
+  chatsNewButton: {
+    width: 24,
+    height: 24,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: theme.borderRadius.sm,
+  },
+  chatsNewButtonHovered: {
+    backgroundColor: theme.colors.surfaceSidebarHover,
+  },
+  chatsNewButtonPressed: {
+    backgroundColor: theme.colors.surfaceSidebarHover,
+  },
+  chatsSectionBody: {
+    paddingTop: theme.spacing[1],
+    gap: 2,
+  },
+  chatsEmptyRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
+    paddingVertical: theme.spacing[2],
+    paddingHorizontal: theme.spacing[2],
+    borderRadius: theme.borderRadius.md,
+    borderWidth: 1,
+    borderStyle: "dashed",
+    borderColor: theme.colors.border,
+    marginVertical: 4,
+  },
+  chatsEmptyRowHovered: {
+    backgroundColor: theme.colors.surfaceSidebarHover,
+    borderColor: theme.colors.foregroundMuted,
+  },
+  chatsEmptyText: {
+    fontSize: theme.fontSize.sm,
+    color: theme.colors.foregroundMuted,
   },
   list: {
     flex: 1,
