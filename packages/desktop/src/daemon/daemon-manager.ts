@@ -460,13 +460,20 @@ async function startDaemon(): Promise<DesktopDaemonStatus> {
   return pollForRunningDaemon();
 }
 
+// `onlyIfDesktopManaged` restricts the stop to a daemon this app started. Callers that
+// act on an explicit user gesture (the management toggle, host removal) leave it off and
+// stop whatever is running; callers acting on the app's own schedule set it, so a daemon
+// owned by systemd, a container, or a bare `paseo daemon start` is left alone.
 export async function stopDesktopDaemon(
   reason: DesktopDaemonStopReason = DEFAULT_DESKTOP_DAEMON_STOP_REASON,
+  { onlyIfDesktopManaged = false }: { onlyIfDesktopManaged?: boolean } = {},
 ): Promise<DesktopDaemonStatus> {
   const status = await resolveDesktopDaemonStatus();
-  if (status.status !== "running") {
+  const externallyManaged = onlyIfDesktopManaged && !status.desktopManaged;
+  if (status.status !== "running" || externallyManaged) {
     logDesktopDaemonLifecycle("desktop daemon stop skipped", {
       reason,
+      externallyManaged,
       statusBefore: summarizeDesktopDaemonStatus(status),
     });
     return status;
@@ -567,7 +574,11 @@ export function createDaemonCommandHandlers(): Record<string, DesktopCommandHand
       return downloadAndInstallUpdate(
         { currentVersion, releaseChannel: await resolveRequestedReleaseChannel(args) },
         async () => {
-          await stopDesktopDaemon("app_update");
+          // Only a desktop-managed daemon is ours to stop. An external one outlives the
+          // app, and startDaemon() refuses to bring it back while manageBuiltInDaemon is
+          // off, so stopping it here would leave the user with no daemon at all and no
+          // way for the app to restore it.
+          await stopDesktopDaemon("app_update", { onlyIfDesktopManaged: true });
         },
       );
     },
