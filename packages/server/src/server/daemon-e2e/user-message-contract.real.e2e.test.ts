@@ -61,7 +61,7 @@ function tmpCwd(provider: ContractProvider): string {
 
 function collectUserMessageEvents(client: DaemonClient, agentId: string): AgentStreamEvent[] {
   const events: AgentStreamEvent[] = [];
-  client.on("agent_stream", (message) => {
+  client.subscribeAgentTimeline(agentId, (message) => {
     if (message.type !== "agent_stream" || message.payload.agentId !== agentId) {
       return;
     }

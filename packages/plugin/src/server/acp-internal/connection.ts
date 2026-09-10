@@ -2,6 +2,7 @@ import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { Readable, Writable } from "node:stream";
 import {
   ClientSideConnection,
+  CLIENT_METHODS,
   PROTOCOL_VERSION,
   ndJsonStream,
   type Client,
@@ -427,10 +428,11 @@ class AcpRuntime {
       requestPermission: (request) => this.requestPermission(request),
       sessionUpdate: (notification) =>
         this.enqueueNotification(() => this.sessionUpdate(notification)),
-      extNotification: (method, params) =>
-        this.enqueueNotification(() => this.vendorNotification(method, params)),
     };
-    this.connection = new ClientSideConnection(() => client, stream);
+    this.connection = new ClientSideConnection(
+      () => client,
+      routeVendorNotifications(stream, (method, params) => this.vendorNotification(method, params)),
+    );
     if (!child) void this.connection.closed.then(() => this.handleUnexpectedTransportClose());
     child?.on("error", (error) => {
       this.processFailed = true;
@@ -997,7 +999,7 @@ class AcpRuntime {
     });
   }
 
-  private vendorNotification(method: string, params: Record<string, unknown>): void {
+  private vendorNotification(method: string, params: unknown): void {
     const notification = { method, params: jsonValue(params) };
     const context = { sessionId: this.options.boundarySessionId };
     for (const transformer of this.transformers) {
@@ -1084,6 +1086,31 @@ class AcpRuntime {
       this.commandWaiter = null;
     });
   }
+}
+
+function routeVendorNotifications(
+  stream: Stream,
+  receive: (method: string, params: unknown) => void,
+): Stream {
+  const clientMethods = new Set<string>(Object.values(CLIENT_METHODS));
+  return {
+    writable: stream.writable,
+    readable: stream.readable.pipeThrough(
+      new TransformStream({
+        transform(message, controller) {
+          if ("method" in message && !("id" in message) && !clientMethods.has(message.method)) {
+            // The SDK dispatches extensions asynchronously and can resolve a later response first.
+            // Run synchronous vendor transforms in wire order, inside the configuration transaction.
+            try {
+              receive(message.method, message.params);
+            } catch (error) {
+              console.error("Error handling ACP vendor notification", error);
+            }
+          } else controller.enqueue(message);
+        },
+      }),
+    ),
+  };
 }
 
 function selectPermissionOption(

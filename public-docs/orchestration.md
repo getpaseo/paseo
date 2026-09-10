@@ -1,6 +1,6 @@
 ---
 title: Orchestration
-description: Give any coding agent control of Paseo so it can launch and coordinate agents from other providers.
+description: Coordinate agents across providers and machines, delegate work, and keep tasks moving with schedules and heartbeats.
 nav: Overview
 order: 30
 category: Orchestration
@@ -8,72 +8,63 @@ category: Orchestration
 
 # Orchestration
 
-Paseo orchestration gives a coding agent control of the Paseo daemon. The agent can discover every provider and model you have configured, create workspaces, launch other agents, send them follow-ups, and create heartbeats or schedules. The same work stays visible in the Paseo app.
+Paseo lets your coding agents coordinate other agents, split work across providers and machines, and keep tasks moving automatically.
 
-## Native subagents vs Paseo subagents
+## What your agents can do
 
-The most important difference from native subagents is that **Paseo subagents can cross provider boundaries**.
+- **Choose providers and models:** launch other agents using any provider and model configured on the host.
+- **Delegate and parallelize:** split research, implementation, and review between agents, including agents from different providers.
+- **Communicate with each other:** agents can [send prompts to other agents by ID](/docs/orchestration-workflows#send-a-prompt-to-another-agent) to ask questions, share findings, or request work.
+- **Coordinate ongoing work:** check progress, stop tasks, and collect results.
+- **Create workspaces and worktrees:** give independent changes their own [working directories](/docs/worktrees).
+- **Work across machines:** use the [CLI](/docs/cli#connecting-to-a-remote-daemon) to launch and manage agents on another reachable Paseo host.
+- **Choose by specialty:** use [agent profiles](/docs/agent-profiles) and their notes to select settings for UI work, planning, or reviews.
+- **Create schedules:** run a prompt in a new agent at [specified times](/docs/schedules).
+- **Create heartbeats:** prompt the same agent periodically to [continue its task](/docs/orchestration-workflows#keep-an-agent-working-with-a-heartbeat).
 
-```text
-Claude Code (Fable 5) => Codex (GPT-5.6)
-Codex (GPT-5.6) => Grok Build
-Cursor => Claude Code (Fable 5)
+## Get started
+
+Use built-in Paseo tools or the CLI. Both let an agent launch and coordinate workers.
+
+### Built-in Paseo tools (MCP)
+
+Enable Paseo tools so agents running inside Paseo can manage agents and workspaces on their host directly.
+
+1. Open **Settings → your host → Agents**.
+2. Turn on **Enable Paseo tools**. Tool injection is off by default.
+3. Start a new agent, or reload an existing agent so it receives the tools.
+4. Ask:
+
+> Use Paseo to launch a second agent to review this branch. Have it report potential bugs without changing files, then summarize its findings.
+
+The worker appears in the **Subagents track** near the composer. Open it to follow the conversation. Your main agent receives a notification when the worker finishes, and you can keep talking while it works.
+
+See the [MCP reference](/docs/mcp) for tool configuration and the full catalog. [Orchestration skills](/docs/skills) are optional reusable workflows.
+
+### CLI
+
+Agents with shell access can also use the Paseo CLI. This route does not require enabling tool injection. With Paseo installed, a running host, and Codex configured:
+
+```bash
+paseo run --provider codex --background \
+  "Review this branch without changing files"
+paseo ls -a
 ```
 
-Native subagents belong to one provider. Claude Code launches Claude Code subagents; Codex launches Codex subagents. They are useful when the parent provider can handle the whole task itself.
+The first command starts a worker and returns immediately; the second lists agents from active workspaces, including archived agents. When a Paseo agent runs the command, the worker becomes its subagent in the same workspace. From your own terminal, it starts in a new local workspace.
 
-Paseo subagents are full agents managed by the Paseo daemon. The orchestrator can choose any configured provider and model, keep the worker in the current workspace, or place it in another workspace created for the task. Use them when you want one model to plan, another to implement, and another to review.
+See the [CLI reference](/docs/cli) for follow-ups, output, worktrees, and remote hosts.
 
-|                      | Native subagent                           | Paseo subagent                                     |
-| -------------------- | ----------------------------------------- | -------------------------------------------------- |
-| Provider             | Same provider as its parent               | Any provider configured in Paseo                   |
-| Working directory    | Managed by the parent provider            | Current or explicitly selected workspace           |
-| Lifecycle            | Owned by the parent provider              | Managed by Paseo; can receive follow-ups           |
-| Where you inspect it | Read-only timeline in the Subagents track | Full agent session in the Subagents track          |
-| Best for             | Fast, provider-native delegation          | Cross-provider work and explicit workspace control |
+## Pick settings once with profiles
 
-## Try it
+Save a provider, model, thinking level, mode, and available feature settings as an **agent profile**, then select it in one click when creating an agent.
 
-Open **Settings → your host → Agents**, then turn on **Enable Paseo tools**. Start a new agent, or reload an existing one so it receives the tools.
+Add **When to use** notes so an orchestrating agent can choose a profile for the task: UI work, planning, or independent review. [Create profiles and write delegation notes](/docs/agent-profiles).
 
-Then ask naturally:
+## Go further
 
-```text
-Stay as the orchestrator. Use Paseo to find my available Codex models, then
-create a worktree-isolated workspace, then launch a GPT-5.6 subagent there. Ask
-it to implement the parser change, run the focused tests, and report back here.
-```
-
-The orchestrator discovers the provider and model IDs, starts the worker, and receives a notification when it finishes. You can keep talking to the orchestrator in the meantime.
-
-Agent creation has one default: when an agent creates another agent without a workspace ID, the new agent is its subagent in the same workspace. Passing a workspace ID changes where the subagent works, not who its parent is.
-
-## Where the work appears
-
-Spawned work appears in the **Subagents track** above the composer. Open a row to read the live conversation.
-
-Both kinds of subagent appear there:
-
-- **Paseo subagents** open as full agent sessions. You can talk to them directly, change their settings, or archive them.
-- **Native provider subagents** open as read-only timelines. You can inspect their work, but their provider owns their lifecycle.
-
-A cross-workspace subagent still belongs to its parent's Subagents track. Paseo also opens its workspace so the work is not hidden in an otherwise empty workspace. If you want to turn any subagent into a top-level agent, detach it manually in the app or with `paseo agent detach`; detachment is not an agent-creation mode.
-
-If an agent says background work is running but the track is empty, update Paseo. Provider-created subagent timelines require Paseo 0.1.107 or newer.
-
-## Keep an agent working with a heartbeat
-
-A heartbeat sends a prompt back into the same agent on a cron cadence. Use one when the agent should keep reassessing a live task: continue a refactor, babysit CI, watch a deployment, or retry after an external system changes.
-
-Ask the agent directly:
-
-```text
-Use Paseo to create a heartbeat every 10 minutes. Keep checking this PR, fix any
-new CI failures, and stop when all checks pass or after two hours.
-```
-
-The base [`/paseo` orchestration skill](/docs/skills) teaches agents how to create heartbeats, so you only need to ask. A heartbeat continues the current conversation; a [schedule](/docs/schedules) is better for standalone cron-style jobs such as daily triage.
-
-You do not need to name MCP tools in your prompts. Ask for the workflow; the agent uses the tools underneath.
-
-Continue with [Common workflows](/docs/orchestration-workflows) for copyable prompts, [Orchestration skills](/docs/skills) for packaged workflows, or the [MCP reference](/docs/mcp) for the complete tool catalog.
+- [Delegate implementation and get an independent review](/docs/orchestration-workflows#implement-then-review).
+- [Run parallel changes in separate worktrees](/docs/orchestration-workflows#parallelize-edits-without-collisions).
+- [Coordinate work on another machine](/docs/orchestration-workflows#work-on-another-machine).
+- [Create recurring jobs](/docs/schedules) or [continue a task with a heartbeat](/docs/orchestration-workflows#keep-an-agent-working-with-a-heartbeat).
+- [Install reusable orchestration skills](/docs/skills).

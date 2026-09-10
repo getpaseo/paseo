@@ -3,6 +3,7 @@ import { QueryClient, CancelledError } from "@tanstack/react-query";
 import type { ProviderSnapshotEntry } from "@getpaseo/protocol/agent-types";
 import type { GetProvidersSnapshotResponseMessage } from "@getpaseo/protocol/messages";
 import { compactProviderSnapshot } from "@getpaseo/protocol/provider-snapshot-codec";
+import { applyProvidersSnapshotUpdate } from "./push-router";
 import { createProviderSnapshotCache } from "./provider-snapshot-cache";
 import {
   resolveProviderIconName,
@@ -295,4 +296,42 @@ it("keeps a replacement query when the cancelled native fetch finishes late", as
     queryClient.clear();
     replaceProviderSnapshotIcons(serverId, []);
   }
+});
+
+describe("provider snapshot publication identity", () => {
+  it("keeps the hash cache's canonical objects across a catalog change and later announcements", async () => {
+    const cache = createProviderSnapshotCache(createStorage());
+    const queryClient = new QueryClient();
+    const serverId = "canonical-provider-snapshot";
+    const client = {
+      async getProvidersSnapshot() {
+        throw new Error("Unexpected content fetch");
+      },
+    };
+    const changed = {
+      ...snapshot,
+      snapshotHash: "next-hash",
+      compactSnapshot: compactProviderSnapshot([{ ...entries[0]!, label: "Updated provider" }]),
+    };
+    try {
+      for (const body of [snapshot, changed, changed]) {
+        await applyProvidersSnapshotUpdate({
+          serverId,
+          queryClient,
+          cache,
+          client,
+          message: { type: "providers_snapshot_update", payload: body },
+        });
+        const canonical = await cache.materialize(serverId, body);
+        const published = queryClient.getQueryData<GetProvidersSnapshotResponseMessage["payload"]>(
+          providersSnapshotQueryKey(serverId, body.cwd),
+        )!;
+        expect(published.entries).toBe(canonical.entries);
+        expect(published.compactSnapshot).toBe(canonical.compactSnapshot);
+        expect(published.entries[0]!.models).toBe(canonical.entries[0]!.models);
+      }
+    } finally {
+      queryClient.clear();
+    }
+  });
 });

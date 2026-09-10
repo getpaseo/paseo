@@ -390,6 +390,18 @@ export function createAgentUpdatesService(deps: AgentUpdatesServiceDeps): AgentU
   }
 
   function forwardLiveAgent(agent: ManagedAgent): Promise<void> {
+    if (!subscription) {
+      const workspaceId = agent.workspaceId;
+      return workspaceId
+        ? enqueueAgentUpdate(agent.id, async () => {
+            try {
+              await deps.emitWorkspaceUpdateForWorkspaceId(workspaceId);
+            } catch (error) {
+              deps.logger.error({ err: error }, "Failed to emit workspace update");
+            }
+          })
+        : Promise.resolve();
+    }
     const payload = toAgentPayload(agent);
     return enqueueAgentUpdate(payload.id, () => emitLiveAgentUpdate(payload));
   }

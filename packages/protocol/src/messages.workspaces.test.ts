@@ -10,6 +10,42 @@ import {
 } from "./messages.js";
 
 describe("workspace message schemas", () => {
+  test("parses mark-unread request and response", () => {
+    expect(
+      SessionInboundMessageSchema.parse({
+        type: "workspace.mark_unread.request",
+        workspaceId: "workspace-1",
+        requestId: "req-mark-unread",
+      }),
+    ).toEqual({
+      type: "workspace.mark_unread.request",
+      workspaceId: "workspace-1",
+      requestId: "req-mark-unread",
+    });
+
+    expect(
+      SessionOutboundMessageSchema.parse({
+        type: "workspace.mark_unread.response",
+        payload: {
+          requestId: "req-mark-unread",
+          workspaceId: "workspace-1",
+          markedAgentId: "agent-1",
+          success: true,
+          error: null,
+        },
+      }),
+    ).toEqual({
+      type: "workspace.mark_unread.response",
+      payload: {
+        requestId: "req-mark-unread",
+        workspaceId: "workspace-1",
+        markedAgentId: "agent-1",
+        success: true,
+        error: null,
+      },
+    });
+  });
+
   test("parses blocked setup status and the explicit setup run RPC", () => {
     expect(
       SessionInboundMessageSchema.parse({

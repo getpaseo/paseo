@@ -1,4 +1,5 @@
 import { execFileSync as nodeExecFileSync } from "node:child_process";
+import { isMainModule } from "./is-main-module.mjs";
 
 function parseJson(output) {
   return JSON.parse(output);
@@ -67,7 +68,7 @@ function parseArgs(argv) {
   return { cleanupDuplicates, repo, tag };
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (isMainModule(import.meta.url)) {
   const { cleanupDuplicates, repo, tag } = parseArgs(process.argv.slice(2));
   let release = null;
   for (let attempt = 0; attempt < 5 && !release; attempt += 1) {

@@ -4,6 +4,11 @@ import type { AgentTimelineItem } from "@getpaseo/protocol/agent-types";
 import type { ZodType, input as ZodInput, output as ZodOutput } from "zod";
 import type { PluginRpcContract } from "../rpc.js";
 import type {
+  PluginButtonRegistration,
+  PluginHeaderButtonContribution,
+  PluginComposerPillContribution,
+} from "./buttons.js";
+import type {
   PluginTheme,
   PluginWorkspaceSnapshot,
   PluginAgentSnapshot,
@@ -65,20 +70,6 @@ export interface PluginAgentPanelProps extends PluginNavigableHostProps {
   agentId: string;
 }
 
-export interface PluginComposerPillProps extends PluginHostProps {
-  workspaceId: string;
-  agentId: string;
-}
-
-export interface PluginComposerPillContribution {
-  id: string;
-  title: string;
-  workspaceId: string;
-  agentId: string;
-  Component: ComponentType<PluginComposerPillProps>;
-  onPress(): void | Promise<void>;
-}
-
 export interface PluginClientOpenPanelOptions extends PluginOpenPanelOptions {
   workspaceId: string;
   agentId?: string;
@@ -91,7 +82,8 @@ export interface PluginClientContext extends PluginCommandCapabilities {
   addWorkspacePanel(contribution: PluginWorkspacePanelContribution): PluginCleanup;
   addCommandCenterItem(contribution: PluginCommandCenterItemContribution): PluginCleanup;
   addSlashCommand(contribution: PluginClientSlashCommandContribution): PluginCleanup;
-  addComposerPill(contribution: PluginComposerPillContribution): PluginCleanup;
+  addHeaderButton(contribution: PluginHeaderButtonContribution): PluginButtonRegistration;
+  addComposerPill(contribution: PluginComposerPillContribution): PluginButtonRegistration;
   addAttachmentSource(contribution: PluginAttachmentSourceContribution): PluginCleanup;
   addTheme(contribution: PluginThemeContribution): PluginCleanup;
   addTimelineTransformer<ItemType extends AgentTimelineItem["type"]>(

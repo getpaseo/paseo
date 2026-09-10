@@ -1034,6 +1034,16 @@ export const zhCN: TranslationResources = {
       updateHost: "请更新此主机以管理标签。",
     },
   },
+  changelog: {
+    title: "新功能",
+    installed: "已安装",
+    showMore: "显示更多",
+    openWebsite: "完整更新日志",
+    error: {
+      title: "无法加载更新日志",
+      description: "请检查网络连接后重试。",
+    },
+  },
   sidebar: {
     display: {
       trigger: "显示偏好",
@@ -2043,6 +2053,7 @@ export const zhCN: TranslationResources = {
     about: {
       title: "关于",
       appVersion: "应用版本",
+      whatsNewHint: "每个版本的发布说明",
       thisDevice: "此设备",
       connectedHosts: "已连接的 Host",
       offline: "离线",

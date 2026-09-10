@@ -259,7 +259,7 @@ test("does not infer browser automation capabilities from Electron runtime", asy
     })
     .parse(JSON.parse(assertStr(mock.sent[0])));
   expect(hello.capabilities[CLIENT_CAPS.browserHost]).toBeUndefined();
-  expect(hello.capabilities[CLIENT_CAPS.selectiveAgentTimeline]).toBeUndefined();
+  expect(hello.capabilities[CLIENT_CAPS.selectiveAgentTimeline]).toBe(true);
 });
 
 test("advertises consumer-provided browser automation capabilities", async () => {
@@ -755,6 +755,11 @@ test("advertises client capabilities in hello", async () => {
     clientType: "cli",
     protocolVersion: 1,
     capabilities: {
+      all_providers: true,
+      selective_agent_timeline: true,
+      timeline_replacement_invalidation: true,
+      provider_snapshot_references: true,
+      explicit_event_subscriptions: true,
       compact_provider_snapshots: true,
       custom_mode_icons: true,
       project_updates: true,
@@ -2998,6 +3003,45 @@ test("sends project.add.request without creating a workspace", async () => {
     },
     error: null,
   });
+});
+
+test("marks a workspace unread through the dotted RPC", async () => {
+  const logger = createMockLogger();
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_unit_test",
+    logger,
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+
+  const markPromise = client.markWorkspaceUnread("workspace-1", "req-mark-unread");
+  expect(parseSentFrame(mock.sent[0])).toEqual({
+    type: "workspace.mark_unread.request",
+    workspaceId: "workspace-1",
+    requestId: "req-mark-unread",
+  });
+
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "workspace.mark_unread.response",
+      payload: {
+        requestId: "req-mark-unread",
+        workspaceId: "workspace-1",
+        markedAgentId: "agent-1",
+        success: true,
+        error: null,
+      },
+    }),
+  );
+
+  await expect(markPromise).resolves.toBeUndefined();
 });
 
 test("searches GitHub repositories through the dotted RPC", async () => {
