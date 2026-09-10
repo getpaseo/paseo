@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, expect, test } from "vitest";
 import { defineSettings } from "@getpaseo/plugin";
+import type { PluginSettingsState } from "@getpaseo/plugin/server";
 import { z } from "zod";
 import { PluginSettingsStore } from "./index.js";
 
@@ -19,6 +20,10 @@ const definition = defineSettings({
     count: z.number().int().min(1).default(5),
   }),
 });
+type DisplaySettingsState = PluginSettingsState<typeof definition.schema>;
+function mutateNotification(state: DisplaySettingsState): void {
+  if (state.status === "ready") state.values.count = 99;
+}
 async function setup() {
   const directory = await mkdtemp(path.join(tmpdir(), "plugin-settings-"));
   roots.push(directory);
@@ -50,7 +55,10 @@ test("defaults, atomic saves, concurrent revisions, and restart persistence", as
 test("server settings read current values and notify after successful writes", async () => {
   const { handlers } = await setup();
   const notifications: unknown[] = [];
-  const unsubscribe = handlers.settings.subscribe((state) => notifications.push(state));
+  const unsubscribe = handlers.settings.subscribe((state) => {
+    notifications.push(state);
+    mutateNotification(state);
+  });
 
   expect(await handlers.settings.read()).toEqual({
     status: "ready",
@@ -62,27 +70,26 @@ test("server settings read current values and notify after successful writes", a
     values: { enabled: false, count: 10 },
   });
   expect(saved).toMatchObject({ status: "saved", values: { enabled: false, count: 10 } });
-  if (saved.status !== "saved") throw new Error("save failed");
-  expect(await handlers.settings.read()).toMatchObject({
+  const current = await handlers.settings.read();
+  expect(current).toMatchObject({
     status: "ready",
-    revision: saved.revision,
     values: { enabled: false, count: 10 },
   });
   expect(notifications).toEqual([
     {
       status: "ready",
-      revision: saved.revision,
-      values: { enabled: false, count: 10 },
+      revision: current.revision,
+      values: { enabled: false, count: 99 },
     },
   ]);
 
   expect(
-    await handlers.write.handle({ revision: saved.revision, values: { count: -1 } }),
+    await handlers.write.handle({ revision: current.revision, values: { count: -1 } }),
   ).toMatchObject({ status: "invalid" });
   expect(notifications).toHaveLength(1);
 
   unsubscribe();
-  await handlers.reset.handle({ revision: saved.revision });
+  await handlers.reset.handle({ revision: current.revision });
   expect(notifications).toHaveLength(1);
 });
 

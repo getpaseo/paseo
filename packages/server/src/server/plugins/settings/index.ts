@@ -24,6 +24,13 @@ function reportListenerError(id: string, error: unknown): void {
   console.error(`Plugin settings subscriber failed for ${id}`, error);
 }
 
+function copySettingsState<Schema extends ZodType>(
+  state: PluginSettingsState<Schema>,
+): PluginSettingsState<Schema> {
+  if (state.status === "invalid") return { ...state };
+  return { ...state, values: structuredClone(state.values) };
+}
+
 /** One instance per installation. The subprocess lifetime gives writes a single owner. */
 export class PluginSettingsStore {
   private readonly definitions = new Map<string, SettingsDefinition>();
@@ -45,7 +52,7 @@ export class PluginSettingsStore {
     const notify = (state: PluginSettingsState<Schema>): void => {
       for (const listener of listeners) {
         try {
-          void Promise.resolve(listener(state)).catch((error) =>
+          void Promise.resolve(listener(copySettingsState(state))).catch((error) =>
             reportListenerError(definition.id, error),
           );
         } catch (error) {
