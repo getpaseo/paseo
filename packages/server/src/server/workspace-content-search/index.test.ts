@@ -186,3 +186,42 @@ test.skipIf(process.platform === "win32")(
     ]);
   },
 );
+
+test("converts coordinates in one pass, so a high-line-count file stays inside the budget", async () => {
+  // A supported saved shape: a million empty lines, then 200 literal matches. Converting each
+  // occurrence by decoding and splitting everything before it blocked for ~5.9s and answered "ok"
+  // after the five-second budget had already passed.
+  const timeoutMs = 5000;
+  const cwd = await workspace({
+    "sparse.txt": `${"\n".repeat(1_000_000)}${"needle\n".repeat(200)}`,
+  });
+  const started = Date.now();
+  const result = await searchWorkspaceContent({ cwd, query: "needle" }, { timeoutMs });
+  const elapsed = Date.now() - started;
+
+  expect(result.status === "ok" && result.matches.length).toBe(200);
+  expect(result.status === "ok" && result.matches[0]).toMatchObject({
+    path: "sparse.txt",
+    line: 1_000_001,
+    columnStart: 1,
+    columnEnd: 7,
+    text: "needle",
+    snippet: "needle",
+  });
+  expect(result.status === "ok" && result.matches[199]).toMatchObject({ line: 1_000_200 });
+  // A successful answer must arrive inside the budget it claims to honour.
+  expect(elapsed, `succeeded after ${elapsed}ms against a ${timeoutMs}ms budget`).toBeLessThan(
+    timeoutMs,
+  );
+  // And with room to spare: the conversion is meant to be proportional to the file, not to the
+  // file times its occurrences.
+  expect(elapsed, `conversion took ${elapsed}ms`).toBeLessThan(2000);
+});
+
+test("stops converting when the deadline passes instead of answering late", async () => {
+  const cwd = await workspace({ "many.txt": `${"needle\n".repeat(200)}` });
+  expect(await searchWorkspaceContent({ cwd, query: "needle" }, { timeoutMs: 0 })).toMatchObject({
+    status: "error",
+    code: "timeout",
+  });
+});

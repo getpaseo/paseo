@@ -144,16 +144,18 @@ test("an empty result says which files the host never opened", async ({ page, wi
   await reportSkippedLargeFiles(page, await withWorkspace());
 });
 
-// "a\b.txt" is one file on POSIX and a nested path on Windows, so the fixture only exists here.
-// Windows separator handling is covered by resolveWorkspaceFilePaths and toWorkspaceRelativePath.
-test.skip(
-  process.platform === "win32",
-  "a file name containing a backslash is not a valid Windows fixture",
-);
+// "a\b.txt" is one file on POSIX and a nested path on Windows, so only this fixture is unavailable
+// there. The skip belongs to this test: at file scope it annotates the whole suite and takes every
+// other journey in this file with it. Windows separator handling is covered by
+// resolveWorkspaceFilePaths and toWorkspaceRelativePath.
 test("a file name containing a backslash opens itself, not a same-named nested path", async ({
   page,
   withWorkspace,
 }) => {
+  test.skip(
+    process.platform === "win32",
+    "a file name containing a backslash is not a valid Windows fixture",
+  );
   await openLiteralBackslashFile(page, await withWorkspace());
 });
 

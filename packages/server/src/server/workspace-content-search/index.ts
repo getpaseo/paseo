@@ -83,10 +83,15 @@ export async function searchWorkspaceContent(
       error = failure("cancelled", "Search cancelled");
       stop();
     };
-    const timeout = setTimeout(() => {
+    const timedOut = () => {
       error = failure("timeout", "Search timed out — refine your query or retry");
       stop();
-    }, options.timeoutMs ?? 5000);
+    };
+    // Reading and converting each matched file is synchronous work between ticks, so the timer
+    // alone cannot end an operation that overruns inside it. Conversion checks the same deadline
+    // directly, and the budget covers the whole operation rather than only its search.
+    const deadline = Date.now() + (options.timeoutMs ?? 5000);
+    const timeout = setTimeout(timedOut, options.timeoutMs ?? 5000);
     input.signal?.addEventListener("abort", abort, { once: true });
     if (input.signal?.aborted) abort();
     child.on("error", (cause) => {
@@ -156,7 +161,10 @@ export async function searchWorkspaceContent(
       let located: WorkspaceContentMatch[] = [];
       try {
         if (!error)
-          located = await locateMatches(input.cwd, matches.slice(0, MAX_RESULTS), () => !!error);
+          located = await locateMatches(input.cwd, matches.slice(0, MAX_RESULTS), () => {
+            if (!error && Date.now() >= deadline) timedOut();
+            return !!error;
+          });
       } catch {
         error ??= failure("unavailable", "Files changed while searching — retry");
       }
@@ -220,9 +228,71 @@ interface RgMatch {
   byteOffset: number;
 }
 
-/** rg counts LF records; source views count CR, CRLF and LF lines. Read each matched
- * file once through the bounded/revision-checked producer to translate original byte
- * offsets. A file changed during the search must not manufacture an occurrence. */
+const LINE_FEED = 0x0a;
+const CARRIAGE_RETURN = 0x0d;
+
+/**
+ * Walks a file's saved bytes once, handing out each occurrence's source line and UTF-16 column.
+ *
+ * rg counts LF records while source views count CR, CRLF and LF lines, so the offsets it reports
+ * have to be translated. Doing that by decoding and splitting everything before each occurrence
+ * costs the whole file per match: a million-line file with 200 matches blocked for about six
+ * seconds and answered after its own deadline. Occurrences arrive in ascending offset order, so a
+ * single forward cursor answers all of them, and each line is decoded once however many matches
+ * it holds.
+ */
+function createLineReader(bytes: Uint8Array) {
+  const decoder = new TextDecoder("utf-8", { ignoreBOM: true });
+  // A leading byte-order mark is not part of the first line's text and is not counted in its
+  // columns. Stripping it once here keeps every later decode positional.
+  const start = bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf ? 3 : 0;
+  let cursor = start;
+  let line = 1;
+  let lineStart = start;
+  let lineEnd = -1;
+  let lineText = "";
+  let columnByte = 0;
+  let column = 0;
+
+  function endOfLine(from: number): number {
+    let index = from;
+    while (index < bytes.length && bytes[index] !== LINE_FEED && bytes[index] !== CARRIAGE_RETURN) {
+      index += 1;
+    }
+    return index;
+  }
+
+  return function read(byteOffset: number) {
+    while (cursor < byteOffset) {
+      const byte = bytes[cursor];
+      cursor += 1;
+      if (byte === CARRIAGE_RETURN && bytes[cursor] === LINE_FEED && cursor < byteOffset) {
+        cursor += 1;
+      } else if (byte !== CARRIAGE_RETURN && byte !== LINE_FEED) {
+        continue;
+      }
+      line += 1;
+      lineStart = cursor;
+      lineEnd = -1;
+    }
+    if (lineEnd === -1) {
+      lineEnd = endOfLine(lineStart);
+      lineText = decoder.decode(bytes.subarray(lineStart, lineEnd));
+      columnByte = lineStart;
+      column = 0;
+    }
+    // Matches on one line arrive in order, so the column advances from the previous one rather
+    // than being recounted from the start of the line.
+    if (byteOffset > columnByte) {
+      column += decoder.decode(bytes.subarray(columnByte, byteOffset)).length;
+      columnByte = byteOffset;
+    }
+    return { line, column, lineText };
+  };
+}
+
+/** Read each matched file once through the bounded/revision-checked producer to translate original
+ * byte offsets. A file changed during the search must not manufacture an occurrence. */
 async function locateMatches(
   cwd: string,
   matches: RgMatch[],
@@ -232,6 +302,7 @@ async function locateMatches(
   let path = "";
   let bytes: Uint8Array = new Uint8Array();
   let valid = false;
+  let read = createLineReader(bytes);
   for (const { byteOffset, ...match } of matches) {
     if (stopped()) break;
     if (path !== match.path) {
@@ -248,6 +319,7 @@ async function locateMatches(
       } catch {
         valid = false;
       }
+      read = createLineReader(bytes);
     }
     if (!valid) continue;
     const end = byteOffset + Buffer.byteLength(match.text);
@@ -256,18 +328,12 @@ async function locateMatches(
       match.text
     )
       continue;
-    const prefix = new TextDecoder().decode(bytes.subarray(0, byteOffset)).split(/\r\n|\r|\n/);
-    const column = prefix[prefix.length - 1].length;
-    const line =
-      prefix[prefix.length - 1] +
-      new TextDecoder("utf-8", { ignoreBOM: true })
-        .decode(bytes.subarray(byteOffset))
-        .split(/\r\n|\r|\n/, 1)[0];
+    const { line, column, lineText } = read(byteOffset);
     const snippetStart = Math.max(0, column - 80);
-    const snippet = line.slice(snippetStart, snippetStart + 240);
+    const snippet = lineText.slice(snippetStart, snippetStart + 240);
     located.push({
       ...match,
-      line: prefix.length,
+      line,
       columnStart: column + 1,
       columnEnd: column + match.text.length + 1,
       snippet,
