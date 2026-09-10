@@ -2,21 +2,6 @@ import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const fr: TranslationResources = {
-  paneFind: {
-    title: "Rechercher",
-    placeholder: "Rechercher dans le panneau",
-    close: "Fermer la recherche",
-    matches: "Résultats de recherche",
-    previous: "Résultat précédent",
-    next: "Résultat suivant",
-    toggleReplace: "Afficher le remplacement",
-    replaceWith: "Remplacer par",
-    replace: "Remplacer",
-    replaceAll: "Tout remplacer",
-    noMatches: "Aucun résultat",
-    position: "{{current}} sur {{total}}",
-    total: "{{total}} résultats",
-  },
   common: {
     back: "Dos",
     loading: "Chargement...",

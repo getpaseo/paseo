@@ -1,5 +1,4 @@
-import { useEffect, useRef, useState, useSyncExternalStore } from "react";
-import { FileFind, FileFindModel } from "../find/index.web";
+import { useEffect, useRef, useSyncExternalStore } from "react";
 import { Annotation, Compartment, EditorState, Transaction } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import { getLanguageForFile } from "@getpaseo/highlight";
@@ -39,7 +38,6 @@ export function FileEditorView({
   onCursorChange,
   onVimModeChange,
 }: FileEditorViewProps) {
-  const [find] = useState(() => new FileFindModel());
   const hostRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const snapshot = useSyncExternalStore(model.subscribe, model.getSnapshot, model.getSnapshot);
@@ -56,7 +54,6 @@ export function FileEditorView({
         doc: values.content,
         extensions: [
           vimCompartment.of(values.vimEnabled ? vim() : []),
-          find.extension,
           ...editorBaseExtensions(() => void values.model.save()),
           languageCompartment.of(getLanguageForFile(values.filename)?.extension ?? []),
           wrappingCompartment.of(wrappingForFile(values.filename)),
@@ -84,7 +81,7 @@ export function FileEditorView({
       view.destroy();
       viewRef.current = null;
     };
-  }, [find]);
+  }, []);
 
   useEffect(() => {
     const view = viewRef.current;
@@ -144,25 +141,15 @@ export function FileEditorView({
   }, [onVimModeChange, vimEnabled]);
 
   return (
-    <div style={FRAME_STYLE}>
-      <div
-        ref={hostRef}
-        data-pmono=""
-        data-testid="file-source-editor"
-        aria-label={`Source editor for ${filename}`}
-        style={HOST_STYLE}
-      />
-      <FileFind model={find} editor={viewRef} />
-    </div>
+    <div
+      ref={hostRef}
+      data-pmono=""
+      data-testid="file-source-editor"
+      aria-label={`Source editor for ${filename}`}
+      style={HOST_STYLE}
+    />
   );
 }
 
 const remoteUpdate = Annotation.define<boolean>();
-const FRAME_STYLE = {
-  display: "flex",
-  position: "relative",
-  flex: 1,
-  minHeight: 0,
-  minWidth: 0,
-} as const;
 const HOST_STYLE = { flex: 1, minHeight: 0, overflow: "hidden" } as const;

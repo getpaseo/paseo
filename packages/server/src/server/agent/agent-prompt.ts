@@ -8,6 +8,7 @@ import type {
 import type { AgentManager, ManagedAgent } from "./agent-manager.js";
 import type { AgentStorage } from "./agent-storage.js";
 import { ensureAgentLoaded } from "./agent-loading.js";
+import { isStaleProviderSessionError } from "./stale-provider-session-error.js";
 import { getParentAgentIdFromLabels } from "@getpaseo/protocol/agent-labels";
 import type { ActiveTurnBehavior } from "@getpaseo/protocol/messages";
 
@@ -21,7 +22,9 @@ export type AgentRunController = Pick<
   | "replaceAgentRun"
   | "steerOrReplaceActiveTurn"
   | "streamAgent"
->;
+> & {
+  reloadAgentSession(agentId: string): Promise<unknown>;
+};
 
 export interface StartAgentRunOptions {
   replaceRunning?: boolean;
@@ -78,6 +81,14 @@ async function startOrReplaceRun(
   return { iterator, replaced };
 }
 
+async function drainAgentRunIterator(
+  iterator: AsyncGenerator<import("./agent-sdk-types.js").AgentStreamEvent>,
+): Promise<void> {
+  for await (const _ of iterator) {
+    // Events are broadcast via AgentManager subscribers.
+  }
+}
+
 export async function startAgentRun(
   agentManager: AgentRunController,
   agentId: string,
@@ -104,6 +115,26 @@ export async function startAgentRun(
   if (agentManager.tryRunOutOfBand(agentId, prompt, options?.runOptions)) {
     return { disposition: "out_of_band" };
   }
+  try {
+    return await startAgentRunInner(agentManager, agentId, prompt, logger, options);
+  } catch (error) {
+    if (!isStaleProviderSessionError(error)) throw error;
+    logger.info({ agentId, err: error }, "Provider session went stale; reopening from persistence");
+    // The live session belongs to a retired plugin runtime. Reload swaps in a
+    // fresh session on the current runtime while preserving history and labels.
+    await agentManager.reloadAgentSession(agentId);
+    return await startAgentRunInner(agentManager, agentId, prompt, logger, options);
+  }
+}
+
+async function startAgentRunInner(
+  agentManager: AgentRunController,
+  agentId: string,
+  prompt: AgentPromptInput,
+  logger: Logger,
+  options?: StartAgentRunOptions,
+): Promise<{ disposition: PromptDispatchDisposition }> {
+  const snapshot = agentManager.getAgent(agentId);
   const steered = await steerOrReplaceActiveRun(agentManager, agentId, prompt, options);
   if (steered?.disposition === "steered") {
     return steered;
@@ -122,8 +153,17 @@ export async function startAgentRun(
   );
   void (async () => {
     try {
-      for await (const _ of iterator) {
-        // Events are broadcast via AgentManager subscribers.
+      try {
+        await drainAgentRunIterator(iterator);
+      } catch (error) {
+        if (!isStaleProviderSessionError(error)) throw error;
+        logger.info(
+          { agentId, err: error },
+          "Provider session went stale; reopening from persistence",
+        );
+        await agentManager.reloadAgentSession(agentId);
+        const retry = await startOrReplaceRun(agentManager, agentId, prompt, options);
+        await drainAgentRunIterator(retry.iterator);
       }
       logger.trace(
         {
