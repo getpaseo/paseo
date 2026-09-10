@@ -5162,15 +5162,7 @@ export class AgentManager {
     if (!this.resolveWorkspaceProjectResourceApproval) {
       return false;
     }
-    try {
-      return await this.resolveWorkspaceProjectResourceApproval(workspaceId);
-    } catch (error) {
-      this.logger.warn(
-        { err: error, workspaceId },
-        "Failed to resolve workspace project-resource trust; launching unapproved",
-      );
-      return false;
-    }
+    return await this.resolveWorkspaceProjectResourceApproval(workspaceId);
   }
 
   private resolveProviderLaunchConfig(

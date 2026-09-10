@@ -2824,6 +2824,29 @@ test("gates project-resource approval by trusted workspaceId across session boun
   rmSync(workdir, { recursive: true, force: true });
 });
 
+test("propagates workspace-trust resolution failures instead of launching unapproved", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-project-trust-error-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+
+  const manager = new AgentManager({
+    clients: { codex: new TestAgentClient() },
+    registry: storage,
+    resolveWorkspaceProjectResourceApproval: async () => {
+      throw new Error("workspace registry unavailable");
+    },
+    logger,
+  });
+
+  await expect(
+    manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: "some-workspace",
+      approveProjectResources: true,
+    }),
+  ).rejects.toThrow("workspace registry unavailable");
+
+  rmSync(workdir, { recursive: true, force: true });
+});
+
 test("createAgent passes persistSession to provider create options", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
   const storagePath = join(workdir, "agents");
