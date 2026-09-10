@@ -97,6 +97,88 @@ async function createConnectedSession(
 }
 
 describe("Codex app-server provider features", () => {
+  test.each([
+    "gpt-6-astra",
+    "gpt-5.6",
+    "gpt-5.6-sol",
+    "gpt-5.6-terra",
+    "gpt-5.6-luna",
+    "gpt-5.5",
+    "gpt-5.4",
+  ])("exposes and sends Fast for %s", async (model) => {
+    const { session, appServer } = await createConnectedSession({ model });
+    try {
+      expect(session.features).toContainEqual(
+        expect.objectContaining({
+          id: "fast_mode",
+          value: false,
+        }),
+      );
+      await session.setFeature?.("fast_mode", true);
+      await session.startTurn("hello");
+      await expect(appServer.waitForTurnStart()).resolves.toMatchObject({
+        model,
+        serviceTier: "fast",
+      });
+    } finally {
+      await session.close();
+    }
+  });
+
+  test.each([
+    "gpt-5.3-codex-spark",
+    "gpt-5.3-codex",
+    "gpt-5.4-mini",
+    "gpt-5.4-nano",
+    "gpt-5.5-pro",
+    "gpt-5",
+    "gpt-4.1",
+    "o3",
+    "o4-mini",
+    "gpt-6-unknown",
+  ])("does not expose or restore Fast for %s", async (model) => {
+    const { session, appServer } = await createConnectedSession({
+      model,
+      featureValues: { fast_mode: true },
+    });
+    try {
+      expect(session.features.map((feature) => feature.id)).toEqual(["plan_mode"]);
+      await expect(session.setFeature?.("fast_mode", true)).rejects.toThrow(
+        `Codex fast mode is not available for model '${model}'`,
+      );
+      await session.startTurn("hello");
+      await expect(appServer.waitForTurnStart()).resolves.not.toMatchObject({
+        serviceTier: expect.anything(),
+      });
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("restores Fast on Astra and preserves it when switching supported models", async () => {
+    const { session, appServer } = await createConnectedSession({
+      model: "gpt-6-astra",
+      featureValues: { fast_mode: true },
+    });
+    try {
+      expect(session.features).toContainEqual(
+        expect.objectContaining({
+          id: "fast_mode",
+          value: true,
+        }),
+      );
+      await session.setModel("gpt-5.6-sol");
+      await session.setModel("gpt-6-astra");
+      await session.startTurn("hello");
+      await expect(appServer.waitForTurnStart()).resolves.toMatchObject({
+        model: "gpt-6-astra",
+        serviceTier: "fast",
+      });
+    } finally {
+      await session.close();
+    }
+  });
+
   test("features returns fast and plan toggles when supported", async () => {
     const { session } = await createConnectedSession();
 
@@ -105,7 +187,7 @@ describe("Codex app-server provider features", () => {
         type: "toggle",
         id: "fast_mode",
         label: "Fast",
-        description: "Priority inference at 2x usage",
+        description: "Priority inference at increased usage",
         tooltip: "Toggle fast mode",
         icon: "zap",
         value: false,
@@ -129,7 +211,7 @@ describe("Codex app-server provider features", () => {
         type: "toggle",
         id: "fast_mode",
         label: "Fast",
-        description: "Priority inference at 2x usage",
+        description: "Priority inference at increased usage",
         tooltip: "Toggle fast mode",
         icon: "zap",
         value: true,
@@ -250,7 +332,7 @@ describe("Codex app-server provider features", () => {
         type: "toggle",
         id: "fast_mode",
         label: "Fast",
-        description: "Priority inference at 2x usage",
+        description: "Priority inference at increased usage",
         tooltip: "Toggle fast mode",
         icon: "zap",
         value: true,
