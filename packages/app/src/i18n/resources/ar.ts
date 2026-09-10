@@ -1,7 +1,7 @@
 import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
-export const ar: TranslationResources = {
+export const ar = {
   changeStats: {
     title: "تفاصيل التغييرات",
     code: "الكود",
@@ -727,6 +727,19 @@ export const ar: TranslationResources = {
         terminalQueued: "تحضير مساحة العمل، وفتح الوحدة الطرفية عندما تكون جاهزة...",
         workspacePathCopiedLabel: "مسار Workspace",
         branchNameCopiedLabel: "اسم الفرع",
+      },
+      branches: {
+        current: "الفرع الحالي: {{branchName}}. اضغط لعرض إجراءات الفرع.",
+        base: "مقارنة مع {{branchName}}. اضغط لتغيير الفرع الأساسي.",
+        setBase: "تعيين الفرع الأساسي",
+        baseTitle: "مقارنة مع",
+        baseUnavailable: "حدّث المضيف لتغيير الفرع الأساسي",
+        baseFailed: "فشل تغيير الفرع الأساسي",
+        rename: "إعادة تسمية الفرع…",
+        renameTitle: "إعادة تسمية الفرع",
+        renameSubmit: "إعادة التسمية",
+        renameFailed: "اسم فرع غير صالح",
+        switch: "تبديل الفرع…",
       },
     },
     scripts: {
@@ -2705,4 +2718,4 @@ export const ar: TranslationResources = {
       },
     },
   },
-};
+} satisfies TranslationResources;

@@ -76,19 +76,38 @@ export async function waitForWorkspaceInSidebar(
   });
 }
 
+// Beside the title, a wide git checkout shows `<branch> → <base>` instead of the project name
+// (`WorkspaceHeaderProjectRow`), so `subtitle` is satisfied by either the project name or the
+// branch pair being there. Pass `branch` to pin the current branch shown in that pair.
 export async function expectWorkspaceHeader(
   page: Page,
-  input: { title: string; subtitle: string },
+  input: { title: string; subtitle?: string; branch?: string },
 ): Promise<void> {
   const titleLocator = page.getByTestId("workspace-header-title").filter({ visible: true });
-  const subtitleLocator = page.getByTestId("workspace-header-subtitle").filter({ visible: true });
 
   await expect(titleLocator.first()).toHaveText(input.title, {
     timeout: 30_000,
   });
-  await expect(subtitleLocator.first()).toHaveText(input.subtitle, {
-    timeout: 30_000,
-  });
+  if (input.subtitle !== undefined) {
+    const subtitleLocator = page.getByTestId("workspace-header-subtitle").filter({ visible: true });
+    const branchesLocator = page.getByTestId("workspace-header-branches").filter({ visible: true });
+    await expect(subtitleLocator.first().or(branchesLocator.first())).toBeVisible({
+      timeout: 30_000,
+    });
+    if ((await subtitleLocator.count()) > 0) {
+      await expect(subtitleLocator.first()).toHaveText(input.subtitle, {
+        timeout: 30_000,
+      });
+    }
+  }
+  if (input.branch !== undefined) {
+    const branchLocator = page
+      .getByTestId("workspace-header-current-branch")
+      .filter({ visible: true });
+    await expect(branchLocator.first()).toContainText(input.branch, {
+      timeout: 30_000,
+    });
+  }
 }
 
 export async function expectReconnectingToastVisible(

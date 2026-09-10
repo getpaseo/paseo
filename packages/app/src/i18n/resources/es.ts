@@ -1,7 +1,7 @@
 import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
-export const es: TranslationResources = {
+export const es = {
   changeStats: {
     title: "Desglose de cambios",
     code: "Código",
@@ -734,6 +734,19 @@ export const es: TranslationResources = {
           "Preparando el espacio de trabajo, abriendo la terminal cuando esté listo...",
         workspacePathCopiedLabel: "RutaWorkspace",
         branchNameCopiedLabel: "Nombre de la sucursal",
+      },
+      branches: {
+        current: "Rama actual: {{branchName}}. Pulsa para ver acciones de la rama.",
+        base: "Comparado con {{branchName}}. Pulsa para cambiar la rama base.",
+        setBase: "Definir rama base",
+        baseTitle: "Comparar con",
+        baseUnavailable: "Actualiza el host para cambiar la rama base",
+        baseFailed: "No se pudo cambiar la rama base",
+        rename: "Renombrar rama…",
+        renameTitle: "Renombrar rama",
+        renameSubmit: "Renombrar",
+        renameFailed: "Nombre de rama no válido",
+        switch: "Cambiar de rama…",
       },
     },
     scripts: {
@@ -2765,4 +2778,4 @@ export const es: TranslationResources = {
       },
     },
   },
-};
+} satisfies TranslationResources;

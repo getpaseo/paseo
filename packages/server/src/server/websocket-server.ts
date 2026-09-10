@@ -1642,6 +1642,8 @@ export class VoiceAssistantWebSocketServer {
         workspaceSetupRun: true,
         // COMPAT(providersSnapshot): keep optional until all clients rely on snapshot flow.
         changeBreakdown: true,
+        // COMPAT(checkoutBaseRefSet): added in v0.8.0, remove gate after 2027-03-10.
+        checkoutBaseRefSet: true,
         providersSnapshot: true,
         // COMPAT(providersSnapshotCwd): added in v0.3.2, remove gate after 2027-02-10.
         providersSnapshotCwd: true,

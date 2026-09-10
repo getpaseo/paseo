@@ -8,6 +8,7 @@ import {
   type CheckoutDiffSubscriber,
   CheckoutSession,
   type CheckoutSessionHost,
+  type CheckoutSessionOptions,
 } from "./checkout-session.js";
 import type { GitMutationService } from "../git-mutation/git-mutation-service.js";
 import { createGitHubService } from "../../../services/github-service.js";
@@ -110,6 +111,7 @@ function makeCheckoutSession(options?: {
   host?: Partial<CheckoutSessionHost>;
   gitMutation?: Partial<GitMutationFake>;
   gitMetadataGenerator?: Partial<GitMetadataGenerator>;
+  setCheckoutBaseRef?: CheckoutSessionOptions["setCheckoutBaseRef"];
 }) {
   const emitted: SessionOutboundMessage[] = [];
   const hostCalls: RecordedHostCalls = {
@@ -172,6 +174,7 @@ function makeCheckoutSession(options?: {
     paseoHome: "/tmp/paseo-home",
     worktreesRoot: undefined,
     logger: pino({ level: "silent" }),
+    ...(options?.setCheckoutBaseRef ? { setCheckoutBaseRef: options.setCheckoutBaseRef } : {}),
   });
   return { checkout, emitted, hostCalls, gitMutationCalls, generatorCalls };
 }
@@ -780,6 +783,107 @@ describe("CheckoutSession", () => {
             currentBranch: "feature-renamed",
             error: null,
             requestId: "rn2",
+          },
+        },
+      ]);
+    });
+  });
+
+  describe("set base ref", () => {
+    it("persists the base, refreshes git state, and confirms the base in effect", async () => {
+      const { subscriber, refreshedCwds } = createFakeDiffSubscriber({
+        cwd: "",
+        files: [],
+        error: null,
+      });
+      const setCalls: Array<{ cwd: string; baseRef: string }> = [];
+      const { checkout, emitted, hostCalls, gitMutationCalls } = makeCheckoutSession({
+        diff: subscriber,
+        setCheckoutBaseRef: async (cwd, baseRef) => {
+          setCalls.push({ cwd, baseRef });
+          return { baseRef: "develop", isPaseoOwnedWorktree: false };
+        },
+      });
+
+      await checkout.handleCheckoutBaseRefSetRequest({
+        type: "checkout.base_ref.set.request",
+        cwd: "/repo",
+        baseRef: "origin/develop",
+        requestId: "b1",
+      });
+
+      expect(setCalls).toEqual([{ cwd: "/repo", baseRef: "origin/develop" }]);
+      expect(gitMutationCalls.notifyGitMutation).toEqual([
+        { cwd: "/repo", reason: "set-base-ref", options: undefined },
+      ]);
+      expect(refreshedCwds).toEqual(["/repo"]);
+      expect(hostCalls.emitWorkspaceUpdateForCwd).toEqual(["/repo"]);
+      expect(emitted).toEqual([
+        {
+          type: "checkout.base_ref.set.response",
+          payload: {
+            cwd: "/repo",
+            success: true,
+            baseRef: "develop",
+            error: null,
+            requestId: "b1",
+          },
+        },
+      ]);
+    });
+
+    it("rejects an unsafe ref before touching the checkout", async () => {
+      const setCalls: Array<{ cwd: string; baseRef: string }> = [];
+      const { checkout, emitted, gitMutationCalls } = makeCheckoutSession({
+        setCheckoutBaseRef: async (cwd, baseRef) => {
+          setCalls.push({ cwd, baseRef });
+          return { baseRef, isPaseoOwnedWorktree: false };
+        },
+      });
+
+      await checkout.handleCheckoutBaseRefSetRequest({
+        type: "checkout.base_ref.set.request",
+        cwd: "/repo",
+        baseRef: "--upload-pack=evil",
+        requestId: "b2",
+      });
+
+      expect(setCalls).toEqual([]);
+      expect(gitMutationCalls.notifyGitMutation).toEqual([]);
+      expect(emitted).toHaveLength(1);
+      expect(emitted[0]).toMatchObject({
+        type: "checkout.base_ref.set.response",
+        payload: { cwd: "/repo", success: false, baseRef: null, requestId: "b2" },
+      });
+    });
+
+    it("emits an error response when persisting fails", async () => {
+      const { checkout, emitted, hostCalls } = makeCheckoutSession({
+        setCheckoutBaseRef: async () => {
+          throw new Error("Base branch not found locally or on origin: ghost");
+        },
+      });
+
+      await checkout.handleCheckoutBaseRefSetRequest({
+        type: "checkout.base_ref.set.request",
+        cwd: "/repo",
+        baseRef: "ghost",
+        requestId: "b3",
+      });
+
+      expect(hostCalls.emitWorkspaceUpdateForCwd).toEqual([]);
+      expect(emitted).toEqual([
+        {
+          type: "checkout.base_ref.set.response",
+          payload: {
+            cwd: "/repo",
+            success: false,
+            baseRef: null,
+            error: {
+              code: "UNKNOWN",
+              message: "Base branch not found locally or on origin: ghost",
+            },
+            requestId: "b3",
           },
         },
       ]);

@@ -725,6 +725,19 @@ export const en = {
         workspacePathCopiedLabel: "Workspace path",
         branchNameCopiedLabel: "Branch name",
       },
+      branches: {
+        current: "Current branch: {{branchName}}. Press for branch actions.",
+        base: "Compared with {{branchName}}. Press to change the base branch.",
+        setBase: "Set base branch",
+        baseTitle: "Compare with",
+        baseUnavailable: "Update the host to change the base branch",
+        baseFailed: "Failed to change base branch",
+        rename: "Rename branch…",
+        renameTitle: "Rename branch",
+        renameSubmit: "Rename",
+        renameFailed: "Invalid branch name",
+        switch: "Switch branch…",
+      },
     },
     scripts: {
       rootPackage: "Root",
@@ -2818,8 +2831,8 @@ export const en = {
   },
 } as const;
 
-type WidenStringLeaves<T> = {
-  [K in keyof T]: T[K] extends string ? string : WidenStringLeaves<T[K]>;
+type OptionalStringLeaves<T> = {
+  [K in keyof T]?: T[K] extends string ? string : OptionalStringLeaves<T[K]>;
 };
 
-export type TranslationResources = WidenStringLeaves<typeof en>;
+export type TranslationResources = OptionalStringLeaves<typeof en>;

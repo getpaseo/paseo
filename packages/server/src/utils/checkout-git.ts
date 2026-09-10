@@ -40,8 +40,10 @@ import {
   branchNameFromRef,
   getPaseoWorktreeChangeRequestHintForBranch,
   type PaseoWorktreeMetadata,
+  normalizeBaseRefName,
   readPaseoWorktreeMetadata,
   rebindPaseoWorktreeChangeRequestHint,
+  writePaseoWorktreeBaseRef,
 } from "./worktree-metadata.js";
 const READ_ONLY_GIT_ENV = {
   GIT_OPTIONAL_LOCKS: "0",
@@ -65,6 +67,7 @@ export type GitMutationRefreshReason =
   | "create-pr"
   | "switch-branch"
   | "rename-branch"
+  | "set-base-ref"
   | "create-branch"
   | "stash-push"
   | "stash-pop"
@@ -1152,6 +1155,47 @@ export async function renameCurrentBranch(
   return { previousBranch, currentBranch };
 }
 
+/**
+ * Change what a checkout is compared with. A Paseo-owned worktree keeps its base in worktree.json,
+ * so the write goes there; any other checkout writes the repository's git config, which
+ * `resolveRepositoryDefaultBranch` reads first. Returns the display name now in effect.
+ */
+export async function setCheckoutBaseRef(
+  cwd: string,
+  requestedBaseRef: string,
+  context?: CheckoutContext,
+): Promise<{ baseRef: string; isPaseoOwnedWorktree: boolean }> {
+  const facts = await getCheckoutSnapshotFacts(cwd, context);
+  if (!facts.isGit) {
+    throw new NotGitRepoError(cwd);
+  }
+  const baseRefName = normalizeBaseRefName(requestedBaseRef);
+  if (baseRefName === "HEAD") {
+    throw new Error("Base branch cannot be HEAD");
+  }
+  if (facts.currentBranch && baseRefName === facts.currentBranch) {
+    throw new Error(`Base branch cannot be the current branch: ${baseRefName}`);
+  }
+  const [hasLocal, hasOrigin] = await Promise.all([
+    doesGitRefExist(cwd, `refs/heads/${baseRefName}`, context),
+    doesGitRefExist(cwd, `refs/remotes/origin/${baseRefName}`, context),
+  ]);
+  if (!hasLocal && !hasOrigin) {
+    throw new Error(`Base branch not found locally or on origin: ${baseRefName}`);
+  }
+
+  if (facts.paseoWorktree.isPaseoOwnedWorktree) {
+    writePaseoWorktreeBaseRef(facts.paseoWorktree.worktreeRoot, { baseRefName });
+    return { baseRef: baseRefName, isPaseoOwnedWorktree: true };
+  }
+
+  await getRunGitCommand(context)(["config", PASEO_BASE_BRANCH_CONFIG_KEY, baseRefName], {
+    cwd,
+    logger: context?.logger,
+  });
+  return { baseRef: baseRefName, isPaseoOwnedWorktree: false };
+}
+
 type PaseoWorktreeForCwd =
   | { isPaseoOwnedWorktree: false }
   | { isPaseoOwnedWorktree: true; worktreeRoot: string };
@@ -1467,10 +1511,26 @@ async function abortGitPullConflictState(cwd: string): Promise<void> {
   }
 }
 
+/**
+ * Repository-local git config key naming the branch Paseo treats as the base for plain
+ * checkouts: comparisons, merge-from-base, and the default base for new worktrees. Set from the
+ * workspace header; absent means origin/HEAD decides. It lives in git config rather than the
+ * workspace registry so every workspace on the same repository agrees.
+ */
+export const PASEO_BASE_BRANCH_CONFIG_KEY = "paseo.baseBranch";
+
 export async function resolveRepositoryDefaultBranch(
   repoRoot: string,
   context?: CheckoutContext,
 ): Promise<string | null> {
+  const configuredBaseBranch = await getGitConfigValue(
+    repoRoot,
+    PASEO_BASE_BRANCH_CONFIG_KEY,
+    context,
+  );
+  if (configuredBaseBranch) {
+    return branchNameFromRef(configuredBaseBranch);
+  }
   try {
     const { stdout } = await getRunGitCommand(context)(
       ["symbolic-ref", "--quiet", "refs/remotes/origin/HEAD"],

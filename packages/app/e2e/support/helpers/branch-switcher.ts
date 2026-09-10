@@ -51,9 +51,10 @@ export async function switchBranchFromChangesPanel(
   await expect(picker).not.toBeVisible({ timeout: 30_000 });
 }
 
-// The workspace header title is a plain static title in Model B; the branch
-// switcher must never appear there. Asserting on the header testID keeps this
-// honest even as the switcher continues to exist inside the Changes panel.
-export async function expectNoBranchSwitcherInWorkspaceHeader(page: Page): Promise<void> {
-  await expect(page.getByTestId("workspace-header-branch-switcher")).toHaveCount(0);
+// The header title stays the workspace's own name; the real branch shows beside it in the
+// `<branch> → <base>` pair and follows checkouts made elsewhere, such as from the Changes panel.
+export async function expectWorkspaceHeaderBranch(page: Page, branchName: string): Promise<void> {
+  await expect(
+    page.getByTestId("workspace-header-current-branch").filter({ visible: true }).first(),
+  ).toContainText(branchName, { timeout: 30_000 });
 }

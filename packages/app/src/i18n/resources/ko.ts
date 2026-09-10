@@ -1,7 +1,7 @@
 import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
-export const ko: TranslationResources = {
+export const ko = {
   changeStats: {
     title: "변경 내역",
     code: "코드",
@@ -728,6 +728,19 @@ export const ko: TranslationResources = {
         terminalQueued: "워크스페이스 준비 중, 준비되면 터미널을 엽니다...",
         workspacePathCopiedLabel: "워크스페이스 경로",
         branchNameCopiedLabel: "브랜치 이름",
+      },
+      branches: {
+        current: "현재 브랜치: {{branchName}}. 눌러서 브랜치 작업을 표시합니다.",
+        base: "{{branchName}}와 비교 중. 눌러서 베이스 브랜치를 변경합니다.",
+        setBase: "베이스 브랜치 설정",
+        baseTitle: "비교 대상",
+        baseUnavailable: "베이스 브랜치를 변경하려면 호스트를 업데이트하세요",
+        baseFailed: "베이스 브랜치를 변경하지 못했습니다",
+        rename: "브랜치 이름 변경…",
+        renameTitle: "브랜치 이름 변경",
+        renameSubmit: "변경",
+        renameFailed: "유효하지 않은 브랜치 이름입니다",
+        switch: "브랜치 전환…",
       },
     },
     scripts: {
@@ -2721,4 +2734,4 @@ export const ko: TranslationResources = {
       },
     },
   },
-};
+} satisfies TranslationResources;

@@ -1,7 +1,7 @@
 import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
-export const ja: TranslationResources = {
+export const ja = {
   changeStats: {
     title: "変更の内訳",
     code: "コード",
@@ -730,6 +730,19 @@ export const ja: TranslationResources = {
         terminalQueued: "ワークスペースを準備中、準備ができたらターミナルを開きます...",
         workspacePathCopiedLabel: "ワークスペースパス",
         branchNameCopiedLabel: "ブランチ名",
+      },
+      branches: {
+        current: "現在のブランチ: {{branchName}}。押すとブランチ操作を表示します。",
+        base: "{{branchName}} と比較中。押すとベースブランチを変更します。",
+        setBase: "ベースブランチを設定",
+        baseTitle: "比較対象",
+        baseUnavailable: "ベースブランチを変更するにはホストを更新してください",
+        baseFailed: "ベースブランチを変更できませんでした",
+        rename: "ブランチ名を変更…",
+        renameTitle: "ブランチ名を変更",
+        renameSubmit: "変更",
+        renameFailed: "無効なブランチ名です",
+        switch: "ブランチを切り替え…",
       },
     },
     scripts: {
@@ -2733,4 +2746,4 @@ export const ja: TranslationResources = {
       },
     },
   },
-} as const;
+} as const satisfies TranslationResources;

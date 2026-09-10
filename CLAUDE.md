@@ -4,6 +4,14 @@ Paseo is a mobile app for monitoring and controlling your local AI coding agents
 
 **Supported agents:** Claude Code, Codex, GitHub Copilot, OpenCode, and Pi.
 
+## Prioritize this personal fork
+
+This repository is a long-term personal fork of Paseo for Michael's productivity improvements. Assume changes will stay in this fork and will probably never be merged upstream.
+
+- Optimize for Michael's workflows and long-term maintainability. Do not add scope or abstractions solely to prepare changes for upstream acceptance.
+- English is the only language you need to maintain. For new or changed UI copy, update the English resources using the existing i18n conventions; do not create or update other translations unless explicitly requested. This overrides upstream translation requirements, including those in `docs/i18n.md`.
+- Keep the other engineering and safety rules below unless a fork-specific policy explicitly overrides them.
+
 ## Repository map
 
 This is an npm workspace monorepo:

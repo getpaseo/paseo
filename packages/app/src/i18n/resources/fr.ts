@@ -1,7 +1,7 @@
 import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
-export const fr: TranslationResources = {
+export const fr = {
   changeStats: {
     title: "Détail des modifications",
     code: "Code",
@@ -734,6 +734,19 @@ export const fr: TranslationResources = {
           "Préparation de l'espace de travail, ouverture du terminal lorsque vous êtes prêt...",
         workspacePathCopiedLabel: "CheminWorkspace",
         branchNameCopiedLabel: "Nom de la succursale",
+      },
+      branches: {
+        current: "Branche actuelle : {{branchName}}. Appuyez pour les actions de branche.",
+        base: "Comparé avec {{branchName}}. Appuyez pour changer la branche de base.",
+        setBase: "Définir la branche de base",
+        baseTitle: "Comparer avec",
+        baseUnavailable: "Mettez à jour l’hôte pour changer la branche de base",
+        baseFailed: "Impossible de changer la branche de base",
+        rename: "Renommer la branche…",
+        renameTitle: "Renommer la branche",
+        renameSubmit: "Renommer",
+        renameFailed: "Nom de branche invalide",
+        switch: "Changer de branche…",
       },
     },
     scripts: {
@@ -2773,4 +2786,4 @@ export const fr: TranslationResources = {
       },
     },
   },
-};
+} satisfies TranslationResources;

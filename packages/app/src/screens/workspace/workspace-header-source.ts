@@ -3,7 +3,10 @@ import type { WorkspaceDescriptor } from "@/stores/session-store";
 export type WorkspaceHeaderCheckoutState =
   | { kind: "pending" }
   | { kind: "error" }
-  | { kind: "ready"; checkout: { isGit: boolean; currentBranch: string | null } };
+  | {
+      kind: "ready";
+      checkout: { isGit: boolean; currentBranch: string | null; baseRef: string | null };
+    };
 
 type WorkspaceHeaderRenderState =
   | { kind: "skeleton" }
@@ -19,6 +22,8 @@ type WorkspaceHeaderRenderState =
       isSubtitleDistinct: boolean;
       isGitCheckout: boolean;
       currentBranchName: string | null;
+      /** Display name of the branch the checkout is compared with, when the daemon resolved one. */
+      baseRefName: string | null;
     };
 
 function trimNonEmpty(value: string | null | undefined): string | null {
@@ -65,6 +70,7 @@ export function resolveWorkspaceHeaderRenderState(input: {
     checkout?.isGit && checkout.currentBranch !== "HEAD"
       ? trimNonEmpty(checkout.currentBranch)
       : null;
+  const baseRefName = checkout?.isGit ? trimNonEmpty(checkout.baseRef) : null;
 
   return {
     kind: "ready",
@@ -73,6 +79,7 @@ export function resolveWorkspaceHeaderRenderState(input: {
     isSubtitleDistinct: !areHeaderLabelsEquivalent(header.title, header.subtitle),
     isGitCheckout: checkout?.isGit ?? false,
     currentBranchName,
+    baseRefName,
   };
 }
 

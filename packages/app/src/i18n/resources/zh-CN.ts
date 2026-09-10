@@ -1,7 +1,7 @@
 import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
-export const zhCN: TranslationResources = {
+export const zhCN = {
   changeStats: {
     title: "更改明细",
     code: "代码",
@@ -723,6 +723,19 @@ export const zhCN: TranslationResources = {
         terminalQueued: "正在准备 workspace，Terminal 准备好后会打开...",
         workspacePathCopiedLabel: "Workspace 路径",
         branchNameCopiedLabel: "分支名称",
+      },
+      branches: {
+        current: "当前分支：{{branchName}}。按下查看分支操作。",
+        base: "与 {{branchName}} 比较。按下更改基础分支。",
+        setBase: "设置基础分支",
+        baseTitle: "比较对象",
+        baseUnavailable: "请更新主机以更改基础分支",
+        baseFailed: "更改基础分支失败",
+        rename: "重命名分支…",
+        renameTitle: "重命名分支",
+        renameSubmit: "重命名",
+        renameFailed: "分支名称无效",
+        switch: "切换分支…",
       },
     },
     scripts: {
@@ -2673,4 +2686,4 @@ export const zhCN: TranslationResources = {
       },
     },
   },
-};
+} satisfies TranslationResources;

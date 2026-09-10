@@ -1,7 +1,7 @@
 import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
-export const ptBR: TranslationResources = {
+export const ptBR = {
   changeStats: {
     title: "Detalhamento das alterações",
     code: "Código",
@@ -731,6 +731,19 @@ export const ptBR: TranslationResources = {
         terminalQueued: "Preparando workspace, abrindo terminal quando estiver pronto...",
         workspacePathCopiedLabel: "Caminho do workspace",
         branchNameCopiedLabel: "Nome da branch",
+      },
+      branches: {
+        current: "Branch atual: {{branchName}}. Toque para ações da branch.",
+        base: "Comparado com {{branchName}}. Toque para alterar a branch base.",
+        setBase: "Definir branch base",
+        baseTitle: "Comparar com",
+        baseUnavailable: "Atualize o host para alterar a branch base",
+        baseFailed: "Falha ao alterar a branch base",
+        rename: "Renomear branch…",
+        renameTitle: "Renomear branch",
+        renameSubmit: "Renomear",
+        renameFailed: "Nome de branch inválido",
+        switch: "Trocar de branch…",
       },
     },
     scripts: {
@@ -2748,4 +2761,4 @@ export const ptBR: TranslationResources = {
       },
     },
   },
-};
+} satisfies TranslationResources;

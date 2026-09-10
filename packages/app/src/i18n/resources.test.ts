@@ -1,6 +1,8 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import { describe, expect, it } from "vitest";
+import { i18n } from "./i18next";
+import type { TranslationResources } from "./resources/en";
 import { ar } from "./resources/ar";
 import { en } from "./resources/en";
 import { es } from "./resources/es";
@@ -35,22 +37,15 @@ function flattenStrings(value: unknown, prefix = ""): Record<string, string> {
   );
 }
 
-function countMatchingEnglishStrings(resource: unknown): number {
-  const englishStrings = flattenStrings(en);
-  const localeStrings = flattenStrings(resource);
-  return Object.entries(englishStrings).filter(([key, value]) => localeStrings[key] === value)
-    .length;
-}
-
 function findInterpolationMismatches(resource: unknown): string[] {
   const interpolationPattern = /\{\{[^}]+\}\}/g;
   const englishStrings = flattenStrings(en);
   const localeStrings = flattenStrings(resource);
-  return Object.entries(englishStrings).flatMap(([key, value]) => {
-    const expected = [...value.matchAll(interpolationPattern)].map((match) => match[0]).sort();
-    const actual = [...(localeStrings[key] ?? "").matchAll(interpolationPattern)]
+  return Object.entries(localeStrings).flatMap(([key, value]) => {
+    const expected = [...(englishStrings[key] ?? "").matchAll(interpolationPattern)]
       .map((match) => match[0])
       .sort();
+    const actual = [...value.matchAll(interpolationPattern)].map((match) => match[0]).sort();
     return expected.join("|") === actual.join("|")
       ? []
       : [`${key}: ${expected.join(", ")} -> ${actual.join(", ")}`];
@@ -104,39 +99,29 @@ function findUntranslatedConnectionErrors(): string[] {
 }
 
 describe("translation resources", () => {
-  it("keeps all supported language keys in sync with English", () => {
-    const englishKeys = flattenKeys(en).sort();
-    expect(flattenKeys(ar).sort()).toEqual(englishKeys);
-    expect(flattenKeys(es).sort()).toEqual(englishKeys);
-    expect(flattenKeys(fr).sort()).toEqual(englishKeys);
-    expect(flattenKeys(ja).sort()).toEqual(englishKeys);
-    expect(flattenKeys(ko).sort()).toEqual(englishKeys);
-    expect(flattenKeys(ptBR).sort()).toEqual(englishKeys);
-    expect(flattenKeys(ru).sort()).toEqual(englishKeys);
-    expect(flattenKeys(zhCN).sort()).toEqual(englishKeys);
-  });
-
-  it("keeps non-English supported languages translated beyond fallback labels", () => {
-    const totalStrings = Object.keys(flattenStrings(en)).length;
-    const maxFallbackStrings = Math.floor(totalStrings * 0.25);
-    expect(countMatchingEnglishStrings(ar)).toBeLessThan(maxFallbackStrings);
-    expect(countMatchingEnglishStrings(es)).toBeLessThan(maxFallbackStrings);
-    expect(countMatchingEnglishStrings(fr)).toBeLessThan(maxFallbackStrings);
-    expect(countMatchingEnglishStrings(ja)).toBeLessThan(maxFallbackStrings);
-    expect(countMatchingEnglishStrings(ko)).toBeLessThan(maxFallbackStrings);
-    expect(countMatchingEnglishStrings(ptBR)).toBeLessThan(maxFallbackStrings);
-    expect(countMatchingEnglishStrings(ru)).toBeLessThan(maxFallbackStrings);
-    expect(countMatchingEnglishStrings(zhCN)).toBeLessThan(maxFallbackStrings);
-  });
-
-  it("localizes the pull request empty state in every supported language", () => {
+  it("requires English source keys for existing translations", () => {
+    const englishKeys = new Set(flattenKeys(en));
     for (const resource of [ar, es, fr, ja, ko, ptBR, ru, zhCN]) {
-      expect(resource.panels.pullRequest.emptyTitle).not.toBe(en.panels.pullRequest.emptyTitle);
-      expect(resource.panels.pullRequest.emptyDescription).not.toBe(
-        en.panels.pullRequest.emptyDescription,
-      );
+      expect(flattenKeys(resource).filter((key) => !englishKeys.has(key))).toEqual([]);
     }
   });
+
+  it.each(["ar", "es", "fr", "ja", "ko", "pt-BR", "ru", "zh-CN"])(
+    "falls back to English for missing nested keys and sections in %s",
+    async (locale) => {
+      const instance = i18n.cloneInstance({ forkResourceStore: true });
+      const partialResource = {
+        common: { actions: { cancel: "Localized cancel" } },
+      } satisfies TranslationResources;
+      instance.removeResourceBundle(locale, "translation");
+      instance.addResourceBundle(locale, "translation", partialResource);
+      await instance.changeLanguage(locale);
+
+      expect(instance.t("common.actions.cancel")).toBe("Localized cancel");
+      expect(instance.t("common.actions.back")).toBe(en.common.actions.back);
+      expect(instance.t("modelSelector.modelCountPlural", { count: 3 })).toBe("3 models");
+    },
+  );
 
   it("preserves interpolation placeholders in every language", () => {
     expect(findInterpolationMismatches(ar)).toEqual([]);

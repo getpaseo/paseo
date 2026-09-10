@@ -1,8 +1,8 @@
 import { expect, test, type Page } from "../support/fixtures";
 import { gotoAppShell } from "../support/helpers/app";
 import {
-  expectNoBranchSwitcherInWorkspaceHeader,
   expectWorkspaceBranch,
+  expectWorkspaceHeaderBranch,
   openChangesPanel,
   switchBranchFromChangesPanel,
 } from "../support/helpers/branch-switcher";
@@ -69,14 +69,14 @@ test.describe("Branch switcher", () => {
         title: customTitle,
       });
 
-      // The header shows the custom title verbatim (a plain static title), never a
-      // branch name, and the branch switcher does not live in the header.
+      // The header title shows the custom title verbatim; the real branch ("main") is a
+      // separate control beside it, so a title is never mistaken for a branch.
       const headerTitle = page
         .getByTestId("workspace-header-title")
         .filter({ visible: true })
         .first();
       await expect(headerTitle).toHaveText(customTitle, { timeout: 30_000 });
-      await expectNoBranchSwitcherInWorkspaceHeader(page);
+      await expectWorkspaceHeaderBranch(page, "main");
 
       // The diff panel's switcher tracks the real branch ("main"), not the title,
       // and switching it checks out the real branch on disk.
@@ -84,6 +84,7 @@ test.describe("Branch switcher", () => {
       await expectWorkspaceBranch(page, "main");
       await switchBranchFromChangesPanel(page, { from: "main", to: "dev" });
       await expectWorkspaceBranch(page, "dev");
+      await expectWorkspaceHeaderBranch(page, "dev");
 
       // The custom title is unaffected by the branch switch.
       await expect(headerTitle).toHaveText(customTitle, { timeout: 30_000 });

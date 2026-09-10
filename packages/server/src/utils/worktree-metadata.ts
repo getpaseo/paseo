@@ -235,6 +235,29 @@ export function writePaseoWorktreeMetadata(
   writePaseoWorktreeMetadataFile(worktreeRoot, metadata);
 }
 
+/**
+ * Re-point an existing worktree at a different base. Only the base fields change; the change
+ * request hint, runtime port, and auto-name state survive. The exact `baseRef` is dropped so the
+ * new name resolves through the same local-vs-origin heuristic a plain checkout uses.
+ */
+export function writePaseoWorktreeBaseRef(
+  worktreeRoot: string,
+  options: { baseRefName: string },
+): PaseoWorktreeMetadata {
+  const metadata = readPaseoWorktreeMetadata(worktreeRoot);
+  if (!metadata) {
+    throw new Error(
+      `Missing Paseo worktree base metadata: ${getPaseoWorktreeMetadataPath(worktreeRoot)}`,
+    );
+  }
+  const baseRefName = normalizeBaseRefName(options.baseRefName);
+  assertValidBaseRef(baseRefName);
+  const { baseRef: _previousBaseRef, ...rest } = metadata;
+  const next: PaseoWorktreeMetadata = { ...rest, baseRefName };
+  writePaseoWorktreeMetadataFile(worktreeRoot, next);
+  return next;
+}
+
 export function writePaseoWorktreeRuntimeMetadata(
   worktreeRoot: string,
   options: { worktreePort: number },

@@ -2317,6 +2317,18 @@ export const CheckoutRenameBranchRequestSchema = z.object({
   requestId: z.string(),
 });
 
+/**
+ * Change the branch a checkout is compared with. Paseo-owned worktrees persist it in
+ * worktree.json; plain checkouts persist it in the repository's git config, where every
+ * comparison against that repository reads it.
+ */
+export const CheckoutBaseRefSetRequestSchema = z.object({
+  type: z.literal("checkout.base_ref.set.request"),
+  cwd: z.string(),
+  baseRef: z.string(),
+  requestId: z.string(),
+});
+
 export const StashSaveRequestSchema = z.object({
   type: z.literal("stash_save_request"),
   cwd: z.string(),
@@ -3200,6 +3212,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   PullRequestTimelineRequestSchema,
   CheckoutSwitchBranchRequestSchema,
   CheckoutRenameBranchRequestSchema,
+  CheckoutBaseRefSetRequestSchema,
   StashSaveRequestSchema,
   StashPopRequestSchema,
   StashListRequestSchema,
@@ -3464,6 +3477,8 @@ export const ServerInfoStatusPayloadSchema = z
         workspaceTerminals: z.boolean().optional(),
         // COMPAT(packageJsonScripts): added in v0.8.0, remove gate after 2027-03-10.
         packageJsonScripts: z.boolean().optional(),
+        // COMPAT(checkoutBaseRefSet): added in v0.8.0, remove gate after 2027-03-10.
+        checkoutBaseRefSet: z.boolean().optional(),
         // COMPAT(checkoutForgeSetAutoMerge): added in v0.2.0-beta.1. Remove the
         // feature gate and checkoutGithubSetAutoMerge fallback after 2027-01-17
         // once the supported daemon floor is >= v0.2.0.
@@ -5569,6 +5584,18 @@ export const CheckoutRenameBranchResponseSchema = z.object({
   }),
 });
 
+export const CheckoutBaseRefSetResponseSchema = z.object({
+  type: z.literal("checkout.base_ref.set.response"),
+  payload: z.object({
+    requestId: z.string(),
+    success: z.boolean(),
+    cwd: z.string(),
+    /** Display name of the base now in effect, null when the request failed. */
+    baseRef: z.string().nullable(),
+    error: CheckoutErrorSchema.nullable(),
+  }),
+});
+
 const StashEntrySchema = z.object({
   index: z.number().int().min(0),
   message: z.string(),
@@ -6619,6 +6646,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   PullRequestTimelineResponseSchema,
   CheckoutSwitchBranchResponseSchema,
   CheckoutRenameBranchResponseSchema,
+  CheckoutBaseRefSetResponseSchema,
   StashSaveResponseSchema,
   StashPopResponseSchema,
   StashListResponseSchema,
@@ -7017,6 +7045,8 @@ export type CheckoutSwitchBranchRequest = z.infer<typeof CheckoutSwitchBranchReq
 export type CheckoutSwitchBranchResponse = z.infer<typeof CheckoutSwitchBranchResponseSchema>;
 export type CheckoutRenameBranchRequest = z.infer<typeof CheckoutRenameBranchRequestSchema>;
 export type CheckoutRenameBranchResponse = z.infer<typeof CheckoutRenameBranchResponseSchema>;
+export type CheckoutBaseRefSetRequest = z.infer<typeof CheckoutBaseRefSetRequestSchema>;
+export type CheckoutBaseRefSetResponse = z.infer<typeof CheckoutBaseRefSetResponseSchema>;
 export type StashSaveRequest = z.infer<typeof StashSaveRequestSchema>;
 export type StashSaveResponse = z.infer<typeof StashSaveResponseSchema>;
 export type StashPopRequest = z.infer<typeof StashPopRequestSchema>;

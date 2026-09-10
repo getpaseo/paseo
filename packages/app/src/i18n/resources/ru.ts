@@ -1,7 +1,7 @@
 import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
-export const ru: TranslationResources = {
+export const ru = {
   changeStats: {
     title: "Состав изменений",
     code: "Код",
@@ -734,6 +734,19 @@ export const ru: TranslationResources = {
           "Рабочее пространство подготавливается. Терминал откроется, когда оно будет готово...",
         workspacePathCopiedLabel: "Путь к рабочему пространству",
         branchNameCopiedLabel: "Имя ветки",
+      },
+      branches: {
+        current: "Текущая ветка: {{branchName}}. Нажмите для действий с веткой.",
+        base: "Сравнение с {{branchName}}. Нажмите, чтобы изменить базовую ветку.",
+        setBase: "Задать базовую ветку",
+        baseTitle: "Сравнить с",
+        baseUnavailable: "Обновите хост, чтобы изменить базовую ветку",
+        baseFailed: "Не удалось изменить базовую ветку",
+        rename: "Переименовать ветку…",
+        renameTitle: "Переименовать ветку",
+        renameSubmit: "Переименовать",
+        renameFailed: "Недопустимое имя ветки",
+        switch: "Переключить ветку…",
       },
     },
     scripts: {
@@ -2757,4 +2770,4 @@ export const ru: TranslationResources = {
       },
     },
   },
-};
+} satisfies TranslationResources;

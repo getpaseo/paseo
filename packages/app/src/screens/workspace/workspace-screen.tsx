@@ -197,6 +197,7 @@ import {
   WorkspaceHeaderMenuDesktop,
   WorkspaceHeaderMenuMobile,
 } from "@/screens/workspace/workspace-header-menu";
+import { WorkspaceHeaderBranches } from "@/screens/workspace/workspace-header-branches";
 import {
   createWorkspaceFileTabTarget,
   normalizeWorkspaceFileLocation,
@@ -906,25 +907,46 @@ function useCloseTabs(): UseCloseTabsResult {
 }
 
 /**
- * Which project the workspace belongs to, and which machine it runs on.
+ * What sits beside the workspace name: on wide, the branch pair for a git checkout; otherwise the
+ * project and host.
  *
- * Compact gets both, on their own line under the workspace name: this header is the only thing on
- * screen that says where the workspace lives, because the sidebar that normally carries the host
- * badge is closed. It still follows the host's own badge setting, so a purely local setup stays
- * quiet. A project name that only repeats the workspace name is dropped on wide, where the two sit
- * side by side, and kept on compact, where the line exists for the host anyway.
+ * Wide git checkouts show `<current branch> → <base branch>` in place of the project name. The
+ * sidebar already groups workspaces by project, so the name repeats what is on screen, while the
+ * branch pair is the one fact about the checkout the header could not otherwise show.
+ *
+ * Compact gets project and host, on their own line under the workspace name: this header is the
+ * only thing on screen that says where the workspace lives, because the sidebar that normally
+ * carries the host badge is closed. It still follows the host's own badge setting, so a purely
+ * local setup stays quiet. A project name that only repeats the workspace name is dropped on wide,
+ * where the two sit side by side, and kept on compact, where the line exists for the host anyway.
  */
 function WorkspaceHeaderProjectRow({
   subtitle,
   isSubtitleDistinct,
   serverId,
+  branches,
 }: {
   subtitle: string;
   isSubtitleDistinct: boolean;
   serverId: string;
+  branches: WorkspaceHeaderBranchesModel | null;
 }) {
   const isCompact = useIsCompactFormFactor();
   const hostBadge = useHostBadges({ enabled: isCompact }).get(serverId) ?? null;
+  if (!isCompact && branches) {
+    return (
+      <View style={styles.headerProjectRow}>
+        <WorkspaceHeaderBranches
+          serverId={serverId}
+          workspaceId={branches.workspaceId}
+          workspaceDirectory={branches.workspaceDirectory}
+          currentBranchName={branches.currentBranchName}
+          baseRefName={branches.baseRefName}
+          onCopyBranchName={branches.onCopyBranchName}
+        />
+      </View>
+    );
+  }
   const showProject = isSubtitleDistinct || isCompact;
   if (!showProject && !hostBadge) {
     return null;
@@ -946,12 +968,23 @@ function WorkspaceHeaderProjectRow({
   );
 }
 
+/** The branch pair the wide header shows for a git checkout. Null when there is no branch. */
+interface WorkspaceHeaderBranchesModel {
+  workspaceId: string;
+  workspaceDirectory: string | null;
+  currentBranchName: string;
+  baseRefName: string | null;
+  onCopyBranchName: () => void;
+}
+
 interface WorkspaceHeaderTitleBarProps {
   isLoading: boolean;
   title: string;
   subtitle: string;
   isSubtitleDistinct: boolean;
   currentBranchName: string | null;
+  baseRefName: string | null;
+  workspaceDirectory: string | null;
   normalizedServerId: string;
   normalizedWorkspaceId: string;
   workspaceScripts: WorkspaceDescriptor["scripts"];
@@ -981,6 +1014,8 @@ function WorkspaceHeaderTitleBar({
   subtitle,
   isSubtitleDistinct,
   currentBranchName,
+  baseRefName,
+  workspaceDirectory,
   normalizedServerId,
   normalizedWorkspaceId,
   workspaceScripts,
@@ -1003,6 +1038,19 @@ function WorkspaceHeaderTitleBar({
   onViewScriptTerminal,
   onOpenUrlInBrowserTab,
 }: WorkspaceHeaderTitleBarProps) {
+  const branches = useMemo<WorkspaceHeaderBranchesModel | null>(
+    () =>
+      currentBranchName
+        ? {
+            workspaceId: normalizedWorkspaceId,
+            workspaceDirectory,
+            currentBranchName,
+            baseRefName,
+            onCopyBranchName,
+          }
+        : null,
+    [baseRefName, currentBranchName, normalizedWorkspaceId, onCopyBranchName, workspaceDirectory],
+  );
   return (
     <View style={styles.headerTitleContainer}>
       {isLoading ? (
@@ -1016,6 +1064,7 @@ function WorkspaceHeaderTitleBar({
             subtitle={subtitle}
             isSubtitleDistinct={isSubtitleDistinct}
             serverId={normalizedServerId}
+            branches={branches}
           />
         </View>
       )}
@@ -1162,6 +1211,7 @@ interface WorkspaceHeaderFields {
   isWorkspaceHeaderSubtitleDistinct: boolean;
   isGitCheckout: boolean;
   currentBranchName: string | null;
+  baseRefName: string | null;
 }
 
 function buildWorkspaceHeaderCheckoutState(input: {
@@ -1180,6 +1230,7 @@ function buildWorkspaceHeaderCheckoutState(input: {
     checkout: {
       isGit: input.data.isGit,
       currentBranch: input.data.currentBranch,
+      baseRef: input.data.baseRef,
     },
   };
 }
@@ -1197,6 +1248,7 @@ function deriveWorkspaceHeaderFields(input: {
       isWorkspaceHeaderSubtitleDistinct: false,
       isGitCheckout: false,
       currentBranchName: null,
+      baseRefName: null,
     };
   }
   return {
@@ -1206,6 +1258,7 @@ function deriveWorkspaceHeaderFields(input: {
     isWorkspaceHeaderSubtitleDistinct: renderState.isSubtitleDistinct,
     isGitCheckout: renderState.isGitCheckout,
     currentBranchName: renderState.currentBranchName,
+    baseRefName: renderState.baseRefName,
   };
 }
 
@@ -1761,6 +1814,7 @@ function WorkspaceScreenContent({
     isWorkspaceHeaderSubtitleDistinct,
     isGitCheckout,
     currentBranchName,
+    baseRefName,
   } = deriveWorkspaceHeaderFields({
     workspace: workspaceDescriptor,
     checkoutState: workspaceHeaderCheckoutState,
@@ -3889,6 +3943,8 @@ function WorkspaceScreenContent({
                 subtitle={workspaceHeaderSubtitle}
                 isSubtitleDistinct={isWorkspaceHeaderSubtitleDistinct}
                 currentBranchName={currentBranchName}
+                baseRefName={baseRefName}
+                workspaceDirectory={workspaceDirectory}
                 normalizedServerId={normalizedServerId}
                 normalizedWorkspaceId={normalizedWorkspaceId}
                 workspaceScripts={workspaceScripts}
@@ -3917,6 +3973,7 @@ function WorkspaceScreenContent({
         />
       ) : null,
     [
+      baseRefName,
       canOpenImportSheet,
       createTerminalDisabled,
       currentBranchName,

@@ -43,6 +43,7 @@ import {
   resolveRepositoryDefaultBranch,
   parseWorktreeList,
   renameCurrentBranch,
+  setCheckoutBaseRef,
   isPaseoWorktreePath,
   isDescendantPath,
   warmCheckoutShortstatInBackground,
@@ -3649,6 +3650,83 @@ const x = 1;
     });
 
     await expect(resolveRepositoryDefaultBranch(repoDir)).resolves.toBe("main");
+  });
+
+  it("prefers the paseo.baseBranch git config over origin HEAD", async () => {
+    execFileSync("git", ["checkout", "-b", "develop"], { cwd: repoDir });
+    execFileSync("git", ["checkout", "main"], { cwd: repoDir });
+    execFileSync("git", ["remote", "add", "origin", "https://github.com/acme/repo.git"], {
+      cwd: repoDir,
+    });
+    execFileSync("git", ["update-ref", "refs/remotes/origin/main", "refs/heads/main"], {
+      cwd: repoDir,
+    });
+    execFileSync("git", ["symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main"], {
+      cwd: repoDir,
+    });
+    execFileSync("git", ["config", "paseo.baseBranch", "develop"], { cwd: repoDir });
+
+    await expect(resolveRepositoryDefaultBranch(repoDir)).resolves.toBe("develop");
+  });
+
+  it("setCheckoutBaseRef persists the base for a plain checkout in git config", async () => {
+    execFileSync("git", ["checkout", "-b", "develop"], { cwd: repoDir });
+    commitFile(repoDir, "develop.txt", "develop\n", "develop commit");
+    execFileSync("git", ["checkout", "-b", "feature"], { cwd: repoDir });
+
+    await expect(setCheckoutBaseRef(repoDir, "develop")).resolves.toEqual({
+      baseRef: "develop",
+      isPaseoOwnedWorktree: false,
+    });
+    expect(
+      execFileSync("git", ["config", "--get", "paseo.baseBranch"], { cwd: repoDir })
+        .toString()
+        .trim(),
+    ).toBe("develop");
+    const status = await getCheckoutStatus(repoDir);
+    expect(status).toMatchObject({ isGit: true, baseRef: "develop" });
+  });
+
+  it("setCheckoutBaseRef rejects a branch that exists neither locally nor on origin", async () => {
+    await expect(setCheckoutBaseRef(repoDir, "ghost")).rejects.toThrow(
+      "Base branch not found locally or on origin: ghost",
+    );
+    expect(spawnSync("git", ["config", "--get", "paseo.baseBranch"], { cwd: repoDir }).status).toBe(
+      1,
+    );
+  });
+
+  it("setCheckoutBaseRef rejects the current branch as its own base", async () => {
+    await expect(setCheckoutBaseRef(repoDir, "main")).rejects.toThrow(
+      "Base branch cannot be the current branch: main",
+    );
+  });
+
+  it("setCheckoutBaseRef rewrites worktree.json for a Paseo worktree", async () => {
+    setupRemoteTrackingMain(repoDir, tempDir);
+    execFileSync("git", ["checkout", "-b", "develop"], { cwd: repoDir });
+    commitFile(repoDir, "develop.txt", "develop\n", "develop commit");
+    execFileSync("git", ["checkout", "main"], { cwd: repoDir });
+    const worktree = await createLegacyWorktreeForTest({
+      branchName: "feature",
+      cwd: repoDir,
+      baseBranch: "main",
+      worktreeSlug: "feature",
+      paseoHome,
+    });
+
+    await expect(
+      setCheckoutBaseRef(worktree.worktreePath, "develop", { paseoHome }),
+    ).resolves.toEqual({ baseRef: "develop", isPaseoOwnedWorktree: true });
+    const metadata = readPaseoWorktreeMetadata(worktree.worktreePath);
+    expect(metadata).toMatchObject({ baseRefName: "develop" });
+    expect(metadata?.baseRef).toBeUndefined();
+    const status = await getCheckoutStatus(worktree.worktreePath, { paseoHome });
+    expect(status).toMatchObject({ isGit: true, isPaseoOwnedWorktree: true, baseRef: "develop" });
+    // The worktree carries its own base; the shared repository config stays untouched.
+    expect(spawnSync("git", ["config", "--get", "paseo.baseBranch"], { cwd: repoDir }).status).toBe(
+      1,
+    );
   });
 
   it("merges to stored baseRefName when baseRef is not provided", async () => {

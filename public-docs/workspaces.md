@@ -61,6 +61,14 @@ Either way, once the workspace exists you can add more sessions to it. Open a te
 
 Creating an agent and creating a workspace are separate actions. Pass a workspace ID when you want an agent in a specific existing workspace. A bare `paseo run` from a human shell creates a new local workspace; when one agent runs it, Paseo recognizes the caller and creates a subagent in the caller's workspace.
 
+## Branch and base branch
+
+For a git checkout, the workspace header shows `<branch> → <base>` beside the workspace name.
+
+The left side is the branch the workspace is on. Press it to rename the branch, switch to another one, or copy its name.
+
+The right side is the base branch: the one Changes compares against and Update-from-base pulls from. Press it to pick a different branch. A worktree workspace keeps its own base, chosen when you created it. A local workspace stores the base in the repository's git config as `paseo.baseBranch`, so every local workspace on that checkout shares it. Until you set one, Paseo uses the branch `origin/HEAD` points at, then a local `main` or `master`.
+
 ## Worktrees
 
 Every workspace in Paseo is backed by a working directory. When that directory is a git worktree, you get a separate branch and isolated environment for each task.
