@@ -9622,3 +9622,74 @@ test("workspace.create.request reports an archived explicit project", async () =
     errorCode: "archived_project",
   });
 });
+
+test("workspace.create.request with chat source creates a chat workspace in a random directory", async () => {
+  const emitted: SessionOutboundMessage[] = [];
+  const workspaces = new Map<string, ReturnType<typeof createPersistedWorkspaceRecord>>();
+  const projects = new Map<string, ReturnType<typeof createPersistedProjectRecord>>();
+  const session = createSessionForWorkspaceTests({
+    onMessage: (message) => emitted.push(message),
+    projectRegistry: {
+      initialize: async () => {},
+      existsOnDisk: async () => true,
+      list: async () => Array.from(projects.values()),
+      get: async (id) => projects.get(id) ?? null,
+      getOrCreateActiveByRoot: async (allocation) => {
+        const existing = Array.from(projects.values()).find(
+          (p) => !p.archivedAt && p.rootPath === allocation.rootPath,
+        );
+        if (existing) return existing;
+        const project = createPersistedProjectRecord({
+          projectId: "prj_chats",
+          rootPath: allocation.rootPath,
+          kind: allocation.kind,
+          displayName: allocation.displayName,
+          projectKey: allocation.projectKey,
+          createdAt: allocation.timestamp,
+          updatedAt: allocation.timestamp,
+        });
+        projects.set(project.projectId, project);
+        return project;
+      },
+      upsert: async (record) => {
+        projects.set(record.projectId, record);
+      },
+      archive: async () => {},
+      remove: async () => {},
+    },
+    workspaceRegistry: {
+      initialize: async () => {},
+      existsOnDisk: async () => true,
+      list: async () => Array.from(workspaces.values()),
+      get: async (workspaceId) => workspaces.get(workspaceId) ?? null,
+      upsert: async (workspace) => {
+        workspaces.set(workspace.workspaceId, workspace);
+      },
+      archive: async () => {},
+      remove: async () => {},
+      subscribeToMutations: () => () => {},
+    },
+  });
+  session.listAgentPayloads = async () => [];
+
+  await session.handleMessage({
+    type: "workspace.create.request",
+    requestId: "req-create-chat",
+    source: { kind: "chat" },
+    title: "Test Chat Session",
+  });
+
+  const response = findByType(emitted, "workspace.create.response");
+  expect(response?.payload.error).toBeNull();
+  expect(response?.payload.workspace).toBeDefined();
+  expect(response?.payload.workspace?.workspaceKind).toBe("chat");
+  expect(response?.payload.workspace?.projectDisplayName).toBe("Chats");
+  expect(response?.payload.workspace?.title).toBe("Test Chat Session");
+  expect(response?.payload.workspace?.workspaceDirectory).toBeDefined();
+
+  const chatDir = response!.payload.workspace!.workspaceDirectory;
+  const sessionJsonPath = path.join(chatDir, "session.json");
+  expect(existsSync(sessionJsonPath)).toBe(true);
+
+  rmSync(chatDir, { recursive: true, force: true });
+});

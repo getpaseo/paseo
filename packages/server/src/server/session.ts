@@ -61,6 +61,11 @@ import {
   createWorkspaceScriptsService,
   type WorkspaceScriptsService,
 } from "./session/workspace-scripts/workspace-scripts-service.js";
+import {
+  resolvePaseoChatsDirectory,
+  generateChatSessionId,
+  ensureChatSessionDirectory,
+} from "./session/chat-directory.js";
 import type { DaemonConfigStore } from "./daemon-config-store.js";
 import { loadPersistedConfig } from "./persisted-config.js";
 import { releaseWorkspaceServicePortPlan } from "./workspace-service-port-registry.js";
@@ -5124,7 +5129,11 @@ export class Session {
     projectRecord?: PersistedProjectRecord | null;
     includeGitData: boolean;
   }): Promise<WorkspaceDescriptorPayload> {
-    if (input.includeGitData && input.workspace.kind !== "directory") {
+    if (
+      input.includeGitData &&
+      input.workspace.kind !== "directory" &&
+      input.workspace.kind !== "chat"
+    ) {
       return this.describeWorkspaceRecordWithGitData(input.workspace, input.projectRecord);
     }
     return this.describeWorkspaceRecord(input.workspace, input.projectRecord);
@@ -6085,6 +6094,10 @@ export class Session {
         await this.handleWorkspaceCreateLocal(request);
         return;
       }
+      if (request.source.kind === "chat") {
+        await this.handleWorkspaceCreateChat(request);
+        return;
+      }
       await this.handleWorkspaceCreateWorktree(request);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to create workspace";
@@ -6160,6 +6173,53 @@ export class Session {
           "Background snapshot refresh failed after workspace.create",
         );
       });
+    if (request.firstAgentContext) {
+      const firstAgentContext = request.firstAgentContext;
+      this.workspaceAutoName.scheduleForDirectory(
+        {
+          workspaceId: workspace.workspaceId,
+          cwd: workspace.cwd,
+          firstAgentContext,
+        },
+        { currentSelection: this.getFocusedAgentSelectionForCwd(workspace.cwd) },
+      );
+    }
+  }
+
+  private async handleWorkspaceCreateChat(
+    request: Extract<SessionInboundMessage, { type: "workspace.create.request" }>,
+  ): Promise<void> {
+    if (request.source.kind !== "chat") {
+      return;
+    }
+
+    const baseDir = resolvePaseoChatsDirectory(this.paseoHome, request.source.chatsDirectory);
+    const sessionId = request.source.sessionId?.trim() || generateChatSessionId();
+    const { chatDir } = await ensureChatSessionDirectory(baseDir, sessionId);
+
+    const explicitTitle = request.title?.trim() || null;
+    const promptTitle = resolveFirstAgentPromptTitle(request.firstAgentContext);
+    const workspace = await this.workspaceProvisioning.createWorkspaceForChat({
+      cwd: chatDir,
+      sessionId,
+      title: explicitTitle ?? promptTitle,
+      expectsInitialAgent: Boolean(request.firstAgentContext),
+    });
+
+    const descriptor = await this.describeWorkspaceRecord(workspace);
+    this.emit({
+      type: "workspace.create.response",
+      payload: {
+        requestId: request.requestId,
+        workspace: descriptor,
+        setupTerminalId: null,
+        error: null,
+      },
+    });
+    await this.emitCreatedWorkspaceUpdate(
+      descriptor,
+      request.firstAgentContext ? "running" : undefined,
+    );
     if (request.firstAgentContext) {
       const firstAgentContext = request.firstAgentContext;
       this.workspaceAutoName.scheduleForDirectory(

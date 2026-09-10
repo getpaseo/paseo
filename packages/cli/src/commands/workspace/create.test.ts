@@ -122,4 +122,20 @@ describe("workspace create source", () => {
       "Unsupported workspace isolation",
     );
   });
+
+  it("maps chat flag or isolation to a chat workspace", () => {
+    expect(buildWorkspaceSource({ chat: true })).toEqual({ kind: "chat" });
+    expect(buildWorkspaceSource({ isolation: "chat" })).toEqual({ kind: "chat" });
+    expect(
+      buildWorkspaceSource({
+        chat: true,
+        chatsDir: "/custom/chats",
+        sessionId: "session-123",
+      }),
+    ).toEqual({
+      kind: "chat",
+      chatsDirectory: "/custom/chats",
+      sessionId: "session-123",
+    });
+  });
 });

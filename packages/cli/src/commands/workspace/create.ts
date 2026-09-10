@@ -5,6 +5,9 @@ import { toWorkspaceRow, workspaceSchema, type WorkspaceRow } from "./shared.js"
 
 export interface WorkspaceCreateOptions extends CommandOptions {
   isolation?: string;
+  chat?: boolean;
+  chatsDir?: string;
+  sessionId?: string;
   path?: string;
   project?: string;
   title?: string;
@@ -120,6 +123,13 @@ function buildWorktreeWorkspaceSource(options: WorkspaceCreateOptions, path: str
 }
 
 export function buildWorkspaceSource(options: WorkspaceCreateOptions) {
+  if (options.chat || options.isolation === "chat") {
+    return {
+      kind: "chat" as const,
+      ...(options.chatsDir ? { chatsDirectory: options.chatsDir } : {}),
+      ...(options.sessionId ? { sessionId: options.sessionId } : {}),
+    };
+  }
   if (options.isolation === "local") {
     return buildLocalWorkspaceSource(options, options.path ?? process.cwd());
   }

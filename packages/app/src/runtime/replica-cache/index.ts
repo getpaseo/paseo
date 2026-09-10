@@ -306,7 +306,7 @@ const StoredWorkspaceSchema = z.strictObject({
   workspaceDirectory: z.string(),
   worktreeSlug: z.string().optional(),
   projectKind: z.enum(["git", "non_git", "directory"]),
-  workspaceKind: z.enum(["directory", "local_checkout", "checkout", "worktree"]),
+  workspaceKind: z.enum(["directory", "local_checkout", "checkout", "worktree", "chat"]),
   name: z.string(),
   title: z.string().nullable(),
   pinnedAt: z.string().nullable(),
