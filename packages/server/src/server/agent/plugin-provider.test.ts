@@ -25,6 +25,7 @@ const CAPABILITIES = [
 interface ProviderHarnessOptions {
   capabilities?: ProviderConnection["capabilities"];
   completeTurn?: boolean;
+  permissionResponseError?: Error;
   rewindable?: boolean;
 }
 
@@ -177,6 +178,7 @@ function createProviderHarness(options: ProviderHarnessOptions = {}) {
         return;
       }
       if (input.type === "session.permission") {
+        if (options.permissionResponseError) throw options.permissionResponseError;
         emit({
           type: "session.permission_resolved",
           sessionId: input.sessionId,
@@ -392,6 +394,14 @@ describe("PluginAgentClientRegistry", () => {
 
     await session.startTurn("old branch", { clientMessageId: "old-branch" });
     await session.revertConversation?.({ messageId: "rewind-target" });
+    expect(session.getPendingPermissions()).toEqual([]);
+    expect(harness.inputs).toContainEqual(
+      expect.objectContaining({
+        type: "session.permission",
+        permissionId: "permission-1",
+        response: { behavior: "deny", message: "Removed by rewind" },
+      }),
+    );
     await session.startTurn("replacement", { clientMessageId: "replacement" });
 
     const timeline = [];
@@ -402,6 +412,68 @@ describe("PluginAgentClientRegistry", () => {
       { type: "assistant_message", text: "Rep", messageId: "replacement-answer" },
       { type: "assistant_message", text: "lacement", messageId: "replacement-answer" },
     ]);
+
+    await registry.shutdown();
+  });
+
+  test("keeps local history consistent when permission cleanup fails", async () => {
+    const harness = createProviderHarness({
+      rewindable: true,
+      permissionResponseError: new Error("permission cleanup failed"),
+      capabilities: [...CAPABILITIES, "session.revert.conversation"],
+    });
+    const registry = new PluginAgentClientRegistry(createTestLogger());
+    registry.replace([harness.registration]);
+    const client = registry.clients()[harness.registration.id]!;
+    const session = await client.createSession({
+      provider: harness.registration.id,
+      cwd: "/workspace",
+    });
+
+    await session.startTurn("old branch", { clientMessageId: "old-branch" });
+    await expect(session.revertConversation?.({ messageId: "rewind-target" })).rejects.toThrow(
+      "permission cleanup failed",
+    );
+    expect(session.getPendingPermissions()).toEqual([]);
+
+    const timeline = [];
+    for await (const event of session.streamHistory()) {
+      if (event.type === "timeline") timeline.push(event.item);
+    }
+    expect(timeline).toEqual([]);
+    await expect(
+      session.startTurn("replacement", { clientMessageId: "replacement" }),
+    ).rejects.toThrow("permission cleanup failed");
+    expect(harness.inputs.filter((input) => input.type === "session.permission")).toHaveLength(2);
+
+    await registry.shutdown();
+  });
+
+  test.each(["both", "files"] as const)("applies history policy to %s rewinds", async (scope) => {
+    const harness = createProviderHarness({
+      rewindable: true,
+      capabilities: [...CAPABILITIES, `session.revert.${scope}`],
+    });
+    const registry = new PluginAgentClientRegistry(createTestLogger());
+    registry.replace([harness.registration]);
+    const client = registry.clients()[harness.registration.id]!;
+    const session = await client.createSession({
+      provider: harness.registration.id,
+      cwd: "/workspace",
+    });
+
+    await session.startTurn("old branch", { clientMessageId: "old-branch" });
+    if (scope === "both") {
+      await session.revertBoth?.({ messageId: "rewind-target" });
+    } else {
+      await session.revertFiles?.({ messageId: "rewind-target" });
+    }
+
+    const timeline = [];
+    for await (const event of session.streamHistory()) {
+      if (event.type === "timeline") timeline.push(event.item);
+    }
+    expect(timeline).toHaveLength(scope === "both" ? 0 : 3);
 
     await registry.shutdown();
   });
