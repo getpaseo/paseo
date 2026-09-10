@@ -82,18 +82,18 @@ export function hasPendingTerminalModifiers(modifiers: PendingTerminalModifiers)
   return modifiers.ctrl || modifiers.shift || modifiers.alt;
 }
 
-interface AppleHandheldDetectionInput {
+interface MacPlatformDetectionInput {
   userAgent: string | null | undefined;
   platform: string | null | undefined;
+}
+
+interface AppleHandheldDetectionInput extends MacPlatformDetectionInput {
   maxTouchPoints: number | null | undefined;
 }
 
 // Matches macOS and iPadOS (which reports a Mac user agent in WKWebView); both
 // follow the same cmd/option editing conventions on hardware keyboards.
-export function isMacLikePlatform(input: {
-  userAgent: string | null | undefined;
-  platform: string | null | undefined;
-}): boolean {
+export function isMacLikePlatform(input: MacPlatformDetectionInput): boolean {
   return /Macintosh|Mac OS/i.test(input.userAgent ?? "") || /Mac/i.test(input.platform ?? "");
 }
 
@@ -144,19 +144,23 @@ export function shouldInterceptDomTerminalKey(args: {
   return false;
 }
 
+interface MacTerminalEditingShortcutInput {
+  key: string;
+  ctrlKey: boolean;
+  shiftKey: boolean;
+  altKey: boolean;
+  metaKey: boolean;
+}
+
 // macOS terminals translate these editing chords instead of forwarding raw modified
 // keys: Terminal.app and iTerm2 ("Natural Text Editing") send ^A/^E for cmd+arrows,
 // ESC b / ESC f for option+arrows, and ^U for cmd+backspace. xterm ignores meta+arrow
 // entirely, and 6.x dropped the 5.x macOS conversion of option+arrow to ESC b/f, so
 // without this the shell receives nothing or an `ESC[1;3C`-style sequence it can't
 // parse (which zsh renders as a stray "C"/"D" plus a bell).
-export function resolveMacTerminalEditingShortcut(args: {
-  key: string;
-  ctrlKey: boolean;
-  shiftKey: boolean;
-  altKey: boolean;
-  metaKey: boolean;
-}): string | null {
+export function resolveMacTerminalEditingShortcut(
+  args: MacTerminalEditingShortcutInput,
+): string | null {
   if (args.ctrlKey || args.shiftKey) {
     return null;
   }

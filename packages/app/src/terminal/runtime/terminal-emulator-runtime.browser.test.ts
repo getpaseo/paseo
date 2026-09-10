@@ -72,12 +72,14 @@ function settleMountRefits(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 2_600));
 }
 
-function createTerminalHost(input: {
+interface CreateTerminalHostInput {
   width: number;
   height: number;
   scrollback?: number;
   isMacLikePlatform?: boolean;
-}): MountedTerminal {
+}
+
+function createTerminalHost(input: CreateTerminalHostInput): MountedTerminal {
   const root = document.createElement("div");
   root.style.width = `${input.width}px`;
   root.style.height = `${input.height}px`;
@@ -164,7 +166,7 @@ function getBrowserTerminal(): BrowserTerminal {
   return terminal;
 }
 
-function dispatchTerminalKey(input: {
+interface DispatchTerminalKeyInput {
   host: HTMLElement;
   key: string;
   keyCode?: number;
@@ -172,7 +174,9 @@ function dispatchTerminalKey(input: {
   ctrlKey?: boolean;
   altKey?: boolean;
   metaKey?: boolean;
-}): boolean {
+}
+
+function dispatchTerminalKey(input: DispatchTerminalKeyInput): boolean {
   const textarea = input.host.querySelector<HTMLTextAreaElement>("textarea");
   if (!textarea) {
     throw new Error("Expected xterm textarea to be mounted");
