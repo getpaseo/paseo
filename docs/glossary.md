@@ -54,6 +54,4 @@ Authoritative terminology. UI label wins. Don't invent synonyms; use what's here
 - **Product discussion** — Where non-bug product talk goes: [GitHub Discussions](https://github.com/getpaseo/paseo/discussions) and `#product` in Discord. Covers workflows, features, and product direction. The container term; the ask inside it is always a **workflow** — what you're doing, how you do it today, where Paseo gets in the way. Issues are bugs only. Forbidden: "Feature request" as a Paseo surface, label, or invitation; the phrase is only used when answering someone who arrived with it. Don't invent "feature discussion", "idea", or "workflow thread" as synonyms. See [CONTRIBUTING.md](../CONTRIBUTING.md).
 
 ## Inconsistencies (documented, not papered over)
-
-- CLI `--host <host>` description `"Daemon host target"` (`packages/cli/src/utils/command-options.ts:5`) blurs daemon/host; the app keeps them distinct.
 - `WorkspaceDescriptorPayloadSchema.workspaceKind` accepts legacy `"checkout"` on the wire (`packages/protocol/src/messages.ts:2187`) while `PersistedWorkspaceKind` does not (`packages/server/src/server/workspace-registry-model.ts:8`).
