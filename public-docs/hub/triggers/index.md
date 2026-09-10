@@ -67,7 +67,7 @@ run:
   prompt: Handle this request and call finish_execution when complete.
 ```
 
-The [continuation reference](/docs/hub/configuration/hub-yml#agent-continuation) describes keys, compatibility, runtime deadlines, and how temporary credentials affect agent reuse. The run detail shows whether each arrival created, continued, or restored an agent.
+The [continuation reference](/docs/hub/configuration/hub-yml#agent-continuation) covers keys and agent reuse. The run detail shows whether each arrival created, continued, or restored an agent.
 
 Hub includes an `executionId` in each prompt. When using a continuing agent, pass that ID to `reply` and `finish_execution`. These tools act on that arrival's destination and contract; an old or unrelated execution ID is rejected.
 
