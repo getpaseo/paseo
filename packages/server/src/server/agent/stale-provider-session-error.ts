@@ -6,6 +6,6 @@ export class StaleProviderSessionError extends Error {
   }
 }
 
-export function isStaleProviderSessionError(error: unknown): boolean {
+export function isStaleProviderSessionError(error: unknown): error is StaleProviderSessionError {
   return error instanceof StaleProviderSessionError;
 }

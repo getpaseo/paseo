@@ -69,6 +69,12 @@ function deferred<T>(): Deferred<T> {
   return { promise, resolve, reject };
 }
 
+async function drainAsyncGenerator<T>(generator: AsyncGenerator<T>): Promise<void> {
+  for await (const _ of generator) {
+    // Drain provider events while AgentManager subscribers observe them.
+  }
+}
+
 function waitForAgentLifecycle(
   manager: AgentManager,
   agentId: string,
@@ -518,6 +524,32 @@ class TestAgentSession implements AgentSession {
   }
 
   async close(): Promise<void> {}
+}
+
+class ResumeTrackingTestAgentClient extends TestAgentClient {
+  private readonly retryStarted = deferred<void>();
+
+  override async resumeSession(
+    _handle: AgentPersistenceHandle,
+    config?: Partial<AgentSessionConfig>,
+  ): Promise<AgentSession> {
+    this.resumeOverrides.push(config);
+    const signalRetryStarted = () => this.retryStarted.resolve();
+    return new (class extends TestAgentSession {
+      override async startTurn(): Promise<{ turnId: string }> {
+        signalRetryStarted();
+        return await super.startTurn();
+      }
+    })({
+      provider: this.provider,
+      cwd: config?.cwd ?? process.cwd(),
+      daemonAppendSystemPrompt: config?.daemonAppendSystemPrompt,
+    });
+  }
+
+  waitForRetryStart(): Promise<void> {
+    return this.retryStarted.promise;
+  }
 }
 
 class McpCapableTestAgentSession extends TestAgentSession {
@@ -3768,7 +3800,7 @@ test("a prompt after provider replacement reopens the stale session", async () =
   }
 
   const staleClient = new StalePluginClient();
-  const replacement = new TestAgentClient(provider);
+  const replacement = new ResumeTrackingTestAgentClient(provider);
   const manager = new AgentManager({
     clients: { [provider]: staleClient },
     providerDefinitions: { [provider]: { enabled: true } },
@@ -3787,8 +3819,84 @@ test("a prompt after provider replacement reopens the stale session", async () =
 
     const dispatch = await startAgentRun(manager, created.id, "continue after reload", logger);
     expect(dispatch.disposition).toBe("turn_started");
-    await expect.poll(() => replacement.resumeOverrides).toHaveLength(1);
-    await expect.poll(() => manager.getAgent(created.id)?.lifecycle).toBe("idle");
+    await replacement.waitForRetryStart();
+    const result = await manager.waitForAgentEvent(created.id);
+    expect(result.status).toBe("idle");
+    expect(replacement.resumeOverrides).toHaveLength(1);
+  } finally {
+    await manager.closeAgent(created.id).catch(() => undefined);
+    await manager.flush().catch(() => undefined);
+    await storage.flush().catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("a replacement prompt recovers when the retired session fails to start", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-stale-replacement-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const provider = "plugin-provider";
+
+  class StaleReplacementSession extends TestAgentSession {
+    private starts = 0;
+
+    override async startTurn(): Promise<{ turnId: string }> {
+      this.starts += 1;
+      if (this.starts > 1) throw new StaleProviderSessionError("stale-bridge");
+      return { turnId: "initial-turn" };
+    }
+
+    override async interrupt(): Promise<void> {
+      if (this.starts > 1) throw new StaleProviderSessionError("stale-bridge");
+      this.pushEvent({
+        type: "turn_canceled",
+        provider: this.provider,
+        turnId: "initial-turn",
+      });
+    }
+  }
+
+  class StaleReplacementClient extends TestAgentClient {
+    constructor() {
+      super(provider);
+    }
+
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      const session = new StaleReplacementSession(config);
+      session.describePersistence = () => ({ provider, sessionId: "plugin-session" });
+      return session;
+    }
+  }
+
+  const replacement = new ResumeTrackingTestAgentClient(provider);
+  const manager = new AgentManager({
+    clients: { [provider]: new StaleReplacementClient() },
+    providerDefinitions: { [provider]: { enabled: true } },
+    registry: storage,
+    logger,
+    rescueTimeouts: { interruptSessionMs: 20 },
+  });
+  const created = await manager.createAgent({ provider, cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+
+  try {
+    const initial = manager.streamAgent(created.id, "initial");
+    void drainAsyncGenerator(initial);
+    await manager.waitForAgentRunStart(created.id);
+
+    manager.updateProviderRegistry({
+      providerDefinitions: { [provider]: { enabled: true } },
+      clients: { [provider]: replacement },
+    });
+
+    const dispatch = await startAgentRun(manager, created.id, "replacement", logger, {
+      replaceRunning: true,
+    });
+    expect(dispatch.disposition).toBe("turn_started");
+    await replacement.waitForRetryStart();
+    const result = await manager.waitForAgentEvent(created.id);
+    expect(result.status).toBe("idle");
+    expect(replacement.resumeOverrides).toHaveLength(1);
   } finally {
     await manager.closeAgent(created.id).catch(() => undefined);
     await manager.flush().catch(() => undefined);

@@ -2375,7 +2375,9 @@ export class AgentManager {
         throw error;
       }
       if (isStaleProviderSessionError(error)) {
-        pendingRun.start = { status: "failed", error: (error as Error).message };
+        pendingRun.start = { status: "failed", error: error.message };
+        agent.pendingReplacement = false;
+        if (!agent.activeForegroundTurnId) agent.lifecycle = "idle";
         this.runs.settleForegroundRun(agentId, pendingRun.token);
         throw error;
       }
