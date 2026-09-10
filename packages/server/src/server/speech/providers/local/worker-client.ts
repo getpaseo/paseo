@@ -637,6 +637,7 @@ class WorkerBackedTranscriptionSession
   public requiredSampleRate = DEFAULT_LOCAL_SAMPLE_RATE;
   private connectedSessionId: string | null = null;
   private connecting: Promise<void> | null = null;
+  private closed = false;
 
   constructor(
     private readonly client: LocalSpeechWorkerClient,
@@ -658,6 +659,13 @@ class WorkerBackedTranscriptionSession
   private async connectRemoteSession(): Promise<void> {
     try {
       const result = await this.client.createSession(this.kind, this);
+      if (this.closed) {
+        // close() raced the worker round-trip; release the session the
+        // worker just registered or it stays in activeSessionIds forever
+        // and the idle shutdown never fires.
+        this.client.closeSession(result.sessionId);
+        return;
+      }
       this.connectedSessionId = result.sessionId;
       this.requiredSampleRate = result.requiredSampleRate;
     } finally {
@@ -691,6 +699,7 @@ class WorkerBackedTranscriptionSession
   }
 
   close(): void {
+    this.closed = true;
     const sessionId = this.connectedSessionId;
     this.connectedSessionId = null;
     if (sessionId) {
@@ -703,6 +712,7 @@ class WorkerBackedTurnDetectionSession extends EventEmitter implements TurnDetec
   public requiredSampleRate = DEFAULT_LOCAL_SAMPLE_RATE;
   private connectedSessionId: string | null = null;
   private connecting: Promise<void> | null = null;
+  private closed = false;
 
   constructor(private readonly client: LocalSpeechWorkerClient) {
     super();
@@ -721,6 +731,10 @@ class WorkerBackedTurnDetectionSession extends EventEmitter implements TurnDetec
   private async connectRemoteSession(): Promise<void> {
     try {
       const result = await this.client.createSession("vad", this);
+      if (this.closed) {
+        this.client.closeSession(result.sessionId);
+        return;
+      }
       this.connectedSessionId = result.sessionId;
       this.requiredSampleRate = result.requiredSampleRate;
     } finally {
@@ -752,6 +766,7 @@ class WorkerBackedTurnDetectionSession extends EventEmitter implements TurnDetec
   }
 
   close(): void {
+    this.closed = true;
     const sessionId = this.connectedSessionId;
     this.connectedSessionId = null;
     if (sessionId) {

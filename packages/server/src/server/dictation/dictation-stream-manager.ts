@@ -135,6 +135,9 @@ export class DictationStreamManager {
   private readonly finalTimeoutMs: number;
   private readonly autoCommitSeconds: number;
   private readonly streams = new Map<string, DictationStreamState>();
+  // STT sessions still inside `connect()`; a cancel/cleanup that lands during
+  // that await must be able to close them or the provider session leaks.
+  private readonly connecting = new Map<string, StreamingTranscriptionSession>();
 
   constructor(params: {
     logger: pino.Logger;
@@ -158,7 +161,7 @@ export class DictationStreamManager {
   }
 
   public cleanupAll(): void {
-    for (const dictationId of this.streams.keys()) {
+    for (const dictationId of [...this.streams.keys(), ...this.connecting.keys()]) {
       this.cleanupDictationStream(dictationId);
     }
   }
@@ -249,10 +252,22 @@ export class DictationStreamManager {
       void this.failAndCleanupDictationStream(dictationId, message, true);
     });
 
+    this.connecting.set(dictationId, stt);
+    let connectError: unknown = null;
     try {
       await stt.connect();
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      connectError = error;
+    }
+    // handleCancel/cleanupAll during the await already closed `stt` and
+    // removed it; do not register a stream for a dictation that is gone.
+    const wasCancelled = this.connecting.get(dictationId) !== stt;
+    this.connecting.delete(dictationId);
+    if (wasCancelled) {
+      return;
+    }
+    if (connectError !== null) {
+      const message = connectError instanceof Error ? connectError.message : String(connectError);
       this.failDictationStream(dictationId, message, true);
       try {
         stt.close();
@@ -554,6 +569,15 @@ export class DictationStreamManager {
   }
 
   private cleanupDictationStream(dictationId: string): void {
+    const pending = this.connecting.get(dictationId);
+    if (pending) {
+      this.connecting.delete(dictationId);
+      try {
+        pending.close();
+      } catch {
+        // no-op
+      }
+    }
     const state = this.streams.get(dictationId) ?? null;
     if (!state) {
       return;
