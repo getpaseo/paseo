@@ -109,7 +109,10 @@ export async function ensureAgentLoaded(
         handle,
         buildConfigOverrides(record),
         agentId,
-        extractTimestamps(record),
+        {
+          ...extractTimestamps(record),
+          approveProjectResources: !record.archivedAt,
+        },
         record.archivedAt ? { purpose: "history" } : undefined,
       );
       deps.logger.info({ agentId, provider: record.provider }, "Agent resumed from persistence");
@@ -124,6 +127,7 @@ export async function ensureAgentLoaded(
         labels: record.labels,
         workspaceId: record.workspaceId,
         owner: record.owner,
+        approveProjectResources: !record.archivedAt,
       });
       deps.logger.info({ agentId, provider: record.provider }, "Agent created from stored config");
     }

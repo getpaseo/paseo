@@ -279,6 +279,8 @@ type ProviderEnabledMap = Partial<Record<AgentProvider, ProviderEnabledFlag>>;
 type ProviderClientMap = Partial<Record<AgentProvider, AgentClient>>;
 
 export interface CreateAgentOptions {
+  /** Runtime-only intent from an interactive user-session boundary. */
+  approveProjectResources?: boolean;
   labels?: Record<string, string>;
   initialPrompt?: string;
   env?: Record<string, string>;
@@ -304,6 +306,8 @@ export interface AgentManagerOptions {
   paseoToolsEnabled?: boolean;
   paseoToolCatalogFactory?: PaseoToolCatalogFactory;
   resolvePaseoToolPolicy?: (provider: AgentProvider) => ProviderPaseoToolsPolicy | undefined;
+  /** Resolve project-resource trust by opaque workspace ID. Missing/error is untrusted. */
+  resolveWorkspaceProjectResourceApproval?: (workspaceId: string) => Promise<boolean>;
   appendSystemPrompt?: string;
   agentStreamCoalesceWindowMs?: number;
   rescueTimeouts?: AgentManagerRescueTimeouts;
@@ -728,6 +732,9 @@ export class AgentManager {
   private logger: Logger;
   private readonly rescueTimeouts: Required<AgentManagerRescueTimeouts>;
   private readonly beforeSteerUnavailableFallback?: AgentManagerOptions["beforeSteerUnavailableFallback"];
+  private readonly resolveWorkspaceProjectResourceApproval:
+    | AgentManagerOptions["resolveWorkspaceProjectResourceApproval"]
+    | undefined;
   private acceptingAgentRegistrations = true;
 
   constructor(options: AgentManagerOptions) {
@@ -741,6 +748,7 @@ export class AgentManager {
     this.mcpAuthToken = options?.mcpAuthToken ?? null;
     this.configurePaseoTools(options);
     this.resolvePaseoToolPolicy = options.resolvePaseoToolPolicy ?? (() => undefined);
+    this.resolveWorkspaceProjectResourceApproval = options.resolveWorkspaceProjectResourceApproval;
     this.appendSystemPrompt = options.appendSystemPrompt ?? "";
     this.logger = options.logger.child({ module: "agent", component: "agent-manager" });
     this.rescueTimeouts = {
@@ -1237,7 +1245,13 @@ export class AgentManager {
       storedConfig.cwd,
       paseoToolPolicy,
       options?.env,
-      { reason: "create", purpose: "interactive", workspaceId: options.workspaceId ?? null },
+      {
+        reason: "create",
+        purpose: "interactive",
+        workspaceId: options.workspaceId ?? null,
+        approveProjectResources: options.approveProjectResources === true,
+        internal: storedConfig.internal === true,
+      },
     );
     const providerLaunchConfig = this.resolveProviderLaunchConfig(launchConfig, launchContext);
     const createOptions = this.buildCreateSessionOptions(options);
@@ -1279,6 +1293,8 @@ export class AgentManager {
       labels?: Record<string, string>;
       workspaceId?: string;
       owner?: AgentOwner;
+      internal?: boolean;
+      approveProjectResources?: boolean;
     },
     resumeOptions?: AgentResumeSessionOptions,
   ): Promise<ManagedAgent> {
@@ -1298,6 +1314,8 @@ export class AgentManager {
       labels?: Record<string, string>;
       workspaceId?: string;
       owner?: AgentOwner;
+      internal?: boolean;
+      approveProjectResources?: boolean;
     },
     resumeOptions?: AgentResumeSessionOptions,
   ): Promise<ManagedAgent> {
@@ -1335,6 +1353,8 @@ export class AgentManager {
         reason: "resume",
         purpose: resumeOptions?.purpose ?? "interactive",
         workspaceId: options?.workspaceId ?? null,
+        approveProjectResources: options?.approveProjectResources === true,
+        internal: options?.internal === true,
       },
     );
     const providerLaunchConfig = this.resolveProviderLaunchConfig(launchConfig, launchContext);
@@ -1391,7 +1411,12 @@ export class AgentManager {
       storedConfig.cwd,
       paseoToolPolicy,
       undefined,
-      { reason: "import", purpose: "interactive", workspaceId: input.workspaceId },
+      {
+        reason: "import",
+        purpose: "interactive",
+        workspaceId: input.workspaceId,
+        approveProjectResources: true,
+      },
     );
     const providerLaunchConfig = this.resolveProviderLaunchConfig(launchConfig, launchContext);
     const imported = await client.importSession(
@@ -1486,7 +1511,13 @@ export class AgentManager {
       storedConfig.cwd,
       paseoToolPolicy,
       undefined,
-      { reason: "refresh", purpose: "interactive", workspaceId: existing.workspaceId },
+      {
+        reason: "refresh",
+        purpose: "interactive",
+        workspaceId: existing.workspaceId,
+        approveProjectResources: !existing.internal,
+        internal: existing.internal === true,
+      },
     );
     const providerLaunchConfig = this.resolveProviderLaunchConfig(launchConfig, launchContext);
     if (
@@ -5080,6 +5111,8 @@ export class AgentManager {
       reason: PluginSessionOpenRequest["reason"];
       purpose: PluginSessionOpenRequest["purpose"];
       workspaceId?: string | null;
+      approveProjectResources?: boolean;
+      internal?: boolean;
     },
   ): Promise<AgentLaunchContext> {
     if (this.pluginLifecycle) {
@@ -5104,6 +5137,14 @@ export class AgentManager {
       },
     };
     if (
+      opening?.approveProjectResources === true &&
+      opening.internal !== true &&
+      opening.workspaceId &&
+      (await this.isWorkspaceTrustedForProjectResources(opening.workspaceId))
+    ) {
+      context.approveProjectResources = true;
+    }
+    if (
       this.paseoToolsEnabled &&
       isPaseoToolPolicyEnabled(paseoToolPolicy) &&
       client.capabilities.supportsNativePaseoTools &&
@@ -5115,6 +5156,21 @@ export class AgentManager {
       });
     }
     return context;
+  }
+
+  private async isWorkspaceTrustedForProjectResources(workspaceId: string): Promise<boolean> {
+    if (!this.resolveWorkspaceProjectResourceApproval) {
+      return false;
+    }
+    try {
+      return await this.resolveWorkspaceProjectResourceApproval(workspaceId);
+    } catch (error) {
+      this.logger.warn(
+        { err: error, workspaceId },
+        "Failed to resolve workspace project-resource trust; launching unapproved",
+      );
+      return false;
+    }
   }
 
   private resolveProviderLaunchConfig(

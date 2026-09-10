@@ -526,7 +526,9 @@ function buildResumeStartInput(input: {
     thinkingOptionId: normalizePiThinkingOption(input.resumeConfig.thinkingOptionId) ?? undefined,
     mcpConfigPath: input.mcpConfig?.path,
     extensionPaths: input.paseoExtension ? [input.paseoExtension.path] : undefined,
-    ...(input.resumeConfig.config.internal === true ? {} : { extraArgs: PI_PROJECT_TRUST_ARGS }),
+    ...(input.launchContext?.approveProjectResources && input.resumeConfig.config.internal !== true
+      ? { extraArgs: PI_PROJECT_TRUST_ARGS }
+      : {}),
   };
 }
 
@@ -2550,7 +2552,9 @@ export class PiRpcAgentClient implements AgentClient {
         env: launchContext?.env,
         mcpConfigPath: mcpConfig?.path,
         extensionPaths: paseoExtension ? [paseoExtension.path] : undefined,
-        ...(config.internal === true ? {} : { extraArgs: PI_PROJECT_TRUST_ARGS }),
+        ...(launchContext?.approveProjectResources && config.internal !== true
+          ? { extraArgs: PI_PROJECT_TRUST_ARGS }
+          : {}),
       });
     } catch (error) {
       mcpConfig?.cleanup();

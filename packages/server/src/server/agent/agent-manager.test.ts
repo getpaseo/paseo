@@ -2731,6 +2731,99 @@ test("createAgent passes daemon launch env through the provider launch context",
   });
 });
 
+test("gates project-resource approval by trusted workspaceId across session boundaries", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-project-trust-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+
+  class ProjectTrustCaptureClient extends TestAgentClient {
+    readonly launchContexts: AgentLaunchContext[] = [];
+
+    override async createSession(
+      config: AgentSessionConfig,
+      launchContext?: AgentLaunchContext,
+    ): Promise<AgentSession> {
+      this.launchContexts.push(launchContext ?? {});
+      return new TestAgentSession(config);
+    }
+
+    override async resumeSession(
+      handle: AgentPersistenceHandle,
+      config?: Partial<AgentSessionConfig>,
+      launchContext?: AgentLaunchContext,
+    ): Promise<AgentSession> {
+      this.launchContexts.push(launchContext ?? {});
+      return new TestAgentSession({
+        provider: this.provider,
+        cwd: config?.cwd ?? (handle.metadata?.cwd as string) ?? process.cwd(),
+      });
+    }
+
+    override async importSession(
+      input: ImportProviderSessionInput,
+      context: ImportProviderSessionContext,
+    ) {
+      this.launchContexts.push(context.launchContext ?? {});
+      return {
+        session: new TestAgentSession(context.config),
+        config: context.storedConfig,
+        persistence: {
+          provider: this.provider,
+          sessionId: input.providerHandleId,
+          nativeHandle: input.providerHandleId,
+        },
+        timeline: [],
+      };
+    }
+  }
+
+  const client = new ProjectTrustCaptureClient();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: storage,
+    resolveWorkspaceProjectResourceApproval: async (workspaceId) => workspaceId === "trusted",
+    logger,
+  });
+
+  const trusted = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    workspaceId: "trusted",
+    approveProjectResources: true,
+  });
+  const untrusted = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    workspaceId: "untrusted",
+    approveProjectResources: true,
+  });
+
+  expect(client.launchContexts[0]?.approveProjectResources).toBe(true);
+  expect(client.launchContexts[1]?.approveProjectResources).toBeUndefined();
+  expect(trusted.config).not.toHaveProperty("approveProjectResources");
+
+  const resumed = await manager.resumeAgentFromPersistence(
+    trusted.persistence!,
+    undefined,
+    undefined,
+    { workspaceId: "trusted", approveProjectResources: true },
+  );
+  expect(client.launchContexts[2]?.approveProjectResources).toBe(true);
+
+  const reloaded = await manager.reloadAgentSession(untrusted.id);
+  expect(client.launchContexts[3]?.approveProjectResources).toBeUndefined();
+
+  const imported = await manager.importProviderSession({
+    provider: "codex",
+    providerHandleId: "imported-untrusted",
+    cwd: workdir,
+    workspaceId: "untrusted",
+  });
+  expect(client.launchContexts[4]?.approveProjectResources).toBeUndefined();
+
+  await trusted.session.close();
+  await untrusted.session.close();
+  await resumed.session.close();
+  await reloaded.session.close();
+  await imported.session.close();
+  rmSync(workdir, { recursive: true, force: true });
+});
+
 test("createAgent passes persistSession to provider create options", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
   const storagePath = join(workdir, "agents");
