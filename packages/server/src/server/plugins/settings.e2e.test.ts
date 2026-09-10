@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { expect, test } from "vitest";
 import { z } from "zod";
-import { settingsRpc } from "@getpaseo/plugin";
+import { defineRpc, settingsRpc } from "@getpaseo/plugin";
 import { DaemonClient } from "../test-utils/daemon-client.js";
 import { createTestPaseoDaemon } from "../test-utils/paseo-daemon.js";
 
@@ -14,6 +14,16 @@ test("two clients share settings, observe changes, and preserve values through p
   const first = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws`, appVersion: "0.7.2" });
   const second = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws`, appVersion: "0.7.2" });
   const rpc = settingsRpc("display");
+  const serverReadRpc = defineRpc({
+    name: "settings-test.server-read",
+    input: z.object({}),
+    output: z.json(),
+  });
+  const serverChangesRpc = defineRpc({
+    name: "settings-test.server-changes",
+    input: z.object({}),
+    output: z.object({ count: z.number().int() }),
+  });
   const read = async (client: DaemonClient, pluginId = "settings-test") =>
     rpc.read.output.parse(await client.invokePluginRpc(pluginId, rpc.read.name, {}));
   const changed: string[] = [];
@@ -27,9 +37,18 @@ test("two clients share settings, observe changes, and preserve values through p
     );
     await writeFile(
       path.join(directory, "index.server.ts"),
-      `import { defineSettings } from "@getpaseo/plugin";
+      `import { defineRpc, defineSettings } from "@getpaseo/plugin";
 import { z } from "zod";
-export default function(server) { server.registerSettings(defineSettings({ id: "display", scope: "host", version: 1, schema: z.object({ enabled: z.boolean().default(true) }) })); return () => {}; }`,
+const serverRead = defineRpc({ name: "settings-test.server-read", input: z.object({}), output: z.json() });
+const serverChanges = defineRpc({ name: "settings-test.server-changes", input: z.object({}), output: z.object({ count: z.number().int() }) });
+export default function(server) {
+  const settings = server.registerSettings(defineSettings({ id: "display", scope: "host", version: 1, schema: z.object({ enabled: z.boolean().default(true) }) }));
+  let changes = 0;
+  settings.subscribe(() => { changes += 1; });
+  server.handle(serverRead, () => settings.read());
+  server.handle(serverChanges, () => ({ count: changes }));
+  return () => {};
+}`,
     );
     await first.connect();
     await second.connect();
@@ -42,6 +61,16 @@ export default function(server) { server.registerSettings(defineSettings({ id: "
     const initial = await read(first);
     expect(initial).toMatchObject({ status: "ready", values: { enabled: true } });
     expect(
+      serverReadRpc.output.parse(
+        await first.invokePluginRpc("settings-test", serverReadRpc.name, {}),
+      ),
+    ).toMatchObject({ status: "ready", values: { enabled: true } });
+    expect(
+      serverChangesRpc.output.parse(
+        await first.invokePluginRpc("settings-test", serverChangesRpc.name, {}),
+      ),
+    ).toEqual({ count: 0 });
+    expect(
       await second.invokePluginRpc("settings-test", rpc.write.name, {
         revision: initial.revision,
         values: { enabled: false },
@@ -49,6 +78,16 @@ export default function(server) { server.registerSettings(defineSettings({ id: "
     ).toMatchObject({ status: "saved" });
     await expect.poll(() => changed).toEqual(["display"]);
     expect(await read(first)).toMatchObject({ values: { enabled: false } });
+    expect(
+      serverReadRpc.output.parse(
+        await first.invokePluginRpc("settings-test", serverReadRpc.name, {}),
+      ),
+    ).toMatchObject({ status: "ready", values: { enabled: false } });
+    expect(
+      serverChangesRpc.output.parse(
+        await first.invokePluginRpc("settings-test", serverChangesRpc.name, {}),
+      ),
+    ).toEqual({ count: 1 });
     expect(
       await first.invokePluginRpc("settings-test", rpc.write.name, {
         revision: initial.revision,
