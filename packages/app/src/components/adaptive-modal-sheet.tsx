@@ -30,7 +30,8 @@ import {
   getCompactSheetSafeAreaPadding,
 } from "@/components/adaptive-modal-sheet-layout";
 import { ScrollView } from "@/components/ui/scroll-view";
-import { isWeb } from "@/constants/platform";
+import { GestureHandlerRootView } from "react-native-gesture-handler";
+import { isNative, isWeb } from "@/constants/platform";
 import { useKeyboardVisibility } from "@/hooks/use-keyboard-visibility";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { AdaptiveTextInput } from "@/components/adaptive-text-input";
@@ -67,10 +68,14 @@ export interface SheetHeader {
   search?: SheetHeaderSearch;
 }
 
+const ModalRoot = isNative ? GestureHandlerRootView : View;
 const SCROLL_CONTENT_GROW = { flexGrow: 1 };
 const ABSOLUTE_FILL_STYLE = { ...StyleSheet.absoluteFillObject };
 
 const styles = StyleSheet.create((theme) => ({
+  desktopModalRoot: {
+    flex: 1,
+  },
   desktopOverlay: {
     ...StyleSheet.absoluteFillObject,
     backgroundColor: "rgba(0,0,0,0.55)",
@@ -724,7 +729,7 @@ export function AdaptiveModalSheet({
       onDismiss={notifyNativeModalDismiss}
       hardwareAccelerated
     >
-      {desktopContent}
+      <ModalRoot style={styles.desktopModalRoot}>{desktopContent}</ModalRoot>
     </Modal>
   );
 }
