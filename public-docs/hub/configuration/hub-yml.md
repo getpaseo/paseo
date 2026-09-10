@@ -271,7 +271,7 @@ Keys use the existing expression syntax and must resolve to a non-empty string o
 
 An existing session keeps its daemon, agent configuration, target, environment, and tool contracts. Changing those settings for the same key fails with an explanation; choose a different key or **New agent**. Prompts and output destinations belong to each arrival and may change. A worktree branch is chosen when the session is first created and reused on later arrivals.
 
-A follow-up steers the active agent without extending its runtime deadline or credential expiry. With a `run.github` grant or connection token in `run.env`, follow-ups share the active agent’s credentials. Once all requests finish, the next arrival starts a new agent with fresh credentials. Agents without temporary credentials can be reused after completion.
+A follow-up steers the active agent without extending its runtime deadline or credential expiry. With a `run.github` grant or connection token in `run.env`, follow-ups share the active agent’s credentials. Once all requests finish, Hub revokes leased tokens; the next arrival starts a new agent with fresh credentials. Agents without temporary credentials can be reused after completion.
 
 ### Upgrading
 
