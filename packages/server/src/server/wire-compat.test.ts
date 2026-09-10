@@ -4,6 +4,8 @@ import { z } from "zod";
 import { describe, expect, test } from "vitest";
 
 import { CLIENT_CAPS } from "@getpaseo/protocol/client-capabilities";
+import { base64EncryptedWireByteLength } from "@getpaseo/relay";
+import { MAX_RELAY_PAYLOAD_BYTES } from "./websocket/relay-payload.js";
 import {
   AgentTimelineItemPayloadSchema,
   FetchAgentTimelineResponseMessageSchema,
@@ -312,6 +314,122 @@ async function emitTimelineResponse(options?: {
 }
 
 describe("wire compatibility", () => {
+  test("byte-bounded projected pages do not skip rows inside a tool lifecycle", async () => {
+    const text = "x".repeat(9 * 1024 * 1024);
+    const timestamp = "2026-05-02T00:00:00.000Z";
+    const tool = {
+      type: "tool_call" as const,
+      callId: "tool-1",
+      name: "shell",
+      error: null,
+      detail: { type: "unknown" as const, input: {}, output: { text } },
+    };
+    const rows: AgentTimelineRow[] = [
+      { seq: 1, timestamp, item: { type: "user_message", text } },
+      { seq: 2, timestamp, item: { ...tool, status: "running" } },
+      { seq: 3, timestamp, item: { type: "user_message", text } },
+      { seq: 4, timestamp, item: { ...tool, status: "completed" } },
+    ];
+    const first = await emitTimelineResponse({ rows, request: { direction: "after", limit: 0 } });
+    expect(first.payload.error).toBeNull();
+    expect(first.payload.endCursor).toEqual({ epoch: "epoch-1", seq: 2 });
+    expect(first.payload.entries.map((entry) => entry.seqEnd)).toEqual([1, 4]);
+    expect(first.payload.hasNewer).toBe(true);
+    const second = await emitTimelineResponse({
+      rows,
+      request: {
+        direction: "after",
+        cursor: { epoch: "epoch-1", seq: 2 },
+        limit: 0,
+      },
+    });
+    expect(second.payload.error).toBeNull();
+    expect(second.payload.entries.map((entry) => entry.seqStart)).toContain(3);
+    expect(second.payload.endCursor).toEqual({ epoch: "epoch-1", seq: 4 });
+    expect(second.payload.hasNewer).toBe(false);
+  });
+
+  test("byte-bounded tail and backward pages retain every canonical row", async () => {
+    const text = "x".repeat(9 * 1024 * 1024);
+    const rows: AgentTimelineRow[] = [1, 2, 3].map((seq) => ({
+      seq,
+      timestamp: "2026-05-02T00:00:00.000Z",
+      item: { type: "user_message", text },
+    }));
+    const tail = await emitTimelineResponse({
+      rows,
+      request: { direction: "tail", projection: "canonical", limit: 0 },
+    });
+    expect(tail.payload.error).toBeNull();
+    expect(tail.payload.entries.map((entry) => entry.seqEnd)).toEqual([2, 3]);
+    expect(tail.payload.hasOlder).toBe(true);
+    expect(tail.payload.startCursor).toEqual({ epoch: "epoch-1", seq: 2 });
+    const older = await emitTimelineResponse({
+      rows,
+      request: {
+        direction: "before",
+        projection: "canonical",
+        cursor: { epoch: "epoch-1", seq: 2 },
+        limit: 0,
+      },
+    });
+    expect(older.payload.entries.map((entry) => entry.seqEnd)).toEqual([1]);
+    expect(older.payload.hasOlder).toBe(false);
+  });
+
+  test("large canonical history stays complete across byte-bounded forward pages", async () => {
+    const text = "x".repeat(9 * 1024 * 1024);
+    const rows: AgentTimelineRow[] = [1, 2, 3].map((seq) => ({
+      seq,
+      timestamp: "2026-05-02T00:00:00.000Z",
+      item: { type: "user_message", text },
+    }));
+    const first = await emitTimelineResponse({
+      rows,
+      request: { direction: "after", projection: "canonical", limit: 0 },
+    });
+    expect(first.payload.error).toBeNull();
+    expect(first.payload.entries.map((entry) => entry.seqEnd)).toEqual([1, 2]);
+    expect(first.payload.hasNewer).toBe(true);
+    expect(first.payload.endCursor).toEqual({ epoch: "epoch-1", seq: 2 });
+    const second = await emitTimelineResponse({
+      rows,
+      request: {
+        direction: "after",
+        projection: "canonical",
+        cursor: first.payload.endCursor!,
+        limit: 0,
+      },
+    });
+    expect(second.payload.error).toBeNull();
+    expect(second.payload.entries.map((entry) => entry.seqEnd)).toEqual([3]);
+    expect(second.payload.hasNewer).toBe(false);
+    for (const message of [first, second]) {
+      expect(FetchAgentTimelineResponseMessageSchema.safeParse(message).success).toBe(true);
+      const wireBytes = base64EncryptedWireByteLength(
+        Buffer.byteLength(JSON.stringify({ type: "session", message })),
+      );
+      expect(wireBytes).toBeLessThanOrEqual(MAX_RELAY_PAYLOAD_BYTES);
+    }
+  });
+
+  test("one oversized timeline item returns a bounded RPC error", async () => {
+    const message = await emitTimelineResponse({
+      rows: [
+        {
+          seq: 1,
+          timestamp: "2026-05-02T00:00:00.000Z",
+          item: { type: "user_message", text: "x".repeat(24 * 1024 * 1024) },
+        },
+      ],
+    });
+    expect(message.payload.error).toContain("relay payload limit");
+    expect(message.payload.entries).toEqual([]);
+    expect(message.payload.agent).toBeNull();
+    expect(message.payload.endCursor).toBeNull();
+    expect(Buffer.byteLength(JSON.stringify(message))).toBeLessThan(1024);
+  });
+
   test("sends project updates only to clients that declare support", async () => {
     const project = createPersistedProjectRecord({
       projectId: "project-1",

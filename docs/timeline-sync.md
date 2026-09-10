@@ -34,6 +34,11 @@ Heartbeat is used for notification routing. It must not be used as a correctness
 
 Large unbounded timeline responses can exceed relay frame limits, so catch-up uses bounded pages. Bounded does not mean partial.
 
+The daemon also bounds the complete response by its encrypted wire size. Oversized responses
+are reselected with smaller page limits using the same projection and cursor rules. A single
+projected item or response metadata that cannot fit returns an explicit RPC error; history is
+never truncated to make the frame fit.
+
 Page limits are projected-item targets. A tool call lifecycle is one projected item even if it spans many source sequence numbers, and assistant/reasoning chunks are merged before counting. The response carries `seqStart`, `seqEnd`, `sourceSeqRanges`, and `collapsed` so clients can advance sequence cursors without rendering delta rows.
 
 When live delivery detects a sequence gap, the app fetches `direction: "after"`. If the daemon

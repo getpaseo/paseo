@@ -1,5 +1,6 @@
 import { EventEmitter } from "node:events";
 import { MAX_PHYSICAL_SOCKET_BUFFERED_BYTES } from "./physical-socket.js";
+import { MAX_RELAY_PAYLOAD_BYTES } from "./relay-payload.js";
 
 export interface EncryptedRelayChannel {
   setState: (state: "open") => void;
@@ -23,6 +24,12 @@ export function createEncryptedRelaySocket(params: {
   emitter: EventEmitter;
   getTransportBufferedAmount: () => number | undefined;
   terminateTransport: () => void;
+  onOversizedMessage?: (details: {
+    plaintextBytes: number;
+    wireBytes: number;
+    queuedBytes: number;
+    maxWireBytes: number;
+  }) => void;
 }): EncryptedRelaySocket {
   const { channel, emitter, getTransportBufferedAmount, terminateTransport } = params;
   let readyState = 1;
@@ -59,6 +66,17 @@ export function createEncryptedRelaySocket(params: {
       const outbound = normalizeRelaySendPayload(data);
       const outboundBytes = channel.outboundWireByteLength(outbound);
       const queuedBytes = getTransportBufferedAmount() ?? 0;
+      if (outboundBytes > MAX_RELAY_PAYLOAD_BYTES) {
+        terminate();
+        params.onOversizedMessage?.({
+          plaintextBytes:
+            typeof outbound === "string" ? Buffer.byteLength(outbound) : outbound.byteLength,
+          wireBytes: outboundBytes,
+          queuedBytes,
+          maxWireBytes: MAX_RELAY_PAYLOAD_BYTES,
+        });
+        return Promise.reject(new Error("Encrypted message exceeded the relay payload limit"));
+      }
       if (queuedBytes + outboundBytes > MAX_PHYSICAL_SOCKET_BUFFERED_BYTES) {
         terminate();
         return Promise.reject(
@@ -66,7 +84,10 @@ export function createEncryptedRelaySocket(params: {
         );
       }
       return channel.send(outbound).catch((error) => {
-        emitter.emit("error", error);
+        if (readyState === 1) {
+          terminate();
+          emitter.emit("error", error);
+        }
         throw error;
       });
     },

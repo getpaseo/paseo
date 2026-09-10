@@ -445,6 +445,11 @@ async function attachEncryptedSocket(
       emitter,
       getTransportBufferedAmount: () => socket.bufferedAmount,
       terminateTransport: () => socket.terminate(),
+      onOversizedMessage: (details) =>
+        logger.warn(
+          { ...details, transport: "relay", connectionId: metadata?.relayConnectionId },
+          "relay_message_too_large",
+        ),
     });
     await attachSocket(encryptedSocket, metadata);
     attached = true;
@@ -466,21 +471,32 @@ function createRelayTransportAdapter(
   socket: RelayWebSocketLike,
   logger: pino.Logger,
 ): RelayTransport {
+  let sendFailure: Error | null = null;
+  const failSend = (error: Error) => {
+    if (sendFailure) return;
+    sendFailure = error;
+    logger.warn({ err: error }, "relay_socket_send_failed");
+    if (socket.readyState !== WebSocket.CLOSED) socket.terminate();
+  };
   const relayTransport: RelayTransport = {
     send: (data) =>
       new Promise<void>((resolve, reject) => {
+        if (sendFailure || socket.readyState !== WebSocket.OPEN) {
+          reject(sendFailure ?? new Error("Relay transport is not open"));
+          return;
+        }
         try {
           socket.send(data, (error) => {
             if (!error) {
               resolve();
               return;
             }
-            logger.warn({ err: error }, "relay_socket_send_failed");
+            failSend(error);
             reject(error);
           });
         } catch (error) {
           const err = error instanceof Error ? error : new Error(String(error));
-          logger.warn({ err }, "relay_socket_send_failed");
+          failSend(err);
           reject(err);
         }
       }),

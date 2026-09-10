@@ -102,6 +102,8 @@ import type { DaemonRuntimeConfig } from "./session/daemon/daemon-session.js";
 import { DirectorySyncService } from "./directory-sync/index.js";
 import { OWNER_PERMISSIONS, type DaemonPermission } from "./authorization/index.js";
 import type { WorkspaceLabelService } from "./workspace-labels/index.js";
+import { base64EncryptedWireByteLength } from "@getpaseo/relay";
+import { MAX_RELAY_PAYLOAD_BYTES } from "./websocket/relay-payload.js";
 import {
   APPLICATION_SOCKET_LEASE_CHECK_INTERVAL_MS,
   ApplicationSocketLease,
@@ -1129,6 +1131,24 @@ export class VoiceAssistantWebSocketServer {
 
     const payloadBytes = outboundFrameByteLength(payload);
     for (const ws of writableSockets) {
+      const identity = this.socketIdentities.get(ws);
+      const wireBytes = base64EncryptedWireByteLength(payloadBytes);
+      if (identity?.transport === "relay" && wireBytes > MAX_RELAY_PAYLOAD_BYTES) {
+        this.logger.warn(
+          {
+            connectionId: identity.connectionId,
+            relayConnectionId: identity.relayConnectionId,
+            transport: identity.transport,
+            messageType: message.type,
+            sessionMessageType: message.type === "session" ? message.message.type : undefined,
+            plaintextBytes: payloadBytes,
+            wireBytes,
+            maxWireBytes: MAX_RELAY_PAYLOAD_BYTES,
+            queuedBytes: ws.bufferedAmount ?? 0,
+          },
+          "ws_relay_message_too_large",
+        );
+      }
       this.sendFrameToClient(ws, payload, payloadBytes, () => {
         this.runtimeMetrics.recordOutboundMessage(message, ws.bufferedAmount);
       });

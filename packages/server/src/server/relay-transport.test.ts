@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import type pino from "pino";
 import { createClientChannel, type Transport } from "@getpaseo/relay/e2ee";
 import { exportPublicKey, generateKeyPair } from "@getpaseo/relay";
-import { startRelayTransport } from "./relay-transport";
+import { startRelayTransport, type RelaySocketLike } from "./relay-transport";
 
 function createMockLogger() {
   const messages: { level: "debug" | "info" | "warn" | "error"; args: unknown[] }[] = [];
@@ -80,8 +80,8 @@ class FakeRelayWebSocket {
     callback();
   }
 
-  completeNextSend() {
-    this.pendingSendCallbacks.shift()?.();
+  completeNextSend(error?: Error) {
+    this.pendingSendCallbacks.shift()?.(error);
   }
 
   ping() {
@@ -348,5 +348,70 @@ describe("relay-transport control lifecycle", () => {
 
     expect(relay.sockets[0]?.url).toMatch(/^wss:\/\/\[::1\]\/ws\?/);
     expect(relay.sockets[1]?.url).toMatch(/^wss:\/\/\[::1\]\/ws\?/);
+  });
+
+  test("pending encrypted send failures log once and allow a replacement data connection", async () => {
+    const logger = createMockLogger();
+    const daemonKeyPair = generateKeyPair();
+    let resolveAttached: (socket: RelaySocketLike) => void = () => {};
+    const attached = new Promise<RelaySocketLike>((resolve) => (resolveAttached = resolve));
+    controllers.push(
+      startRelayTransport({
+        logger: logger as unknown as pino.Logger,
+        attachSocket: async (socket) => resolveAttached(socket),
+        relayEndpoint: "relay.paseo.sh:443",
+        relayUseTls: true,
+        serverId: "srv_test",
+        daemonKeyPair,
+        createWebSocket: relay.createWebSocket,
+      }),
+    );
+    const control = relay.sockets[0];
+    control.open();
+    control.message(JSON.stringify({ type: "connected", connectionId: "clt_test" }));
+    const dataSocket = relay.sockets[1];
+    dataSocket.open();
+    const clientTransport: Transport = {
+      send: (data) => dataSocket.message(data, data instanceof ArrayBuffer),
+      close: () => undefined,
+      onmessage: null,
+      onclose: null,
+      onerror: null,
+    };
+    dataSocket.onSend = (data) =>
+      clientTransport.onmessage?.({
+        data: data instanceof Uint8Array ? data.slice().buffer : data,
+        isBinary: data instanceof ArrayBuffer || data instanceof Uint8Array,
+      });
+    await createClientChannel(clientTransport, exportPublicKey(daemonKeyPair.publicKey));
+    const socket = await attached;
+    socket.on("error", () => {});
+    dataSocket.deferSendCompletion = true;
+    const sending = Promise.allSettled([
+      socket.send("first"),
+      socket.send("second"),
+      socket.send("third"),
+    ]);
+    const failure = new Error("write EPIPE");
+
+    dataSocket.completeNextSend(failure);
+    dataSocket.completeNextSend(failure);
+    dataSocket.completeNextSend(failure);
+
+    expect(await sending).toEqual(
+      Array.from({ length: 3 }, () => ({
+        status: "rejected",
+        reason: failure,
+      })),
+    );
+    expect(dataSocket.terminateCalls).toBe(1);
+    expect(socket.readyState).toBe(3);
+    expect(
+      logger.messages.filter((entry) => entry.args.includes("relay_socket_send_failed")),
+    ).toHaveLength(1);
+    await expect(socket.send("later")).rejects.toThrow("not open");
+    expect(control.readyState).toBe(FakeRelayWebSocket.OPEN);
+    control.message(JSON.stringify({ type: "connected", connectionId: "clt_test" }));
+    expect(relay.sockets).toHaveLength(3);
   });
 });

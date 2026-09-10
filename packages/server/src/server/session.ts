@@ -1,4 +1,5 @@
 import type { SessionEventSubscription } from "@getpaseo/protocol/messages";
+import { boundTimelineResponse } from "./timeline-response.js";
 import type { AgentRequests } from "./agent/requests/index.js";
 import equal from "fast-deep-equal";
 import { v4 as uuidv4 } from "uuid";
@@ -7236,33 +7237,35 @@ export class Session {
       });
       const agentPayload = await this.buildAgentPayload(snapshot);
 
-      const fetchedControlTimeline = this.agentManager.fetchTimeline(msg.agentId, {
-        direction,
-        cursor,
-        limit: pageLimit,
-      });
-      const selectedTimeline = this.selectTimelineProjection({
-        agentId: msg.agentId,
-        projection,
-        controlTimeline: fetchedControlTimeline,
-        direction,
-        ...(cursor ? { cursor } : {}),
-        pageLimit,
-      });
-      const startCursor =
-        selectedTimeline.startSeq !== null
-          ? { epoch: selectedTimeline.timeline.epoch, seq: selectedTimeline.startSeq }
-          : null;
-      const endCursor =
-        selectedTimeline.endSeq !== null
-          ? { epoch: selectedTimeline.timeline.epoch, seq: selectedTimeline.endSeq }
-          : null;
-      const entries = selectedTimeline.entries.filter((entry) =>
-        this.supportsTimelineItem(entry.item, source),
-      );
+      const selectPage = (
+        limit: number,
+      ): Extract<SessionOutboundMessage, { type: "fetch_agent_timeline_response" }> => {
+        const fetchedControlTimeline = this.agentManager.fetchTimeline(msg.agentId, {
+          direction,
+          cursor,
+          limit,
+        });
+        const selectedTimeline = this.selectTimelineProjection({
+          agentId: msg.agentId,
+          projection,
+          controlTimeline: fetchedControlTimeline,
+          direction,
+          ...(cursor ? { cursor } : {}),
+          pageLimit: limit,
+        });
+        const startCursor =
+          selectedTimeline.startSeq !== null
+            ? { epoch: selectedTimeline.timeline.epoch, seq: selectedTimeline.startSeq }
+            : null;
+        const endCursor =
+          selectedTimeline.endSeq !== null
+            ? { epoch: selectedTimeline.timeline.epoch, seq: selectedTimeline.endSeq }
+            : null;
+        const entries = selectedTimeline.entries.filter((entry) =>
+          this.supportsTimelineItem(entry.item, source),
+        );
 
-      this.emitForSource(
-        {
+        return {
           type: "fetch_agent_timeline_response",
           payload: {
             requestId: msg.requestId,
@@ -7302,9 +7305,9 @@ export class Session {
             }),
             error: null,
           },
-        },
-        source,
-      );
+        };
+      };
+      this.emitForSource(boundTimelineResponse(selectPage(pageLimit), selectPage), source);
     } catch (error) {
       this.sessionLogger.error(
         { err: error, agentId: msg.agentId },

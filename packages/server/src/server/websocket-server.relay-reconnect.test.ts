@@ -480,6 +480,31 @@ describe("relay external socket reconnect behavior", () => {
     vi.useRealTimers();
   });
 
+  test("oversized relay diagnostics identify the response without logging its content", async () => {
+    const logger = createLogger();
+    const server = createServer({ logger });
+    const socket = new MockSocket();
+    await attachRelayAndHello({ server, socket, clientId: "cid-size-diagnostic" });
+    logger.warn.mockClear();
+    const privateText = "private-tool-result".repeat(2 * 1024 * 1024);
+    sessionMock.instances[0].publish({
+      type: "fetch_agent_timeline_response",
+      payload: { privateText },
+    });
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        transport: "relay",
+        messageType: "session",
+        sessionMessageType: "fetch_agent_timeline_response",
+        plaintextBytes: expect.any(Number),
+        wireBytes: expect.any(Number),
+      }),
+      "ws_relay_message_too_large",
+    );
+    expect(JSON.stringify(logger.warn.mock.calls)).not.toContain("private-tool-result");
+    await server.close();
+  });
+
   test("keeps the same session when relay reconnects within grace window", async () => {
     const server = createServer();
     const clientId = "cid-relay-reconnect";
