@@ -1,3 +1,7 @@
+import type {
+  TerminalFindHandle,
+  TerminalFindResult,
+} from "../terminal/runtime/terminal-emulator-runtime";
 import type { Ref } from "react";
 import type { ITheme } from "@xterm/xterm";
 import type { TerminalState } from "@getpaseo/protocol/messages";
@@ -12,6 +16,7 @@ import type { PendingTerminalModifiers } from "../utils/terminal-keys";
 import type { TerminalRendererReadyChange } from "../utils/terminal-renderer-readiness";
 
 export interface TerminalEmulatorHandle {
+  find?: TerminalFindHandle;
   writeOutput: (data: TerminalOutputData) => void;
   restoreOutput: (data: TerminalOutputData) => void;
   renderSnapshot: (state: TerminalState | null) => void;
@@ -39,6 +44,8 @@ export interface TerminalEmulatorProps {
   onSwipeLeft?: () => void;
   onSwipeRight?: () => void;
   initialSnapshot?: TerminalState | null;
+  onFindRequest?: () => void;
+  onFindResult?: (result: TerminalFindResult) => void;
   onInput?: (data: string) => Promise<void> | void;
   onFocus?: () => Promise<void> | void;
   onResize?: (input: {
