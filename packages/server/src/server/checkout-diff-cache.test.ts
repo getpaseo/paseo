@@ -1,13 +1,39 @@
 import { expect, test } from "vitest";
 import { CheckoutDiffCache } from "./checkout-diff-cache.js";
 
+test("forced reads after a mutation share a fresh build after the active build finishes", async () => {
+  const cache = new CheckoutDiffCache(() => 0);
+  const first = Promise.withResolvers<{ diff: string }>();
+  const second = Promise.withResolvers<{ diff: string }>();
+  let calls = 0;
+  const load = () => (++calls === 1 ? first.promise : second.promise);
+  const pending = cache.read({ cwd: "repo", compare: { mode: "base" }, load });
+  await Promise.resolve();
+  const options = { force: true, reason: "repository-mutation" };
+  const fresh = cache.read({ cwd: "repo", compare: { mode: "base" }, ...options, load });
+  const another = cache.read({ cwd: "repo", compare: { mode: "base" }, ...options, load });
+  expect(calls).toBe(1);
+  first.resolve({ diff: "before-mutation" });
+  expect(await pending).toEqual({ diff: "before-mutation" });
+  await Promise.resolve();
+  await Promise.resolve();
+  expect(calls).toBe(2);
+  second.resolve({ diff: "after-mutation" });
+  expect(await fresh).toEqual({ diff: "after-mutation" });
+  expect(await another).toEqual({ diff: "after-mutation" });
+  expect(await cache.read({ cwd: "repo", compare: { mode: "base" }, load })).toEqual({
+    diff: "after-mutation",
+  });
+  expect(calls).toBe(2);
+});
+
 test("reads after invalidation wait for fresh work without overlapping the original read", async () => {
   const cache = new CheckoutDiffCache(() => 0);
   const first = Promise.withResolvers<{ diff: string }>();
   const second = Promise.withResolvers<{ diff: string }>();
   let calls = 0;
   const load = () => (++calls === 1 ? first.promise : second.promise);
-  const read = () => cache.read("repo", { mode: "base" }, undefined, load);
+  const read = () => cache.read({ cwd: "repo", compare: { mode: "base" }, load });
   const pending = read();
   await Promise.resolve();
   cache.invalidate("repo", "base");
@@ -35,14 +61,18 @@ test("edits during a read do not delay its caller or cache its outdated snapshot
     calls += 1;
     return deferred.promise;
   };
-  const pending = cache.read("repo", { mode: "uncommitted" }, undefined, load);
+  const pending = cache.read({ cwd: "repo", compare: { mode: "uncommitted" }, load });
   await Promise.resolve();
   cache.invalidate("repo", "uncommitted");
   deferred.resolve({ diff: "snapshot" });
   expect(await pending).toEqual({ diff: "snapshot" });
   expect(calls).toBe(1);
   expect(
-    await cache.read("repo", { mode: "uncommitted" }, undefined, async () => ({ diff: "fresh" })),
+    await cache.read({
+      cwd: "repo",
+      compare: { mode: "uncommitted" },
+      load: async () => ({ diff: "fresh" }),
+    }),
   ).toEqual({ diff: "fresh" });
 });
 
@@ -50,14 +80,22 @@ test("active reads survive completed-payload eviction and failed reads can retry
   const cache = new CheckoutDiffCache(() => 0);
   const deferred = Promise.withResolvers<{ diff: string }>();
   const load = () => deferred.promise;
-  const first = cache.read("active", { mode: "uncommitted" }, undefined, load);
+  const first = cache.read({ cwd: "active", compare: { mode: "uncommitted" }, load });
   const rejected = expect(first).rejects.toThrow("read failed");
   for (let i = 0; i < 70; i++)
-    await cache.read(String(i), { mode: "base" }, undefined, async () => ({ diff: "" }));
-  expect(cache.read("active", { mode: "uncommitted" }, undefined, load)).toBe(first);
+    await cache.read({
+      cwd: String(i),
+      compare: { mode: "base" },
+      load: async () => ({ diff: "" }),
+    });
+  expect(cache.read({ cwd: "active", compare: { mode: "uncommitted" }, load })).toBe(first);
   deferred.reject(new Error("read failed"));
   await rejected;
   expect(
-    await cache.read("active", { mode: "uncommitted" }, undefined, async () => ({ diff: "retry" })),
+    await cache.read({
+      cwd: "active",
+      compare: { mode: "uncommitted" },
+      load: async () => ({ diff: "retry" }),
+    }),
   ).toEqual({ diff: "retry" });
 });

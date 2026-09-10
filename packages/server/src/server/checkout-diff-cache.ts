@@ -6,26 +6,32 @@ interface ActiveRead {
   invalidated: boolean;
 }
 
+interface CachedDiff {
+  value: CheckoutDiffResult;
+  loadedAt: number;
+  lastReadStarted: number;
+}
+
+interface CheckoutDiffReadInput {
+  cwd: string;
+  compare: CheckoutDiffCompare;
+  force?: boolean;
+  reason?: string;
+  load: () => Promise<CheckoutDiffResult>;
+}
+
 /** Completed payloads are bounded; active work survives invalidation and eviction. */
 export class CheckoutDiffCache {
-  private readonly values = new LRUCache<
-    string,
-    { value: CheckoutDiffResult; loadedAt: number; lastReadStarted: number }
-  >({
+  private readonly values = new LRUCache<string, CachedDiff>({
     max: 64,
   });
   private readonly active = new Map<string, ActiveRead>();
 
   constructor(private readonly now: () => number) {}
 
-  read(
-    cwd: string,
-    compare: CheckoutDiffCompare,
-    options: { force?: boolean; reason?: string } | undefined,
-    load: () => Promise<CheckoutDiffResult>,
-  ): Promise<CheckoutDiffResult> {
-    if (options?.force && !options.reason)
-      throw new Error("WorkspaceGitService forced read requires a reason");
+  read(input: CheckoutDiffReadInput): Promise<CheckoutDiffResult> {
+    const { cwd, compare, force, reason, load } = input;
+    if (force && !reason) throw new Error("WorkspaceGitService forced read requires a reason");
     const key = JSON.stringify([
       cwd,
       compare.mode,
@@ -36,17 +42,23 @@ export class CheckoutDiffCache {
     const cached = this.values.get(key);
     const now = this.now();
     if (
-      !options?.force &&
+      !force &&
       cached &&
       (now - cached.loadedAt <= 15_000 || now - cached.lastReadStarted < 2_000)
     )
       return Promise.resolve(cached.value);
     const pending = this.active.get(key);
     if (pending) {
+      if (force) {
+        pending.invalidated = true;
+        this.values.delete(key);
+      }
       if (!pending.invalidated) return pending.promise;
       // A caller arriving after a change needs a fresh read, once the old one
       // finishes. The original caller can still receive its snapshot promptly.
-      const reload = () => this.read(cwd, compare, options, load);
+      // The older result cannot enter the cache. Drop force when retrying so
+      // callers waiting on that same result share the next fresh build.
+      const reload = () => this.read({ ...input, force: false });
       return pending.promise.then(reload, reload);
     }
     if (cached) cached.lastReadStarted = now;

@@ -734,12 +734,16 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     // starting a cold diff, rather than invalidating that build halfway through.
     await this.workspaceTargets.get(normalizedCwd)?.observationSetupPromise;
     this.assertNotDisposed();
-    return this.checkoutDiffCache.read(normalizedCwd, normalizedOptions, readOptions, () =>
-      this.deps.getCheckoutDiff(normalizedCwd, normalizedOptions, {
-        paseoHome: this.paseoHome,
-        worktreesRoot: this.worktreesRoot,
-      }),
-    );
+    return this.checkoutDiffCache.read({
+      cwd: normalizedCwd,
+      compare: normalizedOptions,
+      ...readOptions,
+      load: () =>
+        this.deps.getCheckoutDiff(normalizedCwd, normalizedOptions, {
+          paseoHome: this.paseoHome,
+          worktreesRoot: this.worktreesRoot,
+        }),
+    });
   }
 
   private normalizeCheckoutDiffOptions(options: CheckoutDiffCompare): CheckoutDiffCompare {
