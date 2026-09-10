@@ -390,8 +390,8 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
   {
     // Browsers reserve Cmd/Ctrl+Shift+R for hard reload, so browser web gets
     // its own chord. Listed first so web resolves to it; the desktop bindings
-    // below have no `desktop` constraint and only win where this one is gated
-    // off. Same pattern as close-current-tab's Alt+Shift+W web variant.
+    // below are gated to `desktop: true` and only win on the desktop apps.
+    // Same pattern as close-current-tab's Alt+Shift+W web variant.
     id: "workspace-rename-alt-shift-r-web",
     action: "workspace.rename",
     combo: "Alt+Shift+R",
@@ -406,7 +406,7 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
     id: "workspace-rename-cmd-shift-r-mac",
     action: "workspace.rename",
     combo: "Cmd+Shift+R",
-    when: { mac: true, commandCenter: false },
+    when: { mac: true, desktop: true, commandCenter: false },
     help: {
       id: "rename-workspace",
       section: "workspaces",
@@ -417,7 +417,7 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
     id: "workspace-rename-ctrl-shift-r-non-mac",
     action: "workspace.rename",
     combo: "Ctrl+Shift+R",
-    when: { mac: false, commandCenter: false, terminal: false },
+    when: { mac: false, desktop: true, commandCenter: false, terminal: false },
     help: {
       id: "rename-workspace",
       section: "workspaces",

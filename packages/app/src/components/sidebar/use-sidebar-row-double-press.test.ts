@@ -1,79 +1,13 @@
-import { JSDOM } from "jsdom";
-import React, { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { useSidebarRowDoublePress } from "./use-sidebar-row-double-press";
+import { describe, expect, it, vi } from "vitest";
+import { createSidebarRowPressHandler } from "./use-sidebar-row-double-press";
 
-let root: Root | null = null;
-let container: HTMLElement | null = null;
-let latestHandler: { press: () => void } | null = null;
-let dateNowSpy: ReturnType<typeof vi.spyOn> | null = null;
-
-function Harness({
-  onPress,
-  onRename,
-  didLongPressRef,
-}: {
-  onPress: () => void;
-  onRename?: () => void;
-  didLongPressRef?: { current: boolean } | null;
-}) {
-  const press = useSidebarRowDoublePress({ onPress, onRename, didLongPressRef });
-  latestHandler = { press };
-  return null;
-}
-
-function renderHarness(props: Parameters<typeof Harness>[0]) {
-  act(() => {
-    root?.render(React.createElement(Harness, props));
-  });
-  return latestHandler as { press: () => void };
-}
-
-function pressAt(handler: { press: () => void }, time: number) {
-  dateNowSpy?.mockReturnValue(time);
-  act(() => {
-    handler.press();
-  });
-}
-
-beforeEach(() => {
-  const dom = new JSDOM("<!doctype html><html><body></body></html>");
-  vi.stubGlobal("React", React);
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  vi.stubGlobal("window", dom.window);
-  vi.stubGlobal("document", dom.window.document);
-  vi.stubGlobal("HTMLElement", dom.window.HTMLElement);
-  vi.stubGlobal("Node", dom.window.Node);
-  vi.stubGlobal("navigator", dom.window.navigator);
-
-  container = document.createElement("div");
-  document.body.appendChild(container);
-  root = createRoot(container);
-  latestHandler = null;
-  dateNowSpy = vi.spyOn(Date, "now");
-});
-
-afterEach(() => {
-  act(() => {
-    root?.unmount();
-  });
-  container?.remove();
-  container = null;
-  root = null;
-  latestHandler = null;
-  dateNowSpy?.mockRestore();
-  dateNowSpy = null;
-  vi.unstubAllGlobals();
-});
-
-describe("useSidebarRowDoublePress", () => {
+describe("createSidebarRowPressHandler", () => {
   it("calls onPress for a single press", () => {
     const onPress = vi.fn();
     const onRename = vi.fn();
-    const handler = renderHarness({ onPress, onRename });
+    const handler = createSidebarRowPressHandler({ onPress, onRename, now: () => 1000 });
 
-    pressAt(handler, 1000);
+    handler();
 
     expect(onPress).toHaveBeenCalledTimes(1);
     expect(onRename).not.toHaveBeenCalled();
@@ -82,10 +16,12 @@ describe("useSidebarRowDoublePress", () => {
   it("opens rename on a second press inside the window", () => {
     const onPress = vi.fn();
     const onRename = vi.fn();
-    const handler = renderHarness({ onPress, onRename });
+    let now = 1000;
+    const handler = createSidebarRowPressHandler({ onPress, onRename, now: () => now });
 
-    pressAt(handler, 1000);
-    pressAt(handler, 1200);
+    handler();
+    now = 1200;
+    handler();
 
     expect(onPress).toHaveBeenCalledTimes(1);
     expect(onRename).toHaveBeenCalledTimes(1);
@@ -94,10 +30,12 @@ describe("useSidebarRowDoublePress", () => {
   it("treats two presses outside the window as two selections", () => {
     const onPress = vi.fn();
     const onRename = vi.fn();
-    const handler = renderHarness({ onPress, onRename });
+    let now = 1000;
+    const handler = createSidebarRowPressHandler({ onPress, onRename, now: () => now });
 
-    pressAt(handler, 1000);
-    pressAt(handler, 1000 + 400);
+    handler();
+    now = 1400;
+    handler();
 
     expect(onPress).toHaveBeenCalledTimes(2);
     expect(onRename).not.toHaveBeenCalled();
@@ -106,11 +44,14 @@ describe("useSidebarRowDoublePress", () => {
   it("treats a press right after a rename as a fresh selection", () => {
     const onPress = vi.fn();
     const onRename = vi.fn();
-    const handler = renderHarness({ onPress, onRename });
+    let now = 1000;
+    const handler = createSidebarRowPressHandler({ onPress, onRename, now: () => now });
 
-    pressAt(handler, 1000);
-    pressAt(handler, 1100);
-    pressAt(handler, 1200);
+    handler();
+    now = 1100;
+    handler();
+    now = 1200;
+    handler();
 
     expect(onRename).toHaveBeenCalledTimes(1);
     expect(onPress).toHaveBeenCalledTimes(2);
@@ -118,10 +59,12 @@ describe("useSidebarRowDoublePress", () => {
 
   it("falls through to onPress when rename is unavailable", () => {
     const onPress = vi.fn();
-    const handler = renderHarness({ onPress });
+    let now = 1000;
+    const handler = createSidebarRowPressHandler({ onPress, now: () => now });
 
-    pressAt(handler, 1000);
-    pressAt(handler, 1100);
+    handler();
+    now = 1100;
+    handler();
 
     expect(onPress).toHaveBeenCalledTimes(2);
   });
@@ -130,15 +73,23 @@ describe("useSidebarRowDoublePress", () => {
     const onPress = vi.fn();
     const onRename = vi.fn();
     const didLongPressRef = { current: false };
-    const handler = renderHarness({ onPress, onRename, didLongPressRef });
+    let now = 1000;
+    const handler = createSidebarRowPressHandler({
+      onPress,
+      onRename,
+      didLongPressRef,
+      now: () => now,
+    });
 
-    pressAt(handler, 1000);
+    handler();
     didLongPressRef.current = true;
-    pressAt(handler, 1100);
+    now = 1100;
+    handler();
     expect(onPress).toHaveBeenCalledTimes(1);
     expect(onRename).not.toHaveBeenCalled();
 
-    pressAt(handler, 1200);
+    now = 1200;
+    handler();
     expect(onPress).toHaveBeenCalledTimes(2);
     expect(onRename).not.toHaveBeenCalled();
   });
