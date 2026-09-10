@@ -74,18 +74,14 @@ export const es: TranslationResources = {
     },
     commandCenter: {
       contentTitle: "Buscar contenido de archivos",
+      content: "Contenido de archivos",
       contentPlaceholder: "Buscar contenido guardado...",
       contentUnavailable: "Espacio de trabajo no disponible",
       contentUpdateHost: "Actualiza este host para buscar contenido",
-      contentEmpty: "Buscar contenido guardado",
       contentBack: "Volver a resultados",
-      contentPreview: "Vista previa",
       contentOpen: "Abrir",
       contentLoadingPreview: "Cargando vista previa...",
       contentLimited: "Resultados limitados — precisa la búsqueda",
-      contentScopeDetail:
-        "Busca archivos UTF-8 guardados, incluidos ocultos y sin seguimiento. Respeta las reglas de exclusión. Excluye enlaces simbólicos y cambios sin guardar.",
-      contentScope: "Archivos guardados hasta 1 MiB · Sin distinguir mayúsculas",
       contentChanged: "El archivo cambió — la coincidencia ya no está aquí",
 
       placeholder: "Buscar comandos, archivos, espacios de trabajo y agentes...",

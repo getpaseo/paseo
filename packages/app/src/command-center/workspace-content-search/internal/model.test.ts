@@ -201,3 +201,34 @@ test("textual image occurrences expose saved source without changing the read ki
     model.dispose();
   }
 });
+
+test("revisiting a file re-reads it, so a file deleted since the search stops previewing", async () => {
+  const reads: string[] = [];
+  let deleted = false;
+  const model = new WorkspaceContentSearchModel({
+    cwd: "/workspace",
+    debounceMs: 0,
+    open() {},
+    transport: {
+      searchWorkspaceContent: async () => result([match("a.ts"), match("b.ts")]),
+      readFile: async (_cwd, path) => {
+        reads.push(path);
+        if (path === "a.ts" && deleted) throw new Error("ENOENT: no such file");
+        return file(path, `NEEDLE in ${path}`);
+      },
+    },
+  });
+  try {
+    model.setQuery("needle");
+    await expect.poll(() => model.getSnapshot().preview.status).toBe("ready");
+    expect(reads).toEqual(["a.ts"]);
+    model.move(1);
+    await expect.poll(() => reads).toEqual(["a.ts", "b.ts"]);
+    deleted = true;
+    model.move(-1);
+    await expect.poll(() => model.getSnapshot().preview).toMatchObject({ status: "error" });
+    expect(reads).toEqual(["a.ts", "b.ts", "a.ts"]);
+  } finally {
+    model.dispose();
+  }
+});

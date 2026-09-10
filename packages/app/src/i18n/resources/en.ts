@@ -71,18 +71,14 @@ export const en = {
     },
     commandCenter: {
       contentTitle: "Search file contents",
+      content: "File contents",
       contentPlaceholder: "Search saved file contents...",
       contentUnavailable: "Workspace unavailable",
       contentUpdateHost: "Update this host to search file contents",
-      contentEmpty: "Search saved file contents",
       contentBack: "Back to results",
-      contentPreview: "Preview",
       contentOpen: "Open",
       contentLoadingPreview: "Loading preview...",
       contentLimited: "Results limited — refine your search",
-      contentScopeDetail:
-        "Searches saved UTF-8 files, including hidden and untracked files. Ignore rules apply. Symbolic links and unsaved edits are excluded.",
-      contentScope: "Saved files up to 1 MiB · Ignore case",
       contentChanged: "File changed — saved match is no longer at this location",
 
       placeholder: "Search commands, files, workspaces, and agents...",

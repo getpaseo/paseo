@@ -75,18 +75,14 @@ export const fr: TranslationResources = {
     },
     commandCenter: {
       contentTitle: "Rechercher dans les fichiers",
+      content: "Contenu des fichiers",
       contentPlaceholder: "Rechercher dans les fichiers enregistrés...",
       contentUnavailable: "Espace de travail indisponible",
       contentUpdateHost: "Mettez cet hôte à jour pour rechercher dans les fichiers",
-      contentEmpty: "Rechercher dans les fichiers enregistrés",
       contentBack: "Retour aux résultats",
-      contentPreview: "Aperçu",
       contentOpen: "Ouvrir",
       contentLoadingPreview: "Chargement de l’aperçu...",
       contentLimited: "Résultats limités — précisez la recherche",
-      contentScopeDetail:
-        "Recherche dans les fichiers UTF-8 enregistrés, y compris cachés et non suivis. Respecte les règles d’exclusion. Exclut les liens symboliques et les modifications non enregistrées.",
-      contentScope: "Fichiers enregistrés jusqu’à 1 Mio · Casse ignorée",
       contentChanged: "Fichier modifié — la correspondance n’est plus à cet emplacement",
 
       placeholder: "Rechercher des commandes, fichiers, espaces de travail et agents...",

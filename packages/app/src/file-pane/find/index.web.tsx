@@ -11,7 +11,7 @@ import { View, type View as ViewInstance } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
 import { PaneFind, type PaneFindHandle } from "@/pane-find";
-import { usePaneFocus } from "@/panels/pane-context";
+import { usePaneFocusIfAny } from "@/panels/pane-context";
 import { hasActiveWebOverlay } from "@/lib/overlay-root";
 import { useRetainedPanelActive } from "@/components/retained-panel";
 import { isImeComposingKeyboardEvent } from "@/utils/keyboard-ime";
@@ -29,7 +29,9 @@ export function FileFind({
   const { t } = useTranslation();
   const state = useSyncExternalStore(model.subscribe, model.getSnapshot, model.getSnapshot);
   const widget = useRef<PaneFindHandle>(null);
-  const { isInteractive } = usePaneFocus();
+  // A source view can also render outside any pane, such as the Command Center content
+  // preview. Pane Find belongs to the pane, so there is nothing to open there.
+  const pane = usePaneFocusIfAny();
   const active = useRetainedPanelActive();
   // RN Web hands the underlying DOM element to a View ref; the model measures it.
   const setWidgetNode = useCallback(
@@ -37,7 +39,7 @@ export function FileFind({
     [model],
   );
   useEffect(() => {
-    if (!isInteractive || !active) return;
+    if (!pane?.isInteractive || !active) return;
     function onKeyDown(event: KeyboardEvent) {
       if (event.defaultPrevented || hasActiveWebOverlay() || isImeComposingKeyboardEvent(event))
         return;
@@ -54,7 +56,7 @@ export function FileFind({
     }
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
-  }, [active, editor, isInteractive, model]);
+  }, [active, editor, model, pane?.isInteractive]);
 
   const replace = useMemo(
     () =>
@@ -68,7 +70,7 @@ export function FileFind({
           },
     [model, state.readOnly, state.replacement],
   );
-  if (!state.open) return null;
+  if (!pane || !state.open) return null;
   const total = `${state.total}${state.limited ? "+" : ""}`;
   let status = "";
   if (state.query) {

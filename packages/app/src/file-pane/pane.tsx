@@ -33,7 +33,7 @@ import { FileMarkdownPreview } from "./markdown-preview";
 import { FileEditorModel, getFileConflictCallout, type FileConflictCallout } from "./editor/model";
 import { createFileObservationSource } from "./editor/observation-source";
 import { FileEditorView } from "./editor/view";
-import { FileSourceView } from "./source/view";
+import { WorkspaceFileSource } from "./source";
 import type { FileConflictAlertState } from "./conflict-alert";
 import type { LiveFileModel } from "./live-file/model";
 import { confirmDialog } from "@/utils/confirm-dialog";
@@ -79,32 +79,13 @@ function ReadonlySource({
   location: WorkspaceFileLocation;
   navigationRevision: number;
 }) {
-  const theme = UnistylesRuntime.getTheme();
-  const { t } = useTranslation();
-  const visualTheme = useMemo(
-    () => ({
-      colorScheme: theme.colorScheme,
-      background: theme.colors.surface0,
-      foreground: theme.colors.foreground,
-      cursor: theme.colors.terminal.cursor,
-      foregroundMuted: theme.colors.foregroundMuted,
-      border: theme.colors.border,
-      selection: theme.colors.terminal.selectionBackground,
-      monoFont: theme.fontFamily.mono,
-      codeFontSize: theme.fontSize.code,
-      syntax: theme.colors.syntax,
-    }),
-    [theme],
-  );
   return (
-    <FileSourceView
+    <WorkspaceFileSource
       content={preview.content ?? ""}
       filename={filename}
       location={location}
       navigationRevision={navigationRevision}
       size={preview.size}
-      theme={visualTheme}
-      tooLargeMessage={t("panels.file.tooLargeToDisplay")}
     />
   );
 }

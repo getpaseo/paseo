@@ -120,7 +120,8 @@ function ReadonlyCodeMirror({
     const { from, to } = resolveWorkspaceFileSelection(view.state.doc.toString(), location);
     view.dispatch({
       selection: { anchor: from, head: to },
-      effects: EditorView.scrollIntoView(from, { y: "center" }),
+      // A match far into a long line lands at the scroller edge without the horizontal centre.
+      effects: EditorView.scrollIntoView(from, { x: "center", y: "center" }),
     });
   }, [content, location, navigationRevision]);
 

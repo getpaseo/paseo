@@ -28,9 +28,10 @@ export async function previewAndOpenSecondOccurrence(page: Page, screenshot: str
   await page.keyboard.press("ArrowDown");
   await expect(panel.getByTestId("file-source-editor")).toContainText("const emoji");
   await expect(input).toBeFocused();
+  // The query field is the Command Center's own header input, above the results and preview.
   const inputBox = await input.boundingBox();
   const previewBox = await panel.getByTestId("file-source-editor").boundingBox();
-  expect(inputBox!.y).toBeGreaterThan(previewBox!.y + previewBox!.height);
+  expect(inputBox!.y + inputBox!.height).toBeLessThan(previewBox!.y);
   await panel.screenshot({ path: screenshot });
   await page.keyboard.press("Enter");
   await expect(panel).toBeHidden();

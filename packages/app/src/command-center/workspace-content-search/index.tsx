@@ -1,17 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
-import {
-  FlatList,
-  Pressable,
-  Text,
-  View,
-  type NativeSyntheticEvent,
-  type TextInputKeyPressEventData,
-} from "react-native";
+import { FlatList, Pressable, Text, View, type PressableStateCallbackType } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
+import type { WorkspaceContentMatch } from "@getpaseo/protocol/messages";
 import { isWeb } from "@/constants/platform";
 import { Button } from "@/components/ui/button";
-import { EditingTextInput } from "@/components/ui/text-input";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { useActiveWorkspaceSelection } from "@/stores/navigation-active-workspace-store";
 import { useWorkspaceDirectory } from "@/stores/session-store-hooks";
@@ -22,21 +15,26 @@ import { createWorkspaceFileTabTarget } from "@/workspace/file-open";
 import { buildWorkspaceTabPersistenceKey } from "@/workspace-tabs/model";
 import { clearCommandCenterFocusRestoreElement } from "@/utils/command-center-focus-restore";
 import { WorkspaceFileSource } from "@/file-pane/source";
-import { WorkspaceContentSearchModel, type ContentSearchTransport } from "./internal/model";
+import { describeWorkspaceFilePath } from "../workspace-file-search-model";
+import {
+  WorkspaceContentSearchModel,
+  type ContentSearchSnapshot,
+  type ContentSearchTransport,
+} from "./internal/model";
 
 const ThemedSpinner = withUnistyles(LoadingSpinner, (theme) => ({
   color: theme.colors.foregroundMuted,
 }));
 
-import type { WorkspaceContentMatch } from "@getpaseo/protocol/messages";
-import type { ContentSearchSnapshot } from "./internal/model";
 interface Props {
+  /** The Command Center owns the field; this body only reacts to what was typed in it. */
+  query: string;
   compact: boolean;
-  bottomSheet: boolean;
   close(): void;
   clearScope(): void;
   keyHandler: React.RefObject<((key: string) => boolean) | null>;
 }
+
 export function WorkspaceContentSearch(props: Props) {
   const { keyHandler, close, clearScope } = props;
   const { t } = useTranslation();
@@ -78,13 +76,14 @@ export function WorkspaceContentSearch(props: Props) {
     />
   );
 }
+
 function ContentSearch({
   transport,
   cwd,
   serverId,
   workspaceId,
+  query,
   compact,
-  bottomSheet,
   close,
   clearScope,
   keyHandler,
@@ -94,7 +93,6 @@ function ContentSearch({
   serverId: string;
   workspaceId: string;
 }) {
-  const { t } = useTranslation();
   const [previewPage, setPreviewPage] = useState(false);
   const closeRef = useRef(close);
   closeRef.current = close;
@@ -121,6 +119,12 @@ function ContentSearch({
     [cwd, transport, serverId, workspaceId],
   );
   useEffect(() => () => model.dispose(), [model]);
+  // The field lives in the Command Center header, so the typed value is a prop; this is the only
+  // bridge from it into the model that owns the search.
+  useEffect(() => {
+    setPreviewPage(false);
+    model.setQuery(query);
+  }, [model, query]);
   const state = useSyncExternalStore(model.subscribe, model.getSnapshot, model.getSnapshot);
   const listRef = useRef<FlatList>(null);
   useEffect(() => {
@@ -159,19 +163,6 @@ function ContentSearch({
       if (keyHandler.current === key) keyHandler.current = null;
     };
   }, [keyHandler, key]);
-  const onKey = useCallback(
-    ({ nativeEvent }: NativeSyntheticEvent<TextInputKeyPressEventData>) => {
-      if (bottomSheet) key(nativeEvent.key);
-    },
-    [bottomSheet, key],
-  );
-  const changeQuery = useCallback(
-    (value: string) => {
-      setPreviewPage(false);
-      model.setQuery(value);
-    },
-    [model],
-  );
   const select = useCallback(
     (index: number) => {
       model.select(index);
@@ -186,54 +177,34 @@ function ContentSearch({
     ),
     [select, state.activeIndex],
   );
-  const empty = useMemo(() => {
-    let text = "";
-    if (state.status === "idle") text = t("shell.commandCenter.contentEmpty");
-    if (state.status === "ready") text = t("shell.commandCenter.noMatches");
-    return <Text style={styles.status}>{text}</Text>;
-  }, [state.status, t]);
+  const emptyState = useMemo(
+    () => <SearchState state={state} retry={model.retry} />,
+    [model.retry, state],
+  );
+  const limitNotice = useMemo(() => <ResultLimit limited={state.limited} />, [state.limited]);
   return (
-    <View style={styles.root}>
-      <View style={styles.body}>
-        {!compact || !previewPage ? (
-          <View style={[styles.results, compact && styles.full]}>
-            <FlatList
-              ref={listRef}
-              data={state.matches}
-              keyboardShouldPersistTaps="handled"
-              keyExtractor={resultKey}
-              getItemLayout={resultLayout}
-              renderItem={renderItem}
-              ListEmptyComponent={empty}
-            />
-          </View>
-        ) : null}
-        {!compact || previewPage ? (
-          <ContentPreview state={state} model={model} compact={compact} back={back} />
-        ) : null}
-      </View>
-      <SearchStatus state={state} retry={model.retry} />
-      <View style={styles.query}>
-        <Button variant="ghost" size="sm" onPress={clearScope}>
-          {t("shell.commandCenter.contentTitle")}
-        </Button>
-        <EditingTextInput
-          initialValue={state.query}
-          onChangeText={changeQuery}
-          variant={bottomSheet ? "bottom-sheet" : "default"}
-          autoFocus
-          autoCapitalize="none"
-          autoCorrect={false}
-          accessibilityLabel={t("shell.commandCenter.contentPlaceholder")}
-          placeholder={t("shell.commandCenter.contentPlaceholder")}
-          onKeyPress={onKey}
-          onSubmitEditing={model.openSelected}
-          style={styles.input}
-        />
-      </View>
+    <View style={styles.body}>
+      {!compact || !previewPage ? (
+        <View style={[styles.results, compact && styles.full]}>
+          <FlatList
+            ref={listRef}
+            data={state.matches}
+            keyboardShouldPersistTaps="handled"
+            keyExtractor={resultKey}
+            getItemLayout={resultLayout}
+            renderItem={renderItem}
+            ListEmptyComponent={emptyState}
+            ListFooterComponent={limitNotice}
+          />
+        </View>
+      ) : null}
+      {!compact || previewPage ? (
+        <ContentPreview state={state} model={model} compact={compact} back={back} />
+      ) : null}
     </View>
   );
 }
+
 function ResultRow({
   item,
   index,
@@ -247,6 +218,18 @@ function ResultRow({
 }) {
   const onPress = useCallback(() => select(index), [index, select]);
   const accessibilityState = useMemo(() => ({ selected }), [selected]);
+  // Same hover/selection idiom as the Command Center's own result rows, one tint apart so the
+  // keyboard cursor that drives the preview stays distinguishable from the pointer.
+  const style = useCallback(
+    ({ hovered, pressed }: PressableStateCallbackType & { hovered?: boolean }) => [
+      styles.row,
+      (Boolean(hovered) || pressed) && styles.hovered,
+      selected && styles.selected,
+    ],
+    [selected],
+  );
+  const line = useMemo(() => describeMatchLine(item), [item]);
+  const file = useMemo(() => describeWorkspaceFilePath(item.path), [item.path]);
   return (
     <Pressable
       accessibilityRole="button"
@@ -254,27 +237,72 @@ function ResultRow({
       accessibilityState={accessibilityState}
       aria-pressed={isWeb ? selected : undefined}
       onPress={onPress}
-      style={[styles.row, selected && styles.selected]}
+      style={style}
     >
-      <Text style={styles.path} numberOfLines={1}>
-        {item.path}:{item.line}:{item.columnStart}
-      </Text>
       <Text style={styles.snippet} numberOfLines={1}>
-        {item.snippet.slice(0, item.snippetMatchStart)}
-        <Text style={styles.match}>
-          {item.snippet.slice(item.snippetMatchStart, item.snippetMatchEnd)}
+        {line.before}
+        <Text style={styles.match}>{line.match}</Text>
+        {line.after}
+      </Text>
+      <Text style={styles.location} numberOfLines={1}>
+        <Text style={styles.locationFile}>
+          {file.name}:{item.line}:{item.columnStart}
         </Text>
-        {item.snippet.slice(item.snippetMatchEnd)}
+        {file.directory ? <Text style={styles.locationDirectory}> {file.directory}</Text> : null}
       </Text>
     </Pressable>
   );
+}
+
+/** The row is one line wide, so the match has to survive indentation and long-line offsets. */
+function describeMatchLine(item: WorkspaceContentMatch) {
+  // Only a run-up long enough to be worth cutting is cut, so an ordinary line keeps its start.
+  const cut = item.snippetMatchStart > SNIPPET_LEAD * 2;
+  const from = cut ? item.snippetMatchStart - SNIPPET_LEAD : 0;
+  const before = item.snippet.slice(from, item.snippetMatchStart);
+  return {
+    before: cut ? `…${before}` : before.trimStart(),
+    match: item.snippet.slice(item.snippetMatchStart, item.snippetMatchEnd),
+    after: item.snippet.slice(item.snippetMatchEnd),
+  };
 }
 function resultKey(item: WorkspaceContentMatch) {
   return `${item.path}:${item.line}:${item.columnStart}`;
 }
 function resultLayout(_data: ArrayLike<WorkspaceContentMatch> | null | undefined, index: number) {
-  return { length: 56, offset: index * 56, index };
+  return { length: RESULT_ROW_HEIGHT, offset: index * RESULT_ROW_HEIGHT, index };
 }
+
+/** Idle stays blank: the header placeholder already says what the field does. */
+function SearchState({ state, retry }: { state: ContentSearchSnapshot; retry(): void }) {
+  const { t } = useTranslation();
+  if (state.status === "searching")
+    return (
+      <View style={styles.status} accessibilityLiveRegion="polite">
+        <ThemedSpinner size={14} />
+        <Text style={styles.muted}>{t("shell.commandCenter.searchingFiles")}</Text>
+      </View>
+    );
+  if (state.status === "error")
+    return (
+      <View style={styles.status} accessibilityLiveRegion="polite">
+        <Text style={[styles.muted, styles.error]}>{state.message}</Text>
+        <Button variant="outline" size="sm" onPress={retry}>
+          {t("common.actions.retry")}
+        </Button>
+      </View>
+    );
+  if (state.status === "ready")
+    return <Text style={styles.emptyText}>{t("shell.commandCenter.noMatches")}</Text>;
+  return null;
+}
+
+function ResultLimit({ limited }: { limited: boolean }) {
+  const { t } = useTranslation();
+  if (!limited) return null;
+  return <Text style={styles.limit}>{t("shell.commandCenter.contentLimited")}</Text>;
+}
+
 function ContentPreview({
   state,
   model,
@@ -304,25 +332,33 @@ function ContentPreview({
   );
   return (
     <View style={styles.preview}>
-      <View style={styles.previewHeader}>
-        {compact ? (
-          <Button variant="ghost" size="sm" onPress={back}>
-            {t("shell.commandCenter.contentBack")}
+      {match ? (
+        <View style={styles.previewHeader}>
+          {compact ? (
+            <Button variant="ghost" size="sm" onPress={back}>
+              {t("shell.commandCenter.contentBack")}
+            </Button>
+          ) : null}
+          <Text style={styles.previewPath} numberOfLines={1} ellipsizeMode="head">
+            {match.path}
+          </Text>
+          <Button variant="outline" size="sm" onPress={model.openSelected}>
+            {t("shell.commandCenter.contentOpen")}
           </Button>
-        ) : null}
-        <Text style={styles.previewPath} numberOfLines={1}>
-          {match?.path ?? t("shell.commandCenter.contentPreview")}
-        </Text>
-        <Button variant="outline" size="sm" disabled={!match} onPress={model.openSelected}>
-          {t("shell.commandCenter.contentOpen")}
-        </Button>
-      </View>
+        </View>
+      ) : null}
       {preview.status === "loading" ? (
-        <Text style={styles.status}>{t("shell.commandCenter.contentLoadingPreview")}</Text>
+        <View
+          style={styles.status}
+          accessibilityRole="progressbar"
+          accessibilityLabel={t("shell.commandCenter.contentLoadingPreview")}
+        >
+          <ThemedSpinner size={14} />
+        </View>
       ) : null}
       {preview.status === "error" ? (
-        <View style={styles.status}>
-          <Text style={styles.error}>{preview.message}</Text>
+        <View style={styles.status} accessibilityLiveRegion="polite">
+          <Text style={[styles.muted, styles.error]}>{preview.message}</Text>
           <Button variant="outline" size="sm" onPress={model.retryPreview}>
             {t("common.actions.retry")}
           </Button>
@@ -340,102 +376,76 @@ function ContentPreview({
     </View>
   );
 }
-function SearchStatus({ state, retry }: { state: ContentSearchSnapshot; retry(): void }) {
-  const { t } = useTranslation();
-  return (
-    <View style={styles.statusRow} accessibilityLiveRegion="polite">
-      {state.status === "searching" ? (
-        <>
-          <ThemedSpinner size={14} />
-          <Text style={styles.hint}>{t("shell.commandCenter.searchingFiles")}</Text>
-        </>
-      ) : null}
-      {state.status === "error" ? (
-        <>
-          <Text style={[styles.hint, styles.error]}>{state.message}</Text>
-          <Button variant="outline" size="sm" onPress={retry}>
-            {t("common.actions.retry")}
-          </Button>
-        </>
-      ) : null}
-      {state.limited ? (
-        <Text style={styles.hint}>{t("shell.commandCenter.contentLimited")}</Text>
-      ) : null}
-      {state.status === "idle" || (state.status === "ready" && !state.limited) ? (
-        <Text
-          style={styles.hint}
-          accessibilityHint={t("shell.commandCenter.contentScopeDetail")}
-          aria-description={isWeb ? t("shell.commandCenter.contentScopeDetail") : undefined}
-        >
-          {t("shell.commandCenter.contentScope")}
-        </Text>
-      ) : null}
-    </View>
-  );
-}
+
+// Matches the Command Center's own two-line result row.
+const RESULT_ROW_HEIGHT = 56;
+// Characters of the matched line kept ahead of the match itself.
+const SNIPPET_LEAD = 24;
+
 const styles = StyleSheet.create((theme) => ({
-  root: { flex: 1, minHeight: 0 },
   body: { flex: 1, minHeight: 0, flexDirection: "row" },
+  // A result row is two truncated single lines, so extra panel width buys the list nothing and
+  // buys the code preview everything: the column is a fixed reading width, capped so a narrow
+  // desktop panel cannot starve the preview.
   results: {
-    width: "40%",
+    width: 360,
+    maxWidth: "45%",
     minHeight: 0,
     borderRightWidth: 1,
     borderRightColor: theme.colors.border,
   },
-  full: { width: "100%", borderRightWidth: 0 },
+  full: { width: "100%", maxWidth: "100%", borderRightWidth: 0 },
   row: {
-    height: 56,
-    paddingHorizontal: theme.spacing[3],
+    height: RESULT_ROW_HEIGHT,
+    justifyContent: "center",
+    paddingHorizontal: theme.spacing[4],
     paddingVertical: theme.spacing[2],
-    gap: theme.spacing[1],
   },
+  hovered: { backgroundColor: theme.colors.surface1 },
   selected: { backgroundColor: theme.colors.surface2 },
-  path: { color: theme.colors.foreground, fontSize: theme.fontSize.sm },
+  // The matched line leads, in the code type scale; the location is its subtitle.
   snippet: {
-    color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.sm,
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.code,
+    lineHeight: 18,
     fontFamily: theme.fontFamily.mono,
   },
-  match: {
-    color: theme.colors.foreground,
-    backgroundColor: theme.colors.terminal.selectionBackground,
-  },
+  match: { backgroundColor: theme.colors.terminal.selectionBackground },
+  // The file name and coordinates lead so that truncation eats the directory, not the identity.
+  location: { fontSize: theme.fontSize.sm, lineHeight: 16 },
+  locationFile: { color: theme.colors.foreground },
+  locationDirectory: { color: theme.colors.foregroundMuted },
   preview: { flex: 1, minWidth: 0, minHeight: 0 },
   previewHeader: {
     flexDirection: "row",
     alignItems: "center",
-    padding: theme.spacing[2],
+    paddingHorizontal: theme.spacing[3],
+    paddingVertical: theme.spacing[2],
     gap: theme.spacing[2],
     borderBottomWidth: 1,
     borderBottomColor: theme.colors.border,
   },
   previewPath: { flex: 1, color: theme.colors.foregroundMuted, fontSize: theme.fontSize.sm },
   status: {
-    padding: theme.spacing[4],
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
+    paddingHorizontal: theme.spacing[4],
+    paddingVertical: theme.spacing[6],
+  },
+  muted: { fontSize: theme.fontSize.sm, color: theme.colors.foregroundMuted },
+  error: { color: theme.colors.statusDanger },
+  emptyText: {
+    paddingHorizontal: theme.spacing[4],
+    paddingVertical: theme.spacing[6],
+    textAlign: "center",
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.base,
+  },
+  limit: {
+    paddingHorizontal: theme.spacing[4],
+    paddingVertical: theme.spacing[3],
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.sm,
-  },
-  statusRow: {
-    minHeight: 40,
-    paddingHorizontal: theme.spacing[3],
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[2],
-  },
-  hint: { flex: 1, fontSize: theme.fontSize.sm, color: theme.colors.foregroundMuted },
-  error: { color: theme.colors.statusDanger },
-  query: {
-    flexDirection: "row",
-    alignItems: "center",
-    borderTopWidth: 1,
-    borderTopColor: theme.colors.border,
-    padding: theme.spacing[2],
-    gap: theme.spacing[2],
-  },
-  input: {
-    flex: 1,
-    color: theme.colors.foreground,
-    fontSize: theme.fontSize.base,
-    ...(isWeb ? { outlineWidth: 0 } : {}),
   },
 }));

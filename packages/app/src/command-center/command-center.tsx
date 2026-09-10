@@ -91,6 +91,16 @@ const ThemedX = withUnistyles(X, (theme) => ({ color: theme.colors.foregroundMut
 const ThemedLoadingSpinner = withUnistyles(LoadingSpinner, (theme) => ({
   color: theme.colors.foregroundMuted,
 }));
+const SCOPE_LABELS = {
+  files: {
+    chip: "shell.commandCenter.files",
+    placeholder: "shell.commandCenter.filePlaceholder",
+  },
+  content: {
+    chip: "shell.commandCenter.content",
+    placeholder: "shell.commandCenter.contentPlaceholder",
+  },
+} as const;
 const COMMAND_CENTER_SNAP_POINTS = ["60%", "90%"];
 const CONTENT_SEARCH_SNAP_POINTS = ["90%"];
 const KEYBOARD_SHOULD_PERSIST_TAPS = "always" as const;
@@ -703,22 +713,30 @@ export function CommandCenter() {
     onScroll: handleListScroll,
     scrollEventThrottle: 16,
   };
-  const keyPress = useCallback(
-    ({ nativeEvent: { key } }: { nativeEvent: { key: string } }) => state.key(key),
+  // Every scope wears the same header; only the chip and the placeholder name it.
+  const scopeLabels = state.scope ? SCOPE_LABELS[state.scope] : null;
+  const scopeChipLabel = scopeLabels ? t(scopeLabels.chip) : null;
+  const placeholder = t(scopeLabels?.placeholder ?? "shell.commandCenter.placeholder");
+  // Content search owns arrows, Enter and Backspace while its scope is active; every other scope
+  // is driven by the shared result list. One dispatcher so the input, submit and the web overlay
+  // can never disagree about who is steering.
+  const dispatchKey = useCallback(
+    (key: string) =>
+      state.scope === "content" ? (contentKeyHandler.current?.(key) ?? false) : state.key(key),
     [state],
   );
-  const submit = useCallback(() => state.key("Enter"), [state]);
+  const keyPress = useCallback(
+    ({ nativeEvent: { key } }: { nativeEvent: { key: string } }) => dispatchKey(key),
+    [dispatchKey],
+  );
+  const submit = useCallback(() => dispatchKey("Enter"), [dispatchKey]);
   const handleWebOverlayKeyDown = useCallback(
     (event: KeyboardEvent) => {
-      const handled =
-        state.scope === "content"
-          ? (contentKeyHandler.current?.(event.key) ?? false)
-          : state.key(event.key);
-      if (!handled) return false;
+      if (!dispatchKey(event.key)) return false;
       event.preventDefault();
       return true;
     },
-    [state],
+    [dispatchKey],
   );
   const setWebOverlayScope = useWebOverlayRegistration({
     active: isWeb && state.open && !showBottomSheet,
@@ -752,46 +770,37 @@ export function CommandCenter() {
         keyboardBlurBehavior="restore"
         accessible={false}
       >
+        <View style={[styles.bottomSheetHeader, styles.searchRow]} testID="command-center-header">
+          {scopeChipLabel ? <ScopeChip label={scopeChipLabel} onRemove={state.clearScope} /> : null}
+          <ThemedBottomSheetTextInput
+            testID="command-center-input"
+            ref={bottomSheetInputRef}
+            initialValue={state.query}
+            variant="bottom-sheet"
+            onChangeText={state.setQuery}
+            onKeyPress={keyPress}
+            onSubmitEditing={submit}
+            placeholder={placeholder}
+            style={[styles.input, styles.growingInput]}
+            autoCapitalize="none"
+            autoCorrect={false}
+            autoFocus
+          />
+          <FileSearchLoadingIndicator
+            loading={state.fileSearchLoading}
+            label={t("shell.commandCenter.searchingFiles")}
+          />
+        </View>
         {state.scope === "content" ? (
           <WorkspaceContentSearch
+            query={state.query}
             compact={isCompact}
-            bottomSheet
             close={state.close}
             clearScope={state.clearScope}
             keyHandler={contentKeyHandler}
           />
         ) : (
           <>
-            <View
-              style={[styles.bottomSheetHeader, styles.searchRow]}
-              testID="command-center-header"
-            >
-              {state.scope === "files" ? (
-                <ScopeChip label={t("shell.commandCenter.files")} onRemove={state.clearScope} />
-              ) : null}
-              <ThemedBottomSheetTextInput
-                testID="command-center-input"
-                ref={bottomSheetInputRef}
-                initialValue={state.query}
-                variant="bottom-sheet"
-                onChangeText={state.setQuery}
-                onKeyPress={keyPress}
-                onSubmitEditing={submit}
-                placeholder={
-                  state.scope === "files"
-                    ? t("shell.commandCenter.filePlaceholder")
-                    : t("shell.commandCenter.placeholder")
-                }
-                style={[styles.input, styles.growingInput]}
-                autoCapitalize="none"
-                autoCorrect={false}
-                autoFocus
-              />
-              <FileSearchLoadingIndicator
-                loading={state.fileSearchLoading}
-                label={t("shell.commandCenter.searchingFiles")}
-              />
-            </View>
             {fileSearchError}
             <BottomSheetFlatList ref={bottomSheetListRef} {...commonListProps} />
           </>
@@ -810,40 +819,36 @@ export function CommandCenter() {
             testID="command-center-panel"
             style={[styles.panel, state.scope === "content" && styles.contentPanel]}
           >
+            <View style={[styles.header, styles.searchRow]} testID="command-center-header">
+              {scopeChipLabel ? (
+                <ScopeChip label={scopeChipLabel} onRemove={state.clearScope} />
+              ) : null}
+              <ThemedTextInput
+                testID="command-center-input"
+                ref={state.inputRef}
+                initialValue={state.query}
+                onChangeText={state.setQuery}
+                placeholder={placeholder}
+                style={[styles.input, styles.growingInput]}
+                autoCapitalize="none"
+                autoCorrect={false}
+                autoFocus
+              />
+              <FileSearchLoadingIndicator
+                loading={state.fileSearchLoading}
+                label={t("shell.commandCenter.searchingFiles")}
+              />
+            </View>
             {state.scope === "content" ? (
               <WorkspaceContentSearch
+                query={state.query}
                 compact={isCompact}
-                bottomSheet={false}
                 close={state.close}
                 clearScope={state.clearScope}
                 keyHandler={contentKeyHandler}
               />
             ) : (
               <>
-                <View style={[styles.header, styles.searchRow]} testID="command-center-header">
-                  {state.scope === "files" ? (
-                    <ScopeChip label={t("shell.commandCenter.files")} onRemove={state.clearScope} />
-                  ) : null}
-                  <ThemedTextInput
-                    testID="command-center-input"
-                    ref={state.inputRef}
-                    initialValue={state.query}
-                    onChangeText={state.setQuery}
-                    placeholder={
-                      state.scope === "files"
-                        ? t("shell.commandCenter.filePlaceholder")
-                        : t("shell.commandCenter.placeholder")
-                    }
-                    style={[styles.input, styles.growingInput]}
-                    autoCapitalize="none"
-                    autoCorrect={false}
-                    autoFocus
-                  />
-                  <FileSearchLoadingIndicator
-                    loading={state.fileSearchLoading}
-                    label={t("shell.commandCenter.searchingFiles")}
-                  />
-                </View>
                 {fileSearchError}
                 <FlatList ref={listRef} {...commonListProps} />
               </>
@@ -881,7 +886,7 @@ function ScopeChip({ label, onRemove }: { label: string; onRemove(): void }) {
       accessibilityLabel={label}
       onPress={onRemove}
       style={styles.scopeChip}
-      testID="command-center-files-scope"
+      testID="command-center-scope"
     >
       <ThemedFolder size={14} strokeWidth={2.2} />
       <Text style={styles.scopeChipLabel}>{label}</Text>

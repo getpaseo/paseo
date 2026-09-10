@@ -32,6 +32,8 @@ export interface ContentSearchSnapshot {
   preview: Preview;
 }
 
+/** The daemon refuses to read more, and rg refuses to search a file bigger than this. */
+const MAX_PREVIEW_BYTES = 1_048_576;
 export class WorkspaceContentSearchModel {
   private snapshot: ContentSearchSnapshot = {
     query: "",
@@ -122,13 +124,11 @@ export class WorkspaceContentSearchModel {
   private async preview() {
     const match = this.snapshot.matches[this.snapshot.activeIndex];
     if (!match) return;
+    // Only the file on screen is retained. Re-reading on every arrival is what lets the preview
+    // tell the truth about a file that changed or disappeared since the search ran; see the
+    // deleted-file recovery case in the browser spec before trading it for fewer reads.
     if (this.file?.path === match.path) {
-      this.update({
-        preview: {
-          status: "ready",
-          ...this.file,
-        },
-      });
+      this.update({ preview: { status: "ready", ...this.file } });
       return;
     }
     this.update({ preview: { status: "loading" } });
@@ -141,17 +141,13 @@ export class WorkspaceContentSearchModel {
         this.options.cwd,
         path,
         undefined,
-        1_048_576,
+        MAX_PREVIEW_BYTES,
       );
       if (this.disposed) return;
       if (query === this.controller) {
         const content = explorerFileFromReadResult(file).content;
         if (content === undefined) throw new Error("This file is no longer text");
-        this.file = {
-          path,
-          content,
-          size: file.size,
-        };
+        this.file = { path, content, size: file.size };
       }
     } catch (error) {
       if (
