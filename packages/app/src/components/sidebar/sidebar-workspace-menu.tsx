@@ -1,4 +1,10 @@
-import { useMemo, type ComponentProps, type PropsWithChildren, type ReactNode } from "react";
+import {
+  useCallback,
+  useMemo,
+  type ComponentProps,
+  type PropsWithChildren,
+  type ReactNode,
+} from "react";
 import { useTranslation } from "react-i18next";
 import { type PressableStateCallbackType } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
@@ -17,6 +23,7 @@ import { isWeb } from "@/constants/platform";
 import { getForgePresentation, normalizeForge } from "@/git/forge";
 import type { SidebarWorkspaceEntry } from "@/hooks/use-sidebar-workspaces-list";
 import { useAppSettings } from "@/hooks/use-settings";
+import { useSidebarOrderStore } from "@/stores/sidebar-order-store";
 import type { Theme } from "@/styles/theme";
 import type { ShortcutKey } from "@/utils/format-shortcut";
 import {
@@ -44,6 +51,7 @@ import {
   WORKSPACE_LABEL_PAGE_ID,
   type WorkspaceLabelTarget,
 } from "@/workspace-labels/picker";
+import { MenuItem, type MenuPageDefinition } from "@/components/ui/menu";
 
 const foregroundColorMapping = (theme: Theme) => ({ color: theme.colors.foreground });
 const foregroundMutedColorMapping = (theme: Theme) => ({
@@ -69,6 +77,9 @@ const markAsUnreadLeadingIcon = <ThemedCircle size={14} uniProps={foregroundMute
 const archiveLeadingIcon = <ThemedArchive size={14} uniProps={foregroundMutedColorMapping} />;
 const pinLeadingIcon = <ThemedPin size={14} uniProps={foregroundMutedColorMapping} />;
 const unpinLeadingIcon = <ThemedPinOff size={14} uniProps={foregroundMutedColorMapping} />;
+const WORKSPACE_SECTION_PAGE_ID = "workspaceSections";
+const EMPTY_WORKSPACE_SECTIONS: readonly { id: string; name: string; workspaceKeys: string[] }[] =
+  [];
 
 function renderTriggerIcon({ hovered }: { hovered?: boolean }) {
   return (
@@ -81,6 +92,7 @@ function renderTriggerIcon({ hovered }: { hovered?: boolean }) {
 
 export interface SidebarWorkspaceMenuProps {
   workspaceKey: string;
+  projectViewKey?: string;
   serverId?: string;
   workspaceId?: string;
   workspaceLabels?: readonly string[];
@@ -130,6 +142,7 @@ function WorkspaceMenuItem({
 function SidebarWorkspaceMenuItems({
   surface,
   workspaceKey,
+  projectViewKey,
   serverId,
   workspaceId,
   onCopyPath,
@@ -154,6 +167,11 @@ function SidebarWorkspaceMenuItems({
   const labelLeading = useMemo(
     () => <ThemedTag size={14} uniProps={foregroundMutedColorMapping} />,
     [],
+  );
+  const workspaceSections = useSidebarOrderStore((state) =>
+    projectViewKey
+      ? (state.workspaceSectionsByProject[projectViewKey] ?? EMPTY_WORKSPACE_SECTIONS)
+      : EMPTY_WORKSPACE_SECTIONS,
   );
 
   return (
@@ -218,6 +236,14 @@ function SidebarWorkspaceMenuItems({
           {isPinned ? t("sidebar.workspace.actions.unpin") : t("sidebar.workspace.actions.pin")}
         </WorkspaceMenuItem>
       ) : null}
+      {projectViewKey && workspaceSections.length > 0 ? (
+        <DropdownMenuSubTrigger
+          id={WORKSPACE_SECTION_PAGE_ID}
+          testID={`sidebar-workspace-menu-sections-${workspaceKey}`}
+        >
+          Move to section
+        </DropdownMenuSubTrigger>
+      ) : null}
       {serverId && workspaceId ? (
         <DropdownMenuSubTrigger
           id={WORKSPACE_LABEL_PAGE_ID}
@@ -249,8 +275,92 @@ function SidebarWorkspaceMenuItems({
   );
 }
 
+function WorkspaceSectionPickerPage({
+  projectViewKey,
+  workspaceKey,
+}: {
+  projectViewKey: string;
+  workspaceKey: string;
+}): ReactNode {
+  const workspaceSections = useSidebarOrderStore(
+    (state) => state.workspaceSectionsByProject[projectViewKey] ?? EMPTY_WORKSPACE_SECTIONS,
+  );
+  const currentSectionId =
+    workspaceSections.find((section) => section.workspaceKeys.includes(workspaceKey))?.id ?? null;
+
+  return (
+    <>
+      <WorkspaceSectionMenuItem
+        projectViewKey={projectViewKey}
+        workspaceKey={workspaceKey}
+        sectionId={null}
+        selected={currentSectionId === null}
+      />
+      {workspaceSections.map((section) => (
+        <WorkspaceSectionMenuItem
+          key={section.id}
+          projectViewKey={projectViewKey}
+          workspaceKey={workspaceKey}
+          sectionId={section.id}
+          name={section.name}
+          selected={currentSectionId === section.id}
+        />
+      ))}
+    </>
+  );
+}
+
+function WorkspaceSectionMenuItem({
+  projectViewKey,
+  workspaceKey,
+  sectionId,
+  name = "Unsectioned",
+  selected,
+}: {
+  projectViewKey: string;
+  workspaceKey: string;
+  sectionId: string | null;
+  name?: string;
+  selected: boolean;
+}): ReactNode {
+  const moveWorkspaceToSection = useSidebarOrderStore((state) => state.moveWorkspaceToSection);
+  const handleSelect = useCallback(() => {
+    moveWorkspaceToSection(projectViewKey, workspaceKey, sectionId);
+  }, [moveWorkspaceToSection, projectViewKey, sectionId, workspaceKey]);
+  const sectionKey = sectionId ?? "unsectioned";
+
+  return (
+    <MenuItem
+      selected={selected}
+      onSelect={handleSelect}
+      testID={`sidebar-workspace-section-${sectionKey}-${workspaceKey}`}
+    >
+      {name}
+    </MenuItem>
+  );
+}
+
+function useWorkspaceSectionMenuPages(
+  projectViewKey: string | undefined,
+  workspaceKey: string,
+): readonly MenuPageDefinition[] {
+  return useMemo(() => {
+    if (!projectViewKey) return [];
+    return [
+      {
+        id: WORKSPACE_SECTION_PAGE_ID,
+        title: "Move to section",
+        content: (
+          <WorkspaceSectionPickerPage projectViewKey={projectViewKey} workspaceKey={workspaceKey} />
+        ),
+      },
+    ];
+  }, [projectViewKey, workspaceKey]);
+}
+
 export function SidebarWorkspaceMenu({
   workspaceKey,
+  projectViewKey,
   serverId,
   workspaceId,
   workspaceLabels,
@@ -277,6 +387,11 @@ export function SidebarWorkspaceMenu({
     [serverId, workspaceId, workspaceLabels],
   );
   const pages = useWorkspaceLabelMenuPages(workspaceTarget);
+  const workspaceSectionPages = useWorkspaceSectionMenuPages(projectViewKey, workspaceKey);
+  const menuPages = useMemo(
+    () => [...pages, ...workspaceSectionPages],
+    [pages, workspaceSectionPages],
+  );
   return (
     <DropdownMenu compactMode="sheet" open={open} onOpenChange={onOpenChange}>
       <DropdownMenuTrigger
@@ -291,12 +406,13 @@ export function SidebarWorkspaceMenu({
       <DropdownMenuContent
         align="end"
         width={260}
-        pages={pages}
+        pages={menuPages}
         sheetTitle={t("sidebar.workspace.actions.menu")}
       >
         <SidebarWorkspaceMenuItems
           surface="dropdown"
           workspaceKey={workspaceKey}
+          projectViewKey={projectViewKey}
           serverId={serverId}
           workspaceId={workspaceId}
           workspaceLabels={workspaceLabels}
@@ -333,6 +449,7 @@ export function SidebarWorkspaceContextMenu({
   hostBadgeLabel,
   serviceSummary,
   workspaceKey,
+  projectViewKey: _projectViewKey,
   onCopyPath,
   onCopyBranchName,
   onRename,
@@ -390,6 +507,14 @@ export function SidebarWorkspaceContextMenu({
     [workspace],
   );
   const pages = useWorkspaceLabelMenuPages(workspaceTarget);
+  const workspaceSectionPages = useWorkspaceSectionMenuPages(
+    workspace.projectViewKey,
+    workspaceKey,
+  );
+  const menuPages = useMemo(
+    () => [...pages, ...workspaceSectionPages],
+    [pages, workspaceSectionPages],
+  );
 
   return (
     <ContextMenu open={contextMenuOpen} onOpenChange={onContextMenuOpenChange}>
@@ -405,11 +530,12 @@ export function SidebarWorkspaceContextMenu({
         align="start"
         width={260}
         testID={`sidebar-workspace-context-menu-${workspaceKey}`}
-        pages={pages}
+        pages={menuPages}
       >
         <SidebarWorkspaceMenuItems
           surface="context"
           workspaceKey={workspaceKey}
+          projectViewKey={workspace.projectViewKey}
           serverId={workspaceTarget.serverId}
           workspaceId={workspaceTarget.workspaceId}
           workspaceLabels={workspaceTarget.labels}
