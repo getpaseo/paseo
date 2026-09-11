@@ -2,39 +2,8 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
-
-const spawnCounters = vi.hoisted(() => ({
-  trackedTextDiffCalls: 0,
-}));
-
-vi.mock("child_process", async () => {
-  const actual = await vi.importActual<typeof import("child_process")>("child_process");
-  return {
-    ...actual,
-    spawn: (...args: Parameters<typeof actual.spawn>) => {
-      const [command, commandArgs] = args;
-      if (command === "git" && Array.isArray(commandArgs)) {
-        const normalizedArgs = commandArgs.map((arg) => String(arg));
-        // `runGitCommand` always prepends its two config overrides; skip them
-        // to find the actual git subcommand.
-        const subcommandIndex =
-          normalizedArgs[0] === "-c" && normalizedArgs[1] === "core.quotepath=false" ? 4 : 0;
-        const isTrackedTextDiff =
-          normalizedArgs[subcommandIndex] === "diff" &&
-          normalizedArgs.includes("HEAD") &&
-          !normalizedArgs.includes("--numstat") &&
-          !normalizedArgs.includes("--no-index") &&
-          !normalizedArgs.includes("--shortstat") &&
-          !normalizedArgs.includes("--name-status");
-        if (isTrackedTextDiff) {
-          spawnCounters.trackedTextDiffCalls += 1;
-        }
-      }
-      return actual.spawn(...args);
-    },
-  };
-});
+import { beforeEach, afterEach, describe, expect, it } from "vitest";
+import { startGitCommandMetrics, stopGitCommandMetrics } from "@server/utils/run-git-command.js";
 
 import { getCheckoutDiff } from "./checkout-git.js";
 
@@ -70,14 +39,14 @@ describe("checkout git diff batching", () => {
     const setup = initRepoWithTrackedChanges(20);
     tempDir = setup.tempDir;
     repoDir = setup.repoDir;
-    spawnCounters.trackedTextDiffCalls = 0;
   });
 
   afterEach(() => {
     rmSync(tempDir, { recursive: true, force: true });
   });
 
-  it("uses per-file tracked git diff commands for tracked file diffs", async () => {
+  it("collects ordinary tracked patches with one bounded Git command", async () => {
+    startGitCommandMetrics();
     const result = await getCheckoutDiff(repoDir, {
       mode: "uncommitted",
       includeStructured: false,
@@ -85,6 +54,44 @@ describe("checkout git diff batching", () => {
 
     expect(result.diff).toContain("file-0.txt");
     expect(result.diff).toContain("file-19.txt");
-    expect(spawnCounters.trackedTextDiffCalls).toBe(20);
+    const metrics = stopGitCommandMetrics();
+    expect(
+      metrics.commands.filter(({ args }) => args[0] === "diff" && args.includes("--")),
+    ).toHaveLength(1);
+  });
+
+  it("batches committed file contents and preserves the highlighted diff", async () => {
+    execFileSync("git", ["checkout", "-b", "feature"], { cwd: repoDir });
+    execFileSync("git", ["add", "."], { cwd: repoDir });
+    execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "change"], { cwd: repoDir });
+    startGitCommandMetrics();
+    const result = await getCheckoutDiff(repoDir, {
+      mode: "base",
+      baseRef: "main",
+      includeStructured: true,
+    });
+    const metrics = stopGitCommandMetrics();
+    expect(result.structured).toHaveLength(20);
+    expect(result.structured?.every((file) => file.additions === 1 && file.deletions === 1)).toBe(
+      true,
+    );
+    expect(metrics.commands.filter(({ args }) => args[0] === "show")).toHaveLength(0);
+    expect(metrics.commands.filter(({ args }) => args[0] === "cat-file")).toHaveLength(1);
+  });
+
+  it("keeps small neighbors when a patch exceeds the entire batch budget", async () => {
+    writeFileSync(join(repoDir, "file-0.txt"), "x".repeat(9 * 1024 * 1024) + "\n");
+    const result = await getCheckoutDiff(repoDir, {
+      mode: "uncommitted",
+      includeStructured: true,
+    });
+    expect(result.structured).toHaveLength(20);
+    expect(result.structured?.find((file) => file.path === "file-0.txt")).toMatchObject({
+      status: "too_large",
+      hunks: [],
+    });
+    expect(result.structured?.filter((file) => file.status === "ok")).toHaveLength(19);
+    expect(result.diff).toContain("+after-19");
+    expect(result.diff).not.toContain("x".repeat(1_000));
   });
 });

@@ -122,7 +122,7 @@ describe("daemon E2E (real pi) - rewind", () => {
     });
 
     await client.connect();
-    await client.fetchAgents({ subscribe: { subscriptionId: "pi-rewind-real" } });
+    await client.fetchAgents({ subscribe: {} });
     harness = { client, daemon };
   }, 30_000);
 

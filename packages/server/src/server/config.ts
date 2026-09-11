@@ -1,3 +1,4 @@
+import { configurationEnvironment } from "./config-environment.js";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -554,7 +555,7 @@ export function resolveConfigFromPersisted(
   options?: ResolveConfigFromPersistedOptions,
 ): PaseoDaemonConfig {
   const resolvedOptions = options ?? {};
-  const env = resolvedOptions.env ?? process.env;
+  const env = configurationEnvironment(resolvedOptions.env ?? process.env);
   const cli = resolvedOptions.cli;
   const relayEnabledFallback =
     resolvedOptions.relayEnabledFallback ?? persisted.daemon?.relay?.enabled === undefined;

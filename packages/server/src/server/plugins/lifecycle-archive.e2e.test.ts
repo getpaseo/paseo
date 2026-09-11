@@ -12,7 +12,7 @@ test("workspace archive publishes agent archive hooks for both live and closed a
   const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws`, appVersion: "0.8.0" });
   try {
     await client.connect();
-    await client.fetchAgents({ subscribe: { subscriptionId: "archive-hooks" } });
+    await client.fetchAgents({ subscribe: {} });
     await client.patchDaemonConfig({ pluginsEnabled: true });
     await client.installDirectoryPlugin(
       fileURLToPath(new URL("../../../../../plugin-examples/lifecycle-logger", import.meta.url)),

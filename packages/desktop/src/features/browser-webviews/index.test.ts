@@ -19,7 +19,6 @@ class FakeRenderer {
 }
 
 class FakeBrowserGuest {
-  public readonly backgroundThrottlingCalls: boolean[] = [];
   private destroyedListener: (() => void) | null = null;
   private destroyed = false;
 
@@ -31,10 +30,6 @@ class FakeBrowserGuest {
 
   public isDestroyed(): boolean {
     return this.destroyed;
-  }
-
-  public setBackgroundThrottling(allowed: boolean): void {
-    this.backgroundThrottlingCalls.push(allowed);
   }
 
   public once(event: "destroyed", listener: () => void): void {
@@ -187,7 +182,7 @@ describe("browser webview attachment", () => {
     unregisterPaseoBrowser("browser-shared-hosts");
   });
 
-  test("prepares throttling once and removes registration when the guest is destroyed", () => {
+  test("removes registration when the guest is destroyed", () => {
     const profileSession = {};
     const renderer = new FakeRenderer(31);
     const guest = new FakeBrowserGuest(601, renderer, profileSession);
@@ -201,12 +196,10 @@ describe("browser webview attachment", () => {
       findWebContents: () => guest,
     });
 
-    expect(guest.backgroundThrottlingCalls).toEqual([false]);
     expect(getPaseoBrowserIdForWebContents(guest)).toBe("browser-cleanup");
 
     guest.destroy();
 
     expect(getPaseoBrowserIdForWebContents(guest)).toBeNull();
-    expect(guest.backgroundThrottlingCalls).toEqual([false]);
   });
 });

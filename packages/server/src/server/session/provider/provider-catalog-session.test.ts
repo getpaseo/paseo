@@ -54,7 +54,10 @@ function makeSubsystem(options: MakeOptions = {}) {
     isProviderVisibleToClient: (provider) => visible.has(provider),
     supportsCustomModeIcons: () => options.supportsCustomModeIcons ?? false,
     supportsProviderSnapshotReferences: () => false,
-    wantsSnapshotChanges: () => true,
+    publishSnapshot: (project) => {
+      const message = project();
+      if (message) emitted.push(message);
+    },
     supportsCompactProviderSnapshots: () => options.supportsCompactProviderSnapshots ?? false,
     listProviderAvailability: async () => [],
     listDraftFeatures: async () => [],
@@ -396,7 +399,10 @@ it("announces shared content without retransmitting models or hashing discovery 
         isProviderVisibleToClient: () => true,
         supportsCustomModeIcons: () => true,
         supportsCompactProviderSnapshots: () => true,
-        wantsSnapshotChanges: () => true,
+        publishSnapshot: (project) => {
+          const message = project();
+          if (message) emitted.push(message);
+        },
         supportsProviderSnapshotReferences: () => references,
         listProviderAvailability: async () => [],
         listDraftFeatures: async () => [],

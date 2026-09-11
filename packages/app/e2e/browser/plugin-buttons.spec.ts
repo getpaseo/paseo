@@ -12,3 +12,10 @@ test("plugin header and composer buttons share actions, menus, content, and upda
     await buttons.hideAndUnloadOpenButtons();
   });
 });
+
+test("plugin button observations follow mounted content and error lifetimes", async ({
+  page,
+}, testInfo) => {
+  test.setTimeout(120_000);
+  await withButtonShowcase(page, testInfo, (buttons) => buttons.verifyObservationLifetime());
+});

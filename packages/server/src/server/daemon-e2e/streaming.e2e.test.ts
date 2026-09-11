@@ -51,6 +51,7 @@ describe("daemon E2E - streaming", () => {
         title: "Streaming concat test",
         modeId: "bypassPermissions",
       });
+      await ctx.client.subscribeAgentTimeline(agent.id, () => {}).ready;
 
       messages.length = 0;
       await ctx.client.sendMessage(
@@ -78,6 +79,7 @@ describe("daemon E2E - streaming", () => {
         title: "Overlap stream test",
         modeId: "full-access",
       });
+      await ctx.client.subscribeAgentTimeline(agent.id, () => {}).ready;
 
       messages.length = 0;
       await ctx.client.sendMessage(agent.id, "Run: sleep 30");

@@ -66,6 +66,7 @@ export function createWorkspaceScriptsService(deps: {
   globalServicePorts?: PaseoServicePortAllocation;
   logger: pino.Logger;
   emit: (message: SessionOutboundMessage) => void;
+  wantsStatusUpdates?: () => boolean;
   spawnWorkspaceScript: (options: SpawnWorkspaceScriptOptions) => Promise<WorktreeScriptResult>;
   assertAutomationAllowed: (workspaceId: string) => Promise<void>;
 }): WorkspaceScriptsService {
@@ -129,6 +130,7 @@ export function createWorkspaceScriptsService(deps: {
   }
 
   async function emitStatusUpdate(workspaceId: string, _workspaceDirectory: string): Promise<void> {
+    if (deps.wantsStatusUpdates && !deps.wantsStatusUpdates()) return;
     try {
       const workspace = await workspaceRegistry.get(workspaceId);
       if (!workspace) return;

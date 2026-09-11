@@ -87,8 +87,7 @@ test.describe("Workspace setup streaming", () => {
     try {
       await seedProjectForWorkspaceSetup(client, repo.path);
 
-      // Wait for setup completion via daemon (setup snapshots are per-session,
-      // so the browser session won't receive progress events).
+      // The setup client owns progress before creating the workspace.
       const completed = waitForWorkspaceSetupProgress(
         client,
         (payload) =>

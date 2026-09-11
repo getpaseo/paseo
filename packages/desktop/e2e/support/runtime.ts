@@ -62,6 +62,9 @@ export interface DesktopRuntimeConfig {
   slowInstall?: boolean;
   /** Initial PID reported by desktop_daemon_status. Defaults to null. */
   daemonPid?: number | null;
+  daemonHome?: string;
+  /** Current-session ownership, independent of the legacy management flag. */
+  ownedByDesktop?: boolean;
   daemonVersion?: string | null;
   daemonLogPath?: string;
   /** Initial manageBuiltInDaemon setting. Defaults to false. */
@@ -139,7 +142,7 @@ export async function installDesktopRuntime(
     let manageDaemon = cfg.manageBuiltInDaemon ?? false;
     let daemonRunning = true;
     let currentPid: number | null = cfg.daemonPid ?? null;
-    let startCount = 0;
+    let ownedByDesktop = cfg.ownedByDesktop ?? false;
     let manualUpdateAdmitted = false;
     window.__desktopDaemonStartRequested = false;
 
@@ -150,7 +153,9 @@ export async function installDesktopRuntime(
         listen: cfg.daemonListen ?? "127.0.0.1:6767",
         hostname: null,
         pid: currentPid,
-        home: "",
+        home: cfg.daemonHome ?? "",
+        startedAt: currentPid === null ? null : "2026-09-01T00:00:00.000Z",
+        ownedByDesktop,
         version: cfg.daemonVersion ?? null,
         desktopManaged: manageDaemon,
         error: null,
@@ -162,11 +167,11 @@ export async function installDesktopRuntime(
       if (cfg.hangDaemonStart) {
         return new Promise(() => undefined);
       }
-      startCount += 1;
+      if (!daemonRunning) {
+        currentPid = (cfg.daemonPid ?? 10000) + 1000;
+        ownedByDesktop = true;
+      }
       daemonRunning = true;
-      // First start (bootstrap) returns the configured PID; subsequent starts
-      // (after a stop) get a fresh PID so tests can observe the change.
-      currentPid = (cfg.daemonPid ?? 10000) + (startCount - 1) * 1000;
       return buildDaemonStatus();
     }
 
@@ -268,6 +273,7 @@ export async function installDesktopRuntime(
         }
 
         if (command === "stop_desktop_daemon") {
+          ownedByDesktop = false;
           daemonRunning = false;
           currentPid = null;
           return buildDaemonStatus();
@@ -396,6 +402,12 @@ export async function interceptDaemonManagementConfirmDialog(
   return page.evaluate(() => window.__capturedDialogCall!);
 }
 
+export async function interceptDaemonStopConfirmDialog(page: Page): Promise<ConfirmDialogCall> {
+  await page.getByRole("button", { name: "Stop daemon", exact: true }).click();
+  await page.waitForFunction(() => !!window.__capturedDialogCall);
+  return page.evaluate(() => window.__capturedDialogCall!);
+}
+
 export async function toggleDaemonManagement(
   page: Page,
   _action: "enable" | "disable",
@@ -405,7 +417,9 @@ export async function toggleDaemonManagement(
 
 export function expectDaemonManagementConfirmDialog(args: ConfirmDialogCall): void {
   expect(args.title).toBe("Pause built-in daemon");
-  expect(args.message).toContain("stop the built-in daemon immediately");
+  expect(args.message).toBe(
+    "This will stop the built-in daemon immediately. Running agents and terminals connected to the built-in daemon will be stopped.",
+  );
 }
 
 export async function expectDaemonManagementEnabled(page: Page): Promise<void> {

@@ -1,4 +1,3 @@
-import { randomUUID } from "node:crypto";
 import { mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -30,7 +29,7 @@ async function withConnectedOpenCodeDaemon(
   try {
     await client.connect();
     await client.fetchAgents({
-      subscribe: { subscriptionId: `opencode-draft-features-${randomUUID()}` },
+      subscribe: {},
     });
     await run({ client });
   } finally {

@@ -95,6 +95,7 @@ export async function openDesktopWithProject(projectPath: string): Promise<void>
   try {
     launchDesktop([projectPath]);
   } catch (error) {
+    if (error && typeof error === "object" && "code" in error) throw error;
     const message = error instanceof Error ? error.message : String(error);
     process.stderr.write(`${message}\n`);
     process.exitCode = 1;

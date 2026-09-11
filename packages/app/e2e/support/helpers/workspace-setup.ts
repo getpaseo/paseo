@@ -20,6 +20,7 @@ type WorkspaceSetupDaemonClient = Pick<
   | "fetchAgents"
   | "fetchWorkspaces"
   | "listTerminals"
+  | "observeEvents"
   | "removeProject"
   | "subscribeRawMessages"
 >;
@@ -35,6 +36,13 @@ export async function connectWorkspaceSetupClient(): Promise<WorkspaceSetupDaemo
   const client = await connectDaemonClient<WorkspaceSetupDaemonClient>({
     clientIdPrefix: "workspace-setup",
   });
+  // Establish demand before a caller can launch setup. Client close releases it.
+  try {
+    await client.observeEvents(["workspace_setup_progress"]).ready;
+  } catch (error) {
+    await client.close();
+    throw error;
+  }
   return withProjectOwnership(client);
 }
 

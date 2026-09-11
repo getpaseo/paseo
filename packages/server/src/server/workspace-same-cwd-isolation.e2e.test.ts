@@ -374,6 +374,7 @@ test("local workspace auto-title does not broadcast provider snapshot warm-up to
 
   try {
     await client.connect();
+    await client.observeEvents(["providers_snapshot_update"]).ready;
     await client.getProvidersSnapshot({ cwd });
     await expect
       .poll(

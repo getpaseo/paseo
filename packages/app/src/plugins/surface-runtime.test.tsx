@@ -52,7 +52,10 @@ function borrowFromAppProvider(paseo: PaseoApi): PaseoApi {
 describe("plugin surface host runtime", () => {
   it("creates a PR worktree and agent through usePaseo on the selected app host", async () => {
     const selected = clientWithWorkspace("workspace-a");
-    const runtime = createPluginSurfaceRuntime(selected.client, "workspace-plugin");
+    const runtime = createPluginSurfaceRuntime(selected.client, {
+      id: "workspace-plugin",
+      lifetime: new AbortController(),
+    });
     if (!runtime) throw new Error("Expected selected host runtime");
 
     const paseo = borrowFromAppProvider(runtime.paseo);
@@ -78,8 +81,14 @@ describe("plugin surface host runtime", () => {
   it("switches all plugin calls when the selected host changes", async () => {
     const hostA = clientWithWorkspace("workspace-a");
     const hostB = clientWithWorkspace("workspace-b");
-    const first = createPluginSurfaceRuntime(hostA.client, "same-plugin");
-    const second = createPluginSurfaceRuntime(hostB.client, "same-plugin");
+    const first = createPluginSurfaceRuntime(hostA.client, {
+      id: "same-plugin",
+      lifetime: new AbortController(),
+    });
+    const second = createPluginSurfaceRuntime(hostB.client, {
+      id: "same-plugin",
+      lifetime: new AbortController(),
+    });
     if (!first || !second) throw new Error("Expected online host runtimes");
 
     await first.invoke("host", {});
@@ -95,7 +104,9 @@ describe("plugin surface host runtime", () => {
   it("keeps an offline selected host unavailable instead of borrowing another host", () => {
     const otherHost = clientWithWorkspace("workspace-online");
 
-    expect(createPluginSurfaceRuntime(null, "same-plugin")).toBeNull();
+    expect(
+      createPluginSurfaceRuntime(null, { id: "same-plugin", lifetime: new AbortController() }),
+    ).toBeNull();
     expect(otherHost.createWorkspace).not.toHaveBeenCalled();
   });
 });

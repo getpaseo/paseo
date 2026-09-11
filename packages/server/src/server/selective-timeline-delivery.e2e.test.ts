@@ -6,7 +6,8 @@ import { createPersistedWorkspaceRecord } from "./workspace-registry.js";
 import { afterEach, beforeEach, expect, test } from "vitest";
 import { CLIENT_CAPS } from "@getpaseo/protocol/client-capabilities";
 import type { SessionOutboundMessage } from "@getpaseo/protocol/messages";
-import { DaemonClient } from "./test-utils/daemon-client.js";
+import { DaemonClient, type WebSocketLike } from "@getpaseo/client/internal/daemon-client";
+import { WebSocket } from "ws";
 import { createTestPaseoDaemon, type TestPaseoDaemon } from "./test-utils/paseo-daemon.js";
 import {
   MockLoadTestAgentClient,
@@ -25,7 +26,10 @@ class ConnectedClient {
   private readonly waiters: MessageWaiter[] = [];
   private readonly unsubscribe: () => void;
 
-  constructor(readonly client: DaemonClient) {
+  constructor(
+    readonly client: DaemonClient,
+    private readonly socket: WebSocket,
+  ) {
     this.unsubscribe = client.subscribeRawMessages((message) => {
       this.messages.push(message);
       for (let waiterIndex = this.waiters.length - 1; waiterIndex >= 0; waiterIndex -= 1) {
@@ -36,6 +40,46 @@ class ConnectedClient {
         waiter.resolve(message);
       }
     });
+  }
+
+  // These cases exercise the pre-owned-subscriptions selective timeline contract.
+  async setLegacyTimelineMembership(agentIds: string[]): Promise<void> {
+    const requestId = crypto.randomUUID();
+    this.socket.send(
+      JSON.stringify({
+        type: "session",
+        message: {
+          type: "agent.timeline.set_subscription.request",
+          requestId,
+          agentIds,
+        },
+      }),
+    );
+    await this.next(
+      (message) =>
+        message.type === "agent.timeline.set_subscription.response" &&
+        message.payload.requestId === requestId,
+      "legacy timeline acknowledgement",
+    );
+  }
+
+  async observeLegacyDirectory(subscriptionId: string): Promise<void> {
+    const requestId = crypto.randomUUID();
+    this.socket.send(
+      JSON.stringify({
+        type: "session",
+        message: {
+          type: "fetch_agents_request",
+          requestId,
+          subscribe: { subscriptionId },
+        },
+      }),
+    );
+    await this.next(
+      (message) =>
+        message.type === "fetch_agents_response" && message.payload.requestId === requestId,
+      "legacy directory acknowledgement",
+    );
   }
 
   clear(): void {
@@ -141,24 +185,28 @@ async function connect(input: {
   pluginTimelineItems?: boolean;
   workspaceSetupBlocked?: boolean;
 }): Promise<ConnectedClient> {
+  let socket!: WebSocket;
   const client = new DaemonClient({
     url: `ws://127.0.0.1:${daemon.port}/ws`,
     clientId: input.clientId,
+    webSocketFactory: (url) => {
+      socket = new WebSocket(url);
+      return socket as unknown as WebSocketLike;
+    },
     capabilities: {
+      [CLIENT_CAPS.ownedSubscriptions]: false,
       [CLIENT_CAPS.selectiveAgentTimeline]: input.selective,
       [CLIENT_CAPS.pluginTimelineItems]: input.pluginTimelineItems ?? false,
       [CLIENT_CAPS.workspaceSetupBlocked]: input.workspaceSetupBlocked ?? false,
       ...(input.timelineNotifications === undefined
         ? {}
         : { [CLIENT_CAPS.timelineNotifications]: input.timelineNotifications }),
-      ...(input.timelineReplacementInvalidation
-        ? { [CLIENT_CAPS.timelineReplacementInvalidation]: true }
-        : {}),
+      [CLIENT_CAPS.timelineReplacementInvalidation]: input.timelineReplacementInvalidation ?? false,
     },
     reconnect: { enabled: false },
   });
   await client.connect();
-  const connected = new ConnectedClient(client);
+  const connected = new ConnectedClient(client, socket);
   clients.push(connected);
   return connected;
 }
@@ -358,9 +406,9 @@ test("rewind routes replacement completion by source capability and subscription
   });
 
   await Promise.all([
-    initiating.client.setAgentTimelineSubscription([agent.id]),
-    passive.client.setAgentTimelineSubscription([agent.id]),
-    unrelated.client.setAgentTimelineSubscription([]),
+    initiating.setLegacyTimelineMembership([agent.id]),
+    passive.setLegacyTimelineMembership([agent.id]),
+    unrelated.setLegacyTimelineMembership([]),
   ]);
   await initiating.client.sendMessage(agent.id, "Rewind this synthetic prompt");
   await initiating.client.cancelAgent(agent.id);
@@ -409,7 +457,7 @@ test("subscription acknowledgements stay on the requesting socket of a retained 
   legacy.clear();
   capable.clear();
 
-  await capable.client.setAgentTimelineSubscription(["agent-a"]);
+  await capable.setLegacyTimelineMembership(["agent-a"]);
   await capable.barrier("targeted-subscription-ack");
 
   expect(
@@ -444,7 +492,7 @@ test("real WebSocket sessions enforce selective delivery, retained resets, downg
   await capable.barrier("before-membership");
   expect(capable.hasTimeline(agentC.id)).toBe(false);
 
-  await capable.client.setAgentTimelineSubscription([agentA.id, agentB.id]);
+  await capable.setLegacyTimelineMembership([agentA.id, agentB.id]);
   legacy.clear();
   capable.clear();
   await daemon.daemon.agentManager.emitLiveTimelineItem(agentA.id, {
@@ -467,7 +515,7 @@ test("real WebSocket sessions enforce selective delivery, retained resets, downg
   await capable.barrier("unviewed-c");
   expect(capable.hasTimeline(agentC.id)).toBe(false);
 
-  await capable.client.setAgentTimelineSubscription([agentB.id]);
+  await capable.setLegacyTimelineMembership([agentB.id]);
   legacy.clear();
   capable.clear();
   await daemon.daemon.agentManager.emitLiveTimelineItem(agentA.id, {
@@ -500,8 +548,8 @@ test("real WebSocket sessions enforce selective delivery, retained resets, downg
   expect(capable.hasTimeline(agentB.id)).toBe(false);
 
   await Promise.all([
-    legacy.client.fetchAgents({ subscribe: { subscriptionId: "legacy-directory" } }),
-    capable.client.fetchAgents({ subscribe: { subscriptionId: "capable-directory" } }),
+    legacy.observeLegacyDirectory("legacy-directory"),
+    capable.observeLegacyDirectory("capable-directory"),
   ]);
   capable.client.sendHeartbeat({
     deviceType: "mobile",

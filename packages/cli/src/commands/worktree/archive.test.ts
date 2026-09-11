@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { runArchiveCommandWithDeps } from "./archive.js";
 
+const daemonTarget = { kind: "endpoint" as const, host: "example.test:12345" };
+
 function createFakeDaemonClient(
   overrides: Partial<
     Pick<DaemonClient, "getPaseoWorktreeList" | "archivePaseoWorktree" | "close">
@@ -60,9 +62,12 @@ describe("runArchiveCommand", () => {
 
     const result = await runArchiveCommandWithDeps(
       "feature",
-      {},
+      { daemonTarget },
       {
-        connectToDaemon: async () => fakeClient,
+        connectToDaemon: async (options) => {
+          expect(options.target).toEqual(daemonTarget);
+          return fakeClient;
+        },
       },
     );
 
@@ -111,9 +116,12 @@ describe("runArchiveCommand", () => {
 
     await runArchiveCommandWithDeps(
       "feature-x",
-      {},
+      { daemonTarget },
       {
-        connectToDaemon: async () => fakeClient,
+        connectToDaemon: async (options) => {
+          expect(options.target).toEqual(daemonTarget);
+          return fakeClient;
+        },
       },
     );
 
@@ -134,9 +142,12 @@ describe("runArchiveCommand", () => {
     await expect(
       runArchiveCommandWithDeps(
         "missing",
-        {},
+        { daemonTarget },
         {
-          connectToDaemon: async () => fakeClient,
+          connectToDaemon: async (options) => {
+            expect(options.target).toEqual(daemonTarget);
+            return fakeClient;
+          },
         },
       ),
     ).rejects.toMatchObject({

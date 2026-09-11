@@ -1,6 +1,6 @@
 import type { ParsedDiffFile } from "@getpaseo/protocol/messages";
 import { describe, expect, it } from "vitest";
-import { buildDiffDocumentModel } from "./model";
+import { buildDiffDocumentModel, measureFragments } from "./model";
 import type { BuildDiffDocumentModelInput, TextMeasurer } from "./types";
 
 /**
@@ -92,6 +92,33 @@ function shapedCharactersFor(options: { lineCount: number; lineLength: number })
 }
 
 describe("diff document measurement cost", () => {
+  it("keeps additive wrapped search work proportional to long source lines", () => {
+    function measuredGraphemes(length: number): number {
+      let count = 0;
+      measureFragments({
+        text: "a".repeat(length),
+        availableWidth: 200,
+        wrapLines: true,
+        lineHeight: 18,
+        measureText: {
+          measure: (text) => text.length * 10,
+          measureWidth(graphemes) {
+            count += graphemes.length;
+            return graphemes.length * 10;
+          },
+          measureAdvances(graphemes) {
+            count += graphemes.length;
+            return graphemes.map((_, index) => (index + 1) * 10);
+          },
+        },
+      });
+      return count;
+    }
+    const short = measuredGraphemes(100);
+    const long = measuredGraphemes(1600);
+    expect(long / short).toBeLessThan(32);
+  });
+
   it("shapes a bounded number of characters per character of text", () => {
     // The shape of the CHANGELOG.md working diff that froze the renderer: 42
     // lines, longest 597 characters.

@@ -58,8 +58,16 @@ export function useBuiltInDaemonManagement(
           confirm: () =>
             confirmDialog({
               title: t("desktop.daemon.management.pauseTitle"),
-              message: t("desktop.daemon.management.pauseMessage"),
-              confirmLabel: t("desktop.daemon.management.pauseAndStop"),
+              message: t(
+                daemonStatus?.ownedByDesktop
+                  ? "desktop.daemon.management.pauseMessage"
+                  : "desktop.daemon.lifecycle.pauseAttached",
+              ),
+              confirmLabel: t(
+                daemonStatus?.ownedByDesktop
+                  ? "desktop.daemon.management.pauseAndStop"
+                  : "desktop.daemon.lifecycle.pause",
+              ),
               cancelLabel: t("common.actions.cancel"),
               destructive: true,
             }),

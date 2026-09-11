@@ -62,7 +62,7 @@ export async function runModelsCommand(
 ): Promise<ProviderModelsResult> {
   const normalizedProvider = provider.toLowerCase();
 
-  const client = await connectToDaemon({ host: options.host });
+  const client = await connectToDaemon({ target: options.daemonTarget });
   try {
     const result = await client.listProviderModels(normalizedProvider);
 

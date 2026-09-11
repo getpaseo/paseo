@@ -5,6 +5,7 @@ import { readFile, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { $ } from "zx";
+import { runLocalPaseo } from "./helpers/local-cli.ts";
 import { getAvailablePort } from "./helpers/network.ts";
 
 $.verbose = false;
@@ -15,9 +16,19 @@ const paseoHome = await mkdtemp(join(tmpdir(), "paseo-onboard-home-"));
 const port = await getAvailablePort();
 
 try {
+  const configured = await runLocalPaseo([
+    "daemon",
+    "config",
+    "set",
+    "daemon.listen",
+    `127.0.0.1:${port}`,
+    "--home",
+    paseoHome,
+  ]);
+  assert.strictEqual(configured.exitCode, 0, configured.stderr);
+
   console.log("Test 1: `paseo` runs blocking onboarding without implicit relay pairing");
-  const onboard =
-    await $`PASEO_HOME=${paseoHome} PASEO_LISTEN=127.0.0.1:${port} PASEO_PAIRING_QR=0 npx paseo`.nothrow();
+  const onboard = await $`PASEO_HOME=${paseoHome} PASEO_PAIRING_QR=0 npx paseo`.nothrow();
 
   assert.strictEqual(
     onboard.exitCode,
@@ -37,8 +48,8 @@ try {
   assert(onboard.stdout.includes("paseo --help"), "onboard output should include --help shortcut");
   assert(onboard.stdout.includes("paseo ls"), "onboard output should include ls shortcut");
   assert(
-    onboard.stdout.includes('paseo run "your prompt"'),
-    "onboard output should include run shortcut",
+    onboard.stdout.includes(`paseo run --home ${JSON.stringify(paseoHome)} "your prompt"`),
+    "onboard output should include a run shortcut for the selected home",
   );
   assert(onboard.stdout.includes("paseo status"), "onboard output should include status shortcut");
   assert(
@@ -58,8 +69,7 @@ try {
   assert.strictEqual(enableRelay.exitCode, 0, `relay enable should succeed: ${enableRelay.stderr}`);
   assert(enableRelay.stdout.includes("#offer="), "relay enable should produce a pairing offer");
 
-  const noRelayOnboard =
-    await $`PASEO_HOME=${paseoHome} PASEO_LISTEN=127.0.0.1:${port} npx paseo --no-relay`.nothrow();
+  const noRelayOnboard = await $`PASEO_HOME=${paseoHome} npx paseo --no-relay`.nothrow();
   assert.strictEqual(
     noRelayOnboard.exitCode,
     0,
