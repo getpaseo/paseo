@@ -555,6 +555,8 @@ Tests use `isProviderAvailable(provider)` to skip when the binary or credentials
 
 **Models and modes are discovered dynamically.** ACP providers report available models and modes at runtime via the protocol. The static definitions in `provider-manifest.ts` are used for UI scaffolding (icons, color tiers) but the runtime values from the agent process are the source of truth.
 
+**Some modes are fixed at launch.** An ACP agent that resolves a mode when its process starts (DSH reads `DSH_PERMISSION_MODE` for its sandbox and approval policy) cannot take a switch in place. Expose the values as `defaultModes` and return `ACPProviderModeWriteResult.notice` from the mode writer: the session keeps the mode it launched with and the user is told to start a new one, instead of the UI reporting a mode the process never applied. Add the launch value in `createSession`/`resumeSession`; the session's `launchEnv` is the only environment the spawned process sees.
+
 **`AgentProvider` is always `string`.** The type alias is `type AgentProvider = string`. Provider IDs are validated against the manifest at runtime, not at the type level.
 
 **Auth patterns vary.** Some providers need API keys in env vars (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`), some use OAuth tokens (`CLAUDE_CODE_OAUTH_TOKEN`), some use auth files (`~/.codex/auth.json`), and some handle auth entirely in their CLI binary (Copilot). Your `isAvailable()` method should check whatever is needed.
