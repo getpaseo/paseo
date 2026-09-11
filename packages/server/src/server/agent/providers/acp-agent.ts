@@ -3521,6 +3521,7 @@ function mapToolSnapshotToTimeline(
     metadata: {
       kind: snapshot.kind ?? undefined,
       title: snapshot.title,
+      rawInput: snapshot.rawInput,
     },
   };
   if (status === "failed") {

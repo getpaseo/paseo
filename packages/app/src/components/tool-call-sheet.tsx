@@ -21,6 +21,7 @@ export interface ToolCallSheetData {
   displayName: string;
   summary?: string;
   detail?: ToolCallDetail;
+  rawInput?: unknown;
   errorText?: string;
   icon: ToolCallIconComponent;
   showLoadingSkeleton?: boolean;
@@ -160,6 +161,7 @@ function ToolCallSheetContent({ data, onClose }: ToolCallSheetContentProps) {
     toolName,
     displayName,
     detail,
+    rawInput,
     errorText,
     icon: IconComponent,
     showLoadingSkeleton,
@@ -191,6 +193,7 @@ function ToolCallSheetContent({ data, onClose }: ToolCallSheetContentProps) {
         <ToolCallDetailsContent
           toolName={toolName}
           detail={detail}
+          rawInput={rawInput}
           errorText={errorText}
           fillAvailableHeight
           showLoadingSkeleton={showLoadingSkeleton}
