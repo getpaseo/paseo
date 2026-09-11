@@ -110,7 +110,7 @@ describe("buildSidebarShortcutModel", () => {
     expect(model.shortcutIndexByWorkspaceKey.get("s1:ws-repo2-main")).toBeUndefined();
   });
 
-  it("limits shortcuts to 9", () => {
+  it("keeps all traversal targets while numbering only the first 9", () => {
     const workspaces = Array.from({ length: 20 }, (_, index) =>
       workspace({
         serverId: "s",
@@ -126,9 +126,11 @@ describe("buildSidebarShortcutModel", () => {
       collapsedProjectKeys: new Set<string>(),
     });
 
-    expect(model.shortcutTargets).toHaveLength(9);
-    expect(model.shortcutTargets[0]).toEqual({ serverId: "s", workspaceId: "ws-1" });
+    expect(model.shortcutTargets).toHaveLength(20);
     expect(model.shortcutTargets[8]).toEqual({ serverId: "s", workspaceId: "ws-9" });
+    expect(model.shortcutTargets[9]).toEqual({ serverId: "s", workspaceId: "ws-10" });
+    expect(model.shortcutIndexByWorkspaceKey.get("s:ws-9")).toBe(9);
+    expect(model.shortcutIndexByWorkspaceKey.get("s:ws-10")).toBeUndefined();
   });
 
   it("excludes a collapsed project's workspaces regardless of project kind", () => {
