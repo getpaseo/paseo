@@ -1,6 +1,7 @@
 import type { PluginLifecycle } from "../plugins/lifecycle/index.js";
 import { describeHookAgent, publishAgentStream } from "../plugins/lifecycle/index.js";
-import type { PluginSessionOpenRequest } from "@getpaseo/plugin/server";
+import type { PluginSessionOpenRequest, PluginSubagentReporter } from "@getpaseo/plugin/server";
+import { PluginSubagentSources } from "./provider-subagents/reporters.js";
 import { randomUUID } from "node:crypto";
 import { basename, resolve } from "node:path";
 import { stat } from "node:fs/promises";
@@ -697,6 +698,12 @@ export class AgentManager {
   private readonly agents = new Map<string, LiveManagedAgent>();
   private readonly timelineStore = new InMemoryAgentTimelineStore();
   private readonly providerSubagents = new ProviderSubagentStore();
+  private readonly pluginSubagentSources = new PluginSubagentSources(
+    this.providerSubagents,
+    (event) => {
+      this.dispatch({ type: "provider_subagent", event });
+    },
+  );
   private readonly agentsAwaitingInitialSnapshotPersist = new Set<string>();
   private readonly sessionEventTails = new Map<string, Promise<void>>();
   private readonly steerEventBarriers = new Map<string, SteerEventBarrier>();
@@ -1164,6 +1171,20 @@ export class AgentManager {
     return this.timelineStore.fetch(id, options);
   }
 
+  openPluginSubagentReporter(pluginId: string, parentAgentId: string): PluginSubagentReporter {
+    this.assertAcceptingAgentRegistrations();
+    const parent = this.requirePublicAgent(parentAgentId);
+    if (parent.lifecycle === "initializing") throw new Error("Parent agent is not ready");
+    if (this.lifecycleMutationTails.has(parent.id) || this.inFlightAgentCloses.has(parent.id)) {
+      throw new Error("Parent agent lifecycle is changing");
+    }
+    return this.pluginSubagentSources.open(pluginId, {
+      id: parent.id,
+      provider: parent.provider,
+      isCurrent: () => this.agents.get(parent.id) === parent,
+    });
+  }
+
   listProviderSubagents(parentAgentId: string): ProviderSubagentDescriptor[] {
     this.requirePublicAgent(parentAgentId);
     return this.providerSubagents.list(parentAgentId);
@@ -1519,7 +1540,7 @@ export class AgentManager {
         // Wipe the in-memory timeline so registerSession mints a new epoch and
         // hydrateTimelineFromProvider re-streams the freshly read provider history.
         this.timelineStore.delete(agentId);
-        for (const event of this.providerSubagents.deleteParent(agentId)) {
+        for (const event of this.providerSubagents.deleteNativeParent(agentId)) {
           this.dispatch({ type: "provider_subagent", event });
         }
       }
@@ -1683,7 +1704,7 @@ export class AgentManager {
   }
 
   private cancelRunningProviderSubagents(parentAgentId: string): void {
-    for (const subagent of this.providerSubagents.list(parentAgentId)) {
+    for (const subagent of this.providerSubagents.listNative(parentAgentId)) {
       if (subagent.status !== "running") {
         continue;
       }
@@ -3593,6 +3614,7 @@ export class AgentManager {
     agent: LiveManagedAgent,
     cancelReason: string,
   ): ManagedAgentClosed {
+    this.pluginSubagentSources.deleteParent(agent.id);
     this.agentStreamCoalescer.flushAndDiscard(agent.id);
     this.agents.delete(agent.id);
     this.previousStatuses.delete(agent.id);
@@ -3625,6 +3647,7 @@ export class AgentManager {
   }
 
   private discardRetainedAgentState(agentId: string): void {
+    this.pluginSubagentSources.deleteParent(agentId);
     this.timelineStore.delete(agentId);
     this.paseoToolPolicies.delete(agentId);
     for (const event of this.providerSubagents.deleteParent(agentId)) {
@@ -3911,7 +3934,7 @@ export class AgentManager {
     this.timelineStore.initialize(agent.id, { timestamp: new Date().toISOString() });
     agent.historyPrimed = true;
 
-    for (const event of this.providerSubagents.deleteParent(agent.id)) {
+    for (const event of this.providerSubagents.deleteNativeParent(agent.id)) {
       if (broadcast) {
         this.dispatch({ type: "provider_subagent", event });
       }

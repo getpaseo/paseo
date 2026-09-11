@@ -79,19 +79,26 @@ function stickyField<T>(next: T | undefined, previous: T | null | undefined): T 
 export class ProviderSubagentStore {
   private readonly descriptors = new Map<string, ProviderSubagentDescriptor>();
   private readonly timelines = new InMemoryAgentTimelineStore();
+  private readonly sources = new Map<string, string | null>();
 
   apply(
     parentAgentId: string,
     provider: AgentProvider,
     event: ProviderSubagentInputEvent,
+    source: string | null = null,
   ): ProviderSubagentStoreEvent {
     const key = storeKey(parentAgentId, event.id);
+    if (this.sources.has(key) && this.sources.get(key) !== source) {
+      throw new Error("Provider subagent belongs to a different source");
+    }
     if (event.type === "remove") {
+      this.sources.delete(key);
       this.descriptors.delete(key);
       this.timelines.delete(key);
       return { type: "remove", parentAgentId, subagentId: event.id };
     }
 
+    this.sources.set(key, source);
     if (event.type === "timeline") {
       if (!this.timelines.has(key)) {
         this.timelines.initialize(key);
@@ -177,13 +184,37 @@ export class ProviderSubagentStore {
     };
   }
 
+  listNative(parentAgentId: string): ProviderSubagentDescriptor[] {
+    return this.list(parentAgentId).filter(
+      (child) => this.sources.get(storeKey(parentAgentId, child.id)) === null,
+    );
+  }
+
+  deleteNativeParent(parentAgentId: string): ProviderSubagentStoreEvent[] {
+    return this.deleteSource(parentAgentId, null);
+  }
+
+  deleteSource(parentAgentId: string, source: string | null): ProviderSubagentStoreEvent[] {
+    return this.deleteMatching(parentAgentId, source);
+  }
+
   deleteParent(parentAgentId: string): ProviderSubagentStoreEvent[] {
+    return this.deleteMatching(parentAgentId);
+  }
+
+  private deleteMatching(
+    parentAgentId: string,
+    source?: string | null,
+  ): ProviderSubagentStoreEvent[] {
     const events: ProviderSubagentStoreEvent[] = [];
-    for (const subagent of this.list(parentAgentId)) {
-      const key = storeKey(parentAgentId, subagent.id);
+    // Include timeline-only native observations, which have no descriptor yet.
+    const prefix = `${parentAgentId}\0`;
+    for (const [key, owner] of this.sources) {
+      if (!key.startsWith(prefix) || (source !== undefined && source !== owner)) continue;
+      this.sources.delete(key);
       this.descriptors.delete(key);
       this.timelines.delete(key);
-      events.push({ type: "remove", parentAgentId, subagentId: subagent.id });
+      events.push({ type: "remove", parentAgentId, subagentId: key.slice(prefix.length) });
     }
     return events;
   }

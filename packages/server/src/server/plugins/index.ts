@@ -40,6 +40,7 @@ interface PluginRuntimePort {
   stopAll(): Promise<void>;
   subscribe(listener: (pluginId: string, error?: string) => void): () => void;
   bindPaseoSessionHost(sessionHost: Parameters<PluginRuntime["bindPaseoSessionHost"]>[0]): void;
+  bindSubagentHost?: PluginRuntime["bindSubagentHost"];
 }
 
 interface PluginServiceDependencies {
@@ -117,6 +118,12 @@ export class PluginService {
 
   bindPaseoSessionHost(sessionHost: Parameters<PluginRuntime["bindPaseoSessionHost"]>[0]): void {
     this.runtime.bindPaseoSessionHost(sessionHost);
+  }
+
+  bindSubagentHost(host: Parameters<PluginRuntime["bindSubagentHost"]>[0]): void {
+    if (!this.runtime.bindSubagentHost)
+      throw new Error("Plugin runtime cannot bind a subagent host");
+    this.runtime.bindSubagentHost(host);
   }
 
   getProviderRegistrations(): readonly ProviderRegistration[] {
