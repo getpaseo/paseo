@@ -41,7 +41,7 @@ describe("daemon E2E (real claude) - model resolution on init", () => {
     try {
       await client.connect();
       await client.fetchAgents({
-        subscribe: { subscriptionId: "model-init-test" },
+        subscribe: {},
       });
 
       const modelsResult = await client.listProviderModels("claude", { cwd });

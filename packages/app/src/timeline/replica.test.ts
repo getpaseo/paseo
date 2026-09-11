@@ -51,8 +51,7 @@ function createOwner(storage: TimelineReplicaStorage): ViewedTimelineOwner {
     replaceDemandedAgentIds: () => undefined,
     drainQueuedAgentMessage: () => undefined,
     ports: {
-      initialDeliveryMode: "legacy",
-      setSubscription: async () => undefined,
+      observe: () => ({ ready: Promise.resolve(), release: async () => undefined }),
       readCursor: () => undefined,
       fetchPage: async () => ({ hasNewer: false, endCursor: null }),
       fetchLatestTail: async () => ({ hasNewer: false, endCursor: null }),

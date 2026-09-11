@@ -1,4 +1,6 @@
 import {
+  getDesktopSandboxDiagnostics,
+  type DesktopSandboxDiagnostics,
   getDesktopAppLogs,
   getDesktopDaemonLogs,
   getDesktopDaemonStatus,
@@ -19,6 +21,7 @@ export interface DesktopDiagnosticCollectionResult {
 }
 
 export interface DesktopDiagnosticSources {
+  getSandboxDiagnostics: () => Promise<DesktopSandboxDiagnostics>;
   getStatus: () => Promise<DesktopDaemonStatus>;
   getDaemonLogs: () => Promise<DesktopDaemonLogs>;
   getAppLogs: () => Promise<DesktopAppLogs>;
@@ -26,6 +29,7 @@ export interface DesktopDiagnosticSources {
 }
 
 const DEFAULT_DESKTOP_DIAGNOSTIC_SOURCES: DesktopDiagnosticSources = {
+  getSandboxDiagnostics: getDesktopSandboxDiagnostics,
   getStatus: getDesktopDaemonStatus,
   getDaemonLogs: getDesktopDaemonLogs,
   getAppLogs: getDesktopAppLogs,
@@ -38,11 +42,32 @@ export async function collectDesktopDiagnosticSections(
   const sections: string[] = [];
   let failed = false;
 
-  const [daemonResult, appLogsResult, updaterResult] = await Promise.allSettled([
+  const [daemonResult, appLogsResult, updaterResult, sandboxResult] = await Promise.allSettled([
     Promise.all([sources.getStatus(), sources.getDaemonLogs()]),
     sources.getAppLogs(),
     sources.getUpdaterDiagnostics(),
+    sources.getSandboxDiagnostics(),
   ]);
+
+  if (sandboxResult.status === "fulfilled") {
+    const sandbox = sandboxResult.value;
+    sections.push(
+      formatDiagnosticSection("Chromium sandbox", [
+        {
+          label: "State",
+          value: sandbox.enabled ? "Enabled" : "Disabled",
+        },
+        { label: "Reason", value: sandbox.reason },
+      ]),
+    );
+  } else {
+    failed = true;
+    sections.push(
+      formatDiagnosticSection("Chromium sandbox", [
+        { label: "Error", value: toMessage(sandboxResult.reason) },
+      ]),
+    );
+  }
 
   if (daemonResult.status === "fulfilled") {
     const [status, daemonLogs] = daemonResult.value;

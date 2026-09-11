@@ -47,7 +47,11 @@ describe("project commands", () => {
   });
 
   it("creates a project from an absolute directory path", async () => {
-    const result = await runCreateCommand("relative/project", {}, {} as never);
+    const result = await runCreateCommand(
+      "relative/project",
+      { daemonTarget: { kind: "instance", home: "/tmp/project-test" } },
+      {} as never,
+    );
 
     expect(addProject).toHaveBeenCalledWith(path.resolve("relative/project"));
     expect(result.data).toEqual({
@@ -77,7 +81,10 @@ describe("project commands", () => {
   });
 
   it("lists projects", async () => {
-    const result = await runLsCommand({}, {} as never);
+    const result = await runLsCommand(
+      { daemonTarget: { kind: "instance", home: "/tmp/project-test" } },
+      {} as never,
+    );
 
     expect(listProjects).toHaveBeenCalled();
     expect(result.data).toHaveLength(1);
@@ -88,7 +95,12 @@ describe("project commands", () => {
     expect(resolveProjectName({ name: "  New name  " })).toBe("New name");
     expect(resolveProjectName({ reset: true })).toBeNull();
 
-    const result = await runRenameCommand("project-1", "  New name  ", {}, {} as never);
+    const result = await runRenameCommand(
+      "project-1",
+      "  New name  ",
+      { daemonTarget: { kind: "instance", home: "/tmp/project-test" } },
+      {} as never,
+    );
     expect(renameProject).toHaveBeenCalledWith("project-1", "New name");
     expect(result.data).toEqual({ projectId: "project-1", name: "New name" });
   });
@@ -98,7 +110,11 @@ describe("project commands", () => {
   });
 
   it("deletes a project", async () => {
-    const result = await runDeleteCommand("project-1", {}, {} as never);
+    const result = await runDeleteCommand(
+      "project-1",
+      { daemonTarget: { kind: "instance", home: "/tmp/project-test" } },
+      {} as never,
+    );
 
     expect(removeProject).toHaveBeenCalledWith("project-1");
     expect(result.data).toEqual({

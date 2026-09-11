@@ -36,7 +36,7 @@ async function withConnectedOpenCodeDaemon(
   try {
     await client.connect();
     await client.fetchAgents({
-      subscribe: { subscriptionId: `opencode-import-persistence-${randomUUID()}` },
+      subscribe: {},
     });
     await run({ client });
   } finally {

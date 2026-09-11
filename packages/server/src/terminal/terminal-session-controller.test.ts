@@ -1,7 +1,7 @@
 import { describe, expect, test, vi } from "vitest";
-import type pino from "pino";
+import pino from "pino";
 
-import type { SessionOutboundMessage } from "../server/messages.js";
+import type { SessionInboundMessage, SessionOutboundMessage } from "../server/messages.js";
 import {
   TerminalStreamOpcode,
   decodeTerminalStreamFrame,
@@ -9,10 +9,40 @@ import {
 } from "@getpaseo/protocol/binary-frames/index";
 import type { TerminalCell, TerminalState } from "@getpaseo/protocol/messages";
 import type { ServerMessage, TerminalSession, TerminalStateSnapshot } from "./terminal.js";
-import { TerminalSessionController } from "./terminal-session-controller.js";
+import {
+  TerminalSessionController,
+  type TerminalSessionControllerOptions,
+} from "./terminal-session-controller.js";
+import { SessionDelivery } from "../server/session/owned-subscriptions/index.js";
 import type { TerminalManager, TerminalsChangedEvent } from "./terminal-manager.js";
 import { isSameOrDescendantPath } from "../server/path-utils.js";
 import { PluginSessionSocket } from "../server/plugins/session-socket.js";
+
+function createController(
+  options: TerminalSessionControllerOptions & { emitBinary(frame: Uint8Array): void },
+) {
+  const source = {};
+  const ownership = new SessionDelivery(
+    (_source, message) => options.emit(message),
+    (_source, frame) => options.emitBinary(frame),
+  );
+  ownership.attach(source, false);
+  const controller = new TerminalSessionController({
+    ...options,
+    emit: (message) => {
+      if (!ownership.reply(message)) options.emit(message);
+    },
+  });
+  return {
+    start: () => controller.start(),
+    dispatch: (message: SessionInboundMessage) =>
+      ownership.request(source, message, async () => {
+        await controller.dispatch(message, ownership);
+      }),
+    hasDirectorySubscription: (input: { cwd: string; workspaceId?: string }) =>
+      controller.hasDirectorySubscription(input),
+  };
+}
 
 function deferred<T>(): {
   promise: Promise<T>;
@@ -102,7 +132,7 @@ describe("terminal-session-controller restore", () => {
       subscribeTerminalActivity: vi.fn(() => vi.fn()),
       subscribeTerminalWorkspaceContributionChanged: vi.fn(() => vi.fn()),
     };
-    const controller = new TerminalSessionController({
+    const controller = createController({
       terminalManager,
       emit: (message) => outboundMessages.push(message),
       emitBinary: (bytes) => {
@@ -218,7 +248,7 @@ describe("terminal-session-controller legacy terminal creation", () => {
       subscribeTerminalActivity: vi.fn(() => vi.fn()),
       subscribeTerminalWorkspaceContributionChanged: vi.fn(() => vi.fn()),
     };
-    const controller = new TerminalSessionController({
+    const controller = createController({
       terminalManager,
       emit: (message) => outboundMessages.push(message),
       emitBinary: vi.fn(),
@@ -293,7 +323,7 @@ describe("terminal-session-controller legacy terminal creation", () => {
       subscribeTerminalActivity: vi.fn(() => vi.fn()),
       subscribeTerminalWorkspaceContributionChanged: vi.fn(() => vi.fn()),
     };
-    const controller = new TerminalSessionController({
+    const controller = createController({
       terminalManager,
       emit: (message) => outboundMessages.push(message),
       emitBinary: vi.fn(),
@@ -329,7 +359,7 @@ async function waitForCoalescerFlush(): Promise<void> {
 
 describe("terminal-session-controller wrap-flag gating", () => {
   function setup(clientSupportsWrapReflow?: () => boolean): {
-    controller: TerminalSessionController;
+    controller: ReturnType<typeof createController>;
     getTerminalState: ReturnType<typeof vi.fn>;
   } {
     const terminal: TerminalSession = {
@@ -379,7 +409,7 @@ describe("terminal-session-controller wrap-flag gating", () => {
       subscribeTerminalActivity: vi.fn(() => vi.fn()),
       subscribeTerminalWorkspaceContributionChanged: vi.fn(() => vi.fn()),
     } as unknown as TerminalManager;
-    const controller = new TerminalSessionController({
+    const controller = createController({
       terminalManager,
       emit: vi.fn(),
       emitBinary: vi.fn(),
@@ -391,7 +421,7 @@ describe("terminal-session-controller wrap-flag gating", () => {
     return { controller, getTerminalState };
   }
 
-  async function subscribe(controller: TerminalSessionController): Promise<void> {
+  async function subscribe(controller: ReturnType<typeof createController>): Promise<void> {
     await controller.dispatch({
       type: "subscribe_terminal_request",
       terminalId: "term-1",
@@ -457,7 +487,7 @@ describe("terminal-session-controller subdirectory aggregation", () => {
     };
 
     const outboundMessages: SessionOutboundMessage[] = [];
-    const controller = new TerminalSessionController({
+    const controller = createController({
       terminalManager,
       emit: (message) => outboundMessages.push(message),
       emitBinary: vi.fn(),
@@ -521,7 +551,7 @@ describe("terminal-session-controller subdirectory aggregation", () => {
       subscribeTerminalWorkspaceContributionChanged: vi.fn(() => vi.fn()),
     };
     const outboundMessages: SessionOutboundMessage[] = [];
-    const controller = new TerminalSessionController({
+    const controller = createController({
       terminalManager,
       emit: (message) => outboundMessages.push(message),
       emitBinary: vi.fn(),
@@ -617,7 +647,7 @@ describe("terminal-session-controller workspace-scoped subscriptions", () => {
     };
 
     const outboundMessages: SessionOutboundMessage[] = [];
-    const controller = new TerminalSessionController({
+    const controller = createController({
       terminalManager,
       emit: (message) => outboundMessages.push(message),
       emitBinary: vi.fn(),
@@ -714,7 +744,7 @@ describe("terminal-session-controller backpressure snapshot fallback", () => {
     } as unknown as TerminalManager;
 
     const frames: TerminalStreamFrame[] = [];
-    const controller = new TerminalSessionController({
+    const controller = createController({
       terminalManager,
       emit: vi.fn(),
       emitBinary: (bytes) => {
@@ -805,5 +835,406 @@ describe("terminal-session-controller backpressure snapshot fallback", () => {
     await waitForCoalescerFlush();
 
     expect(frames.some((frame) => frame.opcode === TerminalStreamOpcode.Snapshot)).toBe(true);
+  });
+});
+
+function exitFixture(readSnapshot: () => Promise<TerminalStateSnapshot | null>, backedUp = false) {
+  const outputs = new Set<(message: ServerMessage) => void>();
+  const exits = new Set<Parameters<TerminalSession["onExit"]>[0]>();
+  const terminal: TerminalSession = {
+    id: "exit-terminal",
+    name: "Terminal",
+    cwd: "/unused",
+    workspaceId: "workspace",
+    send() {},
+    subscribe(listener) {
+      outputs.add(listener);
+      return () => {
+        outputs.delete(listener);
+      };
+    },
+    onExit(listener) {
+      exits.add(listener);
+      return () => {
+        exits.delete(listener);
+      };
+    },
+    onCommandFinished: () => () => {},
+    onTitleChange: () => () => {},
+    onActivityChange: () => () => {},
+    getSize: () => ({ rows: 1, cols: 80 }),
+    getState: () => terminalState("snapshot"),
+    getStateSnapshot: () => ({ state: terminalState("snapshot"), revision: 0 }),
+    getReplayPreamble: () => "",
+    getTitle: () => undefined,
+    getActivity: () => null,
+    setActivity() {},
+    clearActivityAttention: () => false,
+    setTitle() {},
+    getExitInfo: () => null,
+    kill() {},
+    async killAndWait() {},
+  };
+  const manager: TerminalManager = {
+    getTerminal: () => terminal,
+    getTerminalState: readSnapshot,
+    getTerminals: async () => [terminal],
+    createTerminal: async () => terminal,
+    registerCwdEnv() {},
+    validateTerminalActivityToken: () => "unknown",
+    setTerminalTitle: () => true,
+    setTerminalActivity: async () => true,
+    clearTerminalAttention: async () => false,
+    killTerminal() {},
+    async killTerminalAndWait() {},
+    captureTerminal: async () => ({ lines: [], totalLines: 0 }),
+    listDirectories: () => [],
+    killAll() {},
+    subscribeTerminalsChanged: () => () => {},
+    subscribeTerminalActivity: () => () => {},
+    subscribeTerminalWorkspaceContributionChanged: () => () => {},
+  };
+  const frames: Array<{
+    source: object;
+    message?: SessionOutboundMessage;
+    binary?: TerminalStreamFrame;
+  }> = [];
+  const delivery = new SessionDelivery(
+    (source, message) => frames.push({ source, message }),
+    (source, bytes) => {
+      const binary = decodeTerminalStreamFrame(bytes);
+      if (binary) frames.push({ source, binary });
+    },
+  );
+  const controller = new TerminalSessionController({
+    terminalManager: manager,
+    emit: (message) => {
+      delivery.reply(message);
+    },
+    hasBinaryChannel: () => true,
+    isPathWithinRoot: () => false,
+    sessionLogger: pino({ level: "silent" }),
+    getClientBufferedAmount: () => (backedUp ? 8 * 1024 * 1024 : 0),
+  });
+  return {
+    frames,
+    delivery,
+    controller,
+    outputs,
+    exits,
+    subscribe: async (source: object, modern: boolean, requestId: string) => {
+      delivery.attach(source, modern);
+      const request = {
+        type: "subscribe_terminal_request" as const,
+        terminalId: terminal.id,
+        requestId,
+      };
+      await delivery.request(source, request, async () => {
+        await controller.dispatch(request, delivery);
+      });
+      const reply = frames.find(
+        (row) =>
+          row.message?.type === "subscribe_terminal_response" &&
+          row.message.payload.requestId === requestId,
+      )?.message;
+      if (reply?.type !== "subscribe_terminal_response" || reply.payload.error !== null)
+        throw new Error("Missing stream acknowledgement");
+      return { source, slot: reply.payload.slot, id: reply.payload.subscriptionId };
+    },
+    output: (data: string, revision: number) => {
+      for (const listener of outputs) listener({ type: "output", data, revision });
+    },
+    exit: () => {
+      for (const listener of exits) listener({ exitCode: 0, signal: null, lastOutputLines: [] });
+    },
+  };
+}
+
+describe("terminal output before natural exit", () => {
+  test.each([true, false])(
+    "flushes each observer's final bytes before exit (modern=%s)",
+    async (modern) => {
+      vi.useFakeTimers();
+      const f = exitFixture(async () => ({ state: terminalState("snapshot"), revision: 0 }));
+      try {
+        const source = {};
+        const owners = [
+          await f.subscribe(source, modern, "first"),
+          await f.subscribe(modern ? source : {}, modern, "second"),
+        ];
+        await vi.advanceTimersByTimeAsync(0);
+        f.output("FIRST-OUTPUT", 1);
+        await vi.advanceTimersByTimeAsync(5);
+        f.output("FINAL-BYTES", 2);
+        f.exit();
+        await vi.advanceTimersByTimeAsync(0);
+        for (const owner of owners) {
+          const ordered = f.frames.filter(
+            (row) =>
+              row.source === owner.source &&
+              (row.binary?.slot === owner.slot ||
+                (row.message?.type === "terminal_stream_exit" &&
+                  row.message.payload.subscriptionId === owner.id)),
+          );
+          expect(ordered.map((row) => row.binary?.opcode ?? row.message?.type)).toEqual([
+            TerminalStreamOpcode.Snapshot,
+            TerminalStreamOpcode.Output,
+            TerminalStreamOpcode.Output,
+            "terminal_stream_exit",
+          ]);
+          expect(Buffer.from(ordered[2].binary!.payload).toString()).toBe("FINAL-BYTES");
+        }
+        if (modern) expect(new Set(owners.map((owner) => owner.id)).size).toBe(2);
+        expect(f.delivery.registrationCount).toBe(0);
+        expect(f.controller.getMetrics().streamSubscriptionCount).toBe(0);
+        expect(f.outputs.size + f.exits.size).toBe(0);
+      } finally {
+        await f.delivery.close();
+        vi.useRealTimers();
+      }
+    },
+  );
+
+  test("waits for bootstrap snapshot and flushes buffered bytes without starting backpressure work", async () => {
+    vi.useFakeTimers();
+    const snapshot = deferred<TerminalStateSnapshot | null>();
+    let reads = 0;
+    const f = exitFixture(() => {
+      reads++;
+      return snapshot.promise;
+    }, true);
+    try {
+      await f.subscribe({}, true, "bootstrap");
+      f.output("x".repeat(300 * 1024), 1);
+      f.output("FINAL-BYTES", 2);
+      f.exit();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(f.frames.map((row) => row.message?.type)).toEqual(["subscribe_terminal_response"]);
+      snapshot.resolve({ state: terminalState("snapshot"), revision: 0 });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(f.frames.slice(1).map((row) => row.binary?.opcode ?? row.message?.type)).toEqual([
+        TerminalStreamOpcode.Snapshot,
+        TerminalStreamOpcode.Output,
+        "terminal_stream_exit",
+      ]);
+      expect(Buffer.from(f.frames[2].binary!.payload).toString()).toBe(
+        "x".repeat(300 * 1024) + "FINAL-BYTES",
+      );
+      expect(reads).toBe(1);
+      expect(f.delivery.registrationCount).toBe(0);
+    } finally {
+      snapshot.resolve(null);
+      await f.delivery.close();
+      vi.useRealTimers();
+    }
+  });
+
+  test.each([true, false, "rejected"])(
+    "finishes an in-flight backpressure snapshot (available=%s)",
+    async (available) => {
+      vi.useFakeTimers();
+      const snapshot = deferred<TerminalStateSnapshot | null>();
+      let reads = 0;
+      const f = exitFixture(
+        async () =>
+          ++reads === 1 ? { state: terminalState("initial"), revision: 0 } : snapshot.promise,
+        true,
+      );
+      try {
+        await f.subscribe({}, true, "pressure");
+        await vi.advanceTimersByTimeAsync(0);
+        f.output("x".repeat(300 * 1024), 1);
+        await vi.advanceTimersByTimeAsync(5);
+        expect(reads).toBe(2);
+        f.output("FINAL-BYTES", 2);
+        f.exit();
+        await vi.advanceTimersByTimeAsync(0);
+        expect(f.frames.some((row) => row.message?.type === "terminal_stream_exit")).toBe(false);
+        if (available === "rejected") snapshot.reject(new Error("Snapshot failed during exit"));
+        else
+          snapshot.resolve(
+            available ? { state: terminalState("pressure-snapshot"), revision: 1 } : null,
+          );
+        await vi.advanceTimersByTimeAsync(0);
+        const output = f.frames
+          .filter((row) => row.binary?.opcode === TerminalStreamOpcode.Output)
+          .map((row) => Buffer.from(row.binary!.payload).toString())
+          .join("");
+        expect(output).toBe((available === true ? "" : "x".repeat(300 * 1024)) + "FINAL-BYTES");
+        expect(f.frames.at(-1)?.message?.type).toBe("terminal_stream_exit");
+        expect(f.delivery.registrationCount).toBe(0);
+        expect(reads).toBe(2);
+      } finally {
+        snapshot.resolve(null);
+        await f.delivery.close();
+        vi.useRealTimers();
+      }
+    },
+  );
+
+  test("release during exit's pending snapshot suppresses late delivery", async () => {
+    vi.useFakeTimers();
+    const snapshot = deferred<TerminalStateSnapshot | null>();
+    const f = exitFixture(() => snapshot.promise);
+    const source = {};
+    try {
+      const owner = await f.subscribe(source, true, "pending");
+      f.output("FINAL-BYTES", 1);
+      f.exit();
+      const request = {
+        type: "subscription.release.request" as const,
+        requestId: "release",
+        subscriptionId: owner.id!,
+      };
+      const release = f.delivery.request(source, request, () => f.delivery.release(owner.id!));
+      snapshot.resolve({ state: terminalState("snapshot"), revision: 0 });
+      await release;
+      await vi.advanceTimersByTimeAsync(0);
+      expect(f.frames.map((row) => row.message?.type)).toEqual(["subscribe_terminal_response"]);
+      expect(f.delivery.registrationCount).toBe(0);
+      expect(f.outputs.size + f.exits.size).toBe(0);
+    } finally {
+      snapshot.resolve(null);
+      await f.delivery.close();
+      vi.useRealTimers();
+    }
+  });
+
+  test("explicit release discards only that observer's trailing output", async () => {
+    vi.useFakeTimers();
+    const f = exitFixture(async () => ({ state: terminalState("snapshot"), revision: 0 }));
+    const source = {};
+    try {
+      const a = await f.subscribe(source, true, "a");
+      const b = await f.subscribe(source, true, "b");
+      await vi.advanceTimersByTimeAsync(0);
+      f.output("FINAL-BYTES", 1);
+      const request = {
+        type: "subscription.release.request" as const,
+        requestId: "release",
+        subscriptionId: a.id!,
+      };
+      await f.delivery.request(source, request, () => f.delivery.release(a.id!));
+      f.exit();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(
+        f.frames.some(
+          (row) =>
+            row.binary &&
+            row.binary.slot === a.slot &&
+            row.binary.opcode === TerminalStreamOpcode.Output,
+        ),
+      ).toBe(false);
+      expect(
+        f.frames.some(
+          (row) =>
+            row.binary &&
+            row.binary.slot === b.slot &&
+            row.binary.opcode === TerminalStreamOpcode.Output &&
+            Buffer.from(row.binary.payload).toString() === "FINAL-BYTES",
+        ),
+      ).toBe(true);
+      expect(f.delivery.registrationCount).toBe(0);
+    } finally {
+      await f.delivery.close();
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe("terminal snapshot failure", () => {
+  test.each(["initial", "legacy initial", "backpressure"])(
+    "releases only the failed observer after %s rejection",
+    async (phase) => {
+      vi.useFakeTimers();
+      let reads = 0;
+      const f = exitFixture(async () => {
+        if (++reads === (phase === "backpressure" ? 2 : 1))
+          throw new Error("Terminal worker request timed out: getTerminalState");
+        return { state: terminalState("healthy"), revision: 0 };
+      }, phase === "backpressure");
+      try {
+        const source = {};
+        const failed = await f.subscribe(source, phase !== "legacy initial", "failed");
+        await vi.advanceTimersByTimeAsync(0);
+        if (phase === "backpressure") {
+          f.output("x".repeat(300 * 1024), 1);
+          await vi.advanceTimersByTimeAsync(5);
+        }
+        const healthy = await f.subscribe(
+          phase === "legacy initial" ? {} : source,
+          phase !== "legacy initial",
+          "healthy",
+        );
+        await vi.advanceTimersByTimeAsync(0);
+        f.output("SIBLING-ALIVE", 2);
+        await vi.advanceTimersByTimeAsync(5);
+        expect(f.delivery.registrationCount).toBe(1);
+        expect(f.controller.getMetrics().streamSubscriptionCount).toBe(1);
+        expect(f.outputs.size).toBe(1);
+        expect(f.exits.size).toBe(1);
+        expect(
+          f.frames
+            .filter((row) => row.message?.type === "terminal_stream_exit")
+            .map((row) => row.message),
+        ).toEqual([
+          {
+            type: "terminal_stream_exit",
+            payload: {
+              terminalId: "exit-terminal",
+              ...(phase === "legacy initial" ? {} : { subscriptionId: failed.id }),
+              error: "Terminal worker request timed out: getTerminalState",
+            },
+          },
+        ]);
+        expect(
+          f.frames.some(
+            (row) =>
+              row.binary?.slot === healthy.slot &&
+              row.binary?.opcode === TerminalStreamOpcode.Output &&
+              Buffer.from(row.binary.payload).toString() === "SIBLING-ALIVE",
+          ),
+        ).toBe(true);
+        f.exit();
+        await vi.advanceTimersByTimeAsync(0);
+        expect(f.frames.at(-1)?.message).toEqual({
+          type: "terminal_stream_exit",
+          payload: {
+            terminalId: "exit-terminal",
+            ...(phase === "legacy initial" ? {} : { subscriptionId: healthy.id }),
+          },
+        });
+        expect(f.delivery.registrationCount).toBe(0);
+        expect(f.outputs.size + f.exits.size).toBe(0);
+      } finally {
+        await f.delivery.close();
+        vi.useRealTimers();
+      }
+    },
+  );
+
+  test("release during pending rejection suppresses the failure and completes cleanup", async () => {
+    const snapshot = deferred<TerminalStateSnapshot | null>();
+    const f = exitFixture(() => snapshot.promise);
+    const source = {};
+    try {
+      const owner = await f.subscribe(source, true, "pending");
+      f.output("BUFFERED", 1);
+      const request = {
+        type: "subscription.release.request" as const,
+        requestId: "release",
+        subscriptionId: owner.id!,
+      };
+      const release = f.delivery.request(source, request, () => f.delivery.release(owner.id!));
+      snapshot.reject(new Error("Terminal worker request timed out: getTerminalState"));
+      await release;
+      expect(f.frames.map((row) => row.message?.type)).toEqual(["subscribe_terminal_response"]);
+      expect(f.delivery.registrationCount).toBe(0);
+      expect(f.controller.getMetrics().streamSubscriptionCount).toBe(0);
+      expect(f.outputs.size + f.exits.size).toBe(0);
+    } finally {
+      snapshot.resolve(null);
+      await f.delivery.close();
+    }
   });
 });

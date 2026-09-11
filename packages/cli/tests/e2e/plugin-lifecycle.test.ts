@@ -44,7 +44,9 @@ async function main(): Promise<void> {
     assert.equal(install.exitCode, 0, install.stderr);
     assert.equal(JSON.parse(install.stdout).id, "cli-e2e");
 
-    const client = await connectToDaemon({ host: `127.0.0.1:${context.port}` });
+    const client = await connectToDaemon({
+      target: { kind: "endpoint", host: `127.0.0.1:${context.port}` },
+    });
     await client.patchDaemonConfig({ pluginsEnabled: true });
     await client.close();
 

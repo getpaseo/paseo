@@ -1,7 +1,6 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { randomUUID } from "node:crypto";
 import { beforeAll, beforeEach, expect, test } from "vitest";
 import pino from "pino";
 
@@ -118,7 +117,7 @@ async function withConnectedPiDaemon(
   try {
     await client.connect();
     await client.fetchAgents({
-      subscribe: { subscriptionId: `pi-real-${randomUUID()}` },
+      subscribe: {},
     });
     await run({ client, daemon });
   } finally {

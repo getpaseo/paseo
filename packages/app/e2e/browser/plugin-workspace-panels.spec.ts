@@ -67,7 +67,7 @@ function contributeClient(client) {
     pills.get(agentId)?.();
     pills.delete(agentId);
   };
-  const unsubscribe = client.paseo.agents.subscribe((update) => {
+  const apply = (update) => {
     if (update.kind === "remove") {
       remove(update.agentId);
       return;
@@ -94,9 +94,20 @@ function contributeClient(client) {
       },
     });
     pills.set(agent.id, () => pill.remove());
-  });
+  };
+  const lifetime = new AbortController();
+  void client.paseo.agents.list({ subscribe: {}, signal: lifetime.signal }).then(({ subscription }) => {
+    subscription.subscribe({
+      snapshot({ entries }) {
+        for (const removePill of pills.values()) removePill();
+        pills.clear();
+        for (const { agent } of entries) apply({ kind: "upsert", agent });
+      },
+      update(message) { if (message.type === "agent_update") apply(message.payload); },
+    });
+  }).catch((error) => { if (!lifetime.signal.aborted) console.error(error); });
   return () => {
-    unsubscribe();
+    lifetime.abort();
     for (const removePill of pills.values()) removePill();
     pills.clear();
   };

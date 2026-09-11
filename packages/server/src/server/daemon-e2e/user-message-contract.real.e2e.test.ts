@@ -103,7 +103,7 @@ describe.each(CONTRACT_CASES)("daemon E2E (real $provider) - user_message contra
       appVersion: "0.1.80",
     });
     await client.connect();
-    await client.fetchAgents({ subscribe: { subscriptionId: `${entry.provider}-user-contract` } });
+    await client.fetchAgents({ subscribe: {} });
   }, 30_000);
 
   afterEach(async () => {

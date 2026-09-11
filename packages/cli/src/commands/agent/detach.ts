@@ -1,6 +1,5 @@
 import type { Command } from "commander";
-import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
-import { connectToDaemon, getDaemonHost, resolveAgentId } from "../../utils/client.js";
+import { connectToDaemon, resolveAgentId } from "../../utils/client.js";
 import type {
   CommandError,
   CommandOptions,
@@ -26,17 +25,7 @@ export async function runDetachCommand(
   options: CommandOptions,
   _command: Command,
 ): Promise<SingleResult<AgentDetachResult>> {
-  const host = getDaemonHost({ host: options.host });
-  let client: DaemonClient;
-  try {
-    client = await connectToDaemon({ host: options.host });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    throw {
-      code: "DAEMON_NOT_RUNNING",
-      message: `Cannot connect to daemon at ${host}: ${message}`,
-    } satisfies CommandError;
-  }
+  const client = await connectToDaemon({ target: options.daemonTarget });
 
   try {
     const payload = await client.fetchAgents({ filter: { includeArchived: true } });

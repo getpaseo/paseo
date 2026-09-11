@@ -345,7 +345,7 @@ describe("daemon E2E (real claude) - send message during tool call", () => {
       await within(
         "subscribe Claude steering test client",
         15_000,
-        client.fetchAgents({ subscribe: { subscriptionId: "steer" } }),
+        client.fetchAgents({ subscribe: {} }),
       );
       const agent = await within(
         "create Claude steering test agent",
@@ -518,7 +518,7 @@ describe("daemon E2E (real claude) - send message during tool call", () => {
       await within(
         "subscribe queued-steer Stop client",
         15_000,
-        client.fetchAgents({ subscribe: { subscriptionId: "queued-steer-stop" } }),
+        client.fetchAgents({ subscribe: {} }),
       );
       const agent = await within(
         "create queued-steer Stop agent",
@@ -587,7 +587,7 @@ describe("daemon E2E (real claude) - send message during tool call", () => {
 
     try {
       await client.connect();
-      await client.fetchAgents({ subscribe: { subscriptionId: "primary" } });
+      await client.fetchAgents({ subscribe: {} });
 
       const agent = await client.createAgent({
         cwd,

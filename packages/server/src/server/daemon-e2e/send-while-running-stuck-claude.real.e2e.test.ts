@@ -44,8 +44,8 @@ describe("daemon E2E (real claude) - send while running recovery", () => {
     try {
       await primary.connect();
       await secondary.connect();
-      await primary.fetchAgents({ subscribe: { subscriptionId: "primary" } });
-      await secondary.fetchAgents({ subscribe: { subscriptionId: "secondary" } });
+      await primary.fetchAgents({ subscribe: {} });
+      await secondary.fetchAgents({ subscribe: {} });
 
       const agent = await primary.createAgent({
         cwd,
@@ -104,7 +104,7 @@ describe("daemon E2E (real claude) - send while running recovery", () => {
         });
 
         const initial = await reconnected.fetchAgents({
-          subscribe: { subscriptionId: "reconnected" },
+          subscribe: {},
         });
         const hydratedSnapshot = initial.entries.find(
           (candidate) => candidate.agent.id === agent.id,

@@ -1,6 +1,6 @@
-import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -37,14 +37,14 @@ describe("file uploads", () => {
     await expect(uploads.receiveFrame(uploadChunk("req-upload", "hello"))).resolves.toBeNull();
     await expect(uploads.receiveFrame(uploadChunk("req-upload", " world"))).resolves.toBeNull();
 
-    const path = join(paseoHome, "uploads", "upload_req-upload", "notes.txt");
+    const path = uploadedPath(paseoHome, "notes.txt");
     await expect(uploads.receiveFrame(uploadEnds("req-upload"))).resolves.toEqual({
       type: "file.upload.response",
       payload: {
         requestId: "req-upload",
         file: {
           type: "uploaded_file",
-          id: "upload_req-upload",
+          id: expect.any(String),
           fileName: "notes.txt",
           mimeType: "text/plain",
           size: 11,
@@ -70,8 +70,8 @@ describe("file uploads", () => {
     });
     await expect(uploads.receiveFrame(uploadBegins("req-overflow"))).resolves.toBeNull();
 
-    const uploadDir = join(paseoHome, "uploads", "upload_req-overflow");
-    const path = join(uploadDir, "notes.txt");
+    const path = uploadedPath(paseoHome, "notes.txt");
+    const uploadDir = dirname(path);
     await expect(uploads.receiveFrame(uploadChunk("req-overflow", "hello!"))).resolves.toEqual({
       type: "file.upload.response",
       payload: {
@@ -106,9 +106,7 @@ describe("file uploads", () => {
 
     expect(results.slice(0, 3)).toEqual([null, null, null]);
     expect(results[3]?.payload.error).toBeNull();
-    expect(readFileSync(join(paseoHome, "uploads", "upload_req-queued", "notes.txt"), "utf8")).toBe(
-      "hello world",
-    );
+    expect(readFileSync(uploadedPath(paseoHome, "notes.txt"), "utf8")).toBe("hello world");
   });
 
   it("replaces duplicate upload starts without letting the old stale timeout evict the replacement", async () => {
@@ -139,16 +137,16 @@ describe("file uploads", () => {
     });
     await vi.advanceTimersByTimeAsync(30);
 
-    const path = join(paseoHome, "uploads", "upload_req-duplicate_2", "new.txt");
     await expect(uploads.receiveFrame(uploadBegins("req-duplicate"))).resolves.toBeNull();
     await expect(uploads.receiveFrame(uploadChunk("req-duplicate", "new"))).resolves.toBeNull();
+    const path = uploadedPath(paseoHome, "new.txt");
     await expect(uploads.receiveFrame(uploadEnds("req-duplicate"))).resolves.toEqual({
       type: "file.upload.response",
       payload: {
         requestId: "req-duplicate",
         file: {
           type: "uploaded_file",
-          id: "upload_req-duplicate_2",
+          id: expect.any(String),
           fileName: "new.txt",
           mimeType: "text/plain",
           size: 3,
@@ -184,14 +182,14 @@ describe("file uploads", () => {
       uploads.receiveFrame(uploadChunk("req-slow-active", " world")),
     ).resolves.toBeNull();
 
-    const path = join(paseoHome, "uploads", "upload_req-slow-active", "notes.txt");
+    const path = uploadedPath(paseoHome, "notes.txt");
     await expect(uploads.receiveFrame(uploadEnds("req-slow-active"))).resolves.toEqual({
       type: "file.upload.response",
       payload: {
         requestId: "req-slow-active",
         file: {
           type: "uploaded_file",
-          id: "upload_req-slow-active",
+          id: expect.any(String),
           fileName: "notes.txt",
           mimeType: "text/plain",
           size: 11,
@@ -251,4 +249,13 @@ function decodeUploadFrame(bytes: Uint8Array): FileTransferFrame {
     throw new Error("Expected file transfer frame");
   }
   return frame;
+}
+
+function uploadedPath(paseoHome: string, fileName: string): string {
+  const root = join(paseoHome, "uploads");
+  const file = readdirSync(root)
+    .map((id) => join(root, id, fileName))
+    .find((candidate) => existsSync(candidate));
+  if (!file) throw new Error(`Upload file ${fileName} is missing`);
+  return file;
 }
