@@ -24,6 +24,22 @@ describe("ProviderOverridesSchema", () => {
     });
   });
 
+  test("accepts an installed plugin's same-ID override without extends", () => {
+    expect(
+      ProviderOverridesSchema.parse({
+        "omp-plugin": {
+          providerOptions: { command: ["/opt/omp"] },
+          models: [{ id: "configured", label: "Configured" }],
+        },
+      }),
+    ).toEqual({
+      "omp-plugin": {
+        providerOptions: { command: ["/opt/omp"] },
+        models: [{ id: "configured", label: "Configured" }],
+      },
+    });
+  });
+
   test("bounds generic denied tool configuration", () => {
     const profile = {
       extends: "plugin-base",

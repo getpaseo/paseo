@@ -478,27 +478,38 @@ export class PluginService {
           label: provider.label,
           description: provider.description,
           checkAvailability: provider.hasAvailability
-            ? (options) => {
+            ? (options, context) => {
                 if (!this.runtime.getProviderAvailability)
                   throw new Error("Plugin runtime cannot check provider availability");
-                return this.runtime.getProviderAvailability(pluginId, provider.id, options);
+                return this.runtime.getProviderAvailability(
+                  pluginId,
+                  provider.id,
+                  options,
+                  context?.timeoutMs,
+                );
               }
             : undefined,
           getCatalogCacheKey: provider.hasCatalogCacheKey
-            ? (options) => {
+            ? (options, context) => {
                 if (!this.runtime.getProviderCatalogCacheKey)
                   throw new Error("Plugin runtime cannot resolve catalogue keys");
-                return this.runtime.getProviderCatalogCacheKey(pluginId, provider.id, options);
+                return this.runtime.getProviderCatalogCacheKey(
+                  pluginId,
+                  provider.id,
+                  options,
+                  context?.timeoutMs,
+                );
               }
             : undefined,
           normalizeProviderOptions: provider.hasProviderOptionsSchema
-            ? async (options) => {
+            ? async (options, timeoutMs) => {
                 if (!this.runtime.normalizeProviderOptions)
                   throw new Error("Plugin runtime cannot validate providerOptions");
                 const result = await this.runtime.normalizeProviderOptions(
                   pluginId,
                   provider.id,
                   options,
+                  timeoutMs,
                 );
                 if (!result.valid) {
                   throw new ProviderOptionsValidationError(provider.id, result.issues);

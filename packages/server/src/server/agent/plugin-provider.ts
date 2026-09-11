@@ -51,6 +51,7 @@ import type {
   ListImportableSessionsOptions,
   ProviderCatalog,
   ProviderRefreshContext,
+  ProviderOperationContext,
   SteerActiveTurnOptions,
   SteerResult,
 } from "./agent-sdk-types.js";
@@ -89,7 +90,10 @@ interface OpenProviderSessionInput {
 }
 
 export interface PluginProviderRegistration extends ProviderRegistration {
-  normalizeProviderOptions?(options: ProviderOptions | undefined): Promise<ProviderOptions>;
+  normalizeProviderOptions?(
+    options: ProviderOptions | undefined,
+    timeoutMs?: number,
+  ): Promise<ProviderOptions>;
 }
 
 function deferred<Value>(): Deferred<Value> {
@@ -142,9 +146,12 @@ class ProviderRuntime {
     return this.closed;
   }
 
-  async isAvailable(options: ProviderCatalogOptions): Promise<ProviderAvailability> {
+  async isAvailable(
+    options: ProviderCatalogOptions,
+    context?: ProviderOperationContext,
+  ): Promise<ProviderAvailability> {
     if (this.registration.checkAvailability) {
-      return await this.registration.checkAvailability(options);
+      return await this.registration.checkAvailability(options, context);
     }
     await this.getConnection();
     return { status: "available" };
@@ -847,7 +854,17 @@ function createPluginProviderDefinition(
     derivedFromProviderId: null,
     optionsSchema: PluginProviderOptionsSchema,
     supportsExactMcpPreapproval: true,
-    validateOptions: async (options) => await normalizePluginProviderOptions(registration, options),
+    validateOptions: async (options, context) =>
+      await normalizePluginProviderOptions(registration, options, context?.timeoutMs),
+    normalizeCatalogOptions: async (options, context) => ({
+      ...options,
+      providerOptions: await normalizePluginProviderOptions(
+        registration,
+        options.providerOptions,
+        context?.timeoutMs,
+      ),
+      settings: toJsonObject(options.settings ?? {}, "provider settings"),
+    }),
     applyOptions: (config, options) => ({ ...config, providerOptions: options }),
     applyToolPolicy: (config, toolPolicy) => ({ ...config, toolPolicy }),
     createClient: () => client,
@@ -873,10 +890,8 @@ class PluginAgentClient implements AgentClient {
 
   constructor(private readonly registration: PluginProviderRegistration) {
     this.getCatalogCacheKey = registration.getCatalogCacheKey
-      ? async (options) => {
-          const normalized = await this.normalizeCatalogOptions(options);
-          return await registration.getCatalogCacheKey!(normalized);
-        }
+      ? async (options, context) =>
+          await registration.getCatalogCacheKey!(toProviderCatalogOptions(options), context)
       : undefined;
     this.provider = registration.id;
     this.runtime = new ProviderRuntime(registration);
@@ -921,8 +936,7 @@ class PluginAgentClient implements AgentClient {
     options: FetchCatalogOptions,
     context?: ProviderRefreshContext,
   ): Promise<ProviderCatalog> {
-    const normalized = await this.normalizeCatalogOptions(options);
-    const catalog = await this.runtime.catalog(normalized, context?.signal);
+    const catalog = await this.runtime.catalog(toProviderCatalogOptions(options), context?.signal);
     return {
       models: catalog.models.map((model) =>
         mapModel(
@@ -941,10 +955,10 @@ class PluginAgentClient implements AgentClient {
   async checkAvailability(
     options: FetchCatalogOptions,
     signal?: AbortSignal,
+    context?: ProviderOperationContext,
   ): Promise<ProviderAvailability> {
     signal?.throwIfAborted();
-    const normalized = await this.normalizeCatalogOptions(options);
-    const availability = await this.runtime.isAvailable(normalized);
+    const availability = await this.runtime.isAvailable(toProviderCatalogOptions(options), context);
     signal?.throwIfAborted();
     return availability;
   }
@@ -963,11 +977,12 @@ class PluginAgentClient implements AgentClient {
 
   async getDiagnostic(
     catalogOptions: FetchCatalogOptions = { scope: "global", force: true },
+    context?: ProviderOperationContext,
   ): Promise<{ diagnostic: string }> {
     if (!this.registration.checkAvailability) {
       return { diagnostic: `Plugin provider '${this.provider}' has no diagnostic hook` };
     }
-    const availability = await this.checkAvailability(catalogOptions);
+    const availability = await this.checkAvailability(catalogOptions, undefined, context);
     return {
       diagnostic:
         availability.diagnostic ??
@@ -975,35 +990,20 @@ class PluginAgentClient implements AgentClient {
     };
   }
 
-  private async normalizeCatalogOptions(
-    options: FetchCatalogOptions,
-  ): Promise<ProviderCatalogOptions> {
+  async listImportableSessions(
+    options: ListImportableSessionsOptions = {},
+  ): Promise<ImportableProviderSession[]> {
     const providerOptions = await normalizePluginProviderOptions(
       this.registration,
       options.providerOptions,
     );
     const settings = toJsonObject(options.settings ?? {}, "provider settings");
-    return options.scope === "global"
-      ? { scope: "global", force: options.force, providerOptions, settings }
-      : { scope: "workspace", cwd: options.cwd, force: options.force, providerOptions, settings };
-  }
-
-  async listImportableSessions(
-    options: ListImportableSessionsOptions = {},
-  ): Promise<ImportableProviderSession[]> {
-    const normalized = await this.normalizeCatalogOptions({
-      scope: "workspace",
-      cwd: options.cwd ?? process.cwd(),
-      force: false,
-      providerOptions: options.providerOptions,
-      settings: options.settings,
-    });
     const sessions = await this.runtime.listSessions({
       query: options.query,
       cwd: options.cwd,
       limit: options.limit,
-      providerOptions: normalized.providerOptions,
-      settings: normalized.settings,
+      providerOptions,
+      settings,
     });
     return sessions.map((session) => ({
       providerHandleId: encodePersistence(session.persistence),
@@ -1056,17 +1056,9 @@ class PluginAgentClient implements AgentClient {
     persist: boolean;
   }): Promise<PluginAgentSession> {
     const sessionId = randomUUID();
-    const providerOptions = await normalizePluginProviderOptions(
-      this.registration,
-      input.config.providerOptions,
-    );
     const bridge = await this.runtime.openSession({
       sessionId,
-      config: mapSessionConfig(
-        { ...input.config, providerOptions },
-        input.launchContext,
-        input.persist,
-      ),
+      config: mapSessionConfig(input.config, input.launchContext, input.persist),
       persistence: input.persistence,
       history: input.history,
     });
@@ -1807,9 +1799,10 @@ function parseProviderDate(value: string | undefined): Date {
 async function normalizePluginProviderOptions(
   registration: PluginProviderRegistration,
   options: ProviderOptions | undefined,
+  timeoutMs?: number,
 ): Promise<ProviderOptions | undefined> {
   if (registration.normalizeProviderOptions) {
-    return await registration.normalizeProviderOptions(options);
+    return await registration.normalizeProviderOptions(options, timeoutMs);
   }
   if (registration.providerOptionsSchema) {
     const parsed = await registration.providerOptionsSchema.safeParseAsync(options ?? {});
@@ -1827,6 +1820,21 @@ async function normalizePluginProviderOptions(
     return toJsonObject(parsed.data, "provider options");
   }
   return options ? toJsonObject(options, "provider options") : undefined;
+}
+
+function toProviderCatalogOptions(options: FetchCatalogOptions): ProviderCatalogOptions {
+  const settings = options.settings
+    ? toJsonObject(options.settings, "provider settings")
+    : undefined;
+  return options.scope === "global"
+    ? { scope: "global", force: options.force, providerOptions: options.providerOptions, settings }
+    : {
+        scope: "workspace",
+        cwd: options.cwd,
+        force: options.force,
+        providerOptions: options.providerOptions,
+        settings,
+      };
 }
 
 function toJsonObject(value: unknown, label: string): Record<string, JsonValue> {

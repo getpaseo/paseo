@@ -11,6 +11,7 @@ import type { AgentStreamEvent } from "../agent/agent-sdk-types.js";
 import { PluginAgentClientRegistry } from "../agent/plugin-provider.js";
 import { PluginRuntime } from "./runtime.js";
 import type { PluginSessionSocket } from "./session-socket.js";
+import type { PluginProviderMetadata } from "./plugin-process-protocol.js";
 
 const temporaryDirectories: string[] = [];
 
@@ -1121,6 +1122,87 @@ export default function contribute(server: { registerProvider(provider: Provider
         ),
       ).toHaveLength(2);
       child.emitMessage({ type: "provider.closed", connectionId });
+    } finally {
+      await runtime.stopAll();
+      vi.useRealTimers();
+    }
+  });
+
+  it("lets provider registration hooks exceed the default timeout within the caller deadline", async () => {
+    const directory = await createPlugin(
+      "slow-provider-hooks",
+      `export default function contribute(plugin: unknown) { void plugin; return () => undefined; }`,
+    );
+    const metadata: PluginProviderMetadata = {
+      id: "provider",
+      label: "Provider",
+      hasAvailability: true,
+      hasCatalogCacheKey: true,
+    };
+    const child = createReloadChild("slow-provider-hooks", [], [], [metadata]);
+    const sent: Array<{ type: string; requestId?: string; timeoutMs?: number }> = [];
+    const originalSend = child.send.bind(child);
+    child.send = (message, callback) => {
+      sent.push(message);
+      if (message.type === "provider.availability" || message.type === "provider.catalog_key") {
+        callback?.(null);
+        if (!("requestId" in message) || typeof message.requestId !== "string") {
+          throw new Error("Provider registration request is missing requestId");
+        }
+        const requestId = message.requestId;
+        setTimeout(() => {
+          child.emitMessage({
+            type: "result",
+            requestId,
+            output:
+              message.type === "provider.availability"
+                ? { status: "available", diagnostic: "slow but healthy" }
+                : "slow-key",
+          });
+        }, 35_000);
+        return true;
+      }
+      return originalSend(message, callback);
+    };
+    const runtime = createTestRuntime({ spawnChild: () => child });
+    await runtime.startPlugin("slow-provider-hooks", directory);
+    vi.useFakeTimers();
+    try {
+      let settled = false;
+      const pending = Promise.all([
+        runtime.getProviderAvailability(
+          "slow-provider-hooks",
+          "provider",
+          { scope: "global" },
+          45_000,
+        ),
+        runtime.getProviderCatalogCacheKey(
+          "slow-provider-hooks",
+          "provider",
+          { scope: "global" },
+          45_000,
+        ),
+      ]).then((result) => {
+        settled = true;
+        return result;
+      });
+
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(settled).toBe(false);
+      await vi.advanceTimersByTimeAsync(5_000);
+      await expect(pending).resolves.toEqual([
+        { status: "available", diagnostic: "slow but healthy" },
+        "slow-key",
+      ]);
+      expect(
+        sent.filter(
+          (message) =>
+            message.type === "provider.availability" || message.type === "provider.catalog_key",
+        ),
+      ).toEqual([
+        expect.objectContaining({ type: "provider.availability", timeoutMs: 45_000 }),
+        expect.objectContaining({ type: "provider.catalog_key", timeoutMs: 45_000 }),
+      ]);
     } finally {
       await runtime.stopAll();
       vi.useRealTimers();

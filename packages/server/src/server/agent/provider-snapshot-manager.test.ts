@@ -221,11 +221,27 @@ describe("ProviderSnapshotManager public surface", () => {
 
   test("installs configured profiles derived from plugin providers", async () => {
     let listener: ((event: ProviderEvent) => void) | null = null;
+    let normalizations = 0;
+    const registrationOptions: unknown[] = [];
     const receivedCatalogs: unknown[] = [];
     const registration: ProviderRegistration = {
       id: "plugin-base",
       label: "Plugin base",
-      providerOptionsSchema: z.object({ runtime: z.string() }).strict(),
+      providerOptionsSchema: z
+        .object({ runtime: z.string() })
+        .strict()
+        .transform(({ runtime }) => {
+          normalizations += 1;
+          return { runtime: `${runtime}!` };
+        }),
+      async checkAvailability(options) {
+        registrationOptions.push({ availability: options });
+        return { status: "available" };
+      },
+      async getCatalogCacheKey(options) {
+        registrationOptions.push({ cacheKey: options });
+        return JSON.stringify(options.providerOptions);
+      },
       async connect() {
         return {
           version: 1,
@@ -271,6 +287,21 @@ describe("ProviderSnapshotManager public surface", () => {
         cwd: "/tmp/project",
         providers: ["plugin-profile"],
       });
+      expect(normalizations).toBe(1);
+      expect(registrationOptions).toEqual([
+        {
+          cacheKey: expect.objectContaining({ providerOptions: { runtime: "configured!" } }),
+        },
+        {
+          availability: expect.objectContaining({ providerOptions: { runtime: "configured!" } }),
+        },
+      ]);
+      expect(receivedCatalogs).toContainEqual(
+        expect.objectContaining({
+          providerOptions: { runtime: "configured!" },
+          settings: { approval: "ask" },
+        }),
+      );
       const snapshotEntry = manager
         .getSnapshot("/tmp/project")
         .records.find(({ entry }) => entry.provider === "plugin-profile")?.entry;
@@ -282,17 +313,88 @@ describe("ProviderSnapshotManager public surface", () => {
           { provider: "plugin-profile", id: "extra", label: "Extra" },
         ],
       });
-      expect(receivedCatalogs).toContainEqual(
-        expect.objectContaining({
-          providerOptions: { runtime: "configured" },
-          settings: { approval: "ask" },
-        }),
-      );
       expect(
         manager.getAgentManagerProviderState().providerDefinitions["plugin-profile"],
       ).toMatchObject({ derivedFromProviderId: "plugin-base" });
     } finally {
       await manager.shutdown();
+    }
+  });
+  test("applies same-ID plugin overrides and rejects an ambiguous foreign base", async () => {
+    let listener: ((event: ProviderEvent) => void) | null = null;
+    const catalogInputs: unknown[] = [];
+    const registration: ProviderRegistration = {
+      id: "plugin-base",
+      label: "Plugin base",
+      providerOptionsSchema: z.object({ runtime: z.string() }).strict(),
+      async connect() {
+        return {
+          version: 1,
+          capabilities: [],
+          async send(input) {
+            if (input.type !== "catalog") return;
+            catalogInputs.push(input);
+            listener?.({
+              type: "catalog",
+              requestId: input.requestId,
+              catalog: {
+                models: [{ id: "runtime", label: "Runtime" }],
+                modes: [],
+              },
+            });
+          },
+          onEvent(next) {
+            listener = next;
+            return () => {
+              if (listener === next) listener = null;
+            };
+          },
+          async close() {},
+        };
+      },
+    };
+    const manager = new ProviderSnapshotManager({
+      logger: createTestLogger(),
+      providerOverrides: {
+        "plugin-base": {
+          providerOptions: { runtime: "configured" },
+          models: [{ id: "configured", label: "Configured" }],
+        },
+      },
+    });
+    try {
+      manager.replacePluginProviders([registration]);
+      await manager.refreshSnapshotForCwd({
+        cwd: "/tmp/project",
+        providers: [registration.id],
+      });
+      const snapshotEntry = manager
+        .getSnapshot("/tmp/project")
+        .records.find(({ entry }) => entry.provider === registration.id)?.entry;
+      expect(snapshotEntry).toMatchObject({
+        provider: registration.id,
+        status: "ready",
+        models: [{ provider: registration.id, id: "configured", label: "Configured" }],
+      });
+      expect(catalogInputs).toContainEqual(
+        expect.objectContaining({ providerOptions: { runtime: "configured" } }),
+      );
+    } finally {
+      await manager.shutdown();
+    }
+
+    const ambiguous = new ProviderSnapshotManager({
+      logger: createTestLogger(),
+      providerOverrides: {
+        "plugin-base": { extends: "codex", label: "Ambiguous plugin" },
+      },
+    });
+    try {
+      expect(() => ambiguous.replacePluginProviders([registration])).toThrow(
+        "conflicts with a configured provider",
+      );
+    } finally {
+      ambiguous.destroy();
     }
   });
 

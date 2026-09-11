@@ -76,8 +76,10 @@ Keep the native SDK, process, and stream inside the connection implementation. C
 to `ProviderEvent` objects before publishing it.
 
 Use `providerOptionsSchema` to validate and normalize provider-specific launch options before Paseo
-discovers models or opens a session. The schema must return a JSON object. Existing providers that
-omit it continue to accept arbitrary JSON objects.
+discovers models or opens a session. The schema must return a JSON object. Paseo applies it once per
+operation; cache-key lookup and catalog discovery receive the same normalized value, and
+`session.open` receives the value already normalized during agent configuration. Existing providers
+that omit the schema continue to accept arbitrary JSON objects.
 
 ```ts
 providerOptionsSchema: z.object({
@@ -86,11 +88,12 @@ providerOptionsSchema: z.object({
 }).strict(),
 ```
 
-Use `checkAvailability(options)` when connection negotiation is not the right installation probe.
-Return `available`, `missing`, `unrunnable`, or `incompatible`, plus an optional diagnostic of at
-most 4,096 characters. Paseo runs the hook inside the provider refresh deadline. Missing providers
-remain unavailable; unrunnable and incompatible providers surface as errors. Omitting the hook
-keeps the legacy behavior where successful connection negotiation means available.
+Use `checkAvailability(options, context)` when connection negotiation is not the right installation
+probe. Return `available`, `missing`, `unrunnable`, or `incompatible`, plus an optional diagnostic of
+at most 4,096 characters. `context.timeoutMs` is the host's operation deadline; use it to bound
+provider-owned subprocesses. Paseo applies the same deadline to the cross-process call. Missing
+providers remain unavailable; unrunnable and incompatible providers surface as errors. Omitting the
+hook keeps the legacy behavior where successful connection negotiation means available.
 
 ## Return models, modes, and thinking options
 
@@ -128,13 +131,15 @@ Return an empty array for a category the agent does not expose. The selected `mo
 The catalog describes choices available before a session exists. Session-specific controls come
 later through `session.config`.
 
-Catalog requests and `getCatalogCacheKey()` receive the same normalized `providerOptions` and
-`settings` objects. Include every value that changes discovery in the cache key. Paseo also passes
-these objects to session listing so provider profiles can discover their own persistence roots.
+Catalog requests and `getCatalogCacheKey(options, context)` receive the same normalized
+`providerOptions` and `settings` objects. Include every value that changes discovery in the cache
+key, but exclude `force` and `context.timeoutMs`. Paseo also passes these objects to session listing
+so provider profiles can discover their own persistence roots.
 
-Daemon provider profiles can extend a registered plugin provider. `models` replaces discovered
-models and `additionalModels` adds or overrides individual IDs, matching built-in provider
-configuration:
+Daemon provider profiles can extend a registered plugin provider. A provider entry whose ID exactly
+matches an installed plugin provider and omits `extends` configures that provider directly. An entry
+with the same ID and an `extends` value is rejected as ambiguous. `models` replaces discovered models
+and `additionalModels` adds or overrides individual IDs, matching built-in provider configuration:
 
 ```json
 {

@@ -317,14 +317,17 @@ workspace target. Return a key covering effective configuration and execution en
 need no change. See [catalogue ownership](providers.md#provider-snapshot-refresh-contract).
 
 `providerOptionsSchema` runs in the plugin process and is the validation boundary for launch,
-catalogue, cache-key, and session-list inputs. The host forwards its normalized JSON object with the
-normalized provider settings. Configured profiles may extend a registered plugin provider; model
-replacement, model additions, settings, provider options, and generic denied tools are applied by
-the core registry before the provider callback runs.
+catalogue, cache-key, and session-list inputs. Normalize once at the operation owner: cache identity
+and catalogue discovery share that result, and session opening receives the already-normalized agent
+configuration. The host forwards the normalized JSON object with normalized provider settings.
+Configured profiles may extend a registered plugin provider; a same-ID entry without `extends`
+configures the installed provider directly. Model replacement, model additions, settings, provider
+options, and generic denied tools are applied by the core registry before the provider callback runs.
 
-`checkAvailability(options)` reports `available`, `missing`, `unrunnable`, or `incompatible` with a
-bounded diagnostic. Refresh owns the deadline. Missing maps to unavailable; unrunnable and
-incompatible map to provider errors.
+`checkAvailability(options, context)` reports `available`, `missing`, `unrunnable`, or
+`incompatible` with a bounded diagnostic. `context.timeoutMs` is the refresh deadline and must bound
+provider-owned work; the host applies the same timeout to the plugin IPC request. Missing maps to
+unavailable; unrunnable and incompatible map to provider errors.
 
 `send()` resolves after acceptance. Publish operation completion, prompt disposition, turn state,
 configuration, permissions, persistence, and complete timeline snapshots through `onEvent()`.

@@ -732,6 +732,10 @@ export interface ProviderAvailabilityResult {
   diagnostic?: string;
 }
 
+export interface ProviderOperationContext {
+  timeoutMs?: number;
+}
+
 export interface ProviderRefreshContext {
   readonly signal: AbortSignal;
   /** Track an upstream operation so timeout errors identify the work still pending. */
@@ -767,7 +771,10 @@ export interface AgentClient {
   /** Equal keys share availability and catalogue discovery within this configured client.
    * Include the execution environment and effective configuration; omit to use target identity.
    * force must not affect identity. Resolve before every cache lookup. */
-  getCatalogCacheKey?(options: FetchCatalogOptions): Promise<string | undefined>;
+  getCatalogCacheKey?(
+    options: FetchCatalogOptions,
+    context?: ProviderOperationContext,
+  ): Promise<string | undefined>;
   /**
    * Discover models and modes together. Implementations may use one upstream
    * process, separate upstream calls, static modes, or private helpers; callers
@@ -801,9 +808,13 @@ export interface AgentClient {
   checkAvailability?(
     options: FetchCatalogOptions,
     signal?: AbortSignal,
+    context?: ProviderOperationContext,
   ): Promise<ProviderAvailabilityResult>;
   isAvailable(signal?: AbortSignal, options?: FetchCatalogOptions): Promise<boolean>;
-  getDiagnostic?(options?: FetchCatalogOptions): Promise<{ diagnostic: string }>;
+  getDiagnostic?(
+    options?: FetchCatalogOptions,
+    context?: ProviderOperationContext,
+  ): Promise<{ diagnostic: string }>;
   /**
    * Archive a durable native session (best-effort). Runtime release belongs to AgentSession.close().
    * Called when Paseo archives an agent so the provider's own UI reflects the same state.

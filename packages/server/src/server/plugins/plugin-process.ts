@@ -168,7 +168,9 @@ async function handleProviderRegistrationRequest(
   const provider = providers.get(message.providerId);
   if (!provider) throw new Error(`Unknown provider: ${message.providerId}`);
   if (message.type === "provider.catalog_key") {
-    const output = await provider.getCatalogCacheKey?.(message.options);
+    const output = await provider.getCatalogCacheKey?.(message.options, {
+      timeoutMs: message.timeoutMs,
+    });
     if (output !== undefined && typeof output !== "string") {
       throw new Error("Invalid catalogue key");
     }
@@ -176,7 +178,9 @@ async function handleProviderRegistrationRequest(
     return;
   }
   if (message.type === "provider.availability") {
-    const availability = await provider.checkAvailability?.(message.options);
+    const availability = await provider.checkAvailability?.(message.options, {
+      timeoutMs: message.timeoutMs,
+    });
     if (!availability) throw new Error(`Provider ${message.providerId} has no availability hook`);
     const parsedAvailability = ProviderAvailabilitySchema.safeParse(
       jsonTransportValue(availability),

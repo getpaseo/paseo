@@ -14,6 +14,7 @@ import type {
   AgentStreamEvent,
   FetchCatalogOptions,
   ProviderRefreshContext,
+  ProviderOperationContext,
   ProviderCatalog,
   ResolveAgentCreateConfigInput,
   ResolveAgentCreateConfigResult,
@@ -88,6 +89,7 @@ export interface ProviderDefinition extends AgentProviderDefinition {
   supportsExactMcpPreapproval: boolean;
   validateOptions: (
     options: ProviderOptions | undefined,
+    context?: ProviderOperationContext,
   ) => ProviderOptions | undefined | Promise<ProviderOptions | undefined>;
   applyOptions: (
     config: AgentSessionConfig,
@@ -97,6 +99,11 @@ export interface ProviderDefinition extends AgentProviderDefinition {
     config: AgentSessionConfig,
     toolPolicy: ToolPolicy | undefined,
   ) => AgentSessionConfig;
+  /** Normalize provider options exactly once before cache identity and discovery. */
+  normalizeCatalogOptions?(
+    options: FetchCatalogOptions,
+    context?: ProviderOperationContext,
+  ): FetchCatalogOptions | Promise<FetchCatalogOptions>;
   createClient: (logger: Logger) => AgentClient;
   resolveCreateConfig: (input: ResolveAgentCreateConfigInput) => ResolveAgentCreateConfigResult;
   isCreateConfigUnattended: (input: AgentCreateConfigUnattendedInput) => boolean;
@@ -482,7 +489,6 @@ export function wrapSessionProvider(provider: AgentProvider, inner: AgentSession
     tryHandleOutOfBand: inner.tryHandleOutOfBand?.bind(inner),
   };
 }
-
 interface WrappedProviderClientOptions {
   profileModelsAreAdditive: boolean;
   providerOptions?: ProviderOptions;
@@ -517,7 +523,9 @@ function wrapClientProvider(
 
   return {
     provider,
-    capabilities: inner.capabilities,
+    get capabilities() {
+      return inner.capabilities;
+    },
     createSession: async (config, launchContext, sessionOptions) =>
       wrapSessionProvider(
         provider,
@@ -538,8 +546,7 @@ function wrapClientProvider(
         ),
       ),
     fetchCatalog: async (catalogOptions, context) => {
-      const configuredOptions = withConfiguredCatalogOptions(catalogOptions, options);
-      const catalog = await inner.fetchCatalog(configuredOptions, context);
+      const catalog = await inner.fetchCatalog(catalogOptions, context);
       return {
         ...catalog,
         models: mergeModels(provider, profileModels, additionalModels, catalog.models, {
@@ -563,18 +570,23 @@ function wrapClientProvider(
       ? async (config) => await listFeatures({ ...config, provider: inner.provider })
       : undefined,
     listImportableSessions: listImportableSessions
-      ? async (listOptions) =>
-          await listImportableSessions({
+      ? async (listOptions) => {
+          const configuredOptions = withConfiguredCatalogOptions(
+            {
+              scope: "workspace",
+              cwd: listOptions?.cwd ?? process.cwd(),
+              force: false,
+              providerOptions: listOptions?.providerOptions,
+              settings: listOptions?.settings,
+            },
+            options,
+          );
+          return await listImportableSessions({
             ...listOptions,
-            providerOptions:
-              options.providerOptions || listOptions?.providerOptions
-                ? { ...options.providerOptions, ...listOptions?.providerOptions }
-                : undefined,
-            settings:
-              options.settings || listOptions?.settings
-                ? { ...options.settings, ...listOptions?.settings }
-                : undefined,
-          })
+            providerOptions: configuredOptions.providerOptions,
+            settings: configuredOptions.settings,
+          });
+        }
       : undefined,
     importSession: importSession
       ? async (input, context) => {
@@ -595,30 +607,10 @@ function wrapClientProvider(
           };
         }
       : undefined,
-    getCatalogCacheKey: inner.getCatalogCacheKey
-      ? async (catalogOptions) =>
-          await inner.getCatalogCacheKey!(withConfiguredCatalogOptions(catalogOptions, options))
-      : undefined,
-    checkAvailability: inner.checkAvailability
-      ? async (catalogOptions, signal) =>
-          await inner.checkAvailability!(
-            withConfiguredCatalogOptions(catalogOptions, options),
-            signal,
-          )
-      : undefined,
-    isAvailable: (signal, catalogOptions) =>
-      inner.isAvailable(
-        signal,
-        catalogOptions ? withConfiguredCatalogOptions(catalogOptions, options) : catalogOptions,
-      ),
-    getDiagnostic: inner.getDiagnostic
-      ? async (catalogOptions) =>
-          await inner.getDiagnostic!(
-            catalogOptions
-              ? withConfiguredCatalogOptions(catalogOptions, options)
-              : withConfiguredCatalogOptions({ scope: "global", force: true }, options),
-          )
-      : undefined,
+    getCatalogCacheKey: inner.getCatalogCacheKey?.bind(inner),
+    checkAvailability: inner.checkAvailability?.bind(inner),
+    isAvailable: (signal, catalogOptions) => inner.isAvailable(signal, catalogOptions),
+    getDiagnostic: inner.getDiagnostic?.bind(inner),
   };
 }
 
@@ -662,6 +654,14 @@ function createRegistryEntry(
     supportsExactMcpPreapproval: resolved.contract.supportsExactMcpPreapproval,
     validateOptions: (options) =>
       validateProviderOptions(provider, resolved.contract.optionsSchema, options),
+    normalizeCatalogOptions: (options) => ({
+      ...options,
+      providerOptions: validateProviderOptions(
+        provider,
+        resolved.contract.optionsSchema,
+        options.providerOptions,
+      ),
+    }),
     applyOptions: (config, options) => ({ ...config, providerOptions: options }),
     applyToolPolicy: (config, toolPolicy) => {
       if (toolPolicy && !resolved.contract.supportsExactMcpPreapproval) {
@@ -741,6 +741,25 @@ function createResolvedProviderClient(
   });
 }
 
+async function normalizeExternalProviderOptions(
+  provider: AgentProvider,
+  base: ProviderDefinition,
+  override: ProviderOverride,
+  options: ProviderOptions | undefined,
+  context?: ProviderOperationContext,
+): Promise<ProviderOptions | undefined> {
+  const configuredOptions =
+    override.providerOptions || options ? { ...override.providerOptions, ...options } : undefined;
+  try {
+    return await base.validateOptions(configuredOptions, context);
+  } catch (error) {
+    if (error instanceof ProviderOptionsValidationError && error.provider !== provider) {
+      throw new ProviderOptionsValidationError(provider, error.issues);
+    }
+    throw error;
+  }
+}
+
 function createConfiguredExternalProvider(
   provider: AgentProvider,
   baseProviderId: AgentProvider,
@@ -764,19 +783,20 @@ function createConfiguredExternalProvider(
     configuration: { registration: base.createClient, override },
     enabled: override.enabled !== false,
     derivedFromProviderId: provider === baseProviderId ? null : baseProviderId,
-    validateOptions: async (options) => {
-      const configuredOptions =
-        override.providerOptions || options
-          ? { ...override.providerOptions, ...options }
-          : undefined;
-      try {
-        return await base.validateOptions(configuredOptions);
-      } catch (error) {
-        if (error instanceof ProviderOptionsValidationError && error.provider !== provider) {
-          throw new ProviderOptionsValidationError(provider, error.issues);
-        }
-        throw error;
-      }
+    validateOptions: async (options) =>
+      await normalizeExternalProviderOptions(provider, base, override, options),
+    normalizeCatalogOptions: async (options, context) => {
+      const configuredOptions = withConfiguredCatalogOptions(options, clientOptions);
+      return {
+        ...configuredOptions,
+        providerOptions: await normalizeExternalProviderOptions(
+          provider,
+          base,
+          override,
+          options.providerOptions,
+          context,
+        ),
+      };
     },
     applyOptions: (config, options) => {
       const withOptions = base.applyOptions(config, options);
@@ -784,7 +804,11 @@ function createConfiguredExternalProvider(
         override.settings || withOptions.featureValues
           ? { ...override.settings, ...withOptions.featureValues }
           : undefined;
-      return { ...withOptions, featureValues, deniedTools };
+      const effectiveDeniedTools =
+        deniedTools || withOptions.deniedTools
+          ? [...new Set([...(withOptions.deniedTools ?? []), ...(deniedTools ?? [])])]
+          : undefined;
+      return { ...withOptions, featureValues, deniedTools: effectiveDeniedTools };
     },
     applyToolPolicy: base.applyToolPolicy,
     createClient: (logger) =>
@@ -797,8 +821,7 @@ function createConfiguredExternalProvider(
       ),
     fetchCatalog: async (catalogOptions, client, context) => {
       if (client) return await client.fetchCatalog(catalogOptions, context);
-      const configuredOptions = withConfiguredCatalogOptions(catalogOptions, clientOptions);
-      const catalog = await base.fetchCatalog(configuredOptions, undefined, context);
+      const catalog = await base.fetchCatalog(catalogOptions, undefined, context);
       return {
         ...catalog,
         models: mergeModels(provider, profileModels, additionalModels, catalog.models),
@@ -814,13 +837,18 @@ export function configureExternalProviderDefinitions(
   const configured: Record<AgentProvider, ProviderDefinition> = {};
   for (const [provider, definition] of Object.entries(baseDefinitions)) {
     const override = providerOverrides[provider];
+    if (override?.extends) {
+      throw new Error(
+        `Configured plugin provider '${provider}' cannot also extend '${override.extends}'`,
+      );
+    }
     configured[provider] = override
       ? createConfiguredExternalProvider(provider, provider, definition, override)
       : definition;
   }
   for (const [provider, override] of Object.entries(providerOverrides)) {
     if (configured[provider] || !override.extends) continue;
-    const base = baseDefinitions[override.extends];
+    const base = configured[override.extends];
     if (!base) continue;
     configured[provider] = createConfiguredExternalProvider(
       provider,
@@ -831,7 +859,6 @@ export function configureExternalProviderDefinitions(
   }
   return configured;
 }
-
 function buildResolvedBuiltinProviders(
   providerOverrides: Record<string, ProviderOverride>,
   runtimeSettings: AgentProviderRuntimeSettingsMap | undefined,

@@ -582,17 +582,19 @@ describe("PluginAgentClientRegistry", () => {
 });
 
 describe("plugin provider configuration", () => {
-  test("normalizes provider options before availability, cache identity, catalog, and launch", async () => {
+  test("normalizes options once and carries the exact value through discovery and launch", async () => {
     const harness = createProviderHarness();
     const observed: unknown[] = [];
+    let normalizations = 0;
     const registration: ProviderRegistration = {
       ...harness.registration,
       providerOptionsSchema: z
-        .object({
-          command: z.array(z.string()).default(["omp"]),
-          timeoutMs: z.number().int().positive().default(30_000),
-        })
-        .strict(),
+        .object({ token: z.string().default("default") })
+        .strict()
+        .transform(({ token }) => {
+          normalizations += 1;
+          return { token: `${token}!` };
+        }),
       async checkAvailability(options) {
         observed.push({ availability: options });
         return { status: "available", diagnostic: "OMP is ready" };
@@ -604,43 +606,34 @@ describe("plugin provider configuration", () => {
     };
     const registry = new PluginAgentClientRegistry(createTestLogger());
     registry.replace([registration]);
+    const definition = registry.definitions()[registration.id]!;
     const client = registry.clients()[registration.id]!;
-
-    await expect(
-      client.checkAvailability?.({
-        scope: "workspace",
-        cwd: "/workspace",
-        force: true,
-        settings: { approval: "ask" },
-      }),
-    ).resolves.toEqual({ status: "available", diagnostic: "OMP is ready" });
-    await expect(
-      client.getCatalogCacheKey?.({
-        scope: "workspace",
-        cwd: "/workspace",
-        force: false,
-        settings: { approval: "ask" },
-      }),
-    ).resolves.toBe('{"command":["omp"],"timeoutMs":30000}');
-    await client.fetchCatalog({
-      scope: "workspace",
+    const providerOptions = await definition.validateOptions({ token: "session" });
+    const config = definition.applyOptions(
+      { provider: registration.id, cwd: "/workspace" },
+      providerOptions,
+    );
+    const catalogOptions = {
+      scope: "workspace" as const,
       cwd: "/workspace",
       force: false,
+      providerOptions: config.providerOptions,
       settings: { approval: "ask" },
-    });
-    const session = await client.createSession({
-      provider: registration.id,
-      cwd: "/workspace",
-      providerOptions: { command: ["custom-omp"] },
-    });
+    };
 
+    await client.checkAvailability?.(catalogOptions);
+    await expect(client.getCatalogCacheKey?.(catalogOptions)).resolves.toBe('{"token":"session!"}');
+    await definition.fetchCatalog(catalogOptions, client);
+    const session = await client.createSession(config);
+
+    expect(normalizations).toBe(1);
     expect(observed).toEqual([
       {
         availability: {
           scope: "workspace",
           cwd: "/workspace",
-          force: true,
-          providerOptions: { command: ["omp"], timeoutMs: 30_000 },
+          force: false,
+          providerOptions: { token: "session!" },
           settings: { approval: "ask" },
         },
       },
@@ -649,7 +642,7 @@ describe("plugin provider configuration", () => {
           scope: "workspace",
           cwd: "/workspace",
           force: false,
-          providerOptions: { command: ["omp"], timeoutMs: 30_000 },
+          providerOptions: { token: "session!" },
           settings: { approval: "ask" },
         },
       },
@@ -657,25 +650,19 @@ describe("plugin provider configuration", () => {
     expect(harness.inputs).toContainEqual(
       expect.objectContaining({
         type: "catalog",
-        providerOptions: { command: ["omp"], timeoutMs: 30_000 },
+        providerOptions: { token: "session!" },
         settings: { approval: "ask" },
       }),
     );
     expect(harness.inputs).toContainEqual(
       expect.objectContaining({
         type: "session.open",
-        config: expect.objectContaining({
-          providerOptions: { command: ["custom-omp"], timeoutMs: 30_000 },
-        }),
+        config: expect.objectContaining({ providerOptions: { token: "session!" } }),
       }),
     );
-    await expect(
-      client.createSession({
-        provider: registration.id,
-        cwd: "/workspace",
-        providerOptions: { typo: true },
-      }),
-    ).rejects.toThrow("Invalid providerOptions");
+    await expect(definition.validateOptions({ typo: true })).rejects.toThrow(
+      "Invalid providerOptions",
+    );
 
     await session.close();
     await registry.shutdown();
@@ -706,15 +693,14 @@ describe("plugin provider configuration", () => {
     });
     const definition = definitions["plugin-work"]!;
     const client = definition.createClient(createTestLogger());
-    const catalog = await definition.fetchCatalog(
-      { scope: "workspace", cwd: "/workspace", force: false },
-      client,
-    );
-    await client.getCatalogCacheKey?.({
+    const catalogOptions = await definition.normalizeCatalogOptions?.({
       scope: "workspace",
       cwd: "/workspace",
       force: false,
     });
+    if (!catalogOptions) throw new Error("Missing normalized catalog options");
+    const catalog = await definition.fetchCatalog(catalogOptions, client);
+    await client.getCatalogCacheKey?.(catalogOptions);
     const providerOptions = await definition.validateOptions({ timeoutMs: 45_000 });
     const config = definition.applyOptions(
       { provider: "plugin-work", cwd: "/workspace", featureValues: { local: true } },
@@ -746,6 +732,26 @@ describe("plugin provider configuration", () => {
         settings: { approval: "ask" },
       },
     ]);
+    await registry.shutdown();
+  });
+
+  test("reflects capabilities negotiated after a configured wrapper connects", async () => {
+    const harness = createProviderHarness({ capabilities: ["session.list"] });
+    const registry = new PluginAgentClientRegistry(createTestLogger());
+    registry.replace([harness.registration]);
+    const definitions = configureExternalProviderDefinitions(registry.definitions(), {
+      "plugin-profile": {
+        extends: harness.registration.id,
+        label: "Plugin profile",
+      },
+    });
+    const client = definitions["plugin-profile"]!.createClient(createTestLogger());
+
+    expect(client.capabilities.supportsSessionListing).toBe(false);
+    await client.fetchCatalog({ scope: "workspace", cwd: "/workspace", force: false });
+    expect(client.capabilities.supportsSessionListing).toBe(true);
+    await expect(client.listImportableSessions?.({ cwd: "/workspace" })).resolves.toEqual([]);
+
     await registry.shutdown();
   });
 

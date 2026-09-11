@@ -490,15 +490,21 @@ export class PluginRuntime {
     pluginId: string,
     providerId: string,
     options: ProviderCatalogOptions,
+    timeoutMs?: number,
   ): Promise<string | undefined> {
     const loaded = this.plugins.get(pluginId);
     if (!loaded) throw new Error(`Plugin is not available: ${pluginId}`);
-    const output = await this.request(loaded, {
-      type: "provider.catalog_key",
-      requestId: randomUUID(),
-      providerId,
-      options,
-    });
+    const output = await this.request(
+      loaded,
+      {
+        type: "provider.catalog_key",
+        requestId: randomUUID(),
+        providerId,
+        options,
+        timeoutMs,
+      },
+      timeoutMs,
+    );
     if (output !== undefined && typeof output !== "string")
       throw new Error("Invalid catalogue key from plugin");
     return output;
@@ -508,15 +514,21 @@ export class PluginRuntime {
     pluginId: string,
     providerId: string,
     options: ProviderCatalogOptions,
+    timeoutMs?: number,
   ): Promise<ProviderAvailability> {
     const loaded = this.plugins.get(pluginId);
     if (!loaded) throw new Error(`Plugin is not available: ${pluginId}`);
-    const output = await this.request(loaded, {
-      type: "provider.availability",
-      requestId: randomUUID(),
-      providerId,
-      options,
-    });
+    const output = await this.request(
+      loaded,
+      {
+        type: "provider.availability",
+        requestId: randomUUID(),
+        providerId,
+        options,
+        timeoutMs,
+      },
+      timeoutMs,
+    );
     return PluginProviderAvailabilitySchema.parse(output);
   }
 
@@ -524,21 +536,28 @@ export class PluginRuntime {
     pluginId: string,
     providerId: string,
     options: Readonly<Record<string, unknown>> | undefined,
+    timeoutMs?: number,
   ): Promise<PluginProviderOptionsValidation> {
     const loaded = this.plugins.get(pluginId);
     if (!loaded) throw new Error(`Plugin is not available: ${pluginId}`);
-    const output = await this.request(loaded, {
-      type: "provider.normalize_options",
-      requestId: randomUUID(),
-      providerId,
-      options,
-    });
+    const output = await this.request(
+      loaded,
+      {
+        type: "provider.normalize_options",
+        requestId: randomUUID(),
+        providerId,
+        options,
+        timeoutMs,
+      },
+      timeoutMs,
+    );
     return PluginProviderOptionsValidationSchema.parse(output);
   }
 
   private request(
     loaded: LoadedPlugin,
     message: Extract<PluginProcessRequest, { requestId: string }>,
+    timeoutMs = REQUEST_TIMEOUT_MS,
   ): Promise<unknown> {
     const child = loaded.child;
     const pluginId = loaded.id;
@@ -551,7 +570,7 @@ export class PluginRuntime {
           void send(child, { type: "hook.cancel", requestId }).catch(() => {});
         }
         reject(new Error(`Plugin RPC timed out: ${pluginId}.${message.type}`));
-      }, REQUEST_TIMEOUT_MS);
+      }, timeoutMs);
       loaded.pending.set(requestId, { resolve, reject, timeout });
       void send(child, message).catch((error) => {
         clearTimeout(timeout);

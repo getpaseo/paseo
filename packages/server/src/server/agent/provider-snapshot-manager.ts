@@ -805,9 +805,21 @@ export class ProviderSnapshotManager {
     try {
       const client = this.ensureClient(provider, definition);
       if (client.getDiagnostic) {
+        const requestedOptions: FetchCatalogOptions = { scope: "global", force: true };
+        const normalizedOptions = definition.normalizeCatalogOptions?.(requestedOptions, {
+          timeoutMs: this.diagnosticTimeoutMs,
+        });
+        const diagnosticOptions =
+          normalizedOptions instanceof Promise
+            ? await withTimeout(
+                normalizedOptions,
+                this.diagnosticTimeoutMs,
+                `Timed out normalizing ${definition.label ?? provider} diagnostic options`,
+              )
+            : (normalizedOptions ?? requestedOptions);
         return (
           await withTimeout(
-            client.getDiagnostic({ scope: "global", force: true }),
+            client.getDiagnostic(diagnosticOptions, { timeoutMs: this.diagnosticTimeoutMs }),
             this.diagnosticTimeoutMs,
             `Timed out collecting ${definition.label ?? provider} diagnostic after ${
               this.diagnosticTimeoutMs
@@ -919,12 +931,24 @@ export class ProviderSnapshotManager {
     if (!definition.enabled) return;
     const currentBinding = () => this.targets.get(snapshotCwd)?.bindings.get(provider);
     const client = this.ensureClient(provider, definition);
-    const catalogOptions = createFetchCatalogOptions(options.catalogScope, force);
+    const requestedCatalogOptions = createFetchCatalogOptions(options.catalogScope, force);
+    let catalogOptions: FetchCatalogOptions;
     let key: string;
     try {
+      catalogOptions = definition.normalizeCatalogOptions
+        ? await withTimeout(
+            Promise.resolve(
+              definition.normalizeCatalogOptions(requestedCatalogOptions, {
+                timeoutMs: this.refreshTimeoutMs,
+              }),
+            ),
+            this.refreshTimeoutMs,
+            `Timed out normalizing ${provider} catalogue options`,
+          )
+        : requestedCatalogOptions;
       const sharedKey = client.getCatalogCacheKey
         ? await withTimeout(
-            client.getCatalogCacheKey(catalogOptions),
+            client.getCatalogCacheKey(catalogOptions, { timeoutMs: this.refreshTimeoutMs }),
             this.refreshTimeoutMs,
             `Timed out resolving ${provider} catalogue key`,
           )
@@ -1020,7 +1044,9 @@ export class ProviderSnapshotManager {
             ? await context.runActivity("availability", () =>
                 raceProviderRefreshAbort(
                   context.signal,
-                  client.checkAvailability!(catalogOptions, context.signal),
+                  client.checkAvailability!(catalogOptions, context.signal, {
+                    timeoutMs: this.refreshTimeoutMs,
+                  }),
                 ),
               )
             : {

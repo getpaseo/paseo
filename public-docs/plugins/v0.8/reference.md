@@ -215,9 +215,14 @@ configuration and persistence. Providers re-read external state during `session.
 Use `runAcpProvider()` from `@getpaseo/plugin/server/acp` to adapt a command-backed ACP. Add transformer
 hooks only for a vendor's discovery, configuration, notification, or tool-call differences.
 
-Optional `checkAvailability(options)` returns `available`, `missing`, `unrunnable`, or
-`incompatible` with a diagnostic of at most 4,096 characters. Provider refresh bounds the hook and
-surfaces its classification. Providers that omit it retain connection-based availability.
+Optional `checkAvailability(options, context)` returns `available`, `missing`, `unrunnable`, or
+`incompatible` with a diagnostic of at most 4,096 characters. `context.timeoutMs` carries the host
+deadline through the plugin subprocess; provider refresh applies that same bound. Providers that
+omit the hook retain connection-based availability.
+
+`providerOptionsSchema` runs once per operation. Cache-key lookup, catalog discovery, and
+`session.open` receive the same normalized option value rather than applying schema transforms
+again.
 
 `ProviderSessionSummary` supports separate optional `firstPromptPreview` and
 `lastPromptPreview` fields, each limited to 160 characters.

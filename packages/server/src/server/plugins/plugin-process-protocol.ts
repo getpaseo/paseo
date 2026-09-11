@@ -35,18 +35,21 @@ export type PluginProcessRequest =
       requestId: string;
       providerId: string;
       options: ProviderCatalogOptions;
+      timeoutMs?: number;
     }
   | {
       type: "provider.availability";
       requestId: string;
       providerId: string;
       options: ProviderCatalogOptions;
+      timeoutMs?: number;
     }
   | {
       type: "provider.normalize_options";
       requestId: string;
       providerId: string;
       options?: Readonly<Record<string, unknown>>;
+      timeoutMs?: number;
     }
   | { type: "hook"; requestId: string; kind: "event" | "before"; name: string; input: unknown }
   | { type: "hook.cancel"; requestId: string }
@@ -140,6 +143,7 @@ export const PluginProcessRequestSchema: z.ZodType<PluginProcessRequest> = z.dis
         type: z.literal("provider.catalog_key"),
         requestId: z.string().min(1),
         providerId: z.string().min(1),
+        timeoutMs: z.number().int().positive().max(2_147_483_647).optional(),
         options: z.discriminatedUnion("scope", [
           z
             .object({
@@ -166,6 +170,7 @@ export const PluginProcessRequestSchema: z.ZodType<PluginProcessRequest> = z.dis
         type: z.literal("provider.availability"),
         requestId: z.string().min(1),
         providerId: z.string().min(1),
+        timeoutMs: z.number().int().positive().max(2_147_483_647).optional(),
         options: z.discriminatedUnion("scope", [
           z
             .object({
@@ -192,6 +197,7 @@ export const PluginProcessRequestSchema: z.ZodType<PluginProcessRequest> = z.dis
         type: z.literal("provider.normalize_options"),
         requestId: z.string().min(1),
         providerId: z.string().min(1),
+        timeoutMs: z.number().int().positive().max(2_147_483_647).optional(),
         options: z.record(z.string(), z.json()).optional(),
       })
       .strict(),

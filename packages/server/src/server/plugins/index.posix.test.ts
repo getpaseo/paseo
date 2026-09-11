@@ -167,8 +167,8 @@ export default function contribute(server) {
     label: "Plugin agent",
     icon: "icon.svg",
     providerOptionsSchema: z.object({ timeoutMs: z.number().int().positive().default(30000) }).strict(),
-    async checkAvailability(options) { return { status: "available", diagnostic: JSON.stringify(options.providerOptions) }; },
-    async getCatalogCacheKey(options) { return options.scope === "workspace" ? "runtime:" + options.cwd + ":" + JSON.stringify(options.providerOptions) : undefined; },
+    async checkAvailability(options, context) { return { status: "available", diagnostic: JSON.stringify([options.providerOptions, context?.timeoutMs]) }; },
+    async getCatalogCacheKey(options, context) { return options.scope === "workspace" ? "runtime:" + options.cwd + ":" + JSON.stringify([options.providerOptions, context?.timeoutMs]) : undefined; },
     async connect() { throw new Error("not opened by this test"); },
   });
   return () => {};
@@ -198,23 +198,76 @@ export default function contribute(server) {
       provider: "plugin-agent",
     });
     await expect(
-      provider.checkAvailability?.({
-        scope: "workspace",
-        cwd: "/project-a",
-        providerOptions: normalized,
-      }),
+      provider.checkAvailability?.(
+        {
+          scope: "workspace",
+          cwd: "/project-a",
+          providerOptions: normalized,
+        },
+        { timeoutMs: 45_000 },
+      ),
     ).resolves.toEqual({
       status: "available",
-      diagnostic: '{"timeoutMs":30000}',
+      diagnostic: '[{"timeoutMs":30000},45000]',
     });
     expect(
-      await provider.getCatalogCacheKey!({
-        scope: "workspace",
-        cwd: "/project-a",
-        providerOptions: normalized,
-      }),
-    ).toBe('runtime:/project-a:{"timeoutMs":30000}');
+      await provider.getCatalogCacheKey!(
+        {
+          scope: "workspace",
+          cwd: "/project-a",
+          providerOptions: normalized,
+        },
+        { timeoutMs: 45_000 },
+      ),
+    ).toBe('runtime:/project-a:[{"timeoutMs":30000},45000]');
     expect(await provider.getCatalogCacheKey!({ scope: "global" })).toBeUndefined();
+  });
+
+  it("accepts same-ID plugin overrides and rejects conflicting derived entries", async () => {
+    const home = await mkdtemp(path.join(tmpdir(), "paseo-plugin-home-"));
+    roots.push(home);
+    const directory = await createPlugin(
+      "same-id-plugin",
+      `export default function contribute(server) {
+  server.registerProvider({
+    id: "same-id-provider",
+    label: "Same ID provider",
+    async connect() { throw new Error("not opened by this test"); },
+  });
+  return () => {};
+}`,
+    );
+    const store = createStore(home);
+    store.patch({
+      providers: {
+        "same-id-provider": { providerOptions: { command: ["custom"] } },
+      },
+    });
+    const service = bindTestSessionHost(
+      new PluginService(pino({ level: "silent" }), store, "0.4.0"),
+    );
+
+    await service.start();
+    await service.installDirectory({ path: directory });
+    expect(service.getProviderRegistrations()).toMatchObject([
+      { id: "same-id-provider", label: "Same ID provider" },
+    ]);
+
+    const conflictingHome = await mkdtemp(path.join(tmpdir(), "paseo-plugin-home-"));
+    roots.push(conflictingHome);
+    const conflictingStore = createStore(conflictingHome);
+    conflictingStore.patch({
+      providers: {
+        "same-id-provider": { extends: "codex", label: "Foreign provider" },
+      },
+    });
+    const conflictingService = bindTestSessionHost(
+      new PluginService(pino({ level: "silent" }), conflictingStore, "0.4.0"),
+    );
+    await conflictingService.start();
+    await expect(conflictingService.installDirectory({ path: directory })).rejects.toThrow(
+      'cannot register configured derived provider ID "same-id-provider"',
+    );
   });
 
   it("publishes provider registrations only while their plugin is running", async () => {

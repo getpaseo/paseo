@@ -27,9 +27,15 @@ export type ProviderCapability = (typeof PROVIDER_CAPABILITIES)[number];
 
 export interface ProviderRegistration {
   /** Equal keys share discovery within this provider. Include effective configuration and execution environment. */
-  getCatalogCacheKey?(options: ProviderCatalogOptions): Promise<string | undefined>;
+  getCatalogCacheKey?(
+    options: ProviderCatalogOptions,
+    context?: ProviderOperationContext,
+  ): Promise<string | undefined>;
   /** Probe the native runtime without opening a provider connection. */
-  checkAvailability?(options: ProviderCatalogOptions): Promise<ProviderAvailability>;
+  checkAvailability?(
+    options: ProviderCatalogOptions,
+    context?: ProviderOperationContext,
+  ): Promise<ProviderAvailability>;
   /** Strict schema for providerOptions. Defaults and transforms produce the normalized host value. */
   providerOptionsSchema?: z.ZodType;
   id: string;
@@ -51,6 +57,11 @@ export type ProviderCatalogOptions = ProviderCatalogConfiguration &
 export interface ProviderAvailability {
   status: "missing" | "unrunnable" | "incompatible" | "available";
   diagnostic?: string;
+}
+
+export interface ProviderOperationContext {
+  /** Maximum time the host permits this operation to run. */
+  timeoutMs?: number;
 }
 
 export interface ProviderConnectRequest {
