@@ -353,6 +353,34 @@ describe("OMP agent client and session", () => {
     await expect(completion).resolves.toMatchObject({ finalText: "first done" });
   });
 
+  test("fails the turn when OMP never reports idle after agent_end", async () => {
+    const scheduler = new ManualIdleScheduler();
+    const omp = new OmpHarness({
+      providerIdleScheduler: scheduler,
+      providerIdleDeadlineMs: 0,
+    });
+    await omp.start();
+
+    const { completion } = await omp.startPromptUntilProviderIdle("first", "first done", {
+      isStreaming: true,
+      isCompacting: false,
+    });
+    await omp.waitForProviderStateChecks(1);
+    await expect(completion).rejects.toThrow(/did not report idle/);
+    expect(omp.completedTurnCount()).toBe(0);
+    expect(omp.failedTurnCount()).toBe(1);
+  });
+
+  test("does not complete the turn on a custom notice before the prompt's user message", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+
+    await expect(
+      omp.runPromptAfterEarlyCustomNotice("hello OMP", "late model turn completed"),
+    ).resolves.toMatchObject({ finalText: expect.stringContaining("late model turn completed") });
+    expect(omp.completedTurnCount()).toBe(1);
+  });
+
   test("does not complete on OMP's extension-notice agent_end", async () => {
     const omp = new OmpHarness();
     await omp.start();

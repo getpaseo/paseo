@@ -74,6 +74,7 @@ export class OmpHarness {
       noTurnScheduler?: OmpNoTurnScheduler;
       runtimeSettings?: ProviderRuntimeSettings;
       usagePollScheduler?: OmpUsagePollScheduler;
+      providerIdleDeadlineMs?: number;
     } = {},
   ) {
     this.client = new OmpAgentClient({
@@ -81,6 +82,7 @@ export class OmpHarness {
       runtimeSettings: options.runtimeSettings,
       runtime: this.omp,
       providerIdleScheduler: options.providerIdleScheduler,
+      providerIdleDeadlineMs: options.providerIdleDeadlineMs,
       noTurnScheduler: options.noTurnScheduler,
       usagePollScheduler: options.usagePollScheduler,
     });
@@ -232,6 +234,23 @@ export class OmpHarness {
     runtime.emit({ type: "message_end", message });
     runtime.finishTurn(message);
     runtime.beginTurn();
+    runtime.streamAssistantText(output);
+    runtime.finishTurn();
+    return await run;
+  }
+
+  async runPromptAfterEarlyCustomNotice(input: string, output: string): Promise<unknown> {
+    const session = this.requireSession();
+    const promptStarted = this.omp.latestSession().nextPrompt();
+    const run = session.run(input);
+    await promptStarted;
+    const runtime = this.omp.latestSession();
+    runtime.emit({
+      type: "message_end",
+      message: { role: "custom", content: "extension inventory changed", display: true },
+    });
+    runtime.beginTurn();
+    runtime.acceptPrompt(input, "user-1");
     runtime.streamAssistantText(output);
     runtime.finishTurn();
     return await run;
@@ -416,6 +435,10 @@ export class OmpHarness {
 
   completedTurnCount(): number {
     return this.events.filter((event) => event.type === "turn_completed").length;
+  }
+
+  failedTurnCount(): number {
+    return this.events.filter((event) => event.type === "turn_failed").length;
   }
 
   usageUpdates() {
