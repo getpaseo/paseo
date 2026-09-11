@@ -21,7 +21,7 @@ import {
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
-import { ArrowUp, Mic, MicOff, CornerDownLeft, Plus, Square } from "lucide-react-native";
+import { ArrowUp, Mic, MicOff, CornerDownLeft, ListPlus, Plus, Square } from "lucide-react-native";
 import { useDictation } from "@/hooks/use-dictation";
 import { DictationOverlay } from "@/components/dictation-controls";
 import { RealtimeVoiceOverlay } from "@/components/realtime-voice-overlay";
@@ -84,6 +84,7 @@ import {
 } from "./state";
 
 const DEFAULT_SEND_KEYS: ShortcutKey[][] = [["Enter"]];
+const ALTERNATE_SEND_KEYS: ShortcutKey[][] = [["Mod", "Enter"]];
 const COMPOSER_INPUT_DATASET = { composerInput: "" } as const;
 
 export interface AttachmentMenuItem {
@@ -362,17 +363,22 @@ function SendButtonContent({
   submitIcon,
   submitLabel,
   buttonIconSize,
+  queuesMessage,
 }: {
   isSubmitLoading: boolean;
   submitIcon: "arrow" | "return";
   submitLabel: string | undefined;
   buttonIconSize: number;
+  queuesMessage: boolean;
 }) {
   if (isSubmitLoading) {
     return <ThemedLoadingSpinner size="small" uniProps={iconAccentForegroundMapping} />;
   }
   if (submitLabel) {
     return <Text style={styles.sendButtonLabel}>{submitLabel}</Text>;
+  }
+  if (queuesMessage) {
+    return <ThemedListPlus size={buttonIconSize} uniProps={iconAccentForegroundMapping} />;
   }
   if (submitIcon === "return") {
     return <ThemedCornerDownLeft size={buttonIconSize} uniProps={iconAccentForegroundMapping} />;
@@ -751,6 +757,7 @@ function SendButtonTooltip({
   buttonIconSize,
   sendKeys,
   sendTooltipLabel,
+  queuesMessage,
 }: {
   shouldShow: boolean;
   canPressLoadingButton: boolean;
@@ -766,6 +773,7 @@ function SendButtonTooltip({
   buttonIconSize: number;
   sendKeys: ShortcutChord | null | undefined;
   sendTooltipLabel: string;
+  queuesMessage: boolean;
 }) {
   if (!shouldShow) return null;
   return (
@@ -783,6 +791,7 @@ function SendButtonTooltip({
           submitIcon={submitIcon}
           submitLabel={submitLabel}
           buttonIconSize={buttonIconSize}
+          queuesMessage={queuesMessage}
         />
       </TooltipTrigger>
       <TooltipContent side="top" align="center" offset={8}>
@@ -790,6 +799,55 @@ function SendButtonTooltip({
       </TooltipContent>
     </Tooltip>
   );
+}
+
+export function useAlternateQueueModifier(input: {
+  isAgentRunning: boolean;
+  defaultSendBehavior: "interrupt" | "steer" | "queue";
+  onQueue: ((payload: MessagePayload) => void) | undefined;
+}): boolean {
+  const [isModifierHeld, setIsModifierHeld] = useState(false);
+  const canQueueWithAlternateAction =
+    isWeb &&
+    input.isAgentRunning &&
+    input.defaultSendBehavior !== "queue" &&
+    Boolean(input.onQueue);
+
+  useEffect(() => {
+    if (!canQueueWithAlternateAction) {
+      setIsModifierHeld(false);
+      return;
+    }
+
+    const handleModifierDown = (event: KeyboardEvent) =>
+      setIsModifierHeld(
+        event.key === "Meta" || event.key === "Control" || event.metaKey || event.ctrlKey,
+      );
+    const handleModifierUp = (event: KeyboardEvent) =>
+      setIsModifierHeld(event.metaKey || event.ctrlKey);
+    const clearModifierState = () => setIsModifierHeld(false);
+
+    window.addEventListener("keydown", handleModifierDown, true);
+    window.addEventListener("keyup", handleModifierUp, true);
+    window.addEventListener("blur", clearModifierState, true);
+    return () => {
+      window.removeEventListener("keydown", handleModifierDown, true);
+      window.removeEventListener("keyup", handleModifierUp, true);
+      window.removeEventListener("blur", clearModifierState, true);
+    };
+  }, [canQueueWithAlternateAction]);
+
+  return isModifierHeld;
+}
+
+function resolveSendButtonPresentation(input: {
+  defaultActionQueues: boolean;
+  alternateQueueModifierHeld: boolean;
+}): { queuesMessage: boolean; sendKeys: ShortcutKey[][] } {
+  return {
+    queuesMessage: input.defaultActionQueues || input.alternateQueueModifierHeld,
+    sendKeys: input.alternateQueueModifierHeld ? ALTERNATE_SEND_KEYS : DEFAULT_SEND_KEYS,
+  };
 }
 
 type PrimaryActionKind = "send" | "active" | "none";
@@ -1634,6 +1692,15 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
         defaultSendBehavior,
         isAgentRunning,
       });
+    const alternateQueueModifierHeld = useAlternateQueueModifier({
+      isAgentRunning,
+      defaultSendBehavior,
+      onQueue,
+    });
+    const sendButtonPresentation = resolveSendButtonPresentation({
+      defaultActionQueues,
+      alternateQueueModifierHeld,
+    });
     useIosHardwareKeyboardSubmit({
       isEnabled: isInputFocused && !isSendButtonDisabled,
       onSubmit: handleDefaultSendAction,
@@ -1641,7 +1708,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
     const submitAccessibilityLabel = resolveSubmitAccessibilityLabel({
       submitButtonAccessibilityLabel,
       canPressLoadingButton,
-      defaultActionQueues,
+      defaultActionQueues: sendButtonPresentation.queuesMessage,
       defaultSendBehavior,
       isAgentRunning,
       t,
@@ -1662,7 +1729,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
 
     const sendTooltipLabel = resolveSendTooltipLabel({
       submitButtonAccessibilityLabel,
-      defaultActionQueues,
+      defaultActionQueues: sendButtonPresentation.queuesMessage,
       t,
     });
 
@@ -1873,8 +1940,9 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
                 submitLabel={submitLabel}
                 submitButtonTestID={submitButtonTestID}
                 buttonIconSize={buttonIconSize}
-                sendKeys={DEFAULT_SEND_KEYS}
+                sendKeys={sendButtonPresentation.sendKeys}
                 sendTooltipLabel={sendTooltipLabel}
+                queuesMessage={sendButtonPresentation.queuesMessage}
               />
             </View>
           </View>
@@ -2074,6 +2142,7 @@ const ThemedMic = withUnistyles(Mic);
 const ThemedMicOff = withUnistyles(MicOff);
 const ThemedArrowUp = withUnistyles(ArrowUp);
 const ThemedCornerDownLeft = withUnistyles(CornerDownLeft);
+const ThemedListPlus = withUnistyles(ListPlus);
 const ThemedLoadingSpinner = withUnistyles(LoadingSpinner);
 
 const iconForegroundMapping = (theme: Theme) => ({ color: theme.colors.foreground });
