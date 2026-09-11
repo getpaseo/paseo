@@ -154,6 +154,21 @@ interface TimeoutOptions {
   onLateError?: (error: unknown) => void;
 }
 
+interface ImportProviderSessionInput {
+  provider: AgentProvider;
+  providerHandleId: string;
+  cwd: string;
+  workspaceId: string;
+  labels?: Record<string, string>;
+  modeId?: string;
+}
+
+interface UnarchiveSnapshotUpdates {
+  workspaceId?: string;
+  labels?: AgentLabelPatch;
+  modeId?: string;
+}
+
 function formatProviderList(providers: readonly string[]): string {
   return providers.length > 0 ? providers.join(", ") : "none";
 }
@@ -1351,25 +1366,13 @@ export class AgentManager {
     });
   }
 
-  importProviderSession(input: {
-    provider: AgentProvider;
-    providerHandleId: string;
-    cwd: string;
-    workspaceId: string;
-    labels?: Record<string, string>;
-    modeId?: string;
-  }): Promise<ManagedAgent> {
+  importProviderSession(input: ImportProviderSessionInput): Promise<ManagedAgent> {
     return this.trackAgentRegistrationOperation(this.importProviderSessionInternal(input));
   }
 
-  private async importProviderSessionInternal(input: {
-    provider: AgentProvider;
-    providerHandleId: string;
-    cwd: string;
-    workspaceId: string;
-    labels?: Record<string, string>;
-    modeId?: string;
-  }): Promise<ManagedAgent> {
+  private async importProviderSessionInternal(
+    input: ImportProviderSessionInput,
+  ): Promise<ManagedAgent> {
     this.assertAcceptingAgentRegistrations();
     const resolvedAgentId = validateAgentId(this.idFactory(), "importProviderSession");
     this.requireEnabledProvider(input.provider);
@@ -2144,10 +2147,7 @@ export class AgentManager {
     return nextRecord;
   }
 
-  async unarchiveSnapshot(
-    agentId: string,
-    updates?: { workspaceId?: string; labels?: AgentLabelPatch; modeId?: string },
-  ): Promise<boolean> {
+  async unarchiveSnapshot(agentId: string, updates?: UnarchiveSnapshotUpdates): Promise<boolean> {
     const registry = this.requireRegistry();
     const record = await registry.get(agentId);
     if (!record || !record.archivedAt) {
