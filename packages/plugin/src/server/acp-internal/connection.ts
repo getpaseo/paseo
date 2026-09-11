@@ -885,6 +885,13 @@ class AcpRuntime {
         this.fallbackChunkIds.clear();
         return;
       }
+      // A chunk of one kind ends the other kind's item, whatever its content
+      // or id: reasoning, then text, then reasoning again are three items.
+      this.fallbackChunkIds.delete(
+        update.sessionUpdate === "agent_message_chunk"
+          ? "agent_thought_chunk"
+          : "agent_message_chunk",
+      );
       if (update.content.type !== "text") return;
       const id = this.resolveChunkId(update.sessionUpdate, update.messageId);
       const text = `${this.messages.get(id) ?? ""}${update.content.text}`;
@@ -920,8 +927,6 @@ class AcpRuntime {
       this.fallbackChunkIds.delete(kind);
       return messageId;
     }
-    const other = kind === "agent_message_chunk" ? "agent_thought_chunk" : "agent_message_chunk";
-    this.fallbackChunkIds.delete(other);
     let id = this.fallbackChunkIds.get(kind);
     if (!id) {
       id = `${kind}:${++this.messageSequence}`;

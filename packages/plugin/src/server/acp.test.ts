@@ -79,6 +79,8 @@ interface ConnectorResponse {
 interface ConnectorHarnessOptions {
   capabilities?: Record<string, unknown>;
   configOptions?: unknown[];
+  /** Session updates the agent streams for a prompt (keyed by its text) before ending the turn. */
+  promptUpdates?(promptText: string): unknown[];
   handleMessage?(instance: ConnectorInstance, message: AcpStreamMessage): boolean;
   handleRequest?(instance: ConnectorInstance, request: AcpRequestMessage): boolean;
 }
@@ -120,6 +122,11 @@ function respondToConnectorRequest(
       configOptions: options?.configOptions ?? [],
     });
   } else if (request.method === "session/prompt") {
+    const { prompt } = request.params as { prompt: Array<{ type: string; text?: string }> };
+    const promptText = prompt.find((part) => part.type === "text")?.text ?? "";
+    for (const update of options?.promptUpdates?.(promptText) ?? []) {
+      instance.notify("session/update", { sessionId: "connector-session", update });
+    }
     instance.respond(request, { stopReason: "end_turn" });
   } else if (request.method === "session/close") {
     instance.respond(request, {});
@@ -1005,26 +1012,36 @@ lines.on("line", (line) => {
 });
 
 describe("runAcpProvider streamed chunks without messageId (#4699)", () => {
+  interface Chunk {
+    kind: "agent_message_chunk" | "agent_thought_chunk";
+    text: string;
+    messageId?: string;
+  }
+
   it("continues one timeline item per turn instead of one per chunk", async () => {
-    const chunksByPrompt: Record<string, string[]> = {
-      first: ["- **Current tem", "perature**: 25°C"],
-      second: ["next turn"],
+    const chunksByPrompt: Record<string, Chunk[]> = {
+      first: [
+        { kind: "agent_message_chunk", text: "- **Current tem" },
+        { kind: "agent_message_chunk", text: "perature**: 25°C" },
+      ],
+      second: [{ kind: "agent_message_chunk", text: "next turn" }],
+      // An explicit-id text chunk between two id-less thoughts separates them.
+      third: [
+        { kind: "agent_thought_chunk", text: "think A" },
+        { kind: "agent_message_chunk", text: "say", messageId: "m-explicit" },
+        { kind: "agent_thought_chunk", text: "think B" },
+      ],
     };
     const harness = connectorHarness({
-      handleMessage(instance, message) {
-        if (!("method" in message) || !("id" in message)) return false;
-        if (message.method !== "session/prompt") return false;
-        const request = message as AcpRequestMessage;
-        const { prompt } = request.params as { prompt: Array<{ type: string; text?: string }> };
-        for (const text of chunksByPrompt[prompt[0]!.text!]!) {
-          instance.notify("session/update", {
-            sessionId: "connector-session",
-            update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text } },
-          });
-        }
-        instance.respond(request, { stopReason: "end_turn" });
-        return true;
-      },
+      promptUpdates: (promptText) =>
+        (chunksByPrompt[promptText] ?? []).map((chunk) => {
+          const update: Record<string, unknown> = {
+            sessionUpdate: chunk.kind,
+            content: { type: "text", text: chunk.text },
+          };
+          if (chunk.messageId) update.messageId = chunk.messageId;
+          return update;
+        }),
     });
     const registration = runAcpProvider({
       id: "chunk-acp",
@@ -1040,7 +1057,7 @@ describe("runAcpProvider streamed chunks without messageId (#4699)", () => {
     await connection.send(openInput());
     await waitForEvent(events, (event) => event.type === "session.ready");
 
-    for (const clientMessageId of ["first", "second"]) {
+    for (const clientMessageId of ["first", "second", "third"]) {
       await connection.send({
         type: "session.prompt",
         sessionId: "session-1",
@@ -1059,15 +1076,19 @@ describe("runAcpProvider streamed chunks without messageId (#4699)", () => {
       );
     }
 
-    const assistantItems = events.flatMap((event) =>
-      event.type === "timeline.item" && event.item.type === "assistant_message"
+    const items = events.flatMap((event) =>
+      event.type === "timeline.item" &&
+      (event.item.type === "assistant_message" || event.item.type === "reasoning")
         ? [{ id: event.item.id, text: event.item.text }]
         : [],
     );
-    expect(assistantItems).toEqual([
+    expect(items).toEqual([
       { id: "agent_message_chunk:1", text: "- **Current tem" },
       { id: "agent_message_chunk:1", text: "- **Current temperature**: 25°C" },
       { id: "agent_message_chunk:2", text: "next turn" },
+      { id: "agent_thought_chunk:3", text: "think A" },
+      { id: "m-explicit", text: "say" },
+      { id: "agent_thought_chunk:4", text: "think B" },
     ]);
     await connection.close();
   });
