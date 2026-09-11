@@ -462,10 +462,12 @@ const CREATE_AGENT_TEST_CAPABILITIES = {
 
 class CreateAgentTestSession implements AgentSession {
   readonly provider = "codex";
-  readonly id = "create-agent-test-session";
   readonly capabilities = CREATE_AGENT_TEST_CAPABILITIES;
 
-  constructor(private readonly config: AgentSessionConfig) {}
+  constructor(
+    private readonly config: AgentSessionConfig,
+    readonly id = "create-agent-test-session",
+  ) {}
 
   async run(): Promise<AgentRunResult> {
     return { sessionId: this.id, finalText: "", timeline: [] };
@@ -518,13 +520,14 @@ class CreateAgentTestSession implements AgentSession {
 class CreateAgentTestClient implements AgentClient {
   readonly provider = "codex";
   readonly capabilities = CREATE_AGENT_TEST_CAPABILITIES;
+  private nextSessionId = 1;
 
   async createSession(
     config: AgentSessionConfig,
     _launchContext?: AgentLaunchContext,
     _options?: AgentCreateSessionOptions,
   ): Promise<AgentSession> {
-    return new CreateAgentTestSession(config);
+    return new CreateAgentTestSession(config, `create-agent-test-session-${this.nextSessionId++}`);
   }
 
   async resumeSession(
@@ -1238,7 +1241,13 @@ test("create_agent_request launches from an exact subdirectory in a created work
   }
 });
 
-test("create_agent_request does not title an existing workspace from the agent prompt", async () => {
+async function runExistingWorkspaceAutoNameScenario(input: {
+  existingAgent: boolean;
+  requestCount?: number;
+  expectedGenerateCalls: number;
+  expectedGeneratedPrompts: string[];
+  expectedTitle: string | null;
+}): Promise<void> {
   vi.useFakeTimers();
   const workdir = mkdtempSync(path.join(tmpdir(), "paseo-create-agent-existing-title-"));
   try {
@@ -1254,11 +1263,12 @@ test("create_agent_request does not title an existing workspace from the agent p
       error: vi.fn(),
     };
     const agentStorage = new AgentStorage(path.join(workdir, "agents"), asSessionLogger(logger));
+    let nextAgentId = 552;
     const agentManager = new AgentManager({
       clients: { codex: new CreateAgentTestClient() },
       registry: agentStorage,
       logger: asSessionLogger(logger),
-      idFactory: () => "00000000-0000-4000-8000-000000000552",
+      idFactory: () => `00000000-0000-4000-8000-${String(nextAgentId++).padStart(12, "0")}`,
     });
     const projectRegistry = new FileBackedProjectRegistry(
       path.join(workdir, "projects.json"),
@@ -1291,15 +1301,32 @@ test("create_agent_request does not title an existing workspace from the agent p
         updatedAt: "2026-05-07T00:00:00.000Z",
       }),
     );
+    if (input.existingAgent) {
+      await agentStorage.upsert({
+        id: "agent-existing",
+        provider: "codex",
+        cwd,
+        workspaceId: "ws-existing",
+        createdAt: "2026-05-07T00:00:00.000Z",
+        updatedAt: "2026-05-07T00:00:00.000Z",
+        labels: {},
+        lastStatus: "closed",
+      });
+    }
 
     let generateCalls = 0;
+    const generatedPrompts: string[] = [];
+    const emitted: SessionOutboundMessage[] = [];
+    const autoNameCompleted = deferred<void>();
+    const providerSnapshotManager = createProviderSnapshotManagerStub().manager;
+    const workspaceGitService = createNoopWorkspaceGitService();
     const session = asTestSession(
       new Session({
         agentRequests: createAgentRequestsStub(),
         clientId: "test-client",
         permissions: OWNER_PERMISSIONS,
         appVersion: null,
-        onMessage: vi.fn(),
+        onMessage: (message) => emitted.push(message),
         logger: asSessionLogger(logger),
         downloadTokenStore: asDownloadTokenStore(),
         pushNotifications: asPushNotifications(),
@@ -1325,7 +1352,25 @@ test("create_agent_request does not title an existing workspace from the agent p
           }),
           dispose: () => {},
         }),
-        workspaceGitService: createNoopWorkspaceGitService(),
+        workspaceGitService,
+        workspaceAutoName: new WorkspaceAutoName({
+          agentManager,
+          workspaceRegistry,
+          workspaceGitService,
+          providerSnapshotManager,
+          readDaemonConfig: () => ({ metadataGeneration: { providers: [] } }),
+          gitMutation: { notifyGitMutation: async () => {} },
+          emitWorkspaceUpdateForCwd: async () => {},
+          emitWorkspaceUpdateForWorkspaceId: async () => {
+            autoNameCompleted.resolve(undefined);
+          },
+          logger: asSessionLogger(logger),
+          generateWorkspaceName: async ({ firstAgentContext }) => {
+            generateCalls += 1;
+            generatedPrompts.push(firstAgentContext.prompt ?? "");
+            return { title: "Generated login fix title", branch: null };
+          },
+        }),
         daemonConfigStore: asDaemonConfigStore({
           get: () => ({ mcp: { injectIntoAgents: false }, providers: {} }),
           onChange: () => () => {},
@@ -1333,36 +1378,75 @@ test("create_agent_request does not title an existing workspace from the agent p
         mcpBaseUrl: null,
         stt: null,
         tts: null,
-        generateWorkspaceName: async () => {
-          generateCalls += 1;
-          return { title: "Generated title that must not be written", branch: null };
-        },
-        providerSnapshotManager: createProviderSnapshotManagerStub().manager,
+        providerSnapshotManager,
         terminalManager: null,
       }),
     );
 
-    await session.handleMessage({
-      type: "create_agent_request",
-      requestId: "req-create-existing-title",
-      workspaceId: "ws-existing",
-      config: { provider: "codex", cwd },
-      initialPrompt: "Fix login bug\nwith better validation",
-      attachments: [],
-    });
+    const prompts = ["Fix login bug\nwith better validation", "Refactor billing retry behavior"];
+    await Promise.all(
+      prompts.slice(0, input.requestCount ?? 1).map((initialPrompt, index) =>
+        session.handleMessage({
+          type: "create_agent_request",
+          requestId: `req-create-existing-title-${index}`,
+          workspaceId: "ws-existing",
+          config: { provider: "codex", cwd },
+          initialPrompt,
+          attachments: [],
+        }),
+      ),
+    );
     await vi.runAllTimersAsync();
+    if (input.expectedGenerateCalls > 0) {
+      await autoNameCompleted.promise;
+    }
 
-    const [createdAgent] = agentManager.listAgents();
-    expect(createdAgent?.workspaceId).toBe("ws-existing");
-    expect(generateCalls).toBe(0);
+    expect(
+      emitted.filter(
+        (message) => message.type === "status" && message.payload.status === "agent_create_failed",
+      ),
+    ).toEqual([]);
+    expect(agentManager.listAgents()).toHaveLength(input.requestCount ?? 1);
+    expect(agentManager.listAgents().every((agent) => agent.workspaceId === "ws-existing")).toBe(
+      true,
+    );
+    expect(generateCalls).toBe(input.expectedGenerateCalls);
+    expect(generatedPrompts).toEqual(input.expectedGeneratedPrompts);
     await expect(workspaceRegistry.get("ws-existing")).resolves.toMatchObject({
-      title: null,
-      updatedAt: "2026-05-07T00:00:00.000Z",
+      title: input.expectedTitle,
     });
   } finally {
     vi.useRealTimers();
     rmSync(workdir, { recursive: true, force: true });
   }
+}
+
+test("create_agent_request titles an existing workspace from its first agent prompt", async () => {
+  await runExistingWorkspaceAutoNameScenario({
+    existingAgent: false,
+    expectedGenerateCalls: 1,
+    expectedGeneratedPrompts: ["Fix login bug\nwith better validation"],
+    expectedTitle: "Generated login fix title",
+  });
+});
+
+test("create_agent_request preserves an existing workspace that already has an agent", async () => {
+  await runExistingWorkspaceAutoNameScenario({
+    existingAgent: true,
+    expectedGenerateCalls: 0,
+    expectedGeneratedPrompts: [],
+    expectedTitle: null,
+  });
+});
+
+test("concurrent first agents schedule one existing workspace title from the first request", async () => {
+  await runExistingWorkspaceAutoNameScenario({
+    existingAgent: false,
+    requestCount: 2,
+    expectedGenerateCalls: 1,
+    expectedGeneratedPrompts: ["Fix login bug\nwith better validation"],
+    expectedTitle: "Generated login fix title",
+  });
 });
 
 test("unsupported persisted agents are excluded from active lists but preserved in history payloads", async () => {
