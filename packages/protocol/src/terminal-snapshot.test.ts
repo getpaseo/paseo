@@ -7,6 +7,20 @@ function cells(text: string): TerminalState["grid"][number] {
 }
 
 describe("renderTerminalSnapshotToAnsi", () => {
+  it("preserves adjacent wide characters", () => {
+    const state: TerminalState = {
+      rows: 1,
+      cols: 4,
+      scrollback: [],
+      grid: [[{ char: "\u4e2d" }, { char: "" }, { char: "\u6587" }, { char: "" }]],
+      cursor: { row: 0, col: 4 },
+    };
+
+    const ansi = renderTerminalSnapshotToAnsi(state);
+
+    expect(ansi).toContain("\u4e2d\u6587");
+  });
+
   it("renders soft-wrapped rows as one contiguous logical line when wrap flags are present", () => {
     // The server soft-wrapped one logical line "ABCDEFGHIJKLMNOP" at 10 cols into
     // two grid rows. gridWrapped[0] = true marks row 0 as continuing into row 1.
