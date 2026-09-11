@@ -308,3 +308,14 @@ export function createProviderSnapshot(
     }),
   };
 }
+
+export function createCreationServiceStub(): SessionOptions["creationService"] {
+  return {
+    create: async () => {
+      throw new Error("Unexpected creation in legacy session fixture");
+    },
+    subscribe: async () => {
+      throw new Error("Unexpected creation subscription in legacy session fixture");
+    },
+  };
+}

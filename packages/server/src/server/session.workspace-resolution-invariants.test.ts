@@ -1,4 +1,7 @@
-import { createRequestReceiptsStub } from "./test-utils/session-stubs.js";
+import {
+  createRequestReceiptsStub,
+  createCreationServiceStub,
+} from "./test-utils/session-stubs.js";
 // Invariant tests for cwd → workspace resolution on the open_project_request path.
 // Each test encodes a default behavior we want from `findOrCreateWorkspaceForDirectory`.
 // Run to see which invariants the current code already satisfies (green) and which
@@ -90,6 +93,7 @@ function createHarness(input: {
 
   const session = new Session({
     requestReceipts: createRequestReceiptsStub(),
+    creationService: createCreationServiceStub(),
     clientId: "test",
     permissions: OWNER_PERMISSIONS,
     appVersion: null,

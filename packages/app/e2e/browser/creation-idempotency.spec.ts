@@ -35,7 +35,7 @@ test("the first prompt still names an agent created with a receipt", async ({ cr
   await creation.expectAgentTitle("Name this new agent from its first prompt.");
 });
 
-test("retrying after a lost first-prompt acknowledgement reuses the agent and message", async ({
+test("reconnecting after a lost creation response recovers the agent and initial message", async ({
   creation,
   promptRetry,
 }) => {
@@ -44,12 +44,11 @@ test("retrying after a lost first-prompt acknowledgement reuses the agent and me
   await creation.submitPrompt("Deliver this initial prompt once.");
   await promptRetry.waitForDeliveredPrompt();
   await promptRetry.disconnectAndReconnect();
-  await creation.submitPrompt("Deliver this initial prompt once.");
   await promptRetry.expectSameAgentAndMessage();
   await creation.expectAgentCount(1);
 });
 
-test("a remounted draft unlocks when its original submission fails", async ({
+test("a remounted draft reconciles its original creation after reconnect", async ({
   creation,
   promptRetry,
 }) => {
@@ -60,7 +59,6 @@ test("a remounted draft unlocks when its original submission fails", async ({
   await creation.evictAndReturnToDraft();
   await creation.expectPromptVisible("Deliver this initial prompt once.");
   await promptRetry.disconnectAndReconnect();
-  await creation.submitPrompt("Deliver this initial prompt once.");
   await promptRetry.expectSameAgentAndMessage();
   await creation.expectAgentCount(1);
 });
@@ -89,4 +87,32 @@ test("separate drafts can intentionally create two agents in the same workspace"
   await delayedCreation.waitForDelayedCreatedStatus();
   delayedCreation.release();
   await creation.expectAgentCount(2);
+});
+
+test("new workspace navigation and optimistic prompt precede agent completion", async ({
+  creation,
+  delayedCreation,
+}) => {
+  await creation.openWorkspaceForm("worktree");
+  await creation.submitPrompt("Show this prompt while the agent is starting.", "Create");
+  await delayedCreation.waitForDelayedCreatedStatus();
+  await creation.expectWorkspaceReadyBeforeAgentCompletion();
+  delayedCreation.expectSingleWorkspaceIntent();
+  delayedCreation.release();
+  await creation.expectOneCreatedWorkspace();
+  await creation.expectAgentCount(1);
+});
+
+test("retrying a failed combined result keeps the workspace and original creation intent", async ({
+  creation,
+  delayedCreation,
+}) => {
+  await creation.openWorkspaceForm("local");
+  await creation.submitPrompt("Retry this workspace and agent together.", "Create");
+  await delayedCreation.waitForDelayedCreatedStatus();
+  await creation.expectWorkspaceReadyBeforeAgentCompletion();
+  delayedCreation.fail("Creation response was lost");
+  await creation.submitPrompt("Retry this workspace and agent together.");
+  await creation.expectOneCreatedWorkspace();
+  await creation.expectAgentCount(1);
 });

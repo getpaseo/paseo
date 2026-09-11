@@ -1,4 +1,5 @@
-import { createAgentWithInitialMessage } from "@/agent-creation";
+import type { CreateWorkspaceRequestOptions } from "@getpaseo/client/internal/daemon-client";
+import type { AgentSnapshotPayload } from "@getpaseo/protocol/messages";
 import { getHostRuntimeStore } from "@/runtime/host-runtime";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Text, View } from "react-native";
@@ -32,7 +33,6 @@ import type {
   DaemonClient,
 } from "@getpaseo/client/internal/daemon-client";
 import { projectIconPlaceholderLabelFromDisplayName } from "@/utils/project-display-name";
-import { requireWorkspaceDirectory } from "@/utils/workspace-directory";
 import { navigateToAgent } from "@/utils/navigate-to-agent";
 import { navigateToWorkspace } from "@/stores/navigation-active-workspace-store";
 import type { MessagePayload } from "@/composer/types";
@@ -93,10 +93,11 @@ async function callWorkspaceCreation({
   connectedClient: DaemonClient;
   creationId: string;
   worktreeSlug: string;
-  input: { cwd: string };
+  input: { cwd: string; agent?: CreateWorkspaceRequestOptions["agent"] };
 }) {
   return connectedClient.createWorkspace({
     idempotencyKey: creationId,
+    agent: input.agent,
     source:
       creationMethod === "create_worktree"
         ? { kind: "worktree", cwd: input.cwd, worktreeSlug }
@@ -251,12 +252,17 @@ export function WorkspaceSetupDialog() {
   }, [client, isConnected, t]);
 
   const ensureWorkspace = useCallback(
-    async (input: { cwd: string; attachments: MessagePayload["attachments"] }) => {
+    async (input: {
+      cwd: string;
+      attachments: MessagePayload["attachments"];
+      agent?: CreateWorkspaceRequestOptions["agent"];
+      onAgentCreated?: (agent: AgentSnapshotPayload) => void;
+    }) => {
       if (!pendingWorkspaceSetup) {
         throw new Error(t("workspaceSetup.errors.pendingRequired"));
       }
 
-      if (createdWorkspace) {
+      if (createdWorkspace && !input.agent) {
         return createdWorkspace;
       }
 
@@ -275,6 +281,7 @@ export function WorkspaceSetupDialog() {
         );
       }
 
+      if (payload.agent) input.onAgentCreated?.(payload.agent);
       const normalizedWorkspace = normalizeWorkspaceDescriptor(payload.workspace);
       mergeWorkspaces(pendingWorkspaceSetup.serverId, [normalizedWorkspace]);
       if (pendingWorkspaceSetup.creationMethod === "open_project") {
@@ -311,8 +318,7 @@ export function WorkspaceSetupDialog() {
       try {
         setPendingAction("chat");
         setErrorMessage(null);
-        const ensuredWorkspace = await ensureWorkspace({ cwd, attachments });
-        const connectedClient = withConnectedClient();
+
         if (!composerState) {
           throw new Error(t("workspaceSetup.errors.composerStateRequired"));
         }
@@ -326,24 +332,30 @@ export function WorkspaceSetupDialog() {
           }),
         });
         const encodedImages = await encodeImages(wirePayload.images);
-        const workspaceDirectory = requireWorkspaceDirectory({
-          workspaceId: ensuredWorkspace.id,
-          workspaceDirectory: ensuredWorkspace.workspaceDirectory,
-        });
         if (!pendingWorkspaceSetup) throw new Error(t("workspaceSetup.errors.pendingRequired"));
-        const agent = await createAgentWithInitialMessage(connectedClient, {
-          idempotencyKey: pendingWorkspaceSetup.creationId,
-          clientMessageId: `${pendingWorkspaceSetup.creationId}:initial-message`,
-          ...buildCreateAgentOptions({
-            composerState,
-            text,
-            attachments: wirePayload.attachments,
-            encodedImages: encodedImages ?? null,
-            workspaceDirectory,
-            workspaceId: ensuredWorkspace.id,
-            provider: composerState.selectedProvider,
-          }),
+        let createdAgent: AgentSnapshotPayload | undefined;
+        const { workspaceId: _workspaceId, ...agentInput } = buildCreateAgentOptions({
+          composerState,
+          text,
+          attachments: wirePayload.attachments,
+          encodedImages: encodedImages ?? null,
+          workspaceDirectory: cwd,
+          workspaceId: "",
+          provider: composerState.selectedProvider,
         });
+        const ensuredWorkspace = await ensureWorkspace({
+          cwd,
+          attachments,
+          agent: {
+            ...agentInput,
+            clientMessageId: `${pendingWorkspaceSetup.creationId}:initial-message`,
+          },
+          onAgentCreated: (value) => {
+            createdAgent = value;
+          },
+        });
+        if (!createdAgent) throw new Error("The daemon did not create the requested agent");
+        const agent = createdAgent;
 
         if (!getIsStillActive()) {
           return;
@@ -376,7 +388,6 @@ export function WorkspaceSetupDialog() {
       ensureWorkspace,
       t,
       toast,
-      withConnectedClient,
       supportsForgeSearch,
     ],
   );

@@ -1,4 +1,3 @@
-import { createAgentWithInitialMessage } from "@/agent-creation";
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import { Keyboard, ScrollView, StyleSheet as RNStyleSheet, Text, View } from "react-native";
 import { useTranslation } from "react-i18next";
@@ -198,15 +197,17 @@ async function submitDraftCreateRequest(input: {
 
   const attachmentsArray = Array.isArray(attachments) ? attachments : undefined;
   const imagesData = await encodeImages(images);
-  const result = await createAgentWithInitialMessage(client, {
+  const options = {
     idempotencyKey: input.draftId,
     config,
     workspaceId,
     initialPrompt: text,
     clientMessageId: attempt.clientMessageId,
     ...(imagesData && imagesData.length > 0 ? { images: imagesData } : {}),
-    ...(attachmentsArray ? { attachments: attachmentsArray } : {}),
-  });
+    ...(attachmentsArray && attachmentsArray.length > 0 ? { attachments: attachmentsArray } : {}),
+  };
+  const creation = useWorkspaceDraftSubmissionStore.getState().creationByDraftId[input.draftId];
+  const result = creation ? await creation.retry(options) : await client.createAgent(options);
 
   return {
     agentId: result.id,
@@ -487,8 +488,12 @@ export function WorkspaceDraftAgentTab({
         composerState,
         selectModelMessage: t("workspaceSetup.errors.selectModel"),
       }),
-    createRequest: async ({ attempt, text, images, attachments, cwd }) =>
-      submitDraftCreateRequest({
+    createRequest: async ({ attempt, text, images, attachments, cwd }) => {
+      if (pendingAutoSubmit?.agentCreation) {
+        const result = await pendingAutoSubmit.agentCreation.result;
+        return { agentId: result.id, result };
+      }
+      return submitDraftCreateRequest({
         draftId,
         attempt,
         text,
@@ -502,7 +507,8 @@ export function WorkspaceDraftAgentTab({
         composerState,
         hostDisconnectedMessage: t("workspace.terminal.hostDisconnected"),
         selectModelMessage: t("workspaceSetup.errors.selectModel"),
-      }),
+      });
+    },
     onCreateSuccess: ({ result }) => {
       clearDraftInput("sent");
       clearWorkspaceAttachments({ scopeKey: draftAttachmentScopeKey });

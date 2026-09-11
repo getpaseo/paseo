@@ -36,7 +36,7 @@ export function observeCreationRequests(page: Page) {
       const request = envelope.message;
       if (
         request?.type === "workspace.create.request" ||
-        request?.type === "create_agent_request"
+        request?.type === "agent.create.request"
       ) {
         pending.add(request.requestId);
       }
@@ -46,6 +46,7 @@ export function observeCreationRequests(page: Page) {
       const response = envelope.message;
       if (
         response?.type === "workspace.create.response" ||
+        response?.type === "agent.create.response" ||
         (response?.type === "status" &&
           (response.payload.status === "agent_created" ||
             response.payload.status === "agent_create_failed"))
@@ -71,7 +72,7 @@ export async function retryNextAgentCreation(page: Page) {
     browser.onMessage((frame) => {
       const envelope = JSON.parse(frame.toString()) as { message?: SessionInboundMessage };
       const request = envelope.message;
-      if (!repeated && request?.type === "create_agent_request") {
+      if (!repeated && request?.type === "agent.create.request") {
         repeated = true;
         for (let attempt = 1; attempt <= 3; attempt++) {
           const requestId = attempt === 1 ? request.requestId : `${request.requestId}-${attempt}`;
@@ -87,13 +88,13 @@ export async function retryNextAgentCreation(page: Page) {
       const envelope = JSON.parse(frame.toString()) as { message?: SessionOutboundMessage };
       const response = envelope.message;
       if (
-        response?.type === "status" &&
-        (response.payload.status === "agent_created" ||
-          response.payload.status === "agent_create_failed") &&
-        typeof response.payload.requestId === "string" &&
+        response?.type === "agent.create.response" &&
         retryIds.delete(response.payload.requestId)
       ) {
-        results.push(response.payload);
+        results.push({
+          status: response.payload.error ? "agent_create_failed" : "agent_created",
+          agentId: response.payload.agent?.id,
+        });
       }
       browser.send(frame);
     });
@@ -141,6 +142,15 @@ export async function createCreationScenario(page: Page) {
     async expectPromptVisible(prompt?: string) {
       const rows = page.getByTestId("user-message");
       await expect(prompt ? rows.filter({ hasText: prompt }) : rows.first()).toBeVisible();
+    },
+    async expectWorkspaceReadyBeforeAgentCompletion() {
+      await expect(page).toHaveURL(/\/workspace\//);
+      await expect(page.getByTestId("user-message").first()).toBeVisible();
+      await expect(
+        page
+          .locator('[data-testid^="workspace-tab-draft_"][aria-selected="true"]')
+          .filter({ visible: true }),
+      ).toBeVisible();
     },
     async expectOneCreatedWorkspace() {
       await expect(page).toHaveURL(/\/workspace\//);
@@ -208,11 +218,11 @@ export function createPromptRetryScenario(
   let firstMessage: ReturnType<typeof gate.getClientRequests>[number] | undefined;
   return {
     holdAcknowledgement() {
-      gate.holdNextServerMessage("send_agent_message_response");
+      gate.holdNextServerMessage("agent.create.response");
     },
     async waitForDeliveredPrompt() {
-      await gate.waitForHeldServerMessage("send_agent_message_response");
-      firstMessage = gate.getClientRequests("send_agent_message_request").at(-1);
+      await gate.waitForHeldServerMessage("agent.create.response");
+      firstMessage = gate.getClientRequests("agent.create.request").at(-1);
     },
     async disconnectAndReconnect() {
       const fetches = gate.getClientRequestCount("fetch_agents_request");
@@ -223,11 +233,12 @@ export function createPromptRetryScenario(
         .toBeGreaterThan(fetches);
     },
     async expectSameAgentAndMessage() {
-      await expect.poll(() => gate.getClientRequestCount("send_agent_message_request")).toBe(2);
-      expect(gate.getClientRequests("send_agent_message_request").at(-1)).toMatchObject({
-        agentId: firstMessage?.agentId,
-        messageId: firstMessage?.messageId,
-      });
+      expect(gate.getClientRequestCount("agent.create.request")).toBe(1);
+      await expect
+        .poll(() => gate.getClientRequestCount("creation.subscribe.request"))
+        .toBeGreaterThan(0);
+      expect(gate.getClientRequests("agent.create.request").at(-1)).toEqual(firstMessage);
+      expect(gate.getClientRequestCount("send_agent_message_request")).toBe(0);
       await expect(page.getByTestId("user-message").filter({ visible: true })).toHaveCount(1);
     },
   };

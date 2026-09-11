@@ -1681,7 +1681,7 @@ export type CreateAgentWorktreeTarget = z.infer<typeof CreateAgentWorktreeTarget
 
 export const CreateAgentRequestMessageSchema = z.object({
   type: z.literal("create_agent_request"),
-  // A creation key requires initialPrompt to be sent separately with a stable messageId.
+  // Legacy create_agent_request uses a separate initial-message receipt when keyed.
   idempotencyKey: z.string().min(1).max(512).optional(),
   config: AgentSessionConfigSchema,
   env: z.record(z.string(), z.string()).optional(),
@@ -1700,6 +1700,33 @@ export const CreateAgentRequestMessageSchema = z.object({
   autoArchive: z.boolean().optional(),
   labels: z.record(z.string(), z.string()).default({}),
   requestId: z.string(),
+});
+
+/** Resource IDs are optional on creation; supplied IDs retain their identity on replay. */
+export const AgentCreateRequestSchema = CreateAgentRequestMessageSchema.extend({
+  type: z.literal("agent.create.request"),
+  agentId: z.uuid().optional(),
+  attachments: z.array(AgentAttachmentSchema).optional(),
+  subscribe: z.boolean().optional(),
+});
+
+export const WorkspaceInitialAgentSchema = AgentCreateRequestSchema.omit({
+  type: true,
+  requestId: true,
+  idempotencyKey: true,
+  subscribe: true,
+  workspaceId: true,
+  worktree: true,
+  worktreeName: true,
+  git: true,
+});
+
+export const CreationSubscribeRequestSchema = z.object({
+  type: z.literal("creation.subscribe.request"),
+  requestId: z.string(),
+  kind: z.enum(["workspace", "agent"]),
+  idempotencyKey: z.string().min(1).max(512),
+  subscribe: z.boolean().optional(),
 });
 
 export const ListProviderModelsRequestMessageSchema = z.object({
@@ -2562,6 +2589,12 @@ export const ArchiveWorkspaceRequestSchema = z.object({
 // between an existing local directory and a newly created paseo worktree.
 export const WorkspaceCreateRequestSchema = z.object({
   type: z.literal("workspace.create.request"),
+  workspaceId: z
+    .string()
+    .regex(/^wks_[a-f0-9]{16}$/)
+    .optional(),
+  agent: WorkspaceInitialAgentSchema.optional(),
+  subscribe: z.boolean().optional(),
   requestId: z.string(),
   idempotencyKey: z.string().min(1).max(512).optional(),
   // Optional user-set title applied to the created workspace.
@@ -3255,6 +3288,8 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   ProjectGithubCloneRequestSchema,
   ArchiveWorkspaceRequestSchema,
   WorkspaceCreateRequestSchema,
+  AgentCreateRequestSchema,
+  CreationSubscribeRequestSchema,
   WorkspaceClearAttentionRequestSchema,
   WorkspaceMarkUnreadRequestSchema,
   FileExplorerRequestSchema,
@@ -3483,6 +3518,7 @@ export const ServerInfoStatusPayloadSchema = z
         agentRequestReceipts: z.boolean().optional(),
         // COMPAT(workspaceRequestReceipts): added in v0.8.0; remove gate after 2027-03-07.
         workspaceRequestReceipts: z.boolean().optional(),
+        creationLifecycle: z.boolean().optional(),
         // COMPAT(hubAgentRpc): added in v0.8.0; remove gate after 2027-03-05.
         hubAgentRpc: z.boolean().optional(),
         providersSnapshot: z.boolean().optional(),
@@ -4724,9 +4760,62 @@ export const ClearAgentAttentionResponseMessageSchema = z.object({
   }),
 });
 
+export const CreationSnapshotSchema = z.object({
+  kind: z.enum(["workspace", "agent"]),
+  idempotencyKey: z.string(),
+  revision: z.number().int().nonnegative(),
+  phase: z.enum([
+    "accepted",
+    "workspace_ready",
+    "agent_ready",
+    "prompt_started",
+    "completed",
+    "failed",
+  ]),
+  workspaceId: z.string().nullable(),
+  agentId: z.string().nullable(),
+  workspace: WorkspaceDescriptorPayloadSchema.optional(),
+  agent: AgentSnapshotPayloadSchema.optional(),
+  error: z.string().nullable(),
+  setupSkippedReason: z.string().optional(),
+  errorCode: z.string().optional(),
+  failedStage: z.enum(["workspace", "agent", "prompt"]).optional(),
+  outcomeUnknown: z.boolean().optional(),
+});
+export type CreationSnapshot = z.infer<typeof CreationSnapshotSchema>;
+export type AgentCreateRequest = z.infer<typeof AgentCreateRequestSchema>;
+export type WorkspaceInitialAgent = z.infer<typeof WorkspaceInitialAgentSchema>;
+
+export const WorkspaceCreationUpdateSchema = z.object({
+  type: z.literal("workspace.create.update"),
+  payload: CreationSnapshotSchema,
+});
+export const AgentCreationUpdateSchema = WorkspaceCreationUpdateSchema.extend({
+  type: z.literal("agent.create.update"),
+});
+export const CreationSubscribeResponseSchema = z.object({
+  type: z.literal("creation.subscribe.response"),
+  payload: z.object({
+    requestId: z.string(),
+    snapshot: CreationSnapshotSchema.nullable(),
+    error: z.string().nullable(),
+  }),
+});
+export const AgentCreateResponseSchema = z.object({
+  type: z.literal("agent.create.response"),
+  payload: z.object({
+    requestId: z.string(),
+    agent: AgentSnapshotPayloadSchema.nullable(),
+    error: z.string().nullable(),
+    creation: CreationSnapshotSchema.optional(),
+  }),
+});
+
 export const WorkspaceCreateResponseSchema = z.object({
   type: z.literal("workspace.create.response"),
   payload: z.object({
+    agent: AgentSnapshotPayloadSchema.optional(),
+    creation: CreationSnapshotSchema.optional(),
     workspace: WorkspaceDescriptorPayloadSchema.nullable(),
     setupTerminalId: z.string().nullable(),
     setupSkippedReason: z.string().optional(),
@@ -6637,6 +6726,10 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   CancelAgentResponseMessageSchema,
   ClearAgentAttentionResponseMessageSchema,
   WorkspaceCreateResponseSchema,
+  AgentCreateResponseSchema,
+  WorkspaceCreationUpdateSchema,
+  AgentCreationUpdateSchema,
+  CreationSubscribeResponseSchema,
   WorkspaceClearAttentionResponseSchema,
   WorkspaceMarkUnreadResponseSchema,
   SendAgentMessageResponseMessageSchema,

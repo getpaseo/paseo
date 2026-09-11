@@ -6,6 +6,8 @@ import {
   DEFAULT_CLIENT_CAPABILITIES,
   type TimelineSubscription,
 } from "./connection/index.js";
+import { CreationClient } from "./creation/index.js";
+import type { CreationSnapshot } from "@getpaseo/protocol/messages";
 import type { z } from "zod";
 import type { SessionEventSubscription } from "@getpaseo/protocol/messages";
 import type { ClientCapability } from "@getpaseo/protocol/client-capabilities";
@@ -370,6 +372,8 @@ export interface AgentAttentionRequiredNotification {
 type AgentConfigOverrides = Partial<Omit<AgentSessionConfig, "provider" | "cwd">>;
 
 export interface CreateAgentRequestOptions extends AgentConfigOverrides {
+  agentId?: string;
+  onEvent?: (snapshot: CreationSnapshot) => void;
   config?: AgentSessionConfig;
   provider?: AgentProvider;
   cwd?: string;
@@ -390,6 +394,20 @@ export interface CreateAgentRequestOptions extends AgentConfigOverrides {
   worktreeName?: string;
   requestId?: string;
   labels?: Record<string, string>;
+}
+
+export interface CreateWorkspaceRequestOptions {
+  source: WorkspaceCreateRequest["source"];
+  title?: string;
+  idempotencyKey?: string;
+  workspaceId?: string;
+  agent?: Omit<
+    CreateAgentRequestOptions,
+    "workspaceId" | "onEvent" | "worktree" | "git" | "worktreeName" | "idempotencyKey" | "requestId"
+  >;
+  onEvent?: (snapshot: CreationSnapshot) => void;
+  firstAgentContext?: WorkspaceCreateRequest["firstAgentContext"];
+  requestId?: string;
 }
 
 export interface CreatePaseoWorktreeInput extends Pick<
@@ -1416,6 +1434,7 @@ export class DaemonClient {
     this.providerSnapshotUpdates.clear();
     this.clearWaiters(new Error("Daemon client closed"));
     await this.owned.close();
+    this.creations.close();
     this.rejectPendingSendQueue(new Error("Daemon client closed"));
     this.rejectPingProbe(new Error("Daemon client closed"));
     this.terminalStreams.clearSlots();
@@ -2656,7 +2675,49 @@ export class DaemonClient {
   // Agent Lifecycle
   // ============================================================================
 
+  private readonly creations = new CreationClient({
+    supports: () => this.lastServerInfoMessage?.features?.creationLifecycle === true,
+    connected: () => this.connectionState.status === "connected",
+    requestId: () => this.createRequestId(),
+    request: (kind, input) =>
+      kind === "workspace"
+        ? this.sendCorrelatedSessionRequest({
+            requestId: input.requestId as string | undefined,
+            message: { ...input, type: "workspace.create.request" },
+            responseType: "workspace.create.response",
+            timeout: 0,
+          })
+        : this.sendCorrelatedSessionRequest({
+            requestId: input.requestId as string | undefined,
+            message: { ...input, type: "agent.create.request" },
+            responseType: "agent.create.response",
+            timeout: 0,
+          }),
+    subscribe: async (kind, idempotencyKey, subscribe = true) => {
+      const result = await this.sendCorrelatedSessionRequest({
+        message: { type: "creation.subscribe.request", kind, idempotencyKey, subscribe },
+        responseType: "creation.subscribe.response",
+      });
+      if (result.error) throw new Error(result.error);
+      return result.snapshot;
+    },
+    legacyAgent: (input) => this.createLegacyAgent(input),
+    legacyWorkspace: (input) => this.createLegacyWorkspace(input, input.requestId),
+    sendMessage: (id, text, options) => this.sendMessage(id, text, options),
+  });
+
   async createAgent(options: CreateAgentRequestOptions): Promise<AgentSnapshotPayload> {
+    const result = await this.creations.createAgent({
+      ...options,
+      config: resolveAgentConfig(options),
+    });
+    if (result.error || !result.agent) throw new Error(result.error ?? "Agent creation failed");
+    return result.agent;
+  }
+
+  private async createLegacyAgent(
+    options: CreateAgentRequestOptions,
+  ): Promise<AgentSnapshotPayload> {
     if (options.idempotencyKey !== undefined) this.requireAgentRequestReceipts();
     const requestId = this.createRequestId(options.requestId);
     const config = resolveAgentConfig(options);
@@ -4330,12 +4391,28 @@ export class DaemonClient {
   }
 
   async createWorkspace(
-    input: {
-      source: WorkspaceCreateRequest["source"];
-      title?: string;
-      idempotencyKey?: string;
-      firstAgentContext?: WorkspaceCreateRequest["firstAgentContext"];
-    },
+    input: CreateWorkspaceRequestOptions,
+    requestId?: string,
+  ): Promise<WorkspaceCreatePayload> {
+    const resolvedRequestId = this.createRequestId(requestId ?? input.requestId);
+    const result = await this.creations.createWorkspace({
+      ...input,
+      requestId: resolvedRequestId,
+      ...(input.agent
+        ? { agent: { ...input.agent, config: resolveAgentConfig(input.agent) } }
+        : {}),
+    });
+    return {
+      ...result,
+      workspace: result.workspace ?? null,
+      agent: result.agent ?? undefined,
+      setupTerminalId: result.setupTerminalId ?? null,
+      requestId: result.requestId ?? resolvedRequestId,
+    };
+  }
+
+  private async createLegacyWorkspace(
+    input: CreateWorkspaceRequestOptions,
     requestId?: string,
   ): Promise<WorkspaceCreatePayload> {
     // COMPAT(workspaceRequestReceipts): added in v0.8.0; remove gate after 2027-03-07.
@@ -6281,6 +6358,7 @@ export class DaemonClient {
             ...DEFAULT_CLIENT_CAPABILITIES,
             ...this.config.capabilities,
           });
+          this.creations.reconnect();
           this.flushPendingSendQueue();
           this.resolveConnect();
         }
@@ -6315,6 +6393,11 @@ export class DaemonClient {
       }
     }
 
+    if (
+      consumerMessage.type === "workspace.create.update" ||
+      consumerMessage.type === "agent.create.update"
+    )
+      this.creations.receive(consumerMessage.payload);
     this.resolveWaiters(consumerMessage);
     this.owned.receive(consumerMessage);
   }
@@ -6498,6 +6581,15 @@ function resolveAgentConfig(options: CreateAgentRequestOptions): AgentSessionCon
     config,
     provider,
     cwd,
+    agentId: _agentId,
+    onEvent: _onEvent,
+    idempotencyKey: _idempotencyKey,
+    clientMessageId: _clientMessageId,
+    callerAgentId: _callerAgentId,
+    outputSchema: _outputSchema,
+    attachments: _attachments,
+    worktree: _worktree,
+    autoArchive: _autoArchive,
     env: _env,
     workspaceId: _workspaceId,
     initialPrompt: _initialPrompt,

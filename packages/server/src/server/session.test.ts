@@ -1,4 +1,7 @@
-import { createRequestReceiptsStub } from "./test-utils/session-stubs.js";
+import {
+  createRequestReceiptsStub,
+  createCreationServiceStub,
+} from "./test-utils/session-stubs.js";
 import { execSync } from "child_process";
 import { existsSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
@@ -365,6 +368,7 @@ function createSessionForTest(options: SessionForTestOptions = {}): Session {
 
   const sessionOptions: SessionOptions = {
     requestReceipts: createRequestReceiptsStub(),
+    creationService: createCreationServiceStub(),
     clientId: options.clientId ?? "test-client",
     onMessage: (message) => messages.push(message),
     ...(options.targetedMessages

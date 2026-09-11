@@ -1,4 +1,7 @@
-import { createRequestReceiptsStub } from "./test-utils/session-stubs.js";
+import {
+  createRequestReceiptsStub,
+  createCreationServiceStub,
+} from "./test-utils/session-stubs.js";
 import pino from "pino";
 import { z } from "zod";
 import { describe, expect, test } from "vitest";
@@ -209,6 +212,7 @@ function createSessionForWireCompatTest(options?: {
 
   const session = new Session({
     requestReceipts: createRequestReceiptsStub(),
+    creationService: createCreationServiceStub(),
     clientId: "wire-compat-client",
     permissions: OWNER_PERMISSIONS,
     clientCapabilities: options?.clientCapabilities ?? null,

@@ -319,6 +319,30 @@ Example: adding a new enum value
 // 4. Gate the new emitted value: session.supports(CLIENT_CAPS.newThing) ? "new_value" : "old_value"
 ```
 
+### Creation ownership
+
+Creation is owned by the daemon across socket lifetimes. A workspace request can include
+its initial agent and prompt. Workspace readiness is published before provider startup;
+the app keeps its existing disk-ready navigation and observes the remaining creation.
+Callbacks do not advance the workflow. Resource reservations in acknowledgement are
+identities, not ready workspace records.
+
+The creation journal (`server/creation/`) keeps cumulative milestones and permanent IDs
+under an operation kind and idempotency key. Reconnect subscribes to that key; retries
+join active work or reuse committed stages. A persisted resource alone cannot prove
+that a provider accepted its initial prompt. Interrupted side effects with no conclusive
+receipt return an unknown outcome instead of being repeated.
+
+`packages/client/src/creation/` owns capability selection and legacy orchestration.
+Callers always pass the initial prompt to agent creation. On an older host, the client
+adapts keyed creation to the legacy create/send sequence; it cannot continue that
+sequence after the client process disappears. Explicitly requested IDs or receipts
+that an old host cannot honor produce an unsupported error. Keep these adapters inside
+the client package, as an exception to the default no-fallback feature policy.
+
+Creation updates require an explicit subscription and go only to the requesting socket.
+Legacy consumers, including Hub, keep their existing response contract.
+
 ## Agent lifecycle
 
 The lifecycle states are defined in `shared/agent-lifecycle.ts`:

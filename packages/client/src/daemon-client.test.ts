@@ -6322,3 +6322,86 @@ test("wire snapshot callers own expansion and receive hash references unchanged"
   );
   expect(await request).toEqual(body);
 });
+
+test("creation lifecycle sends the keyed agent and initial prompt as one intent", async () => {
+  const transport = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "creation-contract",
+    transportFactory: () => transport.transport,
+    reconnect: { enabled: false },
+  });
+  clients.push(client);
+  const connected = client.connect();
+  transport.triggerOpen({ features: { creationLifecycle: true, agentRequestReceipts: true } });
+  await connected;
+  const creation = client.createAgent({
+    idempotencyKey: "draft-one",
+    provider: "codex",
+    cwd: "/project",
+    workspaceId: "wks_0123456789abcdef",
+    initialPrompt: "Start once",
+    clientMessageId: "first-message",
+  });
+  void creation.catch(() => undefined);
+  const request = parseSentFrame(transport.sent[0]);
+  expect(request).toMatchObject({
+    type: "agent.create.request",
+    idempotencyKey: "draft-one",
+    initialPrompt: "Start once",
+    clientMessageId: "first-message",
+  });
+  transport.triggerMessage(
+    wrapSessionMessage({
+      type: "agent.create.response",
+      payload: { requestId: request.requestId, agent: null, error: "provider unavailable" },
+    }),
+  );
+  await expect(creation).rejects.toThrow("provider unavailable");
+  expect(transport.sent).toHaveLength(1);
+});
+
+test("creation lifecycle acknowledgement reaches the observer before the final response", async () => {
+  const transport = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "creation-progress",
+    transportFactory: () => transport.transport,
+    reconnect: { enabled: false },
+  });
+  clients.push(client);
+  const connected = client.connect();
+  transport.triggerOpen({ features: { creationLifecycle: true } });
+  await connected;
+  const phases: string[] = [];
+  const creation = client.createAgent({
+    provider: "codex",
+    cwd: "/project",
+    idempotencyKey: "observe-one",
+    onEvent: (snapshot) => phases.push(snapshot.phase),
+  });
+  void creation.catch(() => undefined);
+  const request = parseSentFrame(transport.sent[0]);
+  transport.triggerMessage(
+    wrapSessionMessage({
+      type: "agent.create.update",
+      payload: {
+        kind: "agent",
+        idempotencyKey: "observe-one",
+        revision: 0,
+        phase: "accepted",
+        workspaceId: null,
+        agentId: "00000000-0000-4000-8000-000000000001",
+        error: null,
+      },
+    }),
+  );
+  expect(phases).toEqual(["accepted"]);
+  transport.triggerMessage(
+    wrapSessionMessage({
+      type: "agent.create.response",
+      payload: { requestId: request.requestId, agent: null, error: "provider unavailable" },
+    }),
+  );
+  await expect(creation).rejects.toThrow("provider unavailable");
+});
