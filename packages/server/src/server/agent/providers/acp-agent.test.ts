@@ -2800,6 +2800,84 @@ describe("ACPAgentSession", () => {
     expect(asInternals<ACPSessionInternals>(session).activeForegroundTurnId).toBeNull();
   });
 
+  test("usage_update fills the context window meter without dropping token counts", async () => {
+    const session = createSession();
+    const events: AgentStreamEvent[] = [];
+    let resolvePrompt!: (value: PromptResponse) => void;
+    const prompt = vi.fn(
+      () =>
+        new Promise<PromptResponse>((resolve) => {
+          resolvePrompt = resolve;
+        }),
+    );
+
+    asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+    asInternals<ACPSessionInternals>(session).connection = { prompt };
+    session.subscribe((event) => {
+      events.push(event);
+    });
+
+    const { turnId } = await session.startTurn("hello");
+
+    await session.sessionUpdate({
+      sessionId: "session-1",
+      update: { sessionUpdate: "usage_update", used: 18_538, size: 256_000 } as SessionUpdate,
+    });
+
+    expect(events.find((event) => event.type === "usage_updated")).toMatchObject({
+      type: "usage_updated",
+      turnId,
+      usage: { contextWindowUsedTokens: 18_538, contextWindowMaxTokens: 256_000 },
+    });
+
+    resolvePrompt({ stopReason: "end_turn", usage: { inputTokens: 12, outputTokens: 3 } });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    // The turn's token counts and the context meter coexist.
+    expect(events.find((event) => event.type === "turn_completed")).toMatchObject({
+      type: "turn_completed",
+      usage: {
+        inputTokens: 12,
+        outputTokens: 3,
+        contextWindowUsedTokens: 18_538,
+        contextWindowMaxTokens: 256_000,
+      },
+    });
+  });
+
+  test("ignores unusable window sizes and repeated identical usage reports", async () => {
+    const session = createSession();
+    const events: AgentStreamEvent[] = [];
+    const prompt = vi.fn(() => new Promise<PromptResponse>(() => {}));
+
+    asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+    asInternals<ACPSessionInternals>(session).connection = { prompt };
+    session.subscribe((event) => {
+      events.push(event);
+    });
+    await session.startTurn("hello");
+
+    const send = async (used: number, size: number) => {
+      await session.sessionUpdate({
+        sessionId: "session-1",
+        update: { sessionUpdate: "usage_update", used, size } as SessionUpdate,
+      });
+    };
+
+    // A zero window would render as a divide-by-zero meter.
+    await send(10, 0);
+    expect(events.filter((event) => event.type === "usage_updated")).toHaveLength(0);
+
+    // Real movement is published, an identical repeat is not.
+    await send(10, 1_000);
+    await send(10, 1_000);
+    expect(events.filter((event) => event.type === "usage_updated")).toHaveLength(1);
+
+    await send(20, 1_000);
+    expect(events.filter((event) => event.type === "usage_updated")).toHaveLength(2);
+  });
+
   test("startTurn emits the submitted user message even when ACP does not echo it", async () => {
     const session = createSession();
     const events: AgentStreamEvent[] = [];
