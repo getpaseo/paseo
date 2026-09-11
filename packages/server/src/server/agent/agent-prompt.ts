@@ -5,12 +5,16 @@ import type {
   AgentPromptInput,
   AgentRunOptions,
 } from "./agent-sdk-types.js";
-import type { AgentManager, ManagedAgent } from "./agent-manager.js";
+import {
+  AgentMessageSendGuardRejectedError,
+  type AgentManager,
+  type ManagedAgent,
+} from "./agent-manager.js";
 import type { AgentStorage } from "./agent-storage.js";
 import { ensureAgentLoaded } from "./agent-loading.js";
 import { isStaleProviderSessionError } from "./stale-provider-session-error.js";
 import { getParentAgentIdFromLabels } from "@getpaseo/protocol/agent-labels";
-import type { ActiveTurnBehavior } from "@getpaseo/protocol/messages";
+import type { ActiveTurnBehavior, AgentMessageSendGuard } from "@getpaseo/protocol/messages";
 
 export type AgentUnarchiveController = Pick<AgentManager, "notifyAgentState" | "unarchiveSnapshot">;
 
@@ -32,6 +36,8 @@ export interface StartAgentRunOptions {
   runOptions?: AgentRunOptions;
   /** Ask the provider to deny permissions blocking this steer. */
   clearPendingPermissions?: boolean;
+  /** Disable provider-session reload retries when a caller supplied an exact-state guard. */
+  retryStaleSession?: boolean;
 }
 
 export type PromptDispatchDisposition = "out_of_band" | "steered" | "turn_started";
@@ -118,7 +124,7 @@ export async function startAgentRun(
   try {
     return await startAgentRunInner(agentManager, agentId, prompt, logger, options);
   } catch (error) {
-    if (!isStaleProviderSessionError(error)) throw error;
+    if (!isStaleProviderSessionError(error) || options?.retryStaleSession === false) throw error;
     logger.info({ agentId, err: error }, "Provider session went stale; reopening from persistence");
     // The live session belongs to a retired plugin runtime. Reload swaps in a
     // fresh session on the current runtime while preserving history and labels.
@@ -135,7 +141,10 @@ async function startAgentRunInner(
   options?: StartAgentRunOptions,
 ): Promise<{ disposition: PromptDispatchDisposition }> {
   const snapshot = agentManager.getAgent(agentId);
-  const steered = await steerOrReplaceActiveRun(agentManager, agentId, prompt, options);
+  const steered =
+    options?.activeTurnBehavior === "steer"
+      ? await steerOrReplaceActiveRun(agentManager, agentId, prompt, options)
+      : null;
   if (steered?.disposition === "steered") {
     return steered;
   }
@@ -156,7 +165,8 @@ async function startAgentRunInner(
       try {
         await drainAgentRunIterator(iterator);
       } catch (error) {
-        if (!isStaleProviderSessionError(error)) throw error;
+        if (!isStaleProviderSessionError(error) || options?.retryStaleSession === false)
+          throw error;
         logger.info(
           { agentId, err: error },
           "Provider session went stale; reopening from persistence",
@@ -229,6 +239,7 @@ export interface SendPromptToAgentParams {
   prompt: AgentPromptInput;
   messageId?: string;
   activeTurnBehavior?: ActiveTurnBehavior;
+  guard?: AgentMessageSendGuard;
   runOptions?: AgentRunOptions;
   /** Optional mode to set on the agent before the run starts. */
   sessionMode?: string;
@@ -307,6 +318,9 @@ export async function sendPromptToAgent(
 
   const record = await params.agentStorage.get(params.agentId);
   if (record?.archivedAt) {
+    if (params.guard) {
+      throw new AgentMessageSendGuardRejectedError("archived");
+    }
     if (!unarchive) {
       return { disposition: "turn_started" };
     }
@@ -326,6 +340,31 @@ export async function sendPromptToAgent(
   const runOptions = params.messageId
     ? { ...params.runOptions, clientMessageId: params.messageId }
     : params.runOptions;
+
+  if (params.guard) {
+    return params.agentManager.runGuardedAgentMessageSend(
+      params.agentId,
+      params.guard,
+      async () => {
+        const result = await startAgentRun(
+          params.agentManager,
+          params.agentId,
+          params.prompt,
+          params.logger,
+          {
+            replaceRunning: false,
+            clearPendingPermissions: params.clearPendingPermissions,
+            runOptions,
+            retryStaleSession: false,
+          },
+        );
+        if (result.disposition === "turn_started") {
+          await waitForAgentRunStartWithTimeout(params.agentManager, params.agentId);
+        }
+        return result;
+      },
+    );
+  }
 
   return await startAgentRun(params.agentManager, params.agentId, params.prompt, params.logger, {
     replaceRunning: true,

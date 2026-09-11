@@ -85,7 +85,12 @@ import {
   type WorkspaceLabelService,
 } from "./workspace-labels/index.js";
 
-import { AgentManager, AgentRunCancellationError } from "./agent/agent-manager.js";
+import {
+  AgentManager,
+  AgentMessageSendGuardRejectedError,
+  AgentRunCancellationError,
+  isAgentMessageSendGuardRejectedError,
+} from "./agent/agent-manager.js";
 import { buildTimelinePromptIndex } from "./agent/timeline-prompt-index.js";
 import { ProviderSnapshotManager } from "./agent/provider-snapshot-manager.js";
 import type {
@@ -464,7 +469,7 @@ export interface SessionOptions {
   worktreesRoot?: string;
   agentManager: AgentManager;
   agentStorage: AgentStorage;
-  agentRequests: Pick<AgentRequests, "create" | "send">;
+  agentRequests: Pick<AgentRequests, "create" | "send" | "inspectSend">;
   projectRegistry: ProjectRegistry;
   workspaceRegistry: WorkspaceRegistry;
   directorySync?: DirectorySyncService;
@@ -754,7 +759,7 @@ export class Session {
   private readonly daemonSession: DaemonSession;
   private readonly hubExecutionController: HubExecutionController | null;
   private readonly workspaceScripts: WorkspaceScriptsService;
-  private readonly agentRequests: Pick<AgentRequests, "create" | "send">;
+  private readonly agentRequests: Pick<AgentRequests, "create" | "send" | "inspectSend">;
   private readonly createAgentLifecycleDispatch: CreateAgentLifecycleDispatch;
 
   constructor(options: SessionOptions) {
@@ -2367,6 +2372,8 @@ export class Session {
       }
       case "agent.fork_context.request":
         return this.handleAgentForkContextRequest(msg);
+      case "agent.message.receipt.get.request":
+        return this.handleAgentMessageReceiptGetRequest(msg);
       default:
         return undefined;
     }
@@ -2722,6 +2729,10 @@ export class Session {
         return this.scheduleSession.handleSchedulePauseRequest(msg);
       case "schedule/resume":
         return this.scheduleSession.handleScheduleResumeRequest(msg);
+      case "schedule.state.transition.request":
+        return this.scheduleSession.handleScheduleStateTransitionRequest(msg);
+      case "schedule.state.restore.request":
+        return this.scheduleSession.handleScheduleStateRestoreRequest(msg);
       case "schedule/delete":
         return this.scheduleSession.handleScheduleDeleteRequest(msg);
       case "schedule/run-once":
@@ -7579,6 +7590,8 @@ export class Session {
           agentId: msg.agentId,
           accepted: false,
           error: resolved.error,
+          ...(msg.messageId ? { messageId: msg.messageId, replayed: false } : {}),
+          ...(msg.guard ? { guard: { matched: false, reason: "agent_id_mismatch" as const } } : {}),
         },
       });
       return;
@@ -7586,6 +7599,10 @@ export class Session {
 
     try {
       const agentId = resolved.agentId;
+
+      if (msg.guard && msg.agentId !== msg.guard.expectedAgentId) {
+        throw new AgentMessageSendGuardRejectedError("agent_id_mismatch");
+      }
 
       const prompt = buildAgentPrompt(msg.text, msg.images, msg.attachments);
       this.sessionLogger.trace(
@@ -7605,19 +7622,31 @@ export class Session {
           prompt,
           messageId: msg.messageId,
           activeTurnBehavior: msg.activeTurnBehavior ?? "interrupt",
+          guard: msg.guard,
           clearPendingPermissions: true,
           logger: this.sessionLogger,
         });
-        if (result.disposition === "turn_started") {
+        if (!msg.guard && result.disposition === "turn_started") {
           await waitForAgentRunStartWithTimeout(this.agentManager, agentId);
         }
       };
+      let replayed = false;
       if (msg.messageId) {
-        await this.agentRequests.send({
+        const receipt = await this.agentRequests.send({
           agentId,
           messageId: msg.messageId,
-          request: { prompt, activeTurnBehavior: msg.activeTurnBehavior ?? "interrupt" },
+          request: {
+            prompt,
+            activeTurnBehavior: msg.activeTurnBehavior ?? "interrupt",
+            guard: msg.guard,
+          },
           prepare: async () => {
+            if (msg.guard) {
+              const record = await this.agentStorage.get(agentId);
+              if (record?.archivedAt) {
+                throw new AgentMessageSendGuardRejectedError("archived");
+              }
+            }
             await ensureAgentLoaded(agentId, {
               agentManager: this.agentManager,
               agentStorage: this.agentStorage,
@@ -7625,7 +7654,9 @@ export class Session {
             });
           },
           send,
+          retrySafe: isAgentMessageSendGuardRejectedError,
         });
+        replayed = receipt.replayed;
       } else {
         await send();
       }
@@ -7637,10 +7668,15 @@ export class Session {
           agentId,
           accepted: true,
           error: null,
+          ...(msg.messageId ? { messageId: msg.messageId, replayed } : {}),
+          ...(msg.guard ? { guard: { matched: true, reason: null } } : {}),
         },
       });
     } catch (error) {
-      this.handleAgentRunError(resolved.agentId, error, "Failed to send agent message");
+      const guardRejection = isAgentMessageSendGuardRejectedError(error) ? error : null;
+      if (!guardRejection) {
+        this.handleAgentRunError(resolved.agentId, error, "Failed to send agent message");
+      }
       this.emit({
         type: "send_agent_message_response",
         payload: {
@@ -7648,9 +7684,42 @@ export class Session {
           agentId: resolved.agentId,
           accepted: false,
           error: errorToFriendlyMessage(error),
+          ...(msg.messageId ? { messageId: msg.messageId, replayed: false } : {}),
+          ...(guardRejection ? { guard: { matched: false, reason: guardRejection.reason } } : {}),
         },
       });
     }
+  }
+
+  private async handleAgentMessageReceiptGetRequest(
+    msg: Extract<SessionInboundMessage, { type: "agent.message.receipt.get.request" }>,
+  ): Promise<void> {
+    const resolved = await this.resolveAgentIdentifier(msg.agentId);
+    if (!resolved.ok) {
+      this.emit({
+        type: "agent.message.receipt.get.response",
+        payload: {
+          requestId: msg.requestId,
+          agentId: msg.agentId,
+          messageId: msg.messageId,
+          state: "missing",
+          error: resolved.error,
+        },
+      });
+      return;
+    }
+
+    const state = await this.agentRequests.inspectSend(resolved.agentId, msg.messageId);
+    this.emit({
+      type: "agent.message.receipt.get.response",
+      payload: {
+        requestId: msg.requestId,
+        agentId: resolved.agentId,
+        messageId: msg.messageId,
+        state,
+        error: null,
+      },
+    });
   }
 
   private async handleWaitForFinish(

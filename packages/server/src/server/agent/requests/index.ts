@@ -10,10 +10,16 @@ const ReceiptSchema = z.object({
   state: z.enum(["pending", "completed"]),
 });
 type Receipt = z.infer<typeof ReceiptSchema>;
+export type AgentMessageReceiptState = "missing" | Receipt["state"];
+
+interface ExecutionResult {
+  agentId: string;
+  replayed: boolean;
+}
 
 /** One daemon-owned request journal, shared by all of its socket sessions. */
 export class AgentRequests {
-  private readonly pending = new Map<string, Promise<string>>();
+  private readonly pending = new Map<string, Promise<ExecutionResult>>();
 
   constructor(private readonly directory: string) {}
 
@@ -28,7 +34,7 @@ export class AgentRequests {
       recover: input.findAgent,
       run: input.create,
       retrySafe: async (agentId) => !(await input.findAgent(agentId)),
-    });
+    }).then((result) => result.agentId);
   }
 
   async send(input: {
@@ -37,15 +43,23 @@ export class AgentRequests {
     request: unknown;
     send: () => Promise<void>;
     prepare?: () => Promise<void>;
-  }): Promise<void> {
-    await this.execute(["send", input.agentId, input.messageId], input.request, {
+    retrySafe?: (error: unknown) => boolean;
+  }): Promise<{ replayed: boolean }> {
+    const result = await this.execute(["send", input.agentId, input.messageId], input.request, {
       agentId: input.agentId,
       // A provider call can take effect before the daemon records its outcome.
       // Never repeat that call merely because a process died in this window.
       recover: async () => false,
       run: input.send,
       prepare: input.prepare,
+      retrySafe: async (_agentId, error) => input.retrySafe?.(error) === true,
     });
+    return { replayed: result.replayed };
+  }
+
+  async inspectSend(agentId: string, messageId: string): Promise<AgentMessageReceiptState> {
+    const key = digest(["send", agentId, messageId]);
+    return (await readReceipt(path.join(this.directory, `${key}.json`)))?.state ?? "missing";
   }
 
   private execute(
@@ -56,9 +70,9 @@ export class AgentRequests {
       recover: (agentId: string) => Promise<boolean>;
       run: (agentId: string) => Promise<void>;
       prepare?: (() => Promise<void>) | undefined;
-      retrySafe?: (agentId: string) => Promise<boolean>;
+      retrySafe?: (agentId: string, error: unknown) => Promise<boolean>;
     },
-  ): Promise<string> {
+  ): Promise<ExecutionResult> {
     const key = digest(identity);
     const fingerprint = digest(request);
     const previous = this.pending.get(key);
@@ -83,19 +97,19 @@ export class AgentRequests {
       recover: (agentId: string) => Promise<boolean>;
       run: (agentId: string) => Promise<void>;
       prepare?: (() => Promise<void>) | undefined;
-      retrySafe?: (agentId: string) => Promise<boolean>;
+      retrySafe?: (agentId: string, error: unknown) => Promise<boolean>;
     },
-  ): Promise<string> {
+  ): Promise<ExecutionResult> {
     const file = path.join(this.directory, `${key}.json`);
     const existing = await readReceipt(file);
     if (existing) {
       if (existing.fingerprint !== fingerprint) throw new Error("agent_request_key_conflict");
-      if (existing.state === "completed") return existing.agentId;
+      if (existing.state === "completed") return { agentId: existing.agentId, replayed: true };
       if (!(await operation.recover(existing.agentId))) {
         throw new Error("agent_request_outcome_unknown");
       }
       await writeJsonFileAtomic(file, { ...existing, state: "completed" });
-      return existing.agentId;
+      return { agentId: existing.agentId, replayed: true };
     }
     await operation.prepare?.();
     const receipt: Receipt = { fingerprint, agentId: operation.agentId, state: "pending" };
@@ -105,11 +119,11 @@ export class AgentRequests {
     } catch (error) {
       // Keyed creation has no initial prompt. Once its normal cleanup finished,
       // absence of an agent confirms that retrying cannot duplicate one.
-      if (await operation.retrySafe?.(receipt.agentId)) await rm(file, { force: true });
+      if (await operation.retrySafe?.(receipt.agentId, error)) await rm(file, { force: true });
       throw error;
     }
     await writeJsonFileAtomic(file, { ...receipt, state: "completed" });
-    return receipt.agentId;
+    return { agentId: receipt.agentId, replayed: false };
   }
 }
 

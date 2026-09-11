@@ -22,6 +22,7 @@ import {
   DaemonUpdateResponseSchema,
   SessionInboundMessageSchema,
   type ActiveTurnBehavior,
+  type AgentMessageSendGuard,
   type ServerInfoStatusPayload,
 } from "@getpaseo/protocol/messages";
 import { validateWSOutboundMessage } from "@getpaseo/protocol/validation/ws-outbound";
@@ -354,8 +355,33 @@ export interface DaemonClientTrace {
 export interface SendMessageOptions {
   messageId?: string;
   activeTurnBehavior?: ActiveTurnBehavior;
+  guard?: AgentMessageSendGuard;
   images?: Array<{ data: string; mimeType: string }>;
   attachments?: SendAgentMessageRequest["attachments"];
+}
+
+export interface GuardedSendAgentMessageResult {
+  agentId: string;
+  messageId: string;
+  accepted: boolean;
+  replayed: boolean;
+  guard: {
+    matched: boolean;
+    reason: "agent_id_mismatch" | "updated_at_mismatch" | "not_idle" | "archived" | null;
+  };
+  error: string | null;
+}
+
+export interface AgentMessageReceiptOptions {
+  id: string;
+  messageId: string;
+  requestId?: string;
+}
+
+export interface AgentMessageReceiptResult {
+  agentId: string;
+  messageId: string;
+  state: "missing" | "pending" | "completed";
 }
 
 export interface AgentAttentionRequiredNotification {
@@ -541,6 +567,18 @@ type SchedulePausePayload = Extract<
 type ScheduleResumePayload = Extract<
   SessionOutboundMessage,
   { type: "schedule/resume/response" }
+>["payload"];
+type ScheduleStateTransitionPayload = Extract<
+  SessionOutboundMessage,
+  { type: "schedule.state.transition.response" }
+>["payload"];
+type ScheduleStateRestorePayload = Extract<
+  SessionOutboundMessage,
+  { type: "schedule.state.restore.response" }
+>["payload"];
+type SendAgentMessagePayload = Extract<
+  SessionOutboundMessage,
+  { type: "send_agent_message_response" }
 >["payload"];
 type ScheduleDeletePayload = Extract<
   SessionOutboundMessage,
@@ -764,6 +802,13 @@ export interface CreateScheduleOptions {
 export interface InspectScheduleOptions {
   id: string;
   requestId?: string;
+}
+export interface TransitionScheduleStateOptions extends InspectScheduleOptions {
+  operationId: string;
+  targetStatus: "active" | "paused";
+}
+export interface RestoreScheduleStateOptions extends InspectScheduleOptions {
+  operationId: string;
 }
 export interface UpdateScheduleNewAgentConfig {
   provider?: string;
@@ -3189,8 +3234,21 @@ export class DaemonClient {
   async sendAgentMessage(
     agentId: string,
     text: string,
+    options: SendMessageOptions & { guard: AgentMessageSendGuard },
+  ): Promise<GuardedSendAgentMessageResult>;
+  async sendAgentMessage(
+    agentId: string,
+    text: string,
     options?: SendMessageOptions,
-  ): Promise<void> {
+  ): Promise<void>;
+  async sendAgentMessage(
+    agentId: string,
+    text: string,
+    options?: SendMessageOptions,
+  ): Promise<void | GuardedSendAgentMessageResult> {
+    if (options?.guard) {
+      this.assertAgentMessageSendGuardSupported();
+    }
     const requestId = this.createRequestId();
     const messageId = options?.messageId ?? crypto.randomUUID();
     const message = SessionInboundMessageSchema.parse({
@@ -3200,6 +3258,7 @@ export class DaemonClient {
       text,
       ...(messageId ? { messageId } : {}),
       ...(options?.activeTurnBehavior ? { activeTurnBehavior: options.activeTurnBehavior } : {}),
+      ...(options?.guard ? { guard: options.guard } : {}),
       ...(options?.images ? { images: options.images } : {}),
       ...(options?.attachments ? { attachments: options.attachments } : {}),
     });
@@ -3217,13 +3276,83 @@ export class DaemonClient {
         return msg.payload;
       },
     });
-    if (!payload.accepted) {
-      throw new Error(payload.error ?? "sendAgentMessage rejected");
-    }
+    return this.parseSendAgentMessagePayload(payload, messageId, options?.guard !== undefined);
   }
 
-  async sendMessage(agentId: string, text: string, options?: SendMessageOptions): Promise<void> {
+  private parseSendAgentMessagePayload(
+    payload: SendAgentMessagePayload,
+    messageId: string,
+    guarded: boolean,
+  ): void | GuardedSendAgentMessageResult {
+    if (!guarded) {
+      if (!payload.accepted) {
+        throw new Error(payload.error ?? "sendAgentMessage rejected");
+      }
+      return;
+    }
+    if (!payload.accepted && !payload.guard) {
+      throw new Error(payload.error ?? "guarded sendAgentMessage rejected");
+    }
+    if (!payload.guard || payload.messageId !== messageId) {
+      throw new Error("Guarded agent message response is missing receipt metadata");
+    }
+    return {
+      agentId: payload.agentId,
+      messageId,
+      accepted: payload.accepted,
+      replayed: payload.replayed === true,
+      guard: payload.guard,
+      error: payload.error,
+    };
+  }
+
+  async sendMessage(
+    agentId: string,
+    text: string,
+    options: SendMessageOptions & { guard: AgentMessageSendGuard },
+  ): Promise<GuardedSendAgentMessageResult>;
+  async sendMessage(agentId: string, text: string, options?: SendMessageOptions): Promise<void>;
+  async sendMessage(
+    agentId: string,
+    text: string,
+    options?: SendMessageOptions,
+  ): Promise<void | GuardedSendAgentMessageResult> {
+    if (options?.guard) {
+      return this.sendAgentMessage(agentId, text, {
+        ...options,
+        guard: options.guard,
+      });
+    }
     await this.sendAgentMessage(agentId, text, options);
+  }
+
+  async getAgentMessageReceipt(
+    options: AgentMessageReceiptOptions,
+  ): Promise<AgentMessageReceiptResult> {
+    this.assertAgentMessageSendGuardSupported();
+    const payload = await this.sendCorrelatedSessionRequest({
+      requestId: options.requestId,
+      message: {
+        type: "agent.message.receipt.get.request",
+        agentId: options.id,
+        messageId: options.messageId,
+      },
+      responseType: "agent.message.receipt.get.response",
+    });
+    if (payload.error) {
+      throw new Error(payload.error);
+    }
+    return {
+      agentId: payload.agentId,
+      messageId: payload.messageId,
+      state: payload.state,
+    };
+  }
+
+  private assertAgentMessageSendGuardSupported(): void {
+    if (this.lastServerInfoMessage?.features?.agentMessageSendGuard !== true) {
+      throw new Error("This host does not support guarded agent messages; update Paseo");
+    }
   }
 
   async rewindAgent(
@@ -5669,6 +5798,43 @@ export class DaemonClient {
       },
       responseType: "schedule/resume/response",
     });
+  }
+
+  async scheduleStateTransition(
+    options: TransitionScheduleStateOptions,
+  ): Promise<ScheduleStateTransitionPayload> {
+    this.assertScheduleStateRestoreSupported();
+    return this.sendCorrelatedSessionRequest({
+      requestId: options.requestId,
+      message: {
+        type: "schedule.state.transition.request",
+        operationId: options.operationId,
+        scheduleId: options.id,
+        targetStatus: options.targetStatus,
+      },
+      responseType: "schedule.state.transition.response",
+    });
+  }
+
+  async scheduleStateRestore(
+    options: RestoreScheduleStateOptions,
+  ): Promise<ScheduleStateRestorePayload> {
+    this.assertScheduleStateRestoreSupported();
+    return this.sendCorrelatedSessionRequest({
+      requestId: options.requestId,
+      message: {
+        type: "schedule.state.restore.request",
+        operationId: options.operationId,
+        scheduleId: options.id,
+      },
+      responseType: "schedule.state.restore.response",
+    });
+  }
+
+  private assertScheduleStateRestoreSupported(): void {
+    if (this.lastServerInfoMessage?.features?.scheduleStateRestore !== true) {
+      throw new Error("This host does not support exact schedule state restoration; update Paseo");
+    }
   }
 
   async scheduleDelete(options: InspectScheduleOptions): Promise<ScheduleDeletePayload> {

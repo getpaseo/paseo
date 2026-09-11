@@ -65,6 +65,21 @@ export const ScheduleResumeRequestSchema = z.object({
   scheduleId: z.string(),
 });
 
+export const ScheduleStateTransitionRequestSchema = z.object({
+  type: z.literal("schedule.state.transition.request"),
+  requestId: z.string(),
+  operationId: z.string().trim().min(1),
+  scheduleId: z.string(),
+  targetStatus: z.enum(["active", "paused"]),
+});
+
+export const ScheduleStateRestoreRequestSchema = z.object({
+  type: z.literal("schedule.state.restore.request"),
+  requestId: z.string(),
+  operationId: z.string().trim().min(1),
+  scheduleId: z.string(),
+});
+
 export const ScheduleDeleteRequestSchema = z.object({
   type: z.literal("schedule/delete"),
   requestId: z.string(),
@@ -151,6 +166,24 @@ export const ScheduleResumeResponseSchema = z.object({
     schedule: ScheduleSummarySchema.nullable(),
     error: z.string().nullable(),
   }),
+});
+
+const ScheduleStateOperationResponsePayloadSchema = z.object({
+  requestId: z.string(),
+  operationId: z.string(),
+  schedule: ScheduleSummarySchema,
+  replayed: z.boolean(),
+  isCurrent: z.boolean(),
+});
+
+export const ScheduleStateTransitionResponseSchema = z.object({
+  type: z.literal("schedule.state.transition.response"),
+  payload: ScheduleStateOperationResponsePayloadSchema,
+});
+
+export const ScheduleStateRestoreResponseSchema = z.object({
+  type: z.literal("schedule.state.restore.response"),
+  payload: ScheduleStateOperationResponsePayloadSchema,
 });
 
 export const ScheduleDeleteResponseSchema = z.object({

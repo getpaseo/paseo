@@ -16,7 +16,7 @@ import { resolveCreateAgentTitles } from "../agent/create-agent-title.js";
 import { type BoundCreateAgentCommand, formatProviderModel } from "../agent/create-agent/create.js";
 import type { PersistedWorkspaceRecord } from "../workspace-registry.js";
 import type { CreatePaseoWorktreeWorkflowResult } from "../worktree-session.js";
-import { ScheduleStore } from "./store.js";
+import { ScheduleStore, type ScheduleStateOperationResult } from "./store.js";
 import { computeNextRunAt, validateScheduleCadence } from "./cron.js";
 import type {
   CreateScheduleInput,
@@ -432,6 +432,49 @@ export class ScheduleService {
       };
     });
     return requireSchedule(resumed, id);
+  }
+
+  async transitionState(input: {
+    operationId: string;
+    scheduleId: string;
+    targetStatus: "active" | "paused";
+  }): Promise<ScheduleStateOperationResult> {
+    return this.store.transitionState(input, (schedule) => {
+      if (schedule.status === "completed") {
+        throw new Error(`Schedule ${input.scheduleId} is already completed`);
+      }
+      if (schedule.status === input.targetStatus) {
+        return schedule;
+      }
+      const now = this.now();
+      if (input.targetStatus === "paused") {
+        return {
+          ...schedule,
+          status: "paused",
+          nextRunAt: null,
+          pausedAt: now.toISOString(),
+          updatedAt: now.toISOString(),
+        };
+      }
+      return {
+        ...schedule,
+        status: "active",
+        pausedAt: null,
+        nextRunAt: computeNextRunAt(schedule.cadence, now).toISOString(),
+        updatedAt: now.toISOString(),
+      };
+    });
+  }
+
+  async restoreState(input: {
+    operationId: string;
+    scheduleId: string;
+  }): Promise<ScheduleStateOperationResult> {
+    return this.store.restoreState(input, (schedule, state) => ({
+      ...schedule,
+      ...state,
+      updatedAt: this.now().toISOString(),
+    }));
   }
 
   async update(input: UpdateScheduleInput): Promise<StoredSchedule> {

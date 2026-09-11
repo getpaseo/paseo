@@ -18,6 +18,7 @@ import {
 import type { Logger } from "pino";
 import type { ProviderOptions, ToolPolicy } from "@getpaseo/protocol/agent-types";
 import type { ProviderPaseoToolsPolicy } from "@getpaseo/protocol/provider-config";
+import type { AgentMessageSendGuard } from "@getpaseo/protocol/messages";
 import { z } from "zod";
 import type { TerminalManager } from "../../terminal/terminal-manager.js";
 
@@ -121,6 +122,25 @@ export class AgentManagerShuttingDownError extends Error {
     super("Agent manager is shutting down");
     this.name = "AgentManagerShuttingDownError";
   }
+}
+
+export type AgentMessageSendGuardFailureReason =
+  | "agent_id_mismatch"
+  | "updated_at_mismatch"
+  | "not_idle"
+  | "archived";
+
+export class AgentMessageSendGuardRejectedError extends Error {
+  constructor(readonly reason: AgentMessageSendGuardFailureReason) {
+    super(`agent_message_send_guard_rejected:${reason}`);
+    this.name = "AgentMessageSendGuardRejectedError";
+  }
+}
+
+export function isAgentMessageSendGuardRejectedError(
+  error: unknown,
+): error is AgentMessageSendGuardRejectedError {
+  return error instanceof AgentMessageSendGuardRejectedError;
 }
 
 export class AgentRunCancellationError extends Error {
@@ -2233,6 +2253,36 @@ export class AgentManager {
       }
     });
     return result;
+  }
+
+  async runGuardedAgentMessageSend<T>(
+    agentId: string,
+    guard: AgentMessageSendGuard,
+    send: () => Promise<T>,
+  ): Promise<T> {
+    return this.runLifecycleMutation(agentId, async () => {
+      if (agentId !== guard.expectedAgentId) {
+        throw new AgentMessageSendGuardRejectedError("agent_id_mismatch");
+      }
+
+      const record = await this.requireRegistry().get(agentId);
+      if (!record) {
+        throw new AgentMessageSendGuardRejectedError("agent_id_mismatch");
+      }
+      if (record.archivedAt) {
+        throw new AgentMessageSendGuardRejectedError("archived");
+      }
+
+      const agent = this.agents.get(agentId);
+      if (!agent || agent.lifecycle !== "idle" || this.hasInFlightRun(agentId)) {
+        throw new AgentMessageSendGuardRejectedError("not_idle");
+      }
+      if (agent.updatedAt.toISOString() !== guard.expectedUpdatedAt) {
+        throw new AgentMessageSendGuardRejectedError("updated_at_mismatch");
+      }
+
+      return send();
+    });
   }
 
   async runAgent(

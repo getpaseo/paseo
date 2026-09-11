@@ -97,4 +97,50 @@ describe("ScheduleSession", () => {
     expect(received?.target).toEqual({ type: "agent", agentId: "agent-9" });
     expect(findByType(emitted, "schedule/create/response")?.payload.error).toBeNull();
   });
+
+  it("returns exact state operation receipt metadata", async () => {
+    const stored = {
+      id: "s1",
+      name: null,
+      prompt: "p",
+      cadence: { type: "every" as const, everyMs: 1000 },
+      target: { type: "agent" as const, agentId: "a" },
+      status: "paused" as const,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:01.000Z",
+      nextRunAt: null,
+      lastRunAt: null,
+      pausedAt: "2026-01-01T00:00:01.000Z",
+      expiresAt: null,
+      maxRuns: null,
+      runs: [],
+    };
+    let received: Parameters<ScheduleService["transitionState"]>[0] | undefined;
+    const { session, emitted } = makeSession({
+      transitionState: async (input: Parameters<ScheduleService["transitionState"]>[0]) => {
+        received = input;
+        return { schedule: stored, replayed: true, isCurrent: false };
+      },
+    });
+
+    await session.handleScheduleStateTransitionRequest({
+      type: "schedule.state.transition.request",
+      requestId: "request-1",
+      operationId: "operation-1",
+      scheduleId: "s1",
+      targetStatus: "paused",
+    });
+
+    expect(received).toEqual({
+      operationId: "operation-1",
+      scheduleId: "s1",
+      targetStatus: "paused",
+    });
+    expect(findByType(emitted, "schedule.state.transition.response")?.payload).toMatchObject({
+      operationId: "operation-1",
+      replayed: true,
+      isCurrent: false,
+      schedule: { id: "s1", status: "paused" },
+    });
+  });
 });

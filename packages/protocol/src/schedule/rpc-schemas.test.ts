@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { ScheduleCreateRequestSchema, ScheduleUpdateRequestSchema } from "./rpc-schemas.js";
+import {
+  ScheduleCreateRequestSchema,
+  ScheduleStateRestoreRequestSchema,
+  ScheduleStateTransitionRequestSchema,
+  ScheduleUpdateRequestSchema,
+} from "./rpc-schemas.js";
 
 describe("schedule RPC schemas", () => {
   it("round-trips new-agent run options on create requests", () => {
@@ -59,6 +64,37 @@ describe("schedule RPC schemas", () => {
         archiveOnFinish: false,
         isolation: "worktree",
       },
+    });
+  });
+
+  it("keeps exact state operation ownership fields on the wire", () => {
+    expect(
+      ScheduleStateTransitionRequestSchema.parse({
+        type: "schedule.state.transition.request",
+        requestId: "request-1",
+        operationId: "operation-1",
+        scheduleId: "schedule-1",
+        targetStatus: "paused",
+      }),
+    ).toEqual({
+      type: "schedule.state.transition.request",
+      requestId: "request-1",
+      operationId: "operation-1",
+      scheduleId: "schedule-1",
+      targetStatus: "paused",
+    });
+    expect(
+      ScheduleStateRestoreRequestSchema.parse({
+        type: "schedule.state.restore.request",
+        requestId: "request-2",
+        operationId: "operation-1",
+        scheduleId: "schedule-1",
+      }),
+    ).toEqual({
+      type: "schedule.state.restore.request",
+      requestId: "request-2",
+      operationId: "operation-1",
+      scheduleId: "schedule-1",
     });
   });
 });

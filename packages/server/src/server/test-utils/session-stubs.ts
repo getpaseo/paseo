@@ -285,7 +285,13 @@ export function createAgentRequestsStub(): SessionOptions["agentRequests"] {
       await input.create(agentId);
       return agentId;
     },
-    send: (input) => input.send(),
+    async send(input) {
+      await input.send();
+      return { replayed: false };
+    },
+    async inspectSend() {
+      return "missing";
+    },
   };
 }
 

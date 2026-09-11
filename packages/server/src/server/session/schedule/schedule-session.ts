@@ -44,6 +44,8 @@ export class ScheduleSession {
           | "schedule/logs"
           | "schedule/pause"
           | "schedule/resume"
+          | "schedule.state.transition.request"
+          | "schedule.state.restore.request"
           | "schedule/delete"
           | "schedule/run-once"
           | "schedule/update";
@@ -177,6 +179,53 @@ export class ScheduleSession {
           requestId: request.requestId,
           schedule: this.toScheduleSummary(schedule),
           error: null,
+        },
+      });
+    } catch (error) {
+      this.emitScheduleRpcError(request, error);
+    }
+  }
+
+  async handleScheduleStateTransitionRequest(
+    request: Extract<SessionInboundMessage, { type: "schedule.state.transition.request" }>,
+  ): Promise<void> {
+    try {
+      const result = await this.scheduleService.transitionState({
+        operationId: request.operationId,
+        scheduleId: request.scheduleId,
+        targetStatus: request.targetStatus,
+      });
+      this.host.emit({
+        type: "schedule.state.transition.response",
+        payload: {
+          requestId: request.requestId,
+          operationId: request.operationId,
+          schedule: this.toScheduleSummary(result.schedule),
+          replayed: result.replayed,
+          isCurrent: result.isCurrent,
+        },
+      });
+    } catch (error) {
+      this.emitScheduleRpcError(request, error);
+    }
+  }
+
+  async handleScheduleStateRestoreRequest(
+    request: Extract<SessionInboundMessage, { type: "schedule.state.restore.request" }>,
+  ): Promise<void> {
+    try {
+      const result = await this.scheduleService.restoreState({
+        operationId: request.operationId,
+        scheduleId: request.scheduleId,
+      });
+      this.host.emit({
+        type: "schedule.state.restore.response",
+        payload: {
+          requestId: request.requestId,
+          operationId: request.operationId,
+          schedule: this.toScheduleSummary(result.schedule),
+          replayed: result.replayed,
+          isCurrent: result.isCurrent,
         },
       });
     } catch (error) {

@@ -52,8 +52,11 @@ $PASEO_HOME/
 ├── agents/
 │   └── {sanitized-cwd}/
 │       └── {agentId}.json               # One file per agent
+├── agent-requests/
+│   └── {sha256(request identity)}.json   # Agent create/send receipts
 ├── schedules/
-│   └── {scheduleId}.json                # One file per schedule
+│   ├── {scheduleId}.json                # One file per schedule
+│   └── operations/{sha256(operationId)}.json # Exact state transition receipts
 ├── projects/
 │   ├── projects.json                    # Project registry
 │   ├── workspaces.json                  # Workspace registry
@@ -163,6 +166,65 @@ Each agent is stored as a separate JSON file, grouped by project directory.
 | `icon`        | `string?`             |
 | `value`       | `string \| null`      |
 | `options`     | `AgentSelectOption[]` |
+
+---
+
+## Agent message delivery receipts
+
+`sendAgentMessage` accepts a stable `messageId`. The daemon stores a receipt under
+`$PASEO_HOME/agent-requests/`, keyed by the exact agent id and message id. A completed receipt makes
+same-request retries return `replayed: true` without calling the provider again. Reusing that key
+with different request bytes is rejected. If the daemon exits after provider dispatch but before
+the completed receipt write, the receipt remains `pending`; retries return
+`agent_request_outcome_unknown` instead of risking a duplicate provider call.
+
+Use `getAgentMessageReceipt` to read `missing`, `pending`, or `completed`. This is historical delivery
+state, not the agent's current status.
+
+The `agentMessageSendGuard` feature adds a guarded `sendAgentMessage` option. It compares only
+daemon-owned facts immediately before dispatch: the exact agent id, `updatedAt`, idle status, and a
+null `archivedAt`. A mismatch returns `accepted: false` without unarchiving, replacing a running
+turn, or retaining a send receipt. The guard is a precondition, not additional authority; guarded
+sends and receipt reads use the same permission path as ordinary agent messages.
+External registration or generation claims are not guard inputs and must be validated by their
+owning system.
+
+Read the target with `fetchAgent` and pass its full id and daemon-returned `updatedAt`:
+
+```typescript
+await client.sendAgentMessage(agent.id, text, {
+  messageId,
+  guard: {
+    expectedAgentId: agent.id,
+    expectedUpdatedAt: agent.updatedAt,
+    expectedStatus: "idle",
+    expectedArchivedAt: null,
+  },
+});
+```
+
+The existing `send_agent_message_request` carries the optional `guard`. Guarded SDK calls return
+`agentId`, `messageId`, `accepted`, `replayed`, `guard: { matched, reason }`, and `error`.
+Precondition failures return `accepted: false` with `agent_id_mismatch`, `updated_at_mismatch`,
+`not_idle`, or `archived`. Other delivery failures reject the SDK promise. A completed retry returns
+the historical acceptance with `replayed: true`; it does not recheck the current guard. Keep the
+original message bytes and guard when retrying the same id.
+
+`getAgentMessageReceipt({ id, messageId })` uses `agent.message.receipt.get.request` and
+`agent.message.receipt.get.response`. Both SDK operations require the daemon's
+`features.agentMessageSendGuard` flag. Receipt lookup returns `agentId`, `messageId`, and `state`;
+`pending` is an unknown outcome, not permission to resend under another id.
+
+At implementation commit `57d99793a81b2dd2859ced9996dd45d45decb7f8`, the isolated daemon test
+`packages/server/src/server/agent-message-send-guard.e2e.test.ts` verified that completed retries
+before and after daemon reconstruction caused one provider start in total. Stale timestamps,
+prefix or missing ids, running agents, and archived agents were rejected without another start.
+The receipt unit tests also covered concurrent requests and pending-outcome rejection after journal
+reconstruction. These checks do not exercise abrupt process termination.
+
+These receipts cover one daemon process and process-exit/retry recovery. Atomic JSON replacement
+does not fsync the file or parent directory, so host power-loss durability and write ordering are not
+guaranteed.
 
 ---
 
@@ -395,22 +457,28 @@ Paseo uses these paths under the configured OpenAI base URL:
 
 One file per schedule. ID is 8 hex characters.
 
-| Field       | Type                                  | Description                      |
-| ----------- | ------------------------------------- | -------------------------------- |
-| `id`        | `string`                              | 8-char hex ID                    |
-| `name`      | `string?`                             | Human-readable name              |
-| `prompt`    | `string`                              | The prompt to send               |
-| `cadence`   | `ScheduleCadence`                     | Timing (see below)               |
-| `target`    | `ScheduleTarget`                      | What to run (see below)          |
-| `status`    | `"active" \| "paused" \| "completed"` | Current state                    |
-| `createdAt` | `string` (ISO 8601)                   |                                  |
-| `updatedAt` | `string` (ISO 8601)                   |                                  |
-| `nextRunAt` | `string?` (ISO 8601)                  | Next scheduled execution         |
-| `lastRunAt` | `string?` (ISO 8601)                  | Last execution time              |
-| `pausedAt`  | `string?` (ISO 8601)                  | When paused                      |
-| `expiresAt` | `string?` (ISO 8601)                  | Auto-expire time                 |
-| `maxRuns`   | `number?`                             | Max executions before completing |
-| `runs`      | `ScheduleRun[]`                       | Execution history                |
+| Field              | Type                                  | Description                             |
+| ------------------ | ------------------------------------- | --------------------------------------- |
+| `id`               | `string`                              | 8-char hex ID                           |
+| `name`             | `string?`                             | Human-readable name                     |
+| `prompt`           | `string`                              | The prompt to send                      |
+| `cadence`          | `ScheduleCadence`                     | Timing (see below)                      |
+| `target`           | `ScheduleTarget`                      | What to run (see below)                 |
+| `status`           | `"active" \| "paused" \| "completed"` | Current state                           |
+| `createdAt`        | `string` (ISO 8601)                   |                                         |
+| `updatedAt`        | `string` (ISO 8601)                   |                                         |
+| `nextRunAt`        | `string?` (ISO 8601)                  | Next scheduled execution                |
+| `lastRunAt`        | `string?` (ISO 8601)                  | Last execution time                     |
+| `pausedAt`         | `string?` (ISO 8601)                  | When paused                             |
+| `expiresAt`        | `string?` (ISO 8601)                  | Auto-expire time                        |
+| `maxRuns`          | `number?`                             | Max executions before completing        |
+| `runs`             | `ScheduleRun[]`                       | Execution history                       |
+| `_mutationVersion` | `{ generation, sequence }`            | Internal managed-write ownership marker |
+
+Older schedule files acquire a deterministic generation when read and persist it on their next
+managed write. Every later write advances the sequence. Exact state transition receipts live under
+`schedules/operations/`; see [Exact schedule state restore](schedule-state-restore.md) for their
+ownership and recovery contract.
 
 ### Nested: ScheduleCadence (discriminated union on `type`)
 

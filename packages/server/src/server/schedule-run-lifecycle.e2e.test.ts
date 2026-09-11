@@ -198,6 +198,56 @@ async function archivedAgent(agentId: string) {
   return entry.agent;
 }
 
+test("exact schedule state restore works through an isolated daemon", async () => {
+  const schedule = await createNewAgentSchedule({
+    prompt: "Keep the deadline.",
+    cadence: { type: "every", everyMs: 60_000 },
+    target: {
+      type: "new-agent",
+      config: {
+        ...getFullAccessConfig("codex"),
+        cwd: makeTempDir("schedule-state-restore-"),
+      },
+    },
+    runOnCreate: false,
+  });
+  const originalNextRunAt = schedule.nextRunAt;
+
+  const transitioned = await ctx.client.scheduleStateTransition({
+    id: schedule.id,
+    operationId: "e2e-pause",
+    targetStatus: "paused",
+  });
+  expect(transitioned).toMatchObject({
+    replayed: false,
+    isCurrent: true,
+    schedule: { status: "paused", nextRunAt: null },
+  });
+
+  const restored = await ctx.client.scheduleStateRestore({
+    id: schedule.id,
+    operationId: "e2e-pause",
+  });
+  expect(restored).toMatchObject({
+    replayed: false,
+    isCurrent: true,
+    schedule: { status: "active", pausedAt: null, nextRunAt: originalNextRunAt },
+  });
+  await expect(
+    ctx.client.scheduleStateRestore({ id: schedule.id, operationId: "e2e-pause" }),
+  ).resolves.toMatchObject({ replayed: true, isCurrent: true });
+
+  await ctx.client.scheduleStateTransition({
+    id: schedule.id,
+    operationId: "e2e-conflict",
+    targetStatus: "paused",
+  });
+  await updateSchedule({ id: schedule.id, prompt: "Changed elsewhere." });
+  await expect(
+    ctx.client.scheduleStateRestore({ id: schedule.id, operationId: "e2e-conflict" }),
+  ).rejects.toThrow("changed after operation");
+});
+
 async function activeAgent(agentId: string) {
   const agent = await ctx.client.fetchAgent({ agentId });
   if (!agent) {

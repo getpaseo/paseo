@@ -77,11 +77,30 @@ test("message retries survive reconstruction without submitting twice", async ()
       deliveries++;
     },
   };
-  await Promise.all([requests.send(input), requests.send(input)]);
-  await new AgentRequests(directory).send(input);
+  const concurrent = await Promise.all([requests.send(input), requests.send(input)]);
+  expect(concurrent.map((result) => result.replayed)).toEqual([false, true]);
+  await expect(new AgentRequests(directory).send(input)).resolves.toEqual({ replayed: true });
+  await expect(requests.inspectSend("agent", "arrival")).resolves.toBe("completed");
   expect(deliveries).toBe(1);
   await requests.send({ ...input, agentId: "another" });
   expect(deliveries).toBe(2);
+});
+
+test("a known no-effect rejection removes the pending send receipt", async () => {
+  const { requests } = await fixture();
+  const rejection = new Error("guard did not match");
+  const input = {
+    agentId: "agent",
+    messageId: "guarded-arrival",
+    request: { text: "hello" },
+    retrySafe: (error: unknown) => error === rejection,
+    send: async () => {
+      throw rejection;
+    },
+  };
+
+  await expect(requests.send(input)).rejects.toBe(rejection);
+  await expect(requests.inspectSend("agent", "guarded-arrival")).resolves.toBe("missing");
 });
 
 test("ambiguous provider delivery is never blindly replayed after restart", async () => {
@@ -100,6 +119,7 @@ test("ambiguous provider delivery is never blindly replayed after restart", asyn
   await expect(new AgentRequests(directory).send(input)).rejects.toThrow(
     "agent_request_outcome_unknown",
   );
+  await expect(requests.inspectSend("agent", "arrival")).resolves.toBe("pending");
   expect(deliveries).toBe(1);
 });
 

@@ -388,6 +388,99 @@ describe("ScheduleService", () => {
     expect(resumed.nextRunAt).toBe("2026-01-01T00:04:00.000Z");
   });
 
+  test("state operations restore exact active and paused timestamps and reject completed schedules", async () => {
+    const service = createScheduleService({
+      paseoHome: tempDir,
+      logger: createTestLogger(),
+      agentManager: new AgentManager({ logger: createTestLogger() }),
+      agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
+      now: () => now,
+      runner: async () => ({ agentId: null, output: "ok" }),
+    });
+
+    const active = await service.create({
+      prompt: "active",
+      cadence: { type: "every", everyMs: 60_000 },
+      target: { type: "new-agent", config: { provider: "claude", cwd: tempDir } },
+      runOnCreate: false,
+    });
+    expect(active.nextRunAt).toBe("2026-01-01T00:01:00.000Z");
+    now = new Date("2026-01-01T00:00:20.000Z");
+    await service.transitionState({
+      operationId: "active-to-paused",
+      scheduleId: active.id,
+      targetStatus: "paused",
+    });
+    now = new Date("2026-01-01T00:00:30.000Z");
+    const activeRestored = await service.restoreState({
+      operationId: "active-to-paused",
+      scheduleId: active.id,
+    });
+    expect(activeRestored.schedule).toMatchObject({
+      status: "active",
+      pausedAt: null,
+      nextRunAt: "2026-01-01T00:01:00.000Z",
+    });
+
+    const paused = await service.create({
+      prompt: "paused",
+      cadence: { type: "every", everyMs: 60_000 },
+      target: { type: "new-agent", config: { provider: "claude", cwd: tempDir } },
+      runOnCreate: false,
+    });
+    now = new Date("2026-01-01T00:00:40.000Z");
+    const originallyPaused = await service.pause(paused.id);
+    now = new Date("2026-01-01T00:02:00.000Z");
+    await service.transitionState({
+      operationId: "paused-to-active",
+      scheduleId: paused.id,
+      targetStatus: "active",
+    });
+    now = new Date("2026-01-01T00:02:10.000Z");
+    const pausedRestored = await service.restoreState({
+      operationId: "paused-to-active",
+      scheduleId: paused.id,
+    });
+    expect(pausedRestored.schedule).toMatchObject({
+      status: "paused",
+      pausedAt: originallyPaused.pausedAt,
+      nextRunAt: null,
+    });
+    const alreadyPaused = await service.transitionState({
+      operationId: "already-paused",
+      scheduleId: paused.id,
+      targetStatus: "paused",
+    });
+    expect(alreadyPaused.schedule).toMatchObject({
+      status: "paused",
+      pausedAt: originallyPaused.pausedAt,
+      nextRunAt: null,
+    });
+
+    const alreadyActive = await service.transitionState({
+      operationId: "already-active",
+      scheduleId: active.id,
+      targetStatus: "active",
+    });
+    expect(alreadyActive.schedule.nextRunAt).toBe("2026-01-01T00:01:00.000Z");
+
+    const completed = await service.create({
+      prompt: "will complete",
+      cadence: { type: "every", everyMs: 60_000 },
+      target: { type: "new-agent", config: { provider: "claude", cwd: tempDir } },
+      maxRuns: 1,
+    });
+    await service.tick();
+    await expect(
+      service.transitionState({
+        operationId: "completed-rejected",
+        scheduleId: completed.id,
+        targetStatus: "paused",
+      }),
+    ).rejects.toThrow("already completed");
+  });
+
   test("completes schedules when max runs is reached", async () => {
     const service = createScheduleService({
       paseoHome: tempDir,

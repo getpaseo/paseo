@@ -1,7 +1,9 @@
 import {
+  AgentMessageReceiptGetRequestSchema,
   AgentStreamEventPayloadSchema,
   AgentTimelineEntryPayloadSchema,
   SendAgentMessageRequestSchema,
+  SendAgentMessageResponseMessageSchema,
 } from "./messages";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
@@ -26,6 +28,36 @@ describe("send_agent_message_request active-turn behavior", () => {
         text: "Keep the old behavior",
       }).activeTurnBehavior,
     ).toBeUndefined();
+  });
+
+  it("accepts an exact daemon-owned state guard and a receipt lookup", () => {
+    const guarded = SendAgentMessageRequestSchema.parse({
+      type: "send_agent_message_request",
+      requestId: "request-guarded",
+      agentId: "agent-1",
+      text: "Run only from the observed idle seat",
+      messageId: "message-1",
+      guard: {
+        expectedAgentId: "agent-1",
+        expectedUpdatedAt: "2026-09-11T00:00:00.000Z",
+        expectedStatus: "idle",
+        expectedArchivedAt: null,
+      },
+    });
+    expect(guarded.guard).toEqual({
+      expectedAgentId: "agent-1",
+      expectedUpdatedAt: "2026-09-11T00:00:00.000Z",
+      expectedStatus: "idle",
+      expectedArchivedAt: null,
+    });
+    expect(
+      AgentMessageReceiptGetRequestSchema.parse({
+        type: "agent.message.receipt.get.request",
+        requestId: "request-receipt",
+        agentId: "agent-1",
+        messageId: "message-1",
+      }),
+    ).toMatchObject({ agentId: "agent-1", messageId: "message-1" });
   });
 });
 
@@ -83,5 +115,61 @@ describe("legacy daemon send request schema compatibility", () => {
       text: "replace the turn",
     });
     expect("activeTurnBehavior" in legacyRequest).toBe(false);
+  });
+
+  it("lets a legacy daemon ignore the optional send guard", () => {
+    const newClientRequest = SendAgentMessageRequestSchema.parse({
+      type: "send_agent_message_request",
+      requestId: "request-guarded-legacy",
+      agentId: "agent-1",
+      text: "send once",
+      guard: {
+        expectedAgentId: "agent-1",
+        expectedUpdatedAt: "2026-09-11T00:00:00.000Z",
+        expectedStatus: "idle",
+        expectedArchivedAt: null,
+      },
+    });
+
+    expect(LegacySendAgentMessageRequestSchema.parse(newClientRequest)).toEqual({
+      type: "send_agent_message_request",
+      requestId: "request-guarded-legacy",
+      agentId: "agent-1",
+      text: "send once",
+    });
+  });
+
+  it("lets a legacy client ignore guarded-send receipt metadata", () => {
+    const LegacySendAgentMessageResponseSchema = z.object({
+      type: z.literal("send_agent_message_response"),
+      payload: z.object({
+        requestId: z.string(),
+        agentId: z.string(),
+        accepted: z.boolean(),
+        error: z.string().nullable(),
+      }),
+    });
+    const response = SendAgentMessageResponseMessageSchema.parse({
+      type: "send_agent_message_response",
+      payload: {
+        requestId: "request-guarded",
+        agentId: "agent-1",
+        messageId: "message-1",
+        accepted: true,
+        replayed: false,
+        guard: { matched: true, reason: null },
+        error: null,
+      },
+    });
+
+    expect(LegacySendAgentMessageResponseSchema.parse(response)).toEqual({
+      type: "send_agent_message_response",
+      payload: {
+        requestId: "request-guarded",
+        agentId: "agent-1",
+        accepted: true,
+        error: null,
+      },
+    });
   });
 });
