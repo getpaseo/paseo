@@ -493,6 +493,32 @@ function parseKeyValueFlags(
 interface RunWorkspace {
   id?: string;
   cwd: string;
+  createdForRun: boolean;
+}
+
+type CreateRunAgentInput = Parameters<ConnectedDaemonClient["createAgent"]>[0];
+
+async function createAgentInRunWorkspace(
+  client: ConnectedDaemonClient,
+  workspace: RunWorkspace,
+  input: CreateRunAgentInput,
+): Promise<AgentSnapshotPayload> {
+  try {
+    return await client.createAgent(input);
+  } catch (error) {
+    if (workspace.createdForRun && workspace.id) {
+      try {
+        const archived = await client.archiveWorkspace(workspace.id);
+        if (archived.error) {
+          console.error(`Warning: failed to clean up workspace ${workspace.id}: ${archived.error}`);
+        }
+      } catch (cleanupError) {
+        const message = cleanupError instanceof Error ? cleanupError.message : String(cleanupError);
+        console.error(`Warning: failed to clean up workspace ${workspace.id}: ${message}`);
+      }
+    }
+    throw error;
+  }
 }
 
 export interface RunWorkspaceLookupClient {
@@ -512,7 +538,7 @@ export async function resolveExistingRunWorkspace(
   });
   const workspace = result.entries.find((entry) => entry.id === workspaceId);
   if (workspace) {
-    return { id: workspace.id, cwd: workspace.workspaceDirectory };
+    return { id: workspace.id, cwd: workspace.workspaceDirectory, createdForRun: false };
   }
 
   throw {
@@ -540,7 +566,7 @@ async function resolveRunWorkspace(
   }
 
   if (!newWorkspace && resolveRunCallerAgentId()) {
-    return { cwd };
+    return { cwd, createdForRun: false };
   }
 
   const ambientWorkspaceId = newWorkspace ? undefined : process.env.PASEO_WORKSPACE_ID?.trim();
@@ -568,7 +594,11 @@ async function resolveRunWorkspace(
   console.error(
     "Tip: pass --workspace <id> (or set PASEO_WORKSPACE_ID) to run in an existing workspace.",
   );
-  return { id: result.workspace.id, cwd: result.workspace.workspaceDirectory ?? cwd };
+  return {
+    id: result.workspace.id,
+    cwd: result.workspace.workspaceDirectory ?? cwd,
+    createdForRun: true,
+  };
 }
 
 export async function runRunCommand(
@@ -616,7 +646,7 @@ export async function runRunCommand(
 
       const callStructuredTurn = async (structuredPrompt: string): Promise<string> => {
         if (!structuredAgent) {
-          structuredAgent = await client.createAgent({
+          structuredAgent = await createAgentInRunWorkspace(client, workspace, {
             provider: resolvedProviderModel.provider,
             cwd: runCwd,
             workspaceId,
@@ -687,7 +717,7 @@ export async function runRunCommand(
     }
 
     // Create the agent
-    const agent = await client.createAgent({
+    const agent = await createAgentInRunWorkspace(client, workspace, {
       provider: resolvedProviderModel.provider,
       cwd: runCwd,
       workspaceId,
