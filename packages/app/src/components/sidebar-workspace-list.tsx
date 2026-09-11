@@ -1893,6 +1893,8 @@ const MemoProjectBlock = memo(ProjectBlock, areProjectBlockPropsEqual);
 
 interface SidebarChatsSectionProps {
   workspaceEntriesByKey: ReadonlyMap<string, SidebarWorkspaceEntry>;
+  pinnedWorkspaceKeys?: ReadonlySet<string>;
+  supportsChatByServerId?: ReadonlyMap<string, boolean>;
   onWorkspacePress?: () => void;
   activeWorkspaceSelection: ActiveWorkspaceSelection | null;
   creatingWorkspaceIds: ReadonlySet<string>;
@@ -1906,6 +1908,8 @@ interface SidebarChatsSectionProps {
 
 function SidebarChatsSection({
   workspaceEntriesByKey,
+  pinnedWorkspaceKeys,
+  supportsChatByServerId,
   onWorkspacePress,
   activeWorkspaceSelection,
   creatingWorkspaceIds,
@@ -1924,17 +1928,33 @@ function SidebarChatsSection({
   const chatEntries = useMemo(() => {
     return Array.from(workspaceEntriesByKey.values()).filter(
       (workspace) =>
-        workspace.workspaceKind === "chat" ||
-        workspace.projectName === "Chats" ||
-        workspace.projectViewKey === "__chats__",
+        !pinnedWorkspaceKeys?.has(workspace.workspaceKey) &&
+        (workspace.workspaceKind === "chat" ||
+          workspace.projectName === "Chats" ||
+          workspace.projectViewKey === "__chats__"),
     );
-  }, [workspaceEntriesByKey]);
+  }, [pinnedWorkspaceKeys, workspaceEntriesByKey]);
+
+  const anyHostSupportsChat = useMemo(() => {
+    if (!supportsChatByServerId || supportsChatByServerId.size === 0) return true;
+    for (const supports of supportsChatByServerId.values()) {
+      if (supports) return true;
+    }
+    return false;
+  }, [supportsChatByServerId]);
+
+  const targetServerId = activeSelection?.serverId ?? allHosts[0]?.serverId;
+  const targetHostSupportsChat = Boolean(
+    targetServerId &&
+    (supportsChatByServerId ? supportsChatByServerId.get(targetServerId) === true : true),
+  );
 
   const handleCreateChat = useCallback(async () => {
     if (isCreating) return;
-    const targetServerId = activeSelection?.serverId ?? allHosts[0]?.serverId;
-    if (!targetServerId) return;
-    const client = getHostRuntimeStore().getClient(targetServerId);
+    const targetId = activeSelection?.serverId ?? allHosts[0]?.serverId;
+    if (!targetId) return;
+    if (supportsChatByServerId && supportsChatByServerId.get(targetId) !== true) return;
+    const client = getHostRuntimeStore().getClient(targetId);
     if (!client) return;
     setIsCreating(true);
     try {
@@ -1943,7 +1963,7 @@ function SidebarChatsSection({
       });
       if (payload.workspace) {
         navigateToWorkspace({
-          serverId: targetServerId,
+          serverId: targetId,
           workspaceId: payload.workspace.id,
         });
       }
@@ -1952,7 +1972,7 @@ function SidebarChatsSection({
     } finally {
       setIsCreating(false);
     }
-  }, [activeSelection, allHosts, isCreating]);
+  }, [activeSelection, allHosts, isCreating, supportsChatByServerId]);
 
   const toggleCollapsed = useCallback(() => setCollapsed((prev) => !prev), []);
 
@@ -1973,6 +1993,27 @@ function SidebarChatsSection({
     [],
   );
 
+  const emptyChatRow = targetHostSupportsChat ? (
+    <Pressable
+      onPress={handleCreateChat}
+      disabled={isCreating}
+      style={emptyRowStyle}
+      testID="sidebar-chats-empty-start"
+      accessibilityRole="button"
+      accessibilityLabel="Start a chat"
+    >
+      <ThemedPlus size={12} uniProps={foregroundMutedColorMapping} />
+      <Text style={styles.chatsEmptyText}>No chats yet. Start a chat</Text>
+    </Pressable>
+  ) : (
+    <View style={styles.chatsEmptyRow}>
+      <Text style={styles.chatsEmptyText}>No chats yet</Text>
+    </View>
+  );
+  if (chatEntries.length === 0 && !anyHostSupportsChat) {
+    return null;
+  }
+
   return (
     <View style={styles.chatsSectionContainer} testID="sidebar-chats-section">
       <View style={styles.chatsSectionDivider} />
@@ -1991,61 +2032,51 @@ function SidebarChatsSection({
           )}
         </Pressable>
         <View style={styles.chatsSectionHeaderRight}>
-          <Tooltip delayDuration={300}>
-            <TooltipTrigger asChild>
-              <Pressable
-                onPress={handleCreateChat}
-                disabled={isCreating}
-                hitSlop={4}
-                style={newChatButtonStyle}
-                testID="sidebar-chats-new-button"
-                accessibilityRole="button"
-                accessibilityLabel="New chat"
-              >
-                <ThemedPlus size={14} uniProps={foregroundMutedColorMapping} />
-              </Pressable>
-            </TooltipTrigger>
-            <TooltipContent side="bottom" align="center" offset={8}>
-              <Text style={styles.projectActionTooltipText}>New chat</Text>
-            </TooltipContent>
-          </Tooltip>
+          {targetHostSupportsChat && (
+            <Tooltip delayDuration={300}>
+              <TooltipTrigger asChild>
+                <Pressable
+                  onPress={handleCreateChat}
+                  disabled={isCreating}
+                  hitSlop={4}
+                  style={newChatButtonStyle}
+                  testID="sidebar-chats-new-button"
+                  accessibilityRole="button"
+                  accessibilityLabel="New chat"
+                >
+                  <ThemedPlus size={14} uniProps={foregroundMutedColorMapping} />
+                </Pressable>
+              </TooltipTrigger>
+              <TooltipContent side="bottom" align="center" offset={8}>
+                <Text style={styles.projectActionTooltipText}>New chat</Text>
+              </TooltipContent>
+            </Tooltip>
+          )}
         </View>
       </View>
       {!collapsed && (
         <View style={styles.chatsSectionBody}>
-          {chatEntries.length === 0 ? (
-            <Pressable
-              onPress={handleCreateChat}
-              disabled={isCreating}
-              style={emptyRowStyle}
-              testID="sidebar-chats-empty-start"
-              accessibilityRole="button"
-              accessibilityLabel="Start a chat"
-            >
-              <ThemedPlus size={12} uniProps={foregroundMutedColorMapping} />
-              <Text style={styles.chatsEmptyText}>No chats yet. Start a chat</Text>
-            </Pressable>
-          ) : (
-            chatEntries.map((entry) => (
-              <MemoWorkspaceRowItem
-                key={entry.workspaceKey}
-                workspace={entry}
-                workspaceEntry={entry}
-                hostBadge={hostBadgeByServerId.get(entry.serverId) ?? null}
-                leadingProjectName="Chats"
-                leadingProjectIconDataUri={null}
-                shortcutNumber={shortcutIndexByWorkspaceKey.get(entry.workspaceKey) ?? null}
-                showShortcutBadge={showShortcutBadges}
-                canCopyBranchName={false}
-                canPin={supportsPinningByServerId.get(entry.serverId) === true}
-                onToggleWorkspacePin={onToggleWorkspacePin}
-                isCreating={creatingWorkspaceIds.has(entry.workspaceId)}
-                selectionEnabled={selectionEnabled}
-                activeWorkspaceSelection={activeWorkspaceSelection}
-                onWorkspacePress={onWorkspacePress}
-              />
-            ))
-          )}
+          {chatEntries.length === 0
+            ? emptyChatRow
+            : chatEntries.map((entry) => (
+                <MemoWorkspaceRowItem
+                  key={entry.workspaceKey}
+                  workspace={entry}
+                  workspaceEntry={entry}
+                  hostBadge={hostBadgeByServerId.get(entry.serverId) ?? null}
+                  leadingProjectName="Chats"
+                  leadingProjectIconDataUri={null}
+                  shortcutNumber={shortcutIndexByWorkspaceKey.get(entry.workspaceKey) ?? null}
+                  showShortcutBadge={showShortcutBadges}
+                  canCopyBranchName={false}
+                  canPin={supportsPinningByServerId.get(entry.serverId) === true}
+                  onToggleWorkspacePin={onToggleWorkspacePin}
+                  isCreating={creatingWorkspaceIds.has(entry.workspaceId)}
+                  selectionEnabled={selectionEnabled}
+                  activeWorkspaceSelection={activeWorkspaceSelection}
+                  onWorkspacePress={onWorkspacePress}
+                />
+              ))}
         </View>
       )}
     </View>
@@ -2087,6 +2118,7 @@ export function SidebarWorkspaceList({
   const serverIds = useMemo(() => hosts.map((host) => host.serverId), [hosts]);
   const supportsMultiplicityByServerId = useHostFeatureMap(serverIds, "workspaceMultiplicity");
   const supportsPinningByServerId = useHostFeatureMap(serverIds, "workspacePinning");
+  const supportsChatByServerId = useHostFeatureMap(serverIds, "chatWorkspaces");
   const onToggleWorkspacePin = useSidebarWorkspacePinController();
   const getPinnedWorkspaceOrder = useSidebarOrderStore((state) => state.getPinnedWorkspaceOrder);
   const setPinnedWorkspaceOrder = useSidebarOrderStore((state) => state.setPinnedWorkspaceOrder);
@@ -2144,6 +2176,7 @@ export function SidebarWorkspaceList({
         onWorkspacePress={onWorkspacePress}
         hostBadgeByServerId={hostBadgeByServerId}
         supportsPinningByServerId={supportsPinningByServerId}
+        supportsChatByServerId={supportsChatByServerId}
         onToggleWorkspacePin={onToggleWorkspacePin}
         onPinnedWorkspaceReorder={handlePinnedWorkspaceReorder}
         listHeaderComponent={listHeaderComponent}
@@ -2173,6 +2206,7 @@ export function SidebarWorkspaceList({
         hostBadgeByServerId={hostBadgeByServerId}
         supportsMultiplicityByServerId={supportsMultiplicityByServerId}
         supportsPinningByServerId={supportsPinningByServerId}
+        supportsChatByServerId={supportsChatByServerId}
         onToggleWorkspacePin={onToggleWorkspacePin}
         onPinnedWorkspaceReorder={handlePinnedWorkspaceReorder}
       />
@@ -2198,6 +2232,7 @@ function SidebarGroupedModeList({
   onWorkspacePress,
   hostBadgeByServerId,
   supportsPinningByServerId,
+  supportsChatByServerId,
   onToggleWorkspacePin,
   onPinnedWorkspaceReorder,
   listHeaderComponent,
@@ -2213,6 +2248,7 @@ function SidebarGroupedModeList({
   onWorkspacePress?: () => void;
   hostBadgeByServerId: ReadonlyMap<string, HostBadgeModel>;
   supportsPinningByServerId: ReadonlyMap<string, boolean>;
+  supportsChatByServerId?: ReadonlyMap<string, boolean>;
   onToggleWorkspacePin: ToggleSidebarWorkspacePin;
   onPinnedWorkspaceReorder: (workspaces: SidebarWorkspacePlacement[]) => void;
   listHeaderComponent?: ReactElement | null;
@@ -2231,10 +2267,17 @@ function SidebarGroupedModeList({
     [pinnedGroups.pinnedChats, workspaceEntriesByKey],
   );
 
+  const pinnedWorkspaceKeys = useMemo(
+    () => new Set(pinnedGroups.pinnedChats.map((workspace) => workspace.workspaceKey)),
+    [pinnedGroups.pinnedChats],
+  );
+
   const footerComponent = useMemo(
     () => (
       <SidebarChatsSection
         workspaceEntriesByKey={workspaceEntriesByKey}
+        pinnedWorkspaceKeys={pinnedWorkspaceKeys}
+        supportsChatByServerId={supportsChatByServerId}
         onWorkspacePress={onWorkspacePress}
         activeWorkspaceSelection={activeWorkspaceSelection}
         creatingWorkspaceIds={EMPTY_CREATING_SET}
@@ -2248,6 +2291,8 @@ function SidebarGroupedModeList({
     ),
     [
       workspaceEntriesByKey,
+      pinnedWorkspaceKeys,
+      supportsChatByServerId,
       onWorkspacePress,
       activeWorkspaceSelection,
       hostBadgeByServerId,
@@ -2300,6 +2345,7 @@ function ProjectModeList({
   hostBadgeByServerId,
   supportsMultiplicityByServerId,
   supportsPinningByServerId,
+  supportsChatByServerId,
   onToggleWorkspacePin,
   onPinnedWorkspaceReorder,
 }: Omit<
@@ -2318,6 +2364,7 @@ function ProjectModeList({
   hostBadgeByServerId: ReadonlyMap<string, HostBadgeModel>;
   supportsMultiplicityByServerId: ReadonlyMap<string, boolean>;
   supportsPinningByServerId: ReadonlyMap<string, boolean>;
+  supportsChatByServerId?: ReadonlyMap<string, boolean>;
   onToggleWorkspacePin: ToggleSidebarWorkspacePin;
   onPinnedWorkspaceReorder: (workspaces: SidebarWorkspacePlacement[]) => void;
 }) {
@@ -2665,6 +2712,8 @@ function ProjectModeList({
       {sidebarFilterEmpty ? <SidebarFilterEmptyState /> : projectBody}
       <SidebarChatsSection
         workspaceEntriesByKey={workspaceEntriesByKey}
+        pinnedWorkspaceKeys={new Set(pinnedChats.map((w) => w.workspaceKey))}
+        supportsChatByServerId={supportsChatByServerId}
         onWorkspacePress={onWorkspacePress}
         activeWorkspaceSelection={activeWorkspaceSelection}
         creatingWorkspaceIds={creatingWorkspaceIds}

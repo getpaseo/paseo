@@ -138,4 +138,31 @@ describe("workspace create source", () => {
       sessionId: "session-123",
     });
   });
+
+  it("rejects chat flag combined with conflicting isolation", () => {
+    expect(() =>
+      buildWorkspaceSource({ chat: true, isolation: "worktree", branch: "feature" }),
+    ).toThrow("--chat cannot be combined with --isolation worktree");
+  });
+
+  it("rejects worktree or local options for chat workspaces", () => {
+    expect(() => buildWorkspaceSource({ chat: true, branch: "feature" })).toThrow(
+      "Chat workspaces do not support worktree, branch, project, or path options",
+    );
+    expect(() => buildWorkspaceSource({ isolation: "chat", path: "/tmp/project" })).toThrow(
+      "Chat workspaces do not support worktree, branch, project, or path options",
+    );
+    expect(() => buildWorkspaceSource({ chat: true, project: "my-project" })).toThrow(
+      "Chat workspaces do not support worktree, branch, project, or path options",
+    );
+  });
+
+  it("rejects chats-dir or session-id without chat flag or isolation", () => {
+    expect(() => buildWorkspaceSource({ isolation: "local", chatsDir: "/tmp/chats" })).toThrow(
+      "--chats-dir and --session-id require --chat or --isolation chat",
+    );
+    expect(() => buildWorkspaceSource({ isolation: "worktree", sessionId: "my-session" })).toThrow(
+      "--chats-dir and --session-id require --chat or --isolation chat",
+    );
+  });
 });

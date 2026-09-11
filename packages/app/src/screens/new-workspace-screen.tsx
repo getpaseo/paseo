@@ -709,8 +709,9 @@ interface WorkspaceIsolationState {
 function useWorkspaceIsolation(input: {
   supportsMultiplicity: boolean;
   worktreeSupport: "supported" | "unsupported" | "unknown";
+  supportsChatWorkspaces?: boolean;
 }): WorkspaceIsolationState {
-  const { supportsMultiplicity, worktreeSupport } = input;
+  const { supportsMultiplicity, worktreeSupport, supportsChatWorkspaces = true } = input;
   // The last isolation choice is remembered alongside the other New Workspace
   // form preferences (provider, model, mode). A manual in-screen pick overrides
   // the remembered default until the screen remounts.
@@ -722,7 +723,7 @@ function useWorkspaceIsolation(input: {
     manualIsolation ?? (preferences.isolation as "local" | "worktree" | "chat") ?? "local";
   const canCreateWorktree = supportsMultiplicity && worktreeSupport !== "unsupported";
   const isWorktree = isolation === "worktree" && canCreateWorktree;
-  const isChat = isolation === "chat";
+  const isChat = isolation === "chat" && supportsChatWorkspaces;
 
   const setIsolation = useCallback(
     (value: "local" | "worktree" | "chat") => {
@@ -837,8 +838,8 @@ async function createAndMergeWorkspace(input: {
 async function createMultiplicityWorkspace(input: {
   client: NonNullable<ReturnType<typeof useHostRuntimeClient>>;
   isolation: "local" | "worktree" | "chat";
-  project: HostProjectListItem;
-  sourceDirectory: string;
+  project?: HostProjectListItem | null;
+  sourceDirectory?: string | null;
   checkoutRequest: PickerCheckoutRequest | undefined;
   withInitialAgent: boolean;
   prompt: string;
@@ -851,7 +852,8 @@ async function createMultiplicityWorkspace(input: {
   createFailedMessage: string;
 }): Promise<ReturnType<typeof normalizeWorkspaceDescriptor>> {
   const isChat = input.isolation === "chat";
-  const projectId = isChat ? undefined : getHostProjectId(input.project, input.serverId);
+  const projectId =
+    isChat || !input.project ? undefined : getHostProjectId(input.project, input.serverId);
   if (!isChat && !projectId) throw new Error("Project is not available on the selected host");
   const isWorktree = input.isolation === "worktree";
   const firstAgentContext = buildFirstAgentContext({
@@ -862,6 +864,7 @@ async function createMultiplicityWorkspace(input: {
   if (isChat) {
     source = { kind: "chat" as const };
   } else if (isWorktree) {
+    if (!input.sourceDirectory) throw new Error("Choose a host for this project");
     source = {
       kind: "worktree" as const,
       cwd: input.sourceDirectory,
@@ -870,6 +873,7 @@ async function createMultiplicityWorkspace(input: {
       ...input.checkoutRequest,
     };
   } else {
+    if (!input.sourceDirectory) throw new Error("Choose a host for this project");
     source = {
       kind: "directory" as const,
       path: input.sourceDirectory,
@@ -1798,10 +1802,12 @@ export function NewWorkspaceScreen({
     ? getWorktreeSupportForHostProject({ project: selectedProject, serverId: selectedServerId })
     : "unsupported";
   const isPending = isNewWorkspacePending({ pendingAction, isDraftHandoffActive });
+  const supportsChatWorkspaces = useHostFeature(selectedServerId, "chatWorkspaces");
   const { effectiveIsolation, setIsolation, canCreateWorktree, showRefPicker } =
     useWorkspaceIsolation({
       supportsMultiplicity: supportsWorkspaceMultiplicity,
       worktreeSupport,
+      supportsChatWorkspaces,
     });
 
   const branchSuggestionsQuery = useQuery({
@@ -1963,9 +1969,15 @@ export function NewWorkspaceScreen({
   const isolationOptions = useMemo<ComboboxOptionType[]>(() => {
     const localOption = { id: "local", label: isolationLabel(t, "local") };
     const chatOption = { id: "chat", label: isolationLabel(t, "chat") };
-    if (!canCreateWorktree) return [localOption, chatOption];
-    return [localOption, { id: "worktree", label: isolationLabel(t, "worktree") }, chatOption];
-  }, [canCreateWorktree, t]);
+    const opts: ComboboxOptionType[] = [localOption];
+    if (canCreateWorktree) {
+      opts.push({ id: "worktree", label: isolationLabel(t, "worktree") });
+    }
+    if (supportsChatWorkspaces) {
+      opts.push(chatOption);
+    }
+    return opts;
+  }, [canCreateWorktree, supportsChatWorkspaces, t]);
 
   const handleSelectIsolationOption = useCallback(
     (id: string) => {
@@ -2064,22 +2076,27 @@ export function NewWorkspaceScreen({
       if (createdWorkspace) {
         return createdWorkspace;
       }
-      if (!selectedProject) {
-        throw new Error("Choose a project");
-      }
-      if (!selectedSourceDirectory) {
-        throw new Error("Choose a host for this project");
+      if (effectiveIsolation !== "chat") {
+        if (!selectedProject) {
+          throw new Error("Choose a project");
+        }
+        if (!selectedSourceDirectory) {
+          throw new Error("Choose a host for this project");
+        }
       }
       const connectedClient = withConnectedClient();
-      const createsWorktree = !supportsWorkspaceMultiplicity || effectiveIsolation === "worktree";
-      const checkoutStatusForCreate = createsWorktree
-        ? await ensureCheckoutStatus({
-            queryClient,
-            client: connectedClient,
-            serverId: selectedServerId,
-            cwd: selectedSourceDirectory,
-          })
-        : null;
+      const createsWorktree =
+        effectiveIsolation !== "chat" &&
+        (!supportsWorkspaceMultiplicity || effectiveIsolation === "worktree");
+      const checkoutStatusForCreate =
+        createsWorktree && selectedSourceDirectory
+          ? await ensureCheckoutStatus({
+              queryClient,
+              client: connectedClient,
+              serverId: selectedServerId,
+              cwd: selectedSourceDirectory,
+            })
+          : null;
       const checkoutRequest = checkoutStatusForCreate
         ? pickerItemToCheckoutRequest(
             selectedItem ?? defaultBasePickerItem(checkoutStatusForCreate),

@@ -123,13 +123,38 @@ function buildWorktreeWorkspaceSource(options: WorkspaceCreateOptions, path: str
 }
 
 export function buildWorkspaceSource(options: WorkspaceCreateOptions) {
-  if (options.chat || options.isolation === "chat") {
+  const isChat = Boolean(options.chat || options.isolation === "chat");
+
+  if (options.chat && options.isolation !== undefined && options.isolation !== "chat") {
+    throw new Error(`--chat cannot be combined with --isolation ${options.isolation}`);
+  }
+
+  if (isChat) {
+    assertOptionsAbsent(
+      [
+        options.path,
+        options.project,
+        options.mode,
+        options.worktreeSlug,
+        options.newBranch,
+        options.base,
+        options.branch,
+        options.prNumber,
+        options.forge,
+      ],
+      "Chat workspaces do not support worktree, branch, project, or path options",
+    );
     return {
       kind: "chat" as const,
       ...(options.chatsDir ? { chatsDirectory: options.chatsDir } : {}),
       ...(options.sessionId ? { sessionId: options.sessionId } : {}),
     };
   }
+
+  assertOptionsAbsent(
+    [options.chatsDir, options.sessionId],
+    "--chats-dir and --session-id require --chat or --isolation chat",
+  );
   if (options.isolation === "local") {
     return buildLocalWorkspaceSource(options, options.path ?? process.cwd());
   }

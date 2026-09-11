@@ -40,6 +40,10 @@ export const CLIENT_CAPS = {
   pluginTimelineItems: "plugin_timeline_items",
   // COMPAT(workspaceSetupBlocked): added in v0.8.0, remove after 2027-03-07 once client floor >= v0.8.0.
   workspaceSetupBlocked: "workspace_setup_blocked",
+  // COMPAT(chatWorkspaces): added in v0.9.0. Capable clients accept workspaceKind="chat".
+  // Older clients fail closed-enum validation unless the daemon sends "directory".
+  // Remove after 2027-03-10 once the supported client floor is >= v0.9.0.
+  chatWorkspaces: "chat_workspaces",
   browserHost: "browser_host",
 } as const;
 
