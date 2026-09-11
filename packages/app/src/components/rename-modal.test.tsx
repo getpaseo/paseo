@@ -70,8 +70,10 @@ vi.mock("@/components/adaptive-modal-sheet", async () => {
   };
   // Mirrors production AdaptiveTextInput: native-owned input seeded by
   // initialValue, remounted (via key) when resetKey changes so the new
-  // initialValue takes effect.
-  const AdaptiveTextInput = ReactModule.forwardRef<HTMLInputElement, Record<string, unknown>>(
+  // initialValue takes effect. The ref exposes the imperative handle shape
+  // (`focus`/`getText`/`replaceText`), not the raw input element — the modal
+  // drives selection through the handle on every platform.
+  const AdaptiveTextInput = ReactModule.forwardRef<unknown, Record<string, unknown>>(
     (props, ref) => {
       const p = props as {
         initialValue?: string;
@@ -87,7 +89,26 @@ vi.mock("@/components/adaptive-modal-sheet", async () => {
         onSubmitEditing: p.onSubmitEditing,
       };
       return ReactModule.createElement("input", {
-        ref,
+        ref: (el: HTMLInputElement | null) => {
+          const handle = el
+            ? {
+                focus: () => el.focus(),
+                blur: () => el.blur(),
+                isFocused: () => document.activeElement === el,
+                getText: () => el.value,
+                replaceText: (nextText: string, selection?: { start: number; end: number }) => {
+                  el.value = nextText;
+                  if (selection) el.setSelectionRange(selection.start, selection.end);
+                },
+                reset: () => {
+                  el.value = "";
+                },
+                getNativeRef: () => el,
+              }
+            : null;
+          if (typeof ref === "function") ref(handle);
+          else if (ref) ref.current = handle;
+        },
         defaultValue: p.initialValue ?? p.defaultValue ?? "",
         disabled: p.editable === false,
         maxLength: p.maxLength,

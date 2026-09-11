@@ -8,7 +8,6 @@ import {
   type SheetHeader,
 } from "@/components/adaptive-modal-sheet";
 import { Button } from "@/components/ui/button";
-import { isWeb } from "@/constants/platform";
 import type { EditingTextInputHandle } from "@/components/ui/text-input";
 
 export interface AdaptiveRenameModalProps {
@@ -56,9 +55,11 @@ export function AdaptiveRenameModal({
       const node = inputRef.current;
       if (!node) return;
       node.focus();
-      if (isWeb && node instanceof HTMLInputElement) {
-        node.setSelectionRange(0, length);
-      } else if (!isWeb && length > 0) {
+      // `replaceText` re-seeds the text and applies the selection on every
+      // platform: the web handle routes to setSelectionRange on the underlying
+      // input, the native handle to its selection API. The ref is the
+      // imperative handle, never the raw DOM input.
+      if (length > 0) {
         node.replaceText(node.getText(), { start: 0, end: length });
       }
     }, 50);
