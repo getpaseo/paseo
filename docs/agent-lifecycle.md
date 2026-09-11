@@ -109,16 +109,28 @@ archived workspace. History navigation must not infer workspace lifecycle from `
 or mutate either lifecycle. The workspace route asks the daemon for authoritative recovery state;
 only the route's explicit Unarchive or Restore action changes the archived workspace.
 
-History navigation preserves the selected agent as an explicit recovery target. If both that agent
-and its workspace are archived, the workspace recovery action restores the workspace and unarchives
-the selected agent as one user action. Other archived agents in the restored workspace remain
-recoverable from History. Opening one pins its tab and renders the archived-agent callout. Authoritative
-timeline catch-up may load provider history with a runtime-only `history` resume purpose, which must
-leave both Paseo's `archivedAt` and the provider's native archive state unchanged. **Unarchive** remains
-the only transition back to an interactive runtime: it runs the provider's native unarchive hook
-(including Codex `thread/unarchive`) before the normal agent resume and timeline hydration flow. A
-provider session can be archived outside Paseo while its Paseo agent remains active. Interactive
-resume repairs that drift through the provider's native unarchive hook; history resume does not.
+History navigation opens the selected agent without changing either archive state. Workspace
+**Restore** recovers only the workspace; the selected archived agent stays open with its callout.
+The agent's **Unarchive** runs the provider's native unarchive hook before interactive resume and
+history hydration. Other archived agents stay archived.
+
+Opening an agent is a navigation choice, independent of whether its details are cached. The
+layout retains that choice across reload while the panel fetches the agent from the daemon.
+Once the daemon reports the agent active, its tab follows normal archive propagation again.
+An empty active list cannot cancel an explicit History selection. Agent-detail loading does
+not own selection or release the explicit open.
+
+Persisted resume, native restore, and both live and stored-only archive enter the same per-agent
+lifecycle queue. Resume chooses its history or interactive purpose from the durable record after
+entering that queue. Shutdown must finish before the manager releases runtime ownership; a failed
+close retains the runtime for cleanup and blocks replacement through that close operation.
+
+Authoritative timeline catch-up can use a runtime-only `history` resume purpose. For Codex, that
+purpose initializes a temporary app-server, reads the persisted thread and child histories, and
+releases the process before returning. It never loads, resumes, or unarchives a native thread,
+including legacy records whose native archive failed. The retained history session contains only
+the read results. Interactive resume remains responsible for repairing a provider session archived
+outside Paseo while its Paseo agent is active.
 
 Provider session connection owns every process it spawns until the session is registered with
 `AgentManager`. If initialization, persisted-session resume, or initial history hydration fails,

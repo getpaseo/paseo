@@ -95,6 +95,11 @@ owner wraps cached preparation, network catch-up, accepted timeline application,
 behind one interface. React supplies transport and projection operations without selecting a cache
 path or issuing a separate persistence notification.
 
+Active-agent list reconciliation does not own transcript lifetime. An archived agent's fresh
+history response can arrive before the active-list response that omits it. Clearing history there
+would discard accepted rows while the viewed owner still considers them synchronized. Entity
+deletion clears the transcript; list membership changes do not.
+
 Removing the host from the registry is the destructive boundary: it stops the runtime and clears the
 session and host-scoped setup state together.
 
