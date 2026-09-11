@@ -66,7 +66,13 @@ linux:
     - deb
     - rpm
     - tar.gz
+deb:
+  afterInstall: scripts/linux-sandbox/after-install.tpl
+rpm:
+  afterInstall: scripts/linux-sandbox/after-install.tpl
 appImage:
+  # A nonempty argument list replaces builder's hardcoded --no-sandbox default.
+  executableArgs: ["--class=Paseo"]
   # Keep the AppImage filename stable across versions (no ${version}) so
   # electron-updater overwrites the file in place instead of renaming it to a new
   # versioned path. A rename orphans the old binary, breaks desktop shortcuts, and

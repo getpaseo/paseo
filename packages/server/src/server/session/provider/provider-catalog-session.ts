@@ -48,7 +48,7 @@ export interface ProviderCatalogSessionHost {
   supportsCustomModeIcons(): boolean;
   supportsCompactProviderSnapshots(): boolean;
   supportsProviderSnapshotReferences(): boolean;
-  wantsSnapshotChanges(): boolean;
+  publishSnapshot(project: () => SessionOutboundMessage | null): void;
   listProviderAvailability(): Promise<ProviderAvailability[]>;
   listDraftFeatures(config: AgentSessionConfig): Promise<AgentFeature[]>;
 }
@@ -81,15 +81,18 @@ export class ProviderCatalogSession {
     this.logger = options.logger;
   }
 
+  get isObserving(): boolean {
+    return this.unsubscribeSnapshotEvents !== null;
+  }
+
   start(): void {
+    if (this.unsubscribeSnapshotEvents) return;
     const handleProviderSnapshotChange = (transition: ProviderSnapshotTransition) => {
-      if (!this.host.wantsSnapshotChanges()) return;
-      const previous = this.visibleSnapshot(transition.previous);
-      const current = this.visibleSnapshot(transition.current);
-      if (sameSnapshotRecords(previous.records, current.records)) return;
-      this.host.emit({
-        type: "providers_snapshot_update",
-        payload: this.snapshotPayload(current),
+      this.host.publishSnapshot(() => {
+        const previous = this.visibleSnapshot(transition.previous);
+        const current = this.visibleSnapshot(transition.current);
+        if (sameSnapshotRecords(previous.records, current.records)) return null;
+        return { type: "providers_snapshot_update", payload: this.snapshotPayload(current) };
       });
     };
     this.providerSnapshotManager.on("change", handleProviderSnapshotChange);

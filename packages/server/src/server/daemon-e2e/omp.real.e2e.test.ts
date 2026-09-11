@@ -1,5 +1,4 @@
 import { execFile } from "node:child_process";
-import { randomUUID } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -69,7 +68,7 @@ async function createHarness(): Promise<Harness> {
   });
   await client.connect();
   await client.fetchAgents({
-    subscribe: { subscriptionId: `omp-real-${randomUUID()}` },
+    subscribe: {},
   });
   return { daemon, client, cwd, paseoHomeRoot, staticDir };
 }

@@ -106,7 +106,7 @@ test("openProject preserves a worktree's exact-root project without rehoming it"
     const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
     cleanupClients.add(client);
     await client.connect();
-    await client.fetchAgents({ subscribe: { subscriptionId: "worktree-reclassification" } });
+    await client.fetchAgents({ subscribe: {} });
 
     const response = await client.openProject(worktreeRoot);
     const persistedProjects = await readRegistry<PersistedProjectRecord>(projectsPath);

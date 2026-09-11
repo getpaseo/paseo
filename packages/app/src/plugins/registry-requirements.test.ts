@@ -22,7 +22,8 @@ function registry(version: string) {
         },
         openSurface() {},
         openPanel() {},
-        addComposerPill: () => () => {},
+        addComposerPill: () => ({ update() {}, remove() {} }),
+        addHeaderButton: () => ({ update() {}, remove() {} }),
       };
     },
   });

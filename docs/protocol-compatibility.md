@@ -50,6 +50,17 @@ Connecting creates no timeline or event demand. Client subscriptions own their n
 release it on unsubscribe, and restore it after reconnect. Raw message observers inspect traffic
 without requesting streams. Application caches and which agents are visible remain caller-owned.
 
+## Owned observations
+
+`owned_subscriptions` and `server_info.features.ownedSubscriptions` negotiate the entire source-owned
+contract described in [architecture](architecture.md#websocket-protocol). The client gates observation
+once and tells users to update an older host. It does not emulate independent handles over legacy slots.
+
+Old clients keep their existing wire shapes and slot behavior at the daemon's source boundary.
+The adapter keys legacy slots by physical socket, so an old connection cannot replace a modern
+sibling's observation even when both use the same logical client ID. Optional wire IDs stay accepted
+for parsing compatibility; modern requests cannot select their subscription ID.
+
 ## Every shim is tagged and dated
 
 A shim that exists for old-app or old-daemon support carries a comment naming it, the version it arrived in, and when it can go:

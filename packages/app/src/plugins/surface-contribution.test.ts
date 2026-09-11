@@ -16,6 +16,7 @@ function installation(
     id: pluginId,
     serverId,
     clientBundle: serverId,
+    lifetime: new AbortController(),
     queryClient: new QueryClient(),
     cleanup: () => undefined,
     settingsScreens: [],

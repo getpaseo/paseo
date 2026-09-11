@@ -18,6 +18,7 @@ const workspaceRenameSchema: OutputSchema<WorkspaceRenameResult> = {
 
 export interface WorkspaceRenameOptions {
   host?: string;
+  daemonTarget: import("../../utils/daemon-target.js").DaemonTarget;
   reset?: boolean;
 }
 
@@ -55,8 +56,8 @@ export async function runRenameCommand(
 ): Promise<SingleResult<WorkspaceRenameResult>> {
   const title = resolveWorkspaceTitle({ title: titleArg, reset: options.reset });
 
-  const host = getDaemonHost({ host: options.host });
-  const client = await connectToDaemon({ host: options.host }).catch((error: unknown) => {
+  const host = getDaemonHost({ target: options.daemonTarget });
+  const client = await connectToDaemon({ target: options.daemonTarget }).catch((error: unknown) => {
     const message = error instanceof Error ? error.message : String(error);
     throw {
       code: "DAEMON_NOT_RUNNING",
@@ -72,6 +73,7 @@ export async function runRenameCommand(
       schema: workspaceRenameSchema,
     };
   } catch (error) {
+    if (error && typeof error === "object" && "code" in error) throw error;
     const message = error instanceof Error ? error.message : String(error);
     throw { code: "WORKSPACE_RENAME_FAILED", message } satisfies CommandError;
   } finally {

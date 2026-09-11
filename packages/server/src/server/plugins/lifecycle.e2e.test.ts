@@ -32,7 +32,7 @@ export default function contribute(server) {
 `,
     );
     await client.connect();
-    await client.fetchAgents({ subscribe: { subscriptionId: "lifecycle" } });
+    await client.fetchAgents({ subscribe: {} });
     await client.patchDaemonConfig({ pluginsEnabled: true });
     await client.installDirectoryPlugin(directory);
     const created = await client.createWorkspace({
@@ -100,7 +100,7 @@ export default function contribute(server) {
 `,
     );
     await client.connect();
-    await client.fetchAgents({ subscribe: { subscriptionId: "turn-hooks" } });
+    await client.fetchAgents({ subscribe: {} });
     await client.patchDaemonConfig({ pluginsEnabled: true });
     await client.installDirectoryPlugin(directory);
     const agent = await client.createAgent({
@@ -183,7 +183,7 @@ export default function contribute(server) {
 `,
     );
     await client.connect();
-    await client.fetchAgents({ subscribe: { subscriptionId: "agent-hooks" } });
+    await client.fetchAgents({ subscribe: {} });
     await client.patchDaemonConfig({ pluginsEnabled: true });
     await client.installDirectoryPlugin(directory);
     const agent = await client.createAgent({

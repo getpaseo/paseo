@@ -1,29 +1,12 @@
+import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import type { SubscribeTerminalRequest, TerminalState } from "@getpaseo/protocol/messages";
 import type { TerminalOutputData } from "./terminal-emulator-runtime";
 import { i18n } from "@/i18n/i18next";
 
-export interface TerminalStreamControllerClient {
-  subscribeTerminal: (
-    terminalId: string,
-    options?: { restore?: SubscribeTerminalRequest["restore"] },
-  ) => Promise<{
-    terminalId: string;
-    error?: string | null;
-  }>;
-  unsubscribeTerminal: (terminalId: string) => void;
-  sendTerminalInput: (
-    terminalId: string,
-    message: { type: "resize"; rows: number; cols: number; intent?: "claim" | "update" },
-  ) => void;
-  onTerminalStreamEvent: (
-    handler: (
-      event:
-        | { terminalId: string; type: "output"; data: Uint8Array }
-        | { terminalId: string; type: "snapshot"; state: TerminalState }
-        | { terminalId: string; type: "restore"; data: Uint8Array },
-    ) => void,
-  ) => () => void;
-}
+export type TerminalStreamControllerClient = Pick<
+  DaemonClient,
+  "observeTerminal" | "sendTerminalInput"
+>;
 
 export interface TerminalStreamControllerSize {
   rows: number;
@@ -41,6 +24,7 @@ export interface TerminalStreamControllerOptions {
   getPreferredSize: () => TerminalStreamControllerSize | null;
   onOutput: (input: { terminalId: string; data: TerminalOutputData }) => void;
   onSnapshot: (input: { terminalId: string; state: TerminalState }) => void;
+  onExit?: (terminalId: string) => void;
   onRestore?: (input: { terminalId: string; data: TerminalOutputData }) => void;
   getRestoreOptions?: () => SubscribeTerminalRequest["restore"] | undefined;
   onStatusChange?: (status: TerminalStreamControllerStatus) => void;
@@ -49,51 +33,76 @@ export interface TerminalStreamControllerOptions {
 const TERMINAL_EXITED_ERROR = "Terminal exited";
 
 export class TerminalStreamController {
-  private readonly unsubscribeStreamEvents: () => void;
+  private subscription: ReturnType<DaemonClient["observeTerminal"]> | null = null;
   private terminalId: string | null = null;
   private disposed = false;
 
-  constructor(private readonly options: TerminalStreamControllerOptions) {
-    this.unsubscribeStreamEvents = this.options.client.onTerminalStreamEvent((event) => {
-      if (this.disposed || event.terminalId !== this.terminalId) {
-        return;
-      }
-      if (event.type === "snapshot") {
-        this.options.onSnapshot({ terminalId: event.terminalId, state: event.state });
-        return;
-      }
-      if (event.type === "restore") {
-        if (event.data.length > 0) {
-          this.options.onRestore?.({ terminalId: event.terminalId, data: event.data });
-        }
-        return;
-      }
+  constructor(private readonly options: TerminalStreamControllerOptions) {}
+
+  private receive: Parameters<DaemonClient["observeTerminal"]>[1] = (event) => {
+    if (this.disposed || event.terminalId !== this.terminalId) {
+      return;
+    }
+    if (event.type === "snapshot") {
+      this.options.onSnapshot({ terminalId: event.terminalId, state: event.state });
+      return;
+    }
+    if (event.type === "restore") {
       if (event.data.length > 0) {
-        this.options.onOutput({ terminalId: event.terminalId, data: event.data });
+        this.options.onRestore?.({ terminalId: event.terminalId, data: event.data });
       }
-    });
-  }
+      return;
+    }
+    if (event.data.length > 0) {
+      this.options.onOutput({ terminalId: event.terminalId, data: event.data });
+    }
+  };
 
   setTerminal(input: { terminalId: string | null }): void {
     if (this.disposed || input.terminalId === this.terminalId) {
       return;
     }
     const nextTerminalId = input.terminalId;
-    const previousTerminalId = this.terminalId;
     this.terminalId = nextTerminalId;
-    if (previousTerminalId) {
-      this.options.client.unsubscribeTerminal(previousTerminalId);
-    }
+    void this.subscription?.release().catch(console.error);
+    this.subscription = null;
     if (!nextTerminalId) {
       this.options.onStatusChange?.({ terminalId: null, isAttaching: false, error: null });
       return;
     }
     const restore = this.options.getRestoreOptions?.();
     this.options.onStatusChange?.({ terminalId: nextTerminalId, isAttaching: true, error: null });
-    void this.options.client
-      .subscribeTerminal(nextTerminalId, restore ? { restore } : undefined)
+    let subscription: ReturnType<DaemonClient["observeTerminal"]>;
+    try {
+      const preferredSize = restore?.size ?? this.options.getPreferredSize();
+      if (preferredSize)
+        this.options.client.sendTerminalInput(nextTerminalId, {
+          type: "resize",
+          ...preferredSize,
+          intent: "claim",
+        });
+      subscription = this.options.client.observeTerminal(
+        nextTerminalId,
+        this.receive,
+        restore ? { restore } : undefined,
+      );
+    } catch (error) {
+      this.failAttach(nextTerminalId, error);
+      return;
+    }
+    this.subscription = subscription;
+    subscription.subscribe({
+      snapshot: () => {},
+      update: (message) => {
+        if (message.type !== "terminal_stream_exit" || this.subscription !== subscription) return;
+        if (message.payload.error)
+          this.failAttach(nextTerminalId, new Error(message.payload.error));
+        else this.handleTerminalExit({ terminalId: nextTerminalId });
+      },
+    });
+    void subscription.ready
       .then((payload) => {
-        if (this.disposed || this.terminalId !== nextTerminalId) {
+        if (this.disposed || this.subscription !== subscription) {
           return;
         }
         if (payload.error) {
@@ -105,15 +114,6 @@ export class TerminalStreamController {
           });
           return;
         }
-        const preferredSize = restore?.size ? null : this.options.getPreferredSize();
-        if (preferredSize) {
-          this.options.client.sendTerminalInput(nextTerminalId, {
-            type: "resize",
-            rows: preferredSize.rows,
-            cols: preferredSize.cols,
-            intent: "claim",
-          });
-        }
         this.options.onStatusChange?.({
           terminalId: nextTerminalId,
           isAttaching: false,
@@ -122,24 +122,33 @@ export class TerminalStreamController {
         return;
       })
       .catch((error: unknown) => {
-        if (this.disposed || this.terminalId !== nextTerminalId) {
+        if (this.disposed || this.subscription !== subscription) {
           return;
         }
-        this.terminalId = null;
-        this.options.onStatusChange?.({
-          terminalId: nextTerminalId,
-          isAttaching: false,
-          error:
-            error instanceof Error ? error.message : i18n.t("workspace.terminal.unableToSubscribe"),
-        });
+        this.failAttach(nextTerminalId, error);
       });
+  }
+
+  private failAttach(terminalId: string, error: unknown): void {
+    this.terminalId = null;
+    void this.subscription?.release().catch(console.error);
+    this.subscription = null;
+    this.options.onStatusChange?.({
+      terminalId,
+      isAttaching: false,
+      error:
+        error instanceof Error ? error.message : i18n.t("workspace.terminal.unableToSubscribe"),
+    });
   }
 
   handleTerminalExit(input: { terminalId: string }): void {
     if (this.disposed || input.terminalId !== this.terminalId) {
       return;
     }
+    this.options.onExit?.(input.terminalId);
     this.terminalId = null;
+    void this.subscription?.release().catch(console.error);
+    this.subscription = null;
     this.options.onStatusChange?.({
       terminalId: input.terminalId,
       isAttaching: false,
@@ -152,12 +161,9 @@ export class TerminalStreamController {
       return;
     }
     this.disposed = true;
-    const terminalId = this.terminalId;
     this.terminalId = null;
-    if (terminalId) {
-      this.options.client.unsubscribeTerminal(terminalId);
-    }
-    this.unsubscribeStreamEvents();
+    void this.subscription?.release().catch(console.error);
+    this.subscription = null;
     this.options.onStatusChange?.({ terminalId: null, isAttaching: false, error: null });
   }
 }

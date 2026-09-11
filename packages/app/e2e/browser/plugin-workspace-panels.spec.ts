@@ -61,19 +61,13 @@ function SidebarCollisionSurface() {
   return <View><Text>Sidebar collision surface</Text></View>;
 }
 
-function ComposerPill({ theme, workspaceId, agentId }) {
-  const workspace = useWorkspace(workspaceId, (value) => ({ title: value.title }));
-  const agent = useAgent(agentId, (value) => ({ title: value.title }));
-  return <><Icon name="Scan" size={14} color={theme.colors.foregroundMuted} /><Text numberOfLines={1} style={{ color: theme.colors.foregroundMuted, flexShrink: 1 }}>Review {workspace?.title}:{agent?.title}</Text></>;
-}
-
 function contributeClient(client) {
   const pills = new Map();
   const remove = (agentId) => {
     pills.get(agentId)?.();
     pills.delete(agentId);
   };
-  const unsubscribe = client.paseo.agents.subscribe((update) => {
+  const apply = (update) => {
     if (update.kind === "remove") {
       remove(update.agentId);
       return;
@@ -81,26 +75,39 @@ function contributeClient(client) {
     const agent = update.agent;
     if (agent.title !== "Plugin panel context agent" || !agent.workspaceId) return;
     remove(agent.id);
-    let removePill = () => {};
-    removePill = client.addComposerPill({
+    const pill = client.addComposerPill({
       id: "review",
-      title: "Open composer review",
       workspaceId: agent.workspaceId,
       agentId: agent.id,
-      Component: ComposerPill,
-      async onPress() {
+      button: {
+        title: "Open composer review",
+        icon: "Scan",
+        label: "Review",
+        behavior: { kind: "action", async onPress() {
         await client.rpc(recordComposerOpen, { workspaceId: agent.workspaceId });
-        removePill();
+        pill.remove();
         client.openPanel("agent", {
           workspaceId: agent.workspaceId,
           agentId: agent.id,
         });
+        } },
       },
     });
-    pills.set(agent.id, removePill);
-  });
+    pills.set(agent.id, () => pill.remove());
+  };
+  const lifetime = new AbortController();
+  void client.paseo.agents.list({ subscribe: {}, signal: lifetime.signal }).then(({ subscription }) => {
+    subscription.subscribe({
+      snapshot({ entries }) {
+        for (const removePill of pills.values()) removePill();
+        pills.clear();
+        for (const { agent } of entries) apply({ kind: "upsert", agent });
+      },
+      update(message) { if (message.type === "agent_update") apply(message.payload); },
+    });
+  }).catch((error) => { if (!lifetime.signal.aborted) console.error(error); });
   return () => {
-    unsubscribe();
+    lifetime.abort();
     for (const removePill of pills.values()) removePill();
     pills.clear();
   };
@@ -333,9 +340,7 @@ test.describe("plugin workspace panels and Command Center", () => {
           timeout: 30_000,
         });
         const composerPill = page.getByRole("button", { name: "Open composer review" });
-        await expect(composerPill).toContainText(
-          "Review Unrelated title update:Plugin panel context agent",
-        );
+        await expect(composerPill).toContainText("Review");
         await capture(page, testInfo, "plugin-composer-pill-wide");
         await page.setViewportSize(COMPACT_VIEWPORT);
         await expect(page.getByRole("button", { name: "Open composer review" })).toBeVisible();

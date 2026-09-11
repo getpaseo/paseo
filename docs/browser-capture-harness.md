@@ -12,8 +12,7 @@ It validates the compositor behavior that unit tests cannot see:
   by retrying until the frame appears;
 - both viewport `capturePage` and full-page CDP screenshots return real pixels from
   the permanent production parking state;
-- guest background throttling can be disabled once at attach without per-capture
-  renderer coordination;
+- parked guests remain capturable with Chromium background throttling enabled;
 - the real-Electron host-composer sentinel proves guest Enter cannot submit a focused
   host composer;
 - the automation group loads the compiled production keyboard boundary and guest
@@ -73,10 +72,16 @@ The harness writes PNG evidence and `results.json` to:
 packages/desktop/capture-harness/out/
 ```
 
-A passing run prints `PASS` lines for the production P1 attach-off parking state,
+A passing run prints `PASS` lines for the production P1 default-throttling parking state,
 including fresh, settled, 75-second soak, multi-tab, viewport, and full-page checks. The
 PNG sizes may be device-pixel scaled; on a Retina display the 1280x800 logical viewport
 is usually saved as 2560x1600.
+
+The existing `npm run test:e2e:browser-tabs --workspace=@getpaseo/desktop` journey
+verifies that a hidden window stops guest animation, captures fresh viewport pixels,
+and resumes animation after restoring the window. Its artifacts include the screenshot
+and animation measurements. Full-page content correctness remains separately tracked in
+[the full-page repetition bug](https://github.com/getpaseo/paseo/issues/3196).
 
 ## Mechanism
 
@@ -96,8 +101,8 @@ plane stays below the overlay plane regardless of body insertion order; menus ke
 layering inside `overlay-root`. Activating a presented browser also focuses its registered guest
 `WebContents` in main so macOS assigns keyboard first-responder ownership to the page.
 
-There is no renderer prep/restore handshake. Main disables guest background throttling
-once when the webview attaches, then screenshot capture uses the shared serialized queue,
-invalidates before each attempt, and retries known first-frame failures within the
-5-second capture budget. Viewport screenshots use `capturePage({ stayHidden:false })`;
+There is no renderer prep/restore handshake or lifetime background-throttling override.
+Screenshot capture temporarily enables frame production inside the shared serialized queue,
+restores the previous throttling policy on success or failure, invalidates before each attempt,
+and retries known first-frame failures within the 5-second capture budget. Viewport screenshots use `capturePage({ stayHidden:false })`;
 full-page screenshots use the existing CDP path with layout metrics and screenshot clip.

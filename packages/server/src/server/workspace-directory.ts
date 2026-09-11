@@ -153,6 +153,18 @@ export function workspaceIdsForProjects(
   return Array.from(workspaceIds);
 }
 
+function activeWorkspaceRecords(
+  workspaces: PersistedWorkspaceRecord[],
+  projects: PersistedProjectRecord[],
+): PersistedWorkspaceRecord[] {
+  const archivedProjects = new Set(
+    projects.filter((project) => project.archivedAt).map((project) => project.projectId),
+  );
+  return workspaces.filter(
+    (workspace) => !workspace.archivedAt && !archivedProjects.has(workspace.projectId),
+  );
+}
+
 export class WorkspaceDirectory {
   private readonly archivingByWorkspaceId = new Map<string, string>();
   /**
@@ -223,12 +235,7 @@ export class WorkspaceDirectory {
         .filter((project) => !project.archivedAt)
         .map((project) => [project.projectId, project] as const),
     );
-    const archivedProjectIds = new Set(
-      persistedProjects.filter((project) => project.archivedAt).map((project) => project.projectId),
-    );
-    const activeRecords = persistedWorkspaces.filter(
-      (workspace) => !workspace.archivedAt && !archivedProjectIds.has(workspace.projectId),
-    );
+    const activeRecords = activeWorkspaceRecords(persistedWorkspaces, persistedProjects);
     const descriptorsByWorkspaceId = new Map<string, WorkspaceDescriptorPayload>();
     const workspaceIds = options.workspaceIds ? new Set(options.workspaceIds) : null;
     const activeWorkspaceIds = new Set(activeRecords.map((workspace) => workspace.workspaceId));
@@ -575,6 +582,20 @@ export class WorkspaceDirectory {
       }));
   }
 
+  async listObservationTargets(): Promise<
+    Pick<WorkspaceDescriptorPayload, "id" | "workspaceDirectory" | "workspaceKind">[]
+  > {
+    const [workspaces, projects] = await Promise.all([
+      this.deps.workspaceRegistry.list(),
+      this.deps.projectRegistry.list(),
+    ]);
+    return activeWorkspaceRecords(workspaces, projects).map((workspace) => ({
+      id: workspace.workspaceId,
+      workspaceDirectory: workspace.cwd,
+      workspaceKind: workspace.kind,
+    }));
+  }
+
   async listDescriptors(): Promise<WorkspaceDescriptorPayload[]> {
     return Array.from(
       (
@@ -693,7 +714,7 @@ function groupAgentsByWorkspaceId(
   return byWorkspaceId;
 }
 
-function resolveWorkspaceRootAgent(
+export function resolveWorkspaceRootAgent(
   agent: AgentSnapshotPayload,
   activeAgentsById: ReadonlyMap<string, AgentSnapshotPayload>,
 ): AgentSnapshotPayload | null {

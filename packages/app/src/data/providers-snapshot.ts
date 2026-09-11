@@ -78,6 +78,7 @@ export async function fetchProvidersSnapshot(input: {
       const body = await queryClient.fetchQuery({
         queryKey: ["providerSnapshotContent", input.serverId, hash],
         gcTime: 0,
+        structuralSharing: false,
         staleTime: 0,
         retry: false,
         queryFn: async () => {
@@ -134,6 +135,7 @@ export async function refreshAndApplyProvidersSnapshot(input: {
   await input.queryClient.fetchQuery({
     queryKey,
     staleTime: 0,
+    structuralSharing: false,
     queryFn: ({ signal }) => fetchProvidersSnapshot({ ...input, signal }),
   });
   void input.queryClient.invalidateQueries({

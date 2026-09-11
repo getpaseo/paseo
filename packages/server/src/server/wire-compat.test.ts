@@ -213,7 +213,7 @@ function createSessionForWireCompatTest(options?: {
     permissions: OWNER_PERMISSIONS,
     clientCapabilities: options?.clientCapabilities ?? null,
     onMessage: (message) => messages.push(message),
-    onMessageToSource: options?.onMessageToSource,
+    onMessageToSource: options?.onMessageToSource ?? ((_source, message) => messages.push(message)),
     logger: pino({ level: "silent" }),
     downloadTokenStore: {} as SessionOptions["downloadTokenStore"],
     pushNotifications: {} as SessionOptions["pushNotifications"],
@@ -277,6 +277,7 @@ function createSessionForWireCompatTest(options?: {
     terminalManager: null,
   });
 
+  session.updateClientCapabilities(options?.clientCapabilities ?? null, {});
   return session;
 }
 
@@ -342,6 +343,8 @@ describe("wire compatibility", () => {
       {
         type: "project.update",
         payload: {
+          generation: expect.any(String),
+          seq: 1,
           kind: "upsert",
           project: {
             projectId: "project-1",
@@ -356,7 +359,7 @@ describe("wire compatibility", () => {
       },
       {
         type: "project.update",
-        payload: { kind: "remove", projectId: "project-1" },
+        payload: { kind: "remove", projectId: "project-1", generation: expect.any(String), seq: 2 },
       },
     ]);
   });
@@ -549,13 +552,40 @@ describe("wire compatibility", () => {
 test("setup progress is adapted per socket without changing the canonical snapshot", async () => {
   const legacy = {};
   const capable = {};
+  const modern = {};
+  const modernCapable = {};
   const delivered = new Map<object, SessionOutboundMessage[]>();
   const session = createSessionForWireCompatTest({
     onMessageToSource: (source, message) =>
       delivered.set(source, [...(delivered.get(source) ?? []), message]),
   });
-  session.updateClientCapabilities({}, legacy);
-  session.updateClientCapabilities({ workspace_setup_blocked: true }, capable);
+  for (const [source, blocked, owned] of [
+    [legacy, false, false],
+    [capable, true, false],
+    [modern, false, true],
+    [modernCapable, true, true],
+  ] as const) {
+    session.updateClientCapabilities(
+      {
+        explicit_event_subscriptions: true,
+        owned_subscriptions: owned,
+        workspace_setup_blocked: blocked,
+      },
+      source,
+    );
+    await session.handleMessage(
+      {
+        type: "session.events.set_subscription.request",
+        requestId: "setup",
+        events: ["workspace_setup_progress"],
+      },
+      source,
+    );
+    expect(delivered.get(source)).toContainEqual(
+      expect.objectContaining({ type: "session.events.set_subscription.response" }),
+    );
+  }
+  delivered.clear();
   const message = {
     type: "workspace_setup_progress" as const,
     payload: {
@@ -587,6 +617,20 @@ test("setup progress is adapted per socket without changing the canonical snapsh
         status: "failed",
         error:
           "Workspace setup is blocked pending approval of code from a fork pull request. Update Paseo to review and run setup.",
+      },
+    },
+  ]);
+  expect(delivered.get(modernCapable)).toEqual([
+    { ...message, payload: { ...message.payload, subscriptionId: expect.any(String) } },
+  ]);
+  expect(delivered.get(modern)).toEqual([
+    {
+      ...message,
+      payload: {
+        ...message.payload,
+        status: "failed",
+        error: expect.stringContaining("Update Paseo"),
+        subscriptionId: expect.any(String),
       },
     },
   ]);

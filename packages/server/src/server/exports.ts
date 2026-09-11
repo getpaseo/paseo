@@ -96,3 +96,23 @@ export type {
   AgentStreamEventPayload,
   AgentStreamMessage,
 } from "@getpaseo/protocol/messages";
+
+export {
+  readDaemonInstance,
+  startDaemonInstance,
+  stopDaemonInstance,
+  waitForDaemonReady,
+  daemonLogPath,
+  daemonLaunchEnvironment,
+  isSameDaemonInstance,
+  DaemonInstanceError,
+  type DaemonInstance,
+} from "./daemon-instance.js";
+export {
+  readPersistedConfig,
+  getPersistedConfigValue,
+  editPersistedConfig,
+} from "./persisted-config.js";
+export { resolveConfigFromPersisted } from "./config.js";
+
+export { ensurePrivateDirectory } from "./private-files.js";

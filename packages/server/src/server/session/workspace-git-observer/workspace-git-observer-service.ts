@@ -5,9 +5,6 @@ import type {
   WorkspaceGitRuntimeSnapshot,
   WorkspaceGitService,
 } from "../../workspace-git-service.js";
-import type { PersistedWorkspaceRecord } from "../../workspace-registry.js";
-
-const WORKSPACE_GIT_WATCH_REMOVED_STATE_KEY = "__removed__";
 
 interface WorkspaceGitWatchTarget {
   workspaceIds: Set<string>;
@@ -15,7 +12,6 @@ interface WorkspaceGitWatchTarget {
 
 interface WorkspaceGitWatchState {
   cwd: string;
-  latestDescriptorStateKey: string | null;
   lastBranchName: string | null;
 }
 
@@ -39,11 +35,11 @@ export interface WorkspaceGitObserverMetrics {
  */
 export interface WorkspaceGitObserverService {
   syncObservers(workspaces: Iterable<WorkspaceDescriptorPayload>): void;
-  syncObserverForWorkspace(workspace: PersistedWorkspaceRecord): Promise<void>;
-  warmGitData(workspace: PersistedWorkspaceRecord): Promise<void>;
-  // Check-and-record dedupe gate: returns true when the descriptor state is unchanged
-  // for this workspace, and otherwise advances the recorded state key as a side effect.
-  shouldSkipUpdate(workspaceId: string, workspace: WorkspaceDescriptorPayload | null): boolean;
+  reconcileObservers(
+    workspaces: Iterable<
+      Pick<WorkspaceDescriptorPayload, "id" | "workspaceDirectory" | "workspaceKind">
+    >,
+  ): void;
   recordDescriptorState(workspaceId: string, workspace: WorkspaceDescriptorPayload | null): void;
   handleBranchSnapshot(cwd: string, branchName: string | null): void;
   getMetrics(): WorkspaceGitObserverMetrics;
@@ -53,11 +49,7 @@ export interface WorkspaceGitObserverService {
 
 export function createWorkspaceGitObserverService(deps: {
   workspaceGitService: Pick<WorkspaceGitService, "registerWorkspace">;
-  describeWorkspaceRecordWithGitData: (
-    workspace: PersistedWorkspaceRecord,
-  ) => Promise<WorkspaceDescriptorPayload>;
   emitWorkspaceUpdateForCwd: (cwd: string) => Promise<void>;
-  emitWorkspaceUpdateForWorkspaceId: (workspaceId: string) => Promise<void>;
   emitStatusUpdate: (cwd: string, snapshot: WorkspaceGitRuntimeSnapshot) => void;
   onBranchChanged?: (
     workspaceId: string,
@@ -68,9 +60,7 @@ export function createWorkspaceGitObserverService(deps: {
 }): WorkspaceGitObserverService {
   const {
     workspaceGitService,
-    describeWorkspaceRecordWithGitData,
     emitWorkspaceUpdateForCwd,
-    emitWorkspaceUpdateForWorkspaceId,
     emitStatusUpdate,
     onBranchChanged,
     logger,
@@ -80,16 +70,6 @@ export function createWorkspaceGitObserverService(deps: {
   const workspaceStates = new Map<string, WorkspaceGitWatchState>();
   const subscriptions = new Map<string, () => void>();
 
-  function descriptorStateKey(workspace: WorkspaceDescriptorPayload | null): string {
-    if (!workspace) {
-      return WORKSPACE_GIT_WATCH_REMOVED_STATE_KEY;
-    }
-    return JSON.stringify([
-      workspace.name,
-      workspace.diffStat ? [workspace.diffStat.additions, workspace.diffStat.deletions] : null,
-    ]);
-  }
-
   function rememberDescriptorState(
     workspaceId: string,
     workspace: WorkspaceDescriptorPayload | null,
@@ -98,7 +78,6 @@ export function createWorkspaceGitObserverService(deps: {
     if (!state) {
       return;
     }
-    state.latestDescriptorStateKey = descriptorStateKey(workspace);
     const currentBranch = workspace?.gitRuntime?.currentBranch;
     if (currentBranch !== undefined) {
       state.lastBranchName = currentBranch;
@@ -168,7 +147,6 @@ export function createWorkspaceGitObserverService(deps: {
     if (!workspaceStates.has(options.workspaceId)) {
       workspaceStates.set(options.workspaceId, {
         cwd: normalizedCwd,
-        latestDescriptorStateKey: null,
         lastBranchName: null,
       });
     }
@@ -206,33 +184,20 @@ export function createWorkspaceGitObserverService(deps: {
     }
   }
 
-  async function syncObserverForWorkspace(workspace: PersistedWorkspaceRecord): Promise<void> {
-    const descriptor = await describeWorkspaceRecordWithGitData(workspace);
-    syncObservers([descriptor]);
-  }
-
   return {
+    reconcileObservers(workspaces) {
+      const retained = new Map([...workspaces].map((workspace) => [workspace.id, workspace]));
+      for (const workspaceId of workspaceStates.keys()) {
+        if (!retained.has(workspaceId)) removeForWorkspaceId(workspaceId);
+      }
+      for (const workspace of retained.values()) {
+        syncObserver(workspace.workspaceDirectory, {
+          isGit: workspace.workspaceKind !== "directory",
+          workspaceId: workspace.id,
+        });
+      }
+    },
     syncObservers,
-    syncObserverForWorkspace,
-
-    async warmGitData(workspace) {
-      await syncObserverForWorkspace(workspace);
-      await emitWorkspaceUpdateForWorkspaceId(workspace.workspaceId);
-    },
-
-    shouldSkipUpdate(workspaceId, workspace) {
-      const state = workspaceStates.get(workspaceId);
-      if (!state) {
-        return false;
-      }
-      const nextStateKey = descriptorStateKey(workspace);
-      if (state.latestDescriptorStateKey === nextStateKey) {
-        return true;
-      }
-      state.latestDescriptorStateKey = nextStateKey;
-      return false;
-    },
-
     recordDescriptorState(workspaceId, nextWorkspace) {
       const state = workspaceStates.get(workspaceId);
       const newBranchName = nextWorkspace?.gitRuntime?.currentBranch;

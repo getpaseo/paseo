@@ -33,6 +33,9 @@ class FakeImage implements TabImage {
 }
 
 class FakeTab implements TabContents {
+  public withFrameProduction<T>(capture: () => Promise<T>): Promise<T> {
+    return capture();
+  }
   public readonly loadedUrls: string[] = [];
   public readonly scripts: string[] = [];
   public readonly actions: string[] = [];
@@ -64,6 +67,7 @@ class FakeTab implements TabContents {
   public networkEntries: unknown[] = [];
   public consoleMessages: BrowserAutomationConsoleLogEntry[] = [];
   public dialogsToCapture: BrowserAutomationDialogEvent[] = [];
+  public paintDelayMs = 0;
   public captureNeverPaints = false;
   public captureThrows = false;
   public captureErrorMessage = "capture failed";
@@ -115,6 +119,9 @@ class FakeTab implements TabContents {
 
   public async executeJavaScript(code: string): Promise<unknown> {
     this.scripts.push(code);
+    if (code.includes("requestAnimationFrame") && this.paintDelayMs > 0) {
+      await new Promise((resolve) => setTimeout(resolve, this.paintDelayMs));
+    }
     if (code.includes("document.body.innerText")) {
       return this.bodyText;
     }
@@ -1583,6 +1590,31 @@ describe("executeAutomationCommand", () => {
         },
       });
       expect(browser.tab.actions).toEqual(["invalidate", "capture"]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test("paint and pixel capture share the five-second screenshot budget", async () => {
+    vi.useFakeTimers();
+    try {
+      const browser = new BrowserAutomationHarness();
+      browser.tab.paintDelayMs = 4_000;
+      browser.tab.captureNeverPaints = true;
+      let result: unknown;
+      void browser
+        .execute({
+          command: "screenshot",
+          args: { browserId: BROWSER_A },
+        })
+        .then((value) => {
+          result = value;
+          return value;
+        });
+      await vi.advanceTimersByTimeAsync(4_999);
+      expect(result).toBeUndefined();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(result).toMatchObject({ ok: false, error: { code: "screenshot_no_frame" } });
     } finally {
       vi.useRealTimers();
     }

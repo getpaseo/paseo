@@ -14,7 +14,7 @@ export type DaemonManagementToggleResult =
 
 export async function executeDaemonManagementToggle(
   currentlyManaging: boolean,
-  daemonStatus: Pick<DesktopDaemonStatus, "status" | "desktopManaged"> | null,
+  daemonStatus: Pick<DesktopDaemonStatus, "status" | "ownedByDesktop"> | null,
   deps: DaemonManagementToggleDeps,
 ): Promise<DaemonManagementToggleResult> {
   if (!currentlyManaging) {
@@ -32,7 +32,7 @@ export async function executeDaemonManagementToggle(
   // state reflects what was actually applied if the stop fails.
   await deps.persistSettings({ manageBuiltInDaemon: false });
 
-  if (daemonStatus?.status === "running" && daemonStatus.desktopManaged) {
+  if (daemonStatus?.ownedByDesktop && ["running", "starting"].includes(daemonStatus.status)) {
     const newStatus = await deps.stopDaemon();
     return { kind: "disabled", newStatus };
   }

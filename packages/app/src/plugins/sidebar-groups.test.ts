@@ -9,6 +9,7 @@ function installed(serverId: string, contributionId = "main"): InstalledPlugin {
     cleanup: () => undefined,
     serverId,
     clientBundle: serverId,
+    lifetime: new AbortController(),
     queryClient: new QueryClient(),
     settingsScreens: [],
     surfaces: [{ id: "surface", Component: () => null }],
