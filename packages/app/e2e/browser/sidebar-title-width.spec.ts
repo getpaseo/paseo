@@ -1,6 +1,6 @@
 import { rm, writeFile } from "node:fs/promises";
 import path from "node:path";
-import type { Locator, Page } from "@playwright/test";
+import type { Locator, Page, TestInfo } from "@playwright/test";
 import { expect, test } from "../support/fixtures";
 import { gotoAppShell } from "../support/helpers/app";
 import { seedWorkspace, type SeededWorkspace } from "../support/helpers/seed-client";
@@ -82,9 +82,7 @@ test.afterEach(async () => {
   await workspace?.cleanup();
 });
 
-test("touch titles use the space occupied by hidden stats in every grouping", async ({
-  page,
-}, testInfo) => {
+async function openTouchWorkspaceList(page: Page, testInfo: TestInfo) {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.emulateMedia({ colorScheme: "dark" });
   await gotoAppShell(page);
@@ -92,33 +90,64 @@ test("touch titles use the space occupied by hidden stats in every grouping", as
   await expect(workspaceRow(page)).toBeVisible();
   await page.mouse.move(0, 0);
   await page.screenshot({ path: testInfo.outputPath("sidebar.png") });
+}
 
-  await expectTouchTitleWidth(page);
+async function pinWorkspaceForLayout(page: Page) {
   await workspace.client.setWorkspacePinned(workspace.workspaceId, true);
   await expect(page.getByTestId("sidebar-pinned-section")).toBeVisible();
-  await expectTouchTitleWidth(page);
+}
+
+async function moveWorkspaceToStatusGrouping(page: Page) {
   await workspace.client.setWorkspacePinned(workspace.workspaceId, false);
   await selectSidebarStatusGrouping(page);
-  await expectTouchTitleWidth(page);
-});
+}
 
-test("desktop hover and shortcut hints preserve title width", async ({ page }, testInfo) => {
+async function openDesktopWorkspaceList(page: Page) {
   await gotoAppShell(page);
   const row = workspaceRow(page);
   await expect(row).toBeVisible();
   await page.mouse.move(0, 0);
-  const initialWidth = await titleWidth(row);
   await expect(row.getByText("+12.3k", { exact: true })).toBeVisible();
+  return titleWidth(row);
+}
+
+async function expectHoverKeepsTitleWidth(page: Page, width: number, testInfo: TestInfo) {
+  const row = workspaceRow(page);
   await row.hover();
   await expect(row.getByLabel("Workspace actions", { exact: true })).toBeVisible();
-  expect(await titleWidth(row)).toBeCloseTo(initialWidth, 0);
+  expect(await titleWidth(row)).toBeCloseTo(width, 0);
   await page.screenshot({ path: testInfo.outputPath("desktop-hover.png") });
+}
+
+async function expectShortcutHintsKeepTitleWidth(page: Page, width: number, testInfo: TestInfo) {
+  const row = workspaceRow(page);
   await page.keyboard.down("Alt");
   await expect(row.getByText("1", { exact: true })).toBeVisible();
-  expect(await titleWidth(row)).toBeCloseTo(initialWidth, 0);
+  expect(await titleWidth(row)).toBeCloseTo(width, 0);
   await page.screenshot({ path: testInfo.outputPath("desktop-shortcuts.png") });
   await page.keyboard.up("Alt");
   await expect(row.getByText("1", { exact: true })).toHaveCount(0);
+}
+
+async function expectDisablingStatsExpandsTitle(page: Page, width: number) {
   await toggleTrailing(page, "Diff stats");
-  expect(await titleWidth(row)).toBeGreaterThan(initialWidth);
+  expect(await titleWidth(workspaceRow(page))).toBeGreaterThan(width);
+}
+
+test("touch titles use the space occupied by hidden stats in every grouping", async ({
+  page,
+}, testInfo) => {
+  await openTouchWorkspaceList(page, testInfo);
+  await expectTouchTitleWidth(page);
+  await pinWorkspaceForLayout(page);
+  await expectTouchTitleWidth(page);
+  await moveWorkspaceToStatusGrouping(page);
+  await expectTouchTitleWidth(page);
+});
+
+test("desktop hover and shortcut hints preserve title width", async ({ page }, testInfo) => {
+  const width = await openDesktopWorkspaceList(page);
+  await expectHoverKeepsTitleWidth(page, width, testInfo);
+  await expectShortcutHintsKeepTitleWidth(page, width, testInfo);
+  await expectDisablingStatsExpandsTitle(page, width);
 });
