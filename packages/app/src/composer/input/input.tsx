@@ -378,7 +378,11 @@ function SendButtonContent({
     return <Text style={styles.sendButtonLabel}>{submitLabel}</Text>;
   }
   if (queuesMessage) {
-    return <ThemedListPlus size={buttonIconSize} uniProps={iconAccentForegroundMapping} />;
+    return (
+      <View testID="message-input-queue-icon">
+        <ThemedListPlus size={buttonIconSize} uniProps={iconAccentForegroundMapping} />
+      </View>
+    );
   }
   if (submitIcon === "return") {
     return <ThemedCornerDownLeft size={buttonIconSize} uniProps={iconAccentForegroundMapping} />;
@@ -747,6 +751,7 @@ function SendButtonTooltip({
   canPressLoadingButton,
   onSubmitLoadingPress,
   onDefaultSendAction,
+  onAlternateSendAction,
   isSendButtonDisabled,
   submitAccessibilityLabel,
   sendButtonCombinedStyle,
@@ -763,6 +768,7 @@ function SendButtonTooltip({
   canPressLoadingButton: boolean;
   onSubmitLoadingPress: (() => void) | undefined;
   onDefaultSendAction: () => void;
+  onAlternateSendAction: () => void;
   isSendButtonDisabled: boolean;
   submitAccessibilityLabel: string;
   sendButtonCombinedStyle: React.ComponentProps<typeof TooltipTrigger>["style"];
@@ -775,11 +781,25 @@ function SendButtonTooltip({
   sendTooltipLabel: string;
   queuesMessage: boolean;
 }) {
+  const handlePress = useCallback(() => {
+    if (canPressLoadingButton) return onSubmitLoadingPress?.();
+    if (queuesMessage && isWeb) return;
+    if (queuesMessage) return onAlternateSendAction();
+    onDefaultSendAction();
+  }, [
+    canPressLoadingButton,
+    onAlternateSendAction,
+    onDefaultSendAction,
+    onSubmitLoadingPress,
+    queuesMessage,
+  ]);
   if (!shouldShow) return null;
+
   return (
     <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile={false}>
       <TooltipTrigger
-        onPress={canPressLoadingButton ? onSubmitLoadingPress : onDefaultSendAction}
+        onPress={handlePress}
+        {...(isWeb && queuesMessage ? { onPointerDown: onAlternateSendAction } : {})}
         disabled={isSendButtonDisabled}
         accessibilityLabel={submitAccessibilityLabel}
         accessibilityRole="button"
@@ -843,8 +863,13 @@ export function useAlternateQueueModifier(input: {
 function resolveSendButtonPresentation(input: {
   defaultActionQueues: boolean;
   alternateQueueModifierHeld: boolean;
-}): { queuesMessage: boolean; sendKeys: ShortcutKey[][] } {
+}): {
+  showsQueueIcon: boolean;
+  queuesMessage: boolean;
+  sendKeys: ShortcutKey[][];
+} {
   return {
+    showsQueueIcon: input.alternateQueueModifierHeld,
     queuesMessage: input.defaultActionQueues || input.alternateQueueModifierHeld,
     sendKeys: input.alternateQueueModifierHeld ? ALTERNATE_SEND_KEYS : DEFAULT_SEND_KEYS,
   };
@@ -1932,6 +1957,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
                 canPressLoadingButton={canPressLoadingButton}
                 onSubmitLoadingPress={onSubmitLoadingPress}
                 onDefaultSendAction={handleDefaultSendAction}
+                onAlternateSendAction={handleAlternateSendAction}
                 isSendButtonDisabled={isSendButtonDisabled}
                 submitAccessibilityLabel={submitAccessibilityLabel}
                 sendButtonCombinedStyle={sendButtonCombinedStyle}
@@ -1942,7 +1968,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
                 buttonIconSize={buttonIconSize}
                 sendKeys={sendButtonPresentation.sendKeys}
                 sendTooltipLabel={sendTooltipLabel}
-                queuesMessage={sendButtonPresentation.queuesMessage}
+                queuesMessage={sendButtonPresentation.showsQueueIcon}
               />
             </View>
           </View>
