@@ -128,6 +128,7 @@ export function AdaptiveRenameModal({
         <AdaptiveTextInput
           ref={inputRef}
           initialValue={initialValue}
+          accessibilityLabel={title}
           onChangeText={handleChange}
           placeholder={placeholder}
           autoCapitalize="none"

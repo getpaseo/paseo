@@ -6,6 +6,11 @@ import { AdaptiveRenameModal } from "./rename-modal";
 
 function noop(): void {}
 
+const INPUT_LABEL = "Rename workspace";
+const SUBMIT_LABEL = "Rename";
+const PENDING_LABEL = "Saving...";
+const CANCEL_LABEL = "Cancel";
+
 interface MountedModal {
   root: Root;
   container: HTMLDivElement;
@@ -28,9 +33,9 @@ function renderModal({ initialValue, onSubmit, onClose, validate }: RenderModalP
     root.render(
       <AdaptiveRenameModal
         visible
-        title="Rename workspace"
+        title={INPUT_LABEL}
         initialValue={initialValue}
-        submitLabel="Rename"
+        submitLabel={SUBMIT_LABEL}
         onClose={onClose ?? noop}
         onSubmit={onSubmit ?? noop}
         validate={validate}
@@ -41,16 +46,30 @@ function renderModal({ initialValue, onSubmit, onClose, validate }: RenderModalP
   mountedModals.push({ root, container });
 }
 
-function queryInput(): HTMLInputElement {
-  const input = document.querySelector<HTMLInputElement>('[data-testid="rename-modal-input"]');
-  if (!input) throw new Error("Rename modal did not render its input");
+function accessibleName(element: HTMLElement): string {
+  return (element.getAttribute("aria-label") ?? element.textContent ?? "").trim();
+}
+
+function queryNamedInput(name: string): HTMLInputElement {
+  const input = Array.from(document.querySelectorAll<HTMLInputElement>("input")).find(
+    (candidate) => accessibleName(candidate) === name,
+  );
+  if (!input) throw new Error(`No textbox named "${name}" is rendered`);
   return input;
 }
 
-function queryButton(suffix: "submit" | "cancel"): HTMLElement {
-  const button = document.querySelector<HTMLElement>(`[data-testid="rename-modal-${suffix}"]`);
-  if (!button) throw new Error(`Rename modal did not render its ${suffix} button`);
+function queryNamedButton(name: string): HTMLElement {
+  const button = Array.from(document.querySelectorAll<HTMLElement>('[role="button"]')).find(
+    (candidate) => accessibleName(candidate) === name,
+  );
+  if (!button) throw new Error(`No button named "${name}" is rendered`);
   return button;
+}
+
+function queryError(): HTMLElement {
+  const error = document.querySelector<HTMLElement>('[data-testid="rename-modal-error"]');
+  if (!error) throw new Error("Rename modal did not render its error text");
+  return error;
 }
 
 function isDisabled(element: HTMLElement): boolean {
@@ -84,6 +103,29 @@ function press(button: HTMLElement): void {
   });
 }
 
+/**
+ * The modal focuses and selects on a 50 ms timeout after mount. Poll the
+ * observable readiness condition rather than a wall-clock delay so the test
+ * passes deterministically regardless of scheduler jitter.
+ */
+async function waitForFullySelectedInput(
+  input: HTMLInputElement,
+  expectedValue: string,
+): Promise<void> {
+  const expectedEnd = expectedValue.length;
+  await vi.waitFor(
+    () => {
+      if (document.activeElement !== input) {
+        throw new Error("rename input is not focused yet");
+      }
+      if (input.selectionStart !== 0 || input.selectionEnd !== expectedEnd) {
+        throw new Error("rename input is not fully selected yet");
+      }
+    },
+    { timeout: 5000, interval: 10 },
+  );
+}
+
 async function flush(): Promise<void> {
   await act(async () => {
     await Promise.resolve();
@@ -108,23 +150,10 @@ beforeAll(function pinEnglishLocale() {
 describe("AdaptiveRenameModal", () => {
   it("renders the initial value pre-filled, focused, and fully selected after open", async () => {
     renderModal({ initialValue: "main" });
-    const input = queryInput();
+    const input = queryNamedInput(INPUT_LABEL);
     expect(input.value).toBe("main");
 
-    // The modal focuses and selects on a 50 ms timeout after mount. Synchronize
-    // on the observable condition rather than a wall-clock delay so the test
-    // passes deterministically regardless of scheduler jitter.
-    await vi.waitFor(
-      () => {
-        if (document.activeElement !== input) {
-          throw new Error("rename input is not focused yet");
-        }
-        if (input.selectionStart !== 0 || input.selectionEnd !== "main".length) {
-          throw new Error("rename input is not fully selected yet");
-        }
-      },
-      { timeout: 5000, interval: 10 },
-    );
+    await waitForFullySelectedInput(input, "main");
 
     expect(input.selectionStart).toBe(0);
     expect(input.selectionEnd).toBe("main".length);
@@ -135,8 +164,8 @@ describe("AdaptiveRenameModal", () => {
     const onClose = vi.fn();
     renderModal({ initialValue: "feature", onSubmit, onClose });
 
-    typeInto(queryInput(), "feature-2");
-    pressEnter(queryInput());
+    typeInto(queryNamedInput(INPUT_LABEL), "feature-2");
+    pressEnter(queryNamedInput(INPUT_LABEL));
     await flush();
 
     expect(onSubmit).toHaveBeenCalledTimes(1);
@@ -149,7 +178,7 @@ describe("AdaptiveRenameModal", () => {
     const onSubmit = vi.fn();
     renderModal({ initialValue: "main", onClose, onSubmit });
 
-    press(queryButton("cancel"));
+    press(queryNamedButton(CANCEL_LABEL));
     await flush();
 
     expect(onClose).toHaveBeenCalledTimes(1);
@@ -160,19 +189,19 @@ describe("AdaptiveRenameModal", () => {
     const onSubmit = vi.fn();
     renderModal({ initialValue: "main", onSubmit });
 
-    expect(isDisabled(queryButton("submit"))).toBe(true);
+    expect(isDisabled(queryNamedButton(SUBMIT_LABEL))).toBe(true);
 
-    pressEnter(queryInput());
+    pressEnter(queryNamedInput(INPUT_LABEL));
     await flush();
     expect(onSubmit).not.toHaveBeenCalled();
 
-    typeInto(queryInput(), "main-v2");
+    typeInto(queryNamedInput(INPUT_LABEL), "main-v2");
     await flush();
-    expect(isDisabled(queryButton("submit"))).toBe(false);
+    expect(isDisabled(queryNamedButton(SUBMIT_LABEL))).toBe(false);
 
-    typeInto(queryInput(), "main");
+    typeInto(queryNamedInput(INPUT_LABEL), "main");
     await flush();
-    expect(isDisabled(queryButton("submit"))).toBe(true);
+    expect(isDisabled(queryNamedButton(SUBMIT_LABEL))).toBe(true);
   });
 
   it("surfaces validate errors inline and blocks submission", async () => {
@@ -180,15 +209,14 @@ describe("AdaptiveRenameModal", () => {
     const validate = vi.fn((value: string) => (value === "bad" ? "Invalid name" : null));
     renderModal({ initialValue: "ok", validate, onSubmit });
 
-    typeInto(queryInput(), "bad");
-    expect(isDisabled(queryButton("submit"))).toBe(true);
+    typeInto(queryNamedInput(INPUT_LABEL), "bad");
+    expect(isDisabled(queryNamedButton(SUBMIT_LABEL))).toBe(true);
 
-    pressEnter(queryInput());
+    pressEnter(queryNamedInput(INPUT_LABEL));
     await flush();
 
     expect(onSubmit).not.toHaveBeenCalled();
-    const error = document.querySelector<HTMLElement>('[data-testid="rename-modal-error"]');
-    expect(error?.textContent).toContain("Invalid name");
+    expect(queryError().textContent).toContain("Invalid name");
   });
 
   it("disables the submit and cancel buttons while onSubmit is pending", async () => {
@@ -201,13 +229,14 @@ describe("AdaptiveRenameModal", () => {
     );
     renderModal({ initialValue: "main", onSubmit });
 
-    typeInto(queryInput(), "main-renamed");
-    press(queryButton("submit"));
+    typeInto(queryNamedInput(INPUT_LABEL), "main-renamed");
+    press(queryNamedButton(SUBMIT_LABEL));
     await flush();
 
+    // While pending the submit button swaps its accessible name to "Saving...".
     expect(onSubmit).toHaveBeenCalledTimes(1);
-    expect(isDisabled(queryButton("submit"))).toBe(true);
-    expect(isDisabled(queryButton("cancel"))).toBe(true);
+    expect(isDisabled(queryNamedButton(PENDING_LABEL))).toBe(true);
+    expect(isDisabled(queryNamedButton(CANCEL_LABEL))).toBe(true);
 
     await act(async () => {
       resolve();
@@ -220,13 +249,12 @@ describe("AdaptiveRenameModal", () => {
     const onClose = vi.fn();
     renderModal({ initialValue: "main", onSubmit, onClose });
 
-    typeInto(queryInput(), "main-renamed");
-    press(queryButton("submit"));
+    typeInto(queryNamedInput(INPUT_LABEL), "main-renamed");
+    press(queryNamedButton(SUBMIT_LABEL));
     await flush();
 
     expect(onClose).not.toHaveBeenCalled();
-    const error = document.querySelector<HTMLElement>('[data-testid="rename-modal-error"]');
-    expect(error?.textContent).toContain("Server said no");
-    expect(isDisabled(queryButton("submit"))).toBe(false);
+    expect(queryError().textContent).toContain("Server said no");
+    expect(isDisabled(queryNamedButton(SUBMIT_LABEL))).toBe(false);
   });
 });
