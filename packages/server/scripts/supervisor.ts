@@ -234,12 +234,14 @@ export function runSupervisor(options: SupervisorOptions): SupervisorController 
       child = spawn(spawnSpec.command, spawnSpec.args, {
         stdio: ["inherit", "pipe", "pipe", "ipc"],
         env: spawnSpec.env ?? workerEnv,
+        windowsHide: true,
       });
     } else {
       child = fork(workerEntry, workerArgs, {
         stdio: ["inherit", "pipe", "pipe", "ipc"],
         env: workerEnv,
         execArgv: workerExecArgv,
+        windowsHide: true,
       });
     }
 
