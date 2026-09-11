@@ -6,11 +6,13 @@ import pino from "pino";
 
 import type {
   AgentPersistenceHandle,
+  AgentFeature,
   AgentPermissionResponse,
   AgentSessionConfig,
   AgentStreamEvent,
   AgentTimelineItem,
 } from "../../../agent-sdk-types.js";
+import type { ProviderRuntimeSettings } from "../../../provider-launch-config.js";
 import type { PaseoToolCatalog } from "../../../tools/types.js";
 import {
   OmpAgentClient,
@@ -19,7 +21,7 @@ import {
   type OmpProviderIdleScheduler,
 } from "../agent.js";
 import type { OmpUsagePollScheduler } from "../usage-poller.js";
-import type { OmpAgentMessage, OmpRpcSlashCommand } from "../rpc-types.js";
+import type { OmpAgentMessage, OmpRpcSlashCommand, OmpSessionState } from "../rpc-types.js";
 import { FakeOmp } from "./fake-omp.js";
 
 const CWD = "/tmp/paseo-omp-agent-test";
@@ -70,11 +72,13 @@ export class OmpHarness {
     options: {
       providerIdleScheduler?: OmpProviderIdleScheduler;
       noTurnScheduler?: OmpNoTurnScheduler;
+      runtimeSettings?: ProviderRuntimeSettings;
       usagePollScheduler?: OmpUsagePollScheduler;
     } = {},
   ) {
     this.client = new OmpAgentClient({
       logger: pino({ level: "silent" }),
+      runtimeSettings: options.runtimeSettings,
       runtime: this.omp,
       providerIdleScheduler: options.providerIdleScheduler,
       noTurnScheduler: options.noTurnScheduler,
@@ -84,6 +88,10 @@ export class OmpHarness {
 
   queueCommands(commands: OmpRpcSlashCommand[]): void {
     this.omp.queueCommands(commands);
+  }
+
+  queueInitialState(patch: Partial<OmpSessionState>): void {
+    this.omp.queueInitialStatePatch(patch);
   }
 
   failEventSubscription(error: Error): void {
@@ -446,6 +454,22 @@ export class OmpHarness {
     return await this.requireSession().setMode(modeId);
   }
 
+  features(): AgentFeature[] {
+    return this.requireSession().features ?? [];
+  }
+
+  async clientFeatures(config: Partial<AgentSessionConfig> = {}): Promise<AgentFeature[]> {
+    return await this.client.listFeatures({ provider: "omp", cwd: CWD, ...config });
+  }
+
+  async setFeature(featureId: string, value: unknown): Promise<void> {
+    await this.requireSession().setFeature?.(featureId, value);
+  }
+
+  async setModel(modelId: string | null): Promise<void> {
+    await this.requireSession().setModel?.(modelId);
+  }
+
   async rewind(messageId: string, restoredPrompt: string): Promise<void> {
     this.omp.latestSession().branchResponse = { text: restoredPrompt };
     await this.requireSession().revertConversation({ messageId });
@@ -476,6 +500,10 @@ export class OmpHarness {
 
   runtime() {
     return this.omp.latestSession();
+  }
+
+  async requireRuntimeInfo() {
+    return await this.requireSession().getRuntimeInfo();
   }
 
   runningToolCallIds(): string[] {
