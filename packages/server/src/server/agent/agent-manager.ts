@@ -4883,7 +4883,10 @@ export class AgentManager {
       },
       "agent.manager.dispatch_stream",
     );
-    this.dispatch({ type: "agent_stream", agentId, event, ...metadata });
+    // Native diffs belong to plugin capture, not the ordinary app stream or model history.
+    const publicEvent =
+      "nativeDiff" in event ? (({ nativeDiff: _diff, ...rest }) => rest)(event) : event;
+    this.dispatch({ type: "agent_stream", agentId, event: publicEvent, ...metadata });
     if (this.pluginLifecycle && agent && !agent.internal && event.type !== "timeline") {
       publishAgentStream(
         this.pluginLifecycle,

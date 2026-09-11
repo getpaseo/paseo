@@ -2154,6 +2154,7 @@ const TurnPlanUpdatedNotificationSchema = z
 const TurnDiffUpdatedNotificationSchema = z
   .object({
     threadId: z.string().optional(),
+    turnId: z.string().optional(),
     diff: z.string(),
   })
   .passthrough();
@@ -2424,7 +2425,7 @@ type ParsedCodexNotification =
       plan: Array<{ step: string | null; status: string | null }>;
       threadId: string | null;
     }
-  | { kind: "diff_updated"; diff: string; threadId: string | null }
+  | { kind: "diff_updated"; diff: string; threadId: string | null; turnId: string | null }
   | { kind: "token_usage_updated"; tokenUsage: unknown; threadId: string | null }
   | { kind: "agent_message_delta"; itemId: string; delta: string; threadId: string | null }
   | { kind: "reasoning_delta"; itemId: string; delta: string; threadId: string | null }
@@ -2605,6 +2606,7 @@ const CodexNotificationSchema = z.union([
         kind: "diff_updated",
         diff: params.diff,
         threadId: params.threadId ?? null,
+        turnId: params.turnId ?? null,
       }),
     ),
   z.object({ method: z.literal("turn/diff/updated"), params: z.unknown() }).transform(
@@ -2974,6 +2976,7 @@ const CodexNotificationSchema = z.union([
         kind: "diff_updated",
         diff: params.msg.unified_diff ?? params.msg.diff ?? "",
         threadId: getCodexEventThreadId(params),
+        turnId: null,
       }),
     ),
   z.object({ method: z.literal("codex/event/turn_diff"), params: z.unknown() }).transform(
@@ -3309,6 +3312,7 @@ export class CodexAppServerAgentSession implements AgentSession {
   private resolvedSandboxPolicy: Record<string, unknown> | null = null;
   private currentThreadId: string | null = null;
   private currentTurnId: string | null = null;
+  private latestTurnDiff: string | null = null;
   private pendingForegroundTurnIdentification: {
     foregroundTurnId: string;
     promise: Promise<string | null>;
@@ -5162,6 +5166,14 @@ export class CodexAppServerAgentSession implements AgentSession {
   }
 
   private emitEvent(event: AgentStreamEvent): void {
+    const isTurnEnd =
+      event.type === "turn_completed" ||
+      event.type === "turn_failed" ||
+      event.type === "turn_canceled";
+    if (isTurnEnd) {
+      this.notifySubscribers({ ...event, nativeDiff: this.latestTurnDiff });
+      return;
+    }
     if (this.loadingPersistedHistory && event.type === "provider_subagent") {
       this.persistedProviderSubagentEvents.push(event);
       return;
@@ -5290,9 +5302,7 @@ export class CodexAppServerAgentSession implements AgentSession {
         this.handlePlanUpdatedNotification(parsed);
         return;
       case "diff_updated":
-        // NOTE: Codex app-server emits frequent `turn/diff/updated` notifications
-        // containing a full accumulated unified diff for the *entire turn*.
-        // This is not a concrete file-change tool call; it is progress telemetry.
+        this.handleTurnDiffNotification(parsed);
         return;
       case "token_usage_updated":
         this.handleTokenUsageUpdatedNotification(parsed);
@@ -5968,6 +5978,7 @@ export class CodexAppServerAgentSession implements AgentSession {
   }
 
   private resetTurnTrackingState(): void {
+    this.latestTurnDiff = null;
     this.latestPlanResult = null;
     this.emittedItemStartedIds.clear();
     this.emittedItemCompletedIds.clear();
@@ -5984,6 +5995,14 @@ export class CodexAppServerAgentSession implements AgentSession {
     this.pendingAnonymousRootCompactions = 0;
     this.unpairedCompactionNotificationCompletions = 0;
     this.unpairedCompactionItemCompletions = 0;
+  }
+
+  private handleTurnDiffNotification(
+    parsed: Extract<ParsedCodexNotification, { kind: "diff_updated" }>,
+  ): void {
+    const matchesCurrentTurn =
+      this.currentTurnId && (!parsed.turnId || parsed.turnId === this.currentTurnId);
+    if (matchesCurrentTurn) this.latestTurnDiff = parsed.diff;
   }
 
   private handlePlanUpdatedNotification(
