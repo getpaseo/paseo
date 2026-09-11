@@ -40,9 +40,11 @@ export async function installCli(): Promise<InstallStatus> {
     // Generate a thin .cmd trampoline that delegates to the bundled shim.
     // Only the app install path is baked in — internal details (asar layout,
     // entrypoint scripts) live in the bundled shim and update with the app.
-    // cmd.exe reads the file in the OEM code page, so the content is kept
-    // ASCII-only and the path goes through %LOCALAPPDATA% & co. (#4684).
-    await fs.writeFile(targetPath, renderWindowsCliShim(shimPath), "ascii");
+    // cmd.exe reads the file in the OEM code page, so the path goes through
+    // %LOCALAPPDATA% & co. and the content stays ASCII (#4684); a non-ASCII
+    // path outside every root is written as UTF-8 and the shim switches the
+    // code page for that line itself.
+    await fs.writeFile(targetPath, renderWindowsCliShim(shimPath));
   } else {
     if (await pathOrSymlinkExists(targetPath)) {
       await fs.unlink(targetPath);
