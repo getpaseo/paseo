@@ -1,3 +1,4 @@
+import { BackgroundActivityRecorder } from "../background-activity/recorder.js";
 import { isSummarizableToolCall, readToolCallSummary } from "@getpaseo/protocol/tool-call-summary";
 import { ToolCallSummaryStore, toolCallSummaryKey } from "./tool-call-summaries/store.js";
 import type { ToolCallSummaryTarget, ToolCallSummarySource } from "./tool-call-summaries/types.js";
@@ -696,6 +697,7 @@ function detachedAgentLabelPatch(labels: Record<string, string>): AgentLabelPatc
 }
 
 export class AgentManager {
+  readonly backgroundActivity = new BackgroundActivityRecorder();
   private readonly pluginLifecycle: PluginLifecycle | undefined;
   private readonly clients = new Map<AgentProvider, AgentClient>();
   private readonly providerEnabled = new Map<AgentProvider, boolean>();
@@ -1147,6 +1149,14 @@ export class AgentManager {
 
   getProviderRuntimeId(provider: AgentProvider): AgentProvider {
     return this.providerDefinitions.get(provider)?.derivedFromProviderId ?? provider;
+  }
+
+  getBackgroundSystemInstructions(agentId: string): string | null {
+    const config = this.applyDaemonAppendSystemPrompt(this.requireAgent(agentId).config);
+    const sections = [config.systemPrompt, config.daemonAppendSystemPrompt].filter(
+      (part) => typeof part === "string" && part.length > 0,
+    );
+    return sections.length ? sections.join("\n\n") : null;
   }
 
   supportsToolCallSummaries(): boolean {

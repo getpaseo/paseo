@@ -39,6 +39,7 @@ import {
   MessageOuterSpacingProvider,
   type InlinePathTarget,
 } from "@/components/message";
+import { PlanHandoffButton } from "@/components/plan-handoff-button";
 import { PlanCard } from "@/components/plan-card";
 import type { StreamItem } from "@/types/stream";
 import type { PendingMessageSubmission } from "@/composer/submission/model";
@@ -142,6 +143,7 @@ function BottomOverlayInset({ height }: { height: number }) {
 
 function renderPendingPermissionsNode(input: {
   pendingPermissions: PendingPermission[];
+  serverId: string;
   client: DaemonClient | null;
 }): ReactNode {
   if (input.pendingPermissions.length === 0) {
@@ -150,7 +152,12 @@ function renderPendingPermissionsNode(input: {
   return (
     <View style={stylesheet.permissionsContainer}>
       {input.pendingPermissions.map((permission) => (
-        <PermissionRequestCard key={permission.key} permission={permission} client={input.client} />
+        <PermissionRequestCard
+          key={permission.key}
+          permission={permission}
+          serverId={input.serverId}
+          client={input.client}
+        />
       ))}
     </View>
   );
@@ -270,11 +277,13 @@ function renderLiveHeadStreamItem(input: {
 }
 
 export interface AgentStreamViewHandle {
+  scrollToMessage(itemId: string): void;
   scrollToBottom(reason?: BottomAnchorLocalRequest["reason"]): void;
   prepareForViewportChange(): void;
 }
 
 export interface AgentStreamViewProps {
+  renderUserMessageHeader?: (messageId: string) => React.ReactNode;
   agentId: string;
   serverId?: string;
   context: AgentScreenAgent;
@@ -346,6 +355,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       toast,
       onOpenWorkspaceFile,
       readOnly = false,
+      renderUserMessageHeader,
       historyPagination,
     },
     ref,
@@ -660,6 +670,9 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
         scrollToBottom(reason = "jump-to-bottom") {
           viewportRef.current?.scrollToBottom(reason);
         },
+        scrollToMessage(itemId: string) {
+          viewportRef.current?.scrollToMessage?.(itemId);
+        },
         prepareForViewportChange() {
           viewportRef.current?.prepareForViewportChange();
         },
@@ -715,26 +728,36 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
     const renderUserMessageItem = useCallback(
       (layoutItem: StreamLayoutItem, item: Extract<StreamItem, { kind: "user_message" }>) => {
         return (
-          <UserMessage
-            serverId={resolvedServerId}
-            agentId={agentId}
-            messageId={item.messageId}
-            message={item.text}
-            images={item.images}
-            attachments={item.attachments}
-            timestamp={item.timestamp.getTime()}
-            capabilities={context.capabilities}
-            client={client}
-            isFirstInGroup={layoutItem.isFirstInUserGroup}
-            isLastInGroup={layoutItem.isLastInUserGroup}
-            isPending={
-              item.clientMessageId !== undefined &&
-              pendingClientMessageIds.has(item.clientMessageId)
-            }
-          />
+          <>
+            {renderUserMessageHeader?.(item.messageId ?? "")}
+            <UserMessage
+              serverId={resolvedServerId}
+              agentId={agentId}
+              messageId={item.messageId}
+              message={item.text}
+              images={item.images}
+              attachments={item.attachments}
+              timestamp={item.timestamp.getTime()}
+              capabilities={context.capabilities}
+              client={client}
+              isFirstInGroup={layoutItem.isFirstInUserGroup}
+              isLastInGroup={layoutItem.isLastInUserGroup}
+              isPending={
+                item.clientMessageId !== undefined &&
+                pendingClientMessageIds.has(item.clientMessageId)
+              }
+            />
+          </>
         );
       },
-      [context.capabilities, agentId, client, pendingClientMessageIds, resolvedServerId],
+      [
+        renderUserMessageHeader,
+        context.capabilities,
+        agentId,
+        client,
+        pendingClientMessageIds,
+        resolvedServerId,
+      ],
     );
 
     const renderAssistantMessageItem = useCallback(
@@ -958,9 +981,10 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       () =>
         renderPendingPermissionsNode({
           pendingPermissions: pendingPermissionItems,
+          serverId: resolvedServerId,
           client,
         }),
-      [client, pendingPermissionItems],
+      [client, pendingPermissionItems, resolvedServerId],
     );
     const turnFooterNode = useMemo(
       () =>
@@ -1273,6 +1297,8 @@ function agentStreamViewPropsEqual(
   }
   if (left.toast !== right.toast) reasons.push("toast");
   if (left.onOpenWorkspaceFile !== right.onOpenWorkspaceFile) reasons.push("onOpenWorkspaceFile");
+  if (left.renderUserMessageHeader !== right.renderUserMessageHeader)
+    reasons.push("renderUserMessageHeader");
   if (left.readOnly !== right.readOnly) reasons.push("readOnly");
   if (!historyPaginationPropsEqual(left.historyPagination, right.historyPagination)) {
     reasons.push("historyPagination");
@@ -1402,16 +1428,22 @@ function PermissionActionButton({
 }
 
 function PermissionRequestCard({
+  serverId,
   permission,
   client,
 }: {
   permission: PendingPermission;
+  serverId: string;
   client: DaemonClient | null;
 }) {
   const { t } = useTranslation();
   const isMobile = useIsCompactFormFactor();
 
   const { request } = permission;
+  const planSource = useMemo(
+    () => ({ serverId, agentId: permission.agentId }),
+    [serverId, permission.agentId],
+  );
   const isPlanRequest = request.kind === "plan";
   const title = isPlanRequest
     ? t("agentStream.permission.plan")
@@ -1576,6 +1608,14 @@ function PermissionRequestCard({
             />
           );
         })}
+        {isPlanRequest && planMarkdown ? (
+          <PlanHandoffButton
+            serverId={serverId}
+            agentId={permission.agentId}
+            text={planMarkdown}
+            disabled={isResponding}
+          />
+        ) : null}
       </View>
     </>
   );
@@ -1586,6 +1626,7 @@ function PermissionRequestCard({
         title={title}
         description={description}
         text={planMarkdown}
+        source={planSource}
         footer={footer}
         testID="permission-plan-card"
         disableOuterSpacing

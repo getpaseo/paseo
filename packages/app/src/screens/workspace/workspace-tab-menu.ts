@@ -160,6 +160,8 @@ function getCloseButtonTestId(tab: WorkspaceTabDescriptor): string {
   if (tab.target.kind === "new_tab") {
     return `workspace-new-tab-close-${tab.tabId}`;
   }
+  if (tab.target.kind === "background_activity" || tab.target.kind === "background_thread")
+    return `workspace-background-close-${tab.tabId}`;
   return `workspace-file-close-${encodeFilePathForPathSegment(tab.target.path)}`;
 }
 

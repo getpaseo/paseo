@@ -7,6 +7,12 @@ export function normalizeWorkspaceTabTarget(
   if (!value || typeof value !== "object" || typeof value.kind !== "string") {
     return null;
   }
+  if (value.kind === "background_thread") {
+    const conversationId = trimNonEmpty(value.conversationId);
+    return conversationId
+      ? { kind: "background_thread", conversationId, requestId: value.requestId }
+      : null;
+  }
   if (value.kind === "draft") {
     const draftId = trimNonEmpty(value.draftId);
     if (!draftId) {
@@ -55,6 +61,7 @@ function normalizeSimpleWorkspaceTabTarget(value: WorkspaceTabTarget): Workspace
       const browserId = trimNonEmpty(value.browserId);
       return browserId ? { kind: "browser", browserId } : null;
     }
+    case "background_activity":
     case "changes_tree":
     case "files":
     case "pull_request":
@@ -100,6 +107,7 @@ export function workspaceTabTargetsEqual(
   left: WorkspaceTabTarget,
   right: WorkspaceTabTarget,
 ): boolean {
+  if (left.kind === "background_thread") return backgroundThreadTargetsEqual(left, right);
   if (left.kind !== right.kind) {
     return false;
   }
@@ -127,10 +135,22 @@ export function workspaceTabTargetsEqual(
   return secondaryWorkspaceTabTargetsEqual(left, right);
 }
 
+function backgroundThreadTargetsEqual(
+  left: Extract<WorkspaceTabTarget, { kind: "background_thread" }>,
+  right: WorkspaceTabTarget,
+): boolean {
+  return (
+    right.kind === "background_thread" &&
+    left.conversationId === right.conversationId &&
+    left.requestId === right.requestId
+  );
+}
+
 function secondaryWorkspaceTabTargetsEqual(
   left: WorkspaceTabTarget,
   right: WorkspaceTabTarget,
 ): boolean {
+  if (left.kind === "background_activity") return right.kind === "background_activity";
   if (left.kind === "browser" && right.kind === "browser") {
     return left.browserId === right.browserId;
   }
@@ -228,6 +248,8 @@ export function buildDeterministicWorkspaceTabId(target: WorkspaceTabTarget): st
       ? `plugin_workspace_${identity}`
       : `plugin_agent_${identity}_${target.agentId.length}_${target.agentId}`;
   }
+  if (target.kind === "background_activity") return target.kind;
+  if (target.kind === "background_thread") return `background_thread_${target.conversationId}`;
   return `file_${target.path}`;
 }
 

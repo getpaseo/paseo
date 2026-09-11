@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import pino from "pino";
+import { AgentManager } from "../agent-manager.js";
+import { createTestAgentClient } from "../../test-utils/fake-agent-client.js";
 import type { ToolCallSummarySource, ToolCallSummaryTarget } from "./types.js";
 import { ToolCallSummarizer, SummaryCancellationError, type SummaryGenerator } from "./service.js";
 import type { SummaryCall, SummaryResponse } from "./prompt.js";
@@ -14,7 +16,7 @@ afterEach(async () => {
   vi.useRealTimers();
 });
 
-function fixture() {
+function fixture(manager?: AgentManager) {
   const sources = new Map<string, ToolCallSummarySource>();
   const generate = vi
     .fn<SummaryGenerator["generate"]>()
@@ -24,6 +26,7 @@ function fixture() {
   const apply = vi.fn(async (_target: ToolCallSummaryTarget, _description: string) => {});
   const invalidate = vi.fn(async (_agentId: string) => {});
   const service = new ToolCallSummarizer({
+    manager,
     getSource: (target) => sources.get(target.key) ?? null,
     apply,
     generator: { generate, invalidate, dispose: async () => {} },
@@ -59,6 +62,40 @@ function response(calls: SummaryCall[]): SummaryResponse {
 }
 
 describe("tool-call summary scheduling", () => {
+  it("records queued batches without changing their scheduling", async () => {
+    const manager = new AgentManager({
+      clients: { codex: createTestAgentClient("codex") },
+      logger: pino({ level: "silent" }),
+    });
+    const source = await manager.createAgent(
+      { provider: "codex", cwd: "/tmp", internal: true },
+      undefined,
+      { workspaceId: undefined, persistSession: false },
+    );
+    try {
+      const { enqueue, generate } = fixture(manager);
+      enqueue(source.id, 12);
+      expect(manager.backgroundActivity.snapshot().requests).toMatchObject([
+        { status: "queued", count: 12, sourceAgentId: source.id },
+      ]);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(generate.mock.calls[0][4]).toBeTruthy();
+      expect(
+        manager.backgroundActivity
+          .snapshot()
+          .requests.map((request) => [request.status, request.count]),
+      ).toEqual([
+        ["completed", 10],
+        ["queued", 2],
+      ]);
+      await vi.advanceTimersByTimeAsync(5000);
+      expect(
+        manager.backgroundActivity.snapshot().requests.map((request) => request.status),
+      ).toEqual(["completed", "completed"]);
+    } finally {
+      await manager.closeAgent(source.id);
+    }
+  });
   it("starts immediately, then spaces batches by five seconds and rotates fairly", async () => {
     const { enqueue, generate } = fixture();
     enqueue("a", 12);

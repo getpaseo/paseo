@@ -26,7 +26,7 @@ generates separate 2–8 word input and result labels for shell and generic tool
 agents, using the same model selection as commit generation. Input generation is queued on creation;
 result generation waits for completion. Both share the throttled queue. Input labels are keyed only
 by the requested operation, so a result arriving first cannot discard an in-flight input label.
-The app shows **input** → result, with filenames linked to file tabs. Link paths must occur in the
+The app shows a muted, medium-weight input → result, with filenames linked to file tabs. Link paths must occur in the
 source call; helper context cannot supply a missing path. Simple reads have an immediate local
 label while the helper is pending. History hydration restores saved descriptions without starting
 generation for old calls.
@@ -46,6 +46,25 @@ Set `agents.toolCallSummaries.enabled` to `false` in the host's `config.json` to
 on the next daemon start. Existing descriptions remain readable. Model preferences continue to use
 `agents.metadataGeneration.providers`. Helpers retain recent context but are released on source
 closure or inactivity; their sessions are not the durable source of descriptions.
+
+## Background request inspection
+
+Commit text and tool-label generation share a session-only activity recorder. Requests, execution
+attempts, and helper conversations have separate identities: retries can change providers, while a
+label helper serves multiple batches. Capture subscribes directly to internal helpers before each
+run, so deleting a helper never deletes its retained evidence or exposes it in ordinary agent lists.
+
+The inspector uses the standard stream projection and message renderer in read-only mode. Its
+summary subscription carries invalidations; an open conversation fetches sequenced rows separately.
+Subscribe before taking a snapshot. Reset accumulated rows when the daemon epoch or conversation
+retention identity changes; the latter handles eviction followed by reuse of a still-live helper.
+
+History stays in memory for the daemon session, with a 128 MiB capture budget. Finished helper
+conversations are evicted first. Oversized active content is explicitly omitted; recording never
+cancels execution or keeps a helper process alive. Provider-reported models override configured
+models only when reported. Missing model configuration means **Provider default**.
+
+See [Explorer sidebar](explorer-sidebar.md#panel-host-contract) for inspector placement.
 
 ## Presence is not delivery
 

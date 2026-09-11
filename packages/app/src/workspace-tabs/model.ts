@@ -33,6 +33,8 @@ export type PluginWorkspaceTabTarget =
     };
 
 export type WorkspaceTabTarget =
+  | { kind: "background_activity" }
+  | { kind: "background_thread"; conversationId: string; requestId?: string }
   | { kind: "new_tab" }
   | { kind: "draft"; draftId: string; setup?: WorkspaceDraftTabSetup }
   | { kind: "agent"; agentId: string }

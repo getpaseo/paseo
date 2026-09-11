@@ -13,6 +13,16 @@ type PanelManifestByKind = {
 };
 
 const manifests = {
+  background_activity: {
+    kind: "background_activity",
+    supportedHosts: ["explorer"],
+    resourceKey: () => "background_activity",
+  },
+  background_thread: {
+    kind: "background_thread",
+    supportedHosts: ["main"],
+    resourceKey: (target) => target.conversationId,
+  },
   new_tab: {
     kind: "new_tab",
     supportedHosts: ["main", "explorer"],

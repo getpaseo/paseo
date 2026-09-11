@@ -7,10 +7,11 @@ import {
 } from "@/stores/workspace-layout-store";
 import type { WorkspaceTabTarget } from "@/workspace-tabs/model";
 
-export type ExplorerSidebarView = "changes" | "files" | "pr";
+export type ExplorerSidebarView = "changes" | "files" | "pr" | "activity";
 export type ExplorerSidebarPresentation = "overlay" | "dock" | "pane";
 
 const VIEW_TARGETS: Record<ExplorerSidebarView, WorkspaceTabTarget> = {
+  activity: { kind: "background_activity" },
   changes: { kind: "changes_tree" },
   files: { kind: "files" },
   pr: { kind: "pull_request" },

@@ -5068,6 +5068,39 @@ export class DaemonClient {
     return payload.plugins;
   }
 
+  async getBackgroundActivity(conversationId?: string, afterSeq?: number) {
+    const requestId = this.createRequestId();
+    return this.sendCorrelatedSessionRequest({
+      requestId,
+      message: {
+        type: "background.activity.snapshot.request",
+        requestId,
+        conversationId,
+        afterSeq,
+      },
+      responseType: "background.activity.snapshot.response",
+    });
+  }
+
+  async setBackgroundActivitySubscription(
+    subscriptionId: string,
+    enabled: boolean,
+    conversationId?: string,
+  ) {
+    const requestId = this.createRequestId();
+    await this.sendCorrelatedSessionRequest({
+      requestId,
+      message: {
+        type: "background.activity.subscribe.request",
+        requestId,
+        subscriptionId,
+        enabled,
+        conversationId,
+      },
+      responseType: "background.activity.subscribe.response",
+    });
+  }
+
   async getPluginLogs(pluginId: string): Promise<PluginLogEntry[]> {
     const requestId = this.createRequestId();
     const payload = await this.sendCorrelatedSessionRequest({

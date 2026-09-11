@@ -2320,11 +2320,67 @@ export class Session {
     }
   }
 
+  private readonly backgroundSubscriptions = new Map<string, () => void>();
+
+  private handleBackgroundSubscription(
+    msg: Extract<SessionInboundMessage, { type: "background.activity.subscribe.request" }>,
+  ): void {
+    this.backgroundSubscriptions.get(msg.subscriptionId)?.();
+    this.backgroundSubscriptions.delete(msg.subscriptionId);
+    if (msg.enabled) {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const notify = (conversationId?: string) => {
+        if (msg.conversationId && conversationId && msg.conversationId !== conversationId) return;
+        if (timer) return;
+        timer = setTimeout(
+          () => {
+            timer = undefined;
+            const snapshot = this.agentManager.backgroundActivity.snapshot(
+              msg.conversationId,
+              Number.MAX_SAFE_INTEGER,
+            );
+            this.emit({
+              type: "background.activity.changed",
+              payload: {
+                subscriptionId: msg.subscriptionId,
+                epoch: snapshot.epoch,
+                revision: snapshot.revision,
+              },
+            });
+          },
+          msg.conversationId ? 50 : 250,
+        );
+        timer.unref();
+      };
+      const unsubscribe = this.agentManager.backgroundActivity.subscribe(notify);
+      this.backgroundSubscriptions.set(msg.subscriptionId, () => {
+        unsubscribe();
+        if (timer) clearTimeout(timer);
+      });
+    }
+    this.emit({
+      type: "background.activity.subscribe.response",
+      payload: { requestId: msg.requestId },
+    });
+  }
+
   private dispatchAgentTimelineMessage(
     msg: SessionInboundMessage,
     source?: object,
   ): Promise<void> | undefined {
     switch (msg.type) {
+      case "background.activity.snapshot.request":
+        this.emit({
+          type: "background.activity.snapshot.response",
+          payload: {
+            requestId: msg.requestId,
+            ...this.agentManager.backgroundActivity.snapshot(msg.conversationId, msg.afterSeq),
+          },
+        });
+        return Promise.resolve();
+      case "background.activity.subscribe.request":
+        this.handleBackgroundSubscription(msg);
+        return Promise.resolve();
       case "fetch_agent_timeline_request":
         return this.handleFetchAgentTimelineRequest(msg, source);
       case "agent.timeline.append.request":
@@ -7898,6 +7954,8 @@ export class Session {
    * Clean up session resources
    */
   public async cleanup(): Promise<void> {
+    for (const unsubscribe of this.backgroundSubscriptions.values()) unsubscribe();
+    this.backgroundSubscriptions.clear();
     this.sessionLogger.trace({}, "agent.session.lifecycle.cleanup");
     this.isCleanedUp = true;
 

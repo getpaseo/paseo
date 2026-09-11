@@ -158,8 +158,20 @@ describe("tool-call descriptions in the real manager", () => {
     const callSource = manager.getToolCallSummarySource(targets[0]);
     if (!callSource) throw new Error("Missing source");
     const calls = [summaryCall(targets[0].key, callSource)];
-    await generator.generate(source.id, calls, 0, new AbortController().signal);
-    await generator.generate(source.id, calls, 0, new AbortController().signal);
+    const activityIds = [];
+    for (let index = 0; index < 2; index++) {
+      const requestId = manager.backgroundActivity.create({
+        kind: "labels",
+        title: "Labels",
+        cwd: source.cwd,
+      });
+      activityIds.push(requestId);
+      await generator.generate(source.id, calls, 0, new AbortController().signal, requestId);
+      manager.backgroundActivity.finish(requestId);
+    }
+    const requests = manager.backgroundActivity.snapshot().requests;
+    expect(requests.map((request) => request.id)).toEqual(activityIds);
+    expect(requests[0].attempts[0].conversationId).toBe(requests[1].attempts[0].conversationId);
     expect(created).toHaveBeenCalledTimes(1);
     expect(created.mock.calls[0][0]).toMatchObject({ internal: true, mcpServers: {} });
     expect(created.mock.calls[0][1]?.paseoTools).toBeUndefined();
@@ -170,6 +182,7 @@ describe("tool-call descriptions in the real manager", () => {
       await generator.generate(source.id, calls, 0, new AbortController().signal);
     expect(created).toHaveBeenCalledTimes(2);
     expect(run.mock.calls[20][0]).not.toBe(run.mock.calls[0][0]);
+    expect(manager.backgroundActivity.snapshot(run.mock.calls[0][0]).rows).toHaveLength(2);
     const helperId = run.mock.calls[20][0];
     await generator.invalidate(source.id);
     expect(manager.getAgent(helperId)).toBeNull();

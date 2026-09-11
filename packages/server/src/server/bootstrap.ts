@@ -956,6 +956,7 @@ export async function createPaseoDaemon(
   });
   if (config.toolCallSummariesEnabled !== false) {
     toolCallSummarizer = new ToolCallSummarizer({
+      manager: agentManager,
       getSource: (target) => agentManager.getToolCallSummarySource(target),
       apply: (target, description, filePath) =>
         agentManager.applyToolCallSummary(target, description, filePath),

@@ -183,26 +183,40 @@ export function createAgentStructuredTextGeneration(deps: {
 }): StructuredTextGeneration {
   return {
     async generate({ cwd, prompt, schema, schemaName, agentTitle }) {
-      const providers = await resolveStructuredGenerationProviders({
+      const activity = deps.agentManager.backgroundActivity;
+      const requestId = activity.create({
+        kind: schemaName === "CommitMessage" ? "commit" : "pull_request",
+        title: agentTitle,
         cwd,
-        providerSnapshotManager: deps.providerSnapshotManager,
-        daemonConfig: deps.readDaemonConfig(),
-        currentSelection: deps.getFocusedSelection(cwd),
       });
-      return generateStructuredAgentResponseWithFallback({
-        manager: deps.agentManager,
-        cwd,
-        prompt,
-        schema,
-        schemaName,
-        maxRetries: 2,
-        providers,
-        persistSession: false,
-        agentConfigOverrides: {
-          title: agentTitle,
-          internal: true,
-        },
-      });
+      try {
+        const providers = await resolveStructuredGenerationProviders({
+          cwd,
+          providerSnapshotManager: deps.providerSnapshotManager,
+          daemonConfig: deps.readDaemonConfig(),
+          currentSelection: deps.getFocusedSelection(cwd),
+        });
+        const result = await generateStructuredAgentResponseWithFallback({
+          backgroundRequestId: requestId,
+          manager: deps.agentManager,
+          cwd,
+          prompt,
+          schema,
+          schemaName,
+          maxRetries: 2,
+          providers,
+          persistSession: false,
+          agentConfigOverrides: {
+            title: agentTitle,
+            internal: true,
+          },
+        });
+        activity.finish(requestId);
+        return result;
+      } catch (error) {
+        activity.finish(requestId, error);
+        throw error;
+      }
     },
   };
 }

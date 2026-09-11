@@ -148,6 +148,16 @@ export function CompactExplorerSidebarHost({
     [focusWorkspaceTab, model, openWorkspaceTabInFocusedPane, presentation, showMobileAgent],
   );
 
+  const handleOpenBackground = useCallback(
+    (target: WorkspaceTabTarget) => {
+      if (!model) return;
+      const tabId = openWorkspaceTabInFocusedPane(model.persistenceKey, target);
+      if (tabId) focusWorkspaceTab(model.persistenceKey, tabId);
+      if (presentation === "overlay") showMobileAgent();
+    },
+    [model, openWorkspaceTabInFocusedPane, focusWorkspaceTab, presentation, showMobileAgent],
+  );
+
   const handleContainerLayout = useCallback((event: LayoutChangeEvent) => {
     const nextWidth = event.nativeEvent.layout.width;
     setContainerWidth((current) => (current === nextWidth ? current : nextWidth));
@@ -164,6 +174,7 @@ export function CompactExplorerSidebarHost({
             isGit={model.isGit}
             persistenceKey={model.persistenceKey}
             containerWidth={containerWidth}
+            onOpenBackground={handleOpenBackground}
             onOpenFile={handleOpenFile}
           />
         ) : (
@@ -172,6 +183,7 @@ export function CompactExplorerSidebarHost({
             workspaceId={model.workspaceId}
             workspaceRoot={model.workspaceRoot}
             isGit={model.isGit}
+            onOpenBackground={handleOpenBackground}
             onOpenFile={handleOpenFile}
           />
         )}

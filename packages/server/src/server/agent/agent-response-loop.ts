@@ -62,6 +62,7 @@ export class StructuredAgentFallbackError extends Error {
 }
 
 export interface StructuredAgentResponseOptions<T> {
+  onValidationFailure?: (error: string) => void;
   caller: AgentCaller;
   prompt: string;
   schema: z.ZodType<T> | JsonSchema;
@@ -74,6 +75,7 @@ export interface StructuredAgentGenerationOptions<T> {
   agentConfig: AgentSessionConfig;
   agentId?: string;
   persistSession?: boolean;
+  backgroundRequestId?: string;
   prompt: string;
   schema: z.ZodType<T> | JsonSchema;
   maxRetries?: number;
@@ -91,6 +93,7 @@ export interface StructuredAgentGenerationWithFallbackOptions<T> {
     "provider" | "cwd" | "model" | "thinkingOptionId"
   >;
   persistSession?: boolean;
+  backgroundRequestId?: string;
   maxRetries?: number;
   schemaName?: string;
   logger?: StructuredGenerationLogger;
@@ -326,6 +329,7 @@ export async function getStructuredAgentResponse<T>(
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       lastErrors = [`Invalid JSON: ${message}`];
+      options.onValidationFailure?.(lastErrors.join("; "));
       if (attempt === maxRetries) {
         break;
       }
@@ -339,6 +343,7 @@ export async function getStructuredAgentResponse<T>(
     }
 
     lastErrors = validation.errors;
+    options.onValidationFailure?.(lastErrors.join("; "));
     if (attempt === maxRetries) {
       break;
     }
@@ -356,21 +361,51 @@ export async function generateStructuredAgentResponse<T>(
 ): Promise<T> {
   const { manager, agentConfig, agentId, persistSession, prompt, schema, maxRetries, schemaName } =
     options;
-  const agent = await manager.createAgent(agentConfig, agentId, {
-    persistSession,
-    workspaceId: undefined,
-  });
+  const agent = await manager
+    .createAgent(agentConfig, agentId, {
+      persistSession,
+      workspaceId: undefined,
+    })
+    .catch((error: unknown) => {
+      if (options.backgroundRequestId)
+        manager.backgroundActivity.unavailable(
+          options.backgroundRequestId,
+          agentConfig.provider,
+          agentConfig.model,
+          errorMessage(error),
+        );
+      throw error;
+    });
   try {
     const caller: AgentCaller = async (nextPrompt) => {
-      const result = await manager.runAgent(agent.id, nextPrompt);
-      if (typeof result.finalText === "string" && result.finalText.length > 0) {
-        return result.finalText;
+      const finish = options.backgroundRequestId
+        ? manager.backgroundActivity.capture(
+            manager,
+            options.backgroundRequestId,
+            agent.id,
+            nextPrompt,
+          )
+        : () => {};
+      try {
+        const result = await manager.runAgent(agent.id, nextPrompt);
+        if (typeof result.finalText === "string" && result.finalText.length > 0) {
+          return result.finalText;
+        }
+        // Fallback for providers that may not populate finalText consistently.
+        const lastAssistant = result.timeline.findLast((item) => item.type === "assistant_message");
+        return lastAssistant?.text ?? "";
+      } catch (error) {
+        finish(error);
+        throw error;
+      } finally {
+        finish();
       }
-      // Fallback for providers that may not populate finalText consistently.
-      const lastAssistant = result.timeline.findLast((item) => item.type === "assistant_message");
-      return lastAssistant?.text ?? "";
     };
     return await getStructuredAgentResponse({
+      onValidationFailure: (error) => {
+        if (options.backgroundRequestId)
+          manager.backgroundActivity.markAttemptFailure(options.backgroundRequestId, error);
+      },
       caller,
       prompt,
       schema,
@@ -425,6 +460,13 @@ export async function generateStructuredAgentResponseWithFallback<T>(
     const availabilityEntry = await manager.getProviderAvailability(candidate.provider);
     if (!availabilityEntry.available) {
       const reason = availabilityEntry.error ?? "unavailable";
+      if (options.backgroundRequestId)
+        manager.backgroundActivity.unavailable(
+          options.backgroundRequestId,
+          candidate.provider,
+          candidate.model,
+          reason,
+        );
       attempts.push({
         provider: candidate.provider,
         model: candidate.model ?? null,
@@ -446,6 +488,7 @@ export async function generateStructuredAgentResponseWithFallback<T>(
         maxRetries,
         schemaName,
         persistSession,
+        backgroundRequestId: options.backgroundRequestId,
         agentConfig: {
           ...agentConfigOverrides,
           provider: candidate.provider,

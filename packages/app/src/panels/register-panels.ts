@@ -1,3 +1,7 @@
+import {
+  backgroundActivityPanelRegistration,
+  backgroundThreadPanelRegistration,
+} from "@/background-activity/panels";
 import { agentPanelRegistration } from "@/panels/agent-panel";
 import { browserPanelRegistration } from "@/desktop/browser/panel";
 import {
@@ -22,6 +26,8 @@ export function ensurePanelsRegistered(): void {
   if (panelsRegistered) {
     return;
   }
+  registerPanel(backgroundActivityPanelRegistration);
+  registerPanel(backgroundThreadPanelRegistration);
   registerPanel(draftPanelRegistration);
   registerPanel(newTabPanelRegistration);
   registerPanel(agentPanelRegistration);

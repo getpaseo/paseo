@@ -68,7 +68,12 @@ export class AgentSummaryGenerator implements SummaryGenerator {
     return boundedText(JSON.stringify(context), 8000);
   }
 
-  private async helper(sourceId: string, attempt: number, signal: AbortSignal): Promise<Helper> {
+  private async helper(
+    sourceId: string,
+    attempt: number,
+    signal: AbortSignal,
+    backgroundRequestId?: string,
+  ): Promise<Helper> {
     if (this.fatal) throw this.fatal;
     signal.throwIfAborted();
     let existing = this.helpers.get(sourceId);
@@ -107,27 +112,45 @@ export class AgentSummaryGenerator implements SummaryGenerator {
     for (const provider of providers) {
       const availability = await this.options.manager.getProviderAvailability(provider.provider);
       if (availability.available) available.push(provider);
+      else if (backgroundRequestId)
+        this.options.manager.backgroundActivity.unavailable(
+          backgroundRequestId,
+          provider.provider,
+          provider.model,
+          availability.error ?? "Provider unavailable",
+        );
     }
     const selected = available[attempt % Math.max(available.length, 1)];
     if (!selected) throw new Error("No metadata generation provider is available");
     signal.throwIfAborted();
-    const agent = await this.options.manager.createAgent(
-      {
-        provider: selected.provider,
-        model: selected.model,
-        thinkingOptionId: selected.thinkingOptionId,
-        cwd: source.cwd,
-        title: "Tool-call descriptions",
-        internal: true,
-        systemPrompt: SUMMARY_INSTRUCTIONS,
-        mcpServers: {},
-        providerOptions: helperProviderOptions(
-          this.options.manager.getProviderRuntimeId(selected.provider),
-        ),
-      },
-      undefined,
-      { persistSession: false, workspaceId: undefined, paseoToolsEnabled: false },
-    );
+    const agent = await this.options.manager
+      .createAgent(
+        {
+          provider: selected.provider,
+          model: selected.model,
+          thinkingOptionId: selected.thinkingOptionId,
+          cwd: source.cwd,
+          title: "Tool-call descriptions",
+          internal: true,
+          systemPrompt: SUMMARY_INSTRUCTIONS,
+          mcpServers: {},
+          providerOptions: helperProviderOptions(
+            this.options.manager.getProviderRuntimeId(selected.provider),
+          ),
+        },
+        undefined,
+        { persistSession: false, workspaceId: undefined, paseoToolsEnabled: false },
+      )
+      .catch((error: unknown) => {
+        if (backgroundRequestId)
+          this.options.manager.backgroundActivity.unavailable(
+            backgroundRequestId,
+            selected.provider,
+            selected.model,
+            String(error),
+          );
+        throw error;
+      });
     const helper: Helper = {
       sourceId,
       id: agent.id,
@@ -162,8 +185,9 @@ export class AgentSummaryGenerator implements SummaryGenerator {
     calls: SummaryCall[],
     attempt: number,
     signal: AbortSignal,
+    backgroundRequestId?: string,
   ): Promise<SummaryResponse> {
-    const helper = await this.helper(sourceId, attempt, signal);
+    const helper = await this.helper(sourceId, attempt, signal, backgroundRequestId);
     if (helper.idleTimer) clearTimeout(helper.idleTimer);
     helper.active = true;
     const source = this.options.manager.getAgent(sourceId);
@@ -183,7 +207,24 @@ export class AgentSummaryGenerator implements SummaryGenerator {
     const prompt = `${SUMMARY_INSTRUCTIONS}${contextPrompt}\n\nCalls:\n${JSON.stringify(calls)}`;
     try {
       const response = await getStructuredAgentResponse({
-        caller: (nextPrompt) => this.run(helper, nextPrompt, signal),
+        caller: async (nextPrompt) => {
+          const finish = backgroundRequestId
+            ? this.options.manager.backgroundActivity.capture(
+                this.options.manager,
+                backgroundRequestId,
+                helper.id,
+                nextPrompt,
+              )
+            : () => {};
+          try {
+            return await this.run(helper, nextPrompt, signal);
+          } catch (error) {
+            finish(error);
+            throw error;
+          } finally {
+            finish();
+          }
+        },
         prompt,
         schema: SummaryResponseSchema,
         schemaName: "ToolCallDescriptions",
@@ -193,6 +234,8 @@ export class AgentSummaryGenerator implements SummaryGenerator {
       helper.batches++;
       return validated;
     } catch (error) {
+      if (backgroundRequestId)
+        this.options.manager.backgroundActivity.markAttemptFailure(backgroundRequestId, error);
       if (!(error instanceof SummaryCancellationError)) await this.close(helper);
       throw error;
     } finally {

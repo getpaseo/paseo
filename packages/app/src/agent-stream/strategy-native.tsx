@@ -93,6 +93,8 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
   } = props;
   const { renderHistoryMountedRow, renderLiveHeadRow, renderLiveAuxiliary } = renderers;
   const flatListRef = useRef<FlatList<StreamItem>>(null);
+  const promptJumpRetry = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const promptJumpAttempts = useRef(0);
   const streamViewportMetricsRef = useRef({
     containerKey: "native-virtualized",
     contentHeight: 0,
@@ -341,8 +343,38 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
     bottomAnchorController.prepareForStickyContentChange();
   }, [bottomAnchorController, historyRows, segments.liveHead]);
 
+  const jumpToPrompt = useStableEvent((itemId: string) => {
+    const index = historyRows.findIndex((row) => row.id === itemId);
+    if (index < 0) return;
+    bottomAnchorController.detachByUser();
+    onNearBottomChange(false);
+    promptJumpAttempts.current = 0;
+    if (promptJumpRetry.current) clearTimeout(promptJumpRetry.current);
+    flatListRef.current?.scrollToIndex({ index, animated: false, viewPosition: 1 });
+  });
+  const handlePromptJumpFailed = useStableEvent(
+    (info: { index: number; averageItemLength: number }) => {
+      if (promptJumpAttempts.current++ >= 3) return;
+      flatListRef.current?.scrollToOffset({
+        offset: info.index * info.averageItemLength,
+        animated: false,
+      });
+      promptJumpRetry.current = setTimeout(() => {
+        promptJumpRetry.current = null;
+        flatListRef.current?.scrollToIndex({ index: info.index, animated: false, viewPosition: 1 });
+      }, 100);
+    },
+  );
+  useEffect(
+    () => () => {
+      if (promptJumpRetry.current) clearTimeout(promptJumpRetry.current);
+    },
+    [],
+  );
+
   useEffect(() => {
     const handle: StreamViewportHandle = {
+      scrollToMessage: jumpToPrompt,
       scrollToBottom: (reason = "jump-to-bottom") => {
         bottomAnchorController.requestLocalAnchor({
           agentId,
@@ -360,7 +392,7 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
         viewportRef.current = null;
       }
     };
-  }, [agentId, bottomAnchorController, markNativeViewportSettling, viewportRef]);
+  }, [agentId, bottomAnchorController, jumpToPrompt, markNativeViewportSettling, viewportRef]);
 
   const isScrollEventNearBottom = useStableEvent(
     (event: NativeSyntheticEvent<NativeScrollEvent>) => {
@@ -584,6 +616,7 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
       style={listStyle}
       onLayout={handleListLayout}
       onScroll={handleScroll}
+      onScrollToIndexFailed={handlePromptJumpFailed}
       onScrollBeginDrag={handleScrollBeginDrag}
       onScrollEndDrag={handleScrollEndDrag}
       onMomentumScrollBegin={handleMomentumScrollBegin}

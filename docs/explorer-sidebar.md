@@ -17,6 +17,13 @@ a compatible pane.
 
 Files and Changes are the Explorer defaults and its singleton navigation views. Other compatible
 tabs, including agents, terminals, files, and diffs, can move between Explorer and main panes.
+**Background activity** opens from the Explorer New Tab launcher. Its list stays in Explorer;
+selecting a request opens or reuses its read-only helper thread in a main pane. Request identity
+controls the scroll destination, while helper identity controls tab reuse. Closing either tab only
+changes layout. Compact and wide native Explorer shells expose the same list through their activity
+tab; opening a thread closes the compact overlay. Session retention and delivery are described in
+[timeline sync](timeline-sync.md#background-request-inspection).
+
 Keep panel implementations independent of either shell. `WorkspacePanelHost` owns mounting and
 retention, while each shell owns its tabs, focus, dragging, resizing, and shortcuts.
 

@@ -1,3 +1,5 @@
+import type { AgentDeepLinkTarget } from "@getpaseo/protocol/agent-deep-link";
+import { PlanCopyActions } from "@/components/plan-copy-actions";
 import { useMemo, type ReactNode } from "react";
 import { Text, View, type StyleProp, type TextStyle, type ViewStyle } from "react-native";
 import Markdown, { type ASTNode } from "react-native-markdown-display";
@@ -185,6 +187,7 @@ export function PlanCard({
   description,
   text,
   footer,
+  source,
   disableOuterSpacing = false,
   testID,
 }: {
@@ -192,6 +195,7 @@ export function PlanCard({
   description?: string;
   text: string;
   footer?: ReactNode;
+  source?: AgentDeepLinkTarget;
   disableOuterSpacing?: boolean;
   testID?: string;
 }) {
@@ -223,7 +227,10 @@ export function PlanCard({
 
   return (
     <View testID={testID} style={containerStyle}>
-      <Text style={titleStyle}>{resolvedTitle}</Text>
+      <View style={styles.header}>
+        <Text style={titleStyle}>{resolvedTitle}</Text>
+        <PlanCopyActions text={text} source={source} />
+      </View>
       {description ? <Text style={descriptionStyle}>{description}</Text> : null}
       <Markdown style={markdownStyles} rules={markdownRules} markdownit={planMarkdownParser}>
         {text}
@@ -244,7 +251,13 @@ const styles = StyleSheet.create((theme) => ({
   containerCompact: {
     marginVertical: 0,
   },
+  header: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[1],
+  },
   title: {
+    flex: 1,
     fontSize: theme.fontSize.base,
     lineHeight: 22,
   },

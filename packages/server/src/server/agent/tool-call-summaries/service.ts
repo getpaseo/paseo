@@ -1,3 +1,4 @@
+import type { AgentManager } from "../agent-manager.js";
 import type { Logger } from "pino";
 import { readToolCallSummary } from "@getpaseo/protocol/tool-call-summary";
 import type { ToolCallSummarySource, ToolCallSummaryTarget } from "./types.js";
@@ -10,11 +11,13 @@ export interface SummaryGenerator {
     calls: SummaryCall[],
     attempt: number,
     signal: AbortSignal,
+    backgroundRequestId?: string,
   ): Promise<SummaryResponse>;
   invalidate(agentId: string): Promise<void>;
   dispose(): Promise<void>;
 }
 interface SummaryServiceOptions {
+  manager?: AgentManager;
   getSource: (target: ToolCallSummaryTarget) => ToolCallSummarySource | null;
   apply: (target: ToolCallSummaryTarget, description: string, filePath?: string) => Promise<void>;
   generator: SummaryGenerator;
@@ -24,6 +27,7 @@ interface PendingCall {
   target: ToolCallSummaryTarget;
   queuedAt: number;
   attempt: number;
+  requestId?: string;
 }
 interface Batch {
   pending: PendingCall[];
@@ -32,6 +36,7 @@ interface Batch {
 
 export class ToolCallSummarizer {
   private readonly queues = new Map<string, Map<string, PendingCall>>();
+  private readonly queuedRequests = new Map<string, string>();
   private timer: ReturnType<typeof setTimeout> | null = null;
   private lastStarted = Number.NEGATIVE_INFINITY;
   private active: { agentId: string; controller: AbortController; keys: Set<string> } | null = null;
@@ -59,11 +64,54 @@ export class ToolCallSummarizer {
         "Tool-call summary queue overflow",
       );
     }
+    this.updateQueued(target.agentId, queue.size);
     this.schedule();
   }
 
+  private createRequest(agentId: string, count: number): string | undefined {
+    const manager = this.options.manager;
+    const source = manager?.getAgent(agentId);
+    if (!manager || !source) return undefined;
+    return manager.backgroundActivity.create({
+      kind: "labels",
+      title: "Generate tool labels",
+      cwd: source.cwd,
+      workspaceId: source.workspaceId,
+      sourceAgentId: agentId,
+      sourceTitle: source.config.title ?? undefined,
+      count,
+    });
+  }
+  private updateQueued(agentId: string, count: number): void {
+    const activity = this.options.manager?.backgroundActivity;
+    if (!activity) return;
+    const existing = this.queuedRequests.get(agentId);
+    if (count)
+      count = [...(this.queues.get(agentId)?.values() ?? [])].filter(
+        (call) => !call.requestId,
+      ).length;
+    if (!count) {
+      if (existing) activity.removeQueued(existing);
+      this.queuedRequests.delete(agentId);
+    } else if (existing) activity.queue(existing, count);
+    else {
+      const id = this.createRequest(agentId, count);
+      if (id) this.queuedRequests.set(agentId, id);
+    }
+  }
+
+  private cancelQueuedActivity(agentId: string): void {
+    const requests = new Set(
+      [...(this.queues.get(agentId)?.values() ?? [])].map((call) => call.requestId),
+    );
+    for (const id of requests) this.finishActivity(id, "Source work canceled", true);
+    this.updateQueued(agentId, 0);
+  }
+
   invalidate(agentId: string): void {
+    this.cancelQueuedActivity(agentId);
     this.queues.delete(agentId);
+    this.updateQueued(agentId, 0);
     if (this.active?.agentId === agentId) this.active.controller.abort();
     const task = this.options.generator.invalidate(agentId).catch((error: unknown) => {
       this.pause(error);
@@ -78,6 +126,7 @@ export class ToolCallSummarizer {
     this.paused = true;
     if (this.timer) clearTimeout(this.timer);
     this.timer = null;
+    for (const agentId of this.queues.keys()) this.cancelQueuedActivity(agentId);
     this.queues.clear();
     this.options.logger.error(
       { err: error },
@@ -128,13 +177,41 @@ export class ToolCallSummarizer {
     return batch;
   }
 
+  private startActivity(agentId: string, batch: Batch): string | undefined {
+    const queuedId = this.queuedRequests.get(agentId);
+    let requestId =
+      batch.pending[0].requestId ?? queuedId ?? this.createRequest(agentId, batch.calls.length);
+    const retryRequests = new Set(batch.pending.map((call) => call.requestId).filter(Boolean));
+    // Observation must not split batches. If retries merge, the combined batch is a new request.
+    if (retryRequests.size > 1) {
+      for (const id of retryRequests) this.finishActivity(id, "Retried in a combined label batch");
+      requestId = this.createRequest(agentId, batch.calls.length);
+    }
+    if (queuedId && requestId !== queuedId)
+      this.options.manager?.backgroundActivity.removeQueued(queuedId);
+    if (requestId) {
+      this.options.manager?.backgroundActivity.queue(requestId, batch.calls.length);
+      for (const pending of batch.pending) pending.requestId = requestId;
+    }
+    this.queuedRequests.delete(agentId);
+    this.updateQueued(agentId, this.queues.get(agentId)?.size ?? 0);
+    return requestId;
+  }
+  private finishActivity(requestId: string | undefined, error?: unknown, canceled = false): void {
+    if (requestId) this.options.manager?.backgroundActivity.finish(requestId, error, canceled);
+  }
+
   private async runNext(): Promise<void> {
     if (this.stopped || this.paused) return;
     const next = this.queues.entries().next().value;
     if (!next) return;
     const [agentId, queue] = next;
     const batch = this.takeBatch(agentId, queue);
-    if (batch.calls.length === 0) return;
+    if (batch.calls.length === 0) {
+      this.updateQueued(agentId, 0);
+      return;
+    }
+    const requestId = this.startActivity(agentId, batch);
     const controller = new AbortController();
     this.active = { agentId, controller, keys: new Set(batch.calls.map((call) => call.id)) };
     this.lastStarted = Date.now();
@@ -152,14 +229,19 @@ export class ToolCallSummarizer {
         batch.calls,
         batch.pending[0].attempt,
         controller.signal,
+        requestId,
       );
-      if (controller.signal.aborted) return;
+      if (controller.signal.aborted) {
+        this.finishActivity(requestId, "Canceled", true);
+        return;
+      }
       const descriptions = new Map(response.descriptions.map((entry) => [entry.id, entry]));
       for (const pending of batch.pending) {
         const description = descriptions.get(pending.target.key);
         if (description && !controller.signal.aborted)
           await this.options.apply(pending.target, description.description, description.filePath);
       }
+      this.finishActivity(requestId);
       this.options.logger.debug(
         {
           agentId,
@@ -171,6 +253,7 @@ export class ToolCallSummarizer {
         "Tool-call summaries generated",
       );
     } catch (error) {
+      this.finishActivity(requestId, error, controller.signal.aborted);
       if (error instanceof SummaryCancellationError) {
         this.pause(error);
         return;
@@ -197,6 +280,8 @@ export class ToolCallSummarizer {
     for (const call of pending) {
       if (call.attempt === 0 && this.options.getSource(call.target) && queue.size < 250) {
         queue.set(call.target.key, { ...call, attempt: 1 });
+        if (call.requestId)
+          this.options.manager?.backgroundActivity.queue(call.requestId, pending.length);
       }
     }
     if (queue.size > 0) this.queues.set(agentId, queue);
@@ -205,6 +290,7 @@ export class ToolCallSummarizer {
   async dispose(): Promise<void> {
     this.stopped = true;
     if (this.timer) clearTimeout(this.timer);
+    for (const agentId of this.queues.keys()) this.cancelQueuedActivity(agentId);
     this.queues.clear();
     this.active?.controller.abort();
     await this.task;

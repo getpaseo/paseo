@@ -5,7 +5,9 @@ import Animated, { runOnJS, useAnimatedStyle, useSharedValue } from "react-nativ
 import { scheduleOnRN } from "react-native-worklets";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
-import { X } from "lucide-react-native";
+import { BackgroundActivityContent } from "@/background-activity/activity-panel";
+import type { WorkspaceTabTarget } from "@/workspace-tabs/model";
+import { Activity, X } from "lucide-react-native";
 import { useTranslation } from "react-i18next";
 import { formatPrTabLabel, PullRequestTabIcon } from "@/git/pull-request-panel";
 import {
@@ -49,6 +51,7 @@ interface ExplorerSidebarProps {
   workspaceRoot: string;
   isGit: boolean;
   onOpenFile?: (filePath: string) => void;
+  onOpenBackground?: (target: WorkspaceTabTarget) => void;
 }
 
 interface ExplorerSidebarSharedState {
@@ -79,6 +82,7 @@ export function CompactExplorerSidebar({
   workspaceRoot,
   isGit,
   onOpenFile,
+  onOpenBackground,
 }: ExplorerSidebarProps) {
   const { theme } = useUnistyles();
   const insets = useSafeAreaInsets();
@@ -143,6 +147,7 @@ export function CompactExplorerSidebar({
           workspaceRoot={workspaceRoot}
           isGit={isGit}
           isOpen={isActive}
+          onOpenBackground={onOpenBackground}
           onOpenFile={onOpenFile}
         />
       </MobilePanelOverlay>
@@ -161,6 +166,7 @@ export function NativeExplorerSidebarDock({
   workspaceRoot,
   isGit,
   onOpenFile,
+  onOpenBackground,
   persistenceKey,
   containerWidth,
 }: NativeExplorerSidebarDockProps) {
@@ -254,6 +260,7 @@ export function NativeExplorerSidebarDock({
             workspaceRoot={workspaceRoot}
             isGit={isGit}
             isOpen={isOpen}
+            onOpenBackground={onOpenBackground}
             onOpenFile={onOpenFile}
           />
         </View>
@@ -300,6 +307,7 @@ interface SidebarContentProps {
   isGit: boolean;
   isOpen: boolean;
   onOpenFile?: (filePath: string) => void;
+  onOpenBackground?: (target: WorkspaceTabTarget) => void;
 }
 
 function ExplorerSidebarContent({
@@ -312,6 +320,7 @@ function ExplorerSidebarContent({
   isGit,
   isOpen,
   onOpenFile,
+  onOpenBackground,
 }: SidebarContentProps) {
   const { theme } = useUnistyles();
   const { t } = useTranslation();
@@ -330,8 +339,9 @@ function ExplorerSidebarContent({
   const availableTabs = useMemo<ExplorerTab[]>(() => {
     const tabs: ExplorerTab[] = isGit ? ["changes", "files"] : ["files"];
     if (isGit && showPrTab) tabs.push("pr");
+    if (onOpenBackground) tabs.push("activity");
     return tabs;
-  }, [isGit, showPrTab]);
+  }, [isGit, showPrTab, onOpenBackground]);
   const { mountedTabIds } = useMountedTabSet({
     activeTabId: resolvedTab,
     allTabIds: availableTabs,
@@ -382,6 +392,20 @@ function ExplorerSidebarContent({
               />
             </ExplorerTabButton>
           )}
+          {onOpenBackground ? (
+            <ExplorerTabButton
+              tab="activity"
+              active={resolvedTab === "activity"}
+              onTabPress={onTabPress}
+              testID="explorer-tab-activity"
+            >
+              <Activity
+                size={16}
+                color={theme.colors.foregroundMuted}
+                accessibilityLabel={t("backgroundActivity.title")}
+              />
+            </ExplorerTabButton>
+          ) : null}
         </View>
         <View style={styles.headerRightSection}>
           <Pressable
@@ -406,6 +430,16 @@ function ExplorerSidebarContent({
 
       {/* Content based on active tab */}
       <View style={styles.contentArea} testID="explorer-content-area">
+        {mountedTabIds.has("activity") && onOpenBackground ? (
+          <RetainedPanel active={resolvedTab === "activity"}>
+            <BackgroundActivityContent
+              serverId={serverId}
+              workspaceId={workspaceId}
+              cwd={workspaceRoot}
+              openTab={onOpenBackground}
+            />
+          </RetainedPanel>
+        ) : null}
         {mountedTabIds.has("changes") ? (
           <RetainedPanel active={resolvedTab === "changes"}>
             <ChangedFilesPane

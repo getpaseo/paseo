@@ -912,6 +912,88 @@ export type AgentListItemPayload = z.infer<typeof AgentListItemPayloadSchema>;
 
 export type AgentStreamEventPayload = z.infer<typeof AgentStreamEventPayloadSchema>;
 
+export const BackgroundAttemptSchema = z.object({
+  id: z.string(),
+  conversationId: z.string(),
+  provider: z.string(),
+  configuredModel: z.string().nullable(),
+  resolvedModel: z.string().nullable(),
+  startedAt: z.number(),
+  finishedAt: z.number().nullable(),
+  error: z.string().nullable(),
+});
+export const BackgroundRequestSchema = z.object({
+  id: z.string(),
+  kind: z.enum(["commit", "pull_request", "labels"]),
+  title: z.string(),
+  cwd: z.string(),
+  workspaceId: z.string().nullable(),
+  sourceAgentId: z.string().nullable(),
+  sourceTitle: z.string().nullable(),
+  createdAt: z.number(),
+  finishedAt: z.number().nullable(),
+  status: z.enum(["queued", "running", "completed", "failed", "canceled"]),
+  error: z.string().nullable(),
+  count: z.number(),
+  attempts: z.array(BackgroundAttemptSchema),
+});
+export type BackgroundRequest = z.infer<typeof BackgroundRequestSchema>;
+export type BackgroundAttempt = z.infer<typeof BackgroundAttemptSchema>;
+export const BackgroundRowSchema = z.object({
+  seq: z.number(),
+  requestId: z.string(),
+  attemptId: z.string(),
+  timestamp: z.number(),
+  event: AgentStreamEventPayloadSchema,
+});
+export type BackgroundRow = z.infer<typeof BackgroundRowSchema>;
+export const BackgroundConversationSchema = z.object({
+  id: z.string(),
+  retentionId: z.string().optional(),
+  cwd: z.string(),
+  provider: z.string(),
+  systemPrompt: z.string().nullable(),
+  truncated: z.boolean(),
+});
+export type BackgroundConversation = z.infer<typeof BackgroundConversationSchema>;
+export const BackgroundSnapshotRequestSchema = z.object({
+  type: z.literal("background.activity.snapshot.request"),
+  requestId: z.string(),
+  conversationId: z.string().optional(),
+  afterSeq: z.number().optional(),
+});
+export const BackgroundSubscribeRequestSchema = z.object({
+  type: z.literal("background.activity.subscribe.request"),
+  requestId: z.string(),
+  subscriptionId: z.string(),
+  conversationId: z.string().optional(),
+  enabled: z.boolean(),
+});
+export const BackgroundSnapshotResponseSchema = z.object({
+  type: z.literal("background.activity.snapshot.response"),
+  payload: z.object({
+    requestId: z.string(),
+    epoch: z.string(),
+    revision: z.number(),
+    requests: z.array(BackgroundRequestSchema),
+    conversation: BackgroundConversationSchema.nullable(),
+    rows: z.array(BackgroundRowSchema),
+    hasMore: z.boolean(),
+  }),
+});
+export const BackgroundSubscribeResponseSchema = z.object({
+  type: z.literal("background.activity.subscribe.response"),
+  payload: z.object({ requestId: z.string() }),
+});
+export const BackgroundChangedSchema = z.object({
+  type: z.literal("background.activity.changed"),
+  payload: z.object({
+    subscriptionId: z.string(),
+    epoch: z.string(),
+    revision: z.number(),
+  }),
+});
+
 export const RecentProviderSessionDescriptorPayloadSchema = z.object({
   providerId: z.string(),
   providerLabel: z.string(),
@@ -3138,6 +3220,8 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   PluginCatalogGetRequestSchema,
   PluginListRequestSchema,
   PluginLogsGetRequestSchema,
+  BackgroundSnapshotRequestSchema,
+  BackgroundSubscribeRequestSchema,
   PluginDirectoryInstallRequestSchema,
   PluginDirectoryInspectRequestSchema,
   PluginSourceInstallRequestSchema,
@@ -3519,6 +3603,7 @@ export const ServerInfoStatusPayloadSchema = z
         pluginManagement: z.boolean().optional(),
         // COMPAT(pluginLogs): added in v0.4.0, remove gate after 2027-08-16.
         pluginLogs: z.boolean().optional(),
+        backgroundActivity: z.boolean().optional(),
         // COMPAT(pluginGitManagement): added in v0.7.0, remove gate after 2027-08-26.
         pluginGitManagement: z.boolean().optional(),
         // COMPAT(pluginThemes): added in v0.5.0, remove gate after 2027-08-20.
@@ -6529,6 +6614,9 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   PluginCatalogGetResponseSchema,
   PluginListResponseSchema,
   PluginLogsGetResponseSchema,
+  BackgroundSnapshotResponseSchema,
+  BackgroundSubscribeResponseSchema,
+  BackgroundChangedSchema,
   PluginDirectoryInstallResponseSchema,
   PluginDirectoryInspectResponseSchema,
   PluginSourceInstallResponseSchema,
