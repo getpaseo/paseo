@@ -1,0 +1,21 @@
+# FORM_URL is paseo://new?serverId=<connected-serverId>.
+# Needs a non-compact Android layout: a tablet emulator in portrait, such as pixel_tablet at
+# 1600x2560 and density 320 (800dp). The app is portrait-locked, so in landscape Android
+# letterboxes it to a compact width and the phone sheet is used instead of this popover.
+# Rotate with adb before running (`orientation portrait` selects rotation 0, which is landscape
+# on a tablet): adb shell settings put system accelerometer_rotation 0 && \
+#   adb shell settings put system user_rotation 1
+# Start with no model selected: the picker reopens on the selected provider's models, so this
+# journey drills into a provider without selecting a model.
+# The model picker's native popover must deliver taps to its gesture-handler rows (#4475).
+context platform=android timeout=60000 retries=0
+env APP_ID=sh.paseo.debug
+
+open "${APP_ID}" "${FORM_URL}"
+wait "id=\"combined-model-selector\"" 20000
+press "id=\"combined-model-selector\""
+wait "id=\"combobox-desktop-container\"" 10000
+wait "id=\"model-provider-mock\"" 10000
+press "id=\"model-provider-mock\""
+wait "id=\"compact-model-list\"" 10000
+close
