@@ -1,3 +1,4 @@
+import { readToolCallSummary } from "./tool-call-summary.js";
 import type { ToolCallTimelineItem } from "./agent-types.js";
 import { getPaseoToolLeafName, isPaseoToolName } from "./tool-name-normalization.js";
 import { stripCwdPrefix } from "./path-utils.js";
@@ -157,7 +158,10 @@ export function buildToolCallDisplayModel(input: ToolCallDisplayInput): ToolCall
     unknownDetailOverride.displayName ??
     canonicalDisplay.displayName ??
     humanizeToolName(input.name);
-  const summary = unknownDetailOverride.summary ?? canonicalDisplay.summary;
+  const summary =
+    readToolCallSummary(input.metadata) ??
+    unknownDetailOverride.summary ??
+    canonicalDisplay.summary;
   const errorText = input.status === "failed" ? formatErrorText(input.error) : undefined;
 
   return {

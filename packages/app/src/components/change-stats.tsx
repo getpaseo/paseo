@@ -16,7 +16,7 @@ import { Button } from "@/components/ui/button";
 import { AdaptiveModalSheet } from "@/components/adaptive-modal-sheet";
 
 interface ChangeStatsProps extends DiffStatValue {
-  variant?: "summary" | "inline" | "detail";
+  variant?: "summary" | "inline" | "detail" | "sidebar";
   testID?: string;
   interactive?: boolean;
   painted?: boolean;
@@ -51,18 +51,21 @@ export function ChangeStats({
   );
   const code = breakdown ? productionStat(breakdown) : null;
   const hasCode = code !== null && (code.additions !== 0 || code.deletions !== 0);
+  const showTotal = variant !== "sidebar" || !hasCode;
   if (stat.additions === 0 && stat.deletions === 0) return null;
   const content = (
     <View style={styles.summary} testID={testID}>
       {hasCode && (
         <View style={styles.summaryGroup} accessibilityLabel={t("changeStats.code")}>
-          {estimated && <Text style={styles.label}>≈</Text>}
+          {estimated && variant !== "sidebar" && <Text style={styles.label}>≈</Text>}
           <DiffStat {...code} />
         </View>
       )}
-      <View style={styles.summaryGroup} accessibilityLabel={t("changeStats.total")}>
-        <DiffStat additions={stat.additions} deletions={stat.deletions} muted />
-      </View>
+      {showTotal && (
+        <View style={styles.summaryGroup} accessibilityLabel={t("changeStats.total")}>
+          <DiffStat additions={stat.additions} deletions={stat.deletions} muted />
+        </View>
+      )}
     </View>
   );
   if (!interactive) return content;

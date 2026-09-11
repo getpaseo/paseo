@@ -15,6 +15,7 @@ import Animated, { runOnJS, useAnimatedStyle, useSharedValue } from "react-nativ
 import { scheduleOnRN } from "react-native-worklets";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
+import { KeepAwakeIndicator } from "@/components/desktop/keep-awake-indicator";
 import { TitlebarDragRegion } from "@/components/desktop/titlebar-drag-region";
 import { resolveDesktopSidebarWidth } from "@/components/desktop-sidebar-layout";
 import {
@@ -32,6 +33,7 @@ import { HEADER_INNER_HEIGHT, useIsCompactFormFactor } from "@/constants/layout"
 import { useOpenAddProject } from "@/hooks/use-open-add-project";
 import { useImportSession } from "@/hooks/use-import-session";
 import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
+import { useIsPreventingSleep } from "@/hooks/use-sleep-prevention";
 import {
   type SidebarProjectEntry,
   type SidebarWorkspaceEntry,
@@ -643,6 +645,9 @@ function DesktopSidebar({
   active,
 }: DesktopSidebarProps) {
   const ownsTopLeft = useOwnsWindowChromeCorner("top-left");
+  // The chrome row is otherwise skipped on layouts that don't own the corner,
+  // which would hide the indicator on plain web, Windows, and Linux.
+  const isPreventingSleep = useIsPreventingSleep();
   const hasActiveHostFilter = useSidebarViewStore((state) => state.hostFilters.length > 0);
   const sidebarWidth = usePanelStore((state) => state.sidebarWidth);
   const setSidebarWidth = usePanelStore((state) => state.setSidebarWidth);
@@ -731,9 +736,10 @@ function DesktopSidebar({
     >
       <View style={desktopSidebarBorderStyle}>
         <View style={styles.sidebarDragArea}>
-          {ownsTopLeft || DEV_BUILD_LABEL ? (
+          {ownsTopLeft || DEV_BUILD_LABEL || isPreventingSleep ? (
             <View style={styles.desktopChromeRow}>
               <TitlebarDragRegion />
+              <KeepAwakeIndicator />
               {DEV_BUILD_LABEL ? (
                 <View
                   pointerEvents="none"

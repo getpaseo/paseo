@@ -356,6 +356,29 @@ describe("routeKeyboardShortcut — settings.toggle", () => {
   });
 });
 
+describe("routeKeyboardShortcut — history navigation", () => {
+  it("routes history.back to a backward step", () => {
+    expect(
+      routeKeyboardShortcut({ action: "history.back", payload: null }, makeCtx()),
+    ).toEqual<ShortcutAction>({ kind: "history-go", delta: -1 });
+  });
+
+  it("routes history.forward to a forward step", () => {
+    expect(
+      routeKeyboardShortcut({ action: "history.forward", payload: null }, makeCtx()),
+    ).toEqual<ShortcutAction>({ kind: "history-go", delta: 1 });
+  });
+
+  it("stays route-independent so it works from settings too", () => {
+    expect(
+      routeKeyboardShortcut(
+        { action: "history.back", payload: null },
+        makeCtx({ pathname: "/settings/general" }),
+      ),
+    ).toEqual<ShortcutAction>({ kind: "history-go", delta: -1 });
+  });
+});
+
 describe("routeKeyboardShortcut — callbacks and pickers", () => {
   it.each([
     ["sidebar.toggle.left", "toggle-agent-list"],

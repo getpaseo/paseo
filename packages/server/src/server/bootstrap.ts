@@ -1,3 +1,6 @@
+import { ToolCallSummaryStore } from "./agent/tool-call-summaries/store.js";
+import { ToolCallSummarizer } from "./agent/tool-call-summaries/service.js";
+import { AgentSummaryGenerator } from "./agent/tool-call-summaries/generation.js";
 import { describeHookWorkspace } from "./plugins/lifecycle/index.js";
 import express from "express";
 import { createServer as createHTTPServer, type IncomingMessage, type ServerResponse } from "http";
@@ -163,6 +166,7 @@ import {
   type ActiveWorkspaceRef,
 } from "./workspace-archive-service.js";
 import { setupAutoArchiveOnMerge } from "./auto-archive-on-merge/index.js";
+import { setupSleepInhibitor } from "./sleep-inhibitor/index.js";
 import { wrapSessionMessage, type SessionOutboundMessage } from "./messages.js";
 import type { TerminalManager } from "../terminal/terminal-manager.js";
 import { createConfiguredTerminalManager } from "../terminal/terminal-manager-factory.js";
@@ -401,6 +405,7 @@ export interface PaseoDaemonConfig {
     maxProcessConcurrency: number;
   };
   autoArchiveAfterMerge?: boolean;
+  preventSleepWhileAgentsRun?: boolean;
   enableTerminalAgentHooks?: boolean;
   appendSystemPrompt?: string;
   terminalProfiles?: TerminalProfile[];
@@ -438,6 +443,7 @@ export interface PaseoDaemonConfig {
   downloadTokenTtlMs?: number;
   agentProviderSettings?: AgentProviderRuntimeSettingsMap;
   providerCatalogRefreshTimeoutMs?: number;
+  toolCallSummariesEnabled?: boolean;
   metadataGeneration?: {
     providers?: Array<{
       provider: string;
@@ -524,6 +530,14 @@ function resolveExpressTrustProxySetting(config: PaseoDaemonConfig): true | stri
   return config.trustedProxies ?? ["loopback"];
 }
 
+function resolveDaemonBehaviorToggles(config: PaseoDaemonConfig) {
+  return {
+    autoArchiveAfterMerge: config.autoArchiveAfterMerge ?? false,
+    preventSleepWhileAgentsRun: config.preventSleepWhileAgentsRun ?? true,
+    enableTerminalAgentHooks: config.enableTerminalAgentHooks ?? false,
+  };
+}
+
 function createInitialMutableDaemonConfig(config: PaseoDaemonConfig): MutableDaemonConfig {
   const providers = config.providerOverrides ?? {};
 
@@ -546,8 +560,7 @@ function createInitialMutableDaemonConfig(config: PaseoDaemonConfig): MutableDae
     metadataGeneration: {
       providers: config.metadataGeneration?.providers ?? [],
     },
-    autoArchiveAfterMerge: config.autoArchiveAfterMerge ?? false,
-    enableTerminalAgentHooks: config.enableTerminalAgentHooks ?? false,
+    ...resolveDaemonBehaviorToggles(config),
     appendSystemPrompt: config.appendSystemPrompt ?? "",
     pluginsEnabled: config.pluginsEnabled ?? false,
     plugins: config.plugins ?? {},
@@ -919,7 +932,15 @@ export async function createPaseoDaemon(
     if (git) configureGitProcessPolicy(git);
   });
   const initialAgentManagerState = providerSnapshotManager.getAgentManagerProviderState();
+  const toolCallSummaryStore = new ToolCallSummaryStore(
+    path.join(config.paseoHome, "tool-call-summaries"),
+    logger,
+  );
+  let toolCallSummarizer: ToolCallSummarizer | null = null;
   const agentManager = new AgentManager({
+    toolCallSummaryStore,
+    onToolCallSummaryRequested: (target) => toolCallSummarizer?.enqueue(target),
+    onToolCallSummaryInvalidated: (agentId) => toolCallSummarizer?.invalidate(agentId),
     pluginLifecycle: pluginRuntime,
     clients: initialAgentManagerState.clients,
     providerDefinitions: initialAgentManagerState.providerDefinitions,
@@ -933,6 +954,23 @@ export async function createPaseoDaemon(
       resolvePaseoToolPolicy(provider, daemonConfigStore.get().providers),
     logger,
   });
+  if (config.toolCallSummariesEnabled !== false) {
+    toolCallSummarizer = new ToolCallSummarizer({
+      getSource: (target) => agentManager.getToolCallSummarySource(target),
+      apply: (target, description, filePath) =>
+        agentManager.applyToolCallSummary(target, description, filePath),
+      generator: new AgentSummaryGenerator({
+        manager: agentManager,
+        providerSnapshotManager,
+        store: toolCallSummaryStore,
+        readDaemonConfig: () => ({
+          metadataGeneration: daemonConfigStore.get().metadataGeneration,
+        }),
+        logger,
+      }),
+      logger,
+    });
+  }
   const syncPluginProviders = () => {
     agentManager.updateProviderRegistry(
       providerSnapshotManager.replacePluginProviders(pluginRuntime.getProviderRegistrations()),
@@ -1085,6 +1123,13 @@ export async function createPaseoDaemon(
       await emitWorkspaceUpdatesExternal([workspaceId]);
     },
     logger,
+  });
+
+  const sleepInhibitor = setupSleepInhibitor({
+    agentManager,
+    daemonConfigStore,
+    logger,
+    onStateChanged: (state) => wsServer?.broadcastSleepPrevention(state),
   });
 
   setupAutoArchiveOnMerge({
@@ -1662,6 +1707,7 @@ export async function createPaseoDaemon(
                 getAllowedOrigins: () => allowedOrigins,
                 getHostnames: () => configuredHostnames,
                 daemonStatusRpc: dependencies.serverFeatureOverrides?.daemonStatusRpc,
+                getSleepPreventionState: () => sleepInhibitor.getState(),
                 relayConfig: dependencies.serverFeatureOverrides?.relayConfig,
                 startPaused: true,
               },
@@ -1763,6 +1809,10 @@ export async function createPaseoDaemon(
       speechService.start();
       scriptHealthMonitor.start();
     } catch (error) {
+      await toolCallSummarizer
+        ?.dispose()
+        .catch((err: unknown) => logger.warn({ err }, "Summary helper startup cleanup failed"));
+      sleepInhibitor.dispose();
       unsubscribePluginProviders();
       await pluginRuntime.stopAllPlugins().catch(() => undefined);
       await serviceProxy.stopStandalone().catch(() => undefined);
@@ -1776,11 +1826,16 @@ export async function createPaseoDaemon(
   };
 
   const stop = async () => {
+    await toolCallSummarizer
+      ?.dispose()
+      .catch((err: unknown) => logger.warn({ err }, "Summary helper shutdown failed"));
+    await toolCallSummaryStore.flush();
     await pluginRuntime.stopAllPlugins();
     unsubscribePluginProviders();
     await hubRelationships.stop();
     workspaceReconciliation.dispose();
     scriptHealthMonitor.stop();
+    sleepInhibitor.dispose();
     // Freeze both ingress and registration before taking the agent closure snapshot.
     wsServer?.prepareForShutdown();
     agentManager.prepareForShutdown();

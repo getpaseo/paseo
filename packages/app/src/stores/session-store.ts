@@ -277,6 +277,12 @@ export interface AgentFileExplorerState {
   selectedEntryPath: string | null;
 }
 
+export interface SleepPreventionState {
+  active: boolean;
+  supported: boolean;
+  agentCount: number;
+}
+
 export interface DaemonServerInfo {
   serverId: string;
   hostname: string | null;
@@ -372,6 +378,11 @@ export interface SessionState {
   // Server metadata (from server_info handshake)
   serverInfo: DaemonServerInfo | null;
 
+  // Whether this host is currently holding the machine awake for its agents.
+  // Reported by the daemon rather than derived from agent state, so an
+  // unsupported host never claims to be holding anything.
+  sleepPrevention: SleepPreventionState | null;
+
   // Hydration status
   hasHydratedAgents: boolean;
   hasHydratedWorkspaces: boolean;
@@ -445,6 +456,8 @@ interface SessionStoreActions {
   updateSessionClient: (serverId: string, client: DaemonClient, clientGeneration?: number) => void;
   setViewedTimelineSync: (serverId: string, sync: ViewedTimelineUiBridge | null) => void;
   updateSessionServerInfo: (serverId: string, info: DaemonServerInfo) => void;
+  setSleepPrevention: (serverId: string, state: SleepPreventionState) => void;
+  clearSleepPrevention: (serverId: string) => void;
 
   // Audio state
   setIsPlayingAudio: (serverId: string, playing: boolean) => void;
@@ -627,6 +640,7 @@ function createInitialSessionState(
     clientGeneration,
     viewedTimelineSync: null,
     serverInfo: null,
+    sleepPrevention: null,
     hasHydratedAgents: false,
     hasHydratedWorkspaces: false,
     hasWorkspaceDirectorySnapshot: false,
@@ -866,6 +880,43 @@ export const useSessionStore = create<SessionStore>()(
                   ...(nextFeatures ? { features: nextFeatures } : {}),
                 },
               },
+            },
+          };
+        });
+      },
+
+      setSleepPrevention: (serverId, state) => {
+        set((prev) => {
+          const session = prev.sessions[serverId];
+          if (!session) return prev;
+          const current = session.sleepPrevention;
+          if (
+            current &&
+            current.active === state.active &&
+            current.supported === state.supported &&
+            current.agentCount === state.agentCount
+          ) {
+            return prev;
+          }
+          return {
+            ...prev,
+            sessions: {
+              ...prev.sessions,
+              [serverId]: { ...session, sleepPrevention: state },
+            },
+          };
+        });
+      },
+
+      clearSleepPrevention: (serverId) => {
+        set((prev) => {
+          const session = prev.sessions[serverId];
+          if (!session || session.sleepPrevention === null) return prev;
+          return {
+            ...prev,
+            sessions: {
+              ...prev.sessions,
+              [serverId]: { ...session, sleepPrevention: null },
             },
           };
         });

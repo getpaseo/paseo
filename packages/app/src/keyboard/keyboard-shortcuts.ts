@@ -156,6 +156,8 @@ export const SHORTCUT_HELP_ROW_ORDER: Record<ShortcutSectionId, readonly string[
   general: [
     "toggle-command-center",
     "search-files",
+    "history-back",
+    "history-forward",
     "show-shortcuts",
     "toggle-settings",
     "cycle-theme",
@@ -216,6 +218,8 @@ const SHORTCUT_HELP_LABEL_KEYS: Record<string, string> = {
   "workspace-tab-close-current": "settings.shortcuts.help.closeCurrentTab",
   "workspace-jump-index": "settings.shortcuts.help.jumpToWorkspace",
   "workspace-tab-jump-index": "settings.shortcuts.help.jumpToTab",
+  "history-back": "settings.shortcuts.help.historyBack",
+  "history-forward": "settings.shortcuts.help.historyForward",
   "workspace-prev": "settings.shortcuts.help.previousWorkspace",
   "workspace-next": "settings.shortcuts.help.nextWorkspace",
   "workspace-tab-prev": "settings.shortcuts.help.previousTab",
@@ -613,11 +617,59 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
     },
   },
 
+  // --- History navigation ---
+  // Desktop only. In a real browser tab Cmd+[ / Ctrl+[ is already the browser's own back, and
+  // Electron ships no equivalent, so the brackets are free to mean the same thing here.
+  {
+    id: "history-back-cmd-bracket-left-mac",
+    action: "history.back",
+    combo: "Cmd+[",
+    when: { mac: true, desktop: true, commandCenter: false },
+    help: {
+      id: "history-back",
+      section: "general",
+      label: "Back",
+    },
+  },
+  {
+    id: "history-back-ctrl-bracket-left-non-mac",
+    action: "history.back",
+    combo: "Ctrl+[",
+    when: { mac: false, desktop: true, commandCenter: false, terminal: false },
+    help: {
+      id: "history-back",
+      section: "general",
+      label: "Back",
+    },
+  },
+  {
+    id: "history-forward-cmd-bracket-right-mac",
+    action: "history.forward",
+    combo: "Cmd+]",
+    when: { mac: true, desktop: true, commandCenter: false },
+    help: {
+      id: "history-forward",
+      section: "general",
+      label: "Forward",
+    },
+  },
+  {
+    id: "history-forward-ctrl-bracket-right-non-mac",
+    action: "history.forward",
+    combo: "Ctrl+]",
+    when: { mac: false, desktop: true, commandCenter: false, terminal: false },
+    help: {
+      id: "history-forward",
+      section: "general",
+      label: "Forward",
+    },
+  },
+
   // --- Workspace relative navigation ---
   {
-    id: "workspace-navigate-relative-cmd-left-mac",
+    id: "workspace-navigate-relative-cmd-alt-left-mac",
     action: "workspace.navigate.relative",
-    combo: "Cmd+[",
+    combo: "Cmd+Alt+[",
     when: { mac: true, desktop: true, commandCenter: false },
     payload: { type: "delta", delta: -1 },
     help: {
@@ -627,9 +679,9 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
     },
   },
   {
-    id: "workspace-navigate-relative-ctrl-left-non-mac",
+    id: "workspace-navigate-relative-ctrl-alt-left-non-mac",
     action: "workspace.navigate.relative",
-    combo: "Ctrl+[",
+    combo: "Ctrl+Alt+[",
     when: { mac: false, desktop: true, commandCenter: false, terminal: false },
     payload: { type: "delta", delta: -1 },
     help: {
@@ -639,9 +691,9 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
     },
   },
   {
-    id: "workspace-navigate-relative-cmd-right-mac",
+    id: "workspace-navigate-relative-cmd-alt-right-mac",
     action: "workspace.navigate.relative",
-    combo: "Cmd+]",
+    combo: "Cmd+Alt+]",
     when: { mac: true, desktop: true, commandCenter: false },
     payload: { type: "delta", delta: 1 },
     help: {
@@ -651,9 +703,9 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
     },
   },
   {
-    id: "workspace-navigate-relative-ctrl-right-non-mac",
+    id: "workspace-navigate-relative-ctrl-alt-right-non-mac",
     action: "workspace.navigate.relative",
-    combo: "Ctrl+]",
+    combo: "Ctrl+Alt+]",
     when: { mac: false, desktop: true, commandCenter: false, terminal: false },
     payload: { type: "delta", delta: 1 },
     help: {

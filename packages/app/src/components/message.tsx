@@ -1,3 +1,4 @@
+import { ToolCallSummaryLabel } from "@/tool-calls/summary-label";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { TaskListRow } from "@/components/task-list-row";
 import {
@@ -2297,6 +2298,7 @@ export const TodoListCard = memo(function TodoListCard({
 });
 
 interface ExpandableBadgeProps {
+  labelContent?: ReactNode;
   label: string;
   secondaryLabel?: string;
   icon?: ComponentType<{ size?: number; color?: string }>;
@@ -2660,6 +2662,7 @@ function buildShimmerTextStyle(input: {
 }
 
 export const ExpandableBadge = memo(function ExpandableBadge({
+  labelContent,
   label,
   style,
   secondaryLabel,
@@ -2943,31 +2946,33 @@ export const ExpandableBadge = memo(function ExpandableBadge({
       >
         <View style={expandableBadgeStylesheet.headerRow}>
           <View style={expandableBadgeStylesheet.iconBadge}>{iconSlotNode}</View>
-          <ExpandableBadgeLabelRow
-            label={label}
-            labelStyle={labelStyle}
-            secondaryLabel={secondaryLabel}
-            secondaryLabelStyle={secondaryLabelStyle}
-            shouldMeasureWebShimmer={shouldMeasureWebShimmer}
-            shouldMeasureNativeShimmer={shouldMeasureNativeShimmer}
-            isWebShimmer={isWebShimmer}
-            isNativeShimmer={isNativeShimmer}
-            shimmerLabelTextStyle={shimmerLabelTextStyle}
-            shimmerSecondaryTextStyle={shimmerSecondaryTextStyle}
-            labelRowWidth={labelRowWidth}
-            labelRowHeight={labelRowHeight}
-            nativeShimmerPeakWidth={nativeShimmerPeakWidth}
-            shimmerDuration={shimmerDuration}
-            nativeGradientId={nativeGradientIdRef.current}
-            onLabelRowLayout={handleLabelRowLayout}
-            onLabelLayout={handleLabelLayout}
-            onSecondaryLayout={handleSecondaryLayout}
-            showOpenFileButton={Boolean(onOpenFile && isHovered)}
-            isOpenFileHovered={isOpenFileHovered}
-            onOpenFilePress={handleOpenFilePress}
-            onOpenFileHoverIn={handleOpenFileHoverIn}
-            onOpenFileHoverOut={handleOpenFileHoverOut}
-          />
+          {labelContent ?? (
+            <ExpandableBadgeLabelRow
+              label={label}
+              labelStyle={labelStyle}
+              secondaryLabel={secondaryLabel}
+              secondaryLabelStyle={secondaryLabelStyle}
+              shouldMeasureWebShimmer={shouldMeasureWebShimmer}
+              shouldMeasureNativeShimmer={shouldMeasureNativeShimmer}
+              isWebShimmer={isWebShimmer}
+              isNativeShimmer={isNativeShimmer}
+              shimmerLabelTextStyle={shimmerLabelTextStyle}
+              shimmerSecondaryTextStyle={shimmerSecondaryTextStyle}
+              labelRowWidth={labelRowWidth}
+              labelRowHeight={labelRowHeight}
+              nativeShimmerPeakWidth={nativeShimmerPeakWidth}
+              shimmerDuration={shimmerDuration}
+              nativeGradientId={nativeGradientIdRef.current}
+              onLabelRowLayout={handleLabelRowLayout}
+              onLabelLayout={handleLabelLayout}
+              onSecondaryLayout={handleSecondaryLayout}
+              showOpenFileButton={Boolean(onOpenFile && isHovered)}
+              isOpenFileHovered={isOpenFileHovered}
+              onOpenFilePress={handleOpenFilePress}
+              onOpenFileHoverIn={handleOpenFileHoverIn}
+              onOpenFileHoverOut={handleOpenFileHoverOut}
+            />
+          )}
         </View>
       </Pressable>
       {detailContent ? (
@@ -2985,6 +2990,7 @@ export const ExpandableBadge = memo(function ExpandableBadge({
 }, areExpandableBadgePropsEqual);
 
 function areExpandableBadgePropsEqual(previous: ExpandableBadgeProps, next: ExpandableBadgeProps) {
+  if (previous.labelContent !== next.labelContent) return false;
   if (previous.label !== next.label) return false;
   if (previous.secondaryLabel !== next.secondaryLabel) return false;
   if (previous.icon !== next.icon) return false;
@@ -3087,6 +3093,7 @@ export const ToolCall = memo(function ToolCall({
         toolName,
         displayName: presentation.displayName,
         summary: presentation.summary,
+        description: presentation.description,
         detail: effectiveDetail,
         errorText: presentation.errorText,
         icon: presentation.icon,
@@ -3101,6 +3108,7 @@ export const ToolCall = memo(function ToolCall({
     toolName,
     presentation.displayName,
     presentation.summary,
+    presentation.description,
     presentation.errorText,
     presentation.icon,
     presentation.isLoadingDetails,
@@ -3140,6 +3148,7 @@ export const ToolCall = memo(function ToolCall({
     return (
       <ToolCallDetailsContent
         toolName={toolName}
+        description={presentation.description}
         detail={effectiveDetail}
         errorText={presentation.errorText}
         maxHeight={maxDetailHeight}
@@ -3150,9 +3159,32 @@ export const ToolCall = memo(function ToolCall({
     shouldRenderInline,
     toolName,
     effectiveDetail,
+    presentation.description,
     presentation.errorText,
     presentation.isLoadingDetails,
     maxDetailHeight,
+  ]);
+
+  const summaryLabel = useMemo(() => {
+    if (!presentation.inputLabel) return undefined;
+    return (
+      <ToolCallSummaryLabel
+        input={presentation.inputLabel}
+        output={
+          status === "running" || status === "executing" ? undefined : presentation.description
+        }
+        inputFilePath={presentation.inputFilePath}
+        outputFilePath={presentation.outputFilePath}
+        onOpenFilePath={onOpenFilePath}
+      />
+    );
+  }, [
+    presentation.inputLabel,
+    presentation.description,
+    presentation.inputFilePath,
+    presentation.outputFilePath,
+    status,
+    onOpenFilePath,
   ]);
 
   if (presentation.isPlan && effectiveDetail?.type === "plan") {
@@ -3168,6 +3200,7 @@ export const ToolCall = memo(function ToolCall({
   return (
     <ExpandableBadge
       testID="tool-call-badge"
+      labelContent={summaryLabel}
       label={presentation.displayName}
       secondaryLabel={presentation.summary}
       icon={presentation.icon}

@@ -2158,6 +2158,12 @@ export class HostRuntimeStore {
       this.connectionStatusStartedAtByServer.set(serverId, Date.now());
     }
     this.lastConnectionStatusByServer.set(serverId, snapshot.connectionStatus);
+    if (snapshot.connectionStatus !== "online" && previousStatus === "online") {
+      // What the daemon is holding is only knowable while connected. Without
+      // this the coffee indicator would keep claiming the machine is awake
+      // after the host dropped.
+      useSessionStore.getState().clearSleepPrevention(serverId);
+    }
     const didTransitionOnline =
       snapshot.connectionStatus === "online" && previousStatus !== "online";
     if (didTransitionOnline) {

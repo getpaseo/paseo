@@ -44,7 +44,7 @@ export function SidebarWorkspaceTrailingContent({
   trailing: SidebarWorkspaceTrailing;
 }) {
   if (trailing === "diff" && workspace.diffStat) {
-    return <ChangeStats {...workspace.diffStat} serverId={workspace.serverId} />;
+    return <ChangeStats {...workspace.diffStat} serverId={workspace.serverId} variant="sidebar" />;
   }
   if (trailing === "timestamp" && workspace.statusEnteredAt) {
     return <WorkspaceTimestamp enteredAt={workspace.statusEnteredAt} />;

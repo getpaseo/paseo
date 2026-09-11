@@ -37,6 +37,7 @@ import {
   DropdownMenuTrigger,
   useDropdownMenuClose,
 } from "@/components/ui/dropdown-menu";
+import { MenuTextField } from "@/components/ui/menu";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { MENU_ITEM_HEIGHT } from "@/components/ui/menu/menu-geometry";
 import { useToast } from "@/contexts/toast-context";
@@ -607,6 +608,11 @@ export function WorkspaceScriptsButton({
     (state) => state.sessions[serverId]?.serverInfo?.features?.packageJsonScripts === true,
   );
   const [menuOpen, setMenuOpen] = useState(false);
+  const [search, setSearch] = useState("");
+  const handleMenuOpenChange = useCallback((open: boolean) => {
+    setMenuOpen(open);
+    if (open) setSearch("");
+  }, []);
   const packageQuery = useFetchQuery({
     dataShape: "value",
     staleTimeMs: 0,
@@ -636,8 +642,12 @@ export function WorkspaceScriptsButton({
   }, [packageQuery.data, workspaceScripts]);
   const groups = useMemo(() => {
     const grouped = new Map<string, WorkspaceDescriptor["scripts"]>();
+    const terms = search.toLowerCase().trim().split(/\s+/).filter(Boolean);
     for (const script of scripts) {
       const path = script.packageJson?.path ?? "";
+      const label = script.packageJson?.script ?? script.scriptName;
+      const searchable = `${label} ${path}`.toLowerCase();
+      if (!terms.every((term) => searchable.includes(term))) continue;
       const group = grouped.get(path) ?? [];
       group.push(script);
       grouped.set(path, group);
@@ -649,7 +659,7 @@ export function WorkspaceScriptsButton({
       if (right === "package.json") return 1;
       return left.localeCompare(right);
     });
-  }, [scripts]);
+  }, [scripts, search]);
   const packageCount = groups.filter(([path]) => path !== "").length;
   const preferredRouteKind = useWorkspaceServiceRoutePreferencesStore(
     (state) => state.byServerId[serverId] ?? null,
@@ -781,7 +791,7 @@ export function WorkspaceScriptsButton({
   return (
     <View style={styles.row}>
       <View style={presentation === "ghost" ? styles.ghostButtonFrame : styles.splitButton}>
-        <DropdownMenu onOpenChange={setMenuOpen}>
+        <DropdownMenu onOpenChange={handleMenuOpenChange} compactMode="sheet">
           <DropdownMenuTrigger
             testID="workspace-scripts-button"
             style={triggerStyle}
@@ -804,12 +814,25 @@ export function WorkspaceScriptsButton({
           </DropdownMenuTrigger>
           <DropdownMenuContent
             align="end"
-            minWidth={200}
-            maxWidth={280}
+            minWidth={280}
+            maxWidth={360}
+            maxHeight={420}
+            scrollable
+            sheetTitle={t("workspace.scripts.title")}
             testID="workspace-scripts-menu"
           >
+            <MenuTextField
+              initialValue={search}
+              onChangeText={setSearch}
+              placeholder={t("workspace.scripts.searchPlaceholder")}
+              testID="workspace-scripts-search"
+            />
             {groups.map(([path, group]) => (
-              <ScriptGroup key={path} path={path} collapsible={path !== "" && packageCount > 1}>
+              <ScriptGroup
+                key={path}
+                path={path}
+                collapsible={path !== "" && packageCount > 1 && !search.trim()}
+              >
                 {group.map((script) => (
                   <ScriptRow
                     key={script.scriptName}
@@ -830,7 +853,7 @@ export function WorkspaceScriptsButton({
                 ))}
               </ScriptGroup>
             ))}
-            {supportsPackages && packageQuery.isFetching ? (
+            {packageQuery.isFetching ? (
               <DropdownMenuLabel>{t("common.loading")}</DropdownMenuLabel>
             ) : null}
             {packageQuery.isError ? (
@@ -842,8 +865,14 @@ export function WorkspaceScriptsButton({
                 {t("common.actions.retry")}
               </DropdownMenuItem>
             ) : null}
-            {packageQuery.isSuccess && scripts.length === 0 ? (
-              <DropdownMenuLabel>{t("workspace.scripts.states.empty")}</DropdownMenuLabel>
+            {groups.length === 0 && !packageQuery.isFetching ? (
+              <DropdownMenuLabel>
+                {t(
+                  search.trim()
+                    ? "workspace.scripts.states.noMatches"
+                    : "workspace.scripts.states.empty",
+                )}
+              </DropdownMenuLabel>
             ) : null}
           </DropdownMenuContent>
         </DropdownMenu>

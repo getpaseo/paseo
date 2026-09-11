@@ -36,6 +36,8 @@ import { AppDiagnosticHost } from "@/components/app-diagnostic-host";
 import { AppearanceStyleBoundary } from "@/components/appearance-style-boundary";
 import { LeftSidebar } from "@/components/left-sidebar";
 import { WindowSidebarMenuToggle } from "@/components/headers/menu-header";
+import { KeepAwakeIndicator } from "@/components/desktop/keep-awake-indicator";
+import { useIsPreventingSleep } from "@/hooks/use-sleep-prevention";
 import { DesktopWindowControls } from "@/components/desktop/window-controls";
 import { SidebarModelProvider } from "@/components/sidebar/sidebar-model";
 import { WorkspacePinShortcutHandler } from "@/components/workspace-pin-shortcut-handler";
@@ -465,6 +467,29 @@ interface AppContainerProps {
 
 const WINDOW_SIDEBAR_TOGGLE_HORIZONTAL_PADDING = 12;
 
+function TopLeftWindowChromeSlot({
+  showToggle,
+  showKeepAwake,
+}: {
+  showToggle: boolean;
+  showKeepAwake: boolean;
+}) {
+  if (!showToggle && !showKeepAwake) return null;
+  return (
+    <WindowChromeRegion corners="top-left">
+      <WindowChromeSafeArea
+        placement="inline"
+        horizontalPadding={WINDOW_SIDEBAR_TOGGLE_HORIZONTAL_PADDING}
+        pointerEvents="box-none"
+        style={layoutStyles.windowSidebarToggle}
+      >
+        {showToggle ? <WindowSidebarMenuToggle /> : null}
+        {showKeepAwake ? <KeepAwakeIndicator /> : null}
+      </WindowChromeSafeArea>
+    </WindowChromeRegion>
+  );
+}
+
 function AppContainer({ children, chromeEnabled: chromeEnabledOverride }: AppContainerProps) {
   const keyboardActionDispatcher = useKeyboardActionDispatcher();
   const daemons = useHosts();
@@ -527,6 +552,7 @@ function AppContainer({ children, chromeEnabled: chromeEnabledOverride }: AppCon
     isSettingsRoute: pathname.includes("/settings"),
   });
   const desktopSidebarMounted = hasMountedDesktopSidebar && !isWorkspaceFocusModeEnabled;
+  const isPreventingSleep = useIsPreventingSleep();
   const desktopSidebarVisible = resolveDesktopSidebarVisibility({
     chromeEnabled,
     isCompactLayout,
@@ -544,6 +570,12 @@ function AppContainer({ children, chromeEnabled: chromeEnabledOverride }: AppCon
     hasTopLeftWindowControls,
     sidebarControlsEnabled: chromeEnabled && !isWorkspaceFocusModeEnabled,
   });
+  const showWindowSidebarToggle =
+    !isCompactLayout && appChromeLayout.sidebarToggleOwner === "window";
+  // The sidebar's own chrome row owns the indicator whenever the sidebar is
+  // rendered; this window-level slot covers the collapsed case, so the two can
+  // never both show a coffee icon.
+  const showWindowKeepAwake = !isCompactLayout && !desktopSidebarVisible && isPreventingSleep;
   const sidebarChrome = (
     <SidebarChrome
       mounted={isCompactLayout ? chromeEnabled : desktopSidebarMounted}
@@ -585,18 +617,10 @@ function AppContainer({ children, chromeEnabled: chromeEnabledOverride }: AppCon
     <View style={layoutStyles.surfaceFill}>
       {workspaceChrome}
       <AppearanceStyleBoundary>
-        {!isCompactLayout && appChromeLayout.sidebarToggleOwner === "window" ? (
-          <WindowChromeRegion corners="top-left">
-            <WindowChromeSafeArea
-              placement="inline"
-              horizontalPadding={WINDOW_SIDEBAR_TOGGLE_HORIZONTAL_PADDING}
-              pointerEvents="box-none"
-              style={layoutStyles.windowSidebarToggle}
-            >
-              <WindowSidebarMenuToggle />
-            </WindowChromeSafeArea>
-          </WindowChromeRegion>
-        ) : null}
+        <TopLeftWindowChromeSlot
+          showToggle={showWindowSidebarToggle}
+          showKeepAwake={showWindowKeepAwake}
+        />
         <DesktopWindowControls />
         <FloatingPanelPortalHost />
       </AppearanceStyleBoundary>

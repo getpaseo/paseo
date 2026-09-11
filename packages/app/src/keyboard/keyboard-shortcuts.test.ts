@@ -210,11 +210,36 @@ describe("keyboard-shortcuts", () => {
       payload: { delta: -1 },
     },
     {
-      name: "matches workspace relative navigation on desktop via Mod+]",
-      event: { key: "]", code: "BracketRight", ctrlKey: true },
+      name: "matches workspace relative navigation on desktop via Mod+Alt+]",
+      event: { key: "]", code: "BracketRight", ctrlKey: true, altKey: true },
       context: { isDesktop: true },
       action: "workspace.navigate.relative",
       payload: { delta: 1 },
+    },
+    {
+      name: "matches workspace relative navigation on mac desktop via Cmd+Alt+[",
+      event: { key: "\u201C", code: "BracketLeft", metaKey: true, altKey: true },
+      context: { isDesktop: true, isMac: true },
+      action: "workspace.navigate.relative",
+      payload: { delta: -1 },
+    },
+    {
+      name: "matches history back on mac desktop via Cmd+[",
+      event: { key: "[", code: "BracketLeft", metaKey: true },
+      context: { isDesktop: true, isMac: true },
+      action: "history.back",
+    },
+    {
+      name: "matches history forward on mac desktop via Cmd+]",
+      event: { key: "]", code: "BracketRight", metaKey: true },
+      context: { isDesktop: true, isMac: true },
+      action: "history.forward",
+    },
+    {
+      name: "matches history back on non-mac desktop via Ctrl+[",
+      event: { key: "[", code: "BracketLeft", ctrlKey: true },
+      context: { isDesktop: true, isMac: false },
+      action: "history.back",
     },
     {
       name: "matches tab relative navigation via Alt+Shift+]",

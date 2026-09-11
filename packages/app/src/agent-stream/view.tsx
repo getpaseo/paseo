@@ -500,7 +500,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
     );
 
     const handleToolCallOpenFile = useStableEvent((filePath: string) => {
-      handleInlinePathPress({ raw: filePath, path: filePath }, "preferred");
+      handleInlinePathPress({ raw: filePath, path: filePath }, "main");
     });
 
     const handleForkAssistantTurn: AssistantTurnForkHandler = useStableEvent(

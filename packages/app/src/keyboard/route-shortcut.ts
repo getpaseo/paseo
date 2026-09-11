@@ -29,6 +29,7 @@ export type ShortcutAction =
   | { kind: "navigate-last-workspace" }
   | { kind: "router-replace"; route: string }
   | { kind: "router-back" }
+  | { kind: "history-go"; delta: 1 | -1 }
   | { kind: "router-push"; route: string }
   | { kind: "open-project-picker" }
   | { kind: "callback"; name: ShortcutCallbackName }
@@ -207,6 +208,10 @@ export function routeKeyboardShortcut(
       return { kind: "open-project-picker" };
     case "settings.toggle":
       return routeSettingsToggle(ctx);
+    case "history.back":
+      return { kind: "history-go", delta: -1 };
+    case "history.forward":
+      return { kind: "history-go", delta: 1 };
     case "command-center.toggle":
       return { kind: "command-center-toggle", nextOpen: !ctx.commandCenterOpen };
     case "command-center.files":

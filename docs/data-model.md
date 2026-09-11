@@ -49,6 +49,8 @@ $PASEO_HOME/
 ├── daemon-keypair.json                  # E2EE keypair for relay (mode 0600)
 ├── paseo.pid                            # Daemon PID lock file
 ├── daemon.log                           # Default log file (path configurable)
+├── tool-call-summaries/
+│   └── {agentId}.json                    # Generated descriptions, separate from provider history
 ├── agents/
 │   └── {sanitized-cwd}/
 │       └── {agentId}.json               # One file per agent
@@ -72,6 +74,15 @@ $PASEO_HOME/
 The `agents/{sanitized-cwd}/` directory name is derived from the agent's `cwd` by stripping the filesystem root and replacing path separators with `-` (Windows drive letters become a `C-` style prefix). Persistent server stores write atomically by writing a temp file in the target directory and then renaming it into place.
 
 ---
+
+## Tool-call summary store
+
+**Path:** `$PASEO_HOME/tool-call-summaries/{agentId}.json`
+
+The store owns atomic writes for generated descriptions. Preserve it when an agent is archived;
+remove it when the agent is permanently deleted. Rewind retains only entries for surviving tool
+calls. See [tool-call descriptions](timeline-sync.md#tool-call-descriptions) for matching and delivery
+rules.
 
 ## 1. Agent Record
 

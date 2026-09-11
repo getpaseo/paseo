@@ -15,6 +15,7 @@ import type { ProjectUpdate } from "./workspace-reconciliation-service.js";
 import type { ScheduleService } from "./schedule/service.js";
 import type { CheckoutDiffManager, CheckoutDiffMetrics } from "./checkout-diff-manager.js";
 import type { DaemonConfigStore, MutableDaemonConfig } from "./daemon-config-store.js";
+import type { SleepInhibitorState } from "./sleep-inhibitor/index.js";
 import {
   type ServerInfoStatusPayload,
   type SessionOutboundMessage,
@@ -158,6 +159,7 @@ interface WebSocketServerConfig {
   daemonStatusRpc?: boolean;
   relayConfig?: boolean;
   startPaused?: boolean;
+  getSleepPreventionState?: () => SleepInhibitorState;
 }
 
 type WebSocketRuntimeMetrics = SessionRuntimeMetrics & CheckoutDiffMetrics;
@@ -599,6 +601,7 @@ export class VoiceAssistantWebSocketServer {
   private readonly browserToolsRegistrations = new Map<string, BrowserToolsRegistration>();
   private connectionLifecycle: "starting" | "accepting" | "stopping" = "accepting";
   private readonly advertiseDaemonStatusRpc: boolean;
+  private readonly getSleepPreventionState: (() => SleepInhibitorState) | undefined;
   private readonly advertiseRelayConfig: boolean;
   private readonly directorySync = new DirectorySyncService();
   private readonly pluginRuntime: SessionOptions["pluginRuntime"];
@@ -654,6 +657,7 @@ export class VoiceAssistantWebSocketServer {
     this.logger = logger.child({ module: "websocket-server" });
     this.workspaceSetupRuntime = workspaceSetupRuntime;
     this.advertiseDaemonStatusRpc = wsConfig.daemonStatusRpc !== false;
+    this.getSleepPreventionState = wsConfig.getSleepPreventionState;
     this.advertiseRelayConfig = wsConfig.relayConfig !== false;
     this.connectionLifecycle = wsConfig.startPaused === true ? "starting" : "accepting";
     this.serverId = serverId;
@@ -1567,6 +1571,7 @@ export class VoiceAssistantWebSocketServer {
     pending.identity.sessionId = connection.session.getSessionId();
     this.syncBrowserToolsClientRegistration(connection);
     this.sendToClient(ws, this.createServerInfoMessage(connection.session));
+    this.sendSleepPreventionState(ws);
     connection.connectionLogger.info(
       {
         ...toConnectionLogFields(pending.identity),
@@ -1611,6 +1616,7 @@ export class VoiceAssistantWebSocketServer {
     pending.identity.sessionId = existing.session.getSessionId();
     this.syncBrowserToolsClientRegistration(existing);
     this.sendToClient(ws, this.createServerInfoMessage(existing.session));
+    this.sendSleepPreventionState(ws);
     pending.connectionLogger.info(
       {
         ...toConnectionLogFields(pending.identity),
@@ -1633,6 +1639,7 @@ export class VoiceAssistantWebSocketServer {
       ...(this.serverCapabilities ? { capabilities: this.serverCapabilities } : {}),
       features: {
         agentRequestReceipts: true,
+        toolCallDescriptions: this.agentManager.supportsToolCallSummaries(),
         hubAgentRpc: true,
         // COMPAT(directorySync): added in v0.3.x, remove gate after 2027-02-12.
         directorySync: true,
@@ -1695,6 +1702,8 @@ export class VoiceAssistantWebSocketServer {
         "terminal-size-ownership": true,
         workspaceTerminals: true,
         packageJsonScripts: true,
+        // COMPAT(sleepPrevention): added in v0.8.0, remove gate after 2027-09-11.
+        sleepPrevention: true,
         // COMPAT(rewind): added in v0.1.X, drop the gate when floor >= v0.1.X.
         rewind: true,
         // COMPAT(agentTimelinePromptIndex): added in v0.2.X, drop the gate when floor >= v0.2.X.
@@ -1813,6 +1822,33 @@ export class VoiceAssistantWebSocketServer {
 
   private broadcastDaemonConfigChanged(config: MutableDaemonConfig): void {
     this.broadcast(this.createDaemonConfigChangedMessage(config));
+  }
+
+  private createSleepPreventionMessage(state: SleepInhibitorState): WSOutboundMessage {
+    return wrapSessionMessage({
+      type: "status",
+      payload: {
+        status: "sleep_prevention_changed",
+        active: state.active,
+        supported: state.supported,
+        agentCount: state.agentCount,
+      },
+    });
+  }
+
+  broadcastSleepPrevention(state: SleepInhibitorState): void {
+    this.broadcast(this.createSleepPreventionMessage(state));
+  }
+
+  /**
+   * Clients learn the inhibitor state from broadcasts, which only fire on
+   * change — a session attaching between transitions would otherwise render
+   * nothing until the next agent starts.
+   */
+  private sendSleepPreventionState(ws: WebSocketLike): void {
+    const state = this.getSleepPreventionState?.();
+    if (!state) return;
+    this.sendToClient(ws, this.createSleepPreventionMessage(state));
   }
 
   private bindSocketHandlers(ws: WebSocketLike): void {

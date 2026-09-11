@@ -195,6 +195,24 @@ vi.mock("@/components/ui/dropdown-menu", () => ({
   useDropdownMenuClose: () => () => {},
 }));
 
+vi.mock("@/components/ui/menu", () => ({
+  MenuTextField: ({
+    initialValue,
+    onChangeText,
+    testID,
+  }: {
+    initialValue: string;
+    onChangeText: (value: string) => void;
+    testID: string;
+  }) => {
+    const change = React.useCallback(
+      (event: React.ChangeEvent<HTMLInputElement>) => onChangeText(event.target.value),
+      [onChangeText],
+    );
+    return <input defaultValue={initialValue} onChange={change} data-testid={testID} />;
+  },
+}));
+
 vi.mock("@/components/ui/tooltip", () => ({
   Tooltip: ({ children }: { children: React.ReactNode }) => children as ReactElement,
   TooltipTrigger: ({ children }: { children: React.ReactNode }) => children as ReactElement,
@@ -354,6 +372,42 @@ describe("WorkspaceScriptsButton", () => {
     current?.unmount();
     current = null;
     vi.unstubAllGlobals();
+  });
+
+  it("searches script names and package paths, revealing matches in collapsed groups", () => {
+    current = renderScripts([
+      script({ scriptName: "typecheck" }),
+      script({ scriptName: "root-build", packageJson: { path: "package.json", script: "build" } }),
+      script({
+        scriptName: "web-build",
+        packageJson: { path: "packages/web/package.json", script: "build" },
+      }),
+      script({
+        scriptName: "api-build",
+        packageJson: { path: "packages/api/package.json", script: "build" },
+      }),
+    ]);
+    const input = document.querySelector('[data-testid="workspace-scripts-search"]')!;
+    expect(document.querySelector('[data-testid="workspace-scripts-item-web-build"]')).toBeNull();
+    act(() => {
+      fireEvent.change(input, { target: { value: "WEB build" } });
+    });
+    expect(requireRow("web-build").textContent).toContain("build");
+    expect(document.querySelector('[data-testid="workspace-scripts-item-root-build"]')).toBeNull();
+    expect(document.querySelector('[data-testid="workspace-scripts-item-api-build"]')).toBeNull();
+    act(() => {
+      fireEvent.change(input, { target: { value: "typecheck" } });
+    });
+    expect(requireRow("typecheck").textContent).toContain("typecheck");
+    act(() => {
+      fireEvent.change(input, { target: { value: "missing-script" } });
+    });
+    expect(document.body.textContent).toContain("No matching scripts");
+    act(() => {
+      fireEvent.change(input, { target: { value: "" } });
+    });
+    expect(requireRow("root-build").textContent).toContain("build");
+    expect(document.querySelector('[data-testid="workspace-scripts-item-web-build"]')).toBeNull();
   });
 
   it("discovers scripts without paseo.json and folds nested packages independently", async () => {

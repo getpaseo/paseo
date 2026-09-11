@@ -20,6 +20,7 @@ export interface ToolCallSheetData {
   toolName: string;
   displayName: string;
   summary?: string;
+  description?: string;
   detail?: ToolCallDetail;
   errorText?: string;
   icon: ToolCallIconComponent;
@@ -159,6 +160,7 @@ function ToolCallSheetContent({ data, onClose }: ToolCallSheetContentProps) {
   const {
     toolName,
     displayName,
+    description,
     detail,
     errorText,
     icon: IconComponent,
@@ -190,6 +192,7 @@ function ToolCallSheetContent({ data, onClose }: ToolCallSheetContentProps) {
       <BottomSheetScrollView style={styles.content} contentContainerStyle={styles.contentContainer}>
         <ToolCallDetailsContent
           toolName={toolName}
+          description={description}
           detail={detail}
           errorText={errorText}
           fillAvailableHeight

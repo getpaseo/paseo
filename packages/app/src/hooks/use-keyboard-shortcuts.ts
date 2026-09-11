@@ -28,7 +28,7 @@ import {
 import { getShortcutOs } from "@/utils/shortcut-platform";
 import { useOpenAddProject } from "@/hooks/use-open-add-project";
 import { useKeyboardShortcutOverrides } from "@/hooks/use-keyboard-shortcut-overrides";
-import { isNative } from "@/constants/platform";
+import { isNative, isWeb } from "@/constants/platform";
 import { keyboardShortcutsAvailable } from "@/keyboard/availability";
 import { getDesktopHost, isElectronRuntime } from "@/desktop/host";
 import { isImeComposingKeyboardEvent } from "@/utils/keyboard-ime";
@@ -40,6 +40,21 @@ import {
   useActiveWorkspaceSelection,
 } from "@/stores/navigation-active-workspace-store";
 import { dispatchTopWebOverlayKeyDown } from "@/lib/overlay-root";
+
+// Expo Router exposes no forward, so history navigation drives the browser stack directly. Its
+// linking fork reads the current index back out of window.history.state and resets the navigation
+// tree on the resulting popstate, so an external back()/forward() stays in sync.
+function goBrowserHistory(delta: 1 | -1): boolean {
+  if (!isWeb || typeof window === "undefined") {
+    return false;
+  }
+  if (delta < 0) {
+    window.history.back();
+  } else {
+    window.history.forward();
+  }
+  return true;
+}
 
 export function useKeyboardShortcuts({
   enabled,
@@ -192,6 +207,8 @@ export function useKeyboardShortcuts({
         case "router-back":
           router.back();
           return true;
+        case "history-go":
+          return goBrowserHistory(action.delta);
         case "router-push":
           router.push(action.route as Parameters<typeof router.push>[0]);
           return true;

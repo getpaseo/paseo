@@ -1,6 +1,8 @@
+import { lightHighlightColors } from "@getpaseo/highlight";
 const testTheme = {
   colorScheme: "light",
   colors: {
+    syntax: lightHighlightColors,
     foreground: "#111111",
     foregroundMuted: "#666666",
     statusSuccess: "#15803d",
@@ -35,6 +37,8 @@ const testTheme = {
     xs: 12,
     sm: 14,
     base: 16,
+    content: 16,
+    code: 14,
   },
   fontFamily: {
     ui: "sans-serif",
@@ -43,6 +47,7 @@ const testTheme = {
   fontWeight: {
     normal: "400",
     medium: "500",
+    bold: "700",
   },
   borderRadius: {
     base: 4,

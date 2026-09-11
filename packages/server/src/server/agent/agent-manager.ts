@@ -1,3 +1,6 @@
+import { isSummarizableToolCall, readToolCallSummary } from "@getpaseo/protocol/tool-call-summary";
+import { ToolCallSummaryStore, toolCallSummaryKey } from "./tool-call-summaries/store.js";
+import type { ToolCallSummaryTarget, ToolCallSummarySource } from "./tool-call-summaries/types.js";
 import type { PluginLifecycle } from "../plugins/lifecycle/index.js";
 import { describeHookAgent, publishAgentStream } from "../plugins/lifecycle/index.js";
 import type { PluginSessionOpenRequest } from "@getpaseo/plugin/server";
@@ -278,6 +281,7 @@ type ProviderEnabledMap = Partial<Record<AgentProvider, ProviderEnabledFlag>>;
 type ProviderClientMap = Partial<Record<AgentProvider, AgentClient>>;
 
 export interface CreateAgentOptions {
+  paseoToolsEnabled?: boolean;
   labels?: Record<string, string>;
   initialPrompt?: string;
   env?: Record<string, string>;
@@ -289,6 +293,9 @@ export interface CreateAgentOptions {
 }
 
 export interface AgentManagerOptions {
+  toolCallSummaryStore?: ToolCallSummaryStore;
+  onToolCallSummaryRequested?: (target: ToolCallSummaryTarget) => void;
+  onToolCallSummaryInvalidated?: (agentId: string) => void;
   pluginLifecycle?: PluginLifecycle;
   clients?: ProviderClientMap;
   providerDefinitions?: ProviderEnabledMap;
@@ -703,6 +710,9 @@ export class AgentManager {
   private readonly runs = new AgentRunState();
   private readonly subscribers = new Set<SubscriptionRecord>();
   private readonly idFactory: () => string;
+  private readonly summaryStore?: ToolCallSummaryStore;
+  private readonly onToolCallSummaryRequested?: AgentManagerOptions["onToolCallSummaryRequested"];
+  private readonly onToolCallSummaryInvalidated?: AgentManagerOptions["onToolCallSummaryInvalidated"];
   private readonly registry?: AgentStorage;
   private readonly durableTimelineStore?: AgentTimelineStore;
   private readonly previousStatuses = new Map<string, AgentLifecycleStatus>();
@@ -730,6 +740,9 @@ export class AgentManager {
   private acceptingAgentRegistrations = true;
 
   constructor(options: AgentManagerOptions) {
+    this.summaryStore = options.toolCallSummaryStore;
+    this.onToolCallSummaryRequested = options.onToolCallSummaryRequested;
+    this.onToolCallSummaryInvalidated = options.onToolCallSummaryInvalidated;
     this.pluginLifecycle = options.pluginLifecycle;
     this.idFactory = options?.idFactory ?? (() => randomUUID());
     this.registry = options?.registry;
@@ -1132,6 +1145,65 @@ export class AgentManager {
     await this.inFlightAgentCloses?.get(agentId)?.catch(() => undefined);
   }
 
+  getProviderRuntimeId(provider: AgentProvider): AgentProvider {
+    return this.providerDefinitions.get(provider)?.derivedFromProviderId ?? provider;
+  }
+
+  supportsToolCallSummaries(): boolean {
+    return this.summaryStore !== undefined;
+  }
+
+  getToolCallSummarySource(target: ToolCallSummaryTarget): ToolCallSummarySource | null {
+    const agent = this.agents.get(target.agentId);
+    if (!agent || agent.internal || !this.timelineStore.has(target.agentId)) return null;
+    if (this.timelineStore.getEpoch(target.agentId) !== target.epoch) return null;
+    const source = this.timelineStore.getRow(target.agentId, target.seq);
+    if (!source || source.item.type !== "tool_call") return null;
+    const latest = this.timelineStore.getLatestToolCallRow(
+      target.agentId,
+      source.item.callId,
+      source.turnId,
+    );
+    if (
+      !latest ||
+      latest.item.type !== "tool_call" ||
+      toolCallSummaryKey(latest.item, target.phase) !== target.key
+    )
+      return null;
+    return { item: latest.item, turnId: latest.turnId, timestamp: source.timestamp };
+  }
+
+  async applyToolCallSummary(
+    target: ToolCallSummaryTarget,
+    description: string,
+    filePath?: string,
+  ): Promise<void> {
+    const store = this.summaryStore;
+    if (!store || !this.getToolCallSummarySource(target)) return;
+    await store.save(target.agentId, target.key, description, filePath);
+    const source = this.getToolCallSummarySource(target);
+    if (!source) {
+      await store.remove(target.agentId, target.key);
+      return;
+    }
+    const agent = this.requireAgent(target.agentId);
+    const item = store.enrich(target.agentId, source.item);
+    const row = this.recordTimeline(target.agentId, item, {
+      turnId: source.turnId,
+      timestamp: source.timestamp,
+    });
+    // This is a presentation update, not provider activity or another completion.
+    this.dispatchStream(
+      target.agentId,
+      { type: "timeline", provider: agent.provider, item, turnId: source.turnId },
+      {
+        seq: row.seq,
+        epoch: target.epoch,
+        timestamp: row.timestamp,
+      },
+    );
+  }
+
   getTimeline(id: string): AgentTimelineItem[] {
     this.requireAgent(id);
     return this.timelineStore.getItems(id);
@@ -1211,6 +1283,7 @@ export class AgentManager {
       config,
       resolvedAgentId,
       options?.env,
+      options.paseoToolsEnabled,
     );
     this.requireEnabledProvider(storedConfig.provider);
     const client = await this.requireAvailableClient({
@@ -2283,11 +2356,15 @@ export class AgentManager {
       if (event.type === "timeline") {
         this.touchUpdatedAt(agent);
         const row = this.recordTimeline(agent.id, event.item);
-        this.dispatchStream(agent.id, event, {
-          seq: row.seq,
-          epoch: this.timelineStore.getEpoch(agent.id),
-          timestamp: row.timestamp,
-        });
+        this.dispatchStream(
+          agent.id,
+          { ...event, item: row.item },
+          {
+            seq: row.seq,
+            epoch: this.timelineStore.getEpoch(agent.id),
+            timestamp: row.timestamp,
+          },
+        );
         return;
       }
       this.dispatchStream(agent.id, event, { timestamp: new Date().toISOString() });
@@ -3042,6 +3119,7 @@ export class AgentManager {
   }
 
   async rewind(agentId: string, messageId: string, mode: RewindMode): Promise<void> {
+    if (mode !== "files") this.onToolCallSummaryInvalidated?.(agentId);
     const agent = this.requireSessionAgent(agentId);
     const submittedRow = this.timelineStore
       .getRows(agentId)
@@ -3073,6 +3151,15 @@ export class AgentManager {
           broadcast: true,
           broadcastTimeline: false,
         });
+        if (this.summaryStore) {
+          const keys = new Set(
+            this.timelineStore
+              .getItems(agentId)
+              .filter((item) => item.type === "tool_call")
+              .flatMap((item) => [toolCallSummaryKey(item), toolCallSummaryKey(item, "input")]),
+          );
+          await this.summaryStore.retain(agentId, keys);
+        }
         this.dispatch({
           type: "timeline_replacement",
           agentId,
@@ -3097,6 +3184,8 @@ export class AgentManager {
   }
 
   async deleteAgentState(agentId: string): Promise<void> {
+    this.onToolCallSummaryInvalidated?.(agentId);
+    await this.summaryStore?.delete(agentId);
     this.discardRetainedAgentState(agentId);
     await this.deleteCommittedTimeline(agentId);
   }
@@ -3370,6 +3459,7 @@ export class AgentManager {
         options?.initialTitle ?? null,
       );
 
+      if (!config.internal) await this.summaryStore?.load(resolvedAgentId);
       const now = new Date();
       const { durableTimelineHasRows } = await this.initializeAgentTimelineForRegister({
         agentId: resolvedAgentId,
@@ -3567,6 +3657,7 @@ export class AgentManager {
     cancelReason: string,
   ): ManagedAgentClosed {
     this.agentStreamCoalescer.flushAndDiscard(agent.id);
+    this.onToolCallSummaryInvalidated?.(agent.id);
     this.agents.delete(agent.id);
     this.previousStatuses.delete(agent.id);
     if (agent.unsubscribeSession) {
@@ -3902,11 +3993,15 @@ export class AgentManager {
         event.timestamp ? { timestamp: event.timestamp } : undefined,
       );
       if (broadcastTimeline) {
-        this.dispatchStream(agent.id, event, {
-          seq: row.seq,
-          epoch: this.timelineStore.getEpoch(agent.id),
-          timestamp: row.timestamp,
-        });
+        this.dispatchStream(
+          agent.id,
+          { ...event, item: row.item },
+          {
+            seq: row.seq,
+            epoch: this.timelineStore.getEpoch(agent.id),
+            timestamp: row.timestamp,
+          },
+        );
       }
     }
     this.touchUpdatedAt(agent);
@@ -3951,11 +4046,15 @@ export class AgentManager {
         if (deferredBroadcast) {
           timelineEvents.push({ event, row });
         } else if (broadcast) {
-          this.dispatchStream(agent.id, event, {
-            seq: row.seq,
-            epoch: this.timelineStore.getEpoch(agent.id),
-            timestamp: row.timestamp,
-          });
+          this.dispatchStream(
+            agent.id,
+            { ...event, item: row.item },
+            {
+              seq: row.seq,
+              epoch: this.timelineStore.getEpoch(agent.id),
+              timestamp: row.timestamp,
+            },
+          );
         }
       }
     } catch (error) {
@@ -3971,11 +4070,15 @@ export class AgentManager {
       this.dispatch(event);
     }
     for (const { event, row } of timelineEvents) {
-      this.dispatchStream(agent.id, event, {
-        seq: row.seq,
-        epoch: this.timelineStore.getEpoch(agent.id),
-        timestamp: row.timestamp,
-      });
+      this.dispatchStream(
+        agent.id,
+        { ...event, item: row.item },
+        {
+          seq: row.seq,
+          epoch: this.timelineStore.getEpoch(agent.id),
+          timestamp: row.timestamp,
+        },
+      );
     }
   }
 
@@ -4490,11 +4593,15 @@ export class AgentManager {
     provider: AgentProvider,
     turnId?: string,
     options?: { providerMessageId?: string },
-  ): AgentStreamEvent {
+  ): Extract<AgentStreamEvent, { type: "timeline" }> {
+    const previousCall =
+      item.type === "tool_call"
+        ? this.timelineStore.getLatestToolCallRow(agentId, item.callId, turnId)
+        : null;
     const row = this.recordTimeline(agentId, item, { ...options, turnId });
-    const event: AgentStreamEvent = {
+    const event: Extract<AgentStreamEvent, { type: "timeline" }> = {
       type: "timeline",
-      item,
+      item: row.item,
       provider,
       ...(turnId !== undefined ? { turnId } : {}),
     };
@@ -4516,6 +4623,28 @@ export class AgentManager {
       }
     }
 
+    const agent = this.agents.get(agentId);
+    if (agent && !agent.internal && row.item.type === "tool_call") {
+      for (const phase of ["input", "output"] as const) {
+        if (
+          !isSummarizableToolCall(row.item, phase) ||
+          readToolCallSummary(row.item.metadata, phase)
+        )
+          continue;
+        const key = toolCallSummaryKey(row.item, phase);
+        const duplicate =
+          previousCall?.item.type === "tool_call" &&
+          toolCallSummaryKey(previousCall.item, phase) === key;
+        if (!duplicate)
+          this.onToolCallSummaryRequested?.({
+            agentId,
+            epoch: this.timelineStore.getEpoch(agentId),
+            seq: row.seq,
+            key,
+            phase,
+          });
+      }
+    }
     return event;
   }
 
@@ -4631,6 +4760,7 @@ export class AgentManager {
     },
   ): AgentTimelineRow {
     item = limitAgentTimelineItemContent(item);
+    item = this.summaryStore?.enrich(agentId, item) ?? item;
     const row = this.timelineStore.append(agentId, item, options);
     this.enqueueDurableTimelineAppend(agentId, row);
     return row;
@@ -5005,11 +5135,13 @@ export class AgentManager {
     config: AgentSessionConfig,
     agentId: string,
     env?: Record<string, string>,
+    paseoToolsEnabled = true,
   ): Promise<PreparedSessionConfig> {
     const storedConfig = await this.normalizeConfig(stripInternalPaseoMcpServer(config), { env });
-    const paseoToolPolicy = this.paseoToolsEnabled
-      ? this.resolvePaseoToolPolicy(storedConfig.provider)
-      : { enabled: false };
+    const paseoToolPolicy =
+      this.paseoToolsEnabled && paseoToolsEnabled
+        ? this.resolvePaseoToolPolicy(storedConfig.provider)
+        : { enabled: false };
     const launchConfig = this.applyDaemonAppendSystemPrompt(
       withRuntimePaseoMcpServer({
         config: storedConfig,

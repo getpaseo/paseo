@@ -314,6 +314,7 @@ function makeConfig(providers: MutableDaemonConfig["providers"] = {}): MutableDa
     providers,
     metadataGeneration: { providers: [] },
     autoArchiveAfterMerge: false,
+    preventSleepWhileAgentsRun: true,
     enableTerminalAgentHooks: false,
     appendSystemPrompt: "",
   };

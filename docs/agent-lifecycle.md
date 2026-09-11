@@ -28,6 +28,13 @@ replacement. Once closure succeeds, a failed resume leaves the durable agent clo
 Idle agents remain resident indefinitely. Runtime closure happens only through an explicit lifecycle
 action such as archive, replacement, reload, workspace teardown, or daemon shutdown.
 
+Host suspend is partly defended against: while any non-internal agent is `initializing` or `running`,
+the daemon holds a sleep inhibitor (`caffeinate -i` on macOS, `systemd-inhibit` on Linux, nothing on
+Windows), released a few seconds after the last agent goes idle. Turn it off per host with
+`daemon.preventSleepWhileAgentsRun`. It only blocks idle sleep — closing a laptop lid still suspends
+the machine, and it cannot wake a host that is already asleep, so a schedule due during sleep is
+still missed.
+
 A provider runtime can still die on its own — crash, OOM kill, host suspend. Work the agent parked
 inside that process dies with it: Claude Code's background Bash shells, `Monitor` watches, and
 workflows all live in the CLI process, and the completion notification that would have woken the

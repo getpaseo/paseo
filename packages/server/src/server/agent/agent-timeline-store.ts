@@ -167,6 +167,23 @@ export class InMemoryAgentTimelineStore {
     return this.requireState(agentId).rows.map(cloneRow);
   }
 
+  getRow(agentId: string, seq: number): AgentTimelineRow | null {
+    const row = this.requireState(agentId).rows.find((entry) => entry.seq === seq);
+    return row ? cloneRow(row) : null;
+  }
+
+  getLatestToolCallRow(
+    agentId: string,
+    callId: string,
+    turnId: string | undefined,
+  ): AgentTimelineRow | null {
+    const row = this.requireState(agentId).rows.findLast(
+      (entry) =>
+        entry.item.type === "tool_call" && entry.item.callId === callId && entry.turnId === turnId,
+    );
+    return row ? cloneRow(row) : null;
+  }
+
   getSubmittedUserMessage(agentId: string, clientMessageId: string): AgentTimelineRow | null {
     const row = this.requireState(agentId).rows.find(
       (candidate) =>

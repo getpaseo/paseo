@@ -14,6 +14,8 @@ describe("extractToolCallFilePath", () => {
 
   it.each([
     ["cat ~/file.md", "~/file.md"],
+    ['cat "/tmp/My Plan.md"', "/tmp/My Plan.md"],
+    ["cat '/tmp/My Plan.md'", "/tmp/My Plan.md"],
     ["wc -l ~/.paseo/plans/projects-settings-page.md", "~/.paseo/plans/projects-settings-page.md"],
     ["head -n 20 src/index.ts", "src/index.ts"],
     ["tail -f /var/log/x.log", "/var/log/x.log"],
@@ -27,6 +29,7 @@ describe("extractToolCallFilePath", () => {
     "cat a.ts | grep foo",
     "cat a.ts > b.ts",
     "cat a.ts b.ts",
+    'cat "unfinished.md',
     "echo hi",
     "ls /tmp",
     "rm -rf /tmp",

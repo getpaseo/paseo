@@ -245,6 +245,7 @@ export const MutableDaemonConfigSchema = z
     providers: z.record(z.string(), MutableDaemonProviderConfigSchema).default({}),
     metadataGeneration: MutableMetadataGenerationConfigSchema.default({ providers: [] }),
     autoArchiveAfterMerge: z.boolean().default(false),
+    preventSleepWhileAgentsRun: z.boolean().default(true),
     enableTerminalAgentHooks: z.boolean().default(false),
     appendSystemPrompt: z.string().default(""),
     terminalProfiles: z.array(TerminalProfileSchema).optional(),
@@ -266,6 +267,7 @@ export const MutableDaemonConfigPatchSchema = z
     removeProviders: z.array(z.string().min(1)).optional(),
     metadataGeneration: MutableMetadataGenerationConfigSchema.partial().optional(),
     autoArchiveAfterMerge: z.boolean().optional(),
+    preventSleepWhileAgentsRun: z.boolean().optional(),
     enableTerminalAgentHooks: z.boolean().optional(),
     appendSystemPrompt: z.string().optional(),
     terminalProfiles: z.array(TerminalProfileSchema).optional(),
@@ -3460,6 +3462,7 @@ export const ServerInfoStatusPayloadSchema = z
       .object({
         // COMPAT(agentRequestReceipts): added in v0.8.0; remove gate after 2027-03-05.
         agentRequestReceipts: z.boolean().optional(),
+        toolCallDescriptions: z.boolean().optional(),
         // COMPAT(hubAgentRpc): added in v0.8.0; remove gate after 2027-03-05.
         hubAgentRpc: z.boolean().optional(),
         // COMPAT(changeBreakdown): added in v0.8.0, remove gate after 2027-03-10.
@@ -3477,6 +3480,8 @@ export const ServerInfoStatusPayloadSchema = z
         workspaceTerminals: z.boolean().optional(),
         // COMPAT(packageJsonScripts): added in v0.8.0, remove gate after 2027-03-10.
         packageJsonScripts: z.boolean().optional(),
+        // COMPAT(sleepPrevention): added in v0.8.0, remove gate after 2027-09-11.
+        sleepPrevention: z.boolean().optional(),
         // COMPAT(checkoutBaseRefSet): added in v0.8.0, remove gate after 2027-03-10.
         checkoutBaseRefSet: z.boolean().optional(),
         // COMPAT(checkoutForgeSetAutoMerge): added in v0.2.0-beta.1. Remove the
@@ -3718,6 +3723,18 @@ export const DaemonConfigChangedStatusPayloadSchema = z
   })
   .passthrough();
 
+// What the daemon is actually holding right now, not what the client can infer
+// from agent state: a host with no usable inhibitor binary reports `supported:
+// false` even while agents run.
+export const SleepPreventionStatusPayloadSchema = z
+  .object({
+    status: z.literal("sleep_prevention_changed"),
+    active: z.boolean(),
+    supported: z.boolean(),
+    agentCount: z.number().int().nonnegative().optional(),
+  })
+  .passthrough();
+
 export const PluginCatalogChangedStatusPayloadSchema = z.object({
   status: z.literal("plugin_catalog_changed"),
   pluginId: PluginIdSchema,
@@ -3737,11 +3754,13 @@ export const KnownStatusPayloadSchema = z.discriminatedUnion("status", [
   ShutdownRequestedStatusPayloadSchema,
   RestartRequestedStatusPayloadSchema,
   DaemonConfigChangedStatusPayloadSchema,
+  SleepPreventionStatusPayloadSchema,
   PluginCatalogChangedStatusPayloadSchema,
   PluginSettingsChangedStatusPayloadSchema,
 ]);
 
 export type KnownStatusPayload = z.infer<typeof KnownStatusPayloadSchema>;
+export type SleepPreventionStatusPayload = z.infer<typeof SleepPreventionStatusPayloadSchema>;
 
 export const ArtifactMessageSchema = z.object({
   type: z.literal("artifact"),
@@ -7265,6 +7284,16 @@ export function wrapSessionMessage(sessionMsg: SessionOutboundMessage): WSOutbou
 
 export function parseServerInfoStatusPayload(payload: unknown): ServerInfoStatusPayload | null {
   const parsed = ServerInfoStatusPayloadSchema.safeParse(payload);
+  if (!parsed.success) {
+    return null;
+  }
+  return parsed.data;
+}
+
+export function parseSleepPreventionStatusPayload(
+  payload: unknown,
+): SleepPreventionStatusPayload | null {
+  const parsed = SleepPreventionStatusPayloadSchema.safeParse(payload);
   if (!parsed.success) {
     return null;
   }

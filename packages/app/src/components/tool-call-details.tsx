@@ -31,6 +31,7 @@ const ScrollView = isWeb ? RNScrollView : GHScrollView;
 // ---- Content Component ----
 
 interface ToolCallDetailsContentProps {
+  description?: string;
   toolName?: string;
   detail?: ToolCallDetail;
   errorText?: string;
@@ -781,6 +782,7 @@ function LoadingSkeleton({ containerStyle }: { containerStyle: StyleProp<ViewSty
 }
 
 export function ToolCallDetailsContent({
+  description,
   toolName,
   detail,
   errorText,
@@ -795,6 +797,18 @@ export function ToolCallDetailsContent({
 
   const sections: ReactNode[] = buildDetailSections(toolName, detail, diffLines, ds, t);
 
+  if (description) {
+    sections.unshift(
+      <Text
+        key="description"
+        selectable
+        style={styles.generatedDescription}
+        testID="tool-call-description"
+      >
+        {description}
+      </Text>,
+    );
+  }
   if (errorText) {
     sections.push(<ErrorSection key="error" errorText={errorText} ds={ds} />);
   }
@@ -815,6 +829,11 @@ const styles = StyleSheet.create((theme) => {
   const insets = getCodeInsets(theme);
 
   return {
+    generatedDescription: {
+      color: theme.colors.foreground,
+      fontSize: theme.fontSize.base,
+      padding: theme.spacing[2],
+    },
     paddedContainer: {
       gap: theme.spacing[4],
       padding: 0,

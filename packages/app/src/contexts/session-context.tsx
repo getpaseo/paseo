@@ -21,7 +21,10 @@ import {
   type ViewedTimelineOwner,
 } from "@/timeline/viewed-timeline-sync";
 import type { AgentAttachment, SessionOutboundMessage } from "@getpaseo/protocol/messages";
-import { parseServerInfoStatusPayload } from "@getpaseo/protocol/messages";
+import {
+  parseServerInfoStatusPayload,
+  parseSleepPreventionStatusPayload,
+} from "@getpaseo/protocol/messages";
 import {
   buildAgentAttentionNotificationPayload,
   type AgentAttentionReason,
@@ -238,6 +241,7 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
   const flushAgentLastActivity = useSessionStore((state) => state.flushAgentLastActivity);
   const setPendingPermissions = useSessionStore((state) => state.setPendingPermissions);
   const updateSessionServerInfo = useSessionStore((state) => state.updateSessionServerInfo);
+  const setSleepPrevention = useSessionStore((state) => state.setSleepPrevention);
   const setViewedTimelineSync = useSessionStore((state) => state.setViewedTimelineSync);
   const upsertWorkspaceSetupProgress = useWorkspaceSetupStore((state) => state.upsertProgress);
 
@@ -617,6 +621,16 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
         });
         return;
       }
+
+      const sleepPrevention = parseSleepPreventionStatusPayload(message.payload);
+      if (sleepPrevention) {
+        setSleepPrevention(serverId, {
+          active: sleepPrevention.active,
+          supported: sleepPrevention.supported,
+          agentCount: sleepPrevention.agentCount ?? 0,
+        });
+        return;
+      }
     });
 
     const unsubPermissionRequest = client.on("agent_permission_request", (message) => {
@@ -794,6 +808,7 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
     applyWorkspaceSetupProgress,
     applyTimelineResponse,
     updateSessionServerInfo,
+    setSleepPrevention,
     toast,
     voiceRuntime,
     voiceAudioEngine,

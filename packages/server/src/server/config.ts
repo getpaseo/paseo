@@ -519,6 +519,13 @@ function resolveProfileLists(persisted: ReturnType<typeof loadPersistedConfig>) 
   };
 }
 
+function resolvePersistedDaemonToggles(persisted: ReturnType<typeof loadPersistedConfig>) {
+  return {
+    autoArchiveAfterMerge: persisted.daemon?.autoArchiveAfterMerge ?? false,
+    preventSleepWhileAgentsRun: persisted.daemon?.preventSleepWhileAgentsRun ?? true,
+  };
+}
+
 function resolveStaticLoadConfigSettings(
   env: NodeJS.ProcessEnv,
   cli: CliConfigOverrides | undefined,
@@ -529,7 +536,7 @@ function resolveStaticLoadConfigSettings(
     mcpInjectIntoAgents:
       cli?.mcpInjectIntoAgents ?? persisted.daemon?.mcp?.injectIntoAgents ?? false,
     browserToolsEnabled: resolveBrowserToolsEnabled(persisted),
-    autoArchiveAfterMerge: persisted.daemon?.autoArchiveAfterMerge ?? false,
+    ...resolvePersistedDaemonToggles(persisted),
     appendSystemPrompt: resolveAppendSystemPrompt(persisted),
     ...resolveProfileLists(persisted),
     hostnames: mergeHostnames([
@@ -565,6 +572,7 @@ export function resolveConfigFromPersisted(
     mcpInjectIntoAgents,
     browserToolsEnabled,
     autoArchiveAfterMerge,
+    preventSleepWhileAgentsRun,
     appendSystemPrompt,
     terminalProfiles,
     agentProfiles,
@@ -609,6 +617,7 @@ export function resolveConfigFromPersisted(
     browserToolsEnabled,
     git: resolveGitProcessConfig(env, persisted),
     autoArchiveAfterMerge,
+    preventSleepWhileAgentsRun,
     enableTerminalAgentHooks: persisted.daemon?.enableTerminalAgentHooks ?? false,
     appendSystemPrompt,
     terminalProfiles,
@@ -639,6 +648,7 @@ export function resolveConfigFromPersisted(
     agentProviderSettings: extractAgentProviderSettings(providerOverrides),
     providerCatalogRefreshTimeoutMs: persisted.agents?.catalogRefreshTimeoutMs,
     metadataGeneration: persisted.agents?.metadataGeneration,
+    toolCallSummariesEnabled: persisted.agents?.toolCallSummaries?.enabled ?? true,
     providerOverrides,
     log: resolveLogConfigFromEnv(env, persisted),
     configReload: {

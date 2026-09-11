@@ -308,6 +308,11 @@ export const en = {
     },
   },
   message: {
+    toolCallLabels: {
+      readFile: "Read {{file}}",
+      runShell: "Run shell command",
+      runTool: "Run {{tool}}",
+    },
     diagram: {
       diagram: "Diagram",
       zoomIn: "Zoom in",
@@ -741,6 +746,7 @@ export const en = {
     },
     scripts: {
       rootPackage: "Root",
+      searchPlaceholder: "Search scripts or packages…",
       title: "Scripts",
       actions: {
         chooseUrl: "Choose URL",
@@ -769,6 +775,7 @@ export const en = {
       },
       states: {
         empty: "No scripts found",
+        noMatches: "No matching scripts",
         exitCode: "exit {{code}}",
         startFailed: "Failed to start {{scriptName}}",
         stopFailed: "Failed to stop {{scriptName}}",
@@ -1325,6 +1332,10 @@ export const en = {
     },
   },
   desktop: {
+    keepAwake: {
+      tooltip_one: "Keeping this computer awake while {{count}} agent works",
+      tooltip_other: "Keeping this computer awake while {{count}} agents work",
+    },
     windowControls: {
       minimize: "Minimize window",
       maximize: "Maximize window",
@@ -2350,6 +2361,8 @@ export const en = {
         closeCurrentTab: "Close current tab",
         jumpToWorkspace: "Jump to workspace",
         jumpToTab: "Jump to tab",
+        historyBack: "Back",
+        historyForward: "Forward",
         previousWorkspace: "Previous workspace",
         nextWorkspace: "Next workspace",
         previousTab: "Previous tab",
@@ -2517,6 +2530,11 @@ export const en = {
           update: "Update skill",
           delete: "Delete skill",
         },
+      },
+      preventSleep: {
+        title: "Keep this computer awake",
+        hint: "Stops the machine sleeping while an agent is working, so long runs finish while you are away",
+        unsupported: "This host has no way to keep itself awake",
       },
       orchestration: {
         title: "Orchestration",

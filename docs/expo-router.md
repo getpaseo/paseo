@@ -83,6 +83,15 @@ History returns.
 Plugin settings use the distinct `settings/hosts/[serverId]/plugins/[pluginId]/[screenId]` leaf;
 Back returns to that host's Plugins page.
 
+Desktop binds `Cmd+[` / `Cmd+]` (`Ctrl` off mac) to browser history back and
+forward. Electron loads the app with `loadURL`, so Chromium keeps a real
+path-based history stack and the shortcut drives `window.history` directly —
+Expo Router has no forward, and its linking fork resyncs the navigation tree
+from the resulting `popstate`. Because the hops above collapse history with
+`POP_TO` and `dismissTo`, that stack is the route stack Expo Router kept, not
+every screen the user visited; back will skip workspace switches. That is the
+intended tradeoff, not a bug to patch by pushing extra entries.
+
 Settings detail routes are separate siblings on purpose. Keep
 `settings/[section]`, the host routes, the projects index, and project detail as
 distinct route names. `router.dismissTo()` ultimately matches stack entries by

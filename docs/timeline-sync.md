@@ -19,6 +19,34 @@ to 64 KiB, and the same bounded item is used for runtime timeline rows and live 
 Provider history hydration applies the same rule so reopening an agent cannot restore an oversized
 tool payload.
 
+## Tool-call descriptions
+
+Descriptions are optional presentation metadata, separate from the provider transcript. The daemon
+generates separate 2–8 word input and result labels for shell and generic tool calls with internal
+agents, using the same model selection as commit generation. Input generation is queued on creation;
+result generation waits for completion. Both share the throttled queue. Input labels are keyed only
+by the requested operation, so a result arriving first cannot discard an in-flight input label.
+The app shows **input** → result, with filenames linked to file tabs. Link paths must occur in the
+source call; helper context cannot supply a missing path. Simple reads have an immediate local
+label while the helper is pending. History hydration restores saved descriptions without starting
+generation for old calls.
+
+The scheduler shares one request slot across conversations and spaces request starts by at least
+five seconds. The first request starts immediately when the slot is idle. Slow requests hold the slot until they finish or cancellation is acknowledged.
+If cancellation cannot be confirmed, summarization pauses until the daemon restarts. Original tool
+details remain available while generation is pending or unavailable.
+
+Saved descriptions live in the [summary store](data-model.md#tool-call-summary-store). Provider call
+identity and the relevant input or terminal payload must match before a label can be restored: runtime turn IDs
+can differ when provider history is hydrated. A changed payload clears its previous description.
+Live description updates use ordinary sequenced tool-call rows, so reconnect and pagination use the
+existing delivery path. They do not count as coding-agent activity or trigger notifications.
+
+Set `agents.toolCallSummaries.enabled` to `false` in the host's `config.json` to disable generation
+on the next daemon start. Existing descriptions remain readable. Model preferences continue to use
+`agents.metadataGeneration.providers`. Helpers retain recent context but are released on source
+closure or inactivity; their sessions are not the durable source of descriptions.
+
 ## Presence is not delivery
 
 Client heartbeat reports presence:

@@ -30,7 +30,12 @@ function extractFromShellCommand(command: string): string | null {
   if (!trimmed || SHELL_OPERATOR_PATTERN.test(trimmed)) {
     return null;
   }
-  const tokens = trimmed.split(/\s+/);
+  const tokenPattern = /"[^"]*"|'[^']*'|[^\s"']+/g;
+  const quotedTokens = trimmed.match(tokenPattern) ?? [];
+  if (trimmed.replace(tokenPattern, "").trim()) return null;
+  const tokens = quotedTokens.map((token) =>
+    token.startsWith('"') || token.startsWith("'") ? token.slice(1, -1) : token,
+  );
   if (tokens.length < 2) {
     return null;
   }
@@ -64,6 +69,17 @@ export function extractToolCallFilePath(detail: ToolCallDetail | undefined): str
       return detail.filePath || null;
     case "shell":
       return extractFromShellCommand(detail.command);
+    case "unknown": {
+      const input = detail.input;
+      if (!input || typeof input !== "object") return null;
+      for (const key of ["filePath", "file_path", "path"]) {
+        if (key in input) {
+          const value = Reflect.get(input, key);
+          if (typeof value === "string" && value.trim()) return value;
+        }
+      }
+      return null;
+    }
     default:
       return null;
   }

@@ -60,13 +60,13 @@ export default defineConfig({
       },
     },
   },
-  // Reanimated ships one file per platform and picks between them by extension
+  // Reanimated and Gesture Handler ship one file per platform and picks between them by extension
   // (`findHostInstance.web.js`). Vite's dependency optimizer does not apply `resolve.extensions`,
   // so it scans the native files and dies on imports react-native-web has no answer for.
   // Unbundled, the same imports go through the resolver below and land on the web files.
   optimizeDeps: {
-    include: ["react/jsx-runtime"],
-    exclude: ["react-native-reanimated"],
+    include: ["react/jsx-runtime", "hoist-non-react-statics", "invariant", "@egjs/hammerjs"],
+    exclude: ["react-native-reanimated", "react-native-gesture-handler"],
   },
   // The globals a React Native bundler defines, which esbuild is no longer there to supply for
   // the package excluded above.
