@@ -822,7 +822,7 @@ test("importProviderSession restores an archived session as the same standalone 
   });
   expect(await harness.storage.get(harness.snapshot.id)).toMatchObject({
     id: harness.snapshot.id,
-    workspaceId: "ws-restored",
+    workspaceId: "ws-archived",
     labels: { existing: "label", source: "reimport" },
     archivedAt: null,
   });
@@ -831,6 +831,43 @@ test("importProviderSession restores an archived session as the same standalone 
   );
   expect(harness.resumeAttempts).toBe(1);
   expect(harness.freshImports).toEqual([]);
+});
+
+test("importProviderSession keeps an archived session in the workspace it was archived in", async () => {
+  const harness = await ProviderImportHarness.create({ sessionId: "thread-homed" });
+  await harness.seed(
+    makeStoredProviderSession({
+      id: harness.snapshot.id,
+      cwd: harness.snapshot.cwd,
+      sessionId: "thread-homed",
+      workspaceId: "ws-original",
+    }),
+  );
+
+  // The client asks for the workspace it is looking at; the import resolves to "ws-restored".
+  await harness.import({ providerHandleId: "thread-homed", cwd: harness.snapshot.cwd });
+
+  expect(await harness.storage.get(harness.snapshot.id)).toMatchObject({
+    workspaceId: "ws-original",
+    archivedAt: null,
+  });
+});
+
+test("importProviderSession places an archived session without a workspace into the import workspace", async () => {
+  const harness = await ProviderImportHarness.create({ sessionId: "thread-homeless" });
+  const record = makeStoredProviderSession({
+    id: harness.snapshot.id,
+    cwd: harness.snapshot.cwd,
+    sessionId: "thread-homeless",
+  });
+  await harness.seed({ ...record, workspaceId: undefined });
+
+  await harness.import({ providerHandleId: "thread-homeless", cwd: harness.snapshot.cwd });
+
+  expect(await harness.storage.get(harness.snapshot.id)).toMatchObject({
+    workspaceId: "ws-restored",
+    archivedAt: null,
+  });
 });
 
 test("importProviderSession rejects an archived session from a different cwd before restoring", async () => {

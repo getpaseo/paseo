@@ -227,8 +227,12 @@ async function importProviderSessionNow(
     ) {
       labelPatch[PARENT_AGENT_ID_LABEL] = requestedParentAgentId;
     }
+    // A registered agent keeps the workspace it was archived in: the client
+    // passes the workspace it is looking at, which is not where this agent
+    // and its subagents live (#4707). Only a record without one takes the
+    // import workspace.
     await unarchiveAgentState(input.agentStorage, input.agentManager, archivedRecord.id, {
-      workspaceId,
+      ...(archivedRecord.workspaceId ? {} : { workspaceId }),
       labels: Object.keys(labelPatch).length > 0 ? labelPatch : undefined,
     });
     try {
