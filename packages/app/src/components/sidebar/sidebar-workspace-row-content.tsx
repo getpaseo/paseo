@@ -2,6 +2,8 @@ import { memo, useMemo, useCallback, useState, type ReactNode } from "react";
 import { Text, View, type ViewStyle } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { CircleAlert, Folder, FolderGit2, Monitor } from "lucide-react-native";
+import Animated from "react-native-reanimated";
+import { useStatusPulse } from "@/hooks/use-status-pulse";
 import { ProjectStatusIndicator } from "@/components/sidebar/project-leading-visual";
 import type { SidebarSurfaceBackdrop } from "@/styles/surface-backdrop";
 import {
@@ -144,6 +146,7 @@ export const SidebarWorkspaceRowContent = memo(function SidebarWorkspaceRowConte
             displayName={leadingProjectName}
             projectViewKey={workspace.projectViewKey}
             statusBucket={workspace.statusBucket}
+            statusEnteredAt={workspace.statusEnteredAt?.getTime()}
             backdrop={backdrop}
             loading={isLoading}
             testID={`sidebar-row-project-icon-${workspace.workspaceKey}`}
@@ -151,6 +154,7 @@ export const SidebarWorkspaceRowContent = memo(function SidebarWorkspaceRowConte
         ) : (
           <WorkspaceStatusIndicator
             bucket={workspace.statusBucket}
+            statusEnteredAt={workspace.statusEnteredAt?.getTime()}
             workspaceKind={workspace.workspaceKind}
             loading={isLoading}
             reserveIdleSpace={reserveIdleStatusIndicatorSpace}
@@ -184,16 +188,19 @@ export const SidebarWorkspaceRowContent = memo(function SidebarWorkspaceRowConte
 
 function WorkspaceStatusIndicator({
   bucket,
+  statusEnteredAt,
   workspaceKind,
   loading = false,
   reserveIdleSpace = true,
 }: {
   bucket: SidebarWorkspaceEntry["statusBucket"];
+  statusEnteredAt?: number;
   workspaceKind: SidebarWorkspaceEntry["workspaceKind"];
   loading?: boolean;
   reserveIdleSpace?: boolean;
 }) {
-  // Busy is the only status that moves, and it is the ring rather than a dot for the same
+  const pulseStyle = useStatusPulse(loading ? "running" : bucket, statusEnteredAt);
+  // Busy uses the ring rather than a dot for the same
   // reason it is a dot elsewhere: every status in the sidebar sits in this one slot, so busy
   // has to fill it without displacing anything. A row starting up and a row working are both
   // busy, so they share the ring and differ only in testID.
@@ -215,17 +222,23 @@ function WorkspaceStatusIndicator({
 
   if (bucket === "needs_input") {
     return (
-      <View style={styles.workspaceStatusDot} testID="workspace-status-indicator-needs_input">
+      <Animated.View
+        style={[styles.workspaceStatusDot, pulseStyle]}
+        testID="workspace-status-indicator-needs_input"
+      >
         <ThemedCircleAlert size={STATUS_INDICATOR_ALERT_SIZE} uniProps={needsInputColorMapping} />
-      </View>
+      </Animated.View>
     );
   }
 
   if (bucket === "attention") {
     return (
-      <View style={styles.workspaceStatusDot} testID="workspace-status-indicator-attention">
+      <Animated.View
+        style={[styles.workspaceStatusDot, pulseStyle]}
+        testID="workspace-status-indicator-attention"
+      >
         <View style={styles.standaloneStatusDot} />
-      </View>
+      </Animated.View>
     );
   }
 

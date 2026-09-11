@@ -246,11 +246,17 @@ export interface ProjectStatusSession {
  * activity-index + effective-status pipeline as per-workspace rows (one pass over the
  * session's agents per server, not per workspace) rather than re-deriving it.
  */
-export function deriveProjectStatusBucket(input: {
+export function deriveProjectStatusBucket(
+  input: Parameters<typeof deriveProjectStatus>[0],
+): SidebarStateBucket {
+  return deriveProjectStatus(input).bucket;
+}
+
+export function deriveProjectStatus(input: {
   workspaces: readonly SidebarWorkspacePlacement[];
   sessions: Record<string, ProjectStatusSession | undefined>;
   pendingCreateAttempts?: Record<string, PendingCreateAttempt>;
-}): SidebarStateBucket {
+}): { bucket: SidebarStateBucket; enteredAt: number | null } {
   const workspaceIdsByServer = new Map<string, string[]>();
   for (const placement of input.workspaces) {
     const existing = workspaceIdsByServer.get(placement.serverId);
@@ -261,7 +267,7 @@ export function deriveProjectStatusBucket(input: {
     }
   }
 
-  const buckets: SidebarStateBucket[] = [];
+  const statuses: ReturnType<typeof deriveEffectiveWorkspaceStatus>[] = [];
   for (const [serverId, workspaceIds] of workspaceIdsByServer) {
     const session = input.sessions[serverId];
     if (!session) continue;
@@ -272,18 +278,26 @@ export function deriveProjectStatusBucket(input: {
       });
       const workspace = workspaceKey ? session.workspaces.get(workspaceKey) : undefined;
       if (!workspace) continue;
-      buckets.push(
+      statuses.push(
         deriveEffectiveWorkspaceStatus({
           serverId,
           workspace,
           pendingCreateAttempts: input.pendingCreateAttempts,
           workspaceAgentActivity: session.workspaceAgentActivity,
-        }).status,
+        }),
       );
     }
   }
 
-  return aggregateSidebarStateBuckets(buckets);
+  const bucket = aggregateSidebarStateBuckets(statuses.map((status) => status.status));
+  let enteredAt: number | null = null;
+  for (const status of statuses) {
+    const timestamp = status.enteredAt?.getTime();
+    if (status.status === bucket && timestamp != null && Number.isFinite(timestamp)) {
+      enteredAt = Math.max(enteredAt ?? timestamp, timestamp);
+    }
+  }
+  return { bucket, enteredAt };
 }
 
 export function buildSidebarWorkspacePlacementModel(input: {

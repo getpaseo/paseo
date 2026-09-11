@@ -71,6 +71,8 @@ import { resolveStreamRenderStrategy } from "./strategy-resolver";
 import { type StreamSegmentRenderers, type StreamViewportHandle } from "./strategy";
 import { ChatOutlineRail } from "@/agent-stream/chat-outline/rail";
 import { useChatOutline } from "@/agent-stream/chat-outline/use-chat-outline";
+import { PinnedPrompt } from "@/agent-stream/pinned-prompt/pinned-prompt";
+import { usePinnedPrompt } from "@/agent-stream/pinned-prompt/use-pinned-prompt";
 import { getHostRuntimeStore } from "@/runtime/host-runtime";
 import { planTimelineTailFetch } from "@/timeline/timeline-sync-plan";
 import {
@@ -618,12 +620,15 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
     const handleTimelineHistoryLoadError = useCallback(() => {
       toast?.error(t("agentStream.historyLoadFailed"));
     }, [t, toast]);
-    const visibleHistoryItemIds = useMemo(
-      () =>
-        new Set(
-          [...baseRenderModel.history, ...baseRenderModel.segments.liveHead].map((item) => item.id),
-        ),
+    // The strategy's render order, which is the order the web viewport measures its reading
+    // position against.
+    const readingOrderItems = useMemo(
+      () => [...baseRenderModel.history, ...baseRenderModel.segments.liveHead],
       [baseRenderModel.history, baseRenderModel.segments.liveHead],
+    );
+    const visibleHistoryItemIds = useMemo(
+      () => new Set(readingOrderItems.map((item) => item.id)),
+      [readingOrderItems],
     );
     const chatOutline = useChatOutline({
       agentId,
@@ -636,6 +641,19 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       onJumpError: handleTimelineHistoryLoadError,
       visibleItemIds: visibleHistoryItemIds,
       revealLoadedItem: revealLoadedHistory,
+    });
+    const pinnedPrompt = usePinnedPrompt({
+      agentId,
+      timelineEpoch,
+      history: baseRenderModel.history,
+      liveHead: baseRenderModel.segments.liveHead,
+    });
+    const jumpToPinnedPrompt = useStableEvent((itemId: string) => {
+      viewportRef.current?.scrollToMessage?.(itemId);
+    });
+    const reportReadingPosition = useStableEvent((rowId: string | null) => {
+      chatOutline.reportReadingPosition(rowId);
+      pinnedPrompt.reportReadingPosition(rowId);
     });
 
     useImperativeHandle(
@@ -1103,7 +1121,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
               routeBottomAnchorRequest,
               isAuthoritativeHistoryReady,
               onNearBottomChange: setIsNearBottom,
-              onReadingPositionChange: chatOutline.reportReadingPosition,
+              onReadingPositionChange: reportReadingPosition,
               onNearHistoryStart: loadOlder,
               isLoadingOlderHistory: isLoadingOlder,
               hasOlderHistory: hasOlder,
@@ -1118,6 +1136,11 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
             prompts={chatOutline.prompts}
             activePrompt={chatOutline.activePrompt}
             onJumpToPrompt={chatOutline.jumpToPrompt}
+          />
+          <PinnedPrompt
+            pinnedId={pinnedPrompt.pinnedId}
+            promptById={pinnedPrompt.promptById}
+            onJumpToPrompt={jumpToPinnedPrompt}
           />
           {(!isNearBottom || isTimelineDetached) && (
             <View style={scrollToBottomContainerStyle} pointerEvents="box-none">

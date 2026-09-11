@@ -85,7 +85,12 @@ async function startVisibleTurn(
   prompt: string,
 ): Promise<void> {
   await scenario.client.sendAgentMessage(scenario.firstAgentId, prompt);
-  await expect(page.getByText(prompt, { exact: true })).toBeVisible();
+  await expect(
+    page
+      .locator('[data-testid="agent-chat-scroll"]:visible')
+      .first()
+      .getByText(prompt, { exact: true }),
+  ).toBeVisible();
   await expectInlineWorkingIndicator(page);
 }
 

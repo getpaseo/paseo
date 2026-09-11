@@ -65,7 +65,16 @@ export default defineConfig({
   // so it scans the native files and dies on imports react-native-web has no answer for.
   // Unbundled, the same imports go through the resolver below and land on the web files.
   optimizeDeps: {
-    include: ["react/jsx-runtime", "hoist-non-react-statics", "invariant", "@egjs/hammerjs"],
+    include: [
+      "react",
+      "react-dom/client",
+      "react/jsx-runtime",
+      "hoist-non-react-statics",
+      "invariant",
+      "@egjs/hammerjs",
+      "react-native-web/dist/exports/StyleSheet/compiler/createReactDOMStyle",
+      "react-native-web/dist/exports/StyleSheet/preprocess",
+    ],
     exclude: ["react-native-reanimated", "react-native-gesture-handler"],
   },
   // The globals a React Native bundler defines, which esbuild is no longer there to supply for

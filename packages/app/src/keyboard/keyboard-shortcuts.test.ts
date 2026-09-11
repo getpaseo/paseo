@@ -242,6 +242,27 @@ describe("keyboard-shortcuts", () => {
       action: "history.back",
     },
     {
+      // Czech types u on BracketLeft and ) on BracketRight, so key-first matching
+      // alone never fires. The bracket bindings have to fall back to the physical key.
+      name: "matches history back on a Czech layout where BracketLeft types u",
+      event: { key: "\u00FA", code: "BracketLeft", metaKey: true },
+      context: { isDesktop: true, isMac: true },
+      action: "history.back",
+    },
+    {
+      name: "matches history forward on a Czech layout where BracketRight types )",
+      event: { key: ")", code: "BracketRight", metaKey: true },
+      context: { isDesktop: true, isMac: true },
+      action: "history.forward",
+    },
+    {
+      name: "matches workspace navigation on a Czech layout via Cmd+Alt+[",
+      event: { key: "\u00FA", code: "BracketLeft", metaKey: true, altKey: true },
+      context: { isDesktop: true, isMac: true },
+      action: "workspace.navigate.relative",
+      payload: { delta: -1 },
+    },
+    {
       name: "matches tab relative navigation via Alt+Shift+]",
       event: { key: "}", code: "BracketRight", altKey: true, shiftKey: true },
       action: "workspace.tab.navigate.relative",

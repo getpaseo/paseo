@@ -348,14 +348,28 @@ function useAgentPanelDescriptor(
       const session = state.sessions[context.serverId];
       const agent =
         session?.agents?.get(target.agentId) ?? session?.agentDetails?.get(target.agentId) ?? null;
+      const isTurnActive = selectAgentTurnPresentation(session, target.agentId).isActive;
+      if (!agent) {
+        return {
+          provider: "codex" as const,
+          title: null,
+          status: null,
+          pendingPermissionCount: 0,
+          requiresAttention: false,
+          attentionReason: null,
+          attentionTimestamp: null,
+          isTurnActive,
+        };
+      }
       return {
-        provider: agent?.provider ?? "codex",
-        title: agent?.title ?? null,
-        status: agent?.status ?? null,
-        pendingPermissionCount: agent?.pendingPermissions.length ?? 0,
-        requiresAttention: agent?.requiresAttention ?? false,
-        attentionReason: agent?.attentionReason ?? null,
-        isTurnActive: selectAgentTurnPresentation(session, target.agentId).isActive,
+        provider: agent.provider,
+        title: agent.title,
+        status: agent.status,
+        pendingPermissionCount: agent.pendingPermissions.length,
+        requiresAttention: agent.requiresAttention,
+        attentionReason: agent.attentionReason ?? null,
+        attentionTimestamp: agent.attentionTimestamp?.getTime() ?? null,
+        isTurnActive,
       };
     }),
   );
@@ -369,6 +383,7 @@ function useAgentPanelDescriptor(
     tooltip: label ?? `${formatProviderLabel(provider)} agent`,
     titleState: label ? "ready" : "loading",
     icon,
+    attentionTimestamp: descriptorState.attentionTimestamp,
     statusBucket: descriptorState.status
       ? deriveSidebarStateBucket({
           status: descriptorState.isTurnActive ? "running" : descriptorState.status,

@@ -82,10 +82,11 @@ import {
   HorizontalScrollBoundaryShades,
   useHorizontalScrollBoundary,
 } from "@/components/ui/horizontal-scroll-boundary";
+import { useWorkspaceTabLaunchCatalog } from "@/workspace-tabs/launcher";
 import { useSessionStore } from "@/stores/session-store";
 
 const DROPDOWN_WIDTH = 220;
-const DEFAULT_INLINE_ADD_BUTTON_RESERVED_WIDTH = 36;
+const DEFAULT_INLINE_ADD_BUTTON_RESERVED_WIDTH = 36 + buttonControlHeight.xs;
 const PANE_SPLIT_ACTIONS_HORIZONTAL_PADDING = 2;
 const PANE_SPLIT_ACTIONS_OUTER_MARGIN =
   paneContentToolbarTrailingPadding(false) - PANE_SPLIT_ACTIONS_HORIZONTAL_PADDING;
@@ -214,21 +215,27 @@ function TabLabelMeasurement({
   );
 }
 
-interface WorkspaceNewTabButtonProps {
+interface WorkspaceNewTabButtonsProps {
   serverId: string;
   paneId?: string;
   shortcutKeys: ShortcutKey[][] | null;
   placement: "inline" | "toolbar";
 }
 
-function WorkspaceNewTabButton({
+function WorkspaceNewTabButtons({
   serverId,
   paneId,
   shortcutKeys,
   placement,
-}: WorkspaceNewTabButtonProps) {
+}: WorkspaceNewTabButtonsProps) {
   const { t } = useTranslation();
   const tooltipText = t("workspace.tabs.actions.newTab");
+  const groups = useWorkspaceTabLaunchCatalog({ serverId, purpose: "primary", host: "main" });
+  const agentItem = groups.flatMap((group) => group.items).find((item) => item.id === "agent");
+  const agentShortcutKeys = useShortcutKeys("workspace-tab-target-agent");
+  const handleNewAgent = useCallback(() => {
+    agentItem?.launch({ kind: "open", paneId });
+  }, [agentItem, paneId]);
   const menu = (
     <DropdownMenu>
       <ToolbarButton
@@ -249,7 +256,25 @@ function WorkspaceNewTabButton({
     </DropdownMenu>
   );
 
-  return placement === "inline" ? <View style={styles.inlineAddButton}>{menu}</View> : menu;
+  const buttons = (
+    <>
+      {menu}
+      {agentItem ? (
+        <ToolbarButton
+          label={t("workspace.tabs.actions.newAgent")}
+          shortcut={agentShortcutKeys}
+          testID="workspace-new-agent-button"
+          disabled={agentItem.disabled}
+          onPress={handleNewAgent}
+          style={placement === "inline" ? styles.inlineNewTabButton : undefined}
+        >
+          <ThemedPencil size={14} uniProps={extraMutedColorMapping} />
+        </ToolbarButton>
+      ) : null}
+    </>
+  );
+
+  return placement === "inline" ? <View style={styles.inlineAddButton}>{buttons}</View> : buttons;
 }
 
 function WorkspacePaneToolbarActions({
@@ -301,7 +326,7 @@ function WorkspacePaneToolbarActions({
   return (
     <ToolbarControls style={styles.paneSplitActions}>
       {showNewTabButton ? (
-        <WorkspaceNewTabButton
+        <WorkspaceNewTabButtons
           placement="toolbar"
           serverId={serverId}
           paneId={paneId}
@@ -1362,7 +1387,7 @@ function ResolvedWorkspaceDesktopTabsRow({
             renderItem={renderTab}
           />
           {!layout.requiresHorizontalScrollFallback ? (
-            <WorkspaceNewTabButton
+            <WorkspaceNewTabButtons
               placement="inline"
               serverId={normalizedServerId}
               paneId={paneId}

@@ -45,8 +45,11 @@ KEY_MAP["Digit"] = { code: "Digit" };
 KEY_MAP["-"] = { code: "Minus", key: "-", shiftedKey: "_" };
 KEY_MAP["="] = { code: "Equal", key: "=", shiftedKey: "+" };
 KEY_MAP["\\"] = { code: "Backslash", key: "\\", shiftedKey: "|" };
-KEY_MAP["["] = { code: "BracketLeft", key: "[", shiftedKey: "{" };
-KEY_MAP["]"] = { code: "BracketRight", key: "]", shiftedKey: "}" };
+// Brackets fall back to the physical key. Non-US layouts put other characters on these positions
+// (Czech types u/) there), so key-first matching alone never fires for a layout that doesn't
+// produce "[" or "]".
+KEY_MAP["["] = { code: "BracketLeft", key: "[", shiftedKey: "{", codeFallback: true };
+KEY_MAP["]"] = { code: "BracketRight", key: "]", shiftedKey: "}", codeFallback: true };
 KEY_MAP[";"] = { code: "Semicolon", key: ";", shiftedKey: ":" };
 KEY_MAP["'"] = { code: "Quote", key: "'", shiftedKey: '"' };
 KEY_MAP[","] = { code: "Comma", key: ",", shiftedKey: "<" };

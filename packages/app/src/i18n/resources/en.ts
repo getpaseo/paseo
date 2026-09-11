@@ -230,6 +230,9 @@ export const en = {
     scrollToBottom: "Scroll to bottom",
     historyLoadFailed: "Couldn't load agent history",
     messageCapped: "This message was capped ({{bytes}} bytes).",
+    pinnedPrompt: {
+      jump: "Scroll to this message",
+    },
     permission: {
       plan: "Plan",
       required: "Permission Required",

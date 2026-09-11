@@ -44,7 +44,12 @@ test.describe("User message UI contract", () => {
       for (let index = 0; index < prompts.length; index += 1) {
         const prompt = prompts[index]!;
         await submitMessage(page, prompt);
-        await expect(page.getByText(prompt, { exact: true })).toBeVisible({ timeout: 15_000 });
+        await expect(
+          page
+            .locator('[data-testid="agent-chat-scroll"]:visible')
+            .first()
+            .getByText(prompt, { exact: true }),
+        ).toBeVisible({ timeout: 15_000 });
         await expect(page.getByText("stress-update-0", { exact: true }).first()).toBeVisible({
           timeout: 15_000,
         });

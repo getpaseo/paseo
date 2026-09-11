@@ -1,4 +1,9 @@
 import type { AgentTimelinePromptIndexPayload } from "@getpaseo/client/internal/daemon-client";
+import {
+  createReadingSignal,
+  type ReadingSignal,
+  type ReadingSignalSource,
+} from "../reading-signal";
 
 export type ChatOutlinePrompt = AgentTimelinePromptIndexPayload["prompts"][number];
 
@@ -50,39 +55,9 @@ export function resolveActivePromptSeq(
   return activeSeq;
 }
 
-export interface ActivePromptSource {
-  subscribe: (listener: () => void) => () => void;
-  getActiveSeq: () => number | null;
-}
+export type ActivePromptSource = ReadingSignalSource<number | null>;
+export type ActivePromptPublisher = ReadingSignal<number | null>;
 
-export interface ActivePromptPublisher extends ActivePromptSource {
-  publish: (seq: number | null) => void;
-}
-
-/**
- * The transcript reports its reading position on every scroll frame, far more often than
- * it re-renders. Keeping the active prompt outside React lets the rail subscribe to it
- * without dragging the transcript through a render on each frame.
- */
 export function createActivePromptPublisher(): ActivePromptPublisher {
-  const listeners = new Set<() => void>();
-  let activeSeq: number | null = null;
-  return {
-    subscribe(listener) {
-      listeners.add(listener);
-      return () => {
-        listeners.delete(listener);
-      };
-    },
-    getActiveSeq: () => activeSeq,
-    publish(seq) {
-      if (seq === activeSeq) {
-        return;
-      }
-      activeSeq = seq;
-      for (const listener of listeners) {
-        listener();
-      }
-    },
-  };
+  return createReadingSignal<number | null>(null);
 }

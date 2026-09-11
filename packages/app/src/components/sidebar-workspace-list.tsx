@@ -58,7 +58,7 @@ import {
 } from "@/utils/host-routes";
 import {
   shouldShowSidebarHostLabels,
-  useSidebarProjectStatusBucket,
+  useSidebarProjectStatus,
   type SidebarProjectEntry,
   type SidebarWorkspaceEntry,
   type SidebarWorkspacePlacement,
@@ -244,6 +244,7 @@ interface ProjectHeaderRowProps {
   displayName: string;
   iconDataUri: string | null;
   statusBucket: SidebarStateBucket | null;
+  statusEnteredAt?: number | null;
   selected?: boolean;
   chevron: "expand" | "collapse" | null;
   onPress: () => void;
@@ -858,6 +859,7 @@ function NewWorkspaceGhostRow({
 }
 
 function ProjectHeaderRow({
+  statusEnteredAt,
   project,
   displayName,
   iconDataUri,
@@ -957,6 +959,7 @@ function ProjectHeaderRow({
           displayName={displayName}
           iconDataUri={iconDataUri}
           statusBucket={statusBucket}
+          statusEnteredAt={statusEnteredAt}
           projectViewKey={project.viewKey}
           backdrop={getSidebarRowBackdrop({ isDragging, isPressed, selected, isHovered })}
           chevron={chevron}
@@ -1623,7 +1626,7 @@ function ProjectBlock({
 
   // Collapsed rows hide their workspace rows, so the project row carries the most urgent
   // status among them; expanded rows leave the signal to the child rows themselves.
-  const aggregateStatusBucket = useSidebarProjectStatusBucket({
+  const aggregateStatusBucket = useSidebarProjectStatus({
     workspaces: project.workspaces,
     enabled: collapsed,
   });
@@ -1811,7 +1814,8 @@ function ProjectBlock({
         project={project}
         displayName={displayName}
         iconDataUri={iconDataUri}
-        statusBucket={aggregateStatusBucket}
+        statusBucket={aggregateStatusBucket?.bucket ?? null}
+        statusEnteredAt={aggregateStatusBucket?.enteredAt}
         selected={false}
         chevron={rowModel.chevron}
         onPress={handleToggleCollapsed}

@@ -29,7 +29,7 @@ export const ChatOutlineRail = memo(function ChatOutlineRail({
 }: ChatOutlineRailProps) {
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
   const [focusedIndex, setFocusedIndex] = useState<number | null>(null);
-  const activeSeq = useSyncExternalStore(activePrompt.subscribe, activePrompt.getActiveSeq);
+  const activeSeq = useSyncExternalStore(activePrompt.subscribe, activePrompt.getValue);
   const prefersReducedMotion = useReducedMotion();
   const { onLayout, isBelow: isPanelNarrow } = useContainerWidthBelow(MIN_PANEL_WIDTH);
 

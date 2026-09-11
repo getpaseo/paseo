@@ -4,6 +4,7 @@ import { ArrowLeftToLine, Plus, X } from "lucide-react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
 import Animated from "react-native-reanimated";
+import { ToolbarButton } from "@/components/ui/pane-content-toolbar";
 import { SortableInlineList } from "@/components/sortable-inline-list";
 import type {
   DraggableListDragHandleProps,
@@ -357,6 +358,13 @@ export function ExplorerSidebarTabRail({
               activeId={activeDragTabId}
               getItemData={getTabDragData}
             />
+            <ToolbarButton
+              label={t("workspace.tabs.actions.newTab")}
+              testID="explorer-sidebar-new-tab-button"
+              onPress={onCreateNewTab}
+            >
+              <ThemedPlus size={14} uniProps={mutedColorMapping} />
+            </ToolbarButton>
           </Animated.ScrollView>
           <HorizontalScrollBoundaryShades
             visible

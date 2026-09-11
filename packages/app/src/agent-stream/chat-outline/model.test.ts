@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import {
-  createActivePromptPublisher,
   shouldAcceptPromptIndexEpoch,
   promptTickMagnification,
   resolveActivePromptSeq,
@@ -50,24 +49,5 @@ describe("resolveActivePromptSeq", () => {
     expect(resolveActivePromptSeq(prompts, 1)).toBeNull();
     expect(resolveActivePromptSeq(prompts, null)).toBeNull();
     expect(resolveActivePromptSeq([], 42)).toBeNull();
-  });
-});
-
-describe("createActivePromptPublisher", () => {
-  it("notifies subscribers only when the active prompt changes", () => {
-    const publisher = createActivePromptPublisher();
-    let notifications = 0;
-    const unsubscribe = publisher.subscribe(() => {
-      notifications += 1;
-    });
-
-    publisher.publish(9);
-    publisher.publish(9);
-    publisher.publish(20);
-    unsubscribe();
-    publisher.publish(null);
-
-    expect(notifications).toBe(2);
-    expect(publisher.getActiveSeq()).toBeNull();
   });
 });

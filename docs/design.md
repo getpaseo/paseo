@@ -30,6 +30,8 @@ Before adding a new component, read `components/ui/`. The primitive usually exis
 
 Hierarchy is conveyed through weight and color, not size. Most interface text is `fontSize.base`; compact metadata and hints use `fontSize.sm`. The distinction between a row's primary line and its secondary line is `foreground` versus `foregroundMuted`.
 
+The pinned prompt at the top of the transcript (`packages/app/src/agent-stream/pinned-prompt/pinned-prompt.web.tsx`) is the one deliberate exception. It is a 0.7 transform of the real user bubble, which puts its text, corner radius, and shadow off the token ramp. Size is doing the work there because the pin has to read as the same object as the bubble it replaces, shrunk — a restyled copy on the ramp reads as a different component. Do not take it as license elsewhere, and do not "fix" it to `fontSize.sm`.
+
 The authored interface ramp uses a 14px base. New native installs default to 15px; web and desktop default to 14px. The Appearance **Interface size** setting is the rendered `fontSize.base` value and scales the rest of the UI ramp proportionally. Primary readable content has its own `fontSize.content`, which defaults to 16px on native and 15px on web and desktop. It owns message bodies, composer input, Markdown, and PR prose. Controls, navigation, metadata, tool chrome, code, diffs, editors, and terminals stay on their interface or code tokens. **Code size** remains independent.
 
 Weight has three tiers, applied by role:

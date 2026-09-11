@@ -11,6 +11,7 @@ import {
   computeSidebarOrderUpdates,
   createSidebarWorkspaceEntry,
   deriveProjectStatusBucket,
+  deriveProjectStatus,
   deriveSidebarLoadingState,
   shouldShowSidebarHostLabels,
   type ProjectStatusSession,
@@ -941,4 +942,18 @@ describe("deriveProjectStatusBucket", () => {
       }),
     ).toBe("done");
   });
+});
+
+it("uses the newest timestamp only among workspaces matching the project badge", () => {
+  const older = { ...projectWorkspace("older", "needs_input"), statusEnteredAt: new Date(1000) };
+  const newer = { ...projectWorkspace("newer", "needs_input"), statusEnteredAt: new Date(2000) };
+  const unread = { ...projectWorkspace("unread", "attention"), statusEnteredAt: new Date(3000) };
+  expect(
+    deriveProjectStatus({
+      workspaces: [older, newer, unread].map((entry) =>
+        workspacePlacement({ workspaceId: entry.id }),
+      ),
+      sessions: { srv: sessionWith({ workspaces: [older, newer, unread] }) },
+    }),
+  ).toEqual({ bucket: "needs_input", enteredAt: 2000 });
 });

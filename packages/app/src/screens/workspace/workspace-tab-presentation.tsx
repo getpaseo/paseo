@@ -10,6 +10,8 @@ import type { WorkspaceTabDescriptor } from "@/screens/workspace/workspace-tabs-
 import type { SidebarStateBucket } from "@/utils/sidebar-agent-state";
 import type { SurfaceBackdrop } from "@/styles/surface-backdrop";
 import { getStatusDotColor } from "@/utils/status-dot-color";
+import Animated from "react-native-reanimated";
+import { useStatusPulse } from "@/hooks/use-status-pulse";
 import { StatusRing } from "@/components/status-ring";
 import { getStatusRingOffset } from "@/components/status-ring/geometry";
 import {
@@ -29,6 +31,7 @@ export interface WorkspaceTabPresentation {
   titleState: "ready" | "loading";
   icon: React.ComponentType<PanelIconProps>;
   statusBucket: SidebarStateBucket | null;
+  attentionTimestamp?: number | null;
 }
 
 const DEFAULT_STATUS_DOT_OFFSET = -2;
@@ -93,12 +96,14 @@ function WorkspaceTabPresentationResolverInner({
       titleState: descriptor.titleState,
       icon: descriptor.icon,
       statusBucket: descriptor.statusBucket,
+      attentionTimestamp: descriptor.attentionTimestamp,
     }),
     [
       descriptor.icon,
       descriptor.label,
       descriptor.tooltip,
       descriptor.statusBucket,
+      descriptor.attentionTimestamp,
       descriptor.subtitle,
       descriptor.titleState,
       tab.key,
@@ -143,6 +148,7 @@ export function WorkspaceTabIcon({
 }: WorkspaceTabIconProps): ReactElement {
   const iconColor = active ? styles.iconActive.color : styles.iconInactive.color;
   const bucket = presentation.statusBucket;
+  const pulseStyle = useStatusPulse(bucket, presentation.attentionTimestamp);
   const isRunning = bucket === "running";
   let statusDotColor: string | undefined;
   if (bucket === "failed") statusDotColor = styles.statusDotFailed.color;
@@ -176,11 +182,11 @@ export function WorkspaceTabIcon({
           <StatusRing backdrop={backdrop} />
         </View>
       ) : null}
-      {statusDotColor ? <View style={statusDotStyle} /> : null}
+      {statusDotColor ? <Animated.View style={[statusDotStyle, pulseStyle]} /> : null}
       {showNeedsInputAlert ? (
-        <View style={styles.statusAlertOverlay}>
+        <Animated.View style={[styles.statusAlertOverlay, pulseStyle]}>
           <ThemedCircleAlert size={STATUS_INDICATOR_ALERT_SIZE} uniProps={needsInputAlertMapping} />
-        </View>
+        </Animated.View>
       ) : null}
     </View>
   );
