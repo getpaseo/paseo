@@ -111,11 +111,21 @@ describe("AdaptiveRenameModal", () => {
     const input = queryInput();
     expect(input.value).toBe("main");
 
-    await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 150));
-    });
+    // The modal focuses and selects on a 50 ms timeout after mount. Synchronize
+    // on the observable condition rather than a wall-clock delay so the test
+    // passes deterministically regardless of scheduler jitter.
+    await vi.waitFor(
+      () => {
+        if (document.activeElement !== input) {
+          throw new Error("rename input is not focused yet");
+        }
+        if (input.selectionStart !== 0 || input.selectionEnd !== "main".length) {
+          throw new Error("rename input is not fully selected yet");
+        }
+      },
+      { timeout: 5000, interval: 10 },
+    );
 
-    expect(document.activeElement).toBe(input);
     expect(input.selectionStart).toBe(0);
     expect(input.selectionEnd).toBe("main".length);
   });
