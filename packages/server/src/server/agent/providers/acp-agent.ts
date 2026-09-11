@@ -3070,11 +3070,42 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   }
 
   private handleUsageUpdate(update: UsageUpdate): void {
-    void update;
+    // A window size of zero (or worse) cannot be rendered as a meter, so treat
+    // it as "unknown" rather than publishing a bar that divides by zero.
+    if (!Number.isFinite(update.size) || update.size <= 0 || !Number.isFinite(update.used)) {
+      return;
+    }
+
+    const unchanged =
+      this.currentTurnUsage?.contextWindowUsedTokens === update.used &&
+      this.currentTurnUsage?.contextWindowMaxTokens === update.size;
+    if (unchanged) {
+      // Agents may report on every chunk; only publish real movement.
+      return;
+    }
+
+    // Merge rather than replace: `usage_updated` overwrites `lastUsage`
+    // wholesale downstream, and the token counts come from the prompt response.
+    this.currentTurnUsage = {
+      ...this.currentTurnUsage,
+      contextWindowUsedTokens: update.used,
+      contextWindowMaxTokens: update.size,
+    };
+    this.pushEvent({
+      type: "usage_updated",
+      provider: this.provider,
+      usage: this.currentTurnUsage,
+      turnId: this.activeForegroundTurnId ?? undefined,
+    });
   }
 
   private handlePromptResponse(response: PromptResponse, turnId: string): void {
-    this.currentTurnUsage = mapACPUsage(response.usage) ?? this.currentTurnUsage;
+    const responseUsage = mapACPUsage(response.usage);
+    if (responseUsage) {
+      // Merge, so the turn's token counts do not wipe the context window
+      // figures that `usage_update` reported during the turn.
+      this.currentTurnUsage = { ...this.currentTurnUsage, ...responseUsage };
+    }
 
     switch (response.stopReason) {
       case "cancelled":
