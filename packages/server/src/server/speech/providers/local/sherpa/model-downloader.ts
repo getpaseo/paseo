@@ -15,6 +15,21 @@ export interface EnsureSherpaOnnxModelOptions {
   signal?: AbortSignal;
 }
 
+export class SherpaOnnxModelPreparationError extends Error {
+  readonly modelId: SherpaOnnxModelId;
+  readonly modelsDir: string;
+
+  constructor(input: { modelId: SherpaOnnxModelId; modelsDir: string; cause: unknown }) {
+    const message = input.cause instanceof Error ? input.cause.message : String(input.cause);
+    super(`Failed to prepare model ${input.modelId} in ${input.modelsDir}: ${message}`, {
+      cause: input.cause,
+    });
+    this.name = "SherpaOnnxModelPreparationError";
+    this.modelId = input.modelId;
+    this.modelsDir = input.modelsDir;
+  }
+}
+
 export function getSherpaOnnxModelDir(modelsDir: string, modelId: SherpaOnnxModelId): string {
   const spec = getSherpaOnnxModelSpec(modelId);
   return path.join(modelsDir, spec.extractedDir);
@@ -169,8 +184,12 @@ export async function ensureSherpaOnnxModel(
     logger.info({ modelDir }, "Model download completed");
     return modelDir;
   } catch (error) {
-    logger.error({ err: error }, "Model download failed");
-    throw error;
+    logger.error({ err: error, modelsDir: options.modelsDir }, "Model download failed");
+    throw new SherpaOnnxModelPreparationError({
+      modelId: options.modelId,
+      modelsDir: options.modelsDir,
+      cause: error,
+    });
   }
 }
 
