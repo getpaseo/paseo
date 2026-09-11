@@ -7,6 +7,7 @@ import {
   type DaemonSelfUpdater,
 } from "./daemon-self-updater.js";
 import { getErrorMessage } from "@getpaseo/protocol/error-utils";
+import { DAEMON_UPDATE_RPC_REASON } from "../../lifecycle-reasons.js";
 
 type DaemonUpdateRequest = Extract<SessionInboundMessage, { type: "daemon.update.request" }>;
 
@@ -87,7 +88,7 @@ export class DaemonSelfUpdateSessionController {
         type: "restart",
         clientId: this.clientId,
         requestId: msg.requestId,
-        reason: "daemon_update",
+        reason: DAEMON_UPDATE_RPC_REASON,
       });
     } catch (error) {
       if (error instanceof DaemonSelfUpdateInProgressError) {

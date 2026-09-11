@@ -3,14 +3,16 @@ import { invokeDesktopCommand } from "@/desktop/electron/invoke";
 import type { AgentSkillSelection } from "@getpaseo/protocol/messages";
 
 export type DesktopDaemonState = "starting" | "running" | "stopped" | "errored";
-export type DesktopDaemonStopReason =
-  | "manual_ipc"
-  | "settings"
-  | "host_remove"
-  | "quit"
-  | "app_update"
-  | "version_mismatch"
-  | "restart";
+export const DESKTOP_DAEMON_STOP_REASONS = [
+  "manual_ipc",
+  "settings",
+  "host_remove",
+  "quit",
+  "app_update",
+  "version_mismatch",
+  "restart",
+] as const;
+export type DesktopDaemonStopReason = (typeof DESKTOP_DAEMON_STOP_REASONS)[number];
 
 export interface DesktopDaemonStatus {
   serverId: string;
