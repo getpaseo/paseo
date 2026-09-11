@@ -99,6 +99,7 @@ function plugin(onAgentSelect: AgentCommandItem["onSelect"]): InstalledPlugin {
         onSelect: onAgentSelect,
       },
     ],
+    fileMenuItems: [],
     clientSlashCommands: [],
     attachmentSources: [],
     themes: [],

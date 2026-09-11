@@ -17,6 +17,7 @@ import {
 import {
   type PluginCommandCenterItemContribution,
   type PluginClientContext,
+  type PluginFileMenuItemContribution,
   type PluginClientSlashCommandContribution,
   type PluginSidebarContribution,
   type PluginSurfaceProps,
@@ -92,6 +93,7 @@ export function runPluginClientBundle(
     sidebarItems: [],
     workspacePanels: [],
     commandCenterItems: [],
+    fileMenuItems: [],
     clientSlashCommands: [],
     attachmentSources: [],
     themes: [],
@@ -103,6 +105,7 @@ export function runPluginClientBundle(
   const sidebarItemIds = new Set<string>();
   const workspacePanelIds = new Set<string>();
   const commandCenterItemIds = new Set<string>();
+  const fileMenuItemIds = new Set<string>();
   const clientSlashCommandNames = new Set<string>();
   const attachmentSourceIds = new Set<string>();
   const themeIds = new Set<string>();
@@ -249,6 +252,26 @@ export function runPluginClientBundle(
           keywords: contribution.keywords?.map((keyword) => keyword.trim()).filter(Boolean),
         },
         () => commandCenterItemIds.delete(normalizedId),
+      );
+    },
+    addFileMenuItem(contribution: PluginFileMenuItemContribution) {
+      const normalizedId = requireId(contribution.id, "file menu item id");
+      if (fileMenuItemIds.has(normalizedId)) {
+        throw new Error(`Duplicate file menu item: ${normalizedId}`);
+      }
+      const title = contribution.title.trim();
+      const icon = contribution.icon.trim();
+      if (!title) throw new Error(`File menu item ${normalizedId} has no title`);
+      if (!icon) throw new Error(`File menu item ${normalizedId} has no icon`);
+      if (typeof contribution.onSelect !== "function") {
+        throw new Error(`File menu item ${normalizedId} has no callback`);
+      }
+      resolvePluginIcon(icon);
+      fileMenuItemIds.add(normalizedId);
+      return register(
+        collector.fileMenuItems,
+        { id: normalizedId, title, icon, onSelect: contribution.onSelect },
+        () => fileMenuItemIds.delete(normalizedId),
       );
     },
     addSlashCommand(contribution: PluginClientSlashCommandContribution) {
@@ -436,6 +459,7 @@ export function runPluginClientBundle(
     sidebarItems: collector.sidebarItems,
     workspacePanels: collector.workspacePanels as EvaluatedPlugin["workspacePanels"],
     commandCenterItems: collector.commandCenterItems,
+    fileMenuItems: collector.fileMenuItems,
     clientSlashCommands: collector.clientSlashCommands,
     attachmentSources: collector.attachmentSources,
     themes: collector.themes,

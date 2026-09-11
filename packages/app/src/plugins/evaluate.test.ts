@@ -77,6 +77,7 @@ describe("evaluatePluginClientBundle", () => {
           plugin.addSidebarItem({ id: "main", title: "Main", icon: "Blocks", surface: "main" }),
           plugin.addWorkspacePanel({ id: "panel", title: "Panel", icon: "Blocks", context: "workspace", Component }),
           plugin.addCommandCenterItem({ id: "command", title: "Command", icon: "Blocks", context: "global", onSelect() {} }),
+          plugin.addFileMenuItem({ id: "file", title: "File", icon: "Blocks", onSelect() {} }),
           plugin.addSlashCommand({ name: "review", description: "Review", argumentHint: "", context: "workspace", onSubmit() {} }),
           plugin.addComposerPill({ id: "pill", workspaceId: "workspace", agentId: "agent", button: { title: "Pill", icon: "Scan", behavior: { kind: "action", onPress() {} } } }).remove,
           plugin.addAttachmentSource({ id: "issues", title: "Issues", icon: "Blocks", pickerTitle: "Attach issue", searchPlaceholder: "Search", search: { name: "issues.search", input: {}, output: {} } }),
@@ -107,6 +108,7 @@ describe("evaluatePluginClientBundle", () => {
         plugin.sidebarItems,
         plugin.workspacePanels,
         plugin.commandCenterItems,
+        plugin.fileMenuItems,
         plugin.clientSlashCommands,
         plugin.attachmentSources,
         plugin.themes,
@@ -126,6 +128,7 @@ describe("evaluatePluginClientBundle", () => {
         plugin.sidebarItems,
         plugin.workspacePanels,
         plugin.commandCenterItems,
+        plugin.fileMenuItems,
         plugin.clientSlashCommands,
         plugin.attachmentSources,
         plugin.themes,
@@ -337,6 +340,46 @@ describe("evaluatePluginClientBundle", () => {
         `),
       ),
     ).toThrow("Duplicate Command Center item: review");
+  });
+
+  it("collects and validates file menu items", () => {
+    const plugin = evaluatePluginClientBundle(
+      "reader",
+      bundle(
+        `plugin.addFileMenuItem({ id: " open ", title: " Open in Reader ", icon: " Scan ", onSelect() {} })`,
+      ),
+    );
+    expect(plugin.fileMenuItems.map(({ id, title, icon }) => ({ id, title, icon }))).toEqual([
+      { id: "open", title: "Open in Reader", icon: "Scan" },
+    ]);
+    const invalid: Array<[string, string]> = [
+      [
+        `{ id: "Open", title: "Open", icon: "Scan", onSelect() {} }`,
+        "Invalid file menu item id: Open",
+      ],
+      [
+        `{ id: "open", title: " ", icon: "Scan", onSelect() {} }`,
+        "File menu item open has no title",
+      ],
+      [`{ id: "open", title: "Open", icon: "", onSelect() {} }`, "File menu item open has no icon"],
+      [`{ id: "open", title: "Open", icon: "Scan" }`, "File menu item open has no callback"],
+      [`{ id: "open", title: "Open", icon: "NoSuchIcon", onSelect() {} }`, "NoSuchIcon"],
+    ];
+    for (const [item, message] of invalid) {
+      expect(() =>
+        evaluatePluginClientBundle("reader", bundle(`plugin.addFileMenuItem(${item})`)),
+      ).toThrow(message);
+    }
+    expect(() =>
+      evaluatePluginClientBundle(
+        "reader",
+        bundle(`
+          const item = { id: "open", title: "Open", icon: "Scan", onSelect() {} };
+          plugin.addFileMenuItem(item);
+          plugin.addFileMenuItem(item);
+        `),
+      ),
+    ).toThrow("Duplicate file menu item: open");
   });
 
   it("runs the client entry with the full runtime context", () => {

@@ -40,6 +40,14 @@ interface FileAction {
   testID?: string;
 }
 
+/** An action supplied by the caller for an existing file, listed after the built-in open actions. */
+export interface FileMenuExtraAction {
+  key: string;
+  label: string;
+  icon: LucideIcon;
+  onSelect: () => void;
+}
+
 function optionalFileAction(
   available: boolean,
   onSelect: (() => void) | undefined,
@@ -68,6 +76,7 @@ interface FileActionsContextMenuContentProps {
   onDuplicate?: () => void;
   onRevert?: () => void;
   onDelete?: () => void;
+  extraActions?: readonly FileMenuExtraAction[];
   testIDPrefix?: string;
 }
 
@@ -95,6 +104,7 @@ export function FileActionsContextMenuContent({
   onDuplicate,
   onRevert,
   onDelete,
+  extraActions,
   testIDPrefix,
 }: FileActionsContextMenuContentProps): ReactElement | null {
   const { t } = useTranslation();
@@ -110,6 +120,19 @@ export function FileActionsContextMenuContent({
           }
         : null,
     [editorTargetName, fileKind, onOpenInEditor, t],
+  );
+  const extraFileActions = useMemo<FileAction[]>(
+    () =>
+      fileKind === "file" && fileExists && extraActions
+        ? extraActions.map((action) => ({
+            key: `extra-${action.key}`,
+            group: "open",
+            label: action.label,
+            icon: action.icon,
+            onSelect: action.onSelect,
+          }))
+        : [],
+    [extraActions, fileExists, fileKind],
   );
   const actions = useMemo<FileAction[]>(() => {
     const availableFile = fileKind === "file" && fileExists;
@@ -157,6 +180,7 @@ export function FileActionsContextMenuContent({
         label: t("workspace.fileActions.openToSide"),
         icon: ArrowRightToLine,
       }),
+      ...extraFileActions,
       onCopyPath
         ? {
             key: "copy-path",
@@ -249,6 +273,7 @@ export function FileActionsContextMenuContent({
       }),
     );
   }, [
+    extraFileActions,
     fileExists,
     fileKind,
     onAddToChat,

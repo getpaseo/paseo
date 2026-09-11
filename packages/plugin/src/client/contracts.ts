@@ -81,6 +81,11 @@ export interface PluginClientContext extends PluginCommandCapabilities {
   addSidebarItem(contribution: PluginSidebarContribution): PluginCleanup;
   addWorkspacePanel(contribution: PluginWorkspacePanelContribution): PluginCleanup;
   addCommandCenterItem(contribution: PluginCommandCenterItemContribution): PluginCleanup;
+  /**
+   * Adds an item to the Files context menu for existing files. Undefined on older hosts; check
+   * before calling.
+   */
+  addFileMenuItem?(contribution: PluginFileMenuItemContribution): PluginCleanup;
   addSlashCommand(contribution: PluginClientSlashCommandContribution): PluginCleanup;
   addHeaderButton(contribution: PluginHeaderButtonContribution): PluginButtonRegistration;
   addComposerPill(contribution: PluginComposerPillContribution): PluginButtonRegistration;
@@ -184,6 +189,19 @@ export interface PluginAgentCommandContext extends PluginCommandCapabilities {
   workspace: PluginWorkspaceSnapshot;
   agent: PluginAgentSnapshot;
   openPanel(id: string, options?: PluginOpenPanelOptions): void;
+}
+
+/** Workspace context for a file chosen from the Files context menu. */
+export interface PluginFileMenuContext extends PluginWorkspaceCommandContext {
+  /** `path` is relative to the workspace directory. */
+  file: { readonly path: string };
+}
+
+export interface PluginFileMenuItemContribution {
+  id: string;
+  title: string;
+  icon: string;
+  onSelect(context: PluginFileMenuContext): void | Promise<void>;
 }
 
 interface PluginCommandCenterItemBase {

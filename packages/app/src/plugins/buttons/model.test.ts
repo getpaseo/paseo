@@ -17,6 +17,7 @@ function installation(): InstalledPlugin {
     sidebarItems: [],
     workspacePanels: [],
     commandCenterItems: [],
+    fileMenuItems: [],
     clientSlashCommands: [],
     attachmentSources: [],
     themes: [],

@@ -9,6 +9,7 @@ import type {
   PluginCommandCenterItemContribution,
   PluginClientSlashCommandContribution,
   PluginComposerPillContribution,
+  PluginFileMenuItemContribution,
   PluginSidebarContribution,
   PluginSurfaceContribution,
   PluginSettingsScreenContribution,
@@ -30,6 +31,7 @@ export interface EvaluatedPlugin {
   sidebarItems: PluginSidebarContribution[];
   workspacePanels: EvaluatedPluginWorkspacePanelContribution[];
   commandCenterItems: PluginCommandCenterItemContribution[];
+  fileMenuItems: PluginFileMenuItemContribution[];
   clientSlashCommands: PluginClientSlashCommandContribution[];
   attachmentSources: PluginAttachmentSourceContribution[];
   themes: PluginThemeContribution[];
@@ -50,6 +52,7 @@ export type {
   PluginCommandCenterItemContribution,
   PluginClientSlashCommandContribution,
   PluginComposerPillContribution,
+  PluginFileMenuItemContribution,
   PluginSidebarContribution,
   PluginSurfaceContribution,
   PluginSettingsScreenContribution,

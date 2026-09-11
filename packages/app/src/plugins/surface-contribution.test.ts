@@ -28,6 +28,7 @@ function installation(
     })),
     workspacePanels: [],
     commandCenterItems: [],
+    fileMenuItems: [],
     clientSlashCommands: [],
     attachmentSources: [],
     themes: [],

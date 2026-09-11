@@ -1260,6 +1260,44 @@ Every callback receives:
 
 An agent callback may open either an agent panel or a workspace panel. A workspace callback may open only a workspace panel. Unknown surface and panel IDs fail visibly. Use `paseo` for normal workspace, agent, provider, and daemon-config operations. Use `rpc` for plugin-specific filesystem, credential, vendor, or daemon-local work.
 
+## File menu items
+
+Add an item to the Files context menu. It appears for existing files in the workspace whose Files
+panel you right-click or long-press, never for folders:
+
+```tsx
+client.addFileMenuItem?.({
+  id: "open-in-reader",
+  title: "Open in Reader",
+  icon: "BookOpen",
+  onSelect({ workspace, file, openPanel }) {
+    rememberRequestedFile(workspace.id, file.path);
+    openPanel("reader");
+  },
+});
+```
+
+`addFileMenuItem` is undefined on Paseo clients that predate it. Call it with `?.` or check for it
+first, and keep another way to reach the same panel.
+
+`addFileMenuItem` fields:
+
+| Field      | Required | Meaning                            |
+| ---------- | -------- | ---------------------------------- |
+| `id`       | Yes      | Plugin-local item ID.              |
+| `title`    | Yes      | Menu item label.                   |
+| `icon`     | Yes      | Lucide icon name.                  |
+| `onSelect` | Yes      | Client-side callback for the file. |
+
+The callback receives the workspace callback fields from [Command Center items](#command-center-items)
+plus `file.path`, the file's path relative to the workspace directory. `openPanel` opens a workspace
+panel in that workspace. Panels receive no file argument: keep the requested path in your own client
+state keyed by `workspace.id` and read it from the panel. Paseo does not check the file's type or
+contents; validate the path before you use it.
+
+The item only runs while its plugin is loaded and its registration is present. Navigation the callback
+starts after either one goes away is refused, and errors thrown by the callback are shown to the user.
+
 ## Slash commands
 
 Register a command that runs in the Paseo client when the user submits `/name args` from the

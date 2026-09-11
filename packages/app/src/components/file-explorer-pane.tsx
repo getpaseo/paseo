@@ -1,4 +1,5 @@
 import {
+  type ComponentProps,
   useCallback,
   useEffect,
   useMemo,
@@ -57,6 +58,7 @@ import type {
 } from "@/stores/session-store";
 import { useSessionStore } from "@/stores/session-store";
 import { FileActionsContextMenuContent } from "@/components/file-actions-menu";
+import { usePluginFileMenuActions } from "@/plugins/file-menu/use-plugin-file-menu-actions";
 import { ContextMenu, ContextMenuTrigger, useContextMenu } from "@/components/ui/context-menu";
 import { useFileDownload } from "@/hooks/use-file-download";
 import { useFileExplorerActions } from "@/hooks/use-file-explorer-actions";
@@ -228,6 +230,29 @@ function EntryNameInputRow({
   );
 }
 
+type TreeRowFileActionsProps = ComponentProps<typeof FileActionsContextMenuContent> & {
+  serverId: string;
+  workspaceId?: string | null;
+  path: string;
+};
+
+/**
+ * Plugin items join the row menu once it has opened; rows that were never opened hold no plugin
+ * catalog subscription. The latch keeps items stable while the menu animates closed.
+ */
+function TreeRowFileActions({ serverId, workspaceId, path, ...menu }: TreeRowFileActionsProps) {
+  const { open } = useContextMenu();
+  const [opened, setOpened] = useState(false);
+  if (open && !opened) setOpened(true);
+  const pluginActions = usePluginFileMenuActions({
+    enabled: opened && menu.fileKind === "file",
+    serverId,
+    workspaceId,
+    path,
+  });
+  return <FileActionsContextMenuContent {...menu} extraActions={pluginActions} />;
+}
+
 function TreeRowItem({
   serverId,
   workspaceId,
@@ -373,7 +398,10 @@ function TreeRowItem({
           </Text>
         </View>
       </ContextMenuTrigger>
-      <FileActionsContextMenuContent
+      <TreeRowFileActions
+        serverId={serverId}
+        workspaceId={workspaceId}
+        path={entry.path}
         fileKind={entry.kind}
         onOpenInEditor={isDirectory && onOpenInEditor ? handleOpenInEditor : undefined}
         editorTargetName={editorTargetName}

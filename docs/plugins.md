@@ -263,8 +263,8 @@ When the same plugin contribution exists on multiple hosts, Paseo shows it once 
 adds a host picker to the screen header. The selected host supplies the bundle, RPC transport, and
 query cache. Plugin code cannot address another host.
 
-Workspace panels, Command Center items, and client slash commands are client contributions. The
-daemon transports their compiled bundle without interpreting placement or callbacks. Panel props
+Workspace panels, Command Center items, file menu items, and client slash commands are client
+contributions. The daemon transports their compiled bundle without interpreting placement or callbacks. Panel props
 contain workspace and agent IDs. Required-selector hooks read normalized client state synchronously
 and use shallow equality, so a panel does not subscribe to fields it does not render. Command
 callbacks materialize their snapshots only when invoked. Contribution discovery and panel opening
@@ -276,6 +276,12 @@ Panels declare `locations: ["workspace", "explorer"]` to opt into Explorer hosti
 workspace only. Location controls hosting, not context. An agent panel target keeps its `agentId`
 when moved between hosts. Explorer configuration can create workspace-context panels and remove
 existing agent-context instances, but it cannot create an agent panel without an agent-aware command.
+
+File menu items appear in the Files context menu for existing files only. The row reads the plugin
+catalog once its menu first opens, and each selection creates a short-lived API runtime that is disposed
+when the callback settles. A selection is refused once its plugin unloads or its registration is removed,
+including panel navigation started late by that callback. `addFileMenuItem` is absent on older clients,
+so plugins check for it before calling it.
 
 Command Center callbacks use the selected host's existing `PaseoApi` for normal Paseo operations.
 They use typed plugin RPC only for plugin-specific backend work. Surface and panel props expose

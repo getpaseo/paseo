@@ -25,6 +25,7 @@ function installed(): InstalledPlugin {
       },
     ],
     commandCenterItems: [],
+    fileMenuItems: [],
     clientSlashCommands: [],
     attachmentSources: [],
     themes: [],

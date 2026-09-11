@@ -19,6 +19,7 @@ function plugin(input: {
     sidebarItems: [],
     workspacePanels: [],
     commandCenterItems: [],
+    fileMenuItems: [],
     clientSlashCommands: [],
     attachmentSources: [],
     themes: [],
