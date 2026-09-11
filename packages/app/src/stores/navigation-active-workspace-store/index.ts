@@ -48,6 +48,12 @@ function navigateDeps(): NavigateToWorkspaceDeps {
     openTab: (input) => useWorkspaceLayoutStore.getState().openTab(input),
     revealEphemeralTab: (input) =>
       useWorkspaceLayoutStore.getState().revealEphemeralTab(input.workspaceKey, input.target),
+    holdEphemeralTab: (input) =>
+      useWorkspaceLayoutStore.getState().holdEphemeralFocusTab(input.workspaceKey, input.target),
+    settleHeldEphemeralTab: (input) =>
+      useWorkspaceLayoutStore
+        .getState()
+        .settleHeldEphemeralFocusTab(input.workspaceKey, input.target, input.reveal),
     getLastWorkspaceSelection: () => lastWorkspaceSelectionStore.getSelection(),
     rememberLastWorkspace: (selection) => lastWorkspaceSelectionStore.remember(selection),
     navigateToRoute: (route) => {

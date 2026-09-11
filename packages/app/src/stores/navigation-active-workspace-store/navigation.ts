@@ -31,6 +31,11 @@ export interface NavigateToWorkspaceInput {
   placement?: WorkspaceTabPlacement;
 }
 
+export interface EphemeralTabReveal {
+  workspaceKey: string;
+  target: WorkspaceTabTarget;
+}
+
 export interface NavigateToWorkspaceDeps extends PrepareWorkspaceTabDeps {
   getSessionWorkspaces: (serverId: string) => Map<string, WorkspaceDescriptor> | null | undefined;
   getSessionAgents: (serverId: string) => Iterable<Agent>;
@@ -41,8 +46,21 @@ export interface NavigateToWorkspaceDeps extends PrepareWorkspaceTabDeps {
    */
   onWorkspaceLayoutHydrated: (callback: () => void) => void;
   /** Reveals a tab for the current visit without persisting the focus change. */
-  revealEphemeralTab: (input: { workspaceKey: string; target: WorkspaceTabTarget }) => void;
-  /** The workspace the user is on right now; every navigation and route change updates it. */
+  revealEphemeralTab: (input: EphemeralTabReveal) => void;
+  /**
+   * Holds a reveal whose layout has not hydrated yet, without opening its tab. The entry is
+   * memory-only, so hydration keeps it, and leaving the workspace clears it like any reveal.
+   */
+  holdEphemeralTab: (input: EphemeralTabReveal) => void;
+  /**
+   * Settles a held reveal after hydration: reveals it, or drops it when `reveal` is false. Does
+   * nothing once the entry no longer holds this target — the visit ended or a newer reveal won.
+   */
+  settleHeldEphemeralTab: (input: EphemeralTabReveal & { reveal: boolean }) => void;
+  /**
+   * The workspace most recently navigated to or shown. App-wide routes (settings) leave it
+   * unchanged, so it cannot tell on its own whether the user is still on that workspace.
+   */
   getLastWorkspaceSelection: () => ActiveWorkspaceSelection | null;
   rememberLastWorkspace: (selection: ActiveWorkspaceSelection) => void;
   navigateToRoute: (route: string) => void;
@@ -131,26 +149,30 @@ export function navigateToWorkspace(
     // because an agent needs attention, and once hydration settles them on
     // their saved tab, nothing else would retry the reveal.
     if (attentionAgentId && attentionWorkspaceKey) {
-      const reveal: { workspaceKey: string; target: WorkspaceTabTarget } = {
+      const reveal: EphemeralTabReveal = {
         workspaceKey: attentionWorkspaceKey,
         target: { kind: "agent", agentId: attentionAgentId },
       };
       if (deps.isWorkspaceLayoutHydrated()) {
         deps.revealEphemeralTab(reveal);
       } else {
+        // Hydration can finish after the user has moved on, and a reveal
+        // installed then would ambush their next visit. So the target is held
+        // now and only settled at hydration: the workspace screen clears a held
+        // entry when the user leaves — for any route, settings included — and
+        // settling an entry that is gone does nothing. The selection check
+        // covers the one departure the screen cannot see: moving on to another
+        // workspace before this one's screen mounted.
+        deps.holdEphemeralTab(reveal);
         const selection = { serverId: input.serverId, workspaceId: input.workspaceId };
         deps.onWorkspaceLayoutHydrated(() => {
-          // Hydration can finish after the user has moved on to another
-          // workspace; a reveal installed then would ambush their next visit.
-          // The remembered selection tracks every navigation and route change,
-          // so only a reveal whose workspace is still current may land.
           const current = deps.getLastWorkspaceSelection();
-          if (
-            current?.serverId === selection.serverId &&
-            current?.workspaceId === selection.workspaceId
-          ) {
-            deps.revealEphemeralTab(reveal);
-          }
+          deps.settleHeldEphemeralTab({
+            ...reveal,
+            reveal:
+              current?.serverId === selection.serverId &&
+              current.workspaceId === selection.workspaceId,
+          });
         });
       }
     }

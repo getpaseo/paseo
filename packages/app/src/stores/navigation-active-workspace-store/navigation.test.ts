@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { ActiveWorkspaceSelection } from "@/stores/last-workspace-selection";
 import type { WorkspaceTabTarget } from "@/workspace-tabs/model";
+import { workspaceTabTargetsEqual } from "@/workspace-tabs/identity";
 import { parseHostWorkspaceRouteFromPathname } from "@/utils/host-routes";
 import {
   navigateToLastWorkspace,
@@ -28,6 +29,10 @@ function createFakeDeps(overrides: Partial<NavigateToWorkspaceDeps> = {}) {
   const openedTabs: RecordedTab[] = [];
   const ephemeralReveals: RecordedEphemeralReveal[] = [];
   const deferredUntilHydrated: Array<() => void> = [];
+  // Mirrors the layout store's memory-only reveal entries: a hold records the
+  // target, the workspace screen deletes it when the user leaves, and settling
+  // acts only on a target that is still held.
+  const heldReveals = new Map<string, WorkspaceTabTarget>();
   let lastSelection: ActiveWorkspaceSelection | null = null;
   const deps: NavigateToWorkspaceDeps = {
     getSessionWorkspaces: () => null,
@@ -41,6 +46,20 @@ function createFakeDeps(overrides: Partial<NavigateToWorkspaceDeps> = {}) {
     revealEphemeralTab: ({ workspaceKey, target }) => {
       ephemeralReveals.push({ workspaceKey, target });
     },
+    holdEphemeralTab: ({ workspaceKey, target }) => {
+      heldReveals.set(workspaceKey, target);
+    },
+    settleHeldEphemeralTab: ({ workspaceKey, target, reveal }) => {
+      const held = heldReveals.get(workspaceKey);
+      if (!held || !workspaceTabTargetsEqual(held, target)) {
+        return;
+      }
+      if (reveal) {
+        ephemeralReveals.push({ workspaceKey, target });
+      } else {
+        heldReveals.delete(workspaceKey);
+      }
+    },
     // Mirrors the real store: every navigation updates the current selection.
     getLastWorkspaceSelection: () => lastSelection,
     rememberLastWorkspace: (selection) => {
@@ -50,7 +69,15 @@ function createFakeDeps(overrides: Partial<NavigateToWorkspaceDeps> = {}) {
     navigateToRoute: (route) => navigations.push(route),
     ...overrides,
   };
-  return { deps, navigations, remembered, openedTabs, ephemeralReveals, deferredUntilHydrated };
+  return {
+    deps,
+    navigations,
+    remembered,
+    openedTabs,
+    ephemeralReveals,
+    deferredUntilHydrated,
+    heldReveals,
+  };
 }
 
 function createLastSelectionDeps(
@@ -232,11 +259,12 @@ describe("workspace navigation", () => {
       requiresAttention: true,
       attentionReason: "permission",
     } as unknown as Agent;
-    const { deps, openedTabs, ephemeralReveals, deferredUntilHydrated } = createFakeDeps({
-      getSessionWorkspaces: () => new Map([[workspace.id, workspace]]),
-      getSessionAgents: () => [agent],
-      isWorkspaceLayoutHydrated: () => false,
-    });
+    const { deps, openedTabs, ephemeralReveals, deferredUntilHydrated, heldReveals } =
+      createFakeDeps({
+        getSessionWorkspaces: () => new Map([[workspace.id, workspace]]),
+        getSessionAgents: () => [agent],
+        isWorkspaceLayoutHydrated: () => false,
+      });
 
     navigateToWorkspace({ serverId: "server-1", workspaceId: "workspace-a" }, deps);
 
@@ -244,6 +272,7 @@ describe("workspace navigation", () => {
     // the saved focus with nothing retrying the reveal, while an agent still
     // needs attention.
     expect(ephemeralReveals).toEqual([]);
+    expect(heldReveals.get("server-1:workspace-a")).toEqual({ kind: "agent", agentId: "agent-1" });
     expect(deferredUntilHydrated).toHaveLength(1);
 
     deferredUntilHydrated[0]?.();
@@ -268,17 +297,46 @@ describe("workspace navigation", () => {
       requiresAttention: true,
       attentionReason: "permission",
     } as unknown as Agent;
-    const { deps, ephemeralReveals, deferredUntilHydrated } = createFakeDeps({
+    const { deps, ephemeralReveals, deferredUntilHydrated, heldReveals } = createFakeDeps({
       getSessionWorkspaces: () => new Map([[workspace.id, workspace]]),
       getSessionAgents: () => [agent],
       isWorkspaceLayoutHydrated: () => false,
     });
 
     navigateToWorkspace({ serverId: "server-1", workspaceId: "workspace-a" }, deps);
-    // The user leaves for another workspace before hydration finishes; the
-    // screen they left has nothing to clear yet, so the guard is the only
-    // thing standing between the deferred reveal and a stale ambush.
+    // The user moves on to another workspace before hydration finishes and
+    // before the screen they left mounted to clear the held reveal, so the
+    // selection check is what drops it.
     navigateToWorkspace({ serverId: "server-1", workspaceId: "workspace-b" }, deps);
+
+    deferredUntilHydrated[0]?.();
+
+    expect(ephemeralReveals).toEqual([]);
+    expect(heldReveals.has("server-1:workspace-a")).toBe(false);
+  });
+
+  it("drops a deferred attention reveal whose visit ended on an app-wide route", () => {
+    const workspace = {
+      id: "workspace-a",
+      workspaceDirectory: "/repo/workspace-a",
+    } as WorkspaceDescriptor;
+    const agent = {
+      id: "agent-1",
+      cwd: "/repo/workspace-a",
+      workspaceId: "workspace-a",
+      requiresAttention: true,
+      attentionReason: "permission",
+    } as unknown as Agent;
+    const { deps, ephemeralReveals, deferredUntilHydrated, heldReveals } = createFakeDeps({
+      getSessionWorkspaces: () => new Map([[workspace.id, workspace]]),
+      getSessionAgents: () => [agent],
+      isWorkspaceLayoutHydrated: () => false,
+    });
+
+    navigateToWorkspace({ serverId: "server-1", workspaceId: "workspace-a" }, deps);
+    // Leaving for settings keeps the remembered selection on workspace-a, but
+    // the workspace screen clears the held reveal as the user leaves.
+    heldReveals.delete("server-1:workspace-a");
 
     deferredUntilHydrated[0]?.();
 

@@ -58,7 +58,7 @@ import {
   type WorkspaceTabSnapshot,
   type WorkspaceLayout,
 } from "@/stores/workspace-layout-actions";
-import { normalizeWorkspaceTabTarget } from "@/workspace-tabs/identity";
+import { normalizeWorkspaceTabTarget, workspaceTabTargetsEqual } from "@/workspace-tabs/identity";
 import { createValidatedPersistStorage } from "@/storage/validated-persist-storage";
 import { panelTargetSupportsHostForWorkspaceKey } from "@/plugins/workspace-panels/locations";
 
@@ -171,6 +171,23 @@ interface WorkspaceLayoutStore {
    * the workspace screen to focus on an in-memory layout copy.
    */
   revealEphemeralTab: (workspaceKey: string, target: WorkspaceTabTarget) => void;
+  /**
+   * Holds a reveal target for a visit whose layout has not hydrated yet, without
+   * opening its tab. Hydration's merge replaces the layout but keeps this
+   * memory-only entry, and leaving the workspace clears it like any reveal.
+   */
+  holdEphemeralFocusTab: (workspaceKey: string, target: WorkspaceTabTarget) => void;
+  /**
+   * Settles a held reveal once the layout has hydrated: reveals it, or drops it
+   * when `reveal` is false. A no-op once the entry no longer holds this target —
+   * the visit ended or a newer reveal replaced it — so a late settlement never
+   * resurrects a finished visit.
+   */
+  settleHeldEphemeralFocusTab: (
+    workspaceKey: string,
+    target: WorkspaceTabTarget,
+    reveal: boolean,
+  ) => void;
   /** Drops a workspace's ephemeral reveal target; a no-op when none is set. */
   clearEphemeralFocusTab: (workspaceKey: string) => void;
   unfocusPane: (workspaceKey: string) => string | null;
@@ -730,6 +747,23 @@ function withoutEphemeralFocusTarget(
   return { ephemeralFocusTargetByWorkspace };
 }
 
+// The reveal ends with its tab: a target left without one would otherwise
+// linger and snap focus back if that tab reappears later in the visit.
+function withoutOrphanedEphemeralFocusTarget(
+  state: WorkspaceLayoutStore,
+  workspaceKey: string,
+  layout: WorkspaceLayout,
+): Pick<WorkspaceLayoutStore, "ephemeralFocusTargetByWorkspace"> | null {
+  const target = state.ephemeralFocusTargetByWorkspace[workspaceKey];
+  if (
+    !target ||
+    collectAllTabs(layout.root).some((tab) => workspaceTabTargetsEqual(tab.target, target))
+  ) {
+    return null;
+  }
+  return withoutEphemeralFocusTarget(state, workspaceKey);
+}
+
 function reconcileRememberedSidePane(
   state: WorkspaceLayoutStore,
   workspaceKey: string,
@@ -1028,6 +1062,7 @@ export function createWorkspaceLayoutStore(
               }
               return {
                 ...withoutFocusRestoration(state, normalizedWorkspaceKey),
+                ...withoutOrphanedEphemeralFocusTarget(state, normalizedWorkspaceKey, nextLayout),
                 ...reconcileRememberedSidePane(state, normalizedWorkspaceKey, nextLayout),
                 layoutByWorkspace: {
                   ...state.layoutByWorkspace,
@@ -1067,6 +1102,7 @@ export function createWorkspaceLayoutStore(
 
             return {
               ...withoutFocusRestoration(state, normalizedWorkspaceKey),
+              ...withoutOrphanedEphemeralFocusTarget(state, normalizedWorkspaceKey, nextLayout),
               ...reconcileRememberedSidePane(state, normalizedWorkspaceKey, nextLayout),
               layoutByWorkspace: {
                 ...state.layoutByWorkspace,
@@ -1526,6 +1562,7 @@ export function createWorkspaceLayoutStore(
 
             return {
               ...withoutFocusRestoration(state, normalizedWorkspaceKey),
+              ...withoutOrphanedEphemeralFocusTarget(state, normalizedWorkspaceKey, nextLayout),
               layoutByWorkspace: {
                 ...state.layoutByWorkspace,
                 [normalizedWorkspaceKey]: nextLayout,
@@ -1627,6 +1664,37 @@ export function createWorkspaceLayoutStore(
               },
             };
           });
+        },
+        holdEphemeralFocusTab: (workspaceKey, target) => {
+          const normalizedWorkspaceKey = trimNonEmpty(workspaceKey);
+          const normalizedTarget = normalizeWorkspaceTabTarget(target);
+          if (!normalizedWorkspaceKey || !normalizedTarget) {
+            return;
+          }
+
+          set((state) => ({
+            ephemeralFocusTargetByWorkspace: {
+              ...state.ephemeralFocusTargetByWorkspace,
+              [normalizedWorkspaceKey]: normalizedTarget,
+            },
+          }));
+        },
+        settleHeldEphemeralFocusTab: (workspaceKey, target, reveal) => {
+          const normalizedWorkspaceKey = trimNonEmpty(workspaceKey);
+          const normalizedTarget = normalizeWorkspaceTabTarget(target);
+          if (!normalizedWorkspaceKey || !normalizedTarget) {
+            return;
+          }
+
+          const heldTarget = get().ephemeralFocusTargetByWorkspace[normalizedWorkspaceKey];
+          if (!heldTarget || !workspaceTabTargetsEqual(heldTarget, normalizedTarget)) {
+            return;
+          }
+          if (reveal) {
+            get().revealEphemeralTab(normalizedWorkspaceKey, normalizedTarget);
+          } else {
+            get().clearEphemeralFocusTab(normalizedWorkspaceKey);
+          }
         },
         clearEphemeralFocusTab: (workspaceKey) => {
           const normalizedWorkspaceKey = trimNonEmpty(workspaceKey);
