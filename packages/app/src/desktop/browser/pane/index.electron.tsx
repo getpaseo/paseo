@@ -1088,7 +1088,12 @@ export function BrowserPane({
         return undefined;
       }
       try {
-        const dataUrl = await captureElement(browserIdRef.current, { x, y, width, height });
+        const dataUrl = await captureElement(
+          browserIdRef.current,
+          { x, y, width, height },
+          selection.selector,
+          selection.captureId,
+        );
         if (!dataUrl) {
           return undefined;
         }
@@ -1115,7 +1120,12 @@ export function BrowserPane({
       let imageDataUrl: string | undefined;
       if (typeof captureElement === "function" && width > 0 && height > 0) {
         try {
-          const dataUrl = await captureElement(browserIdRef.current, { x, y, width, height });
+          const dataUrl = await captureElement(
+            browserIdRef.current,
+            { x, y, width, height },
+            selection.selector,
+            selection.captureId,
+          );
           imageDataUrl = dataUrl ?? undefined;
         } catch (error) {
           console.warn("[browser-pane] capture element for screenshot failed", error);

@@ -133,7 +133,16 @@ contextBridge.exposeInMainWorld("paseoDesktop", {
     captureElement: (
       browserId: string,
       rect: { x: number; y: number; width: number; height: number },
-    ) => ipcRenderer.invoke("paseo:browser:capture-element", browserId, rect),
+      selector?: string | null,
+      captureId?: string | null,
+    ) =>
+      ipcRenderer.invoke(
+        "paseo:browser:capture-element",
+        browserId,
+        rect,
+        selector ?? null,
+        captureId ?? null,
+      ),
     copyElement: (payload: { text?: string; imageDataUrl?: string }) =>
       ipcRenderer.invoke("paseo:browser:copy-element", payload),
   },

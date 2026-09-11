@@ -2,6 +2,8 @@ import type { BrowserElementAttachment } from "@/attachments/types";
 
 export type BrowserElementSelection = Omit<BrowserElementAttachment, "formatted" | "comment"> & {
   attributes?: Record<string, string>;
+  /** Marker stamped on the clicked node so capture re-measures the same element. */
+  captureId?: string;
 };
 
 export type ElementSelectorMode = "annotate" | "screenshot";
@@ -330,8 +332,12 @@ function buildElementSelectorScript(sessionToken: string): string {
           boundingRect: { x: Math.round(rect.x), y: Math.round(rect.y), width: Math.round(rect.width), height: Math.round(rect.height) },
           reactSource: getReactSource(el),
           parentChain: getParentChain(el, 5),
-          children: getChildSummary(el, 8)
+          children: getChildSummary(el, 8),
+          captureId: sessionToken
         };
+        // Stamped so the capture flow re-measures this exact node at
+        // screenshot time; it removes the mark itself when it finishes.
+        el.setAttribute('data-paseo-capture-id', sessionToken);
         destroy();
         window.__paseoSelectorResult = result;
       }
