@@ -524,6 +524,12 @@ export const OmpRpcCommandSchema = z.discriminatedUnion("type", [
   z.object({ ...OmpCommandBase, type: z.literal("get_state") }),
   z.object({ ...OmpCommandBase, type: z.literal("set_fast_mode"), enabled: z.boolean() }),
   z.object({ ...OmpCommandBase, type: z.literal("get_messages") }),
+  z.object({
+    ...OmpCommandBase,
+    type: z.literal("get_messages_page"),
+    limit: z.number().optional(),
+    cursor: z.string().optional(),
+  }),
   z.object({ ...OmpCommandBase, type: z.literal("get_available_models") }),
   z.object({
     ...OmpCommandBase,
@@ -563,6 +569,13 @@ export const OmpPromptAckSchema = z
   .optional();
 export const OmpMessagesResultSchema = z
   .object({ messages: z.array(OmpAgentMessageSchema).optional() })
+  .passthrough();
+export const OmpMessagesPageResultSchema = z
+  .object({
+    messages: z.array(OmpAgentMessageSchema).optional(),
+    totalMessages: z.number().optional(),
+    nextCursor: z.string().optional(),
+  })
   .passthrough();
 export const OmpModelsResultSchema = z
   .object({ models: z.array(OmpModelSchema).optional() })
@@ -624,6 +637,7 @@ export type OmpAvailableCommand = z.infer<typeof OmpAvailableCommandSchema>;
 export type OmpAvailableCommandsUpdateEvent = z.infer<typeof OmpAvailableCommandsUpdateEventSchema>;
 export type OmpRpcCommand = z.infer<typeof OmpRpcCommandSchema>;
 export type OmpPromptAck = z.infer<typeof OmpPromptAckSchema> & { requestId?: string };
+export type OmpMessagesPageResult = z.infer<typeof OmpMessagesPageResultSchema>;
 
 export interface OmpSubagentSnapshot {
   id: string;
