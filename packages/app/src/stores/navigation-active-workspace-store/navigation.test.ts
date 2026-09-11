@@ -28,6 +28,7 @@ function createFakeDeps(overrides: Partial<NavigateToWorkspaceDeps> = {}) {
   const openedTabs: RecordedTab[] = [];
   const ephemeralReveals: RecordedEphemeralReveal[] = [];
   const deferredUntilHydrated: Array<() => void> = [];
+  let lastSelection: ActiveWorkspaceSelection | null = null;
   const deps: NavigateToWorkspaceDeps = {
     getSessionWorkspaces: () => null,
     getSessionAgents: () => [] as Agent[],
@@ -40,7 +41,12 @@ function createFakeDeps(overrides: Partial<NavigateToWorkspaceDeps> = {}) {
     revealEphemeralTab: ({ workspaceKey, target }) => {
       ephemeralReveals.push({ workspaceKey, target });
     },
-    rememberLastWorkspace: (selection) => remembered.push(selection),
+    // Mirrors the real store: every navigation updates the current selection.
+    getLastWorkspaceSelection: () => lastSelection,
+    rememberLastWorkspace: (selection) => {
+      lastSelection = selection;
+      remembered.push(selection);
+    },
     navigateToRoute: (route) => navigations.push(route),
     ...overrides,
   };
@@ -248,6 +254,65 @@ describe("workspace navigation", () => {
       },
     ]);
     expect(openedTabs).toEqual([]);
+  });
+
+  it("drops a deferred attention reveal when the user has moved on", () => {
+    const workspace = {
+      id: "workspace-a",
+      workspaceDirectory: "/repo/workspace-a",
+    } as WorkspaceDescriptor;
+    const agent = {
+      id: "agent-1",
+      cwd: "/repo/workspace-a",
+      workspaceId: "workspace-a",
+      requiresAttention: true,
+      attentionReason: "permission",
+    } as unknown as Agent;
+    const { deps, ephemeralReveals, deferredUntilHydrated } = createFakeDeps({
+      getSessionWorkspaces: () => new Map([[workspace.id, workspace]]),
+      getSessionAgents: () => [agent],
+      isWorkspaceLayoutHydrated: () => false,
+    });
+
+    navigateToWorkspace({ serverId: "server-1", workspaceId: "workspace-a" }, deps);
+    // The user leaves for another workspace before hydration finishes; the
+    // screen they left has nothing to clear yet, so the guard is the only
+    // thing standing between the deferred reveal and a stale ambush.
+    navigateToWorkspace({ serverId: "server-1", workspaceId: "workspace-b" }, deps);
+
+    deferredUntilHydrated[0]?.();
+
+    expect(ephemeralReveals).toEqual([]);
+  });
+
+  it("applies a deferred attention reveal when its workspace is still current", () => {
+    const workspace = {
+      id: "workspace-a",
+      workspaceDirectory: "/repo/workspace-a",
+    } as WorkspaceDescriptor;
+    const agent = {
+      id: "agent-1",
+      cwd: "/repo/workspace-a",
+      workspaceId: "workspace-a",
+      requiresAttention: true,
+      attentionReason: "permission",
+    } as unknown as Agent;
+    const { deps, ephemeralReveals, deferredUntilHydrated } = createFakeDeps({
+      getSessionWorkspaces: () => new Map([[workspace.id, workspace]]),
+      getSessionAgents: () => [agent],
+      isWorkspaceLayoutHydrated: () => false,
+    });
+
+    navigateToWorkspace({ serverId: "server-1", workspaceId: "workspace-a" }, deps);
+
+    deferredUntilHydrated[0]?.();
+
+    expect(ephemeralReveals).toEqual([
+      {
+        workspaceKey: "server-1:workspace-a",
+        target: { kind: "agent", agentId: "agent-1" },
+      },
+    ]);
   });
 
   it("reads the active workspace from the current route", () => {

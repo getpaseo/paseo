@@ -1383,6 +1383,8 @@ export function createWorkspaceLayoutStore(
 
           set((state) => ({
             ...withoutFocusRestoration(state, normalizedWorkspaceKey),
+            // Splitting moves persisted focus to the new pane; the reveal ends.
+            ...withoutEphemeralFocusTarget(state, normalizedWorkspaceKey),
             layoutByWorkspace: {
               ...state.layoutByWorkspace,
               [normalizedWorkspaceKey]: result.layout,
@@ -1420,6 +1422,8 @@ export function createWorkspaceLayoutStore(
 
           set((state) => ({
             ...withoutFocusRestoration(state, normalizedWorkspaceKey),
+            // Splitting moves persisted focus to the new pane; the reveal ends.
+            ...withoutEphemeralFocusTarget(state, normalizedWorkspaceKey),
             layoutByWorkspace: {
               ...state.layoutByWorkspace,
               [normalizedWorkspaceKey]: result.layout,
@@ -1479,6 +1483,8 @@ export function createWorkspaceLayoutStore(
 
             return {
               ...withoutFocusRestoration(state, normalizedWorkspaceKey),
+              // Moving a tab focuses its destination pane; the reveal ends.
+              ...withoutEphemeralFocusTarget(state, normalizedWorkspaceKey),
               layoutByWorkspace: {
                 ...state.layoutByWorkspace,
                 [normalizedWorkspaceKey]: normalizedNextLayout,

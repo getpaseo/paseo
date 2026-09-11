@@ -48,6 +48,7 @@ function navigateDeps(): NavigateToWorkspaceDeps {
     openTab: (input) => useWorkspaceLayoutStore.getState().openTab(input),
     revealEphemeralTab: (input) =>
       useWorkspaceLayoutStore.getState().revealEphemeralTab(input.workspaceKey, input.target),
+    getLastWorkspaceSelection: () => lastWorkspaceSelectionStore.getSelection(),
     rememberLastWorkspace: (selection) => lastWorkspaceSelectionStore.remember(selection),
     navigateToRoute: (route) => {
       navigateToHostWorkspaceRoute(route);
@@ -73,10 +74,7 @@ export function navigateToWorkspace(input: NavigateToWorkspaceInput): string {
 }
 
 export function navigateToLastWorkspace(): boolean {
-  return navigateToLastWorkspacePure({
-    ...navigateDeps(),
-    getLastWorkspaceSelection: () => lastWorkspaceSelectionStore.getSelection(),
-  });
+  return navigateToLastWorkspacePure(navigateDeps());
 }
 
 export function useActiveWorkspaceSelection(): ActiveWorkspaceSelection | null {

@@ -42,13 +42,13 @@ export interface NavigateToWorkspaceDeps extends PrepareWorkspaceTabDeps {
   onWorkspaceLayoutHydrated: (callback: () => void) => void;
   /** Reveals a tab for the current visit without persisting the focus change. */
   revealEphemeralTab: (input: { workspaceKey: string; target: WorkspaceTabTarget }) => void;
+  /** The workspace the user is on right now; every navigation and route change updates it. */
+  getLastWorkspaceSelection: () => ActiveWorkspaceSelection | null;
   rememberLastWorkspace: (selection: ActiveWorkspaceSelection) => void;
   navigateToRoute: (route: string) => void;
 }
 
-export interface NavigateToLastWorkspaceDeps extends NavigateToWorkspaceDeps {
-  getLastWorkspaceSelection: () => ActiveWorkspaceSelection | null;
-}
+export interface NavigateToLastWorkspaceDeps extends NavigateToWorkspaceDeps {}
 
 function getParamValue(value: string | string[] | undefined): string {
   if (typeof value === "string") {
@@ -138,7 +138,20 @@ export function navigateToWorkspace(
       if (deps.isWorkspaceLayoutHydrated()) {
         deps.revealEphemeralTab(reveal);
       } else {
-        deps.onWorkspaceLayoutHydrated(() => deps.revealEphemeralTab(reveal));
+        const selection = { serverId: input.serverId, workspaceId: input.workspaceId };
+        deps.onWorkspaceLayoutHydrated(() => {
+          // Hydration can finish after the user has moved on to another
+          // workspace; a reveal installed then would ambush their next visit.
+          // The remembered selection tracks every navigation and route change,
+          // so only a reveal whose workspace is still current may land.
+          const current = deps.getLastWorkspaceSelection();
+          if (
+            current?.serverId === selection.serverId &&
+            current?.workspaceId === selection.workspaceId
+          ) {
+            deps.revealEphemeralTab(reveal);
+          }
+        });
       }
     }
   }
