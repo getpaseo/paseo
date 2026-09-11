@@ -7,6 +7,7 @@ import {
   mergeTerminalModifiers,
   normalizeDomTerminalKey,
   normalizeTerminalTransportKey,
+  resolveMacTerminalEditingShortcut,
   resolvePendingModifierDataInput,
   shouldInterceptDomTerminalKey,
 } from "./terminal-keys";
@@ -349,5 +350,47 @@ describe("terminal key helpers", () => {
       mode: "raw",
       clearPendingModifiers: false,
     });
+  });
+});
+
+describe("resolveMacTerminalEditingShortcut", () => {
+  function shortcut(
+    key: string,
+    modifiers: Partial<Record<"ctrl" | "shift" | "alt" | "meta", boolean>>,
+  ) {
+    return resolveMacTerminalEditingShortcut({
+      key,
+      ctrlKey: modifiers.ctrl ?? false,
+      shiftKey: modifiers.shift ?? false,
+      altKey: modifiers.alt ?? false,
+      metaKey: modifiers.meta ?? false,
+    });
+  }
+
+  it("maps cmd+arrow to line start/end", () => {
+    expect(shortcut("ArrowLeft", { meta: true })).toBe("\x01");
+    expect(shortcut("ArrowRight", { meta: true })).toBe("\x05");
+  });
+
+  it("maps option+arrow to word movement", () => {
+    expect(shortcut("ArrowLeft", { alt: true })).toBe("\x1bb");
+    expect(shortcut("ArrowRight", { alt: true })).toBe("\x1bf");
+  });
+
+  it("maps cmd+backspace to kill-line", () => {
+    expect(shortcut("Backspace", { meta: true })).toBe("\x15");
+  });
+
+  it("leaves other combinations to xterm", () => {
+    expect(shortcut("ArrowLeft", {})).toBeNull();
+    expect(shortcut("ArrowRight", { meta: true, shift: true })).toBeNull();
+    expect(shortcut("ArrowRight", { meta: true, ctrl: true })).toBeNull();
+    expect(shortcut("ArrowRight", { meta: true, alt: true })).toBeNull();
+    expect(shortcut("ArrowLeft", { alt: true, shift: true })).toBeNull();
+    expect(shortcut("ArrowUp", { meta: true })).toBeNull();
+    expect(shortcut("ArrowDown", { alt: true })).toBeNull();
+    // Option+Backspace already works natively in xterm (ESC DEL).
+    expect(shortcut("Backspace", { alt: true })).toBeNull();
+    expect(shortcut("k", { meta: true })).toBeNull();
   });
 });
