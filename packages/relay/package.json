@@ -12,20 +12,20 @@
     ".": {
       "types": "./dist/index.d.ts",
       "node": "./dist/index.js",
-      "import": "./src/index.ts",
-      "default": "./src/index.ts"
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
     },
     "./e2ee": {
       "types": "./dist/e2ee.d.ts",
       "node": "./dist/e2ee.js",
-      "import": "./src/e2ee.ts",
-      "default": "./src/e2ee.ts"
+      "import": "./dist/e2ee.js",
+      "default": "./dist/e2ee.js"
     },
     "./cloudflare": {
       "types": "./dist/cloudflare-adapter.d.ts",
       "node": "./dist/cloudflare-adapter.js",
-      "import": "./src/cloudflare-adapter.ts",
-      "default": "./src/cloudflare-adapter.ts"
+      "import": "./dist/cloudflare-adapter.js",
+      "default": "./dist/cloudflare-adapter.js"
     }
   },
   "publishConfig": {
