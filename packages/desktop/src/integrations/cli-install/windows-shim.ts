@@ -22,10 +22,14 @@ function normalizeWindowsPath(value: string): string {
 /** Rewrites the leading root of `shimPath` as `%VARIABLE%` when it lies under one. */
 export function windowsShimPathExpression(shimPath: string, env: NodeJS.ProcessEnv): string {
   const normalizedShim = normalizeWindowsPath(shimPath);
-  const candidates = ROOT_VARIABLES.map((name) => ({ name, value: env[name] }))
-    .filter((entry): entry is { name: string; value: string } => typeof entry.value === "string" && entry.value.length > 0)
-    .map((entry) => ({ ...entry, normalized: normalizeWindowsPath(entry.value) }))
-    .sort((a, b) => b.normalized.length - a.normalized.length);
+  const candidates: Array<{ name: string; value: string; normalized: string }> = [];
+  for (const name of ROOT_VARIABLES) {
+    const value = env[name];
+    if (typeof value === "string" && value.length > 0) {
+      candidates.push({ name, value, normalized: normalizeWindowsPath(value) });
+    }
+  }
+  candidates.sort((a, b) => b.normalized.length - a.normalized.length);
   for (const candidate of candidates) {
     if (normalizedShim === candidate.normalized || normalizedShim.startsWith(`${candidate.normalized}\\`)) {
       const rest = shimPath.slice(candidate.value.replace(/[\\/]+$/, "").length).replace(/^[\\/]+/, "");
