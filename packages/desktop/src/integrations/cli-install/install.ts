@@ -4,6 +4,7 @@ import log from "electron-log/main";
 import { resolveCliInstallSourcePath } from "./path.js";
 import { getBundledCliShimPath, getCliTargetPath, getLocalBinDir } from "./paths.js";
 import { ensurePathInShellRc } from "./shell-rc.js";
+import { renderWindowsCliShim } from "./windows-shim.js";
 
 interface InstallStatus {
   installed: boolean;
@@ -39,17 +40,9 @@ export async function installCli(): Promise<InstallStatus> {
     // Generate a thin .cmd trampoline that delegates to the bundled shim.
     // Only the app install path is baked in — internal details (asar layout,
     // entrypoint scripts) live in the bundled shim and update with the app.
-    const cmdContent = [
-      "@echo off",
-      `set "BUNDLED_CLI=${shimPath}"`,
-      `if not exist "%BUNDLED_CLI%" (`,
-      `  echo Paseo CLI not found at %BUNDLED_CLI% — is Paseo installed? 1>&2`,
-      `  exit /b 1`,
-      `)`,
-      `call "%BUNDLED_CLI%" %*`,
-      `exit /b %errorlevel%`,
-    ].join("\r\n");
-    await fs.writeFile(targetPath, cmdContent, "utf-8");
+    // cmd.exe reads the file in the OEM code page, so the content is kept
+    // ASCII-only and the path goes through %LOCALAPPDATA% & co. (#4684).
+    await fs.writeFile(targetPath, renderWindowsCliShim(shimPath), "ascii");
   } else {
     if (await pathOrSymlinkExists(targetPath)) {
       await fs.unlink(targetPath);
