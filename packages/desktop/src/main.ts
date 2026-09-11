@@ -147,59 +147,60 @@ interface AttachedBrowserInput {
   webContentsId: number;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 function readAttachedBrowserInput(input: unknown): AttachedBrowserInput | null {
-  if (typeof input !== "object" || input === null || Array.isArray(input)) {
+  if (!isRecord(input)) {
     return null;
   }
-  const record = input as Record<string, unknown>;
-  if (typeof record.browserId !== "string" || record.browserId.trim().length === 0) {
+  if (typeof input.browserId !== "string" || input.browserId.trim().length === 0) {
     return null;
   }
-  if (typeof record.workspaceId !== "string" || record.workspaceId.trim().length === 0) {
+  if (typeof input.workspaceId !== "string" || input.workspaceId.trim().length === 0) {
     return null;
   }
   if (
-    typeof record.webContentsId !== "number" ||
-    !Number.isInteger(record.webContentsId) ||
-    record.webContentsId <= 0
+    typeof input.webContentsId !== "number" ||
+    !Number.isInteger(input.webContentsId) ||
+    input.webContentsId <= 0
   ) {
     return null;
   }
   return {
-    browserId: record.browserId.trim(),
-    workspaceId: record.workspaceId.trim(),
-    webContentsId: record.webContentsId,
+    browserId: input.browserId.trim(),
+    workspaceId: input.workspaceId.trim(),
+    webContentsId: input.webContentsId,
   };
 }
 
 function readPresentedBrowserInput(
   input: unknown,
 ): { browserId: string; presented: boolean } | null {
-  if (typeof input !== "object" || input === null || Array.isArray(input)) {
+  if (!isRecord(input)) {
     return null;
   }
-  const record = input as Record<string, unknown>;
-  if (typeof record.browserId !== "string" || record.browserId.trim().length === 0) {
+  if (typeof input.browserId !== "string" || input.browserId.trim().length === 0) {
     return null;
   }
-  if (typeof record.presented !== "boolean") {
+  if (typeof input.presented !== "boolean") {
     return null;
   }
-  return { browserId: record.browserId.trim(), presented: record.presented };
+  return { browserId: input.browserId.trim(), presented: input.presented };
 }
 
 function readActiveBrowserInput(
   input: unknown,
 ): { workspaceId: string; browserId: string | null } | null {
-  if (typeof input !== "object" || input === null || Array.isArray(input)) {
+  if (!isRecord(input)) {
     return null;
   }
-  const record = input as Record<string, unknown>;
-  if (typeof record.workspaceId !== "string" || record.workspaceId.trim().length === 0) {
+  if (typeof input.workspaceId !== "string" || input.workspaceId.trim().length === 0) {
     return null;
   }
-  const browserId = typeof record.browserId === "string" ? record.browserId.trim() : null;
-  return { workspaceId: record.workspaceId.trim(), browserId: browserId || null };
+  const browserId = typeof input.browserId === "string" ? input.browserId.trim() : null;
+  return { workspaceId: input.workspaceId.trim(), browserId: browserId || null };
 }
 
 const browserKeyboard = new BrowserKeyboard(getPaseoBrowserWebviewRegistry());
