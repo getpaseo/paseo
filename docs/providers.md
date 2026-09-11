@@ -192,6 +192,11 @@ Cursor usage reads the desktop `state.vscdb` token first, then `cursor-agent`'s 
 
 ### Usage fetchers are read-only on credentials
 
+Default Claude Code credentials on macOS come from the login Keychain; an old
+`.credentials.json` can remain after Claude Code stops updating it. Explicit
+credential directories use their own file, never the default Keychain account.
+This does not resolve credentials for routed commands or provider-specific profiles.
+
 A fetcher reads the provider's credential file and never writes it. On a 401 or 403 it returns `unavailable` and leaves refresh to the provider's own CLI: redeeming a refresh token in the fetcher invalidates the CLI's copy (refresh tokens are single-use), and rewriting the file through the fetcher's Zod schema drops any field the schema does not model, corrupting the file for the CLI.
 
 ---
