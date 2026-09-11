@@ -303,7 +303,7 @@ export type PaseoAgentTimelineEvent =
   | {
       agentId: string;
       subscriptionId: string;
-      event: { type: "snapshot"; reason: "reconnect"; page: FetchAgentTimelinePayload };
+      event: { type: "subscription_restored" };
     }
   | { agentId: string; event: { type: "error"; error: string } };
 
@@ -318,10 +318,10 @@ export interface PaseoAgentTimelineHandle {
    */
   refetch(options?: PaseoAgentTimelineRefetchOptions): Promise<FetchAgentTimelinePayload>;
   /**
-   * Initially delivers live events only. Reconnect delivers a projected snapshot
-   * of the latest 100 entries before subsequent updates. Replace your recent view
-   * with this page; use its cursors to load older history. A replacement event
-   * invalidates the previous epoch. Recovery errors release this observation.
+   * Delivers live events only. After reconnect, subscription_restored precedes
+   * subsequent updates. History may have been missed; use refetch() to request
+   * the range you need. No history is fetched automatically. A replacement event
+   * invalidates the previous epoch. Subscription errors release this observation.
    * Await the returned unsubscribe function's `ready` promise before starting
    * work that must be observed. It rejects if establishment fails.
    */
@@ -520,8 +520,6 @@ export function createPaseoApi(
   const handles = new Set<{ release(): Promise<void> }>();
   const agentListeners = new Set<PaseoAgentUpdateHandler>();
   const workspaceListeners = new Set<PaseoWorkspaceUpdateHandler>();
-  const projectListeners = new Set<PaseoProjectUpdateHandler>();
-  const providerListeners = new Set<(update: PaseoProviderSnapshotUpdate) => void>();
   const lifetime = new AbortController();
   const own = <T extends { release(): Promise<void> }>(create: () => T): T => {
     if (lifetime.signal.aborted) throw new Error("Paseo API is disposed");
@@ -598,8 +596,6 @@ export function createPaseoApi(
     scopeOptions?.signal?.removeEventListener("abort", abort);
     agentListeners.clear();
     workspaceListeners.clear();
-    projectListeners.clear();
-    providerListeners.clear();
     disposal = Promise.allSettled([...handles].map((handle) => handle.release())).then(
       (results) => {
         handles.clear();
@@ -619,18 +615,20 @@ export function createPaseoApi(
   if (scopeOptions?.signal?.aborted) abort();
   else scopeOptions?.signal?.addEventListener("abort", abort, { once: true });
 
-  const observeEvents: DaemonClient["observeEvents"] = (events, options) => {
-    const subscription = own(() => daemonClient.observeEvents(events, options));
-    subscription.subscribe({
-      snapshot: () => {},
-      update: (message) => {
-        if (message.type === "project.update")
-          for (const listener of projectListeners) listener(message.payload);
-        if (message.type === "providers_snapshot_update")
-          for (const listener of providerListeners) listener(message.payload);
-      },
-    });
-    return subscription;
+  const observeEvents: DaemonClient["observeEvents"] = (events, options) =>
+    own(() => daemonClient.observeEvents(events, options));
+
+  const subscribeEvent = (
+    event: "project.update" | "providers_snapshot_update",
+    update: (message: SessionOutboundMessage) => void,
+  ): (() => void) => {
+    const observation = observeEvents([event]);
+    observation.subscribe({ snapshot: () => {}, update });
+    return () => {
+      void observation
+        .release()
+        .catch((error) => console.error("Event subscription cleanup failed", error));
+    };
   };
 
   function listWorkspaces(options: PaseoWorkspaceListOptions & { subscribe: {} }): Promise<
@@ -686,11 +684,9 @@ export function createPaseoApi(
     projects: {
       list: (options) => daemonClient.listProjects(options),
       subscribe: (handler) => {
-        if (lifetime.signal.aborted) throw new Error("Paseo API is disposed");
-        projectListeners.add(handler);
-        return () => {
-          projectListeners.delete(handler);
-        };
+        return subscribeEvent("project.update", (message) => {
+          if (message.type === "project.update") handler(message.payload);
+        });
       },
     },
     workspaces: {
@@ -735,11 +731,9 @@ export function createPaseoApi(
       diagnostic: (provider, options) => daemonClient.getProviderDiagnostic(provider, options),
       listUsage: (options) => listProviderUsage(daemonClient, options),
       subscribe: (handler) => {
-        if (lifetime.signal.aborted) throw new Error("Paseo API is disposed");
-        providerListeners.add(handler);
-        return () => {
-          providerListeners.delete(handler);
-        };
+        return subscribeEvent("providers_snapshot_update", (message) => {
+          if (message.type === "providers_snapshot_update") handler(message.payload);
+        });
       },
     },
     config: {
@@ -865,11 +859,11 @@ function createAgentHandleFactory(
             switch (message.type) {
               case "agent_stream":
                 return handler(message.payload);
-              case "agent.timeline.snapshot":
+              case "agent.timeline.subscription_restored":
                 return handler({
                   agentId: id,
                   subscriptionId: message.payload.subscriptionId,
-                  event: { type: "snapshot", reason: "reconnect", page: message.payload.page },
+                  event: { type: "subscription_restored" },
                 });
               case "agent.timeline.error":
                 return handler({

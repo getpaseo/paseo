@@ -8,7 +8,7 @@ category: TypeScript SDK
 
 # SDK events
 
-Use an owned subscription to fetch a snapshot and follow its changes. Connecting, plain reads, and local listeners do not start observation. Each observation gets a new server-issued ID, even when its filter matches another observation.
+Use an owned subscription to fetch a snapshot and follow its changes. On capable daemons, connecting, plain reads, and local directory listeners do not start observation. Each observation gets a new server-issued ID, even when its filter matches another observation.
 
 ## Follow one agent's status
 
@@ -47,10 +47,9 @@ await directory.subscription.release();
 ```ts
 const unsubscribe = agent.timeline.subscribe((update) => {
   const { event } = update;
-  if (event.type === "snapshot") {
-    // Replace your recent history view; these are complete projected entries,
-    // not additional live message fragments.
-    console.log("Reconnected", event.page.epoch, event.page.entries);
+  if (event.type === "subscription_restored") {
+    // Live delivery has resumed. Choose whether to fetch missed history.
+    console.log("Reconnected; events may have been missed");
     return;
   }
   if (event.type === "error") {
@@ -72,11 +71,13 @@ const unsubscribe = agent.timeline.subscribe((update) => {
 });
 ```
 
-Await `unsubscribe.ready` before starting work whose events you need to observe. It acknowledges the initial live subscription; initial history is a separate [read](#fetch-timeline-history). Call `unsubscribe()` to release demand, or await `unsubscribe.release()` for teardown.
+Await `unsubscribe.ready` before starting work whose events you need to observe. It waits for the initial live subscription (local listener attachment on broadcast-only hosts); initial history is a separate [read](#fetch-timeline-history). Call `unsubscribe()` to release demand, or await `unsubscribe.release()` for teardown.
 
-After reconnect, the same handle receives `{ agentId, subscriptionId, event: { type: "snapshot", reason: "reconnect", page } }` before subsequent updates. The host assigns a fresh subscription ID. `page` is the latest 100 projected history entries, with the same epoch, cursors and paging flags as `timeline.refetch()`. Replace your recent view with this page; do not concatenate it with earlier message fragments. If `hasOlder` is true, fetch older pages with `page.startCursor`. Compare epochs before retaining any previously loaded history: a reconnect may preserve or replace the epoch. A live `replacement` event still means the previous epoch is invalid.
+After reconnect, the same handle receives `{ agentId, subscriptionId, event: { type: "subscription_restored" } }` before subsequent live updates. This is a local SDK notification after membership acknowledgement (local attachment on broadcast-only hosts). The subscription gets a fresh ID. No history is fetched automatically, and missed events are not replayed.
 
-Persisted history is recovered; transient events such as an offline turn-completion notification are not replayed. Recovery buffers at most 128 current-connection updates. Overflow or a concurrent replacement discards the obsolete buffer and reads a fresh page. A recovery read failure delivers `{ agentId, event: { type: "error", error } }` and releases that observation; establish a new subscription when ready to retry. Release suppresses pending recovery callbacks. Each same-agent subscription recovers independently.
+Choose recovery for your consumer: continue live, request a recent page, or call `timeline.refetch({ direction: "after", cursor: { epoch, seq } })` using your saved position. Live delivery continues while your read is pending; buffer or reconcile those events with the returned page by epoch and sequence. Follow `hasNewer` and `endCursor` to read further pages when needed. A live `replacement` invalidates the previous epoch. A failed explicit history read rejects that read and leaves the live subscription active.
+
+Subscription establishment failures deliver `{ agentId, event: { type: "error", error } }` and release the observation. Establish a new subscription when ready to retry. Releasing a subscription stops its callbacks and prevents restoration after reconnect.
 
 Assistant messages can arrive in pieces. Concatenate their text when you need a complete message, or use `run()` and read `lastMessage` when you only need the final reply.
 
@@ -118,7 +119,6 @@ await directory.subscription.release();
 ## Follow provider catalog changes
 
 ```ts
-const observation = client.observeEvents(["providers_snapshot_update"]);
 const unsubscribe = client.providers.subscribe((update) => {
   const ready = update.entries.filter((entry) => entry.status === "ready");
   console.log(
@@ -126,14 +126,19 @@ const unsubscribe = client.providers.subscribe((update) => {
     ready.map((entry) => entry.provider),
   );
 });
-await observation.ready;
 console.log(await client.providers.snapshot());
 
 // When this view closes:
 unsubscribe();
-await observation.release();
 ```
 
-Project listeners work the same way: request `client.observeEvents(["project.update"])` before relying on `client.projects.subscribe()`. For an initial project cache, buffer updates while awaiting `client.projects.list()`, then apply them after the snapshot.
+Provider and project `subscribe()` calls request their own updates and release that demand on unsubscribe. For an initial project cache, buffer updates while awaiting `client.projects.list()`, then apply them after the snapshot.
 
-Call `client.close()` when the application no longer needs the connection. Observation requires a host that advertises independent subscriptions; an older host returns an update-host error. Plain reads remain available.
+Call `client.close()` when the application no longer needs the connection.
+
+## Older daemons
+
+The same methods use the existing connection and legacy delivery behavior. Old directory subscriptions
+share a server slot: a later filtered observation replaces that slot's filter. Handles have local IDs
+and separate callbacks, but independent server filters require an updated daemon. Releasing a handle
+detaches its callbacks; old daemons may continue sending broadcasts.

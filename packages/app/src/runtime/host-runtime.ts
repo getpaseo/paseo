@@ -1273,24 +1273,13 @@ export class HostRuntimeController {
         /* Preserve the compatibility/connection error. */
       }
     };
-    const requireAppHost = () => {
-      if (client.getLastServerInfoMessage()?.features?.ownedSubscriptions !== true)
-        throw new Error("Update the host to use this version of Paseo.");
-    };
     try {
       if (!existingClient) await client.connect();
       if (!this.isCurrentSwitchRequest(requestVersion) || this.activeClient !== client) return;
-      requireAppHost();
       this.unsubscribeClientHandlers =
         this.deps.mountClientHandlers?.({ client, host: this.host, connection }) ?? null;
       this.unsubscribeClientStatus = client.subscribeConnectionStatus((state) => {
         if (!this.isCurrentSwitchRequest(requestVersion) || this.activeClient !== client) return;
-        try {
-          if (state.status === "connected") requireAppHost();
-        } catch (error) {
-          void failConnection(error);
-          return;
-        }
         this.applyConnectionEvent({ type: "client_state", state, lastError: client.lastError });
         this.updateSnapshot({
           ...toSnapshotConnectionPatch(this.connectionMachineState, this.connectionEpoch),

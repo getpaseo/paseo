@@ -356,8 +356,10 @@ query, and toast providers inside the surface content, including overflow pages 
 plugins. Providers only around the trigger do not reach those bodies.
 
 Request observation with `client.paseo.agents.list({ subscribe: {} })` and consume the returned
-`subscription` handle. Plain `list()` and local `.subscribe(handler)` listeners create no daemon
-demand. Each list-and-subscribe call has its own server ID, even for the same query. Handle snapshots
+`subscription` handle. Plain `list()` and agent/workspace directory `.subscribe(handler)` listeners create no daemon
+demand. Provider and project `subscribe()` calls establish their own demand. On capable daemons, each
+list-and-subscribe call has its own server ID, even for the same query. Older daemons retain
+[shared delivery behavior](protocol-compatibility.md#owned-observations). Handle snapshots
 also run after reconnect; replace your view before applying its subsequent updates. The installation
 owns every observation created through its API and releases them on unload, including setup failure.
 Mounted surfaces and command invocations have shorter API lifetimes.

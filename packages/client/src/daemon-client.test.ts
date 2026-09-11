@@ -328,7 +328,7 @@ test("Hub management requires daemon support before dispatching requests", async
   expect(mock.sent).toEqual([]);
 });
 
-test("owned timeline observation requires the host feature", async () => {
+test("timeline observation consumes broadcasts from a host without selective delivery", async () => {
   const mock = createMockTransport();
   const client = new DaemonClient({
     url: "ws://test",
@@ -341,7 +341,21 @@ test("owned timeline observation requires the host feature", async () => {
   mock.triggerOpen({ features: {} });
   await connecting;
   const observation = client.observeTimeline(["agent"]);
-  await expect(observation.ready).rejects.toThrow("Update the host");
+  await expect(observation.ready).resolves.toMatchObject({ agentIds: ["agent"] });
+  const updates: unknown[] = [];
+  observation.subscribe({ snapshot: () => {}, update: (message) => updates.push(message) });
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "agent_stream",
+      payload: {
+        agentId: "agent",
+        timestamp: "2026-09-11T00:00:00Z",
+        event: { type: "turn_completed", provider: "codex" },
+      },
+    }),
+  );
+  expect(updates).toEqual([expect.objectContaining({ type: "agent_stream" })]);
+  await observation.release();
   expect(mock.sent).toEqual([]);
 });
 
