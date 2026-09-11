@@ -144,6 +144,7 @@ export interface OmpAgentClientOptions {
   providerIdleScheduler?: OmpProviderIdleScheduler;
   noTurnScheduler?: OmpNoTurnScheduler;
   usagePollScheduler?: OmpUsagePollScheduler;
+  providerIdleDeadlineMs?: number;
 }
 
 export interface OmpProviderIdleScheduler {
@@ -159,6 +160,11 @@ export interface OmpNoTurnScheduler {
 // v0.2.0-beta.1; remove after January 20, 2027 once the minimum OMP version
 // guarantees prompt_result waits for queued extension work.
 const OMP_NO_TURN_SETTLE_MS = 5_000;
+
+// Upper bound on how long the completion gate waits after agent_end for OMP to
+// report a non-streaming, non-compacting state before the turn fails instead of
+// retrying forever.
+const OMP_PROVIDER_IDLE_DEADLINE_MS = 600_000;
 
 interface OmpPromptPayload {
   text: string;
@@ -192,6 +198,7 @@ interface OmpAgentSessionOptions {
   providerIdleScheduler?: OmpProviderIdleScheduler;
   noTurnScheduler?: OmpNoTurnScheduler;
   usagePollScheduler?: OmpUsagePollScheduler;
+  providerIdleDeadlineMs?: number;
   paseoTools?: PaseoToolCatalog;
   nativeFastModeSupported: boolean;
   /**
@@ -929,6 +936,7 @@ export class OmpAgentSession implements AgentSession {
   private state: OmpSessionState;
   private readonly currentModeId: string | null;
   private readonly providerIdleScheduler: OmpProviderIdleScheduler;
+  private readonly providerIdleDeadlineMs: number;
   private readonly noTurnScheduler: OmpNoTurnScheduler;
   private readonly usagePoller: OmpUsagePoller;
   private readonly nativeFastModeSupported: boolean;
@@ -946,6 +954,7 @@ export class OmpAgentSession implements AgentSession {
     this.nativeFastModeSupported = options.nativeFastModeSupported;
     this.live = options.live ?? true;
     this.providerIdleScheduler = options.providerIdleScheduler ?? createOmpProviderIdleScheduler();
+    this.providerIdleDeadlineMs = options.providerIdleDeadlineMs ?? OMP_PROVIDER_IDLE_DEADLINE_MS;
     this.noTurnScheduler = options.noTurnScheduler ?? createOmpNoTurnScheduler();
     this.usagePoller = new OmpUsagePoller({
       scheduler: options.usagePollScheduler,
@@ -2316,7 +2325,11 @@ export class OmpAgentSession implements AgentSession {
     });
   }
 
-  private completeTurn(turnId: string | undefined, messages: OmpAgentMessage[]): void {
+  private completeTurn(
+    turnId: string | undefined,
+    messages: OmpAgentMessage[],
+    terminalError?: string,
+  ): void {
     this.activeTurnId = null;
     this.activeClientMessageId = null;
     this.activeAssistantMessageId = null;
@@ -2337,7 +2350,7 @@ export class OmpAgentSession implements AgentSession {
       });
       return;
     }
-    const errorMessage = latestOmpErrorMessage(messages);
+    const errorMessage = terminalError ?? latestOmpErrorMessage(messages);
     if (typeof errorMessage === "string" && errorMessage.length > 0) {
       this.usagePoller.stopTurn();
       this.emit({
@@ -2361,6 +2374,7 @@ export class OmpAgentSession implements AgentSession {
     turnId: string | undefined,
     messages: OmpAgentMessage[],
   ): Promise<void> {
+    const deadline = Date.now() + this.providerIdleDeadlineMs;
     while (!this.closed && this.activeTurnStarted && this.currentTurnIdForEvent() === turnId) {
       try {
         const state = await this.runtimeSession.getState();
@@ -2375,6 +2389,18 @@ export class OmpAgentSession implements AgentSession {
         }
       } catch (error) {
         this.logger.debug({ err: error }, "OMP state unavailable while waiting for provider idle");
+      }
+      if (Date.now() >= deadline) {
+        this.logger.warn(
+          { turnId, providerIdleDeadlineMs: this.providerIdleDeadlineMs },
+          "OMP completion gate deadline exceeded; failing the turn",
+        );
+        this.completeTurn(
+          turnId,
+          messages,
+          `OMP provider did not report idle within ${Math.round(this.providerIdleDeadlineMs / 1000)}s of agent_end`,
+        );
+        return;
       }
       await this.providerIdleScheduler.waitForRetry();
     }
@@ -2400,6 +2426,7 @@ export class OmpAgentClient implements AgentClient {
   private readonly subagentCardScheduler?: OmpSubagentCardScheduler;
   private readonly providerIdleScheduler?: OmpProviderIdleScheduler;
   private readonly noTurnScheduler?: OmpNoTurnScheduler;
+  private readonly providerIdleDeadlineMs?: number;
   private readonly usagePollScheduler?: OmpUsagePollScheduler;
   private readonly runtime: OmpRuntime;
   private nativeFastModeSupport: Promise<boolean> | null = null;
@@ -2422,6 +2449,7 @@ export class OmpAgentClient implements AgentClient {
     this.providerParams = runtimeProviderParams;
     this.modelRoleParams = modelRoleParams;
     this.subagentCardScheduler = options.subagentCardScheduler;
+    this.providerIdleDeadlineMs = options.providerIdleDeadlineMs;
     this.providerIdleScheduler = options.providerIdleScheduler;
     this.noTurnScheduler = options.noTurnScheduler;
     this.usagePollScheduler = options.usagePollScheduler;
@@ -2494,6 +2522,7 @@ export class OmpAgentClient implements AgentClient {
         subagentCardScheduler: this.subagentCardScheduler,
         providerIdleScheduler: this.providerIdleScheduler,
         noTurnScheduler: this.noTurnScheduler,
+        providerIdleDeadlineMs: this.providerIdleDeadlineMs,
         usagePollScheduler: this.usagePollScheduler,
         paseoTools: launchContext?.paseoTools,
         nativeFastModeSupported,
@@ -2564,6 +2593,7 @@ export class OmpAgentClient implements AgentClient {
         logger: this.logger,
         subagentCardScheduler: this.subagentCardScheduler,
         providerIdleScheduler: this.providerIdleScheduler,
+        providerIdleDeadlineMs: this.providerIdleDeadlineMs,
         noTurnScheduler: this.noTurnScheduler,
         usagePollScheduler: this.usagePollScheduler,
         paseoTools: launchContext?.paseoTools,
