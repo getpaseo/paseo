@@ -74,7 +74,8 @@ export class LegacyWorkspaces {
   read(entries: AgentEntry[], reset: boolean): Workspace[] {
     if (reset) this.agents.clear();
     for (const entry of entries) this.agents.set(entry.agent.id, entry);
-    return [...this.workspaces().values()];
+    const pageIds = new Set(entries.map(workspaceId));
+    return [...this.workspaces().values()].filter((workspace) => pageIds.has(workspace.id));
   }
 
   update(message: SessionOutboundMessage): WorkspaceUpdate[] {
@@ -104,7 +105,7 @@ export class LegacyWorkspaces {
     for (const entry of this.agents.values()) {
       const { agent, project } = entry;
       const { checkout } = project;
-      const id = agent.workspaceId ?? legacyWorkspaceId(checkout.cwd);
+      const id = workspaceId(entry);
       const status = deriveAgentStateBucket({
         status: agent.status,
         pendingPermissionCount: agent.pendingPermissions.length,
@@ -141,6 +142,10 @@ export class LegacyWorkspaces {
     }
     return workspaces;
   }
+}
+
+function workspaceId(entry: AgentEntry): string {
+  return entry.agent.workspaceId ?? legacyWorkspaceId(entry.project.checkout.cwd);
 }
 
 function workspaceKind(checkout: AgentEntry["project"]["checkout"]): Workspace["workspaceKind"] {

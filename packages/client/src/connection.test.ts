@@ -788,6 +788,63 @@ test.each([
   },
 );
 
+test("legacy workspace pages contain only that page's groups and retain earlier live state", async () => {
+  const h = connection({ ownedSubscriptions: false, workspaceMultiplicity: false });
+  try {
+    const connecting = h.client.connect();
+    h.open();
+    await connecting;
+    const workspaces = h.client.observeWorkspaces();
+    h.receive({
+      type: "fetch_agents_response",
+      payload: {
+        requestId: h.sent.at(-1)!.message!.requestId,
+        entries: [legacyAgent({ id: "first", cwd: "/first", status: "running" })],
+        pageInfo: { hasMore: true, nextCursor: "next-page", prevCursor: null },
+      },
+    });
+    const first = await workspaces.ready;
+    const next = h.client.fetchWorkspaces({
+      page: { cursor: first.pageInfo.nextCursor!, limit: 1 },
+    });
+    h.receive({
+      type: "fetch_agents_response",
+      payload: {
+        requestId: h.sent.at(-1)!.message!.requestId,
+        entries: [legacyAgent({ id: "second", cwd: "/second" })],
+        pageInfo: { hasMore: false, nextCursor: null, prevCursor: "previous-page" },
+      },
+    });
+    const second = await next;
+    expect([...first.entries, ...second.entries].map((workspace) => workspace.id)).toEqual([
+      "/first",
+      "/second",
+    ]);
+    const updates: unknown[] = [];
+    workspaces.subscribe({ snapshot: () => {}, update: (message) => updates.push(message) });
+    // Earlier pages must remain in the aggregate: this idle sibling cannot
+    // replace the running status of the first workspace.
+    h.receive({
+      type: "agent_update",
+      payload: { kind: "upsert", ...legacyAgent({ id: "sibling", cwd: "/first" }) },
+    });
+    expect(updates).toEqual([]);
+    h.receive({ type: "agent_update", payload: { kind: "remove", agentId: "first" } });
+    expect(updates).toEqual([
+      expect.objectContaining({
+        type: "workspace_update",
+        payload: expect.objectContaining({
+          kind: "upsert",
+          workspace: expect.objectContaining({ id: "/first", status: "done" }),
+        }),
+      }),
+    ]);
+    await workspaces.release();
+  } finally {
+    await h.client.close();
+  }
+});
+
 test("old attention stream events reach the current notification interface", async () => {
   const h = connection({ ownedSubscriptions: false });
   try {

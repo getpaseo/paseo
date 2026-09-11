@@ -1017,7 +1017,8 @@ export class TerminalSessionController {
       if (activeStream.exiting) return;
       // COMPAT(terminalSnapshotErrors): restored in v0.8.0; remove after 2027-03-11 once client floor >= v0.8.0.
       // Old clients interpret every stream exit as PTY exit. Preserve their
-      // retry-on-snapshot-ready behavior; source teardown still releases the stream.
+      // attached stream after failure. Another snapshot notification can retry;
+      // this does not schedule recovery. Source teardown still releases the stream.
       if (activeStream.retrySnapshotErrors) {
         activeStream.needsSnapshot = true;
         return;
