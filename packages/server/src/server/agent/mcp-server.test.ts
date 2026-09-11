@@ -212,9 +212,12 @@ function buildAgentManagerSpies() {
     archiveAgent: vi.fn().mockResolvedValue({ archivedAt: new Date().toISOString() }),
     notifyAgentState: vi.fn(),
     getAgent: vi.fn(),
+    getHistorySnapshot: vi.fn(),
+    releaseHistorySnapshot: vi.fn(),
     listAgents: vi.fn().mockReturnValue([]),
     getTimeline: vi.fn().mockReturnValue([]),
     resumeAgentFromPersistence: vi.fn(),
+    readAgentHistoryFromPersistence: vi.fn(),
     hydrateTimelineFromProvider: vi.fn().mockResolvedValue(undefined),
     appendTimelineItem: vi.fn().mockResolvedValue(undefined),
     emitLiveTimelineItem: vi.fn().mockResolvedValue(undefined),
@@ -5812,12 +5815,10 @@ describe("agent snapshot MCP serialization", () => {
       id: "archived-activity-agent",
       currentModeId: "default",
     } as ManagedAgent;
-    spies.agentManager.getAgent
-      .mockReturnValueOnce(null)
-      .mockReturnValue(snapshot)
-      .mockReturnValue(snapshot);
+    spies.agentManager.getAgent.mockReturnValue(null);
+    spies.agentManager.getHistorySnapshot.mockReturnValueOnce(null).mockReturnValue(snapshot);
     spies.agentStorage.get.mockResolvedValue(record);
-    spies.agentManager.resumeAgentFromPersistence.mockResolvedValue(snapshot);
+    spies.agentManager.readAgentHistoryFromPersistence.mockResolvedValue(snapshot);
     spies.agentManager.getTimeline.mockReturnValue([
       {
         kind: "status",
@@ -5842,10 +5843,42 @@ describe("agent snapshot MCP serialization", () => {
         currentModeId: "default",
       }),
     );
-    expect(spies.agentManager.resumeAgentFromPersistence).toHaveBeenCalled();
-    expect(spies.agentManager.hydrateTimelineFromProvider).toHaveBeenCalledWith(
+    expect(spies.agentManager.readAgentHistoryFromPersistence).toHaveBeenCalledWith(
+      record.persistence,
+      expect.objectContaining({ provider: "claude", cwd: record.cwd }),
       "archived-activity-agent",
+      expect.objectContaining({ workspaceId: record.workspaceId }),
       { broadcast: expect.any(Function) },
+    );
+    expect(spies.agentManager.resumeAgentFromPersistence).not.toHaveBeenCalled();
+  });
+
+  it("does not expose archived internal agents from get_agent_activity", async () => {
+    const { agentManager, agentStorage, spies } = createTestDeps();
+    const record = createStoredRecord({ id: "internal-activity-agent", internal: true });
+    const snapshot = createManagedAgent({
+      id: "internal-activity-agent",
+      internal: true,
+      lifecycle: "closed",
+    });
+    spies.agentManager.getAgent.mockReturnValue(null);
+    spies.agentManager.getHistorySnapshot.mockReturnValueOnce(null);
+    spies.agentStorage.get.mockResolvedValue(record);
+    spies.agentManager.readAgentHistoryFromPersistence.mockResolvedValue(snapshot);
+    spies.agentManager.getTimeline.mockImplementation(() => {
+      throw new Error("Unknown agent 'internal-activity-agent'");
+    });
+
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      logger,
+      providerSnapshotManager: createClaudeOnlyManager(),
+    });
+    const tool = registeredTool(server, "get_agent_activity");
+
+    await expect(tool.handler({ agentId: "internal-activity-agent" })).rejects.toThrow(
+      "Unknown agent 'internal-activity-agent'",
     );
   });
 

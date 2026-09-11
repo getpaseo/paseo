@@ -3895,6 +3895,144 @@ describe("OpenCodeAgentClient env", () => {
 });
 
 describe("OpenCode persisted sessions", () => {
+  const historyHandle = {
+    provider: "opencode" as const,
+    sessionId: "ses_history",
+    metadata: { cwd: "/workspace/repo" },
+  };
+
+  function createHistoryHarness(
+    options: {
+      sdkClient?: TestOpenCodeClient;
+      failClientCreation?: boolean;
+    } = {},
+  ) {
+    const runtime = new TestOpenCodeHarness();
+    const sdkClient = options.sdkClient ?? new TestOpenCodeClient();
+    if (!options.failClientCreation) {
+      runtime.enqueueClient(sdkClient);
+    }
+    const client = new OpenCodeAgentClient(createTestLogger(), undefined, {
+      serverManager: runtime,
+      createClient: options.failClientCreation
+        ? () => {
+            throw new Error("OpenCode client construction failed");
+          }
+        : runtime.createClient,
+    });
+    return {
+      runtime,
+      sdkClient,
+      read: async () => await client.readSessionHistory(historyHandle),
+    };
+  }
+
+  test("reads history without starting an event stream or aborting the native session", async () => {
+    const { runtime, sdkClient, read } = createHistoryHarness();
+    sdkClient.sessionGetResponse = {
+      data: {
+        id: "ses_history",
+        directory: historyHandle.metadata.cwd,
+        title: null,
+        time: { archived: 123 },
+      },
+    };
+    sdkClient.sessionMessagesResponse = {
+      data: [
+        {
+          info: {
+            id: "msg_user",
+            sessionID: "ses_history",
+            role: "user",
+            time: { created: 1000 },
+            agent: "build",
+            model: { providerID: "opencode", modelID: "big-pickle" },
+          },
+          parts: [
+            {
+              id: "prt_user",
+              sessionID: "ses_history",
+              messageID: "msg_user",
+              type: "text",
+              text: "read archived history",
+            },
+          ],
+        },
+      ],
+    };
+
+    await expect(read()).resolves.toEqual({
+      events: [
+        {
+          type: "timeline",
+          provider: "opencode",
+          item: {
+            type: "user_message",
+            text: "read archived history",
+            messageId: "msg_user",
+          },
+          timestamp: "1970-01-01T00:16:40.000Z",
+        },
+      ],
+      coverage: { kind: "complete" },
+    });
+    expect(sdkClient.calls.sessionGet).toEqual([
+      { sessionID: "ses_history", directory: historyHandle.metadata.cwd },
+    ]);
+    expect(sdkClient.calls.sessionMessages).toEqual([
+      { sessionID: "ses_history", directory: historyHandle.metadata.cwd },
+    ]);
+    expect(sdkClient.calls.globalEvent).toEqual([]);
+    expect(sdkClient.calls.eventSubscribe).toEqual([]);
+    expect(sdkClient.calls.sessionAbort).toEqual([]);
+    expect(sdkClient.calls.sessionUpdate).toEqual([]);
+    expect(runtime.acquisitions).toEqual([{ kind: "current", releaseCount: 1 }]);
+  });
+
+  test("releases the server acquisition when direct history loading fails", async () => {
+    const sdkClient = new TestOpenCodeClient();
+    sdkClient.sessionMessagesImplementation = async () => {
+      throw new Error("session messages unavailable");
+    };
+    const { runtime, read } = createHistoryHarness({ sdkClient });
+
+    await expect(read()).rejects.toThrow("session messages unavailable");
+    expect(sdkClient.calls.sessionAbort).toEqual([]);
+    expect(runtime.acquisitions).toEqual([{ kind: "current", releaseCount: 1 }]);
+  });
+
+  test("rejects structured session metadata errors without reading messages", async () => {
+    const sdkClient = new TestOpenCodeClient();
+    sdkClient.sessionGetResponse = { error: { name: "NotFoundError", message: "missing session" } };
+    const { runtime, read } = createHistoryHarness({ sdkClient });
+
+    await expect(read()).rejects.toThrow(
+      'Failed to read OpenCode session metadata: {"name":"NotFoundError","message":"missing session"}',
+    );
+    expect(sdkClient.calls.sessionMessages).toEqual([]);
+    expect(runtime.acquisitions).toEqual([{ kind: "current", releaseCount: 1 }]);
+  });
+
+  test("rejects structured session message errors instead of completing empty history", async () => {
+    const sdkClient = new TestOpenCodeClient();
+    sdkClient.sessionMessagesResponse = {
+      error: { name: "InternalServerError", message: "messages unavailable" },
+    };
+    const { runtime, read } = createHistoryHarness({ sdkClient });
+
+    await expect(read()).rejects.toThrow(
+      'Failed to read OpenCode session messages: {"name":"InternalServerError","message":"messages unavailable"}',
+    );
+    expect(runtime.acquisitions).toEqual([{ kind: "current", releaseCount: 1 }]);
+  });
+
+  test("releases the server acquisition when history client construction fails", async () => {
+    const { runtime, read } = createHistoryHarness({ failClientCreation: true });
+
+    await expect(read()).rejects.toThrow("OpenCode client construction failed");
+    expect(runtime.acquisitions).toEqual([{ kind: "current", releaseCount: 1 }]);
+  });
+
   test("replay hides summaries produced by manual compact", () => {
     const timeline = __openCodeInternals.buildOpenCodeSessionTimeline([
       {

@@ -25,6 +25,8 @@ import {
   type AgentClient,
   type AgentCreateSessionOptions,
   type AgentFeature,
+  type AgentHistoryReadContext,
+  type AgentHistoryReadResult,
   type AgentLaunchContext,
   type AgentMode,
   type AgentModelDefinition,
@@ -1569,6 +1571,66 @@ export class OpenCodeAgentClient implements AgentClient {
       env: launchContext.env ?? {},
       tools: launchContext.paseoTools,
     });
+  }
+
+  async readSessionHistory(
+    handle: AgentPersistenceHandle,
+    context?: AgentHistoryReadContext,
+  ): Promise<AgentHistoryReadResult> {
+    const metadata = (handle.metadata ?? {}) as Partial<AgentSessionConfig>;
+    const cwd = context?.cwd ?? metadata.cwd;
+    if (!cwd) {
+      throw new Error("OpenCode history read requires the original working directory");
+    }
+
+    const registeredServerUrl = getOpenCodeChildSessionServerUrl(handle.sessionId);
+    const registeredAcquisition = registeredServerUrl
+      ? this.serverManager.acquireExisting(registeredServerUrl)
+      : null;
+    const acquisition =
+      registeredAcquisition ??
+      (context?.env
+        ? await this.serverManager.acquireDedicated(context.env)
+        : await this.serverManager.acquireCurrent());
+    try {
+      const client = this.createOpenCodeClient({
+        baseUrl: acquisition.server.url,
+        directory: cwd,
+      });
+      const sessionResponse = await client.session.get({
+        sessionID: handle.sessionId,
+        directory: cwd,
+      });
+      if (sessionResponse.error || !sessionResponse.data) {
+        let detail = "response did not include session data";
+        if (sessionResponse.error) {
+          detail = toDiagnosticErrorMessage(sessionResponse.error);
+        }
+        throw new Error(`Failed to read OpenCode session metadata: ${detail}`);
+      }
+      const messagesResponse = await client.session.messages({
+        sessionID: handle.sessionId,
+        directory: cwd,
+      });
+      if (messagesResponse.error || !messagesResponse.data) {
+        let detail = "response did not include session messages";
+        if (messagesResponse.error) {
+          detail = toDiagnosticErrorMessage(messagesResponse.error);
+        }
+        throw new Error(`Failed to read OpenCode session messages: ${detail}`);
+      }
+
+      const messages = filterOpenCodeRevertedMessages(
+        messagesResponse.data,
+        sessionResponse.data.revert,
+      );
+      return {
+        events: messages.flatMap(buildOpenCodeReplayTimelineEvents),
+        coverage: { kind: "complete" },
+      };
+    } finally {
+      await acquisition.release();
+    }
   }
 
   async fetchCatalog(

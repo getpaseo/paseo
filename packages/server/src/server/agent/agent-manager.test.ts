@@ -7452,6 +7452,242 @@ test("getAgent returns internal agents by ID", async () => {
   expect(agent?.internal).toBe(true);
 });
 
+test("getTimelineRows rejects internal history snapshots", async () => {
+  const agentId = "00000000-0000-4000-8000-000000000118";
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-internal-history-"));
+  const client = new (class extends TestAgentClient {
+    async readSessionHistory() {
+      return {
+        events: [
+          {
+            type: "timeline" as const,
+            provider: "codex" as const,
+            item: { type: "user_message" as const, text: "internal prompt" },
+          },
+        ],
+        coverage: { kind: "complete" as const },
+      };
+    }
+  })();
+  const manager = new AgentManager({ clients: { codex: client }, logger });
+
+  try {
+    await manager.readAgentHistoryFromPersistence(
+      { provider: "codex", sessionId: "internal-history", metadata: { cwd: workdir } },
+      { cwd: workdir },
+      agentId,
+      { internal: true },
+    );
+
+    await expect(manager.getTimelineRows(agentId)).rejects.toThrow(`Unknown agent '${agentId}'`);
+  } finally {
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("dedicated history reads use only the in-memory timeline", async () => {
+  const agentId = "00000000-0000-4000-8000-000000000119";
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-memory-history-"));
+  const durableTimelineStore = new RecordingTimelineStore();
+  const getLatestCommittedSeq = vi.spyOn(durableTimelineStore, "getLatestCommittedSeq");
+  const getCommittedRows = vi.spyOn(durableTimelineStore, "getCommittedRows");
+  const bulkInsert = vi.spyOn(durableTimelineStore, "bulkInsert");
+  const client = new (class extends TestAgentClient {
+    async readSessionHistory() {
+      return {
+        events: [
+          {
+            type: "timeline" as const,
+            provider: "codex" as const,
+            item: { type: "assistant_message" as const, text: "memory-only history" },
+          },
+        ],
+        coverage: { kind: "complete" as const },
+      };
+    }
+  })();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    durableTimelineStore,
+    logger,
+  });
+
+  try {
+    await manager.readAgentHistoryFromPersistence(
+      { provider: "codex", sessionId: "memory-history", metadata: { cwd: workdir } },
+      { cwd: workdir },
+      agentId,
+      {},
+    );
+
+    expect(await manager.getTimelineRows(agentId)).toMatchObject([
+      { item: { type: "assistant_message", text: "memory-only history" } },
+    ]);
+    await manager.flush();
+    expect(getLatestCommittedSeq).not.toHaveBeenCalled();
+    expect(getCommittedRows).not.toHaveBeenCalled();
+    expect(bulkInsert).not.toHaveBeenCalled();
+  } finally {
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("clearAgentAttention publishes archived attention changes without loading history", async () => {
+  const agentId = "00000000-0000-4000-8000-000000000132";
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-unloaded-attention-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const client = new TestAgentClient();
+  const manager = new AgentManager({ clients: { codex: client }, registry: storage, logger });
+  const before: StoredAgentRecord = {
+    id: agentId,
+    provider: "codex",
+    cwd: workdir,
+    createdAt: "2026-08-30T00:00:00.000Z",
+    updatedAt: "2026-08-30T00:00:01.000Z",
+    labels: {},
+    lastStatus: "closed",
+    config: null,
+    persistence: {
+      provider: "codex",
+      sessionId: "unloaded-attention-session",
+      metadata: { cwd: workdir },
+    },
+    requiresAttention: true,
+    attentionReason: "error",
+    attentionTimestamp: "2026-08-30T00:00:01.000Z",
+    archivedAt: "2026-08-30T00:00:02.000Z",
+  };
+  const stateEvents: AgentManagerEvent[] = [];
+  const unsubscribe = manager.subscribe((event) => stateEvents.push(event), {
+    agentId,
+    replayState: false,
+  });
+
+  try {
+    await storage.upsert(before);
+    await manager.clearAgentAttention(agentId);
+
+    const stored = await storage.get(agentId);
+    expectArchivedAgentRecord(stored, "closed");
+    expect(stored?.archivedAt).toBe(before.archivedAt);
+    expect(manager.getAgent(agentId)).toBeNull();
+    expect(manager.getHistorySnapshot(agentId)).toBeNull();
+    expect(stateEvents).toEqual([
+      expect.objectContaining({
+        type: "agent_state",
+        agent: expect.objectContaining({
+          id: agentId,
+          lifecycle: "closed",
+          attention: { requiresAttention: false },
+        }),
+      }),
+    ]);
+    expect(client.createdConfigs).toEqual([]);
+    expect(client.resumeOverrides).toEqual([]);
+  } finally {
+    unsubscribe();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("clearAgentAttention clears archived history snapshots without resuming a provider runtime", async () => {
+  const agentId = "00000000-0000-4000-8000-000000000131";
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-archived-attention-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const historyReads: string[] = [];
+  const client = new (class extends TestAgentClient {
+    async readSessionHistory(handle: AgentPersistenceHandle) {
+      historyReads.push(handle.sessionId);
+      return {
+        events: [
+          {
+            type: "timeline" as const,
+            provider: "codex" as const,
+            item: { type: "assistant_message" as const, text: "archived result" },
+          },
+        ],
+        coverage: { kind: "complete" as const },
+      };
+    }
+  })();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: storage,
+    logger,
+  });
+  const before: StoredAgentRecord = {
+    id: agentId,
+    provider: "codex",
+    cwd: workdir,
+    createdAt: "2026-08-30T00:00:00.000Z",
+    updatedAt: "2026-08-30T00:00:01.000Z",
+    labels: {},
+    lastStatus: "closed",
+    config: null,
+    persistence: {
+      provider: "codex",
+      sessionId: "archived-attention-session",
+      metadata: { cwd: workdir },
+    },
+    requiresAttention: true,
+    attentionReason: "error",
+    attentionTimestamp: "2026-08-30T00:00:01.000Z",
+    archivedAt: "2026-08-30T00:00:02.000Z",
+  };
+  await storage.upsert(before);
+
+  try {
+    const historySnapshot = await ensureAgentLoaded(agentId, {
+      agentManager: manager,
+      agentStorage: storage,
+      logger,
+    });
+    expect(historySnapshot.lifecycle).toBe("closed");
+    expect(manager.getAgent(agentId)).toBeNull();
+    expect(historyReads).toEqual(["archived-attention-session"]);
+    expect(client.createdConfigs).toEqual([]);
+    expect(client.resumeOverrides).toEqual([]);
+
+    const stateEvents: AgentManagerEvent[] = [];
+    const unsubscribe = manager.subscribe((event) => stateEvents.push(event), {
+      agentId,
+      replayState: false,
+    });
+    await manager.clearAgentAttention(agentId);
+    unsubscribe();
+
+    const stored = await storage.get(agentId);
+    expect(stored).toMatchObject({
+      archivedAt: "2026-08-30T00:00:02.000Z",
+      requiresAttention: false,
+      attentionReason: null,
+      attentionTimestamp: null,
+    });
+    expect(Date.parse(stored!.updatedAt)).toBeGreaterThan(Date.parse(before.updatedAt));
+    expect(manager.getAgent(agentId)).toBeNull();
+    expect(manager.getHistorySnapshot(agentId)).toMatchObject({
+      lifecycle: "closed",
+      attention: { requiresAttention: false },
+      updatedAt: new Date(stored!.updatedAt),
+    });
+    expect(stateEvents).toEqual([
+      expect.objectContaining({
+        type: "agent_state",
+        agent: expect.objectContaining({
+          id: agentId,
+          lifecycle: "closed",
+          attention: { requiresAttention: false },
+        }),
+      }),
+    ]);
+    expect(historyReads).toEqual(["archived-attention-session"]);
+    expect(client.createdConfigs).toEqual([]);
+    expect(client.resumeOverrides).toEqual([]);
+  } finally {
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
 test("subscribe does not emit state events for internal agents to global subscribers", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
   const storagePath = join(workdir, "agents");
@@ -8057,6 +8293,18 @@ test("native archive and restore release the loaded session writer", async () =>
     ): Promise<AgentSession> {
       return this.createSession({ provider: "codex", cwd: workdir, ...config });
     }
+    override async readSessionHistory() {
+      return {
+        events: [
+          {
+            type: "timeline" as const,
+            provider: "codex" as const,
+            item: { type: "assistant_message" as const, text: "Archived provider history" },
+          },
+        ],
+        coverage: { kind: "complete" as const },
+      };
+    }
     override async archiveNativeSession(handle: AgentPersistenceHandle): Promise<void> {
       if (!this.session?.closed) throw new Error("native thread has an active writer");
       await super.archiveNativeSession(handle);
@@ -8075,9 +8323,14 @@ test("native archive and restore release the loaded session writer", async () =>
     });
     await manager.archiveAgent(agent.id);
     expect(client.archivedHandles).toHaveLength(1);
-    // Opening archived history can retain a writer, including records archived by older daemons.
-    await ensureAgentLoaded(agent.id, { agentManager: manager, agentStorage: storage, logger });
-    expect(client.session?.closed).toBe(false);
+    const archivedSnapshot = await ensureAgentLoaded(agent.id, {
+      agentManager: manager,
+      agentStorage: storage,
+      logger,
+    });
+    expect(archivedSnapshot.lifecycle).toBe("closed");
+    expect(manager.getAgent(agent.id)).toBeNull();
+    expect(client.session?.closed).toBe(true);
     await manager.unarchiveSnapshot(agent.id);
     expect(client.unarchivedHandles).toHaveLength(1);
     expect((await storage.get(agent.id))?.archivedAt).toBeNull();

@@ -90,6 +90,12 @@ export class OmpHarness {
     this.omp.failNextSubagentSubscription("events", error);
   }
 
+  failNextHistoryStateRead(error: Error): void {
+    this.omp.queueSessionSetup((session) => {
+      session.getStateError = error;
+    });
+  }
+
   async start(
     config: Partial<AgentSessionConfig> = {},
     paseoTools?: PaseoToolCatalog,
@@ -103,6 +109,24 @@ export class OmpHarness {
     }
     this.session = session;
     this.session.subscribe((event) => this.events.push(event));
+  }
+
+  async readPersistedHistory(
+    history: OmpResumeHistory,
+    overrides: Partial<AgentSessionConfig> = {},
+    _paseoTools?: PaseoToolCatalog,
+  ): Promise<AgentStreamEvent[]> {
+    const sessionFile = await writeOmpHistory(history);
+    const result = await this.client.readSessionHistory(
+      {
+        provider: "omp",
+        sessionId: "omp-session-history",
+        nativeHandle: sessionFile,
+        metadata: { cwd: CWD },
+      },
+      { cwd: overrides.cwd ?? CWD },
+    );
+    return result.events;
   }
 
   async resume(
@@ -144,6 +168,14 @@ export class OmpHarness {
 
   registeredHostTools() {
     return this.omp.latestSession().hostToolSetRequests;
+  }
+
+  subagentSubscriptionRequests() {
+    return this.omp.latestSession().subagentSubscriptionRequests;
+  }
+
+  runtimeClosed(): boolean {
+    return this.omp.latestSession().closed;
   }
 
   capabilities() {
