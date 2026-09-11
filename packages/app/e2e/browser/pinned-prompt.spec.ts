@@ -79,6 +79,30 @@ test.describe("pinned current prompt", () => {
     await expect(pinnedPrompt(page)).toContainText(agent.prompts[8]!);
   });
 
+  test("caps the pin at 70% of the content rail and keeps it on the right edge", async ({
+    page,
+  }) => {
+    const longPrompt = Array.from({ length: 60 }, (_unused, word) => `railwidth${word}`).join(" ");
+    await agent.client.sendAgentMessage(agent.agentId, longPrompt);
+    await agent.client.waitForFinish(agent.agentId, 15_000);
+    const realBubble = timeline(page).getByTestId("user-message").filter({ hasText: longPrompt });
+    await expect(realBubble).toBeVisible();
+    const realBox = await realBubble.boundingBox();
+    if (!realBox) throw new Error("Expected the real user message to have a layout box");
+
+    await scrollPromptAboveFold(page, longPrompt);
+    const pin = pinnedPrompt(page);
+    await expect(pin).toBeVisible();
+    const pinBox = await pin.boundingBox();
+    if (!pinBox) throw new Error("Expected the pinned prompt to have a layout box");
+
+    // The real bubble spans the rail; the pin is that width scaled to 70%, never wider.
+    expect(pinBox.width).toBeLessThanOrEqual(realBox.width * 0.7 + 2);
+    expect(pinBox.width).toBeGreaterThan(realBox.width * 0.6);
+    // Scaled toward the top-right corner, so the right edges line up.
+    expect(Math.abs(pinBox.x + pinBox.width - (realBox.x + realBox.width))).toBeLessThanOrEqual(2);
+  });
+
   test("swaps the pin when the reader crosses into the next turn", async ({ page }) => {
     await scrollPromptAboveFold(page, agent.prompts[8]!);
     await expect(pinnedPrompt(page)).toContainText(agent.prompts[8]!);

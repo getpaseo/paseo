@@ -1,6 +1,12 @@
 import { useCallback, useId, useState, useSyncExternalStore } from "react";
 import { useTranslation } from "react-i18next";
-import { Pressable, Text, View, type LayoutChangeEvent } from "react-native";
+import {
+  Pressable,
+  StyleSheet as RNStyleSheet,
+  Text,
+  View,
+  type LayoutChangeEvent,
+} from "react-native";
 import Animated, { FadeIn, FadeOut, useReducedMotion } from "react-native-reanimated";
 import Svg, { Defs, LinearGradient as SvgLinearGradient, Rect, Stop } from "react-native-svg";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
@@ -13,6 +19,17 @@ import type { PinnedPromptProps } from "./pinned-prompt";
 const PINNED_PROMPT_SCALE = 0.7;
 const PINNED_PROMPT_MAX_LINES = 5;
 const CONTENT_LINE_HEIGHT_RATIO = 1.4;
+
+// The animated shell is the rail's flex child, so the width cap has to live here: a `flexShrink`
+// on the bubble inside it would only ever be measured against the shell's own content width.
+// Plain RN styles on purpose — see docs/unistyles.md on Reanimated + Unistyles styles.
+const shellStyles = RNStyleSheet.create({
+  shell: {
+    minWidth: 0,
+    maxWidth: "100%",
+    flexShrink: 1,
+  },
+});
 
 export function PinnedPrompt({ pinnedId, promptById, onJumpToPrompt }: PinnedPromptProps) {
   const pinnedItemId = useSyncExternalStore(pinnedId.subscribe, pinnedId.getValue);
@@ -70,6 +87,7 @@ function PinnedPromptBubble({
 
   return (
     <Animated.View
+      style={shellStyles.shell}
       entering={prefersReducedMotion ? undefined : FadeIn.duration(140)}
       exiting={prefersReducedMotion ? undefined : FadeOut.duration(140)}
     >
@@ -155,10 +173,9 @@ const styles = StyleSheet.create((theme) => {
       borderTopRightRadius: theme.borderRadius.sm,
       paddingHorizontal: theme.spacing[4],
       paddingVertical: theme.spacing[4],
-      // Same as the real bubble: without these a long single line refuses to wrap and overflows
-      // the rail to the left.
+      // The shell above owns the width cap; the bubble fills it, so a wrapped prompt is never wider
+      // than the real message's rail and the scale leaves it at 70% of the content width at most.
       minWidth: 0,
-      flexShrink: 1,
       transform: [{ scale: PINNED_PROMPT_SCALE }],
       // Scale toward the top-right corner so the right edge stays on the rail whatever the
       // bubble's width. CSS string form on purpose: Unistyles' web converter only translates
