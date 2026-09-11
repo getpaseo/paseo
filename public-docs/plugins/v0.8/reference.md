@@ -204,8 +204,10 @@ effects. Repeat `clientMessageId` on the live user timeline item and publish exa
 `session.prompt_result`. Publish provider-created children as sessions with `parentSessionId`.
 
 Provider settings are toggle/select descriptors that Paseo renders in the composer. Keep
-provider-private JSON under `providerOptions`. Host tools arrive as MCP servers in the complete
-session config.
+provider-private JSON under `providerOptions`; declare `providerOptionsSchema` on the registration
+for strict validation and defaults. Catalog, cache-key, and session-list requests receive normalized
+`providerOptions` and `settings`. Host-configured native tool exclusions arrive as `deniedTools`,
+separate from exact MCP preapproval in `toolPolicy`.
 
 Paseo refreshes an agent by closing its current provider session and opening it with current
 configuration and persistence. Providers re-read external state during `session.open`.
@@ -213,6 +215,12 @@ configuration and persistence. Providers re-read external state during `session.
 Use `runAcpProvider()` from `@getpaseo/plugin/server/acp` to adapt a command-backed ACP. Add transformer
 hooks only for a vendor's discovery, configuration, notification, or tool-call differences.
 
+Optional `checkAvailability(options)` returns `available`, `missing`, `unrunnable`, or
+`incompatible` with a diagnostic of at most 4,096 characters. Provider refresh bounds the hook and
+surfaces its classification. Providers that omit it retain connection-based availability.
+
+`ProviderSessionSummary` supports separate optional `firstPromptPreview` and
+`lastPromptPreview` fields, each limited to 160 characters.
 `ProviderRegistration.icon` is a file path relative to the plugin directory, such as `icon.svg`.
 It must resolve inside that directory to a regular SVG file no larger than 64 KiB. The SVG must be
 self-contained: scripts, styles, `foreignObject`, event-handler attributes, JavaScript URLs, and

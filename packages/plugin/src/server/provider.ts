@@ -28,6 +28,10 @@ export type ProviderCapability = (typeof PROVIDER_CAPABILITIES)[number];
 export interface ProviderRegistration {
   /** Equal keys share discovery within this provider. Include effective configuration and execution environment. */
   getCatalogCacheKey?(options: ProviderCatalogOptions): Promise<string | undefined>;
+  /** Probe the native runtime without opening a provider connection. */
+  checkAvailability?(options: ProviderCatalogOptions): Promise<ProviderAvailability>;
+  /** Strict schema for providerOptions. Defaults and transforms produce the normalized host value. */
+  providerOptionsSchema?: z.ZodType;
   id: string;
   label: string;
   description?: string;
@@ -36,9 +40,18 @@ export interface ProviderRegistration {
   connect(request: ProviderConnectRequest): Promise<ProviderConnection>;
 }
 
-export type ProviderCatalogOptions =
-  | { scope: "global"; force?: boolean }
-  | { scope: "workspace"; cwd: string; force?: boolean };
+interface ProviderCatalogConfiguration {
+  providerOptions?: Readonly<Record<string, JsonValue>>;
+  settings?: Readonly<Record<string, JsonValue>>;
+}
+
+export type ProviderCatalogOptions = ProviderCatalogConfiguration &
+  ({ scope: "global"; force?: boolean } | { scope: "workspace"; cwd: string; force?: boolean });
+
+export interface ProviderAvailability {
+  status: "missing" | "unrunnable" | "incompatible" | "available";
+  diagnostic?: string;
+}
 
 export interface ProviderConnectRequest {
   versions: readonly number[];
@@ -83,6 +96,7 @@ export interface ProviderSessionConfig {
   systemPrompt?: string;
   mcpServers: Readonly<Record<string, ProviderMcpServerConfig>>;
   toolPolicy?: ProviderToolPolicy;
+  deniedTools?: readonly string[];
   model?: string;
   mode?: string;
   thinkingOption?: string;
@@ -215,8 +229,16 @@ export type ProviderContent =
     };
 
 export type ProviderInput =
-  | { type: "catalog"; requestId: string; cwd?: string }
-  | { type: "sessions"; requestId: string; query?: string; cwd?: string; limit?: number }
+  | ({ type: "catalog"; requestId: string } & ProviderCatalogConfiguration & {
+        cwd?: string;
+      })
+  | ({
+      type: "sessions";
+      requestId: string;
+      query?: string;
+      cwd?: string;
+      limit?: number;
+    } & ProviderCatalogConfiguration)
   | {
       type: "session.open";
       requestId: string;
@@ -322,6 +344,8 @@ export interface ProviderSessionSummary {
   title?: string;
   description?: string;
   updatedAt?: string;
+  firstPromptPreview?: string;
+  lastPromptPreview?: string;
 }
 
 export interface ProviderCommand {
@@ -642,6 +666,19 @@ export function requireProviderCapabilities(
 
 const idSchema = z.string().min(1);
 const jsonObjectSchema = z.record(z.string(), z.json());
+const providerConfigurationSchema = {
+  providerOptions: jsonObjectSchema.optional(),
+  settings: jsonObjectSchema.optional(),
+};
+const providerAvailabilitySchema = z
+  .object({
+    status: z.enum(["missing", "unrunnable", "incompatible", "available"]),
+    diagnostic: z.string().max(4_096).optional(),
+  })
+  .strict();
+
+export const ProviderAvailabilitySchema: z.ZodType<ProviderAvailability> =
+  providerAvailabilitySchema;
 const providerErrorSchema = z
   .object({ message: z.string(), code: z.string().optional(), diagnostic: z.string().optional() })
   .strip();
@@ -708,6 +745,7 @@ const sessionConfigSchema = z
     systemPrompt: z.string().optional(),
     mcpServers: z.record(z.string(), mcpServerSchema),
     toolPolicy: toolPolicySchema.optional(),
+    deniedTools: z.array(z.string().trim().min(1).max(256)).max(512).optional(),
     model: z.string().optional(),
     mode: z.string().optional(),
     thinkingOption: z.string().optional(),
@@ -857,7 +895,12 @@ const configChangesSchema = z
 
 export const ProviderInputSchema: z.ZodType<ProviderInput> = z.discriminatedUnion("type", [
   z
-    .object({ type: z.literal("catalog"), requestId: idSchema, cwd: z.string().optional() })
+    .object({
+      type: z.literal("catalog"),
+      requestId: idSchema,
+      cwd: z.string().optional(),
+      ...providerConfigurationSchema,
+    })
     .strict(),
   z
     .object({
@@ -866,6 +909,7 @@ export const ProviderInputSchema: z.ZodType<ProviderInput> = z.discriminatedUnio
       query: z.string().optional(),
       cwd: z.string().optional(),
       limit: z.number().int().positive().optional(),
+      ...providerConfigurationSchema,
     })
     .strict(),
   z
@@ -1263,6 +1307,8 @@ export const ProviderEventSchema: z.ZodType<ProviderEvent> = z.discriminatedUnio
             title: z.string().optional(),
             description: z.string().optional(),
             updatedAt: z.string().optional(),
+            firstPromptPreview: z.string().max(160).optional(),
+            lastPromptPreview: z.string().max(160).optional(),
           })
           .strip(),
       ),

@@ -2,7 +2,7 @@ import type { PluginLifecycle } from "./lifecycle/index.js";
 import path from "node:path";
 import { stat, rm } from "node:fs/promises";
 import type pino from "pino";
-import type { ProviderRegistration } from "@getpaseo/plugin/server/provider";
+import type { PluginProviderRegistration } from "../agent/plugin-provider.js";
 import {
   PluginIdSchema,
   type PluginLogEntry,
@@ -21,6 +21,7 @@ import { runPluginBuild } from "./preparation.js";
 import { PluginRuntime } from "./runtime.js";
 import type { PluginProviderMetadata } from "./plugin-process-protocol.js";
 import { readPluginProviderIcon } from "./provider-icon.js";
+import { ProviderOptionsValidationError } from "../agent/provider-options.js";
 
 const BUILTIN_PROVIDER_ID_SET: ReadonlySet<string> = new Set(BUILTIN_PROVIDER_IDS);
 
@@ -34,6 +35,8 @@ interface PluginRuntimePort {
   getProviderRegistrations?(pluginId: string): readonly PluginProviderMetadata[];
   connectProvider: PluginRuntime["connectProvider"];
   getProviderCatalogCacheKey?: PluginRuntime["getProviderCatalogCacheKey"];
+  getProviderAvailability?: PluginRuntime["getProviderAvailability"];
+  normalizeProviderOptions?: PluginRuntime["normalizeProviderOptions"];
   validatePlugin?(path: string): Promise<void>;
   startPlugin(pluginId: string, path: string, canPublish: () => boolean): Promise<void>;
   stopPluginById(pluginId: string): Promise<boolean>;
@@ -63,7 +66,7 @@ export class PluginService {
   private readonly logger: pino.Logger;
   private readonly errors = new Map<string, string>();
   private readonly listeners = new Set<(pluginId: string) => void>();
-  private readonly providers = new Map<string, ProviderRegistration>();
+  private readonly providers = new Map<string, PluginProviderRegistration>();
   private readonly providerIdsByPlugin = new Map<string, readonly string[]>();
   private readonly providerListeners = new Set<() => void>();
   private lifecycle = Promise.resolve();
@@ -119,7 +122,7 @@ export class PluginService {
     this.runtime.bindPaseoSessionHost(sessionHost);
   }
 
-  getProviderRegistrations(): readonly ProviderRegistration[] {
+  getProviderRegistrations(): readonly PluginProviderRegistration[] {
     return [...this.providers.values()].sort((left, right) => left.id.localeCompare(right.id));
   }
 
@@ -454,14 +457,14 @@ export class PluginService {
     pluginDirectory: string,
   ): Promise<void> {
     const metadata = this.runtime.getProviderRegistrations?.(pluginId) ?? [];
-    const configuredIds = new Set(Object.keys(this.configStore.get().providers));
+    const configuredProviders = this.configStore.get().providers;
     for (const provider of metadata) {
       if (BUILTIN_PROVIDER_ID_SET.has(provider.id)) {
         throw new Error(`Plugin ${pluginId} cannot register builtin provider ID "${provider.id}"`);
       }
-      if (configuredIds.has(provider.id)) {
+      if (configuredProviders[provider.id]?.extends) {
         throw new Error(
-          `Plugin ${pluginId} cannot register configured provider ID "${provider.id}"`,
+          `Plugin ${pluginId} cannot register configured derived provider ID "${provider.id}"`,
         );
       }
       if (this.providers.has(provider.id)) {
@@ -470,15 +473,37 @@ export class PluginService {
     }
     const registrations = await Promise.all(
       metadata.map(
-        async (provider): Promise<ProviderRegistration> => ({
+        async (provider): Promise<PluginProviderRegistration> => ({
           id: provider.id,
           label: provider.label,
           description: provider.description,
+          checkAvailability: provider.hasAvailability
+            ? (options) => {
+                if (!this.runtime.getProviderAvailability)
+                  throw new Error("Plugin runtime cannot check provider availability");
+                return this.runtime.getProviderAvailability(pluginId, provider.id, options);
+              }
+            : undefined,
           getCatalogCacheKey: provider.hasCatalogCacheKey
             ? (options) => {
                 if (!this.runtime.getProviderCatalogCacheKey)
                   throw new Error("Plugin runtime cannot resolve catalogue keys");
                 return this.runtime.getProviderCatalogCacheKey(pluginId, provider.id, options);
+              }
+            : undefined,
+          normalizeProviderOptions: provider.hasProviderOptionsSchema
+            ? async (options) => {
+                if (!this.runtime.normalizeProviderOptions)
+                  throw new Error("Plugin runtime cannot validate providerOptions");
+                const result = await this.runtime.normalizeProviderOptions(
+                  pluginId,
+                  provider.id,
+                  options,
+                );
+                if (!result.valid) {
+                  throw new ProviderOptionsValidationError(provider.id, result.issues);
+                }
+                return result.options;
               }
             : undefined,
           icon: provider.iconPath

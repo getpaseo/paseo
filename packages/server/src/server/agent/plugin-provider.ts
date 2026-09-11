@@ -8,6 +8,8 @@ import {
   ProviderEventSchema,
   ProviderInputSchema,
   requireProviderCapabilities,
+  type ProviderAvailability,
+  type ProviderCatalogOptions,
   type ProviderCapability,
   type ProviderConfigChanges,
   type ProviderConfigState,
@@ -58,6 +60,7 @@ import {
 } from "./create-agent-mode.js";
 import type { ProviderDefinition } from "./provider-registry.js";
 import { runProviderTurn } from "./providers/provider-runner.js";
+import { ProviderOptionsValidationError } from "./provider-options.js";
 import { StaleProviderSessionError } from "./stale-provider-session-error.js";
 
 interface Deferred<Value> {
@@ -83,6 +86,10 @@ interface OpenProviderSessionInput {
   config: ProviderSessionConfig;
   persistence?: ProviderPersistence;
   history: "replay" | "skip";
+}
+
+export interface PluginProviderRegistration extends ProviderRegistration {
+  normalizeProviderOptions?(options: ProviderOptions | undefined): Promise<ProviderOptions>;
 }
 
 function deferred<Value>(): Deferred<Value> {
@@ -125,7 +132,7 @@ class ProviderRuntime {
     PendingOpenDescendantState
   >();
 
-  constructor(private readonly registration: ProviderRegistration) {}
+  constructor(private readonly registration: PluginProviderRegistration) {}
 
   get negotiatedCapabilities(): readonly string[] {
     return this.connection?.capabilities ?? [];
@@ -135,16 +142,28 @@ class ProviderRuntime {
     return this.closed;
   }
 
-  async isAvailable(): Promise<boolean> {
+  async isAvailable(options: ProviderCatalogOptions): Promise<ProviderAvailability> {
+    if (this.registration.checkAvailability) {
+      return await this.registration.checkAvailability(options);
+    }
     await this.getConnection();
-    return true;
+    return { status: "available" };
   }
 
   async catalog(
-    cwd?: string,
+    options: ProviderCatalogOptions,
     signal?: AbortSignal,
   ): Promise<Extract<ProviderEvent, { type: "catalog" }>["catalog"]> {
-    const event = await this.complete({ type: "catalog", requestId: randomUUID(), cwd }, signal);
+    const event = await this.complete(
+      {
+        type: "catalog",
+        requestId: randomUUID(),
+        cwd: options.scope === "workspace" ? options.cwd : undefined,
+        providerOptions: options.providerOptions,
+        settings: options.settings,
+      },
+      signal,
+    );
     if (event.type !== "catalog") throw new Error("Provider returned an invalid catalog response");
     return event.catalog;
   }
@@ -154,6 +173,8 @@ class ProviderRuntime {
       query?: string;
       cwd?: string;
       limit?: number;
+      providerOptions?: Readonly<Record<string, JsonValue>>;
+      settings?: Readonly<Record<string, JsonValue>>;
     } = {},
   ): Promise<Extract<ProviderEvent, { type: "sessions" }>["sessions"]> {
     const connection = await this.getConnection();
@@ -748,7 +769,7 @@ function normalizeConnection(connection: ProviderConnection): ProviderConnection
 }
 
 interface AdaptedPluginProvider {
-  registration: ProviderRegistration;
+  registration: PluginProviderRegistration;
   client: PluginAgentClient;
   definition: ProviderDefinition;
 }
@@ -759,8 +780,8 @@ export class PluginAgentClientRegistry {
 
   constructor(private readonly logger: Logger) {}
 
-  replace(registrations: readonly ProviderRegistration[]): void {
-    const incoming = new Map<string, ProviderRegistration>();
+  replace(registrations: readonly PluginProviderRegistration[]): void {
+    const incoming = new Map<string, PluginProviderRegistration>();
     for (const registration of registrations) {
       if (incoming.has(registration.id)) {
         throw new Error(`Duplicate plugin provider ID: ${registration.id}`);
@@ -811,7 +832,7 @@ export class PluginAgentClientRegistry {
 const PluginProviderOptionsSchema: z.ZodType<ProviderOptions> = z.record(z.string(), z.json());
 
 function createPluginProviderDefinition(
-  registration: ProviderRegistration,
+  registration: PluginProviderRegistration,
   client: PluginAgentClient,
 ): ProviderDefinition {
   return {
@@ -826,8 +847,7 @@ function createPluginProviderDefinition(
     derivedFromProviderId: null,
     optionsSchema: PluginProviderOptionsSchema,
     supportsExactMcpPreapproval: true,
-    validateOptions: (options) =>
-      options === undefined ? undefined : PluginProviderOptionsSchema.parse(options),
+    validateOptions: async (options) => await normalizePluginProviderOptions(registration, options),
     applyOptions: (config, options) => ({ ...config, providerOptions: options }),
     applyToolPolicy: (config, toolPolicy) => ({ ...config, toolPolicy }),
     createClient: () => client,
@@ -851,8 +871,13 @@ class PluginAgentClient implements AgentClient {
 
   readonly getCatalogCacheKey?: AgentClient["getCatalogCacheKey"];
 
-  constructor(registration: ProviderRegistration) {
-    this.getCatalogCacheKey = registration.getCatalogCacheKey?.bind(registration);
+  constructor(private readonly registration: PluginProviderRegistration) {
+    this.getCatalogCacheKey = registration.getCatalogCacheKey
+      ? async (options) => {
+          const normalized = await this.normalizeCatalogOptions(options);
+          return await registration.getCatalogCacheKey!(normalized);
+        }
+      : undefined;
     this.provider = registration.id;
     this.runtime = new ProviderRuntime(registration);
     this.runtime.onSessionOpened((session, opened) => this.acceptChild(session, opened));
@@ -896,10 +921,8 @@ class PluginAgentClient implements AgentClient {
     options: FetchCatalogOptions,
     context?: ProviderRefreshContext,
   ): Promise<ProviderCatalog> {
-    const catalog = await this.runtime.catalog(
-      options.scope === "workspace" ? options.cwd : undefined,
-      context?.signal,
-    );
+    const normalized = await this.normalizeCatalogOptions(options);
+    const catalog = await this.runtime.catalog(normalized, context?.signal);
     return {
       models: catalog.models.map((model) =>
         mapModel(
@@ -915,25 +938,79 @@ class PluginAgentClient implements AgentClient {
     };
   }
 
-  async isAvailable(signal?: AbortSignal): Promise<boolean> {
+  async checkAvailability(
+    options: FetchCatalogOptions,
+    signal?: AbortSignal,
+  ): Promise<ProviderAvailability> {
     signal?.throwIfAborted();
-    return await this.runtime.isAvailable();
+    const normalized = await this.normalizeCatalogOptions(options);
+    const availability = await this.runtime.isAvailable(normalized);
+    signal?.throwIfAborted();
+    return availability;
+  }
+
+  async isAvailable(signal?: AbortSignal, options?: FetchCatalogOptions): Promise<boolean> {
+    const availability = await this.checkAvailability(
+      options ?? { scope: "global", force: false },
+      signal,
+    );
+    if (availability.status === "available") return true;
+    if (availability.status === "missing") return false;
+    throw new Error(
+      availability.diagnostic ?? `Plugin provider '${this.provider}' is ${availability.status}`,
+    );
+  }
+
+  async getDiagnostic(
+    catalogOptions: FetchCatalogOptions = { scope: "global", force: true },
+  ): Promise<{ diagnostic: string }> {
+    if (!this.registration.checkAvailability) {
+      return { diagnostic: `Plugin provider '${this.provider}' has no diagnostic hook` };
+    }
+    const availability = await this.checkAvailability(catalogOptions);
+    return {
+      diagnostic:
+        availability.diagnostic ??
+        `Plugin provider '${this.provider}' availability: ${availability.status}`,
+    };
+  }
+
+  private async normalizeCatalogOptions(
+    options: FetchCatalogOptions,
+  ): Promise<ProviderCatalogOptions> {
+    const providerOptions = await normalizePluginProviderOptions(
+      this.registration,
+      options.providerOptions,
+    );
+    const settings = toJsonObject(options.settings ?? {}, "provider settings");
+    return options.scope === "global"
+      ? { scope: "global", force: options.force, providerOptions, settings }
+      : { scope: "workspace", cwd: options.cwd, force: options.force, providerOptions, settings };
   }
 
   async listImportableSessions(
     options: ListImportableSessionsOptions = {},
   ): Promise<ImportableProviderSession[]> {
+    const normalized = await this.normalizeCatalogOptions({
+      scope: "workspace",
+      cwd: options.cwd ?? process.cwd(),
+      force: false,
+      providerOptions: options.providerOptions,
+      settings: options.settings,
+    });
     const sessions = await this.runtime.listSessions({
       query: options.query,
       cwd: options.cwd,
       limit: options.limit,
+      providerOptions: normalized.providerOptions,
+      settings: normalized.settings,
     });
     return sessions.map((session) => ({
       providerHandleId: encodePersistence(session.persistence),
       cwd: session.cwd,
       title: session.title ?? null,
-      firstPromptPreview: null,
-      lastPromptPreview: session.description ?? null,
+      firstPromptPreview: session.firstPromptPreview ?? null,
+      lastPromptPreview: session.lastPromptPreview ?? null,
       lastActivityAt: parseProviderDate(session.updatedAt),
     }));
   }
@@ -971,7 +1048,6 @@ class PluginAgentClient implements AgentClient {
   async shutdown(): Promise<void> {
     await this.runtime.close();
   }
-
   private async openSession(input: {
     config: AgentSessionConfig;
     launchContext?: AgentLaunchContext;
@@ -980,9 +1056,17 @@ class PluginAgentClient implements AgentClient {
     persist: boolean;
   }): Promise<PluginAgentSession> {
     const sessionId = randomUUID();
+    const providerOptions = await normalizePluginProviderOptions(
+      this.registration,
+      input.config.providerOptions,
+    );
     const bridge = await this.runtime.openSession({
       sessionId,
-      config: mapSessionConfig(input.config, input.launchContext, input.persist),
+      config: mapSessionConfig(
+        { ...input.config, providerOptions },
+        input.launchContext,
+        input.persist,
+      ),
       persistence: input.persistence,
       history: input.history,
     });
@@ -1588,6 +1672,9 @@ function mapSessionConfig(
     toolPolicy: config.toolPolicy
       ? { preapproved: config.toolPolicy.preapproved.map((grant) => ({ ...grant })) }
       : undefined,
+    deniedTools: config.deniedTools
+      ? [...new Set(config.deniedTools.map((tool) => tool.trim()))]
+      : undefined,
     model: config.model,
     mode: config.modeId,
     thinkingOption: config.thinkingOptionId,
@@ -1715,6 +1802,31 @@ function decodePersistenceId(id: string): ProviderPersistence {
 function parseProviderDate(value: string | undefined): Date {
   const timestamp = value ? Date.parse(value) : Number.NaN;
   return new Date(Number.isFinite(timestamp) ? timestamp : 0);
+}
+
+async function normalizePluginProviderOptions(
+  registration: PluginProviderRegistration,
+  options: ProviderOptions | undefined,
+): Promise<ProviderOptions | undefined> {
+  if (registration.normalizeProviderOptions) {
+    return await registration.normalizeProviderOptions(options);
+  }
+  if (registration.providerOptionsSchema) {
+    const parsed = await registration.providerOptionsSchema.safeParseAsync(options ?? {});
+    if (!parsed.success) {
+      throw new ProviderOptionsValidationError(
+        registration.id,
+        parsed.error.issues.map((issue) => ({
+          path: issue.path.map((segment) =>
+            typeof segment === "number" ? segment : String(segment),
+          ),
+          message: issue.message,
+        })),
+      );
+    }
+    return toJsonObject(parsed.data, "provider options");
+  }
+  return options ? toJsonObject(options, "provider options") : undefined;
 }
 
 function toJsonObject(value: unknown, label: string): Record<string, JsonValue> {

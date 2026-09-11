@@ -16,14 +16,16 @@ export interface AgentConfigurationValidationInput {
 interface AgentConfigurationValidationContext {
   input: AgentConfigurationValidationInput;
   provider: ProviderSnapshotEntry;
-  validateOptions(options: ProviderOptions | undefined): ProviderOptions | undefined;
+  validateOptions(
+    options: ProviderOptions | undefined,
+  ): ProviderOptions | undefined | Promise<ProviderOptions | undefined>;
 }
 
-export function validateAgentConfigurationAgainstProvider({
+export async function validateAgentConfigurationAgainstProvider({
   input,
   provider,
   validateOptions,
-}: AgentConfigurationValidationContext): HubExecutionAgentValidationIssue[] {
+}: AgentConfigurationValidationContext): Promise<HubExecutionAgentValidationIssue[]> {
   const issues: HubExecutionAgentValidationIssue[] = [];
   const models = filterSelectableAgentModels(provider.models);
   const requestedModel = input.model;
@@ -54,7 +56,7 @@ export function validateAgentConfigurationAgainstProvider({
   }
 
   try {
-    validateOptions(input.providerOptions);
+    await validateOptions(input.providerOptions);
   } catch (error) {
     if (!(error instanceof ProviderOptionsValidationError)) throw error;
     issues.push(

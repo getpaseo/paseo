@@ -265,7 +265,9 @@ interface AgentManagerRescueTimeouts {
 interface ProviderEnabledFlag {
   enabled: boolean;
   derivedFromProviderId?: string | null;
-  validateOptions?: (options: ProviderOptions | undefined) => ProviderOptions | undefined;
+  validateOptions?: (
+    options: ProviderOptions | undefined,
+  ) => ProviderOptions | undefined | Promise<ProviderOptions | undefined>;
   applyOptions?: (
     config: AgentSessionConfig,
     options: ProviderOptions | undefined,
@@ -4973,23 +4975,26 @@ export class AgentManager {
       normalized.model = trimmed.length > 0 && trimmed !== "default" ? trimmed : undefined;
     }
 
+    const configured = await this.applyProviderConfiguration(normalized);
     const shouldResolveDefaultModel = options.resolveDefaultModel ?? true;
-    if (shouldResolveDefaultModel && !normalized.model) {
-      const defaultModelId = await this.resolveDefaultModelId(normalized);
+    if (shouldResolveDefaultModel && !configured.model) {
+      const defaultModelId = await this.resolveDefaultModelId(configured);
       if (defaultModelId) {
-        normalized.model = defaultModelId;
+        configured.model = defaultModelId;
       }
     }
 
-    return this.applyProviderConfiguration(normalized);
+    return configured;
   }
 
-  private applyProviderConfiguration(config: AgentSessionConfig): AgentSessionConfig {
+  private async applyProviderConfiguration(
+    config: AgentSessionConfig,
+  ): Promise<AgentSessionConfig> {
     const definition = this.providerDefinitions.get(config.provider);
     if (config.providerOptions !== undefined && !definition?.validateOptions) {
       throw new Error(`Provider '${config.provider}' does not accept providerOptions`);
     }
-    const validatedOptions = definition?.validateOptions?.(config.providerOptions);
+    const validatedOptions = await definition?.validateOptions?.(config.providerOptions);
     const withOptions = definition?.applyOptions
       ? definition.applyOptions(config, validatedOptions)
       : config;
@@ -5024,6 +5029,8 @@ export class AgentManager {
     try {
       const catalog = await client.fetchCatalog({
         scope: "workspace",
+        providerOptions: config.providerOptions,
+        settings: config.featureValues,
         cwd: config.cwd,
         force: false,
       });

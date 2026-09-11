@@ -55,22 +55,23 @@ export const ProviderOverrideSchema = z.object({
   command: z.array(z.string().min(1)).min(1).optional(),
   env: z.record(z.string(), z.string()).optional(),
   params: z.record(z.string(), z.unknown()).optional(),
+  providerOptions: z.record(z.string(), z.json()).optional(),
+  settings: z.record(z.string(), z.json()).optional(),
   models: z.array(ProviderProfileModelSchema).optional(),
   additionalModels: z.array(ProviderProfileModelSchema).optional(),
-  disallowedTools: z.array(z.string()).optional(),
+  disallowedTools: z.array(z.string().trim().min(1).max(256)).max(512).optional(),
   paseoTools: ProviderPaseoToolsPolicySchema.optional(),
   enabled: z.boolean().optional(),
   order: z.number().optional(),
 });
 
 const BUILTIN_PROVIDER_IDS = ["claude", "codex", "copilot", "opencode", "pi", "omp"] as const;
-const PROVIDER_ID_PATTERN = /^[a-z][a-z0-9-]*$/;
+const PROVIDER_ID_PATTERN = /^[a-z][a-z0-9._-]*$/;
 
 export const ProviderOverridesSchema = z
   .record(z.string(), ProviderOverrideSchema)
   .superRefine((providers, ctx) => {
     const builtinProviderIdSet = new Set<string>(BUILTIN_PROVIDER_IDS);
-    const validExtendsValues = new Set<string>([...BUILTIN_PROVIDER_IDS, "acp"]);
 
     for (const [providerId, provider] of Object.entries(providers)) {
       if (!PROVIDER_ID_PATTERN.test(providerId)) {
@@ -90,19 +91,12 @@ export const ProviderOverridesSchema = z
         });
       }
 
-      if (!isBuiltinProvider && !provider.label) {
+      const isDerivedProvider = !isBuiltinProvider && provider.extends !== undefined;
+      if (isDerivedProvider && !provider.label) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
           path: [providerId, "label"],
           message: `Custom provider "${providerId}" must declare label.`,
-        });
-      }
-
-      if (provider.extends && !validExtendsValues.has(provider.extends)) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          path: [providerId, "extends"],
-          message: `Provider "${providerId}" extends unknown provider "${provider.extends}".`,
         });
       }
 

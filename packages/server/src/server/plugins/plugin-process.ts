@@ -11,6 +11,7 @@ import * as pluginAcpRuntime from "@getpaseo/plugin/server/acp";
 import type { SettingsDefinition, PluginRpcContract } from "@getpaseo/plugin";
 import type { PluginHandlerContext } from "@getpaseo/plugin/server";
 import {
+  ProviderAvailabilitySchema,
   ProviderEventSchema,
   type ProviderConnection,
   type ProviderRegistration,
@@ -116,6 +117,18 @@ function registerProvider(provider: ProviderRegistration): void {
   ) {
     throw new Error(`Invalid catalogue key callback for plugin provider ${id}`);
   }
+  if (
+    provider.checkAvailability !== undefined &&
+    typeof provider.checkAvailability !== "function"
+  ) {
+    throw new Error(`Invalid availability callback for plugin provider ${id}`);
+  }
+  if (
+    provider.providerOptionsSchema !== undefined &&
+    typeof provider.providerOptionsSchema.safeParseAsync !== "function"
+  ) {
+    throw new Error(`Invalid providerOptions schema for plugin provider ${id}`);
+  }
   if (providers.has(id)) throw new Error(`Duplicate plugin provider ID: ${id}`);
   providers.set(id, { ...provider, id });
 }
@@ -127,7 +140,71 @@ function providerMetadata(provider: ProviderRegistration) {
     description: provider.description,
     iconPath: provider.icon,
     hasCatalogCacheKey: provider.getCatalogCacheKey !== undefined,
+    hasAvailability: provider.checkAvailability !== undefined,
+    hasProviderOptionsSchema: provider.providerOptionsSchema !== undefined,
   };
+}
+
+type ProviderRegistrationRequest = Extract<
+  PluginProcessRequest,
+  { type: "provider.catalog_key" | "provider.availability" | "provider.normalize_options" }
+>;
+
+const PROVIDER_REGISTRATION_REQUEST_TYPES: Record<ProviderRegistrationRequest["type"], true> = {
+  "provider.catalog_key": true,
+  "provider.availability": true,
+  "provider.normalize_options": true,
+};
+
+function isProviderRegistrationRequest(
+  message: PluginProcessRequest,
+): message is ProviderRegistrationRequest {
+  return message.type in PROVIDER_REGISTRATION_REQUEST_TYPES;
+}
+
+async function handleProviderRegistrationRequest(
+  message: ProviderRegistrationRequest,
+): Promise<void> {
+  const provider = providers.get(message.providerId);
+  if (!provider) throw new Error(`Unknown provider: ${message.providerId}`);
+  if (message.type === "provider.catalog_key") {
+    const output = await provider.getCatalogCacheKey?.(message.options);
+    if (output !== undefined && typeof output !== "string") {
+      throw new Error("Invalid catalogue key");
+    }
+    send({ type: "result", requestId: message.requestId, output });
+    return;
+  }
+  if (message.type === "provider.availability") {
+    const availability = await provider.checkAvailability?.(message.options);
+    if (!availability) throw new Error(`Provider ${message.providerId} has no availability hook`);
+    const parsedAvailability = ProviderAvailabilitySchema.safeParse(
+      jsonTransportValue(availability),
+    );
+    if (!parsedAvailability.success) {
+      throw new Error(`Provider ${message.providerId} returned invalid availability`);
+    }
+    send({ type: "result", requestId: message.requestId, output: parsedAvailability.data });
+    return;
+  }
+
+  const schema = provider.providerOptionsSchema;
+  if (!schema) throw new Error(`Provider ${message.providerId} has no providerOptions schema`);
+  const validation = await schema.safeParseAsync(message.options ?? {});
+  const output = validation.success
+    ? { valid: true as const, options: jsonTransportValue(validation.data) }
+    : {
+        valid: false as const,
+        issues: validation.error.issues.slice(0, 128).map((issue) => ({
+          path: issue.path
+            .slice(0, 32)
+            .map((segment) =>
+              typeof segment === "number" ? segment : String(segment).slice(0, 256),
+            ),
+          message: issue.message.slice(0, 2_048),
+        })),
+      };
+  send({ type: "result", requestId: message.requestId, output });
 }
 
 async function connectProvider(
@@ -337,7 +414,7 @@ process.on("message", (rawMessage: unknown) => {
     return;
   }
   if (stopping) {
-    if (message.type === "provider.catalog_key") {
+    if (isProviderRegistrationRequest(message)) {
       send({ type: "error", requestId: message.requestId, error: "Plugin is stopping" });
     } else if (message.type === "provider.connect") {
       send({
@@ -357,15 +434,8 @@ process.on("message", (rawMessage: unknown) => {
     }
     return;
   }
-  if (message.type === "provider.catalog_key") {
-    void (async () => {
-      const provider = providers.get(message.providerId);
-      if (!provider) throw new Error(`Unknown provider: ${message.providerId}`);
-      const output = await provider.getCatalogCacheKey?.(message.options);
-      if (output !== undefined && typeof output !== "string")
-        throw new Error("Invalid catalogue key");
-      send({ type: "result", requestId: message.requestId, output });
-    })().catch((error) =>
+  if (isProviderRegistrationRequest(message)) {
+    void handleProviderRegistrationRequest(message).catch((error) =>
       send({ type: "error", requestId: message.requestId, error: describeError(error) }),
     );
     return;

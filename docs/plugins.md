@@ -316,6 +316,16 @@ workspace target. Return a key covering effective configuration and execution en
 `undefined` for target-specific caching. Ignore `force` when choosing identity. Existing providers
 need no change. See [catalogue ownership](providers.md#provider-snapshot-refresh-contract).
 
+`providerOptionsSchema` runs in the plugin process and is the validation boundary for launch,
+catalogue, cache-key, and session-list inputs. The host forwards its normalized JSON object with the
+normalized provider settings. Configured profiles may extend a registered plugin provider; model
+replacement, model additions, settings, provider options, and generic denied tools are applied by
+the core registry before the provider callback runs.
+
+`checkAvailability(options)` reports `available`, `missing`, `unrunnable`, or `incompatible` with a
+bounded diagnostic. Refresh owns the deadline. Missing maps to unavailable; unrunnable and
+incompatible map to provider errors.
+
 `send()` resolves after acceptance. Publish operation completion, prompt disposition, turn state,
 configuration, permissions, persistence, and complete timeline snapshots through `onEvent()`.
 Route messages, structured commands, steering, and command side effects through `session.prompt`.
@@ -325,6 +335,9 @@ the opaque `providerOptions` config object.
 Agent refresh closes the current provider session and opens it again with current configuration and
 persistence. Providers re-read credentials, environment, global configuration, and MCP servers on
 `session.open`; there is no provider reload input.
+
+Session listings keep `firstPromptPreview` and `lastPromptPreview` distinct. Both fields are capped
+at 160 characters by the public event schema.
 
 For an ACP command, register `runAcpProvider({ id, label, command })` from
 `@getpaseo/plugin/server/acp`. Its transformer hooks cover narrow vendor differences; do not translate the

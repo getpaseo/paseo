@@ -11,6 +11,7 @@ import {
   requireProviderCapabilities,
   type ProviderConnectRequest,
   type ProviderCatalogOptions,
+  type ProviderAvailability,
   type ProviderConnection,
   type ProviderEvent,
   type ProviderInput,
@@ -24,8 +25,13 @@ import type {
   PluginProcessMessage,
   PluginProcessRequest,
   PluginProviderMetadata,
+  PluginProviderOptionsValidation,
 } from "./plugin-process-protocol.js";
-import { PluginProcessMessageSchema } from "./plugin-process-protocol.js";
+import {
+  PluginProcessMessageSchema,
+  PluginProviderAvailabilitySchema,
+  PluginProviderOptionsValidationSchema,
+} from "./plugin-process-protocol.js";
 import { PluginSessionSocket } from "./session-socket.js";
 
 const CLIENT_ENTRY_FILENAMES = ["index.client.ts", "index.client.tsx"] as const;
@@ -496,6 +502,38 @@ export class PluginRuntime {
     if (output !== undefined && typeof output !== "string")
       throw new Error("Invalid catalogue key from plugin");
     return output;
+  }
+
+  async getProviderAvailability(
+    pluginId: string,
+    providerId: string,
+    options: ProviderCatalogOptions,
+  ): Promise<ProviderAvailability> {
+    const loaded = this.plugins.get(pluginId);
+    if (!loaded) throw new Error(`Plugin is not available: ${pluginId}`);
+    const output = await this.request(loaded, {
+      type: "provider.availability",
+      requestId: randomUUID(),
+      providerId,
+      options,
+    });
+    return PluginProviderAvailabilitySchema.parse(output);
+  }
+
+  async normalizeProviderOptions(
+    pluginId: string,
+    providerId: string,
+    options: Readonly<Record<string, unknown>> | undefined,
+  ): Promise<PluginProviderOptionsValidation> {
+    const loaded = this.plugins.get(pluginId);
+    if (!loaded) throw new Error(`Plugin is not available: ${pluginId}`);
+    const output = await this.request(loaded, {
+      type: "provider.normalize_options",
+      requestId: randomUUID(),
+      providerId,
+      options,
+    });
+    return PluginProviderOptionsValidationSchema.parse(output);
   }
 
   private request(

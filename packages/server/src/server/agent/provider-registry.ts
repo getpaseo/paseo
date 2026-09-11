@@ -52,7 +52,11 @@ import { MockSlowProviderClient } from "./providers/mock-slow-provider.js";
 import { ClaudeProviderOptionsSchema } from "./providers/claude/options.js";
 import { CodexProviderOptionsSchema } from "./providers/codex/options.js";
 import { OpenCodeProviderOptionsSchema } from "./providers/opencode/options.js";
-import { ToolPolicyUnsupportedError, validateProviderOptions } from "./provider-options.js";
+import {
+  ProviderOptionsValidationError,
+  ToolPolicyUnsupportedError,
+  validateProviderOptions,
+} from "./provider-options.js";
 import {
   AGENT_PROVIDER_DEFINITIONS,
   BUILTIN_PROVIDER_IDS,
@@ -70,8 +74,8 @@ export type { AgentProviderDefinition };
 export { AGENT_PROVIDER_DEFINITIONS, getAgentProviderDefinition };
 
 export interface ProviderDefinition extends AgentProviderDefinition {
-  /** Effective inputs after overrides and inheritance; plugin registrations are owned separately. */
-  configuration: Omit<ResolvedProvider, "createBaseClient" | "contract"> | null;
+  /** Effective inputs after overrides and inheritance; compared to preserve live clients. */
+  configuration: unknown;
   iconSvg?: string;
   enabled: boolean;
   /**
@@ -82,7 +86,9 @@ export interface ProviderDefinition extends AgentProviderDefinition {
   derivedFromProviderId: string | null;
   optionsSchema: z.ZodType<ProviderOptions>;
   supportsExactMcpPreapproval: boolean;
-  validateOptions: (options: ProviderOptions | undefined) => ProviderOptions | undefined;
+  validateOptions: (
+    options: ProviderOptions | undefined,
+  ) => ProviderOptions | undefined | Promise<ProviderOptions | undefined>;
   applyOptions: (
     config: AgentSessionConfig,
     options: ProviderOptions | undefined,
@@ -477,12 +483,33 @@ export function wrapSessionProvider(provider: AgentProvider, inner: AgentSession
   };
 }
 
+interface WrappedProviderClientOptions {
+  profileModelsAreAdditive: boolean;
+  providerOptions?: ProviderOptions;
+  settings?: Readonly<Record<string, unknown>>;
+}
+
+function withConfiguredCatalogOptions(
+  options: FetchCatalogOptions,
+  configured: WrappedProviderClientOptions,
+): FetchCatalogOptions {
+  const providerOptions =
+    configured.providerOptions || options.providerOptions
+      ? { ...configured.providerOptions, ...options.providerOptions }
+      : undefined;
+  const settings =
+    configured.settings || options.settings
+      ? { ...configured.settings, ...options.settings }
+      : undefined;
+  return { ...options, providerOptions, settings };
+}
+
 function wrapClientProvider(
   provider: AgentProvider,
   inner: AgentClient,
   profileModels: ProviderProfileModel[],
   additionalModels: ProviderProfileModel[],
-  profileModelsAreAdditive: boolean,
+  options: WrappedProviderClientOptions,
 ): AgentClient {
   const listImportableSessions = inner.listImportableSessions?.bind(inner);
   const importSession = inner.importSession?.bind(inner);
@@ -491,41 +518,32 @@ function wrapClientProvider(
   return {
     provider,
     capabilities: inner.capabilities,
-    createSession: async (config, launchContext) =>
+    createSession: async (config, launchContext, sessionOptions) =>
       wrapSessionProvider(
         provider,
         await inner.createSession(
-          {
-            ...config,
-            provider: inner.provider,
-          },
+          { ...config, provider: inner.provider },
           launchContext,
+          sessionOptions,
         ),
       ),
-    resumeSession: async (handle, overrides, launchContext, options) =>
+    resumeSession: async (handle, overrides, launchContext, sessionOptions) =>
       wrapSessionProvider(
         provider,
         await inner.resumeSession(
-          {
-            ...handle,
-            provider: inner.provider,
-          },
-          overrides
-            ? {
-                ...overrides,
-                provider: inner.provider,
-              }
-            : undefined,
+          { ...handle, provider: inner.provider },
+          overrides ? { ...overrides, provider: inner.provider } : undefined,
           launchContext,
-          options,
+          sessionOptions,
         ),
       ),
-    fetchCatalog: async (options, context) => {
-      const catalog = await inner.fetchCatalog(options, context);
+    fetchCatalog: async (catalogOptions, context) => {
+      const configuredOptions = withConfiguredCatalogOptions(catalogOptions, options);
+      const catalog = await inner.fetchCatalog(configuredOptions, context);
       return {
         ...catalog,
         models: mergeModels(provider, profileModels, additionalModels, catalog.models, {
-          profileModelsAreAdditive,
+          profileModelsAreAdditive: options.profileModelsAreAdditive,
         }),
         modes: catalog.modes,
       };
@@ -545,20 +563,25 @@ function wrapClientProvider(
       ? async (config) => await listFeatures({ ...config, provider: inner.provider })
       : undefined,
     listImportableSessions: listImportableSessions
-      ? async (options) => await listImportableSessions(options)
+      ? async (listOptions) =>
+          await listImportableSessions({
+            ...listOptions,
+            providerOptions:
+              options.providerOptions || listOptions?.providerOptions
+                ? { ...options.providerOptions, ...listOptions?.providerOptions }
+                : undefined,
+            settings:
+              options.settings || listOptions?.settings
+                ? { ...options.settings, ...listOptions?.settings }
+                : undefined,
+          })
       : undefined,
     importSession: importSession
       ? async (input, context) => {
           const imported = await importSession(input, {
             ...context,
-            config: {
-              ...context.config,
-              provider: inner.provider,
-            },
-            storedConfig: {
-              ...context.storedConfig,
-              provider: inner.provider,
-            },
+            config: { ...context.config, provider: inner.provider },
+            storedConfig: { ...context.storedConfig, provider: inner.provider },
           });
           const persistence = mapPersistenceHandle(provider, imported.persistence);
           if (!persistence) {
@@ -567,17 +590,35 @@ function wrapClientProvider(
           return {
             ...imported,
             session: wrapSessionProvider(provider, imported.session),
-            config: {
-              ...imported.config,
-              provider,
-            },
+            config: { ...imported.config, provider },
             persistence,
           };
         }
       : undefined,
-    getCatalogCacheKey: inner.getCatalogCacheKey?.bind(inner),
-    isAvailable: (signal, options) => inner.isAvailable(signal, options),
-    getDiagnostic: inner.getDiagnostic?.bind(inner),
+    getCatalogCacheKey: inner.getCatalogCacheKey
+      ? async (catalogOptions) =>
+          await inner.getCatalogCacheKey!(withConfiguredCatalogOptions(catalogOptions, options))
+      : undefined,
+    checkAvailability: inner.checkAvailability
+      ? async (catalogOptions, signal) =>
+          await inner.checkAvailability!(
+            withConfiguredCatalogOptions(catalogOptions, options),
+            signal,
+          )
+      : undefined,
+    isAvailable: (signal, catalogOptions) =>
+      inner.isAvailable(
+        signal,
+        catalogOptions ? withConfiguredCatalogOptions(catalogOptions, options) : catalogOptions,
+      ),
+    getDiagnostic: inner.getDiagnostic
+      ? async (catalogOptions) =>
+          await inner.getDiagnostic!(
+            catalogOptions
+              ? withConfiguredCatalogOptions(catalogOptions, options)
+              : withConfiguredCatalogOptions({ scope: "global", force: true }, options),
+          )
+      : undefined,
   };
 }
 
@@ -645,9 +686,8 @@ function createRegistryEntry(
     ) => {
       const catalogClient = client ?? modelClient;
       if (hasReplacementModels) {
-        // Replacement models skip runtime model discovery, but additionalModels
-        // must still be merged on top. If modes are dynamic, probe for modes via
-        // the single catalog API; otherwise use static/empty modes with no runtime.
+        // Replacement models skip runtime model discovery, but dynamic modes still require the
+        // provider catalog when the definition has no static modes.
         const models = mergeModelAdditions(provider, replacementModels, additionalModels);
         if (hasStaticModes) {
           const defaultModeId = await runProviderRefreshActivity(
@@ -696,13 +736,100 @@ function createResolvedProviderClient(
   if (inner.provider === provider && !hasModelOverrides) {
     return inner;
   }
-  return wrapClientProvider(
-    provider,
-    inner,
-    profileModels,
-    additionalModels,
-    resolved.profileModelsAreAdditive,
-  );
+  return wrapClientProvider(provider, inner, profileModels, additionalModels, {
+    profileModelsAreAdditive: resolved.profileModelsAreAdditive,
+  });
+}
+
+function createConfiguredExternalProvider(
+  provider: AgentProvider,
+  baseProviderId: AgentProvider,
+  base: ProviderDefinition,
+  override: ProviderOverride,
+): ProviderDefinition {
+  const profileModels = override.models ?? [];
+  const additionalModels = override.additionalModels ?? [];
+  const clientOptions: WrappedProviderClientOptions = {
+    profileModelsAreAdditive: false,
+    providerOptions: override.providerOptions,
+    settings: override.settings,
+  };
+  const deniedTools = override.disallowedTools ? [...new Set(override.disallowedTools)] : undefined;
+
+  return {
+    ...base,
+    id: provider,
+    label: override.label ?? base.label,
+    description: override.description ?? base.description,
+    configuration: { registration: base.createClient, override },
+    enabled: override.enabled !== false,
+    derivedFromProviderId: provider === baseProviderId ? null : baseProviderId,
+    validateOptions: async (options) => {
+      const configuredOptions =
+        override.providerOptions || options
+          ? { ...override.providerOptions, ...options }
+          : undefined;
+      try {
+        return await base.validateOptions(configuredOptions);
+      } catch (error) {
+        if (error instanceof ProviderOptionsValidationError && error.provider !== provider) {
+          throw new ProviderOptionsValidationError(provider, error.issues);
+        }
+        throw error;
+      }
+    },
+    applyOptions: (config, options) => {
+      const withOptions = base.applyOptions(config, options);
+      const featureValues =
+        override.settings || withOptions.featureValues
+          ? { ...override.settings, ...withOptions.featureValues }
+          : undefined;
+      return { ...withOptions, featureValues, deniedTools };
+    },
+    applyToolPolicy: base.applyToolPolicy,
+    createClient: (logger) =>
+      wrapClientProvider(
+        provider,
+        base.createClient(logger),
+        profileModels,
+        additionalModels,
+        clientOptions,
+      ),
+    fetchCatalog: async (catalogOptions, client, context) => {
+      if (client) return await client.fetchCatalog(catalogOptions, context);
+      const configuredOptions = withConfiguredCatalogOptions(catalogOptions, clientOptions);
+      const catalog = await base.fetchCatalog(configuredOptions, undefined, context);
+      return {
+        ...catalog,
+        models: mergeModels(provider, profileModels, additionalModels, catalog.models),
+      };
+    },
+  };
+}
+
+export function configureExternalProviderDefinitions(
+  baseDefinitions: Record<AgentProvider, ProviderDefinition>,
+  providerOverrides: Record<string, ProviderOverride> = {},
+): Record<AgentProvider, ProviderDefinition> {
+  const configured: Record<AgentProvider, ProviderDefinition> = {};
+  for (const [provider, definition] of Object.entries(baseDefinitions)) {
+    const override = providerOverrides[provider];
+    configured[provider] = override
+      ? createConfiguredExternalProvider(provider, provider, definition, override)
+      : definition;
+  }
+  for (const [provider, override] of Object.entries(providerOverrides)) {
+    if (configured[provider] || !override.extends) continue;
+    const base = baseDefinitions[override.extends];
+    if (!base) continue;
+    configured[provider] = createConfiguredExternalProvider(
+      provider,
+      override.extends,
+      base,
+      override,
+    );
+  }
+  return configured;
 }
 
 function buildResolvedBuiltinProviders(
@@ -761,10 +888,7 @@ function addDerivedProviders(
     if (resolvedProviders.has(providerId) || BUILTIN_PROVIDER_IDS.includes(providerId)) {
       continue;
     }
-
-    if (!override.extends) {
-      throw new Error(`Custom provider '${providerId}' requires an extends value`);
-    }
+    if (!override.extends) continue;
 
     if (override.extends === "acp") {
       if (!override.command || !isNonEmptyStringArray(override.command)) {
@@ -826,9 +950,12 @@ function addDerivedProviders(
     const baseProviderId = override.extends;
     const baseProvider = resolvedProviders.get(baseProviderId);
     if (!baseProvider) {
-      throw new Error(
-        `Custom provider '${providerId}' extends unknown provider '${baseProviderId}'`,
-      );
+      if (!override.label) {
+        throw new Error(
+          `Custom provider '${providerId}' extends unknown provider '${baseProviderId}'`,
+        );
+      }
+      continue;
     }
 
     const mergedRuntimeSettings = mergeRuntimeSettings(

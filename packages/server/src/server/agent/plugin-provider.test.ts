@@ -4,10 +4,13 @@ import type {
   ProviderInput,
   ProviderRegistration,
   ProviderTimelineItem,
+  ProviderSessionSummary,
 } from "@getpaseo/plugin/server/provider";
 import { describe, expect, test } from "vitest";
+import { z } from "zod";
 import { createTestLogger } from "../../test-utils/test-logger.js";
 import type { AgentStreamEvent } from "./agent-sdk-types.js";
+import { configureExternalProviderDefinitions } from "./provider-registry.js";
 import { PluginAgentClientRegistry } from "./plugin-provider.js";
 import {
   isStaleProviderSessionError,
@@ -27,6 +30,7 @@ interface ProviderHarnessOptions {
   completeTurn?: boolean;
   rewindItems?: readonly ProviderTimelineItem[];
   nestedChild?: boolean;
+  sessionSummaries?: readonly ProviderSessionSummary[];
 }
 
 function createProviderHarness(options: ProviderHarnessOptions = {}) {
@@ -57,6 +61,14 @@ function createProviderHarness(options: ProviderHarnessOptions = {}) {
             defaultMode: "build",
             defaultThinkingOption: "deep",
           },
+        });
+        return;
+      }
+      if (input.type === "sessions") {
+        emit({
+          type: "sessions",
+          requestId: input.requestId,
+          sessions: [...(options.sessionSummaries ?? [])],
         });
         return;
       }
@@ -566,5 +578,219 @@ describe("PluginAgentClientRegistry", () => {
     registry.replace([]);
     await expect.poll(harness.closeCount).toBe(1);
     expect(harness.inputs.map((input) => input.type)).toContain("session.close");
+  });
+});
+
+describe("plugin provider configuration", () => {
+  test("normalizes provider options before availability, cache identity, catalog, and launch", async () => {
+    const harness = createProviderHarness();
+    const observed: unknown[] = [];
+    const registration: ProviderRegistration = {
+      ...harness.registration,
+      providerOptionsSchema: z
+        .object({
+          command: z.array(z.string()).default(["omp"]),
+          timeoutMs: z.number().int().positive().default(30_000),
+        })
+        .strict(),
+      async checkAvailability(options) {
+        observed.push({ availability: options });
+        return { status: "available", diagnostic: "OMP is ready" };
+      },
+      async getCatalogCacheKey(options) {
+        observed.push({ cacheKey: options });
+        return JSON.stringify(options.providerOptions);
+      },
+    };
+    const registry = new PluginAgentClientRegistry(createTestLogger());
+    registry.replace([registration]);
+    const client = registry.clients()[registration.id]!;
+
+    await expect(
+      client.checkAvailability?.({
+        scope: "workspace",
+        cwd: "/workspace",
+        force: true,
+        settings: { approval: "ask" },
+      }),
+    ).resolves.toEqual({ status: "available", diagnostic: "OMP is ready" });
+    await expect(
+      client.getCatalogCacheKey?.({
+        scope: "workspace",
+        cwd: "/workspace",
+        force: false,
+        settings: { approval: "ask" },
+      }),
+    ).resolves.toBe('{"command":["omp"],"timeoutMs":30000}');
+    await client.fetchCatalog({
+      scope: "workspace",
+      cwd: "/workspace",
+      force: false,
+      settings: { approval: "ask" },
+    });
+    const session = await client.createSession({
+      provider: registration.id,
+      cwd: "/workspace",
+      providerOptions: { command: ["custom-omp"] },
+    });
+
+    expect(observed).toEqual([
+      {
+        availability: {
+          scope: "workspace",
+          cwd: "/workspace",
+          force: true,
+          providerOptions: { command: ["omp"], timeoutMs: 30_000 },
+          settings: { approval: "ask" },
+        },
+      },
+      {
+        cacheKey: {
+          scope: "workspace",
+          cwd: "/workspace",
+          force: false,
+          providerOptions: { command: ["omp"], timeoutMs: 30_000 },
+          settings: { approval: "ask" },
+        },
+      },
+    ]);
+    expect(harness.inputs).toContainEqual(
+      expect.objectContaining({
+        type: "catalog",
+        providerOptions: { command: ["omp"], timeoutMs: 30_000 },
+        settings: { approval: "ask" },
+      }),
+    );
+    expect(harness.inputs).toContainEqual(
+      expect.objectContaining({
+        type: "session.open",
+        config: expect.objectContaining({
+          providerOptions: { command: ["custom-omp"], timeoutMs: 30_000 },
+        }),
+      }),
+    );
+    await expect(
+      client.createSession({
+        provider: registration.id,
+        cwd: "/workspace",
+        providerOptions: { typo: true },
+      }),
+    ).rejects.toThrow("Invalid providerOptions");
+
+    await session.close();
+    await registry.shutdown();
+  });
+
+  test("applies configured models, settings, denied tools, and derived plugin profiles", async () => {
+    const harness = createProviderHarness();
+    const cacheOptions: unknown[] = [];
+    const registration: ProviderRegistration = {
+      ...harness.registration,
+      async getCatalogCacheKey(options) {
+        cacheOptions.push(options);
+        return "profile";
+      },
+    };
+    const registry = new PluginAgentClientRegistry(createTestLogger());
+    registry.replace([registration]);
+    const definitions = configureExternalProviderDefinitions(registry.definitions(), {
+      "plugin-work": {
+        extends: registration.id,
+        label: "Plugin work",
+        models: [{ id: "configured", label: "Configured" }],
+        additionalModels: [{ id: "extra", label: "Extra", isDefault: true }],
+        providerOptions: { command: ["omp-work"] },
+        settings: { approval: "ask" },
+        disallowedTools: ["shell", "shell", "web_search"],
+      },
+    });
+    const definition = definitions["plugin-work"]!;
+    const client = definition.createClient(createTestLogger());
+    const catalog = await definition.fetchCatalog(
+      { scope: "workspace", cwd: "/workspace", force: false },
+      client,
+    );
+    await client.getCatalogCacheKey?.({
+      scope: "workspace",
+      cwd: "/workspace",
+      force: false,
+    });
+    const providerOptions = await definition.validateOptions({ timeoutMs: 45_000 });
+    const config = definition.applyOptions(
+      { provider: "plugin-work", cwd: "/workspace", featureValues: { local: true } },
+      providerOptions,
+    );
+
+    expect(catalog.models).toEqual([
+      expect.objectContaining({ id: "configured", provider: "plugin-work", isDefault: false }),
+      expect.objectContaining({ id: "extra", provider: "plugin-work", isDefault: true }),
+    ]);
+    expect(config).toMatchObject({
+      providerOptions: { command: ["omp-work"], timeoutMs: 45_000 },
+      featureValues: { approval: "ask", local: true },
+      deniedTools: ["shell", "web_search"],
+    });
+    expect(harness.inputs).toContainEqual(
+      expect.objectContaining({
+        type: "catalog",
+        providerOptions: { command: ["omp-work"] },
+        settings: { approval: "ask" },
+      }),
+    );
+    expect(cacheOptions).toEqual([
+      {
+        scope: "workspace",
+        cwd: "/workspace",
+        force: false,
+        providerOptions: { command: ["omp-work"] },
+        settings: { approval: "ask" },
+      },
+    ]);
+    await registry.shutdown();
+  });
+
+  test("forwards bounded denied tools and separate prompt previews", async () => {
+    const harness = createProviderHarness({
+      capabilities: [...CAPABILITIES, "session.list"],
+      sessionSummaries: [
+        {
+          persistence: { version: 1, data: { token: "listed" } },
+          cwd: "/workspace",
+          title: "Listed session",
+          description: "provider description",
+          firstPromptPreview: "first prompt",
+          lastPromptPreview: "last prompt",
+          updatedAt: "2026-09-11T12:00:00.000Z",
+        },
+      ],
+    });
+    const registry = new PluginAgentClientRegistry(createTestLogger());
+    registry.replace([harness.registration]);
+    const client = registry.clients()[harness.registration.id]!;
+    const session = await client.createSession({
+      provider: harness.registration.id,
+      cwd: "/workspace",
+      deniedTools: [" shell ", "shell", "web_search"],
+    });
+
+    expect(harness.inputs).toContainEqual(
+      expect.objectContaining({
+        type: "session.open",
+        config: expect.objectContaining({ deniedTools: ["shell", "web_search"] }),
+      }),
+    );
+    await expect(client.listImportableSessions?.({ cwd: "/workspace" })).resolves.toEqual([
+      {
+        providerHandleId: 'plugin:{"version":1,"data":{"token":"listed"}}',
+        cwd: "/workspace",
+        title: "Listed session",
+        firstPromptPreview: "first prompt",
+        lastPromptPreview: "last prompt",
+        lastActivityAt: new Date("2026-09-11T12:00:00.000Z"),
+      },
+    ]);
+
+    await session.close();
+    await registry.shutdown();
   });
 });

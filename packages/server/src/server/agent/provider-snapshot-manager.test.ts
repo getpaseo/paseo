@@ -2,6 +2,7 @@ import pino from "pino";
 import { homedir } from "node:os";
 import { resolve } from "node:path";
 import { describe, expect, test, vi } from "vitest";
+import { z } from "zod";
 import type { ProviderEvent, ProviderRegistration } from "@getpaseo/plugin/server/provider";
 
 import { createTestLogger } from "../../test-utils/test-logger.js";
@@ -158,6 +159,140 @@ describe("ProviderSnapshotManager public surface", () => {
       );
     } finally {
       manager.destroy();
+    }
+  });
+
+  test("surfaces plugin availability classifications during refresh", async () => {
+    for (const [availability, expected] of [
+      [{ status: "missing" as const, diagnostic: "omp was not found" }, "unavailable"],
+      [{ status: "unrunnable" as const, diagnostic: "omp could not execute" }, "error"],
+      [{ status: "incompatible" as const, diagnostic: "omp rpc-ui is too old" }, "error"],
+      [{ status: "available" as const, diagnostic: "omp is ready" }, "ready"],
+    ] as const) {
+      let listener: ((event: ProviderEvent) => void) | null = null;
+      const registration: ProviderRegistration = {
+        id: `plugin-${availability.status}`,
+        label: `Plugin ${availability.status}`,
+        async checkAvailability() {
+          return availability;
+        },
+        async connect() {
+          return {
+            version: 1,
+            capabilities: [],
+            async send(input) {
+              if (input.type !== "catalog") return;
+              listener?.({
+                type: "catalog",
+                requestId: input.requestId,
+                catalog: { models: [{ id: "model", label: "Model" }], modes: [] },
+              });
+            },
+            onEvent(next) {
+              listener = next;
+              return () => {
+                if (listener === next) listener = null;
+              };
+            },
+            async close() {},
+          };
+        },
+      };
+      const manager = new ProviderSnapshotManager({ logger: createTestLogger() });
+      try {
+        manager.replacePluginProviders([registration]);
+        await manager.refreshSnapshotForCwd({
+          cwd: "/tmp/project",
+          providers: [registration.id],
+        });
+        const snapshotEntry = manager
+          .getSnapshot("/tmp/project")
+          .records.find(({ entry }) => entry.provider === registration.id)?.entry;
+        expect(snapshotEntry).toMatchObject({
+          provider: registration.id,
+          status: expected,
+          ...(availability.status === "available" ? {} : { error: availability.diagnostic }),
+        });
+      } finally {
+        await manager.shutdown();
+      }
+    }
+  });
+
+  test("installs configured profiles derived from plugin providers", async () => {
+    let listener: ((event: ProviderEvent) => void) | null = null;
+    const receivedCatalogs: unknown[] = [];
+    const registration: ProviderRegistration = {
+      id: "plugin-base",
+      label: "Plugin base",
+      providerOptionsSchema: z.object({ runtime: z.string() }).strict(),
+      async connect() {
+        return {
+          version: 1,
+          capabilities: [],
+          async send(input) {
+            if (input.type !== "catalog") return;
+            receivedCatalogs.push(input);
+            listener?.({
+              type: "catalog",
+              requestId: input.requestId,
+              catalog: {
+                models: [{ id: "runtime", label: "Runtime" }],
+                modes: [],
+              },
+            });
+          },
+          onEvent(next) {
+            listener = next;
+            return () => {
+              if (listener === next) listener = null;
+            };
+          },
+          async close() {},
+        };
+      },
+    };
+    const manager = new ProviderSnapshotManager({
+      logger: createTestLogger(),
+      providerOverrides: {
+        "plugin-profile": {
+          extends: "plugin-base",
+          label: "Plugin profile",
+          providerOptions: { runtime: "configured" },
+          settings: { approval: "ask" },
+          models: [{ id: "configured", label: "Configured" }],
+          additionalModels: [{ id: "extra", label: "Extra" }],
+        },
+      },
+    });
+    try {
+      manager.replacePluginProviders([registration]);
+      await manager.refreshSnapshotForCwd({
+        cwd: "/tmp/project",
+        providers: ["plugin-profile"],
+      });
+      const snapshotEntry = manager
+        .getSnapshot("/tmp/project")
+        .records.find(({ entry }) => entry.provider === "plugin-profile")?.entry;
+      expect(snapshotEntry).toMatchObject({
+        provider: "plugin-profile",
+        status: "ready",
+        models: [
+          { provider: "plugin-profile", id: "configured", label: "Configured" },
+          { provider: "plugin-profile", id: "extra", label: "Extra" },
+        ],
+      });
+      expect(receivedCatalogs).toContainEqual(
+        expect.objectContaining({
+          providerOptions: { runtime: "configured" },
+          settings: { approval: "ask" },
+        }),
+      );
+      expect(
+        manager.getAgentManagerProviderState().providerDefinitions["plugin-profile"],
+      ).toMatchObject({ derivedFromProviderId: "plugin-base" });
+    } finally {
+      await manager.shutdown();
     }
   });
 

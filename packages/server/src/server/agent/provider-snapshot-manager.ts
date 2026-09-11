@@ -33,6 +33,7 @@ import type {
 } from "./provider-launch-config.js";
 import {
   buildProviderRegistry,
+  configureExternalProviderDefinitions,
   shutdownAgentClients,
   type ProviderDefinition,
 } from "./provider-registry.js";
@@ -48,8 +49,7 @@ import {
   type AgentConfigurationValidationInput,
   validateAgentConfigurationAgainstProvider,
 } from "./agent-configuration-validator.js";
-import type { ProviderRegistration } from "@getpaseo/plugin/server/provider";
-import { PluginAgentClientRegistry } from "./plugin-provider.js";
+import { PluginAgentClientRegistry, type PluginProviderRegistration } from "./plugin-provider.js";
 
 const DEFAULT_REFRESH_TIMEOUT_MS = 120_000;
 const MAX_REFRESH_TIMEOUT_MS = 2_147_483_647;
@@ -385,7 +385,7 @@ export class ProviderSnapshotManager {
   }
 
   replacePluginProviders(
-    registrations: readonly ProviderRegistration[],
+    registrations: readonly PluginProviderRegistration[],
   ): AgentManagerProviderState {
     for (const registration of registrations) {
       if (
@@ -397,29 +397,38 @@ export class ProviderSnapshotManager {
         );
       }
     }
-    const previousPlugins = this.pluginProviders.definitions();
+    const previousRaw = this.pluginProviders.definitions();
+    const previousPlugins = configureExternalProviderDefinitions(
+      previousRaw,
+      this.providerOverrides,
+    );
     const clients = { ...this.providerClients };
-    // Materialize fallible installed clients before retiring any plugin runtime.
     this.createAgentManagerState(this.generation.definitions, clients);
     this.pluginProviders.replace(registrations);
-    const plugins = this.pluginProviders.definitions();
-    const retiredProviders = Object.keys(previousPlugins).filter(
-      (provider) => previousPlugins[provider] !== plugins[provider],
-    );
+    const currentRaw = this.pluginProviders.definitions();
+    const plugins = configureExternalProviderDefinitions(currentRaw, this.providerOverrides);
     const definitions = { ...this.generation.definitions };
     const changed = new Set<AgentProvider>();
     for (const provider of new Set([...Object.keys(previousPlugins), ...Object.keys(plugins)])) {
-      if (previousPlugins[provider] !== plugins[provider]) changed.add(provider);
+      const before = previousPlugins[provider];
+      const after = plugins[provider];
+      const baseProvider = after?.derivedFromProviderId ?? provider;
+      const registrationChanged = previousRaw[baseProvider] !== currentRaw[baseProvider];
+      const configurationChanged =
+        !before || !after || !isDeepStrictEqual(before.configuration, after.configuration);
+      if (registrationChanged || configurationChanged) {
+        changed.add(provider);
+        delete clients[provider];
+      } else if (before) {
+        plugins[provider] = before;
+      }
       delete definitions[provider];
-      delete clients[provider];
     }
     Object.assign(definitions, plugins);
-    Object.assign(clients, this.pluginProviders.clients());
-    for (const client of Object.values(clients)) this.ownedClients.add(client);
     const generation = this.createGeneration(definitions, this.providerOverrides);
     const state = this.createAgentManagerState(definitions, clients);
     this.installGeneration(generation, clients, changed);
-    return { ...state, retiredProviders };
+    return { ...state, retiredProviders: [...changed] };
   }
 
   private ensureClient(
@@ -606,7 +615,7 @@ export class ProviderSnapshotManager {
         definitions[provider] = before;
       }
     }
-    Object.assign(clients, this.extraClients, this.pluginProviders.clients());
+    Object.assign(clients, this.extraClients);
     const generation = this.createGeneration(definitions, providerOverrides);
     const agentManagerState = this.createAgentManagerState(definitions, clients);
     return {
@@ -694,7 +703,11 @@ export class ProviderSnapshotManager {
       isDev: this.isDev,
     });
 
-    for (const [provider, definition] of Object.entries(this.pluginProviders.definitions())) {
+    const configuredPlugins = configureExternalProviderDefinitions(
+      this.pluginProviders.definitions(),
+      providerOverrides,
+    );
+    for (const [provider, definition] of Object.entries(configuredPlugins)) {
       if (registry[provider]) {
         throw new Error(`Plugin provider '${provider}' conflicts with a configured provider`);
       }
@@ -794,7 +807,7 @@ export class ProviderSnapshotManager {
       if (client.getDiagnostic) {
         return (
           await withTimeout(
-            client.getDiagnostic(),
+            client.getDiagnostic({ scope: "global", force: true }),
             this.diagnosticTimeoutMs,
             `Timed out collecting ${definition.label ?? provider} diagnostic after ${
               this.diagnosticTimeoutMs
@@ -999,28 +1012,62 @@ export class ProviderSnapshotManager {
     } = options;
 
     try {
-      const catalog = await runProviderRefreshWithDeadline({
+      const result = await runProviderRefreshWithDeadline({
         label: definition.label,
         timeoutMs: this.refreshTimeoutMs,
         operation: async (context) => {
-          const available = await context.runActivity("availability", () =>
-            raceProviderRefreshAbort(
-              context.signal,
-              client.isAvailable(context.signal, catalogOptions),
-            ),
-          );
-          if (!available) {
-            return null;
-          }
+          const availability = client.checkAvailability
+            ? await context.runActivity("availability", () =>
+                raceProviderRefreshAbort(
+                  context.signal,
+                  client.checkAvailability!(catalogOptions, context.signal),
+                ),
+              )
+            : {
+                status: (await context.runActivity("availability", () =>
+                  raceProviderRefreshAbort(
+                    context.signal,
+                    client.isAvailable(context.signal, catalogOptions),
+                  ),
+                ))
+                  ? ("available" as const)
+                  : ("missing" as const),
+              };
+          if (availability.status !== "available") return { availability };
 
-          return await definition.fetchCatalog(catalogOptions, client, context);
+          const catalog = await definition.fetchCatalog(catalogOptions, client, context);
+          return { availability, catalog };
         },
       });
-      if (!catalog) {
-        setEntry({ ...base, status: "unavailable", enabled: true });
+      if (result.availability.status === "missing") {
+        setEntry({
+          ...base,
+          status: "unavailable",
+          enabled: true,
+          error: result.availability.diagnostic,
+        });
+        return;
+      }
+      if (result.availability.status !== "available") {
+        setEntry({
+          ...base,
+          status: "error",
+          enabled: true,
+          error:
+            result.availability.diagnostic ??
+            `Provider '${provider}' is ${result.availability.status}`,
+        });
         return;
       }
 
+      if (!("catalog" in result)) {
+        throw new Error(`Provider '${provider}' returned no catalog after reporting available`);
+      }
+
+      const catalog = result.catalog;
+      if (!catalog) {
+        throw new Error(`Provider '${provider}' returned no catalog after reporting available`);
+      }
       setEntry({
         ...base,
         defaultModeId:

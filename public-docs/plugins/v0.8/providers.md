@@ -75,6 +75,23 @@ The connection has three operations:
 Keep the native SDK, process, and stream inside the connection implementation. Convert its output
 to `ProviderEvent` objects before publishing it.
 
+Use `providerOptionsSchema` to validate and normalize provider-specific launch options before Paseo
+discovers models or opens a session. The schema must return a JSON object. Existing providers that
+omit it continue to accept arbitrary JSON objects.
+
+```ts
+providerOptionsSchema: z.object({
+  command: z.array(z.string()).min(1).optional(),
+  timeoutMs: z.number().int().positive().default(30_000),
+}).strict(),
+```
+
+Use `checkAvailability(options)` when connection negotiation is not the right installation probe.
+Return `available`, `missing`, `unrunnable`, or `incompatible`, plus an optional diagnostic of at
+most 4,096 characters. Paseo runs the hook inside the provider refresh deadline. Missing providers
+remain unavailable; unrunnable and incompatible providers surface as errors. Omitting the hook
+keeps the legacy behavior where successful connection negotiation means available.
+
 ## Return models, modes, and thinking options
 
 Paseo requests the catalog before creating a session. Return the choices needed by the agent form:
@@ -110,6 +127,30 @@ Return an empty array for a category the agent does not expose. The selected `mo
 
 The catalog describes choices available before a session exists. Session-specific controls come
 later through `session.config`.
+
+Catalog requests and `getCatalogCacheKey()` receive the same normalized `providerOptions` and
+`settings` objects. Include every value that changes discovery in the cache key. Paseo also passes
+these objects to session listing so provider profiles can discover their own persistence roots.
+
+Daemon provider profiles can extend a registered plugin provider. `models` replaces discovered
+models and `additionalModels` adds or overrides individual IDs, matching built-in provider
+configuration:
+
+```json
+{
+  "agents": {
+    "providers": {
+      "my-agent-work": {
+        "extends": "my-agent",
+        "label": "My agent (work)",
+        "providerOptions": { "endpoint": "https://agent.example.com" },
+        "settings": { "approval": "ask" },
+        "additionalModels": [{ "id": "agent-preview", "label": "Agent Preview" }]
+      }
+    }
+  }
+}
+```
 
 ## Open a session
 
@@ -156,6 +197,10 @@ emit({ type: "session.ready", requestId: input.requestId, sessionId: input.sessi
 
 `session.config` contains the committed values. Publish what the native agent selected after
 normalization, not a copy of the request.
+
+`config.deniedTools` is the provider-agnostic native tool deny-list from host provider
+configuration. It contains at most 512 unique, non-empty names of at most 256 characters each.
+This is separate from `toolPolicy.preapproved`, which grants exact MCP tools.
 
 ## Complete the first prompt
 
@@ -250,6 +295,10 @@ Advertise `session.persistence` when a native session can be reopened. Open a ne
 when `session.open.persistence` is absent. Resume the identified native session when it is present.
 Return an opaque persistence value in `session.opened` or `session.persistence`; Paseo stores it
 without inspecting it.
+
+When `session.list` is negotiated, return `firstPromptPreview` and `lastPromptPreview` separately in
+each `ProviderSessionSummary`. Each preview is optional and limited to 160 characters. Do not reuse
+the session description as a prompt preview.
 
 When `history` is `"replay"`, publish the native session's existing `timeline.item` snapshots before
 `session.ready`. Use `history: "skip"` to open without replaying old rows.

@@ -1,14 +1,21 @@
 import type {
+  ProviderAvailability,
   ProviderConnectRequest,
   ProviderCatalogOptions,
   ProviderEvent,
   ProviderInput,
 } from "@getpaseo/plugin/server/provider";
-import { ProviderEventSchema, ProviderInputSchema } from "@getpaseo/plugin/server/provider";
+import {
+  ProviderAvailabilitySchema,
+  ProviderEventSchema,
+  ProviderInputSchema,
+} from "@getpaseo/plugin/server/provider";
 import { z } from "zod";
 
 export interface PluginProviderMetadata {
   hasCatalogCacheKey?: boolean;
+  hasAvailability?: boolean;
+  hasProviderOptionsSchema?: boolean;
   id: string;
   label: string;
   description?: string;
@@ -28,6 +35,18 @@ export type PluginProcessRequest =
       requestId: string;
       providerId: string;
       options: ProviderCatalogOptions;
+    }
+  | {
+      type: "provider.availability";
+      requestId: string;
+      providerId: string;
+      options: ProviderCatalogOptions;
+    }
+  | {
+      type: "provider.normalize_options";
+      requestId: string;
+      providerId: string;
+      options?: Readonly<Record<string, unknown>>;
     }
   | { type: "hook"; requestId: string; kind: "event" | "before"; name: string; input: unknown }
   | { type: "hook.cancel"; requestId: string }
@@ -89,6 +108,8 @@ const providerMetadataSchema = z
     description: z.string().optional(),
     iconPath: z.string().optional(),
     hasCatalogCacheKey: z.boolean().optional(),
+    hasAvailability: z.boolean().optional(),
+    hasProviderOptionsSchema: z.boolean().optional(),
   })
   .strict();
 const providerConnectRequestSchema = z
@@ -120,15 +141,58 @@ export const PluginProcessRequestSchema: z.ZodType<PluginProcessRequest> = z.dis
         requestId: z.string().min(1),
         providerId: z.string().min(1),
         options: z.discriminatedUnion("scope", [
-          z.object({ scope: z.literal("global"), force: z.boolean().optional() }).strict(),
+          z
+            .object({
+              scope: z.literal("global"),
+              force: z.boolean().optional(),
+              providerOptions: z.record(z.string(), z.json()).optional(),
+              settings: z.record(z.string(), z.json()).optional(),
+            })
+            .strict(),
           z
             .object({
               scope: z.literal("workspace"),
               cwd: z.string(),
               force: z.boolean().optional(),
+              providerOptions: z.record(z.string(), z.json()).optional(),
+              settings: z.record(z.string(), z.json()).optional(),
             })
             .strict(),
         ]),
+      })
+      .strict(),
+    z
+      .object({
+        type: z.literal("provider.availability"),
+        requestId: z.string().min(1),
+        providerId: z.string().min(1),
+        options: z.discriminatedUnion("scope", [
+          z
+            .object({
+              scope: z.literal("global"),
+              force: z.boolean().optional(),
+              providerOptions: z.record(z.string(), z.json()).optional(),
+              settings: z.record(z.string(), z.json()).optional(),
+            })
+            .strict(),
+          z
+            .object({
+              scope: z.literal("workspace"),
+              cwd: z.string(),
+              force: z.boolean().optional(),
+              providerOptions: z.record(z.string(), z.json()).optional(),
+              settings: z.record(z.string(), z.json()).optional(),
+            })
+            .strict(),
+        ]),
+      })
+      .strict(),
+    z
+      .object({
+        type: z.literal("provider.normalize_options"),
+        requestId: z.string().min(1),
+        providerId: z.string().min(1),
+        options: z.record(z.string(), z.json()).optional(),
       })
       .strict(),
     z
@@ -240,3 +304,27 @@ export const PluginProcessMessageSchema: z.ZodType<PluginProcessMessage> = z.dis
     z.object({ type: z.literal("paseo_close") }).strict(),
   ],
 );
+
+export const PluginProviderAvailabilitySchema: z.ZodType<ProviderAvailability> =
+  ProviderAvailabilitySchema;
+
+export const PluginProviderOptionsValidationSchema = z.discriminatedUnion("valid", [
+  z.object({ valid: z.literal(true), options: z.record(z.string(), z.json()) }).strict(),
+  z
+    .object({
+      valid: z.literal(false),
+      issues: z
+        .array(
+          z
+            .object({
+              path: z.array(z.union([z.string().max(256), z.number()])).max(32),
+              message: z.string().max(2_048),
+            })
+            .strict(),
+        )
+        .max(128),
+    })
+    .strict(),
+]);
+
+export type PluginProviderOptionsValidation = z.infer<typeof PluginProviderOptionsValidationSchema>;

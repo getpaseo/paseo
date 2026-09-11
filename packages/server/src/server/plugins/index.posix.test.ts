@@ -160,12 +160,15 @@ describe("PluginService", () => {
     roots.push(home);
     const directory = await createPlugin(
       "provider-icon",
-      `export default function contribute(server) {
+      `import { z } from "zod";
+export default function contribute(server) {
   server.registerProvider({
     id: "plugin-agent",
     label: "Plugin agent",
     icon: "icon.svg",
-    async getCatalogCacheKey(options) { return options.scope === "workspace" ? "runtime:" + options.cwd : undefined; },
+    providerOptionsSchema: z.object({ timeoutMs: z.number().int().positive().default(30000) }).strict(),
+    async checkAvailability(options) { return { status: "available", diagnostic: JSON.stringify(options.providerOptions) }; },
+    async getCatalogCacheKey(options) { return options.scope === "workspace" ? "runtime:" + options.cwd + ":" + JSON.stringify(options.providerOptions) : undefined; },
     async connect() { throw new Error("not opened by this test"); },
   });
   return () => {};
@@ -179,15 +182,38 @@ describe("PluginService", () => {
     await service.installDirectory({ path: directory });
 
     expect(service.getProviderRegistrations()).toMatchObject([
-      { id: "plugin-agent", icon: iconSvg, getCatalogCacheKey: expect.any(Function) },
+      {
+        id: "plugin-agent",
+        icon: iconSvg,
+        checkAvailability: expect.any(Function),
+        getCatalogCacheKey: expect.any(Function),
+        normalizeProviderOptions: expect.any(Function),
+      },
     ]);
     const provider = service.getProviderRegistrations()[0]!;
-    expect(await provider.getCatalogCacheKey!({ scope: "workspace", cwd: "/project-a" })).toBe(
-      "runtime:/project-a",
-    );
+    const normalized = await provider.normalizeProviderOptions?.(undefined);
+    expect(normalized).toEqual({ timeoutMs: 30_000 });
+    await expect(provider.normalizeProviderOptions?.({ typo: true })).rejects.toMatchObject({
+      code: "provider_options_invalid",
+      provider: "plugin-agent",
+    });
+    await expect(
+      provider.checkAvailability?.({
+        scope: "workspace",
+        cwd: "/project-a",
+        providerOptions: normalized,
+      }),
+    ).resolves.toEqual({
+      status: "available",
+      diagnostic: '{"timeoutMs":30000}',
+    });
     expect(
-      await provider.getCatalogCacheKey!({ scope: "workspace", cwd: "/project-b", force: true }),
-    ).toBe("runtime:/project-b");
+      await provider.getCatalogCacheKey!({
+        scope: "workspace",
+        cwd: "/project-a",
+        providerOptions: normalized,
+      }),
+    ).toBe('runtime:/project-a:{"timeoutMs":30000}');
     expect(await provider.getCatalogCacheKey!({ scope: "global" })).toBeUndefined();
   });
 

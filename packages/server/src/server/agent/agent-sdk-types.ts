@@ -562,6 +562,8 @@ export interface ListImportableSessionsOptions {
    * sessions by working directory should do so before doing expensive work.
    */
   cwd?: string;
+  providerOptions?: ProviderOptions;
+  settings?: Readonly<Record<string, unknown>>;
 }
 
 export interface ImportableProviderSession {
@@ -617,6 +619,8 @@ export interface AgentSessionConfig {
   title?: string | null;
   providerOptions?: ProviderOptions;
   toolPolicy?: ToolPolicy;
+  /** Runtime-only generic native tool deny-list supplied by provider configuration. */
+  deniedTools?: readonly string[];
   mcpServers?: Record<string, McpServerConfig>;
   /**
    * Internal agents are hidden from listings and don't trigger notifications.
@@ -705,16 +709,28 @@ export interface AgentSession {
   } | null;
 }
 
-export type FetchCatalogOptions =
-  | {
-      scope: "global";
-      force: boolean;
-    }
-  | {
-      scope: "workspace";
-      cwd: string;
-      force: boolean;
-    };
+interface FetchCatalogConfiguration {
+  providerOptions?: ProviderOptions;
+  settings?: Readonly<Record<string, unknown>>;
+}
+
+export type FetchCatalogOptions = FetchCatalogConfiguration &
+  (
+    | {
+        scope: "global";
+        force: boolean;
+      }
+    | {
+        scope: "workspace";
+        cwd: string;
+        force: boolean;
+      }
+  );
+
+export interface ProviderAvailabilityResult {
+  status: "missing" | "unrunnable" | "incompatible" | "available";
+  diagnostic?: string;
+}
 
 export interface ProviderRefreshContext {
   readonly signal: AbortSignal;
@@ -782,8 +798,12 @@ export interface AgentClient {
    * Check availability in the catalogue target when supplied (CLI binary is installed).
    * Returns true if available, false otherwise.
    */
+  checkAvailability?(
+    options: FetchCatalogOptions,
+    signal?: AbortSignal,
+  ): Promise<ProviderAvailabilityResult>;
   isAvailable(signal?: AbortSignal, options?: FetchCatalogOptions): Promise<boolean>;
-  getDiagnostic?(): Promise<{ diagnostic: string }>;
+  getDiagnostic?(options?: FetchCatalogOptions): Promise<{ diagnostic: string }>;
   /**
    * Archive a durable native session (best-effort). Runtime release belongs to AgentSession.close().
    * Called when Paseo archives an agent so the provider's own UI reflects the same state.
