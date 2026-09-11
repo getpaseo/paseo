@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import type pino from "pino";
 import { createClientChannel, type Transport } from "@getpaseo/relay/e2ee";
 import { exportPublicKey, generateKeyPair } from "@getpaseo/relay";
-import { startRelayTransport } from "./relay-transport";
+import { RELAY_WEBSOCKET_OPTIONS, startRelayTransport } from "./relay-transport";
 
 function createMockLogger() {
   const messages: { level: "debug" | "info" | "warn" | "error"; args: unknown[] }[] = [];
@@ -131,6 +131,16 @@ function createFakeWebSockets() {
     },
   };
 }
+
+describe("relay-transport websocket options", () => {
+  test("pins HTTP/1.1 ALPN for outbound relay sockets", () => {
+    expect(RELAY_WEBSOCKET_OPTIONS).toMatchObject({
+      handshakeTimeout: 10_000,
+      perMessageDeflate: false,
+      ALPNProtocols: ["http/1.1"],
+    });
+  });
+});
 
 describe("relay-transport control lifecycle", () => {
   const controllers: Array<{ stop: () => Promise<void> }> = [];
