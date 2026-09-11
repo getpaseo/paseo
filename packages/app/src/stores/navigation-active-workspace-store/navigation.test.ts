@@ -190,6 +190,52 @@ describe("workspace navigation", () => {
     expect(navigations).toEqual(["/h/server-1/workspace/workspace-a?open=agent%3Aagent-1"]);
   });
 
+  it("records no reveal when no agent needs attention", () => {
+    const workspace = {
+      id: "workspace-a",
+      workspaceDirectory: "/repo/workspace-a",
+    } as WorkspaceDescriptor;
+    const agent = {
+      id: "agent-1",
+      cwd: "/repo/workspace-a",
+      workspaceId: "workspace-a",
+      requiresAttention: false,
+    } as unknown as Agent;
+    const { deps, openedTabs, ephemeralReveals } = createFakeDeps({
+      getSessionWorkspaces: () => new Map([[workspace.id, workspace]]),
+      getSessionAgents: () => [agent],
+    });
+
+    navigateToWorkspace({ serverId: "server-1", workspaceId: "workspace-a" }, deps);
+
+    expect(ephemeralReveals).toEqual([]);
+    expect(openedTabs).toEqual([]);
+  });
+
+  it("skips the attention reveal until the persisted workspace layout has hydrated", () => {
+    const workspace = {
+      id: "workspace-a",
+      workspaceDirectory: "/repo/workspace-a",
+    } as WorkspaceDescriptor;
+    const agent = {
+      id: "agent-1",
+      cwd: "/repo/workspace-a",
+      workspaceId: "workspace-a",
+      requiresAttention: true,
+      attentionReason: "permission",
+    } as unknown as Agent;
+    const { deps, openedTabs, ephemeralReveals } = createFakeDeps({
+      getSessionWorkspaces: () => new Map([[workspace.id, workspace]]),
+      getSessionAgents: () => [agent],
+      isWorkspaceLayoutHydrated: () => false,
+    });
+
+    navigateToWorkspace({ serverId: "server-1", workspaceId: "workspace-a" }, deps);
+
+    expect(ephemeralReveals).toEqual([]);
+    expect(openedTabs).toEqual([]);
+  });
+
   it("reads the active workspace from the current route", () => {
     const selection = parseActiveWorkspaceSelection({
       pathname: "/h/server-1/workspace/workspace-a",

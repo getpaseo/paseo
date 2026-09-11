@@ -66,10 +66,10 @@ import {
   collectAllTabs,
   DEFAULT_PANE_ID,
   findPaneById,
-  focusWorkspaceTabEphemerally,
   getFocusedBrowserId,
   FOCUSED_PANE_PLACEMENT,
   selectExplorerSidebarPaneId,
+  useEffectiveWorkspaceLayout,
   type WorkspaceLayout,
   type WorkspaceTabPlacement,
   useWorkspaceLayoutStore,
@@ -1811,27 +1811,12 @@ function WorkspaceScreenContent({
     return () => handler.remove();
   }, [isExplorerSidebarShowing, isMobile, isRouteFocused, showMobileAgent]);
 
-  const persistedWorkspaceLayout = useWorkspaceLayoutStore((state) =>
-    persistenceKey ? (state.layoutByWorkspace[persistenceKey] ?? null) : null,
-  );
-  const ephemeralFocusTarget = useWorkspaceLayoutStore((state) =>
-    persistenceKey ? (state.ephemeralFocusTargetByWorkspace[persistenceKey] ?? null) : null,
-  );
+  // The layout the user is looking at: persisted focus with the ephemeral
+  // attention reveal applied, so what renders always agrees with what
+  // focus-derived consumers (add-to-chat, plugin context) resolve.
+  const workspaceLayout = useEffectiveWorkspaceLayout(persistenceKey);
   const clearEphemeralWorkspaceFocus = useWorkspaceLayoutStore(
     (state) => state.clearEphemeralFocusTab,
-  );
-  // The attention reveal must not overwrite the focus the user left behind:
-  // apply it to an in-memory copy so the persisted layout still restores their
-  // tab when they come back without interacting with the revealed agent.
-  const workspaceLayout = useMemo(
-    () =>
-      persistedWorkspaceLayout && ephemeralFocusTarget
-        ? focusWorkspaceTabEphemerally({
-            layout: persistedWorkspaceLayout,
-            target: ephemeralFocusTarget,
-          })
-        : persistedWorkspaceLayout,
-    [ephemeralFocusTarget, persistedWorkspaceLayout],
   );
   // The reveal lasts one visit: it ends when the user leaves the workspace (or
   // the screen goes away entirely), not when the retained deck entry unmounts.

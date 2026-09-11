@@ -6,7 +6,7 @@ import { useHostRuntimeClient } from "@/runtime/host-runtime";
 import { useActiveWorkspaceSelection } from "@/stores/navigation-active-workspace-store";
 import { useSessionStore } from "@/stores/session-store";
 import { useWorkspaceExists } from "@/stores/session-store-hooks";
-import { useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
+import { useEffectiveWorkspaceLayout } from "@/stores/workspace-layout-store";
 import { normalizeWorkspaceOpaqueId } from "@/utils/workspace-identity";
 import { createPluginClientStateSource } from "../client-state/source";
 import { hostIdFromPathname } from "../routes";
@@ -23,9 +23,9 @@ export function PluginCommandCenterActions() {
   const workspaceId = selection?.workspaceId ?? null;
   const workspaceExists = useWorkspaceExists(serverId, workspaceId);
   const workspaceKey = serverId && workspaceId ? `${serverId}:${workspaceId}` : null;
-  const layout = useWorkspaceLayoutStore((state) =>
-    workspaceKey ? (state.layoutByWorkspace[workspaceKey] ?? null) : null,
-  );
+  // The effective layout, not the persisted one: during an attention reveal the
+  // agent on screen is the revealed one, and plugin context must agree with it.
+  const layout = useEffectiveWorkspaceLayout(workspaceKey);
   const focusedAgentId = getFocusedAgentId(layout);
   const agentExists = useSessionStore((state) => {
     if (!serverId || !focusedAgentId) return null;

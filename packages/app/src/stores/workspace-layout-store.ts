@@ -1,5 +1,5 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import { z } from "zod";
@@ -1547,19 +1547,20 @@ export function createWorkspaceLayoutStore(
               layout,
               state.explorerSidebarPaneIdByWorkspace[normalizedWorkspaceKey],
             );
+            // Focusing a pane is an explicit focus move: it ends the reveal even
+            // when the pane is already the persisted focused pane — and even when
+            // the target is the Explorer sidebar, which only toggles visibility.
+            const clearedEphemeralFocus = withoutEphemeralFocusTarget(
+              state,
+              normalizedWorkspaceKey,
+            );
             if (normalizedPaneId === explorerSidebarPaneId) {
-              return state;
+              return clearedEphemeralFocus ?? state;
             }
             const nextLayout = focusPaneInLayout({
               layout,
               paneId: normalizedPaneId,
             });
-            // Focusing a pane is an explicit focus move: it ends the reveal
-            // even when the pane is already the persisted focused pane.
-            const clearedEphemeralFocus = withoutEphemeralFocusTarget(
-              state,
-              normalizedWorkspaceKey,
-            );
             if (!nextLayout) {
               return clearedEphemeralFocus ?? state;
             }
@@ -1994,6 +1995,36 @@ export function createWorkspaceLayoutStore(
 }
 
 export const useWorkspaceLayoutStore = createWorkspaceLayoutStore();
+
+/**
+ * The layout the user is looking at: the persisted layout with the ephemeral
+ * attention reveal applied. Focus-derived consumers (the workspace screen, the
+ * composer's add-to-chat target, plugin command-center context) must read this
+ * so their idea of "focused" matches what is on screen during a reveal.
+ */
+export function useEffectiveWorkspaceLayout(
+  workspaceKey: string | null | undefined,
+): WorkspaceLayout | null {
+  const normalizedWorkspaceKey = trimNonEmpty(workspaceKey);
+  const persistedLayout = useWorkspaceLayoutStore((state) =>
+    normalizedWorkspaceKey ? (state.layoutByWorkspace[normalizedWorkspaceKey] ?? null) : null,
+  );
+  const ephemeralFocusTarget = useWorkspaceLayoutStore((state) =>
+    normalizedWorkspaceKey
+      ? (state.ephemeralFocusTargetByWorkspace[normalizedWorkspaceKey] ?? null)
+      : null,
+  );
+  return useMemo(
+    () =>
+      persistedLayout && ephemeralFocusTarget
+        ? focusWorkspaceTabEphemerally({
+            layout: persistedLayout,
+            target: ephemeralFocusTarget,
+          })
+        : persistedLayout,
+    [ephemeralFocusTarget, persistedLayout],
+  );
+}
 
 export function useWorkspaceLayoutStoreHydrated(): boolean {
   const [hasHydrated, setHasHydrated] = useState(() =>

@@ -11,7 +11,7 @@ import {
   resolveWorkspaceMapKeyByIdentity,
 } from "@/utils/workspace-identity";
 import type { ActiveWorkspaceSelection } from "@/stores/last-workspace-selection";
-import type { WorkspaceTabTarget } from "@/workspace-tabs/model";
+import { buildWorkspaceTabPersistenceKey, type WorkspaceTabTarget } from "@/workspace-tabs/model";
 import { prepareWorkspaceTab, type PrepareWorkspaceTabDeps } from "@/utils/prepare-workspace-tab";
 import type { WorkspaceTabPlacement } from "@/stores/workspace-layout-actions";
 
@@ -107,12 +107,25 @@ export function navigateToWorkspace(
         )
       : [];
     const attentionAgentId = pickAttentionAgent(workspaceAgents);
-    if (attentionAgentId && resolvedWorkspaceId) {
-      // Ephemeral, not a persisted reveal: the layout keeps the focus the user
-      // left behind, so returning to the workspace restores their tab once the
-      // attention flag clears or they move focus themselves.
+    // Keyed like the workspace screen keys it (from the route id, via
+    // buildWorkspaceTabPersistenceKey), not like the session-store map: a map
+    // key that differs from the route id would file the reveal where the screen
+    // never looks.
+    const attentionWorkspaceKey = attentionAgentId
+      ? buildWorkspaceTabPersistenceKey({
+          serverId: input.serverId,
+          workspaceId: input.workspaceId,
+        })
+      : null;
+    // Ephemeral, not a persisted reveal: the layout keeps the focus the user
+    // left behind, so returning to the workspace restores their tab once the
+    // attention flag clears or they move focus themselves. Skipped until the
+    // persisted layout has hydrated — an early merge would discard the
+    // background-opened tab while the target lingered — and attention persists,
+    // so the next navigation reveals just as well.
+    if (attentionAgentId && attentionWorkspaceKey && deps.isWorkspaceLayoutHydrated()) {
       deps.revealEphemeralTab({
-        workspaceKey: `${input.serverId}:${resolvedWorkspaceId}`,
+        workspaceKey: attentionWorkspaceKey,
         target: { kind: "agent", agentId: attentionAgentId },
       });
     }

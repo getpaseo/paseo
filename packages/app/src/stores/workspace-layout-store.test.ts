@@ -4369,6 +4369,101 @@ describe("workspace-layout-store ephemeral attention focus", () => {
     ).toBeUndefined();
   });
 
+  it("clears the reveal when the user focuses a pane", () => {
+    const workspaceKey = createWorkspaceKey();
+    const store = workspaceLayoutStore.getState();
+    store.openTab({
+      workspaceKey,
+      target: { kind: "agent", agentId: "agent-attention" },
+      intent: "new",
+    });
+    store.revealEphemeralTab(workspaceKey, { kind: "agent", agentId: "agent-attention" });
+
+    store.focusPane(workspaceKey, "main");
+
+    expect(
+      workspaceLayoutStore.getState().ephemeralFocusTargetByWorkspace[workspaceKey],
+    ).toBeUndefined();
+  });
+
+  it("clears the reveal when the user focuses the Explorer sidebar pane", () => {
+    const workspaceKey = createWorkspaceKey();
+    const store = workspaceLayoutStore.getState();
+    store.openTab({
+      workspaceKey,
+      target: { kind: "agent", agentId: "agent-attention" },
+      intent: "new",
+    });
+    store.revealEphemeralTab(workspaceKey, { kind: "agent", agentId: "agent-attention" });
+
+    store.focusPane(workspaceKey, "explorer");
+
+    expect(
+      workspaceLayoutStore.getState().ephemeralFocusTargetByWorkspace[workspaceKey],
+    ).toBeUndefined();
+  });
+
+  it("clears the reveal when the user opens a tab with focus", () => {
+    const workspaceKey = createWorkspaceKey();
+    const store = workspaceLayoutStore.getState();
+    store.openTab({
+      workspaceKey,
+      target: { kind: "agent", agentId: "agent-attention" },
+      intent: "new",
+    });
+    store.revealEphemeralTab(workspaceKey, { kind: "agent", agentId: "agent-attention" });
+
+    store.openTab({
+      workspaceKey,
+      target: { kind: "agent", agentId: "agent-idle" },
+      intent: "new",
+    });
+
+    expect(
+      workspaceLayoutStore.getState().ephemeralFocusTargetByWorkspace[workspaceKey],
+    ).toBeUndefined();
+  });
+
+  it("clears the reveal when a tab is retargeted", () => {
+    const workspaceKey = createWorkspaceKey();
+    const store = workspaceLayoutStore.getState();
+    const newTabId = store.openTab({
+      workspaceKey,
+      target: { kind: "new_tab" },
+      intent: "new",
+    });
+    expect(newTabId).toBeTruthy();
+    store.openTab({
+      workspaceKey,
+      target: { kind: "agent", agentId: "agent-attention" },
+      intent: "new",
+    });
+    store.revealEphemeralTab(workspaceKey, { kind: "agent", agentId: "agent-attention" });
+
+    store.replaceTab(workspaceKey, newTabId as string, { kind: "files" });
+
+    expect(
+      workspaceLayoutStore.getState().ephemeralFocusTargetByWorkspace[workspaceKey],
+    ).toBeUndefined();
+  });
+
+  it("drops the reveal when the workspace is purged", () => {
+    const workspaceKey = createWorkspaceKey();
+    const store = workspaceLayoutStore.getState();
+    store.openTab({
+      workspaceKey,
+      target: { kind: "agent", agentId: "agent-attention" },
+      intent: "new",
+    });
+    store.revealEphemeralTab(workspaceKey, { kind: "agent", agentId: "agent-attention" });
+
+    store.purgeWorkspace(workspaceKey);
+
+    expect(
+      workspaceLayoutStore.getState().ephemeralFocusTargetByWorkspace[workspaceKey],
+    ).toBeUndefined();
+  });
+
   it("never persists the ephemeral reveal", async () => {
     const workspaceKey = createWorkspaceKey();
     const store = workspaceLayoutStore.getState();
