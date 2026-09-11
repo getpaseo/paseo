@@ -107,6 +107,11 @@ function createInput(
         status: "idle",
         handler: () => undefined,
       },
+      "commit-and-create-pr": {
+        disabled: false,
+        status: "idle",
+        handler: () => undefined,
+      },
       "merge-pr-squash": {
         disabled: false,
         status: "idle",
@@ -313,6 +318,58 @@ describe("git-actions-policy", () => {
     expect(
       actions.secondary.some((action) => action.id === "pr" && action.label === "View PR"),
     ).toBe(true);
+  });
+
+  it("offers commit-and-create-pr only while dirty and before a PR exists", () => {
+    const dirty = createInput({
+      hasRemote: true,
+      isOnBaseBranch: false,
+      aheadCount: 1,
+      hasUncommittedChanges: true,
+    });
+
+    expect(buildGitActions(dirty).secondary.map((action) => action.id)).toContain(
+      "commit-and-create-pr",
+    );
+    expect(
+      buildGitActions({ ...dirty, hasUncommittedChanges: false }).secondary.map(
+        (action) => action.id,
+      ),
+    ).not.toContain("commit-and-create-pr");
+    expect(
+      buildGitActions({
+        ...dirty,
+        hasPullRequest: true,
+        pullRequestUrl: "https://example.com/pr/789",
+        pullRequestState: "open",
+      }).secondary.map((action) => action.id),
+    ).not.toContain("commit-and-create-pr");
+    expect(
+      buildGitActions({ ...dirty, githubFeaturesEnabled: false }).secondary.map(
+        (action) => action.id,
+      ),
+    ).not.toContain("commit-and-create-pr");
+  });
+
+  it("keeps commit-and-create-pr visible while its own run is still pending, even after the commit clears hasUncommittedChanges", () => {
+    const pending = createInput({
+      hasRemote: true,
+      isOnBaseBranch: false,
+      aheadCount: 1,
+      hasUncommittedChanges: false,
+      runtime: {
+        ...createInput().runtime,
+        "commit-and-create-pr": {
+          disabled: false,
+          status: "pending",
+          handler: () => undefined,
+        },
+      },
+    });
+
+    expect(buildGitActions(pending).secondary.map((action) => action.id)).toContain(
+      "commit-and-create-pr",
+    );
   });
 
   it("enables pull-and-push when the branch has both incoming and outgoing commits", () => {

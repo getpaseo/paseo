@@ -777,6 +777,14 @@ export const ja: TranslationResources = {
           pending_mr: "MRを作成中...",
           success_mr: "MRが作成されました",
         },
+        commitAndCreatePr: {
+          label: "コミットしてPRを作成",
+          pending: "コミットしてPRを作成中...",
+          success: "コミットしてPRを作成しました",
+          label_mr: "コミットしてMRを作成",
+          pending_mr: "コミットしてMRを作成中...",
+          success_mr: "コミットしてMRを作成しました",
+        },
         mergeBranch: {
           label: "ローカルでマージ",
           pending: "マージ中...",
@@ -866,6 +874,7 @@ export const ja: TranslationResources = {
           failedPush: "プッシュに失敗しました",
           failedPullAndPush: "プル＆プッシュに失敗しました",
           failedCreatePr: "PRの作成に失敗しました",
+          failedCommitAndCreatePr: "コミットしてPRの作成に失敗しました",
           failedMergePr: "PRのマージに失敗しました",
           failedEnableAutoMerge: "自動マージの有効化に失敗しました",
           failedDisableAutoMerge: "自動マージの無効化に失敗しました",

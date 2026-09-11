@@ -776,6 +776,14 @@ export const ko: TranslationResources = {
           pending_mr: "MR 생성 중...",
           success_mr: "MR 생성됨",
         },
+        commitAndCreatePr: {
+          label: "커밋 후 PR 생성",
+          pending: "커밋하고 PR 생성 중...",
+          success: "커밋 후 PR 생성됨",
+          label_mr: "커밋 후 MR 생성",
+          pending_mr: "커밋하고 MR 생성 중...",
+          success_mr: "커밋 후 MR 생성됨",
+        },
         mergeBranch: {
           label: "로컬에서 병합",
           pending: "병합하는 중...",
@@ -862,6 +870,7 @@ export const ko: TranslationResources = {
           failedPush: "푸시하지 못했습니다",
           failedPullAndPush: "풀 후 푸시하지 못했습니다",
           failedCreatePr: "PR을 생성하지 못했습니다",
+          failedCommitAndCreatePr: "커밋 후 PR을 생성하지 못했습니다",
           failedMergePr: "PR을 병합하지 못했습니다",
           failedEnableAutoMerge: "자동 병합을 사용 설정하지 못했습니다",
           failedDisableAutoMerge: "자동 병합을 해제하지 못했습니다",

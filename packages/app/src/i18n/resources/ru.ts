@@ -781,6 +781,14 @@ export const ru: TranslationResources = {
           pending_mr: "Создание MR...",
           success_mr: "MR создан",
         },
+        commitAndCreatePr: {
+          label: "Закоммитить и создать PR",
+          pending: "Создание коммита и PR...",
+          success: "Коммит создан и PR создан",
+          label_mr: "Закоммитить и создать MR",
+          pending_mr: "Создание коммита и MR...",
+          success_mr: "Коммит создан и MR создан",
+        },
         mergeBranch: {
           label: "Выполнить слияние локально",
           pending: "Слияние...",
@@ -870,6 +878,7 @@ export const ru: TranslationResources = {
           failedPush: "Не удалось отправить изменения",
           failedPullAndPush: "Не удалось получить и отправить изменения",
           failedCreatePr: "Не удалось создать PR.",
+          failedCommitAndCreatePr: "Не удалось закоммитить и создать PR.",
           failedMergePr: "Не удалось выполнить слияние PR",
           failedEnableAutoMerge: "Не удалось включить автослияние",
           failedDisableAutoMerge: "Не удалось отключить автослияние",

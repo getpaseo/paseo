@@ -16,6 +16,7 @@ export type CheckoutGitAsyncActionId =
   | "pull-and-push"
   | "refresh"
   | "create-pr"
+  | "commit-and-create-pr"
   | "merge-pr-squash"
   | "merge-pr-merge"
   | "merge-pr-rebase"
@@ -108,6 +109,7 @@ interface CheckoutGitActionsStoreState {
   pullAndPush: (params: { serverId: string; cwd: string }) => Promise<void>;
   refresh: (params: { serverId: string; cwd: string }) => Promise<void>;
   createPr: (params: { serverId: string; cwd: string }) => Promise<void>;
+  commitAndCreatePr: (params: { serverId: string; cwd: string }) => Promise<void>;
   mergePr: (params: {
     serverId: string;
     cwd: string;
@@ -271,6 +273,25 @@ export const useCheckoutGitActionsStore = create<CheckoutGitActionsStoreState>()
         const payload = await client.checkoutPrCreate(cwd, {});
         if (payload.error) {
           throw new Error(payload.error.message);
+        }
+      },
+    });
+  },
+
+  commitAndCreatePr: async ({ serverId, cwd }) => {
+    await runCheckoutAction({
+      serverId,
+      cwd,
+      actionId: "commit-and-create-pr",
+      run: async () => {
+        const client = resolveClient(serverId);
+        const commitPayload = await client.checkoutCommit(cwd, { addAll: true });
+        if (commitPayload.error) {
+          throw new Error(commitPayload.error.message);
+        }
+        const prPayload = await client.checkoutPrCreate(cwd, {});
+        if (prPayload.error) {
+          throw new Error(prPayload.error.message);
         }
       },
     });

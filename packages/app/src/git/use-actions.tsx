@@ -411,6 +411,9 @@ export function useGitActions({ serverId, cwd, icons }: UseGitActionsInput): Use
   const prCreateStatus = useCheckoutGitActionsStore((s) =>
     s.getStatus({ serverId, cwd, actionId: "create-pr" }),
   );
+  const commitAndCreatePrStatus = useCheckoutGitActionsStore((s) =>
+    s.getStatus({ serverId, cwd, actionId: "commit-and-create-pr" }),
+  );
   const mergePrStatuses: Record<CheckoutPrMergeMethod, CheckoutGitActionStatus> = {
     squash: useCheckoutGitActionsStore((s) =>
       s.getStatus({ serverId, cwd, actionId: "merge-pr-squash" }),
@@ -448,6 +451,7 @@ export function useGitActions({ serverId, cwd, icons }: UseGitActionsInput): Use
   const runPush = useCheckoutGitActionsStore((s) => s.push);
   const runPullAndPush = useCheckoutGitActionsStore((s) => s.pullAndPush);
   const runCreatePr = useCheckoutGitActionsStore((s) => s.createPr);
+  const runCommitAndCreatePr = useCheckoutGitActionsStore((s) => s.commitAndCreatePr);
   const runMergePr = useCheckoutGitActionsStore((s) => s.mergePr);
   const runEnablePrAutoMerge = useCheckoutGitActionsStore((s) => s.enablePrAutoMerge);
   const runDisablePrAutoMerge = useCheckoutGitActionsStore((s) => s.disablePrAutoMerge);
@@ -534,6 +538,29 @@ export function useGitActions({ serverId, cwd, icons }: UseGitActionsInput): Use
     forge,
     persistShipDefault,
     runCreatePr,
+    serverId,
+    t,
+    toastActionError,
+    toastActionSuccess,
+  ]);
+
+  const handleCommitAndCreatePr = useCallback(() => {
+    void persistShipDefault("pr");
+    void runCommitAndCreatePr({ serverId, cwd })
+      .then(() => {
+        toastActionSuccess(
+          t("workspace.git.actions.commitAndCreatePr.success", forgeVocabulary(forge)),
+        );
+        return;
+      })
+      .catch((err) => {
+        toastActionError(err, t("workspace.git.actions.toasts.failedCommitAndCreatePr"));
+      });
+  }, [
+    cwd,
+    forge,
+    persistShipDefault,
+    runCommitAndCreatePr,
     serverId,
     t,
     toastActionError,
@@ -730,10 +757,18 @@ export function useGitActions({ serverId, cwd, icons }: UseGitActionsInput): Use
           handler: handlePullAndPush,
         },
         pr: {
-          disabled: isActionDisabled(actionsDisabled, prCreateStatus),
+          disabled:
+            isActionDisabled(actionsDisabled, prCreateStatus) ||
+            commitAndCreatePrStatus === "pending",
           status: hasPullRequest ? "idle" : prCreateStatus,
           icon: prIcon,
           handler: handlePrAction,
+        },
+        "commit-and-create-pr": {
+          disabled: isActionDisabled(actionsDisabled, commitAndCreatePrStatus),
+          status: commitAndCreatePrStatus,
+          icon: icons.commit,
+          handler: handleCommitAndCreatePr,
         },
         "merge-pr-squash": {
           disabled: isActionDisabled(actionsDisabled, mergePrStatuses.squash),
@@ -827,6 +862,7 @@ export function useGitActions({ serverId, cwd, icons }: UseGitActionsInput): Use
     pushStatus,
     pullAndPushStatus,
     prCreateStatus,
+    commitAndCreatePrStatus,
     mergePrStatuses.squash,
     mergePrStatuses.merge,
     mergePrStatuses.rebase,
@@ -843,6 +879,7 @@ export function useGitActions({ serverId, cwd, icons }: UseGitActionsInput): Use
     handlePush,
     handlePullAndPush,
     handlePrAction,
+    handleCommitAndCreatePr,
     handleMergePr,
     handleEnablePrAutoMerge,
     handleDisablePrAutoMerge,
@@ -960,6 +997,12 @@ function getTranslatedGitActionLabels(
             pendingLabel: t("workspace.git.actions.createPr.pending", forgeVocabulary(forge)),
             successLabel: t("workspace.git.actions.createPr.success", forgeVocabulary(forge)),
           };
+    case "commit-and-create-pr":
+      return {
+        label: t("workspace.git.actions.commitAndCreatePr.label", forgeVocabulary(forge)),
+        pendingLabel: t("workspace.git.actions.commitAndCreatePr.pending", forgeVocabulary(forge)),
+        successLabel: t("workspace.git.actions.commitAndCreatePr.success", forgeVocabulary(forge)),
+      };
     case "merge-pr-squash":
       return {
         label: t("workspace.git.actions.mergePr.squash", forgeVocabulary(forge)),

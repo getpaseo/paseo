@@ -778,6 +778,14 @@ export const ptBR: TranslationResources = {
           pending_mr: "Criando MR...",
           success_mr: "MR criada",
         },
+        commitAndCreatePr: {
+          label: "Commit e criar PR",
+          pending: "Fazendo commit e criando PR...",
+          success: "Commit feito e PR criada",
+          label_mr: "Commit e criar MR",
+          pending_mr: "Fazendo commit e criando MR...",
+          success_mr: "Commit feito e MR criada",
+        },
         mergeBranch: {
           label: "Fazer merge localmente",
           pending: "Fazendo merge...",
@@ -877,6 +885,7 @@ export const ptBR: TranslationResources = {
           failedPush: "Falha ao fazer push",
           failedPullAndPush: "Falha ao fazer pull e push",
           failedCreatePr: "Falha ao criar PR",
+          failedCommitAndCreatePr: "Falha ao fazer commit e criar PR",
           failedMergePr: "Falha ao fazer merge da PR",
           failedEnableAutoMerge: "Falha ao ativar merge automático",
           failedDisableAutoMerge: "Falha ao desativar merge automático",
