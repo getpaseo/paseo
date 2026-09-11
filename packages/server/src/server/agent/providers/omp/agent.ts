@@ -2028,9 +2028,6 @@ export class OmpAgentSession implements AgentSession {
           });
         }
       }
-      if (!this.activeTurnHasUserMessage) {
-        this.completeTurn(turnId, []);
-      }
       return;
     }
 
