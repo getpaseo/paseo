@@ -2417,8 +2417,11 @@ export class ACPAgentSession implements AgentSession, ACPClient {
 
     const cancelledTurnId = this.activeForegroundTurnId;
     if (cancelledTurnId) {
-      await this.connection.cancel({ sessionId: this.sessionId });
+      // Armed before the request, not after: an agent that leaves
+      // `session/cancel` itself pending would otherwise never reach this and
+      // the turn slot would stay occupied. Normal settlement clears the timer.
       this.armCancelSettleTimer(cancelledTurnId);
+      await this.connection.cancel({ sessionId: this.sessionId });
     }
   }
 
@@ -3123,13 +3126,14 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   }
 
   private handlePromptResponse(response: PromptResponse, turnId: string): void {
-    this.currentTurnUsage = mapACPUsage(response.usage) ?? this.currentTurnUsage;
-
     if (this.activeForegroundTurnId !== turnId) {
       // The turn already ended, most likely through the cancel watchdog above.
-      // Emitting a second terminal event for it would corrupt the timeline.
+      // Returning before any state is touched keeps a late response from
+      // attributing the old turn's usage to the turn that replaced it.
       return;
     }
+
+    this.currentTurnUsage = mapACPUsage(response.usage) ?? this.currentTurnUsage;
 
     switch (response.stopReason) {
       case "cancelled":

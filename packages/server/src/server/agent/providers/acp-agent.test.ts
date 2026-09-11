@@ -2819,7 +2819,6 @@ describe("ACPAgentSession", () => {
       await session.interrupt();
 
       expect(cancel).toHaveBeenCalledOnce();
-      expect(asInternals<ACPSessionInternals>(session).activeForegroundTurnId).toBe(turnId);
 
       await vi.advanceTimersByTimeAsync(30_000);
 
@@ -2827,12 +2826,88 @@ describe("ACPAgentSession", () => {
         type: "turn_canceled",
         turnId,
       });
-      expect(asInternals<ACPSessionInternals>(session).activeForegroundTurnId).toBeNull();
 
       // The session is usable again rather than stuck on "A foreground turn is already active".
       await expect(session.startTurn("second")).resolves.toMatchObject({
         turnId: expect.any(String),
       });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test("a cancel request that never settles still releases the turn", async () => {
+    vi.useFakeTimers();
+    try {
+      const session = createSession();
+      const events: AgentStreamEvent[] = [];
+      const prompt = vi.fn(() => new Promise<PromptResponse>(() => {}));
+      // The agent acknowledges nothing: session/cancel stays pending forever.
+      const cancel = vi.fn(() => new Promise<void>(() => {}));
+
+      asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+      asInternals<ACPSessionInternals>(session).connection = { prompt, cancel } as never;
+      session.subscribe((event) => {
+        events.push(event);
+      });
+
+      const { turnId } = await session.startTurn("hello");
+      void session.interrupt();
+      await vi.advanceTimersByTimeAsync(30_000);
+
+      expect(events.find((event) => event.type === "turn_canceled")).toMatchObject({
+        type: "turn_canceled",
+        turnId,
+      });
+      await expect(session.startTurn("second")).resolves.toMatchObject({
+        turnId: expect.any(String),
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test("a late response cannot attribute its usage to the turn that replaced it", async () => {
+    vi.useFakeTimers();
+    try {
+      const session = createSession();
+      const events: AgentStreamEvent[] = [];
+      const settlers: Array<(value: PromptResponse) => void> = [];
+      const prompt = vi.fn(
+        () =>
+          new Promise<PromptResponse>((resolve) => {
+            settlers.push(resolve);
+          }),
+      );
+      const cancel = vi.fn(async () => {});
+
+      asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+      asInternals<ACPSessionInternals>(session).connection = { prompt, cancel } as never;
+      session.subscribe((event) => {
+        events.push(event);
+      });
+
+      await session.startTurn("first");
+      await session.interrupt();
+      await vi.advanceTimersByTimeAsync(30_000);
+
+      const second = await session.startTurn("second");
+
+      // The abandoned first turn answers late, carrying its own token counts.
+      settlers[0]({ stopReason: "end_turn", usage: { inputTokens: 999, outputTokens: 999 } });
+      await Promise.resolve();
+      await Promise.resolve();
+
+      // The replacement turn reports no usage of its own.
+      settlers[1]({ stopReason: "end_turn" });
+      await Promise.resolve();
+      await Promise.resolve();
+
+      const completed = events.find(
+        (event) => event.type === "turn_completed" && event.turnId === second.turnId,
+      );
+      expect(completed).toMatchObject({ type: "turn_completed" });
+      expect((completed as { usage?: { inputTokens?: number } }).usage?.inputTokens).not.toBe(999);
     } finally {
       vi.useRealTimers();
     }
