@@ -32,6 +32,7 @@ interface JsonlRpcResponse {
   success?: boolean;
   data?: unknown;
   error?: string;
+  code?: string;
 }
 
 interface PendingRequest {
@@ -282,11 +283,13 @@ export class JsonlRpcProcess {
     }
     this.pending.delete(response.id);
     if (!response.success) {
-      pending.reject(
-        new Error(
-          response.error ?? `${this.diagnosticName} ${response.command ?? "request"} failed`,
-        ),
+      const error = new Error(
+        response.error ?? `${this.diagnosticName} ${response.command ?? "request"} failed`,
       );
+      if (response.code) {
+        Object.assign(error, { code: response.code });
+      }
+      pending.reject(error);
       return;
     }
     pending.resolve(response.data);

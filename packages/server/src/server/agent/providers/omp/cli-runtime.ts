@@ -17,6 +17,7 @@ import {
   OmpCommandsResultSchema,
   OmpHostToolsResultSchema,
   OmpMessagesResultSchema,
+  OmpMessagesPageResultSchema,
   OmpModelSchema,
   OmpModelsResultSchema,
   OmpPromptAckSchema,
@@ -107,6 +108,7 @@ export class OmpCliRuntime implements OmpRuntime {
 
 class OmpCliRuntimeSession implements OmpRuntimeSession {
   private readonly subscribers = new Set<(event: OmpRuntimeEvent) => void>();
+  private pagingUnsupported = false;
   activeBranchEntryId?: string;
 
   constructor(
@@ -168,6 +170,39 @@ class OmpCliRuntimeSession implements OmpRuntimeSession {
   }
 
   async getMessages(): Promise<OmpAgentMessage[]> {
+    if (this.pagingUnsupported) {
+      return this.getMessagesLegacy();
+    }
+    try {
+      const messages: OmpAgentMessage[] = [];
+      let cursor: string | undefined = undefined;
+      for (;;) {
+        const pageData = await this.request({
+          type: "get_messages_page",
+          limit: 256,
+          ...(cursor !== undefined ? { cursor } : {}),
+        });
+        const page = OmpMessagesPageResultSchema.parse(pageData);
+        if (page.messages) {
+          messages.push(...page.messages);
+        }
+        if (!page.nextCursor) {
+          break;
+        }
+        cursor = page.nextCursor;
+      }
+      return messages;
+    } catch (error) {
+      const code = error && typeof error === "object" && "code" in error ? error.code : undefined;
+      if (code === "session_busy" || code === "stale_cursor") {
+        return this.getMessagesLegacy();
+      }
+      this.pagingUnsupported = true;
+      throw error;
+    }
+  }
+
+  private async getMessagesLegacy(): Promise<OmpAgentMessage[]> {
     const data = OmpMessagesResultSchema.parse(await this.request({ type: "get_messages" }));
     return data.messages ?? [];
   }
