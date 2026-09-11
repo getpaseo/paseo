@@ -67,15 +67,20 @@ function getGuestCompositorContents(webContentsId: number): GuestCompositorTarge
   return contents;
 }
 
-export function syncPaseoGuestCompositorBudgets(): Promise<void> {
+export function syncPaseoGuestCompositorBudgets(webContentsIds?: number[]): Promise<void> {
+  const registrations = browserRegistry.listRegistrations();
+  const guests =
+    webContentsIds === undefined
+      ? registrations
+      : registrations.filter((guest) => webContentsIds.includes(guest.webContentsId));
   return guestCompositor.applyBudgets({
-    guests: browserRegistry.listRegistrations(),
+    guests,
     getContents: getGuestCompositorContents,
   });
 }
 
-function queueGuestCompositorSync(): void {
-  void syncPaseoGuestCompositorBudgets().catch((error) => {
+function queueGuestCompositorSync(webContentsIds?: number[]): void {
+  void syncPaseoGuestCompositorBudgets(webContentsIds).catch((error) => {
     console.warn("[guest-compositor] failed to apply budgets", error);
   });
 }
@@ -86,11 +91,11 @@ export async function withPaseoGuestLiveHold<T>(
 ): Promise<T> {
   try {
     return await guestCompositor.withLiveHold(webContentsId, async () => {
-      await syncPaseoGuestCompositorBudgets();
+      await syncPaseoGuestCompositorBudgets([webContentsId]);
       return await task();
     });
   } finally {
-    await syncPaseoGuestCompositorBudgets();
+    await syncPaseoGuestCompositorBudgets([webContentsId]);
   }
 }
 
@@ -100,7 +105,11 @@ export function setPaseoGuestPresented(input: {
   presented: boolean;
 }): void {
   guestCompositor.setPresented(input);
-  queueGuestCompositorSync();
+  const webContentsId = browserRegistry.getWebContentsIdForBrowserInHostWindow(
+    input.hostWebContentsId,
+    input.browserId,
+  );
+  queueGuestCompositorSync(webContentsId === null ? [] : [webContentsId]);
 }
 
 export function startPaseoGuestCompositorWatchdog(input: {
@@ -120,7 +129,6 @@ export function preparePaseoBrowserWebContents(contents: RegisteredBrowserWebCon
   contents.once("destroyed", () => {
     browserRegistry.unregisterWebContents(webContentsId);
     guestCompositor.releaseWebContents(webContentsId);
-    queueGuestCompositorSync();
   });
 }
 
@@ -144,7 +152,7 @@ export function registerAttachedPaseoBrowser(input: RegisterAttachedBrowserInput
     browserId: input.browserId,
     workspaceId: input.workspaceId,
   });
-  queueGuestCompositorSync();
+  queueGuestCompositorSync([input.webContentsId]);
   return true;
 }
 
@@ -165,7 +173,6 @@ export function unregisterPaseoBrowser(browserId: string): void {
   for (const registration of registrations) {
     guestCompositor.releaseWebContents(registration.webContentsId);
   }
-  queueGuestCompositorSync();
 }
 
 export function unregisterPaseoBrowserFromHost(hostWebContentsId: number, browserId: string): void {
@@ -177,7 +184,6 @@ export function unregisterPaseoBrowserFromHost(hostWebContentsId: number, browse
   if (webContentsId !== null) {
     guestCompositor.releaseWebContents(webContentsId);
   }
-  queueGuestCompositorSync();
 }
 
 export function unregisterPaseoBrowserHost(hostWebContentsId: number): void {
@@ -189,7 +195,6 @@ export function unregisterPaseoBrowserHost(hostWebContentsId: number): void {
     guestCompositor.releaseWebContents(registration.webContentsId);
   }
   guestCompositor.releaseHost(hostWebContentsId);
-  queueGuestCompositorSync();
 }
 
 export function getPaseoBrowserWorkspaceId(browserId: string): string | null {
@@ -210,7 +215,12 @@ export function setWorkspaceActivePaseoBrowserId(input: {
     hostWebContentsId: input.hostWebContentsId,
     browserId: browserRegistry.getActiveBrowserIdForHostWindow(input.hostWebContentsId),
   });
-  queueGuestCompositorSync();
+  queueGuestCompositorSync(
+    browserRegistry
+      .listRegistrations()
+      .filter((registration) => registration.hostWebContentsId === input.hostWebContentsId)
+      .map((registration) => registration.webContentsId),
+  );
 }
 
 export function getWorkspaceActivePaseoBrowserId(workspaceId: string): string | null {

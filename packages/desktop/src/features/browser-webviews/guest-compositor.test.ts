@@ -237,6 +237,52 @@ describe("createGuestCompositor", () => {
     expect(guest.backgroundThrottlingCalls.at(-1)).toBe(false);
   });
 
+  it("does not stall one guest behind another guest's pending lifecycle command", async () => {
+    let resumeFrozen = () => {};
+    const frozenGate = new Promise<void>((resolve) => {
+      resumeFrozen = resolve;
+    });
+    const compositor = createGuestCompositor({
+      setLifecycleState: async (contents, state) => {
+        if (contents.id === 10 && state === "frozen") {
+          await frozenGate;
+        }
+      },
+    });
+    const hung = new FakeGuest(10, 110);
+    const ready = new FakeGuest(11, 111);
+    compositor.setPresented({
+      hostWebContentsId: 100,
+      browserId: "browser-ready",
+      presented: true,
+    });
+
+    const hungUpdate = compositor.applyBudgets({
+      guests: [
+        {
+          webContentsId: hung.id,
+          browserId: "browser-hung",
+          hostWebContentsId: 100,
+        },
+      ],
+      getContents: () => hung,
+    });
+    await compositor.applyBudgets({
+      guests: [
+        {
+          webContentsId: ready.id,
+          browserId: "browser-ready",
+          hostWebContentsId: 100,
+        },
+      ],
+      getContents: () => ready,
+    });
+
+    expect(ready.backgroundThrottlingCalls).toEqual([false]);
+    resumeFrozen();
+    await hungUpdate;
+  });
+
   it("unthrottles the workspace-active guest even when it is not presented", async () => {
     const compositor = createGuestCompositor({
       setLifecycleState: async () => {},

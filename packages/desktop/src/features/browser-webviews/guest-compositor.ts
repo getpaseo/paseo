@@ -9,6 +9,7 @@ export const RUNAWAY_GUEST_CHECKS_TO_RELOAD = 2;
 export const RUNAWAY_GUEST_RELOAD_COOLDOWN_MS = 30_000;
 export const RUNAWAY_GUEST_MAX_RELOADS = 3;
 export const GUEST_COMPOSITOR_WATCHDOG_INTERVAL_MS = 5_000;
+export const GUEST_LIFECYCLE_COMMAND_TIMEOUT_MS = 2_000;
 
 export type GuestCompositorBudget = "live" | "parked";
 export type GuestLifecycleState = "active" | "frozen";
@@ -51,6 +52,22 @@ interface RunawayGuestGenerationState {
 interface AppliedGuestBudget {
   throttlingAllowed: boolean;
   lifecycle: GuestLifecycleState;
+}
+
+async function withDeadline<T>(task: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      task,
+      new Promise<T>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(message)), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) {
+      clearTimeout(timer);
+    }
+  }
 }
 
 export interface GuestCompositorApplyInput {
@@ -220,7 +237,7 @@ export function createGuestCompositor(options: CreateGuestCompositorOptions = {}
   const setLifecycleState = options.setLifecycleState;
   const now = options.now ?? Date.now;
   const logWarn = options.logWarn;
-  let applyChain: Promise<void> = Promise.resolve();
+  const applyChainByWebContentsId = new Map<number, Promise<void>>();
 
   function liveHoldCount(webContentsId: number): number {
     return liveHoldCountByWebContentsId.get(webContentsId) ?? 0;
@@ -277,7 +294,11 @@ export function createGuestCompositor(options: CreateGuestCompositorOptions = {}
       const lifecycleChanged = applied?.lifecycle !== lifecycle;
       if (lifecycleChanged && setLifecycleState) {
         try {
-          await setLifecycleState(contents, lifecycle);
+          await withDeadline(
+            setLifecycleState(contents, lifecycle),
+            GUEST_LIFECYCLE_COMMAND_TIMEOUT_MS,
+            "lifecycle command timed out",
+          );
         } catch (error) {
           logWarn?.("[guest-compositor] failed to set page lifecycle", {
             webContentsId: contents.id,
@@ -296,6 +317,31 @@ export function createGuestCompositor(options: CreateGuestCompositorOptions = {}
       appliedBudgetByWebContentsId.set(contents.id, { throttlingAllowed, lifecycle });
       return;
     }
+  }
+
+  function enqueueGuestApply(
+    guest: BrowserGuestRegistration,
+    getContents: (webContentsId: number) => GuestCompositorTarget | null,
+  ): Promise<void> {
+    const previous = applyChainByWebContentsId.get(guest.webContentsId) ?? Promise.resolve();
+    const run = previous.catch(() => {}).then(() => applyRegisteredGuest(guest, getContents));
+    applyChainByWebContentsId.set(
+      guest.webContentsId,
+      run.catch(() => {}),
+    );
+    return run;
+  }
+
+  async function applyRegisteredGuest(
+    guest: BrowserGuestRegistration,
+    getContents: (webContentsId: number) => GuestCompositorTarget | null,
+  ): Promise<void> {
+    const contents = getContents(guest.webContentsId);
+    if (!contents) {
+      appliedBudgetByWebContentsId.delete(guest.webContentsId);
+      return;
+    }
+    await applyBudgetToGuest(guest, contents);
   }
 
   return {
@@ -333,25 +379,7 @@ export function createGuestCompositor(options: CreateGuestCompositorOptions = {}
     },
 
     async applyBudgets(input) {
-      const previous = applyChain;
-      let releaseCurrent = () => {};
-      const current = new Promise<void>((resolve) => {
-        releaseCurrent = resolve;
-      });
-      applyChain = previous.catch(() => {}).then(() => current);
-      await previous.catch(() => {});
-      try {
-        for (const guest of input.guests) {
-          const contents = input.getContents(guest.webContentsId);
-          if (!contents) {
-            appliedBudgetByWebContentsId.delete(guest.webContentsId);
-            continue;
-          }
-          await applyBudgetToGuest(guest, contents);
-        }
-      } finally {
-        releaseCurrent();
-      }
+      await Promise.all(input.guests.map((guest) => enqueueGuestApply(guest, input.getContents)));
     },
 
     handleRunawayGuests(input) {
@@ -372,6 +400,7 @@ export function createGuestCompositor(options: CreateGuestCompositorOptions = {}
     releaseWebContents(webContentsId) {
       liveHoldCountByWebContentsId.delete(webContentsId);
       appliedBudgetByWebContentsId.delete(webContentsId);
+      applyChainByWebContentsId.delete(webContentsId);
     },
 
     releaseHost(hostWebContentsId) {
