@@ -10,11 +10,14 @@ import type {
 } from "../../../server/messages.js";
 import type { ProviderApiFetch, ProviderUsageFetcher } from "../provider.js";
 import {
+  ApiNullableNumberSchema,
   ApiNumberSchema,
   balanceToneFromRemaining,
   toneFromUsedPct,
+  toIsoStringOrNull,
   fetchProviderApi,
   unavailableUsage,
+  usedPctOf,
   windowFromUsedPct,
 } from "../usage.js";
 
@@ -33,6 +36,40 @@ const CodexWindowSchema = z.object({
   reset_at: ApiNumberSchema.optional(),
 });
 
+// ChatGPT Business/Enterprise plans rate-limit individual metered features
+// (e.g. codex_bengalfox) in this array instead of the top-level rate_limit.
+const CodexAdditionalRateLimitSchema = z.object({
+  limit_name: z.string().optional(),
+  metered_feature: z.string().optional(),
+  rate_limit: z
+    .object({
+      allowed: z.boolean().optional(),
+      limit_reached: z.boolean().optional(),
+      primary_window: z.unknown().optional(),
+      secondary_window: z.unknown().optional(),
+    })
+    .nullish(),
+});
+
+// ChatGPT Business/Enterprise spend-control budget. Business plans quote a
+// monthly credit cap here (e.g. limit: "32500") with used/remaining as strings.
+const CodexSpendLimitSchema = z.object({
+  source: z.string().optional(),
+  limit: ApiNullableNumberSchema.optional(),
+  used: ApiNullableNumberSchema.optional(),
+  remaining: ApiNullableNumberSchema.optional(),
+  used_percent: ApiNullableNumberSchema.optional(),
+  remaining_percent: ApiNullableNumberSchema.optional(),
+  reset_after_seconds: ApiNullableNumberSchema.optional(),
+  reset_at: ApiNullableNumberSchema.optional(),
+});
+
+const CodexSpendControlSchema = z
+  .object({
+    individual_limit: CodexSpendLimitSchema.nullish(),
+  })
+  .nullish();
+
 const CodexUsageResponseSchema = z.object({
   plan_type: z.string().optional(),
   email: z.string().optional(),
@@ -47,11 +84,13 @@ const CodexUsageResponseSchema = z.object({
       primary_window: CodexWindowSchema.nullish(),
     })
     .nullish(),
+  additional_rate_limits: z.unknown().optional(),
+  spend_control: z.unknown().optional(),
   credits: z
     .object({
       has_credits: z.boolean().optional(),
       unlimited: z.boolean().optional(),
-      balance: ApiNumberSchema.optional(),
+      balance: ApiNullableNumberSchema.optional(),
     })
     .nullish(),
 });
@@ -72,7 +111,7 @@ function codexWindow(
   if (!window) return null;
   return {
     usedPct: window.used_percent ?? 0,
-    resetsAt: window.reset_at != null ? new Date(window.reset_at * 1000).toISOString() : null,
+    resetsAt: window.reset_at != null ? toIsoStringOrNull(window.reset_at * 1000) : null,
   };
 }
 
@@ -80,10 +119,12 @@ export class CodexQuotaProvider implements ProviderUsageFetcher {
   readonly providerId = "codex";
   readonly displayName = "Codex";
 
+  private readonly logger: Logger;
   private readonly codexHome: string;
   private readonly fetchApi: ProviderApiFetch;
 
   constructor(options: CodexQuotaProviderOptions) {
+    this.logger = options.logger.child({ module: "codex-quota-provider" });
     this.codexHome = options.codexHome || process.env["CODEX_HOME"] || join(homedir(), ".codex");
     this.fetchApi = options.fetch ?? fetch;
   }
@@ -107,47 +148,56 @@ export class CodexQuotaProvider implements ProviderUsageFetcher {
   }
 
   private toUsage(resp: CodexUsageResponse): ProviderUsage {
-    const session = codexWindow(resp.rate_limit?.primary_window);
-    const weekly = codexWindow(resp.rate_limit?.secondary_window);
-    const codeReview = codexWindow(resp.code_review_rate_limit?.primary_window);
     const windows: ProviderUsageWindow[] = [];
+    this.pushWindow({
+      windows,
+      id: "session",
+      label: "Session",
+      window: codexWindow(resp.rate_limit?.primary_window),
+    });
+    this.pushWindow({
+      windows,
+      id: "weekly",
+      label: "Weekly",
+      window: codexWindow(resp.rate_limit?.secondary_window),
+    });
+    this.pushWindow({
+      windows,
+      id: "code_review",
+      label: "Code review",
+      window: codexWindow(resp.code_review_rate_limit?.primary_window),
+    });
 
-    if (session) {
-      windows.push(
-        windowFromUsedPct({
-          id: "session",
-          label: "Session",
-          utilizationPct: session.usedPct,
-          resetsAt: session.resetsAt,
-          tone: toneFromUsedPct(session.usedPct),
-        }),
-      );
-    }
-    if (weekly) {
-      windows.push(
-        windowFromUsedPct({
-          id: "weekly",
-          label: "Weekly",
-          utilizationPct: weekly.usedPct,
-          resetsAt: weekly.resetsAt,
-          tone: toneFromUsedPct(weekly.usedPct),
-        }),
-      );
-    }
-    if (codeReview) {
-      windows.push(
-        windowFromUsedPct({
-          id: "code_review",
-          label: "Code review",
-          utilizationPct: codeReview.usedPct,
-          resetsAt: codeReview.resetsAt,
-          tone: toneFromUsedPct(codeReview.usedPct),
-        }),
-      );
+    // ChatGPT Business/Enterprise omit the top-level rate_limit entirely and
+    // rate-limit each metered feature (e.g. codex_bengalfox) instead. Without
+    // this, a business account renders with no windows at all. Keyed on the
+    // absent top-level limit rather than `windows.length === 0` so an
+    // independent code_review_rate_limit cannot suppress these windows.
+    if (resp.rate_limit == null && resp.additional_rate_limits != null) {
+      windows.push(...this.additionalRateLimitWindows(resp.additional_rate_limits));
     }
 
     const balances: ProviderUsageBalance[] = [];
-    if (resp.credits?.balance !== undefined) {
+
+    // Business/Enterprise plans meter spend-control credits (monthly cap, reset
+    // on the calendar period) rather than a per-account credit balance.
+    const parsedSpend = CodexSpendControlSchema.safeParse(resp.spend_control);
+    if (!parsedSpend.success) this.logger.warn("Skipping unparseable Codex spend-control budget");
+    const spendLimit = parsedSpend.success ? parsedSpend.data?.individual_limit : null;
+    if (spendLimit?.limit != null) {
+      const usedPct = spendLimit.used_percent ?? usedPctOf(spendLimit.used, spendLimit.limit) ?? 0;
+      balances.push({
+        id: "spend",
+        label: "Spend",
+        used: spendLimit.used ?? null,
+        remaining: spendLimit.remaining ?? null,
+        limit: spendLimit.limit,
+        unit: "credits",
+        resetsAt:
+          spendLimit.reset_at != null ? toIsoStringOrNull(spendLimit.reset_at * 1000) : null,
+        tone: toneFromUsedPct(usedPct),
+      });
+    } else if (resp.credits?.balance != null) {
       balances.push({
         id: "credits",
         label: "Credits",
@@ -167,6 +217,105 @@ export class CodexQuotaProvider implements ProviderUsageFetcher {
       details: [],
       error: null,
     };
+  }
+
+  /**
+   * Append one window built from a parsed API window, when present.
+   */
+  private pushWindow(input: {
+    windows: ProviderUsageWindow[];
+    id: string;
+    label: string;
+    window: { usedPct: number; resetsAt: string | null } | null;
+  }): void {
+    if (!input.window) return;
+    input.windows.push(
+      windowFromUsedPct({
+        id: input.id,
+        label: input.label,
+        utilizationPct: input.window.usedPct,
+        resetsAt: input.window.resetsAt,
+        tone: toneFromUsedPct(input.window.usedPct),
+      }),
+    );
+  }
+
+  private additionalWindow(window: unknown): ReturnType<typeof codexWindow> {
+    if (window == null) return null;
+    const parsed = CodexWindowSchema.safeParse(window);
+    if (!parsed.success) {
+      this.logger.warn("Skipping unparseable Codex feature window");
+      return null;
+    }
+    return codexWindow(parsed.data);
+  }
+
+  /**
+   * Per-feature rate-limit windows for ChatGPT Business/Enterprise accounts,
+   * which omit the top-level rate_limit block entirely.
+   */
+  private additionalRateLimitWindows(limits: unknown): ProviderUsageWindow[] {
+    const windows: ProviderUsageWindow[] = [];
+    const parsedLimits = z.array(z.unknown()).safeParse(limits);
+    if (!parsedLimits.success) {
+      this.logger.warn("Skipping unparseable Codex additional rate limits");
+      return windows;
+    }
+    const identities = new Map<string, number>();
+    for (const [index, entry] of parsedLimits.data.entries()) {
+      const parsedFeature = CodexAdditionalRateLimitSchema.safeParse(entry);
+      if (!parsedFeature.success) {
+        this.logger.warn("Skipping unparseable Codex feature rate limit");
+        continue;
+      }
+      const feature = parsedFeature.data;
+      const featureName = feature.limit_name || feature.metered_feature || `Feature ${index + 1}`;
+      const featureSession = this.additionalWindow(feature.rate_limit?.primary_window);
+      const featureWeekly = this.additionalWindow(feature.rate_limit?.secondary_window);
+      if (!featureSession && !featureWeekly) continue;
+      const meteredFeature = feature.metered_feature?.trim();
+      const limitName = feature.limit_name?.trim();
+      // Namespaces and escaping keep fallback names and duplicate suffixes from
+      // colliding with real feature IDs. Anonymous/duplicate entries have no
+      // distinct server identity, so only those fall back to response order.
+      let namespace = "anonymous";
+      let value = String(index);
+      if (meteredFeature) {
+        namespace = "metered";
+        value = meteredFeature;
+      } else if (limitName) {
+        namespace = "name";
+        value = limitName;
+      }
+      const escapedValue = value.replaceAll("%", "%25").replaceAll(":", "%3A");
+      const identity = `${namespace}:${escapedValue}`;
+      const occurrence = (identities.get(identity) ?? 0) + 1;
+      identities.set(identity, occurrence);
+      const featureId = occurrence === 1 ? identity : `${identity}:${occurrence}`;
+      if (featureSession) {
+        windows.push(
+          windowFromUsedPct({
+            id: `session_${featureId}`,
+            label: `Session · ${featureName}`,
+            utilizationPct: featureSession.usedPct,
+            resetsAt: featureSession.resetsAt,
+            tone: toneFromUsedPct(featureSession.usedPct),
+          }),
+        );
+      }
+      if (featureWeekly) {
+        windows.push(
+          windowFromUsedPct({
+            id: `weekly_${featureId}`,
+            label: `Weekly · ${featureName}`,
+            utilizationPct: featureWeekly.usedPct,
+            resetsAt: featureWeekly.resetsAt,
+            tone: toneFromUsedPct(featureWeekly.usedPct),
+          }),
+        );
+      }
+    }
+    return windows;
   }
 
   private async readCodexAuth(): Promise<CodexAuth | null> {

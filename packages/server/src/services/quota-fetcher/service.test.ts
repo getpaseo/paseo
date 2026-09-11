@@ -574,6 +574,208 @@ describe("real provider usage fetchers", () => {
     );
   });
 
+  it("renders enterprise spend-metered Claude usage from the spend block", async () => {
+    // Enterprise usage-based orgs return null rolling windows; the `spend` block
+    // carries the dollar meter (used/limit in minor units + exponent).
+    writeClaudeCredentials(
+      claudeHome,
+      "at_enterprise",
+      "rt_enterprise",
+      "enterprise",
+      "default_claude_zero",
+    );
+    fetchApi = mockFetch(
+      new Map([
+        [
+          "https://api.anthropic.com/api/oauth/usage",
+          () =>
+            jsonResponse({
+              five_hour: null,
+              seven_day: null,
+              spend: {
+                used: { amount_minor: 64913, currency: "USD", exponent: 2 },
+                limit: { amount_minor: 100000, currency: "USD", exponent: 2 },
+                percent: 65,
+              },
+            }),
+        ],
+      ]),
+    );
+
+    const result = await service().listUsage();
+    const claude = findProvider(result, "claude");
+
+    expect(claude).toMatchObject({
+      status: "available",
+      planLabel: "Enterprise",
+      windows: [expect.objectContaining({ id: "spend", usedPct: 64.913 })],
+      balances: [
+        expect.objectContaining({
+          id: "spend",
+          used: 649.13,
+          remaining: 350.87,
+          limit: 1000,
+          unit: "usd",
+        }),
+      ],
+    });
+  });
+
+  it("normalizes Claude used and limit with their own exponents", async () => {
+    writeClaudeCredentials(claudeHome, "at_enterprise");
+    fetchApi = mockFetch(
+      new Map([
+        [
+          "https://api.anthropic.com/api/oauth/usage",
+          () =>
+            jsonResponse({
+              spend: {
+                used: { amount_minor: 1802, currency: "USD", exponent: 2 },
+                limit: { amount_minor: 300, currency: "USD", exponent: 0 },
+              },
+            }),
+        ],
+      ]),
+    );
+    const claude = findProvider(await service().listUsage(), "claude");
+    expect(claude).toMatchObject({
+      status: "available",
+      windows: [expect.objectContaining({ usedPct: (18.02 / 300) * 100 })],
+      balances: [
+        expect.objectContaining({ used: 18.02, limit: 300, remaining: 281.98, unit: "usd" }),
+      ],
+    });
+  });
+
+  it.each(["EUR", "JPY"])("does not label %s Claude spend as USD", async (currency) => {
+    writeClaudeCredentials(claudeHome, "at_enterprise");
+    fetchApi = mockFetch(
+      new Map([
+        [
+          "https://api.anthropic.com/api/oauth/usage",
+          () =>
+            jsonResponse({
+              spend: {
+                used: { amount_minor: 1802, currency, exponent: 2 },
+                limit: { amount_minor: 30000, currency, exponent: 2 },
+              },
+            }),
+        ],
+      ]),
+    );
+    expect(findProvider(await service().listUsage(), "claude")).toMatchObject({
+      status: "available",
+      windows: [],
+      balances: [],
+    });
+  });
+
+  it.each([
+    { spend: { used: { amount_minor: "unavailable" } } },
+    { extra_usage: { is_enabled: true, monthly_limit: "unavailable" } },
+  ])("keeps Claude rolling windows when added spend data is malformed: %j", async (extra) => {
+    writeClaudeCredentials(claudeHome, "at_valid");
+    fetchApi = mockFetch(
+      new Map([
+        [
+          "https://api.anthropic.com/api/oauth/usage",
+          () =>
+            jsonResponse({
+              five_hour: { utilization: 30, resets_at: "2026-10-01T00:00:00Z" },
+              ...extra,
+            }),
+        ],
+      ]),
+    );
+    expect(findProvider(await service().listUsage(), "claude")).toMatchObject({
+      status: "available",
+      windows: [
+        {
+          id: "five_hour",
+          label: "Session",
+          usedPct: 30,
+          remainingPct: 70,
+          resetsAt: "2026-10-01T00:00:00Z",
+          tone: "ok",
+        },
+      ],
+      balances: [],
+    });
+  });
+
+  it("falls back to extra_usage when the Claude spend block is absent", async () => {
+    writeClaudeCredentials(
+      claudeHome,
+      "at_enterprise",
+      "rt_enterprise",
+      "enterprise",
+      "default_claude_zero",
+    );
+    fetchApi = mockFetch(
+      new Map([
+        [
+          "https://api.anthropic.com/api/oauth/usage",
+          () =>
+            jsonResponse({
+              five_hour: null,
+              seven_day: null,
+              extra_usage: {
+                is_enabled: true,
+                monthly_limit: 100000,
+                used_credits: 25000,
+                utilization: 25,
+                currency: "USD",
+                decimal_places: 2,
+              },
+            }),
+        ],
+      ]),
+    );
+
+    const claude = findProvider(await service().listUsage(), "claude");
+
+    expect(claude).toMatchObject({
+      status: "available",
+      planLabel: "Enterprise",
+      windows: [expect.objectContaining({ id: "spend", usedPct: 25 })],
+      balances: [expect.objectContaining({ id: "spend", remaining: 750, unit: "usd" })],
+    });
+  });
+
+  it("keeps window-metered Claude usage even when a spend block is present", async () => {
+    // Pro/Max accounts carry a spend block too, but it is their extra-usage cap —
+    // live session/weekly windows must stay the primary meter.
+    writeClaudeCredentials(claudeHome, "at_valid");
+    fetchApi = mockFetch(
+      new Map([
+        [
+          "https://api.anthropic.com/api/oauth/usage",
+          () =>
+            jsonResponse({
+              five_hour: { utilization: 30, resets_at: "2026-06-01T21:00:00Z" },
+              seven_day: { utilization: 10, resets_at: "2026-06-04T00:00:00Z" },
+              spend: {
+                used: { amount_minor: 1000, currency: "USD", exponent: 2 },
+                limit: { amount_minor: 50000, currency: "USD", exponent: 2 },
+                percent: 2,
+              },
+            }),
+        ],
+      ]),
+    );
+
+    const claude = findProvider(await service().listUsage(), "claude");
+
+    expect(claude).toMatchObject({
+      windows: expect.arrayContaining([
+        expect.objectContaining({ id: "five_hour", usedPct: 30 }),
+        expect.objectContaining({ id: "weekly", usedPct: 10 }),
+      ]),
+    });
+    // The spend cap must not become a window for window-metered accounts.
+    expect(claude.windows?.some((window: { id?: string }) => window.id === "spend")).toBe(false);
+  });
+
   it("fetches Codex windows and coerces string credit balances", async () => {
     writeCodexAuth(codexHome, "at_codex_valid");
     fetchApi = mockFetch(
@@ -603,6 +805,453 @@ describe("real provider usage fetchers", () => {
       ]),
       balances: [expect.objectContaining({ id: "credits", remaining: 0 })],
     });
+  });
+
+  it.each([
+    { additional_rate_limits: [{ rate_limit: { primary_window: { used_percent: "invalid" } } }] },
+    { spend_control: { individual_limit: { limit: "invalid" } } },
+  ])("keeps Codex rolling windows when enterprise fields are malformed: %j", async (extra) => {
+    writeCodexAuth(codexHome, "at_codex_valid");
+    fetchApi = mockFetch(
+      new Map([
+        [
+          "https://chatgpt.com/backend-api/wham/usage",
+          () =>
+            jsonResponse({
+              plan_type: "pro",
+              rate_limit: { primary_window: { used_percent: 30, reset_at: 1790812800 } },
+              ...extra,
+            }),
+        ],
+      ]),
+    );
+    expect(findProvider(await service().listUsage(), "codex")).toMatchObject({
+      status: "available",
+      windows: [
+        {
+          id: "session",
+          label: "Session",
+          usedPct: 30,
+          remainingPct: 70,
+          resetsAt: "2026-10-01T00:00:00.000Z",
+          tone: "ok",
+        },
+      ],
+      balances: [],
+    });
+  });
+
+  it.each([
+    {
+      malformed: "primary_window",
+      valid: "secondary_window",
+      id: "weekly_name:Feature",
+      label: "Weekly · Feature",
+    },
+    {
+      malformed: "secondary_window",
+      valid: "primary_window",
+      id: "session_name:Feature",
+      label: "Session · Feature",
+    },
+  ])(
+    "keeps the valid Codex sibling when $malformed is malformed",
+    async ({ malformed, valid, id, label }) => {
+      writeCodexAuth(codexHome, "at_codex_valid");
+      fetchApi = mockFetch(
+        new Map([
+          [
+            "https://chatgpt.com/backend-api/wham/usage",
+            () =>
+              jsonResponse({
+                plan_type: "business",
+                rate_limit: null,
+                additional_rate_limits: [
+                  {
+                    limit_name: "Feature",
+                    rate_limit: {
+                      [malformed]: { used_percent: "invalid" },
+                      [valid]: { used_percent: 30, reset_at: 1790812800 },
+                    },
+                  },
+                ],
+              }),
+          ],
+        ]),
+      );
+      expect(findProvider(await service().listUsage(), "codex")).toMatchObject({
+        status: "available",
+        windows: [
+          {
+            id,
+            label,
+            usedPct: 30,
+            remainingPct: 70,
+            resetsAt: "2026-10-01T00:00:00.000Z",
+            tone: "ok",
+          },
+        ],
+        balances: [],
+      });
+    },
+  );
+
+  it.each([
+    {
+      windowReset: 1e20,
+      budgetReset: 1790812800,
+      expectedWindow: null,
+      expectedBudget: "2026-10-01T00:00:00.000Z",
+    },
+    {
+      windowReset: -1e20,
+      budgetReset: 1790812800,
+      expectedWindow: null,
+      expectedBudget: "2026-10-01T00:00:00.000Z",
+    },
+    {
+      windowReset: Number.MAX_VALUE,
+      budgetReset: 1790812800,
+      expectedWindow: null,
+      expectedBudget: "2026-10-01T00:00:00.000Z",
+    },
+    {
+      windowReset: 1790812800,
+      budgetReset: 1e20,
+      expectedWindow: "2026-10-01T00:00:00.000Z",
+      expectedBudget: null,
+    },
+    {
+      windowReset: 1790812800,
+      budgetReset: -1e20,
+      expectedWindow: "2026-10-01T00:00:00.000Z",
+      expectedBudget: null,
+    },
+    {
+      windowReset: 1790812800,
+      budgetReset: Number.MAX_VALUE,
+      expectedWindow: "2026-10-01T00:00:00.000Z",
+      expectedBudget: null,
+    },
+  ])(
+    "keeps Codex usage with out-of-range reset epochs: %j",
+    async ({ windowReset, budgetReset, expectedWindow, expectedBudget }) => {
+      writeCodexAuth(codexHome, "at_codex_valid");
+      fetchApi = mockFetch(
+        new Map([
+          [
+            "https://chatgpt.com/backend-api/wham/usage",
+            () =>
+              jsonResponse({
+                plan_type: "business",
+                rate_limit: null,
+                additional_rate_limits: [
+                  {
+                    limit_name: "Feature",
+                    rate_limit: {
+                      primary_window: { used_percent: 30, reset_at: windowReset },
+                      secondary_window: { used_percent: 20, reset_at: 1790812800 },
+                    },
+                  },
+                ],
+                spend_control: {
+                  individual_limit: {
+                    used: "20",
+                    remaining: "80",
+                    limit: "100",
+                    reset_at: budgetReset,
+                  },
+                },
+              }),
+          ],
+        ]),
+      );
+      expect(findProvider(await service().listUsage(), "codex")).toMatchObject({
+        status: "available",
+        error: null,
+        windows: [
+          {
+            id: "session_name:Feature",
+            label: "Session · Feature",
+            usedPct: 30,
+            remainingPct: 70,
+            resetsAt: expectedWindow,
+            tone: "ok",
+          },
+          {
+            id: "weekly_name:Feature",
+            label: "Weekly · Feature",
+            usedPct: 20,
+            remainingPct: 80,
+            resetsAt: "2026-10-01T00:00:00.000Z",
+            tone: "ok",
+          },
+        ],
+        balances: [
+          {
+            id: "spend",
+            label: "Spend",
+            used: 20,
+            remaining: 80,
+            limit: 100,
+            unit: "credits",
+            resetsAt: expectedBudget,
+            tone: "ok",
+          },
+        ],
+      });
+    },
+  );
+
+  it.each(["metered_feature", "limit_name"])(
+    "keeps Codex feature identities across refreshes using %s",
+    async (identity) => {
+      writeCodexAuth(codexHome, "at_codex_valid");
+      const rateLimit = { primary_window: { used_percent: 30, reset_at: 1790812800 } };
+      const alpha = { [identity]: "alpha", rate_limit: rateLimit };
+      const beta = { [identity]: "beta", rate_limit: rateLimit };
+      const gamma = { [identity]: "gamma", rate_limit: rateLimit };
+      let features = [alpha, beta];
+      fetchApi = mockFetch(
+        new Map([
+          [
+            "https://chatgpt.com/backend-api/wham/usage",
+            () =>
+              jsonResponse({
+                plan_type: "business",
+                rate_limit: null,
+                additional_rate_limits: features,
+              }),
+          ],
+        ]),
+      );
+      const usage = service();
+      const initial = findProvider(await usage.listUsage(), "codex").windows;
+      expect(initial).toHaveLength(2);
+      features = [beta, alpha];
+      expect(findProvider(await usage.listUsage({ forceRefresh: true }), "codex").windows).toEqual([
+        initial[1],
+        initial[0],
+      ]);
+      features = [gamma, beta, alpha];
+      expect(
+        findProvider(await usage.listUsage({ forceRefresh: true }), "codex").windows.slice(1),
+      ).toEqual([initial[1], initial[0]]);
+      features = [alpha];
+      expect(findProvider(await usage.listUsage({ forceRefresh: true }), "codex").windows).toEqual([
+        initial[0],
+      ]);
+    },
+  );
+
+  it("keeps Codex feature keys unique for duplicate and absent identities", async () => {
+    writeCodexAuth(codexHome, "at_codex_valid");
+    const rateLimit = { primary_window: { used_percent: 30, reset_at: 1790812800 } };
+    fetchApi = mockFetch(
+      new Map([
+        [
+          "https://chatgpt.com/backend-api/wham/usage",
+          () =>
+            jsonResponse({
+              plan_type: "business",
+              rate_limit: null,
+              additional_rate_limits: [
+                { metered_feature: "a", rate_limit: rateLimit },
+                { metered_feature: "a", rate_limit: rateLimit },
+                { metered_feature: "a:2", rate_limit: rateLimit },
+                { metered_feature: "a%3A2", rate_limit: rateLimit },
+                { metered_feature: "\ud800", rate_limit: rateLimit },
+                { limit_name: "a", rate_limit: rateLimit },
+                { rate_limit: rateLimit },
+                { rate_limit: rateLimit },
+              ],
+            }),
+        ],
+      ]),
+    );
+    expect(
+      findProvider(await service().listUsage(), "codex").windows.map((window) => window.id),
+    ).toEqual([
+      "session_metered:a",
+      "session_metered:a:2",
+      "session_metered:a%3A2",
+      "session_metered:a%253A2",
+      "session_metered:\ud800",
+      "session_name:a",
+      "session_anonymous:6",
+      "session_anonymous:7",
+    ]);
+  });
+
+  it("keeps valid Codex feature windows and budget beside a malformed feature", async () => {
+    writeCodexAuth(codexHome, "at_codex_valid");
+    fetchApi = mockFetch(
+      new Map([
+        [
+          "https://chatgpt.com/backend-api/wham/usage",
+          () =>
+            jsonResponse({
+              plan_type: "business",
+              rate_limit: null,
+              additional_rate_limits: [
+                { rate_limit: { primary_window: { used_percent: "invalid" } } },
+                {
+                  limit_name: "Feature",
+                  rate_limit: { primary_window: { used_percent: 30, reset_at: 1790812800 } },
+                },
+              ],
+              spend_control: {
+                individual_limit: {
+                  used: "20",
+                  remaining: "80",
+                  limit: "100",
+                  reset_at: 1790812800,
+                },
+              },
+            }),
+        ],
+      ]),
+    );
+    expect(findProvider(await service().listUsage(), "codex")).toMatchObject({
+      status: "available",
+      windows: [
+        {
+          id: "session_name:Feature",
+          label: "Session · Feature",
+          usedPct: 30,
+          remainingPct: 70,
+          resetsAt: "2026-10-01T00:00:00.000Z",
+          tone: "ok",
+        },
+      ],
+      balances: [
+        {
+          id: "spend",
+          label: "Spend",
+          used: 20,
+          remaining: 80,
+          limit: 100,
+          unit: "credits",
+          resetsAt: "2026-10-01T00:00:00.000Z",
+          tone: "ok",
+        },
+      ],
+    });
+  });
+
+  it("renders ChatGPT Business Codex usage from additional rate limits and spend control", async () => {
+    // Business/Enterprise plans return plan_type "business", a null top-level
+    // rate_limit, per-feature rate limits, and a monthly spend-control budget.
+    writeCodexAuth(codexHome, "at_codex_business");
+    fetchApi = mockFetch(
+      new Map([
+        [
+          "https://chatgpt.com/backend-api/wham/usage",
+          () =>
+            jsonResponse({
+              plan_type: "business",
+              email: "member@example.com",
+              rate_limit: null,
+              code_review_rate_limit: null,
+              additional_rate_limits: [
+                {
+                  limit_name: "GPT-5.3-Codex-Spark-Preview",
+                  metered_feature: "codex_bengalfox",
+                  rate_limit: {
+                    allowed: true,
+                    limit_reached: false,
+                    primary_window: { used_percent: 5, reset_at: 1_748_812_800 },
+                    secondary_window: { used_percent: 12, reset_at: 1_749_072_000 },
+                  },
+                },
+              ],
+              spend_control: {
+                reached: false,
+                individual_limit: {
+                  source: "individual_limit",
+                  limit: "32500",
+                  used: "3947.67",
+                  remaining: "28552.33",
+                  used_percent: 12,
+                  remaining_percent: 88,
+                  reset_after_seconds: 2_133_422,
+                  reset_at: 1_790_812_800,
+                },
+              },
+              credits: { has_credits: true, unlimited: false, balance: null },
+            }),
+        ],
+      ]),
+    );
+
+    const result = await service().listUsage();
+    const codex = findProvider(result, "codex");
+
+    expect(codex).toMatchObject({
+      status: "available",
+      planLabel: "business",
+      windows: [
+        expect.objectContaining({
+          id: "session_metered:codex_bengalfox",
+          label: "Session · GPT-5.3-Codex-Spark-Preview",
+          usedPct: 5,
+        }),
+        expect.objectContaining({
+          id: "weekly_metered:codex_bengalfox",
+          label: "Weekly · GPT-5.3-Codex-Spark-Preview",
+          usedPct: 12,
+        }),
+      ],
+      balances: [
+        expect.objectContaining({
+          id: "spend",
+          label: "Spend",
+          used: 3947.67,
+          remaining: 28552.33,
+          limit: 32500,
+          unit: "credits",
+        }),
+      ],
+    });
+  });
+
+  it("keeps additional rate-limit windows when business has a code-review limit", async () => {
+    // A Business response with its own code_review_rate_limit must not suppress
+    // the per-feature windows from additional_rate_limits (regression for the
+    // windows.length === 0 gate).
+    writeCodexAuth(codexHome, "at_codex_business");
+    fetchApi = mockFetch(
+      new Map([
+        [
+          "https://chatgpt.com/backend-api/wham/usage",
+          () =>
+            jsonResponse({
+              plan_type: "business",
+              rate_limit: null,
+              code_review_rate_limit: {
+                primary_window: { used_percent: 40, reset_at: 1_748_812_800 },
+              },
+              additional_rate_limits: [
+                {
+                  limit_name: "GPT-5.3-Codex-Spark-Preview",
+                  rate_limit: {
+                    primary_window: { used_percent: 3, reset_at: 1_748_812_800 },
+                    secondary_window: { used_percent: 7, reset_at: 1_749_072_000 },
+                  },
+                },
+              ],
+            }),
+        ],
+      ]),
+    );
+
+    const codex = findProvider(await service().listUsage(), "codex");
+
+    expect(codex.windows?.map((window) => window.id)).toEqual([
+      "code_review",
+      "session_name:GPT-5.3-Codex-Spark-Preview",
+      "weekly_name:GPT-5.3-Codex-Spark-Preview",
+    ]);
   });
 
   it("treats a Codex HTML usage response as auth failure", async () => {
