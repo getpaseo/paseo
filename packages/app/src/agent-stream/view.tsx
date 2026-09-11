@@ -643,8 +643,6 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       revealLoadedItem: revealLoadedHistory,
     });
     const pinnedPrompt = usePinnedPrompt({
-      agentId,
-      timelineEpoch,
       history: baseRenderModel.history,
       liveHead: baseRenderModel.segments.liveHead,
     });

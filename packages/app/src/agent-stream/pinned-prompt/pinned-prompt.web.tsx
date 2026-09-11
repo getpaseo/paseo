@@ -155,12 +155,20 @@ const styles = StyleSheet.create((theme) => {
       borderTopRightRadius: theme.borderRadius.sm,
       paddingHorizontal: theme.spacing[4],
       paddingVertical: theme.spacing[4],
-      maxWidth: "100%",
+      // Same as the real bubble: without these a long single line refuses to wrap and overflows
+      // the rail to the left.
+      minWidth: 0,
+      flexShrink: 1,
       transform: [{ scale: PINNED_PROMPT_SCALE }],
-      // Array form: native theme updates can bypass RN's JS string preprocessing.
-      transformOrigin: ["100%", 0, 0],
+      // Scale toward the top-right corner so the right edge stays on the rail whatever the
+      // bubble's width. CSS string form on purpose: Unistyles' web converter only translates
+      // `transform` arrays, so RN's array origin would reach the DOM verbatim and fall back to
+      // center. This file is web-only, so the native array concern does not apply.
+      transformOrigin: "100% 0",
       cursor: "pointer",
-      ...theme.shadow.sm,
+      // Large, low-alpha shadow so the pin reads as floating over the transcript without a hard
+      // edge against it.
+      ...theme.shadow.lg,
     },
     clip: {
       maxHeight: lineHeight * PINNED_PROMPT_MAX_LINES,

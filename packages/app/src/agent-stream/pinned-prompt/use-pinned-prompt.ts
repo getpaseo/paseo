@@ -5,8 +5,6 @@ import { createReadingSignal, type ReadingSignalSource } from "../reading-signal
 import { resolvePinnedPrompt, type PinnedPromptResolution } from "./model";
 
 export interface UsePinnedPromptInput {
-  agentId: string;
-  timelineEpoch: string | null;
   history: StreamItem[];
   liveHead: StreamItem[];
 }
@@ -17,12 +15,7 @@ export interface PinnedPromptState {
   reportReadingPosition: (rowId: string | null) => void;
 }
 
-export function usePinnedPrompt({
-  agentId,
-  timelineEpoch,
-  history,
-  liveHead,
-}: UsePinnedPromptInput): PinnedPromptState {
+export function usePinnedPrompt({ history, liveHead }: UsePinnedPromptInput): PinnedPromptState {
   const [pinnedId] = useState(() => createReadingSignal<string | null>(null));
   const readingRowIdRef = useRef<string | null>(null);
   const items = useMemo(() => [...history, ...liveHead], [history, liveHead]);
@@ -39,13 +32,13 @@ export function usePinnedPrompt({
     publishPinnedPrompt();
   });
 
-  useEffect(() => {
-    readingRowIdRef.current = null;
-    pinnedId.publish(null);
-  }, [agentId, pinnedId, timelineEpoch]);
-
-  // The transcript reports its reading position before the items arrive, and a reader who never
-  // scrolls would otherwise never get a pin.
+  // Re-resolve whenever the rows change. This also covers the transcript reporting its reading
+  // position before the items arrive, and a reader who never scrolls.
+  //
+  // Deliberately no reset on agent or epoch change. The viewport is a child of this hook's owner,
+  // so on a timeline replacement its effects report the fresh reading row *before* an effect here
+  // would run; clearing the ref at that point would discard the report and leave the pin empty
+  // until the next scroll. A stale row id is harmless — it fails the lookup and resolves to null.
   useEffect(() => {
     publishPinnedPrompt();
   }, [items, publishPinnedPrompt]);
