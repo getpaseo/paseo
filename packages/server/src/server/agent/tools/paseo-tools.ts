@@ -393,6 +393,7 @@ interface ScheduleUpdateToolInput {
   model?: string | null;
   mode?: string | null;
   cwd?: string;
+  workspaceId?: string | null;
   expiresIn?: string;
   clearExpires?: boolean;
 }
@@ -459,6 +460,9 @@ function resolveScheduleUpdateExpiresAt(input: ScheduleUpdateToolInput): string 
 }
 
 function buildScheduleUpdateInput(input: ScheduleUpdateToolInput): UpdateScheduleInput {
+  if (input.workspaceId === null && input.cwd === undefined) {
+    throw new Error("cwd is required when clearing workspaceId");
+  }
   const cadence = resolveScheduleUpdateCadence(input);
   const expiresAt = resolveScheduleUpdateExpiresAt(input);
   const providerModelPatch = resolveScheduleUpdateProviderAndModel({
@@ -470,6 +474,7 @@ function buildScheduleUpdateInput(input: ScheduleUpdateToolInput): UpdateSchedul
     ...(providerModelPatch.model !== undefined ? { model: providerModelPatch.model } : {}),
     ...(input.mode !== undefined ? { modeId: input.mode } : {}),
     ...(input.cwd !== undefined ? { cwd: input.cwd } : {}),
+    ...(input.workspaceId !== undefined ? { workspaceId: input.workspaceId } : {}),
   };
 
   return {
@@ -763,6 +768,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
     provider?: string;
     cwd?: string;
     isolation?: "local" | "worktree";
+    workspaceId?: string;
   }) => {
     const callerAgent = resolveCallerAgent();
     if (callerAgent) {
@@ -771,6 +777,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
         config: {
           ...buildCallerAgentScheduleConfig(callerAgent, params),
           ...(params?.isolation ? { isolation: params.isolation } : {}),
+          ...(params?.workspaceId ? { workspaceId: params.workspaceId } : {}),
         },
       };
     }
@@ -790,6 +797,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
         cwd: params?.cwd?.trim() ? expandUserPath(params.cwd) : process.cwd(),
         ...(resolvedProviderModel.model ? { model: resolvedProviderModel.model } : {}),
         ...(params?.isolation ? { isolation: params.isolation } : {}),
+        ...(params?.workspaceId ? { workspaceId: params.workspaceId } : {}),
       },
     };
   };
@@ -2534,13 +2542,30 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
           "Provider, or provider/model (for example: codex or codex/gpt-5.4). Defaults to the caller's provider in an agent-scoped session.",
         ),
         cwd: z.string().optional(),
+        workspaceId: z
+          .string()
+          .trim()
+          .min(1)
+          .optional()
+          .describe("Existing workspace ID for each fresh scheduled agent."),
         isolation: z.enum(["local", "worktree"]).optional(),
         maxRuns: z.number().int().positive().optional(),
         expiresIn: z.string().optional(),
       },
       outputSchema: ScheduleSummarySchema.shape,
     },
-    async ({ prompt, cron, timezone, name, provider, cwd, isolation, maxRuns, expiresIn }) => {
+    async ({
+      prompt,
+      cron,
+      timezone,
+      name,
+      provider,
+      cwd,
+      workspaceId,
+      isolation,
+      maxRuns,
+      expiresIn,
+    }) => {
       if (!scheduleService) {
         throw new Error("Schedule service is not configured");
       }
@@ -2552,7 +2577,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
           cron,
           ...(timezone !== undefined ? { timezone } : {}),
         }),
-        target: resolveNewAgentScheduleTarget({ provider, cwd, isolation }),
+        target: resolveNewAgentScheduleTarget({ provider, cwd, workspaceId, isolation }),
         ...(name?.trim() ? { name: name.trim() } : {}),
         ...(maxRuns === undefined ? {} : { maxRuns }),
         ...(expiresAt === undefined ? {} : { expiresAt }),
@@ -2809,6 +2834,13 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
             .optional()
             .describe("New mode for new-agent target (null to clear)."),
           cwd: z.string().trim().min(1).optional().describe("New cwd for new-agent target."),
+          workspaceId: z
+            .string()
+            .trim()
+            .min(1)
+            .nullable()
+            .optional()
+            .describe("Existing workspace ID for each fresh agent (null to clear; requires cwd)."),
           expiresIn: z
             .string()
             .optional()

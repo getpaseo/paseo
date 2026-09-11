@@ -6,14 +6,28 @@ import type {
 import type { ScheduleSummary } from "@getpaseo/protocol/schedule/types";
 import type { FormPreferences } from "@/create-agent-preferences/preferences";
 import { describe, expect, it } from "vitest";
-import { buildProjectOptionId, type ScheduleProjectTarget } from "./schedule-project-targets";
+import {
+  buildProjectOptionId,
+  type ScheduleProjectTarget,
+  type ScheduleWorkspaceTarget,
+} from "./schedule-project-targets";
 import { openScheduleForm, type ScheduleFormSnapshot } from "./schedule-form-model";
 
 type TestSchedule = ScheduleSummary & { serverId: string; serverName: string };
 
 const HOSTS = [
-  { serverId: "host-a", label: "Host A", supportsWorkspaceMultiplicity: true },
-  { serverId: "host-b", label: "Host B", supportsWorkspaceMultiplicity: true },
+  {
+    serverId: "host-a",
+    label: "Host A",
+    supportsWorkspaceMultiplicity: true,
+    supportsScheduleExistingWorkspace: true,
+  },
+  {
+    serverId: "host-b",
+    label: "Host B",
+    supportsWorkspaceMultiplicity: true,
+    supportsScheduleExistingWorkspace: true,
+  },
 ] as const;
 
 const MOCK_MODES: AgentMode[] = [{ id: "load-test", label: "Load test" }];
@@ -64,6 +78,7 @@ function target(input: {
   projectName: string;
   cwd: string;
   isGit?: boolean;
+  workspaces?: ScheduleWorkspaceTarget[];
 }): ScheduleProjectTarget {
   return {
     optionId: buildProjectOptionId(input.serverId, input.projectKey),
@@ -73,8 +88,17 @@ function target(input: {
     projectName: input.projectName,
     cwd: input.cwd,
     isGit: input.isGit ?? true,
+    workspaces: input.workspaces ?? [],
   };
 }
+
+const WORKSPACE_TARGETS: ScheduleWorkspaceTarget[] = [
+  {
+    workspaceId: "wks_daily",
+    workspaceName: "Daily status",
+    cwd: "/repo/a/worktrees/daily-status",
+  },
+];
 
 const PROJECT_TARGETS = [
   target({
@@ -82,6 +106,7 @@ const PROJECT_TARGETS = [
     projectKey: "project-a",
     projectName: "Project A",
     cwd: "/repo/a",
+    workspaces: WORKSPACE_TARGETS,
   }),
   target({
     serverId: "host-b",
@@ -97,6 +122,7 @@ function scheduleOnHost(input: {
   cwd: string;
   model: string;
   thinkingOptionId?: string | null;
+  workspaceId?: string;
   cadence?: ScheduleSummary["cadence"];
 }): TestSchedule {
   return {
@@ -117,6 +143,7 @@ function scheduleOnHost(input: {
           input.thinkingOptionId === undefined ? "high" : (input.thinkingOptionId ?? undefined),
         archiveOnFinish: false,
         isolation: "worktree",
+        ...(input.workspaceId ? { workspaceId: input.workspaceId } : {}),
       },
     },
     status: "active",
@@ -186,6 +213,107 @@ function applyPreferences(form: ReturnType<typeof open>, preferences: FormPrefer
 }
 
 describe("schedule form model", () => {
+  it("targets an existing workspace while keeping a fresh-agent schedule", () => {
+    const form = open({
+      mode: "create",
+      defaults: {
+        serverId: "host-a",
+        projectTargets: PROJECT_TARGETS,
+        preferences: {},
+      },
+    });
+
+    form.setPrompt("Run daily status");
+    form.setProject(buildProjectOptionId("host-a", "project-a"), { label: "Project A" });
+    form.applyProviderSnapshot("host-a", providerSnapshot(HOST_A_MODELS));
+    form.setWorkspace("wks_daily");
+    form.applyProviderSnapshot("host-a", providerSnapshot(HOST_A_MODELS));
+    form.setModel("mock", "model-a");
+
+    expect(form.getState()).toMatchObject({
+      targetKind: "new-agent",
+      selectedWorkspaceId: "wks_daily",
+      selectedWorkspaceDisplay: {
+        label: "Daily status",
+        description: "/repo/a/worktrees/daily-status",
+      },
+      workingDir: "/repo/a/worktrees/daily-status",
+      submitWorkspaceId: "wks_daily",
+      submitIsolation: undefined,
+      canSubmit: true,
+      disclosure: {
+        showWorkspaceField: true,
+        showIsolationField: false,
+      },
+    });
+  });
+
+  it("loads and clears an existing workspace target when editing", () => {
+    const form = open({
+      mode: "edit",
+      schedule: scheduleOnHost({
+        serverId: "host-a",
+        serverName: "Host A",
+        cwd: "/repo/a/worktrees/daily-status",
+        model: "model-a",
+        workspaceId: "wks_daily",
+      }),
+      defaults: {
+        serverId: null,
+        projectTargets: PROJECT_TARGETS,
+        preferences: {},
+      },
+    });
+    form.applyProviderSnapshot("host-a", providerSnapshot(HOST_A_MODELS));
+
+    expect(form.getState()).toMatchObject({
+      selectedProjectOptionId: buildProjectOptionId("host-a", "project-a"),
+      selectedWorkspaceId: "wks_daily",
+      submitWorkspaceId: "wks_daily",
+    });
+
+    form.setWorkspace(null);
+    form.applyProviderSnapshot("host-a", providerSnapshot(HOST_A_MODELS));
+    expect(form.getState()).toMatchObject({
+      selectedWorkspaceId: null,
+      workingDir: "/repo/a",
+      submitWorkspaceId: null,
+      submitIsolation: "worktree",
+    });
+  });
+
+  it("resolves a stored workspace when project data arrives after edit opens", () => {
+    const form = open({
+      mode: "edit",
+      schedule: scheduleOnHost({
+        serverId: "host-a",
+        serverName: "Host A",
+        cwd: "/repo/a/worktrees/daily-status",
+        model: "model-a",
+        workspaceId: "wks_daily",
+      }),
+      defaults: { serverId: null, projectTargets: [], preferences: {} },
+    });
+
+    expect(form.getState()).toMatchObject({
+      selectedProjectOptionId: "",
+      selectedWorkspaceDisplay: { label: "wks_daily" },
+    });
+
+    form.applyProjectTargets(PROJECT_TARGETS);
+    expect(form.getState()).toMatchObject({
+      selectedProjectOptionId: buildProjectOptionId("host-a", "project-a"),
+      selectedWorkspaceDisplay: { label: "Daily status" },
+    });
+
+    form.setWorkspace(null);
+    expect(form.getState()).toMatchObject({
+      selectedWorkspaceId: null,
+      workingDir: "/repo/a",
+      submitWorkspaceId: null,
+    });
+  });
+
   it("opens edit from the schedule host snapshot and completes that host resolution", () => {
     const previous = open({
       mode: "edit",
@@ -351,6 +479,7 @@ describe("schedule form model", () => {
 
     expect(form.getState().disclosure).toEqual({
       showProjectField: true,
+      showWorkspaceField: false,
       showModelField: false,
       showThinkingField: false,
       showModeField: false,
@@ -362,6 +491,7 @@ describe("schedule form model", () => {
 
     expect(form.getState().disclosure).toEqual({
       showProjectField: true,
+      showWorkspaceField: true,
       showModelField: true,
       showThinkingField: false,
       showModeField: false,
@@ -374,12 +504,31 @@ describe("schedule form model", () => {
 
     expect(form.getState().disclosure).toEqual({
       showProjectField: true,
+      showWorkspaceField: true,
       showModelField: true,
       showThinkingField: true,
       showModeField: true,
       showIsolationField: true,
       showArchiveOnFinishField: true,
     });
+  });
+
+  it("does not expose workspace targeting based only on the older multiplicity feature", () => {
+    const form = openWithHosts({
+      mode: "create",
+      hosts: [
+        {
+          serverId: "host-a",
+          label: "Host A",
+          supportsWorkspaceMultiplicity: true,
+        },
+      ],
+      defaults: { serverId: "host-a", projectTargets: PROJECT_TARGETS, preferences: {} },
+    });
+
+    form.setProject(buildProjectOptionId("host-a", "project-a"), { label: "Project A" });
+
+    expect(form.getState().disclosure.showWorkspaceField).toBe(false);
   });
 
   it("hides isolation unless the selected project can create a worktree", () => {

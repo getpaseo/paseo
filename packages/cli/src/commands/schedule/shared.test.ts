@@ -6,7 +6,9 @@ import {
   compileEveryPresetToCron,
   parseScheduleCreateInput,
   parseScheduleUpdateInput,
+  requireScheduleExistingWorkspaceSupport,
 } from "./shared.js";
+import type { ScheduleDaemonClient } from "./types.js";
 
 const baseOptions = {
   daemonTarget: selectDaemonTarget({ home: process.cwd() }, {}),
@@ -48,6 +50,22 @@ describe("parseScheduleCreateInput cwd/host validation", () => {
     expect(input.target).toEqual({
       type: "new-agent",
       config: { provider: "claude", cwd: "/remote/project" },
+    });
+  });
+
+  test("host with a workspace does not require a cwd", () => {
+    const input = parseScheduleCreateInput({
+      ...baseOptions,
+      daemonTarget: selectDaemonTarget({ host: "dev:12345" }, {}),
+      workspace: "wks_daily",
+    });
+    expect(input.target).toEqual({
+      type: "new-agent",
+      config: {
+        provider: "claude",
+        cwd: process.cwd(),
+        workspaceId: "wks_daily",
+      },
     });
   });
 
@@ -258,6 +276,43 @@ describe("parseScheduleUpdateInput", () => {
     expect(() => parseScheduleUpdateInput({ id: "abc", cwd: "   " })).toThrow(
       expect.objectContaining({ code: "INVALID_CWD" }),
     );
+  });
+
+  test("sets and clears a selected workspace", () => {
+    expect(parseScheduleUpdateInput({ id: "abc", workspace: "wks_daily" })).toEqual({
+      id: "abc",
+      newAgentConfig: { workspaceId: "wks_daily" },
+    });
+    expect(
+      parseScheduleUpdateInput({ id: "abc", clearWorkspace: true, cwd: "/repo/source" }),
+    ).toEqual({
+      id: "abc",
+      newAgentConfig: { cwd: "/repo/source", workspaceId: null },
+    });
+    expect(() => parseScheduleUpdateInput({ id: "abc", clearWorkspace: true })).toThrow(
+      expect.objectContaining({ code: "MISSING_CWD" }),
+    );
+    expect(() =>
+      parseScheduleUpdateInput({
+        id: "abc",
+        workspace: "wks_daily",
+        clearWorkspace: true,
+      }),
+    ).toThrow(expect.objectContaining({ code: "CONFLICTING_WORKSPACE" }));
+  });
+
+  test("requires explicit daemon support for existing-workspace schedules", () => {
+    const client = (features?: { scheduleExistingWorkspace?: boolean }) =>
+      ({
+        getLastServerInfoMessage: () => (features ? { features } : null),
+      }) as ScheduleDaemonClient;
+
+    expect(() => requireScheduleExistingWorkspaceSupport(client())).toThrow(
+      expect.objectContaining({ code: "DAEMON_UPDATE_REQUIRED" }),
+    );
+    expect(() =>
+      requireScheduleExistingWorkspaceSupport(client({ scheduleExistingWorkspace: true })),
+    ).not.toThrow();
   });
 
   test("--max-runs sets a positive integer; --no-max-runs clears", () => {

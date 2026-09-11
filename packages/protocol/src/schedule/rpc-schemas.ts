@@ -85,6 +85,7 @@ const ScheduleUpdateNewAgentConfigSchema = z.object({
   archiveOnFinish: z.boolean().optional(),
   isolation: z.enum(["local", "worktree"]).optional(),
   cwd: z.string().trim().min(1).optional(),
+  workspaceId: z.string().trim().min(1).nullable().optional(),
 });
 
 export const ScheduleUpdateRequestSchema = z.object({
