@@ -216,6 +216,8 @@ async function createCodexRestoreJourney(page: Page, client: SeedDaemonClient, i
       });
     },
     async dispose() {
+      const testFailed = info.status !== info.expectedStatus;
+      const errors: unknown[] = [];
       try {
         await info.attach("final-screen", {
           body: await page.screenshot(),
@@ -230,12 +232,27 @@ async function createCodexRestoreJourney(page: Page, client: SeedDaemonClient, i
           body: await readFile(path.join(process.env.E2E_PASEO_HOME!, "daemon.log")),
           contentType: "text/plain",
         });
-      } finally {
-        await mcp.close();
-        if (info.status === info.expectedStatus || process.env.E2E_KEEP_PASEO_HOME !== "1") {
-          if (workspace) await client.removeProject(workspace.projectId);
-          await repo.cleanup();
+      } catch (error) {
+        errors.push(error);
+      }
+      const cleanup: Array<() => Promise<unknown>> = [() => mcp.close()];
+      if (!testFailed || process.env.E2E_KEEP_PASEO_HOME !== "1") {
+        const projectId = workspace?.projectId;
+        if (projectId) cleanup.push(() => client.removeProject(projectId));
+        cleanup.push(() => repo.cleanup());
+      }
+      for (const release of cleanup) {
+        try {
+          await release();
+        } catch (error) {
+          errors.push(error);
         }
+      }
+      if (errors.length > 0) {
+        const error = new AggregateError(errors, "Codex restore fixture teardown failed");
+        if (!testFailed) throw error;
+        // Keep the journey failure primary while reporting teardown failures in the test log.
+        console.error(error);
       }
     },
   };
