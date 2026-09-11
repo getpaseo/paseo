@@ -617,6 +617,7 @@ export class ScheduleService {
       agentId: string | null;
       runId: string;
       workspaceOwnedByRun: boolean;
+      archiveOnFinish: boolean;
     }> = [];
     await this.store.update(scheduleId, async (current) => {
       let updated = { ...current };
@@ -629,6 +630,11 @@ export class ScheduleService {
         // Runs written before workspace ownership was recorded always used a
         // schedule-created workspace, so missing ownership means owned.
         const workspaceOwnedByRun = runningRun.workspaceOwnedByRun ?? true;
+        const archiveOnFinish =
+          runningRun.archiveOnFinish ??
+          (updated.target.type === "new-agent"
+            ? (updated.target.config.archiveOnFinish ?? true)
+            : true);
         const recoveredAgentId =
           runningRun.agentId ??
           (workspaceOwnedByRun || !runningRun.workspaceId
@@ -638,21 +644,13 @@ export class ScheduleService {
                 runId: runningRun.id,
                 workspaceId: runningRun.workspaceId,
               }));
-        if (
-          updated.target.type === "new-agent" &&
-          runningRun.workspaceId &&
-          (workspaceOwnedByRun
-            ? shouldArchiveScheduleRunWorkspace({
-                agentId: recoveredAgentId,
-                archiveOnFinish: updated.target.config.archiveOnFinish,
-              })
-            : Boolean(recoveredAgentId && (updated.target.config.archiveOnFinish ?? true)))
-        ) {
+        if (updated.target.type === "new-agent" && runningRun.workspaceId) {
           interruptedRuns.push({
             workspaceId: runningRun.workspaceId,
             agentId: recoveredAgentId,
             runId: runningRun.id,
             workspaceOwnedByRun,
+            archiveOnFinish,
           });
         }
         runs[runningIndex] = {
@@ -688,26 +686,11 @@ export class ScheduleService {
     if (!interruptedRun) {
       return;
     }
-    try {
-      if (interruptedRun.workspaceOwnedByRun) {
-        await this.archiveWorkspace(interruptedRun.workspaceId);
-      } else if (interruptedRun.agentId) {
-        await this.archiveAgent(interruptedRun.agentId);
-      }
-    } catch (error) {
-      this.logger.warn(
-        {
-          err: error,
-          agentId: interruptedRun.agentId,
-          workspaceId: interruptedRun.workspaceId,
-          scheduleId,
-          runId: interruptedRun.runId,
-        },
-        interruptedRun.workspaceOwnedByRun
-          ? "Failed to archive interrupted scheduled workspace after daemon restart"
-          : "Failed to archive interrupted scheduled agent after daemon restart",
-      );
-    }
+    await this.cleanupScheduleRunResources({
+      ...interruptedRun,
+      scheduleId,
+      interrupted: true,
+    });
   }
 
   private async findScheduledRunAgent(input: {
@@ -810,11 +793,20 @@ export class ScheduleService {
     scheduleId: string,
     runningRun: ScheduleRun,
   ): Promise<StoredSchedule> {
-    const updated = await this.store.update(scheduleId, (schedule) => ({
-      ...schedule,
-      updatedAt: runningRun.startedAt,
-      runs: [...schedule.runs, runningRun],
-    }));
+    const updated = await this.store.update(scheduleId, (schedule) => {
+      const run =
+        schedule.target.type === "new-agent"
+          ? {
+              ...runningRun,
+              archiveOnFinish: schedule.target.config.archiveOnFinish ?? true,
+            }
+          : runningRun;
+      return {
+        ...schedule,
+        updatedAt: runningRun.startedAt,
+        runs: [...schedule.runs, run],
+      };
+    });
     return requireSchedule(updated, scheduleId);
   }
 
@@ -1024,26 +1016,28 @@ export class ScheduleService {
         }),
       };
     } finally {
-      await this.cleanupScheduleRunWorkspace({
-        workspace,
+      await this.cleanupScheduleRunResources({
+        workspaceId: workspace?.workspaceId ?? null,
         workspaceOwnedByRun,
         agentId,
-        archiveOnFinish: config.archiveOnFinish,
+        archiveOnFinish: config.archiveOnFinish ?? true,
         scheduleId: schedule.id,
         runId,
+        interrupted: false,
       });
     }
   }
 
-  private async cleanupScheduleRunWorkspace(input: {
-    workspace: PersistedWorkspaceRecord | null;
+  private async cleanupScheduleRunResources(input: {
+    workspaceId: string | null;
     workspaceOwnedByRun: boolean;
     agentId: string | null;
-    archiveOnFinish: boolean | undefined;
+    archiveOnFinish: boolean;
     scheduleId: string;
     runId: string;
+    interrupted: boolean;
   }): Promise<void> {
-    if (!input.workspace) {
+    if (!input.workspaceId) {
       return;
     }
     try {
@@ -1054,8 +1048,8 @@ export class ScheduleService {
           archiveOnFinish: input.archiveOnFinish,
         })
       ) {
-        await this.archiveWorkspace(input.workspace.workspaceId);
-      } else if (!input.workspaceOwnedByRun && input.agentId && (input.archiveOnFinish ?? true)) {
+        await this.archiveWorkspace(input.workspaceId);
+      } else if (!input.workspaceOwnedByRun && input.agentId && input.archiveOnFinish) {
         await this.archiveAgent(input.agentId);
       }
     } catch (error) {
@@ -1063,13 +1057,11 @@ export class ScheduleService {
         {
           err: error,
           agentId: input.agentId,
-          workspaceId: input.workspace.workspaceId,
+          workspaceId: input.workspaceId,
           scheduleId: input.scheduleId,
           runId: input.runId,
         },
-        input.workspaceOwnedByRun
-          ? "Failed to archive scheduled workspace after run"
-          : "Failed to archive scheduled agent after run",
+        `Failed to archive ${input.interrupted ? "interrupted " : ""}scheduled ${input.workspaceOwnedByRun ? "workspace" : "agent"} after ${input.interrupted ? "daemon restart" : "run"}`,
       );
     }
   }

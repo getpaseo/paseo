@@ -44,11 +44,10 @@ import { useAggregatedAgents } from "@/hooks/use-aggregated-agents";
 import { useProjects } from "@/hooks/use-projects";
 import { useHosts } from "@/runtime/host-runtime";
 import { useSessionStore } from "@/stores/session-store";
-import { buildScheduleProjectTargets } from "@/schedules/schedule-project-targets";
 import {
-  buildScheduleWorkspaceTargets,
+  buildScheduleProjectTargets,
   NEW_SCHEDULE_WORKSPACE_OPTION_ID,
-} from "@/schedules/schedule-workspace-targets";
+} from "@/schedules/schedule-project-targets";
 import { useScheduleFormModel } from "@/schedules/use-schedule-form-model";
 import { useScheduleFormProviderSnapshot } from "@/schedules/use-schedule-form-provider-snapshot";
 import type {
@@ -147,7 +146,6 @@ function buildSnapshot(input: {
   schedule: ScheduleSummary | undefined;
   hosts: readonly ScheduleFormHost[];
   projectTargets: ReturnType<typeof buildScheduleProjectTargets>;
-  workspaceTargets: ReturnType<typeof buildScheduleWorkspaceTargets>;
   preferences: FormPreferences;
   timezone: string;
 }): ScheduleFormSnapshot {
@@ -165,7 +163,6 @@ function buildSnapshot(input: {
         hosts: input.hosts,
       }),
       projectTargets: input.projectTargets,
-      workspaceTargets: input.workspaceTargets,
       preferences: input.preferences,
       timezone: input.timezone,
     },
@@ -268,7 +265,6 @@ function OpenScheduleFormSheet({
   );
   const { preferences, updatePreferences } = useFormPreferences();
   const projectTargets = useMemo(() => buildScheduleProjectTargets(projects), [projects]);
-  const workspaceTargets = useMemo(() => buildScheduleWorkspaceTargets(projects), [projects]);
   const timezone = useMemo(getDeviceTimeZone, []);
   const snapshot = useMemo(
     () =>
@@ -278,11 +274,10 @@ function OpenScheduleFormSheet({
         schedule,
         hosts,
         projectTargets,
-        workspaceTargets,
         preferences,
         timezone,
       }),
-    [hosts, mode, preferences, projectTargets, schedule, serverId, timezone, workspaceTargets],
+    [hosts, mode, preferences, projectTargets, schedule, serverId, timezone],
   );
   const model = useScheduleFormModel(snapshot);
   const state = useSyncExternalStore(model.subscribe, model.getState, model.getState);

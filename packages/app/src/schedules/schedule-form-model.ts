@@ -27,8 +27,11 @@ import {
 import { buildProviderDefinitions } from "@/utils/provider-definitions";
 import { shortenPath } from "@/utils/shorten-path";
 import { normalizeScheduleFormCadence } from "./schedule-cadence-options";
-import { PROJECT_OPTION_PREFIX, type ScheduleProjectTarget } from "./schedule-project-targets";
-import type { ScheduleWorkspaceTarget } from "./schedule-workspace-targets";
+import {
+  PROJECT_OPTION_PREFIX,
+  type ScheduleProjectTarget,
+  type ScheduleWorkspaceTarget,
+} from "./schedule-project-targets";
 
 export interface ScheduleFormDisplay {
   label: string;
@@ -49,7 +52,6 @@ export interface ScheduleFormSnapshot {
   defaults: {
     serverId?: string | null;
     projectTargets: readonly ScheduleProjectTarget[];
-    workspaceTargets?: readonly ScheduleWorkspaceTarget[];
     preferences?: FormPreferences;
     timezone?: string;
   };
@@ -140,7 +142,6 @@ export interface ScheduleFormModel {
   close: () => void;
   applyHosts: (hosts: readonly ScheduleFormHost[]) => void;
   applyProjectTargets: (targets: readonly ScheduleProjectTarget[]) => void;
-  applyWorkspaceTargets: (targets: readonly ScheduleWorkspaceTarget[]) => void;
   applyPreferences: (preferences: FormPreferences | undefined) => void;
   applyProviderSnapshot: (serverId: string, snapshot: ScheduleFormProviderSnapshot) => void;
   setHost: (serverId: string | null) => void;
@@ -208,22 +209,15 @@ function buildProjectOptions(
 }
 
 function buildWorkspaceOptions(
-  targets: readonly ScheduleWorkspaceTarget[],
-  serverId: string | null,
-  projectOptionId: string,
+  projectTarget: ScheduleProjectTarget | null,
 ): ScheduleFormWorkspaceOption[] {
-  if (!serverId || !projectOptionId) {
-    return [];
-  }
-  return targets
-    .filter((target) => target.serverId === serverId && target.projectOptionId === projectOptionId)
-    .map((target) => ({
-      id: target.workspaceId,
-      value: target.workspaceId,
-      label: target.workspaceName,
-      description: shortenPath(target.cwd),
-      testID: `schedule-workspace-option-${target.workspaceId}`,
-    }));
+  return (projectTarget?.workspaces ?? []).map((target) => ({
+    id: target.workspaceId,
+    value: target.workspaceId,
+    label: target.workspaceName,
+    description: shortenPath(target.cwd),
+    testID: `schedule-workspace-option-${target.workspaceId}`,
+  }));
 }
 
 function resolveProjectTarget(input: {
@@ -247,14 +241,22 @@ function findProjectTargetByOptionId(
   return targets.find((target) => target.optionId === optionId) ?? null;
 }
 
-function findWorkspaceTargetById(
-  targets: readonly ScheduleWorkspaceTarget[],
+function findWorkspaceSelectionById(
+  targets: readonly ScheduleProjectTarget[],
   workspaceId: string | null | undefined,
-): ScheduleWorkspaceTarget | null {
+): { projectTarget: ScheduleProjectTarget; workspaceTarget: ScheduleWorkspaceTarget } | null {
   if (!workspaceId) {
     return null;
   }
-  return targets.find((target) => target.workspaceId === workspaceId) ?? null;
+  for (const projectTarget of targets) {
+    const workspaceTarget = projectTarget.workspaces.find(
+      (target) => target.workspaceId === workspaceId,
+    );
+    if (workspaceTarget) {
+      return { projectTarget, workspaceTarget };
+    }
+  }
+  return null;
 }
 
 function buildWorkspaceDisplay(target: ScheduleWorkspaceTarget | null): ScheduleFormDisplay {
@@ -491,26 +493,24 @@ function buildInitialWorkspaceState(input: {
   selectedServerId: string | null;
   workingDir: string;
 }) {
-  const workspaceTargets = input.snapshot.defaults.workspaceTargets ?? [];
   const selectedWorkspaceId = input.config?.workspaceId ?? null;
-  const selectedWorkspaceTarget = findWorkspaceTargetById(workspaceTargets, selectedWorkspaceId);
-  const selectedProjectTarget = selectedWorkspaceTarget
-    ? findProjectTargetByOptionId(
-        input.snapshot.defaults.projectTargets,
-        selectedWorkspaceTarget.projectOptionId,
-      )
+  const workspaceSelection = findWorkspaceSelectionById(
+    input.snapshot.defaults.projectTargets,
+    selectedWorkspaceId,
+  );
+  const selectedProjectTarget = workspaceSelection
+    ? workspaceSelection.projectTarget
     : resolveProjectTarget({
         targets: input.snapshot.defaults.projectTargets,
         serverId: input.selectedServerId,
         cwd: input.workingDir,
       });
-  let selectedWorkspaceDisplay = buildWorkspaceDisplay(selectedWorkspaceTarget);
-  if (!selectedWorkspaceTarget && selectedWorkspaceId) {
+  let selectedWorkspaceDisplay = buildWorkspaceDisplay(workspaceSelection?.workspaceTarget ?? null);
+  if (!workspaceSelection && selectedWorkspaceId) {
     selectedWorkspaceDisplay = { label: selectedWorkspaceId };
   }
   const selectedProjectOptionId = resolveSelectedProjectOptionId(selectedProjectTarget);
   return {
-    workspaceTargets,
     selectedWorkspaceId,
     selectedWorkspaceDisplay,
     selectedProjectOptionId,
@@ -521,11 +521,7 @@ function buildInitialWorkspaceState(input: {
           targets: input.snapshot.defaults.projectTargets,
           selectedServerId: input.selectedServerId,
         }),
-    workspaceOptions: buildWorkspaceOptions(
-      workspaceTargets,
-      input.selectedServerId,
-      selectedProjectOptionId,
-    ),
+    workspaceOptions: buildWorkspaceOptions(selectedProjectTarget),
   };
 }
 
@@ -690,7 +686,6 @@ function updateDerivedState(input: {
   state: ScheduleFormState;
   hosts: readonly ScheduleFormHost[];
   targets: readonly ScheduleProjectTarget[];
-  workspaceTargets: readonly ScheduleWorkspaceTarget[];
   providerEntries: readonly ProviderSnapshotEntry[];
 }): ScheduleFormState {
   const modeOptions = resolveModeOptions(input.providerEntries, input.state.selectedProvider);
@@ -719,10 +714,13 @@ function updateDerivedState(input: {
     serverId: input.state.selectedServerId,
     cwd: input.state.workingDir,
   });
-  const selectedProjectTarget = findProjectTargetByOptionId(
+  const workspaceSelection = findWorkspaceSelectionById(
     input.targets,
-    input.state.selectedProjectOptionId,
+    input.state.selectedWorkspaceId,
   );
+  const selectedProjectTarget =
+    workspaceSelection?.projectTarget ??
+    findProjectTargetByOptionId(input.targets, input.state.selectedProjectOptionId);
   const selectedProjectOptionId =
     selectedProjectTarget?.serverId === input.state.selectedServerId
       ? selectedProjectTarget.optionId
@@ -731,11 +729,7 @@ function updateDerivedState(input: {
     ...input.state,
     hosts: [...input.hosts],
     projectOptions: buildProjectOptions(input.targets, input.state.selectedServerId),
-    workspaceOptions: buildWorkspaceOptions(
-      input.workspaceTargets,
-      input.state.selectedServerId,
-      selectedProjectOptionId,
-    ),
+    workspaceOptions: buildWorkspaceOptions(selectedProjectTarget),
     projectDisplay: selectedProjectTarget
       ? buildProjectDisplay(selectedProjectTarget)
       : resolveProjectDisplay({
@@ -744,6 +738,10 @@ function updateDerivedState(input: {
           cwd: input.state.workingDir,
         }),
     selectedProjectOptionId,
+    selectedWorkspaceDisplay: workspaceSelection
+      ? buildWorkspaceDisplay(workspaceSelection.workspaceTarget)
+      : input.state.selectedWorkspaceDisplay,
+    workingDir: workspaceSelection?.workspaceTarget.cwd ?? input.state.workingDir,
     selectedModelDisplay: resolveModelDisplay({
       entries: input.providerEntries,
       provider: input.state.selectedProvider,
@@ -859,7 +857,6 @@ function buildInitialState(snapshot: ScheduleFormSnapshot): ScheduleFormState {
     state,
     hosts: snapshot.hosts,
     targets: snapshot.defaults.projectTargets,
-    workspaceTargets: initialWorkspace.workspaceTargets,
     providerEntries: [],
   });
 }
@@ -1001,7 +998,6 @@ export function openScheduleForm(snapshot: ScheduleFormSnapshot): ScheduleFormMo
   let closed = false;
   let hosts = snapshot.hosts;
   let projectTargets = snapshot.defaults.projectTargets;
-  let workspaceTargets = snapshot.defaults.workspaceTargets ?? [];
   let preferences = snapshot.defaults.preferences ?? null;
   const thinkingDrafts = new Map<string, string>();
   seedThinkingDrafts(thinkingDrafts, preferences);
@@ -1029,7 +1025,6 @@ export function openScheduleForm(snapshot: ScheduleFormSnapshot): ScheduleFormMo
       state: nextState,
       hosts,
       targets: projectTargets,
-      workspaceTargets,
       providerEntries,
     });
     for (const listener of listeners) {
@@ -1125,13 +1120,6 @@ export function openScheduleForm(snapshot: ScheduleFormSnapshot): ScheduleFormMo
       projectTargets = nextTargets;
       publish(state);
     },
-    applyWorkspaceTargets(nextTargets) {
-      if (closed || workspaceTargets === nextTargets) {
-        return;
-      }
-      workspaceTargets = nextTargets;
-      publish(state);
-    },
     applyPreferences(nextPreferences) {
       const normalizedPreferences = nextPreferences ?? null;
       if (closed || preferences === normalizedPreferences) {
@@ -1221,13 +1209,14 @@ export function openScheduleForm(snapshot: ScheduleFormSnapshot): ScheduleFormMo
       if (closed || state.selectedWorkspaceId === workspaceId) {
         return;
       }
-      const workspaceTarget = findWorkspaceTargetById(workspaceTargets, workspaceId);
-      const projectTarget = workspaceTarget
-        ? findProjectTargetByOptionId(projectTargets, workspaceTarget.projectOptionId)
+      const workspaceSelection = findWorkspaceSelectionById(projectTargets, workspaceId);
+      const projectTarget = workspaceSelection
+        ? workspaceSelection.projectTarget
         : findProjectTargetByOptionId(projectTargets, state.selectedProjectOptionId);
       if (!projectTarget) {
         return;
       }
+      const workspaceTarget = workspaceSelection?.workspaceTarget ?? null;
       const cwd = workspaceTarget?.cwd ?? projectTarget.cwd;
       const providerScopeChanged =
         state.selectedServerId !== projectTarget.serverId || state.workingDir !== cwd;

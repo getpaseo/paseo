@@ -52,6 +52,7 @@ export const ScheduleRunSchema = z.object({
   agentId: z.guid().nullable(),
   workspaceId: z.string().nullable().optional(),
   workspaceOwnedByRun: z.boolean().optional(),
+  archiveOnFinish: z.boolean().optional(),
   output: z.string().nullable(),
   error: z.string().nullable(),
 });

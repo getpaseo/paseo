@@ -40,7 +40,11 @@ import {
   type ScheduleServiceOptions,
 } from "./service.js";
 import { ScheduleStore } from "./store.js";
-import type { ScheduleExecutionResult, StoredSchedule } from "@getpaseo/protocol/schedule/types";
+import type {
+  ScheduleExecutionResult,
+  ScheduleRun,
+  StoredSchedule,
+} from "@getpaseo/protocol/schedule/types";
 
 interface ScheduleServiceInternals {
   executeSchedule(schedule: StoredSchedule, runId: string): Promise<ScheduleExecutionResult>;
@@ -322,6 +326,59 @@ describe("ScheduleService", () => {
     await agentStorage.flush();
     await rm(tempDir, { recursive: true, force: true });
   });
+
+  function serviceForRecovery(overrides: Partial<TestScheduleServiceOptions> = {}) {
+    return createScheduleService({
+      paseoHome: tempDir,
+      logger: createTestLogger(),
+      agentManager: new AgentManager({ logger: createTestLogger() }),
+      agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
+      now: () => now,
+      runner: async () => ({ agentId: null, output: "ok" }),
+      ...overrides,
+    });
+  }
+
+  async function seedInterruptedRun(
+    scheduleId: string,
+    run: Pick<ScheduleRun, "id" | "agentId" | "workspaceId"> &
+      Partial<Pick<ScheduleRun, "workspaceOwnedByRun" | "archiveOnFinish">>,
+  ) {
+    const interruptedAt = now.toISOString();
+    const store = new ScheduleStore(join(tempDir, "schedules"));
+    await store.update(scheduleId, (schedule) => ({
+      ...schedule,
+      runs: [
+        ...schedule.runs,
+        {
+          ...run,
+          scheduledFor: interruptedAt,
+          startedAt: interruptedAt,
+          endedAt: null,
+          status: "running",
+          output: null,
+          error: null,
+        },
+      ],
+    }));
+  }
+
+  function makeSelectedWorkspace(workspaceId: string): PersistedWorkspaceRecord {
+    return {
+      workspaceId,
+      projectId: "test-project",
+      cwd: tempDir,
+      kind: "directory",
+      displayName: "shared",
+      title: "Shared workspace",
+      branch: null,
+      baseBranch: null,
+      createdAt: now.toISOString(),
+      updatedAt: now.toISOString(),
+      archivedAt: null,
+    };
+  }
 
   test("ticks due schedules and records run history on disk", async () => {
     const service = createScheduleService({
@@ -629,6 +686,7 @@ describe("ScheduleService", () => {
 
     const inspected = await service.inspect(created.id);
     expect(inspected.runs).toHaveLength(2);
+    expect(inspected.runs.every((run) => run.archiveOnFinish === false)).toBe(true);
     const firstAgent = await agentStorage.get(inspected.runs[0]!.agentId!);
     const secondAgent = await agentStorage.get(inspected.runs[1]!.agentId!);
     expect(firstAgent?.workspaceId).toMatch(/^wks_/);
@@ -700,7 +758,7 @@ describe("ScheduleService", () => {
     await service.tick();
 
     const inspected = await service.inspect(created.id);
-    expect(inspected.runs[0]?.status).toBe("succeeded");
+    expect(inspected.runs[0]).toMatchObject({ status: "succeeded", archiveOnFinish: true });
     const agentId = inspected.runs[0]?.agentId;
     expect(agentId).toMatch(/^[0-9a-f-]{36}$/);
     const storedAgent = await agentStorage.get(agentId!);
@@ -2105,15 +2163,7 @@ describe("ScheduleService", () => {
   });
 
   test("startup recovery archives an interrupted run workspace with an associated agent", async () => {
-    const service1 = createScheduleService({
-      paseoHome: tempDir,
-      logger: createTestLogger(),
-      agentManager: new AgentManager({ logger: createTestLogger() }),
-      agentStorage,
-      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
-      now: () => now,
-      runner: async () => ({ agentId: null, output: "ok" }),
-    });
+    const service1 = serviceForRecovery();
     const created = await service1.create({
       prompt: "Interrupted after creating an agent",
       cadence: { type: "every", everyMs: 60_000 },
@@ -2125,38 +2175,17 @@ describe("ScheduleService", () => {
     });
     await service1.stop();
 
-    const interruptedAt = now.toISOString();
     const associatedAgentId = "11111111-1111-4111-8111-111111111111";
     const workspaceId = "wks_interrupted_with_agent";
-    const store = new ScheduleStore(join(tempDir, "schedules"));
-    await store.update(created.id, (schedule) => ({
-      ...schedule,
-      runs: [
-        ...schedule.runs,
-        {
-          id: "run-interrupted-with-agent",
-          scheduledFor: interruptedAt,
-          startedAt: interruptedAt,
-          endedAt: null,
-          status: "running",
-          agentId: associatedAgentId,
-          workspaceId,
-          output: null,
-          error: null,
-        },
-      ],
-    }));
+    await seedInterruptedRun(created.id, {
+      id: "run-interrupted-with-agent",
+      agentId: associatedAgentId,
+      workspaceId,
+    });
 
     const archiveCalls: string[] = [];
     now = new Date("2026-01-01T00:10:00.000Z");
-    const service2 = createScheduleService({
-      paseoHome: tempDir,
-      logger: createTestLogger(),
-      agentManager: new AgentManager({ logger: createTestLogger() }),
-      agentStorage,
-      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
-      now: () => now,
-      runner: async () => ({ agentId: null, output: "ok" }),
+    const service2 = serviceForRecovery({
       archiveWorkspace: async (archivedWorkspaceId) => {
         archiveCalls.push(archivedWorkspaceId);
       },
@@ -2174,15 +2203,7 @@ describe("ScheduleService", () => {
   });
 
   test("startup recovery archives an interrupted run workspace even before agent association", async () => {
-    const service1 = createScheduleService({
-      paseoHome: tempDir,
-      logger: createTestLogger(),
-      agentManager: new AgentManager({ logger: createTestLogger() }),
-      agentStorage,
-      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
-      now: () => now,
-      runner: async () => ({ agentId: null, output: "ok" }),
-    });
+    const service1 = serviceForRecovery();
     const created = await service1.create({
       prompt: "Interrupted before creating an agent",
       cadence: { type: "every", everyMs: 60_000 },
@@ -2194,37 +2215,16 @@ describe("ScheduleService", () => {
     });
     await service1.stop();
 
-    const interruptedAt = now.toISOString();
     const workspaceId = "wks_interrupted_without_agent";
-    const store = new ScheduleStore(join(tempDir, "schedules"));
-    await store.update(created.id, (schedule) => ({
-      ...schedule,
-      runs: [
-        ...schedule.runs,
-        {
-          id: "run-interrupted-without-agent",
-          scheduledFor: interruptedAt,
-          startedAt: interruptedAt,
-          endedAt: null,
-          status: "running",
-          agentId: null,
-          workspaceId,
-          output: null,
-          error: null,
-        },
-      ],
-    }));
+    await seedInterruptedRun(created.id, {
+      id: "run-interrupted-without-agent",
+      agentId: null,
+      workspaceId,
+    });
 
     const archiveCalls: string[] = [];
     now = new Date("2026-01-01T00:10:00.000Z");
-    const service2 = createScheduleService({
-      paseoHome: tempDir,
-      logger: createTestLogger(),
-      agentManager: new AgentManager({ logger: createTestLogger() }),
-      agentStorage,
-      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
-      now: () => now,
-      runner: async () => ({ agentId: null, output: "ok" }),
+    const service2 = serviceForRecovery({
       archiveWorkspace: async (archivedWorkspaceId) => {
         archiveCalls.push(archivedWorkspaceId);
       },
@@ -2243,28 +2243,9 @@ describe("ScheduleService", () => {
 
   test("startup recovery preserves a selected workspace and archives only its interrupted agent", async () => {
     const workspaceId = "wks_selected_recovery";
-    const selectedWorkspace: PersistedWorkspaceRecord = {
-      workspaceId,
-      projectId: "test-project",
-      cwd: tempDir,
-      kind: "directory",
-      displayName: "shared",
-      title: "Shared workspace",
-      branch: null,
-      baseBranch: null,
-      createdAt: now.toISOString(),
-      updatedAt: now.toISOString(),
-      archivedAt: null,
-    };
-    const service1 = createScheduleService({
-      paseoHome: tempDir,
-      logger: createTestLogger(),
-      agentManager: new AgentManager({ logger: createTestLogger() }),
-      agentStorage,
-      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
-      getWorkspace: async (id) => (id === workspaceId ? selectedWorkspace : null),
-      now: () => now,
-      runner: async () => ({ agentId: null, output: "ok" }),
+    const workspace = makeSelectedWorkspace(workspaceId);
+    const service1 = serviceForRecovery({
+      getWorkspace: async (id) => (id === workspaceId ? workspace : null),
     });
     const created = await service1.create({
       prompt: "Interrupted in a selected workspace",
@@ -2278,41 +2259,20 @@ describe("ScheduleService", () => {
     await service1.stop();
 
     const associatedAgentId = "22222222-2222-4222-8222-222222222222";
-    const interruptedAt = now.toISOString();
-    const store = new ScheduleStore(join(tempDir, "schedules"));
-    await store.update(created.id, (schedule) => ({
-      ...schedule,
-      runs: [
-        ...schedule.runs,
-        {
-          id: "run-interrupted-selected-workspace",
-          scheduledFor: interruptedAt,
-          startedAt: interruptedAt,
-          endedAt: null,
-          status: "running",
-          agentId: associatedAgentId,
-          workspaceId,
-          workspaceOwnedByRun: false,
-          output: null,
-          error: null,
-        },
-      ],
-    }));
+    await seedInterruptedRun(created.id, {
+      id: "run-interrupted-selected-workspace",
+      agentId: associatedAgentId,
+      workspaceId,
+      workspaceOwnedByRun: false,
+    });
 
     const archiveWorkspace = vi.fn<ScheduleServiceOptions["archiveWorkspace"]>();
     const archiveAgent = vi.fn<ScheduleServiceOptions["archiveAgent"]>();
     now = new Date("2026-01-01T00:10:00.000Z");
-    const service2 = createScheduleService({
-      paseoHome: tempDir,
-      logger: createTestLogger(),
-      agentManager: new AgentManager({ logger: createTestLogger() }),
-      agentStorage,
-      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
-      getWorkspace: async (id) => (id === workspaceId ? selectedWorkspace : null),
+    const service2 = serviceForRecovery({
+      getWorkspace: async (id) => (id === workspaceId ? workspace : null),
       archiveWorkspace,
       archiveAgent,
-      now: () => now,
-      runner: async () => ({ agentId: null, output: "ok" }),
     });
     await service2.start();
 
@@ -2330,28 +2290,9 @@ describe("ScheduleService", () => {
     const workspaceId = "wks_selected_unrecorded_agent";
     const runId = "run-interrupted-before-agent-record";
     const agentId = "33333333-3333-4333-8333-333333333333";
-    const selectedWorkspace: PersistedWorkspaceRecord = {
-      workspaceId,
-      projectId: "test-project",
-      cwd: tempDir,
-      kind: "directory",
-      displayName: "shared",
-      title: "Shared workspace",
-      branch: null,
-      baseBranch: null,
-      createdAt: now.toISOString(),
-      updatedAt: now.toISOString(),
-      archivedAt: null,
-    };
-    const service1 = createScheduleService({
-      paseoHome: tempDir,
-      logger: createTestLogger(),
-      agentManager: new AgentManager({ logger: createTestLogger() }),
-      agentStorage,
-      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
-      getWorkspace: async (id) => (id === workspaceId ? selectedWorkspace : null),
-      now: () => now,
-      runner: async () => ({ agentId: null, output: "ok" }),
+    const workspace = makeSelectedWorkspace(workspaceId);
+    const service1 = serviceForRecovery({
+      getWorkspace: async (id) => (id === workspaceId ? workspace : null),
     });
     const created = await service1.create({
       prompt: "Interrupted before the agent id was recorded",
@@ -2372,40 +2313,20 @@ describe("ScheduleService", () => {
         "paseo.schedule-run": runId,
       },
     });
-    const store = new ScheduleStore(join(tempDir, "schedules"));
-    await store.update(created.id, (schedule) => ({
-      ...schedule,
-      runs: [
-        ...schedule.runs,
-        {
-          id: runId,
-          scheduledFor: now.toISOString(),
-          startedAt: now.toISOString(),
-          endedAt: null,
-          status: "running",
-          agentId: null,
-          workspaceId,
-          workspaceOwnedByRun: false,
-          output: null,
-          error: null,
-        },
-      ],
-    }));
+    await seedInterruptedRun(created.id, {
+      id: runId,
+      agentId: null,
+      workspaceId,
+      workspaceOwnedByRun: false,
+    });
 
     const archiveWorkspace = vi.fn<ScheduleServiceOptions["archiveWorkspace"]>();
     const archiveAgent = vi.fn<ScheduleServiceOptions["archiveAgent"]>();
     now = new Date("2026-01-01T00:10:00.000Z");
-    const service2 = createScheduleService({
-      paseoHome: tempDir,
-      logger: createTestLogger(),
-      agentManager: new AgentManager({ logger: createTestLogger() }),
-      agentStorage,
-      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
-      getWorkspace: async (id) => (id === workspaceId ? selectedWorkspace : null),
+    const service2 = serviceForRecovery({
+      getWorkspace: async (id) => (id === workspaceId ? workspace : null),
       archiveWorkspace,
       archiveAgent,
-      now: () => now,
-      runner: async () => ({ agentId: null, output: "ok" }),
     });
     await service2.start();
 
@@ -2419,6 +2340,57 @@ describe("ScheduleService", () => {
     });
     await service2.stop();
   });
+
+  test.each([
+    ["archives", true, false, 1],
+    ["preserves", false, true, 0],
+  ])(
+    "startup recovery %s a selected-workspace agent according to the run-start policy",
+    async (_behavior, archiveOnFinishAtStart, currentArchiveOnFinish, expectedArchiveCalls) => {
+      const workspaceId = "wks_selected_policy_snapshot";
+      const workspace = makeSelectedWorkspace(workspaceId);
+      const getWorkspace = async (id: string) => (id === workspaceId ? workspace : null);
+      const service1 = serviceForRecovery({ getWorkspace });
+      const created = await service1.create({
+        prompt: "Use the policy captured when this run starts",
+        cadence: { type: "every", everyMs: 60_000 },
+        target: {
+          type: "new-agent",
+          config: {
+            provider: "claude",
+            cwd: tempDir,
+            workspaceId,
+            archiveOnFinish: archiveOnFinishAtStart,
+          },
+        },
+        runOnCreate: false,
+      });
+      const agentId = "44444444-4444-4444-8444-444444444444";
+      await seedInterruptedRun(created.id, {
+        id: "run-policy-snapshot",
+        agentId,
+        workspaceId,
+        workspaceOwnedByRun: false,
+        archiveOnFinish: archiveOnFinishAtStart,
+      });
+      await service1.update({
+        id: created.id,
+        newAgentConfig: { archiveOnFinish: currentArchiveOnFinish },
+      });
+
+      const archiveAgent = vi.fn<ScheduleServiceOptions["archiveAgent"]>();
+      now = new Date("2026-01-01T00:10:00.000Z");
+      const service2 = serviceForRecovery({ getWorkspace, archiveAgent });
+      await service2.start();
+
+      expect(archiveAgent).toHaveBeenCalledTimes(expectedArchiveCalls);
+      expect((await service2.inspect(created.id)).runs[0]).toMatchObject({
+        status: "failed",
+        archiveOnFinish: archiveOnFinishAtStart,
+      });
+      await service2.stop();
+    },
+  );
 
   test("keeps schedules paused when an in-flight run finishes after pause", async () => {
     let releaseRun: (() => void) | null = null;

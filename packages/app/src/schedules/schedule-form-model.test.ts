@@ -6,9 +6,12 @@ import type {
 import type { ScheduleSummary } from "@getpaseo/protocol/schedule/types";
 import type { FormPreferences } from "@/create-agent-preferences/preferences";
 import { describe, expect, it } from "vitest";
-import { buildProjectOptionId, type ScheduleProjectTarget } from "./schedule-project-targets";
+import {
+  buildProjectOptionId,
+  type ScheduleProjectTarget,
+  type ScheduleWorkspaceTarget,
+} from "./schedule-project-targets";
 import { openScheduleForm, type ScheduleFormSnapshot } from "./schedule-form-model";
-import type { ScheduleWorkspaceTarget } from "./schedule-workspace-targets";
 
 type TestSchedule = ScheduleSummary & { serverId: string; serverName: string };
 
@@ -75,6 +78,7 @@ function target(input: {
   projectName: string;
   cwd: string;
   isGit?: boolean;
+  workspaces?: ScheduleWorkspaceTarget[];
 }): ScheduleProjectTarget {
   return {
     optionId: buildProjectOptionId(input.serverId, input.projectKey),
@@ -84,8 +88,17 @@ function target(input: {
     projectName: input.projectName,
     cwd: input.cwd,
     isGit: input.isGit ?? true,
+    workspaces: input.workspaces ?? [],
   };
 }
+
+const WORKSPACE_TARGETS: ScheduleWorkspaceTarget[] = [
+  {
+    workspaceId: "wks_daily",
+    workspaceName: "Daily status",
+    cwd: "/repo/a/worktrees/daily-status",
+  },
+];
 
 const PROJECT_TARGETS = [
   target({
@@ -93,6 +106,7 @@ const PROJECT_TARGETS = [
     projectKey: "project-a",
     projectName: "Project A",
     cwd: "/repo/a",
+    workspaces: WORKSPACE_TARGETS,
   }),
   target({
     serverId: "host-b",
@@ -100,16 +114,6 @@ const PROJECT_TARGETS = [
     projectName: "Project B",
     cwd: "/repo/b",
   }),
-];
-
-const WORKSPACE_TARGETS: ScheduleWorkspaceTarget[] = [
-  {
-    workspaceId: "wks_daily",
-    serverId: "host-a",
-    projectOptionId: buildProjectOptionId("host-a", "project-a"),
-    workspaceName: "Daily status",
-    cwd: "/repo/a/worktrees/daily-status",
-  },
 ];
 
 function scheduleOnHost(input: {
@@ -215,7 +219,6 @@ describe("schedule form model", () => {
       defaults: {
         serverId: "host-a",
         projectTargets: PROJECT_TARGETS,
-        workspaceTargets: WORKSPACE_TARGETS,
         preferences: {},
       },
     });
@@ -258,7 +261,6 @@ describe("schedule form model", () => {
       defaults: {
         serverId: null,
         projectTargets: PROJECT_TARGETS,
-        workspaceTargets: WORKSPACE_TARGETS,
         preferences: {},
       },
     });
@@ -277,6 +279,38 @@ describe("schedule form model", () => {
       workingDir: "/repo/a",
       submitWorkspaceId: null,
       submitIsolation: "worktree",
+    });
+  });
+
+  it("resolves a stored workspace when project data arrives after edit opens", () => {
+    const form = open({
+      mode: "edit",
+      schedule: scheduleOnHost({
+        serverId: "host-a",
+        serverName: "Host A",
+        cwd: "/repo/a/worktrees/daily-status",
+        model: "model-a",
+        workspaceId: "wks_daily",
+      }),
+      defaults: { serverId: null, projectTargets: [], preferences: {} },
+    });
+
+    expect(form.getState()).toMatchObject({
+      selectedProjectOptionId: "",
+      selectedWorkspaceDisplay: { label: "wks_daily" },
+    });
+
+    form.applyProjectTargets(PROJECT_TARGETS);
+    expect(form.getState()).toMatchObject({
+      selectedProjectOptionId: buildProjectOptionId("host-a", "project-a"),
+      selectedWorkspaceDisplay: { label: "Daily status" },
+    });
+
+    form.setWorkspace(null);
+    expect(form.getState()).toMatchObject({
+      selectedWorkspaceId: null,
+      workingDir: "/repo/a",
+      submitWorkspaceId: null,
     });
   });
 

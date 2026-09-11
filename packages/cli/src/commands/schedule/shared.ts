@@ -150,7 +150,7 @@ function resolveScheduleTarget(args: {
   return { type: "agent", agentId: targetValue };
 }
 
-function parseCreateWorkspaceId(value: string | undefined): string | undefined {
+function parseWorkspaceId(value: string | undefined): string | undefined {
   if (value === undefined) {
     return undefined;
   }
@@ -162,32 +162,6 @@ function parseCreateWorkspaceId(value: string | undefined): string | undefined {
     } satisfies CommandError;
   }
   return workspaceId;
-}
-
-function requireRemoteScheduleCwd(input: {
-  daemonTarget: import("../../utils/daemon-target.js").DaemonTarget;
-  cwd: string | undefined;
-  workspaceId: string | undefined;
-}): void {
-  if (input.daemonTarget.kind !== "endpoint" || input.cwd || input.workspaceId) {
-    return;
-  }
-  throw {
-    code: "MISSING_CWD",
-    message:
-      "--cwd is required when --host is specified unless --workspace is set (the local working directory will not exist on the remote daemon)",
-  } satisfies CommandError;
-}
-
-function hasExplicitNewAgentCreateOption(options: {
-  provider?: string;
-  mode?: string;
-  thinking?: string;
-  workspace?: string;
-}): boolean {
-  return [options.provider, options.mode, options.thinking, options.workspace].some(
-    (value) => value !== undefined,
-  );
 }
 
 export function parseScheduleCreateInput(options: {
@@ -225,8 +199,14 @@ export function parseScheduleCreateInput(options: {
   }
 
   const cwdInput = options.cwd?.trim();
-  const workspaceId = parseCreateWorkspaceId(options.workspace);
-  requireRemoteScheduleCwd({ daemonTarget: options.daemonTarget, cwd: cwdInput, workspaceId });
+  const workspaceId = parseWorkspaceId(options.workspace);
+  if (options.daemonTarget.kind === "endpoint" && !cwdInput && !workspaceId) {
+    throw {
+      code: "MISSING_CWD",
+      message:
+        "--cwd is required when --host is specified unless --workspace is set (the local working directory will not exist on the remote daemon)",
+    } satisfies CommandError;
+  }
 
   const runOnCreate = resolveRunOnCreate(options.runNow, cadence.type);
 
@@ -239,7 +219,12 @@ export function parseScheduleCreateInput(options: {
       message: "--thinking cannot be empty",
     } satisfies CommandError;
   }
-  const hasExplicitNewAgentOption = hasExplicitNewAgentCreateOption(options);
+  const hasExplicitNewAgentOption = [
+    options.provider,
+    options.mode,
+    options.thinking,
+    options.workspace,
+  ].some((value) => value !== undefined);
   const createNewAgentTarget = (): ScheduleTarget => {
     const resolvedProviderModel = resolveProviderAndModel({
       provider: options.provider,
@@ -495,14 +480,7 @@ function buildNewAgentConfigPatch(
     } satisfies CommandError;
   }
   if (options.workspace !== undefined) {
-    const trimmed = options.workspace.trim();
-    if (!trimmed) {
-      throw {
-        code: "INVALID_WORKSPACE",
-        message: "--workspace cannot be empty",
-      } satisfies CommandError;
-    }
-    patch.workspaceId = trimmed;
+    patch.workspaceId = parseWorkspaceId(options.workspace);
   } else if (options.clearWorkspace) {
     if (patch.cwd === undefined) {
       throw {

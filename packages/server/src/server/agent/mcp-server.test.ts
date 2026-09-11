@@ -4233,7 +4233,7 @@ describe("create_schedule MCP tool", () => {
     });
   });
 
-  it("passes timezone through cron create_schedule input", async () => {
+  it("passes timezone and workspace through cron create_schedule input", async () => {
     const { agentManager, agentStorage } = createTestDeps();
     const createOrReplace = vi.fn(async (scheduleInput: CreateScheduleInput) =>
       createStoredSchedule(scheduleInput),
@@ -4252,6 +4252,7 @@ describe("create_schedule MCP tool", () => {
       cron: "0 9 * * 1-5",
       timezone: "  America/New_York  ",
       provider: "codex",
+      workspaceId: "wks_daily",
     });
 
     expect(createOrReplace).toHaveBeenCalledWith(
@@ -4261,32 +4262,6 @@ describe("create_schedule MCP tool", () => {
           expression: "0 9 * * 1-5",
           timezone: "America/New_York",
         },
-      }),
-    );
-  });
-
-  it("targets an existing workspace for each fresh scheduled agent", async () => {
-    const { agentManager, agentStorage } = createTestDeps();
-    const createOrReplace = vi.fn(async (input: CreateScheduleInput) =>
-      createStoredSchedule(input),
-    );
-    const server = await createAgentMcpServer({
-      agentManager,
-      agentStorage,
-      providerSnapshotManager: createOpenCodeManager().manager,
-      scheduleService: { createOrReplace } as unknown as ScheduleService,
-      logger,
-    });
-
-    await invokeToolWithParsedInput(registeredTool(server, "create_schedule"), {
-      prompt: "say hello",
-      cron: "0 9 * * *",
-      provider: "codex",
-      workspaceId: "wks_daily",
-    });
-
-    expect(createOrReplace).toHaveBeenCalledWith(
-      expect.objectContaining({
         target: {
           type: "new-agent",
           config: expect.objectContaining({ workspaceId: "wks_daily" }),
@@ -4803,24 +4778,10 @@ describe("update_schedule MCP tool", () => {
         workspaceId: null,
       },
     });
-  });
-
-  it("requires a replacement cwd when clearing a schedule workspace", async () => {
-    const { agentManager, agentStorage } = createTestDeps();
-    const update = vi.fn();
-    const server = await createAgentMcpServer({
-      agentManager,
-      agentStorage,
-      providerSnapshotManager: createOpenCodeManager().manager,
-      scheduleService: scheduleServiceWithUpdate(update),
-      logger,
-    });
-    const tool = registeredTool(server, "update_schedule");
-
     await expect(tool.handler({ id: "schedule-1", workspaceId: null })).rejects.toThrow(
       "cwd is required when clearing workspaceId",
     );
-    expect(update).not.toHaveBeenCalled();
+    expect(update).toHaveBeenCalledOnce();
   });
 
   it("rejects conflicting model and expiry inputs", async () => {

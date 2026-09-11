@@ -43,6 +43,7 @@ export interface ScheduleRunRecord {
   agentId: string | null;
   workspaceId?: string | null;
   workspaceOwnedByRun?: boolean;
+  archiveOnFinish?: boolean;
   output: string | null;
   error: string | null;
 }
