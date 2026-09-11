@@ -780,6 +780,14 @@ export const fr: TranslationResources = {
           pending_mr: "Création de MR...",
           success_mr: "MR créé",
         },
+        commitAndCreatePr: {
+          label: "Commettre et créer une PR",
+          pending: "Engagement et création de la PR...",
+          success: "Engagé et PR créée",
+          label_mr: "Commettre et créer une MR",
+          pending_mr: "Engagement et création de la MR...",
+          success_mr: "Engagé et MR créée",
+        },
         mergeBranch: {
           label: "Fusionner localement",
           pending: "Fusion...",
@@ -884,6 +892,7 @@ export const fr: TranslationResources = {
           failedPush: "Échec de la poussée",
           failedPullAndPush: "Impossible de tirer et de pousser",
           failedCreatePr: "Échec de la création dePR",
+          failedCommitAndCreatePr: "Échec de l'engagement et de la création de la PR",
           failedMergePr: "Échec de la fusion dePR",
           failedEnableAutoMerge: "Échec de l'activation de la fusion automatique",
           failedDisableAutoMerge: "Échec de la désactivation de la fusion automatique",

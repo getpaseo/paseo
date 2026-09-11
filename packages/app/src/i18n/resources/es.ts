@@ -780,6 +780,14 @@ export const es: TranslationResources = {
           pending_mr: "Creando MR...",
           success_mr: "MR creado",
         },
+        commitAndCreatePr: {
+          label: "Comprometerse y crear PR",
+          pending: "Comprometiéndose y creando PR...",
+          success: "Comprometido y PR creado",
+          label_mr: "Comprometerse y crear MR",
+          pending_mr: "Comprometiéndose y creando MR...",
+          success_mr: "Comprometido y MR creado",
+        },
         mergeBranch: {
           label: "Fusionar localmente",
           pending: "Fusionando...",
@@ -885,6 +893,7 @@ export const es: TranslationResources = {
           failedPush: "No se pudo empujar",
           failedPullAndPush: "No se pudo tirar y empujar",
           failedCreatePr: "No se pudo crearPR",
+          failedCommitAndCreatePr: "No se pudo comprometerse y crear PR",
           failedMergePr: "No se pudo fusionarPR",
           failedEnableAutoMerge: "No se pudo habilitar la combinación automática",
           failedDisableAutoMerge: "No se pudo deshabilitar la combinación automática",

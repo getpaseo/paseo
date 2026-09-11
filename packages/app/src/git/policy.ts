@@ -12,6 +12,7 @@ export type GitActionId =
   | "push"
   | "pull-and-push"
   | "pr"
+  | "commit-and-create-pr"
   | "merge-pr-squash"
   | "merge-pr-merge"
   | "merge-pr-rebase"
@@ -252,6 +253,18 @@ export function buildGitActions(input: BuildGitActionsInput): GitActions {
     allActions.set(model.id, model.build(input));
   }
 
+  allActions.set("commit-and-create-pr", {
+    id: "commit-and-create-pr",
+    label: i18n.t("workspace.git.actions.commitAndCreatePr.label"),
+    pendingLabel: i18n.t("workspace.git.actions.commitAndCreatePr.pending"),
+    successLabel: i18n.t("workspace.git.actions.commitAndCreatePr.success"),
+    disabled: input.runtime["commit-and-create-pr"].disabled,
+    status: input.runtime["commit-and-create-pr"].status,
+    icon: input.runtime["commit-and-create-pr"].icon,
+    startsGroup: false,
+    handler: input.runtime["commit-and-create-pr"].handler,
+  });
+
   allActions.set("merge-branch", {
     id: "merge-branch",
     label: i18n.t("workspace.git.actions.mergeBranch.label"),
@@ -370,7 +383,16 @@ function getFeatureActionIds(input: BuildGitActionsInput): GitActionId[] {
     "merge-from-base",
     "merge-branch",
     ...getPullRequestActionIds({ roles: ["status", "direct", "auto"], input }),
+    ...(canCommitAndCreatePr(input) ? (["commit-and-create-pr"] as const) : []),
   ];
+}
+
+function canCommitAndCreatePr(input: BuildGitActionsInput): boolean {
+  return (
+    input.githubFeaturesEnabled &&
+    !input.hasPullRequest &&
+    (input.hasUncommittedChanges || input.runtime["commit-and-create-pr"].status === "pending")
+  );
 }
 
 function getDefaultDirectPullRequestMergeActionId(

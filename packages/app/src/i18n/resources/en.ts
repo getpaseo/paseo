@@ -771,6 +771,14 @@ export const en = {
           pending_mr: "Creating MR...",
           success_mr: "MR Created",
         },
+        commitAndCreatePr: {
+          label: "Commit and create PR",
+          pending: "Committing and creating PR...",
+          success: "Committed and PR created",
+          label_mr: "Commit and create MR",
+          pending_mr: "Committing and creating MR...",
+          success_mr: "Committed and MR created",
+        },
         mergeBranch: {
           label: "Merge locally",
           pending: "Merging...",
@@ -863,6 +871,7 @@ export const en = {
           failedPush: "Failed to push",
           failedPullAndPush: "Failed to pull and push",
           failedCreatePr: "Failed to create PR",
+          failedCommitAndCreatePr: "Failed to commit and create PR",
           failedMergePr: "Failed to merge PR",
           failedEnableAutoMerge: "Failed to enable auto-merge",
           failedDisableAutoMerge: "Failed to disable auto-merge",

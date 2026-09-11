@@ -770,6 +770,14 @@ export const zhCN: TranslationResources = {
           pending_mr: "正在创建 MR...",
           success_mr: "MR 已创建",
         },
+        commitAndCreatePr: {
+          label: "Commit 并创建 PR",
+          pending: "正在 commit 并创建 PR...",
+          success: "已 commit 并创建 PR",
+          label_mr: "Commit 并创建 MR",
+          pending_mr: "正在 commit 并创建 MR...",
+          success_mr: "已 commit 并创建 MR",
+        },
         mergeBranch: {
           label: "本地 merge",
           pending: "正在 merge...",
@@ -846,6 +854,7 @@ export const zhCN: TranslationResources = {
           failedPush: "Push 失败",
           failedPullAndPush: "Pull 并 push 失败",
           failedCreatePr: "创建 PR 失败",
+          failedCommitAndCreatePr: "Commit 并创建 PR 失败",
           failedMergePr: "Merge PR 失败",
           failedEnableAutoMerge: "启用 auto-merge 失败",
           failedDisableAutoMerge: "禁用 auto-merge 失败",
