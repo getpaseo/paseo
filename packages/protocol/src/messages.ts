@@ -2584,6 +2584,13 @@ export const WorkspaceCreateRequestSchema = z.object({
       githubPrNumber: z.number().int().positive().optional(),
       worktreeSlug: z.string().optional(),
     }),
+    z.object({
+      kind: z.literal("chat"),
+      // Base directory where the chat folder will be created.
+      chatsDirectory: z.string().optional(),
+      // Optional specific session ID / folder name to specify.
+      sessionId: z.string().optional(),
+    }),
   ]),
 });
 
@@ -3435,6 +3442,8 @@ export const ServerInfoStatusPayloadSchema = z
         agentRequestReceipts: z.boolean().optional(),
         // COMPAT(hubAgentRpc): added in v0.8.0; remove gate after 2027-03-05.
         hubAgentRpc: z.boolean().optional(),
+        // COMPAT(chatWorkspaces): added in v0.9.0; remove gate after 2027-03-10.
+        chatWorkspaces: z.boolean().optional(),
         providersSnapshot: z.boolean().optional(),
         // COMPAT(providersSnapshotCwd): added in v0.3.2, remove gate after 2027-02-10.
         providersSnapshotCwd: z.boolean().optional(),
@@ -3880,7 +3889,7 @@ export const WorkspaceDescriptorPayloadSchema = z
     worktreeSlug: z.string().optional(),
     projectKind: z.enum(["git", "non_git", "directory"]),
     // COMPAT(workspaces): keep legacy directory workspace kind parseable.
-    workspaceKind: z.enum(["directory", "local_checkout", "checkout", "worktree"]),
+    workspaceKind: z.enum(["directory", "local_checkout", "checkout", "worktree", "chat"]),
     name: z.string(),
     // COMPAT(workspaceTitles): added in v0.1.97, drop the optional gate when floor >= v0.1.97.
     // When the user has titled a workspace, `name` carries the resolved value

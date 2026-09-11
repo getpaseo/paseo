@@ -61,6 +61,10 @@ import {
   createWorkspaceScriptsService,
   type WorkspaceScriptsService,
 } from "./session/workspace-scripts/workspace-scripts-service.js";
+import {
+  resolvePaseoChatsDirectory,
+  ensureChatSessionDirectory,
+} from "./session/chat-directory.js";
 import type { DaemonConfigStore } from "./daemon-config-store.js";
 import { loadPersistedConfig } from "./persisted-config.js";
 import { releaseWorkspaceServicePortPlan } from "./workspace-service-port-registry.js";
@@ -5124,7 +5128,11 @@ export class Session {
     projectRecord?: PersistedProjectRecord | null;
     includeGitData: boolean;
   }): Promise<WorkspaceDescriptorPayload> {
-    if (input.includeGitData && input.workspace.kind !== "directory") {
+    if (
+      input.includeGitData &&
+      input.workspace.kind !== "directory" &&
+      input.workspace.kind !== "chat"
+    ) {
       return this.describeWorkspaceRecordWithGitData(input.workspace, input.projectRecord);
     }
     return this.describeWorkspaceRecord(input.workspace, input.projectRecord);
@@ -6085,6 +6093,10 @@ export class Session {
         await this.handleWorkspaceCreateLocal(request);
         return;
       }
+      if (request.source.kind === "chat") {
+        await this.handleWorkspaceCreateChat(request);
+        return;
+      }
       await this.handleWorkspaceCreateWorktree(request);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to create workspace";
@@ -6160,6 +6172,55 @@ export class Session {
           "Background snapshot refresh failed after workspace.create",
         );
       });
+    if (request.firstAgentContext) {
+      const firstAgentContext = request.firstAgentContext;
+      this.workspaceAutoName.scheduleForDirectory(
+        {
+          workspaceId: workspace.workspaceId,
+          cwd: workspace.cwd,
+          firstAgentContext,
+        },
+        { currentSelection: this.getFocusedAgentSelectionForCwd(workspace.cwd) },
+      );
+    }
+  }
+
+  private async handleWorkspaceCreateChat(
+    request: Extract<SessionInboundMessage, { type: "workspace.create.request" }>,
+  ): Promise<void> {
+    if (request.source.kind !== "chat") {
+      return;
+    }
+
+    const baseDir = resolvePaseoChatsDirectory(this.paseoHome, request.source.chatsDirectory);
+    const { chatDir, sessionId } = await ensureChatSessionDirectory(
+      baseDir,
+      request.source.sessionId,
+    );
+
+    const explicitTitle = request.title?.trim() || null;
+    const promptTitle = resolveFirstAgentPromptTitle(request.firstAgentContext);
+    const workspace = await this.workspaceProvisioning.createWorkspaceForChat({
+      cwd: chatDir,
+      sessionId,
+      title: explicitTitle ?? promptTitle,
+      expectsInitialAgent: Boolean(request.firstAgentContext),
+    });
+
+    const descriptor = await this.describeWorkspaceRecord(workspace);
+    this.emit({
+      type: "workspace.create.response",
+      payload: {
+        requestId: request.requestId,
+        workspace: descriptor,
+        setupTerminalId: null,
+        error: null,
+      },
+    });
+    await this.emitCreatedWorkspaceUpdate(
+      descriptor,
+      request.firstAgentContext ? "running" : undefined,
+    );
     if (request.firstAgentContext) {
       const firstAgentContext = request.firstAgentContext;
       this.workspaceAutoName.scheduleForDirectory(
@@ -7796,28 +7857,50 @@ export class Session {
     );
   }
 
+  private handleBroadcastEvent(msg: SessionOutboundMessage): boolean {
+    if (
+      msg.type !== "project.update" &&
+      msg.type !== "providers_snapshot_update" &&
+      msg.type !== "agent_attention_required" &&
+      msg.type !== "agent_permission_request" &&
+      msg.type !== "agent_permission_resolved"
+    ) {
+      return false;
+    }
+    if (this.clientCapabilitiesBySource.size > 0 && this.onMessageToSource) {
+      for (const source of this.clientCapabilitiesBySource.keys()) {
+        if (this.wantsEvent(msg.type, source)) this.onMessageToSource(source, msg);
+      }
+      return true;
+    }
+    return !this.wantsEvent(msg.type);
+  }
+
+  private adaptOutboundMessageForClient(
+    msg: SessionOutboundMessage,
+    source?: object,
+  ): SessionOutboundMessage {
+    if (msg.type === "workspace_setup_progress" || msg.type === "workspace_setup_status_response") {
+      return this.workspaceSetupMessageForClient(msg, source);
+    }
+    if (
+      msg.type === "fetch_workspaces_response" ||
+      msg.type === "workspace_update" ||
+      msg.type === "workspace.create.response" ||
+      msg.type === "open_project_response"
+    ) {
+      return this.sanitizeWorkspaceMessageForClient(msg, source);
+    }
+    return msg;
+  }
+
   private emit(msg: SessionOutboundMessage): void {
     if (!this.authorization.allowsOutbound(msg)) {
       return;
     }
-    if (
-      msg.type === "project.update" ||
-      msg.type === "providers_snapshot_update" ||
-      msg.type === "agent_attention_required" ||
-      msg.type === "agent_permission_request" ||
-      msg.type === "agent_permission_resolved"
-    ) {
-      if (this.clientCapabilitiesBySource.size > 0 && this.onMessageToSource) {
-        for (const source of this.clientCapabilitiesBySource.keys()) {
-          if (this.wantsEvent(msg.type, source)) this.onMessageToSource(source, msg);
-        }
-        return;
-      }
-      if (!this.wantsEvent(msg.type)) return;
+    if (this.handleBroadcastEvent(msg)) {
+      return;
     }
-    // JSON.stringify(msg) is only computed when trace is enabled — it runs for
-    // every outbound message otherwise, and trace is disabled by default.
-    // Optional-chained because test logger stubs don't implement isLevelEnabled.
     if (this.sessionLogger.isLevelEnabled?.("trace")) {
       this.sessionLogger.trace(
         {
@@ -7827,16 +7910,13 @@ export class Session {
         "agent.session.outbound",
       );
     }
-    if (msg.type === "workspace_setup_progress" || msg.type === "workspace_setup_status_response") {
-      if (this.clientCapabilitiesBySource.size > 0 && this.onMessageToSource) {
-        for (const [source] of this.clientCapabilitiesBySource) {
-          this.onMessageToSource(source, this.workspaceSetupMessageForClient(msg, source));
-        }
-        return;
+    if (this.clientCapabilitiesBySource.size > 0 && this.onMessageToSource) {
+      for (const [source] of this.clientCapabilitiesBySource) {
+        this.onMessageToSource(source, this.adaptOutboundMessageForClient(msg, source));
       }
-      msg = this.workspaceSetupMessageForClient(msg);
+      return;
     }
-    this.onMessage(msg);
+    this.onMessage(this.adaptOutboundMessageForClient(msg));
   }
 
   // COMPAT(workspaceSetupBlocked): added in v0.8.0, remove after 2027-03-07 once client floor >= v0.8.0.
@@ -7864,6 +7944,84 @@ export class Session {
       : { ...message, payload: { ...message.payload, snapshot: legacySnapshot } };
   }
 
+  // COMPAT(chatWorkspaces): added in v0.9.0, remove after 2027-03-10 once client floor >= v0.9.0.
+  // Older clients fail closed-enum validation if workspaceKind is "chat". Downgrade to "directory"
+  // when client does not advertise chatWorkspaces capability.
+  private sanitizeWorkspaceMessageForClient(
+    message: SessionOutboundMessage,
+    source?: object,
+  ): SessionOutboundMessage {
+    const supportsChat = source
+      ? this.supportsForSource(CLIENT_CAPS.chatWorkspaces, source)
+      : this.supports(CLIENT_CAPS.chatWorkspaces);
+    if (supportsChat) {
+      return message;
+    }
+
+    if (message.type === "fetch_workspaces_response") {
+      return {
+        ...message,
+        payload: {
+          ...message.payload,
+          entries: message.payload.entries.map((entry) =>
+            entry.workspaceKind === "chat"
+              ? { ...entry, workspaceKind: "directory" as const }
+              : entry,
+          ),
+        },
+      };
+    }
+
+    if (message.type === "workspace_update") {
+      if (message.payload.kind === "upsert" && message.payload.workspace.workspaceKind === "chat") {
+        return {
+          ...message,
+          payload: {
+            ...message.payload,
+            workspace: {
+              ...message.payload.workspace,
+              workspaceKind: "directory",
+            },
+          },
+        };
+      }
+      return message;
+    }
+
+    if (message.type === "workspace.create.response") {
+      if (message.payload.workspace && message.payload.workspace.workspaceKind === "chat") {
+        return {
+          ...message,
+          payload: {
+            ...message.payload,
+            workspace: {
+              ...message.payload.workspace,
+              workspaceKind: "directory",
+            },
+          },
+        };
+      }
+      return message;
+    }
+
+    if (message.type === "open_project_response") {
+      if (message.payload.workspace && message.payload.workspace.workspaceKind === "chat") {
+        return {
+          ...message,
+          payload: {
+            ...message.payload,
+            workspace: {
+              ...message.payload.workspace,
+              workspaceKind: "directory",
+            },
+          },
+        };
+      }
+      return message;
+    }
+    return message;
+  }
+
   private emitBinary(frame: Uint8Array): void {
     if (!this.onBinaryMessage) {
       return;
@@ -7884,11 +8042,12 @@ export class Session {
   }
 
   private emitForSource(msg: SessionOutboundMessage, source?: object): void {
+    const adapted = this.adaptOutboundMessageForClient(msg, source);
     if (source && this.onMessageToSource) {
-      this.onMessageToSource(source, msg);
+      this.onMessageToSource(source, adapted);
       return;
     }
-    this.emit(msg);
+    this.emit(adapted);
   }
 
   /**

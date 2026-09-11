@@ -9,7 +9,14 @@ import { StyleSheet, useUnistyles, withUnistyles } from "react-native-unistyles"
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { createNameId } from "mnemonic-id";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronDown, Folder, FolderPlus, GitBranch, GitPullRequest } from "lucide-react-native";
+import {
+  ChevronDown,
+  Folder,
+  FolderPlus,
+  GitBranch,
+  GitPullRequest,
+  MessageSquare,
+} from "lucide-react-native";
 import { Composer } from "@/composer";
 import { KeyboardTranslateView } from "@/components/keyboard-translate-view";
 import { FileDropZone } from "@/components/file-drop/file-drop-zone";
@@ -443,18 +450,15 @@ function IsolationOptionItem({
   iconColor: string;
   iconSize: number;
 }) {
-  const leadingSlot = useMemo(
-    () => (
-      <View style={styles.rowIconBox}>
-        {optionId === "worktree" ? (
-          <GitBranch size={iconSize} color={iconColor} />
-        ) : (
-          <Folder size={iconSize} color={iconColor} />
-        )}
-      </View>
-    ),
-    [optionId, iconSize, iconColor],
-  );
+  const leadingSlot = useMemo(() => {
+    let icon = <Folder size={iconSize} color={iconColor} />;
+    if (optionId === "chat") {
+      icon = <MessageSquare size={iconSize} color={iconColor} />;
+    } else if (optionId === "worktree") {
+      icon = <GitBranch size={iconSize} color={iconColor} />;
+    }
+    return <View style={styles.rowIconBox}>{icon}</View>;
+  }, [optionId, iconSize, iconColor]);
   return (
     <ComboboxItem
       testID={`workspace-create-isolation-${optionId}`}
@@ -650,7 +654,7 @@ function IsolationPickerTrigger({
   onPress: () => void;
   disabled: boolean;
   badgePressableStyle: React.ComponentProps<typeof Pressable>["style"];
-  isolation: "local" | "worktree";
+  isolation: "local" | "worktree" | "chat";
   label: string;
   tooltipLabel: string;
   iconColor: string;
@@ -670,11 +674,9 @@ function IsolationPickerTrigger({
           accessibilityLabel="Workspace isolation"
         >
           <View style={styles.badgeIconBox}>
-            {isolation === "worktree" ? (
-              <GitBranch size={iconSize} color={iconColor} />
-            ) : (
-              <Folder size={iconSize} color={iconColor} />
-            )}
+            {isolation === "chat" && <MessageSquare size={iconSize} color={iconColor} />}
+            {isolation === "worktree" && <GitBranch size={iconSize} color={iconColor} />}
+            {isolation === "local" && <Folder size={iconSize} color={iconColor} />}
           </View>
           <Text style={styles.badgeText} numberOfLines={1}>
             {label}
@@ -695,9 +697,9 @@ function FormRow({ children }: { children: React.ReactNode }) {
 }
 
 interface WorkspaceIsolationState {
-  isolation: "local" | "worktree";
-  setIsolation: (value: "local" | "worktree") => void;
-  effectiveIsolation: "local" | "worktree";
+  isolation: "local" | "worktree" | "chat";
+  setIsolation: (value: "local" | "worktree" | "chat") => void;
+  effectiveIsolation: "local" | "worktree" | "chat";
   canCreateWorktree: boolean;
   showRefPicker: boolean;
 }
@@ -707,35 +709,48 @@ interface WorkspaceIsolationState {
 function useWorkspaceIsolation(input: {
   supportsMultiplicity: boolean;
   worktreeSupport: "supported" | "unsupported" | "unknown";
+  supportsChatWorkspaces?: boolean;
 }): WorkspaceIsolationState {
-  const { supportsMultiplicity, worktreeSupport } = input;
+  const { supportsMultiplicity, worktreeSupport, supportsChatWorkspaces = true } = input;
   // The last isolation choice is remembered alongside the other New Workspace
   // form preferences (provider, model, mode). A manual in-screen pick overrides
   // the remembered default until the screen remounts.
   const { preferences, updatePreferences } = useFormPreferences();
-  const [manualIsolation, setManualIsolation] = useState<"local" | "worktree" | null>(null);
-  const isolation = manualIsolation ?? preferences.isolation ?? "local";
+  const [manualIsolation, setManualIsolation] = useState<"local" | "worktree" | "chat" | null>(
+    null,
+  );
+  const isolation =
+    manualIsolation ?? (preferences.isolation as "local" | "worktree" | "chat") ?? "local";
   const canCreateWorktree = supportsMultiplicity && worktreeSupport !== "unsupported";
   const isWorktree = isolation === "worktree" && canCreateWorktree;
+  const isChat = isolation === "chat" && supportsChatWorkspaces;
 
   const setIsolation = useCallback(
-    (value: "local" | "worktree") => {
+    (value: "local" | "worktree" | "chat") => {
       setManualIsolation(value);
       void updatePreferences({ isolation: value });
     },
     [updatePreferences],
   );
 
+  let effectiveIsolation: "local" | "worktree" | "chat" = "local";
+  if (isChat) {
+    effectiveIsolation = "chat";
+  } else if (isWorktree) {
+    effectiveIsolation = "worktree";
+  }
+
   return {
     isolation,
     setIsolation,
-    effectiveIsolation: isWorktree ? "worktree" : "local",
+    effectiveIsolation,
     canCreateWorktree,
-    showRefPicker: !supportsMultiplicity || isWorktree,
+    showRefPicker: !isChat && (!supportsMultiplicity || isWorktree),
   };
 }
 
-function isolationLabel(t: TFunction, isolation: "local" | "worktree"): string {
+function isolationLabel(t: TFunction, isolation: "local" | "worktree" | "chat"): string {
+  if (isolation === "chat") return "Chat (No worktree)";
   return isolation === "worktree"
     ? t("newWorkspace.isolation.worktree")
     : t("newWorkspace.isolation.local");
@@ -822,9 +837,9 @@ async function createAndMergeWorkspace(input: {
 
 async function createMultiplicityWorkspace(input: {
   client: NonNullable<ReturnType<typeof useHostRuntimeClient>>;
-  isolation: "local" | "worktree";
-  project: HostProjectListItem;
-  sourceDirectory: string;
+  isolation: "local" | "worktree" | "chat";
+  project?: HostProjectListItem | null;
+  sourceDirectory?: string | null;
   checkoutRequest: PickerCheckoutRequest | undefined;
   withInitialAgent: boolean;
   prompt: string;
@@ -836,27 +851,37 @@ async function createMultiplicityWorkspace(input: {
   serverId: string;
   createFailedMessage: string;
 }): Promise<ReturnType<typeof normalizeWorkspaceDescriptor>> {
-  const projectId = getHostProjectId(input.project, input.serverId);
-  if (!projectId) throw new Error("Project is not available on the selected host");
+  const isChat = input.isolation === "chat";
+  const projectId =
+    isChat || !input.project ? undefined : getHostProjectId(input.project, input.serverId);
+  if (!isChat && !projectId) throw new Error("Project is not available on the selected host");
   const isWorktree = input.isolation === "worktree";
   const firstAgentContext = buildFirstAgentContext({
     prompt: input.prompt,
     attachments: input.attachments,
   });
+  let source;
+  if (isChat) {
+    source = { kind: "chat" as const };
+  } else if (isWorktree) {
+    if (!input.sourceDirectory) throw new Error("Choose a host for this project");
+    source = {
+      kind: "worktree" as const,
+      cwd: input.sourceDirectory,
+      ...(projectId ? { projectId } : {}),
+      worktreeSlug: createNameId(),
+      ...input.checkoutRequest,
+    };
+  } else {
+    if (!input.sourceDirectory) throw new Error("Choose a host for this project");
+    source = {
+      kind: "directory" as const,
+      path: input.sourceDirectory,
+      ...(projectId ? { projectId } : {}),
+    };
+  }
   const payload = await input.client.createWorkspace({
-    source: isWorktree
-      ? {
-          kind: "worktree",
-          cwd: input.sourceDirectory,
-          projectId,
-          worktreeSlug: createNameId(),
-          ...input.checkoutRequest,
-        }
-      : {
-          kind: "directory",
-          path: input.sourceDirectory,
-          projectId,
-        },
+    source,
     ...(firstAgentContext ? { firstAgentContext } : {}),
   });
   if (payload.error || !payload.workspace) {
@@ -1369,7 +1394,7 @@ interface NewWorkspaceFormStackInput {
     onSelect: (id: string) => void;
   };
   isolation: FormPickerControl & {
-    effectiveIsolation: "local" | "worktree";
+    effectiveIsolation: "local" | "worktree" | "chat";
     options: ComboboxOptionType[];
     onSelect: (id: string) => void;
     renderOption: RefPickerRenderOption;
@@ -1502,32 +1527,33 @@ function useNewWorkspaceFormStack(input: NewWorkspaceFormStackInput): ReactEleme
     </View>
   ) : null;
 
-  const isolationControl = isolation.canCreateWorktree ? (
-    <View style={desktopControlStyle}>
-      <IsolationPickerTrigger
-        pickerAnchorRef={isolation.anchorRef}
-        onPress={isolation.open}
-        disabled={isPending}
-        badgePressableStyle={badgePressableStyle}
-        isolation={isolation.effectiveIsolation}
-        label={isolationTriggerLabel}
-        tooltipLabel={t("newWorkspace.tooltips.isolation")}
-        iconColor={theme.colors.foregroundMuted}
-        iconSize={theme.iconSize.sm}
-      />
-      <Combobox
-        options={isolation.options}
-        value={isolation.effectiveIsolation}
-        onSelect={isolation.onSelect}
-        title={t("newWorkspace.isolation.label")}
-        open={isolation.openState}
-        onOpenChange={isolation.onOpenChange}
-        desktopPlacement="bottom-start"
-        anchorRef={isolation.anchorRef}
-        renderOption={isolation.renderOption}
-      />
-    </View>
-  ) : null;
+  const isolationControl =
+    isolation.options.length > 1 ? (
+      <View style={desktopControlStyle}>
+        <IsolationPickerTrigger
+          pickerAnchorRef={isolation.anchorRef}
+          onPress={isolation.open}
+          disabled={isPending}
+          badgePressableStyle={badgePressableStyle}
+          isolation={isolation.effectiveIsolation}
+          label={isolationTriggerLabel}
+          tooltipLabel={t("newWorkspace.tooltips.isolation")}
+          iconColor={theme.colors.foregroundMuted}
+          iconSize={theme.iconSize.sm}
+        />
+        <Combobox
+          options={isolation.options}
+          value={isolation.effectiveIsolation}
+          onSelect={isolation.onSelect}
+          title={t("newWorkspace.isolation.label")}
+          open={isolation.openState}
+          onOpenChange={isolation.onOpenChange}
+          desktopPlacement="bottom-start"
+          anchorRef={isolation.anchorRef}
+          renderOption={isolation.renderOption}
+        />
+      </View>
+    ) : null;
 
   const baseControl = base.showRefPicker ? (
     <View style={desktopControlStyle}>
@@ -1776,10 +1802,12 @@ export function NewWorkspaceScreen({
     ? getWorktreeSupportForHostProject({ project: selectedProject, serverId: selectedServerId })
     : "unsupported";
   const isPending = isNewWorkspacePending({ pendingAction, isDraftHandoffActive });
+  const supportsChatWorkspaces = useHostFeature(selectedServerId, "chatWorkspaces");
   const { effectiveIsolation, setIsolation, canCreateWorktree, showRefPicker } =
     useWorkspaceIsolation({
       supportsMultiplicity: supportsWorkspaceMultiplicity,
       worktreeSupport,
+      supportsChatWorkspaces,
     });
 
   const branchSuggestionsQuery = useQuery({
@@ -1940,13 +1968,26 @@ export function NewWorkspaceScreen({
   // git checkout, since worktree isolation is impossible there.
   const isolationOptions = useMemo<ComboboxOptionType[]>(() => {
     const localOption = { id: "local", label: isolationLabel(t, "local") };
-    if (!canCreateWorktree) return [localOption];
-    return [localOption, { id: "worktree", label: isolationLabel(t, "worktree") }];
-  }, [canCreateWorktree, t]);
+    const chatOption = { id: "chat", label: isolationLabel(t, "chat") };
+    const opts: ComboboxOptionType[] = [localOption];
+    if (canCreateWorktree) {
+      opts.push({ id: "worktree", label: isolationLabel(t, "worktree") });
+    }
+    if (supportsChatWorkspaces) {
+      opts.push(chatOption);
+    }
+    return opts;
+  }, [canCreateWorktree, supportsChatWorkspaces, t]);
 
   const handleSelectIsolationOption = useCallback(
     (id: string) => {
-      setIsolation(id === "worktree" ? "worktree" : "local");
+      let nextIsolation: "local" | "worktree" | "chat" = "local";
+      if (id === "chat") {
+        nextIsolation = "chat";
+      } else if (id === "worktree") {
+        nextIsolation = "worktree";
+      }
+      setIsolation(nextIsolation);
       setIsolationPickerOpen(false);
     },
     [setIsolation],
@@ -2035,22 +2076,27 @@ export function NewWorkspaceScreen({
       if (createdWorkspace) {
         return createdWorkspace;
       }
-      if (!selectedProject) {
-        throw new Error("Choose a project");
-      }
-      if (!selectedSourceDirectory) {
-        throw new Error("Choose a host for this project");
+      if (effectiveIsolation !== "chat") {
+        if (!selectedProject) {
+          throw new Error("Choose a project");
+        }
+        if (!selectedSourceDirectory) {
+          throw new Error("Choose a host for this project");
+        }
       }
       const connectedClient = withConnectedClient();
-      const createsWorktree = !supportsWorkspaceMultiplicity || effectiveIsolation === "worktree";
-      const checkoutStatusForCreate = createsWorktree
-        ? await ensureCheckoutStatus({
-            queryClient,
-            client: connectedClient,
-            serverId: selectedServerId,
-            cwd: selectedSourceDirectory,
-          })
-        : null;
+      const createsWorktree =
+        effectiveIsolation !== "chat" &&
+        (!supportsWorkspaceMultiplicity || effectiveIsolation === "worktree");
+      const checkoutStatusForCreate =
+        createsWorktree && selectedSourceDirectory
+          ? await ensureCheckoutStatus({
+              queryClient,
+              client: connectedClient,
+              serverId: selectedServerId,
+              cwd: selectedSourceDirectory,
+            })
+          : null;
       const checkoutRequest = checkoutStatusForCreate
         ? pickerItemToCheckoutRequest(
             selectedItem ?? defaultBasePickerItem(checkoutStatusForCreate),
