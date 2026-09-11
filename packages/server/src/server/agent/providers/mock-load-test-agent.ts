@@ -57,7 +57,48 @@ const CAPABILITIES: AgentCapabilityFlags = {
   supportsRewindConversation: true,
   supportsRewindFiles: true,
   supportsRewindBoth: true,
+  supportsStopProviderSubagent: true,
 };
+
+/** The one provider subagent a `mockProviderSubagent` session announces. */
+const MOCK_PROVIDER_SUBAGENT_ID = "mock-subagent-1";
+
+function parseMockProviderSubagentTitle(value: unknown): string | null {
+  if (value === true) return "Mock subagent";
+  return typeof value === "string" && value.length > 0 ? value : null;
+}
+
+interface MockProviderSubagentControls {
+  title: string | null;
+  stopError: string | null;
+  stopDelayMs: number;
+  capabilities: AgentCapabilityFlags;
+}
+
+/**
+ * The provider-subagent knobs of a mock session, from its featureValues. A session that announces
+ * a child but withholds the stop capability covers the UI gate: the stop control must not render
+ * for a provider that cannot stop one, even with a running subagent.
+ */
+function resolveMockProviderSubagentControls(
+  featureValues: Record<string, unknown> | undefined,
+): MockProviderSubagentControls {
+  const title = parseMockProviderSubagentTitle(featureValues?.mockProviderSubagent);
+  const stopError =
+    typeof featureValues?.mockStopProviderSubagentError === "string"
+      ? featureValues.mockStopProviderSubagentError
+      : null;
+  const capabilities =
+    title !== null && featureValues?.mockStopProviderSubagentUnsupported !== true
+      ? CAPABILITIES
+      : { ...CAPABILITIES, supportsStopProviderSubagent: false };
+  return {
+    title,
+    stopError,
+    stopDelayMs: getPositiveFeatureInteger(featureValues?.mockStopProviderSubagentDelayMs),
+    capabilities,
+  };
+}
 
 const MODELS: AgentModelDefinition[] = [
   {
@@ -716,7 +757,7 @@ export class MockLoadTestAgentClient implements AgentClient {
 
 export class MockLoadTestAgentSession implements AgentSession {
   readonly provider: AgentProvider = MOCK_LOAD_TEST_PROVIDER_ID;
-  readonly capabilities = CAPABILITIES;
+  readonly capabilities: AgentCapabilityFlags;
   readonly features: AgentFeature[] = [];
   readonly id: string;
   private readonly listeners = new Set<(event: AgentStreamEvent) => void>();
@@ -730,6 +771,10 @@ export class MockLoadTestAgentSession implements AgentSession {
   private readonly streamingAssistantResponse: string | null;
   private readonly streamingAssistantIntervalMs: number;
   private readonly rewindError: string | null;
+  /** Title of the provider subagent this session announces, or null for none. */
+  private readonly providerSubagentTitle: string | null;
+  private readonly stopProviderSubagentError: string | null;
+  private readonly stopProviderSubagentDelayMs: number;
   private remainingPromptRejections: number;
   private remainingSteerFailures: number;
 
@@ -758,6 +803,11 @@ export class MockLoadTestAgentSession implements AgentSession {
       typeof options.config.featureValues?.mockRewindError === "string"
         ? options.config.featureValues.mockRewindError
         : null;
+    const subagentControls = resolveMockProviderSubagentControls(options.config.featureValues);
+    this.providerSubagentTitle = subagentControls.title;
+    this.stopProviderSubagentError = subagentControls.stopError;
+    this.stopProviderSubagentDelayMs = subagentControls.stopDelayMs;
+    this.capabilities = subagentControls.capabilities;
     const requestedPromptRejections = options.config.featureValues?.mockPromptRejections;
     this.remainingPromptRejections =
       typeof requestedPromptRejections === "number" &&
@@ -816,6 +866,9 @@ export class MockLoadTestAgentSession implements AgentSession {
       burstIndex: 0,
     };
     this.activeTurn = turn;
+    if (this.providerSubagentTitle !== null) {
+      this.emitProviderSubagent(this.providerSubagentTitle, "running");
+    }
     const largePayload = parseLargeAgentStreamPayloadPrompt(prompt);
     const stress = parseAgentStreamStressPrompt(prompt);
     const questionPrompt = parseMockQuestionPrompt(prompt);
@@ -1017,6 +1070,41 @@ export class MockLoadTestAgentSession implements AgentSession {
       finalText: "",
       timeline: [],
       canceled: true,
+    });
+  }
+
+  /**
+   * Stop the one subagent a `mockProviderSubagent` session announces.
+   *
+   * The delay and error featureValues exist so the app can cover its stop control's pending,
+   * duplicate-suppression, and failure states against a deterministic provider.
+   */
+  async stopProviderSubagent(subagentId: string): Promise<boolean> {
+    if (this.providerSubagentTitle === null) return false;
+    if (subagentId !== MOCK_PROVIDER_SUBAGENT_ID) return false;
+    if (this.stopProviderSubagentError !== null) {
+      throw new Error(this.stopProviderSubagentError);
+    }
+    if (this.stopProviderSubagentDelayMs > 0) {
+      await new Promise<void>((resolve) => {
+        setTimeout(resolve, this.stopProviderSubagentDelayMs);
+      });
+    }
+    this.emitProviderSubagent(this.providerSubagentTitle, "canceled");
+    return true;
+  }
+
+  private emitProviderSubagent(title: string, status: "running" | "canceled"): void {
+    this.emit({
+      type: "provider_subagent",
+      provider: this.provider,
+      event: {
+        type: "upsert",
+        id: MOCK_PROVIDER_SUBAGENT_ID,
+        title,
+        status,
+        timestamp: new Date().toISOString(),
+      },
     });
   }
 

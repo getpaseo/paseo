@@ -1806,7 +1806,7 @@ export const ptBR: TranslationResources = {
     archiveFinishedRetry: "Tentar novamente ({{failed}}/{{total}})",
     stopAction: "Parar subagente",
     stopTooltip: "Pare este subagente, não o agente principal",
-    stopFailed: "Não foi possível parar o subagente: {{reason}}",
+    stopFailed: "Não foi possível parar este subagente. Tente novamente ou pare o agente pai.",
     stopAlreadyFinished: "Esse subagente já havia terminado.",
   },
   panels: {

@@ -1820,7 +1820,8 @@ export const es: TranslationResources = {
     archiveFinishedRetry: "Reintentar ({{failed}}/{{total}})",
     stopAction: "Detener subagente",
     stopTooltip: "Detén este subagente, no su agente principal",
-    stopFailed: "No se pudo detener el subagente: {{reason}}",
+    stopFailed:
+      "No se pudo detener este subagente. Inténtalo de nuevo o detén el agente principal.",
     stopAlreadyFinished: "Ese subagente ya había terminado.",
   },
   panels: {

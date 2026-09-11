@@ -548,3 +548,91 @@ describe("MockLoadTestAgentClient", () => {
     }
   });
 });
+
+describe("mock provider subagent stop", () => {
+  test("announces a running subagent and stops it by id, settling it as canceled", async () => {
+    const client = new MockLoadTestAgentClient();
+    const session = await client.createSession({
+      provider: "mock",
+      cwd: process.cwd(),
+      model: "ten-second-stream",
+      featureValues: { mockProviderSubagent: "Sentry child" },
+    });
+    expect(session.capabilities.supportsStopProviderSubagent).toBe(true);
+
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+    await session.startTurn("Run with a child.");
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "provider_subagent",
+        event: expect.objectContaining({
+          type: "upsert",
+          id: "mock-subagent-1",
+          status: "running",
+          title: "Sentry child",
+        }),
+      }),
+    );
+
+    expect(await session.stopProviderSubagent?.("mock-subagent-1")).toBe(true);
+    expect(events.at(-1)).toMatchObject({
+      type: "provider_subagent",
+      event: { type: "upsert", id: "mock-subagent-1", status: "canceled" },
+    });
+
+    await session.interrupt();
+  });
+
+  test("refuses an id it never announced instead of stopping something else", async () => {
+    const client = new MockLoadTestAgentClient();
+    const session = await client.createSession({
+      provider: "mock",
+      cwd: process.cwd(),
+      model: "ten-second-stream",
+      featureValues: { mockProviderSubagent: true },
+    });
+    await session.startTurn("Run with a child.");
+
+    expect(await session.stopProviderSubagent?.("mock-subagent-2")).toBe(false);
+
+    await session.interrupt();
+  });
+
+  test("throws the configured error instead of reporting a stop", async () => {
+    const client = new MockLoadTestAgentClient();
+    const session = await client.createSession({
+      provider: "mock",
+      cwd: process.cwd(),
+      model: "ten-second-stream",
+      featureValues: {
+        mockProviderSubagent: true,
+        mockStopProviderSubagentError: "Requested mock stop failure",
+      },
+    });
+    await session.startTurn("Run with a child.");
+
+    await expect(session.stopProviderSubagent?.("mock-subagent-1")).rejects.toThrow(
+      "Requested mock stop failure",
+    );
+
+    await session.interrupt();
+  });
+
+  test("can announce a child while withholding the stop capability", async () => {
+    const client = new MockLoadTestAgentClient();
+    const session = await client.createSession({
+      provider: "mock",
+      cwd: process.cwd(),
+      model: "ten-second-stream",
+      featureValues: {
+        mockProviderSubagent: true,
+        mockStopProviderSubagentUnsupported: true,
+      },
+    });
+    expect(session.capabilities.supportsStopProviderSubagent).toBe(false);
+
+    await session.startTurn("Run with a child.");
+    await session.interrupt();
+  });
+});

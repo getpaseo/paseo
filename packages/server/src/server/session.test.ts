@@ -5153,6 +5153,37 @@ describe("schedule dispatch routing", () => {
   });
 });
 
+describe("client capability aggregation", () => {
+  test("supportsAcrossSources fails closed when any attached source lacks the capability", () => {
+    const messages: SessionOutboundMessage[] = [];
+    const session = createSessionForTest({ messages });
+
+    // No per-source records at all: the session's own last-seen capabilities decide.
+    session.updateClientCapabilities({ [CLIENT_CAPS.providerSubagentStop]: true });
+    expect(session.supportsAcrossSources(CLIENT_CAPS.providerSubagentStop)).toBe(true);
+
+    const capableSocket = {};
+    session.updateClientCapabilities({ [CLIENT_CAPS.providerSubagentStop]: true }, capableSocket);
+    expect(session.supportsAcrossSources(CLIENT_CAPS.providerSubagentStop)).toBe(true);
+
+    // An older app attaches. From here on no client may be assumed capable: a daemon that
+    // spared background subagents on this view would strand one this client cannot stop.
+    const legacySocket = {};
+    session.updateClientCapabilities(null, legacySocket);
+    expect(session.supportsAcrossSources(CLIENT_CAPS.providerSubagentStop)).toBe(false);
+
+    session.updateClientCapabilities({ [CLIENT_CAPS.providerSubagentStop]: true }, legacySocket);
+    expect(session.supportsAcrossSources(CLIENT_CAPS.providerSubagentStop)).toBe(true);
+  });
+
+  test("supportsAcrossSources answers false without sources or capabilities", () => {
+    const messages: SessionOutboundMessage[] = [];
+    const session = createSessionForTest({ messages });
+    session.updateClientCapabilities(null);
+    expect(session.supportsAcrossSources(CLIENT_CAPS.providerSubagentStop)).toBe(false);
+  });
+});
+
 test("replaces a capable session's complete viewed timeline set", async () => {
   const messages: SessionOutboundMessage[] = [];
   const session = createSessionForTest({ messages });

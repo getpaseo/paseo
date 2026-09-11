@@ -1824,7 +1824,7 @@ export const fr: TranslationResources = {
     archiveFinishedRetry: "Réessayer ({{failed}}/{{total}})",
     stopAction: "Arrêter le sous-agent",
     stopTooltip: "Arrêter ce sous-agent, pas son parent",
-    stopFailed: "Impossible d'arrêter le sous-agent : {{reason}}",
+    stopFailed: "Impossible d'arrêter ce sous-agent. Réessayez, ou arrêtez l'agent parent.",
     stopAlreadyFinished: "Ce sous-agent était déjà terminé.",
   },
   panels: {

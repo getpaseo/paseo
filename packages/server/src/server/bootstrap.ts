@@ -180,6 +180,7 @@ import type {
   PluginSource,
   TerminalProfile,
 } from "@getpaseo/protocol/messages";
+import { CLIENT_CAPS } from "@getpaseo/protocol/client-capabilities";
 import type {
   AgentProviderRuntimeSettingsMap,
   ProviderOverride,
@@ -1717,6 +1718,14 @@ export async function createPaseoDaemon(
               pluginRuntime,
               orchestrationSkills,
               workspaceLabelService,
+            );
+            // The server owns the attached-client view; the manager consumes it per turn when a
+            // provider decides whether sparing background subagents from an interrupt is safe.
+            // Every attached client must be able to stop one, or an interrupt keeps killing them.
+            agentManager.setClientsCanStopProviderSubagents(() =>
+              (wsServer?.listSessions() ?? []).every((session) =>
+                session.supportsAcrossSources(CLIENT_CAPS.providerSubagentStop),
+              ),
             );
             pluginRuntime.bindPaseoSessionHost(wsServer);
             await pluginRuntime.start();

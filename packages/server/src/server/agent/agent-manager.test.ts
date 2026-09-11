@@ -2689,13 +2689,20 @@ test("createAgent passes daemon launch env through the provider launch context",
     cwd: workdir,
     model: "gpt-5.4",
   });
-  expect(client.lastLaunchContext).toEqual({
+  const launchContext = client.lastLaunchContext;
+  expect(launchContext).toMatchObject({
     agentId: snapshot.id,
     env: {
       PASEO_AGENT_ID: snapshot.id,
       PASEO_AGENT_CWD: workdir,
     },
   });
+  // The attached-client view rides along on every launch context, fail closed until the
+  // websocket server wires one in.
+  expect(launchContext?.clientsCanStopProviderSubagents).toBeInstanceOf(Function);
+  expect(launchContext?.clientsCanStopProviderSubagents?.()).toBe(false);
+  manager.setClientsCanStopProviderSubagents(() => true);
+  expect(launchContext?.clientsCanStopProviderSubagents?.()).toBe(true);
 });
 
 test("createAgent passes persistSession to provider create options", async () => {
@@ -3824,12 +3831,13 @@ test("resumeAgentFromPersistence keeps metadata config, applies overrides, and p
     },
   });
   expect(client.lastResumeOverrides).not.toHaveProperty("modeId");
-  expect(client.lastResumeLaunchContext).toEqual({
+  expect(client.lastResumeLaunchContext).toMatchObject({
     agentId: resumed.id,
     env: {
       PASEO_AGENT_ID: resumed.id,
       PASEO_AGENT_CWD: workdir,
     },
+    clientsCanStopProviderSubagents: expect.any(Function),
   });
 });
 
@@ -3932,12 +3940,13 @@ test("importProviderSession imports the selected session without listing and pub
 
   expect(client.listCalls).toBe(0);
   expect(client.importInput).toEqual({ providerHandleId: "thread-selected", cwd: workdir });
-  expect(client.importLaunchContext).toEqual({
+  expect(client.importLaunchContext).toMatchObject({
     agentId: imported.id,
     env: {
       PASEO_AGENT_ID: imported.id,
       PASEO_AGENT_CWD: workdir,
     },
+    clientsCanStopProviderSubagents: expect.any(Function),
   });
   expect(imported.lifecycle).toBe("idle");
   expect(imported.historyPrimed).toBe(true);
@@ -4035,24 +4044,26 @@ test("reloadAgentSession passes daemon launch env through the provider launch co
     { workspaceId: undefined },
   );
 
-  expect(client.lastCreateLaunchContext).toEqual({
+  expect(client.lastCreateLaunchContext).toMatchObject({
     agentId: snapshot.id,
     env: {
       PASEO_AGENT_ID: snapshot.id,
       PASEO_AGENT_CWD: workdir,
     },
+    clientsCanStopProviderSubagents: expect.any(Function),
   });
 
   await manager.reloadAgentSession(snapshot.id, {
     systemPrompt: "reloaded prompt",
   });
 
-  expect(client.lastResumeLaunchContext).toEqual({
+  expect(client.lastResumeLaunchContext).toMatchObject({
     agentId: snapshot.id,
     env: {
       PASEO_AGENT_ID: snapshot.id,
       PASEO_AGENT_CWD: workdir,
     },
+    clientsCanStopProviderSubagents: expect.any(Function),
   });
 });
 

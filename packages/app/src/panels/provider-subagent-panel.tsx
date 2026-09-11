@@ -128,12 +128,14 @@ function ProviderSubagentStopControl({
       })
       .catch((error: unknown) => {
         // A rejection means the provider refused, timed out, or the request never arrived. The
-        // subagent is still running, so silence here would be a lie.
-        toast.error(
-          t("subagents.stopFailed", {
-            reason: error instanceof Error ? error.message : String(error),
-          }),
-        );
+        // subagent is still running, so silence here would be a lie. The reason itself is
+        // provider/transport detail: it goes to the log, and the user gets stable copy.
+        console.error("[ProviderSubagentPanel] Failed to stop provider subagent:", {
+          parentAgentId,
+          subagentId,
+          error,
+        });
+        toast.error(t("subagents.stopFailed"));
       })
       .finally(() => setIsStopping(false));
   }, [client, isStopping, parentAgentId, subagentId, t, toast]);

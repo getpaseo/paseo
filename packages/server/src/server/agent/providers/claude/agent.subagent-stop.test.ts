@@ -75,18 +75,28 @@ describe("stopping a provider subagent", () => {
     queryFactory.mockReset();
   });
 
-  async function startTurnWithSubagent(isBackgrounded?: boolean) {
-    const channel = buildOpenQueryMock();
+  async function startTurnWithSubagent(isBackgrounded?: boolean, clientsCanStop = true) {
+    const channels: ReturnType<typeof buildOpenQueryMock>[] = [];
     let capturedOptions: ClaudeQueryInput["options"] | null = null;
+    let canStop = clientsCanStop;
     queryFactory.mockImplementation(({ options }: ClaudeQueryInput) => {
       capturedOptions = options;
+      const channel = buildOpenQueryMock();
+      channels.push(channel);
       return channel.query;
     });
     const session = await new ClaudeAgentClient({
       logger: createTestLogger(),
       queryFactory,
       resolveBinary: async () => "/test/claude/bin",
-    }).createSession({ provider: "claude", cwd: process.cwd() });
+    }).createSession(
+      { provider: "claude", cwd: process.cwd() },
+      {
+        // The daemon-side view of the attached clients, re-read at every query creation. An older
+        // app connected to this daemon answers false, and the affordance must be withheld.
+        clientsCanStopProviderSubagents: () => canStop,
+      },
+    );
 
     const subagentEvents: unknown[] = [];
     session.subscribe((event) => {
@@ -94,6 +104,7 @@ describe("stopping a provider subagent", () => {
     });
 
     await session.startTurn("delegate work");
+    const channel = channels[0]!;
     channel.push({
       type: "system",
       subtype: "init",
@@ -115,7 +126,16 @@ describe("stopping a provider subagent", () => {
     await vi.waitFor(() =>
       expect(subagentEvents).toContainEqual(expect.objectContaining({ id: SUBAGENT_ID })),
     );
-    return { channel, session, subagentEvents, getOptions: () => capturedOptions };
+    return {
+      channel,
+      channels,
+      session,
+      subagentEvents,
+      getOptions: () => capturedOptions,
+      setClientsCanStop: (value: boolean) => {
+        canStop = value;
+      },
+    };
   }
 
   test("declares perTaskStopAffordance, so an interrupt spares background subagents", async () => {
@@ -124,6 +144,43 @@ describe("stopping a provider subagent", () => {
     // Without this flag the CLI fails closed and an interrupt kills every background child. It is
     // the entire fix; assert the wire value rather than any local bookkeeping.
     expect(getOptions()?.perTaskStopAffordance).toBe(true);
+
+    await session.close();
+  });
+
+  test("withholds the affordance while any attached client cannot stop a subagent", async () => {
+    const { session, getOptions } = await startTurnWithSubagent(undefined, false);
+
+    // An older app on this daemon has no per-subagent Stop control. Declaring the affordance
+    // anyway would spare a background child that only archiving the parent could stop. Withheld,
+    // not sent as false: an option the CLI never knew is indistinguishable from absence.
+    expect(getOptions()?.perTaskStopAffordance).toBeUndefined();
+
+    await session.close();
+  });
+
+  test("re-reads the client view when the query is (re)created", async () => {
+    const { channel, channels, session, getOptions, setClientsCanStop } =
+      await startTurnWithSubagent(true, false);
+    expect(getOptions()?.perTaskStopAffordance).toBeUndefined();
+
+    // The option is fixed for a CLI query's lifetime, so the re-read point is query creation.
+    // End the turn, flip the view (the incapable client disconnected), and force a query
+    // restart the way a real one happens — a settings change applies to the next query.
+    const turnEvents: string[] = [];
+    session.subscribe((event) => {
+      if (event.type === "turn_completed" || event.type === "turn_failed") {
+        turnEvents.push(event.type);
+      }
+    });
+    channel.push({ type: "result", subtype: "success" });
+    await vi.waitFor(() => expect(turnEvents).toContain("turn_completed"));
+
+    setClientsCanStop(true);
+    await session.setThinkingOption("high");
+    await session.startTurn("more work");
+    await vi.waitFor(() => expect(getOptions()?.perTaskStopAffordance).toBe(true));
+    expect(channels).toHaveLength(2);
 
     await session.close();
   });

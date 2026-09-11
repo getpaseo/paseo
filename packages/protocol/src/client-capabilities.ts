@@ -40,6 +40,11 @@ export const CLIENT_CAPS = {
   pluginTimelineItems: "plugin_timeline_items",
   // COMPAT(workspaceSetupBlocked): added in v0.8.0, remove after 2027-03-07 once client floor >= v0.8.0.
   workspaceSetupBlocked: "workspace_setup_blocked",
+  // COMPAT(providerSubagentStop): added in v0.8.0. The daemon spares background provider
+  // subagents from a turn interrupt only while EVERY attached client can stop one individually;
+  // without this cap an interrupt keeps killing every child, because a spared child would be
+  // unstoppable. Remove after 2027-03-09 once the client floor is >= v0.8.0.
+  providerSubagentStop: "provider_subagent_stop",
   browserHost: "browser_host",
 } as const;
 

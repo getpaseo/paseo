@@ -716,6 +716,12 @@ export class AgentManager {
   private readonly mcpAuthToken: string | null;
   private paseoToolsEnabled = true;
   private paseoToolCatalogFactory: PaseoToolCatalogFactory | null = null;
+  /**
+   * Late-bound view of the attached clients, owned by the websocket server (which exists after
+   * the manager). Null until wired, which every consumer must treat as "no": a daemon with no
+   * capability view has no client that can stop a provider subagent.
+   */
+  private clientsCanStopProviderSubagents: (() => boolean) | null = null;
   private readonly paseoToolPolicies = new Map<string, ProviderPaseoToolsPolicy | undefined>();
   private readonly resolvePaseoToolPolicy: (
     provider: AgentProvider,
@@ -770,6 +776,15 @@ export class AgentManager {
 
   registerClient(provider: AgentProvider, client: AgentClient): void {
     this.clients.set(provider, client);
+  }
+
+  /**
+   * Wire the attached-client capability view (see the field). Called once the websocket server
+   * exists; until then, and on daemons without one, every launch context reports "no client can
+   * stop a provider subagent".
+   */
+  setClientsCanStopProviderSubagents(view: () => boolean): void {
+    this.clientsCanStopProviderSubagents = view;
   }
 
   updateProviderRegistry(input: {
@@ -5096,6 +5111,9 @@ export class AgentManager {
         PASEO_AGENT_ID: agentId,
         PASEO_AGENT_CWD: cwd,
       },
+      // A stable lambda, not the current value: sessions live across turns and clients attach
+      // and detach, so providers must re-read this at every query creation.
+      clientsCanStopProviderSubagents: () => this.clientsCanStopProviderSubagents?.() === true,
     };
     if (
       this.paseoToolsEnabled &&

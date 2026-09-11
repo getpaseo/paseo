@@ -640,6 +640,14 @@ export interface AgentLaunchContext {
    * AgentSessionConfig; providers may adapt it to their native tool surface.
    */
   paseoTools?: PaseoToolCatalog;
+  /**
+   * Whether every client attached to the daemon right now can stop a provider subagent
+   * individually. Runtime-only, never persisted, and re-read whenever a provider creates a
+   * query: providers whose interrupt semantics hand a spared child to a stop control (Claude's
+   * `perTaskStopAffordance`) must fail closed while any attached client lacks the control,
+   * because a spared-but-unstoppable child is worse than one an interrupt kills.
+   */
+  clientsCanStopProviderSubagents?: () => boolean;
 }
 
 export interface AgentCreateSessionOptions {

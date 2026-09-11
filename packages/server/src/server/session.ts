@@ -1173,11 +1173,20 @@ export class Session {
   }
 
   private usesSelectiveTimelineDelivery(): boolean {
+    return this.supportsAcrossSources(CLIENT_CAPS.selectiveAgentTimeline);
+  }
+
+  /**
+   * Whether every attached source has a capability. Fails closed: an unknown source, or any
+   * source without the capability, makes this false. With no per-source records at all (the
+   * pre-multi-client path) the session's own last-seen capabilities decide.
+   */
+  supportsAcrossSources(capability: ClientCapability): boolean {
     if (this.clientCapabilitiesBySource.size === 0) {
-      return this.supports(CLIENT_CAPS.selectiveAgentTimeline);
+      return this.supports(capability);
     }
     for (const capabilities of this.clientCapabilitiesBySource.values()) {
-      if (!capabilities.has(CLIENT_CAPS.selectiveAgentTimeline)) return false;
+      if (!capabilities.has(capability)) return false;
     }
     return true;
   }

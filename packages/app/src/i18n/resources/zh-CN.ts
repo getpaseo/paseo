@@ -1753,7 +1753,7 @@ export const zhCN: TranslationResources = {
     archiveFinishedRetry: "重试 ({{failed}}/{{total}})",
     stopAction: "停止子代理",
     stopTooltip: "仅停止此子代理，不影响父代理",
-    stopFailed: "无法停止子代理：{{reason}}",
+    stopFailed: "无法停止此子代理。请重试，或停止父代理。",
     stopAlreadyFinished: "该子代理已经结束。",
   },
   panels: {

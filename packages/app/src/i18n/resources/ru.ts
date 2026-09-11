@@ -1804,7 +1804,8 @@ export const ru: TranslationResources = {
     archiveFinishedRetry: "Повторить ({{failed}}/{{total}})",
     stopAction: "Остановить субагента",
     stopTooltip: "Остановить этого субагента, а не родительского",
-    stopFailed: "Не удалось остановить субагента: {{reason}}",
+    stopFailed:
+      "Не удалось остановить этого субагента. Повторите попытку или остановите родительского агента.",
     stopAlreadyFinished: "Этот субагент уже завершился.",
   },
   panels: {

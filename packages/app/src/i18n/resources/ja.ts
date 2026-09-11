@@ -1791,7 +1791,8 @@ export const ja: TranslationResources = {
     archiveFinishedRetry: "再試行 ({{failed}}/{{total}})",
     stopAction: "サブエージェントを停止",
     stopTooltip: "親エージェントではなく、このサブエージェントを停止します",
-    stopFailed: "サブエージェントを停止できませんでした: {{reason}}",
+    stopFailed:
+      "このサブエージェントを停止できませんでした。再試行するか、親エージェントを停止してください。",
     stopAlreadyFinished: "そのサブエージェントはすでに完了していました。",
   },
   panels: {

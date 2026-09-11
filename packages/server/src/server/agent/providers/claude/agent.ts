@@ -418,6 +418,11 @@ interface ClaudeAgentSessionOptions {
   logger: Logger;
   queryFactory?: ClaudeQueryFactory;
   resolveBinary: () => Promise<string>;
+  /**
+   * Whether every client attached to the daemon can stop a provider subagent individually.
+   * Re-read at every query creation; absent means no, and `perTaskStopAffordance` is withheld.
+   */
+  clientsCanStopProviderSubagents?: () => boolean;
 }
 
 type ClaudeThinkingEffort = "low" | "medium" | "high" | "xhigh" | "max";
@@ -1537,6 +1542,7 @@ export class ClaudeAgentClient implements AgentClient {
       agentId: launchContext?.agentId,
       launchEnv: launchContext?.env,
       persistSession: options?.persistSession,
+      clientsCanStopProviderSubagents: launchContext?.clientsCanStopProviderSubagents,
       logger: this.logger,
       queryFactory: this.queryFactory,
       resolveBinary: this.resolveBinary,
@@ -1565,6 +1571,7 @@ export class ClaudeAgentClient implements AgentClient {
       handle,
       agentId: launchContext?.agentId,
       launchEnv: launchContext?.env,
+      clientsCanStopProviderSubagents: launchContext?.clientsCanStopProviderSubagents,
       logger: this.logger,
       queryFactory: this.queryFactory,
       resolveBinary: this.resolveBinary,
@@ -2049,6 +2056,7 @@ class ClaudeAgentSession implements AgentSession {
   private readonly logger: Logger;
   private readonly queryFactory?: ClaudeQueryFactory;
   private readonly resolveBinary: () => Promise<string>;
+  private readonly clientsCanStopProviderSubagents: () => boolean;
   private query: Query | null = null;
   private childProcess: ChildProcess | null = null;
   private input: AsyncMessageInput<SDKUserMessage> | null = null;
@@ -2127,6 +2135,8 @@ class ClaudeAgentSession implements AgentSession {
     this.logger = options.logger.child({ agentId: this.agentId });
     this.queryFactory = options.queryFactory;
     this.resolveBinary = options.resolveBinary;
+    // Absent means no: a daemon without a capability view has no client that can stop one.
+    this.clientsCanStopProviderSubagents = options.clientsCanStopProviderSubagents ?? (() => false);
     this.contextUsage = new ClaudeContextUsageState(
       findClaudeModel(this.config.model)?.contextWindowMaxTokens,
     );
@@ -3358,9 +3368,13 @@ class ClaudeAgentSession implements AgentSession {
       // Paseo renders a per-subagent stop control (agent.provider_subagents.stop.request), so
       // the CLI may spare running background subagents when a turn is interrupted. The CLI fails
       // CLOSED on absence: without this, pressing Stop kills every background subagent, because a
-      // spared one would be unstoppable short of ending the session. Do not drop this flag
-      // without also dropping the stop RPC, and vice versa.
-      perTaskStopAffordance: true,
+      // spared one would be unstoppable short of ending the session. Decided at query creation —
+      // the option is fixed for the CLI process's lifetime — and only while EVERY attached client
+      // can stop a child: an older app that interrupts the parent must not strand a spared child
+      // it cannot address. Withheld, not set false, so the wire shape matches a daemon that never
+      // knew the option. Do not drop this flag without also dropping the stop RPC, and vice
+      // versa.
+      ...(this.clientsCanStopProviderSubagents() ? { perTaskStopAffordance: true } : {}),
       hooks: this.buildSubagentEffortHooks(),
       ...(this.persistSession === undefined ? {} : { persistSession: this.persistSession }),
       env: sdkEnv,

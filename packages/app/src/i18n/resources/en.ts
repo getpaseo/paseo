@@ -1784,7 +1784,7 @@ export const en = {
     archiveFinishedRetry: "Retry ({{failed}}/{{total}})",
     stopAction: "Stop subagent",
     stopTooltip: "Stop this subagent, not its parent",
-    stopFailed: "Could not stop subagent: {{reason}}",
+    stopFailed: "Could not stop this subagent. Try again, or stop the parent agent.",
     stopAlreadyFinished: "That subagent had already finished.",
   },
   panels: {

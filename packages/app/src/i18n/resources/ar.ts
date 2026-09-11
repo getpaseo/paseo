@@ -1774,7 +1774,7 @@ export const ar: TranslationResources = {
     archiveFinishedRetry: "إعادة المحاولة ({{failed}}/{{total}})",
     stopAction: "إيقاف العميل الفرعي",
     stopTooltip: "أوقف هذا العميل الفرعي وليس العميل الأصلي",
-    stopFailed: "تعذّر إيقاف العميل الفرعي: {{reason}}",
+    stopFailed: "تعذّر إيقاف هذا العميل الفرعي. أعد المحاولة أو أوقف العميل الأصلي.",
     stopAlreadyFinished: "كان هذا العميل الفرعي قد انتهى بالفعل.",
   },
   panels: {

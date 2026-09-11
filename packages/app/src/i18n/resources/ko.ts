@@ -1784,7 +1784,8 @@ export const ko: TranslationResources = {
     archiveFinishedRetry: "다시 시도 ({{failed}}/{{total}})",
     stopAction: "서브에이전트 중지",
     stopTooltip: "상위 에이전트가 아닌 이 서브에이전트를 중지합니다",
-    stopFailed: "서브에이전트를 중지할 수 없습니다: {{reason}}",
+    stopFailed:
+      "이 하위 에이전트를 중지하지 못했습니다. 다시 시도하거나 상위 에이전트를 중지하세요.",
     stopAlreadyFinished: "해당 서브에이전트는 이미 완료되었습니다.",
   },
   panels: {
