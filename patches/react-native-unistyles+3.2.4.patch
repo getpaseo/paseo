@@ -317,3 +317,15 @@ index 39e0d9d..a21ba95 100644
          this.stylesCache.clear()
          this.dependenciesMap.clear()
          this.disposeListenersMap.clear()
+diff --git a/node_modules/react-native-unistyles/android/build.gradle b/node_modules/react-native-unistyles/android/build.gradle
+index 195954b..c4ac28c 100644
+--- a/node_modules/react-native-unistyles/android/build.gradle
++++ b/node_modules/react-native-unistyles/android/build.gradle
+@@ -38,6 +38,7 @@ if (isNewArchitectureEnabled()) {
+ 
+ android {
+     compileSdkVersion safeExtGet('compileSdkVersion', 35)
++    ndkVersion safeExtGet('ndkVersion', '27.1.12297006')
+     namespace "com.unistyles"
+ 
+     defaultConfig {
