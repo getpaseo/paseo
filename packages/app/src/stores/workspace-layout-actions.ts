@@ -1581,6 +1581,23 @@ export function closePaneInLayout(input: ClosePaneInLayoutInput): WorkspaceLayou
   });
 }
 
+/**
+ * Brings an already-open tab to the front of an in-memory layout copy. The
+ * caller renders the copy without writing it back, so the persisted layout
+ * keeps the focus the user left behind and the reveal ends with the visit.
+ * Returns the input untouched when no tab matches the target.
+ */
+export function focusWorkspaceTabEphemerally(input: {
+  layout: WorkspaceLayout;
+  target: WorkspaceTabTarget;
+}): WorkspaceLayout {
+  const existingTab = findExistingTabForTarget(asInternalLayout(input.layout).root, input.target);
+  if (!existingTab) {
+    return input.layout;
+  }
+  return focusTabInLayout({ layout: input.layout, tabId: existingTab.tabId }) ?? input.layout;
+}
+
 export function focusTabInLayout(input: FocusTabInLayoutInput): WorkspaceLayout | null {
   const layout = asInternalLayout(input.layout);
   const pane = findPaneContainingTab(layout.root, input.tabId);

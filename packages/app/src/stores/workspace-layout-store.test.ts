@@ -28,6 +28,7 @@ import {
   createWorkspaceLayoutWithExplorerSidebar,
   findPaneById,
   findPaneContainingTab,
+  focusWorkspaceTabEphemerally,
   FOCUSED_PANE_PLACEMENT,
   getFocusedBrowserId,
   getTreeDepth,
@@ -4159,5 +4160,590 @@ describe("workspace-layout-store actions", () => {
     expect(layout).toBe(before);
     expect(findPaneById(layout.root, "main")?.tabIds).toEqual([agentTabId]);
     expect(collectAllPanes(layout.root).map((pane) => pane.id)).toEqual(["main"]);
+  });
+});
+
+describe("workspace-layout-store ephemeral attention focus", () => {
+  beforeEach(() => {
+    workspaceLayoutIds.reset();
+    workspaceLayoutStore.setState({
+      layoutByWorkspace: {},
+      splitSizesByWorkspace: {},
+      pinnedAgentIdsByWorkspace: {},
+      hiddenAgentIdsByWorkspace: {},
+      ephemeralFocusTargetByWorkspace: {},
+      focusRestorationByWorkspace: {},
+      explorerSidebarPaneIdByWorkspace: {},
+    });
+  });
+
+  it("reveals an open attention tab without moving persisted focus", () => {
+    const workspaceKey = createWorkspaceKey();
+    const store = workspaceLayoutStore.getState();
+    const idleTabId = store.openTab({
+      workspaceKey,
+      target: { kind: "agent", agentId: "agent-idle" },
+      intent: "new",
+    });
+    const attentionTabId = store.openTab({
+      workspaceKey,
+      target: { kind: "agent", agentId: "agent-attention" },
+      intent: "new",
+    });
+
+    store.revealEphemeralTab(workspaceKey, { kind: "agent", agentId: "agent-idle" });
+
+    const state = workspaceLayoutStore.getState();
+    expect(state.ephemeralFocusTargetByWorkspace[workspaceKey]).toEqual({
+      kind: "agent",
+      agentId: "agent-idle",
+    });
+    const persistedLayout = state.layoutByWorkspace[workspaceKey];
+    expect(findPaneById(persistedLayout.root, "main")?.focusedTabId).toBe(attentionTabId);
+
+    const revealedLayout = focusWorkspaceTabEphemerally({
+      layout: persistedLayout,
+      target: { kind: "agent", agentId: "agent-idle" },
+    });
+    expect(findPaneById(revealedLayout.root, "main")?.focusedTabId).toBe(idleTabId);
+    expect(revealedLayout.focusedPaneId).toBe("main");
+    // The persisted layout is untouched: returning without interacting must
+    // still restore the tab the user had focused.
+    expect(findPaneById(persistedLayout.root, "main")?.focusedTabId).toBe(attentionTabId);
+  });
+
+  it("returns the layout unchanged when the reveal target has no tab", () => {
+    const workspaceKey = createWorkspaceKey();
+    const store = workspaceLayoutStore.getState();
+    store.openTab({
+      workspaceKey,
+      target: { kind: "agent", agentId: "agent-attention" },
+      intent: "new",
+    });
+    const persistedLayout = workspaceLayoutStore.getState().layoutByWorkspace[workspaceKey];
+
+    const revealedLayout = focusWorkspaceTabEphemerally({
+      layout: persistedLayout,
+      target: { kind: "agent", agentId: "agent-unknown" },
+    });
+
+    expect(revealedLayout).toBe(persistedLayout);
+  });
+
+  it("clears the reveal when the user focuses a tab", () => {
+    const workspaceKey = createWorkspaceKey();
+    const store = workspaceLayoutStore.getState();
+    // A background open uses the deterministic target identity, so the test
+    // never has to narrow a random tab id.
+    store.openTab({
+      workspaceKey,
+      target: { kind: "agent", agentId: "agent-idle" },
+      intent: "background",
+    });
+    store.openTab({
+      workspaceKey,
+      target: { kind: "agent", agentId: "agent-other" },
+      intent: "new",
+    });
+    store.revealEphemeralTab(workspaceKey, { kind: "agent", agentId: "agent-idle" });
+
+    store.focusTab(workspaceKey, "agent_agent-idle");
+
+    const state = workspaceLayoutStore.getState();
+    expect(state.ephemeralFocusTargetByWorkspace[workspaceKey]).toBeUndefined();
+    expect(findPaneById(state.layoutByWorkspace[workspaceKey].root, "main")?.focusedTabId).toBe(
+      "agent_agent-idle",
+    );
+  });
+
+  it("clears the reveal when the user selects a tab inside a pane", () => {
+    const workspaceKey = createWorkspaceKey();
+    const store = workspaceLayoutStore.getState();
+    store.openTab({
+      workspaceKey,
+      target: { kind: "agent", agentId: "agent-idle" },
+      intent: "background",
+    });
+    store.openTab({
+      workspaceKey,
+      target: { kind: "agent", agentId: "agent-other" },
+      intent: "new",
+    });
+    store.revealEphemeralTab(workspaceKey, { kind: "agent", agentId: "agent-idle" });
+
+    store.selectTabInPane(workspaceKey, "main", "agent_agent-idle");
+
+    expect(
+      workspaceLayoutStore.getState().ephemeralFocusTargetByWorkspace[workspaceKey],
+    ).toBeUndefined();
+  });
+
+  it("opens a missing attention tab in the background and unhides the agent", () => {
+    const workspaceKey = createWorkspaceKey();
+    const store = workspaceLayoutStore.getState();
+    const initialLayout = createWorkspaceLayoutWithExplorerSidebar();
+    workspaceLayoutStore.setState({ layoutByWorkspace: { [workspaceKey]: initialLayout } });
+    store.hideAgent(workspaceKey, "agent-attention");
+
+    store.revealEphemeralTab(workspaceKey, { kind: "agent", agentId: "agent-attention" });
+
+    const state = workspaceLayoutStore.getState();
+    expect(state.hiddenAgentIdsByWorkspace[workspaceKey]).toBeUndefined();
+    expect(collectTabIds(state.layoutByWorkspace[workspaceKey].root)).toContain(
+      "agent_agent-attention",
+    );
+    expect(state.ephemeralFocusTargetByWorkspace[workspaceKey]).toEqual({
+      kind: "agent",
+      agentId: "agent-attention",
+    });
+  });
+
+  it("clears the reveal on demand", () => {
+    const workspaceKey = createWorkspaceKey();
+    const store = workspaceLayoutStore.getState();
+    store.openTab({
+      workspaceKey,
+      target: { kind: "agent", agentId: "agent-attention" },
+      intent: "new",
+    });
+    store.revealEphemeralTab(workspaceKey, { kind: "agent", agentId: "agent-attention" });
+
+    store.clearEphemeralFocusTab(workspaceKey);
+
+    expect(
+      workspaceLayoutStore.getState().ephemeralFocusTargetByWorkspace[workspaceKey],
+    ).toBeUndefined();
+  });
+
+  it("keeps the reveal when a tab opens in the background", () => {
+    const workspaceKey = createWorkspaceKey();
+    const store = workspaceLayoutStore.getState();
+    store.openTab({
+      workspaceKey,
+      target: { kind: "agent", agentId: "agent-attention" },
+      intent: "new",
+    });
+    store.openTab({
+      workspaceKey,
+      target: { kind: "agent", agentId: "agent-idle" },
+      intent: "new",
+    });
+    store.revealEphemeralTab(workspaceKey, { kind: "agent", agentId: "agent-attention" });
+
+    store.openTab({
+      workspaceKey,
+      target: { kind: "agent", agentId: "agent-background" },
+      intent: "background",
+    });
+
+    const state = workspaceLayoutStore.getState();
+    expect(state.ephemeralFocusTargetByWorkspace[workspaceKey]).toEqual({
+      kind: "agent",
+      agentId: "agent-attention",
+    });
+    expect(findPaneById(state.layoutByWorkspace[workspaceKey].root, "main")?.focusedTabId).toBe(
+      collectAllTabs(state.layoutByWorkspace[workspaceKey].root).find(
+        (tab) => tab.target.kind === "agent" && tab.target.agentId === "agent-idle",
+      )?.tabId,
+    );
+  });
+
+  it("clears the reveal when a draft submission converts its tab", () => {
+    const workspaceKey = createWorkspaceKey();
+    const store = workspaceLayoutStore.getState();
+    store.openTab({
+      workspaceKey,
+      target: { kind: "draft", draftId: "draft-1" },
+      intent: "background",
+    });
+    store.openTab({
+      workspaceKey,
+      target: { kind: "agent", agentId: "agent-attention" },
+      intent: "new",
+    });
+    store.revealEphemeralTab(workspaceKey, { kind: "agent", agentId: "agent-attention" });
+
+    store.convertDraftToAgent(workspaceKey, "draft-1", "agent-created");
+
+    expect(
+      workspaceLayoutStore.getState().ephemeralFocusTargetByWorkspace[workspaceKey],
+    ).toBeUndefined();
+  });
+
+  it("clears the reveal when the user focuses a pane", () => {
+    const workspaceKey = createWorkspaceKey();
+    const store = workspaceLayoutStore.getState();
+    store.openTab({
+      workspaceKey,
+      target: { kind: "agent", agentId: "agent-attention" },
+      intent: "new",
+    });
+    store.revealEphemeralTab(workspaceKey, { kind: "agent", agentId: "agent-attention" });
+
+    store.focusPane(workspaceKey, "main");
+
+    expect(
+      workspaceLayoutStore.getState().ephemeralFocusTargetByWorkspace[workspaceKey],
+    ).toBeUndefined();
+  });
+
+  it("clears the reveal when the user focuses the Explorer sidebar pane", () => {
+    const workspaceKey = createWorkspaceKey();
+    const store = workspaceLayoutStore.getState();
+    store.openTab({
+      workspaceKey,
+      target: { kind: "agent", agentId: "agent-attention" },
+      intent: "new",
+    });
+    store.revealEphemeralTab(workspaceKey, { kind: "agent", agentId: "agent-attention" });
+
+    store.focusPane(workspaceKey, "explorer");
+
+    expect(
+      workspaceLayoutStore.getState().ephemeralFocusTargetByWorkspace[workspaceKey],
+    ).toBeUndefined();
+  });
+
+  it("clears the reveal when the user opens a tab with focus", () => {
+    const workspaceKey = createWorkspaceKey();
+    const store = workspaceLayoutStore.getState();
+    store.openTab({
+      workspaceKey,
+      target: { kind: "agent", agentId: "agent-attention" },
+      intent: "new",
+    });
+    store.revealEphemeralTab(workspaceKey, { kind: "agent", agentId: "agent-attention" });
+
+    store.openTab({
+      workspaceKey,
+      target: { kind: "agent", agentId: "agent-idle" },
+      intent: "new",
+    });
+
+    expect(
+      workspaceLayoutStore.getState().ephemeralFocusTargetByWorkspace[workspaceKey],
+    ).toBeUndefined();
+  });
+
+  it("clears the reveal when a tab is retargeted", () => {
+    const workspaceKey = createWorkspaceKey();
+    const store = workspaceLayoutStore.getState();
+    store.openTab({
+      workspaceKey,
+      target: { kind: "draft", draftId: "draft-1" },
+      intent: "background",
+    });
+    store.openTab({
+      workspaceKey,
+      target: { kind: "agent", agentId: "agent-attention" },
+      intent: "new",
+    });
+    store.revealEphemeralTab(workspaceKey, { kind: "agent", agentId: "agent-attention" });
+
+    const replacedTabId = store.replaceTab(workspaceKey, "draft-1", { kind: "files" });
+
+    expect(replacedTabId).toBe("draft-1");
+    expect(
+      workspaceLayoutStore.getState().ephemeralFocusTargetByWorkspace[workspaceKey],
+    ).toBeUndefined();
+  });
+
+  it("drops the reveal when the workspace is purged", () => {
+    const workspaceKey = createWorkspaceKey();
+    const store = workspaceLayoutStore.getState();
+    store.openTab({
+      workspaceKey,
+      target: { kind: "agent", agentId: "agent-attention" },
+      intent: "new",
+    });
+    store.revealEphemeralTab(workspaceKey, { kind: "agent", agentId: "agent-attention" });
+
+    store.purgeWorkspace(workspaceKey);
+
+    expect(
+      workspaceLayoutStore.getState().ephemeralFocusTargetByWorkspace[workspaceKey],
+    ).toBeUndefined();
+  });
+
+  it("clears the reveal when the user splits a tab into a new pane", () => {
+    const workspaceKey = createWorkspaceKey();
+    const store = workspaceLayoutStore.getState();
+    store.openTab({
+      workspaceKey,
+      target: { kind: "agent", agentId: "agent-attention" },
+      intent: "new",
+    });
+    store.openTab({
+      workspaceKey,
+      target: { kind: "agent", agentId: "agent-idle" },
+      intent: "background",
+    });
+    store.revealEphemeralTab(workspaceKey, { kind: "agent", agentId: "agent-idle" });
+    useWorkspaceLayoutIds("split-pane", "split-group");
+
+    const splitPaneId = store.splitPane(workspaceKey, {
+      tabId: "agent_agent-idle",
+      targetPaneId: "main",
+      position: "right",
+    });
+
+    expect(splitPaneId).toBe("pane_split-pane");
+    expect(
+      workspaceLayoutStore.getState().ephemeralFocusTargetByWorkspace[workspaceKey],
+    ).toBeUndefined();
+  });
+
+  it("clears the reveal when the user splits an empty pane", () => {
+    const workspaceKey = createWorkspaceKey();
+    const store = workspaceLayoutStore.getState();
+    store.openTab({
+      workspaceKey,
+      target: { kind: "agent", agentId: "agent-attention" },
+      intent: "new",
+    });
+    store.revealEphemeralTab(workspaceKey, { kind: "agent", agentId: "agent-attention" });
+    useWorkspaceLayoutIds("split-pane", "split-group");
+
+    const splitPaneId = store.splitPaneEmpty(workspaceKey, {
+      targetPaneId: "main",
+      position: "right",
+    });
+
+    expect(splitPaneId).toBe("pane_split-pane");
+    expect(
+      workspaceLayoutStore.getState().ephemeralFocusTargetByWorkspace[workspaceKey],
+    ).toBeUndefined();
+  });
+
+  it("clears the reveal when the user moves a tab to another pane", () => {
+    const workspaceKey = createWorkspaceKey();
+    const store = workspaceLayoutStore.getState();
+    store.openTab({
+      workspaceKey,
+      target: { kind: "agent", agentId: "agent-attention" },
+      intent: "new",
+    });
+    store.openTab({
+      workspaceKey,
+      target: { kind: "agent", agentId: "agent-idle" },
+      intent: "background",
+    });
+    store.revealEphemeralTab(workspaceKey, { kind: "agent", agentId: "agent-idle" });
+    useWorkspaceLayoutIds("split-pane", "split-group");
+    const splitPaneId = store.splitPane(workspaceKey, {
+      tabId: "agent_agent-idle",
+      targetPaneId: "main",
+      position: "right",
+    });
+    expect(splitPaneId).toBe("pane_split-pane");
+
+    store.moveTabToPane(workspaceKey, "agent_agent-idle", "main");
+
+    expect(
+      workspaceLayoutStore.getState().ephemeralFocusTargetByWorkspace[workspaceKey],
+    ).toBeUndefined();
+  });
+
+  it("never persists the ephemeral reveal", async () => {
+    const workspaceKey = createWorkspaceKey();
+    const store = workspaceLayoutStore.getState();
+    store.openTab({
+      workspaceKey,
+      target: { kind: "agent", agentId: "agent-attention" },
+      intent: "new",
+    });
+    store.revealEphemeralTab(workspaceKey, { kind: "agent", agentId: "agent-attention" });
+    const persisted = await vi.waitFor(async () => {
+      const value = await AsyncStorage.getItem("workspace-layout-state");
+      if (value === null) {
+        throw new Error("workspace-layout-state was not persisted");
+      }
+      return value;
+    });
+    const parsed: unknown = JSON.parse(persisted);
+    expect(parsed).not.toHaveProperty(["state", "ephemeralFocusTargetByWorkspace"]);
+    expect(parsed).toHaveProperty(["state", "layoutByWorkspace", workspaceKey]);
+  });
+
+  it("holds a reveal through layout hydration and opens its tab when settled", async () => {
+    // Its own key: the shared module store persists this file's other layouts
+    // to the same storage entry, and a pre-existing layout here would make the
+    // assertions pass without hydration preserving anything.
+    const workspaceKey = "server-1:ws-hydration";
+    const restored = createWorkspaceLayoutStore(createDeterministicWorkspaceLayoutIds());
+    // Held before hydration, not revealed: the merge replaces the layout
+    // wholesale, so a tab opened early would be discarded. The memory-only
+    // entry has to survive instead, or nothing retries the reveal on arrival.
+    restored.getState().holdEphemeralFocusTab(workspaceKey, {
+      kind: "agent",
+      agentId: "agent-attention",
+    });
+    await restored.persist.rehydrate();
+
+    expect(restored.getState().ephemeralFocusTargetByWorkspace[workspaceKey]).toEqual({
+      kind: "agent",
+      agentId: "agent-attention",
+    });
+    expect(restored.getState().layoutByWorkspace[workspaceKey]).toBeUndefined();
+
+    restored
+      .getState()
+      .settleHeldEphemeralFocusTab(
+        workspaceKey,
+        { kind: "agent", agentId: "agent-attention" },
+        true,
+      );
+
+    expect(collectTabIds(restored.getState().layoutByWorkspace[workspaceKey].root)).toContain(
+      "agent_agent-attention",
+    );
+  });
+
+  it("ignores a settled reveal once the visit has ended", () => {
+    const workspaceKey = createWorkspaceKey();
+    const store = workspaceLayoutStore.getState();
+    store.openTab({
+      workspaceKey,
+      target: { kind: "agent", agentId: "agent-idle" },
+      intent: "new",
+    });
+    store.holdEphemeralFocusTab(workspaceKey, { kind: "agent", agentId: "agent-attention" });
+    // The workspace screen clears the entry as the user leaves, whichever route
+    // they leave for — including an app-wide one the remembered selection
+    // cannot see.
+    store.clearEphemeralFocusTab(workspaceKey);
+
+    store.settleHeldEphemeralFocusTab(
+      workspaceKey,
+      { kind: "agent", agentId: "agent-attention" },
+      true,
+    );
+
+    const state = workspaceLayoutStore.getState();
+    expect(state.ephemeralFocusTargetByWorkspace[workspaceKey]).toBeUndefined();
+    expect(collectTabIds(state.layoutByWorkspace[workspaceKey].root)).not.toContain(
+      "agent_agent-attention",
+    );
+  });
+
+  it("ignores a settled reveal that a newer reveal replaced", () => {
+    const workspaceKey = createWorkspaceKey();
+    const store = workspaceLayoutStore.getState();
+    store.holdEphemeralFocusTab(workspaceKey, { kind: "agent", agentId: "agent-first" });
+    store.holdEphemeralFocusTab(workspaceKey, { kind: "agent", agentId: "agent-second" });
+
+    store.settleHeldEphemeralFocusTab(
+      workspaceKey,
+      { kind: "agent", agentId: "agent-first" },
+      true,
+    );
+
+    const state = workspaceLayoutStore.getState();
+    expect(state.ephemeralFocusTargetByWorkspace[workspaceKey]).toEqual({
+      kind: "agent",
+      agentId: "agent-second",
+    });
+    expect(
+      collectTabIds(state.layoutByWorkspace[workspaceKey]?.root ?? createDefaultLayout().root),
+    ).not.toContain("agent_agent-first");
+  });
+
+  it("drops a held reveal settled as no longer current", () => {
+    const workspaceKey = createWorkspaceKey();
+    const store = workspaceLayoutStore.getState();
+    store.openTab({
+      workspaceKey,
+      target: { kind: "agent", agentId: "agent-idle" },
+      intent: "new",
+    });
+    store.holdEphemeralFocusTab(workspaceKey, { kind: "agent", agentId: "agent-attention" });
+
+    store.settleHeldEphemeralFocusTab(
+      workspaceKey,
+      { kind: "agent", agentId: "agent-attention" },
+      false,
+    );
+
+    const state = workspaceLayoutStore.getState();
+    expect(state.ephemeralFocusTargetByWorkspace[workspaceKey]).toBeUndefined();
+    expect(collectTabIds(state.layoutByWorkspace[workspaceKey].root)).not.toContain(
+      "agent_agent-attention",
+    );
+  });
+
+  it("clears the reveal when its own tab is closed", () => {
+    const workspaceKey = createWorkspaceKey();
+    const store = workspaceLayoutStore.getState();
+    store.openTab({
+      workspaceKey,
+      target: { kind: "agent", agentId: "agent-idle" },
+      intent: "new",
+    });
+    store.openTab({
+      workspaceKey,
+      target: { kind: "agent", agentId: "agent-attention" },
+      intent: "background",
+    });
+    store.revealEphemeralTab(workspaceKey, { kind: "agent", agentId: "agent-attention" });
+
+    store.closeTab(workspaceKey, "agent_agent-attention");
+
+    expect(
+      workspaceLayoutStore.getState().ephemeralFocusTargetByWorkspace[workspaceKey],
+    ).toBeUndefined();
+  });
+
+  it("keeps the reveal when another tab is closed", () => {
+    const workspaceKey = createWorkspaceKey();
+    const store = workspaceLayoutStore.getState();
+    store.openTab({
+      workspaceKey,
+      target: { kind: "agent", agentId: "agent-attention" },
+      intent: "background",
+    });
+    store.openTab({
+      workspaceKey,
+      target: { kind: "draft", draftId: "draft-1" },
+      intent: "background",
+    });
+    store.revealEphemeralTab(workspaceKey, { kind: "agent", agentId: "agent-attention" });
+
+    store.closeTab(workspaceKey, "draft-1");
+
+    expect(workspaceLayoutStore.getState().ephemeralFocusTargetByWorkspace[workspaceKey]).toEqual({
+      kind: "agent",
+      agentId: "agent-attention",
+    });
+  });
+
+  it("clears the reveal when the pane holding its tab is closed", () => {
+    const workspaceKey = createWorkspaceKey();
+    const store = workspaceLayoutStore.getState();
+    store.openTab({
+      workspaceKey,
+      target: { kind: "agent", agentId: "agent-attention" },
+      intent: "new",
+    });
+    store.openTab({
+      workspaceKey,
+      target: { kind: "agent", agentId: "agent-idle" },
+      intent: "background",
+    });
+    useWorkspaceLayoutIds("split-pane", "split-group");
+    const splitPaneId = store.splitPane(workspaceKey, {
+      tabId: "agent_agent-idle",
+      targetPaneId: "main",
+      position: "right",
+    });
+    expect(splitPaneId).toBe("pane_split-pane");
+    store.revealEphemeralTab(workspaceKey, { kind: "agent", agentId: "agent-idle" });
+
+    store.closePane(workspaceKey, "pane_split-pane");
+
+    const state = workspaceLayoutStore.getState();
+    expect(collectTabIds(state.layoutByWorkspace[workspaceKey].root)).not.toContain(
+      "agent_agent-idle",
+    );
+    expect(state.ephemeralFocusTargetByWorkspace[workspaceKey]).toBeUndefined();
   });
 });

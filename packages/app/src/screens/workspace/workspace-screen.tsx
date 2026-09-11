@@ -69,6 +69,7 @@ import {
   getFocusedBrowserId,
   FOCUSED_PANE_PLACEMENT,
   selectExplorerSidebarPaneId,
+  useEffectiveWorkspaceLayout,
   type WorkspaceLayout,
   type WorkspaceTabPlacement,
   useWorkspaceLayoutStore,
@@ -1810,9 +1811,29 @@ function WorkspaceScreenContent({
     return () => handler.remove();
   }, [isExplorerSidebarShowing, isMobile, isRouteFocused, showMobileAgent]);
 
-  const workspaceLayout = useWorkspaceLayoutStore((state) =>
-    persistenceKey ? (state.layoutByWorkspace[persistenceKey] ?? null) : null,
+  // The layout the user is looking at: persisted focus with the ephemeral
+  // attention reveal applied, so what renders always agrees with what
+  // focus-derived consumers (add-to-chat, plugin context) resolve.
+  const workspaceLayout = useEffectiveWorkspaceLayout(persistenceKey);
+  const clearEphemeralWorkspaceFocus = useWorkspaceLayoutStore(
+    (state) => state.clearEphemeralFocusTab,
   );
+  // The reveal lasts one visit: it ends when the user leaves the workspace (or
+  // the screen goes away entirely), not when the retained deck entry unmounts.
+  const wasRouteFocusedRef = useRef(isRouteFocused);
+  useEffect(() => {
+    if (wasRouteFocusedRef.current && !isRouteFocused && persistenceKey) {
+      clearEphemeralWorkspaceFocus(persistenceKey);
+    }
+    wasRouteFocusedRef.current = isRouteFocused;
+  }, [clearEphemeralWorkspaceFocus, isRouteFocused, persistenceKey]);
+  useEffect(() => {
+    return () => {
+      if (persistenceKey) {
+        clearEphemeralWorkspaceFocus(persistenceKey);
+      }
+    };
+  }, [clearEphemeralWorkspaceFocus, persistenceKey]);
   const unfocusedPaneId = useWorkspaceLayoutStore((state) =>
     persistenceKey ? state.focusRestorationByWorkspace[persistenceKey]?.restorePaneId : undefined,
   );
