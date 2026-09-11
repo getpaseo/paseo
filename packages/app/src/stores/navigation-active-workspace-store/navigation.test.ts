@@ -27,10 +27,12 @@ function createFakeDeps(overrides: Partial<NavigateToWorkspaceDeps> = {}) {
   const remembered: ActiveWorkspaceSelection[] = [];
   const openedTabs: RecordedTab[] = [];
   const ephemeralReveals: RecordedEphemeralReveal[] = [];
+  const deferredUntilHydrated: Array<() => void> = [];
   const deps: NavigateToWorkspaceDeps = {
     getSessionWorkspaces: () => null,
     getSessionAgents: () => [] as Agent[],
     isWorkspaceLayoutHydrated: () => true,
+    onWorkspaceLayoutHydrated: (callback) => deferredUntilHydrated.push(callback),
     openTab: ({ workspaceKey, target, pin = false }) => {
       openedTabs.push({ workspaceKey, target, pin });
       return target.kind === "agent" ? target.agentId : null;
@@ -42,7 +44,7 @@ function createFakeDeps(overrides: Partial<NavigateToWorkspaceDeps> = {}) {
     navigateToRoute: (route) => navigations.push(route),
     ...overrides,
   };
-  return { deps, navigations, remembered, openedTabs, ephemeralReveals };
+  return { deps, navigations, remembered, openedTabs, ephemeralReveals, deferredUntilHydrated };
 }
 
 function createLastSelectionDeps(
@@ -212,7 +214,7 @@ describe("workspace navigation", () => {
     expect(openedTabs).toEqual([]);
   });
 
-  it("skips the attention reveal until the persisted workspace layout has hydrated", () => {
+  it("defers the attention reveal until the persisted workspace layout has hydrated", () => {
     const workspace = {
       id: "workspace-a",
       workspaceDirectory: "/repo/workspace-a",
@@ -224,7 +226,7 @@ describe("workspace navigation", () => {
       requiresAttention: true,
       attentionReason: "permission",
     } as unknown as Agent;
-    const { deps, openedTabs, ephemeralReveals } = createFakeDeps({
+    const { deps, openedTabs, ephemeralReveals, deferredUntilHydrated } = createFakeDeps({
       getSessionWorkspaces: () => new Map([[workspace.id, workspace]]),
       getSessionAgents: () => [agent],
       isWorkspaceLayoutHydrated: () => false,
@@ -232,7 +234,19 @@ describe("workspace navigation", () => {
 
     navigateToWorkspace({ serverId: "server-1", workspaceId: "workspace-a" }, deps);
 
+    // Deferred, not dropped: hydration would otherwise reconcile the tabs onto
+    // the saved focus with nothing retrying the reveal, while an agent still
+    // needs attention.
     expect(ephemeralReveals).toEqual([]);
+    expect(deferredUntilHydrated).toHaveLength(1);
+
+    deferredUntilHydrated[0]?.();
+    expect(ephemeralReveals).toEqual([
+      {
+        workspaceKey: "server-1:workspace-a",
+        target: { kind: "agent", agentId: "agent-1" },
+      },
+    ]);
     expect(openedTabs).toEqual([]);
   });
 

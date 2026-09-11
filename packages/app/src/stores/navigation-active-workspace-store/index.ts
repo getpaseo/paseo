@@ -38,6 +38,13 @@ function navigateDeps(): NavigateToWorkspaceDeps {
     getSessionAgents: (serverId) =>
       useSessionStore.getState().sessions[serverId]?.agents.values() ?? [],
     isWorkspaceLayoutHydrated: () => useWorkspaceLayoutStore.persist.hasHydrated(),
+    onWorkspaceLayoutHydrated: (callback) => {
+      if (useWorkspaceLayoutStore.persist.hasHydrated()) {
+        callback();
+        return;
+      }
+      useWorkspaceLayoutStore.persist.onFinishHydration(callback);
+    },
     openTab: (input) => useWorkspaceLayoutStore.getState().openTab(input),
     revealEphemeralTab: (input) =>
       useWorkspaceLayoutStore.getState().revealEphemeralTab(input.workspaceKey, input.target),

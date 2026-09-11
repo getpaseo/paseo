@@ -35,6 +35,11 @@ export interface NavigateToWorkspaceDeps extends PrepareWorkspaceTabDeps {
   getSessionWorkspaces: (serverId: string) => Map<string, WorkspaceDescriptor> | null | undefined;
   getSessionAgents: (serverId: string) => Iterable<Agent>;
   isWorkspaceLayoutHydrated: () => boolean;
+  /**
+   * Runs a callback once the persisted workspace layout has hydrated (immediately when it
+   * already has). Navigation that beats hydration defers work here rather than dropping it.
+   */
+  onWorkspaceLayoutHydrated: (callback: () => void) => void;
   /** Reveals a tab for the current visit without persisting the focus change. */
   revealEphemeralTab: (input: { workspaceKey: string; target: WorkspaceTabTarget }) => void;
   rememberLastWorkspace: (selection: ActiveWorkspaceSelection) => void;
@@ -119,15 +124,22 @@ export function navigateToWorkspace(
       : null;
     // Ephemeral, not a persisted reveal: the layout keeps the focus the user
     // left behind, so returning to the workspace restores their tab once the
-    // attention flag clears or they move focus themselves. Skipped until the
-    // persisted layout has hydrated — an early merge would discard the
-    // background-opened tab while the target lingered — and attention persists,
-    // so the next navigation reveals just as well.
-    if (attentionAgentId && attentionWorkspaceKey && deps.isWorkspaceLayoutHydrated()) {
-      deps.revealEphemeralTab({
+    // attention flag clears or they move focus themselves. Deferred until the
+    // persisted layout has hydrated — hydration's merge replaces the layout
+    // wholesale, so an early reveal would open the tab only for the merge to
+    // discard it — but deferred, not dropped: the user is navigating NOW
+    // because an agent needs attention, and once hydration settles them on
+    // their saved tab, nothing else would retry the reveal.
+    if (attentionAgentId && attentionWorkspaceKey) {
+      const reveal: { workspaceKey: string; target: WorkspaceTabTarget } = {
         workspaceKey: attentionWorkspaceKey,
         target: { kind: "agent", agentId: attentionAgentId },
-      });
+      };
+      if (deps.isWorkspaceLayoutHydrated()) {
+        deps.revealEphemeralTab(reveal);
+      } else {
+        deps.onWorkspaceLayoutHydrated(() => deps.revealEphemeralTab(reveal));
+      }
     }
   }
 
