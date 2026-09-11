@@ -143,7 +143,12 @@ function buildProjectSections(input: {
     );
     projectSections.set(project.viewKey, [
       ...sections,
-      { id: null, name: null, collapseKey: null, workspaces: unsectionedWorkspaces },
+      {
+        id: null,
+        name: null,
+        collapseKey: `${project.viewKey}::unsectioned`,
+        workspaces: unsectionedWorkspaces,
+      },
     ]);
   }
 

@@ -1,7 +1,7 @@
 import { memo, useMemo, useCallback, useState, type ReactNode } from "react";
 import { Text, View, type ViewStyle } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
-import { CircleAlert, Folder, FolderGit2, Monitor } from "lucide-react-native";
+import { CircleAlert, Folder, FolderGit2, Monitor, Square, SquareCheck } from "lucide-react-native";
 import { ProjectStatusIndicator } from "@/components/sidebar/project-leading-visual";
 import type { SidebarSurfaceBackdrop } from "@/styles/surface-backdrop";
 import {
@@ -40,6 +40,8 @@ const ThemedCircleAlert = withUnistyles(CircleAlert);
 const ThemedMonitor = withUnistyles(Monitor);
 const ThemedFolder = withUnistyles(Folder);
 const ThemedFolderGit2 = withUnistyles(FolderGit2);
+const ThemedSquare = withUnistyles(Square);
+const ThemedSquareCheck = withUnistyles(SquareCheck);
 
 export function SidebarWorkspaceRowFrame({
   workspace,
@@ -99,6 +101,8 @@ export const SidebarWorkspaceRowContent = memo(function SidebarWorkspaceRowConte
   isCreating = false,
   shortcutNumber = null,
   showShortcutBadge = false,
+  selectionMode = false,
+  bulkSelected = false,
   reserveIdleStatusIndicatorSpace = true,
   children,
 }: {
@@ -115,6 +119,8 @@ export const SidebarWorkspaceRowContent = memo(function SidebarWorkspaceRowConte
   isCreating?: boolean;
   shortcutNumber?: number | null;
   showShortcutBadge?: boolean;
+  selectionMode?: boolean;
+  bulkSelected?: boolean;
   /** Keep the empty leading slot when the workspace has no active status. */
   reserveIdleStatusIndicatorSpace?: boolean;
   children?: ReactNode;
@@ -134,28 +140,38 @@ export const SidebarWorkspaceRowContent = memo(function SidebarWorkspaceRowConte
     ],
     [isHovered, isCreating],
   );
+  let leadingVisual: ReactNode;
+  if (selectionMode) {
+    leadingVisual = (
+      <WorkspaceSelectionIndicator selected={bulkSelected} workspaceKey={workspace.workspaceKey} />
+    );
+  } else if (leadingProjectName) {
+    leadingVisual = (
+      <ProjectStatusIndicator
+        iconDataUri={leadingProjectIconDataUri}
+        displayName={leadingProjectName}
+        projectViewKey={workspace.projectViewKey}
+        statusBucket={workspace.statusBucket}
+        backdrop={backdrop}
+        loading={isLoading}
+        testID={`sidebar-row-project-icon-${workspace.workspaceKey}`}
+      />
+    );
+  } else {
+    leadingVisual = (
+      <WorkspaceStatusIndicator
+        bucket={workspace.statusBucket}
+        workspaceKind={workspace.workspaceKind}
+        loading={isLoading}
+        reserveIdleSpace={reserveIdleStatusIndicatorSpace}
+      />
+    );
+  }
 
   return (
     <View style={styles.workspaceRowContent}>
       <View style={styles.workspaceRowMain}>
-        {leadingProjectName ? (
-          <ProjectStatusIndicator
-            iconDataUri={leadingProjectIconDataUri}
-            displayName={leadingProjectName}
-            projectViewKey={workspace.projectViewKey}
-            statusBucket={workspace.statusBucket}
-            backdrop={backdrop}
-            loading={isLoading}
-            testID={`sidebar-row-project-icon-${workspace.workspaceKey}`}
-          />
-        ) : (
-          <WorkspaceStatusIndicator
-            bucket={workspace.statusBucket}
-            workspaceKind={workspace.workspaceKind}
-            loading={isLoading}
-            reserveIdleSpace={reserveIdleStatusIndicatorSpace}
-          />
-        )}
+        {leadingVisual}
         <View style={styles.workspaceContentColumn}>
           <View style={styles.workspaceTitleRow}>
             <Text style={workspaceBranchTextStyle} numberOfLines={1}>
@@ -251,6 +267,21 @@ function WorkspaceStatusIndicator({
     <View style={styles.workspaceStatusDot} testID={`workspace-status-indicator-${bucket}`}>
       <KindIcon size={14} uniProps={foregroundMutedColorMapping} />
       {dotColorStyle ? <StatusDotOverlay dotColorStyle={dotColorStyle} /> : null}
+    </View>
+  );
+}
+
+function WorkspaceSelectionIndicator({
+  selected,
+  workspaceKey,
+}: {
+  selected: boolean;
+  workspaceKey: string;
+}) {
+  const Icon = selected ? ThemedSquareCheck : ThemedSquare;
+  return (
+    <View style={styles.workspaceStatusDot} testID={`sidebar-workspace-selected-${workspaceKey}`}>
+      <Icon size={14} uniProps={foregroundMutedColorMapping} />
     </View>
   );
 }

@@ -95,6 +95,27 @@ describe("migrateSidebarOrderState", () => {
     useSidebarOrderStore.setState({ workspaceSectionsByProject: {} });
   });
 
+  it("moves selected workspaces together and preserves their selection order", () => {
+    useSidebarOrderStore.setState({
+      workspaceSectionsByProject: {
+        project: [
+          { id: "finance", name: "Finance", workspaceKeys: ["srv:one"] },
+          { id: "research", name: "Research", workspaceKeys: ["srv:two"] },
+        ],
+      },
+    });
+
+    useSidebarOrderStore
+      .getState()
+      .moveWorkspacesToSection("project", ["srv:two", "srv:one"], "finance");
+
+    expect(useSidebarOrderStore.getState().getWorkspaceSections("project")).toEqual([
+      { id: "finance", name: "Finance", workspaceKeys: ["srv:two", "srv:one"] },
+      { id: "research", name: "Research", workspaceKeys: [] },
+    ]);
+    useSidebarOrderStore.setState({ workspaceSectionsByProject: {} });
+  });
+
   it("creates, renames, and reorders sections while retaining empty sections", () => {
     useSidebarOrderStore.setState({ workspaceSectionsByProject: {} });
     const store = useSidebarOrderStore.getState();

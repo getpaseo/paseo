@@ -237,6 +237,17 @@ describe("buildSidebarProjection", () => {
     ]);
   });
 
+  it("removes collapsed unsectioned rows from keyboard shortcuts", () => {
+    const input = projectionInput();
+    input.collapsedWorkspaceSectionKeys = new Set(["project::unsectioned"]);
+
+    const projection = buildSidebarProjection(input);
+
+    expect(projection.shortcutModel.shortcutTargets).toEqual([
+      { serverId: "srv", workspaceId: "pinned" },
+    ]);
+  });
+
   it("keeps pinned chats above status groups and removes them from those groups", () => {
     const projection = buildSidebarProjection(projectionInput({ groupMode: "status" }));
 

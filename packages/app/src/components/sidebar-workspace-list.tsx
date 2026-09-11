@@ -164,6 +164,11 @@ import { useHostBadges } from "@/hosts/use-host-badges";
 import { useSidebarRowItems } from "@/components/sidebar/display-preferences/model";
 import { PullRequestStateIcon } from "@/git/pull-request-state-icon";
 import { AdaptiveRenameModal } from "@/components/rename-modal";
+import {
+  retainVisibleSidebarWorkspaceSelection,
+  shouldToggleSidebarWorkspacePin,
+  toggleSidebarWorkspaceSelection,
+} from "@/components/sidebar/sidebar-workspace-selection";
 
 const workspaceKeyExtractor = (workspace: SidebarWorkspacePlacement) => workspace.workspaceKey;
 
@@ -311,6 +316,9 @@ interface WorkspaceRowInnerProps {
   isPinned?: boolean;
   onTogglePin?: () => void;
   reserveIdleStatusIndicatorSpace?: boolean;
+  selectionMode?: boolean;
+  bulkSelected?: boolean;
+  onToggleBulkSelection?: () => void;
 }
 
 export function PrBadge({ hint, style }: { hint: PrHint; style?: StyleProp<ViewStyle> }) {
@@ -402,6 +410,10 @@ function getProjectWorkspaceRowStyle({
 }
 
 function noop() {}
+
+function isShiftClick(event: GestureResponderEvent): boolean {
+  return "shiftKey" in event.nativeEvent && event.nativeEvent.shiftKey === true;
+}
 
 const prBadgeStyles = StyleSheet.create((theme) => ({
   badge: {
@@ -1121,12 +1133,15 @@ function WorkspaceRowInner({
   isPinned,
   onTogglePin,
   reserveIdleStatusIndicatorSpace = true,
+  selectionMode = false,
+  bulkSelected = false,
+  onToggleBulkSelection,
 }: WorkspaceRowInnerProps) {
   const isCompact = useIsCompactFormFactor();
   const [isPressed, setIsPressed] = useState(false);
   const isTouchPlatform = platformIsNative || isCompact;
   const interaction = useLongPressDragInteraction({
-    drag,
+    drag: selectionMode ? noop : drag,
     menuController,
   });
   const {
@@ -1136,13 +1151,32 @@ function WorkspaceRowInner({
     ...dragAttributes
   } = dragHandleProps?.attributes ?? {};
 
-  const handlePress = useCallback(() => {
-    if (interaction.didLongPressRef.current) {
-      interaction.didLongPressRef.current = false;
-      return;
-    }
-    onPress();
-  }, [interaction.didLongPressRef, onPress]);
+  const handlePress = useCallback(
+    (event: GestureResponderEvent) => {
+      if (interaction.didLongPressRef.current) {
+        interaction.didLongPressRef.current = false;
+        return;
+      }
+      if (selectionMode) {
+        onToggleBulkSelection?.();
+        return;
+      }
+      if (
+        onTogglePin &&
+        shouldToggleSidebarWorkspacePin({
+          selectionMode,
+          isElectron: getIsElectron(),
+          shiftKey: isShiftClick(event),
+          canPin: onTogglePin !== undefined,
+        })
+      ) {
+        onTogglePin();
+        return;
+      }
+      onPress();
+    },
+    [interaction.didLongPressRef, onPress, onToggleBulkSelection, onTogglePin, selectionMode],
+  );
   const handleWorkspacePressIn = useCallback(
     (event: GestureResponderEvent) => {
       setIsPressed(true);
@@ -1221,6 +1255,8 @@ function WorkspaceRowInner({
                 isCreating={isCreating}
                 shortcutNumber={shortcutNumber}
                 showShortcutBadge={showShortcutBadge}
+                selectionMode={selectionMode}
+                bulkSelected={bulkSelected}
                 reserveIdleStatusIndicatorSpace={reserveIdleStatusIndicatorSpace}
               >
                 <WorkspaceRowRightGroup
@@ -1270,6 +1306,9 @@ function WorkspaceRowWithMenu({
   onToggleWorkspacePin,
   reserveIdleStatusIndicatorSpace = true,
   isCreating = false,
+  selectionMode = false,
+  bulkSelected = false,
+  onToggleBulkSelection,
 }: {
   workspace: SidebarWorkspaceEntry;
   hostBadge?: HostBadgeModel | null;
@@ -1287,6 +1326,9 @@ function WorkspaceRowWithMenu({
   onToggleWorkspacePin: ToggleSidebarWorkspacePin;
   reserveIdleStatusIndicatorSpace?: boolean;
   isCreating?: boolean;
+  selectionMode?: boolean;
+  bulkSelected?: boolean;
+  onToggleBulkSelection?: () => void;
 }) {
   const { t } = useTranslation();
   const toast = useToast();
@@ -1399,6 +1441,9 @@ function WorkspaceRowWithMenu({
         isPinned={isPinned}
         onTogglePin={onTogglePin}
         reserveIdleStatusIndicatorSpace={reserveIdleStatusIndicatorSpace}
+        selectionMode={selectionMode}
+        bulkSelected={bulkSelected}
+        onToggleBulkSelection={onToggleBulkSelection}
       />
       <WorkspaceRenameModal
         visible={isRenameOpen}
@@ -1423,6 +1468,9 @@ interface WorkspaceRowItemProps {
   onToggleWorkspacePin: ToggleSidebarWorkspacePin;
   reserveIdleStatusIndicatorSpace?: boolean;
   isCreating?: boolean;
+  selectionMode?: boolean;
+  bulkSelected?: boolean;
+  onToggleBulkSelection?: (workspaceKey: string) => void;
   selectionEnabled: boolean;
   activeWorkspaceSelection: ActiveWorkspaceSelection | null;
   onWorkspacePress?: () => void;
@@ -1444,6 +1492,9 @@ function WorkspaceRowItem({
   onToggleWorkspacePin,
   reserveIdleStatusIndicatorSpace = true,
   isCreating = false,
+  selectionMode = false,
+  bulkSelected = false,
+  onToggleBulkSelection,
   selectionEnabled,
   activeWorkspaceSelection,
   onWorkspacePress,
@@ -1458,6 +1509,9 @@ function WorkspaceRowItem({
     onWorkspacePress?.();
     navigateToWorkspace({ serverId: workspace.serverId, workspaceId: workspace.workspaceId });
   }, [onWorkspacePress, workspace.serverId, workspace.workspaceId]);
+  const handleToggleBulkSelection = useCallback(() => {
+    onToggleBulkSelection?.(workspace.workspaceKey);
+  }, [onToggleBulkSelection, workspace.workspaceKey]);
 
   return (
     <WorkspaceRow
@@ -1472,6 +1526,9 @@ function WorkspaceRowItem({
       onToggleWorkspacePin={onToggleWorkspacePin}
       reserveIdleStatusIndicatorSpace={reserveIdleStatusIndicatorSpace}
       isCreating={isCreating}
+      selectionMode={selectionMode}
+      bulkSelected={bulkSelected}
+      onToggleBulkSelection={onToggleBulkSelection ? handleToggleBulkSelection : undefined}
       selected={isWorkspaceSelected({
         selection: activeWorkspaceSelection,
         serverId: workspace.serverId,
@@ -1515,6 +1572,9 @@ function areWorkspaceRowItemPropsEqual(
     previous.onToggleWorkspacePin === next.onToggleWorkspacePin &&
     previous.reserveIdleStatusIndicatorSpace === next.reserveIdleStatusIndicatorSpace &&
     previous.isCreating === next.isCreating &&
+    previous.selectionMode === next.selectionMode &&
+    previous.bulkSelected === next.bulkSelected &&
+    previous.onToggleBulkSelection === next.onToggleBulkSelection &&
     previous.onWorkspacePress === next.onWorkspacePress &&
     previous.drag === next.drag &&
     previous.isDragging === next.isDragging &&
@@ -1541,6 +1601,9 @@ function WorkspaceRow({
   onToggleWorkspacePin,
   reserveIdleStatusIndicatorSpace = true,
   isCreating = false,
+  selectionMode = false,
+  bulkSelected = false,
+  onToggleBulkSelection,
   selected,
 }: {
   workspaceEntry: SidebarWorkspaceEntry | null;
@@ -1558,6 +1621,9 @@ function WorkspaceRow({
   onToggleWorkspacePin: ToggleSidebarWorkspacePin;
   reserveIdleStatusIndicatorSpace?: boolean;
   isCreating?: boolean;
+  selectionMode?: boolean;
+  bulkSelected?: boolean;
+  onToggleBulkSelection?: () => void;
   selected: boolean;
 }) {
   if (!workspaceEntry) {
@@ -1582,6 +1648,9 @@ function WorkspaceRow({
       onToggleWorkspacePin={onToggleWorkspacePin}
       reserveIdleStatusIndicatorSpace={reserveIdleStatusIndicatorSpace}
       isCreating={isCreating}
+      selectionMode={selectionMode}
+      bulkSelected={bulkSelected}
+      onToggleBulkSelection={onToggleBulkSelection}
     />
   );
 }
@@ -1597,6 +1666,9 @@ function WorkspaceSectionBlock({
   canMoveUp,
   canMoveDown,
   onDeleteSection,
+  onStartSelection,
+  selectionMode,
+  bulkSelectionKey,
   renderWorkspaceRow,
   onSectionWorkspaceReorder,
   activeWorkspaceSelection,
@@ -1614,6 +1686,9 @@ function WorkspaceSectionBlock({
   canMoveUp: boolean;
   canMoveDown: boolean;
   onDeleteSection: (section: SidebarProjectWorkspaceSection) => void;
+  onStartSelection: () => void;
+  selectionMode: boolean;
+  bulkSelectionKey: string;
   renderWorkspaceRow: (
     workspace: SidebarWorkspacePlacement,
     input?: {
@@ -1638,10 +1713,11 @@ function WorkspaceSectionBlock({
     toggleExpanded: toggleWorkspacesExpanded,
   } = useLimitedSidebarGroup(section.workspaces);
   const namedSection = section.id !== null;
+  const collapsible = section.collapseKey !== null;
   const Chevron = collapsed ? ThemedChevronRight : ThemedChevronDown;
   const accessibilityState = useMemo(
-    () => (namedSection ? { expanded: !collapsed } : undefined),
-    [collapsed, namedSection],
+    () => (collapsible ? { expanded: !collapsed } : undefined),
+    [collapsed, collapsible],
   );
   const handleToggle = useCallback(() => {
     if (section.collapseKey) onToggleCollapsed(section.collapseKey);
@@ -1673,9 +1749,9 @@ function WorkspaceSectionBlock({
       {showHeader ? (
         <View style={styles.workspaceSectionHeader}>
           <Pressable
-            accessibilityRole={namedSection ? "button" : undefined}
+            accessibilityRole={collapsible ? "button" : undefined}
             accessibilityState={accessibilityState}
-            disabled={!namedSection}
+            disabled={!collapsible}
             onPress={handleToggle}
             style={styles.workspaceSectionTitleButton}
             testID={`sidebar-workspace-section-header-${section.id ?? "unsectioned"}-${projectViewKey}`}
@@ -1683,7 +1759,7 @@ function WorkspaceSectionBlock({
             <Text style={styles.workspaceSectionTitle} numberOfLines={1}>
               {section.name ?? "Unsectioned"}
             </Text>
-            {namedSection ? <Chevron size={12} uniProps={foregroundMutedColorMapping} /> : null}
+            {collapsible ? <Chevron size={12} uniProps={foregroundMutedColorMapping} /> : null}
           </Pressable>
           {namedSection ? (
             <DropdownMenu compactMode="sheet">
@@ -1697,6 +1773,9 @@ function WorkspaceSectionBlock({
                 {renderKebabTriggerIcon}
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" width={200} sheetTitle={section.name ?? "Section"}>
+                {!selectionMode ? (
+                  <DropdownMenuItem onSelect={onStartSelection}>Select workspaces</DropdownMenuItem>
+                ) : null}
                 <DropdownMenuItem leading={pencilLeadingIcon} onSelect={handleRename}>
                   Rename
                 </DropdownMenuItem>
@@ -1735,7 +1814,7 @@ function WorkspaceSectionBlock({
               keyExtractor={workspaceKeyExtractor}
               renderItem={renderWorkspace}
               onDragEnd={handleWorkspaceReorder}
-              extraData={activeWorkspaceSelectionKey(activeWorkspaceSelection)}
+              extraData={`${activeWorkspaceSelectionKey(activeWorkspaceSelection)}:${selectionMode}:${bulkSelectionKey}`}
               scrollEnabled={false}
               useDragHandle
               nestable={useNestable}
@@ -1753,6 +1832,71 @@ function WorkspaceSectionBlock({
           ) : null}
         </>
       )}
+    </View>
+  );
+}
+
+function WorkspaceSectionMoveMenuItem({
+  sectionId,
+  name,
+  onMove,
+}: {
+  sectionId: string | null;
+  name: string;
+  onMove: (sectionId: string | null) => void;
+}) {
+  const handleSelect = useCallback(() => onMove(sectionId), [onMove, sectionId]);
+  return <DropdownMenuItem onSelect={handleSelect}>{name}</DropdownMenuItem>;
+}
+
+function ProjectWorkspaceSelectionBar({
+  selectedCount,
+  sections,
+  onMove,
+  onCancel,
+}: {
+  selectedCount: number;
+  sections: SidebarProjectWorkspaceSection[];
+  onMove: (sectionId: string | null) => void;
+  onCancel: () => void;
+}) {
+  return (
+    <View style={styles.workspaceSelectionBar} testID="sidebar-workspace-selection-bar">
+      <Text style={styles.workspaceSelectionCount}>{selectedCount} selected</Text>
+      <DropdownMenu compactMode="sheet">
+        <DropdownMenuTrigger
+          disabled={selectedCount === 0}
+          style={styles.workspaceSelectionMoveTrigger}
+          accessibilityRole={platformIsWeb ? undefined : "button"}
+          testID="sidebar-workspace-selection-move"
+        >
+          <Text style={styles.workspaceSelectionMoveText}>Move to section</Text>
+          <ThemedChevronDown size={12} uniProps={foregroundMutedColorMapping} />
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="start" width={200} sheetTitle="Move to section">
+          <WorkspaceSectionMoveMenuItem sectionId={null} name="Unsectioned" onMove={onMove} />
+          {sections.flatMap((section) =>
+            section.id ? (
+              <WorkspaceSectionMoveMenuItem
+                key={section.id}
+                sectionId={section.id}
+                name={section.name ?? "Section"}
+                onMove={onMove}
+              />
+            ) : (
+              []
+            ),
+          )}
+        </DropdownMenuContent>
+      </DropdownMenu>
+      <Pressable
+        style={styles.workspaceSelectionCancel}
+        onPress={onCancel}
+        accessibilityRole={platformIsWeb ? undefined : "button"}
+        testID="sidebar-workspace-selection-cancel"
+      >
+        <Text style={styles.workspaceSelectionCancelText}>Cancel</Text>
+      </Pressable>
     </View>
   );
 }
@@ -1824,12 +1968,31 @@ function ProjectBlock({
   const renameWorkspaceSection = useSidebarOrderStore((state) => state.renameWorkspaceSection);
   const reorderWorkspaceSections = useSidebarOrderStore((state) => state.reorderWorkspaceSections);
   const deleteWorkspaceSection = useSidebarOrderStore((state) => state.deleteWorkspaceSection);
+  const moveWorkspacesToSection = useSidebarOrderStore((state) => state.moveWorkspacesToSection);
   const setWorkspaceSectionWorkspaceOrder = useSidebarOrderStore(
     (state) => state.setWorkspaceSectionWorkspaceOrder,
   );
   const [sectionDialog, setSectionDialog] = useState<
     { mode: "create" } | { mode: "rename"; section: SidebarProjectWorkspaceSection } | null
   >(null);
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedWorkspaceKeys, setSelectedWorkspaceKeys] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
+  const visibleWorkspaceKeys = useMemo(
+    () => new Set(project.workspaces.map((workspace) => workspace.workspaceKey)),
+    [project.workspaces],
+  );
+  const bulkSelectionKey = useMemo(
+    () => [...selectedWorkspaceKeys].sort().join(","),
+    [selectedWorkspaceKeys],
+  );
+  useEffect(() => {
+    setSelectedWorkspaceKeys((current) => {
+      const next = retainVisibleSidebarWorkspaceSelection(current, visibleWorkspaceKeys);
+      return next.size === current.size ? current : next;
+    });
+  }, [visibleWorkspaceKeys]);
   const rowModel = useMemo(
     () =>
       buildSidebarProjectRowModel({
@@ -1852,6 +2015,25 @@ function ProjectBlock({
     project,
     enabled: selectionEnabled,
   });
+  const handleStartSelection = useCallback(() => {
+    setSelectionMode(true);
+    setSelectedWorkspaceKeys(new Set());
+  }, []);
+  const handleCancelSelection = useCallback(() => {
+    setSelectionMode(false);
+    setSelectedWorkspaceKeys(new Set());
+  }, []);
+  const handleToggleBulkSelection = useCallback((workspaceKey: string) => {
+    setSelectedWorkspaceKeys((current) => toggleSidebarWorkspaceSelection(current, workspaceKey));
+  }, []);
+  const handleMoveSelectedWorkspaces = useCallback(
+    (sectionId: string | null) => {
+      if (selectedWorkspaceKeys.size === 0) return;
+      moveWorkspacesToSection(project.viewKey, [...selectedWorkspaceKeys], sectionId);
+      handleCancelSelection();
+    },
+    [handleCancelSelection, moveWorkspacesToSection, project.viewKey, selectedWorkspaceKeys],
+  );
 
   const renderWorkspaceRow = useCallback(
     (
@@ -1873,6 +2055,9 @@ function ProjectBlock({
           canPin={supportsPinningByServerId.get(item.serverId) === true}
           onToggleWorkspacePin={onToggleWorkspacePin}
           isCreating={creatingWorkspaceIds.has(item.workspaceId)}
+          selectionMode={selectionMode}
+          bulkSelected={selectedWorkspaceKeys.has(item.workspaceKey)}
+          onToggleBulkSelection={selectionMode ? handleToggleBulkSelection : undefined}
           selectionEnabled={selectionEnabled}
           activeWorkspaceSelection={activeWorkspaceSelection}
           onWorkspacePress={onWorkspacePress}
@@ -1890,7 +2075,10 @@ function ProjectBlock({
       creatingWorkspaceIds,
       hostBadgeByServerId,
       onWorkspacePress,
+      handleToggleBulkSelection,
       selectionEnabled,
+      selectionMode,
+      selectedWorkspaceKeys,
       shortcutIndexByWorkspaceKey,
       showShortcutBadges,
       workspaceEntriesByKey,
@@ -2074,6 +2262,9 @@ function ProjectBlock({
               renderWorkspaceRow={renderWorkspaceRow}
               onSectionWorkspaceReorder={handleSectionWorkspaceReorder}
               activeWorkspaceSelection={activeWorkspaceSelection}
+              onStartSelection={handleStartSelection}
+              selectionMode={selectionMode}
+              bulkSelectionKey={bulkSelectionKey}
               useNestable={useNestable}
               parentGestureRef={parentGestureRef}
               dragGestureHostActive={dragGestureHostActive}
@@ -2149,6 +2340,14 @@ function ProjectBlock({
         dragHandleProps={dragHandleProps}
       />
 
+      {selectionMode ? (
+        <ProjectWorkspaceSelectionBar
+          selectedCount={selectedWorkspaceKeys.size}
+          sections={sections}
+          onMove={handleMoveSelectedWorkspaces}
+          onCancel={handleCancelSelection}
+        />
+      ) : null}
       {projectChildren}
       {sectionDialog ? (
         <AdaptiveRenameModal
@@ -3076,6 +3275,40 @@ const styles = StyleSheet.create((theme) => ({
   workspaceSectionMenuTrigger: {
     padding: 2,
     borderRadius: 4,
+  },
+  workspaceSelectionBar: {
+    minHeight: 36,
+    marginHorizontal: theme.spacing[2],
+    marginTop: theme.spacing[1],
+    paddingHorizontal: theme.spacing[2],
+    borderRadius: theme.borderRadius.md,
+    backgroundColor: theme.colors.surface2,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
+  },
+  workspaceSelectionCount: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.sm,
+    flex: 1,
+  },
+  workspaceSelectionMoveTrigger: {
+    minHeight: 28,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[1],
+  },
+  workspaceSelectionMoveText: {
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.sm,
+  },
+  workspaceSelectionCancel: {
+    minHeight: 28,
+    justifyContent: "center",
+  },
+  workspaceSelectionCancelText: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.sm,
   },
   workspaceRow: {
     minHeight: 36,

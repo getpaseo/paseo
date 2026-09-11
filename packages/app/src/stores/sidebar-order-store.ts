@@ -30,6 +30,11 @@ interface SidebarOrderStoreState {
     workspaceKey: string,
     sectionId: string | null,
   ) => void;
+  moveWorkspacesToSection: (
+    projectViewKey: string,
+    workspaceKeys: string[],
+    sectionId: string | null,
+  ) => void;
 }
 
 interface SidebarOrderPersistedState {
@@ -201,6 +206,21 @@ function moveWorkspaceSection(
     const workspaceKeys = section.workspaceKeys.filter((key) => key !== workspaceKey);
     if (section.id !== sectionId) return { ...section, workspaceKeys };
     return { ...section, workspaceKeys: [...workspaceKeys, workspaceKey] };
+  });
+}
+
+function moveWorkspaceSections(
+  sections: SidebarWorkspaceSection[],
+  workspaceKeys: readonly string[],
+  sectionId: string | null,
+): SidebarWorkspaceSection[] {
+  const targetExists = sectionId === null || sections.some((section) => section.id === sectionId);
+  if (!targetExists) return sections;
+  const movedKeys = new Set(workspaceKeys);
+  return sections.map((section) => {
+    const remainingKeys = section.workspaceKeys.filter((key) => !movedKeys.has(key));
+    if (section.id !== sectionId) return { ...section, workspaceKeys: remainingKeys };
+    return { ...section, workspaceKeys: [...remainingKeys, ...workspaceKeys] };
   });
 }
 
@@ -388,6 +408,19 @@ export const useSidebarOrderStore = create<SidebarOrderStoreState>()(
             projectViewKey,
             (sections) =>
               moveWorkspaceSection(sections, normalizedWorkspaceKey, normalizedSectionId),
+          ),
+        }));
+      },
+      moveWorkspacesToSection: (projectViewKey, workspaceKeys, sectionId) => {
+        const normalizedWorkspaceKeys = normalizeKeys(workspaceKeys);
+        const normalizedSectionId = sectionId?.trim() || null;
+        if (normalizedWorkspaceKeys.length === 0 || !projectViewKey.trim()) return;
+        set((state) => ({
+          workspaceSectionsByProject: withWorkspaceSections(
+            state.workspaceSectionsByProject,
+            projectViewKey,
+            (sections) =>
+              moveWorkspaceSections(sections, normalizedWorkspaceKeys, normalizedSectionId),
           ),
         }));
       },
