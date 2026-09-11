@@ -143,6 +143,18 @@ function createToolCatalog(): PaseoToolCatalog {
   };
 }
 
+function createFastModeHarness(version = "18.1.14"): OmpHarness {
+  const versionOutput = JSON.stringify(`omp ${version}`);
+  return new OmpHarness({
+    runtimeSettings: {
+      command: {
+        mode: "replace",
+        argv: [process.execPath, "-e", `process.stdout.write(${versionOutput})`, "--"],
+      },
+    },
+  });
+}
+
 describe("OMP agent client and session", () => {
   test("owns launch configuration and registers native host tools", async () => {
     const omp = new OmpHarness();
@@ -871,5 +883,170 @@ describe("OMP agent client and session", () => {
     expect(omp.timeline().filter((item) => item.type === "user_message")).toEqual([
       { type: "user_message", text: "hello OMP", messageId: "user-1" },
     ]);
+  });
+
+  test("advertises Fast only for supported Codex models and runtimes", async () => {
+    const omp = createFastModeHarness();
+    await omp.start({ model: "openai-codex/gpt-5.6-luna" });
+
+    expect(omp.features()).toMatchObject([{ type: "toggle", id: "fast_mode", value: false }]);
+    await expect(omp.clientFeatures({ model: "openai-codex/gpt-5.6-luna" })).resolves.toMatchObject(
+      [{ id: "fast_mode", value: false }],
+    );
+    await expect(omp.clientFeatures({ model: "anthropic/claude-sonnet-4" })).resolves.toEqual([]);
+  });
+
+  test("applies Fast through native RPC and preserves enabled versus active", async () => {
+    const omp = createFastModeHarness();
+    await omp.start({ model: "openai-codex/gpt-5.6-luna" });
+    const runtime = omp.runtime();
+    runtime.setFastModeResult = { enabled: true, active: false };
+
+    await omp.setFeature("fast_mode", true);
+
+    expect(runtime.setFastModeRequests).toEqual([true]);
+    expect(runtime.state.fastModeEnabled).toBe(true);
+    expect(runtime.state.fastModeActive).toBe(false);
+    expect(omp.features()).toMatchObject([{ id: "fast_mode", value: true }]);
+  });
+
+  test("hides Fast when an older OMP state omits its state fields", async () => {
+    const omp = createFastModeHarness();
+    await omp.start({ model: "openai-codex/gpt-5.6-luna" });
+    const runtime = omp.runtime();
+    delete runtime.state.fastModeEnabled;
+    delete runtime.state.fastModeActive;
+
+    expect(omp.features()).toEqual([]);
+    runtime.setFastModeError = new Error("set_fast_mode is not supported");
+    await expect(omp.setFeature("fast_mode", true)).rejects.toThrow(
+      "set_fast_mode is not supported",
+    );
+  });
+
+  test("restores persisted Fast state for create and resume", async () => {
+    const created = createFastModeHarness();
+    await created.start({
+      model: "openai-codex/gpt-5.6-luna",
+      featureValues: { fast_mode: true },
+    });
+    expect(created.runtime().setFastModeRequests).toEqual([true]);
+    expect(created.runtime().getStateRequestCount).toBe(2);
+
+    const resumed = createFastModeHarness();
+    resumed.queueInitialState({
+      model: { provider: "openai-codex", id: "gpt-5.6-luna" },
+    });
+    await resumed.resume(
+      {
+        user: { id: "user-history", text: "continue" },
+        assistant: { id: "assistant-history", text: "context" },
+      },
+      {
+        model: "openai-codex/gpt-5.6-luna",
+        featureValues: { fast_mode: true },
+      },
+    );
+    expect(resumed.runtime().setFastModeRequests).toEqual([true]);
+    expect(resumed.runtime().getStateRequestCount).toBe(2);
+  });
+
+  test("restores persisted Fast from the runtime model when create config omits model", async () => {
+    const omp = createFastModeHarness();
+    omp.queueInitialState({
+      model: { provider: "openai-codex", id: "gpt-5.6-luna" },
+    });
+    await omp.start({ featureValues: { fast_mode: true } });
+
+    expect(omp.runtime().setFastModeRequests).toEqual([true]);
+    expect(omp.features()).toMatchObject([{ id: "fast_mode", value: true }]);
+  });
+
+  test("does not restore or expose Fast for unsupported models or old runtimes", async () => {
+    const unsupportedModel = createFastModeHarness();
+    await unsupportedModel.start({
+      model: "anthropic/claude-sonnet-4",
+      featureValues: { fast_mode: true },
+    });
+    expect(unsupportedModel.runtime().setFastModeRequests).toEqual([]);
+    expect(unsupportedModel.features()).toEqual([]);
+
+    const oldRuntime = createFastModeHarness("18.0.9");
+    await oldRuntime.start({
+      model: "openai-codex/gpt-5.6-luna",
+      featureValues: { fast_mode: true },
+    });
+    expect(oldRuntime.runtime().setFastModeRequests).toEqual([]);
+    expect(oldRuntime.features()).toEqual([]);
+    await expect(
+      oldRuntime.clientFeatures({ model: "openai-codex/gpt-5.6-luna" }),
+    ).resolves.toEqual([]);
+  });
+
+  test("rejects invalid Fast values before issuing native RPC", async () => {
+    const omp = createFastModeHarness();
+    await omp.start({ model: "openai-codex/gpt-5.6-luna" });
+
+    await expect(omp.setFeature("fast_mode", "true")).rejects.toThrow("requires a boolean");
+    await expect(omp.setFeature("unknown", true)).rejects.toThrow("Unknown OMP feature");
+    expect(omp.runtime().setFastModeRequests).toEqual([]);
+  });
+
+  test("clears Fast when explicitly switching to an unsupported model", async () => {
+    const omp = createFastModeHarness();
+    await omp.start({
+      model: "openai-codex/gpt-5.6-luna",
+      featureValues: { fast_mode: true },
+    });
+    const runtime = omp.runtime();
+    runtime.setModelResult = {
+      provider: "nvidia",
+      id: "minimaxai/minimax-m3",
+    };
+
+    await omp.setModel("nvidia/minimaxai/minimax-m3");
+
+    expect(runtime.setModelRequests).toEqual([
+      { provider: "nvidia", modelId: "minimaxai/minimax-m3" },
+    ]);
+    expect(runtime.getStateRequestCount).toBe(3);
+    expect(omp.features()).toEqual([]);
+    await expect(omp.setFeature("fast_mode", true)).rejects.toThrow("not available");
+  });
+
+  test("clears Fast when native fallback changes to an unsupported model", async () => {
+    const omp = createFastModeHarness();
+    await omp.start({
+      model: "openai-codex/gpt-5.6-luna",
+      featureValues: { fast_mode: true },
+    });
+
+    omp.runtime().emit({
+      type: "retry_fallback_succeeded",
+      model: "anthropic/claude-sonnet-4",
+      role: "default",
+    });
+
+    expect(omp.features()).toEqual([]);
+    await expect(omp.setFeature("fast_mode", true)).rejects.toThrow("not available");
+    expect(omp.eventTypes()).toContain("model_changed");
+  });
+
+  test("refreshes state and emits model_changed for native model changes", async () => {
+    const omp = createFastModeHarness();
+    await omp.start({ model: "openai-codex/gpt-5.6-luna" });
+    const runtime = omp.runtime();
+    runtime.state = {
+      ...runtime.state,
+      model: { provider: "openai-codex", id: "gpt-5.5" },
+    };
+
+    runtime.emit({ type: "model_changed" });
+    await waitForImmediate();
+
+    await expect(omp.requireRuntimeInfo()).resolves.toMatchObject({
+      model: "openai-codex/gpt-5.5",
+    });
+    expect(omp.eventTypes()).toContain("model_changed");
   });
 });
