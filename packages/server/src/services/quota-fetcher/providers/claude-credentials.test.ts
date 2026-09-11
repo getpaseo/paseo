@@ -40,8 +40,14 @@ describe("Claude quota credential source", () => {
         expect(url).toBe("https://api.anthropic.com/api/oauth/usage");
         const token = new Headers(init?.headers).get("Authorization")!;
         calls.push(token);
-        if (token === "Bearer stale-file") return new Response(null, { status: 401 });
-        return Response.json({ five_hour: { utilization: 11 }, seven_day: { utilization: 2 } });
+        const responses = new Map([
+          ["Bearer stale-file", new Response(null, { status: 401 })],
+          [
+            "Bearer live-keychain",
+            Response.json({ five_hour: { utilization: 11 }, seven_day: { utilization: 2 } }),
+          ],
+        ]);
+        return responses.get(token)!;
       },
     });
 
@@ -54,30 +60,41 @@ describe("Claude quota credential source", () => {
     expect(await readFile(credentialPath, "utf8")).toBe(fileContents);
   });
 
-  it.each([401, 403, 429, 500])(
-    "does not switch accounts after Keychain HTTP %i",
-    async (status) => {
-      let calls = 0;
-      const provider = new ClaudeQuotaProvider({
-        logger: pino({ level: "silent" }),
-        homeDir,
-        platform: "darwin",
-        claudeKeychainReader: async () => ({ claudeAiOauth: { accessToken: "account-a" } }),
-        fetch: async (_url, init) => {
-          calls++;
-          expect(new Headers(init?.headers).get("Authorization")).toBe("Bearer account-a");
-          return new Response(null, { status });
-        },
-      });
-      if (status === 401 || status === 403) {
-        expect((await provider.fetchUsage()).status).toBe("unavailable");
-      } else {
-        await expect(provider.fetchUsage()).rejects.toThrow(`Claude usage API returned ${status}`);
-      }
-      expect(calls).toBe(1);
-      expect(await readFile(credentialPath, "utf8")).toBe(fileContents);
-    },
-  );
+  it.each([401, 403])("does not switch accounts after Keychain HTTP %i", async (status) => {
+    let calls = 0;
+    const provider = new ClaudeQuotaProvider({
+      logger: pino({ level: "silent" }),
+      homeDir,
+      platform: "darwin",
+      claudeKeychainReader: async () => ({ claudeAiOauth: { accessToken: "account-a" } }),
+      fetch: async (_url, init) => {
+        calls++;
+        expect(new Headers(init?.headers).get("Authorization")).toBe("Bearer account-a");
+        return new Response(null, { status });
+      },
+    });
+    expect((await provider.fetchUsage()).status).toBe("unavailable");
+    expect(calls).toBe(1);
+    expect(await readFile(credentialPath, "utf8")).toBe(fileContents);
+  });
+
+  it.each([429, 500])("does not switch accounts after Keychain HTTP %i", async (status) => {
+    let calls = 0;
+    const provider = new ClaudeQuotaProvider({
+      logger: pino({ level: "silent" }),
+      homeDir,
+      platform: "darwin",
+      claudeKeychainReader: async () => ({ claudeAiOauth: { accessToken: "account-a" } }),
+      fetch: async (_url, init) => {
+        calls++;
+        expect(new Headers(init?.headers).get("Authorization")).toBe("Bearer account-a");
+        return new Response(null, { status });
+      },
+    });
+    await expect(provider.fetchUsage()).rejects.toThrow(`Claude usage API returned ${status}`);
+    expect(calls).toBe(1);
+    expect(await readFile(credentialPath, "utf8")).toBe(fileContents);
+  });
 
   it.each(["linux", "win32"] as const)("does not consult Keychain on %s", async (platform) => {
     const provider = new ClaudeQuotaProvider({
@@ -95,7 +112,31 @@ describe("Claude quota credential source", () => {
     expect((await provider.fetchUsage()).windows[0].usedPct).toBe(20);
   });
 
-  it.each(["option", "CLAUDE_CONFIG_DIR", "CLAUDE_HOME"])(
+  it("keeps an explicit claudeHome isolated from the default account", async () => {
+    const customHome = join(homeDir, "account-b");
+    await mkdir(customHome);
+    const customPath = join(customHome, ".credentials.json");
+    const contents = JSON.stringify({ claudeAiOauth: { accessToken: "account-b" } });
+    await writeFile(customPath, contents);
+    const provider = new ClaudeQuotaProvider({
+      logger: pino({ level: "silent" }),
+      homeDir,
+      platform: "darwin",
+      claudeHome: customHome,
+      claudeKeychainReader: async () => {
+        throw new Error("Default account must not be used");
+      },
+      fetch: async (_url, init) => {
+        expect(new Headers(init?.headers).get("Authorization")).toBe("Bearer account-b");
+        return new Response(null, { status: 401 });
+      },
+    });
+    expect((await provider.fetchUsage()).status).toBe("unavailable");
+    await rm(customPath);
+    expect((await provider.fetchUsage()).status).toBe("unavailable");
+  });
+
+  it.each(["CLAUDE_CONFIG_DIR", "CLAUDE_HOME"])(
     "keeps %s isolated from the default account",
     async (setting) => {
       const customHome = join(homeDir, "account-b");
@@ -103,12 +144,11 @@ describe("Claude quota credential source", () => {
       const customPath = join(customHome, ".credentials.json");
       const contents = JSON.stringify({ claudeAiOauth: { accessToken: "account-b" } });
       await writeFile(customPath, contents);
-      if (setting !== "option") vi.stubEnv(setting, customHome);
+      vi.stubEnv(setting, customHome);
       const provider = new ClaudeQuotaProvider({
         logger: pino({ level: "silent" }),
         homeDir,
         platform: "darwin",
-        claudeHome: setting === "option" ? customHome : undefined,
         claudeKeychainReader: async () => {
           throw new Error("Default account must not be used");
         },
