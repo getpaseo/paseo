@@ -280,6 +280,14 @@ const ACP_DIAGNOSTIC_PHASE_TIMEOUT_MS = 20_000;
 const ACP_PROBE_CLOSE_TIMEOUT_MS = 2_000;
 const ACP_IMPORT_HISTORY_LOAD_TIMEOUT_MS = 30_000;
 const ACP_IMPORT_HISTORY_BUDGET_MS = 60_000;
+/**
+ * How long to wait for an agent to answer the in-flight `session/prompt` after
+ * `session/cancel`. The spec requires that answer, and compliant agents send it
+ * within a couple of seconds even while unwinding a tool call, so this is set
+ * well beyond that: it exists to unstick a session that would otherwise stay
+ * broken forever, not to police slow agents.
+ */
+const ACP_CANCEL_SETTLE_TIMEOUT_MS = 30_000;
 
 function summarizeMalformedACPStdoutError(error: unknown): { type: string; message: string } {
   return {
@@ -1683,6 +1691,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   private readonly extensionCommandsParser?: ACPExtensionCommandsParser;
   private currentTurnUsage: AgentUsage | undefined;
   private activeForegroundTurnId: string | null = null;
+  private cancelSettleTimer: ReturnType<typeof setTimeout> | null = null;
   private fallbackAssistantMessageId: string | null = null;
   private closed = false;
   private historyPending = false;
@@ -1867,6 +1876,9 @@ export class ACPAgentSession implements AgentSession, ACPClient {
         return;
       })
       .catch((error) => {
+        if (this.activeForegroundTurnId !== turnId) {
+          return;
+        }
         const summary = summarizeACPRequestError(error);
         this.finishTurn({
           type: "turn_failed",
@@ -2403,8 +2415,44 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     }
     this.pendingPermissions.clear();
 
-    if (this.activeForegroundTurnId) {
+    const cancelledTurnId = this.activeForegroundTurnId;
+    if (cancelledTurnId) {
       await this.connection.cancel({ sessionId: this.sessionId });
+      this.armCancelSettleTimer(cancelledTurnId);
+    }
+  }
+
+  /**
+   * Ends the turn locally if the agent never answers the cancelled prompt.
+   * Without this the turn slot stays occupied forever and every later prompt
+   * fails with "A foreground turn is already active".
+   */
+  private armCancelSettleTimer(turnId: string): void {
+    this.clearCancelSettleTimer();
+    this.cancelSettleTimer = setTimeout(() => {
+      this.cancelSettleTimer = null;
+      if (this.activeForegroundTurnId !== turnId) {
+        return;
+      }
+      this.logger.warn(
+        { agentId: this.agentId, provider: this.provider, sessionId: this.sessionId, turnId },
+        "ACP agent did not answer the cancelled prompt; ending the turn locally",
+      );
+      this.synthesizeCanceledToolCalls();
+      this.finishTurn({
+        type: "turn_canceled",
+        provider: this.provider,
+        reason: "Interrupted",
+        turnId,
+      });
+    }, ACP_CANCEL_SETTLE_TIMEOUT_MS);
+    this.cancelSettleTimer.unref?.();
+  }
+
+  private clearCancelSettleTimer(): void {
+    if (this.cancelSettleTimer) {
+      clearTimeout(this.cancelSettleTimer);
+      this.cancelSettleTimer = null;
     }
   }
 
@@ -2452,6 +2500,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     }
 
     this.subscribers.clear();
+    this.clearCancelSettleTimer();
     this.connection = null;
     this.child = null;
     this.activeForegroundTurnId = null;
@@ -3076,6 +3125,12 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   private handlePromptResponse(response: PromptResponse, turnId: string): void {
     this.currentTurnUsage = mapACPUsage(response.usage) ?? this.currentTurnUsage;
 
+    if (this.activeForegroundTurnId !== turnId) {
+      // The turn already ended, most likely through the cancel watchdog above.
+      // Emitting a second terminal event for it would corrupt the timeline.
+      return;
+    }
+
     switch (response.stopReason) {
       case "cancelled":
         this.synthesizeCanceledToolCalls();
@@ -3168,6 +3223,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     event: Extract<AgentStreamEvent, { type: "turn_completed" | "turn_failed" | "turn_canceled" }>,
   ): void {
     this.deliverTranslatedEvents(this.flushPendingUserMessage());
+    this.clearCancelSettleTimer();
     this.activeForegroundTurnId = null;
     this.fallbackAssistantMessageId = null;
     if (this.submittedUserMessageTurnId === event.turnId) {
