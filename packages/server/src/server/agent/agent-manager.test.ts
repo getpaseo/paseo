@@ -4071,6 +4071,7 @@ test("importProviderSession imports the selected session without listing and pub
   class ImportClient extends TestAgentClient {
     listCalls = 0;
     importInput: unknown = null;
+    importConfig: AgentSessionConfig | null = null;
     importLaunchContext: AgentLaunchContext | undefined;
 
     async listImportableSessions() {
@@ -4080,10 +4081,11 @@ test("importProviderSession imports the selected session without listing and pub
 
     async importSession(input: ImportProviderSessionInput, context: ImportProviderSessionContext) {
       this.importInput = input;
+      this.importConfig = context.storedConfig;
       this.importLaunchContext = context.launchContext;
       return {
         session,
-        config: { provider: "codex" as const, cwd: workdir },
+        config: context.storedConfig,
         persistence: {
           provider: "codex" as const,
           sessionId: input.providerHandleId,
@@ -4156,10 +4158,12 @@ test("importProviderSession imports the selected session without listing and pub
     providerHandleId: "thread-selected",
     cwd: workdir,
     workspaceId: "ws-imported",
+    modeId: "full-access",
   });
 
   expect(client.listCalls).toBe(0);
   expect(client.importInput).toEqual({ providerHandleId: "thread-selected", cwd: workdir });
+  expect(client.importConfig?.modeId).toBe("full-access");
   expect(client.importLaunchContext).toEqual({
     agentId: imported.id,
     env: {
@@ -4168,6 +4172,7 @@ test("importProviderSession imports the selected session without listing and pub
     },
   });
   expect(imported.lifecycle).toBe("idle");
+  expect(imported.config.modeId).toBe("full-access");
   expect(imported.historyPrimed).toBe(true);
   expect(manager.getTimeline(imported.id)).toEqual([
     { type: "user_message", text: "Trace provider imports" },
@@ -8146,6 +8151,7 @@ test("unarchiveSnapshot unarchives native provider storage before clearing archi
   const unarchived = await manager.unarchiveSnapshot(agent.id, {
     workspaceId: "ws-restored",
     labels: { [PARENT_AGENT_ID_LABEL]: null, source: "reimport" },
+    modeId: "full-access",
   });
   const stored = await storage.get(agent.id);
 
@@ -8156,6 +8162,7 @@ test("unarchiveSnapshot unarchives native provider storage before clearing archi
   expect(stored?.archivedAt).toBeNull();
   expect(stored?.workspaceId).toBe("ws-restored");
   expect(stored?.labels).toEqual({ retained: "yes", source: "reimport" });
+  expect(stored?.config?.modeId).toBe("full-access");
 });
 
 test("unarchiveSnapshotByHandle unarchives native provider storage for the matched snapshot", async () => {

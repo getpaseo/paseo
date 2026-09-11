@@ -1357,6 +1357,7 @@ export class AgentManager {
     cwd: string;
     workspaceId: string;
     labels?: Record<string, string>;
+    modeId?: string;
   }): Promise<ManagedAgent> {
     return this.trackAgentRegistrationOperation(this.importProviderSessionInternal(input));
   }
@@ -1367,6 +1368,7 @@ export class AgentManager {
     cwd: string;
     workspaceId: string;
     labels?: Record<string, string>;
+    modeId?: string;
   }): Promise<ManagedAgent> {
     this.assertAcceptingAgentRegistrations();
     const resolvedAgentId = validateAgentId(this.idFactory(), "importProviderSession");
@@ -1381,6 +1383,7 @@ export class AgentManager {
       {
         provider: input.provider,
         cwd: input.cwd,
+        modeId: input.modeId,
       },
       resolvedAgentId,
     );
@@ -2143,7 +2146,7 @@ export class AgentManager {
 
   async unarchiveSnapshot(
     agentId: string,
-    updates?: { workspaceId?: string; labels?: AgentLabelPatch },
+    updates?: { workspaceId?: string; labels?: AgentLabelPatch; modeId?: string },
   ): Promise<boolean> {
     const registry = this.requireRegistry();
     const record = await registry.get(agentId);
@@ -2159,6 +2162,7 @@ export class AgentManager {
       ...record,
       ...(updates?.workspaceId ? { workspaceId: updates.workspaceId } : {}),
       ...(updates?.labels ? { labels: applyLabelPatch(record.labels, updates.labels) } : {}),
+      ...(updates?.modeId ? { config: { ...record.config, modeId: updates.modeId } } : {}),
       archivedAt: null,
       updatedAt: new Date().toISOString(),
     });
