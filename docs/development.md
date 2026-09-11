@@ -311,6 +311,10 @@ frames non-stop, pinning ProMotion displays at 120Hz forever and draining the
 battery while the app is idle — so do not re-add it. The probe's visibility
 guards already prevent throttling from causing a false stall.
 
+In-app browser guests keep that host-window rule and add a parked-guest freeze
+so leftover tabs do not composite while Paseo is focused. See
+[browser-capture-harness.md](browser-capture-harness.md).
+
 ### Daemon logs
 
 Check `$PASEO_HOME/daemon.log` for daemon logs. The default level is `info`; set

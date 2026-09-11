@@ -8,6 +8,10 @@ export interface BrowserWebContentsRegistration {
   hostWebContentsId: number;
 }
 
+export interface BrowserGuestRegistration extends BrowserWebContentsRegistration {
+  webContentsId: number;
+}
+
 export class PaseoBrowserWebviewRegistry {
   private readonly registrationsByWebContentsId = new Map<number, BrowserWebContentsRegistration>();
   private readonly webContentsIdsByHostAndBrowserId = new Map<string, number>();
@@ -76,6 +80,14 @@ export class PaseoBrowserWebviewRegistry {
     return Array.from(
       new Set(Array.from(this.registrationsByWebContentsId.values(), ({ browserId }) => browserId)),
     ).sort();
+  }
+
+  public listRegistrations(): BrowserGuestRegistration[] {
+    return Array.from(this.registrationsByWebContentsId, ([webContentsId, registration]) => ({
+      webContentsId,
+      browserId: registration.browserId,
+      hostWebContentsId: registration.hostWebContentsId,
+    }));
   }
 
   public registerWorkspace(input: BrowserWorkspaceRegistration): void {

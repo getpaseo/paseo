@@ -15,6 +15,7 @@ const RESIDENT_VIEWPORT_HEIGHT = 800;
 const residentWebviewsByBrowserId = new Map<string, HTMLElement>();
 const residentSurfacesByBrowserId = new Map<string, HTMLElement>();
 const residentWebviewSizesByBrowserId = new Map<string, { width: number; height: number }>();
+const presentedBrowserIds = new Set<string>();
 
 interface BrowserWebviewElement extends HTMLElement {
   src: string;
@@ -171,6 +172,18 @@ function dimensionsForBrowser(browserId: string | null): { width: number; height
   );
 }
 
+function notifyGuestPresented(browserId: string, presented: boolean): void {
+  if (presented) {
+    if (presentedBrowserIds.has(browserId)) {
+      return;
+    }
+    presentedBrowserIds.add(browserId);
+  } else if (!presentedBrowserIds.delete(browserId)) {
+    return;
+  }
+  void getDesktopHost()?.browser?.setGuestPresented?.({ browserId, presented });
+}
+
 function applyResidentWebviewStyle(webview: HTMLElement, browserId: string | null): void {
   const dimensions = dimensionsForBrowser(browserId);
   webview.style.display = "inline-flex";
@@ -291,6 +304,7 @@ export function presentBrowserWebview(
   webview.style.position = "absolute";
   webview.style.left = `${Math.round(anchorBounds.left - surfaceLeft)}px`;
   webview.style.top = `${Math.round(anchorBounds.top - surfaceTop)}px`;
+  notifyGuestPresented(normalizedBrowserId, true);
 }
 
 export function prepareBrowserWebview(
@@ -399,6 +413,7 @@ export function releaseResidentBrowserWebview(browserId: string, webview: HTMLEl
   if (webview.parentElement !== surface) {
     surface.appendChild(webview);
   }
+  notifyGuestPresented(normalizedBrowserId, false);
 }
 
 export function resizeResidentBrowserWebview(input: {
@@ -435,6 +450,7 @@ export function removeResidentBrowserWebview(browserId: string): void {
   residentWebviewsByBrowserId.delete(normalizedBrowserId);
   residentSurfacesByBrowserId.delete(normalizedBrowserId);
   residentWebviewSizesByBrowserId.delete(normalizedBrowserId);
+  notifyGuestPresented(normalizedBrowserId, false);
   resident?.remove();
   surface?.remove();
 }
@@ -446,5 +462,6 @@ export function clearResidentBrowserWebviewsForTests(): void {
   residentWebviewsByBrowserId.clear();
   residentSurfacesByBrowserId.clear();
   residentWebviewSizesByBrowserId.clear();
+  presentedBrowserIds.clear();
   readDocument()?.getElementById(RESIDENT_BROWSER_HOST_ID)?.remove();
 }
