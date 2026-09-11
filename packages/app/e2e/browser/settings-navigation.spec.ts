@@ -40,6 +40,8 @@ import {
   expectSettingsHostPickerLabel,
   openSettingsHostSection,
   removeCurrentHostFromSettings,
+  scrollSettingsSidebarToEnd,
+  expectSettingsSidebarScrollOffset,
 } from "../support/helpers/settings";
 import { getServerId } from "../support/helpers/server-id";
 import { expectAppRoute } from "../support/helpers/route-assertions";
@@ -72,6 +74,25 @@ test.describe("Settings sidebar navigation", () => {
     await openSettingsSection(page, "appearance");
     await expectSettingsHeader(page, "Appearance");
     await expectAppearanceContent(page);
+  });
+
+  test("the sidebar keeps its scroll position when a section is selected", async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 480 });
+    await gotoAppShell(page);
+    await openSettings(page);
+
+    const offset = await scrollSettingsSidebarToEnd(page);
+
+    // Only click rows already in view at this offset. Playwright scrolls a
+    // target into view before clicking, so reaching for a row above the fold
+    // would move the sidebar on its own and fail for the wrong reason.
+    await openSettingsHostSection(page, getServerId(), "usage");
+    await expectSettingsHeader(page, "Usage");
+    await expectSettingsSidebarScrollOffset(page, offset);
+
+    await openSettingsHostSection(page, getServerId(), "plugins");
+    await expectSettingsHeader(page, "Plugins");
+    await expectSettingsSidebarScrollOffset(page, offset);
   });
 
   test("/h/[serverId]/settings redirects to the host connections section", async ({ page }) => {

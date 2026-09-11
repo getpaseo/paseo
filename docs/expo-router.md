@@ -93,6 +93,16 @@ store-ready protected group so a cold host deep link can survive daemon startup.
 Do not collapse this topology with a catch-all, `getId`, or
 `dangerouslySingular` workaround.
 
+Because they are separate routes, selecting a section replaces the stack entry
+and unmounts the whole settings screen. Anything that must keep state across
+sections therefore cannot live inside a settings screen. The desktop sidebar is
+the case that matters: it renders from `SettingsChrome`, which wraps the root
+stack in `_layout.tsx`, so navigation only swaps the detail pane and the sidebar
+keeps its scroll offset, hover and host picker. `SettingsChrome` reads the
+selected section with `parseSettingsViewFromPathname()` rather than route
+params, so that parser has to mirror `src/app/settings`. Put new persistent
+settings chrome there too, not in `settings-screen.tsx`.
+
 ## Agent Targets
 
 Notifications and agent URLs enter the router with different authoritative
@@ -183,6 +193,8 @@ Before landing route changes:
 - [ ] Did a route return to a workspace? Use `navigateToWorkspace()` and pass a
       `target` when the action names a specific tab.
 - [ ] Did you add a route? Register it in the layout that directly owns it.
+- [ ] Did you add or move a settings route? Update
+      `parseSettingsViewFromPathname()` so the sidebar still resolves it.
 - [ ] Did `useLocalSearchParams()` lose a required param? Fix the route tree.
 - [ ] Did native show a blank screen without a crash? Suspect route ownership
       before stores, themes, or rendering.

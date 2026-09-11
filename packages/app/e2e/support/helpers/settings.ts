@@ -181,6 +181,26 @@ export async function expectSettingsSidebarVisible(page: Page): Promise<void> {
   await expect(page.getByTestId("settings-sidebar")).toBeVisible();
 }
 
+export async function scrollSettingsSidebarToEnd(page: Page): Promise<number> {
+  const offset = await page.getByTestId("settings-sidebar-scroll-body").evaluate((element) => {
+    element.scrollTop = element.scrollHeight;
+    return element.scrollTop;
+  });
+  expect(offset).toBeGreaterThan(0);
+  return offset;
+}
+
+export async function expectSettingsSidebarScrollOffset(
+  page: Page,
+  expected: number,
+): Promise<void> {
+  await expect
+    .poll(() =>
+      page.getByTestId("settings-sidebar-scroll-body").evaluate((element) => element.scrollTop),
+    )
+    .toBe(expected);
+}
+
 export async function expectSettingsSidebarHidden(page: Page): Promise<void> {
   await expect(page.locator('[data-testid="settings-sidebar"]:visible')).toHaveCount(0);
 }
