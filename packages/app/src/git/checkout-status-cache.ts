@@ -7,6 +7,7 @@ import {
   checkoutStatusQueryKey,
   invalidatePrPaneTimelineForCheckout,
 } from "@/git/query-keys";
+import { invalidateDraftAgentCommandsForCwd } from "@/hooks/agent-commands-query";
 import { type CheckoutPrStatusPayload, normalizeCheckoutPrStatusPayload } from "@/git/pr-status";
 import { expireWorkingDiffComparisons } from "@/git/working-diff-comparison";
 
@@ -67,10 +68,32 @@ export function applyCheckoutStatusUpdateFromEvent({
     ? normalizeCheckoutPrStatusPayload(payload.prStatus)
     : undefined;
   const cachePayload = prStatus ? { ...payload, prStatus } : payload;
-  queryClient.setQueryData(checkoutStatusQueryKey(serverId, payload.cwd), cachePayload);
+  const statusQueryKey = checkoutStatusQueryKey(serverId, payload.cwd);
+  const previousStatus = queryClient.getQueryData<CheckoutStatusPayload>(statusQueryKey);
+  const checkoutIdentityChanged =
+    previousStatus === undefined ||
+    previousStatus.isGit !== payload.isGit ||
+    previousStatus.currentBranch !== payload.currentBranch ||
+    previousStatus.headOid !== payload.headOid;
+  const worktreeChanged =
+    previousStatus !== undefined &&
+    (payload.worktreeRevision !== undefined
+      ? previousStatus.worktreeRevision !== payload.worktreeRevision
+      : previousStatus.isDirty !== payload.isDirty);
+  queryClient.setQueryData(statusQueryKey, cachePayload);
   void queryClient.invalidateQueries({
     queryKey: checkoutCommitsQueryKey(serverId, payload.cwd),
   });
+  if (checkoutIdentityChanged || worktreeChanged) {
+    // Project skills are checkout-scoped. Identity changes refresh an open menu immediately;
+    // working-tree revisions only mark it stale so editing cannot restart discovery mid-typing.
+    void invalidateDraftAgentCommandsForCwd({
+      queryClient,
+      serverId,
+      cwd: payload.cwd,
+      timing: checkoutIdentityChanged ? "now" : "next-open",
+    });
+  }
   expireWorkingDiffComparisons({
     serverId,
     cwd: payload.cwd,
