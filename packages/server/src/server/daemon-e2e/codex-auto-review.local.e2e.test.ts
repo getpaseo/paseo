@@ -288,7 +288,7 @@ async function runScenario(modeId: "auto" | "auto-review") {
   try {
     writeMockCodexConfig(codexHome, mockServer.url);
     await client.connect();
-    await client.fetchAgents({ subscribe: { subscriptionId: `codex-auto-review-${modeId}` } });
+    await client.fetchAgents({ subscribe: {} });
 
     const agent = await client.createAgent({
       provider: "codex",

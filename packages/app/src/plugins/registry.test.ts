@@ -8,11 +8,12 @@ vi.mock("./navigation", () => ({
 }));
 vi.mock("./client-runtime", () => ({
   createPluginClientRuntime: () => ({
-    paseo: {},
+    paseo: { dispose: async () => {} },
     rpc: async () => undefined,
     openSurface: () => undefined,
     openPanel: () => undefined,
-    addComposerPill: () => () => undefined,
+    addComposerPill: () => ({ update() {}, remove() {} }),
+    addHeaderButton: () => ({ update() {}, remove() {} }),
   }),
 }));
 

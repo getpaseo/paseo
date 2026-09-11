@@ -1,7 +1,9 @@
+import type { SettingsState } from "@getpaseo/plugin/client";
 import { useMemo } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { useRpc, type SettingsDefinition, type SettingsState } from "@getpaseo/plugin";
-import { settingsRpc } from "@getpaseo/plugin/host";
+import { useRpc } from "@getpaseo/plugin/client";
+import { type SettingsDefinition } from "@getpaseo/plugin";
+import { settingsRpc } from "@getpaseo/plugin";
 import { useReplicaQuery } from "@/data/query";
 import { z, type ZodType } from "zod";
 

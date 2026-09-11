@@ -1,4 +1,4 @@
-import type { PluginServerContext } from "@getpaseo/plugin";
+import type { PluginServerContext } from "@getpaseo/plugin/server";
 
 export default function contribute(server: PluginServerContext) {
   server.before("agent.create", ({ request }) => {

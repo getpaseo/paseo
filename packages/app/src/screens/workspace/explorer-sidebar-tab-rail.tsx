@@ -32,7 +32,7 @@ import {
   useWorkspaceTabLaunchCatalog,
   type WorkspaceTabLaunchItem,
 } from "@/workspace-tabs/launcher";
-import { panelSupportsHost } from "@/panels/panel-manifest";
+import { workspaceTabTargetsEqual } from "@/workspace-tabs/identity";
 import type { PanelIconProps } from "@/panels/panel-registry";
 import { panelTargetSupportsHost } from "@/plugins/workspace-panels/locations";
 import type { Theme } from "@/styles/theme";
@@ -248,7 +248,7 @@ function ExplorerSidebarConfigurationItem({
 }
 
 function catalogItemMatchesTab(item: WorkspaceTabLaunchItem, tab: WorkspaceTabDescriptor): boolean {
-  return item.panelKind === tab.target.kind;
+  return item.toggleTarget !== null && workspaceTabTargetsEqual(item.toggleTarget, tab.target);
 }
 
 export function ExplorerSidebarTabRail({
@@ -273,10 +273,7 @@ export function ExplorerSidebarTabRail({
     host: "explorer",
   });
   const singletonConfigurationItems = useMemo(
-    () =>
-      (groups.find((group) => group.id === "tabs")?.items ?? []).filter(
-        (item) => !panelSupportsHost(item.panelKind, "main"),
-      ),
+    () => groups.flatMap((group) => group.items).filter((item) => item.toggleTarget !== null),
     [groups],
   );
   const newTabLeading = useMemo(() => <ThemedPlus size={14} uniProps={mutedColorMapping} />, []);

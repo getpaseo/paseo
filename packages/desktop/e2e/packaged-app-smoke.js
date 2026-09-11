@@ -5,6 +5,7 @@ const os = require("node:os");
 const path = require("node:path");
 const { setTimeout: delay } = require("node:timers/promises");
 const { chromium } = require("playwright");
+const { extractFile } = require("@electron/asar");
 
 const EXECUTABLE_NAME = "Paseo";
 const SMOKE_TIMEOUT_MS = 60_000;
@@ -122,19 +123,15 @@ function getShellCommand(script) {
 }
 
 function createDefaultDaemonEnv(extraEnv) {
-  const env = {
-    ...process.env,
+  return {
+    ...Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith("PASEO_"))),
     ...extraEnv,
   };
-
-  delete env.PASEO_HOME;
-  delete env.PASEO_LISTEN;
-  return env;
 }
 
 function createIsolatedDesktopEnv({ home, listen, userData, cdpPort }) {
   return {
-    ...process.env,
+    ...createDefaultDaemonEnv({ HOME: home, USERPROFILE: home }),
     PASEO_HOME: home,
     PASEO_LISTEN: listen,
     PASEO_ELECTRON_USER_DATA_DIR: userData,
@@ -623,24 +620,15 @@ async function smokeColdCliDaemonStart({ appPath }) {
   const pidPath = path.join(home, "paseo.pid");
   const port = await reserveLocalTcpPort();
   const listen = `127.0.0.1:${port}`;
-  const env = createDefaultDaemonEnv();
+  const env = createDefaultDaemonEnv({ HOME: home, USERPROFILE: home });
+  configureIsolatedDaemonHome(home, listen);
 
   try {
     console.log("Packaged desktop smoke: cold-starting daemon through bundled CLI shim");
     await runCliShimCommand({
       appPath,
       env,
-      args: [
-        "daemon",
-        "start",
-        "--home",
-        home,
-        "--listen",
-        listen,
-        "--no-relay",
-        "--no-mcp",
-        "--no-inject-mcp",
-      ],
+      args: ["daemon", "start", "--home", home],
       label: "Bundled CLI shim cold daemon start",
     });
 
@@ -832,6 +820,19 @@ async function assertSandboxState({ browser, page, expectedSandbox, stdout, stde
   }
 }
 
+function assertLinuxDesktopIdentity(appPath) {
+  if (process.platform === "linux") {
+    const metadata = JSON.parse(
+      extractFile(path.join(appPath, "resources", "app.asar"), "package.json").toString(),
+    );
+    if (metadata.desktopName !== `${EXECUTABLE_NAME}.desktop`) {
+      throw new Error(
+        `Packaged Linux desktop identity ${JSON.stringify(metadata.desktopName)} does not match ${EXECUTABLE_NAME}.desktop`,
+      );
+    }
+  }
+}
+
 async function smokePackagedDesktopApp({
   appPath,
   executablePath = getExecutablePath(appPath),
@@ -839,6 +840,7 @@ async function smokePackagedDesktopApp({
   expectedSandbox,
 }) {
   assertExecutable(executablePath, "Packaged app executable");
+  assertLinuxDesktopIdentity(appPath);
   await smokeColdCliDaemonStart({ appPath });
 
   const userData = createTempDir("paseo-smoke-user-data-");

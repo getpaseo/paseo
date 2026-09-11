@@ -1,6 +1,7 @@
 import * as pluginUiRuntime from "./react-native/ui";
 import { useSettings } from "./settings/use-settings";
-import { defineSettings } from "@getpaseo/plugin";
+import * as pluginSharedRuntime from "@getpaseo/plugin";
+import * as pluginClientRuntime from "@getpaseo/plugin/client";
 import * as React from "react";
 import * as ReactJsxRuntime from "react/jsx-runtime";
 // eslint-disable-next-line no-restricted-imports -- plugin client runtime injects host ReactNative.
@@ -9,27 +10,24 @@ import * as ReactNative from "react-native";
 import * as ReactQuery from "@tanstack/react-query";
 import * as Zod from "zod";
 import {
-  defineAttachmentSource,
-  defineRpc,
   type PluginAttachmentSourceContribution,
-  type PluginCommandCenterItemContribution,
   type PluginCleanup,
+  type PluginThemeContribution,
+} from "@getpaseo/plugin";
+import {
+  type PluginCommandCenterItemContribution,
   type PluginClientContext,
   type PluginClientSlashCommandContribution,
   type PluginSidebarContribution,
   type PluginSurfaceProps,
-  type PluginThemeContribution,
   type PluginTimelineRendererContribution,
   type PluginTimelineTransformerContribution,
   type PluginWorkspacePanelContribution,
-  usePaseo,
-  useAgent,
-  useWorkspace,
-  useRpc,
-} from "@getpaseo/plugin";
+  type PluginButtonRegistration,
+} from "@getpaseo/plugin/client";
 import type { EvaluatedPlugin } from "./types";
 import type { ComponentType } from "react";
-import { Icon, resolvePluginIcon } from "./icons";
+import { resolvePluginIcon } from "./icons";
 import { pluginReactNativeRuntime } from "./react-native/runtime";
 import { parsePluginThemeContribution } from "./themes";
 
@@ -73,7 +71,13 @@ function requireId(value: string, label: string): string {
 
 export type PluginClientRuntime = Pick<
   PluginClientContext,
-  "paseo" | "rpc" | "openSettings" | "openSurface" | "openPanel" | "addComposerPill"
+  | "paseo"
+  | "rpc"
+  | "openSettings"
+  | "openSurface"
+  | "openPanel"
+  | "addComposerPill"
+  | "addHeaderButton"
 >;
 
 export function runPluginClientBundle(
@@ -106,6 +110,23 @@ export function runPluginClientBundle(
   const timelineRendererIds = new Set<string>();
   const removals = new Set<PluginCleanup>();
   let setupComplete = false;
+  let stopped = false;
+  function trackButton(registration: PluginButtonRegistration): PluginButtonRegistration {
+    let active = true;
+    const remove = () => {
+      if (!active) return;
+      active = false;
+      registration.remove();
+      removals.delete(remove);
+    };
+    removals.add(remove);
+    return {
+      update: (patch) => {
+        if (active && !stopped) registration.update(patch);
+      },
+      remove,
+    };
+  }
   const notifyChange = () => {
     if (setupComplete) onChange();
   };
@@ -339,41 +360,23 @@ export function runPluginClientBundle(
       );
     },
     addComposerPill(contribution) {
-      const removePill = runtime.addComposerPill(contribution);
-      let active = true;
-      const remove = () => {
-        if (!active) return;
-        active = false;
-        removePill();
-        removals.delete(remove);
-      };
-      removals.add(remove);
-      return remove;
+      if (stopped) throw new Error("Plugin has stopped");
+      return trackButton(runtime.addComposerPill(contribution));
+    },
+    addHeaderButton(contribution) {
+      if (stopped) throw new Error("Plugin has stopped");
+      return trackButton(runtime.addHeaderButton(contribution));
     },
   };
   const runtimeRequire = (name: string): unknown => {
-    if (name === "@getpaseo/plugin/ui") return pluginUiRuntime;
+    if (name === "@getpaseo/plugin/client/ui") return pluginUiRuntime;
     if (name === "react") return React;
     if (name === "react/jsx-runtime") return ReactJsxRuntime;
     if (name === "react-native") return ReactNative;
-    if (name === "@getpaseo/plugin") {
-      return {
-        defineAttachmentSource,
-        defineRpc,
-        defineSettings,
-        useSettings,
-        Icon,
-        usePaseo,
-        useAgent,
-        useWorkspace,
-        useRpc,
-      };
-    }
-    if (name === "@getpaseo/plugin/react-native" || name === "@paseo/plugin/react-native") {
+    if (name === "@getpaseo/plugin") return pluginSharedRuntime;
+    if (name === "@getpaseo/plugin/client") return { ...pluginClientRuntime, useSettings };
+    if (name === "@getpaseo/plugin/client/react-native") {
       return pluginReactNativeRuntime;
-    }
-    if (name === "@getpaseo/plugin/server" || name === "@paseo/plugin/server") {
-      return {};
     }
     if (name === "@tanstack/react-query") return ReactQuery;
     if (name === "zod") return Zod;
@@ -389,34 +392,38 @@ export function runPluginClientBundle(
   if (typeof setup !== "function") {
     throw new Error(`Plugin ${id} must default export a function`);
   }
-  const entryCleanup = setup(pluginContext);
-  if (typeof entryCleanup !== "function") {
-    throw new Error(`Plugin ${id} contribution must return a cleanup function`);
-  }
-
+  let entryCleanup: PluginCleanup | undefined;
   try {
+    entryCleanup = setup(pluginContext);
+    if (typeof entryCleanup !== "function")
+      throw new Error(`Plugin ${id} contribution must return a cleanup function`);
     for (const item of collector.sidebarItems) {
       if (!surfaceIds.has(item.surface)) {
         throw new Error(`Sidebar item ${item.id} references missing surface ${item.surface}`);
       }
     }
   } catch (error) {
+    stopped = true;
     try {
-      void Promise.resolve(entryCleanup()).catch((cleanupError) => {
+      void Promise.resolve(
+        typeof entryCleanup === "function" ? entryCleanup() : entryCleanup,
+      ).catch((cleanupError) => {
         console.warn(`[Plugins] Cleanup failed after setup error for ${id}`, cleanupError);
       });
     } catch (cleanupError) {
       console.warn(`[Plugins] Cleanup failed after setup error for ${id}`, cleanupError);
+    } finally {
+      for (const remove of removals) remove();
     }
     throw error;
   }
   setupComplete = true;
-  let stopped = false;
+  const cleanupEntry = entryCleanup;
   const cleanup = async () => {
     if (stopped) return;
     stopped = true;
     try {
-      await entryCleanup();
+      await cleanupEntry();
     } finally {
       for (const remove of removals) remove();
     }

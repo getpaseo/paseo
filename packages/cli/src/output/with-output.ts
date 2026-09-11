@@ -11,6 +11,8 @@ import { withGlobalOptions } from "../utils/command-options.js";
 
 /** Options that include output settings from global options */
 export interface CommandOptions extends Partial<OutputOptions> {
+  daemonTarget: import("../utils/daemon-target.js").DaemonTarget;
+  home?: string;
   /** Daemon host target from --host option */
   host?: string;
   /** JSON output flag from --json option */

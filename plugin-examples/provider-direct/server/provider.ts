@@ -8,7 +8,7 @@ import {
   type ProviderPersistence,
   type ProviderRegistration,
   type ProviderSessionConfig,
-} from "@getpaseo/plugin/provider";
+} from "@getpaseo/plugin/server/provider";
 import { randomUUID } from "node:crypto";
 import { providerResultKind } from "../shared/provider-result.js";
 

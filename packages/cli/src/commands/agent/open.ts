@@ -1,5 +1,5 @@
 import type { Command } from "commander";
-import { buildDaemonConnectionCommandError, connectToDaemon } from "../../utils/client.js";
+import { connectToDaemon } from "../../utils/client.js";
 import { openDesktopWithAgent } from "../open.js";
 import type {
   CommandError,
@@ -36,12 +36,7 @@ async function resolveServerId(options: CommandOptions): Promise<string> {
     return explicitServerId;
   }
 
-  let client;
-  try {
-    client = await connectToDaemon({ host: options.host });
-  } catch (error) {
-    throw buildDaemonConnectionCommandError({ host: options.host, error });
-  }
+  const client = await connectToDaemon({ target: options.daemonTarget });
   try {
     const serverId = client.getLastServerInfoMessage()?.serverId.trim();
     if (!serverId) {

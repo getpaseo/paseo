@@ -201,11 +201,34 @@ jobs:
 
       - name: Install virtual display
         if: ${{ runner.os == 'Linux' }}
-        run: sudo apt-get update && sudo apt-get install -y xvfb xauth rpm
+        run: sudo apt-get update && sudo apt-get install -y xvfb xauth rpm xdotool
 
       - name: Install Playwright browser
         if: ${{ runner.os == 'Linux' }}
         run: npx playwright install chromium
+
+      - name: Verify Windows daemon process control
+        if: ${{ runner.os == 'Windows' }}
+        run: npx vitest run packages/cli/src/commands/daemon/lifecycle.e2e.test.ts --bail=1 --maxWorkers=1 -t "Windows unbound|managed two-home"
+
+      - name: Run desktop lifecycle E2E (Linux)
+        if: ${{ runner.os == 'Linux' }}
+        run: xvfb-run -a --server-args="-screen 0 1280x800x24" npm run test:e2e:lifecycle --workspace=@getpaseo/desktop
+        env:
+          PASEO_DESKTOP_LIFECYCLE_ARTIFACT_DIR: ${{ runner.temp }}/desktop-lifecycle
+
+      - name: Upload desktop lifecycle screenshots
+        uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() && runner.os == 'Linux' }}
+        with:
+          name: desktop-lifecycle
+          path: ${{ runner.temp }}/desktop-lifecycle
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Run desktop lifecycle E2E (Windows)
+        if: ${{ runner.os == 'Windows' }}
+        run: npm run test:e2e:lifecycle --workspace=@getpaseo/desktop
 
       - name: Run desktop renderer E2E
         if: ${{ runner.os == 'Linux' }}
@@ -329,7 +352,16 @@ jobs:
         run: node scripts/npm-retry.mjs ci
 
       - name: Build client dependencies
-        run: npm run build:client
+        run: npm run build:relay && npm run build:client
+
+      - name: Build plugin SDK
+        run: npm run build:plugin
+
+      - name: Run plugin SDK tests
+        run: npm run test --workspace=@getpaseo/plugin
+
+      - name: Typecheck plugin examples
+        run: npm run typecheck --workspace=@getpaseo/plugin
 
       - name: Run protocol tests
         run: npm run test --workspace=@getpaseo/protocol

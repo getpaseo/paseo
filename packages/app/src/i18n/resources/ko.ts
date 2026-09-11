@@ -12,6 +12,7 @@ export const ko: TranslationResources = {
       copy: "복사",
       copyLine: "줄 복사",
       dismiss: "닫기",
+      reload: "다시 로드",
       retry: "다시 시도",
       search: "검색",
       select: "선택",
@@ -1049,6 +1050,16 @@ export const ko: TranslationResources = {
       updateHost: "레이블을 관리하려면 호스트를 업데이트하세요.",
     },
   },
+  changelog: {
+    title: "새로운 소식",
+    installed: "설치됨",
+    showMore: "더 보기",
+    openWebsite: "전체 변경 내역",
+    error: {
+      title: "변경 내역을 불러오지 못했습니다",
+      description: "연결을 확인한 후 다시 시도하세요.",
+    },
+  },
   sidebar: {
     display: {
       trigger: "표시 설정",
@@ -1270,6 +1281,7 @@ export const ko: TranslationResources = {
       detail: "로컬 데몬을 중지하는 중입니다.",
     },
     daemon: {
+      lifecycle: en.desktop.daemon.lifecycle,
       title: "데몬",
       status: {
         title: "상태",
@@ -2078,6 +2090,7 @@ export const ko: TranslationResources = {
     about: {
       title: "정보",
       appVersion: "앱 버전",
+      whatsNewHint: "모든 버전의 릴리스 노트",
       thisDevice: "이 기기",
       connectedHosts: "연결된 호스트",
       offline: "오프라인",

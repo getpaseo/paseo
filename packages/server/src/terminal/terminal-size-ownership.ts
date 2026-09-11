@@ -6,7 +6,7 @@ interface TerminalSizeRequest {
   intent?: "claim" | "update";
 }
 
-const terminalSizeOwners = new WeakMap<TerminalSession, object>();
+const terminalSizeOwners = new WeakMap<TerminalSession, WeakRef<object>>();
 
 export function applyTerminalSize(
   terminal: TerminalSession,
@@ -14,12 +14,12 @@ export function applyTerminalSize(
   request: TerminalSizeRequest,
 ): boolean {
   const intent = resolveTerminalSizeIntent(request.intent);
-  if (intent === "update" && terminalSizeOwners.get(terminal) !== owner) {
+  if (intent === "update" && terminalSizeOwners.get(terminal)?.deref() !== owner) {
     return false;
   }
 
   if (intent === "claim") {
-    terminalSizeOwners.set(terminal, owner);
+    terminalSizeOwners.set(terminal, new WeakRef(owner));
   }
 
   const currentSize = terminal.getSize();

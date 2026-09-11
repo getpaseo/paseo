@@ -618,7 +618,7 @@ function toJsonObject(value: unknown): JsonObject {
 type StreamEventType = AgentStreamEvent["type"];
 type StreamEventOfType<TType extends StreamEventType> = Extract<AgentStreamEvent, { type: TType }>;
 
-function waitForNextEvent<TType extends StreamEventType>(
+export function waitForNextEvent<TType extends StreamEventType>(
   session: AgentSession,
   type: TType,
   accepts?: (event: StreamEventOfType<TType>) => boolean,

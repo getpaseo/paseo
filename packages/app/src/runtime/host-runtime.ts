@@ -501,8 +501,6 @@ function createDefaultDeps(): HostRuntimeControllerDeps {
       }
     : undefined;
   const appCapabilities = {
-    [CLIENT_CAPS.selectiveAgentTimeline]: true,
-    [CLIENT_CAPS.timelineReplacementInvalidation]: true,
     ...browserAutomationCapabilities,
   };
 
@@ -619,7 +617,6 @@ export class HostRuntimeController {
   private switchRequestVersion = 0;
   private probeRequestVersion = 0;
   private probeCycleInFlight: Promise<void> | null = null;
-  private reconnectEnabled = true;
 
   constructor(input: {
     host: HostProfile;
@@ -727,11 +724,6 @@ export class HostRuntimeController {
 
   ensureConnected(): void {
     this.activeClient?.ensureConnected();
-  }
-
-  setReconnectEnabled(enabled: boolean): void {
-    this.reconnectEnabled = enabled;
-    this.activeClient?.setReconnectEnabled(enabled);
   }
 
   markAgentDirectorySyncLoading(): void {
@@ -1244,7 +1236,7 @@ export class HostRuntimeController {
         clientId,
         runtimeGeneration: nextGeneration,
       });
-    client.setReconnectEnabled(this.reconnectEnabled);
+    client.setReconnectEnabled(true);
 
     if (!this.isSwitchStillValid(requestVersion, expectedProbeVersion)) {
       await client.close().catch(() => undefined);
@@ -1252,56 +1244,62 @@ export class HostRuntimeController {
     }
 
     this.activeClient = client;
-    this.unsubscribeClientHandlers =
-      this.deps.mountClientHandlers?.({ client, host: this.host, connection }) ?? null;
     this.applyConnectionEvent({
       type: "select_connection",
       connectionId: connection.id,
       connection: toActiveConnection(connection),
     });
-    this.snapshot = {
-      ...this.snapshot,
-      serverId: this.host.serverId,
+    this.snapshot = { ...this.snapshot, clientGeneration: nextGeneration };
+    this.updateSnapshot({
       ...toSnapshotConnectionPatch(this.connectionMachineState, this.connectionEpoch),
-      client,
-      clientGeneration: nextGeneration,
-    };
-    for (const listener of this.listeners) {
-      listener();
-    }
-
-    this.unsubscribeClientStatus = client.subscribeConnectionStatus((state) => {
-      if (!this.isCurrentSwitchRequest(requestVersion) || this.activeClient !== client) {
-        return;
-      }
-      this.applyConnectionEvent({
-        type: "client_state",
-        state,
-        lastError: client.lastError,
-      });
-      const patch: HostRuntimeSnapshotPatch = {
-        ...toSnapshotConnectionPatch(this.connectionMachineState, this.connectionEpoch),
-        ...this.buildAgentDirectoryStatusPatch(),
-      };
-      this.updateSnapshot(patch);
+      client: null,
     });
 
-    try {
-      if (!existingClient) {
-        await client.connect();
-      }
-    } catch (error) {
-      if (!this.isCurrentSwitchRequest(requestVersion) || this.activeClient !== client) {
-        return;
-      }
-      const message = toErrorMessage(error);
-      this.applyConnectionEvent({
-        type: "connect_failed",
-        message,
-      });
+    const failConnection = async (error: unknown) => {
+      if (!this.isCurrentSwitchRequest(requestVersion) || this.activeClient !== client) return;
+      this.unsubscribeClientStatus?.();
+      this.unsubscribeClientStatus = null;
+      this.unsubscribeClientHandlers?.();
+      this.unsubscribeClientHandlers = null;
+      client.setReconnectEnabled(false);
+      this.applyConnectionEvent({ type: "connect_failed", message: toErrorMessage(error) });
       this.updateSnapshot({
         ...toSnapshotConnectionPatch(this.connectionMachineState, this.connectionEpoch),
+        client: null,
       });
+      try {
+        await client.close();
+      } catch {
+        /* Preserve the compatibility/connection error. */
+      }
+    };
+    const requireAppHost = () => {
+      if (client.getLastServerInfoMessage()?.features?.ownedSubscriptions !== true)
+        throw new Error("Update the host to use this version of Paseo.");
+    };
+    try {
+      if (!existingClient) await client.connect();
+      if (!this.isCurrentSwitchRequest(requestVersion) || this.activeClient !== client) return;
+      requireAppHost();
+      this.unsubscribeClientHandlers =
+        this.deps.mountClientHandlers?.({ client, host: this.host, connection }) ?? null;
+      this.unsubscribeClientStatus = client.subscribeConnectionStatus((state) => {
+        if (!this.isCurrentSwitchRequest(requestVersion) || this.activeClient !== client) return;
+        try {
+          if (state.status === "connected") requireAppHost();
+        } catch (error) {
+          void failConnection(error);
+          return;
+        }
+        this.applyConnectionEvent({ type: "client_state", state, lastError: client.lastError });
+        this.updateSnapshot({
+          ...toSnapshotConnectionPatch(this.connectionMachineState, this.connectionEpoch),
+          ...this.buildAgentDirectoryStatusPatch(),
+          client,
+        });
+      });
+    } catch (error) {
+      await failConnection(error);
     }
   }
 
@@ -1406,7 +1404,6 @@ export class HostRuntimeStore {
   private timelineReplicaByServer = new Map<string, TimelineReplica>();
   private configuredOverrideBootstrapInFlight: Promise<void> | null = null;
   private bootPromise: Promise<void> | null = null;
-  private appVisible = true;
   private storage: HostRuntimeStorage;
   private replicaCache: ReplicaCache;
   private readonly revokePushNotifications: typeof revokePushNotifications;
@@ -2080,7 +2077,6 @@ export class HostRuntimeStore {
         deps: this.deps,
         onReconcileServerId: (oldId, newId) => this.reconcileServerId(oldId, newId),
       });
-      controller.setReconnectEnabled(this.appVisible);
       this.controllers.set(host.serverId, controller);
       useSessionStore.getState().initializeSession(host.serverId, null);
       const directory = new DirectorySync(
@@ -2342,10 +2338,8 @@ export class HostRuntimeStore {
   }
 
   setAppVisible(visible: boolean): void {
-    this.appVisible = visible;
-    for (const controller of this.controllers.values()) {
-      controller.setReconnectEnabled(visible);
-    }
+    // Keep normal reconnect backoff running while hidden, for as long as the OS
+    // lets us execute. Foregrounding bypasses that backoff without closing healthy sockets.
     if (!visible) {
       void this.replicaCache.flush();
       return;
@@ -2409,14 +2403,20 @@ export class HostRuntimeStore {
     await replica.prepare(agentId);
   }
 
-  fetchAgentTimeline(
+  async fetchAgentTimeline(
     serverId: string,
     agentId: string,
     request: Parameters<DaemonClient["fetchAgentTimeline"]>[1],
   ): Promise<Awaited<ReturnType<DaemonClient["fetchAgentTimeline"]>>> {
     const directory = this.directorySyncByServer.get(serverId);
     if (!directory) throw new Error(`Unknown host runtime for serverId ${serverId}`);
-    return directory.fetchTimeline(agentId, request);
+    const owner = useSessionStore.getState().sessions[serverId]?.viewedTimelineSync;
+    const page = await directory.fetchTimeline(agentId, request);
+    if (owner && useSessionStore.getState().sessions[serverId]?.viewedTimelineSync === owner) {
+      owner.flushStreamAgent(agentId);
+      owner.applyTimelineResponse(page);
+    }
+    return page;
   }
 
   createViewedTimelineOwner(

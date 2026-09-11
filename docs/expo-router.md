@@ -47,6 +47,15 @@ state.
 This split is deliberate. The host layout must mount first so native local
 dynamic params exist before any nested workspace leaf is selected.
 
+## Error Recovery
+
+The root error boundary lives above `ExpoRoot` in `src/root-app.tsx`. Reload
+remounts the router at `/open-project`, preserving saved workspace layouts and
+the remembered selection. Do not move the boundary inside the root layout:
+catching a render error there unmounts the navigator, so the recovery button
+cannot reliably dispatch a navigation reset. Starting recovery at `/` would
+restore the same workspace and could repeat the crash.
+
 ## App-Wide Route Hops
 
 When app-wide routes such as `/new`, `/settings`, or `/sessions` navigate back

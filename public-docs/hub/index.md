@@ -20,7 +20,7 @@ A daemon runs agents on one machine, for you. Paseo Hub is the layer above your 
 What that gives you today:
 
 - Agents that start on their own, from activity in GitHub, Slack, and Discord.
-- Configuration that lives in a repository and deploys when you push.
+- Triggers you can keep in a repository and deploy from the CLI.
 - A record of everything that arrived, what it matched, and what ran.
 - One place for your team to see all of it.
 
@@ -28,16 +28,15 @@ Your daemons keep running agents where they always did. Hub decides when to ask 
 
 ## What lives in your repository
 
-Guided setup creates a project resource file for environments and agents, plus one safe starter workflow:
+`paseo hub init` creates one self-contained starter trigger:
 
 ```text
 .paseo/
-├── hub.yml
-└── workflows/
+└── triggers/
     └── slack-help.yml
 ```
 
-Guided setup deploys the bundle, and mentioning the bot starts an agent on your machine. [Quickstart](/docs/hub/quickstart) runs it end to end; the [generated starter bundle](/docs/hub/configuration#generated-starter-bundle) shows what it wrote, and [Workflows](/docs/hub/workflows) covers routing, prompt partials, and provider-specific replies.
+The file names the app connection, allowed user, daemon, working directory, agent runtime, prompt, and outputs. Setup validates it and asks whether to deploy. Mentioning the bot then starts an agent on your machine. [Quickstart](/docs/hub/quickstart) runs it end to end; the [generated starter trigger](/docs/hub/configuration#generated-starter-trigger) shows what setup wrote.
 
 ## Reading order
 
@@ -56,4 +55,4 @@ If a workflow accepts requests from GitHub, Slack, Discord, or the API, read [Hu
 
 Start on your machine with the embedded database, then add PostgreSQL or a public deployment only when you need them. [Self-hosting](/docs/hub/self-hosting) covers each step.
 
-[Hosted Hub](/docs/hub/hosted) uses the same projects, workflows, daemons, and activity model. [Sign in to start a free trial](https://hub.paseo.sh).
+[Hosted Hub](/docs/hub/hosted) uses the same triggers, daemons, and activity model. [Sign in to start a free trial](https://hub.paseo.sh).

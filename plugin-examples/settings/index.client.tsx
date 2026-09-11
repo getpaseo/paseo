@@ -1,4 +1,4 @@
-import type { PluginClientContext } from "@getpaseo/plugin";
+import type { PluginClientContext } from "@getpaseo/plugin/client";
 import { DisplaySettings } from "./client/display-settings";
 
 export default function contribute(client: PluginClientContext) {

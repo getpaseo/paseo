@@ -14,7 +14,7 @@ import {
   type ProviderConnection,
   type ProviderEvent,
   type ProviderInput,
-} from "@getpaseo/plugin/provider";
+} from "@getpaseo/plugin/server/provider";
 import type { PluginLogEntry } from "@getpaseo/protocol/messages";
 import { compilePlugin } from "./compiler.js";
 import { readPluginManifest } from "./manifest.js";

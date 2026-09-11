@@ -1,3 +1,4 @@
+import { subscriptionFixture } from "@/runtime/subscription-fixture";
 /**
  * @vitest-environment jsdom
  */
@@ -103,7 +104,11 @@ function plugin(enabled = true): PluginListItem {
 
 function createClient() {
   return {
-    on: vi.fn(() => () => undefined),
+    observeEvents: () =>
+      subscriptionFixture(
+        Promise.resolve({ events: ["status.plugin_catalog_changed"] }),
+        () => () => {},
+      ),
     getDaemonConfig: vi.fn(async () => ({ config: { pluginsEnabled: true } })),
     patchDaemonConfig: vi.fn(async () => ({ config: { pluginsEnabled: true } })),
     listPlugins: vi.fn(async (): Promise<PluginListItem[]> => []),

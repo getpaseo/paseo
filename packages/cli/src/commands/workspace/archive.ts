@@ -19,11 +19,11 @@ const workspaceArchiveSchema: OutputSchema<WorkspaceArchiveResult> = {
 
 export async function runArchiveCommand(
   workspaceId: string,
-  options: { host?: string },
+  options: { host?: string; daemonTarget: import("../../utils/daemon-target.js").DaemonTarget },
   _command: Command,
 ): Promise<SingleResult<WorkspaceArchiveResult>> {
-  const host = getDaemonHost({ host: options.host });
-  const client = await connectToDaemon({ host: options.host }).catch((error: unknown) => {
+  const host = getDaemonHost({ target: options.daemonTarget });
+  const client = await connectToDaemon({ target: options.daemonTarget }).catch((error: unknown) => {
     const message = error instanceof Error ? error.message : String(error);
     throw {
       code: "DAEMON_NOT_RUNNING",
@@ -44,6 +44,7 @@ export async function runArchiveCommand(
       schema: workspaceArchiveSchema,
     };
   } catch (error) {
+    if (error && typeof error === "object" && "code" in error) throw error;
     const message = error instanceof Error ? error.message : String(error);
     throw { code: "WORKSPACE_ARCHIVE_FAILED", message } satisfies CommandError;
   } finally {

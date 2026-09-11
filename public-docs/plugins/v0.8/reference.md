@@ -8,7 +8,7 @@ category: Plugins
 
 # Plugin reference
 
-> **For the upcoming Paseo v0.8 release.** Return to the [v0.8 quickstart](/docs/plugins/v0.8).
+> **For Paseo v0.8 beta.** Return to the [v0.8 quickstart](/docs/plugins/v0.8).
 
 Migrating an existing plugin? Follow the standalone [runtime-entry migration guide](/docs/plugins/v0.8/migration).
 
@@ -55,15 +55,13 @@ range. An omitted `requirements.paseo` means `<0.8.0`: the plugin predates the f
 plugin release. Paseo 0.8 and later reject it with a link to the [migration guide](migration).
 Empty strings, invalid ranges, and unknown manifest requirement keys are rejected.
 
-| Range            | Compatible releases                                                 |
-| ---------------- | ------------------------------------------------------------------- |
-| `>=0.8.0`        | 0.8.0 and later stable releases, including future breaking releases |
-| `^0.8.0`         | 0.8.x stable releases only                                          |
-| `>=0.8.3 <0.9.0` | 0.8.3 through the last 0.8 patch                                    |
-| `>=0.8.0-beta.1` | Betas from 0.8.0-beta.1, then 0.8.0 and later stable releases       |
+| Range            | Compatible releases                                                          |
+| ---------------- | ---------------------------------------------------------------------------- |
+| `>=0.8.0`        | 0.8.0 and later releases, including prereleases and future breaking releases |
+| `^0.8.0`         | 0.8.x releases, including prereleases                                        |
+| `>=0.8.3 <0.9.0` | 0.8.3 through the last 0.8 patch, including prereleases                      |
 
-Standard npm prerelease rules apply: `>=0.8.0` excludes `0.8.0-beta.1`. A prerelease must be
-explicitly included for its major/minor/patch tuple; no version tags are stripped.
+Prerelease Paseo versions also satisfy a range their stable core (`major.minor.patch`) satisfies, so `0.8.0-beta.1` satisfies `>=0.8.0` but not `<0.8.0`.
 
 `paseo plugin init` writes `>=` followed by the current CLI version and pins the matching SDK
 for typechecking. Raise the minimum when adopting a newer API. Add an upper bound when a later
@@ -81,10 +79,10 @@ and cannot show this new diagnostic.
 
 ### Runtime entries
 
-| Entry              | Runtime               | Receives              | Required                                                          |
-| ------------------ | --------------------- | --------------------- | ----------------------------------------------------------------- |
-| `index.client.tsx` | Paseo app, per client | `PluginClientContext` | When the plugin has any UI, callback, theme, or attachment source |
-| `index.server.ts`  | Daemon subprocess     | `PluginServerContext` | When the plugin handles RPCs                                      |
+| Entry              | Runtime               | Receives              | Required                                                                        |
+| ------------------ | --------------------- | --------------------- | ------------------------------------------------------------------------------- |
+| `index.client.tsx` | Paseo app, per client | `PluginClientContext` | When the plugin has any UI, callback, theme, or attachment source               |
+| `index.server.ts`  | Daemon subprocess     | `PluginServerContext` | When the plugin contributes handlers, hooks, settings persistence, or providers |
 
 At least one entry is required; both accept `.ts` or `.tsx`. A directory that still has only the
 old `index.ts` fails to load and points at the [migration guide](/docs/plugins/v0.8/migration).
@@ -108,24 +106,34 @@ plugin root is a compile error.
 ## Runtime modules
 
 Paseo builds each bundle from its matching entry. An import from `client/` into the daemon bundle,
-from `server/` into the app bundle, or of a `node:` module anywhere in the app bundle is a compile
-error. Keep `shared/` free of Node and React Native runtime code.
+from `server/` into the app bundle, or of a Node module anywhere in the app bundle is a compile
+error. Server imports of React, React Native, or client SDK entries also fail. Shared code imports
+only shared code: no Node, React, runtime-specific SDK entries, or runtime-specific types.
+
+The SDK root (`@getpaseo/plugin`) contains shared data, schemas, and runtime-neutral helpers only.
+Import client contexts and hooks from `/client`, server contexts and lifecycle contracts from
+`/server`, and UI from `/client/react-native` or `/client/ui`. These rules include type imports and transitive
+dependencies. `/client/host` is private to the app host; plugins cannot import it.
 
 ### Client runtime
 
 Paseo provides these modules to client code:
 
-| Module                          | Use it for                                                                                             |
-| ------------------------------- | ------------------------------------------------------------------------------------------------------ |
-| `@getpaseo/plugin`              | Contribution contracts, `defineRpc`, `defineAttachmentSource`, `RpcInput`, `RpcOutput`, and data hooks |
-| `@getpaseo/plugin/ui`           | Named, composable settings components                                                                  |
-| `@getpaseo/plugin/react-native` | Paseo UI components and UI hooks                                                                       |
-| `@getpaseo/plugin/server`       | Handler-only types such as `PluginHandlerContext`                                                      |
-| `@tanstack/react-query`         | Request state and caching                                                                              |
-| `react`                         | Components and hooks                                                                                   |
-| `react/jsx-runtime`             | Compiled JSX                                                                                           |
-| `react-native`                  | Cross-platform UI                                                                                      |
-| `zod`                           | Shared schemas                                                                                         |
+| Module                                 | Use it for                                                                                        |
+| -------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| `@getpaseo/plugin`                     | Shared data, `defineRpc`, `defineSettings`, `defineAttachmentSource`, `RpcInput`, and `RpcOutput` |
+| `@getpaseo/plugin/client/ui`           | Named, composable settings components                                                             |
+| `@getpaseo/plugin/client/react-native` | Paseo UI components and UI hooks                                                                  |
+| `@getpaseo/plugin/client`              | Client contribution contexts, `usePaseo`, `useRpc`, `useSettings`, and data hooks                 |
+| `@tanstack/react-query`                | Request state and caching                                                                         |
+| `react`                                | Components and hooks                                                                              |
+| `react/jsx-runtime`                    | Compiled JSX                                                                                      |
+| `react-native`                         | Cross-platform UI                                                                                 |
+| `zod`                                  | Shared schemas                                                                                    |
+
+The host owns its paired React and renderer versions. The SDK's React peer range permits patch
+versions for tooling and Node consumers; it does not change the app's pinned React version or
+guarantee compatibility with another host's renderer.
 
 These exact module specifiers use the host's runtime instances. A client bundle that requests another host module fails with `Module "<name>" is not available in plugin client code`.
 
@@ -176,7 +184,7 @@ Use `openSettings`, `openSurface`, and `openPanel` for your own registered contr
 ### Server runtime
 
 Paseo provides `@getpaseo/plugin`, `@getpaseo/plugin/server`,
-`@getpaseo/plugin/provider`, `@getpaseo/plugin/acp`, and `zod` to server code. Backend
+`@getpaseo/plugin/server/provider`, `@getpaseo/plugin/server/acp`, and `zod` to server code. Backend
 contributions run in a daemon subprocess with Node access to the host machine. Keep filesystem,
 process, credential, and other machine-local work under `server/`. A plugin without
 `index.server.ts` starts no subprocess.
@@ -187,7 +195,7 @@ Follow [Build a provider plugin](/docs/plugins/v0.8/providers) for direct and AC
 session lifecycle, composer settings, timeline renderers, testing, and distribution.
 
 Call `server.registerProvider()` with a `ProviderRegistration` from
-`@getpaseo/plugin/provider`. Its connection accepts inputs with `send()` and emits complete state
+`@getpaseo/plugin/server/provider`. Its connection accepts inputs with `send()` and emits complete state
 snapshots through `onEvent()`. `send()` reports acceptance only; prompt disposition, turns,
 configuration, persistence, permissions, and failures are events.
 
@@ -202,7 +210,7 @@ session config.
 Paseo refreshes an agent by closing its current provider session and opening it with current
 configuration and persistence. Providers re-read external state during `session.open`.
 
-Use `runAcpProvider()` from `@getpaseo/plugin/acp` to adapt a command-backed ACP. Add transformer
+Use `runAcpProvider()` from `@getpaseo/plugin/server/acp` to adapt a command-backed ACP. Add transformer
 hooks only for a vendor's discovery, configuration, notification, or tool-call differences.
 
 `ProviderRegistration.icon` is a file path relative to the plugin directory, such as `icon.svg`.
@@ -215,11 +223,11 @@ SVG or URL.
 ## Entry point and cleanup
 
 Each present entry default-exports one contribution function and returns cleanup. Client entries
-receive `PluginClientContext`; server entries receive `PluginServerContext`. Every client `add*`
-returns an idempotent remover. The entry cleanup runs before Paseo removes remaining registrations.
+receive `PluginClientContext`; server entries receive `PluginServerContext`. Client registration methods return idempotent removers, except header buttons and composer pills,
+which return `{ update, remove }` handles. The entry cleanup runs before Paseo removes remaining registrations.
 
 ```ts
-import type { PluginClientContext } from "@getpaseo/plugin";
+import type { PluginClientContext } from "@getpaseo/plugin/client";
 import { Main } from "./client/main";
 
 export default function contribute(client: PluginClientContext) {
@@ -235,7 +243,7 @@ Cleanup can be async. Release timers, watchers, sockets, and other resources cre
 In `index.server.ts`:
 
 ```ts
-import type { PluginServerContext } from "@getpaseo/plugin";
+import type { PluginServerContext } from "@getpaseo/plugin/server";
 
 export default function contribute(server: PluginServerContext) {
   server.on("agent.turn_ended", (event) => {
@@ -336,10 +344,12 @@ and directory lookup/import operations are unaffected.
 ### Send a follow-up when a turn ends
 
 Copy [server/inspect.ts](https://github.com/getpaseo/paseo/blob/main/plugin-examples/lifecycle-actions/server/inspect.ts)
-into your plugin. `latestOutputText` joins text chunks after the latest user message.
+into your plugin. The helper imports types from `@getpaseo/protocol/agent-types`; add
+`@getpaseo/protocol` at the same version as your plugin SDK to your development dependencies
+and install them before loading the plugin. `latestOutputText` joins text chunks after the latest user message.
 
 ```ts
-import type { PluginServerContext } from "@getpaseo/plugin";
+import type { PluginServerContext } from "@getpaseo/plugin/server";
 import { latestOutputText } from "./server/inspect";
 
 export default function contribute(server: PluginServerContext) {
@@ -372,7 +382,7 @@ add limits or delays in your plugin when needed. Attachments and tool effects ar
 Using `shellCommand` from the same [helper file](https://github.com/getpaseo/paseo/blob/main/plugin-examples/lifecycle-actions/server/inspect.ts):
 
 ```ts
-import type { PluginServerContext } from "@getpaseo/plugin";
+import type { PluginServerContext } from "@getpaseo/plugin/server";
 import { shellCommand } from "./server/inspect";
 
 export default function contribute(server: PluginServerContext) {
@@ -558,7 +568,7 @@ Register a component, then point a sidebar item at its surface ID:
 `client/main.tsx`:
 
 ```tsx
-import type { PluginSurfaceProps } from "@getpaseo/plugin";
+import type { PluginSurfaceProps } from "@getpaseo/plugin/client";
 import { useMemo } from "react";
 import { Text, View } from "react-native";
 
@@ -587,7 +597,7 @@ export function Main({ theme, host, layout }: PluginSurfaceProps) {
 `index.client.tsx`:
 
 ```ts
-import type { PluginClientContext } from "@getpaseo/plugin";
+import type { PluginClientContext } from "@getpaseo/plugin/client";
 import { Main } from "./client/main";
 
 export default function contribute(client: PluginClientContext) {
@@ -615,12 +625,12 @@ Paseo owns the route, header, close action, host picker, error boundary, and que
 
 ## Host UI
 
-Import Paseo-owned UI from `@getpaseo/plugin/react-native` in client code. This example
+Import Paseo-owned UI from `@getpaseo/plugin/client/react-native` in client code. This example
 opens a controlled modal, renders a host icon, and confirms the action with a toast:
 
 ```tsx
-import type { PluginSurfaceProps } from "@getpaseo/plugin";
-import { Icon, Modal, useToast } from "@getpaseo/plugin/react-native";
+import type { PluginSurfaceProps } from "@getpaseo/plugin/client";
+import { Icon, Modal, useToast } from "@getpaseo/plugin/client/react-native";
 import { useState } from "react";
 import { Pressable, Text, View } from "react-native";
 
@@ -699,7 +709,7 @@ Modal children keep the plugin runtime context. `usePaseo`, `useRpc`, `useWorksp
 
 ### Scrolling
 
-Import `ScrollView` and `FlatList` from `@getpaseo/plugin/react-native` when content can appear in a
+Import `ScrollView` and `FlatList` from `@getpaseo/plugin/client/react-native` when content can appear in a
 Paseo modal. They accept React Native props and refs and integrate with the sheet's gestures. Outside
 a sheet they use ordinary React Native scrolling. Do not import bottom-sheet libraries directly.
 
@@ -713,7 +723,7 @@ container without changing these gestures. Expand the sheet before using list me
 `scrollToEnd`; the sheet locks list offsets below its largest height.
 
 ```tsx
-import { FlatList, Modal } from "@getpaseo/plugin/react-native";
+import { FlatList, Modal } from "@getpaseo/plugin/client/react-native";
 import { Text } from "react-native";
 
 // Inside your controlled Modal:
@@ -743,7 +753,7 @@ user action and await it before reporting success. It rejects if the platform de
 clipboard is unavailable; browser permissions and secure-context requirements still apply.
 
 ```tsx
-import { copyText, useToast } from "@getpaseo/plugin/react-native";
+import { copyText, useToast } from "@getpaseo/plugin/client/react-native";
 
 // Inside your component:
 const toast = useToast();
@@ -758,7 +768,7 @@ async function copyResult() {
 ```
 
 Programmatic copying and native text selection are separate interactions. Use `<Text selectable>`
-for long-press selection and OS Copy. Import `TextInput` from `@getpaseo/plugin/react-native` for modal forms. It accepts React Native
+for long-press selection and OS Copy. Import `TextInput` from `@getpaseo/plugin/client/react-native` for modal forms. It accepts React Native
 input props and refs, supports OS Paste, and registers focus with the native sheet so the keyboard
 can raise the form. Outside a sheet it uses the ordinary input. A plain React Native input supports
 Paste too, but does not register focus with the sheet; the keyboard can cover it. No clipboard read
@@ -804,7 +814,7 @@ registrations are client contributions. Paseo applies the transformer while buil
 model, including every live streaming update.
 
 ```tsx
-import type { PluginClientContext, PluginTimelineItemProps } from "@getpaseo/plugin";
+import type { PluginClientContext, PluginTimelineItemProps } from "@getpaseo/plugin/client";
 import { Text } from "react-native";
 import { z } from "zod";
 
@@ -860,7 +870,7 @@ assistant rows.
 A server handler can add a plugin-owned row to canonical history:
 
 ```ts
-import type { PluginHandlerContext } from "@getpaseo/plugin";
+import type { PluginHandlerContext } from "@getpaseo/plugin/server";
 
 async function publishReview(agentId: string, { paseo }: PluginHandlerContext) {
   await paseo.agents.ref(agentId).timeline.append({
@@ -919,7 +929,7 @@ Workspace and agent panels receive the same `theme`, `layout`, and optional `nav
 `name`. A theme is data, so it needs no component file:
 
 ```ts
-import type { PluginClientContext } from "@getpaseo/plugin";
+import type { PluginClientContext } from "@getpaseo/plugin/client";
 
 export default function contribute(client: PluginClientContext) {
   client.addTheme({
@@ -984,12 +994,12 @@ A disabled or removed plugin leaves an unavailable screen with working Back navi
 
 ### Named UI components
 
-Import settings components from `@getpaseo/plugin/ui`. They work with your own state and RPCs;
+Import settings components from `@getpaseo/plugin/client/ui`. They work with your own state and RPCs;
 no form wrapper or storage binding is required.
 
 ```tsx
 import { useState } from "react";
-import { SettingsCard, SettingsSection, SettingsSwitch } from "@getpaseo/plugin/ui";
+import { SettingsCard, SettingsSection, SettingsSwitch } from "@getpaseo/plugin/client/ui";
 
 export function DisplaySettings() {
   const [visible, setVisible] = useState(true);
@@ -1088,7 +1098,7 @@ Register one panel for workspace or agent context:
 `client/review.tsx`:
 
 ```tsx
-import { type PluginAgentPanelProps, useAgent, useWorkspace } from "@getpaseo/plugin";
+import { type PluginAgentPanelProps, useAgent, useWorkspace } from "@getpaseo/plugin/client";
 import { useMemo } from "react";
 import { Text, View } from "react-native";
 
@@ -1119,7 +1129,7 @@ export function ReviewPanel({ theme, layout, workspaceId, agentId }: PluginAgent
 `index.client.tsx`:
 
 ```ts
-import type { PluginClientContext } from "@getpaseo/plugin";
+import type { PluginClientContext } from "@getpaseo/plugin/client";
 import { ReviewPanel } from "./client/review";
 
 export default function contribute(client: PluginClientContext) {
@@ -1205,7 +1215,7 @@ import { z } from "zod";
 
 const refreshReview = defineRpc({
   name: "review.refresh",
-  input: z.object({ agentId: z.string() }),
+  input: z.object({ agentId: z.string(), scope: z.string().optional() }),
   output: z.object({ refreshed: z.boolean() }),
 });
 
@@ -1285,91 +1295,179 @@ Precedence is built-in client commands, plugin commands, then provider commands.
 collision is omitted. Built-in aliases also reserve their names. The first plugin in stable catalog
 order wins a collision between plugins. Commands do not run while the composer has attachments.
 
-## Composer pills
+## Header buttons
 
-The client entry owns pill creation and removal. This can live directly in `index.client.tsx` or in
-a function it imports from `client/`:
+Try the [button example](https://github.com/getpaseo/paseo/tree/main/plugin-examples/buttons) for
+actions, menus, custom icons and content, and visibility updates in both the header and composer.
+It switches one header button between modes; additional actions use a named Tools menu.
+
+`client.addHeaderButton({ id, workspaceId, button })` adds a button before the built-in actions on
+the workspace header's right side. It returns a registration with `update(patch)` and `remove()`.
 
 ```tsx
-import {
-  Icon,
-  type PluginClientContext,
-  type PluginComposerPillProps,
-  useAgent,
-} from "@getpaseo/plugin";
-import { Text } from "react-native";
+const review = client.addHeaderButton({
+  id: "review",
+  workspaceId,
+  button: {
+    title: "Open review",
+    icon: "Scan",
+    label: "Review",
+    behavior: {
+      kind: "action",
+      onPress() {
+        client.openPanel("review", { workspaceId });
+      },
+    },
+  },
+});
 
-function ReviewPill({ theme, agentId }: PluginComposerPillProps) {
-  const agent = useAgent(agentId, ({ title }) => ({ title }));
-  return (
-    <>
-      <Icon name="Scan" size={14} color={theme.colors.foregroundMuted} />
-      <Text numberOfLines={1} style={{ color: theme.colors.foregroundMuted, flexShrink: 1 }}>
-        {agent?.title ?? "Review"}
-      </Text>
-    </>
-  );
-}
-
-export default function contribute(client: PluginClientContext) {
-  const pills = new Map<string, () => void>();
-  const unsubscribe = client.paseo.agents.subscribe((update) => {
-    if (update.kind !== "upsert" || !update.agent.workspaceId) return;
-    const { id: agentId, workspaceId } = update.agent;
-    pills.get(agentId)?.();
-    pills.set(
-      agentId,
-      client.addComposerPill({
-        id: "review",
-        title: "Open review",
-        workspaceId,
-        agentId,
-        Component: ReviewPill,
-        async onPress() {
-          await client.rpc(refreshReview, { agentId });
-          client.openPanel("review", { workspaceId, agentId });
-        },
-      }),
-    );
-  });
-  return () => {
-    unsubscribe();
-    for (const remove of pills.values()) remove();
-  };
-}
+review.update({ label: "Review · 3" });
+review.update({ visible: false });
+review.update({ visible: true });
+review.remove();
 ```
 
-`addComposerPill` fields:
+Omit `label` for an icon-only header button. Menus and popovers show a chevron on wide layouts.
+Compact header buttons use icons without labels or chevrons. Paseo moves excess contributions
+into a shared overflow menu. Placement and overflow are host decisions.
 
-| Field         | Required | Meaning                                                    |
-| ------------- | -------- | ---------------------------------------------------------- |
-| `id`          | Yes      | Plugin-local ID within the target agent.                   |
-| `title`       | Yes      | Accessible button label.                                   |
-| `workspaceId` | Yes      | Workspace whose composer track owns the pill.              |
-| `agentId`     | Yes      | Agent whose composer track owns the pill.                  |
-| `Component`   | Yes      | React Native component rendering the pill's icon and text. |
-| `onPress`     | Yes      | Client-side callback.                                      |
+## Composer pills
 
-The client entry runs once per plugin installation in each connected app. Its context exposes
-`paseo`, typed `rpc`, `openSurface`, explicit-context `openPanel`, and every client registration.
-`addComposerPill` returns an idempotent removal function. Paseo also removes every outstanding pill
-when the plugin installation or host connection is torn down.
+`client.addComposerPill({ id, workspaceId, agentId, button })` uses the same [button descriptor](#button-descriptor)
+and returns the same registration. It targets one agent's composer track alongside Tasks and
+Subagents. Composer pills always show the icon and `label` (or `title` when `label` is omitted).
+They never show a chevron, including for menus and popovers.
 
-Paseo owns the pressable, shared pill chrome, pending state, error reporting, and track-bar
-placement. The component receives `theme`, `host`, `layout`, `workspaceId`, and `agentId`. Read
-current values with `useWorkspace` and `useAgent`. The plugin owns when the pill exists, its icon
-and text, and the callback. `openPanel(id, { workspaceId, agentId? })` opens or focuses a panel
-registered by the same plugin.
+```tsx
+const pill = client.addComposerPill({
+  id: "review",
+  workspaceId,
+  agentId,
+  button: {
+    title: "Open review",
+    icon: "Scan",
+    label: "Review",
+    behavior: {
+      kind: "action",
+      onPress() {
+        client.openPanel("review", { workspaceId, agentId });
+      },
+    },
+  },
+});
+```
+
+For pills that follow the agent directory, use an explicit [owned list subscription](/docs/sdk/events#follow-one-agents-status).
+The [local plugin example](https://github.com/getpaseo/paseo/blob/main/plugin-examples/local-plugin/client/main.tsx)
+replaces registrations on each snapshot and aborts the observation during entry cleanup, including pending bootstrap.
+
+## Button descriptor
+
+These contracts are exported from `@getpaseo/plugin/client`.
+
+| Field      | Required | Meaning                                                                 |
+| ---------- | -------- | ----------------------------------------------------------------------- |
+| `title`    | Yes      | Non-empty accessible label, tooltip, and sheet title.                   |
+| `icon`     | Yes      | Lucide name or `ComponentType<PluginButtonIconProps>`.                  |
+| `label`    | No       | Non-empty display text. Omit to use the placement's default.            |
+| `visible`  | No       | Defaults to `true`. False removes the trigger and its layout space.     |
+| `disabled` | No       | Defaults to `false`. Keeps the button visible and prevents interaction. |
+| `behavior` | Yes      | One of the three shapes below.                                          |
+
+```tsx
+type PluginButtonBehavior =
+  | { kind: "action"; onPress(): void | Promise<void> }
+  | { kind: "menu"; items: readonly PluginButtonMenuEntry[] }
+  | { kind: "popover"; Content: React.ComponentType<PluginButtonContentProps> };
+```
+
+An action runs on the client. Paseo marks the button busy until its promise settles, blocks repeated
+presses, and shows failures in a toast. A failed action can be retried. Use the client's `paseo` for
+ordinary operations and `rpc` for plugin-specific backend work.
+
+Menus and popovers open anchored surfaces on wide layouts and bottom sheets on compact layouts.
+The whole trigger opens the surface; there is no split-button behavior.
+
+### Menu entries
+
+A menu contains items and separators. IDs use lowercase letters, digits, and hyphens, start with
+a letter, and are unique within that menu.
+
+```tsx
+const behavior: PluginButtonBehavior = {
+  kind: "menu",
+  items: [
+    {
+      kind: "item",
+      id: "refresh",
+      title: "Refresh review",
+      icon: "RefreshCw",
+      behavior: { kind: "action", onPress: refreshReview },
+    },
+    { kind: "separator", id: "details-divider" },
+    {
+      kind: "item",
+      id: "details",
+      title: "Review details",
+      behavior: { kind: "popover", Content: ReviewDetails },
+    },
+  ],
+};
+```
+
+An item requires `kind: "item"`, `id`, `title`, and `behavior`. Its optional `icon`, `visible`, and
+`disabled` follow the button rules. A separator contains only `kind: "separator"` and `id`.
+Paseo removes leading, trailing, and consecutive separators after filtering hidden items.
+
+Items can use all three behaviors. Nested menus open flyouts on wide layouts and pages with back
+navigation within the same compact sheet. Custom content pages open on selection, never hover.
+Choosing an action closes the menu; opening another page keeps it open.
+
+### Custom icons and popover content
+
+`PluginButtonIconProps` contains `theme`, `host`, `layout`, `size`, `color`, and the target context.
+Render a React Native icon or indicator within the supplied size. Paseo bounds the icon slot and
+owns all pointer interaction. The icon component can use plugin hooks.
+
+`PluginButtonContentProps` contains `theme`, `host`, `layout`, the target context, and `close()`.
+Render the body only; Paseo owns anchoring, scrolling, padding, and sheet presentation. Content can
+use `usePaseo`, `useRpc`, `useWorkspace`, `useAgent`, and the installation's React Query cache.
+
+The target context is one of:
+
+```ts
+{ context: "workspace", workspaceId: string } // Header button
+{ context: "agent", workspaceId: string, agentId: string } // Composer pill
+```
+
+### Updates and lifecycle
+
+Each registration belongs to one plugin installation, placement, workspace, and (for pills) agent.
+`id` is plugin-local within that target and uses the same format as menu IDs. The same ID may be
+used in different targets or placements. Duplicate registration in the same target throws.
+
+`update(patch: Partial<PluginButton>)` changes the descriptor in place, preserving identity and
+order. When changing `behavior`, supply the complete new behavior object. Invalid updates throw
+without changing the existing button. Subscribe to your own model or the client API and call
+`update` to publish reactive changes; mutating the original descriptor does not update the UI.
+
+Hiding or disabling a button closes its surface. Updating its behavior also closes the surface.
+Hiding preserves the registration, so showing it again restores its position. It does not cancel
+an action already in progress.
+
+`remove()` is idempotent. Updates after removal do nothing. Paseo removes outstanding buttons when
+the plugin installation or host connection is torn down. Return cleanup from the client entry for
+your subscriptions, timers, and other resources.
 
 ## Use the Paseo SDK
 
 Use `usePaseo()` for ordinary Paseo operations from a surface. It borrows the selected host's existing connection; do not create another client.
 
 ```tsx
-import { usePaseo } from "@getpaseo/plugin";
+import { type PluginSurfaceProps, usePaseo } from "@getpaseo/plugin/client";
 import { Pressable, Text } from "react-native";
 
-function PullRequestAction() {
+function PullRequestAction({ theme }: PluginSurfaceProps) {
   const paseo = usePaseo();
 
   async function createReviewWorkspace() {
@@ -1390,7 +1488,7 @@ function PullRequestAction() {
 
   return (
     <Pressable accessibilityRole="button" onPress={() => void createReviewWorkspace()}>
-      <Text>Create review workspace</Text>
+      <Text style={{ color: theme.colors.foreground }}>Create review workspace</Text>
     </Pressable>
   );
 }
@@ -1420,7 +1518,7 @@ export const greeting = defineRpc({
 `client/greeting.tsx`:
 
 ```tsx
-import { useRpc } from "@getpaseo/plugin";
+import { useRpc } from "@getpaseo/plugin/client";
 import { greeting } from "../shared/greeting";
 
 export function GreetingButton() {
@@ -1444,7 +1542,7 @@ export function createGreeting({ name }: RpcInput<typeof greeting>) {
 `index.client.tsx`:
 
 ```ts
-import type { PluginClientContext } from "@getpaseo/plugin";
+import type { PluginClientContext } from "@getpaseo/plugin/client";
 import { GreetingButton } from "./client/greeting";
 
 export default function contribute(client: PluginClientContext) {
@@ -1456,7 +1554,7 @@ export default function contribute(client: PluginClientContext) {
 `index.server.ts`:
 
 ```ts
-import type { PluginServerContext } from "@getpaseo/plugin";
+import type { PluginServerContext } from "@getpaseo/plugin/server";
 import { createGreeting } from "./server/greeting";
 import { greeting } from "./shared/greeting";
 
@@ -1468,7 +1566,7 @@ export default function contribute(server: PluginServerContext) {
 
 Inputs and outputs are validated on both sides. RPC names start with a lowercase letter and contain lowercase letters, numbers, dots, hyphens, or underscores. `useRpc()` returns a typed async function. Use TanStack Query for request state, caching, and mutations.
 
-Backend handlers receive the same `PaseoApi` as `{ paseo }`. Their connection belongs to the subprocess and closes when the plugin stops. Backend code can use Node APIs and dependencies installed in the plugin directory.
+Backend handlers receive the same `PaseoApi` as `{ paseo }`. Their connection belongs to the subprocess and closes when the plugin stops. It does not subscribe to timelines or catalog events until plugin code subscribes. Follow the [SDK event contract](../../sdk/events.md) for cleanup and timeline replacements. Backend code can use Node APIs and dependencies installed in the plugin directory.
 
 ## Debug backend output
 
@@ -1559,7 +1657,7 @@ export function search({ query }: RpcInput<typeof searchIssues>) {
 `index.client.tsx`:
 
 ```ts
-import type { PluginClientContext } from "@getpaseo/plugin";
+import type { PluginClientContext } from "@getpaseo/plugin/client";
 import { issues } from "./shared/issues";
 
 export default function contribute(client: PluginClientContext) {
@@ -1571,7 +1669,7 @@ export default function contribute(client: PluginClientContext) {
 `index.server.ts`:
 
 ```ts
-import type { PluginServerContext } from "@getpaseo/plugin";
+import type { PluginServerContext } from "@getpaseo/plugin/server";
 import { search } from "./server/issues";
 import { searchIssues } from "./shared/issues";
 
@@ -1649,7 +1747,7 @@ compilation, activation, or replacement. A failing command reports its output, d
 candidate, and leaves the installed/running version intact. The daemon log records each command and
 output; with the global `--host` option, execution is on that daemon host.
 
-Run `npm run typecheck` before install or reload. Never edit the daemon config directly.
+Run `npm run typecheck` before install or reload. Manage plugin source entries with the CLI or Settings.
 
 The daemon-wide **Enable plugins** switch lives under **Settings → Plugins**. A configured plugin remains `disabled` until that switch and the plugin's own enabled state are both on.
 
@@ -1663,8 +1761,8 @@ Use `paseo plugin ls` to read the current status and error.
 | --------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
 | `This plugin was made for an older version of Paseo`                  | The directory has only an `index.ts` entry. Follow the [migration guide](/docs/plugins/v0.8/migration).                                 |
 | `Plugin entry points are missing`                                     | Neither `index.client.tsx` nor `index.server.ts` exists with that exact name.                                                           |
-| `server-only module cannot be imported into the plugin client bundle` | Client code imports `server/` or a `*.server.*` file. Move the work behind an RPC and import its contract from `shared/`.               |
-| `client-only module cannot be imported into the plugin server bundle` | Server code imports `client/` or a `*.client.*` file. Register that contribution from `index.client.tsx` instead.                       |
+| `server-only module cannot be imported into the plugin client bundle` | Client code imports `server/`. Move the work behind an RPC and import its contract from `shared/`.                                      |
+| `client-only module cannot be imported into the plugin server bundle` | Server code imports `client/`. Register that contribution from `index.client.tsx` instead.                                              |
 | `Node module cannot be imported into the plugin client bundle`        | Client code imports `node:*`. Move the operation to `server/` and call it through an RPC.                                               |
 | Sidebar item is missing                                               | The plugin is `running`, the item references an existing surface, the icon name is valid, and the client is on the installation's host. |
 | Client module is unavailable                                          | Import only the host-provided client modules listed above.                                                                              |

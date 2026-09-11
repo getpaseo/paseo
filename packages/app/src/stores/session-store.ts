@@ -2,7 +2,7 @@ import equal from "fast-deep-equal";
 import { create } from "zustand";
 import { subscribeWithSelector } from "zustand/middleware";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
-import type { ViewedTimelineUiBridge } from "@/timeline/viewed-timeline-sync";
+import type { ViewedTimelineOwner } from "@/timeline/viewed-timeline-sync";
 import type { AgentDirectoryEntry } from "@/types/agent-directory";
 import {
   appendSubmittedUserMessage,
@@ -366,7 +366,7 @@ export interface SessionState {
   // Daemon client (immutable reference)
   client: DaemonClient | null;
   clientGeneration: number;
-  viewedTimelineSync: ViewedTimelineUiBridge | null;
+  viewedTimelineSync: ViewedTimelineOwner | null;
 
   // Server metadata (from server_info handshake)
   serverInfo: DaemonServerInfo | null;
@@ -442,7 +442,7 @@ interface SessionStoreActions {
   clearSession: (serverId: string) => void;
   getSession: (serverId: string) => SessionState | undefined;
   updateSessionClient: (serverId: string, client: DaemonClient, clientGeneration?: number) => void;
-  setViewedTimelineSync: (serverId: string, sync: ViewedTimelineUiBridge | null) => void;
+  setViewedTimelineSync: (serverId: string, sync: ViewedTimelineOwner | null) => void;
   updateSessionServerInfo: (serverId: string, info: DaemonServerInfo) => void;
 
   // Audio state

@@ -48,25 +48,36 @@ export function PluginCatalogSync({
       );
       return refreshQueue;
     };
-    void refresh();
-    const unsubscribe = client.on("status", (message) => {
-      if (message.payload.status === "plugin_settings_changed") {
-        const { pluginId, settingsId } = message.payload;
-        if (typeof settingsId === "string") {
-          const plugin = pluginRegistry
-            .getSnapshot()
-            .find((item) => item.serverId === serverId && item.id === pluginId);
-          void plugin?.queryClient.invalidateQueries({ queryKey: pluginSettingsKey(settingsId) });
+    const observation = client.observeEvents([
+      "status.plugin_catalog_changed",
+      "status.plugin_settings_changed",
+    ]);
+    observation.subscribe({
+      snapshot: () => {
+        void refresh();
+      },
+      update: (message) => {
+        if (message.type !== "status") return;
+        if (message.payload.status === "plugin_settings_changed") {
+          const { pluginId, settingsId } = message.payload;
+          if (typeof settingsId === "string") {
+            const plugin = pluginRegistry
+              .getSnapshot()
+              .find((item) => item.serverId === serverId && item.id === pluginId);
+            void plugin?.queryClient.invalidateQueries({ queryKey: pluginSettingsKey(settingsId) });
+          }
         }
-      }
-      if (message.payload.status === "plugin_catalog_changed") {
-        const pluginId = message.payload.pluginId;
-        if (typeof pluginId === "string") void refresh(pluginId);
-      }
+        if (message.payload.status === "plugin_catalog_changed") {
+          const pluginId = message.payload.pluginId;
+          if (typeof pluginId === "string") void refresh(pluginId);
+        }
+      },
     });
     return () => {
       cancelled = true;
-      unsubscribe();
+      void observation
+        .release()
+        .catch((error) => console.warn("[Plugins] Failed to release catalog", error));
     };
   }, [client, connected, serverId, supported]);
 

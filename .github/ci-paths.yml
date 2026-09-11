@@ -50,6 +50,9 @@ app:
   - "packages/expo-two-way-audio/**"
 
 sdk:
+  - "packages/plugin/**"
+  - "plugin-examples/**"
+  - "public-docs/plugins/v0.8/**"
   - "packages/client/**"
   - "packages/highlight/**"
   - "packages/protocol/**"
@@ -66,7 +69,7 @@ browser:
   - "packages/server/src/server/agent/plugin-provider.ts"
   - "packages/server/src/server/plugins/{index,plugin-process,plugin-process-protocol,runtime}.ts"
   - "packages/server/src/executable-resolution/**"
-  - "packages/plugin/src/provider.ts"
+  - "packages/plugin/src/server/provider.ts"
   - "packages/app/src/!(desktop)/**"
   - "packages/app/e2e/browser/**"
   - "packages/app/e2e/support/**"

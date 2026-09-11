@@ -13,7 +13,7 @@ export async function runKillCommand(
   options: TerminalCommandOptions,
   _command: Command,
 ): Promise<SingleResult<TerminalKillRow>> {
-  const { client, close } = await connectTerminalClient(options.host);
+  const { client, close } = await connectTerminalClient(options.daemonTarget);
 
   try {
     const resolvedId = await requireTerminalId(client, terminalId);

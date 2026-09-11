@@ -2,7 +2,7 @@ import pino from "pino";
 import { homedir } from "node:os";
 import { resolve } from "node:path";
 import { describe, expect, test, vi } from "vitest";
-import type { ProviderEvent, ProviderRegistration } from "@getpaseo/plugin/provider";
+import type { ProviderEvent, ProviderRegistration } from "@getpaseo/plugin/server/provider";
 
 import { createTestLogger } from "../../test-utils/test-logger.js";
 import type {
@@ -2281,6 +2281,7 @@ describe("ProviderSnapshotManager cwd routing", () => {
       const withoutPlugin = manager.replacePluginProviders([]);
       expect(manager.hasProvider(registration.id)).toBe(false);
       expect(withoutPlugin.clients[registration.id]).toBeUndefined();
+      expect(withoutPlugin.retiredProviders).toEqual([registration.id]);
     } finally {
       await manager.shutdown();
       manager.destroy();

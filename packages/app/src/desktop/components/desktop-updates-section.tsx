@@ -12,7 +12,11 @@ import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { openExternalUrl } from "@/utils/open-external-url";
 import { isVersionMismatch } from "@/desktop/updates/desktop-updates";
-import { getCliDaemonStatus, shouldUseDesktopDaemon } from "@/desktop/daemon/desktop-daemon";
+import {
+  getCliDaemonStatus,
+  shouldUseDesktopDaemon,
+  confirmAndStopDesktopDaemon,
+} from "@/desktop/daemon/desktop-daemon";
 import { useBuiltInDaemonManagement } from "@/desktop/hooks/use-built-in-daemon-management";
 import { useDaemonStatus } from "@/desktop/hooks/use-daemon-status";
 import { useDesktopSettings, type DesktopSettings } from "@/desktop/settings/desktop-settings";
@@ -330,6 +334,17 @@ export function LocalDaemonSection() {
   const daemonStatus = data?.status ?? null;
   const daemonLogs = data?.logs ?? null;
   const daemonVersion = daemonStatus?.version ?? null;
+  const [isStopping, setIsStopping] = useState(false);
+  const handleStop = useCallback(() => {
+    setIsStopping(true);
+    void confirmAndStopDesktopDaemon()
+      .then((status) => {
+        if (status) setStatus(status);
+        return undefined;
+      })
+      .catch((error) => Alert.alert(t("desktop.daemon.lifecycle.stopFailed"), String(error)))
+      .finally(() => setIsStopping(false));
+  }, [setStatus, t]);
 
   const daemonVersionMismatch = isVersionMismatch(appVersion, daemonVersion);
   const daemonStatusStateText =
@@ -444,6 +459,26 @@ export function LocalDaemonSection() {
             handleRunCliStatus={handleRunCliStatus}
             isLoadingCliStatus={isLoadingCliStatus}
           />
+
+          {daemonStatus?.pid ? (
+            <View style={settingsStyles.card}>
+              <View style={settingsStyles.row}>
+                <View style={settingsStyles.rowContent}>
+                  <Text style={settingsStyles.rowTitle}>
+                    {daemonStatus.ownedByDesktop
+                      ? t("desktop.daemon.lifecycle.owned")
+                      : t("desktop.daemon.lifecycle.attached")}
+                  </Text>
+                  <Text style={settingsStyles.rowHint}>{daemonStatus.home}</Text>
+                </View>
+                <Button variant="outline" size="sm" onPress={handleStop} disabled={isStopping}>
+                  {isStopping
+                    ? t("desktop.daemon.lifecycle.stopping")
+                    : t("desktop.daemon.lifecycle.stop")}
+                </Button>
+              </View>
+            </View>
+          ) : null}
 
           {daemonVersionMismatch ? (
             <View style={styles.warningCard}>

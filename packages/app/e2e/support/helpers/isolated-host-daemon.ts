@@ -83,7 +83,7 @@ export async function startIsolatedHostDaemon(
 ): Promise<IsolatedHostDaemon> {
   const primaryPort = Number(process.env.E2E_DAEMON_PORT ?? 0);
   let port = await getAvailablePort();
-  while (port === 6767 || port === primaryPort) port = await getAvailablePort();
+  while (port === 6767 || port === 6768 || port === primaryPort) port = await getAvailablePort();
 
   const metroPort = process.env.E2E_METRO_PORT;
   if (!metroPort) throw new Error("E2E_METRO_PORT is required to start an isolated host daemon");

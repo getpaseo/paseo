@@ -15,7 +15,7 @@ change between releases.
 
 Build and maintain plugins for the latest stable Paseo release.
 
-## [Paseo v0.8 — Preview](/docs/plugins/v0.8)
+## [Paseo v0.8 — Beta](/docs/plugins/v0.8)
 
-Prepare plugins for the upcoming client and server entry layout. Existing plugin authors should
+Build plugins for Paseo 0.8 beta, with separate client and server entries. Existing plugin authors should
 follow the [v0.8 migration guide](/docs/plugins/v0.8/migration).

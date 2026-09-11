@@ -71,6 +71,127 @@ function input(overrides: Partial<BuildDiffDocumentModelInput> = {}): BuildDiffD
 }
 
 describe("diff document model", () => {
+  it("preserves shaped wrap breaks when joining makes a longer prefix narrower", () => {
+    const measure = (text: string) => {
+      if (text === "لا") return 30;
+      if (text === "لام") return 15;
+      return text.length * 10;
+    };
+    const fragments = measureFragments({
+      text: "لام",
+      availableWidth: 20,
+      wrapLines: true,
+      lineHeight: 18,
+      measureText: { measure, measureWidth: (graphemes) => measure(graphemes.join("")) },
+    });
+    expect(fragments.map((fragment) => fragment.text)).toEqual(["ل", "ام"]);
+    expect(fragments.map((fragment) => fragment.width)).toEqual([10, 20]);
+  });
+
+  it("does not search wrap boundaries when the remaining text already fits", () => {
+    let widthQueries = 0;
+    const fragments = measureFragments({
+      text: "const answer = value + 1;",
+      availableWidth: 300,
+      wrapLines: true,
+      lineHeight: 18,
+      measureText: {
+        measure: measurer.measure,
+        measureWidth(graphemes) {
+          widthQueries++;
+          return graphemes.length * 10;
+        },
+      },
+    });
+    expect(fragments).toHaveLength(1);
+    expect(fragments[0]?.width).toBe(250);
+    expect(widthQueries).toBe(1);
+  });
+
+  it("builds character geometry only for displayed wrapped fragments", () => {
+    let advancedGraphemes = 0;
+    const measureWidth = (graphemes: readonly string[]) => graphemes.length * 10;
+    const measureText = {
+      // Whole-string widths need not match the chunked advance contract.
+      measure: () => 999,
+      measureWidth,
+      measureAdvances(graphemes: readonly string[]) {
+        advancedGraphemes += graphemes.length;
+        return graphemes.map((_, index) => (index + 1) * 10);
+      },
+    };
+    const text = "const next = (value) => value + 1;".repeat(4);
+    const fragments = measureFragments({
+      text,
+      availableWidth: 80,
+      wrapLines: true,
+      lineHeight: 18,
+      measureText,
+    });
+
+    expect(fragments.map((fragment) => fragment.text).join("")).toBe(text);
+    expect(fragments.every((fragment) => fragment.width <= 80)).toBe(true);
+    expect(fragments).toEqual(
+      measureFragments({
+        text,
+        availableWidth: 80,
+        wrapLines: true,
+        lineHeight: 18,
+        measureText: { measure: measurer.measure },
+      }),
+    );
+    expect(advancedGraphemes).toBe(text.length);
+  });
+
+  it("materializes only visible rows of a large file while preserving full horizontal extent", () => {
+    const source = file("large.ts");
+    source.hunks[0]!.lines = Array.from({ length: 1000 }, (_, index) => ({
+      type: "add",
+      content: index === 900 ? "a very wide offscreen line ".repeat(20) : `line ${index}`,
+      tokens: [{ text: `line ${index}`, style: null }],
+    }));
+    let advancedCharacters = 0;
+    const measureText: TextMeasurer = {
+      measure: (text) => text.length * 10,
+      measureAdvances(graphemes) {
+        advancedCharacters += graphemes.join("").length;
+        return graphemes.map((_, index) => (index + 1) * 10);
+      },
+    };
+    const base = input({ files: [source], wrapLines: false, viewportWidth: 300, measureText });
+    const eager = buildDiffDocumentModel(base);
+    advancedCharacters = 0;
+    const first = buildDiffDocumentModel({
+      ...base,
+      materializationWindow: { top: FILE_HEADER_HEIGHT, height: 54 },
+    });
+    expect(measuredFragments(first, source.path)).toBe(3);
+    expect(advancedCharacters).toBeLessThan(100);
+    expect(first.height).toBe(eager.height);
+    expect(first.files[0]!.contentWidth).toBe(eager.files[0]!.contentWidth);
+    const priorCells = firstLineCells(first, source.path);
+    advancedCharacters = 0;
+    const next = buildDiffDocumentModel({
+      ...base,
+      reuseFrom: [first],
+      materializationWindow: { top: FILE_HEADER_HEIGHT + 900 * 18, height: 54 },
+    });
+    expect(firstLineCells(next, source.path)).toBe(priorCells);
+    expect(next.rows[900]).toMatchObject({
+      kind: "line",
+      cells: [{ fragments: [{ text: source.hunks[0]!.lines[900]!.content }] }],
+    });
+    expect(advancedCharacters).toBeLessThan(600);
+    expect(next.height).toBe(eager.height);
+    advancedCharacters = 0;
+    buildDiffDocumentModel({
+      ...base,
+      reuseFrom: [next],
+      materializationWindow: { top: FILE_HEADER_HEIGHT, height: 54 },
+    });
+    expect(advancedCharacters).toBe(0);
+  });
+
   it("does not imperatively scroll for a no-op relayout", () => {
     expect(shouldApplyRelayoutScroll(320, 320)).toBe(false);
     expect(shouldApplyRelayoutScroll(320, 320.4)).toBe(false);

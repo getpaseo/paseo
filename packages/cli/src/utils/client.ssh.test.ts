@@ -47,7 +47,9 @@ describe("CLI SSH transport", () => {
   });
 
   it("routes an SSH host through a local tunnel", async () => {
-    await connectToDaemon({ host: "ssh://deploy@build-box:2222?daemonPort=7777" });
+    await connectToDaemon({
+      target: { kind: "endpoint", host: "ssh://deploy@build-box:2222?daemonPort=7777" },
+    });
 
     expect(mocks.createSshTunnel).toHaveBeenCalledWith({
       host: "deploy@build-box",

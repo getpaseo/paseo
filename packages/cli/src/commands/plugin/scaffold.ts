@@ -20,7 +20,7 @@ const TSCONFIG = {
   include: ["**/*.ts", "**/*.tsx"],
 };
 
-const CLIENT_ENTRY = `import type { PluginClientContext } from "@getpaseo/plugin";
+const CLIENT_ENTRY = `import type { PluginClientContext } from "@getpaseo/plugin/client";
 import { GreetingSurface } from "./client/greeting";
 
 export default function contribute(client: PluginClientContext) {
@@ -35,7 +35,7 @@ export default function contribute(client: PluginClientContext) {
 }
 `;
 
-const SERVER_ENTRY = `import type { PluginServerContext } from "@getpaseo/plugin";
+const SERVER_ENTRY = `import type { PluginServerContext } from "@getpaseo/plugin/server";
 import { createGreeting } from "./server/greeting";
 import { greetingRpc } from "./shared/greeting";
 
@@ -63,8 +63,8 @@ export function createGreeting({ name }: RpcInput<typeof greetingRpc>) {
 }
 `;
 
-const CLIENT_GREETING = `import type { PluginSurfaceProps } from "@getpaseo/plugin";
-import { useRpc } from "@getpaseo/plugin";
+const CLIENT_GREETING = `import type { PluginSurfaceProps } from "@getpaseo/plugin/client";
+import { useRpc } from "@getpaseo/plugin/client";
 import { useMutation } from "@tanstack/react-query";
 import { useMemo } from "react";
 import { Pressable, Text, View } from "react-native";

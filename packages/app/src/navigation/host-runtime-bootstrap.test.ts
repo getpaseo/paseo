@@ -397,10 +397,10 @@ describe("resolveHostIndexRoute", () => {
 
 describe("host runtime app lifecycle", () => {
   it.each(["inactive", "background"] as const)(
-    "starts with reconnect disabled when mounted %s",
+    "applies initial visibility and forwards lifecycle changes when mounted %s",
     (currentState) => {
       const visibility: boolean[] = [];
-      let listener: ((state: "active" | "background") => void) | undefined;
+      let listener: ((state: "active" | "inactive" | "background") => void) | undefined;
       let subscribed = true;
       const dispose = bindHostRuntimeAppState(
         { setAppVisible: (visible) => visibility.push(visible) },
@@ -418,8 +418,10 @@ describe("host runtime app lifecycle", () => {
       );
       expect(visibility).toEqual([false]);
       listener?.("active");
+      listener?.("inactive");
       listener?.("background");
-      expect(visibility).toEqual([false, true, false]);
+      listener?.("active");
+      expect(visibility).toEqual([false, true, false, false, true]);
       dispose();
       expect(subscribed).toBe(false);
     },

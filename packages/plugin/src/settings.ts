@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { output, ZodType } from "zod";
+import type { ZodType } from "zod";
 import { defineRpc } from "./rpc.js";
 
 export interface SettingsDefinition<Schema extends ZodType = ZodType> {
@@ -49,17 +49,3 @@ export function settingsRpc(id: string) {
     }),
   };
 }
-
-export type SettingsState<Schema extends ZodType> = (
-  | { status: "loading" }
-  | { status: "error"; error: string }
-  | { status: "invalid"; error: string; revision: string }
-  | { status: "ready"; values: output<Schema>; revision: string }
-) & {
-  saving: boolean;
-  saveError: string | null;
-  /** Save an entire document against the revision currently displayed. Never throws. */
-  save(values: output<Schema>, revision: string): Promise<boolean>;
-  reset(): Promise<boolean>;
-  reload(): Promise<void>;
-};

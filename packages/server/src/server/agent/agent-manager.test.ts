@@ -19,6 +19,7 @@ import { toAgentPayload } from "./agent-projections.js";
 import { projectTimelineRows } from "./timeline-projection.js";
 import { getOpenAgentTabLabel, PARENT_AGENT_ID_LABEL } from "@getpaseo/protocol/agent-labels";
 import { formatSystemNotificationPrompt, startAgentRun } from "./agent-prompt.js";
+import { StaleProviderSessionError } from "./stale-provider-session-error.js";
 import { ensureAgentLoaded, ensureUnarchivedAgentLoaded } from "./agent-loading.js";
 import type { StoredAgentRecord } from "./agent-storage.js";
 import type {
@@ -66,6 +67,12 @@ function deferred<T>(): Deferred<T> {
     reject = rej;
   });
   return { promise, resolve, reject };
+}
+
+async function drainAsyncGenerator<T>(generator: AsyncGenerator<T>): Promise<void> {
+  for await (const _ of generator) {
+    // Drain provider events while AgentManager subscribers observe them.
+  }
 }
 
 function waitForAgentLifecycle(
@@ -517,6 +524,32 @@ class TestAgentSession implements AgentSession {
   }
 
   async close(): Promise<void> {}
+}
+
+class ResumeTrackingTestAgentClient extends TestAgentClient {
+  private readonly retryStarted = deferred<void>();
+
+  override async resumeSession(
+    _handle: AgentPersistenceHandle,
+    config?: Partial<AgentSessionConfig>,
+  ): Promise<AgentSession> {
+    this.resumeOverrides.push(config);
+    const signalRetryStarted = () => this.retryStarted.resolve();
+    return new (class extends TestAgentSession {
+      override async startTurn(): Promise<{ turnId: string }> {
+        signalRetryStarted();
+        return await super.startTurn();
+      }
+    })({
+      provider: this.provider,
+      cwd: config?.cwd ?? process.cwd(),
+      daemonAppendSystemPrompt: config?.daemonAppendSystemPrompt,
+    });
+  }
+
+  waitForRetryStart(): Promise<void> {
+    return this.retryStarted.promise;
+  }
 }
 
 class McpCapableTestAgentSession extends TestAgentSession {
@@ -2487,6 +2520,8 @@ test.each(["hang", "reject"])(
       expect(client.resumeSessionCalls).toBe(0);
       expect(manager.getAgent(snapshot.id)?.session).toBe(client.firstSession);
     } finally {
+      await manager.flush();
+      await storage.flush();
       rmSync(workdir, { recursive: true, force: true });
     }
   },
@@ -3673,6 +3708,201 @@ test("updateProviderRegistry removes providers omitted from the next registry", 
     }),
   ).rejects.toThrow("Unknown provider 'zai-claude'");
   expect(removedClient.createSessionCalls).toBe(0);
+});
+
+test("retires loaded agents when their plugin provider is replaced", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-plugin-provider-reload-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const provider = "plugin-provider";
+
+  class OriginalPluginClient extends TestAgentClient {
+    session: CloseRecordingTestAgentSession | null = null;
+
+    constructor() {
+      super(provider);
+    }
+
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      const session = new CloseRecordingTestAgentSession(config);
+      session.describePersistence = () => ({
+        provider,
+        sessionId: "plugin-session",
+      });
+      this.session = session;
+      return session;
+    }
+  }
+
+  const original = new OriginalPluginClient();
+  const replacement = new TestAgentClient(provider);
+  const manager = new AgentManager({
+    clients: { [provider]: original },
+    providerDefinitions: { [provider]: { enabled: true } },
+    registry: storage,
+    logger,
+  });
+  const created = await manager.createAgent({ provider, cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+
+  try {
+    manager.updateProviderRegistry({
+      providerDefinitions: { [provider]: { enabled: true } },
+      clients: { [provider]: replacement },
+      retiredProviders: [provider],
+    });
+
+    await manager.waitForAgentClose(created.id);
+    expect(original.session?.closed).toBe(true);
+    expect(manager.getAgent(created.id)).toBeNull();
+
+    const resumed = await ensureAgentLoaded(created.id, {
+      agentManager: manager,
+      agentStorage: storage,
+      logger,
+    });
+    expect(resumed.id).toBe(created.id);
+    expect(replacement.resumeOverrides).toEqual([
+      expect.objectContaining({ cwd: workdir, provider }),
+    ]);
+  } finally {
+    await manager.closeAgent(created.id).catch(() => undefined);
+    await manager.flush().catch(() => undefined);
+    await storage.flush().catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("a prompt after provider replacement reopens the stale session", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-stale-prompt-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const provider = "plugin-provider";
+
+  class StalePluginSession extends CloseRecordingTestAgentSession {
+    override async startTurn(): Promise<{ turnId: string }> {
+      throw new StaleProviderSessionError("stale-bridge");
+    }
+  }
+
+  class StalePluginClient extends TestAgentClient {
+    constructor() {
+      super(provider);
+    }
+
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      const session = new StalePluginSession(config);
+      session.describePersistence = () => ({
+        provider,
+        sessionId: "plugin-session",
+      });
+      return session;
+    }
+  }
+
+  const staleClient = new StalePluginClient();
+  const replacement = new ResumeTrackingTestAgentClient(provider);
+  const manager = new AgentManager({
+    clients: { [provider]: staleClient },
+    providerDefinitions: { [provider]: { enabled: true } },
+    registry: storage,
+    logger,
+  });
+  const created = await manager.createAgent({ provider, cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+
+  try {
+    manager.updateProviderRegistry({
+      providerDefinitions: { [provider]: { enabled: true } },
+      clients: { [provider]: replacement },
+    });
+
+    const dispatch = await startAgentRun(manager, created.id, "continue after reload", logger);
+    expect(dispatch.disposition).toBe("turn_started");
+    await replacement.waitForRetryStart();
+    const result = await manager.waitForAgentEvent(created.id);
+    expect(result.status).toBe("idle");
+    expect(replacement.resumeOverrides).toHaveLength(1);
+  } finally {
+    await manager.closeAgent(created.id).catch(() => undefined);
+    await manager.flush().catch(() => undefined);
+    await storage.flush().catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("a replacement prompt recovers when the retired session fails to start", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-stale-replacement-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const provider = "plugin-provider";
+
+  class StaleReplacementSession extends TestAgentSession {
+    private starts = 0;
+
+    override async startTurn(): Promise<{ turnId: string }> {
+      this.starts += 1;
+      if (this.starts > 1) throw new StaleProviderSessionError("stale-bridge");
+      return { turnId: "initial-turn" };
+    }
+
+    override async interrupt(): Promise<void> {
+      if (this.starts > 1) throw new StaleProviderSessionError("stale-bridge");
+      this.pushEvent({
+        type: "turn_canceled",
+        provider: this.provider,
+        turnId: "initial-turn",
+      });
+    }
+  }
+
+  class StaleReplacementClient extends TestAgentClient {
+    constructor() {
+      super(provider);
+    }
+
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      const session = new StaleReplacementSession(config);
+      session.describePersistence = () => ({ provider, sessionId: "plugin-session" });
+      return session;
+    }
+  }
+
+  const replacement = new ResumeTrackingTestAgentClient(provider);
+  const manager = new AgentManager({
+    clients: { [provider]: new StaleReplacementClient() },
+    providerDefinitions: { [provider]: { enabled: true } },
+    registry: storage,
+    logger,
+    rescueTimeouts: { interruptSessionMs: 20 },
+  });
+  const created = await manager.createAgent({ provider, cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+
+  try {
+    const initial = manager.streamAgent(created.id, "initial");
+    void drainAsyncGenerator(initial);
+    await manager.waitForAgentRunStart(created.id);
+
+    manager.updateProviderRegistry({
+      providerDefinitions: { [provider]: { enabled: true } },
+      clients: { [provider]: replacement },
+    });
+
+    const dispatch = await startAgentRun(manager, created.id, "replacement", logger, {
+      replaceRunning: true,
+    });
+    expect(dispatch.disposition).toBe("turn_started");
+    await replacement.waitForRetryStart();
+    const result = await manager.waitForAgentEvent(created.id);
+    expect(result.status).toBe("idle");
+    expect(replacement.resumeOverrides).toHaveLength(1);
+  } finally {
+    await manager.closeAgent(created.id).catch(() => undefined);
+    await manager.flush().catch(() => undefined);
+    await storage.flush().catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
 });
 
 test("createAgent passes explicit model strings through to the provider", async () => {
@@ -4915,6 +5145,56 @@ test("archiveSnapshot dispatches archived state for stored-only agents", async (
   const last = events[events.length - 1];
   expect(last.id).toBe(created.id);
   expect(last.lifecycle).toBe("closed");
+});
+
+test("markAgentUnread dispatches stored attention to every subscriber", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-mark-unread-dispatch-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const manager = new AgentManager({
+    clients: { codex: new TestAgentClient() },
+    registry: storage,
+    logger,
+  });
+  const created = await manager.createAgent(
+    { provider: "codex", cwd: workdir, title: "Stored unread dispatch" },
+    undefined,
+    { workspaceId: "workspace-1" },
+  );
+  await manager.closeAgent(created.id);
+
+  const firstClientEvents: ManagedAgent[] = [];
+  const secondClientEvents: ManagedAgent[] = [];
+  for (const events of [firstClientEvents, secondClientEvents]) {
+    manager.subscribe(
+      (event) => {
+        if (event.type === "agent_state" && event.agent.id === created.id) {
+          events.push(event.agent);
+        }
+      },
+      { replayState: false },
+    );
+  }
+
+  await manager.markAgentUnread(created.id);
+
+  for (const events of [firstClientEvents, secondClientEvents]) {
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      id: created.id,
+      lifecycle: "closed",
+      workspaceId: "workspace-1",
+      attention: {
+        requiresAttention: true,
+        attentionReason: "finished",
+        attentionTimestamp: expect.any(Date),
+      },
+    });
+  }
+  expect(await storage.get(created.id)).toMatchObject({
+    requiresAttention: true,
+    attentionReason: "finished",
+    attentionTimestamp: expect.any(String),
+  });
 });
 
 test("reloadAgentSession cancels active run and resumes existing session once thread_started is observed", async () => {
@@ -7761,6 +8041,53 @@ test("fires onAgentArchived for stored-only snapshot archives", async () => {
 
   await manager.archiveSnapshot(storedOnly.id, new Date().toISOString());
   expect(archivedIds).toEqual([storedOnly.id]);
+});
+
+test("native archive and restore release the loaded session writer", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-native-archive-writer-"));
+  class WriterClient extends NativeArchiveRecordingClient {
+    session: CloseRecordingTestAgentSession | undefined;
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      this.session = new CloseRecordingTestAgentSession(config);
+      return this.session;
+    }
+    override async resumeSession(
+      _handle: AgentPersistenceHandle,
+      config?: Partial<AgentSessionConfig>,
+    ): Promise<AgentSession> {
+      return this.createSession({ provider: "codex", cwd: workdir, ...config });
+    }
+    override async archiveNativeSession(handle: AgentPersistenceHandle): Promise<void> {
+      if (!this.session?.closed) throw new Error("native thread has an active writer");
+      await super.archiveNativeSession(handle);
+    }
+    override async unarchiveNativeSession(handle: AgentPersistenceHandle): Promise<void> {
+      if (!this.session?.closed) throw new Error("native thread has an active writer");
+      await super.unarchiveNativeSession(handle);
+    }
+  }
+  const client = new WriterClient();
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const manager = new AgentManager({ clients: { codex: client }, registry: storage, logger });
+  try {
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    await manager.archiveAgent(agent.id);
+    expect(client.archivedHandles).toHaveLength(1);
+    // Opening archived history can retain a writer, including records archived by older daemons.
+    await ensureAgentLoaded(agent.id, { agentManager: manager, agentStorage: storage, logger });
+    expect(client.session?.closed).toBe(false);
+    await manager.unarchiveSnapshot(agent.id);
+    expect(client.unarchivedHandles).toHaveLength(1);
+    expect((await storage.get(agent.id))?.archivedAt).toBeNull();
+    expect(client.session?.closed).toBe(true);
+    await ensureAgentLoaded(agent.id, { agentManager: manager, agentStorage: storage, logger });
+    expect(client.session?.closed).toBe(false);
+  } finally {
+    for (const agent of manager.listAgents()) await manager.closeAgent(agent.id);
+    rmSync(workdir, { recursive: true, force: true });
+  }
 });
 
 test("unarchiveSnapshot skips native provider unarchive for active records", async () => {

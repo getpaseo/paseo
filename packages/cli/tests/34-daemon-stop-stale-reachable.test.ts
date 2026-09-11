@@ -1,8 +1,8 @@
 #!/usr/bin/env npx tsx
 
 /**
- * Regression: `paseo daemon stop` must stop a reachable daemon even when the
- * local pid file points at a dead supervisor owner.
+ * Regression: `paseo daemon stop` must leave a reachable daemon alone when the
+ * selected home points at a dead supervisor owner.
  */
 
 import assert from "node:assert";
@@ -12,6 +12,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { $ } from "zx";
+import { connectToDaemon } from "../src/utils/client.js";
 import { getAvailablePort } from "./helpers/network.ts";
 
 $.verbose = false;
@@ -146,21 +147,24 @@ try {
 
   await waitFor(
     async () => {
-      const status = await readDaemonStatus(paseoHome);
-      return status.localDaemon === "stale_pid" && status.connectedDaemon === "reachable";
+      try {
+        const client = await connectToDaemon({ target: { kind: "endpoint", host }, timeout: 500 });
+        await client.close();
+        return true;
+      } catch {
+        return false;
+      }
     },
     120000,
-    "daemon did not enter stale_pid + reachable state in time",
+    "unowned worker did not become reachable in time",
   );
 
   const statusBeforeStop = await readDaemonStatus(paseoHome);
-  assert.strictEqual(statusBeforeStop.pid, stalePid, "status should report the stale owner pid");
+  assert.strictEqual(statusBeforeStop.pid, null, "status should not claim a dead owner is running");
   assert(workerProcess.pid && isProcessRunning(workerProcess.pid), "worker should be running");
   console.log(`✓ fixture has stale pid ${stalePid} and live worker ${workerProcess.pid}\n`);
 
-  console.log(
-    "Test 2: `paseo daemon stop` should stop reachable worker instead of saying not_running",
-  );
+  console.log("Test 2: home-selected stop leaves the unowned reachable worker running");
   const stopResult =
     await $`PASEO_HOME=${paseoHome} PASEO_LOCAL_SPEECH_AUTO_DOWNLOAD=${testEnv.PASEO_LOCAL_SPEECH_AUTO_DOWNLOAD} PASEO_DICTATION_ENABLED=${testEnv.PASEO_DICTATION_ENABLED} PASEO_VOICE_MODE_ENABLED=${testEnv.PASEO_VOICE_MODE_ENABLED} npx paseo daemon stop --home ${paseoHome} --json`.nothrow();
   assert.strictEqual(stopResult.exitCode, 0, `stop should succeed: ${stopResult.stderr}`);
@@ -169,22 +173,11 @@ try {
     pid?: unknown;
     message?: unknown;
   };
-  assert.strictEqual(stopJson.action, "stopped", "stop should report stopped action");
-  assert.strictEqual(
-    stopJson.pid,
-    String(stalePid),
-    "stop should report the stale pid it recovered from",
-  );
-  assert.strictEqual(
-    stopJson.message,
-    "Daemon stopped gracefully",
-    "stop should route through lifecycle shutdown",
-  );
-
-  await waitFor(
-    () => !isProcessRunning(workerProcess?.pid ?? -1),
-    15000,
-    "worker remained running after stop",
+  assert.strictEqual(stopJson.action, "not_running");
+  assert.strictEqual(stopJson.pid, stalePid);
+  assert(
+    workerProcess.pid && isProcessRunning(workerProcess.pid),
+    "stop must not contact the stale endpoint",
   );
   assert.strictEqual(existsSync(pidPath), false, "stale pid file should be removed after stop");
   console.log("✓ stop recovered stale supervisor pid state\n");

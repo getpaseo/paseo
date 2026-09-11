@@ -1,4 +1,4 @@
-import type { PluginServerContext } from "@getpaseo/plugin";
+import type { PluginServerContext } from "@getpaseo/plugin/server";
 import { latestOutputText, shellCommand } from "./server/inspect";
 
 export default function contribute(server: PluginServerContext) {

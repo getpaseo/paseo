@@ -12,6 +12,7 @@ export const ru: TranslationResources = {
       copy: "Копировать",
       copyLine: "Копировать строку",
       dismiss: "Отклонить",
+      reload: "Перезагрузить",
       retry: "Повторить",
       search: "Поиск",
       select: "Выбрать",
@@ -1057,6 +1058,16 @@ export const ru: TranslationResources = {
       updateHost: "Обновите этот хост для управления метками.",
     },
   },
+  changelog: {
+    title: "Что нового",
+    installed: "Установлена",
+    showMore: "Показать ещё",
+    openWebsite: "Полный список изменений",
+    error: {
+      title: "Не удалось загрузить список изменений",
+      description: "Проверьте подключение и попробуйте снова.",
+    },
+  },
   sidebar: {
     display: {
       trigger: "Настройки отображения",
@@ -1280,6 +1291,7 @@ export const ru: TranslationResources = {
       detail: "Остановка локального демона.",
     },
     daemon: {
+      lifecycle: en.desktop.daemon.lifecycle,
       title: "Демон",
       status: {
         title: "Статус",
@@ -2102,6 +2114,7 @@ export const ru: TranslationResources = {
     about: {
       title: "О приложении",
       appVersion: "Версия приложения",
+      whatsNewHint: "Заметки о выпуске для каждой версии",
       thisDevice: "Это устройство",
       connectedHosts: "Подключенные хосты",
       offline: "Оффлайн",

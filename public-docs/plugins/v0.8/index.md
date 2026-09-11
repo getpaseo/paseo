@@ -1,15 +1,15 @@
 ---
 title: Plugin quickstart
 description: Build, install, share, and update a trusted Paseo plugin.
-nav: Paseo v0.8 — Preview
+nav: Paseo v0.8 — Beta
 order: 46
 category: Plugins
 ---
 
 # Plugin quickstart
 
-> **For the upcoming Paseo v0.8 release.** Use the [current v0.7 docs](/docs/plugins/v0.7)
-> unless you are preparing a plugin for v0.8.
+> **For Paseo v0.8 beta.** Use the [v0.7 docs](/docs/plugins/v0.7)
+> if you run the stable release.
 
 > **Experimental:** The plugin API is still evolving, so expect breaking changes and updates to
 > your plugins as Paseo evolves. See the [plugin roadmap](https://github.com/getpaseo/paseo/labels/plugins)
@@ -64,7 +64,7 @@ Each entry default-exports one function that registers contributions and returns
 function. `index.client.tsx` registers the surface and the sidebar item that opens it:
 
 ```tsx
-import type { PluginClientContext } from "@getpaseo/plugin";
+import type { PluginClientContext } from "@getpaseo/plugin/client";
 import { GreetingSurface } from "./client/greeting";
 
 export default function contribute(client: PluginClientContext) {
@@ -82,7 +82,7 @@ export default function contribute(client: PluginClientContext) {
 `index.server.ts` registers the handler for the contract in `shared/greeting.ts`:
 
 ```ts
-import type { PluginServerContext } from "@getpaseo/plugin";
+import type { PluginServerContext } from "@getpaseo/plugin/server";
 import { createGreeting } from "./server/greeting";
 import { greetingRpc } from "./shared/greeting";
 
@@ -135,7 +135,7 @@ daemon-side output, including load errors.
 A workspace panel opens as a tab next to agents, terminals, and files. Create `client/overview.tsx`:
 
 ```tsx
-import { type PluginWorkspacePanelProps, useWorkspace } from "@getpaseo/plugin";
+import { type PluginWorkspacePanelProps, useWorkspace } from "@getpaseo/plugin/client";
 import { useMemo } from "react";
 import { Text, View } from "react-native";
 

@@ -49,6 +49,7 @@ function installed(serverId: string, themes: PluginThemeContribution[]): Install
     cleanup: () => undefined,
     serverId,
     clientBundle: serverId,
+    lifetime: new AbortController(),
     queryClient: new QueryClient(),
     settingsScreens: [],
     surfaces: [],

@@ -1,5 +1,5 @@
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
-import type { PluginClientOpenPanelOptions } from "@getpaseo/plugin";
+import type { PluginClientOpenPanelOptions } from "@getpaseo/plugin/client";
 import {
   createPluginAgentActionContext,
   createPluginCapabilities,
@@ -8,7 +8,7 @@ import {
 import { createPluginClientStateSource } from "./client-state/source";
 import type { PluginClientRuntime } from "./evaluate";
 import { createPluginNavigation } from "./navigation";
-import { pluginComposerPillStore } from "./composer-pills/store";
+import { pluginButtonStore } from "./buttons";
 import { createPluginSurfaceRuntime } from "./surface-runtime";
 import type { InstalledPlugin } from "./types";
 
@@ -16,7 +16,7 @@ export function createPluginClientRuntime(
   installation: InstalledPlugin,
   daemonClient: DaemonClient,
 ): PluginClientRuntime {
-  const runtime = createPluginSurfaceRuntime(daemonClient, installation.id);
+  const runtime = createPluginSurfaceRuntime(daemonClient, installation);
   if (!runtime) throw new Error("Plugin host is offline");
   const state = createPluginClientStateSource(installation.serverId);
   const capabilities = createPluginCapabilities(
@@ -27,7 +27,10 @@ export function createPluginClientRuntime(
   return {
     ...capabilities,
     addComposerPill(contribution) {
-      return pluginComposerPillStore.add(installation, contribution);
+      return pluginButtonStore.addComposerPill(installation, contribution);
+    },
+    addHeaderButton(contribution) {
+      return pluginButtonStore.addHeaderButton(installation, contribution);
     },
     openPanel(panelId, options) {
       openClientPanel({ installation, runtime, state, panelId, options });

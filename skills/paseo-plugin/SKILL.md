@@ -105,7 +105,7 @@ Default-export one contribution function from each entry and return cleanup:
 
 ```tsx
 // index.client.tsx
-import type { PluginClientContext } from "@getpaseo/plugin";
+import type { PluginClientContext } from "@getpaseo/plugin/client";
 
 export default function contribute(client: PluginClientContext) {
   // Register components and client callbacks here.
@@ -115,7 +115,7 @@ export default function contribute(client: PluginClientContext) {
 
 ```ts
 // index.server.ts
-import type { PluginServerContext } from "@getpaseo/plugin";
+import type { PluginServerContext } from "@getpaseo/plugin/server";
 
 export default function contribute(server: PluginServerContext) {
   // Register daemon-side RPC handlers here.
@@ -139,7 +139,7 @@ import {
   type PluginClientContext,
   type PluginWorkspacePanelProps,
   useWorkspace,
-} from "@getpaseo/plugin";
+} from "@getpaseo/plugin/client";
 import { useMemo } from "react";
 import { Text, View } from "react-native";
 
@@ -195,7 +195,7 @@ the active workspace or agent. Command callbacks receive the selected host's `pa
 Plugin surfaces use React Native primitives and work across desktop, browser, iOS, and Android. Register the surface before its sidebar item. Color text from `theme.colors` and pad from `layout.compact`.
 
 ```tsx
-import type { PluginClientContext, PluginSurfaceProps } from "@getpaseo/plugin";
+import type { PluginClientContext, PluginSurfaceProps } from "@getpaseo/plugin/client";
 import { useMemo, useState } from "react";
 import { Pressable, Text, View } from "react-native";
 
@@ -244,13 +244,12 @@ export default function contribute(client: PluginClientContext) {
 
 Icons are Lucide icon names. `theme` is a typed `PluginTheme` on every surface and panel. Primary text uses `theme.colors.foreground`; labels use `theme.colors.foregroundMuted`; the root view uses `theme.colors.surface0`. `layout.compact` is true on mobile and narrow windows. Paseo owns the route, header, host picker, close action, error boundary, and per-installation query client.
 
-Client code may import `react`, `react-native`, `@tanstack/react-query`, `zod`, `@getpaseo/plugin`, and `@getpaseo/plugin/react-native`. Install dependencies locally for typechecking; Paseo supplies these runtime modules. JSX compiles with the automatic runtime, so no `React` import is needed for JSX. Importing a `node:` module from client code is a compile error.
-
-| Module                          | Use it for                                                                                               |
-| ------------------------------- | -------------------------------------------------------------------------------------------------------- |
-| `@getpaseo/plugin`              | contribution contracts, shared definitions, RPC input/output types, `usePaseo`, `useRpc`, and data hooks |
-| `@getpaseo/plugin/react-native` | Paseo UI: `Icon`, `Modal`, `useToast`, `useRevealedText`                                                 |
-| `@getpaseo/plugin/server`       | handler-only types such as `PluginHandlerContext`                                                        |
+Before writing imports, classify each module as shared, client, or server. Follow the
+[SDK import boundaries](https://paseo.sh/docs/plugins/v0.8/reference.md#runtime-modules), including
+transitive and type dependencies. The root is shared-only; hooks and client contexts belong to
+`@getpaseo/plugin/client`, server contexts to `/server`, and host UI to `/client/react-native` or `/client/ui`.
+Install dependencies locally for typechecking; Paseo supplies host runtime modules. JSX uses the
+automatic runtime. Do not import `/client/host` from plugin code.
 
 ## Works on mobile
 
@@ -281,7 +280,7 @@ Use the existing Paseo SDK for normal Paseo operations. Use plugin RPC only for 
 `usePaseo()` borrows the selected host's current connection. Never create another client inside a surface.
 
 ```tsx
-import { usePaseo } from "@getpaseo/plugin";
+import { usePaseo } from "@getpaseo/plugin/client";
 
 function PullRequestAction() {
   const paseo = usePaseo();
@@ -338,7 +337,7 @@ export async function createGreeting({ name }: RpcInput<typeof greeting>) {
 
 ```ts
 // index.server.ts
-import type { PluginServerContext } from "@getpaseo/plugin";
+import type { PluginServerContext } from "@getpaseo/plugin/server";
 import { createGreeting } from "./server/greeting";
 import { greeting } from "./shared/greeting";
 
@@ -350,7 +349,7 @@ export default function contribute(server: PluginServerContext) {
 
 ```tsx
 // client/greeting.tsx
-import { useRpc } from "@getpaseo/plugin";
+import { useRpc } from "@getpaseo/plugin/client";
 import { greeting } from "../shared/greeting";
 
 function Greeting() {
@@ -422,7 +421,7 @@ const issues = defineAttachmentSource({
 
 ```ts
 // index.server.ts
-import type { PluginServerContext } from "@getpaseo/plugin";
+import type { PluginServerContext } from "@getpaseo/plugin/server";
 import { searchIssues } from "./shared/issues";
 
 export default function contribute(server: PluginServerContext) {
@@ -433,7 +432,7 @@ export default function contribute(server: PluginServerContext) {
 
 ```tsx
 // index.client.tsx
-import type { PluginClientContext } from "@getpaseo/plugin";
+import type { PluginClientContext } from "@getpaseo/plugin/client";
 import { issues } from "./shared/issues";
 
 export default function contribute(client: PluginClientContext) {
@@ -519,7 +518,7 @@ client.addTimelineRenderer({
 });
 ```
 
-Transformers run while the render model is built, on fetched history and on every live update, so `phase` is `"streaming"` for a loading thought or running tool call. Identity comes from the source item, so a streaming item keeps its mounted component; set an output `id` when one source explodes into several items. Transformers must be synchronous and deterministic, `data` must be JSON, and a transformer that throws is logged and skipped. Use `useRevealedText(text, phase)` from `@getpaseo/plugin/react-native` to pace streaming text. `plugin-examples/inline-thinking` replaces the thinking row with inline text; `plugin-examples/timeline-items` replaces a Pi todo tool call with a task card.
+Transformers run while the render model is built, on fetched history and on every live update, so `phase` is `"streaming"` for a loading thought or running tool call. Identity comes from the source item, so a streaming item keeps its mounted component; set an output `id` when one source explodes into several items. Transformers must be synchronous and deterministic, `data` must be JSON, and a transformer that throws is logged and skipped. Use `useRevealedText(text, phase)` from `@getpaseo/plugin/client/react-native` to pace streaming text. `plugin-examples/inline-thinking` replaces the thinking row with inline text; `plugin-examples/timeline-items` replaces a Pi todo tool call with a task card.
 
 ## Append a timeline row from the daemon
 

@@ -1,12 +1,12 @@
 ---
-title: CLI
+title: CLI reference
 description: "Paseo CLI reference: manage projects, workspaces, agents, plugins, scripts, schedules, daemons, and permissions from your terminal."
-nav: CLI
-order: 3
-category: Getting started
+nav: CLI reference
+order: 35
+category: Orchestration
 ---
 
-# CLI
+# CLI reference
 
 The Paseo CLI lets you manage agents from your terminal. It's the same interface exposed by the daemon's API, so anything you can do in the app you can do from the command line.
 
@@ -193,10 +193,10 @@ behavior.
 ## Listing agents
 
 ```bash
-paseo ls                    # Running agents in current directory
-paseo ls -a                 # Include completed/stopped agents
-paseo ls -g                 # All directories
-paseo ls -a -g --json       # Full list as JSON
+paseo ls                    # Non-archived agents in active workspaces
+paseo ls -a                 # Also include archived agents
+paseo ls -g                 # Non-archived agents across all workspaces
+paseo ls -a -g --json       # All agents, including archived, as JSON
 ```
 
 ## Streaming output
@@ -212,6 +212,8 @@ Agent IDs can be shortened, `abc` works if it's unambiguous.
 ## Sending messages
 
 Send follow-up tasks to a running or idle agent:
+
+Use the recipient's agent ID from `paseo ls`, or [copy it from the agent's tab](/docs/orchestration-workflows#send-a-prompt-to-another-agent).
 
 ```bash
 paseo send <id> "now run the tests"
@@ -274,42 +276,80 @@ Detaching is an explicit lifecycle action, not a creation flag. The agent keeps 
 
 ## Daemon management
 
+Define an instance once, then start its saved configuration:
+
 ```bash
-paseo daemon start             # Start the daemon
-paseo daemon start --web-ui    # Start and serve the bundled web UI
-paseo daemon status            # Check status
-paseo reload                    # Reload config.json (top-level alias)
-paseo daemon reload             # Reload config.json
-paseo daemon stop              # Stop the daemon
+paseo daemon config set daemon.listen 127.0.0.1:6799 --home ~/paseo-test
+paseo daemon config set daemon.relay.enabled false --home ~/paseo-test
+paseo daemon start --home ~/paseo-test
+paseo project ls --home ~/paseo-test
+paseo daemon restart --home ~/paseo-test
+paseo daemon stop --home ~/paseo-test
 ```
 
-Reload validates the whole file, applies runtime-safe changes, and reports `appliedPaths`, `restartRequiredPaths`, and `overrideControlledPaths`. Human output prints `paseo daemon restart` only when a changed setting needs it. Use `--json` or `--format yaml` for the structured result. Run `paseo --host <target> reload` to reload a remote daemon's own configuration file. An older host that does not support reload returns an update-host error.
+`start` runs in the background and reports the actual listening address and supervisor PID. It accepts only home selection and `--timeout <seconds>` (default 600). If waiting times out, the supervisor remains running: use the printed status, log, and stop instructions. A worker that exits before becoming ready makes startup fail.
 
-Use `PASEO_HOME` to run multiple isolated daemon instances.
+`restart` requests a replacement worker from the existing supervisor. It rereads the file and retains the supervisor's original environment and arguments. Success confirms a different ready worker, following a changed address for a home target. It never starts a stopped daemon or refreshes the supervisor binary. A timeout reports whether the request was acknowledged; it does not prove why reconnection failed.
+
+`stop --home` waits for that local supervisor to exit. On POSIX it signals the supervisor without contacting a TCP endpoint. On Windows it uses the ready daemon's shutdown RPC; an unbound instance requires explicit `--force`. `--force` permits forced process-tree cleanup after the graceful timeout (default 15 seconds). `stop --host` only reports **shutdown requested**; remote process exit is not verified. A service manager may start another instance after the captured supervisor exits.
+
+`status` separates local supervisor state, its published endpoint, the configured address, and RPC reachability. A stopped home is never probed at its configured address. An unbound live supervisor is **not ready**. If an authenticated local connection remains open but status details time out, the result stays `reachable` with a note explaining the unavailable details. Worker and provider fields are omitted. An explicit `--host` query still fails when its status request fails.
+
+`reload` validates the file, applies runtime-safe changes, and reports `appliedPaths`, `restartRequiredPaths`, and `overrideControlledPaths`. It never implicitly restarts. Use `--json` or `--format yaml` for structured results. An older host lacking the capability reports that it needs an update.
+
+The root aliases `start`, `status`, `restart`, `reload`, and `pair` use the same commands as `daemon`. Root `run` and `stop` remain agent operations.
+
+### Foreground deployments and migration
+
+Use environment overrides with the foreground deployment command:
+
+```bash
+PASEO_LISTEN=127.0.0.1:6799 PASEO_RELAY_ENABLED=false paseo daemon run --home ~/paseo-test
+```
+
+It stays attached until the supervisor exits or you cancel, without a readiness timeout. Worker restart retains these launch inputs. Stop and relaunch the deployment to change them. If the home already has a live supervisor, `run` returns `already_running` without owning or launching a foreground process.
+
+Managed `start` ignores inherited daemon-setting overrides, including `PORT`, `PASEO_LISTEN`, relay, voice, and web UI settings. It preserves provider credentials and executable/runtime controls. `start --foreground` is removed; use `daemon run`. Former start/restart configuration flags such as `--port`, `--no-relay`, and `--web-ui` fail before side effects, with the corresponding `config set` migration. See [configuration edits](/docs/configuration#apply-changes).
+
+### Select one daemon
+
+Every daemon-connected CLI command accepts global `--home` or `--host`, before or after the command. A home selects a local supervisor's published endpoint; a host selects an explicit endpoint. There is no configured-address or default-port fallback.
+
+| Selectors                                  | Result                                                 |
+| ------------------------------------------ | ------------------------------------------------------ |
+| `--home`                                   | That local home, overriding both environment selectors |
+| `--host`                                   | That endpoint, overriding both environment selectors   |
+| Both flags, or conflicting duplicate flags | `TARGET_AMBIGUOUS`                                     |
+| Only `PASEO_HOME` or only `PASEO_HOST`     | The corresponding target                               |
+| Both environment selectors, without a flag | `TARGET_AMBIGUOUS`                                     |
+| Neither                                    | Default local home, `~/.paseo`                         |
+
+Local-only `start`, `daemon run`, `config`, `onboard`, and `set-password` reject explicit `--host` and ignore `PASEO_HOST`. Endpoint operations retain TCP, Unix socket, Windows pipe, SSH, and pairing-offer transports. A host-side CLI controlling a container needs `--host` or `PASEO_HOST`.
 
 ## Hub
 
 ```bash
 paseo hub login [url]          # Approve and store organization-scoped CLI access
-paseo hub init                 # Guided setup: scaffold and deploy a starter bundle here
+paseo hub init                 # Create and optionally deploy a starter trigger here
 paseo hub connect [url]        # Enroll this daemon using CLI access
-paseo hub projects             # List projects in the authenticated organization
+paseo hub projects             # List legacy projects in the authenticated organization
 paseo hub status               # Show the current Hub relationship
 paseo hub disconnect           # End it
-paseo hub deploy -p <project>  # Discover, validate, and activate a Hub bundle
-paseo hub deploy -p <project> --dry-run # Validate without activating
+paseo hub deploy               # Validate and install .paseo/triggers/*.yml
+paseo hub deploy --dry-run     # Validate without installing
+paseo hub deploy -p <project>   # Deploy an existing legacy project bundle
 paseo hub logout               # Remove the active stored CLI login
 ```
 
-Run deploy from the project root. It reads `.paseo/hub.yml`, every direct `.paseo/workflows/*.yml` file, and referenced `.paseo/workflows/partials/*` files in deterministic path order. It does not search parents, accept an alternate resource path, or flatten the bundle into monolithic YAML.
+Run deploy from the repository root. By default it reads every direct `.paseo/triggers/*.yml` file in deterministic path order. It validates all triggers before installing them one at a time. If an installation fails after earlier ones succeeded, the error lists the installed files. `--dry-run` only validates; it does not create or activate revisions.
 
-Pass `-p, --project <slug>` to select the target project. `--dry-run` performs the same discovery and server validation without recording or activating a revision. Both outputs include the resolved Hub, project, and discovered workflow count.
+Pass `-p, --project <slug>` for an existing legacy bundle: `.paseo/hub.yml`, direct `.paseo/workflows/*.yml` files, and referenced workflow partials. See [Deploy from the CLI](/docs/hub/configuration#deploy-from-the-cli).
 
-`login` opens the Hub approval page and stores a durable organization-scoped CLI credential under `PASEO_HOME`. In an interactive terminal it then asks whether to connect this daemon and whether to initialize and deploy a starter workflow, both defaulting to yes. Declining the connection prints `paseo hub connect <origin>; then paseo hub init`, because the connection alone does not produce a bundle; declining only the starter prints `paseo hub init`. `--json` and non-TTY login remain login-only and never prompt. The stored login is separate from the daemon relationship created by `connect`.
+`login` opens the Hub approval page and stores a durable organization-scoped CLI credential under `PASEO_HOME`. In an interactive terminal it offers to connect this daemon, then separately asks whether to allow Hub automations to run agents. Connection defaults to yes; execution permission defaults to no. It then links to Hub's **Triggers** page and prints `paseo hub init` for setup as code. `--json` and non-TTY login remain login-only and never prompt. The stored login is separate from the daemon relationship created by `connect`.
 
-`init` runs the same guided setup on its own and requires a TTY. It connects the daemon, uses the organization's only project or asks which one, and lists the Hub app connections that can back a starter workflow. One usable connection is selected automatically; with several, you choose a **Trigger connection**. If none is ready, setup sends you to **Hub → Apps** and stops before selecting an agent or writing files.
+`init` requires a TTY. It signs in and connects the daemon as needed, then lists the organization's app connections that can back a starter trigger. One usable connection is selected automatically; with several, you choose a **Trigger connection**. If none is ready, setup sends you to **Hub → Apps** and stops before selecting an agent or writing files.
 
-Setup then asks which agent provider, model, and mode the starter should run, choosing from what the connected daemon reports. A provider is offered only when the daemon has it enabled with a selectable model. Suggested model and mode entries are the daemon's defaults; no provider is suggested merely because it appears first. The mode question is skipped for providers that expose no modes and asked explicitly when the daemon has modes but no default. Finally, setup asks for the identity that gates the chosen connection: a GitHub username, a Slack member ID, or a Discord user ID. It writes `.paseo/hub.yml` and `.paseo/workflows/<provider>-help.yml`, validates them against Hub, and deploys. An existing `.paseo/` directory is replaced only after you confirm. See the [generated starter bundle](/docs/hub/configuration#generated-starter-bundle).
+Setup asks which agent provider, model, and mode to run. Providers must be enabled and expose both a selectable model and an execution mode. Suggested model and mode entries are the daemon's defaults; a mode is still selected explicitly when there is no default. Setup then asks for the identity allowed to trigger the bot: a GitHub username, Slack member ID, or Discord user ID. It validates the trigger, writes `.paseo/triggers/<provider>-help.yml`, and asks whether to deploy. Replacing that file requires confirmation; existing legacy bundles and other trigger files are preserved. See the [generated starter trigger](/docs/hub/configuration#generated-starter-trigger).
 
 Interactive logout checks the same-origin daemon relationship and asks whether to disconnect before deleting the login. Declining removes only the login. JSON and noninteractive logout never prompt or disconnect implicitly; `--disconnect-daemon` is the explicit automation path, and `--force` applies to that daemon disconnection. If a requested disconnection fails, the login is preserved.
 
@@ -326,12 +366,12 @@ The global `--host` option accepts either a local target (`host:port`, a unix so
 Get an offer URL from the daemon you want to control:
 
 ```bash
-paseo daemon pair          # asks before enabling relay, then prints the QR and link
+paseo daemon pair          # prints the QR and link when relay is enabled
 paseo daemon pair --relay  # enables relay without prompting
 paseo daemon pair --json   # structured output; never prompts
 ```
 
-Relay is off for new installations. In non-interactive or JSON mode, a disabled relay returns a `RELAY_DISABLED` error; pass `--relay` to provide explicit consent. Relay pairing is end-to-end encrypted. See [Security](/docs/security).
+Relay is off for new installations. A disabled relay returns a `RELAY_DISABLED` error; pass `--relay` to provide explicit consent. For a stopped home, pairing is labelled offline; `--relay` saves relay enablement and the offer includes a start instruction. A live but unreachable home never falls back to an offline identity. Relay pairing is end-to-end encrypted. See [Security](/docs/security).
 
 Use it from anywhere:
 

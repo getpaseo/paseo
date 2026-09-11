@@ -12,8 +12,8 @@ import {
 
 const PLUGIN_ID = "plugin-host-ui-e2e";
 
-const PLUGIN_SOURCE = `import { usePaseo } from "@getpaseo/plugin";
-import { Icon, Modal, useToast } from "@getpaseo/plugin/react-native";
+const PLUGIN_SOURCE = `import { usePaseo } from "@getpaseo/plugin/client";
+import { Icon, Modal, useToast } from "@getpaseo/plugin/client/react-native";
 import { useQueryClient } from "@tanstack/react-query";
 import React, { useState } from "react";
 import { Pressable, Text, View } from "react-native";

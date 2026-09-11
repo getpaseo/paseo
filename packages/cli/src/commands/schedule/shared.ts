@@ -1,4 +1,5 @@
-import { connectToDaemon, getDaemonHost, getExplicitDaemonHost } from "../../utils/client.js";
+import type { DaemonTarget } from "../../utils/daemon-target.js";
+import { connectToDaemon, getDaemonHost } from "../../utils/client.js";
 import type { CommandError, CommandOptions } from "../../output/index.js";
 import type {
   CreateScheduleInput,
@@ -19,15 +20,16 @@ export interface ScheduleCommandOptions extends CommandOptions {
 }
 
 export async function connectScheduleClient(
-  host: string | undefined,
+  target: DaemonTarget,
 ): Promise<{ client: ScheduleDaemonClient; host: string }> {
-  const resolvedHost = getDaemonHost({ host });
+  const resolvedHost = getDaemonHost({ target });
   try {
     const client = (await connectToDaemon({
-      host,
+      target,
     })) as unknown as ScheduleDaemonClient;
     return { client, host: resolvedHost };
   } catch (error) {
+    if (error && typeof error === "object" && "code" in error) throw error;
     const message = error instanceof Error ? error.message : String(error);
     throw {
       code: "DAEMON_NOT_RUNNING",
@@ -147,6 +149,7 @@ export function parseScheduleCreateInput(options: {
   thinking?: string;
   cwd?: string;
   host?: string;
+  daemonTarget: import("../../utils/daemon-target.js").DaemonTarget;
   maxRuns?: string;
   expiresIn?: string;
   runNow?: boolean;
@@ -168,7 +171,7 @@ export function parseScheduleCreateInput(options: {
   }
 
   const cwdInput = options.cwd?.trim();
-  if (getExplicitDaemonHost(options.host) !== undefined && !cwdInput) {
+  if (options.daemonTarget.kind === "endpoint" && !cwdInput) {
     throw {
       code: "MISSING_CWD",
       message:

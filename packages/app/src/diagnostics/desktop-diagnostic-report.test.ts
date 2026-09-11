@@ -16,6 +16,8 @@ function makeSources(): DesktopDiagnosticSources {
       home: "/paseo/home",
       version: "1.2.3",
       desktopManaged: true,
+      ownedByDesktop: true,
+      startedAt: "2026-01-01T00:00:00.000Z",
       error: null,
     }),
     getDaemonLogs: async () => ({

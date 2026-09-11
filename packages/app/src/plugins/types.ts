@@ -2,19 +2,21 @@ import type { QueryClient } from "@tanstack/react-query";
 import type { PluginRequirements } from "@getpaseo/protocol/messages";
 import type {
   PluginAttachmentSourceContribution,
+  PluginCleanup,
+  PluginThemeContribution,
+} from "@getpaseo/plugin";
+import type {
   PluginCommandCenterItemContribution,
   PluginClientSlashCommandContribution,
-  PluginCleanup,
   PluginComposerPillContribution,
   PluginSidebarContribution,
   PluginSurfaceContribution,
   PluginSettingsScreenContribution,
-  PluginThemeContribution,
   PluginTimelineRendererContribution,
   PluginTimelineTransformerContribution,
   PluginPanelLocation,
   PluginWorkspacePanelContribution,
-} from "@getpaseo/plugin";
+} from "@getpaseo/plugin/client";
 
 export type EvaluatedPluginWorkspacePanelContribution = PluginWorkspacePanelContribution & {
   locations: readonly PluginPanelLocation[];
@@ -36,6 +38,7 @@ export interface EvaluatedPlugin {
 }
 
 export interface InstalledPlugin extends EvaluatedPlugin {
+  lifetime: AbortController;
   serverId: string;
   requirements?: PluginRequirements;
   clientBundle: string;

@@ -79,6 +79,8 @@ export function useProvidersSnapshot(
 
   const snapshotQuery = useReplicaQuery({
     queryKey,
+    // The content-hash cache already owns catalog and model identity.
+    structuralSharing: false,
     enabled: Boolean(enabled && supportsSnapshot && serverId && client && isConnected),
     pushEvent: "providers_snapshot_update",
     queryFn: async ({ signal }) => {
@@ -149,6 +151,7 @@ export function prefetchProvidersSnapshot(
   void singletonQueryClient.prefetchQuery({
     queryKey,
     staleTime: Infinity,
+    structuralSharing: false,
     queryFn: ({ signal }) =>
       fetchProvidersSnapshot({ client, serverId, cwd, queryClient: singletonQueryClient, signal }),
   });

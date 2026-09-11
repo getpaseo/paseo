@@ -12,6 +12,7 @@ export const fr: TranslationResources = {
       copy: "Copie",
       copyLine: "Copier la ligne",
       dismiss: "Rejeter",
+      reload: "Recharger",
       retry: "Réessayer",
       search: "Recherche",
       select: "Sélectionner",
@@ -1075,6 +1076,16 @@ export const fr: TranslationResources = {
       updateHost: "Mettez à jour cet hôte pour gérer les étiquettes.",
     },
   },
+  changelog: {
+    title: "Nouveautés",
+    installed: "Installée",
+    showMore: "Afficher plus",
+    openWebsite: "Journal des modifications complet",
+    error: {
+      title: "Impossible de charger le journal des modifications",
+      description: "Vérifiez votre connexion et réessayez.",
+    },
+  },
   sidebar: {
     display: {
       trigger: "Préférences d'affichage",
@@ -1297,6 +1308,7 @@ export const fr: TranslationResources = {
       detail: "Arrêt du démon local.",
     },
     daemon: {
+      lifecycle: en.desktop.daemon.lifecycle,
       title: "Daemon",
       status: {
         title: "Statut",
@@ -2120,6 +2132,7 @@ export const fr: TranslationResources = {
     about: {
       title: "À propos",
       appVersion: "Version de l'application",
+      whatsNewHint: "Notes de version pour chaque release",
       thisDevice: "Cet appareil",
       connectedHosts: "Hôtes connectés",
       offline: "Hors ligne",
