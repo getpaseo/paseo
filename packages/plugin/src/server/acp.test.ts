@@ -1003,3 +1003,72 @@ lines.on("line", (line) => {
     expect(Date.now() - startedAt).toBeLessThan(2_500);
   });
 });
+
+describe("runAcpProvider streamed chunks without messageId (#4699)", () => {
+  it("continues one timeline item per turn instead of one per chunk", async () => {
+    const chunksByPrompt: Record<string, string[]> = {
+      first: ["- **Current tem", "perature**: 25°C"],
+      second: ["next turn"],
+    };
+    const harness = connectorHarness({
+      handleMessage(instance, message) {
+        if (!("method" in message) || !("id" in message)) return false;
+        if (message.method !== "session/prompt") return false;
+        const request = message as AcpRequestMessage;
+        const { prompt } = request.params as { prompt: Array<{ type: string; text?: string }> };
+        for (const text of chunksByPrompt[prompt[0]!.text!]!) {
+          instance.notify("session/update", {
+            sessionId: "connector-session",
+            update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text } },
+          });
+        }
+        instance.respond(request, { stopReason: "end_turn" });
+        return true;
+      },
+    });
+    const registration = runAcpProvider({
+      id: "chunk-acp",
+      label: "Chunk ACP",
+      connector: harness.connector,
+    });
+    const connection = await registration.connect({
+      versions: [1],
+      capabilities: ["prompt.message"],
+    });
+    const events: ProviderEvent[] = [];
+    connection.onEvent((event) => events.push(event));
+    await connection.send(openInput());
+    await waitForEvent(events, (event) => event.type === "session.ready");
+
+    for (const clientMessageId of ["first", "second"]) {
+      await connection.send({
+        type: "session.prompt",
+        sessionId: "session-1",
+        prompt: {
+          clientMessageId,
+          delivery: "auto",
+          input: { type: "message", content: [{ type: "text", text: clientMessageId }] },
+        },
+      });
+      await waitForEvent(
+        events,
+        (event) =>
+          event.type === "session.turn" &&
+          event.turnId === `acp:${clientMessageId}` &&
+          event.state === "completed",
+      );
+    }
+
+    const assistantItems = events.flatMap((event) =>
+      event.type === "timeline.item" && event.item.type === "assistant_message"
+        ? [{ id: event.item.id, text: event.item.text }]
+        : [],
+    );
+    expect(assistantItems).toEqual([
+      { id: "agent_message_chunk:1", text: "- **Current tem" },
+      { id: "agent_message_chunk:1", text: "- **Current temperature**: 25°C" },
+      { id: "agent_message_chunk:2", text: "next turn" },
+    ]);
+    await connection.close();
+  });
+});
