@@ -45,8 +45,13 @@ async function ensureDirectory(fileSystem: AttachmentFileSystem, uri: string): P
 }
 
 async function dataUrlToBytes(dataUrl: string): Promise<Uint8Array> {
-  const response = await fetch(dataUrl);
-  return new Uint8Array(await response.arrayBuffer());
+  const { base64 } = parseDataUrl(dataUrl);
+  const binary = globalThis.atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+  return bytes;
 }
 
 async function blobToBytes(blob: Blob): Promise<Uint8Array> {
