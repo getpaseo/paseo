@@ -61,6 +61,8 @@ linux:
   extraResources:
     - from: bin/paseo
       to: bin/paseo
+    - from: assets/icon.png
+      to: icon.png
   target:
     - AppImage
     - deb

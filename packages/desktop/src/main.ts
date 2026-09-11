@@ -131,6 +131,11 @@ const bootstrapComplete = new Promise<void>((resolve) => {
 let bootstrapIsComplete = false;
 
 app.setName(APP_NAME);
+if (process.platform === "linux" && !app.commandLine.hasSwitch("class")) {
+  // Match electron-builder's desktop entry and StartupWMClass instead of the
+  // scoped npm package name Electron otherwise uses for window identity.
+  app.setDesktopName("Paseo.desktop");
+}
 log.info("[desktop] app startup", {
   version: app.getVersion(),
   platform: process.platform,
