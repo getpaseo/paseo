@@ -1581,8 +1581,15 @@ export class ClaudeAgentClient implements AgentClient {
     } catch (error) {
       this.logger.warn({ err: error }, "Failed to resolve Claude Code version for model catalog");
     }
+    // Fill the configDir seam from this client's launch environment so a custom provider's
+    // settings.json is read from its own dir; an explicit options.configDir (the test seam)
+    // still wins.
+    const configDir =
+      this.configDir ??
+      createProviderEnv({ baseEnv: process.env, runtimeSettings: this.runtimeSettings })
+        .CLAUDE_CONFIG_DIR;
     const models = await runProviderRefreshActivity(context, "settings", () =>
-      getClaudeModelsWithSettings(this.logger, this.configDir, claudeCodeVersion),
+      getClaudeModelsWithSettings(this.logger, configDir, claudeCodeVersion),
     );
     const modeCatalog = claudeModeCatalog(
       createProviderEnv({ baseEnv: process.env, runtimeSettings: this.runtimeSettings }),
@@ -1613,7 +1620,10 @@ export class ClaudeAgentClient implements AgentClient {
   async listImportableSessions(
     options?: ListImportableSessionsOptions,
   ): Promise<ImportableProviderSession[]> {
-    const configDir = process.env.CLAUDE_CONFIG_DIR ?? path.join(os.homedir(), ".claude");
+    // Resolve against this client's own launch environment, not the daemon's process.env.
+    const configDir =
+      createProviderEnv({ baseEnv: process.env, runtimeSettings: this.runtimeSettings })
+        .CLAUDE_CONFIG_DIR ?? path.join(os.homedir(), ".claude");
     const sessionsRoot = options?.cwd
       ? claudeProjectDirSync(options.cwd, { configDir })
       : path.join(configDir, "projects");
@@ -5018,10 +5028,17 @@ class ClaudeAgentSession implements AgentSession {
     }
   }
 
+  // The daemon's own process.env is not necessarily this session's launch environment — a
+  // custom provider can layer CLAUDE_CONFIG_DIR through runtimeSettings.env/launchEnv, and
+  // buildSdkEnv() already composes exactly that for the SDK call itself.
+  private resolveConfigDir(): string {
+    return this.buildSdkEnv().CLAUDE_CONFIG_DIR ?? path.join(os.homedir(), ".claude");
+  }
+
   private resolveHistoryPath(sessionId: string): string | null {
     const cwd = this.config.cwd;
     if (!cwd) return null;
-    const configDir = process.env.CLAUDE_CONFIG_DIR ?? path.join(os.homedir(), ".claude");
+    const configDir = this.resolveConfigDir();
     const candidates = [cwd];
     try {
       const realCwd = fs.realpathSync(cwd);
