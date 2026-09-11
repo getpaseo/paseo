@@ -781,9 +781,41 @@ function SendButtonTooltip({
   sendTooltipLabel: string;
   queuesMessage: boolean;
 }) {
+  const clearPointerReleaseRef = useRef<(() => void) | null>(null);
+  const handlePointerDown = useCallback(
+    (event: {
+      currentTarget?: unknown;
+      nativeEvent?: { button?: unknown; pointerId?: unknown };
+    }) => {
+      const nativeEvent = event.nativeEvent;
+      if (!nativeEvent || nativeEvent.button !== 0 || !(event.currentTarget instanceof Element))
+        return;
+      clearPointerReleaseRef.current?.();
+      const target = event.currentTarget;
+      const pointerId = nativeEvent.pointerId;
+      const clear = () => {
+        window.removeEventListener("pointerup", handlePointerUp, true);
+        window.removeEventListener("pointercancel", clear, true);
+        clearPointerReleaseRef.current = null;
+      };
+      const handlePointerUp = (pointerEvent: PointerEvent) => {
+        if (pointerEvent.pointerId !== pointerId) return;
+        clear();
+        const releasedOverTarget = document.elementFromPoint(
+          pointerEvent.clientX,
+          pointerEvent.clientY,
+        );
+        if (releasedOverTarget && target.contains(releasedOverTarget)) onAlternateSendAction();
+      };
+      window.addEventListener("pointerup", handlePointerUp, true);
+      window.addEventListener("pointercancel", clear, true);
+      clearPointerReleaseRef.current = clear;
+    },
+    [onAlternateSendAction],
+  );
+  useEffect(() => () => clearPointerReleaseRef.current?.(), []);
   const handlePress = useCallback(() => {
     if (canPressLoadingButton) return onSubmitLoadingPress?.();
-    if (queuesMessage && isWeb) return;
     if (queuesMessage) return onAlternateSendAction();
     onDefaultSendAction();
   }, [
@@ -799,7 +831,7 @@ function SendButtonTooltip({
     <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile={false}>
       <TooltipTrigger
         onPress={handlePress}
-        {...(isWeb && queuesMessage ? { onPointerDown: onAlternateSendAction } : {})}
+        {...(isWeb && queuesMessage ? { onPointerDown: handlePointerDown } : {})}
         disabled={isSendButtonDisabled}
         accessibilityLabel={submitAccessibilityLabel}
         accessibilityRole="button"
