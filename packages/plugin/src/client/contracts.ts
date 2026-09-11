@@ -75,6 +75,11 @@ export interface PluginClientOpenPanelOptions extends PluginOpenPanelOptions {
   agentId?: string;
 }
 
+export interface PluginClientOpenPanelWithAgentOptions {
+  workspaceId: string;
+  agentId: string;
+}
+
 export interface PluginClientContext extends PluginCommandCapabilities {
   addSettingsScreen(contribution: PluginSettingsScreenContribution): PluginCleanup;
   addSurface(id: string, Component: ComponentType<PluginSurfaceProps>): PluginCleanup;
@@ -93,6 +98,12 @@ export interface PluginClientContext extends PluginCommandCapabilities {
     contribution: PluginTimelineRendererContribution<Schema>,
   ): PluginCleanup;
   openPanel(id: string, options: PluginClientOpenPanelOptions): void;
+  /**
+   * Opens a workspace panel in the main pane with the agent's chat beside it on the right. Existing
+   * tabs move instead of duplicating. Compact and native layouts open only the chat. Undefined on
+   * older hosts; check before calling.
+   */
+  openPanelWithAgent?(id: string, options: PluginClientOpenPanelWithAgentOptions): void;
 }
 
 export type PluginClientContribution = (client: PluginClientContext) => PluginCleanup;

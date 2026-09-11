@@ -1162,6 +1162,26 @@ Read cached state with `useWorkspace(workspaceId, selector)` and `useAgent(agent
 
 Both hooks return `null` when the record is unavailable. Otherwise they run synchronously against normalized client state. Snapshot DTOs and their nested values are deeply readonly and frozen at runtime. Do not call plugin RPC to discover the current workspace or agent. Fetch optional or vendor-specific enrichment after the component renders.
 
+### Open a panel beside native chat
+
+For a panel registered with `context: "workspace"` and workspace hosting, call:
+
+```ts
+if (client.openPanelWithAgent) {
+  client.openPanelWithAgent("reader", { workspaceId, agentId });
+}
+```
+
+This places the panel in the main pane and the agent's native chat in the right-side pane. Existing
+tabs are moved and reused, including a panel previously opened in Explorer; repeated calls do not
+create duplicate tabs. Paseo reuses its native side pane and any user-adjusted width. On compact or
+native layouts, it opens only the chat. The optional method is absent on older clients, so check
+for it before calling and provide your existing navigation fallback.
+
+The workspace and agent must already be available in the rendering host's cached state, the agent
+must belong to that workspace, and the panel must support workspace hosting. Invalid requests
+throw before changing the layout. Agent-context and Explorer-only panels are not accepted.
+
 Workspace snapshot fields:
 
 | Field                | Type                                                              |

@@ -272,6 +272,13 @@ never fetch active context through plugin RPC. Snapshot DTOs are deeply readonly
 runtime so plugin code cannot mutate normalized app state or a memoized selection. Panels use one persisted
 `plugin` workspace-tab target, so reload, disable, removal, and restoration resolve through the
 current installed-plugin catalog. A missing contribution renders unavailable inside the tab.
+`client.openPanelWithAgent?.(panelId, { workspaceId, agentId })` opens a workspace-context panel in
+main and the native agent chat in Paseo's right-side pane. It moves existing tabs, including a panel
+previously hosted in Explorer, rather than duplicating them. The native side pane and its saved
+width are reused. Compact/native layouts open only the chat. The method is optional on older
+clients; feature-detect it before calling. Both the workspace and an agent belonging to it must be
+in the rendering host's cached state, and the panel must support workspace hosting.
+
 Panels declare `locations: ["workspace", "explorer"]` to opt into Explorer hosting; omission means
 workspace only. Location controls hosting, not context. An agent panel target keeps its `agentId`
 when moved between hosts. Explorer configuration can create workspace-context panels and remove

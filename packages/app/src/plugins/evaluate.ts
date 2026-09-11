@@ -76,6 +76,7 @@ export type PluginClientRuntime = Pick<
   | "openSettings"
   | "openSurface"
   | "openPanel"
+  | "openPanelWithAgent"
   | "addComposerPill"
   | "addHeaderButton"
 >;

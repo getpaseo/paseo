@@ -7,6 +7,7 @@ export type {
   PluginWorkspacePanelProps,
   PluginAgentPanelProps,
   PluginClientOpenPanelOptions,
+  PluginClientOpenPanelWithAgentOptions,
   PluginClientContext,
   PluginClientContribution,
   PluginWorkspacePanelContribution,
