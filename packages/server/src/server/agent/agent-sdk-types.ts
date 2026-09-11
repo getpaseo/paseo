@@ -192,6 +192,13 @@ export interface AgentCapabilityFlags {
   supportsRewindConversation?: boolean;
   supportsRewindFiles?: boolean;
   supportsRewindBoth?: boolean;
+  /**
+   * Whether this provider can stop ONE of its subagents without ending the parent turn, i.e. it
+   * implements `AgentSession.stopProviderSubagent`. Several providers announce provider subagents;
+   * only some can stop one. A client offering a per-subagent stop must gate on this rather than on
+   * the presence of a subagent, or it renders a control that cannot work.
+   */
+  supportsStopProviderSubagent?: boolean;
 }
 
 export interface AgentPersistenceHandle {
@@ -683,6 +690,14 @@ export interface AgentSession {
    * still uncertain.
    */
   interrupt(): Promise<void>;
+  /**
+   * Stop one running provider subagent without touching the parent turn or its siblings.
+   *
+   * Optional: only providers that both expose individually addressable children and are asked to
+   * spare them from `interrupt()` implement it. Resolves false when the id is unknown or already
+   * terminal — that is an ordinary race, not an error.
+   */
+  stopProviderSubagent?(subagentId: string): Promise<boolean>;
   /** Release live runtime resources without archiving or deleting the durable native session. */
   close(): Promise<void>;
   listCommands?(): Promise<AgentSlashCommand[]>;

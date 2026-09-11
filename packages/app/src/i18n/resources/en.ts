@@ -1783,6 +1783,10 @@ export const en = {
     archiveTooltip: "Archive subagent",
     archiveFinishedAction: "Archive finished subagents",
     archiveFinishedRetry: "Retry ({{failed}}/{{total}})",
+    stopAction: "Stop subagent",
+    stopTooltip: "Stop this subagent, not its parent",
+    stopFailed: "Could not stop subagent: {{reason}}",
+    stopAlreadyFinished: "That subagent had already finished.",
   },
   panels: {
     draft: {

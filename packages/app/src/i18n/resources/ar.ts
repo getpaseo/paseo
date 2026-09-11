@@ -1773,6 +1773,10 @@ export const ar: TranslationResources = {
     archiveTooltip: "أرشفة الوكيل الفرعي",
     archiveFinishedAction: "أرشفة الوكلاء الفرعيين المكتملين",
     archiveFinishedRetry: "إعادة المحاولة ({{failed}}/{{total}})",
+    stopAction: "إيقاف العميل الفرعي",
+    stopTooltip: "أوقف هذا العميل الفرعي وليس العميل الأصلي",
+    stopFailed: "تعذّر إيقاف العميل الفرعي: {{reason}}",
+    stopAlreadyFinished: "كان هذا العميل الفرعي قد انتهى بالفعل.",
   },
   panels: {
     draft: {

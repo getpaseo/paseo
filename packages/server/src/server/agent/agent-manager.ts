@@ -1188,6 +1188,21 @@ export class AgentManager {
     return this.providerSubagents.get(parentAgentId, subagentId);
   }
 
+  /**
+   * Stop one running provider subagent.
+   *
+   * False when the provider cannot address children individually, or when this one already
+   * settled. The terminal status still arrives over the normal subagent update stream; this only
+   * reports that the provider took the request.
+   */
+  async stopProviderSubagent(parentAgentId: string, subagentId: string): Promise<boolean> {
+    this.requirePublicAgent(parentAgentId);
+    const agent = this.requireAgent(parentAgentId);
+    const session = agent.session;
+    if (!session?.stopProviderSubagent) return false;
+    return await session.stopProviderSubagent(subagentId);
+  }
+
   fetchProviderSubagentTimeline(
     parentAgentId: string,
     subagentId: string,

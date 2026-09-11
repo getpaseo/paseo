@@ -39,6 +39,15 @@ interface TaskStartedMessage {
   task_type?: string;
   prompt?: string;
   skip_transcript?: boolean;
+  /**
+   * Whether the task was REGISTERED in the background, i.e. the spawning tool call did not block
+   * on it. `SDKTaskStartedMessage.is_backgrounded`. This is the common case and the one that
+   * matters most: a child launched with `run_in_background` is backgrounded from its first frame
+   * and never emits a `task_updated` patch saying so, and per the SDK "a resumed subagent is
+   * always registered in the background". Reading only the patch classifies those as foreground
+   * and terminalizes them on an interrupt they actually survived.
+   */
+  is_backgrounded?: boolean;
 }
 
 /** Task-tool subagents. Backgrounded shell commands announce as `local_bash`. */
@@ -70,9 +79,9 @@ function isProviderSubagentTask(message: TaskStartedMessage): boolean {
 interface TaskUpdatedMessage {
   task_id: string;
   /**
-   * `is_backgrounded` is declared on `SDKTaskUpdatedMessage["patch"]`: it flips when a foreground
-   * task is backgrounded, which is the only signal that separates a child that dies with its turn
-   * from one that was explicitly told to outlive it.
+   * `is_backgrounded` on the patch reports a LATER move to the background, for a task that
+   * started in the foreground. It is not the only source of that fact — a task can be
+   * backgrounded from birth, which arrives on `task_started` instead.
    */
   patch?: { status?: string; is_backgrounded?: boolean };
 }
@@ -152,6 +161,11 @@ export interface ClaudeTaskProtocolSourceInput {
 export class ClaudeTaskProtocolSource {
   /** task_id -> canonical subagent id (the Task tool_use id). Populated by task_started. */
   private readonly subagentIdByTaskId = new Map<string, string>();
+  /**
+   * The inverse of `subagentIdByTaskId`. `stop_task` addresses a task id, but every id that
+   * crosses the provider boundary is a subagent id, so stopping one requires translating back.
+   */
+  private readonly taskIdBySubagentId = new Map<string, string>();
   /** Every announced tool id -> the first tool id that publicly identifies the child. */
   private readonly canonicalIdByToolUseId = new Map<string, string>();
   /** Tool calls made inside a sidechain, keyed to the direct child that emitted them. */
@@ -241,6 +255,33 @@ export class ClaudeTaskProtocolSource {
     );
   }
 
+  /**
+   * Remember whether a subagent outlives the turn that spawned it.
+   *
+   * Absent means "not stated", which must not overwrite a known value: `task_started` omits the
+   * field for task types that do not carry it, and a later `task_updated` patch is the only thing
+   * allowed to change a decision already made.
+   */
+  private recordBackgrounded(id: string, isBackgrounded: boolean | undefined): void {
+    if (isBackgrounded === undefined) return;
+    if (isBackgrounded) this.backgroundedIds.add(id);
+    else this.backgroundedIds.delete(id);
+  }
+
+  /**
+   * The task id to address a running subagent's `stop_task` to.
+   *
+   * Undefined for anything this source cannot vouch for as stoppable: an id it never declared,
+   * or one already terminal. Stopping a settled task is not harmless — task ids are reused
+   * across a session's lifetime only in the sense that a stale id may have been reassigned, and
+   * the CLI would kill whatever holds it now.
+   */
+  runningTaskId(subagentId: string): string | undefined {
+    if (!this.declaredIds.has(subagentId)) return undefined;
+    if (this.lastStatusById.get(subagentId) !== "running") return undefined;
+    return this.taskIdBySubagentId.get(subagentId);
+  }
+
   needsSyntheticParentToolCard(subagentId: string): boolean {
     return !this.idsWithExistingParentToolCard.has(subagentId);
   }
@@ -270,6 +311,7 @@ export class ClaudeTaskProtocolSource {
    */
   reset(): void {
     this.subagentIdByTaskId.clear();
+    this.taskIdBySubagentId.clear();
     this.canonicalIdByToolUseId.clear();
     this.ownerSubagentIdByToolUseId.clear();
     this.ownerSubagentIdByTaskId.clear();
@@ -332,9 +374,11 @@ export class ClaudeTaskProtocolSource {
     this.sawTaskStarted = true;
     const existingId = this.subagentIdByTaskId.get(message.task_id);
     if (existingId) {
+      this.recordBackgrounded(existingId, message.is_backgrounded);
       return this.observeExistingTaskStart(message, id, existingId);
     }
 
+    this.recordBackgrounded(id, message.is_backgrounded);
     return this.observeNewTaskStart(message, id, parentSubagentId);
   }
 
@@ -369,6 +413,7 @@ export class ClaudeTaskProtocolSource {
     parentSubagentId: string | undefined,
   ): SubagentObservation[] {
     this.subagentIdByTaskId.set(message.task_id, id);
+    this.taskIdBySubagentId.set(id, message.task_id);
     this.canonicalIdByToolUseId.set(id, id);
     this.declaredIds.add(id);
     this.lastStatusById.set(id, "running");

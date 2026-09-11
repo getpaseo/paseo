@@ -3115,6 +3115,41 @@ export class DaemonClient {
     return payload;
   }
 
+  /**
+   * Stop one running provider subagent, leaving the parent turn running.
+   *
+   * Resolves false when the subagent already settled or the provider cannot address children
+   * individually — a stop racing a completion is ordinary, not an error.
+   */
+  async stopProviderSubagent(
+    parentAgentId: string,
+    subagentId: string,
+    options: { requestId?: string; timeout?: number } = {},
+  ): Promise<boolean> {
+    const requestId = this.createRequestId(options.requestId);
+    const message = SessionInboundMessageSchema.parse({
+      type: "agent.provider_subagents.stop.request",
+      parentAgentId,
+      subagentId,
+      requestId,
+    });
+    const payload = await this.sendRequest({
+      requestId,
+      message,
+      timeout: options.timeout,
+      options: { skipQueue: true },
+      select: (response) =>
+        response.type === "agent.provider_subagents.stop.response" &&
+        response.payload.requestId === requestId
+          ? response.payload
+          : null,
+    });
+    if (payload.error) {
+      throw new Error(payload.error);
+    }
+    return payload.stopped;
+  }
+
   async fetchProviderSubagentTimeline(
     parentAgentId: string,
     subagentId: string,
