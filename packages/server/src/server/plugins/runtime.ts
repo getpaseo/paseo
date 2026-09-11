@@ -1,6 +1,6 @@
 import type { PluginBeforeRequests, PluginLifecycleEvents } from "@getpaseo/plugin/server";
 import { validateBeforeRequest, validateBeforeResult } from "./lifecycle/index.js";
-import { fork } from "node:child_process";
+import { fork, type ForkOptions } from "node:child_process";
 import { stat } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -35,6 +35,9 @@ const MAX_LOG_ENTRIES = 500;
 const MAX_LOG_BYTES = 256 * 1024;
 const MAX_LOG_LINE_BYTES = 16 * 1024;
 const SOFT_SHUTDOWN_TIMEOUT_MS = 2_000;
+
+// fork() forwards its options to spawn(), but @types/node omits windowsHide from ForkOptions.
+type ForkOptionsWithWindowsHide = ForkOptions & { windowsHide: boolean };
 
 interface PluginOutputStream {
   on(event: "data", listener: (chunk: Buffer | string) => void): this;
@@ -205,11 +208,13 @@ function resolveWorkerExecArgv(): string[] {
 }
 
 function spawnPluginChild(): PluginChild {
-  return fork(fileURLToPath(resolveWorkerUrl()), [], {
+  const options = {
     execArgv: resolveWorkerExecArgv(),
     serialization: "advanced",
     stdio: ["ignore", "pipe", "pipe", "ipc"],
-  }) as PluginChild;
+    windowsHide: true,
+  } satisfies ForkOptionsWithWindowsHide;
+  return fork(fileURLToPath(resolveWorkerUrl()), [], options) as PluginChild;
 }
 
 function terminatePluginChild(child: PluginChild): void {
