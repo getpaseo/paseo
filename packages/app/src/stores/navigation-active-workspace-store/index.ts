@@ -39,6 +39,8 @@ function navigateDeps(): NavigateToWorkspaceDeps {
       useSessionStore.getState().sessions[serverId]?.agents.values() ?? [],
     isWorkspaceLayoutHydrated: () => useWorkspaceLayoutStore.persist.hasHydrated(),
     openTab: (input) => useWorkspaceLayoutStore.getState().openTab(input),
+    revealEphemeralTab: (input) =>
+      useWorkspaceLayoutStore.getState().revealEphemeralTab(input.workspaceKey, input.target),
     rememberLastWorkspace: (selection) => lastWorkspaceSelectionStore.remember(selection),
     navigateToRoute: (route) => {
       navigateToHostWorkspaceRoute(route);

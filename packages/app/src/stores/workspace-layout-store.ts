@@ -28,6 +28,7 @@ import {
   findPaneContainingTab,
   focusPaneInLayout,
   focusTabInLayout,
+  focusWorkspaceTabEphemerally,
   getFocusedBrowserId,
   getTreeDepth,
   insertSplit,
@@ -72,6 +73,7 @@ export {
   FOCUSED_PANE_PLACEMENT,
   findPaneById,
   findPaneContainingTab,
+  focusWorkspaceTabEphemerally,
   getFocusedBrowserId,
   getTreeDepth,
   insertSplit,
@@ -109,6 +111,13 @@ interface WorkspaceLayoutStore {
   pinnedAgentIdsByWorkspace: Record<string, Set<string>>;
   pendingAgentIdsByWorkspace: Record<string, Set<string>>;
   hiddenAgentIdsByWorkspace: Record<string, Set<string>>;
+  /**
+   * Attention-driven reveal targets, one per workspace, held in memory only.
+   * The screen focuses this target on a layout copy; the persisted layout keeps
+   * the focus the user left behind so returning restores their tab. Anything
+   * that moves persisted focus, or leaving the workspace, clears the entry.
+   */
+  ephemeralFocusTargetByWorkspace: Record<string, WorkspaceTabTarget>;
   focusRestorationByWorkspace: Record<string, WorkspaceFocusRestorationState>;
   explorerSidebarPaneIdByWorkspace: Record<string, string | null>;
   sidePaneIdByWorkspace: Record<string, string | null>;
@@ -156,6 +165,14 @@ interface WorkspaceLayoutStore {
    */
   closePane: (workspaceKey: string, paneId: string) => void;
   focusPane: (workspaceKey: string, paneId: string) => void;
+  /**
+   * Reveals a tab for the current visit without persisting the focus change:
+   * opens the tab in the background when missing and remembers the target for
+   * the workspace screen to focus on an in-memory layout copy.
+   */
+  revealEphemeralTab: (workspaceKey: string, target: WorkspaceTabTarget) => void;
+  /** Drops a workspace's ephemeral reveal target; a no-op when none is set. */
+  clearEphemeralFocusTab: (workspaceKey: string) => void;
   unfocusPane: (workspaceKey: string) => string | null;
   restorePaneFocus: (workspaceKey: string, token: string) => void;
   resizeSplit: (workspaceKey: string, groupId: string, sizes: number[]) => void;
@@ -701,6 +718,18 @@ function withoutFocusRestoration(
   return { focusRestorationByWorkspace };
 }
 
+function withoutEphemeralFocusTarget(
+  state: WorkspaceLayoutStore,
+  workspaceKey: string,
+): Pick<WorkspaceLayoutStore, "ephemeralFocusTargetByWorkspace"> | null {
+  if (!(workspaceKey in state.ephemeralFocusTargetByWorkspace)) {
+    return null;
+  }
+  const { [workspaceKey]: _removed, ...ephemeralFocusTargetByWorkspace } =
+    state.ephemeralFocusTargetByWorkspace;
+  return { ephemeralFocusTargetByWorkspace };
+}
+
 function reconcileRememberedSidePane(
   state: WorkspaceLayoutStore,
   workspaceKey: string,
@@ -766,6 +795,7 @@ export function createWorkspaceLayoutStore(
         pinnedAgentIdsByWorkspace: {},
         pendingAgentIdsByWorkspace: {},
         hiddenAgentIdsByWorkspace: {},
+        ephemeralFocusTargetByWorkspace: {},
         focusRestorationByWorkspace: {},
         explorerSidebarPaneIdByWorkspace: {},
         sidePaneIdByWorkspace: {},
@@ -815,6 +845,11 @@ export function createWorkspaceLayoutStore(
           const shouldPinAgent = input.pin === true && normalizedTarget.kind === "agent";
           set((state) => ({
             ...withoutFocusRestoration(state, normalizedWorkspaceKey),
+            // A focused open ends the reveal; a background open must not, since
+            // the user explicitly chose not to move focus to the new tab.
+            ...(input.intent === "background"
+              ? {}
+              : (withoutEphemeralFocusTarget(state, normalizedWorkspaceKey) ?? {})),
             hiddenAgentIdsByWorkspace:
               normalizedTarget.kind !== "agent"
                 ? state.hiddenAgentIdsByWorkspace
@@ -1071,12 +1106,19 @@ export function createWorkspaceLayoutStore(
             } else {
               nextLayout = focusTabInLayout({ layout, tabId: normalizedTabId });
             }
+            // An explicit focus ends the ephemeral reveal even when the
+            // persisted layout already agrees: the click is the user's say.
+            const clearedEphemeralFocus = withoutEphemeralFocusTarget(
+              state,
+              normalizedWorkspaceKey,
+            );
             if (!nextLayout) {
-              return state;
+              return clearedEphemeralFocus ?? state;
             }
 
             return {
               ...withoutFocusRestoration(state, normalizedWorkspaceKey),
+              ...clearedEphemeralFocus,
               layoutByWorkspace: {
                 ...state.layoutByWorkspace,
                 [normalizedWorkspaceKey]: nextLayout,
@@ -1098,14 +1140,21 @@ export function createWorkspaceLayoutStore(
               paneId: normalizedPaneId,
               tabId: normalizedTabId,
             });
+            // Selecting a tab is an explicit focus move: it ends the reveal
+            // even when the pane already shows that tab in the persisted layout.
+            const clearedEphemeralFocus = withoutEphemeralFocusTarget(
+              state,
+              normalizedWorkspaceKey,
+            );
             return nextLayout
               ? {
+                  ...clearedEphemeralFocus,
                   layoutByWorkspace: {
                     ...state.layoutByWorkspace,
                     [normalizedWorkspaceKey]: nextLayout,
                   },
                 }
-              : state;
+              : (clearedEphemeralFocus ?? state);
           });
         },
         replaceTab: (workspaceKey, tabId, target, tabState) => {
@@ -1123,6 +1172,8 @@ export function createWorkspaceLayoutStore(
           if (!result) return null;
           set((state) => ({
             ...withoutFocusRestoration(state, normalizedWorkspaceKey),
+            // Choosing content for a tab is a user focus commitment; the reveal ends.
+            ...withoutEphemeralFocusTarget(state, normalizedWorkspaceKey),
             hiddenAgentIdsByWorkspace:
               normalizedTarget.kind !== "agent"
                 ? state.hiddenAgentIdsByWorkspace
@@ -1178,6 +1229,8 @@ export function createWorkspaceLayoutStore(
             ...(result.layout.focusedPaneId !== null
               ? (withoutFocusRestoration(state, normalizedWorkspaceKey) ?? {})
               : {}),
+            // Submitting the draft commits the user to that tab; the reveal ends.
+            ...withoutEphemeralFocusTarget(state, normalizedWorkspaceKey),
             hiddenAgentIdsByWorkspace: removeAgentIdFromWorkspaceSet(
               state.hiddenAgentIdsByWorkspace,
               normalizedWorkspaceKey,
@@ -1501,18 +1554,82 @@ export function createWorkspaceLayoutStore(
               layout,
               paneId: normalizedPaneId,
             });
+            // Focusing a pane is an explicit focus move: it ends the reveal
+            // even when the pane is already the persisted focused pane.
+            const clearedEphemeralFocus = withoutEphemeralFocusTarget(
+              state,
+              normalizedWorkspaceKey,
+            );
             if (!nextLayout) {
-              return state;
+              return clearedEphemeralFocus ?? state;
             }
 
             return {
               ...withoutFocusRestoration(state, normalizedWorkspaceKey),
+              ...clearedEphemeralFocus,
               layoutByWorkspace: {
                 ...state.layoutByWorkspace,
                 [normalizedWorkspaceKey]: nextLayout,
               },
             };
           });
+        },
+        revealEphemeralTab: (workspaceKey, target) => {
+          const normalizedWorkspaceKey = trimNonEmpty(workspaceKey);
+          const normalizedTarget = normalizeWorkspaceTabTarget(target);
+          if (!normalizedWorkspaceKey || !normalizedTarget) {
+            return;
+          }
+
+          set((state) => {
+            const placement = getOpenTabPlacement(
+              state,
+              normalizedWorkspaceKey,
+              normalizedTarget,
+              undefined,
+            );
+            const opened = openTabInLayoutBackground({
+              ...placement,
+              target: normalizedTarget,
+              now: Date.now(),
+            });
+            if (!opened) {
+              return state;
+            }
+
+            return {
+              hiddenAgentIdsByWorkspace:
+                normalizedTarget.kind !== "agent"
+                  ? state.hiddenAgentIdsByWorkspace
+                  : removeAgentIdFromWorkspaceSet(
+                      state.hiddenAgentIdsByWorkspace,
+                      normalizedWorkspaceKey,
+                      normalizedTarget.agentId,
+                    ),
+              layoutByWorkspace: {
+                ...state.layoutByWorkspace,
+                [normalizedWorkspaceKey]: keepWorkspaceFocusOutOfExplorerSidebar(
+                  opened.layout,
+                  placement.explorerSidebarPaneId,
+                  placement.layout.focusedPaneId,
+                ),
+              },
+              ephemeralFocusTargetByWorkspace: {
+                ...state.ephemeralFocusTargetByWorkspace,
+                [normalizedWorkspaceKey]: normalizedTarget,
+              },
+            };
+          });
+        },
+        clearEphemeralFocusTab: (workspaceKey) => {
+          const normalizedWorkspaceKey = trimNonEmpty(workspaceKey);
+          if (!normalizedWorkspaceKey) {
+            return;
+          }
+
+          set((state) => ({
+            ...withoutEphemeralFocusTarget(state, normalizedWorkspaceKey),
+          }));
         },
         unfocusPane: (workspaceKey) => {
           const normalizedWorkspaceKey = trimNonEmpty(workspaceKey);
@@ -1758,6 +1875,7 @@ export function createWorkspaceLayoutStore(
               normalizedWorkspaceKey in state.pinnedAgentIdsByWorkspace ||
               normalizedWorkspaceKey in state.pendingAgentIdsByWorkspace ||
               normalizedWorkspaceKey in state.hiddenAgentIdsByWorkspace ||
+              normalizedWorkspaceKey in state.ephemeralFocusTargetByWorkspace ||
               normalizedWorkspaceKey in state.focusRestorationByWorkspace ||
               normalizedWorkspaceKey in state.explorerSidebarPaneIdByWorkspace ||
               normalizedWorkspaceKey in state.sidePaneIdByWorkspace;
@@ -1778,6 +1896,8 @@ export function createWorkspaceLayoutStore(
               state.pendingAgentIdsByWorkspace;
             const { [normalizedWorkspaceKey]: _hidden, ...hiddenAgentIdsByWorkspace } =
               state.hiddenAgentIdsByWorkspace;
+            const { [normalizedWorkspaceKey]: _ephemeral, ...ephemeralFocusTargetByWorkspace } =
+              state.ephemeralFocusTargetByWorkspace;
             const { [normalizedWorkspaceKey]: _restoration, ...focusRestorationByWorkspace } =
               state.focusRestorationByWorkspace;
             const {
@@ -1793,6 +1913,7 @@ export function createWorkspaceLayoutStore(
               pinnedAgentIdsByWorkspace,
               pendingAgentIdsByWorkspace,
               hiddenAgentIdsByWorkspace,
+              ephemeralFocusTargetByWorkspace,
               focusRestorationByWorkspace,
               explorerSidebarPaneIdByWorkspace,
               sidePaneIdByWorkspace,

@@ -35,6 +35,8 @@ export interface NavigateToWorkspaceDeps extends PrepareWorkspaceTabDeps {
   getSessionWorkspaces: (serverId: string) => Map<string, WorkspaceDescriptor> | null | undefined;
   getSessionAgents: (serverId: string) => Iterable<Agent>;
   isWorkspaceLayoutHydrated: () => boolean;
+  /** Reveals a tab for the current visit without persisting the focus change. */
+  revealEphemeralTab: (input: { workspaceKey: string; target: WorkspaceTabTarget }) => void;
   rememberLastWorkspace: (selection: ActiveWorkspaceSelection) => void;
   navigateToRoute: (route: string) => void;
 }
@@ -106,10 +108,12 @@ export function navigateToWorkspace(
       : [];
     const attentionAgentId = pickAttentionAgent(workspaceAgents);
     if (attentionAgentId && resolvedWorkspaceId) {
-      deps.openTab({
+      // Ephemeral, not a persisted reveal: the layout keeps the focus the user
+      // left behind, so returning to the workspace restores their tab once the
+      // attention flag clears or they move focus themselves.
+      deps.revealEphemeralTab({
         workspaceKey: `${input.serverId}:${resolvedWorkspaceId}`,
         target: { kind: "agent", agentId: attentionAgentId },
-        intent: "reveal",
       });
     }
   }

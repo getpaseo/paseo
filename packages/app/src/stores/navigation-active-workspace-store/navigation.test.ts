@@ -17,10 +17,16 @@ interface RecordedTab {
   pin: boolean;
 }
 
+interface RecordedEphemeralReveal {
+  workspaceKey: string;
+  target: WorkspaceTabTarget;
+}
+
 function createFakeDeps(overrides: Partial<NavigateToWorkspaceDeps> = {}) {
   const navigations: string[] = [];
   const remembered: ActiveWorkspaceSelection[] = [];
   const openedTabs: RecordedTab[] = [];
+  const ephemeralReveals: RecordedEphemeralReveal[] = [];
   const deps: NavigateToWorkspaceDeps = {
     getSessionWorkspaces: () => null,
     getSessionAgents: () => [] as Agent[],
@@ -29,11 +35,14 @@ function createFakeDeps(overrides: Partial<NavigateToWorkspaceDeps> = {}) {
       openedTabs.push({ workspaceKey, target, pin });
       return target.kind === "agent" ? target.agentId : null;
     },
+    revealEphemeralTab: ({ workspaceKey, target }) => {
+      ephemeralReveals.push({ workspaceKey, target });
+    },
     rememberLastWorkspace: (selection) => remembered.push(selection),
     navigateToRoute: (route) => navigations.push(route),
     ...overrides,
   };
-  return { deps, navigations, remembered, openedTabs };
+  return { deps, navigations, remembered, openedTabs, ephemeralReveals };
 }
 
 function createLastSelectionDeps(
@@ -75,7 +84,7 @@ describe("workspace navigation", () => {
     expect(remembered).toEqual([{ serverId: "server-1", workspaceId: "workspace-a" }]);
   });
 
-  it("focuses the attention agent's tab when a workspace has one", () => {
+  it("reveals the attention agent's tab without persisting a focus change", () => {
     const workspace = {
       id: "workspace-a",
       workspaceDirectory: "/repo/workspace-a",
@@ -87,20 +96,20 @@ describe("workspace navigation", () => {
       requiresAttention: true,
       attentionReason: "permission",
     } as unknown as Agent;
-    const { deps, openedTabs } = createFakeDeps({
+    const { deps, openedTabs, ephemeralReveals } = createFakeDeps({
       getSessionWorkspaces: () => new Map([[workspace.id, workspace]]),
       getSessionAgents: () => [agent],
     });
 
     navigateToWorkspace({ serverId: "server-1", workspaceId: "workspace-a" }, deps);
 
-    expect(openedTabs).toEqual([
+    expect(ephemeralReveals).toEqual([
       {
         workspaceKey: "server-1:workspace-a",
         target: { kind: "agent", agentId: "agent-1" },
-        pin: false,
       },
     ]);
+    expect(openedTabs).toEqual([]);
   });
 
   it("keeps an explicit tab authoritative over an attention agent", () => {
@@ -115,7 +124,7 @@ describe("workspace navigation", () => {
       requiresAttention: true,
       attentionReason: "permission",
     } as unknown as Agent;
-    const { deps, openedTabs } = createFakeDeps({
+    const { deps, openedTabs, ephemeralReveals } = createFakeDeps({
       getSessionWorkspaces: () => new Map([[workspace.id, workspace]]),
       getSessionAgents: () => [agent],
     });
@@ -136,6 +145,7 @@ describe("workspace navigation", () => {
         pin: false,
       },
     ]);
+    expect(ephemeralReveals).toEqual([]);
   });
 
   it("defers an agent tab until a missing workspace is recovered", () => {

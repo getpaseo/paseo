@@ -66,6 +66,7 @@ import {
   collectAllTabs,
   DEFAULT_PANE_ID,
   findPaneById,
+  focusWorkspaceTabEphemerally,
   getFocusedBrowserId,
   FOCUSED_PANE_PLACEMENT,
   selectExplorerSidebarPaneId,
@@ -1810,9 +1811,44 @@ function WorkspaceScreenContent({
     return () => handler.remove();
   }, [isExplorerSidebarShowing, isMobile, isRouteFocused, showMobileAgent]);
 
-  const workspaceLayout = useWorkspaceLayoutStore((state) =>
+  const persistedWorkspaceLayout = useWorkspaceLayoutStore((state) =>
     persistenceKey ? (state.layoutByWorkspace[persistenceKey] ?? null) : null,
   );
+  const ephemeralFocusTarget = useWorkspaceLayoutStore((state) =>
+    persistenceKey ? (state.ephemeralFocusTargetByWorkspace[persistenceKey] ?? null) : null,
+  );
+  const clearEphemeralWorkspaceFocus = useWorkspaceLayoutStore(
+    (state) => state.clearEphemeralFocusTab,
+  );
+  // The attention reveal must not overwrite the focus the user left behind:
+  // apply it to an in-memory copy so the persisted layout still restores their
+  // tab when they come back without interacting with the revealed agent.
+  const workspaceLayout = useMemo(
+    () =>
+      persistedWorkspaceLayout && ephemeralFocusTarget
+        ? focusWorkspaceTabEphemerally({
+            layout: persistedWorkspaceLayout,
+            target: ephemeralFocusTarget,
+          })
+        : persistedWorkspaceLayout,
+    [ephemeralFocusTarget, persistedWorkspaceLayout],
+  );
+  // The reveal lasts one visit: it ends when the user leaves the workspace (or
+  // the screen goes away entirely), not when the retained deck entry unmounts.
+  const wasRouteFocusedRef = useRef(isRouteFocused);
+  useEffect(() => {
+    if (wasRouteFocusedRef.current && !isRouteFocused && persistenceKey) {
+      clearEphemeralWorkspaceFocus(persistenceKey);
+    }
+    wasRouteFocusedRef.current = isRouteFocused;
+  }, [clearEphemeralWorkspaceFocus, isRouteFocused, persistenceKey]);
+  useEffect(() => {
+    return () => {
+      if (persistenceKey) {
+        clearEphemeralWorkspaceFocus(persistenceKey);
+      }
+    };
+  }, [clearEphemeralWorkspaceFocus, persistenceKey]);
   const unfocusedPaneId = useWorkspaceLayoutStore((state) =>
     persistenceKey ? state.focusRestorationByWorkspace[persistenceKey]?.restorePaneId : undefined,
   );
