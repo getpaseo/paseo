@@ -1478,13 +1478,40 @@ class PluginAgentSession implements AgentSession {
   private async revert(messageId: string, scope: "conversation" | "files" | "both") {
     const token = this.revertTokens.get(messageId);
     if (token === undefined) throw new Error(`No provider revert token for message ${messageId}`);
-    await this.bridge.revert({
-      type: "session.revert",
-      requestId: randomUUID(),
-      sessionId: this.bridge.providerId,
-      token,
-      scope,
-    });
+    if (scope === "files") {
+      await this.bridge.revert({
+        type: "session.revert",
+        requestId: randomUUID(),
+        sessionId: this.bridge.providerId,
+        token,
+        scope,
+      });
+      return;
+    }
+
+    const previousHistory = this.history.splice(0);
+    const previousSnapshots = new Map(this.timelineSnapshots);
+    const previousRevertTokens = new Map(this.revertTokens);
+    this.timelineSnapshots.clear();
+    this.revertTokens.clear();
+    try {
+      await this.bridge.revert({
+        type: "session.revert",
+        requestId: randomUUID(),
+        sessionId: this.bridge.providerId,
+        token,
+        scope,
+      });
+    } catch (error) {
+      this.history.splice(0, this.history.length, ...previousHistory);
+      this.timelineSnapshots.clear();
+      for (const [id, item] of previousSnapshots) this.timelineSnapshots.set(id, item);
+      this.revertTokens.clear();
+      for (const [id, previousToken] of previousRevertTokens) {
+        this.revertTokens.set(id, previousToken);
+      }
+      throw error;
+    }
   }
 
   private publish(event: AgentStreamEvent): void {

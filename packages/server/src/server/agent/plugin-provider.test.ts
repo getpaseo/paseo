@@ -3,6 +3,7 @@ import type {
   ProviderEvent,
   ProviderInput,
   ProviderRegistration,
+  ProviderTimelineItem,
 } from "@getpaseo/plugin/server/provider";
 import { describe, expect, test } from "vitest";
 import { createTestLogger } from "../../test-utils/test-logger.js";
@@ -24,6 +25,7 @@ const CAPABILITIES = [
 interface ProviderHarnessOptions {
   capabilities?: ProviderConnection["capabilities"];
   completeTurn?: boolean;
+  rewindItems?: readonly ProviderTimelineItem[];
 }
 
 function createProviderHarness(options: ProviderHarnessOptions = {}) {
@@ -173,6 +175,13 @@ function createProviderHarness(options: ProviderHarnessOptions = {}) {
         emit({ type: "request.completed", requestId: input.requestId });
         return;
       }
+      if (input.type === "session.revert") {
+        for (const item of options.rewindItems ?? []) {
+          emit({ type: "timeline.item", sessionId: input.sessionId, item });
+        }
+        emit({ type: "request.completed", requestId: input.requestId });
+        return;
+      }
       if (input.type === "session.close") {
         emit({ type: "session.closed", sessionId: input.sessionId });
       }
@@ -205,6 +214,7 @@ function createProviderHarness(options: ProviderHarnessOptions = {}) {
     inputs,
     closeCount: () => closeCount,
     waitForClose: () => closed,
+    emit,
   };
 }
 
@@ -234,6 +244,88 @@ describe("PluginAgentClientRegistry", () => {
     await expect(client.archiveNativeSession?.(persistence)).resolves.toBeUndefined();
     await expect(client.unarchiveNativeSession?.(persistence)).resolves.toBeUndefined();
     expect(harness.inputs).toEqual([]);
+    await registry.shutdown();
+  });
+  test("replaces accumulated history with one active branch replay", async () => {
+    const retained = [
+      {
+        type: "user_message" as const,
+        id: "user-1",
+        messageId: "user-1",
+        text: "first",
+        revertToken: "token-1",
+      },
+      {
+        type: "assistant_message" as const,
+        id: "assistant-1",
+        messageId: "assistant-1",
+        text: "first reply",
+      },
+    ];
+    const harness = createProviderHarness({
+      capabilities: ["session.revert.conversation"],
+      rewindItems: retained,
+    });
+    const registry = new PluginAgentClientRegistry(createTestLogger());
+    registry.replace([harness.registration]);
+    const client = registry.clients()[harness.registration.id];
+    if (!client) throw new Error("Missing plugin provider client");
+    const session = await client.createSession({
+      provider: harness.registration.id,
+      cwd: "/workspace",
+    });
+    const openInput = harness.inputs.find(
+      (input): input is Extract<ProviderInput, { type: "session.open" }> =>
+        input.type === "session.open",
+    );
+    if (!openInput) throw new Error("Missing plugin provider open request");
+    harness.emit({
+      type: "timeline.item",
+      sessionId: openInput.sessionId,
+      item: retained[0],
+    });
+    harness.emit({
+      type: "timeline.item",
+      sessionId: openInput.sessionId,
+      item: retained[1],
+    });
+    harness.emit({
+      type: "timeline.item",
+      sessionId: openInput.sessionId,
+      item: {
+        type: "user_message",
+        id: "user-2",
+        messageId: "user-2",
+        text: "second",
+        revertToken: "token-2",
+      },
+    });
+    harness.emit({
+      type: "timeline.item",
+      sessionId: openInput.sessionId,
+      item: {
+        type: "assistant_message",
+        id: "assistant-2",
+        messageId: "assistant-2",
+        text: "second reply",
+      },
+    });
+
+    await session.revertConversation?.({ messageId: "user-2" });
+    const history: AgentStreamEvent[] = [];
+    for await (const event of session.streamHistory()) history.push(event);
+    expect(
+      history.flatMap((event) =>
+        event.type === "timeline" &&
+        (event.item.type === "user_message" || event.item.type === "assistant_message")
+          ? [event.item.text]
+          : [],
+      ),
+    ).toEqual(["first", "first reply"]);
+    expect(harness.inputs).toContainEqual(
+      expect.objectContaining({ type: "session.revert", token: "token-2", scope: "conversation" }),
+    );
+    await session.close();
     await registry.shutdown();
   });
 
