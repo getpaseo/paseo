@@ -47,10 +47,12 @@ class ProjectSecondaryLabelHarness {
       .first();
     const primary = row.locator('[data-testid^="sidebar-project-primary-label-"]');
     const secondary = row.locator('[data-testid^="sidebar-project-secondary-label-"]');
+    const locationStatus = row.locator('[data-testid="sidebar-project-location-status-online"]');
 
     await expect(row).toBeVisible({ timeout: 30_000 });
     await expect(primary).toHaveText(primaryLabel);
     await expect(secondary).toHaveText(SECONDARY_LABEL);
+    await expect(locationStatus).toBeVisible();
 
     const [rowBounds, primaryBounds, secondaryBounds] = await Promise.all([
       row.boundingBox(),
@@ -64,6 +66,10 @@ class ProjectSecondaryLabelHarness {
     expect(secondaryBounds!.x + secondaryBounds!.width).toBeLessThanOrEqual(
       rowBounds!.x + rowBounds!.width,
     );
+
+    await row.hover();
+    await expect(row.locator('[data-testid^="sidebar-project-kebab-"]')).toBeVisible();
+    await expect(locationStatus).toHaveCount(0);
   }
 
   async dispose(): Promise<void> {

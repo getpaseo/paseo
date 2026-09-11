@@ -21,6 +21,7 @@ function installation(): InstalledPlugin {
     surfaces: [],
     sidebarItems: [],
     workspacePanels: [],
+    workspaceLocationStatusProviders: [],
     commandCenterItems: [],
     clientSlashCommands: [],
     attachmentSources: [],

@@ -76,6 +76,7 @@ function plugin(onAgentSelect: AgentCommandItem["onSelect"]): InstalledPlugin {
         Component: () => null,
       },
     ],
+    workspaceLocationStatusProviders: [],
     commandCenterItems: [
       {
         id: "global",

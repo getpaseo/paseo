@@ -1,7 +1,8 @@
 # Plugins
 
-Local plugins contribute daemon RPCs, native app surfaces, workspace panels, Command Center items,
-client slash commands, timeline items, composer pills, app themes, composer attachment sources, and settings screens.
+Local plugins contribute daemon RPCs, native app surfaces, workspace panels, Workspace location
+status, Command Center items, client slash commands, timeline items, composer pills, app themes,
+composer attachment sources, and settings screens.
 Paseo executes `index.server.ts` in a subprocess and `index.client.tsx` in every connected app.
 
 > **Trust every plugin you add.** `paseo plugin add` and `paseo plugin install` mean “I trust this codebase.” Plugins are unsandboxed: server code and Git preparation commands run with the daemon user's access on the daemon host, and client contributions run inside Paseo. The repository's dependencies and future updates are part of that trust decision. With `--host`, preparation runs on that remote daemon host.

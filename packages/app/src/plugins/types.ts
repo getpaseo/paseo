@@ -16,6 +16,7 @@ import type {
   PluginTimelineTransformerContribution,
   PluginPanelLocation,
   PluginWorkspacePanelContribution,
+  PluginWorkspaceLocationStatusProvider,
 } from "@getpaseo/plugin/client";
 
 export type EvaluatedPluginWorkspacePanelContribution = PluginWorkspacePanelContribution & {
@@ -29,6 +30,7 @@ export interface EvaluatedPlugin {
   settingsScreens: PluginSettingsScreenContribution[];
   sidebarItems: PluginSidebarContribution[];
   workspacePanels: EvaluatedPluginWorkspacePanelContribution[];
+  workspaceLocationStatusProviders: PluginWorkspaceLocationStatusProvider[];
   commandCenterItems: PluginCommandCenterItemContribution[];
   clientSlashCommands: PluginClientSlashCommandContribution[];
   attachmentSources: PluginAttachmentSourceContribution[];
@@ -56,4 +58,5 @@ export type {
   PluginTimelineRendererContribution,
   PluginTimelineTransformerContribution,
   PluginWorkspacePanelContribution,
+  PluginWorkspaceLocationStatusProvider,
 };

@@ -23,6 +23,7 @@ function installed(): InstalledPlugin {
         Component: () => null,
       },
     ],
+    workspaceLocationStatusProviders: [],
     commandCenterItems: [],
     clientSlashCommands: [],
     attachmentSources: [],

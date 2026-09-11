@@ -26,6 +26,7 @@ function installation(
       icon: "Blocks",
     })),
     workspacePanels: [],
+    workspaceLocationStatusProviders: [],
     commandCenterItems: [],
     clientSlashCommands: [],
     attachmentSources: [],

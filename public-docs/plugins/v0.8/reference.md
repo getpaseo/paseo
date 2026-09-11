@@ -19,6 +19,7 @@ Local plugins are directory sources installed into one Paseo daemon. A plugin ca
 - global, workspace, and agent actions in the Command Center;
 - slash commands in the message composer;
 - transformed and daemon-pushed agent timeline rows;
+- workspace location status beside integration-provided project labels;
 - light and dark themes in Settings → Appearance;
 - schema-validated RPC handlers running beside the daemon;
 - normal Paseo operations through the TypeScript SDK;
@@ -188,6 +189,39 @@ Paseo provides `@getpaseo/plugin`, `@getpaseo/plugin/server`,
 contributions run in a daemon subprocess with Node access to the host machine. Keep filesystem,
 process, credential, and other machine-local work under `server/`. A plugin without
 `index.server.ts` starts no subprocess.
+
+### Workspace location status
+
+A client plugin can report whether an integration-backed Workspace location is reachable. Paseo
+renders the result beside `projectPresentation.secondaryLabel` in the Projects sidebar and combines
+it with the owning Host connection, so a disconnected Host never leaves a stale green indicator.
+
+```tsx
+import type { PluginClientContext } from "@getpaseo/plugin/client";
+import { inspectWorkspace } from "./shared/workspace";
+
+export default function contribute(client: PluginClientContext) {
+  client.addWorkspaceLocationStatusProvider({
+    id: "remote-workspace",
+    async getStatus({ workspaceId }) {
+      const workspace = await client.paseo.workspaces.ref(workspaceId).refresh();
+      if (!workspace?.workspaceDirectory) return null;
+      const result = await client.rpc(inspectWorkspace, {
+        directory: workspace.workspaceDirectory,
+      });
+      if (!result.remote) return null;
+      return { state: result.reachable ? "online" : "error", detail: result.message };
+    },
+  });
+  return () => {};
+}
+```
+
+`getStatus()` returns `null` when the provider does not own the Workspace. Otherwise it returns
+`online`, `connecting`, `offline`, `error`, or `unknown`, plus an optional short `detail` shown in
+the status tooltip. Paseo probes providers while their Host is online and refreshes the result every
+30 seconds. Keep the check lightweight and bounded. The indicator remains visible while the
+hostname is truncated.
 
 ### Providers
 

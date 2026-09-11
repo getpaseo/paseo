@@ -85,6 +85,7 @@ export class PluginRegistry {
           settingsScreens: [],
           sidebarItems: [],
           workspacePanels: [],
+          workspaceLocationStatusProviders: [],
           commandCenterItems: [],
           clientSlashCommands: [],
           attachmentSources: [],

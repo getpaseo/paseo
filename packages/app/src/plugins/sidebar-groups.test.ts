@@ -21,6 +21,7 @@ function installed(serverId: string, contributionId = "main"): InstalledPlugin {
       },
     ],
     workspacePanels: [],
+    workspaceLocationStatusProviders: [],
     commandCenterItems: [],
     clientSlashCommands: [],
     attachmentSources: [],

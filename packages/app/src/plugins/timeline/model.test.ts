@@ -17,6 +17,7 @@ function plugin(input: {
     surfaces: [],
     sidebarItems: [],
     workspacePanels: [],
+    workspaceLocationStatusProviders: [],
     commandCenterItems: [],
     clientSlashCommands: [],
     attachmentSources: [],

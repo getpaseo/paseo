@@ -23,6 +23,7 @@ import {
   type PluginTimelineRendererContribution,
   type PluginTimelineTransformerContribution,
   type PluginWorkspacePanelContribution,
+  type PluginWorkspaceLocationStatusProvider,
 } from "@getpaseo/plugin/client";
 import type { EvaluatedPlugin } from "./types";
 import type { ComponentType } from "react";
@@ -84,6 +85,7 @@ export function runPluginClientBundle(
     settingsScreens: [],
     sidebarItems: [],
     workspacePanels: [],
+    workspaceLocationStatusProviders: [],
     commandCenterItems: [],
     clientSlashCommands: [],
     attachmentSources: [],
@@ -95,6 +97,7 @@ export function runPluginClientBundle(
   const settingsScreenIds = new Set<string>();
   const sidebarItemIds = new Set<string>();
   const workspacePanelIds = new Set<string>();
+  const workspaceLocationStatusProviderIds = new Set<string>();
   const commandCenterItemIds = new Set<string>();
   const clientSlashCommandNames = new Set<string>();
   const attachmentSourceIds = new Set<string>();
@@ -192,6 +195,21 @@ export function runPluginClientBundle(
           locations,
         },
         () => workspacePanelIds.delete(normalizedId),
+      );
+    },
+    addWorkspaceLocationStatusProvider(contribution: PluginWorkspaceLocationStatusProvider) {
+      const normalizedId = requireId(contribution.id, "workspace location status provider id");
+      if (workspaceLocationStatusProviderIds.has(normalizedId)) {
+        throw new Error(`Duplicate workspace location status provider: ${normalizedId}`);
+      }
+      if (typeof contribution.getStatus !== "function") {
+        throw new Error(`Workspace location status provider ${normalizedId} has no callback`);
+      }
+      workspaceLocationStatusProviderIds.add(normalizedId);
+      return register(
+        collector.workspaceLocationStatusProviders,
+        { ...contribution, id: normalizedId },
+        () => workspaceLocationStatusProviderIds.delete(normalizedId),
       );
     },
     addCommandCenterItem(contribution: PluginCommandCenterItemContribution) {
@@ -411,6 +429,7 @@ export function runPluginClientBundle(
     settingsScreens: collector.settingsScreens,
     sidebarItems: collector.sidebarItems,
     workspacePanels: collector.workspacePanels as EvaluatedPlugin["workspacePanels"],
+    workspaceLocationStatusProviders: collector.workspaceLocationStatusProviders,
     commandCenterItems: collector.commandCenterItems,
     clientSlashCommands: collector.clientSlashCommands,
     attachmentSources: collector.attachmentSources,

@@ -79,6 +79,25 @@ export interface PluginComposerPillContribution {
   onPress(): void | Promise<void>;
 }
 
+export type PluginWorkspaceLocationState =
+  | "online"
+  | "connecting"
+  | "offline"
+  | "error"
+  | "unknown";
+
+export interface PluginWorkspaceLocationStatus {
+  state: PluginWorkspaceLocationState;
+  detail?: string;
+}
+
+export interface PluginWorkspaceLocationStatusProvider {
+  id: string;
+  getStatus(input: {
+    workspaceId: string;
+  }): PluginWorkspaceLocationStatus | null | Promise<PluginWorkspaceLocationStatus | null>;
+}
+
 export interface PluginClientOpenPanelOptions extends PluginOpenPanelOptions {
   workspaceId: string;
   agentId?: string;
@@ -89,6 +108,9 @@ export interface PluginClientContext extends PluginCommandCapabilities {
   addSurface(id: string, Component: ComponentType<PluginSurfaceProps>): PluginCleanup;
   addSidebarItem(contribution: PluginSidebarContribution): PluginCleanup;
   addWorkspacePanel(contribution: PluginWorkspacePanelContribution): PluginCleanup;
+  addWorkspaceLocationStatusProvider(
+    contribution: PluginWorkspaceLocationStatusProvider,
+  ): PluginCleanup;
   addCommandCenterItem(contribution: PluginCommandCenterItemContribution): PluginCleanup;
   addSlashCommand(contribution: PluginClientSlashCommandContribution): PluginCleanup;
   addComposerPill(contribution: PluginComposerPillContribution): PluginCleanup;
