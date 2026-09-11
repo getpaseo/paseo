@@ -104,11 +104,14 @@ layering inside `overlay-root`. Activating a presented browser also focuses its 
 `WebContents` in main so macOS assigns keyboard first-responder ownership to the page.
 
 There is no renderer prep/restore handshake or lifetime background-throttling override.
-Main freezes parked guests and takes a live hold for the presented pane plus in-flight
-capture or automation. Screenshot capture temporarily enables frame production inside
-the shared serialized queue, restores the previous throttling policy on success or
-failure, invalidates before each attempt, and retries known first-frame failures within
-the 5-second capture budget. Viewport screenshots use `capturePage({ stayHidden:false })`;
-full-page screenshots use the existing CDP path with layout metrics and screenshot clip.
-A runaway guest renderer that stays above 1 GiB working set is reloaded, then crashed
-if it keeps growing.
+Parked guests stay in the paintable 1×1 geometry; hiding them with `display:none` or
+`opacity:0` drops the copyable surface. Main freezes those parked guests so they do
+not composite at display refresh while the window is focused, and takes a live hold
+for the presented pane plus in-flight capture or automation. Screenshot capture
+temporarily enables frame production inside the shared serialized queue, restores the
+previous throttling policy on success or failure, invalidates before each attempt,
+and retries known first-frame failures within the 5-second capture budget. Viewport
+screenshots use `capturePage({ stayHidden:false })`; full-page screenshots use the
+existing CDP path with layout metrics and screenshot clip. Runaway guest-renderer
+containment lives in
+`packages/desktop/src/features/browser-webviews/guest-compositor.ts`.

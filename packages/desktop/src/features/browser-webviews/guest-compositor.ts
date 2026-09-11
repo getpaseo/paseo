@@ -220,6 +220,7 @@ export function createGuestCompositor(options: CreateGuestCompositorOptions = {}
   const setLifecycleState = options.setLifecycleState;
   const now = options.now ?? Date.now;
   const logWarn = options.logWarn;
+  let applyChain: Promise<void> = Promise.resolve();
 
   function liveHoldCount(webContentsId: number): number {
     return liveHoldCountByWebContentsId.get(webContentsId) ?? 0;
@@ -246,43 +247,55 @@ export function createGuestCompositor(options: CreateGuestCompositorOptions = {}
     liveHoldCountByWebContentsId.set(webContentsId, nextCount);
   }
 
-  async function applyBudgetToGuest(
+  function budgetForGuest(
     guest: BrowserGuestRegistration,
     contents: GuestCompositorTarget,
-  ): Promise<void> {
-    if (contents.isDestroyed()) {
-      appliedBudgetByWebContentsId.delete(contents.id);
-      return;
-    }
-    const budget = guestCompositorBudget({
+  ): GuestCompositorBudget {
+    return guestCompositorBudget({
       isPresentedInHostWindow: isPresented(guest.hostWebContentsId, guest.browserId),
       isActiveInHostWindow: isActive(guest.hostWebContentsId, guest.browserId),
       liveHoldCount: liveHoldCount(contents.id),
     });
-    const throttlingAllowed = backgroundThrottlingAllowed(budget);
-    const lifecycle = guestLifecycleState(budget);
-    const applied = appliedBudgetByWebContentsId.get(contents.id);
-    if (applied?.throttlingAllowed !== throttlingAllowed) {
-      contents.setBackgroundThrottling(throttlingAllowed);
-    }
-    const lifecycleChanged = applied?.lifecycle !== lifecycle;
-    if (lifecycleChanged && setLifecycleState) {
-      try {
-        await setLifecycleState(contents, lifecycle);
-      } catch (error) {
-        logWarn?.("[guest-compositor] failed to set page lifecycle", {
-          webContentsId: contents.id,
-          lifecycle,
-          error: error instanceof Error ? error.message : String(error),
-        });
-        appliedBudgetByWebContentsId.set(contents.id, {
-          throttlingAllowed,
-          lifecycle: applied?.lifecycle ?? "active",
-        });
+  }
+
+  async function applyBudgetToGuest(
+    guest: BrowserGuestRegistration,
+    contents: GuestCompositorTarget,
+  ): Promise<void> {
+    for (;;) {
+      if (contents.isDestroyed()) {
+        appliedBudgetByWebContentsId.delete(contents.id);
         return;
       }
+      const budget = budgetForGuest(guest, contents);
+      const throttlingAllowed = backgroundThrottlingAllowed(budget);
+      const lifecycle = guestLifecycleState(budget);
+      const applied = appliedBudgetByWebContentsId.get(contents.id);
+      if (applied?.throttlingAllowed !== throttlingAllowed) {
+        contents.setBackgroundThrottling(throttlingAllowed);
+      }
+      const lifecycleChanged = applied?.lifecycle !== lifecycle;
+      if (lifecycleChanged && setLifecycleState) {
+        try {
+          await setLifecycleState(contents, lifecycle);
+        } catch (error) {
+          logWarn?.("[guest-compositor] failed to set page lifecycle", {
+            webContentsId: contents.id,
+            lifecycle,
+            error: error instanceof Error ? error.message : String(error),
+          });
+          appliedBudgetByWebContentsId.set(contents.id, {
+            throttlingAllowed,
+            lifecycle: applied?.lifecycle ?? "active",
+          });
+          return;
+        }
+        appliedBudgetByWebContentsId.set(contents.id, { throttlingAllowed, lifecycle });
+        continue;
+      }
+      appliedBudgetByWebContentsId.set(contents.id, { throttlingAllowed, lifecycle });
+      return;
     }
-    appliedBudgetByWebContentsId.set(contents.id, { throttlingAllowed, lifecycle });
   }
 
   return {
@@ -320,13 +333,24 @@ export function createGuestCompositor(options: CreateGuestCompositorOptions = {}
     },
 
     async applyBudgets(input) {
-      for (const guest of input.guests) {
-        const contents = input.getContents(guest.webContentsId);
-        if (!contents) {
-          appliedBudgetByWebContentsId.delete(guest.webContentsId);
-          continue;
+      const previous = applyChain;
+      let releaseCurrent = () => {};
+      const current = new Promise<void>((resolve) => {
+        releaseCurrent = resolve;
+      });
+      applyChain = previous.catch(() => {}).then(() => current);
+      await previous.catch(() => {});
+      try {
+        for (const guest of input.guests) {
+          const contents = input.getContents(guest.webContentsId);
+          if (!contents) {
+            appliedBudgetByWebContentsId.delete(guest.webContentsId);
+            continue;
+          }
+          await applyBudgetToGuest(guest, contents);
         }
-        await applyBudgetToGuest(guest, contents);
+      } finally {
+        releaseCurrent();
       }
     },
 

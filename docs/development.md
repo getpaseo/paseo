@@ -311,12 +311,9 @@ frames non-stop, pinning ProMotion displays at 120Hz forever and draining the
 battery while the app is idle — so do not re-add it. The probe's visibility
 guards already prevent throttling from causing a false stall.
 
-In-app browser guests follow the same rule except while they are presented or
-held for capture/automation. See `packages/desktop/src/features/browser-webviews/guest-compositor.ts`.
-Parked guests allow Chromium throttling and are frozen with
-`Page.setWebLifecycleState`. A live hold unthrottles and unfreezes for the
-command, then the guest returns to the parked budget. Renderers that stay above
-1 GiB working set are reloaded, then crashed.
+In-app browser guests keep that host-window rule and add a parked-guest freeze
+so leftover tabs do not composite while Paseo is focused. See
+[browser-capture-harness.md](browser-capture-harness.md).
 
 ### Daemon logs
 

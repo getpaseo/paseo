@@ -190,6 +190,53 @@ describe("createGuestCompositor", () => {
     ]);
   });
 
+  it("does not keep a guest frozen after it becomes live during a parked update", async () => {
+    const lifecycle: Array<"active" | "frozen"> = [];
+    let resumeFrozen = () => {};
+    const frozenGate = new Promise<void>((resolve) => {
+      resumeFrozen = resolve;
+    });
+    let frozenStarted = () => {};
+    const frozenStartedAt = new Promise<void>((resolve) => {
+      frozenStarted = resolve;
+    });
+    const compositor = createGuestCompositor({
+      setLifecycleState: async (_contents, state) => {
+        lifecycle.push(state);
+        if (state === "frozen") {
+          frozenStarted();
+          await frozenGate;
+        }
+      },
+    });
+    const guest = new FakeGuest(9, 99);
+    const apply = () =>
+      compositor.applyBudgets({
+        guests: [
+          {
+            webContentsId: guest.id,
+            browserId: "browser-race",
+            hostWebContentsId: 100,
+          },
+        ],
+        getContents: () => guest,
+      });
+
+    const parkedUpdate = apply();
+    await frozenStartedAt;
+    compositor.setPresented({
+      hostWebContentsId: 100,
+      browserId: "browser-race",
+      presented: true,
+    });
+    const liveUpdate = apply();
+    resumeFrozen();
+    await Promise.all([parkedUpdate, liveUpdate]);
+
+    expect(lifecycle.at(-1)).toBe("active");
+    expect(guest.backgroundThrottlingCalls.at(-1)).toBe(false);
+  });
+
   it("unthrottles the workspace-active guest even when it is not presented", async () => {
     const compositor = createGuestCompositor({
       setLifecycleState: async () => {},
