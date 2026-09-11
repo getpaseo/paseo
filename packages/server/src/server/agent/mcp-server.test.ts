@@ -4788,6 +4788,7 @@ describe("update_schedule MCP tool", () => {
       mode: null,
       maxRuns: null,
       clearExpires: true,
+      cwd: "/home/user/project",
       workspaceId: null,
     });
 
@@ -4798,9 +4799,28 @@ describe("update_schedule MCP tool", () => {
       newAgentConfig: {
         model: null,
         modeId: null,
+        cwd: "/home/user/project",
         workspaceId: null,
       },
     });
+  });
+
+  it("requires a replacement cwd when clearing a schedule workspace", async () => {
+    const { agentManager, agentStorage } = createTestDeps();
+    const update = vi.fn();
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      providerSnapshotManager: createOpenCodeManager().manager,
+      scheduleService: scheduleServiceWithUpdate(update),
+      logger,
+    });
+    const tool = registeredTool(server, "update_schedule");
+
+    await expect(tool.handler({ id: "schedule-1", workspaceId: null })).rejects.toThrow(
+      "cwd is required when clearing workspaceId",
+    );
+    expect(update).not.toHaveBeenCalled();
   });
 
   it("rejects conflicting model and expiry inputs", async () => {

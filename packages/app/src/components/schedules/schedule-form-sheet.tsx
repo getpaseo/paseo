@@ -136,6 +136,8 @@ function selectScheduleHosts(
       label: host.label,
       supportsWorkspaceMultiplicity:
         state.sessions[host.serverId]?.serverInfo?.features?.workspaceMultiplicity === true,
+      supportsScheduleExistingWorkspace:
+        state.sessions[host.serverId]?.serverInfo?.features?.scheduleExistingWorkspace === true,
     }));
 }
 

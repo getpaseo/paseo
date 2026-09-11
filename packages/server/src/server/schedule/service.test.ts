@@ -2326,6 +2326,100 @@ describe("ScheduleService", () => {
     await service2.stop();
   });
 
+  test("startup recovery finds and archives an unrecorded selected-workspace agent", async () => {
+    const workspaceId = "wks_selected_unrecorded_agent";
+    const runId = "run-interrupted-before-agent-record";
+    const agentId = "33333333-3333-4333-8333-333333333333";
+    const selectedWorkspace: PersistedWorkspaceRecord = {
+      workspaceId,
+      projectId: "test-project",
+      cwd: tempDir,
+      kind: "directory",
+      displayName: "shared",
+      title: "Shared workspace",
+      branch: null,
+      baseBranch: null,
+      createdAt: now.toISOString(),
+      updatedAt: now.toISOString(),
+      archivedAt: null,
+    };
+    const service1 = createScheduleService({
+      paseoHome: tempDir,
+      logger: createTestLogger(),
+      agentManager: new AgentManager({ logger: createTestLogger() }),
+      agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
+      getWorkspace: async (id) => (id === workspaceId ? selectedWorkspace : null),
+      now: () => now,
+      runner: async () => ({ agentId: null, output: "ok" }),
+    });
+    const created = await service1.create({
+      prompt: "Interrupted before the agent id was recorded",
+      cadence: { type: "every", everyMs: 60_000 },
+      target: {
+        type: "new-agent",
+        config: { provider: "claude", cwd: tempDir, workspaceId },
+      },
+      runOnCreate: false,
+    });
+    await service1.stop();
+
+    await agentStorage.upsert({
+      ...buildAgentRecord({ id: agentId, cwd: tempDir, iso: now.toISOString() }),
+      workspaceId,
+      labels: {
+        "paseo.schedule-id": created.id,
+        "paseo.schedule-run": runId,
+      },
+    });
+    const store = new ScheduleStore(join(tempDir, "schedules"));
+    await store.update(created.id, (schedule) => ({
+      ...schedule,
+      runs: [
+        ...schedule.runs,
+        {
+          id: runId,
+          scheduledFor: now.toISOString(),
+          startedAt: now.toISOString(),
+          endedAt: null,
+          status: "running",
+          agentId: null,
+          workspaceId,
+          workspaceOwnedByRun: false,
+          output: null,
+          error: null,
+        },
+      ],
+    }));
+
+    const archiveWorkspace = vi.fn<ScheduleServiceOptions["archiveWorkspace"]>();
+    const archiveAgent = vi.fn<ScheduleServiceOptions["archiveAgent"]>();
+    now = new Date("2026-01-01T00:10:00.000Z");
+    const service2 = createScheduleService({
+      paseoHome: tempDir,
+      logger: createTestLogger(),
+      agentManager: new AgentManager({ logger: createTestLogger() }),
+      agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
+      getWorkspace: async (id) => (id === workspaceId ? selectedWorkspace : null),
+      archiveWorkspace,
+      archiveAgent,
+      now: () => now,
+      runner: async () => ({ agentId: null, output: "ok" }),
+    });
+    await service2.start();
+
+    expect(archiveWorkspace).not.toHaveBeenCalled();
+    expect(archiveAgent).toHaveBeenCalledWith(agentId);
+    expect((await service2.inspect(created.id)).runs[0]).toMatchObject({
+      status: "failed",
+      agentId,
+      workspaceOwnedByRun: false,
+      error: "Daemon restarted before the scheduled run completed",
+    });
+    await service2.stop();
+  });
+
   test("keeps schedules paused when an in-flight run finishes after pause", async () => {
     let releaseRun: (() => void) | null = null;
     const runStarted = new Promise<void>((resolve) => {
@@ -2828,6 +2922,55 @@ describe("ScheduleService", () => {
     }
     expect(clearModel.target.config.model).toBeUndefined();
     expect(clearModel.target.config.modeId).toBe("bypassPermissions");
+  });
+
+  test("update requires and stores a replacement cwd when clearing a workspace target", async () => {
+    const workspaceId = "wks_update_clear";
+    const selectedWorkspace = {
+      workspaceId,
+      projectId: "test-project",
+      cwd: join(tempDir, "selected-workspace"),
+      kind: "worktree" as const,
+      displayName: "selected-workspace",
+      title: "Selected workspace",
+      branch: "feature",
+      baseBranch: "main",
+      createdAt: now.toISOString(),
+      updatedAt: now.toISOString(),
+      archivedAt: null,
+    };
+    await mkdir(selectedWorkspace.cwd, { recursive: true });
+    const service = createScheduleService({
+      paseoHome: tempDir,
+      logger: createTestLogger(),
+      agentManager: new AgentManager({ logger: createTestLogger() }),
+      agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
+      getWorkspace: async (id) => (id === workspaceId ? selectedWorkspace : null),
+      now: () => now,
+      runner: async () => ({ agentId: null, output: "ok" }),
+    });
+    const created = await service.create({
+      prompt: "p",
+      cadence: { type: "every", everyMs: 60_000 },
+      target: {
+        type: "new-agent",
+        config: { provider: "claude", cwd: tempDir, workspaceId },
+      },
+    });
+
+    await expect(
+      service.update({ id: created.id, newAgentConfig: { workspaceId: null } }),
+    ).rejects.toThrow("cwd is required when clearing workspaceId");
+
+    const updated = await service.update({
+      id: created.id,
+      newAgentConfig: { workspaceId: null, cwd: tempDir },
+    });
+    expect(updated.target).toEqual({
+      type: "new-agent",
+      config: { provider: "claude", cwd: tempDir },
+    });
   });
 
   test("update returns a schedule that round-trips through the store", async () => {

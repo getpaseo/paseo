@@ -50,6 +50,16 @@ export function toScheduleCommandError(code: string, action: string, error: unkn
   };
 }
 
+export function requireScheduleExistingWorkspaceSupport(client: ScheduleDaemonClient): void {
+  // COMPAT(scheduleExistingWorkspace): added in v0.8.0, remove after 2027-09-11.
+  if (client.getLastServerInfoMessage()?.features?.scheduleExistingWorkspace !== true) {
+    throw {
+      code: "DAEMON_UPDATE_REQUIRED",
+      message: "Update the host to schedule fresh agents in an existing workspace.",
+    } satisfies CommandError;
+  }
+}
+
 export async function requireNewAgentSchedule(
   client: ScheduleDaemonClient,
   id: string,
@@ -494,6 +504,12 @@ function buildNewAgentConfigPatch(
     }
     patch.workspaceId = trimmed;
   } else if (options.clearWorkspace) {
+    if (patch.cwd === undefined) {
+      throw {
+        code: "MISSING_CWD",
+        message: "--cwd is required with --clear-workspace",
+      } satisfies CommandError;
+    }
     patch.workspaceId = null;
   }
   return Object.keys(patch).length > 0 ? patch : undefined;

@@ -9,6 +9,7 @@ import {
   connectScheduleClient,
   parseScheduleUpdateInput,
   requireNewAgentSchedule,
+  requireScheduleExistingWorkspaceSupport,
   toScheduleCommandError,
   type ScheduleCommandOptions,
 } from "./shared.js";
@@ -56,6 +57,9 @@ export async function runUpdateCommand(
   });
   const { client } = await connectScheduleClient(options.daemonTarget);
   try {
+    if (input.newAgentConfig?.workspaceId !== undefined) {
+      requireScheduleExistingWorkspaceSupport(client);
+    }
     await requireNewAgentSchedule(client, id);
     const payload = await client.scheduleUpdate(input);
     if (payload.error || !payload.schedule) {

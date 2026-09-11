@@ -98,7 +98,7 @@ export function createScheduleCommand(): Command {
       .option("--mode <mode>", "New agent provider mode (only for new-agent target)")
       .option("--cwd <path>", "New working directory (only for new-agent target)")
       .option("--workspace <id>", "Run each fresh agent in an existing workspace")
-      .option("--clear-workspace", "Return to creating a workspace for each run")
+      .option("--clear-workspace", "Return to creating a workspace for each run (requires --cwd)")
       .option("--max-runs <n>", "Set or change maximum number of runs")
       .option("--no-max-runs", "Clear the max-runs limit")
       .option("--expires-in <duration>", "Set or change time to live for the schedule")

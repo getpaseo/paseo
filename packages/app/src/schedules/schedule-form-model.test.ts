@@ -13,8 +13,18 @@ import type { ScheduleWorkspaceTarget } from "./schedule-workspace-targets";
 type TestSchedule = ScheduleSummary & { serverId: string; serverName: string };
 
 const HOSTS = [
-  { serverId: "host-a", label: "Host A", supportsWorkspaceMultiplicity: true },
-  { serverId: "host-b", label: "Host B", supportsWorkspaceMultiplicity: true },
+  {
+    serverId: "host-a",
+    label: "Host A",
+    supportsWorkspaceMultiplicity: true,
+    supportsScheduleExistingWorkspace: true,
+  },
+  {
+    serverId: "host-b",
+    label: "Host B",
+    supportsWorkspaceMultiplicity: true,
+    supportsScheduleExistingWorkspace: true,
+  },
 ] as const;
 
 const MOCK_MODES: AgentMode[] = [{ id: "load-test", label: "Load test" }];
@@ -467,6 +477,24 @@ describe("schedule form model", () => {
       showIsolationField: true,
       showArchiveOnFinishField: true,
     });
+  });
+
+  it("does not expose workspace targeting based only on the older multiplicity feature", () => {
+    const form = openWithHosts({
+      mode: "create",
+      hosts: [
+        {
+          serverId: "host-a",
+          label: "Host A",
+          supportsWorkspaceMultiplicity: true,
+        },
+      ],
+      defaults: { serverId: "host-a", projectTargets: PROJECT_TARGETS, preferences: {} },
+    });
+
+    form.setProject(buildProjectOptionId("host-a", "project-a"), { label: "Project A" });
+
+    expect(form.getState().disclosure.showWorkspaceField).toBe(false);
   });
 
   it("hides isolation unless the selected project can create a worktree", () => {

@@ -39,6 +39,7 @@ export interface ScheduleFormHost {
   serverId: string;
   label: string;
   supportsWorkspaceMultiplicity?: boolean;
+  supportsScheduleExistingWorkspace?: boolean;
 }
 
 export interface ScheduleFormSnapshot {
@@ -592,6 +593,16 @@ function selectedHostSupportsWorkspaceMultiplicity(input: {
   );
 }
 
+function selectedHostSupportsScheduleExistingWorkspace(input: {
+  hosts: readonly ScheduleFormHost[];
+  selectedServerId: string | null;
+}): boolean {
+  return (
+    input.hosts.find((entry) => entry.serverId === input.selectedServerId)
+      ?.supportsScheduleExistingWorkspace === true
+  );
+}
+
 function resolveEffectiveIsolation(input: {
   isolation: "local" | "worktree";
   canUseWorktreeIsolation: boolean;
@@ -635,7 +646,7 @@ function resolveDisclosure(state: ScheduleFormState): ScheduleDisclosureState {
     showProjectField,
     showWorkspaceField:
       hasProject &&
-      selectedHostSupportsWorkspaceMultiplicity({
+      selectedHostSupportsScheduleExistingWorkspace({
         hosts: state.hosts,
         selectedServerId: state.selectedServerId,
       }),

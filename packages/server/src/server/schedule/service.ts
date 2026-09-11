@@ -64,10 +64,17 @@ function normalizePrompt(prompt: string): string {
   return trimmed;
 }
 
+function assertWorkspaceClearHasCwd(patch: UpdateScheduleNewAgentConfig): void {
+  if (patch.workspaceId === null && patch.cwd === undefined) {
+    throw new Error("cwd is required when clearing workspaceId");
+  }
+}
+
 function applyNewAgentConfig(
   target: Extract<ScheduleTarget, { type: "new-agent" }>,
   patch: UpdateScheduleNewAgentConfig,
 ): Extract<ScheduleTarget, { type: "new-agent" }> {
+  assertWorkspaceClearHasCwd(patch);
   const config = { ...target.config };
   if (patch.provider !== undefined) {
     const trimmed = patch.provider.trim();
@@ -611,7 +618,7 @@ export class ScheduleService {
       runId: string;
       workspaceOwnedByRun: boolean;
     }> = [];
-    await this.store.update(scheduleId, (current) => {
+    await this.store.update(scheduleId, async (current) => {
       let updated = { ...current };
       let dirty = false;
 
@@ -622,19 +629,28 @@ export class ScheduleService {
         // Runs written before workspace ownership was recorded always used a
         // schedule-created workspace, so missing ownership means owned.
         const workspaceOwnedByRun = runningRun.workspaceOwnedByRun ?? true;
+        const recoveredAgentId =
+          runningRun.agentId ??
+          (workspaceOwnedByRun || !runningRun.workspaceId
+            ? null
+            : await this.findScheduledRunAgent({
+                scheduleId,
+                runId: runningRun.id,
+                workspaceId: runningRun.workspaceId,
+              }));
         if (
           updated.target.type === "new-agent" &&
           runningRun.workspaceId &&
           (workspaceOwnedByRun
             ? shouldArchiveScheduleRunWorkspace({
-                agentId: runningRun.agentId,
+                agentId: recoveredAgentId,
                 archiveOnFinish: updated.target.config.archiveOnFinish,
               })
-            : Boolean(runningRun.agentId && (updated.target.config.archiveOnFinish ?? true)))
+            : Boolean(recoveredAgentId && (updated.target.config.archiveOnFinish ?? true)))
         ) {
           interruptedRuns.push({
             workspaceId: runningRun.workspaceId,
-            agentId: runningRun.agentId,
+            agentId: recoveredAgentId,
             runId: runningRun.id,
             workspaceOwnedByRun,
           });
@@ -644,6 +660,7 @@ export class ScheduleService {
           status: "failed",
           endedAt: now.toISOString(),
           error: "Daemon restarted before the scheduled run completed",
+          agentId: recoveredAgentId,
         };
         updated = { ...updated, runs };
         dirty = true;
@@ -691,6 +708,32 @@ export class ScheduleService {
           : "Failed to archive interrupted scheduled agent after daemon restart",
       );
     }
+  }
+
+  private async findScheduledRunAgent(input: {
+    scheduleId: string;
+    runId: string;
+    workspaceId: string;
+  }): Promise<string | null> {
+    const matches = (await this.agentStorage.list()).filter(
+      (record) =>
+        !record.archivedAt &&
+        record.workspaceId === input.workspaceId &&
+        record.labels["paseo.schedule-id"] === input.scheduleId &&
+        record.labels["paseo.schedule-run"] === input.runId,
+    );
+    if (matches.length > 1) {
+      this.logger.warn(
+        {
+          agentIds: matches.map((record) => record.id),
+          workspaceId: input.workspaceId,
+          scheduleId: input.scheduleId,
+          runId: input.runId,
+        },
+        "Found multiple agents for an interrupted scheduled run",
+      );
+    }
+    return matches[0]?.id ?? null;
   }
 
   // Orphaned agent-target schedules (agent deleted while the daemon was down, or

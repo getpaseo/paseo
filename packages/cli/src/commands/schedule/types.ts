@@ -162,6 +162,9 @@ export interface ScheduleUpdatePayload {
 }
 
 export interface ScheduleDaemonClient {
+  getLastServerInfoMessage(): {
+    features?: { scheduleExistingWorkspace?: boolean };
+  } | null;
   scheduleCreate(input: CreateScheduleInput): Promise<ScheduleCreatePayload>;
   scheduleList(): Promise<ScheduleListPayload>;
   scheduleInspect(input: { id: string }): Promise<ScheduleInspectPayload>;

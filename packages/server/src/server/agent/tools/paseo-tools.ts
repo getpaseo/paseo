@@ -460,6 +460,9 @@ function resolveScheduleUpdateExpiresAt(input: ScheduleUpdateToolInput): string 
 }
 
 function buildScheduleUpdateInput(input: ScheduleUpdateToolInput): UpdateScheduleInput {
+  if (input.workspaceId === null && input.cwd === undefined) {
+    throw new Error("cwd is required when clearing workspaceId");
+  }
   const cadence = resolveScheduleUpdateCadence(input);
   const expiresAt = resolveScheduleUpdateExpiresAt(input);
   const providerModelPatch = resolveScheduleUpdateProviderAndModel({
@@ -2837,7 +2840,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
             .min(1)
             .nullable()
             .optional()
-            .describe("Existing workspace ID for each fresh agent (null to clear)."),
+            .describe("Existing workspace ID for each fresh agent (null to clear; requires cwd)."),
           expiresIn: z
             .string()
             .optional()
