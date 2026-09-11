@@ -1,24 +1,47 @@
 import { describe, it, expect } from "vitest";
 import {
   describeCompactTimeAgo,
+  describeTimeAgo,
   formatCompactTimeAgo,
   formatDuration,
   formatMessageTimestamp,
   formatTimeAgo,
 } from "./time";
 
-describe("formatTimeAgo", () => {
+describe("describeTimeAgo", () => {
   const now = new Date("2026-07-16T12:00:00.000Z");
 
   it.each([
-    ["2026-07-16T11:59:55.000Z", "just now"],
-    ["2026-07-16T11:59:30.000Z", "30s ago"],
-    ["2026-07-16T11:55:00.000Z", "5m ago"],
-    ["2026-07-16T10:00:00.000Z", "2h ago"],
-    ["2026-07-13T12:00:00.000Z", "3d ago"],
-    ["2026-01-15T12:00:00.000Z", "Jan 15"],
-  ])("formats %s as %s", (date, expected) => {
-    expect(formatTimeAgo(new Date(date), now)).toBe(expected);
+    ["2026-07-16T11:59:55.000Z", "just now", "minute"],
+    ["2026-07-16T11:59:30.000Z", "just now", "minute"],
+    ["2026-07-16T11:59:00.000Z", "1m ago", "minute"],
+    ["2026-07-16T11:55:00.000Z", "5m ago", "minute"],
+    ["2026-07-16T10:00:00.000Z", "2h ago", "hour"],
+    ["2026-07-13T12:00:00.000Z", "3d ago", "day"],
+    ["2026-01-15T12:00:00.000Z", "Jan 15", "static"],
+  ] as const)("formats %s as %s at %s resolution", (date, label, resolution) => {
+    expect(describeTimeAgo(new Date(date), now)).toEqual({ label, resolution });
+  });
+
+  it("words the same instant the compact formatter describes", () => {
+    // The two formatters only differ in wording, so a threshold can never move in one alone.
+    for (const iso of [
+      "2026-07-16T11:59:30.000Z",
+      "2026-07-16T11:55:00.000Z",
+      "2026-07-16T10:00:00.000Z",
+      "2026-07-13T12:00:00.000Z",
+      "2026-01-15T12:00:00.000Z",
+    ]) {
+      const date = new Date(iso);
+      expect(describeTimeAgo(date, now).resolution).toBe(
+        describeCompactTimeAgo(date, now).resolution,
+      );
+    }
+  });
+
+  it("keeps formatTimeAgo as the label alone", () => {
+    const date = new Date("2026-07-16T10:00:00.000Z");
+    expect(formatTimeAgo(date, now)).toBe(describeTimeAgo(date, now).label);
   });
 });
 

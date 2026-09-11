@@ -96,4 +96,14 @@ describe("subscribeToRelativeTimeTick", () => {
 
     unsubSurvivor();
   });
+
+  it("leaves no timer behind when the last listener unsubscribes during the first tick", () => {
+    // The first tick is a setTimeout that hands off to a setInterval. A label ageing into a
+    // slower tier empties this one from inside that tick, so the handoff must not happen.
+    let unsubSelf = () => {};
+    unsubSelf = subscribeToRelativeTimeTick("minute", () => unsubSelf());
+
+    vi.advanceTimersByTime(MINUTE);
+    expect(activeRelativeTimeTickerCount()).toBe(0);
+  });
 });

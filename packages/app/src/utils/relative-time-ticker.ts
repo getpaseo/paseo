@@ -62,6 +62,10 @@ function start(resolution: TickResolution): void {
   tier.handle = setTimeout(() => {
     tier.handle = null;
     notify(tier);
+    // A listener that ages into a slower tier unsubscribes from inside its own tick, which is
+    // how a tier empties. Handing off to the interval regardless would leave it running forever
+    // over an empty set.
+    if (tier.listeners.size === 0) return;
     tier.interval = setInterval(() => notify(tier), period);
   }, delay);
 }
