@@ -2551,10 +2551,13 @@ export const ProjectGithubCloneRequestSchema = z.object({
   requestId: z.string(),
 });
 
+export const ArchiveWorkspaceTriggerSchema = z.enum(["shortcut", "menu", "git-primary", "api"]);
+
 export const ArchiveWorkspaceRequestSchema = z.object({
   type: z.literal("archive_workspace_request"),
   workspaceId: z.string(),
   requestId: z.string(),
+  trigger: ArchiveWorkspaceTriggerSchema.optional(),
 });
 
 // Create a new workspace record. Unlike open_project, this never deduplicates by
@@ -7135,6 +7138,7 @@ export type WorkspaceGithubSearchRepositoriesRequest = z.infer<
 >;
 export type ProjectGithubCloneRequest = z.infer<typeof ProjectGithubCloneRequestSchema>;
 export type ProjectGithubCloneProtocol = z.infer<typeof ProjectGithubCloneProtocolSchema>;
+export type ArchiveWorkspaceTrigger = z.infer<typeof ArchiveWorkspaceTriggerSchema>;
 export type ArchiveWorkspaceRequest = z.infer<typeof ArchiveWorkspaceRequestSchema>;
 export type WorkspaceClearAttentionRequest = z.infer<typeof WorkspaceClearAttentionRequestSchema>;
 export type WorkspaceMarkUnreadRequest = z.infer<typeof WorkspaceMarkUnreadRequestSchema>;

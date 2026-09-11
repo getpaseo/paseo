@@ -881,6 +881,7 @@ export const ru: TranslationResources = {
           title: "Архивировать «{{workspaceName}}»?",
           confirm: "Архивировать",
           cancel: "Отмена",
+          cleanWorkspace: "Рабочее пространство и его агенты будут архивированы.",
           uncommittedChanges: "Незафиксированные изменения",
           uncommittedChangesWithDiff: "Незафиксированные изменения ({{diffStat}})",
           addedLine: "Добавлено строк: {{count}}",

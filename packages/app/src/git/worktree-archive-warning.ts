@@ -21,6 +21,7 @@ export interface WorktreeArchiveWarningLabels {
   title: (workspaceName: string) => string;
   confirm: string;
   cancel: string;
+  cleanWorkspace: string;
   uncommittedChanges: string;
   uncommittedChangesWithDiff: (diffStat: string) => string;
   addedLine: (count: number) => string;
@@ -32,6 +33,7 @@ export const DEFAULT_WORKTREE_ARCHIVE_WARNING_LABELS: WorktreeArchiveWarningLabe
   title: (workspaceName) => i18n.t("workspace.git.actions.archiveWarning.title", { workspaceName }),
   confirm: i18n.t("workspace.git.actions.archiveWarning.confirm"),
   cancel: i18n.t("workspace.git.actions.archiveWarning.cancel"),
+  cleanWorkspace: i18n.t("workspace.git.actions.archiveWarning.cleanWorkspace"),
   uncommittedChanges: i18n.t("workspace.git.actions.archiveWarning.uncommittedChanges"),
   uncommittedChangesWithDiff: (diffStat) =>
     i18n.t("workspace.git.actions.archiveWarning.uncommittedChangesWithDiff", { diffStat }),
@@ -101,23 +103,29 @@ export function buildWorktreeArchiveRiskReasons(
   return reasons;
 }
 
-export function buildWorktreeArchiveConfirmationMessage(
-  input: WorktreeArchiveConfirmationInput,
-  labels: WorktreeArchiveWarningLabels = DEFAULT_WORKTREE_ARCHIVE_WARNING_LABELS,
-): string | null {
+export function buildWorktreeArchiveConfirmationMessage(options: {
+  input: WorktreeArchiveConfirmationInput;
+  labels?: WorktreeArchiveWarningLabels;
+  confirmClean?: boolean;
+}): string | null {
+  const labels = options.labels ?? DEFAULT_WORKTREE_ARCHIVE_WARNING_LABELS;
+  const input = options.input;
   const reasons = buildWorktreeArchiveRiskReasons(input, labels);
   if (reasons.length === 0) {
-    return null;
+    return options.confirmClean === true ? labels.cleanWorkspace : null;
   }
 
   return reasons.join("\n");
 }
 
-export async function confirmRiskyWorktreeArchive(
-  input: WorktreeArchiveConfirmationInput,
-  labels: WorktreeArchiveWarningLabels = DEFAULT_WORKTREE_ARCHIVE_WARNING_LABELS,
-): Promise<boolean> {
-  const message = buildWorktreeArchiveConfirmationMessage(input, labels);
+export async function confirmRiskyWorktreeArchive(options: {
+  input: WorktreeArchiveConfirmationInput;
+  labels?: WorktreeArchiveWarningLabels;
+  confirmClean?: boolean;
+}): Promise<boolean> {
+  const labels = options.labels ?? DEFAULT_WORKTREE_ARCHIVE_WARNING_LABELS;
+  const input = options.input;
+  const message = buildWorktreeArchiveConfirmationMessage(options);
   if (!message) {
     return true;
   }

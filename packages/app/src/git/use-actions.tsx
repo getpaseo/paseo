@@ -642,7 +642,7 @@ export function useGitActions({ serverId, cwd, icons }: UseGitActionsInput): Use
   });
 
   const handleArchiveWorkspace = useCallback(() => {
-    archiveController.archive();
+    archiveController.archive("git-primary");
   }, [archiveController]);
 
   const derived = deriveGitActionsState({
@@ -1100,6 +1100,7 @@ function getWorktreeArchiveWarningLabels(
     title: (workspaceName) => t("workspace.git.actions.archiveWarning.title", { workspaceName }),
     confirm: t("workspace.git.actions.archiveWarning.confirm"),
     cancel: t("workspace.git.actions.archiveWarning.cancel"),
+    cleanWorkspace: t("workspace.git.actions.archiveWarning.cleanWorkspace"),
     uncommittedChanges: t("workspace.git.actions.archiveWarning.uncommittedChanges"),
     uncommittedChangesWithDiff: (diffStat) =>
       t("workspace.git.actions.archiveWarning.uncommittedChangesWithDiff", { diffStat }),

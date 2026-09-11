@@ -875,6 +875,7 @@ export const en = {
           title: 'Archive "{{workspaceName}}"?',
           confirm: "Archive",
           cancel: "Cancel",
+          cleanWorkspace: "This will archive the workspace and its agents.",
           uncommittedChanges: "Uncommitted changes",
           uncommittedChangesWithDiff: "Uncommitted changes ({{diffStat}})",
           addedLine: "{{count}} added line",

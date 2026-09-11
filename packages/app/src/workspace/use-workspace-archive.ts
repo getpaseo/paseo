@@ -11,6 +11,7 @@ import type { WorkspaceDescriptor } from "@/stores/session-store";
 import { useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
 import { buildWorkspaceTabPersistenceKey } from "@/workspace-tabs/model";
 import { archiveWorkspaceOptimistically } from "@/workspace/workspace-archive";
+import type { ArchiveWorkspaceTrigger } from "@getpaseo/protocol/messages";
 
 function purgeArchivedWorkspaceState(input: { serverId: string; workspaceId: string }): void {
   const workspaceKey = buildWorkspaceTabPersistenceKey(input);
@@ -33,7 +34,7 @@ export interface ArchiveWorkspaceInput {
 }
 
 export interface WorkspaceArchiveController {
-  archive: () => void;
+  archive: (trigger: ArchiveWorkspaceTrigger) => void;
 }
 
 export function useWorkspaceArchive(input: ArchiveWorkspaceInput): WorkspaceArchiveController {
@@ -52,59 +53,59 @@ export function useWorkspaceArchive(input: ArchiveWorkspaceInput): WorkspaceArch
   const { t } = useTranslation();
   const toast = useToast();
 
-  const archiveWorkspaceRecord = useCallback(async () => {
-    const client = getHostRuntimeStore().getClient(serverId);
-    if (!client) {
-      toast.error(t("sidebar.workspace.toasts.hostDisconnected"));
-      return;
-    }
-    onSetHiding?.(true);
-    try {
-      onArchiveStarted();
-      await archiveWorkspaceOptimistically({
-        client,
-        workspace: {
-          serverId,
-          workspaceId,
-        },
-      });
-      purgeArchivedWorkspaceState({ serverId, workspaceId });
-    } catch (error) {
-      toast.error(
-        error instanceof Error ? error.message : t("sidebar.workspace.toasts.archiveFailed"),
-      );
-    } finally {
-      onSetHiding?.(false);
-    }
-  }, [onArchiveStarted, onSetHiding, serverId, t, toast, workspaceId]);
-
-  const archive = useCallback(() => {
-    void (async () => {
-      if (workspaceKind === "worktree") {
-        const confirmed = await confirmRiskyWorktreeArchive(
-          {
-            workspaceName: name,
-            isDirty,
-            aheadOfOrigin,
-            diffStat,
-          },
-          warningLabels,
-        );
-        if (!confirmed) {
-          return;
-        }
+  const archiveWorkspaceRecord = useCallback(
+    async (trigger: ArchiveWorkspaceTrigger) => {
+      const client = getHostRuntimeStore().getClient(serverId);
+      if (!client) {
+        toast.error(t("sidebar.workspace.toasts.hostDisconnected"));
+        return;
       }
-      await archiveWorkspaceRecord();
-    })();
-  }, [
-    aheadOfOrigin,
-    archiveWorkspaceRecord,
-    diffStat,
-    isDirty,
-    name,
-    warningLabels,
-    workspaceKind,
-  ]);
+      onSetHiding?.(true);
+      try {
+        onArchiveStarted();
+        await archiveWorkspaceOptimistically({
+          client,
+          workspace: {
+            serverId,
+            workspaceId,
+          },
+          trigger,
+        });
+        purgeArchivedWorkspaceState({ serverId, workspaceId });
+      } catch (error) {
+        toast.error(
+          error instanceof Error ? error.message : t("sidebar.workspace.toasts.archiveFailed"),
+        );
+      } finally {
+        onSetHiding?.(false);
+      }
+    },
+    [onArchiveStarted, onSetHiding, serverId, t, toast, workspaceId],
+  );
+
+  const archive = useCallback(
+    (trigger: ArchiveWorkspaceTrigger) => {
+      void (async () => {
+        if (workspaceKind === "worktree" || trigger === "shortcut") {
+          const confirmed = await confirmRiskyWorktreeArchive({
+            input: {
+              workspaceName: name,
+              isDirty,
+              aheadOfOrigin,
+              diffStat,
+            },
+            labels: warningLabels,
+            confirmClean: trigger === "shortcut",
+          });
+          if (!confirmed) {
+            return;
+          }
+        }
+        await archiveWorkspaceRecord(trigger);
+      })();
+    },
+    [aheadOfOrigin, archiveWorkspaceRecord, diffStat, isDirty, name, warningLabels, workspaceKind],
+  );
 
   return {
     archive,

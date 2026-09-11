@@ -6,6 +6,7 @@ import {
 import { useSessionStore, type WorkspaceDescriptor } from "@/stores/session-store";
 import { resolveWorkspaceMapKeyByIdentity } from "@/utils/workspace-identity";
 import { i18n } from "@/i18n/i18next";
+import type { ArchiveWorkspaceTrigger } from "@getpaseo/protocol/messages";
 
 export interface WorkspaceArchiveTarget {
   serverId: string;
@@ -13,7 +14,10 @@ export interface WorkspaceArchiveTarget {
 }
 
 interface WorkspaceArchiveClient {
-  archiveWorkspace: (workspaceId: string) => Promise<{ error: string | null }>;
+  archiveWorkspaceWithOptions: (options: {
+    workspaceId: string;
+    trigger: ArchiveWorkspaceTrigger;
+  }) => Promise<{ error: string | null }>;
 }
 
 interface OptimisticWorkspaceArchiveSnapshot {
@@ -72,8 +76,12 @@ function restoreOptimisticallyHiddenWorkspace(input: {
 async function archiveWorkspaceOrThrow(input: {
   client: WorkspaceArchiveClient;
   workspaceId: string;
+  trigger: ArchiveWorkspaceTrigger;
 }): Promise<void> {
-  const payload = await input.client.archiveWorkspace(input.workspaceId);
+  const payload = await input.client.archiveWorkspaceWithOptions({
+    workspaceId: input.workspaceId,
+    trigger: input.trigger,
+  });
   if (payload.error) {
     throw new Error(payload.error);
   }
@@ -82,6 +90,7 @@ async function archiveWorkspaceOrThrow(input: {
 export async function archiveWorkspaceOptimistically(input: {
   client: WorkspaceArchiveClient;
   workspace: WorkspaceArchiveTarget;
+  trigger: ArchiveWorkspaceTrigger;
 }): Promise<void> {
   const snapshot = hideWorkspaceOptimistically(input.workspace);
 
@@ -89,6 +98,7 @@ export async function archiveWorkspaceOptimistically(input: {
     await archiveWorkspaceOrThrow({
       client: input.client,
       workspaceId: input.workspace.workspaceId,
+      trigger: input.trigger,
     });
   } catch (error) {
     restoreOptimisticallyHiddenWorkspace({
@@ -119,6 +129,7 @@ export async function archiveWorkspacesOptimistically(input: {
         await archiveWorkspaceOptimistically({
           client,
           workspace,
+          trigger: "api",
         });
       } catch (error) {
         throw {

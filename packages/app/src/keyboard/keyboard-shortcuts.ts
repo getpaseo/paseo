@@ -339,7 +339,7 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
     id: "worktree-archive-cmd-shift-backspace-mac",
     action: "workspace.archive",
     combo: "Cmd+Shift+Backspace",
-    when: { mac: true, commandCenter: false },
+    when: { mac: true, commandCenter: false, editable: false, terminal: false },
     help: {
       id: "archive-workspace",
       section: "workspaces",
@@ -352,7 +352,7 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
     id: "worktree-archive-ctrl-shift-backspace-non-mac",
     action: "workspace.archive",
     combo: "Ctrl+Shift+Backspace",
-    when: { mac: false, commandCenter: false, terminal: false },
+    when: { mac: false, commandCenter: false, editable: false, terminal: false },
     help: {
       id: "archive-workspace",
       section: "workspaces",

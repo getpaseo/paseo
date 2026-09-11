@@ -7104,6 +7104,15 @@ export class Session {
         throw new Error(`Workspace not found: ${request.workspaceId}`);
       }
 
+      this.sessionLogger.info(
+        {
+          workspaceId: request.workspaceId,
+          requestId: request.requestId,
+          trigger: request.trigger ?? "unknown",
+        },
+        "Workspace archive requested",
+      );
+
       await archiveByScope(
         {
           paseoHome: this.paseoHome,

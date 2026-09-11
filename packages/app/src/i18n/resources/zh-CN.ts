@@ -858,6 +858,7 @@ export const zhCN: TranslationResources = {
           title: "归档「{{workspaceName}}」？",
           confirm: "归档",
           cancel: "取消",
+          cleanWorkspace: "这将归档工作区及其中的代理。",
           uncommittedChanges: "未 commit 的变更",
           uncommittedChangesWithDiff: "未 commit 的变更（{{diffStat}}）",
           addedLine: "新增 {{count}} 行",

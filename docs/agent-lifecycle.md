@@ -109,6 +109,11 @@ archived workspace. History navigation must not infer workspace lifecycle from `
 or mutate either lifecycle. The workspace route asks the daemon for authoritative recovery state;
 only the route's explicit Unarchive or Restore action changes the archived workspace.
 
+Workspace archive shortcuts are disabled while focus is in an editable field or terminal, and they
+always require destructive confirmation, including for clean workspaces. Archive requests carry an
+optional source (`shortcut`, `menu`, `git-primary`, or `api`) for server audit logs. Older clients may
+omit the source; the server records those requests as `unknown`.
+
 History navigation preserves the selected agent as an explicit recovery target. If both that agent
 and its workspace are archived, the workspace recovery action restores the workspace and unarchives
 the selected agent as one user action. Other archived agents in the restored workspace remain

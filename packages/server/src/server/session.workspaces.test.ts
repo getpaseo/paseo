@@ -554,6 +554,7 @@ function createSessionForWorkspaceTests(
     appVersion?: string | null;
     onMessage?: (message: SessionOutboundMessage) => void;
     onWorkspaceRecovered?: SessionOptions["onWorkspaceRecovered"];
+    logger?: SessionOptions["logger"];
     workspaceGitService?: ReturnType<typeof createNoopWorkspaceGitService>;
     terminalManager?: TerminalManager | null;
     agentManager?: { [K in keyof SessionOptions["agentManager"]]?: unknown };
@@ -648,7 +649,7 @@ function createSessionForWorkspaceTests(
       appVersion: options.appVersion ?? null,
       onMessage: options.onMessage ?? vi.fn(),
       onWorkspaceRecovered: options.onWorkspaceRecovered,
-      logger: asSessionLogger(logger),
+      logger: options.logger ?? asSessionLogger(logger),
       downloadTokenStore: asDownloadTokenStore(),
       pushNotifications: asPushNotifications(),
       paseoHome: options.paseoHome ?? "/tmp/paseo-test",
@@ -5897,7 +5898,15 @@ test("legacy editor RPC requests return daemon unsupported errors", async () => 
 
 test("archive_workspace_request hides non-destructive workspace records", async () => {
   const emitted: SessionOutboundMessage[] = [];
-  const session = createSessionForWorkspaceTests();
+  const logger = {
+    child: () => logger,
+    trace: vi.fn(),
+    debug: vi.fn(),
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+  };
+  const session = createSessionForWorkspaceTests({ logger: asSessionLogger(logger) });
   const workspace = createPersistedWorkspaceRecord({
     workspaceId: "ws-repo-archive",
     projectId: "proj-repo-archive",
@@ -5929,6 +5938,57 @@ test("archive_workspace_request hides non-destructive workspace records", async 
     | { payload: Record<string, unknown> }
     | undefined;
   expect(response?.payload.error).toBeNull();
+  expect(logger.info).toHaveBeenCalledWith(
+    {
+      workspaceId: "ws-repo-archive",
+      requestId: "req-archive",
+      trigger: "unknown",
+    },
+    "Workspace archive requested",
+  );
+});
+
+test("archive_workspace_request logs its client trigger", async () => {
+  const logger = {
+    child: () => logger,
+    trace: vi.fn(),
+    debug: vi.fn(),
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+  };
+  const workspace = createPersistedWorkspaceRecord({
+    workspaceId: "ws-trigger-audit",
+    projectId: "proj-trigger-audit",
+    cwd: REPO_CWD,
+    kind: "directory",
+    displayName: "repo",
+    createdAt: "2026-03-01T12:00:00.000Z",
+    updatedAt: "2026-03-01T12:00:00.000Z",
+  });
+  const session = createSessionForWorkspaceTests({ logger: asSessionLogger(logger) });
+  session.workspaceRegistry.get = async () => workspace;
+  session.workspaceRegistry.archive = async (_workspaceId: string, archivedAt: string) => {
+    workspace.archivedAt = archivedAt;
+  };
+  session.workspaceRegistry.list = async () => [workspace];
+  session.projectRegistry.archive = async () => {};
+
+  await session.handleMessage({
+    type: "archive_workspace_request",
+    workspaceId: "ws-trigger-audit",
+    requestId: "req-trigger-audit",
+    trigger: "shortcut",
+  });
+
+  expect(logger.info).toHaveBeenCalledWith(
+    {
+      workspaceId: "ws-trigger-audit",
+      requestId: "req-trigger-audit",
+      trigger: "shortcut",
+    },
+    "Workspace archive requested",
+  );
 });
 
 test("archive_workspace_request archives a worktree-kind workspace and removes the directory on last reference", async () => {

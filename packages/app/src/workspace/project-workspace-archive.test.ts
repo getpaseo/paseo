@@ -31,10 +31,12 @@ describe("selectProjectWorkspacesToArchive", () => {
 
     expect(confirmWorktreeArchive).toHaveBeenCalledOnce();
     expect(confirmWorktreeArchive).toHaveBeenCalledWith({
-      workspaceName: "feature/risky",
-      isDirty: true,
-      aheadOfOrigin: 2,
-      diffStat: { additions: 5, deletions: 1 },
+      input: {
+        workspaceName: "feature/risky",
+        isDirty: true,
+        aheadOfOrigin: 2,
+        diffStat: { additions: 5, deletions: 1 },
+      },
     });
     expect(targets).toEqual([
       {
@@ -73,10 +75,12 @@ describe("selectProjectWorkspacesToArchive", () => {
 
     expect(confirmWorktreeArchive).toHaveBeenCalledOnce();
     expect(confirmWorktreeArchive).toHaveBeenCalledWith({
-      workspaceName: "feature/risky",
-      isDirty: true,
-      aheadOfOrigin: 2,
-      diffStat: { additions: 5, deletions: 1 },
+      input: {
+        workspaceName: "feature/risky",
+        isDirty: true,
+        aheadOfOrigin: 2,
+        diffStat: { additions: 5, deletions: 1 },
+      },
     });
     expect(targets).toEqual([
       {

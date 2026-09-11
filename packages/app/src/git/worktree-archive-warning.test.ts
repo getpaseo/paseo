@@ -10,12 +10,28 @@ describe("workspace archive warning for worktree backing", () => {
   it("does not require a confirmation for clean and pushed worktrees", () => {
     expect(
       buildWorktreeArchiveConfirmationMessage({
-        workspaceName: "feature",
-        isDirty: false,
-        aheadOfOrigin: 0,
-        diffStat: null,
+        input: {
+          workspaceName: "feature",
+          isDirty: false,
+          aheadOfOrigin: 0,
+          diffStat: null,
+        },
       }),
     ).toBeNull();
+  });
+
+  it("requires a confirmation for clean workspaces when explicitly requested", () => {
+    expect(
+      buildWorktreeArchiveConfirmationMessage({
+        input: {
+          workspaceName: "feature",
+          isDirty: false,
+          aheadOfOrigin: 0,
+          diffStat: null,
+        },
+        confirmClean: true,
+      }),
+    ).toBe("This will archive the workspace and its agents.");
   });
 
   it("explains uncommitted line changes", () => {
@@ -51,10 +67,12 @@ describe("workspace archive warning for worktree backing", () => {
   it("includes every archive risk in the confirmation copy", () => {
     expect(
       buildWorktreeArchiveConfirmationMessage({
-        workspaceName: "risky-feature",
-        isDirty: true,
-        aheadOfOrigin: 1,
-        diffStat: { additions: 1, deletions: 3 },
+        input: {
+          workspaceName: "risky-feature",
+          isDirty: true,
+          aheadOfOrigin: 1,
+          diffStat: { additions: 1, deletions: 3 },
+        },
       }),
     ).toBe("Uncommitted changes (1 added line, 3 deleted lines)\n1 unpushed commit");
   });

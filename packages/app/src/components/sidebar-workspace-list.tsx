@@ -1269,7 +1269,7 @@ function WorkspaceRowWithMenu({
     if (isArchiving) {
       return;
     }
-    archiveController.archive();
+    archiveController.archive("menu");
   }, [archiveController, isArchiving]);
 
   const clipboard = useWorkspaceClipboardActions();
@@ -1318,7 +1318,7 @@ function WorkspaceRowWithMenu({
     enabled: selected && !isArchiving,
     priority: 0,
     handle: () => {
-      handleArchive();
+      archiveController.archive("shortcut");
       return true;
     },
   });

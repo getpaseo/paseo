@@ -10,6 +10,34 @@ import {
 } from "./messages.js";
 
 describe("workspace message schemas", () => {
+  test("parses workspace archive source while preserving legacy requests", () => {
+    expect(
+      SessionInboundMessageSchema.parse({
+        type: "archive_workspace_request",
+        workspaceId: "workspace-1",
+        requestId: "req-archive",
+        trigger: "shortcut",
+      }),
+    ).toMatchObject({ trigger: "shortcut" });
+
+    expect(
+      SessionInboundMessageSchema.parse({
+        type: "archive_workspace_request",
+        workspaceId: "workspace-1",
+        requestId: "req-archive-legacy",
+      }),
+    ).not.toHaveProperty("trigger");
+
+    expect(() =>
+      SessionInboundMessageSchema.parse({
+        type: "archive_workspace_request",
+        workspaceId: "workspace-1",
+        requestId: "req-archive-invalid",
+        trigger: "automatic",
+      }),
+    ).toThrow();
+  });
+
   test("parses mark-unread request and response", () => {
     expect(
       SessionInboundMessageSchema.parse({

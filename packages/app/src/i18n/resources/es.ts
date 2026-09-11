@@ -897,6 +897,7 @@ export const es: TranslationResources = {
           title: '¿Archivo "{{workspaceName}}"?',
           confirm: "Archivo",
           cancel: "Cancelar",
+          cleanWorkspace: "Se archivarán el espacio de trabajo y sus agentes.",
           uncommittedChanges: "Cambios no confirmados",
           uncommittedChangesWithDiff: "Cambios no confirmados ({{diffStat}})",
           addedLine: "Línea añadida{{count}}",

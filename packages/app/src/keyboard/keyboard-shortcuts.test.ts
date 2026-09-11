@@ -295,6 +295,18 @@ describe("keyboard-shortcuts", () => {
       action: "workspace.pane.close",
     },
     {
+      name: "matches Cmd+Shift+Backspace to archive outside protected focus scopes",
+      event: { key: "Backspace", code: "Backspace", metaKey: true, shiftKey: true },
+      context: { isMac: true, focusScope: "other" },
+      action: "workspace.archive",
+    },
+    {
+      name: "matches Ctrl+Shift+Backspace to archive on non-macOS",
+      event: { key: "Backspace", code: "Backspace", ctrlKey: true, shiftKey: true },
+      context: { isMac: false, focusScope: "other" },
+      action: "workspace.archive",
+    },
+    {
       name: "matches Cmd+B sidebar toggle on macOS",
       event: { key: "b", code: "KeyB", metaKey: true },
       context: { isMac: true },
@@ -410,6 +422,26 @@ describe("keyboard-shortcuts", () => {
       context: { focusScope: "editable" },
     });
   });
+
+  it.each(["message-input", "editable", "terminal"] as const)(
+    "does not archive a workspace while focus is in the %s scope",
+    (focusScope) => {
+      expectNoShortcutResolution({
+        event: { key: "Backspace", code: "Backspace", metaKey: true, shiftKey: true },
+        context: { isMac: true, focusScope },
+      });
+    },
+  );
+
+  it.each(["message-input", "editable", "terminal"] as const)(
+    "does not archive a workspace on non-macOS while focus is in the %s scope",
+    (focusScope) => {
+      expectNoShortcutResolution({
+        event: { key: "Backspace", code: "Backspace", ctrlKey: true, shiftKey: true },
+        context: { isMac: false, focusScope },
+      });
+    },
+  );
 
   const nonMatchingCases: NonMatchingShortcutCase[] = [
     {
