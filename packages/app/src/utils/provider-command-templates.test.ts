@@ -172,7 +172,7 @@ describe("buildProviderCommand", () => {
 });
 
 describe("resolveProviderResumeCommand", () => {
-  test("rejects built-in Codex when providerAncestry is not advertised", async () => {
+  test("resolves built-in Codex locally when providerAncestry is not advertised", async () => {
     await expect(
       resolveProviderResumeCommand({
         provider: "codex",
@@ -180,16 +180,38 @@ describe("resolveProviderResumeCommand", () => {
         supportsProviderAncestry: false,
         getProviderSnapshot: neverCalledSnapshot,
       }),
-    ).rejects.toThrow(ProviderResumeCommandUnavailableError);
+    ).resolves.toBe("codex resume example-session");
   });
 
-  test("rejects built-in Claude when providerAncestry is not advertised", async () => {
+  test("resolves built-in Claude locally when providerAncestry is not advertised", async () => {
     await expect(
       resolveProviderResumeCommand({
         provider: "claude",
         sessionId: "example-session",
         supportsProviderAncestry: false,
         getProviderSnapshot: neverCalledSnapshot,
+      }),
+    ).resolves.toBe("claude --resume example-session");
+  });
+
+  test("resolves Hermes locally when providerAncestry is not advertised", async () => {
+    await expect(
+      resolveProviderResumeCommand({
+        provider: "hermes",
+        sessionId: "20260813_111500_abc123",
+        supportsProviderAncestry: false,
+        getProviderSnapshot: neverCalledSnapshot,
+      }),
+    ).resolves.toBe("hermes --resume 20260813_111500_abc123");
+  });
+
+  test("keeps Hermes unavailable on current daemons when the snapshot reports an ACP transport launcher", async () => {
+    await expect(
+      resolveProviderResumeCommand({
+        provider: "hermes",
+        sessionId: "20260813_111500_abc123",
+        supportsProviderAncestry: true,
+        getProviderSnapshot: () => Promise.resolve([snapshotEntry("hermes", null, false)]),
       }),
     ).rejects.toThrow(ProviderResumeCommandUnavailableError);
   });

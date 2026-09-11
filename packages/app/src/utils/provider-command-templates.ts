@@ -112,18 +112,27 @@ export function buildProviderCommand(input: BuildProviderCommandInput): string |
 /**
  * Resolve the resume command for a provider.
  *
- * Daemons advertising `providerAncestry` provide the authoritative safety
- * classification for built-in and custom providers through their snapshot.
- * Without that capability, the action fails closed because provider launch
- * customization cannot be ruled out. If the command is not available, the
- * returned promise rejects with
+ * Built-in resume templates are existing functionality: without the
+ * `providerAncestry` capability, resolve them locally and never issue a
+ * snapshot RPC. Only ancestry-based inherited custom-provider resolution is
+ * gated on the capability. Daemons advertising `providerAncestry` provide the
+ * authoritative safety classification through their snapshot. If the command
+ * is not available, the returned promise rejects with
  * {@link ProviderResumeCommandUnavailableError}.
  */
 export async function resolveProviderResumeCommand(
   input: ResolveProviderResumeCommandInput,
 ): Promise<string> {
   if (!input.supportsProviderAncestry) {
-    throw new ProviderResumeCommandUnavailableError();
+    const localCommand = buildProviderCommand({
+      provider: input.provider,
+      id: "resume",
+      sessionId: input.sessionId,
+    });
+    if (!localCommand) {
+      throw new ProviderResumeCommandUnavailableError();
+    }
+    return localCommand;
   }
 
   const providerSnapshot = await input.getProviderSnapshot();

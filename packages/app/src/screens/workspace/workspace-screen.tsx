@@ -2719,6 +2719,8 @@ function WorkspaceScreenContent({
     [toast, t],
   );
 
+  const resumeCopyPendingRef = useRef(new Set<string>());
+
   const handleCopyResumeCommand = useCallback(
     async (agentId: string) => {
       const agent =
@@ -2729,43 +2731,50 @@ function WorkspaceScreenContent({
         toast.error(t("workspace.tabs.toasts.resumeIdUnavailable"));
         return;
       }
-
-      const supportsProviderAncestry =
-        useSessionStore.getState().sessions[normalizedServerId]?.serverInfo?.features
-          ?.providerAncestry === true;
-
-      const outcome = await resolveProviderResumeCommandOutcome({
-        provider: agent.provider,
-        sessionId: providerSessionId,
-        supportsProviderAncestry,
-        getProviderSnapshot: async () => {
-          if (!client) {
-            throw new ProviderResumeCommandUnavailableError();
-          }
-          return ensureProvidersSnapshotEntries({
-            queryClient,
-            client,
-            serverId: normalizedServerId,
-            cwd: workspaceDirectory,
-          });
-        },
-      });
-      if (outcome.status === "unavailable") {
-        toast.error(t("workspace.tabs.toasts.resumeCommandUnavailable"));
+      if (resumeCopyPendingRef.current.has(agentId)) {
         return;
       }
-      if (outcome.status === "failed") {
-        console.error("[WorkspaceScreen] Failed to resolve resume command", {
-          error: outcome.error,
-        });
-        toast.error(t("workspace.tabs.toasts.copyFailed"));
-        return;
-      }
+      resumeCopyPendingRef.current.add(agentId);
       try {
-        await Clipboard.setStringAsync(outcome.command);
-        toast.copied(t("workspace.tabs.toasts.resumeCommandCopiedLabel"));
-      } catch {
-        toast.error(t("workspace.tabs.toasts.copyFailed"));
+        const supportsProviderAncestry =
+          useSessionStore.getState().sessions[normalizedServerId]?.serverInfo?.features
+            ?.providerAncestry === true;
+
+        const outcome = await resolveProviderResumeCommandOutcome({
+          provider: agent.provider,
+          sessionId: providerSessionId,
+          supportsProviderAncestry,
+          getProviderSnapshot: async () => {
+            if (!client) {
+              throw new ProviderResumeCommandUnavailableError();
+            }
+            return ensureProvidersSnapshotEntries({
+              queryClient,
+              client,
+              serverId: normalizedServerId,
+              cwd: workspaceDirectory,
+            });
+          },
+        });
+        if (outcome.status === "unavailable") {
+          toast.error(t("workspace.tabs.toasts.resumeCommandUnavailable"));
+          return;
+        }
+        if (outcome.status === "failed") {
+          console.error("[WorkspaceScreen] Failed to resolve resume command", {
+            error: outcome.error,
+          });
+          toast.error(t("workspace.tabs.toasts.copyFailed"));
+          return;
+        }
+        try {
+          await Clipboard.setStringAsync(outcome.command);
+          toast.copied(t("workspace.tabs.toasts.resumeCommandCopiedLabel"));
+        } catch {
+          toast.error(t("workspace.tabs.toasts.copyFailed"));
+        }
+      } finally {
+        resumeCopyPendingRef.current.delete(agentId);
       }
     },
     [client, normalizedServerId, workspaceDirectory, queryClient, toast, t],
