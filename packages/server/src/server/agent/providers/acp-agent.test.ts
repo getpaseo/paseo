@@ -2655,6 +2655,38 @@ describe("ACPAgentSession", () => {
     ]);
   });
 
+  test("preserves raw ACP tool input for the details view", async () => {
+    const session = createSession();
+    const events: AgentStreamEvent[] = [];
+    asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+    session.subscribe((event) => events.push(event));
+
+    await session.sessionUpdate({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "tool_call",
+        toolCallId: "tool-1",
+        title: "List directory",
+        kind: "search",
+        status: "completed",
+        rawInput: { path: "/workspace", depth: 2 },
+      } as SessionUpdate,
+    });
+
+    const toolEvent = events.find(
+      (event) => event.type === "timeline" && event.item.type === "tool_call",
+    );
+    expect(toolEvent).toMatchObject({
+      type: "timeline",
+      item: {
+        type: "tool_call",
+        metadata: {
+          rawInput: { path: "/workspace", depth: 2 },
+        },
+      },
+    });
+  });
+
   test("assigns one fallback ID per contiguous assistant message", async () => {
     const session = createSession();
     const assistantMessages: Array<{ text: string; messageId?: string }> = [];
