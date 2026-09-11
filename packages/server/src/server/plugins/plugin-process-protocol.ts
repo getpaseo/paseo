@@ -6,6 +6,12 @@ import type {
 } from "@getpaseo/plugin/server/provider";
 import { ProviderEventSchema, ProviderInputSchema } from "@getpaseo/plugin/server/provider";
 import { z } from "zod";
+import {
+  PluginSubagentRequestSchema,
+  PluginSubagentResponseSchema,
+  type PluginSubagentRequest,
+  type PluginSubagentResponse,
+} from "./subagents/protocol.js";
 
 export interface PluginProviderMetadata {
   hasCatalogCacheKey?: boolean;
@@ -16,6 +22,7 @@ export interface PluginProviderMetadata {
 }
 
 export type PluginProcessRequest =
+  | PluginSubagentResponse
   | {
       type: "initialize";
       pluginId: string;
@@ -50,6 +57,7 @@ export type PluginProcessRequest =
   | { type: "paseo_close" };
 
 export type PluginProcessMessage =
+  | PluginSubagentRequest
   | { type: "settings.changed"; settingsId: string }
   | { type: "hooks.changed"; hooks: { events: string[]; before: string[] } }
   | {
@@ -105,6 +113,7 @@ const frameFields = {
 export const PluginProcessRequestSchema: z.ZodType<PluginProcessRequest> = z.discriminatedUnion(
   "type",
   [
+    PluginSubagentResponseSchema,
     z
       .object({
         type: z.literal("initialize"),
@@ -175,6 +184,7 @@ export const PluginProcessRequestSchema: z.ZodType<PluginProcessRequest> = z.dis
 export const PluginProcessMessageSchema: z.ZodType<PluginProcessMessage> = z.discriminatedUnion(
   "type",
   [
+    PluginSubagentRequestSchema,
     z.object({ type: z.literal("settings.changed"), settingsId: z.string() }).strict(),
     z.object({ type: z.literal("hooks.changed"), hooks: hooksSchema }).strict(),
     z
