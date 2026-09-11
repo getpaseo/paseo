@@ -255,6 +255,94 @@ describe("parseDiff", () => {
     expect(files[0].hunks).toHaveLength(1);
   });
 
+  it("parses mnemonic-prefix git diff headers", () => {
+    // diff.mnemonicPrefix output: i/ w/ (unstaged), c/ i/ (staged), c/ w/ (HEAD)
+    const pairs: Array<[string, string]> = [
+      ["i", "w"],
+      ["c", "i"],
+      ["c", "w"],
+      ["w", "i"],
+    ];
+
+    for (const [oldPrefix, newPrefix] of pairs) {
+      const files = parseDiff(
+        SIMPLE_DIFF.replace(
+          "a/example.ts b/example.ts",
+          `${oldPrefix}/example.ts ${newPrefix}/example.ts`,
+        )
+          .replace("--- a/example.ts", `--- ${oldPrefix}/example.ts`)
+          .replace("+++ b/example.ts", `+++ ${newPrefix}/example.ts`),
+      );
+
+      expect(files).toHaveLength(1);
+      expect(files[0].path).toBe("example.ts");
+      expect(files[0].additions).toBe(1);
+      expect(files[0].deletions).toBe(1);
+      expect(files[0].hunks).toHaveLength(1);
+    }
+  });
+
+  it("parses mnemonic-prefix paths with spaces", () => {
+    const files = parseDiff(
+      SIMPLE_DIFF.replaceAll("example.ts", "file with space.ts")
+        .replace(
+          "a/file with space.ts b/file with space.ts",
+          "i/file with space.ts w/file with space.ts",
+        )
+        .replace("--- a/file with space.ts", "--- i/file with space.ts")
+        .replace("+++ b/file with space.ts", "+++ w/file with space.ts"),
+    );
+
+    expect(files).toHaveLength(1);
+    expect(files[0].path).toBe("file with space.ts");
+    expect(files[0].hunks).toHaveLength(1);
+  });
+
+  it("uses the rename target for no-prefix renames between mnemonic-letter directories", () => {
+    // With diff.noprefix, a rename from a literal w/ directory to a literal
+    // i/ directory produces the same header shape as mnemonic-prefix output.
+    // The rename lines never carry prefixes and disambiguate the two.
+    const files = parseDiff(
+      [
+        "diff --git w/foo.ts i/foo.ts",
+        "similarity index 100%",
+        "rename from w/foo.ts",
+        "rename to i/foo.ts",
+        "",
+      ].join("\n"),
+    );
+
+    expect(files.map((file) => file.path)).toEqual(["i/foo.ts"]);
+  });
+
+  it("uses the rename target for mnemonic-prefix renames", () => {
+    const files = parseDiff(
+      [
+        "diff --git c/w/foo.ts i/w/bar.ts",
+        "similarity index 100%",
+        "rename from w/foo.ts",
+        "rename to w/bar.ts",
+        "",
+      ].join("\n"),
+    );
+
+    expect(files.map((file) => file.path)).toEqual(["w/bar.ts"]);
+  });
+
+  it("preserves no-prefix paths that start with a mnemonic letter", () => {
+    // With diff.noprefix a repo can contain a literal top-level w/ or i/
+    // directory. Both sides carrying the same leading letter means it is a
+    // real path, not a prefix pair, and must be kept intact.
+    const files = parseDiff(
+      SIMPLE_DIFF.replace(
+        "diff --git a/example.ts b/example.ts",
+        "diff --git w/example.ts w/example.ts",
+      ).replace("--- a/example.ts\n+++ b/example.ts", "--- w/example.ts\n+++ w/example.ts"),
+    );
+
+    expect(files.map((file) => file.path)).toEqual(["w/example.ts"]);
+  });
+
   it("preserves no-prefix paths that start with a or b", () => {
     const files = parseDiff(
       `${SIMPLE_DIFF.replace(
