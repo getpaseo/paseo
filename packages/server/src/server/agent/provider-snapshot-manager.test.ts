@@ -298,13 +298,36 @@ describe("ProviderSnapshotManager public surface", () => {
       const qwenCodex = snapshot.find((entry) => entry.provider === "qwen-codex");
       const myAcp = snapshot.find((entry) => entry.provider === "my-acp");
       expect(claude?.derivedFromProviderId).toBeNull();
-      expect(claude?.launchSource).toBe("default");
+      expect(claude?.canUseDefaultResumeCommand).toBe(true);
       expect(zaiClaude?.derivedFromProviderId).toBe("claude");
-      expect(zaiClaude?.launchSource).toBe("default");
+      expect(zaiClaude?.canUseDefaultResumeCommand).toBe(true);
       expect(qwenCodex?.derivedFromProviderId).toBe("codex");
-      expect(qwenCodex?.launchSource).toBe("default");
+      expect(qwenCodex?.canUseDefaultResumeCommand).toBe(true);
       expect(myAcp?.derivedFromProviderId).toBeNull();
-      expect(myAcp?.launchSource).toBe("override");
+      expect(myAcp?.canUseDefaultResumeCommand).toBe(false);
+    } finally {
+      manager.destroy();
+    }
+  });
+
+  test("snapshot entries report unsafe default resume for derived providers with custom env", () => {
+    const manager = new ProviderSnapshotManager({
+      logger: createTestLogger(),
+      providerOverrides: {
+        "zai-claude": {
+          extends: "claude",
+          label: "ZAI",
+          enabled: true,
+          env: { ANTHROPIC_API_KEY: "secret", ANTHROPIC_BASE_URL: "https://example.com" },
+        },
+      },
+    });
+    try {
+      const snapshot = manager.getSnapshot("/tmp/project").records.map(({ entry }) => entry);
+      const zaiClaude = snapshot.find((entry) => entry.provider === "zai-claude");
+      expect(zaiClaude?.derivedFromProviderId).toBe("claude");
+      expect(zaiClaude?.canUseDefaultResumeCommand).toBe(false);
+      expect(zaiClaude).not.toMatchObject({ env: expect.anything() });
     } finally {
       manager.destroy();
     }

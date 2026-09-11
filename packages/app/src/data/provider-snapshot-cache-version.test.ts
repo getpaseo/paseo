@@ -30,7 +30,7 @@ function createStorage() {
 }
 
 describe("provider snapshot cache version contract", () => {
-  it("round-trips a v3 body carrying derivedFromProviderId and launchSource", async () => {
+  it("round-trips a v3 body carrying derivedFromProviderId and canUseDefaultResumeCommand", async () => {
     const storage = createStorage();
     const cache: ProviderSnapshotCache = createProviderSnapshotCache(storage);
 
@@ -45,7 +45,7 @@ describe("provider snapshot cache version contract", () => {
           status: "ready",
           enabled: true,
           derivedFromProviderId: "codex",
-          launchSource: "default",
+          canUseDefaultResumeCommand: true,
         },
       ]),
     });
@@ -55,7 +55,7 @@ describe("provider snapshot cache version contract", () => {
     expect(v3!.entries[0]).toMatchObject({
       provider: "my-codex",
       derivedFromProviderId: "codex",
-      launchSource: "default",
+      canUseDefaultResumeCommand: true,
     });
   });
 

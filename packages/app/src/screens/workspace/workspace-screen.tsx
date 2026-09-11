@@ -2761,7 +2761,8 @@ function WorkspaceScreenContent({
         if (error instanceof ProviderResumeCommandUnavailableError) {
           toast.error(t("workspace.tabs.toasts.resumeCommandUnavailable"));
         } else {
-          throw error;
+          console.error("[WorkspaceScreen] Failed to resolve resume command", { error });
+          toast.error(t("workspace.tabs.toasts.copyFailed"));
         }
       }
     },

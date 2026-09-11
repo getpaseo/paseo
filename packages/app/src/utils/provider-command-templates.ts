@@ -4,7 +4,7 @@ export type ProviderCommandId = "resume";
 
 type ResumeSnapshot = Pick<
   ProviderSnapshotEntry,
-  "provider" | "derivedFromProviderId" | "launchSource"
+  "provider" | "derivedFromProviderId" | "canUseDefaultResumeCommand"
 >;
 
 export interface ResolveProviderCommandTemplateInput {
@@ -71,10 +71,10 @@ function renderTemplate(template: string, vars: Record<string, string>): string 
 }
 
 function isDefaultLaunch(entry: ResumeSnapshot | undefined): boolean {
-  // launchSource is absent on old-daemons and pre-v3 caches; treat unknown as
-  // default so the feature degrades to the previous behavior rather than
-  // refusing a command for already-cached snapshots after this code ships.
-  return entry == null || entry.launchSource == null || entry.launchSource === "default";
+  // Built-in providers can still resolve when the snapshot is absent or predates
+  // the canUseDefaultResumeCommand field. Custom providers require an explicit
+  // `true` value in the custom branch below.
+  return entry == null || entry.canUseDefaultResumeCommand !== false;
 }
 
 function resolveProviderCommandTemplate(
@@ -90,9 +90,9 @@ function resolveProviderCommandTemplate(
   }
 
   // Custom providers that extend a built-in can only use the inherited template
-  // when the snapshot explicitly identifies the ancestor and the command has
-  // not been overridden.
-  if (entry?.derivedFromProviderId && entry.launchSource === "default") {
+  // when the snapshot explicitly identifies the ancestor and reports that the
+  // default resume command is safe to use.
+  if (entry?.derivedFromProviderId && entry.canUseDefaultResumeCommand === true) {
     return PROVIDER_COMMAND_TEMPLATES[entry.derivedFromProviderId]?.[input.id];
   }
 

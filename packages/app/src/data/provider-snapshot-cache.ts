@@ -11,7 +11,7 @@ import type { GetProvidersSnapshotResponseMessage } from "@getpaseo/protocol/mes
 type SnapshotPayload = GetProvidersSnapshotResponseMessage["payload"];
 
 // COMPAT(providerSnapshotAncestry): bump v2 to v3 to force fresh snapshots after adding
-// derivedFromProviderId/launchSource. Remove legacy v2 cleanup after 2027-03-15.
+// derivedFromProviderId/canUseDefaultResumeCommand. Remove legacy v2 cleanup after 2027-03-15.
 const CACHE_VERSION = 3;
 const CACHE_KEY_PREFIX = "@paseo/provider-snapshot/v3";
 const CACHE_INDEX_KEY = "@paseo/provider-snapshot-index/v3";

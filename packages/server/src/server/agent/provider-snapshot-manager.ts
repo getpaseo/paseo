@@ -829,7 +829,7 @@ export class ProviderSnapshotManager {
       const custom =
         this.pluginProviders.has(provider) ||
         (!BUILTIN_PROVIDER_IDS.includes(provider) && !!overrides?.[provider]?.extends);
-      const launchSource = resolveLaunchSource(definition);
+      const canUseDefaultResumeCommand = resolveCanUseDefaultResumeCommand(definition);
       providerStates.set(provider, {
         discoveryLimit: previous?.discoveryLimit ?? pLimit({ concurrency: 4, rejectOnClear: true }),
         initial: identifyEntry({
@@ -838,7 +838,7 @@ export class ProviderSnapshotManager {
           enabled: definition.enabled,
           source: custom ? "custom" : "builtin",
           derivedFromProviderId: definition.derivedFromProviderId,
-          launchSource,
+          canUseDefaultResumeCommand,
           label: definition.label,
           description: definition.description,
           iconSvg: definition.iconSvg,
@@ -1166,18 +1166,17 @@ export function isGlobalProviderSnapshotKey(cwd: string): boolean {
   return cwd === GLOBAL_PROVIDER_SNAPSHOT_KEY;
 }
 
-function resolveLaunchSource(definition: ProviderDefinition): "default" | "append" | "override" {
-  const command = definition.configuration?.runtimeSettings?.command;
-  if (command == null) {
-    return "default";
+function resolveCanUseDefaultResumeCommand(definition: ProviderDefinition): boolean {
+  const runtimeSettings = definition.configuration?.runtimeSettings;
+  const command = runtimeSettings?.command;
+  if (command != null && command.mode !== "default") {
+    return false;
   }
-  if (command.mode === "replace") {
-    return "override";
+  const env = runtimeSettings?.env;
+  if (env != null && Object.keys(env).length > 0) {
+    return false;
   }
-  if (command.mode === "append") {
-    return "append";
-  }
-  return "default";
+  return true;
 }
 
 function identifyEntry(entry: ProviderSnapshotEntry): ProviderSnapshotRecord {

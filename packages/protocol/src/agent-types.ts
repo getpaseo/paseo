@@ -113,11 +113,11 @@ export interface ProviderSnapshotEntry {
    */
   derivedFromProviderId?: AgentProvider | null;
   /**
-   * Whether the provider's launch command is the built-in default, appended to,
-   * or fully overridden by a custom `command` array. Used by the client to decide
-   * whether built-in resume command templates are safe to use.
+   * Whether the provider can safely use its built-in resume command template.
+   * Built-in providers and faithful inherited providers report true; customized
+   * providers with an overridden command or custom environment do not.
    */
-  launchSource?: "default" | "append" | "override";
+  canUseDefaultResumeCommand?: boolean;
   error?: string;
   models?: AgentModelDefinition[];
   modes?: AgentMode[];

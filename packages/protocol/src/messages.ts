@@ -375,7 +375,7 @@ export const ProviderSnapshotEntrySchema = z.object({
   enabled: z.boolean().optional().default(true),
   source: z.enum(["builtin", "custom"]).optional(),
   derivedFromProviderId: AgentProviderSchema.nullable().optional(),
-  launchSource: z.enum(["default", "append", "override"]).optional(),
+  canUseDefaultResumeCommand: z.boolean().optional(),
   error: z.string().optional(),
   models: z.array(AgentModelDefinitionSchema).optional(),
   modes: z.array(AgentModeSchema).optional(),

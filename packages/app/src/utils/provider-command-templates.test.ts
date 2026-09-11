@@ -10,9 +10,12 @@ import {
 function snapshotEntry(
   provider: string,
   derivedFromProviderId?: string | null,
-  launchSource: ProviderSnapshotEntry["launchSource"] = "default",
-): Pick<ProviderSnapshotEntry, "provider" | "derivedFromProviderId" | "launchSource"> {
-  return { provider, derivedFromProviderId, launchSource };
+  canUseDefaultResumeCommand: ProviderSnapshotEntry["canUseDefaultResumeCommand"] = true,
+): Pick<
+  ProviderSnapshotEntry,
+  "provider" | "derivedFromProviderId" | "canUseDefaultResumeCommand"
+> {
+  return { provider, derivedFromProviderId, canUseDefaultResumeCommand };
 }
 
 const neverCalledSnapshot = () =>
@@ -85,7 +88,7 @@ describe("buildProviderCommand", () => {
         provider: "my-claude",
         id: "resume",
         sessionId: "example-session",
-        providerSnapshot: [snapshotEntry("my-claude", "claude", "default")],
+        providerSnapshot: [snapshotEntry("my-claude", "claude", true)],
       }),
     ).toBe("claude --resume example-session");
   });
@@ -96,7 +99,7 @@ describe("buildProviderCommand", () => {
         provider: "my-codex",
         id: "resume",
         sessionId: "example-session",
-        providerSnapshot: [snapshotEntry("my-codex", "codex", "default")],
+        providerSnapshot: [snapshotEntry("my-codex", "codex", true)],
       }),
     ).toBe("codex resume example-session");
   });
@@ -117,7 +120,7 @@ describe("buildProviderCommand", () => {
         provider: "my-agent",
         id: "resume",
         sessionId: "example-session",
-        providerSnapshot: [snapshotEntry("my-agent", null, "default")],
+        providerSnapshot: [snapshotEntry("my-agent", null, true)],
       }),
     ).toBeNull();
   });
@@ -128,7 +131,7 @@ describe("buildProviderCommand", () => {
         provider: "claude",
         id: "resume",
         sessionId: "example-session",
-        providerSnapshot: [snapshotEntry("claude", null, "override")],
+        providerSnapshot: [snapshotEntry("claude", null, false)],
       }),
     ).toBeNull();
   });
@@ -139,7 +142,7 @@ describe("buildProviderCommand", () => {
         provider: "my-codex",
         id: "resume",
         sessionId: "example-session",
-        providerSnapshot: [snapshotEntry("my-codex", "codex", "override")],
+        providerSnapshot: [snapshotEntry("my-codex", "codex", false)],
       }),
     ).toBeNull();
   });
@@ -150,7 +153,18 @@ describe("buildProviderCommand", () => {
         provider: "my-codex",
         id: "resume",
         sessionId: "example-session",
-        providerSnapshot: [snapshotEntry("my-codex", "codex", "append")],
+        providerSnapshot: [snapshotEntry("my-codex", "codex", false)],
+      }),
+    ).toBeNull();
+  });
+
+  test("refuses the inherited template for a custom provider with a false safety flag", () => {
+    expect(
+      buildProviderCommand({
+        provider: "my-codex",
+        id: "resume",
+        sessionId: "example-session",
+        providerSnapshot: [snapshotEntry("my-codex", "codex", false)],
       }),
     ).toBeNull();
   });
@@ -207,7 +221,7 @@ describe("resolveProviderResumeCommand", () => {
         provider: "my-codex",
         sessionId: "example-session",
         supportsProviderAncestry: true,
-        getProviderSnapshot: () => Promise.resolve([snapshotEntry("my-codex", "codex", "default")]),
+        getProviderSnapshot: () => Promise.resolve([snapshotEntry("my-codex", "codex", true)]),
       }),
     ).resolves.toBe("codex resume example-session");
   });
@@ -218,8 +232,7 @@ describe("resolveProviderResumeCommand", () => {
         provider: "my-codex",
         sessionId: "example-session",
         supportsProviderAncestry: true,
-        getProviderSnapshot: () =>
-          Promise.resolve([snapshotEntry("my-codex", "codex", "override")]),
+        getProviderSnapshot: () => Promise.resolve([snapshotEntry("my-codex", "codex", false)]),
       }),
     ).rejects.toThrow(ProviderResumeCommandUnavailableError);
   });
@@ -230,19 +243,21 @@ describe("resolveProviderResumeCommand", () => {
         provider: "my-codex",
         sessionId: "example-session",
         supportsProviderAncestry: true,
-        getProviderSnapshot: () => Promise.resolve([snapshotEntry("my-codex", "codex", "append")]),
+        getProviderSnapshot: () => Promise.resolve([snapshotEntry("my-codex", "codex", false)]),
       }),
     ).rejects.toThrow(ProviderResumeCommandUnavailableError);
   });
 
-  test("rejects a custom provider with an absent launchSource", async () => {
+  test("rejects a custom provider with an absent canUseDefaultResumeCommand", async () => {
     await expect(
       resolveProviderResumeCommand({
         provider: "my-codex",
         sessionId: "example-session",
         supportsProviderAncestry: true,
         getProviderSnapshot: () =>
-          Promise.resolve([{ ...snapshotEntry("my-codex", "codex"), launchSource: undefined }]),
+          Promise.resolve([
+            { ...snapshotEntry("my-codex", "codex"), canUseDefaultResumeCommand: undefined },
+          ]),
       }),
     ).rejects.toThrow(ProviderResumeCommandUnavailableError);
   });
