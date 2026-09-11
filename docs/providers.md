@@ -49,6 +49,13 @@ Copilot custom agents are exposed through ACP session config, not the slash-comm
 
 ACP permission options are rendered as ordered actions and Paseo returns the selected option's exact `optionId`. Agents can therefore encode a single-choice question as multiple options of the same allow kind. Auto-accept does not resolve those chooser requests; they always wait for the user.
 
+ACP shims can own model discovery through `catalogModelResolver`; the shared client owns the probe
+process and refresh deadline. Keep vendor RPCs in the shim. Cursor uses
+`cursor/list_available_models` because switching models during discovery writes its saved CLI
+preferences and selection history. Cursor versions without that extension must be updated. Kimi
+still probes model selections in its own shim. The initial session supplies modes and the current
+model; it does not override the model list returned by a resolver.
+
 ### Direct
 
 Implement the `AgentClient` and `AgentSession` interfaces from `agent-sdk-types.ts` yourself. This gives full control but requires you to handle process management, streaming, permissions, and session persistence from scratch.
