@@ -24,6 +24,11 @@ export interface ResolveProviderResumeCommandInput {
   getProviderSnapshot: () => Promise<readonly ResumeSnapshot[] | undefined>;
 }
 
+export type ResolveProviderResumeCommandOutcome =
+  | { status: "ready"; command: string }
+  | { status: "unavailable" }
+  | { status: "failed"; error: unknown };
+
 /**
  * Thrown when a resume command cannot be generated for the provider because it
  * is overridden, unsupported, or ancestry metadata is unavailable.
@@ -71,10 +76,7 @@ function renderTemplate(template: string, vars: Record<string, string>): string 
 }
 
 function isDefaultLaunch(entry: ResumeSnapshot | undefined): boolean {
-  // Built-in providers can still resolve when the snapshot is absent or predates
-  // the canUseDefaultResumeCommand field. Custom providers require an explicit
-  // `true` value in the custom branch below.
-  return entry == null || entry.canUseDefaultResumeCommand !== false;
+  return entry?.canUseDefaultResumeCommand === true;
 }
 
 function resolveProviderCommandTemplate(
@@ -82,11 +84,11 @@ function resolveProviderCommandTemplate(
 ): string | undefined {
   const entry = input.providerSnapshot?.find((candidate) => candidate.provider === input.provider);
 
-  // Built-in providers keep their immediate local template unless the snapshot
-  // explicitly says the command has been replaced/extended.
   const providerTemplate = PROVIDER_COMMAND_TEMPLATES[input.provider]?.[input.id];
   if (providerTemplate) {
-    return isDefaultLaunch(entry) ? providerTemplate : undefined;
+    return input.providerSnapshot === undefined || isDefaultLaunch(entry)
+      ? providerTemplate
+      : undefined;
   }
 
   // Custom providers that extend a built-in can only use the inherited template
@@ -110,30 +112,24 @@ export function buildProviderCommand(input: BuildProviderCommandInput): string |
 /**
  * Resolve the resume command for a provider.
  *
- * Built-in providers resolve from the local `PROVIDER_COMMAND_TEMPLATES` without
- * any snapshot, preserving the pre-existing immediate path. Custom providers
- * that extend a built-in require the daemon's `providerAncestry` capability and
- * the provider snapshot to derive the inherited template. If the command is not
- * available, the returned promise rejects with
+ * Daemons advertising `providerAncestry` provide the authoritative safety
+ * classification for built-in and custom providers through their snapshot.
+ * Without that capability, the action fails closed because provider launch
+ * customization cannot be ruled out. If the command is not available, the
+ * returned promise rejects with
  * {@link ProviderResumeCommandUnavailableError}.
  */
 export async function resolveProviderResumeCommand(
   input: ResolveProviderResumeCommandInput,
 ): Promise<string> {
-  const direct = buildProviderCommand({
-    provider: input.provider,
-    id: "resume",
-    sessionId: input.sessionId,
-  });
-  if (direct) {
-    return direct;
-  }
-
   if (!input.supportsProviderAncestry) {
     throw new ProviderResumeCommandUnavailableError();
   }
 
   const providerSnapshot = await input.getProviderSnapshot();
+  if (!providerSnapshot) {
+    throw new ProviderResumeCommandUnavailableError();
+  }
   const command = buildProviderCommand({
     provider: input.provider,
     id: "resume",
@@ -144,4 +140,18 @@ export async function resolveProviderResumeCommand(
     throw new ProviderResumeCommandUnavailableError();
   }
   return command;
+}
+
+export async function resolveProviderResumeCommandOutcome(
+  input: ResolveProviderResumeCommandInput,
+): Promise<ResolveProviderResumeCommandOutcome> {
+  try {
+    const command = await resolveProviderResumeCommand(input);
+    return { status: "ready", command };
+  } catch (error) {
+    if (error instanceof ProviderResumeCommandUnavailableError) {
+      return { status: "unavailable" };
+    }
+    return { status: "failed", error };
+  }
 }

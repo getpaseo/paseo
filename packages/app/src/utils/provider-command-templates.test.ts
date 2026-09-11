@@ -5,6 +5,7 @@ import {
   buildProviderCommand,
   ProviderResumeCommandUnavailableError,
   resolveProviderResumeCommand,
+  resolveProviderResumeCommandOutcome,
 } from "@/utils/provider-command-templates";
 
 function snapshotEntry(
@@ -171,7 +172,7 @@ describe("buildProviderCommand", () => {
 });
 
 describe("resolveProviderResumeCommand", () => {
-  test("resolves built-in Codex immediately without a snapshot", async () => {
+  test("rejects built-in Codex when providerAncestry is not advertised", async () => {
     await expect(
       resolveProviderResumeCommand({
         provider: "codex",
@@ -179,10 +180,10 @@ describe("resolveProviderResumeCommand", () => {
         supportsProviderAncestry: false,
         getProviderSnapshot: neverCalledSnapshot,
       }),
-    ).resolves.toBe("codex resume example-session");
+    ).rejects.toThrow(ProviderResumeCommandUnavailableError);
   });
 
-  test("resolves built-in Claude immediately without a snapshot", async () => {
+  test("rejects built-in Claude when providerAncestry is not advertised", async () => {
     await expect(
       resolveProviderResumeCommand({
         provider: "claude",
@@ -190,18 +191,40 @@ describe("resolveProviderResumeCommand", () => {
         supportsProviderAncestry: false,
         getProviderSnapshot: neverCalledSnapshot,
       }),
-    ).resolves.toBe("claude --resume example-session");
+    ).rejects.toThrow(ProviderResumeCommandUnavailableError);
   });
 
-  test("resolves built-in Codex with providerAncestry without a snapshot", async () => {
+  test("resolves built-in Codex from the authoritative snapshot when providerAncestry is advertised", async () => {
     await expect(
       resolveProviderResumeCommand({
         provider: "codex",
         sessionId: "example-session",
         supportsProviderAncestry: true,
-        getProviderSnapshot: neverCalledSnapshot,
+        getProviderSnapshot: () => Promise.resolve([snapshotEntry("codex", null, true)]),
       }),
     ).resolves.toBe("codex resume example-session");
+  });
+
+  test("rejects a customized built-in provider when providerAncestry is advertised", async () => {
+    await expect(
+      resolveProviderResumeCommand({
+        provider: "codex",
+        sessionId: "example-session",
+        supportsProviderAncestry: true,
+        getProviderSnapshot: () => Promise.resolve([snapshotEntry("codex", null, false)]),
+      }),
+    ).rejects.toThrow(ProviderResumeCommandUnavailableError);
+  });
+
+  test("rejects a built-in provider when the authoritative snapshot is unavailable", async () => {
+    await expect(
+      resolveProviderResumeCommand({
+        provider: "codex",
+        sessionId: "example-session",
+        supportsProviderAncestry: true,
+        getProviderSnapshot: () => Promise.resolve(undefined),
+      }),
+    ).rejects.toThrow(ProviderResumeCommandUnavailableError);
   });
 
   test("rejects a custom provider when providerAncestry is not advertised", async () => {
@@ -282,5 +305,31 @@ describe("resolveProviderResumeCommand", () => {
         getProviderSnapshot: () => Promise.reject(new Error("network failure")),
       }),
     ).rejects.toThrow("network failure");
+  });
+});
+
+describe("resolveProviderResumeCommandOutcome", () => {
+  test("classifies unsupported providers as unavailable", async () => {
+    await expect(
+      resolveProviderResumeCommandOutcome({
+        provider: "my-codex",
+        sessionId: "example-session",
+        supportsProviderAncestry: false,
+        getProviderSnapshot: neverCalledSnapshot,
+      }),
+    ).resolves.toEqual({ status: "unavailable" });
+  });
+
+  test("returns unexpected snapshot failures without rejecting or classifying them as unavailable", async () => {
+    const snapshotError = new Error("network failure");
+
+    await expect(
+      resolveProviderResumeCommandOutcome({
+        provider: "my-codex",
+        sessionId: "example-session",
+        supportsProviderAncestry: true,
+        getProviderSnapshot: () => Promise.reject(snapshotError),
+      }),
+    ).resolves.toEqual({ status: "failed", error: snapshotError });
   });
 });

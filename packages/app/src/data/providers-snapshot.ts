@@ -119,12 +119,16 @@ export async function fetchProvidersSnapshot(input: {
   return snapshot;
 }
 
-export async function ensureProvidersSnapshotEntries(input: {
+export interface EnsureProvidersSnapshotEntriesInput {
   queryClient: QueryClient;
   client: DaemonClient;
   serverId: string;
   cwd?: string | null;
-}): Promise<ProviderSnapshotEntry[] | undefined> {
+}
+
+export async function ensureProvidersSnapshotEntries(
+  input: EnsureProvidersSnapshotEntriesInput,
+): Promise<ProviderSnapshotEntry[] | undefined> {
   try {
     const snapshot = await input.queryClient.ensureQueryData({
       queryKey: providersSnapshotQueryKey(input.serverId, input.cwd),

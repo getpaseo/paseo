@@ -116,7 +116,7 @@ import { createWorkspaceBrowser, useBrowserStore } from "@/desktop/browser/store
 import { getDesktopHost } from "@/desktop/host";
 import {
   ProviderResumeCommandUnavailableError,
-  resolveProviderResumeCommand,
+  resolveProviderResumeCommandOutcome,
 } from "@/utils/provider-command-templates";
 import { generateDraftId } from "@/stores/draft-keys";
 import { resolveWorkspaceRouteId } from "@/utils/workspace-identity";
@@ -2734,36 +2734,38 @@ function WorkspaceScreenContent({
         useSessionStore.getState().sessions[normalizedServerId]?.serverInfo?.features
           ?.providerAncestry === true;
 
-      try {
-        const command = await resolveProviderResumeCommand({
-          provider: agent.provider,
-          sessionId: providerSessionId,
-          supportsProviderAncestry,
-          getProviderSnapshot: async () => {
-            if (!client) {
-              throw new ProviderResumeCommandUnavailableError();
-            }
-            return ensureProvidersSnapshotEntries({
-              queryClient,
-              client,
-              serverId: normalizedServerId,
-              cwd: workspaceDirectory,
-            });
-          },
+      const outcome = await resolveProviderResumeCommandOutcome({
+        provider: agent.provider,
+        sessionId: providerSessionId,
+        supportsProviderAncestry,
+        getProviderSnapshot: async () => {
+          if (!client) {
+            throw new ProviderResumeCommandUnavailableError();
+          }
+          return ensureProvidersSnapshotEntries({
+            queryClient,
+            client,
+            serverId: normalizedServerId,
+            cwd: workspaceDirectory,
+          });
+        },
+      });
+      if (outcome.status === "unavailable") {
+        toast.error(t("workspace.tabs.toasts.resumeCommandUnavailable"));
+        return;
+      }
+      if (outcome.status === "failed") {
+        console.error("[WorkspaceScreen] Failed to resolve resume command", {
+          error: outcome.error,
         });
-        try {
-          await Clipboard.setStringAsync(command);
-          toast.copied(t("workspace.tabs.toasts.resumeCommandCopiedLabel"));
-        } catch {
-          toast.error(t("workspace.tabs.toasts.copyFailed"));
-        }
-      } catch (error) {
-        if (error instanceof ProviderResumeCommandUnavailableError) {
-          toast.error(t("workspace.tabs.toasts.resumeCommandUnavailable"));
-        } else {
-          console.error("[WorkspaceScreen] Failed to resolve resume command", { error });
-          toast.error(t("workspace.tabs.toasts.copyFailed"));
-        }
+        toast.error(t("workspace.tabs.toasts.copyFailed"));
+        return;
+      }
+      try {
+        await Clipboard.setStringAsync(outcome.command);
+        toast.copied(t("workspace.tabs.toasts.resumeCommandCopiedLabel"));
+      } catch {
+        toast.error(t("workspace.tabs.toasts.copyFailed"));
       }
     },
     [client, normalizedServerId, workspaceDirectory, queryClient, toast, t],
