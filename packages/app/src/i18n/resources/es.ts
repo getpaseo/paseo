@@ -780,6 +780,14 @@ export const es: TranslationResources = {
           pending_mr: "Creando MR...",
           success_mr: "MR creado",
         },
+        setPrReady: {
+          label: "Marcar PR como listo",
+          pending: "Marcando PR como listo...",
+          success: "PR listo para revisión",
+          label_mr: "Marcar MR como listo",
+          pending_mr: "Marcando MR como listo...",
+          success_mr: "MR listo para revisión",
+        },
         mergeBranch: {
           label: "Fusionar localmente",
           pending: "Fusionando...",
@@ -885,6 +893,7 @@ export const es: TranslationResources = {
           failedPush: "No se pudo empujar",
           failedPullAndPush: "No se pudo tirar y empujar",
           failedCreatePr: "No se pudo crearPR",
+          failedSetPrReady: "No se pudo marcar PR como listo",
           failedMergePr: "No se pudo fusionarPR",
           failedEnableAutoMerge: "No se pudo habilitar la combinación automática",
           failedDisableAutoMerge: "No se pudo deshabilitar la combinación automática",

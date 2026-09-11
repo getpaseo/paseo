@@ -640,6 +640,16 @@ describe("createGitLabService", () => {
     ]);
   });
 
+  it("marks a merge request ready with glab", async () => {
+    const { service, calls } = makeService(() => ok(""));
+    const result = await service.markPullRequestReady({
+      cwd: "/repo",
+      prNumber: 14,
+    });
+    expect(result).toEqual({ success: true });
+    expect(calls[0]).toEqual(["mr", "update", "14", "--ready"]);
+  });
+
   it("surfaces the head pipeline id and url on the gitlab status facts", async () => {
     const pipelineMr = mergeRequestWithPipeline("canceling");
     const { service } = makeService((args) => {

@@ -2524,6 +2524,8 @@ export class Session {
         return this.checkoutSession.handleCheckoutPrCreateRequest(msg);
       case "checkout_pr_merge_request":
         return this.checkoutSession.handleCheckoutPrMergeRequest(msg);
+      case "checkout.forge.set_ready.request":
+        return this.checkoutSession.handleCheckoutForgeSetReadyRequest(msg);
       case "checkout.forge.set_auto_merge.request":
       case "checkout.github.set_auto_merge.request":
         return this.checkoutSession.handleCheckoutForgeSetAutoMergeRequest(msg);

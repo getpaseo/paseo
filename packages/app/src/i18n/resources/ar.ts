@@ -774,6 +774,14 @@ export const ar: TranslationResources = {
           pending_mr: "إنشاء MR...",
           success_mr: "تم إنشاء MR",
         },
+        setPrReady: {
+          label: "تعيين PR جاهزًا",
+          pending: "جارٍ تعيين PR جاهزًا...",
+          success: "PR جاهز للمراجعة",
+          label_mr: "تعيين MR جاهزًا",
+          pending_mr: "جارٍ تعيين MR جاهزًا...",
+          success_mr: "MR جاهز للمراجعة",
+        },
         mergeBranch: {
           label: "دمج محليا",
           pending: "جار الدمج...",
@@ -854,6 +862,7 @@ export const ar: TranslationResources = {
           failedPush: "فشل في الدفع",
           failedPullAndPush: "فشل في السحب والدفع",
           failedCreatePr: "فشل في إنشاء PR",
+          failedSetPrReady: "فشل في تعيين PR جاهزًا",
           failedMergePr: "فشل دمج PR",
           failedEnableAutoMerge: "فشل في تمكين الدمج التلقائي",
           failedDisableAutoMerge: "فشل في تعطيل الدمج التلقائي",

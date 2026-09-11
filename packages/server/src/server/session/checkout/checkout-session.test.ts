@@ -896,6 +896,144 @@ describe("CheckoutSession", () => {
     });
   });
 
+  describe("pr set ready", () => {
+    function createGitLabDraftPrSnapshot(
+      cwd: string,
+      overrides?: { isDraft?: boolean },
+    ): WorkspaceGitRuntimeSnapshot {
+      return {
+        ...createGitSnapshot(cwd, "feature/gitlab-draft"),
+        forge: {
+          featuresEnabled: true,
+          error: null,
+          pullRequest: {
+            number: 14,
+            url: "https://gitlab.example.com/g/r/-/merge_requests/14",
+            title: "GitLab MR",
+            state: "open",
+            baseRefName: "main",
+            headRefName: "feature/gitlab-draft",
+            isMerged: false,
+            isDraft: overrides?.isDraft ?? true,
+            mergeable: "UNKNOWN",
+            checks: [],
+            checksStatus: "pending",
+            reviewDecision: null,
+          },
+        },
+      };
+    }
+
+    it("fails when no pull request number can be determined", async () => {
+      const { checkout, emitted } = makeCheckoutSession({
+        git: { getSnapshot: async (cwd) => createGitSnapshot(cwd, "feature") },
+      });
+
+      await checkout.handleCheckoutForgeSetReadyRequest({
+        type: "checkout.forge.set_ready.request",
+        cwd: "/repo",
+        requestId: "sr1",
+      });
+
+      expect(emitted).toEqual([
+        {
+          type: "checkout.forge.set_ready.response",
+          payload: {
+            cwd: "/repo",
+            success: false,
+            error: {
+              code: "UNKNOWN",
+              message: "Unable to determine current change request number for set-ready",
+            },
+            requestId: "sr1",
+          },
+        },
+      ]);
+    });
+
+    it("rejects a pull request that is not a draft, without calling the adapter", async () => {
+      const gitlabCalls: number[] = [];
+      const gitlabService: Partial<ForgeService> = {
+        async markPullRequestReady(input) {
+          gitlabCalls.push(input.prNumber);
+          return { success: true };
+        },
+      };
+      const { checkout, emitted, gitMutationCalls } = makeCheckoutSession({
+        git: {
+          getSnapshot: async (cwd) => createGitLabDraftPrSnapshot(cwd, { isDraft: false }),
+          resolveForge: async () => ({
+            forge: "gitlab",
+            host: "gitlab.example.com",
+            service: gitlabService as ForgeService,
+          }),
+        },
+      });
+
+      await checkout.handleCheckoutForgeSetReadyRequest({
+        type: "checkout.forge.set_ready.request",
+        cwd: "/repo",
+        requestId: "sr3",
+      });
+
+      expect(gitlabCalls).toEqual([]);
+      expect(gitMutationCalls.notifyGitMutation).toEqual([]);
+      expect(emitted).toEqual([
+        {
+          type: "checkout.forge.set_ready.response",
+          payload: {
+            cwd: "/repo",
+            success: false,
+            error: { code: "UNKNOWN", message: "Pull request is not a draft" },
+            requestId: "sr3",
+          },
+        },
+      ]);
+    });
+
+    it("routes through the resolved GitLab adapter and refreshes forge state", async () => {
+      const gitlabCalls: number[] = [];
+      const gitlabService: Partial<ForgeService> = {
+        async markPullRequestReady(input) {
+          gitlabCalls.push(input.prNumber);
+          return { success: true };
+        },
+      };
+      const { checkout, emitted, gitMutationCalls } = makeCheckoutSession({
+        git: {
+          getSnapshot: async (cwd) => createGitLabDraftPrSnapshot(cwd),
+          resolveForge: async () => ({
+            forge: "gitlab",
+            host: "gitlab.example.com",
+            service: gitlabService as ForgeService,
+          }),
+        },
+      });
+
+      await checkout.handleCheckoutForgeSetReadyRequest({
+        type: "checkout.forge.set_ready.request",
+        cwd: "/repo",
+        requestId: "sr2",
+      });
+
+      expect(gitlabCalls).toEqual([14]);
+      expect(gitMutationCalls.notifyGitMutation).toEqual([
+        { cwd: "/repo", reason: "set-pr-ready", options: { invalidateForge: true } },
+      ]);
+      expect(emitted).toEqual([
+        {
+          type: "checkout.forge.set_ready.response",
+          payload: {
+            cwd: "/repo",
+            success: true,
+            error: null,
+            requestId: "sr2",
+          },
+        },
+      ]);
+    });
+  });
+
   describe("auto-merge routing", () => {
     function createGitLabPrSnapshot(
       cwd: string,

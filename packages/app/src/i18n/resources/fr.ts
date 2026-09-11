@@ -780,6 +780,14 @@ export const fr: TranslationResources = {
           pending_mr: "Création de MR...",
           success_mr: "MR créé",
         },
+        setPrReady: {
+          label: "Marquer PR comme prêt",
+          pending: "Marquage de PR comme prêt...",
+          success: "PR prêt pour relecture",
+          label_mr: "Marquer MR comme prêt",
+          pending_mr: "Marquage de MR comme prêt...",
+          success_mr: "MR prêt pour relecture",
+        },
         mergeBranch: {
           label: "Fusionner localement",
           pending: "Fusion...",
@@ -884,6 +892,7 @@ export const fr: TranslationResources = {
           failedPush: "Échec de la poussée",
           failedPullAndPush: "Impossible de tirer et de pousser",
           failedCreatePr: "Échec de la création dePR",
+          failedSetPrReady: "Échec du marquage de PR comme prêt",
           failedMergePr: "Échec de la fusion dePR",
           failedEnableAutoMerge: "Échec de l'activation de la fusion automatique",
           failedDisableAutoMerge: "Échec de la désactivation de la fusion automatique",

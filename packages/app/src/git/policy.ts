@@ -12,6 +12,7 @@ export type GitActionId =
   | "push"
   | "pull-and-push"
   | "pr"
+  | "set-pr-ready"
   | "merge-pr-squash"
   | "merge-pr-merge"
   | "merge-pr-rebase"
@@ -58,6 +59,8 @@ export interface BuildGitActionsInput {
   /** Short change-request noun label (e.g. "PR", "MR") for forge-neutral unavailable copy. */
   forgeChangeRequestNoun: string;
   githubAutoMergeActionsEnabled: boolean;
+  /** The host serves checkout.forge.set_ready.*; gates the draft-to-ready action. */
+  prSetReadyActionEnabled: boolean;
   hasPullRequest: boolean;
   pullRequestUrl: string | null;
   pullRequestState: "open" | "closed" | null;
@@ -252,6 +255,18 @@ export function buildGitActions(input: BuildGitActionsInput): GitActions {
     allActions.set(model.id, model.build(input));
   }
 
+  allActions.set("set-pr-ready", {
+    id: "set-pr-ready",
+    label: i18n.t("workspace.git.actions.setPrReady.label"),
+    pendingLabel: i18n.t("workspace.git.actions.setPrReady.pending"),
+    successLabel: i18n.t("workspace.git.actions.setPrReady.success"),
+    disabled: input.runtime["set-pr-ready"].disabled,
+    status: input.runtime["set-pr-ready"].status,
+    icon: input.runtime["set-pr-ready"].icon,
+    startsGroup: false,
+    handler: input.runtime["set-pr-ready"].handler,
+  });
+
   allActions.set("merge-branch", {
     id: "merge-branch",
     label: i18n.t("workspace.git.actions.mergeBranch.label"),
@@ -370,7 +385,19 @@ function getFeatureActionIds(input: BuildGitActionsInput): GitActionId[] {
     "merge-from-base",
     "merge-branch",
     ...getPullRequestActionIds({ roles: ["status", "direct", "auto"], input }),
+    ...(canSetPrReady(input) ? (["set-pr-ready"] as const) : []),
   ];
+}
+
+function canSetPrReady(input: BuildGitActionsInput): boolean {
+  return (
+    input.githubFeaturesEnabled &&
+    input.prSetReadyActionEnabled &&
+    input.hasPullRequest &&
+    input.pullRequestState === "open" &&
+    input.pullRequestIsDraft &&
+    !input.pullRequestIsMerged
+  );
 }
 
 function getDefaultDirectPullRequestMergeActionId(
