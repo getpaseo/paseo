@@ -50,7 +50,7 @@ import type {
   AgentPermissionResponse,
 } from "@getpaseo/protocol/agent-types";
 import type { AgentScreenAgent } from "@/hooks/use-agent-screen-state-machine";
-import { useSessionStore } from "@/stores/session-store";
+import { selectCanShowChatOutline, useSessionStore } from "@/stores/session-store";
 import { useRevealedText } from "@/hooks/use-revealed-text";
 import { useFileExplorerActions } from "@/hooks/use-file-explorer-actions";
 import { useLoadOlderAgentHistory } from "@/hooks/use-load-older-agent-history";
@@ -326,21 +326,6 @@ function resolveBottomOverlayControlOffset(clearance: number | undefined): numbe
   return Math.max(16, clearance ?? 0);
 }
 
-/** Whether the prompt-index outline is both supported here and addressable by this id. */
-function canShowChatOutline(
-  session:
-    | {
-        agents: Map<string, unknown>;
-        agentDetails: Map<string, unknown>;
-        serverInfo?: { features?: { agentTimelinePromptIndex?: boolean } } | null;
-      }
-    | undefined,
-  agentId: string,
-): boolean {
-  if (session?.serverInfo?.features?.agentTimelinePromptIndex !== true) return false;
-  return session.agents.has(agentId) || session.agentDetails.has(agentId);
-}
-
 const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamViewProps>(
   function AgentStreamView(
     {
@@ -403,19 +388,8 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       (state) =>
         state.sessions[resolvedServerId]?.serverInfo?.features?.agentForkContextCursor === true,
     );
-    /**
-     * Whether this pane can have a prompt-index outline at all.
-     *
-     * Two conditions, deliberately answered together. The daemon must support the index, and
-     * `agentId` must name an agent it can load: this view also renders panes whose id is a
-     * placeholder — an empty tab (`tab_*`), an unsent draft (`draft_msg_*`), or a provider
-     * subagent's synthetic stream key (`provider:<parent>:<child>`, which addresses a child
-     * through its parent instead). Asking the index about one of those is not an empty answer;
-     * the daemon logs it as a failed request. The lookup is reactive, so a pane that starts as a
-     * draft picks the outline up as soon as its agent exists.
-     */
     const supportsChatOutline = useSessionStore((state) =>
-      canShowChatOutline(state.sessions[resolvedServerId], agentId),
+      selectCanShowChatOutline(state.sessions[resolvedServerId], agentId),
     );
     const timelineEpoch = useSessionStore(
       (state) => state.sessions[resolvedServerId]?.agentTimelineCursor.get(agentId)?.epoch ?? null,

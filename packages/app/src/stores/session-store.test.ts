@@ -7,6 +7,7 @@ import {
   normalizeWorkspaceDescriptor,
   selectAgentTurnPresentation,
   selectAgentTimelineState,
+  selectCanShowChatOutline,
   useSessionStore,
   type Agent,
   type WorkspaceDescriptor,
@@ -289,6 +290,78 @@ describe("agent timeline state", () => {
       phase: "idle",
       cancellationRequestId: null,
     });
+  });
+});
+
+describe("chat outline addressability", () => {
+  function updateServerInfo(features: { agentTimelinePromptIndex?: boolean }): void {
+    useSessionStore.getState().updateSessionServerInfo("test-server", {
+      serverId: "test-server",
+      hostname: null,
+      version: null,
+      features,
+    });
+  }
+
+  function setSessionAgents(agentIds: readonly string[]): void {
+    useSessionStore.getState().setAgents("test-server", (agents) => {
+      const next = new Map(agents);
+      for (const agentId of agentIds) next.set(agentId, createTestAgent(agentId));
+      return next;
+    });
+  }
+
+  function setSessionAgentDetails(agentIds: readonly string[]): void {
+    useSessionStore.getState().setAgentDetails("test-server", (details) => {
+      const next = new Map(details);
+      for (const agentId of agentIds) next.set(agentId, createTestAgent(agentId));
+      return next;
+    });
+  }
+
+  function testSession() {
+    return useSessionStore.getState().sessions["test-server"];
+  }
+
+  it("requires both the daemon feature and an agent the session knows", () => {
+    expect(selectCanShowChatOutline(undefined, "agent-1")).toBe(false);
+
+    initializeTestSession();
+    expect(selectCanShowChatOutline(testSession(), "agent-1")).toBe(false);
+
+    updateServerInfo({ agentTimelinePromptIndex: true });
+    expect(selectCanShowChatOutline(testSession(), "agent-1")).toBe(false);
+
+    setSessionAgents(["agent-1"]);
+    expect(selectCanShowChatOutline(testSession(), "agent-1")).toBe(true);
+  });
+
+  it("refuses placeholder pane ids even when the parent agent is loaded", () => {
+    initializeTestSession();
+    updateServerInfo({ agentTimelinePromptIndex: true });
+    setSessionAgents(["agent-1"]);
+
+    const session = testSession();
+    expect(selectCanShowChatOutline(session, "tab_4412c74f8ac6")).toBe(false);
+    expect(selectCanShowChatOutline(session, "draft_msg_1788963805163_i7g3vm0fx")).toBe(false);
+    expect(selectCanShowChatOutline(session, "provider:agent-1:toolu_01VHLvQ6")).toBe(false);
+    expect(selectCanShowChatOutline(session, "agent-1")).toBe(true);
+  });
+
+  it("shows the outline for an agent known only from history", () => {
+    initializeTestSession();
+    updateServerInfo({ agentTimelinePromptIndex: true });
+    setSessionAgentDetails(["agent-2"]);
+
+    expect(selectCanShowChatOutline(testSession(), "agent-2")).toBe(true);
+  });
+
+  it("hides the outline when the daemon lacks the feature", () => {
+    initializeTestSession();
+    setSessionAgents(["agent-1"]);
+    updateServerInfo({});
+
+    expect(selectCanShowChatOutline(testSession(), "agent-1")).toBe(false);
   });
 });
 
