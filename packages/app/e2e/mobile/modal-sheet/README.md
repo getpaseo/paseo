@@ -14,6 +14,18 @@ agent-device test packages/app/e2e/mobile/modal-sheet/model.android.ad \
   --record-video --artifacts-dir .dev/sheet-qa/model
 ```
 
+`model-tablet.android.ad` covers the non-compact model picker, which renders as a popover in a
+native Modal instead of a sheet. Run it on a tablet emulator rotated to portrait (the app is
+portrait-locked, so landscape letterboxes it to a compact width), with no model selected yet:
+
+```sh
+adb shell settings put system accelerometer_rotation 0
+adb shell settings put system user_rotation 1
+agent-device test packages/app/e2e/mobile/modal-sheet/model-tablet.android.ad \
+  --env FORM_URL="paseo://new?serverId=${SHEET_QA_SERVER_ID}" \
+  --record-video --artifacts-dir .dev/sheet-qa/model-tablet
+```
+
 The plugin journey checks body dismissal, reopening, expansion and last-row reachability with SDK
 ScrollView and FlatList, programmatic scrolling after expansion, downward list scrolling, and
 horizontal tab selection. The model journey checks body dismissal and the nested sheet's return to
