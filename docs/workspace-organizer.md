@@ -45,19 +45,3 @@ tests for section edits, persisted-state normalization, collapse, pinned precede
 reordering, empty-section retention, and moving a workspace through the menu. Preview project mode
 on desktop/web and compact native; exercise the menu move on native. Cross-device replication is
 out of scope until a server-backed layout exists.
-
-## Implementation checkpoint — 2026-09-11
-
-The first implementation stores sections in the existing local sidebar-order record and renders
-them only in Project mode. The unsectioned remainder now has the same persisted collapse behavior
-as named sections. The section menu enters a temporary select mode; selected workspaces move
-together through one section picker, then selection clears. Desktop Shift-click toggles a workspace
-pin without opening it. The isolated Electron preview used this worktree's `.dev/paseo-home` and
-port `6768`; it did not touch the active daemon on port `6767` or installed app data. Focused app
-tests cover normalization, section lifecycle, collapse persistence, bulk movement, pinned and
-filtered projection, shortcuts, and the no-section path. `npm run typecheck` and `npm run lint`
-pass.
-
-The source remains native-safe, but this checkpoint is desktop/web validation only. It does not
-ship the feature to the App Store or synchronize layouts to an iOS device; official iOS support
-requires upstream acceptance and a release.

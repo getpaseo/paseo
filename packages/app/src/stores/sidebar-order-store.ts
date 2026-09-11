@@ -3,6 +3,18 @@ import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import { z } from "zod";
 import { createValidatedPersistStorage } from "@/storage/validated-persist-storage";
+import {
+  moveWorkspaceToSection,
+  moveWorkspacesToSection,
+  normalizeWorkspaceSections,
+  removeWorkspaceSection,
+  renameWorkspaceSection,
+  reorderSectionWorkspaceKeys,
+  reorderWorkspaceSections,
+  type SidebarWorkspaceSection,
+} from "./sidebar-workspace-sections";
+
+export type { SidebarWorkspaceSection } from "./sidebar-workspace-sections";
 
 interface SidebarOrderStoreState {
   projectOrder: string[];
@@ -15,7 +27,6 @@ interface SidebarOrderStoreState {
   setPinnedWorkspaceOrder: (keys: string[]) => void;
   getWorkspaceOrder: (projectViewKey: string) => string[];
   setWorkspaceOrder: (projectViewKey: string, keys: string[]) => void;
-  getWorkspaceSections: (projectViewKey: string) => SidebarWorkspaceSection[];
   createWorkspaceSection: (projectViewKey: string, name: string) => void;
   renameWorkspaceSection: (projectViewKey: string, sectionId: string, name: string) => void;
   reorderWorkspaceSections: (projectViewKey: string, sectionIds: string[]) => void;
@@ -51,8 +62,6 @@ const SidebarWorkspaceSectionSchema = z.strictObject({
   name: z.string(),
   workspaceKeys: z.array(z.string()),
 });
-
-export type SidebarWorkspaceSection = z.infer<typeof SidebarWorkspaceSectionSchema>;
 
 const StringArrayRecordSchema = z.record(z.string(), z.array(z.string()));
 const WorkspaceSectionsRecordSchema = z.record(z.string(), z.array(SidebarWorkspaceSectionSchema));
@@ -98,30 +107,6 @@ function normalizeWorkspaceOrderByProject(
   return normalized;
 }
 
-function normalizeWorkspaceSections(
-  sections: readonly SidebarWorkspaceSection[],
-): SidebarWorkspaceSection[] {
-  const seenSectionIds = new Set<string>();
-  const placedWorkspaceKeys = new Set<string>();
-  const normalized: SidebarWorkspaceSection[] = [];
-
-  for (const section of sections) {
-    const id = section.id.trim();
-    const name = section.name.trim();
-    if (!id || !name || seenSectionIds.has(id)) continue;
-
-    const workspaceKeys = normalizeKeys(section.workspaceKeys).filter((workspaceKey) => {
-      if (placedWorkspaceKeys.has(workspaceKey)) return false;
-      placedWorkspaceKeys.add(workspaceKey);
-      return true;
-    });
-    seenSectionIds.add(id);
-    normalized.push({ id, name, workspaceKeys });
-  }
-
-  return normalized;
-}
-
 function normalizeWorkspaceSectionsByProject(
   workspaceSectionsByProject: Record<string, SidebarWorkspaceSection[]> | undefined,
 ): Record<string, SidebarWorkspaceSection[]> {
@@ -144,84 +129,6 @@ function withWorkspaceSections(
   const current = workspaceSectionsByProject[scope] ?? [];
   const next = normalizeWorkspaceSections(update(current));
   return { ...workspaceSectionsByProject, [scope]: next };
-}
-
-function renameSection(
-  sections: SidebarWorkspaceSection[],
-  sectionId: string,
-  name: string,
-): SidebarWorkspaceSection[] {
-  return sections.map((section) => (section.id === sectionId ? { ...section, name } : section));
-}
-
-function reorderSections(
-  sections: SidebarWorkspaceSection[],
-  sectionIds: readonly string[],
-): SidebarWorkspaceSection[] {
-  const byId = new Map(sections.map((section) => [section.id, section]));
-  const reordered: SidebarWorkspaceSection[] = [];
-  for (const id of sectionIds) {
-    const section = byId.get(id);
-    if (section) reordered.push(section);
-  }
-  const reorderedIds = new Set(reordered.map((section) => section.id));
-  return [...reordered, ...sections.filter((section) => !reorderedIds.has(section.id))];
-}
-
-function reorderSectionWorkspaceKeys(
-  sections: SidebarWorkspaceSection[],
-  sectionId: string,
-  workspaceKeys: readonly string[],
-): SidebarWorkspaceSection[] {
-  return sections.map((section) => {
-    if (section.id !== sectionId) return section;
-    const currentKeys = new Set(section.workspaceKeys);
-    const orderedKeys = workspaceKeys.filter((key) => currentKeys.has(key));
-    const orderedKeySet = new Set(orderedKeys);
-    return {
-      ...section,
-      workspaceKeys: [
-        ...orderedKeys,
-        ...section.workspaceKeys.filter((key) => !orderedKeySet.has(key)),
-      ],
-    };
-  });
-}
-
-function removeSection(
-  sections: SidebarWorkspaceSection[],
-  sectionId: string,
-): SidebarWorkspaceSection[] {
-  return sections.filter((section) => section.id !== sectionId);
-}
-
-function moveWorkspaceSection(
-  sections: SidebarWorkspaceSection[],
-  workspaceKey: string,
-  sectionId: string | null,
-): SidebarWorkspaceSection[] {
-  const targetExists = sectionId === null || sections.some((section) => section.id === sectionId);
-  if (!targetExists) return sections;
-  return sections.map((section) => {
-    const workspaceKeys = section.workspaceKeys.filter((key) => key !== workspaceKey);
-    if (section.id !== sectionId) return { ...section, workspaceKeys };
-    return { ...section, workspaceKeys: [...workspaceKeys, workspaceKey] };
-  });
-}
-
-function moveWorkspaceSections(
-  sections: SidebarWorkspaceSection[],
-  workspaceKeys: readonly string[],
-  sectionId: string | null,
-): SidebarWorkspaceSection[] {
-  const targetExists = sectionId === null || sections.some((section) => section.id === sectionId);
-  if (!targetExists) return sections;
-  const movedKeys = new Set(workspaceKeys);
-  return sections.map((section) => {
-    const remainingKeys = section.workspaceKeys.filter((key) => !movedKeys.has(key));
-    if (section.id !== sectionId) return { ...section, workspaceKeys: remainingKeys };
-    return { ...section, workspaceKeys: [...remainingKeys, ...workspaceKeys] };
-  });
 }
 
 function extractWorkspaceOrderScope(scopeKey: string): SidebarWorkspaceOrderScope | null {
@@ -326,11 +233,6 @@ export const useSidebarOrderStore = create<SidebarOrderStoreState>()(
           },
         }));
       },
-      getWorkspaceSections: (projectViewKey) => {
-        const scope = projectViewKey.trim();
-        if (!scope) return [];
-        return get().workspaceSectionsByProject[scope] ?? [];
-      },
       createWorkspaceSection: (projectViewKey, name) => {
         const sectionName = name.trim();
         if (!sectionName || !projectViewKey.trim()) return;
@@ -359,7 +261,7 @@ export const useSidebarOrderStore = create<SidebarOrderStoreState>()(
           workspaceSectionsByProject: withWorkspaceSections(
             state.workspaceSectionsByProject,
             projectViewKey,
-            (sections) => renameSection(sections, normalizedSectionId, sectionName),
+            (sections) => renameWorkspaceSection(sections, normalizedSectionId, sectionName),
           ),
         }));
       },
@@ -370,7 +272,7 @@ export const useSidebarOrderStore = create<SidebarOrderStoreState>()(
           workspaceSectionsByProject: withWorkspaceSections(
             state.workspaceSectionsByProject,
             projectViewKey,
-            (sections) => reorderSections(sections, normalizedSectionIds),
+            (sections) => reorderWorkspaceSections(sections, normalizedSectionIds),
           ),
         }));
       },
@@ -394,7 +296,7 @@ export const useSidebarOrderStore = create<SidebarOrderStoreState>()(
           workspaceSectionsByProject: withWorkspaceSections(
             state.workspaceSectionsByProject,
             projectViewKey,
-            (sections) => removeSection(sections, normalizedSectionId),
+            (sections) => removeWorkspaceSection(sections, normalizedSectionId),
           ),
         }));
       },
@@ -407,7 +309,7 @@ export const useSidebarOrderStore = create<SidebarOrderStoreState>()(
             state.workspaceSectionsByProject,
             projectViewKey,
             (sections) =>
-              moveWorkspaceSection(sections, normalizedWorkspaceKey, normalizedSectionId),
+              moveWorkspaceToSection(sections, normalizedWorkspaceKey, normalizedSectionId),
           ),
         }));
       },
@@ -420,7 +322,7 @@ export const useSidebarOrderStore = create<SidebarOrderStoreState>()(
             state.workspaceSectionsByProject,
             projectViewKey,
             (sections) =>
-              moveWorkspaceSections(sections, normalizedWorkspaceKeys, normalizedSectionId),
+              moveWorkspacesToSection(sections, normalizedWorkspaceKeys, normalizedSectionId),
           ),
         }));
       },

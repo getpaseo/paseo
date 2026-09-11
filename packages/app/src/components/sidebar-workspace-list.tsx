@@ -1658,7 +1658,6 @@ function WorkspaceRow({
 function WorkspaceSectionBlock({
   projectViewKey,
   section,
-  showHeader,
   collapsed,
   onToggleCollapsed,
   onRenameSection,
@@ -1678,7 +1677,6 @@ function WorkspaceSectionBlock({
 }: {
   projectViewKey: string;
   section: SidebarProjectWorkspaceSection;
-  showHeader: boolean;
   collapsed: boolean;
   onToggleCollapsed: (workspaceSectionKey: string) => void;
   onRenameSection: (section: SidebarProjectWorkspaceSection) => void;
@@ -1713,14 +1711,10 @@ function WorkspaceSectionBlock({
     toggleExpanded: toggleWorkspacesExpanded,
   } = useLimitedSidebarGroup(section.workspaces);
   const namedSection = section.id !== null;
-  const collapsible = section.collapseKey !== null;
   const Chevron = collapsed ? ThemedChevronRight : ThemedChevronDown;
-  const accessibilityState = useMemo(
-    () => (collapsible ? { expanded: !collapsed } : undefined),
-    [collapsed, collapsible],
-  );
+  const accessibilityState = useMemo(() => ({ expanded: !collapsed }), [collapsed]);
   const handleToggle = useCallback(() => {
-    if (section.collapseKey) onToggleCollapsed(section.collapseKey);
+    onToggleCollapsed(section.collapseKey);
   }, [onToggleCollapsed, section.collapseKey]);
   const handleRename = useCallback(() => onRenameSection(section), [onRenameSection, section]);
   const handleMoveUp = useCallback(() => onMoveSection(section, -1), [onMoveSection, section]);
@@ -1746,65 +1740,62 @@ function WorkspaceSectionBlock({
       style={styles.workspaceSectionBlock}
       testID={`sidebar-workspace-section-${section.id ?? "unsectioned"}-${projectViewKey}`}
     >
-      {showHeader ? (
-        <View style={styles.workspaceSectionHeader}>
-          <Pressable
-            accessibilityRole={collapsible ? "button" : undefined}
-            accessibilityState={accessibilityState}
-            disabled={!collapsible}
-            onPress={handleToggle}
-            style={styles.workspaceSectionTitleButton}
-            testID={`sidebar-workspace-section-header-${section.id ?? "unsectioned"}-${projectViewKey}`}
-          >
-            <Text style={styles.workspaceSectionTitle} numberOfLines={1}>
-              {section.name ?? "Unsectioned"}
-            </Text>
-            {collapsible ? <Chevron size={12} uniProps={foregroundMutedColorMapping} /> : null}
-          </Pressable>
-          {namedSection ? (
-            <DropdownMenu compactMode="sheet">
-              <DropdownMenuTrigger
-                hitSlop={8}
-                style={styles.workspaceSectionMenuTrigger}
-                accessibilityRole={platformIsWeb ? undefined : "button"}
-                accessibilityLabel={`Actions for ${section.name}`}
-                testID={`sidebar-workspace-section-menu-${section.id}-${projectViewKey}`}
+      <View style={styles.workspaceSectionHeader}>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityState={accessibilityState}
+          onPress={handleToggle}
+          style={styles.workspaceSectionTitleButton}
+          testID={`sidebar-workspace-section-header-${section.id ?? "unsectioned"}-${projectViewKey}`}
+        >
+          <Text style={styles.workspaceSectionTitle} numberOfLines={1}>
+            {section.name ?? "Unsectioned"}
+          </Text>
+          <Chevron size={12} uniProps={foregroundMutedColorMapping} />
+        </Pressable>
+        {namedSection ? (
+          <DropdownMenu compactMode="sheet">
+            <DropdownMenuTrigger
+              hitSlop={8}
+              style={styles.workspaceSectionMenuTrigger}
+              accessibilityRole={platformIsWeb ? undefined : "button"}
+              accessibilityLabel={`Actions for ${section.name}`}
+              testID={`sidebar-workspace-section-menu-${section.id}-${projectViewKey}`}
+            >
+              {renderKebabTriggerIcon}
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" width={200} sheetTitle={section.name ?? "Section"}>
+              {!selectionMode ? (
+                <DropdownMenuItem onSelect={onStartSelection}>Select workspaces</DropdownMenuItem>
+              ) : null}
+              <DropdownMenuItem leading={pencilLeadingIcon} onSelect={handleRename}>
+                Rename
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                leading={arrowUpLeadingIcon}
+                disabled={!canMoveUp}
+                onSelect={handleMoveUp}
               >
-                {renderKebabTriggerIcon}
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" width={200} sheetTitle={section.name ?? "Section"}>
-                {!selectionMode ? (
-                  <DropdownMenuItem onSelect={onStartSelection}>Select workspaces</DropdownMenuItem>
-                ) : null}
-                <DropdownMenuItem leading={pencilLeadingIcon} onSelect={handleRename}>
-                  Rename
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  leading={arrowUpLeadingIcon}
-                  disabled={!canMoveUp}
-                  onSelect={handleMoveUp}
-                >
-                  Move up
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  leading={arrowDownLeadingIcon}
-                  disabled={!canMoveDown}
-                  onSelect={handleMoveDown}
-                >
-                  Move down
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  leading={trash2LeadingIcon}
-                  onSelect={handleDelete}
-                  testID={`sidebar-workspace-section-delete-${section.id}-${projectViewKey}`}
-                >
-                  Delete
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-          ) : null}
-        </View>
-      ) : null}
+                Move up
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                leading={arrowDownLeadingIcon}
+                disabled={!canMoveDown}
+                onSelect={handleMoveDown}
+              >
+                Move down
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                leading={trash2LeadingIcon}
+                onSelect={handleDelete}
+                testID={`sidebar-workspace-section-delete-${section.id}-${projectViewKey}`}
+              >
+                Delete
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        ) : null}
+      </View>
       {collapsed ? null : (
         <>
           {section.workspaces.length > 0 ? (
@@ -1958,12 +1949,6 @@ function ProjectBlock({
   supportsPinningByServerId: ReadonlyMap<string, boolean>;
   onToggleWorkspacePin: ToggleSidebarWorkspacePin;
 }) {
-  const {
-    visibleItems: visibleWorkspaces,
-    expanded: workspacesExpanded,
-    canToggle: canToggleWorkspaces,
-    toggleExpanded: toggleWorkspacesExpanded,
-  } = useLimitedSidebarGroup(project.workspaces);
   const createWorkspaceSection = useSidebarOrderStore((state) => state.createWorkspaceSection);
   const renameWorkspaceSection = useSidebarOrderStore((state) => state.renameWorkspaceSection);
   const reorderWorkspaceSections = useSidebarOrderStore((state) => state.reorderWorkspaceSections);
@@ -2083,29 +2068,6 @@ function ProjectBlock({
       showShortcutBadges,
       workspaceEntriesByKey,
     ],
-  );
-
-  const renderWorkspace = useCallback(
-    ({
-      item,
-      drag: workspaceDrag,
-      isActive,
-      dragHandleProps: workspaceDragHandleProps,
-    }: DraggableRenderItemInfo<SidebarWorkspacePlacement>) => {
-      return renderWorkspaceRow(item, {
-        drag: workspaceDrag,
-        isDragging: isActive,
-        dragHandleProps: workspaceDragHandleProps,
-      });
-    },
-    [renderWorkspaceRow],
-  );
-
-  const handleWorkspaceDragEnd = useCallback(
-    (workspaces: SidebarWorkspacePlacement[]) => {
-      onWorkspaceReorder(project.viewKey, workspaces);
-    },
-    [onWorkspaceReorder, project.viewKey],
   );
 
   const toast = useToast();
@@ -2240,7 +2202,7 @@ function ProjectBlock({
 
   let projectChildren = null;
   if (!collapsed) {
-    if (hasNamedSections) {
+    if (hasNamedSections || project.workspaces.length > 0) {
       projectChildren = (
         <>
           {sections.map((section, index) => (
@@ -2248,11 +2210,7 @@ function ProjectBlock({
               key={section.id ?? "unsectioned"}
               projectViewKey={project.viewKey}
               section={section}
-              showHeader
-              collapsed={
-                section.collapseKey !== null &&
-                collapsedWorkspaceSectionKeys.has(section.collapseKey)
-              }
+              collapsed={collapsedWorkspaceSectionKeys.has(section.collapseKey)}
               onToggleCollapsed={onToggleWorkspaceSectionCollapsed}
               onRenameSection={handleRenameSection}
               onMoveSection={handleMoveSection}
@@ -2270,32 +2228,6 @@ function ProjectBlock({
               dragGestureHostActive={dragGestureHostActive}
             />
           ))}
-        </>
-      );
-    } else if (project.workspaces.length > 0) {
-      projectChildren = (
-        <>
-          <DraggableList
-            testID={`sidebar-workspace-list-${project.viewKey}`}
-            data={visibleWorkspaces}
-            keyExtractor={workspaceKeyExtractor}
-            renderItem={renderWorkspace}
-            onDragEnd={handleWorkspaceDragEnd}
-            extraData={activeWorkspaceSelectionKey(activeWorkspaceSelection)}
-            scrollEnabled={false}
-            useDragHandle
-            nestable={useNestable}
-            simultaneousGestureRef={parentGestureRef}
-            gestureHostPresented={dragGestureHostActive}
-            containerStyle={styles.workspaceListContainer}
-          />
-          {canToggleWorkspaces ? (
-            <SidebarGroupToggleRow
-              expanded={workspacesExpanded}
-              onPress={toggleWorkspacesExpanded}
-              testID={`sidebar-project-show-more-${project.viewKey}`}
-            />
-          ) : null}
         </>
       );
     } else if (rowModel.trailingAction.kind === "new_workspace") {
@@ -3270,6 +3202,7 @@ const styles = StyleSheet.create((theme) => ({
   workspaceSectionTitle: {
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.sm,
+    fontWeight: theme.fontWeight.medium,
     flexShrink: 1,
   },
   workspaceSectionMenuTrigger: {

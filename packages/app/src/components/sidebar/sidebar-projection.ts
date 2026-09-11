@@ -41,7 +41,7 @@ export interface SidebarProjection {
 export interface SidebarProjectWorkspaceSection {
   id: string | null;
   name: string | null;
-  collapseKey: string | null;
+  collapseKey: string;
   workspaces: SidebarWorkspacePlacement[];
 }
 
@@ -89,9 +89,7 @@ export function buildSidebarProjection(input: SidebarProjectionInput): SidebarPr
         return (projectSections.get(project.viewKey) ?? []).map((section) => ({
           workspaces: section.workspaces,
           collapsed:
-            projectCollapsed ||
-            (section.collapseKey !== null &&
-              input.collapsedWorkspaceSectionKeys.has(section.collapseKey)),
+            projectCollapsed || input.collapsedWorkspaceSectionKeys.has(section.collapseKey),
         }));
       }),
     );
