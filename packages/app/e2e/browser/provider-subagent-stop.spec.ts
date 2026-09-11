@@ -1,10 +1,9 @@
 import { test, expect } from "../support/fixtures";
+import { seedMockAgentWorkspace } from "../support/helpers/mock-agent";
 import {
-  openAgentRoute,
-  seedMockAgentWorkspace,
-  type MockAgentWorkspace,
-} from "../support/helpers/mock-agent";
-import { openSubagentsTrack } from "../support/helpers/subagents";
+  openProviderSubagentPane,
+  stopSubagentControl,
+} from "../support/helpers/provider-subagents";
 
 /**
  * The stop control on a provider-subagent pane, through the app: capability gating, request
@@ -13,25 +12,21 @@ import { openSubagentsTrack } from "../support/helpers/subagents";
  * state is deterministic — no real provider, no timing races.
  */
 
-const STOP_BUTTON = "provider-subagent-pane-stop";
+const MOCK_SUBAGENT_ID = "mock-subagent-1";
 const STOP_FAILURE_COPY = "Could not stop this subagent";
 const MOCK_INTERNAL_ERROR = "mock internal transport exploded";
 
-async function openSubagentPane(
-  page: Parameters<typeof openAgentRoute>[0],
-  agent: MockAgentWorkspace,
-  expectedTitle: string,
-): Promise<void> {
-  await openAgentRoute(page, {
-    workspaceId: agent.workspaceId,
-    agentId: agent.agentId,
+function seedStopFlowParent(
+  repoPrefix: string,
+  featureValues: Record<string, unknown>,
+): ReturnType<typeof seedMockAgentWorkspace> {
+  return seedMockAgentWorkspace({
+    repoPrefix,
+    title: "Stop flow parent",
+    model: "ten-second-stream",
+    initialPrompt: "stream while a child runs",
+    featureValues,
   });
-  await openSubagentsTrack(page);
-  const row = page.getByTestId("subagents-track-row-mock-subagent-1");
-  await expect(row).toBeVisible({ timeout: 30_000 });
-  await expect(row).toContainText(expectedTitle);
-  await row.click();
-  await expect(page.getByTestId("provider-subagent-panel")).toBeVisible({ timeout: 30_000 });
 }
 
 test.describe("provider subagent stop control", () => {
@@ -40,22 +35,17 @@ test.describe("provider subagent stop control", () => {
   test("stops a running subagent from its pane, with pending and success feedback", async ({
     page,
   }) => {
-    const agent = await seedMockAgentWorkspace({
-      repoPrefix: "provider-subagent-stop-",
-      title: "Stop flow parent",
-      model: "ten-second-stream",
-      initialPrompt: "stream while a child runs",
-      featureValues: {
-        mockProviderSubagent: "Sentry child",
-        mockStopProviderSubagentDelayMs: 1500,
-      },
+    const agent = await seedStopFlowParent("provider-subagent-stop-", {
+      mockProviderSubagent: "Sentry child",
+      mockStopProviderSubagentDelayMs: 1500,
     });
     try {
-      await openSubagentPane(page, agent, "Sentry child");
+      await openProviderSubagentPane(page, agent, {
+        id: MOCK_SUBAGENT_ID,
+        title: "Sentry child",
+      });
 
-      const stop = page.getByTestId(STOP_BUTTON);
-      await expect(stop).toBeVisible();
-
+      const stop = stopSubagentControl(page);
       // Pending: the control is suppressed for the duration of the request, so a second press
       // cannot dispatch a second stop.
       await stop.click();
@@ -73,20 +63,17 @@ test.describe("provider subagent stop control", () => {
   test("reports a failed stop with stable copy, not the provider's internal error", async ({
     page,
   }) => {
-    const agent = await seedMockAgentWorkspace({
-      repoPrefix: "provider-subagent-stop-failure-",
-      title: "Stop failure parent",
-      model: "ten-second-stream",
-      initialPrompt: "stream while a child runs",
-      featureValues: {
-        mockProviderSubagent: "Unstoppable child",
-        mockStopProviderSubagentError: MOCK_INTERNAL_ERROR,
-      },
+    const agent = await seedStopFlowParent("provider-subagent-stop-failure-", {
+      mockProviderSubagent: "Unstoppable child",
+      mockStopProviderSubagentError: MOCK_INTERNAL_ERROR,
     });
     try {
-      await openSubagentPane(page, agent, "Unstoppable child");
+      await openProviderSubagentPane(page, agent, {
+        id: MOCK_SUBAGENT_ID,
+        title: "Unstoppable child",
+      });
 
-      const stop = page.getByTestId(STOP_BUTTON);
+      const stop = stopSubagentControl(page);
       await stop.click();
 
       const toast = page.getByTestId("app-toast-message");
@@ -104,22 +91,19 @@ test.describe("provider subagent stop control", () => {
   });
 
   test("renders no stop control for a provider that cannot stop one", async ({ page }) => {
-    const agent = await seedMockAgentWorkspace({
-      repoPrefix: "provider-subagent-stop-incapable-",
-      title: "Incapable parent",
-      model: "ten-second-stream",
-      initialPrompt: "stream while a child runs",
-      featureValues: {
-        mockProviderSubagent: "Incapable child",
-        mockStopProviderSubagentUnsupported: true,
-      },
+    const agent = await seedStopFlowParent("provider-subagent-stop-incapable-", {
+      mockProviderSubagent: "Incapable child",
+      mockStopProviderSubagentUnsupported: true,
     });
     try {
-      await openSubagentPane(page, agent, "Incapable child");
+      await openProviderSubagentPane(page, agent, {
+        id: MOCK_SUBAGENT_ID,
+        title: "Incapable child",
+      });
 
       // The child is running and the daemon serves the RPC, but this provider never promised it
       // can stop one. A control here would render a button that cannot work.
-      await expect(page.getByTestId(STOP_BUTTON)).toHaveCount(0);
+      await expect(stopSubagentControl(page)).toHaveCount(0);
     } finally {
       await agent.cleanup();
     }

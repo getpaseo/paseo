@@ -177,7 +177,7 @@ describe("stopping a provider subagent", () => {
     await vi.waitFor(() => expect(turnEvents).toContain("turn_completed"));
 
     setClientsCanStop(true);
-    await session.setThinkingOption("high");
+    await session.setThinkingOption?.("high");
     await session.startTurn("more work");
     await vi.waitFor(() => expect(getOptions()?.perTaskStopAffordance).toBe(true));
     expect(channels).toHaveLength(2);
@@ -246,6 +246,31 @@ describe("stopping a provider subagent", () => {
 
     expect(await session.stopProviderSubagent?.(SUBAGENT_ID)).toBe(true);
     expect(channel.query.stopTask).toHaveBeenCalledWith(TASK_ID);
+
+    await session.close();
+  });
+
+  test("an interrupt stops spared children once a client that cannot stop them attaches", async () => {
+    // The query declared the affordance while every attached client could stop children. The
+    // option is fixed for the query's lifetime, so an older app attaching afterwards cannot
+    // retract it — but its interrupt must not strand a spared child it cannot address. The
+    // daemon stops the spared children itself, restoring what that client expects an interrupt
+    // to do.
+    const { channel, session, setClientsCanStop } = await startTurnWithSubagent(true);
+    setClientsCanStop(false);
+
+    await session.interrupt();
+    await vi.waitFor(() => expect(channel.query.stopTask).toHaveBeenCalledWith(TASK_ID));
+
+    await session.close();
+  });
+
+  test("an interrupt leaves spared children alone while every client can stop them", async () => {
+    const { channel, session } = await startTurnWithSubagent(true);
+
+    await session.interrupt();
+
+    expect(channel.query.stopTask).not.toHaveBeenCalled();
 
     await session.close();
   });

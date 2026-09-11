@@ -1,5 +1,6 @@
 import { expect, type Locator, type Page, type TestInfo } from "@playwright/test";
 
+import { openAgentRoute } from "./mock-agent";
 import { launchAgent, sendMessage, type AgentHandle } from "./rewind-flow";
 import { openSubagentsTrack } from "./subagents";
 
@@ -91,4 +92,30 @@ export async function reopenNestedProviderSession(handle: AgentHandle): Promise<
   await handle.page.reload();
   await handle.page.getByTestId(`workspace-tab-agent_${handle.agentId}`).first().click();
   await expect(handle.page.getByText("ROOT_DONE", { exact: true }).last()).toBeVisible();
+}
+
+/**
+ * The stop control on a provider-subagent pane. Located by role and accessible name, not a test
+ * id: this is a visible control a user addresses by its label, and the accessible name is the
+ * contract the pane actually exposes.
+ */
+export function stopSubagentControl(page: Page): Locator {
+  return page.getByRole("button", { name: "Stop subagent" });
+}
+
+/**
+ * Open a seeded agent and select one of its provider subagents, landing on the subagent pane.
+ */
+export async function openProviderSubagentPane(
+  page: Page,
+  agent: { workspaceId: string; agentId: string },
+  subagent: { id: string; title: string },
+): Promise<void> {
+  await openAgentRoute(page, { workspaceId: agent.workspaceId, agentId: agent.agentId });
+  await openSubagentsTrack(page);
+  const row = page.getByTestId(`subagents-track-row-${subagent.id}`);
+  await expect(row).toBeVisible({ timeout: 30_000 });
+  await expect(row).toContainText(subagent.title);
+  await row.click();
+  await expect(page.getByTestId("provider-subagent-panel")).toBeVisible({ timeout: 30_000 });
 }

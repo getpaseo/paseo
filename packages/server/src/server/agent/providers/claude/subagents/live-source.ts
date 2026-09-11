@@ -282,6 +282,23 @@ export class ClaudeTaskProtocolSource {
     return this.taskIdBySubagentId.get(subagentId);
   }
 
+  /**
+   * Every running background subagent's task id, keyed by the subagent id clients address.
+   *
+   * The interrupt path uses this to restore fail-closed semantics: when a client that cannot
+   * stop children individually interrupts a query that declared the affordance, these are the
+   * children the interrupt spared and the daemon must stop itself.
+   */
+  runningBackgroundTasks(): Array<{ subagentId: string; taskId: string }> {
+    const tasks: Array<{ subagentId: string; taskId: string }> = [];
+    for (const subagentId of this.backgroundedIds) {
+      if (this.lastStatusById.get(subagentId) !== "running") continue;
+      const taskId = this.taskIdBySubagentId.get(subagentId);
+      if (taskId !== undefined) tasks.push({ subagentId, taskId });
+    }
+    return tasks;
+  }
+
   needsSyntheticParentToolCard(subagentId: string): boolean {
     return !this.idsWithExistingParentToolCard.has(subagentId);
   }

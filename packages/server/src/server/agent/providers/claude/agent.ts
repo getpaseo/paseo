@@ -4078,6 +4078,36 @@ class ClaudeAgentSession implements AgentSession {
     } catch (error) {
       this.logger.warn({ err: error }, "Failed to interrupt active turn");
     }
+    this.stopStrandedBackgroundSubagents();
+  }
+
+  /**
+   * Close the one window `perTaskStopAffordance` cannot: the option is fixed for a query's
+   * lifetime, so a client without a per-subagent stop can attach after it was declared. When
+   * the view no longer vouches for every attached client, the interrupt just spared children
+   * that this client cannot address — so the daemon stops them itself, restoring the fail-closed
+   * semantics that client expects. Fire-and-forget on purpose: a slow or failed stop must
+   * neither delay nor fail the interrupt, and the child's own terminal status settles the
+   * outcome either way.
+   */
+  private stopStrandedBackgroundSubagents(): void {
+    if (this.clientsCanStopProviderSubagents()) return;
+    const tasks = this.taskProtocolSource.runningBackgroundTasks();
+    if (tasks.length === 0) return;
+    const query = this.query;
+    if (!query || typeof query.stopTask !== "function") return;
+    void Promise.allSettled(
+      tasks.map(async ({ subagentId, taskId }) => {
+        try {
+          await withTimeout(query.stopTask(taskId), STOP_TASK_TIMEOUT_MS, "timeout");
+        } catch (error) {
+          this.logger.warn(
+            { err: error, agentId: this.agentId, provider: "claude", subagentId, taskId },
+            "provider.claude.interrupt_stop_subagent.failed",
+          );
+        }
+      }),
+    );
   }
 
   /**
