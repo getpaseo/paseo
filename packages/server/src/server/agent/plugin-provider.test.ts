@@ -26,6 +26,7 @@ interface ProviderHarnessOptions {
   capabilities?: ProviderConnection["capabilities"];
   completeTurn?: boolean;
   rewindItems?: readonly ProviderTimelineItem[];
+  nestedChild?: boolean;
 }
 
 function createProviderHarness(options: ProviderHarnessOptions = {}) {
@@ -110,6 +111,18 @@ function createProviderHarness(options: ProviderHarnessOptions = {}) {
           state: "completed",
         });
         emit({ type: "session.ready", sessionId: "child-1" });
+        if (options.nestedChild) {
+          emit({
+            type: "session.opened",
+            sessionId: "grandchild-1",
+            parentSessionId: "child-1",
+            capabilities: [],
+            restoration: "parent",
+            title: "Plugin grandchild",
+            cwd: input.config.cwd,
+          });
+          emit({ type: "session.ready", sessionId: "grandchild-1" });
+        }
         emit({ type: "session.ready", requestId: input.requestId, sessionId: input.sessionId });
         return;
       }
@@ -329,6 +342,32 @@ describe("PluginAgentClientRegistry", () => {
     await registry.shutdown();
   });
 
+  test("preserves direct provider ancestry for nested subagents", async () => {
+    const harness = createProviderHarness({ nestedChild: true });
+    const registry = new PluginAgentClientRegistry(createTestLogger());
+    registry.replace([harness.registration]);
+    const client = registry.clients()[harness.registration.id];
+    if (!client) throw new Error("Missing plugin provider client");
+    const session = await client.createSession({
+      provider: harness.registration.id,
+      cwd: "/workspace",
+    });
+
+    const history: AgentStreamEvent[] = [];
+    for await (const event of session.streamHistory()) history.push(event);
+    const upserts = history.flatMap((event) =>
+      event.type === "provider_subagent" && event.event.type === "upsert" ? [event.event] : [],
+    );
+    expect(upserts).toContainEqual(
+      expect.objectContaining({ id: "child-1", parentSubagentId: null }),
+    );
+    expect(upserts).toContainEqual(
+      expect.objectContaining({ id: "grandchild-1", parentSubagentId: "child-1" }),
+    );
+
+    await session.close();
+    await registry.shutdown();
+  });
   test("terminalizes an active turn exactly once when its plugin provider is removed", async () => {
     const harness = createProviderHarness({ completeTurn: false });
     const registry = new PluginAgentClientRegistry(createTestLogger());

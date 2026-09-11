@@ -847,6 +847,7 @@ class PluginAgentClient implements AgentClient {
   private readonly runtime: ProviderRuntime;
   private readonly rootsBySession = new Map<string, PluginAgentSession>();
   private readonly pendingChildren: PendingChild[] = [];
+  private readonly providerSessionIdBySessionId = new Map<string, string>();
 
   readonly getCatalogCacheKey?: AgentClient["getCatalogCacheKey"];
 
@@ -989,6 +990,7 @@ class PluginAgentClient implements AgentClient {
       this.rootsBySession.delete(bridge.id);
     });
     this.rootsBySession.set(bridge.id, session);
+    this.providerSessionIdBySessionId.set(bridge.id, bridge.providerId);
     this.attachPendingChildren();
     return session;
   }
@@ -1004,8 +1006,14 @@ class PluginAgentClient implements AgentClient {
       this.pendingChildren.push({ session, opened });
       return;
     }
-    root.attachChild(session, opened);
+    const parentProviderSessionId = this.providerSessionIdBySessionId.get(opened.parentSessionId!);
+    if (!parentProviderSessionId) {
+      this.pendingChildren.push({ session, opened });
+      return;
+    }
+    root.attachChild(session, opened, parentProviderSessionId);
     this.rootsBySession.set(session.id, root);
+    this.providerSessionIdBySessionId.set(session.id, session.providerId);
     this.attachPendingChildren();
   }
 
@@ -1019,9 +1027,14 @@ class PluginAgentClient implements AgentClient {
           ? this.rootsBySession.get(pending.opened.parentSessionId)
           : undefined;
         if (!root) continue;
+        const parentProviderSessionId = this.providerSessionIdBySessionId.get(
+          pending.opened.parentSessionId!,
+        );
+        if (!parentProviderSessionId) continue;
         this.pendingChildren.splice(index, 1);
-        root.attachChild(pending.session, pending.opened);
+        root.attachChild(pending.session, pending.opened, parentProviderSessionId);
         this.rootsBySession.set(pending.session.id, root);
+        this.providerSessionIdBySessionId.set(pending.session.id, pending.session.providerId);
         attached = true;
       }
     }
@@ -1242,6 +1255,7 @@ class PluginAgentSession implements AgentSession {
   attachChild(
     child: ProviderRuntimeSession,
     opened: Extract<ProviderEvent, { type: "session.opened" }>,
+    parentProviderSessionId: string,
   ): void {
     const childId = child.providerId;
     this.publish({
@@ -1254,6 +1268,8 @@ class PluginAgentSession implements AgentSession {
         description: opened.description ?? null,
         status: "running",
         cwd: opened.cwd,
+        parentSubagentId:
+          parentProviderSessionId === this.bridge.providerId ? null : parentProviderSessionId,
       },
     });
     const snapshots = new Map<string, ProviderTimelineItem>();
