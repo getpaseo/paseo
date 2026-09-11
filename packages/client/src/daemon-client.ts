@@ -748,6 +748,7 @@ export interface CreateScheduleOptions {
         config: {
           provider: AgentProvider;
           cwd: string;
+          workspaceId?: string;
           modeId?: string;
           model?: string;
           thinkingOptionId?: string;
@@ -776,6 +777,7 @@ export interface UpdateScheduleNewAgentConfig {
   archiveOnFinish?: boolean;
   isolation?: "local" | "worktree";
   cwd?: string;
+  workspaceId?: string | null;
 }
 export interface UpdateScheduleOptions {
   id: string;

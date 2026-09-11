@@ -8,6 +8,7 @@ import type { FormPreferences } from "@/create-agent-preferences/preferences";
 import { describe, expect, it } from "vitest";
 import { buildProjectOptionId, type ScheduleProjectTarget } from "./schedule-project-targets";
 import { openScheduleForm, type ScheduleFormSnapshot } from "./schedule-form-model";
+import type { ScheduleWorkspaceTarget } from "./schedule-workspace-targets";
 
 type TestSchedule = ScheduleSummary & { serverId: string; serverName: string };
 
@@ -91,12 +92,23 @@ const PROJECT_TARGETS = [
   }),
 ];
 
+const WORKSPACE_TARGETS: ScheduleWorkspaceTarget[] = [
+  {
+    workspaceId: "wks_daily",
+    serverId: "host-a",
+    projectOptionId: buildProjectOptionId("host-a", "project-a"),
+    workspaceName: "Daily status",
+    cwd: "/repo/a/worktrees/daily-status",
+  },
+];
+
 function scheduleOnHost(input: {
   serverId: string;
   serverName: string;
   cwd: string;
   model: string;
   thinkingOptionId?: string | null;
+  workspaceId?: string;
   cadence?: ScheduleSummary["cadence"];
 }): TestSchedule {
   return {
@@ -117,6 +129,7 @@ function scheduleOnHost(input: {
           input.thinkingOptionId === undefined ? "high" : (input.thinkingOptionId ?? undefined),
         archiveOnFinish: false,
         isolation: "worktree",
+        ...(input.workspaceId ? { workspaceId: input.workspaceId } : {}),
       },
     },
     status: "active",
@@ -186,6 +199,77 @@ function applyPreferences(form: ReturnType<typeof open>, preferences: FormPrefer
 }
 
 describe("schedule form model", () => {
+  it("targets an existing workspace while keeping a fresh-agent schedule", () => {
+    const form = open({
+      mode: "create",
+      defaults: {
+        serverId: "host-a",
+        projectTargets: PROJECT_TARGETS,
+        workspaceTargets: WORKSPACE_TARGETS,
+        preferences: {},
+      },
+    });
+
+    form.setPrompt("Run daily status");
+    form.setProject(buildProjectOptionId("host-a", "project-a"), { label: "Project A" });
+    form.applyProviderSnapshot("host-a", providerSnapshot(HOST_A_MODELS));
+    form.setWorkspace("wks_daily");
+    form.applyProviderSnapshot("host-a", providerSnapshot(HOST_A_MODELS));
+    form.setModel("mock", "model-a");
+
+    expect(form.getState()).toMatchObject({
+      targetKind: "new-agent",
+      selectedWorkspaceId: "wks_daily",
+      selectedWorkspaceDisplay: {
+        label: "Daily status",
+        description: "/repo/a/worktrees/daily-status",
+      },
+      workingDir: "/repo/a/worktrees/daily-status",
+      submitWorkspaceId: "wks_daily",
+      submitIsolation: undefined,
+      canSubmit: true,
+      disclosure: {
+        showWorkspaceField: true,
+        showIsolationField: false,
+      },
+    });
+  });
+
+  it("loads and clears an existing workspace target when editing", () => {
+    const form = open({
+      mode: "edit",
+      schedule: scheduleOnHost({
+        serverId: "host-a",
+        serverName: "Host A",
+        cwd: "/repo/a/worktrees/daily-status",
+        model: "model-a",
+        workspaceId: "wks_daily",
+      }),
+      defaults: {
+        serverId: null,
+        projectTargets: PROJECT_TARGETS,
+        workspaceTargets: WORKSPACE_TARGETS,
+        preferences: {},
+      },
+    });
+    form.applyProviderSnapshot("host-a", providerSnapshot(HOST_A_MODELS));
+
+    expect(form.getState()).toMatchObject({
+      selectedProjectOptionId: buildProjectOptionId("host-a", "project-a"),
+      selectedWorkspaceId: "wks_daily",
+      submitWorkspaceId: "wks_daily",
+    });
+
+    form.setWorkspace(null);
+    form.applyProviderSnapshot("host-a", providerSnapshot(HOST_A_MODELS));
+    expect(form.getState()).toMatchObject({
+      selectedWorkspaceId: null,
+      workingDir: "/repo/a",
+      submitWorkspaceId: null,
+      submitIsolation: "worktree",
+    });
+  });
+
   it("opens edit from the schedule host snapshot and completes that host resolution", () => {
     const previous = open({
       mode: "edit",
@@ -351,6 +435,7 @@ describe("schedule form model", () => {
 
     expect(form.getState().disclosure).toEqual({
       showProjectField: true,
+      showWorkspaceField: false,
       showModelField: false,
       showThinkingField: false,
       showModeField: false,
@@ -362,6 +447,7 @@ describe("schedule form model", () => {
 
     expect(form.getState().disclosure).toEqual({
       showProjectField: true,
+      showWorkspaceField: true,
       showModelField: true,
       showThinkingField: false,
       showModeField: false,
@@ -374,6 +460,7 @@ describe("schedule form model", () => {
 
     expect(form.getState().disclosure).toEqual({
       showProjectField: true,
+      showWorkspaceField: true,
       showModelField: true,
       showThinkingField: true,
       showModeField: true,

@@ -45,6 +45,10 @@ import { useProjects } from "@/hooks/use-projects";
 import { useHosts } from "@/runtime/host-runtime";
 import { useSessionStore } from "@/stores/session-store";
 import { buildScheduleProjectTargets } from "@/schedules/schedule-project-targets";
+import {
+  buildScheduleWorkspaceTargets,
+  NEW_SCHEDULE_WORKSPACE_OPTION_ID,
+} from "@/schedules/schedule-workspace-targets";
 import { useScheduleFormModel } from "@/schedules/use-schedule-form-model";
 import { useScheduleFormProviderSnapshot } from "@/schedules/use-schedule-form-provider-snapshot";
 import type {
@@ -69,6 +73,17 @@ export interface ScheduleFormSheetProps {
 function parseMaxRuns(raw: string): number | null {
   const parsed = Number.parseInt(raw, 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
+
+function buildScheduleWorkspaceLifecycleOptions(
+  state: Pick<ScheduleFormState, "submitArchiveOnFinish" | "submitIsolation">,
+) {
+  return {
+    ...(state.submitArchiveOnFinish !== undefined
+      ? { archiveOnFinish: state.submitArchiveOnFinish }
+      : {}),
+    ...(state.submitIsolation !== undefined ? { isolation: state.submitIsolation } : {}),
+  };
 }
 
 function requireCronCadence(
@@ -130,6 +145,7 @@ function buildSnapshot(input: {
   schedule: ScheduleSummary | undefined;
   hosts: readonly ScheduleFormHost[];
   projectTargets: ReturnType<typeof buildScheduleProjectTargets>;
+  workspaceTargets: ReturnType<typeof buildScheduleWorkspaceTargets>;
   preferences: FormPreferences;
   timezone: string;
 }): ScheduleFormSnapshot {
@@ -147,6 +163,7 @@ function buildSnapshot(input: {
         hosts: input.hosts,
       }),
       projectTargets: input.projectTargets,
+      workspaceTargets: input.workspaceTargets,
       preferences: input.preferences,
       timezone: input.timezone,
     },
@@ -249,6 +266,7 @@ function OpenScheduleFormSheet({
   );
   const { preferences, updatePreferences } = useFormPreferences();
   const projectTargets = useMemo(() => buildScheduleProjectTargets(projects), [projects]);
+  const workspaceTargets = useMemo(() => buildScheduleWorkspaceTargets(projects), [projects]);
   const timezone = useMemo(getDeviceTimeZone, []);
   const snapshot = useMemo(
     () =>
@@ -258,10 +276,11 @@ function OpenScheduleFormSheet({
         schedule,
         hosts,
         projectTargets,
+        workspaceTargets,
         preferences,
         timezone,
       }),
-    [hosts, mode, preferences, projectTargets, schedule, serverId, timezone],
+    [hosts, mode, preferences, projectTargets, schedule, serverId, timezone, workspaceTargets],
   );
   const model = useScheduleFormModel(snapshot);
   const state = useSyncExternalStore(model.subscribe, model.getState, model.getState);
@@ -346,10 +365,10 @@ function OpenScheduleFormSheet({
           modeId: state.selectedMode || null,
           thinkingOptionId: state.selectedThinkingOptionId || null,
           cwd,
-          ...(state.submitArchiveOnFinish !== undefined
-            ? { archiveOnFinish: state.submitArchiveOnFinish }
+          ...(state.submitWorkspaceId !== undefined
+            ? { workspaceId: state.submitWorkspaceId }
             : {}),
-          ...(state.submitIsolation !== undefined ? { isolation: state.submitIsolation } : {}),
+          ...buildScheduleWorkspaceLifecycleOptions(state),
         },
         maxRuns,
       });
@@ -365,13 +384,11 @@ function OpenScheduleFormSheet({
         config: {
           provider,
           cwd,
+          ...(state.submitWorkspaceId ? { workspaceId: state.submitWorkspaceId } : {}),
           model: state.selectedModel || undefined,
           modeId: state.selectedMode || undefined,
           thinkingOptionId: state.selectedThinkingOptionId || undefined,
-          ...(state.submitArchiveOnFinish !== undefined
-            ? { archiveOnFinish: state.submitArchiveOnFinish }
-            : {}),
-          ...(state.submitIsolation !== undefined ? { isolation: state.submitIsolation } : {}),
+          ...buildScheduleWorkspaceLifecycleOptions(state),
           title: state.name.trim() || undefined,
         },
       },
@@ -404,7 +421,9 @@ function OpenScheduleFormSheet({
     if (mode !== "edit") {
       return { title: "New schedule" };
     }
-    return { title: schedule?.target.type === "agent" ? "Edit heartbeat" : "Edit schedule" };
+    return {
+      title: schedule?.target.type === "agent" ? "Edit heartbeat" : "Edit schedule",
+    };
   }, [mode, schedule?.target.type]);
 
   const footer = useMemo(
@@ -740,6 +759,8 @@ function ScheduleTargetFields({
         />
       ) : null}
 
+      <ScheduleWorkspaceField model={model} state={state} size={controlSize} />
+
       {state.disclosure.showModelField ? (
         <Field label="Model">
           <CombinedModelSelector
@@ -799,7 +820,7 @@ function ScheduleTargetFields({
       ) : null}
 
       {state.disclosure.showArchiveOnFinishField ? (
-        <Field label="Archive on finish">
+        <Field label={state.selectedWorkspaceId ? "Archive agent on finish" : "Archive on finish"}>
           <Switch
             value={state.archiveOnFinish}
             onValueChange={model.setArchiveOnFinish}
@@ -809,6 +830,59 @@ function ScheduleTargetFields({
         </Field>
       ) : null}
     </>
+  );
+}
+
+function ScheduleWorkspaceField({
+  model,
+  state,
+  size,
+}: {
+  model: ScheduleFormModel;
+  state: ScheduleFormState;
+  size: FieldControlSize;
+}): ReactElement | null {
+  const options = useMemo<SelectFieldOption<string>[]>(
+    () => [
+      {
+        id: NEW_SCHEDULE_WORKSPACE_OPTION_ID,
+        value: NEW_SCHEDULE_WORKSPACE_OPTION_ID,
+        label: "New workspace each run",
+        testID: "schedule-workspace-option-new",
+      },
+      ...state.workspaceOptions,
+    ],
+    [state.workspaceOptions],
+  );
+  const handleSelect = useCallback(
+    (workspaceId: string) => {
+      model.setWorkspace(workspaceId === NEW_SCHEDULE_WORKSPACE_OPTION_ID ? null : workspaceId);
+    },
+    [model],
+  );
+  const renderOption = useCallback(
+    (input: SelectFieldRenderOptionInput<string>) => <ProjectOptionItem {...input} />,
+    [],
+  );
+  if (!state.disclosure.showWorkspaceField) {
+    return null;
+  }
+  return (
+    <SelectField
+      label="Workspace"
+      value={state.selectedWorkspaceId ?? NEW_SCHEDULE_WORKSPACE_OPTION_ID}
+      selectedDisplay={state.selectedWorkspaceDisplay}
+      options={options}
+      onChange={handleSelect}
+      placeholder="Select workspace"
+      emptyText="No workspaces found"
+      searchable={options.length > 6}
+      searchPlaceholder="Search workspaces..."
+      title="Select workspace"
+      size={size}
+      triggerTestID="schedule-workspace-trigger"
+      renderOption={renderOption}
+    />
   );
 }
 
@@ -839,7 +913,9 @@ function ScheduleIsolationField({
     [],
   );
   const selectedDisplay = useMemo<SelectFieldDisplay>(
-    () => ({ label: state.effectiveIsolation === "worktree" ? "Worktree" : "Local" }),
+    () => ({
+      label: state.effectiveIsolation === "worktree" ? "Worktree" : "Local",
+    }),
     [state.effectiveIsolation],
   );
   const triggerLeading = useMemo(

@@ -4265,6 +4265,36 @@ describe("create_schedule MCP tool", () => {
     );
   });
 
+  it("targets an existing workspace for each fresh scheduled agent", async () => {
+    const { agentManager, agentStorage } = createTestDeps();
+    const createOrReplace = vi.fn(async (input: CreateScheduleInput) =>
+      createStoredSchedule(input),
+    );
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      providerSnapshotManager: createOpenCodeManager().manager,
+      scheduleService: { createOrReplace } as unknown as ScheduleService,
+      logger,
+    });
+
+    await invokeToolWithParsedInput(registeredTool(server, "create_schedule"), {
+      prompt: "say hello",
+      cron: "0 9 * * *",
+      provider: "codex",
+      workspaceId: "wks_daily",
+    });
+
+    expect(createOrReplace).toHaveBeenCalledWith(
+      expect.objectContaining({
+        target: {
+          type: "new-agent",
+          config: expect.objectContaining({ workspaceId: "wks_daily" }),
+        },
+      }),
+    );
+  });
+
   it("rejects removed create_schedule every input", async () => {
     const { agentManager, agentStorage } = createTestDeps();
     const createOrReplace = vi.fn();
@@ -4758,6 +4788,7 @@ describe("update_schedule MCP tool", () => {
       mode: null,
       maxRuns: null,
       clearExpires: true,
+      workspaceId: null,
     });
 
     expect(update).toHaveBeenCalledWith({
@@ -4767,6 +4798,7 @@ describe("update_schedule MCP tool", () => {
       newAgentConfig: {
         model: null,
         modeId: null,
+        workspaceId: null,
       },
     });
   });

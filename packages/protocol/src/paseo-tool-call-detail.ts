@@ -56,6 +56,7 @@ const AUTOMATION_FIELDS = [
   "cron",
   "timezone",
   "provider",
+  "workspaceId",
   "cwd",
   "isolation",
   "maxRuns",

@@ -6,6 +6,7 @@ import { selectPrHintFromStatus } from "@/git/pr-hint";
 export interface WorkspaceSummary {
   id: string;
   name: string;
+  workspaceDirectory?: string;
   title?: string;
   workspaceKind: WorkspaceDescriptor["workspaceKind"];
   status: WorkspaceDescriptor["status"];
@@ -155,6 +156,7 @@ function toWorkspaceSummary(workspace: WorkspaceDescriptor): WorkspaceSummary {
   return {
     id: workspace.id,
     name: workspace.name,
+    workspaceDirectory: workspace.workspaceDirectory,
     ...(workspace.title ? { title: workspace.title } : {}),
     workspaceKind: workspace.workspaceKind,
     status: workspace.status,

@@ -25,6 +25,7 @@ export type ScheduleTarget =
       config: {
         provider: string;
         cwd: string;
+        workspaceId?: string;
         modeId?: string;
         model?: string;
         thinkingOptionId?: string;
@@ -40,6 +41,8 @@ export interface ScheduleRunRecord {
   endedAt: string | null;
   status: "running" | "succeeded" | "failed";
   agentId: string | null;
+  workspaceId?: string | null;
+  workspaceOwnedByRun?: boolean;
   output: string | null;
   error: string | null;
 }
@@ -139,6 +142,7 @@ export interface UpdateScheduleNewAgentConfig {
   model?: string | null;
   modeId?: string | null;
   cwd?: string;
+  workspaceId?: string | null;
 }
 
 export interface UpdateScheduleInput {

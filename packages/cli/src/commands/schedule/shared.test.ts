@@ -51,6 +51,22 @@ describe("parseScheduleCreateInput cwd/host validation", () => {
     });
   });
 
+  test("host with a workspace does not require a cwd", () => {
+    const input = parseScheduleCreateInput({
+      ...baseOptions,
+      daemonTarget: selectDaemonTarget({ host: "dev:12345" }, {}),
+      workspace: "wks_daily",
+    });
+    expect(input.target).toEqual({
+      type: "new-agent",
+      config: {
+        provider: "claude",
+        cwd: process.cwd(),
+        workspaceId: "wks_daily",
+      },
+    });
+  });
+
   test("host without cwd → throws MISSING_CWD", () => {
     expect(() =>
       parseScheduleCreateInput({
@@ -258,6 +274,24 @@ describe("parseScheduleUpdateInput", () => {
     expect(() => parseScheduleUpdateInput({ id: "abc", cwd: "   " })).toThrow(
       expect.objectContaining({ code: "INVALID_CWD" }),
     );
+  });
+
+  test("sets and clears a selected workspace", () => {
+    expect(parseScheduleUpdateInput({ id: "abc", workspace: "wks_daily" })).toEqual({
+      id: "abc",
+      newAgentConfig: { workspaceId: "wks_daily" },
+    });
+    expect(parseScheduleUpdateInput({ id: "abc", clearWorkspace: true })).toEqual({
+      id: "abc",
+      newAgentConfig: { workspaceId: null },
+    });
+    expect(() =>
+      parseScheduleUpdateInput({
+        id: "abc",
+        workspace: "wks_daily",
+        clearWorkspace: true,
+      }),
+    ).toThrow(expect.objectContaining({ code: "CONFLICTING_WORKSPACE" }));
   });
 
   test("--max-runs sets a positive integer; --no-max-runs clears", () => {

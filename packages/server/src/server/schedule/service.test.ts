@@ -78,7 +78,12 @@ let workspaceArchiveInProgress = false;
 
 type TestScheduleServiceOptions = Omit<
   ScheduleServiceOptions,
-  "createAgent" | "createDirectoryWorkspace" | "createPaseoWorktreeWorkspace" | "archiveWorkspace"
+  | "createAgent"
+  | "createDirectoryWorkspace"
+  | "createPaseoWorktreeWorkspace"
+  | "archiveWorkspace"
+  | "getWorkspace"
+  | "archiveAgent"
 > & {
   agentManager: AgentManager;
   providerSnapshotManager: Pick<ProviderSnapshotManager, "resolveCreateConfig">;
@@ -86,6 +91,8 @@ type TestScheduleServiceOptions = Omit<
   createDirectoryWorkspace?: ScheduleServiceOptions["createDirectoryWorkspace"];
   createPaseoWorktreeWorkspace?: ScheduleServiceOptions["createPaseoWorktreeWorkspace"];
   archiveWorkspace?: ScheduleServiceOptions["archiveWorkspace"];
+  getWorkspace?: ScheduleServiceOptions["getWorkspace"];
+  archiveAgent?: ScheduleServiceOptions["archiveAgent"];
 };
 
 function createScheduleService(options: TestScheduleServiceOptions): ScheduleService {
@@ -185,6 +192,9 @@ function createScheduleService(options: TestScheduleServiceOptions): ScheduleSer
         };
       }),
     archiveWorkspace: options.archiveWorkspace ?? archiveDefaultWorkspace,
+    getWorkspace:
+      options.getWorkspace ?? (async (workspaceId) => workspaces.get(workspaceId) ?? null),
+    archiveAgent: options.archiveAgent ?? (async () => {}),
   });
 }
 
@@ -702,6 +712,199 @@ describe("ScheduleService", () => {
         archivedAt: expect.any(String),
       }),
     );
+  });
+
+  test("fresh agents reuse a selected workspace without archiving it", async () => {
+    const { workspaceRegistry, createDirectoryWorkspace } =
+      await createRegistryBackedScheduleWorkspaceDeps(tempDir);
+    const selectedWorkspace = await createDirectoryWorkspace({
+      cwd: tempDir,
+      firstAgentContext: { prompt: "Create the shared workspace" },
+    });
+    const manager = new AgentManager({
+      logger: createTestLogger(),
+      clients: createTestAgentClients(),
+      registry: agentStorage,
+    });
+    const archiveWorkspace = vi.fn<ScheduleServiceOptions["archiveWorkspace"]>();
+    const archiveAgent = vi.fn<ScheduleServiceOptions["archiveAgent"]>();
+    const service = createScheduleService({
+      paseoHome: tempDir,
+      logger: createTestLogger(),
+      agentManager: manager,
+      agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
+      createDirectoryWorkspace: async () => {
+        throw new Error("must not create a workspace for a selected workspace target");
+      },
+      getWorkspace: (workspaceId) => workspaceRegistry.get(workspaceId),
+      archiveWorkspace,
+      archiveAgent,
+      now: () => now,
+    });
+
+    const created = await service.create({
+      prompt: "repeat with fresh agents in one workspace",
+      cadence: { type: "every", everyMs: 60_000 },
+      target: {
+        type: "new-agent",
+        config: {
+          provider: "claude",
+          cwd: "/ignored/by/workspace-selection",
+          workspaceId: selectedWorkspace.workspaceId,
+          archiveOnFinish: false,
+        },
+      },
+      maxRuns: 2,
+    });
+
+    expect(created.target).toMatchObject({
+      type: "new-agent",
+      config: { cwd: tempDir, workspaceId: selectedWorkspace.workspaceId },
+    });
+    await service.tick();
+    now = new Date("2026-01-01T00:01:00.000Z");
+    await service.tick();
+
+    const inspected = await service.inspect(created.id);
+    expect(inspected.runs).toHaveLength(2);
+    expect(inspected.runs).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          workspaceId: selectedWorkspace.workspaceId,
+          workspaceOwnedByRun: false,
+          status: "succeeded",
+        }),
+      ]),
+    );
+    const firstAgent = await agentStorage.get(inspected.runs[0]!.agentId!);
+    const secondAgent = await agentStorage.get(inspected.runs[1]!.agentId!);
+    expect(firstAgent?.workspaceId).toBe(selectedWorkspace.workspaceId);
+    expect(secondAgent?.workspaceId).toBe(selectedWorkspace.workspaceId);
+    expect(firstAgent?.id).not.toBe(secondAgent?.id);
+    expect(archiveWorkspace).not.toHaveBeenCalled();
+    expect(archiveAgent).not.toHaveBeenCalled();
+    expect(await workspaceRegistry.get(selectedWorkspace.workspaceId)).toMatchObject({
+      archivedAt: null,
+    });
+  });
+
+  test("archiveOnFinish archives only the fresh agent in a selected workspace", async () => {
+    const { workspaceRegistry, createDirectoryWorkspace } =
+      await createRegistryBackedScheduleWorkspaceDeps(tempDir);
+    const selectedWorkspace = await createDirectoryWorkspace({
+      cwd: tempDir,
+      firstAgentContext: { prompt: "Create the shared workspace" },
+    });
+    const manager = new AgentManager({
+      logger: createTestLogger(),
+      clients: createTestAgentClients(),
+      registry: agentStorage,
+    });
+    const archiveWorkspace = vi.fn<ScheduleServiceOptions["archiveWorkspace"]>();
+    const archiveAgent = vi.fn<ScheduleServiceOptions["archiveAgent"]>();
+    const service = createScheduleService({
+      paseoHome: tempDir,
+      logger: createTestLogger(),
+      agentManager: manager,
+      agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
+      getWorkspace: (workspaceId) => workspaceRegistry.get(workspaceId),
+      archiveWorkspace,
+      archiveAgent,
+      now: () => now,
+    });
+
+    const created = await service.create({
+      prompt: "archive only this run agent",
+      cadence: { type: "every", everyMs: 60_000 },
+      target: {
+        type: "new-agent",
+        config: {
+          provider: "claude",
+          cwd: tempDir,
+          workspaceId: selectedWorkspace.workspaceId,
+        },
+      },
+      maxRuns: 1,
+    });
+    await service.tick();
+
+    const inspected = await service.inspect(created.id);
+    expect(archiveAgent).toHaveBeenCalledOnce();
+    expect(archiveAgent).toHaveBeenCalledWith(inspected.runs[0]!.agentId);
+    expect(archiveWorkspace).not.toHaveBeenCalled();
+    expect(await workspaceRegistry.get(selectedWorkspace.workspaceId)).toMatchObject({
+      archivedAt: null,
+    });
+  });
+
+  test("rejects missing selected workspaces and completes when one disappears", async () => {
+    const { workspaceRegistry, createDirectoryWorkspace } =
+      await createRegistryBackedScheduleWorkspaceDeps(tempDir);
+    const selectedWorkspace = await createDirectoryWorkspace({
+      cwd: tempDir,
+      firstAgentContext: { prompt: "Create the shared workspace" },
+    });
+    const service = createScheduleService({
+      paseoHome: tempDir,
+      logger: createTestLogger(),
+      agentManager: new AgentManager({ logger: createTestLogger() }),
+      agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
+      getWorkspace: (workspaceId) => workspaceRegistry.get(workspaceId),
+      now: () => now,
+    });
+
+    await expect(
+      service.create({
+        prompt: "invalid workspace",
+        cadence: { type: "every", everyMs: 60_000 },
+        target: {
+          type: "new-agent",
+          config: { provider: "claude", cwd: tempDir, workspaceId: "wks_missing" },
+        },
+      }),
+    ).rejects.toThrow("Workspace not found: wks_missing");
+
+    const archivedWorkspace = {
+      ...selectedWorkspace,
+      workspaceId: "wks_archived",
+      archivedAt: now.toISOString(),
+    };
+    await workspaceRegistry.upsert(archivedWorkspace);
+    await expect(
+      service.create({
+        prompt: "archived workspace",
+        cadence: { type: "every", everyMs: 60_000 },
+        target: {
+          type: "new-agent",
+          config: { provider: "claude", cwd: tempDir, workspaceId: archivedWorkspace.workspaceId },
+        },
+      }),
+    ).rejects.toThrow(`Workspace ${archivedWorkspace.workspaceId} is archived`);
+
+    const created = await service.create({
+      prompt: "workspace can disappear",
+      cadence: { type: "every", everyMs: 60_000 },
+      target: {
+        type: "new-agent",
+        config: {
+          provider: "claude",
+          cwd: tempDir,
+          workspaceId: selectedWorkspace.workspaceId,
+        },
+      },
+    });
+    await workspaceRegistry.remove(selectedWorkspace.workspaceId);
+    await service.tick();
+
+    const inspected = await service.inspect(created.id);
+    expect(inspected.status).toBe("completed");
+    expect(inspected.runs[0]).toMatchObject({
+      status: "failed",
+      error: `Workspace ${selectedWorkspace.workspaceId} no longer exists`,
+    });
   });
 
   test("archives the run workspace when scheduled agent creation fails before archive opt-out can preserve an agent", async () => {
@@ -2033,6 +2236,91 @@ describe("ScheduleService", () => {
     expect(inspected.runs[0]).toMatchObject({
       status: "failed",
       agentId: null,
+      error: "Daemon restarted before the scheduled run completed",
+    });
+    await service2.stop();
+  });
+
+  test("startup recovery preserves a selected workspace and archives only its interrupted agent", async () => {
+    const workspaceId = "wks_selected_recovery";
+    const selectedWorkspace: PersistedWorkspaceRecord = {
+      workspaceId,
+      projectId: "test-project",
+      cwd: tempDir,
+      kind: "directory",
+      displayName: "shared",
+      title: "Shared workspace",
+      branch: null,
+      baseBranch: null,
+      createdAt: now.toISOString(),
+      updatedAt: now.toISOString(),
+      archivedAt: null,
+    };
+    const service1 = createScheduleService({
+      paseoHome: tempDir,
+      logger: createTestLogger(),
+      agentManager: new AgentManager({ logger: createTestLogger() }),
+      agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
+      getWorkspace: async (id) => (id === workspaceId ? selectedWorkspace : null),
+      now: () => now,
+      runner: async () => ({ agentId: null, output: "ok" }),
+    });
+    const created = await service1.create({
+      prompt: "Interrupted in a selected workspace",
+      cadence: { type: "every", everyMs: 60_000 },
+      target: {
+        type: "new-agent",
+        config: { provider: "claude", cwd: tempDir, workspaceId },
+      },
+      runOnCreate: false,
+    });
+    await service1.stop();
+
+    const associatedAgentId = "22222222-2222-4222-8222-222222222222";
+    const interruptedAt = now.toISOString();
+    const store = new ScheduleStore(join(tempDir, "schedules"));
+    await store.update(created.id, (schedule) => ({
+      ...schedule,
+      runs: [
+        ...schedule.runs,
+        {
+          id: "run-interrupted-selected-workspace",
+          scheduledFor: interruptedAt,
+          startedAt: interruptedAt,
+          endedAt: null,
+          status: "running",
+          agentId: associatedAgentId,
+          workspaceId,
+          workspaceOwnedByRun: false,
+          output: null,
+          error: null,
+        },
+      ],
+    }));
+
+    const archiveWorkspace = vi.fn<ScheduleServiceOptions["archiveWorkspace"]>();
+    const archiveAgent = vi.fn<ScheduleServiceOptions["archiveAgent"]>();
+    now = new Date("2026-01-01T00:10:00.000Z");
+    const service2 = createScheduleService({
+      paseoHome: tempDir,
+      logger: createTestLogger(),
+      agentManager: new AgentManager({ logger: createTestLogger() }),
+      agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
+      getWorkspace: async (id) => (id === workspaceId ? selectedWorkspace : null),
+      archiveWorkspace,
+      archiveAgent,
+      now: () => now,
+      runner: async () => ({ agentId: null, output: "ok" }),
+    });
+    await service2.start();
+
+    expect(archiveWorkspace).not.toHaveBeenCalled();
+    expect(archiveAgent).toHaveBeenCalledWith(associatedAgentId);
+    expect((await service2.inspect(created.id)).runs[0]).toMatchObject({
+      status: "failed",
+      workspaceOwnedByRun: false,
       error: "Daemon restarted before the scheduled run completed",
     });
     await service2.stop();
