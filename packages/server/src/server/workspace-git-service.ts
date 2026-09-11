@@ -150,6 +150,7 @@ export interface WorkspaceGitRuntimeSnapshot {
      * correctly. The wire projection prefers this over the bare name heuristic.
      */
     forge?: string;
+    repositoryWebUrl?: string;
     pullRequest: {
       number?: number;
       repoOwner?: string;
@@ -3024,6 +3025,20 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     // Carry the resolved forge (probe-aware) so the wire projection labels
     // self-managed GitLab hosts correctly instead of falling back to "github".
     target.latestForge = { ...forgeSnapshot, forge: resolution.forge };
+    if (remoteUrl && forgeService.getRepositoryWebUrl) {
+      try {
+        const repositoryWebUrl = await forgeService.getRepositoryWebUrl({
+          cwd: target.cwd,
+          remoteUrl,
+        });
+        if (repositoryWebUrl) {
+          target.latestForge.repositoryWebUrl = repositoryWebUrl;
+        }
+      } catch (error) {
+        // Link metadata must not turn a successful PR lookup into an error.
+        this.logger.warn({ err: error, cwd: target.cwd }, "Failed to resolve repository web URL");
+      }
+    }
     target.latestForgeLoadedAtMs = this.deps.now().getTime();
   }
 
@@ -3071,7 +3086,11 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       return;
     }
 
-    target.latestForge = github;
+    const repositoryWebUrl = target.latestForge?.repositoryWebUrl;
+    target.latestForge = {
+      ...github,
+      ...(repositoryWebUrl ? { repositoryWebUrl } : {}),
+    };
     target.latestForgeLoadedAtMs = this.deps.now().getTime();
     this.rememberSnapshot(target, this.combineSnapshot(target), {
       notify: options?.notify,
