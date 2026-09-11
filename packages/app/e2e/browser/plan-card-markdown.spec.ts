@@ -38,22 +38,20 @@ test("renders plan text verbatim, copies it, and hands it off", async ({ page })
       .toContain(`/agent/${session.agentId}`);
 
     await planCard.getByTestId("permission-plan-handoff").click();
-    await expect
-      .poll(async () => {
-        const agents = await session.client.fetchAgents({ scope: "active" });
-        return agents.entries.filter(({ agent }) => agent.workspaceId === session.workspaceId)
-          .length;
-      })
-      .toBe(2);
+    const composer = page
+      .getByRole("textbox", { name: "Message agent..." })
+      .filter({ visible: true });
+    await expect(composer).toBeEditable();
+    await expect(composer).toHaveValue(/Implement the following proposed plan\./);
+    await expect(composer).toHaveValue(/Add the \(c\) README note/);
+    await expect(composer).toHaveValue(new RegExp(session.agentId));
     const agents = await session.client.fetchAgents({ scope: "active" });
-    const handedOff = agents.entries.find(
-      ({ agent }) => agent.id !== session.agentId && agent.workspaceId === session.workspaceId,
-    );
-    expect(handedOff?.agent.model).toBe("e2e-fast-stream");
+    expect(
+      agents.entries.filter(({ agent }) => agent.workspaceId === session.workspaceId),
+    ).toHaveLength(1);
     await expect(
-      page.getByText("Implement the attached proposed plan.", { exact: true }).first(),
-    ).toBeVisible();
-    await expect(page.getByText("Proposed plan", { exact: true }).first()).toBeVisible();
+      page.getByTestId("combined-model-selector").filter({ visible: true }),
+    ).toBeEnabled();
   } finally {
     await session.cleanup();
   }

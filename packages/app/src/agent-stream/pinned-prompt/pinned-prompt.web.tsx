@@ -19,6 +19,7 @@ import type { PinnedPromptProps } from "./pinned-prompt";
 const PINNED_PROMPT_SCALE = 0.7;
 const PINNED_PROMPT_MAX_LINES = 5;
 const CONTENT_LINE_HEIGHT_RATIO = 1.4;
+const PINNED_PROMPT_BACKDROP_BLUR_PX = 12;
 
 // The animated shell is the rail's flex child, so the width cap has to live here: a `flexShrink`
 // on the bubble inside it would only ever be measured against the shell's own content width.
@@ -126,7 +127,9 @@ function PinnedPromptFadeSvg({ gradientId, color }: { gradientId: string; color:
 }
 
 const ThemedPinnedPromptFadeSvg = withUnistyles(PinnedPromptFadeSvg);
-const bubbleColorMapping = (theme: Theme) => ({ color: theme.colors.surface3 });
+// The fade ends on the bubble's own translucent color; an opaque stop would paint a solid patch
+// on a glass surface. SVG honours the alpha in an rgba `stop-color`.
+const bubbleColorMapping = (theme: Theme) => ({ color: theme.colors.surfaceGlass });
 
 /**
  * Fades the clipped tail of the prompt into the bubble. It sits inside the bubble's padding so the
@@ -168,7 +171,14 @@ const styles = StyleSheet.create((theme) => {
       justifyContent: "flex-end",
     },
     bubble: {
-      backgroundColor: theme.colors.surface3,
+      // Translucent over a blurred backdrop, so the transcript scrolling underneath reads as depth
+      // rather than as text bleeding through. `_web` is Unistyles' typed escape hatch for CSS
+      // that React Native has no name for; this file is web-only.
+      backgroundColor: theme.colors.surfaceGlass,
+      _web: {
+        backdropFilter: `blur(${PINNED_PROMPT_BACKDROP_BLUR_PX}px)`,
+        WebkitBackdropFilter: `blur(${PINNED_PROMPT_BACKDROP_BLUR_PX}px)`,
+      },
       borderRadius: theme.borderRadius["2xl"],
       borderTopRightRadius: theme.borderRadius.sm,
       paddingHorizontal: theme.spacing[4],

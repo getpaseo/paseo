@@ -83,14 +83,15 @@ History returns.
 Plugin settings use the distinct `settings/hosts/[serverId]/plugins/[pluginId]/[screenId]` leaf;
 Back returns to that host's Plugins page.
 
-Desktop binds `Cmd+[` / `Cmd+]` (`Ctrl` off mac) to browser history back and
-forward. Electron loads the app with `loadURL`, so Chromium keeps a real
-path-based history stack and the shortcut drives `window.history` directly —
-Expo Router has no forward, and its linking fork resyncs the navigation tree
-from the resulting `popstate`. Because the hops above collapse history with
-`POP_TO` and `dismissTo`, that stack is the route stack Expo Router kept, not
-every screen the user visited; back will skip workspace switches. That is the
-intended tradeoff, not a bug to patch by pushing extra entries.
+Desktop binds `Cmd+[` / `Cmd+]` (`Ctrl` off mac) to an in-app history of
+visited workspaces, tabs, and app-wide routes (`packages/app/src/navigation/history`).
+It does not use the router stack or `window.history`: the hops above collapse
+the stack with `POP_TO` and `dismissTo`, so a workspace switch never leaves an
+entry to go back to, and encoding the workspace or tab into the URL would
+recreate the hidden deck entries that collapsing prevents. The recorder
+observes the pathname plus the focused tab of that pathname's workspace and
+replays entries through `navigateToWorkspace` and `focusTab`, so it inherits
+the collapsing rather than fighting it. Do not add pushes to make history work.
 
 Settings detail routes are separate siblings on purpose. Keep
 `settings/[section]`, the host routes, the projects index, and project detail as

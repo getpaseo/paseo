@@ -244,6 +244,32 @@ const lightTerminalAnsi = {
   brightWhite: "#fafafa",
 } as const;
 
+/**
+ * Translucency for surfaces that float over content with a backdrop blur. Only the theme derives
+ * translucent colors — see docs/design.md §13 — so callers take `surfaceGlass` rather than mixing
+ * their own alpha at the call site.
+ */
+const SURFACE_GLASS_ALPHA = 0.72;
+
+/** Applies alpha to a #rgb / #rrggbb / #rrggbbaa color; any other format is returned untouched. */
+export function withAlpha(color: string, alpha: number): string {
+  const match = /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/.exec(color.trim());
+  if (!match) {
+    return color;
+  }
+  let hex = match[1] ?? "";
+  if (hex.length === 3) {
+    hex = hex
+      .split("")
+      .map((digit) => digit + digit)
+      .join("");
+  }
+  const r = Number.parseInt(hex.slice(0, 2), 16);
+  const g = Number.parseInt(hex.slice(2, 4), 16);
+  const b = Number.parseInt(hex.slice(4, 6), 16);
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+
 export function buildLightSemanticColors(tint: LightThemeConfig) {
   return {
     surface0: tint.surface0,
@@ -257,6 +283,7 @@ export function buildLightSemanticColors(tint: LightThemeConfig) {
     surfaceSidebarSelected: tint.surface3,
     surfaceWorkspace: tint.surface0,
     interactionHighlight: "rgba(0, 0, 0, 0.06)",
+    surfaceGlass: withAlpha(tint.surface3, SURFACE_GLASS_ALPHA),
 
     foreground: tint.foreground,
     foregroundMuted: tint.foregroundMuted,
@@ -387,6 +414,7 @@ export function buildDarkSemanticColors(tint: DarkThemeConfig) {
     surfaceSidebarSelected: tint.surface2,
     surfaceWorkspace: tint.surface1,
     interactionHighlight: "rgba(255, 255, 255, 0.08)",
+    surfaceGlass: withAlpha(tint.surface3, SURFACE_GLASS_ALPHA),
 
     foreground,
     foregroundMuted: tint.foregroundMuted,

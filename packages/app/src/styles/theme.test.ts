@@ -6,6 +6,7 @@ import {
   getNextThemePreference,
   lightTheme,
   THEME_OPTIONS,
+  withAlpha,
 } from "./theme";
 
 describe("Typography scale", () => {
@@ -92,5 +93,20 @@ describe("Built-in light theme", () => {
         brightBlack: "#3f3f46",
       },
     });
+  });
+});
+
+describe("Glass surface", () => {
+  it("derives the translucent floating surface from surface3 in every theme", () => {
+    expect(lightTheme.colors.surfaceGlass).toBe("rgba(228, 228, 231, 0.72)");
+    expect(darkTheme.colors.surfaceGlass).toBe(withAlpha(darkTheme.colors.surface3, 0.72));
+    expect(darkPureBlackTheme.colors.surfaceGlass).toBe("rgba(32, 32, 32, 0.72)");
+  });
+
+  it("applies alpha to every hex form plugin themes may supply and leaves other formats alone", () => {
+    expect(withAlpha("#fff", 0.5)).toBe("rgba(255, 255, 255, 0.5)");
+    expect(withAlpha("#3f3f46", 0.72)).toBe("rgba(63, 63, 70, 0.72)");
+    expect(withAlpha("#3f3f46ff", 0.72)).toBe("rgba(63, 63, 70, 0.72)");
+    expect(withAlpha("rgb(1, 2, 3)", 0.5)).toBe("rgb(1, 2, 3)");
   });
 });

@@ -618,8 +618,9 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
   },
 
   // --- History navigation ---
-  // Desktop only. In a real browser tab Cmd+[ / Ctrl+[ is already the browser's own back, and
-  // Electron ships no equivalent, so the brackets are free to mean the same thing here.
+  // Desktop only. Steps the in-app history of visited workspaces, tabs, and app-wide routes
+  // (src/navigation/history). In a real browser tab Cmd+[ / Ctrl+[ is already the browser's own
+  // back, so the brackets stay with the browser there.
   {
     id: "history-back-cmd-bracket-left-mac",
     action: "history.back",

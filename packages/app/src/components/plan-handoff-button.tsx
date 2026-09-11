@@ -6,7 +6,9 @@ import { buildAgentDeepLink } from "@getpaseo/protocol/agent-deep-link";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/contexts/toast-context";
 import { useSessionStore } from "@/stores/session-store";
-import { navigateToAgent } from "@/utils/navigate-to-agent";
+import { navigateToWorkspace } from "@/stores/navigation-active-workspace-store";
+import { useDraftStore } from "@/stores/draft-store";
+import { buildDraftStoreKey, generateDraftId } from "@/stores/draft-keys";
 
 export function PlanHandoffButton({
   serverId,
@@ -28,25 +30,33 @@ export function PlanHandoffButton({
       if (!session?.client || !agent?.workspaceId) {
         throw new Error(t("agentStream.permission.handoffFailed"));
       }
-      const created = await session.client.createAgent({
-        workspaceId: agent.workspaceId,
-        config: {
-          provider: agent.provider,
-          cwd: agent.cwd,
-          model: agent.model ?? undefined,
-          thinkingOptionId: agent.thinkingOptionId ?? undefined,
+      const draftId = generateDraftId();
+      const draftKey = buildDraftStoreKey({ serverId, agentId, draftId });
+      useDraftStore.getState().saveDraftInput({
+        draftKey,
+        draft: {
+          text: `${t("agentStream.permission.handoffPrompt")}\n\n${text}\n\nSource: ${buildAgentDeepLink({ serverId, agentId })}`,
+          attachments: [],
         },
-        initialPrompt: t("agentStream.permission.handoffPrompt"),
-        attachments: [
-          {
-            type: "text",
-            mimeType: "text/plain",
-            title: t("agentStream.permission.proposedPlan"),
-            text: `${text}\n\nSource: ${buildAgentDeepLink({ serverId, agentId })}`,
-          },
-        ],
       });
-      navigateToAgent({ serverId, agentId: created.id, workspaceId: agent.workspaceId });
+      navigateToWorkspace({
+        serverId,
+        workspaceId: agent.workspaceId,
+        target: {
+          kind: "draft",
+          draftId,
+          setup: {
+            provider: agent.provider,
+            cwd: agent.cwd,
+            model: agent.model,
+            thinkingOptionId: agent.thinkingOptionId ?? null,
+            modeId: null,
+            featureValues: Object.fromEntries(
+              (agent.features ?? []).map((feature) => [feature.id, feature.value]),
+            ),
+          },
+        },
+      });
     },
     onError: () => toast.error(t("agentStream.permission.handoffFailed")),
   });
