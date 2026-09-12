@@ -93,7 +93,7 @@ function createProviderHarness(options: ProviderHarnessOptions = {}) {
           restoration: "core",
           persistence: coreImport
             ? { version: 1, data: { sessionId: "native-import-id" } }
-            : { version: 1, data: { token: "root" } },
+            : (input.persistence ?? { version: 1, data: { token: "root" } }),
           cwd: input.config.cwd,
         });
         emit({
@@ -749,6 +749,54 @@ describe("plugin provider configuration", () => {
     await registry.shutdown();
   });
 
+  test("updates ordinary plugin persistence across resume and archive", async () => {
+    const harness = createProviderHarness({ capabilities: [...CAPABILITIES, "session.archive"] });
+    const registry = new PluginAgentClientRegistry(createTestLogger());
+    registry.replace([harness.registration]);
+    const client = registry.clients()[harness.registration.id]!;
+    const initial = {
+      provider: harness.registration.id,
+      sessionId: 'plugin:{"version":1,"data":{"token":"initial"}}',
+      metadata: { pluginProviderPersistence: { version: 1, data: { token: "initial" } } },
+    };
+    const session = await client.resumeSession(initial, { cwd: "/workspace" });
+    const opened = harness.inputs.findLast(
+      (input): input is Extract<ProviderInput, { type: "session.open" }> =>
+        input.type === "session.open",
+    );
+    if (!opened) throw new Error("Missing resumed plugin session");
+    harness.emit({
+      type: "session.persistence",
+      sessionId: opened.sessionId,
+      persistence: { version: 1, data: { token: "updated" } },
+    });
+    const updated = session.describePersistence();
+    expect(updated).toEqual({
+      provider: harness.registration.id,
+      sessionId: 'plugin:{"version":1,"data":{"token":"updated"}}',
+      metadata: { pluginProviderPersistence: { version: 1, data: { token: "updated" } } },
+    });
+
+    await session.close();
+    const resumed = await client.resumeSession(updated!, { cwd: "/workspace" });
+    expect(harness.inputs).toContainEqual(
+      expect.objectContaining({
+        type: "session.open",
+        persistence: { version: 1, data: { token: "updated" } },
+      }),
+    );
+    await client.archiveNativeSession!(updated!);
+    expect(harness.inputs).toContainEqual(
+      expect.objectContaining({
+        type: "session.archive",
+        persistence: { version: 1, data: { token: "updated" } },
+      }),
+    );
+
+    await resumed.close();
+    await registry.shutdown();
+  });
+
   test("resumes stored OMP agents through the registered plugin", async () => {
     const harness = createProviderHarness();
     const registration: ProviderRegistration = { ...harness.registration, id: "omp" };
@@ -792,7 +840,7 @@ describe("plugin provider configuration", () => {
   });
 
   test("imports legacy OMP sessions without rewriting rollback handles", async () => {
-    const harness = createProviderHarness();
+    const harness = createProviderHarness({ capabilities: [...CAPABILITIES, "session.archive"] });
     const registration: ProviderRegistration = { ...harness.registration, id: "omp" };
     const registry = new PluginAgentClientRegistry(createTestLogger());
     registry.replace([registration]);
@@ -820,25 +868,43 @@ describe("plugin provider configuration", () => {
         },
       }),
     );
-    expect(imported.persistence).toEqual({
+    const importOpen = harness.inputs.findLast(
+      (input): input is Extract<ProviderInput, { type: "session.open" }> =>
+        input.type === "session.open",
+    );
+    if (!importOpen) throw new Error("Missing legacy import session");
+    harness.emit({
+      type: "session.persistence",
+      sessionId: importOpen.sessionId,
+      persistence: { version: 1, data: { sessionId: "native-import-id-2" } },
+    });
+    const updatedImport = imported.session.describePersistence();
+    expect(updatedImport).toEqual({
       provider: "omp",
-      sessionId: "native-import-id",
+      sessionId: "native-import-id-2",
       nativeHandle: "/home/user/.omp/agent/sessions/import.jsonl",
       metadata: {
         cwd: "/workspace",
-        pluginProviderPersistence: { version: 1, data: { sessionId: "native-import-id" } },
+        pluginProviderPersistence: { version: 1, data: { sessionId: "native-import-id-2" } },
       },
     });
 
-    const resumedImport = await client.resumeSession(imported.persistence, { cwd: "/workspace" });
+    await imported.session.close();
+    const resumedImport = await client.resumeSession(updatedImport!, { cwd: "/workspace" });
     expect(harness.inputs).toContainEqual(
       expect.objectContaining({
         type: "session.open",
-        persistence: { version: 1, data: { sessionId: "native-import-id" } },
+        persistence: { version: 1, data: { sessionId: "native-import-id-2" } },
       }),
     );
-    expect(resumedImport.describePersistence()).toEqual(imported.persistence);
-
+    expect(resumedImport.describePersistence()).toEqual(updatedImport);
+    await client.archiveNativeSession!(updatedImport!);
+    expect(harness.inputs).toContainEqual(
+      expect.objectContaining({
+        type: "session.archive",
+        persistence: { version: 1, data: { sessionId: "native-import-id-2" } },
+      }),
+    );
     const pluginNative = await client.importSession!(
       {
         providerHandleId: 'plugin:{"version":1,"data":{"token":"native"}}',
@@ -851,11 +917,10 @@ describe("plugin provider configuration", () => {
     );
     expect(pluginNative.persistence).toMatchObject({
       provider: "omp",
-      sessionId: 'plugin:{"version":1,"data":{"token":"root"}}',
-      metadata: { pluginProviderPersistence: { version: 1, data: { token: "root" } } },
+      sessionId: 'plugin:{"version":1,"data":{"token":"native"}}',
+      metadata: { pluginProviderPersistence: { version: 1, data: { token: "native" } } },
     });
 
-    await imported.session.close();
     await resumedImport.close();
     await pluginNative.session.close();
     await registry.shutdown();

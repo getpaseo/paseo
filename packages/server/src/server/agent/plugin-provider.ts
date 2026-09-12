@@ -88,7 +88,7 @@ interface OpenProviderSessionInput {
   sessionId: string;
   config: ProviderSessionConfig;
   persistence?: ProviderPersistence;
-  publicPersistence?: AgentPersistenceHandle;
+  rollbackPersistence?: AgentPersistenceHandle;
   legacyImport?: { providerHandleId: string; cwd: string };
   history: "replay" | "skip";
 }
@@ -931,8 +931,8 @@ class PluginAgentClient implements AgentClient {
       config: { ...overrides, provider: this.provider, cwd: overrides.cwd },
       launchContext,
       persistence: decodePersistence(handle),
+      rollbackPersistence: handle.nativeHandle ? handle : undefined,
       history: "replay",
-      publicPersistence: handle,
       persist: true,
     });
   }
@@ -1061,7 +1061,7 @@ class PluginAgentClient implements AgentClient {
     config: AgentSessionConfig;
     launchContext?: AgentLaunchContext;
     persistence?: ProviderPersistence;
-    publicPersistence?: AgentPersistenceHandle;
+    rollbackPersistence?: AgentPersistenceHandle;
     legacyImport?: { providerHandleId: string; cwd: string };
     history: "replay" | "skip";
     persist: boolean;
@@ -1073,14 +1073,13 @@ class PluginAgentClient implements AgentClient {
       persistence: input.persistence,
       history: input.history,
     });
-    const publicPersistence =
-      input.publicPersistence ??
-      (input.legacyImport && bridge.persistence
+    const rollbackPersistence =
+      input.rollbackPersistence ??
+      (input.legacyImport
         ? legacyImportPersistenceHandle(
             this.provider,
             input.legacyImport.providerHandleId,
             input.legacyImport.cwd,
-            bridge.persistence,
           )
         : undefined);
     const session = new PluginAgentSession(
@@ -1089,7 +1088,7 @@ class PluginAgentClient implements AgentClient {
       () => {
         this.rootsBySession.delete(bridge.id);
       },
-      publicPersistence,
+      rollbackPersistence,
     );
     this.rootsBySession.set(bridge.id, session);
     this.providerSessionIdBySessionId.set(bridge.id, bridge.providerId);
@@ -1160,7 +1159,7 @@ class PluginAgentSession implements AgentSession {
     readonly provider: string,
     private readonly bridge: ProviderRuntimeSession,
     private readonly onClose: () => void,
-    private readonly publicPersistence?: AgentPersistenceHandle,
+    private readonly rollbackPersistence?: AgentPersistenceHandle,
   ) {
     for (const event of bridge.history) this.accept(event, false);
     this.unsubscribe = bridge.onEvent((event) => this.accept(event, true));
@@ -1287,9 +1286,8 @@ class PluginAgentSession implements AgentSession {
   }
 
   describePersistence(): AgentPersistenceHandle | null {
-    if (this.publicPersistence) return { ...this.publicPersistence };
     return this.bridge.persistence
-      ? persistenceHandle(this.provider, this.bridge.persistence)
+      ? persistenceHandle(this.provider, this.bridge.persistence, this.rollbackPersistence)
       : null;
   }
 
@@ -1790,12 +1788,33 @@ function mapTimelineItem(
 function persistenceHandle(
   provider: string,
   persistence: ProviderPersistence,
+  rollbackPersistence?: AgentPersistenceHandle,
 ): AgentPersistenceHandle {
+  const encoded = encodePersistence(persistence);
+  if (!rollbackPersistence?.nativeHandle) {
+    return {
+      provider,
+      sessionId: encoded,
+      metadata: { pluginProviderPersistence: persistence },
+    };
+  }
   return {
     provider,
-    sessionId: encodePersistence(persistence),
-    metadata: { pluginProviderPersistence: persistence },
+    sessionId: providerPersistenceSessionId(persistence) ?? encoded,
+    nativeHandle: rollbackPersistence.nativeHandle,
+    metadata: {
+      ...rollbackPersistence.metadata,
+      pluginProviderPersistence: persistence,
+    },
   };
+}
+
+function providerPersistenceSessionId(persistence: ProviderPersistence): string | null {
+  const data = persistence.data;
+  if (!data || typeof data !== "object" || Array.isArray(data) || !("sessionId" in data)) {
+    return null;
+  }
+  return typeof data.sessionId === "string" && data.sessionId.length > 0 ? data.sessionId : null;
 }
 
 function encodePersistence(persistence: ProviderPersistence): string {
@@ -1840,21 +1859,12 @@ function legacyImportPersistenceHandle(
   provider: string,
   providerHandleId: string,
   cwd: string,
-  persistence: ProviderPersistence,
 ): AgentPersistenceHandle {
-  const data = persistence.data;
-  const nativeSessionId =
-    data && typeof data === "object" && !Array.isArray(data) && "sessionId" in data
-      ? data.sessionId
-      : undefined;
-  if (typeof nativeSessionId !== "string" || nativeSessionId.length === 0) {
-    throw new Error(`Plugin provider '${provider}' import did not return a native sessionId`);
-  }
   return {
     provider,
-    sessionId: nativeSessionId,
+    sessionId: providerHandleId,
     nativeHandle: providerHandleId,
-    metadata: { cwd, pluginProviderPersistence: persistence },
+    metadata: { cwd },
   };
 }
 

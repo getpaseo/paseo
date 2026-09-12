@@ -255,9 +255,10 @@ try {
       assert.strictEqual(row.enabled, "Enabled", `${provider} should report Enabled`);
     }
 
-    const omp = rows.find((p) => p.provider === "omp");
-    assert(omp, "should include omp");
-    assert.strictEqual(omp.enabled, "Disabled", "omp should report Disabled by default");
+    assert(
+      !rows.some((provider) => provider.provider === "omp"),
+      "plugin-free daemon should omit omp",
+    );
     console.log("✓ provider ls --json outputs valid JSON\n");
   }
 
