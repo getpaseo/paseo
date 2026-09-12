@@ -1,4 +1,13 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+vi.mock("@react-native-async-storage/async-storage", () => ({
+  default: {
+    getItem: vi.fn(),
+    setItem: vi.fn(),
+    removeItem: vi.fn(),
+  },
+}));
+
 import { migrateSidebarOrderState } from "./sidebar-order-store";
 
 describe("migrateSidebarOrderState", () => {
@@ -20,6 +29,7 @@ describe("migrateSidebarOrderState", () => {
       workspaceOrderByProject: {
         "project-a": ["host-a:main", "host-a:feature", "host-b:main"],
       },
+      workspaceSectionsByProject: {},
     });
   });
 
@@ -29,5 +39,33 @@ describe("migrateSidebarOrderState", () => {
     });
 
     expect(migrated.pinnedWorkspaceOrder).toEqual(["host-a:one", "host-b:two"]);
+  });
+
+  it("normalizes project-scoped section layouts without duplicate workspace placement", () => {
+    const migrated = migrateSidebarOrderState({
+      workspaceSectionsByProject: {
+        " project-a ": [
+          {
+            id: " finance ",
+            name: " Finance ",
+            workspaceKeys: ["host-a:one", "host-a:one", ""],
+          },
+          {
+            id: "research",
+            name: "Research",
+            workspaceKeys: ["host-a:one", "host-a:two"],
+          },
+        ],
+      },
+    });
+
+    expect(migrated).toMatchObject({
+      workspaceSectionsByProject: {
+        "project-a": [
+          { id: "finance", name: "Finance", workspaceKeys: ["host-a:one"] },
+          { id: "research", name: "Research", workspaceKeys: ["host-a:two"] },
+        ],
+      },
+    });
   });
 });

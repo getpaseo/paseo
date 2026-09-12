@@ -66,6 +66,10 @@ function makeProject(
 function projectionInput(options?: {
   groupMode?: "project" | "status";
   pinnedCollapsed?: boolean;
+  workspaceSectionsByProject?: Record<
+    string,
+    { id: string; name: string; workspaceKeys: string[] }[]
+  >;
 }) {
   const pinned = makeWorkspace("pinned", "running");
   const unpinned = makeWorkspace("unpinned", "needs_input");
@@ -85,6 +89,8 @@ function projectionInput(options?: {
     pinnedCollapsed: options?.pinnedCollapsed ?? false,
     collapsedProjectKeys: new Set<string>(),
     collapsedWorkspaceGroupKeys: new Set<string>(),
+    collapsedWorkspaceSectionKeys: new Set<string>(),
+    workspaceSectionsByProject: options?.workspaceSectionsByProject ?? {},
   };
 }
 
@@ -108,6 +114,25 @@ function twoProjectInput(groupMode: "project" | "status") {
       ["other-project", "Other project"],
     ]),
   };
+}
+
+function sectionWorkspaceSummary(
+  sections: readonly { id: string | null; workspaces: SidebarWorkspacePlacement[] }[],
+) {
+  return sections.map((section) => ({
+    id: section.id,
+    workspaceKeys: section.workspaces.map((workspace) => workspace.workspaceKey),
+  }));
+}
+
+function sectionWorkspaceKeys(
+  sections: readonly { workspaces: SidebarWorkspacePlacement[] }[],
+): string[] {
+  const workspaceKeys: string[] = [];
+  for (const section of sections) {
+    for (const workspace of section.workspaces) workspaceKeys.push(workspace.workspaceKey);
+  }
+  return workspaceKeys;
 }
 
 describe("buildSidebarProjection", () => {
@@ -148,6 +173,78 @@ describe("buildSidebarProjection", () => {
     expect(projection.shortcutModel.shortcutTargets).toEqual([
       { serverId: "srv", workspaceId: "pinned" },
       { serverId: "srv", workspaceId: "unpinned" },
+    ]);
+  });
+
+  it("retains empty sections and keeps pinned workspaces out of project sections", () => {
+    const projection = buildSidebarProjection(
+      projectionInput({
+        workspaceSectionsByProject: {
+          project: [
+            { id: "finance", name: "Finance", workspaceKeys: ["srv:pinned", "srv:unpinned"] },
+            { id: "waiting", name: "Waiting", workspaceKeys: [] },
+          ],
+        },
+      }),
+    );
+    expect(sectionWorkspaceSummary(projection.projectSections.get("project") ?? [])).toEqual([
+      { id: "finance", workspaceKeys: ["srv:unpinned"] },
+      { id: "waiting", workspaceKeys: [] },
+      { id: null, workspaceKeys: [] },
+    ]);
+  });
+
+  it("keeps the no-section project projection equivalent to the existing unpinned rows", () => {
+    const projection = buildSidebarProjection(projectionInput());
+
+    expect(projection.projectSections.get("project")?.map((section) => section.id)).toEqual([null]);
+    expect(sectionWorkspaceKeys(projection.projectSections.get("project") ?? [])).toEqual([
+      "srv:unpinned",
+    ]);
+  });
+
+  it("retains a configured section when filters remove all of its workspace keys", () => {
+    const visible = makeWorkspace("visible");
+    const input = projectionInput({
+      workspaceSectionsByProject: {
+        project: [{ id: "finance", name: "Finance", workspaceKeys: ["srv:filtered-out"] }],
+      },
+    });
+    input.projects = [makeProject([visible.placement])];
+    input.pinnedKeys = { pinnedWorkspaceKeys: [], pinnedAtByKey: {} };
+    input.workspaceEntriesByKey = new Map([[visible.entry.workspaceKey, visible.entry]]);
+
+    const projection = buildSidebarProjection(input);
+
+    expect(sectionWorkspaceSummary(projection.projectSections.get("project") ?? [])).toEqual([
+      { id: "finance", workspaceKeys: [] },
+      { id: null, workspaceKeys: ["srv:visible"] },
+    ]);
+  });
+
+  it("removes collapsed section rows from keyboard shortcuts", () => {
+    const input = projectionInput({
+      workspaceSectionsByProject: {
+        project: [{ id: "finance", name: "Finance", workspaceKeys: ["srv:unpinned"] }],
+      },
+    });
+    input.collapsedWorkspaceSectionKeys = new Set(["project::finance"]);
+
+    const projection = buildSidebarProjection(input);
+
+    expect(projection.shortcutModel.shortcutTargets).toEqual([
+      { serverId: "srv", workspaceId: "pinned" },
+    ]);
+  });
+
+  it("removes collapsed unsectioned rows from keyboard shortcuts", () => {
+    const input = projectionInput();
+    input.collapsedWorkspaceSectionKeys = new Set(["project::unsectioned"]);
+
+    const projection = buildSidebarProjection(input);
+
+    expect(projection.shortcutModel.shortcutTargets).toEqual([
+      { serverId: "srv", workspaceId: "pinned" },
     ]);
   });
 
