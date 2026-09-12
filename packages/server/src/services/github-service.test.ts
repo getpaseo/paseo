@@ -751,6 +751,25 @@ describe("ForgeService", () => {
     ]);
   });
 
+  it("marks a pull request ready for review with gh", async () => {
+    const runner = createRunner([""]);
+    const service = createGitHubService({
+      runner: runner.runner,
+    });
+
+    await expect(service.markPullRequestReady({ cwd: "/tmp/repo", prNumber: 42 })).resolves.toEqual(
+      { success: true },
+    );
+
+    expect(runner.calls).toEqual([
+      {
+        args: ["pr", "ready", "42"],
+        cwd: "/tmp/repo",
+        envOverlay: { GH_PROMPT_DISABLED: "1" },
+      },
+    ]);
+  });
+
   it("computes fast cadence for pending and slow cadence for stable PR states", () => {
     const pendingStatus = createCurrentPullRequestStatus({ checksStatus: "pending" });
     const runningCheckStatus = createCurrentPullRequestStatus({

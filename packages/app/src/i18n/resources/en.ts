@@ -772,6 +772,14 @@ export const en = {
           pending_mr: "Creating MR...",
           success_mr: "MR Created",
         },
+        setPrReady: {
+          label: "Set PR ready",
+          pending: "Setting PR ready...",
+          success: "PR ready for review",
+          label_mr: "Set MR ready",
+          pending_mr: "Setting MR ready...",
+          success_mr: "MR ready for review",
+        },
         mergeBranch: {
           label: "Merge locally",
           pending: "Merging...",
@@ -864,6 +872,7 @@ export const en = {
           failedPush: "Failed to push",
           failedPullAndPush: "Failed to pull and push",
           failedCreatePr: "Failed to create PR",
+          failedSetPrReady: "Failed to set PR ready",
           failedMergePr: "Failed to merge PR",
           failedEnableAutoMerge: "Failed to enable auto-merge",
           failedDisableAutoMerge: "Failed to disable auto-merge",

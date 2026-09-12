@@ -776,6 +776,14 @@ export const ko: TranslationResources = {
           pending_mr: "MR 생성 중...",
           success_mr: "MR 생성됨",
         },
+        setPrReady: {
+          label: "PR 검토 준비로 전환",
+          pending: "PR 검토 준비로 전환 중...",
+          success: "PR 검토 준비됨",
+          label_mr: "MR 검토 준비로 전환",
+          pending_mr: "MR 검토 준비로 전환 중...",
+          success_mr: "MR 검토 준비됨",
+        },
         mergeBranch: {
           label: "로컬에서 병합",
           pending: "병합하는 중...",
@@ -862,6 +870,7 @@ export const ko: TranslationResources = {
           failedPush: "푸시하지 못했습니다",
           failedPullAndPush: "풀 후 푸시하지 못했습니다",
           failedCreatePr: "PR을 생성하지 못했습니다",
+          failedSetPrReady: "PR을 검토 준비로 전환하지 못했습니다",
           failedMergePr: "PR을 병합하지 못했습니다",
           failedEnableAutoMerge: "자동 병합을 사용 설정하지 못했습니다",
           failedDisableAutoMerge: "자동 병합을 해제하지 못했습니다",

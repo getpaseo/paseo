@@ -778,6 +778,14 @@ export const ptBR: TranslationResources = {
           pending_mr: "Criando MR...",
           success_mr: "MR criada",
         },
+        setPrReady: {
+          label: "Marcar PR como pronta",
+          pending: "Marcando PR como pronta...",
+          success: "PR pronta para revisão",
+          label_mr: "Marcar MR como pronta",
+          pending_mr: "Marcando MR como pronta...",
+          success_mr: "MR pronta para revisão",
+        },
         mergeBranch: {
           label: "Fazer merge localmente",
           pending: "Fazendo merge...",
@@ -877,6 +885,7 @@ export const ptBR: TranslationResources = {
           failedPush: "Falha ao fazer push",
           failedPullAndPush: "Falha ao fazer pull e push",
           failedCreatePr: "Falha ao criar PR",
+          failedSetPrReady: "Falha ao marcar PR como pronta",
           failedMergePr: "Falha ao fazer merge da PR",
           failedEnableAutoMerge: "Falha ao ativar merge automático",
           failedDisableAutoMerge: "Falha ao desativar merge automático",

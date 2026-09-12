@@ -2201,6 +2201,12 @@ export const CheckoutPrMergeRequestSchema = z.object({
   requestId: z.string(),
 });
 
+export const CheckoutForgeSetReadyRequestSchema = z.object({
+  type: z.literal("checkout.forge.set_ready.request"),
+  cwd: z.string(),
+  requestId: z.string(),
+});
+
 export const CheckoutForgeSetAutoMergeRequestSchema = z.object({
   type: z.literal("checkout.forge.set_auto_merge.request"),
   cwd: z.string(),
@@ -3222,6 +3228,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   CheckoutDiscardChangesRequestSchema,
   CheckoutPrCreateRequestSchema,
   CheckoutPrMergeRequestSchema,
+  CheckoutForgeSetReadyRequestSchema,
   CheckoutForgeSetAutoMergeRequestSchema,
   CheckoutGithubSetAutoMergeRequestSchema,
   CheckoutCommitsListRequestSchema,
@@ -3493,6 +3500,8 @@ export const ServerInfoStatusPayloadSchema = z
         workspaceSetupRun: z.boolean().optional(),
         // COMPAT(workspaceTerminals): added in v0.8.0, remove gate after 2027-09-05.
         workspaceTerminals: z.boolean().optional(),
+        // COMPAT(checkoutForgeSetReady): added in v0.8.1; remove gate after 2027-09-10.
+        checkoutForgeSetReady: z.boolean().optional(),
         // COMPAT(checkoutForgeSetAutoMerge): added in v0.2.0-beta.1. Remove the
         // feature gate and checkoutGithubSetAutoMerge fallback after 2027-01-17
         // once the supported daemon floor is >= v0.2.0.
@@ -5327,6 +5336,16 @@ export const CheckoutPrMergeResponseSchema = z.object({
   }),
 });
 
+export const CheckoutForgeSetReadyResponseSchema = z.object({
+  type: z.literal("checkout.forge.set_ready.response"),
+  payload: z.object({
+    cwd: z.string(),
+    success: z.boolean(),
+    error: CheckoutErrorSchema.nullable(),
+    requestId: z.string(),
+  }),
+});
+
 export const CheckoutForgeSetAutoMergeResponseSchema = z.object({
   type: z.literal("checkout.forge.set_auto_merge.response"),
   payload: z.object({
@@ -6685,6 +6704,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   CheckoutDiscardChangesResponseSchema,
   CheckoutPrCreateResponseSchema,
   CheckoutPrMergeResponseSchema,
+  CheckoutForgeSetReadyResponseSchema,
   CheckoutForgeSetAutoMergeResponseSchema,
   CheckoutGithubSetAutoMergeResponseSchema,
   CheckoutCommitsListResponseSchema,
@@ -7054,6 +7074,8 @@ export type CheckoutPrCreateResponse = z.infer<typeof CheckoutPrCreateResponseSc
 export type CheckoutPrMergeRequest = z.infer<typeof CheckoutPrMergeRequestSchema>;
 export type CheckoutPrMergeResponse = z.infer<typeof CheckoutPrMergeResponseSchema>;
 export type CheckoutPrMergeMethod = z.infer<typeof CheckoutPrMergeRequestSchema>["mergeMethod"];
+export type CheckoutForgeSetReadyRequest = z.infer<typeof CheckoutForgeSetReadyRequestSchema>;
+export type CheckoutForgeSetReadyResponse = z.infer<typeof CheckoutForgeSetReadyResponseSchema>;
 export type CheckoutForgeSetAutoMergeRequest = z.infer<
   typeof CheckoutForgeSetAutoMergeRequestSchema
 >;

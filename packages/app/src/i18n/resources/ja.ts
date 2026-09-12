@@ -777,6 +777,14 @@ export const ja: TranslationResources = {
           pending_mr: "MRを作成中...",
           success_mr: "MRが作成されました",
         },
+        setPrReady: {
+          label: "PRをレビュー可能にする",
+          pending: "PRをレビュー可能に設定中...",
+          success: "PRがレビュー可能になりました",
+          label_mr: "MRをレビュー可能にする",
+          pending_mr: "MRをレビュー可能に設定中...",
+          success_mr: "MRがレビュー可能になりました",
+        },
         mergeBranch: {
           label: "ローカルでマージ",
           pending: "マージ中...",
@@ -866,6 +874,7 @@ export const ja: TranslationResources = {
           failedPush: "プッシュに失敗しました",
           failedPullAndPush: "プル＆プッシュに失敗しました",
           failedCreatePr: "PRの作成に失敗しました",
+          failedSetPrReady: "PRをレビュー可能にできませんでした",
           failedMergePr: "PRのマージに失敗しました",
           failedEnableAutoMerge: "自動マージの有効化に失敗しました",
           failedDisableAutoMerge: "自動マージの無効化に失敗しました",

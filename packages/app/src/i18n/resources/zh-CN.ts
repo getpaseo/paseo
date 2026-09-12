@@ -771,6 +771,14 @@ export const zhCN: TranslationResources = {
           pending_mr: "正在创建 MR...",
           success_mr: "MR 已创建",
         },
+        setPrReady: {
+          label: "将 PR 标记为就绪",
+          pending: "正在将 PR 标记为就绪...",
+          success: "PR 已可供评审",
+          label_mr: "将 MR 标记为就绪",
+          pending_mr: "正在将 MR 标记为就绪...",
+          success_mr: "MR 已可供评审",
+        },
         mergeBranch: {
           label: "本地 merge",
           pending: "正在 merge...",
@@ -847,6 +855,7 @@ export const zhCN: TranslationResources = {
           failedPush: "Push 失败",
           failedPullAndPush: "Pull 并 push 失败",
           failedCreatePr: "创建 PR 失败",
+          failedSetPrReady: "将 PR 标记为就绪失败",
           failedMergePr: "Merge PR 失败",
           failedEnableAutoMerge: "启用 auto-merge 失败",
           failedDisableAutoMerge: "禁用 auto-merge 失败",
