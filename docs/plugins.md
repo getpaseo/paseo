@@ -98,14 +98,17 @@ paseo plugin add owner/monorepo:plugins/review
 paseo plugin add owner/repository --ref main
 paseo plugin ls
 paseo plugin update review
+paseo plugin update review --ref <commit>
 paseo plugin update --all
 ```
 
 Append `:relative/path` to the source when the plugin lives below the repository root.
 
-Omitting `--ref` tracks the remote's default branch. A branch passed with `--ref` also tracks;
-tags and commits stay pinned. `ls` reports the installed commit without contacting the remote.
-Removing a Git source deletes Paseo's managed checkout.
+Omitting `--ref` on install tracks the remote's default branch. A branch passed with `--ref` also
+tracks; tags and commits stay pinned. `update <id> --ref <ref>` resolves a new branch, tag, or commit
+from the installed repository while preserving its monorepo subpath. `update --all` does not accept
+`--ref`. `ls` reports the installed commit without contacting the remote. Removing a Git source
+deletes Paseo's managed checkout.
 
 ### Declare Git preparation
 

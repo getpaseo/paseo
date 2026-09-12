@@ -234,10 +234,13 @@ default branch is tracked; a branch tracks updates, while a tag or commit stays 
 ```bash
 paseo plugin ls
 paseo plugin update workspace-plugin
+paseo plugin update workspace-plugin --ref <commit>
 paseo plugin update --all
 ```
 
-`ls` reports runtime state, source details, and the installed commit without contacting the remote.
+`update <id> --ref <ref>` installs that branch, tag, or commit from the same repository and preserves
+the plugin's monorepo path; it cannot be combined with `--all`. `ls` reports runtime state, source
+details, and the installed commit without contacting the remote.
 
 Paseo compiles TypeScript itself, so most plugins need no build step. A repository that must
 install a dependency Paseo does not provide, or generate files, declares

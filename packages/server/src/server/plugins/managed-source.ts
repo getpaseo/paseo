@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { mkdir, rename, rm } from "node:fs/promises";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { z } from "zod";
 import { PluginIdSchema, type PluginSourceStatusItem } from "@getpaseo/protocol/messages";
 import { runGitCommand } from "../../utils/run-git-command.js";
@@ -158,9 +159,40 @@ export class ManagedPluginSources {
   async prepareUpdate(
     pluginId: string,
     configuredPath: string,
+    requestedRef?: string,
   ): Promise<{ candidate: ManagedPluginCandidate | null; commits: number }> {
     const record = this.records[pluginId];
     if (!record) throw new Error(`Plugin is not managed by Git: ${pluginId}`);
+    if (requestedRef !== undefined) {
+      const candidate = await this.prepareInstall({
+        source: record.remote,
+        ref: requestedRef,
+        pluginPath: record.pluginPath,
+      });
+      try {
+        const unchanged =
+          candidate.record.commit === record.commit &&
+          candidate.record.requestedRef === record.requestedRef &&
+          candidate.record.trackingBranch === record.trackingBranch;
+        if (unchanged) {
+          await this.discard(candidate);
+          return { candidate: null, commits: 0 };
+        }
+        await runGitCommand(
+          ["fetch", "--no-tags", pathToFileURL(record.checkoutRoot).href, record.commit],
+          { cwd: candidate.record.checkoutRoot, envOverlay: GIT_ENV, timeout: GIT_TIMEOUT_MS },
+        );
+        const commits = await countCommits(
+          candidate.record.checkoutRoot,
+          record.commit,
+          candidate.record.commit,
+        );
+        return { candidate, commits };
+      } catch (error) {
+        await this.discard(candidate);
+        throw error;
+      }
+    }
     const status = await this.status(pluginId, configuredPath);
     const latestCommit = status.latestCommit;
     if (!latestCommit || latestCommit === record.commit) return { candidate: null, commits: 0 };

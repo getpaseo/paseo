@@ -345,7 +345,7 @@ describe("PluginService", () => {
     await service.stopAllPlugins();
   }, 20_000);
 
-  it("keeps the running commit when a Git update build command fails", async () => {
+  it("keeps the running commit when an explicit ref or its preparation fails", async () => {
     const home = await mkdtemp(path.join(tmpdir(), "paseo-plugin-home-"));
     roots.push(home);
     const repository = await mkdtemp(path.join(tmpdir(), "paseo-plugin-repository-"));
@@ -375,6 +375,17 @@ describe("PluginService", () => {
     const installedPath = installed.path;
     const installedCommit = installed.commit;
 
+    await expect(service.updateSources("git-update", "missing-ref")).rejects.toThrow();
+    expect(await readdir(path.join(home, "plugins", ".staging"))).toEqual([]);
+    expect(service.listPlugins()).toEqual([
+      expect.objectContaining({
+        id: "git-update",
+        path: installedPath,
+        commit: installedCommit,
+        status: "running",
+      }),
+    ]);
+
     await writeFile(
       path.join(repository, "paseo-plugin.json"),
       JSON.stringify({
@@ -390,8 +401,10 @@ describe("PluginService", () => {
     );
     await runGitCommand(["add", "-A"], { cwd: repository });
     await runGitCommand(["commit", "-m", "broken update"], { cwd: repository });
+    const { stdout } = await runGitCommand(["rev-parse", "HEAD"], { cwd: repository });
+    const brokenCommit = stdout.trim();
 
-    await expect(service.updateSources("git-update")).rejects.toThrow();
+    await expect(service.updateSources("git-update", brokenCommit)).rejects.toThrow();
     expect(await readdir(path.join(home, "plugins", ".staging"))).toEqual([]);
     expect(service.catalog()).toEqual([
       expect.objectContaining({ id: "git-update", clientBundle: expect.any(String) }),
@@ -484,9 +497,22 @@ describe("PluginService", () => {
     );
     await runGitCommand(["add", "-A"], { cwd: repository });
     await runGitCommand(["commit", "-m", "prepared update"], { cwd: repository });
+    const { stdout } = await runGitCommand(["rev-parse", "HEAD"], { cwd: repository });
+    const updatedCommit = stdout.trim();
 
-    await expect(service.updateSources("prepared-git-plugin")).resolves.toEqual([
-      expect.objectContaining({ id: "prepared-git-plugin", updated: true }),
+    await expect(service.updateSources("prepared-git-plugin", updatedCommit)).resolves.toEqual([
+      expect.objectContaining({
+        id: "prepared-git-plugin",
+        currentCommit: updatedCommit,
+        updated: true,
+      }),
+    ]);
+    expect(service.listPlugins()).toEqual([
+      expect.objectContaining({
+        id: "prepared-git-plugin",
+        commit: updatedCommit,
+        ref: updatedCommit,
+      }),
     ]);
     expect(events).toEqual(["validate:prepared", "start", "validate:updated", "start"]);
     await service.stopAllPlugins();

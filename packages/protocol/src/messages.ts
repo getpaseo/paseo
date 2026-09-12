@@ -1505,6 +1505,7 @@ export const PluginSourceUpdateRequestSchema = z.object({
   type: z.literal("plugin.source.update.request"),
   requestId: z.string(),
   pluginId: PluginIdSchema.optional(),
+  ref: z.string().min(1).optional(),
 });
 
 function pluginIdRequest<const Type extends string>(type: Type) {
@@ -3529,6 +3530,8 @@ export const ServerInfoStatusPayloadSchema = z
         pluginLogs: z.boolean().optional(),
         // COMPAT(pluginGitManagement): added in v0.7.0, remove gate after 2027-08-26.
         pluginGitManagement: z.boolean().optional(),
+        // COMPAT(pluginGitRefUpdate): added in v0.8.0, remove gate after 2027-03-12.
+        pluginGitRefUpdate: z.boolean().optional(),
         // COMPAT(pluginThemes): added in v0.5.0, remove gate after 2027-08-20.
         // A daemon that predates this flag keeps `addTheme` in the server bundle it compiles,
         // so a theme plugin cannot start there at all.

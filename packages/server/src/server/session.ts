@@ -27,6 +27,7 @@ import {
   type ProjectPlacementPayload,
   type WorkspaceSetupSnapshot,
   type WorkspaceDescriptorPayload,
+  type PluginSourceUpdateItem,
 } from "./messages.js";
 import type {
   TerminalManager,
@@ -492,9 +493,7 @@ export interface SessionOptions {
     statusSources(
       pluginId?: string,
     ): Promise<import("@getpaseo/protocol/messages").PluginSourceStatusItem[]>;
-    updateSources(
-      pluginId?: string,
-    ): Promise<import("@getpaseo/protocol/messages").PluginSourceUpdateItem[]>;
+    updateSources(pluginId?: string, ref?: string): Promise<PluginSourceUpdateItem[]>;
     reloadPlugin(pluginId: string): Promise<import("@getpaseo/protocol/messages").PluginListItem>;
     enablePlugin(pluginId: string): Promise<import("@getpaseo/protocol/messages").PluginListItem>;
     disablePlugin(pluginId: string): Promise<import("@getpaseo/protocol/messages").PluginListItem>;
@@ -2455,7 +2454,7 @@ export class Session {
     }
     if (msg.type === "plugin.source.update.request") {
       if (!this.pluginRuntime) throw new Error("Plugin service is unavailable");
-      return this.pluginRuntime.updateSources(msg.pluginId).then((plugins) => {
+      return this.pluginRuntime.updateSources(msg.pluginId, msg.ref).then((plugins) => {
         this.emit({
           type: "plugin.source.update.response",
           payload: { requestId: msg.requestId, plugins },

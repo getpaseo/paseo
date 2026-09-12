@@ -2114,6 +2114,52 @@ test("serializes plugin source suffixes through the legacy path field", async ()
   await expect(installPromise).resolves.toMatchObject({ id: "review", status: "running" });
 });
 
+test("serializes an explicit plugin update ref", async () => {
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_plugin_update_ref",
+    logger: createMockLogger(),
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+
+  const updatePromise = client.updatePluginSources("review", "92d85c3a4410fedcba");
+  const request = parseSentFrame(mock.sent.at(-1));
+  expect(request).toEqual({
+    type: "plugin.source.update.request",
+    requestId: expect.any(String),
+    pluginId: "review",
+    ref: "92d85c3a4410fedcba",
+  });
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "plugin.source.update.response",
+      payload: {
+        requestId: request.requestId,
+        plugins: [
+          {
+            id: "review",
+            previousCommit: "1557a34c91e2abcdef",
+            currentCommit: "92d85c3a4410fedcba",
+            commits: 1,
+            updated: true,
+          },
+        ],
+      },
+    }),
+  );
+
+  await expect(updatePromise).resolves.toEqual([
+    expect.objectContaining({ id: "review", currentCommit: "92d85c3a4410fedcba", updated: true }),
+  ]);
+});
+
 test("a connection loss rejects an in-flight file context action", async () => {
   const mock = createMockTransport();
   const client = new DaemonClient({
