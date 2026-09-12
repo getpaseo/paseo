@@ -2060,7 +2060,7 @@ export const es: TranslationResources = {
       },
       serviceUrls: {
         label: "URL de servicio",
-        description: "Dónde abrir URL desde scripts en ejecución",
+        description: "Dónde abrir URL desde scripts y terminales",
         options: {
           ask: "Preguntar",
           inApp: "EnPaseo",

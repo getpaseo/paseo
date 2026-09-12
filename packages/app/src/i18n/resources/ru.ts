@@ -2044,7 +2044,7 @@ export const ru: TranslationResources = {
       },
       serviceUrls: {
         label: "URL-адреса сервисов",
-        description: "Где открывать URL-адреса запущенных скриптов",
+        description: "Где открывать URL-адреса из скриптов и терминалов",
         options: {
           ask: "Спрашивать",
           inApp: "В Paseo",

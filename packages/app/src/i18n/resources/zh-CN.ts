@@ -1986,7 +1986,7 @@ export const zhCN: TranslationResources = {
       },
       serviceUrls: {
         label: "服务 URL",
-        description: "运行脚本中的 URL 打开位置",
+        description: "脚本和终端中的 URL 打开位置",
         options: {
           ask: "询问",
           inApp: "在 Paseo 中",

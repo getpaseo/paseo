@@ -2064,7 +2064,7 @@ export const fr: TranslationResources = {
       },
       serviceUrls: {
         label: "URL de services",
-        description: "Où ouvrir les URL à partir de scripts en cours d'exécution",
+        description: "Où ouvrir les URL à partir des scripts et des terminaux",
         options: {
           ask: "Demander",
           inApp: "DansPaseo",
