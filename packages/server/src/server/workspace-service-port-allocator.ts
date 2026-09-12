@@ -7,6 +7,7 @@ const PORT_SCRIPT_TIMEOUT_MS = 10_000;
 const PORT_SCRIPT_MAX_OUTPUT_BYTES = 1024;
 const TCP_PORT_MIN = 1;
 const TCP_PORT_MAX = 65_535;
+const MAX_DEFAULT_PORT_ALLOCATION_ATTEMPTS = 10;
 
 interface PortRange {
   start: number;
@@ -20,6 +21,8 @@ export interface AllocateWorkspaceServicePortOptions {
   workspaceId: string;
   branchName: string | null;
   reservedPorts?: ReadonlySet<number>;
+  /** Number of contiguous ports requested by a workspace-level caller. */
+  portCount?: number;
 }
 
 export async function allocateWorkspaceServicePort(
@@ -33,6 +36,7 @@ export async function allocateWorkspaceServicePort(
       workspaceId: options.workspaceId,
       branchName: options.branchName,
       reservedPorts: options.reservedPorts,
+      portCount: options.portCount,
     });
   }
   if (options.allocation?.range) {
@@ -41,7 +45,17 @@ export async function allocateWorkspaceServicePort(
       options.reservedPorts ?? new Set(),
     );
   }
-  return await findFreePort();
+  return await allocateDefaultPort(options.reservedPorts ?? new Set());
+}
+
+async function allocateDefaultPort(reservedPorts: ReadonlySet<number>): Promise<number> {
+  for (let attempt = 0; attempt < MAX_DEFAULT_PORT_ALLOCATION_ATTEMPTS; attempt += 1) {
+    const port = await findFreePort();
+    if (!reservedPorts.has(port)) return port;
+  }
+  throw new Error(
+    `Could not allocate an unreserved service port after ${MAX_DEFAULT_PORT_ALLOCATION_ATTEMPTS} attempts`,
+  );
 }
 
 async function allocatePortFromScript(options: {
@@ -51,6 +65,7 @@ async function allocatePortFromScript(options: {
   workspaceId: string;
   branchName: string | null;
   reservedPorts: ReadonlySet<number> | undefined;
+  portCount: number | undefined;
 }): Promise<number> {
   let result: { stdout: string; stderr: string };
   try {
@@ -64,6 +79,7 @@ async function allocatePortFromScript(options: {
           PASEO_WORKSPACE_ID: options.workspaceId,
           PASEO_BRANCH_NAME: options.branchName ?? "",
           PASEO_WORKTREE_PATH: options.cwd,
+          ...(options.portCount ? { PASEO_PORT_COUNT: String(options.portCount) } : {}),
         },
         timeout: PORT_SCRIPT_TIMEOUT_MS,
         maxBuffer: PORT_SCRIPT_MAX_OUTPUT_BYTES,
