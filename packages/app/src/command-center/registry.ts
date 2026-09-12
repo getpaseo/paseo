@@ -54,7 +54,8 @@ export function createCommandCenterRegistry(): CommandCenterRegistry {
       for (const contribution of registration.contributions) {
         const id = contributionId(registration.owner.sourceId, contribution.id);
         if (ids.has(id)) {
-          throw new Error(`Duplicate Command Center contribution id: ${id}`);
+          console.warn(`[CommandCenter] Skipping duplicate contribution id: ${id}`);
+          continue;
         }
         ids.add(id);
         contributions.push({ ...contribution, id });
@@ -84,7 +85,7 @@ export function createCommandCenterRegistry(): CommandCenterRegistry {
       const ids = new Set<string>();
       for (const contribution of registration.contributions) {
         const id = contributionId(registration.owner.sourceId, contribution.id);
-        if (ids.has(id)) throw new Error(`Duplicate Command Center contribution id: ${id}`);
+        if (ids.has(id)) { console.warn(`[CommandCenter] Skipping duplicate contribution id: ${id}`); continue; }
         ids.add(id);
       }
       registrations.set(registration.owner.sourceId, registration);
