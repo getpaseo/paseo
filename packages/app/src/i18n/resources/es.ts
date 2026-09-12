@@ -3,6 +3,14 @@ import { pluginSettings } from "./plugin-settings";
 
 export const es: TranslationResources = {
   paneFind: {
+    searchFailed:
+      "No se pudo buscar en este chat. Comprueba la conexión con el host y vuelve a intentarlo.",
+    searching: "Buscando…",
+    loading: "Cargando…",
+    failed: "Error",
+    retry: "Reintentar",
+    chatPosition: "{{current}} de {{total}} en el mensaje",
+
     title: "Buscar",
     placeholder: "Buscar en el panel",
     close: "Cerrar búsqueda",

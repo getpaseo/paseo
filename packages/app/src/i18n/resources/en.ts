@@ -1,5 +1,11 @@
 export const en = {
   paneFind: {
+    searchFailed: "Could not search this chat. Check the host connection and retry.",
+    searching: "Searching…",
+    loading: "Loading…",
+    failed: "Failed",
+    retry: "Retry",
+    chatPosition: "{{current}} of {{total}} in message",
     title: "Find",
     placeholder: "Find in pane",
     close: "Close Find",
