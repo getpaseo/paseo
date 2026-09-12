@@ -148,6 +148,34 @@ Run it locally with the same command owned by the Ubuntu `desktop-tests` require
 npm run test:e2e:browser-tabs --workspace=@getpaseo/desktop
 ```
 
+### macOS terminal keyboard regression
+
+Run `npm run test:e2e:terminal-command-arrows --workspace=@getpaseo/desktop` on a Mac
+after building the server stack and `@getpaseo/expo-two-way-audio`. This launches an
+isolated daemon and the checkout's real Electron app. A browser with a macOS user
+agent cannot verify native Command-arrow behavior.
+
+Set `PASEO_TERMINAL_ARROW_ARTIFACT_DIR` to keep the screenshots, Playwright trace,
+process logs, and results together. The result records the commit, host, and
+macOS/Electron versions. Keep an unpatched run's failure with the patched run's
+evidence so you can tell whether the check catches the original bug.
+
+Assert editing through the command the real shell executes and its output file.
+Use the accessible terminal input and tab controls to check focus and selection;
+do not inspect xterm buffers or install browser probes for assertions.
+
+For a review video, add `-- --record`. Recording uses 22px terminal text, a
+block cursor, visible key labels, and three-second pauses at each checkpoint. The
+demonstration shows both line boundaries before editing, then tab switching, pane
+focus, and moving a tab between panes. Its isolated app settings leave your normal
+desktop settings alone.
+
+The `recording/` directory contains full-resolution Electron frames, their capture
+timestamps, and an FFmpeg concat manifest. Run the FFmpeg arguments listed in
+`recording/recording.json` from that directory to encode the video, including on a
+different host. Keep the original timing; a trace's reduced screenshots make the
+terminal cursor too small to review.
+
 ## Test organization
 
 - Collocate tests with implementation: `thing.ts` + `thing.test.ts`
