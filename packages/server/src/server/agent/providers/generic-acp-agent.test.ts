@@ -82,4 +82,21 @@ describe("GenericACPAgentClient", () => {
       },
     });
   });
+
+  test("uses provider params to wait for asynchronously published slash commands", () => {
+    const _client = new GenericACPAgentClient({
+      logger: createTestLogger(),
+      command: ["zcode-acp-server"],
+      providerParams: {
+        waitForInitialCommands: true,
+        initialCommandsWaitTimeoutMs: 2_000,
+      },
+    });
+    void _client;
+
+    expect(mockState.superConstructorOptions.at(-1)).toMatchObject({
+      waitForInitialCommands: true,
+      initialCommandsWaitTimeoutMs: 2_000,
+    });
+  });
 });

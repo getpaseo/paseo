@@ -21,6 +21,8 @@ import {
 export const GenericACPProviderParamsSchema = z
   .object({
     supportsMcpServers: z.boolean().optional(),
+    waitForInitialCommands: z.boolean().optional(),
+    initialCommandsWaitTimeoutMs: z.number().int().positive().optional(),
     clientCapabilities: z
       .object({
         fs: z
@@ -70,8 +72,10 @@ export class GenericACPAgentClient extends ACPAgentClient {
       },
       defaultCommand: options.command,
       capabilities: buildGenericACPCapabilities(providerParams),
-      waitForInitialCommands: options.waitForInitialCommands,
-      initialCommandsWaitTimeoutMs: options.initialCommandsWaitTimeoutMs,
+      waitForInitialCommands:
+        options.waitForInitialCommands ?? providerParams.waitForInitialCommands,
+      initialCommandsWaitTimeoutMs:
+        options.initialCommandsWaitTimeoutMs ?? providerParams.initialCommandsWaitTimeoutMs,
       clientCapabilities: providerParams.clientCapabilities,
       clientCapabilityMeta: options.clientCapabilityMeta,
       configFeatureOptions: options.configFeatureOptions,
