@@ -1,13 +1,16 @@
 import { expect, test } from "../support/fixtures";
-import { seedWorkspace } from "../support/helpers/seed-client";
-import { buildHostWorkspaceRoute } from "@/utils/host-routes";
-import { getServerId } from "../support/helpers/server-id";
 import {
-  createAgentTabFromMenu,
-  waitForWorkspaceTabsVisible,
-} from "../support/helpers/workspace-tabs";
-import { expectComposerVisible, submitMessage } from "../support/helpers/composer";
-import { readTranscriptColors, THEME_SWITCH_COLORS } from "../support/helpers/markdown-theme";
+  openAgentTranscriptWithCycleHeading,
+  THEME_SWITCH_COLORS,
+  type AgentTranscriptSurface,
+} from "../support/helpers/markdown-theme";
+
+let transcript: AgentTranscriptSurface | null = null;
+
+test.afterEach(async () => {
+  await transcript?.cleanup();
+  transcript = null;
+});
 
 /**
  * getpaseo/paseo#3581 baseline: with System appearance, a live OS scheme switch
@@ -18,33 +21,13 @@ test("markdown repaints after a live system theme switch", async ({ page }) => {
   test.setTimeout(180_000);
 
   await page.emulateMedia({ colorScheme: "dark" });
+  transcript = await openAgentTranscriptWithCycleHeading(page, {
+    repoPrefix: "md-theme-switch-",
+  });
+  await expect(transcript.heading).toHaveCSS("color", THEME_SWITCH_COLORS.dark.heading);
 
-  const workspace = await seedWorkspace({ repoPrefix: "md-theme-switch-" });
+  await page.emulateMedia({ colorScheme: "light" });
 
-  try {
-    await page.goto(buildHostWorkspaceRoute(getServerId(), workspace.workspaceId));
-    await waitForWorkspaceTabsVisible(page);
-    await createAgentTabFromMenu(page);
-    await expectComposerVisible(page);
-
-    const prompt = "Please review the scroll anchor behavior.";
-    await submitMessage(page, prompt);
-    const userMessage = page.getByTestId("user-message").filter({ hasText: prompt });
-    await expect(userMessage).toHaveAttribute("aria-busy", "false", { timeout: 60_000 });
-    await expect(page.getByText("Cycle 1", { exact: false }).first()).toBeVisible({
-      timeout: 30_000,
-    });
-
-    const dark = await readTranscriptColors(page);
-    expect(dark.heading).toBe(THEME_SWITCH_COLORS.dark.heading);
-    expect(dark.sidebar).toBe(THEME_SWITCH_COLORS.dark.sidebar);
-
-    await page.emulateMedia({ colorScheme: "light" });
-    await expect
-      .poll(async () => (await readTranscriptColors(page)).heading, { timeout: 10_000 })
-      .toBe(THEME_SWITCH_COLORS.light.heading);
-    expect((await readTranscriptColors(page)).sidebar).toBe(THEME_SWITCH_COLORS.light.sidebar);
-  } finally {
-    await workspace.cleanup();
-  }
+  await expect(transcript.heading).toHaveCSS("color", THEME_SWITCH_COLORS.light.heading);
+  await expect(transcript.sidebarLabel).toHaveCSS("color", THEME_SWITCH_COLORS.light.sidebar);
 });
