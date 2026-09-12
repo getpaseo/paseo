@@ -1913,6 +1913,7 @@ export const ptBR: TranslationResources = {
     used: "{{percentage}}% usado",
     tokens: "{{used}} / {{max}} tokens",
     sessionCost: "Custo da sessão {{cost}}",
+    pending: "Nenhum uso informado ainda",
     accessibility: "Janela de contexto {{percentage}}% usada",
   },
   review: {

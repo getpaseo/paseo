@@ -263,6 +263,43 @@ describe("ProviderUsageService", () => {
     expect(refreshed.providers[0]?.windows[0]?.usedPct).toBe(2);
   });
 
+  it("still serves the cache when a forced refresh arrives within the floor", async () => {
+    let now = Date.parse("2026-06-19T00:00:00.000Z");
+    let calls = 0;
+    const service = new ProviderUsageService({
+      logger: createLogger(),
+      now: () => now,
+      cacheTtlMs: 60_000,
+      forceRefreshMinIntervalMs: 15_000,
+      fetchers: [
+        {
+          providerId: "claude",
+          displayName: "Claude",
+          fetchUsage: async () => {
+            calls += 1;
+            return {
+              providerId: "claude",
+              displayName: "Claude",
+              status: "available",
+              planLabel: "Max 20x",
+              windows: [{ id: "session", label: "Session", usedPct: calls }],
+            };
+          },
+        },
+      ],
+    });
+
+    const first = await service.listUsage();
+    now += 5_000;
+    const withinFloor = await service.listUsage({ forceRefresh: true });
+    now += 15_000;
+    const beyondFloor = await service.listUsage({ forceRefresh: true });
+
+    expect(withinFloor).toBe(first);
+    expect(beyondFloor.providers[0]?.windows[0]?.usedPct).toBe(2);
+    expect(calls).toBe(2);
+  });
+
   it("deduplicates concurrent cache misses", async () => {
     let calls = 0;
     let resolveUsage: ((usage: ProviderUsage) => void) | null = null;
@@ -570,6 +607,50 @@ describe("real provider usage fetchers", () => {
       "https://api.anthropic.com/api/oauth/usage",
       expect.objectContaining({
         headers: expect.objectContaining({ Authorization: "Bearer at_expired" }),
+      }),
+    );
+  });
+
+  it("prefers the macOS Keychain over a .credentials.json left by other tools", async () => {
+    // Third-party account switchers maintain a file copy that goes stale when
+    // Claude Code renews the Keychain entry behind them; the Keychain is the
+    // canonical store on macOS and must win.
+    writeClaudeCredentials(claudeHome, "at_stale_file");
+    fetchApi = mockFetch(
+      new Map([
+        ["https://api.anthropic.com/api/oauth/usage", () => jsonResponse(makeClaudeResponse())],
+      ]),
+    );
+
+    const result = await service({
+      platform: "darwin",
+      keychain: async () => ({ claudeAiOauth: { accessToken: "at_keychain_fresh" } }),
+    }).listUsage();
+
+    expect(findProvider(result, "claude").status).toBe("available");
+    expect(fetchApi).toHaveBeenCalledWith(
+      "https://api.anthropic.com/api/oauth/usage",
+      expect.objectContaining({
+        headers: expect.objectContaining({ Authorization: "Bearer at_keychain_fresh" }),
+      }),
+    );
+  });
+
+  it("falls back to .credentials.json on macOS when the Keychain is empty", async () => {
+    writeClaudeCredentials(claudeHome, "at_file_only");
+    fetchApi = mockFetch(
+      new Map([
+        ["https://api.anthropic.com/api/oauth/usage", () => jsonResponse(makeClaudeResponse())],
+      ]),
+    );
+
+    const result = await service({ platform: "darwin", keychain: async () => null }).listUsage();
+
+    expect(findProvider(result, "claude").status).toBe("available");
+    expect(fetchApi).toHaveBeenCalledWith(
+      "https://api.anthropic.com/api/oauth/usage",
+      expect.objectContaining({
+        headers: expect.objectContaining({ Authorization: "Bearer at_file_only" }),
       }),
     );
   });
