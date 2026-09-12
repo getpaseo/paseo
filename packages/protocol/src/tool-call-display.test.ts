@@ -190,4 +190,21 @@ describe("shared tool-call display mapping", () => {
       displayName: "Plan",
     });
   });
+
+  it("labels Agent and Workflow subagent cards like Task", () => {
+    for (const name of ["Task", "Agent", "Workflow"]) {
+      const display = buildToolCallDisplayModel({
+        name,
+        status: "running",
+        error: null,
+        detail: { type: "unknown", input: null, output: null },
+        metadata: { subAgentActivity: "Reading src/index.ts" },
+      });
+
+      expect(display, name).toEqual({
+        displayName: "Task",
+        summary: "Reading src/index.ts",
+      });
+    }
+  });
 });

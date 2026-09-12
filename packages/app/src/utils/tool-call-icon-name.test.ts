@@ -53,4 +53,13 @@ describe("resolveToolCallIconName", () => {
 
     expect(icon).toBe("wrench");
   });
+
+  it("uses the bot icon for every subagent tool name", () => {
+    for (const name of ["Task", "Agent", "Workflow"]) {
+      expect(
+        resolveToolCallIconName(name, { type: "unknown", input: null, output: null }),
+        name,
+      ).toBe("bot");
+    }
+  });
 });
