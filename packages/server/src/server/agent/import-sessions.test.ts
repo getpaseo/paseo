@@ -119,11 +119,11 @@ function makeManagedAgent(args: {
 
 function createImportWorkspace(
   workspaceId: string,
-  unarchivedWorkspaceIds: string[] = [],
+  options: { unarchivedWorkspaceIds?: string[] } = {},
 ): Pick<WorkspaceProvisioningService, "runInImportWorkspace" | "ensureWorkspaceRecordUnarchived"> {
   return {
     async ensureWorkspaceRecordUnarchived(workspace) {
-      unarchivedWorkspaceIds.push(workspace.workspaceId);
+      options.unarchivedWorkspaceIds?.push(workspace.workspaceId);
       return { ...workspace, archivedAt: null };
     },
     async runInImportWorkspace(input, operation) {
@@ -779,7 +779,9 @@ class ProviderImportHarness {
         cwd: input.cwd,
         labels: input.labels,
       },
-      workspaceProvisioning: createImportWorkspace("ws-restored", this.unarchivedWorkspaceIds),
+      workspaceProvisioning: createImportWorkspace("ws-restored", {
+        unarchivedWorkspaceIds: this.unarchivedWorkspaceIds,
+      }),
       workspaceRegistry: {
         get: async (workspaceId: string) => this.workspaceRecords.get(workspaceId) ?? null,
       },
