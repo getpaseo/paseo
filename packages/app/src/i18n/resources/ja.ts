@@ -2023,7 +2023,7 @@ export const ja: TranslationResources = {
       },
       serviceUrls: {
         label: "サービスURL",
-        description: "実行中のスクリプトからURLを開く場所",
+        description: "スクリプトやターミナルからURLを開く場所",
         options: {
           ask: "確認する",
           inApp: "Paseoで",

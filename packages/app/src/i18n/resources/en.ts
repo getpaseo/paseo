@@ -2127,7 +2127,7 @@ export const en = {
       },
       serviceUrls: {
         label: "Service URLs",
-        description: "Where to open URLs from running scripts",
+        description: "Where to open URLs from scripts and terminals",
         options: {
           ask: "Ask",
           inApp: "In Paseo",

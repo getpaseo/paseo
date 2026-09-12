@@ -2017,7 +2017,7 @@ export const ko: TranslationResources = {
       },
       serviceUrls: {
         label: "서비스 URL",
-        description: "실행 중인 스크립트의 URL을 열 위치",
+        description: "스크립트 및 터미널의 URL을 열 위치",
         options: {
           ask: "물어보기",
           inApp: "Paseo에서",

@@ -2039,7 +2039,7 @@ export const ptBR: TranslationResources = {
       },
       serviceUrls: {
         label: "URLs de serviço",
-        description: "Onde abrir URLs de scripts em execução",
+        description: "Onde abrir URLs de scripts e terminais",
         options: {
           ask: "Perguntar",
           inApp: "No Paseo",

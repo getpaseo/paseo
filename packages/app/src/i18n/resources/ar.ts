@@ -2006,7 +2006,7 @@ export const ar: TranslationResources = {
       },
       serviceUrls: {
         label: "عناوين URL للخدمة",
-        description: "مكان فتح عناوين URL من تشغيل البرامج النصية",
+        description: "مكان فتح عناوين URL من البرامج النصية والمحطات الطرفية",
         options: {
           ask: "بسأل",
           inApp: "في Paseo",
