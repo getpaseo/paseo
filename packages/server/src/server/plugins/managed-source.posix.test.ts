@@ -4,7 +4,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { runGitCommand } from "../../utils/run-git-command.js";
-import { ManagedPluginSources } from "./managed-source.js";
+import { type ManagedPluginCandidate, ManagedPluginSources } from "./managed-source.js";
 
 const roots: string[] = [];
 
@@ -32,6 +32,10 @@ async function commitAll(repository: string, message: string): Promise<string> {
   await runGitCommand(["commit", "-m", message], { cwd: repository });
   const { stdout } = await runGitCommand(["rev-parse", "HEAD"], { cwd: repository });
   return stdout.trim();
+}
+function expectCandidate(candidate: ManagedPluginCandidate | null): ManagedPluginCandidate {
+  expect(candidate).not.toBeNull();
+  return candidate as ManagedPluginCandidate;
 }
 
 describe("managed Git plugin sources", () => {
@@ -128,8 +132,10 @@ describe("managed Git plugin sources", () => {
       installed.directory,
       releaseCommit,
     );
-    if (!pinned.candidate) throw new Error("Expected an explicit commit candidate");
-    const pinnedCandidate = await sources.place("monorepo-example", pinned.candidate);
+    const pinnedCandidate = await sources.place(
+      "monorepo-example",
+      expectCandidate(pinned.candidate),
+    );
     sources.commit("monorepo-example", pinnedCandidate.record);
     expect(pinnedCandidate.record).toMatchObject({
       remote,
@@ -147,8 +153,10 @@ describe("managed Git plugin sources", () => {
       pinnedCandidate.directory,
       "release",
     );
-    if (!tracking.candidate) throw new Error("Expected an explicit branch candidate");
-    const trackingCandidate = await sources.place("monorepo-example", tracking.candidate);
+    const trackingCandidate = await sources.place(
+      "monorepo-example",
+      expectCandidate(tracking.candidate),
+    );
     sources.commit("monorepo-example", trackingCandidate.record);
     expect(trackingCandidate.record).toMatchObject({
       pluginPath,
@@ -161,8 +169,7 @@ describe("managed Git plugin sources", () => {
     await writeFile(path.join(pluginDirectory, "index.server.ts"), "export const version = 4;\n");
     const trackedCommit = await commitAll(repository, "release update");
     const tracked = await sources.prepareUpdate("monorepo-example", trackingCandidate.directory);
-    if (!tracked.candidate) throw new Error("Expected a tracked branch candidate");
-    expect(tracked.candidate.record).toMatchObject({
+    expect(expectCandidate(tracked.candidate).record).toMatchObject({
       pluginPath,
       commit: trackedCommit,
       requestedRef: "release",
