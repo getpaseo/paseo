@@ -455,7 +455,7 @@ The [Agent Client Protocol (ACP)](https://agentclientprotocol.com) is an open st
 
 ACP agents communicate over JSON-RPC 2.0 on stdio. Paseo spawns the agent process and talks to it through stdin/stdout.
 
-Paseo also ships an in-app ACP provider catalog for common agents, including CodeWhale, Cursor, DeepAgents, DimCode, Gemini CLI, Hermes, Qwen Code, and Kimi Code. Catalog entries create the same `extends: "acp"` provider config shown below.
+Paseo also ships an in-app ACP provider catalog for common agents, including CodeWhale, Cursor, DeepAgents, DeepSeek Harness, DimCode, Gemini CLI, Hermes, Qwen Code, and Kimi Code. Catalog entries create the same `extends: "acp"` provider config shown below.
 
 ### Adding a generic ACP provider
 
@@ -593,6 +593,32 @@ Ref: [Gemini CLI ACP mode docs](https://github.com/google-gemini/gemini-cli/blob
 ```
 
 Ref: [Hermes ACP docs](https://hermes-agent.nousresearch.com/docs/user-guide/features/acp)
+
+### Example: DeepSeek Harness
+
+[DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (`dsh`) ships an automation-only ACP profile. Paseo drives it with `dsh --profile acp`.
+
+1. Install: `npm install -g @deepseek-ai/dsh`
+2. Give the ACP profile a DeepSeek API key: save `DEEPSEEK_API_KEY` in the DSH credential store (`~/.dsh/.credentials.yaml`, which the DSH web Models page writes), or export it in the environment that launches Paseo. The ACP profile defaults to the `deepseek-official` route and needs its own key even when the DSH web UI reaches models through a gateway configured in `settings.yaml`.
+3. Add to config.json:
+
+```json
+{
+  "agents": {
+    "providers": {
+      "dsh": {
+        "extends": "acp",
+        "label": "DeepSeek Harness",
+        "command": ["dsh", "--profile", "acp"]
+      }
+    }
+  }
+}
+```
+
+The model selector offers DSH route tuples, so a model value looks like `["deepseek-official","deepseek-v4-pro"]`. That is the exact string DSH accepts in `session/set_config_option`; quote it when passing `--model`.
+
+Stdio MCP servers need absolute command paths. DSH rejects `session/new` when a stdio server command is a bare binary name.
 
 ### How ACP providers work in Paseo
 
