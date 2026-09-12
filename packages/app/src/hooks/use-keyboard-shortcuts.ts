@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef, useSyncExternalStore } from "react";
 import { usePathname, useRouter } from "expo-router";
 import { getIsElectronRuntime } from "@/constants/layout";
 import { useKeyboardShortcutsStore } from "@/stores/keyboard-shortcuts-store";
@@ -28,18 +28,44 @@ import {
 import { getShortcutOs } from "@/utils/shortcut-platform";
 import { useOpenAddProject } from "@/hooks/use-open-add-project";
 import { useKeyboardShortcutOverrides } from "@/hooks/use-keyboard-shortcut-overrides";
-import { isNative } from "@/constants/platform";
-import { keyboardShortcutsAvailable } from "@/keyboard/availability";
+import { isNative, isWeb } from "@/constants/platform";
+import {
+  keyboardShortcutRoutingAvailable,
+  keyboardShortcutsAvailable,
+} from "@/keyboard/availability";
+import {
+  buildNativeKeyCommands,
+  buildNativeOverlayKeyCommands,
+  keyboardShortcutInputFromCombo,
+} from "@/keyboard/native-shortcuts";
+import {
+  addHardwareKeyboardShortcutListener,
+  setHardwareKeyboardShortcuts,
+} from "@/native/ios-hardware-keyboard-shortcuts";
+import {
+  isNativeTerminalKeyboardClaimed,
+  subscribeNativeTerminalKeyboard,
+} from "@/keyboard/native-terminal-keyboard";
 import { getDesktopHost, isElectronRuntime } from "@/desktop/host";
 import { isImeComposingKeyboardEvent } from "@/utils/keyboard-ime";
 import { buildOpenProjectRoute } from "@/utils/host-routes";
-import { hasActiveWebOverlay } from "@/lib/overlay-root";
+import {
+  dispatchTopNativeOverlayKey,
+  getTopNativeOverlayKeys,
+  hasActiveNativeOverlay,
+  hasActiveWebOverlay,
+  subscribeNativeOverlays,
+} from "@/lib/overlay-root";
 import {
   type ActiveWorkspaceSelection,
   navigateToLastWorkspace,
   useActiveWorkspaceSelection,
 } from "@/stores/navigation-active-workspace-store";
 import { dispatchTopWebOverlayKeyDown } from "@/lib/overlay-root";
+
+function getNativeOverlayKeySignature(): string {
+  return getTopNativeOverlayKeys().join(",");
+}
 
 export function useKeyboardShortcuts({
   enabled,
@@ -65,6 +91,7 @@ export function useKeyboardShortcuts({
   const { overrides } = useKeyboardShortcutOverrides();
   const bindings = useMemo(() => buildEffectiveBindings(overrides), [overrides]);
   const shortcutsAvailable = keyboardShortcutsAvailable({ isNative, isCompact: isMobile });
+  const routingAvailable = keyboardShortcutRoutingAvailable({ isNative, isCompact: isMobile });
   const isDesktopApp = getIsElectronRuntime();
   const isMac = getShortcutOs() === "mac";
   const chordStateRef = useRef<ChordState>({
@@ -76,6 +103,30 @@ export function useKeyboardShortcuts({
   const activeWorkspaceSelection = useActiveWorkspaceSelection();
   const keyboardWorkspaceSelectionRef = useRef<ActiveWorkspaceSelection | null>(null);
   const badgeModifierKeyRef = useRef<string | null | undefined>(undefined);
+  // Stands in for the focus scope the web resolver reads off the DOM: the only
+  // native distinction the registered command list has to make is whether a
+  // terminal owns the keyboard.
+  const isTerminalClaimingKeyboard = useSyncExternalStore(
+    subscribeNativeTerminalKeyboard,
+    isNativeTerminalKeyboardClaimed,
+    isNativeTerminalKeyboardClaimed,
+  );
+  const overlayOpen = useSyncExternalStore(
+    subscribeNativeOverlays,
+    hasActiveNativeOverlay,
+    hasActiveNativeOverlay,
+  );
+  // Joined rather than the array itself: the snapshot has to be referentially
+  // stable across reads or `useSyncExternalStore` loops.
+  const overlayKeySignature = useSyncExternalStore(
+    subscribeNativeOverlays,
+    getNativeOverlayKeySignature,
+    getNativeOverlayKeySignature,
+  );
+  // An overlay paints above the pane and owns Escape while it is open, so it
+  // outranks a terminal claim. The pane keeps its claim underneath and takes
+  // Escape back when the overlay closes.
+  const isTerminalFocused = isTerminalClaimingKeyboard && !overlayOpen;
 
   const publishBrowserShortcutPolicy = useCallback(
     (chordState?: ChordState) => {
@@ -108,8 +159,22 @@ export function useKeyboardShortcuts({
   }, [isDesktopApp, publishBrowserShortcutPolicy]);
 
   useEffect(() => {
+    if (!isNative) return;
+    if (!enabled) {
+      setHardwareKeyboardShortcuts([]);
+      return () => setHardwareKeyboardShortcuts([]);
+    }
+    const overlayKeys = overlayKeySignature === "" ? [] : overlayKeySignature.split(",");
+    setHardwareKeyboardShortcuts([
+      ...buildNativeKeyCommands(bindings, { isTerminalFocused }),
+      ...buildNativeOverlayKeyCommands(overlayKeys),
+    ]);
+    return () => setHardwareKeyboardShortcuts([]);
+  }, [bindings, enabled, isTerminalFocused, overlayKeySignature]);
+
+  useEffect(() => {
     if (!enabled) return;
-    if (!shortcutsAvailable) return;
+    if (!routingAvailable) return;
 
     // Only the modifier that actually performs the workspace-index jump on this
     // runtime should reveal the sidebar number badges (Alt on web, Cmd on
@@ -376,10 +441,39 @@ export function useKeyboardShortcuts({
       resetModifiers();
     };
 
-    window.addEventListener("keydown", handleKeyDown, true);
-    window.addEventListener("keyup", handleKeyUp, true);
-    window.addEventListener("blur", handleBlurOrHide);
-    document.addEventListener("visibilitychange", handleBlurOrHide);
+    if (isWeb) {
+      window.addEventListener("keydown", handleKeyDown, true);
+      window.addEventListener("keyup", handleKeyUp, true);
+      window.addEventListener("blur", handleBlurOrHide);
+      document.addEventListener("visibilitychange", handleBlurOrHide);
+    }
+
+    // iOS delivers the press as a `UIKeyCommand` rather than a key event, so the
+    // combo comes back as the string it was registered under. There is no DOM
+    // target to derive a scope from, so this mirrors what
+    // `resolveKeyboardFocusScope` does with no candidate elements: the command
+    // center when it is open, "other" otherwise. Narrowing further is the
+    // registered list's job — UIKit already picked this command over whatever
+    // holds focus, so a key the terminal needs is never registered.
+    const nativeShortcutSubscription = addHardwareKeyboardShortcutListener(({ combo }) => {
+      // What `dispatchTopWebOverlayKeyDown` does for web: the topmost overlay
+      // gets first refusal before app-wide shortcuts run, and an unhandled key
+      // falls through. Runs before the combo is parsed because a key an overlay
+      // asked for is not a binding and need not resolve to one. Only a bare key
+      // can belong to an overlay — a combo with modifiers is always a binding,
+      // and its combo string is not a key name.
+      if (!combo.includes("+") && dispatchTopNativeOverlayKey(combo)) {
+        return;
+      }
+      const input = keyboardShortcutInputFromCombo(combo);
+      if (!input) {
+        return;
+      }
+      const focusScope = useKeyboardShortcutsStore.getState().commandCenterOpen
+        ? "command-center"
+        : "other";
+      resolveAndPerformShortcut({ event: input, focusScope, domEvent: null });
+    });
 
     const browserShortcutSubscription = isElectronRuntime()
       ? getDesktopHost()?.events?.on?.("browser-shortcut-input", (payload) => {
@@ -404,10 +498,13 @@ export function useKeyboardShortcuts({
           timeoutId: null,
         };
       }
-      window.removeEventListener("keydown", handleKeyDown, true);
-      window.removeEventListener("keyup", handleKeyUp, true);
-      window.removeEventListener("blur", handleBlurOrHide);
-      document.removeEventListener("visibilitychange", handleBlurOrHide);
+      if (isWeb) {
+        window.removeEventListener("keydown", handleKeyDown, true);
+        window.removeEventListener("keyup", handleKeyUp, true);
+        window.removeEventListener("blur", handleBlurOrHide);
+        document.removeEventListener("visibilitychange", handleBlurOrHide);
+      }
+      nativeShortcutSubscription.remove();
       if (typeof browserShortcutSubscription === "function") {
         browserShortcutSubscription();
       } else {
@@ -430,7 +527,7 @@ export function useKeyboardShortcuts({
     publishBrowserShortcutPolicy,
     resetModifiers,
     router,
-    shortcutsAvailable,
+    routingAvailable,
     toggleAgentList,
     toggleBothSidebars,
   ]);
