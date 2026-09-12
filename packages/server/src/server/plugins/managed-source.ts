@@ -41,6 +41,11 @@ interface InstallInput {
   ref?: string;
   pluginPath?: string;
 }
+export interface ManagedPluginUpdateInput {
+  pluginId: string;
+  configuredPath: string;
+  requestedRef?: string;
+}
 
 interface RefResolution {
   commit: string;
@@ -156,11 +161,14 @@ export class ManagedPluginSources {
     };
   }
 
-  async prepareUpdate(
-    pluginId: string,
-    configuredPath: string,
-    requestedRef?: string,
-  ): Promise<{ candidate: ManagedPluginCandidate | null; commits: number }> {
+  async prepareUpdate({
+    pluginId,
+    configuredPath,
+    requestedRef,
+  }: ManagedPluginUpdateInput): Promise<{
+    candidate: ManagedPluginCandidate | null;
+    commits: number;
+  }> {
     const record = this.records[pluginId];
     if (!record) throw new Error(`Plugin is not managed by Git: ${pluginId}`);
     if (requestedRef !== undefined) {

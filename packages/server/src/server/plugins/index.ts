@@ -286,7 +286,13 @@ export class PluginService {
     });
   }
 
-  async updateSources(pluginId?: string, ref?: string): Promise<PluginSourceUpdateItem[]> {
+  async updateSources({
+    pluginId,
+    ref,
+  }: {
+    pluginId?: string;
+    ref?: string;
+  } = {}): Promise<PluginSourceUpdateItem[]> {
     if (ref !== undefined && pluginId === undefined) {
       throw new Error("Plugin --ref requires a plugin ID");
     }
@@ -296,7 +302,7 @@ export class PluginService {
         ? [pluginId]
         : Object.keys(sources).filter((id) => this.managedSources?.get(id));
       const updates: PluginSourceUpdateItem[] = [];
-      for (const id of ids.sort()) updates.push(await this.updateSource(id, ref));
+      for (const id of ids.sort()) updates.push(await this.updateSource({ pluginId: id, ref }));
       return updates;
     });
   }
@@ -533,12 +539,22 @@ export class PluginService {
     assertPluginCompatibility({ ...manifest, version: this.daemonVersion, runtime: "daemon" });
   }
 
-  private async updateSource(pluginId: string, ref?: string): Promise<PluginSourceUpdateItem> {
+  private async updateSource({
+    pluginId,
+    ref,
+  }: {
+    pluginId: string;
+    ref?: string;
+  }): Promise<PluginSourceUpdateItem> {
     const managedSources = this.requireManagedSources();
     const source = this.requireSource(pluginId);
     const previous = managedSources.get(pluginId);
     if (!previous) throw new Error(`Plugin is not managed by Git: ${pluginId}`);
-    const prepared = await managedSources.prepareUpdate(pluginId, source.path, ref);
+    const prepared = await managedSources.prepareUpdate({
+      pluginId,
+      configuredPath: source.path,
+      requestedRef: ref,
+    });
     if (!prepared.candidate) {
       return {
         id: pluginId,

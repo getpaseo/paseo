@@ -75,11 +75,12 @@ describe("managed Git plugin sources", () => {
       commitsBehind: 1,
       updateAvailable: true,
     });
-
-    const prepared = await sources.prepareUpdate("managed-example", candidate.directory);
+    const prepared = await sources.prepareUpdate({
+      pluginId: "managed-example",
+      configuredPath: candidate.directory,
+    });
     expect(prepared.commits).toBe(1);
-    if (!prepared.candidate) throw new Error("Expected an update candidate");
-    const updated = await sources.place("managed-example", prepared.candidate);
+    const updated = await sources.place("managed-example", expectCandidate(prepared.candidate));
     sources.commit("managed-example", updated.record);
     expect(await readFile(path.join(updated.directory, "index.server.ts"), "utf8")).toContain(
       "new Date",
@@ -126,12 +127,11 @@ describe("managed Git plugin sources", () => {
     let installed = await sources.prepareInstall({ source: remote, pluginPath });
     installed = await sources.place("monorepo-example", installed);
     sources.commit("monorepo-example", installed.record);
-
-    const pinned = await sources.prepareUpdate(
-      "monorepo-example",
-      installed.directory,
-      releaseCommit,
-    );
+    const pinned = await sources.prepareUpdate({
+      pluginId: "monorepo-example",
+      configuredPath: installed.directory,
+      requestedRef: releaseCommit,
+    });
     const pinnedCandidate = await sources.place(
       "monorepo-example",
       expectCandidate(pinned.candidate),
@@ -147,12 +147,11 @@ describe("managed Git plugin sources", () => {
     expect(await readFile(path.join(pinnedCandidate.directory, "index.server.ts"), "utf8")).toBe(
       "export const version = 2;\n",
     );
-
-    const tracking = await sources.prepareUpdate(
-      "monorepo-example",
-      pinnedCandidate.directory,
-      "release",
-    );
+    const tracking = await sources.prepareUpdate({
+      pluginId: "monorepo-example",
+      configuredPath: pinnedCandidate.directory,
+      requestedRef: "release",
+    });
     const trackingCandidate = await sources.place(
       "monorepo-example",
       expectCandidate(tracking.candidate),
@@ -168,7 +167,10 @@ describe("managed Git plugin sources", () => {
     await runGitCommand(["checkout", "release"], { cwd: repository });
     await writeFile(path.join(pluginDirectory, "index.server.ts"), "export const version = 4;\n");
     const trackedCommit = await commitAll(repository, "release update");
-    const tracked = await sources.prepareUpdate("monorepo-example", trackingCandidate.directory);
+    const tracked = await sources.prepareUpdate({
+      pluginId: "monorepo-example",
+      configuredPath: trackingCandidate.directory,
+    });
     expect(expectCandidate(tracked.candidate).record).toMatchObject({
       pluginPath,
       commit: trackedCommit,

@@ -375,7 +375,9 @@ describe("PluginService", () => {
     const installedPath = installed.path;
     const installedCommit = installed.commit;
 
-    await expect(service.updateSources("git-update", "missing-ref")).rejects.toThrow();
+    await expect(
+      service.updateSources({ pluginId: "git-update", ref: "missing-ref" }),
+    ).rejects.toThrow();
     expect(await readdir(path.join(home, "plugins", ".staging"))).toEqual([]);
     expect(service.listPlugins()).toEqual([
       expect.objectContaining({
@@ -404,7 +406,9 @@ describe("PluginService", () => {
     const { stdout } = await runGitCommand(["rev-parse", "HEAD"], { cwd: repository });
     const brokenCommit = stdout.trim();
 
-    await expect(service.updateSources("git-update", brokenCommit)).rejects.toThrow();
+    await expect(
+      service.updateSources({ pluginId: "git-update", ref: brokenCommit }),
+    ).rejects.toThrow();
     expect(await readdir(path.join(home, "plugins", ".staging"))).toEqual([]);
     expect(service.catalog()).toEqual([
       expect.objectContaining({ id: "git-update", clientBundle: expect.any(String) }),
@@ -500,7 +504,9 @@ describe("PluginService", () => {
     const { stdout } = await runGitCommand(["rev-parse", "HEAD"], { cwd: repository });
     const updatedCommit = stdout.trim();
 
-    await expect(service.updateSources("prepared-git-plugin", updatedCommit)).resolves.toEqual([
+    await expect(
+      service.updateSources({ pluginId: "prepared-git-plugin", ref: updatedCommit }),
+    ).resolves.toEqual([
       expect.objectContaining({
         id: "prepared-git-plugin",
         currentCommit: updatedCommit,
@@ -582,7 +588,7 @@ describe("PluginService", () => {
     await runGitCommand(["add", "-A"], { cwd: repository });
     await runGitCommand(["commit", "-m", "fixed"], { cwd: repository });
 
-    await expect(service.updateSources("failed-update")).resolves.toEqual([
+    await expect(service.updateSources({ pluginId: "failed-update" })).resolves.toEqual([
       expect.objectContaining({ id: "failed-update", updated: true }),
     ]);
     expect(starts).toHaveLength(2);

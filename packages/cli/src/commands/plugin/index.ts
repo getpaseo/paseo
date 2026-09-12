@@ -27,6 +27,16 @@ interface PluginOptions extends CommandOptions {
   path?: string;
   all?: boolean;
 }
+export interface PluginUpdateDependencies {
+  withPluginSourceClient: typeof withPluginSourceClient;
+  withPluginSourceRefClient: typeof withPluginSourceRefClient;
+}
+
+interface PluginUpdateCommandInput {
+  pluginId: string | undefined;
+  options: PluginOptions;
+  dependencies: PluginUpdateDependencies;
+}
 
 const pluginSchema: OutputSchema<PluginListItem> = {
   idField: "id",
@@ -149,13 +159,28 @@ export async function runPluginUpdateCommand(
   options: PluginOptions,
   _command: Command,
 ): Promise<ListResult<PluginSourceUpdateItem>> {
+  return runPluginUpdateCommandWithDependencies({
+    pluginId,
+    options,
+    dependencies: { withPluginSourceClient, withPluginSourceRefClient },
+  });
+}
+
+export async function runPluginUpdateCommandWithDependencies({
+  pluginId,
+  options,
+  dependencies,
+}: PluginUpdateCommandInput): Promise<ListResult<PluginSourceUpdateItem>> {
   if (options.ref !== undefined && (pluginId === undefined || options.all === true)) {
     throw new Error("--ref requires one plugin ID and cannot be used with --all");
   }
   if ((pluginId === undefined) === (options.all !== true)) {
     throw new Error("Choose one plugin ID or pass --all");
   }
-  const withClient = options.ref !== undefined ? withPluginSourceRefClient : withPluginSourceClient;
+  const withClient =
+    options.ref !== undefined
+      ? dependencies.withPluginSourceRefClient
+      : dependencies.withPluginSourceClient;
   const data = await withClient(options.daemonTarget, (client) =>
     options.ref !== undefined
       ? client.updatePluginSources(pluginId, options.ref)

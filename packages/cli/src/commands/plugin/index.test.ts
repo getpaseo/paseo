@@ -40,15 +40,6 @@ const installPluginSource = vi.fn(async () => ({
   enabled: true,
   status: "running" as const,
 }));
-const updatePluginSources = vi.fn(async () => [
-  {
-    id: "git-plugin",
-    previousCommit: "1557a34c91e2abcdef",
-    currentCommit: "92d85c3a4410fedcba",
-    commits: 1,
-    updated: true,
-  },
-]);
 const close = vi.fn(async () => undefined);
 const features: {
   pluginManagement?: boolean;
@@ -64,18 +55,12 @@ vi.mock("../../utils/client.js", () => ({
     getPluginLogs,
     installDirectoryPlugin,
     installPluginSource,
-    updatePluginSources,
     close,
   })),
 }));
 
 import { render } from "../../output/index.js";
-import {
-  createPluginCommand,
-  runPluginListCommand,
-  runPluginLogsCommand,
-  runPluginUpdateCommand,
-} from "./index.js";
+import { createPluginCommand, runPluginListCommand, runPluginLogsCommand } from "./index.js";
 
 describe("plugin management commands", () => {
   beforeEach(() => {
@@ -203,54 +188,5 @@ describe("plugin management commands", () => {
     });
     expect(installDirectoryPlugin).not.toHaveBeenCalled();
     stderr.mockRestore();
-  });
-
-  it("updates one Git plugin to an explicit ref with human and JSON output", async () => {
-    features.pluginGitRefUpdate = true;
-
-    const result = await runPluginUpdateCommand(
-      "git-plugin",
-      { daemonTarget, ref: "92d85c3a4410fedcba" },
-      {} as never,
-    );
-
-    expect(updatePluginSources).toHaveBeenCalledWith("git-plugin", "92d85c3a4410fedcba");
-    expect(render(result, { noColor: true })).toContain("92d85c3a4410");
-    expect(JSON.parse(render(result, { format: "json" }))).toEqual([
-      {
-        id: "git-plugin",
-        previousCommit: "1557a34c91e2abcdef",
-        currentCommit: "92d85c3a4410fedcba",
-        commits: 1,
-        updated: true,
-      },
-    ]);
-  });
-
-  it("preserves the existing update request when --ref is omitted", async () => {
-    features.pluginGitManagement = true;
-
-    await runPluginUpdateCommand("git-plugin", { daemonTarget }, {} as never);
-
-    expect(updatePluginSources).toHaveBeenCalledWith("git-plugin");
-  });
-
-  it("requires explicit-ref host support and one plugin ID", async () => {
-    features.pluginGitManagement = true;
-
-    await expect(
-      runPluginUpdateCommand(
-        "git-plugin",
-        { daemonTarget, ref: "92d85c3a4410fedcba" },
-        {} as never,
-      ),
-    ).rejects.toMatchObject({
-      code: "DAEMON_UPDATE_REQUIRED",
-      message: "Update the host to update a Git plugin to an explicit ref.",
-    });
-    await expect(
-      runPluginUpdateCommand(undefined, { daemonTarget, all: true, ref: "main" }, {} as never),
-    ).rejects.toThrow("--ref requires one plugin ID and cannot be used with --all");
-    expect(updatePluginSources).not.toHaveBeenCalled();
   });
 });
