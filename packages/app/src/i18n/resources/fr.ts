@@ -156,7 +156,8 @@ export const fr: TranslationResources = {
       initialPromptRequired: "Une invite initiale est requise",
       alreadyLoading: "Déjà en cours de chargement",
       uploadFailed: "Failed to upload file",
-      noClipboardImage: "Aucune image dans le presse-papiers",
+      noClipboardImage:
+        "Aucune image dans le presse-papiers actuel. Essayez de coller depuis votre clavier.",
       pasteImageFailed: "Impossible de coller l’image",
       fileTooLarge: "{{fileName}} is too large (max {{size}})",
     },
