@@ -51,6 +51,16 @@ function evaluate(expression) {
   });
 }
 
+async function waitForNativeClipboardImage() {
+  const deadline = Date.now() + 15000;
+  do {
+    const result = await evaluate("globalThis.__clipboardImageTest");
+    if (result) return result;
+    await delay(100);
+  } while (Date.now() < deadline);
+  assert.fail("Native image persistence timed out");
+}
+
 try {
   // Metro's debugger module table locates the same public service used by the composer.
   // Hermes does not await promises through Runtime.evaluate, so collect the async result.
@@ -73,14 +83,7 @@ try {
     }).then(result => { globalThis.__clipboardImageTest = result; })
       .catch(error => { globalThis.__clipboardImageTest = { error: String(error) }; });
   })()`);
-  let result;
-  const deadline = Date.now() + 15000;
-  do {
-    result = await evaluate("globalThis.__clipboardImageTest");
-    if (result) break;
-    await delay(100);
-  } while (Date.now() < deadline);
-  assert(result, "Native image persistence timed out");
+  const result = await waitForNativeClipboardImage();
   assert.equal(result.error, undefined, result.error);
   assert.equal(result.attachment.storageType, "native-file");
   assert.equal(result.attachment.byteSize, png.length);
