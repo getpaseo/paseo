@@ -120,7 +120,10 @@ export const SidebarWorkspaceRowContent = memo(function SidebarWorkspaceRowConte
   children?: ReactNode;
 }) {
   const {
-    settings: { workspaceTitleSource },
+    settings: {
+      workspaceTitleSource,
+      appearance: { hidePrStatus, hideScriptIndicators },
+    },
   } = useAppSettings();
   const workspaceLabel = resolveSidebarWorkspacePrimaryLabel({ workspace, workspaceTitleSource });
   // The workspace carries label names; their colors live in its host's catalog, so the row is
@@ -167,8 +170,8 @@ export const SidebarWorkspaceRowContent = memo(function SidebarWorkspaceRowConte
             currentBranch={workspace.currentBranch}
             projectName={leadingProjectName}
             hostBadge={hostBadge ?? null}
-            prHint={workspace.prHint}
-            serviceSummary={serviceSummary}
+            prHint={hidePrStatus ? null : workspace.prHint}
+            serviceSummary={hideScriptIndicators ? null : serviceSummary}
             labels={labels}
           />
         </View>

@@ -50,7 +50,7 @@ export function buildStatusSidebarShortcutModel(input: {
   return buildSidebarShortcutSections({
     sections: input.groups.map((group) => ({
       workspaces: group.rows,
-      collapsed: input.collapsedStatusGroupKeys?.has(group.bucket),
+      collapsed: input.collapsedStatusGroupKeys?.has(group.key),
     })),
     shortcutLimit: input.shortcutLimit,
   });

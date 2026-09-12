@@ -33,14 +33,17 @@ import {
   normalizeAppSettings,
   parseClampedFontSize,
   parseTerminalScrollbackLines,
+  RECENTLY_DONE_WINDOW_OPTIONS,
   sanitizeFontFamily,
   saveAppSettings as saveAppSettingsPure,
+  type AppearanceSettings,
   type AppSettings,
   type AppSettingsUpdate,
   type OpenInSidePanePreferences,
   type PullRequestOpenLocation,
   type DesktopSettingsBridge,
   type KeyValueStorage,
+  type RecentlyDoneWindowMinutes,
   type ReleaseChannel,
   type SendBehavior,
   type ServiceUrlBehavior,
@@ -69,9 +72,11 @@ export {
   MIN_UI_BASE_FONT_SIZE,
   parseClampedFontSize,
   parseTerminalScrollbackLines,
+  RECENTLY_DONE_WINDOW_OPTIONS,
   sanitizeFontFamily,
 };
 export type {
+  AppearanceSettings,
   AppSettings,
   AppSettingsUpdate,
   AppLanguage,
@@ -79,6 +84,7 @@ export type {
   PullRequestOpenLocation,
   DesktopSettingsBridge,
   KeyValueStorage,
+  RecentlyDoneWindowMinutes,
   ReleaseChannel,
   SendBehavior,
   ServiceUrlBehavior,
@@ -238,7 +244,7 @@ export function useSettings<TSelected>(
   };
 }
 
-export async function persistAppSettings(updates: Partial<AppSettings>): Promise<void> {
+export async function persistAppSettings(updates: AppSettingsUpdate): Promise<void> {
   await saveAppSettings({ queryClient: appQueryClient, updates });
 }
 

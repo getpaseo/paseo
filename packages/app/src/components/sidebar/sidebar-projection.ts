@@ -1,4 +1,4 @@
-import { buildStatusGroups } from "@/hooks/sidebar-status-view-model";
+import { buildStatusGroups, type RecentlyDoneRecency } from "@/hooks/sidebar-status-view-model";
 import {
   splitPinnedSidebarGroups,
   type PinnedSidebarGroups,
@@ -45,6 +45,7 @@ export interface SidebarProjectionInput {
   pinnedCollapsed: boolean;
   collapsedProjectKeys: ReadonlySet<string>;
   collapsedWorkspaceGroupKeys: ReadonlySet<string>;
+  recency?: RecentlyDoneRecency;
 }
 
 export function buildSidebarProjection(input: SidebarProjectionInput): SidebarProjection {
@@ -100,7 +101,7 @@ function buildWorkspaceGroups(
       return [];
     case "status":
       return statusWorkspaceGroups(
-        buildStatusGroups(unpinnedWorkspaces, input.projectNamesByViewKey),
+        buildStatusGroups(unpinnedWorkspaces, input.projectNamesByViewKey, input.recency),
       );
   }
 }
