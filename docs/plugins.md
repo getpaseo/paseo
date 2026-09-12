@@ -209,6 +209,27 @@ browser globals are not available across the plugin. Put sanctioned web-only API
 [public plugin reference](../public-docs/plugins/v0.8/reference.md#works-on-mobile) for the complete
 pattern.
 
+### Why drawing primitives are host-supplied
+
+`SvgXml` comes from `@getpaseo/plugin/client/react-native` because a plugin cannot bundle
+`react-native-svg` itself. Three things block it, in order:
+
+1. `compileTarget` in `packages/server/src/server/plugins/compiler.ts` builds with esbuild's
+   `neutral` platform and sets no `mainFields`, so a package without an `exports` map does not
+   resolve at all. `react-native-svg` has only `main`, `module`, and `react-native`.
+2. A deep import such as `react-native-svg/lib/module/index.js` skips that and compiles. The
+   resulting bundle still emits `require("react-native/Libraries/Utilities/codegenNativeComponent")`,
+   because esbuild's `react-native` external entry also covers subpaths. The host require shim in
+   `packages/app/src/plugins/evaluate.ts` allows exact specifiers only, so the plugin throws at load
+   on every platform, web included.
+3. The host's copy is compiled by Metro, so React Native's codegen transform has already replaced
+   those calls with static view configs, and it carries
+   `patches/react-native-svg+15.15.3.patch`. A bundled copy would get neither.
+
+Any future drawing primitive lands the same way: export it from the host runtime map in
+`packages/app/src/plugins/react-native/runtime.ts` and declare it in
+`packages/plugin/src/client/react-native.ts`.
+
 ```ts
 // index.server.ts
 import type { PluginServerContext } from "@getpaseo/plugin/server";
