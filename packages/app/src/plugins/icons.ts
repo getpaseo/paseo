@@ -18,7 +18,13 @@ export function resolvePluginIcon(name: string): LucideIcon {
   return icon;
 }
 
-export function Icon({ name, size, color }: PluginIconProps): ReactElement | null {
+export function Icon({
+  name,
+  size,
+  color,
+  accessible,
+  accessibilityLabel,
+}: PluginIconProps): ReactElement | null {
   const icon = findPluginIcon(name);
-  return icon ? createElement(icon, { size, color }) : null;
+  return icon ? createElement(icon, { size, color, accessible, accessibilityLabel }) : null;
 }
