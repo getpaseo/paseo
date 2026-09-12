@@ -17,6 +17,7 @@ import {
   withPluginLogsClient,
   withPluginManagementClient,
   withPluginSourceClient,
+  withPluginSourceRefClient,
 } from "./shared.js";
 
 interface PluginOptions extends CommandOptions {
@@ -25,6 +26,16 @@ interface PluginOptions extends CommandOptions {
   ref?: string;
   path?: string;
   all?: boolean;
+}
+export interface PluginUpdateDependencies {
+  withPluginSourceClient: typeof withPluginSourceClient;
+  withPluginSourceRefClient: typeof withPluginSourceRefClient;
+}
+
+interface PluginUpdateCommandInput {
+  pluginId: string | undefined;
+  options: PluginOptions;
+  dependencies: PluginUpdateDependencies;
 }
 
 const pluginSchema: OutputSchema<PluginListItem> = {
@@ -143,16 +154,37 @@ async function install(
   return { type: "single", data, schema: pluginSchema };
 }
 
-async function update(
+export async function runPluginUpdateCommand(
   pluginId: string | undefined,
   options: PluginOptions,
   _command: Command,
 ): Promise<ListResult<PluginSourceUpdateItem>> {
+  return runPluginUpdateCommandWithDependencies({
+    pluginId,
+    options,
+    dependencies: { withPluginSourceClient, withPluginSourceRefClient },
+  });
+}
+
+export async function runPluginUpdateCommandWithDependencies({
+  pluginId,
+  options,
+  dependencies,
+}: PluginUpdateCommandInput): Promise<ListResult<PluginSourceUpdateItem>> {
+  if (options.ref !== undefined && (pluginId === undefined || options.all === true)) {
+    throw new Error("--ref requires one plugin ID and cannot be used with --all");
+  }
   if ((pluginId === undefined) === (options.all !== true)) {
     throw new Error("Choose one plugin ID or pass --all");
   }
-  const data = await withPluginSourceClient(options.daemonTarget, (client) =>
-    client.updatePluginSources(pluginId),
+  const withClient =
+    options.ref !== undefined
+      ? dependencies.withPluginSourceRefClient
+      : dependencies.withPluginSourceClient;
+  const data = await withClient(options.daemonTarget, (client) =>
+    options.ref !== undefined
+      ? client.updatePluginSources(pluginId, options.ref)
+      : client.updatePluginSources(pluginId),
   );
   return { type: "list", data, schema: pluginUpdateSchema };
 }
@@ -215,8 +247,9 @@ export function createPluginCommand(): Command {
       .command("update")
       .description("Fetch and install Git-managed plugin updates")
       .argument("[id]")
-      .option("--all", "Update every Git-managed plugin"),
-  ).action(withOutput(update));
+      .option("--all", "Update every Git-managed plugin")
+      .option("--ref <ref>", "Git branch, tag, or commit"),
+  ).action(withOutput(runPluginUpdateCommand));
   for (const action of ["reload", "enable", "disable"] as const) {
     addJsonAndDaemonHostOptions(
       plugin.command(action).description(`${action} a plugin`).argument("<id>"),

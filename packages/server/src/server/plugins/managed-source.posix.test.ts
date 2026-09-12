@@ -1,10 +1,10 @@
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { runGitCommand } from "../../utils/run-git-command.js";
-import { ManagedPluginSources } from "./managed-source.js";
+import { type ManagedPluginCandidate, ManagedPluginSources } from "./managed-source.js";
 
 const roots: string[] = [];
 
@@ -32,6 +32,10 @@ async function commitAll(repository: string, message: string): Promise<string> {
   await runGitCommand(["commit", "-m", message], { cwd: repository });
   const { stdout } = await runGitCommand(["rev-parse", "HEAD"], { cwd: repository });
   return stdout.trim();
+}
+function expectCandidate(candidate: ManagedPluginCandidate | null): ManagedPluginCandidate {
+  expect(candidate).not.toBeNull();
+  return candidate as ManagedPluginCandidate;
 }
 
 describe("managed Git plugin sources", () => {
@@ -71,11 +75,12 @@ describe("managed Git plugin sources", () => {
       commitsBehind: 1,
       updateAvailable: true,
     });
-
-    const prepared = await sources.prepareUpdate("managed-example", candidate.directory);
+    const prepared = await sources.prepareUpdate({
+      pluginId: "managed-example",
+      configuredPath: candidate.directory,
+    });
     expect(prepared.commits).toBe(1);
-    if (!prepared.candidate) throw new Error("Expected an update candidate");
-    const updated = await sources.place("managed-example", prepared.candidate);
+    const updated = await sources.place("managed-example", expectCandidate(prepared.candidate));
     sources.commit("managed-example", updated.record);
     expect(await readFile(path.join(updated.directory, "index.server.ts"), "utf8")).toContain(
       "new Date",
@@ -91,6 +96,86 @@ describe("managed Git plugin sources", () => {
       latestCommit: initial,
       commitsBehind: 0,
       updateAvailable: false,
+    });
+  }, 30_000);
+
+  it("updates to explicit commits and branches while preserving a monorepo path", async () => {
+    const repository = await mkdtemp(path.join(tmpdir(), "paseo-plugin-monorepo-"));
+    roots.push(repository);
+    await runGitCommand(["init", "-b", "main"], { cwd: repository });
+    await runGitCommand(["config", "user.name", "Paseo Tests"], { cwd: repository });
+    await runGitCommand(["config", "user.email", "paseo@example.test"], { cwd: repository });
+    const pluginPath = path.join("plugins", "review");
+    const pluginDirectory = path.join(repository, pluginPath);
+    await mkdir(pluginDirectory, { recursive: true });
+    await writeFile(
+      path.join(pluginDirectory, "paseo-plugin.json"),
+      JSON.stringify({ id: "monorepo-example" }),
+    );
+    await writeFile(path.join(pluginDirectory, "index.server.ts"), "export const version = 1;\n");
+    await commitAll(repository, "initial");
+    await writeFile(path.join(pluginDirectory, "index.server.ts"), "export const version = 2;\n");
+    const releaseCommit = await commitAll(repository, "release");
+    await runGitCommand(["branch", "release"], { cwd: repository });
+    await writeFile(path.join(pluginDirectory, "index.server.ts"), "export const version = 3;\n");
+    await commitAll(repository, "main update");
+
+    const home = await mkdtemp(path.join(tmpdir(), "paseo-plugin-git-home-"));
+    roots.push(home);
+    const remote = pathToFileURL(repository).href;
+    const sources = new ManagedPluginSources(home);
+    let installed = await sources.prepareInstall({ source: remote, pluginPath });
+    installed = await sources.place("monorepo-example", installed);
+    sources.commit("monorepo-example", installed.record);
+    const pinned = await sources.prepareUpdate({
+      pluginId: "monorepo-example",
+      configuredPath: installed.directory,
+      requestedRef: releaseCommit,
+    });
+    const pinnedCandidate = await sources.place(
+      "monorepo-example",
+      expectCandidate(pinned.candidate),
+    );
+    sources.commit("monorepo-example", pinnedCandidate.record);
+    expect(pinnedCandidate.record).toMatchObject({
+      remote,
+      pluginPath,
+      commit: releaseCommit,
+      requestedRef: releaseCommit,
+      trackingBranch: null,
+    });
+    expect(await readFile(path.join(pinnedCandidate.directory, "index.server.ts"), "utf8")).toBe(
+      "export const version = 2;\n",
+    );
+    const tracking = await sources.prepareUpdate({
+      pluginId: "monorepo-example",
+      configuredPath: pinnedCandidate.directory,
+      requestedRef: "release",
+    });
+    const trackingCandidate = await sources.place(
+      "monorepo-example",
+      expectCandidate(tracking.candidate),
+    );
+    sources.commit("monorepo-example", trackingCandidate.record);
+    expect(trackingCandidate.record).toMatchObject({
+      pluginPath,
+      commit: releaseCommit,
+      requestedRef: "release",
+      trackingBranch: "release",
+    });
+
+    await runGitCommand(["checkout", "release"], { cwd: repository });
+    await writeFile(path.join(pluginDirectory, "index.server.ts"), "export const version = 4;\n");
+    const trackedCommit = await commitAll(repository, "release update");
+    const tracked = await sources.prepareUpdate({
+      pluginId: "monorepo-example",
+      configuredPath: trackingCandidate.directory,
+    });
+    expect(expectCandidate(tracked.candidate).record).toMatchObject({
+      pluginPath,
+      commit: trackedCommit,
+      requestedRef: "release",
+      trackingBranch: "release",
     });
   }, 30_000);
 });

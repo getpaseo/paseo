@@ -1704,6 +1704,7 @@ paseo plugin add https://git.example.com/owner/repository.git --ref main
 paseo plugin add owner/monorepo:plugins/review
 paseo plugin ls [id]
 paseo plugin update <id>
+paseo plugin update <id> --ref <branch-or-tag-or-commit>
 paseo plugin update --all
 paseo plugin reload my-plugin
 paseo plugin logs my-plugin
@@ -1713,11 +1714,15 @@ paseo plugin remove my-plugin
 ```
 
 `ls` reports runtime state, source details, and the installed commit without contacting the remote.
-Use `update` when you want Paseo to contact a tracked Git remote and install an available update.
+Use `update` without `--ref` to contact the tracked Git remote and install an available update. Use
+`update <id> --ref <ref>` to resolve and install a branch, tag, or commit from the same repository
+while preserving the plugin's monorepo path. An explicit ref requires one plugin ID and cannot be
+combined with `--all`.
 
-Put `--host <url>` before a management command when the target is not the CLI's default daemon. `remove`
-never deletes a directory source; it deletes the managed checkout for a Git source. The install-time
-`--id` is the runtime ID and allows the same directory or repository to be installed more than once.
+Put `--host <url>` before a management command when the target is not the CLI's default daemon.
+`remove` never deletes a directory source; it deletes the managed checkout for a Git source. The
+install-time `--id` is the runtime ID and allows the same directory or repository to be installed
+more than once.
 
 > **Trust every plugin you add.** `paseo plugin add` and `paseo plugin install` mean “I trust this codebase.” Server code and Git preparation commands run unsandboxed with the daemon user's access on the daemon host; client contributions run inside Paseo. Dependencies and future updates are part of that decision. With the global `--host` option, commands run on the remote daemon host.
 
