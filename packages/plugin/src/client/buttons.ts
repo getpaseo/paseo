@@ -32,8 +32,8 @@ export type PluginButtonMenuEntry =
 export interface PluginButton {
   title: string;
   icon: PluginButtonIcon;
-  /** Omit for an icon-only header button. Composer pills use title when omitted. */
-  label?: string;
+  /** Omit to use the placement default. Pass null or an empty string for icon-only. */
+  label?: string | null;
   visible?: boolean;
   disabled?: boolean;
   behavior: PluginButtonBehavior;

@@ -84,6 +84,9 @@ export default function contribute(client) {
   const review = pill("review", { title: "Run review", icon: "Scan", label: "Review", behavior: { kind: "action", async onPress() { await new Promise((resolve) => { finishReview = resolve; }); review.update({ label: "Reviewed" }); } } });
   const pillMenu = pill("checks", { title: "Composer checks", icon: "ListChecks", label: "Checks", behavior: menu });
   pill("usage", { title: "Composer status", icon: StatusIcon, label: "Status", behavior: { kind: "popover", Content: Details } });
+  pill("icon-empty", { title: "Empty label pill", icon: "Scan", label: "", behavior: { kind: "action", onPress() {} } });
+  pill("icon-null", { title: "Null label pill", icon: "Scan", label: null, behavior: { kind: "action", onPress() {} } });
+  pill("label-default", { title: "Default label pill", icon: "Scan", behavior: { kind: "action", onPress() {} } });
   const command = (id, title, onSelect) => client.addCommandCenterItem({ id, title, icon: "Settings", context: "workspace", onSelect });
   command("finish", "Finish deployment", () => finish());
   command("finish-review", "Finish review", () => finishReview());
@@ -312,6 +315,20 @@ export async function withButtonShowcase(
         }),
       openWideMenusAndPopovers: () =>
         test.step("wide buttons have placement-owned labels and chevrons", async () => {
+          for (const title of ["Empty label pill", "Null label pill"]) {
+            const iconOnlyPill = page.getByRole("button", { name: title, exact: true });
+            await expect(iconOnlyPill).toBeVisible();
+            await expect(iconOnlyPill).toHaveText("");
+            await expect
+              .poll(async () => {
+                const box = await iconOnlyPill.boundingBox();
+                return box ? { width: box.width, height: box.height } : null;
+              })
+              .toEqual({ width: 32, height: 32 });
+          }
+          await expect(
+            page.getByRole("button", { name: "Default label pill", exact: true }),
+          ).toHaveText("Default label pill");
           await expect(
             page
               .getByRole("button", { name: "Header checks", exact: true })

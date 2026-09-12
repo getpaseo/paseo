@@ -1335,8 +1335,9 @@ into a shared overflow menu. Placement and overflow are host decisions.
 
 `client.addComposerPill({ id, workspaceId, agentId, button })` uses the same [button descriptor](#button-descriptor)
 and returns the same registration. It targets one agent's composer track alongside Tasks and
-Subagents. Composer pills always show the icon and `label` (or `title` when `label` is omitted).
-They never show a chevron, including for menus and popovers.
+Subagents. Composer pills show the icon and `label` (or `title` when `label` is omitted).
+Pass `null` or an empty string for an icon-only pill. Icon-only pills use a square button without
+text padding. They never show a chevron, including for menus and popovers.
 
 ```tsx
 const pill = client.addComposerPill({
@@ -1365,14 +1366,14 @@ replaces registrations on each snapshot and aborts the observation during entry 
 
 These contracts are exported from `@getpaseo/plugin/client`.
 
-| Field      | Required | Meaning                                                                 |
-| ---------- | -------- | ----------------------------------------------------------------------- |
-| `title`    | Yes      | Non-empty accessible label, tooltip, and sheet title.                   |
-| `icon`     | Yes      | Lucide name or `ComponentType<PluginButtonIconProps>`.                  |
-| `label`    | No       | Non-empty display text. Omit to use the placement's default.            |
-| `visible`  | No       | Defaults to `true`. False removes the trigger and its layout space.     |
-| `disabled` | No       | Defaults to `false`. Keeps the button visible and prevents interaction. |
-| `behavior` | Yes      | One of the three shapes below.                                          |
+| Field      | Required | Meaning                                                                          |
+| ---------- | -------- | -------------------------------------------------------------------------------- |
+| `title`    | Yes      | Non-empty accessible label, tooltip, and sheet title.                            |
+| `icon`     | Yes      | Lucide name or `ComponentType<PluginButtonIconProps>`.                           |
+| `label`    | No       | Display text. Omit for the placement default; pass `null` or `""` for icon-only. |
+| `visible`  | No       | Defaults to `true`. False removes the trigger and its layout space.              |
+| `disabled` | No       | Defaults to `false`. Keeps the button visible and prevents interaction.          |
+| `behavior` | Yes      | One of the three shapes below.                                                   |
 
 ```tsx
 type PluginButtonBehavior =
