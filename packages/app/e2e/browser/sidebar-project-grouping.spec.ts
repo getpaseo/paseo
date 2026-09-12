@@ -1,6 +1,6 @@
 import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { test as base } from "../support/fixtures";
+import { expect, test as base, type Page } from "../support/fixtures";
 import {
   beginWorkspaceFromProject,
   createWorkspaceWithoutAgent,
@@ -19,9 +19,12 @@ import {
   type IsolatedHostDaemon,
   startIsolatedHostDaemon,
 } from "../support/helpers/isolated-host-daemon";
+import { waitForConnectedHost } from "../support/helpers/hosts";
 import { connectSeedClient, type SeedDaemonClient } from "../support/helpers/seed-client";
 import { getServerId } from "../support/helpers/server-id";
+import { selectSettingsHost } from "../support/helpers/settings";
 import { createTempGitRepo } from "../support/helpers/workspace";
+import { waitForSidebarHydration } from "../support/helpers/workspace-ui";
 
 const PRIMARY_HOST_LABEL = "Primary Host";
 const SECONDARY_HOST_LABEL = "Secondary Host";
@@ -41,6 +44,19 @@ interface HostConnection {
 interface ProjectDirectoryScenario {
   hosts: HostConnection[];
   primaryLabel?: string;
+}
+
+interface CrossHostProjectScenario extends ProjectDirectoryScenario {
+  primaryProjectId: string;
+  primaryProjectPath: string;
+  secondaryProjectId: string;
+  secondaryProjectPath: string;
+}
+
+interface PersistedLocalProjectLink {
+  id: string;
+  members: Array<{ serverId: string; projectId: string }>;
+  identity: { repository: string; subdirectory: string };
 }
 
 interface CreatedProject {
@@ -79,7 +95,7 @@ async function removePersistedProjectKeys(host: IsolatedHostDaemon): Promise<voi
 }
 
 const test = base.extend<{
-  crossHostProject: ProjectDirectoryScenario;
+  crossHostProject: CrossHostProjectScenario;
   reconciledCrossHostProject: ProjectDirectoryScenario;
   rootAndSubdirectoryProjects: ProjectDirectoryScenario;
   crossHostSubdirectoryProject: ProjectDirectoryScenario;
@@ -113,6 +129,10 @@ const test = base.extend<{
       });
       await provide({
         primaryLabel: PRIMARY_HOST_LABEL,
+        primaryProjectId: primary.projectId,
+        primaryProjectPath: primaryRepo.path,
+        secondaryProjectId: secondary.projectId,
+        secondaryProjectPath: secondaryRepo.path,
         hosts: [
           {
             serverId: secondaryHost.serverId,
@@ -329,6 +349,57 @@ async function openScenario(
   await openProjectDirectoryWithHosts(page, scenario);
 }
 
+function localProjectLinkFor(scenario: CrossHostProjectScenario): PersistedLocalProjectLink {
+  const secondaryHost = scenario.hosts[0];
+  if (!secondaryHost) throw new Error("Expected a secondary host for the local project link.");
+  return {
+    id: "project-link-e2e",
+    members: [
+      { serverId: getServerId(), projectId: scenario.primaryProjectId },
+      { serverId: secondaryHost.serverId, projectId: scenario.secondaryProjectId },
+    ],
+    identity: {
+      repository: "github.com/paseo-e2e/grouped-project",
+      subdirectory: "",
+    },
+  };
+}
+
+async function reloadWithLocalProjectLinks(
+  page: Page,
+  scenario: ProjectDirectoryScenario,
+  links: PersistedLocalProjectLink[],
+): Promise<void> {
+  await page.evaluate((storedLinks) => {
+    const seedNonce = localStorage.getItem("@paseo:e2e-seed-nonce");
+    if (!seedNonce)
+      throw new Error("Expected e2e seed nonce before restoring local project links.");
+    localStorage.setItem(
+      "local-project-links",
+      JSON.stringify({ state: { links: storedLinks }, version: 0 }),
+    );
+    localStorage.setItem("@paseo:e2e-disable-default-seed-once", seedNonce);
+  }, links);
+  await page.reload();
+  for (const host of scenario.hosts) {
+    await waitForConnectedHost(page, {
+      serverId: host.serverId,
+      endpoint: `localhost:${host.port}`,
+    });
+  }
+  await waitForSidebarHydration(page);
+}
+
+async function openProjectsSettings(page: Page, serverId: string): Promise<void> {
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await selectSettingsHost(page, serverId);
+  await page.getByRole("button", { name: "Projects", exact: true }).click();
+}
+
+function projectUnlinkTestId(serverId: string, projectId: string): string {
+  return `project-unlink-${JSON.stringify([serverId, projectId])}`;
+}
+
 test.describe("Sidebar project grouping", () => {
   test.describe.configure({ timeout: 120_000 });
 
@@ -341,6 +412,67 @@ test.describe("Sidebar project grouping", () => {
       projectName: GROUPED_PROJECT_NAME,
       workspaceNames: ["Primary workspace", "Secondary workspace"],
     });
+  });
+
+  test("reviews and unlinks a device-local cross-host project link", async ({
+    page,
+    crossHostProject,
+  }) => {
+    await openScenario(page, crossHostProject);
+    await reloadWithLocalProjectLinks(page, crossHostProject, [
+      localProjectLinkFor(crossHostProject),
+    ]);
+    await openProjectsSettings(page, getServerId());
+
+    await expect(page.getByTestId("project-links-banner")).toBeVisible();
+    await page.getByTestId("project-links-review").click();
+
+    const sheet = page.getByTestId("project-links-sheet");
+    await expect(sheet).toBeVisible();
+    await expect(sheet).toContainText("github.com/paseo-e2e/grouped-project");
+    await expect(sheet).toContainText(PRIMARY_HOST_LABEL);
+    await expect(sheet).toContainText(SECONDARY_HOST_LABEL);
+    await expect(sheet).toContainText(crossHostProject.primaryProjectPath);
+    await expect(sheet).toContainText(crossHostProject.secondaryProjectPath);
+
+    await page
+      .getByTestId(projectUnlinkTestId(getServerId(), crossHostProject.primaryProjectId))
+      .click();
+    await expect(sheet.getByTestId("project-links-no-matches")).toBeVisible();
+
+    await page.getByTestId("project-links-close").click();
+    await expect(page.getByTestId("project-links-banner")).toHaveCount(0);
+  });
+
+  test("keeps saved project links reachable after their host project is removed", async ({
+    page,
+    crossHostProject,
+  }) => {
+    await openScenario(page, crossHostProject);
+    const primaryClient = await connectSeedClient();
+    try {
+      await primaryClient.removeProject(crossHostProject.primaryProjectId);
+    } finally {
+      await primaryClient.close();
+    }
+    await reloadWithLocalProjectLinks(page, crossHostProject, [
+      localProjectLinkFor(crossHostProject),
+    ]);
+    await openProjectsSettings(page, getServerId());
+
+    await expect(page.getByText("No projects yet", { exact: true })).toBeVisible();
+    await expect(page.getByTestId("project-links-banner")).toBeVisible();
+    await page.getByTestId("project-links-review").click();
+
+    const sheet = page.getByTestId("project-links-sheet");
+    await expect(sheet).toBeVisible();
+    await expect(
+      sheet.getByText("This project is not currently available.", { exact: true }),
+    ).toBeVisible();
+    await page
+      .getByTestId(projectUnlinkTestId(getServerId(), crossHostProject.primaryProjectId))
+      .click();
+    await expect(sheet.getByTestId("project-links-no-matches")).toBeVisible();
   });
 
   test("groups persisted projects missing project keys after boot", async ({
