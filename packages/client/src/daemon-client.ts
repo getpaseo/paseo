@@ -25,6 +25,7 @@ import {
   SessionInboundMessageSchema,
   type ActiveTurnBehavior,
   type ServerInfoStatusPayload,
+  type TerminalDefaultColors,
 } from "@getpaseo/protocol/messages";
 import { validateWSOutboundMessage } from "@getpaseo/protocol/validation/ws-outbound";
 import type {
@@ -5448,6 +5449,7 @@ export class DaemonClient {
       args?: string[];
       workspaceId?: string;
       size?: { rows: number; cols: number };
+      defaultColors?: TerminalDefaultColors;
     },
   ): Promise<CreateTerminalPayload> {
     const resolvedRequestId = this.createRequestId(requestId);
@@ -5460,6 +5462,7 @@ export class DaemonClient {
       args: options?.args,
       ...(options?.workspaceId !== undefined ? { workspaceId: options.workspaceId } : {}),
       ...(options?.size !== undefined ? { size: options.size } : {}),
+      ...(options?.defaultColors !== undefined ? { defaultColors: options.defaultColors } : {}),
       requestId: resolvedRequestId,
     });
     return this.sendCorrelatedRequest({

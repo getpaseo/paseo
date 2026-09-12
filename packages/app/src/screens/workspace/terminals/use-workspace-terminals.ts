@@ -7,6 +7,7 @@ import type { WorkspaceDescriptor } from "@/stores/session-store";
 import { useTranslation } from "react-i18next";
 import { useReplicaQuery } from "@/data/query";
 import { workspaceTerminalsPushRoute } from "@/data/push-router";
+import { getActiveTerminalDefaultColors } from "@/utils/terminal-default-colors";
 import {
   buildTerminalsQueryKey,
   canCreateWorkspaceTerminal,
@@ -134,14 +135,17 @@ export function useWorkspaceTerminals(input: UseWorkspaceTerminalsInput) {
         throw new Error(t("workspace.terminal.hostDisconnected"));
       }
       const profile = _input.profile ? resolveTerminalProfileLaunch(_input.profile, "") : undefined;
+      const defaultColors = getActiveTerminalDefaultColors();
       const payload = profile
         ? await client.createTerminal(workspaceDirectory, profile.name, undefined, {
             command: profile.command,
             args: profile.args,
             workspaceId: normalizedWorkspaceId || undefined,
+            defaultColors,
           })
         : await client.createTerminal(workspaceDirectory, undefined, undefined, {
             workspaceId: normalizedWorkspaceId || undefined,
+            defaultColors,
           });
       // The daemon reports a failed spawn (e.g. a profile command that isn't
       // installed) via payload.error with a null terminal. Surface it instead
