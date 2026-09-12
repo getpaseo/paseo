@@ -60,7 +60,9 @@ and listens only for the root `.git` entry, with a slow rescan as a missed-event
 for empty projects and without connected clients, then fans metadata changes through the WebSocket
 server to capability-aware sessions. It deliberately does not use the broad recursive working-tree
 watcher or the per-session Git observer: those are checkout/status mechanisms and intentionally do
-not retain non-Git directories.
+not retain non-Git directories. The startup pass updates metadata without archiving missing
+directories; the periodic full pass owns missing-directory archival so an external volume has time
+to mount after login.
 
 **Key modules:**
 

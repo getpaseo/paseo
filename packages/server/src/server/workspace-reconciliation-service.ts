@@ -284,9 +284,9 @@ export class WorkspaceReconciliationService {
     return result;
   }
 
-  /** Runs the boot-time convergence path and publishes every affected workspace. */
+  /** Runs the boot-time availability-safe pass and publishes every affected workspace. */
   async reconcileNow(): Promise<void> {
-    await this.reconcileObservedGitMetadata("full");
+    await this.reconcileObservedGitMetadata("metadata");
   }
 
   private async reconcileGitMetadataForProjects(
