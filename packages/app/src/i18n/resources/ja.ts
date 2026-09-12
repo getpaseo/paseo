@@ -2647,6 +2647,18 @@ export const ja: TranslationResources = {
         teardown: "削除時",
         teardownAccessibility: "ワークツリー削除時のコマンド",
       },
+      env: {
+        updateHost: "プロジェクトの環境変数を使用するにはホストを更新してください。",
+        title: "Env",
+        info: "このプロジェクトの新しいエージェント、ライフサイクルフック、ターミナル、スクリプトに追加する環境変数",
+        accessibility: "プロジェクトの環境変数",
+        placeholder: "API_URL=https://example.com\nDEBUG=1",
+        errors: {
+          missing_equals: "{{line}} 行目は KEY=value 形式で入力してください",
+          invalid_key: "{{line}} 行目の変数名が無効です",
+          duplicate_key: "{{line}} 行目で変数名が重複しています",
+        },
+      },
       scripts: {
         title: "スクリプト",
         info: "このプロジェクトのどのエージェントからでも起動できる、長時間実行サービスと単発コマンド",

@@ -2746,6 +2746,18 @@ export const en = {
         teardown: "Teardown",
         teardownAccessibility: "Worktree teardown commands",
       },
+      env: {
+        updateHost: "Update the host to use project environment variables.",
+        title: "Env",
+        info: "Environment variables added to new agents, lifecycle hooks, terminals, and scripts in this project",
+        accessibility: "Project environment variables",
+        placeholder: "API_URL=https://example.com\nDEBUG=1",
+        errors: {
+          missing_equals: "Line {{line}} must use KEY=value",
+          invalid_key: "Line {{line}} has an invalid variable name",
+          duplicate_key: "Line {{line}} repeats a variable name",
+        },
+      },
       scripts: {
         title: "Scripts",
         info: "Long-running services and one-off commands you can launch from any agent in this project",

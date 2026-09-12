@@ -2670,6 +2670,18 @@ export const ru: TranslationResources = {
         teardown: "Удаление",
         teardownAccessibility: "Команды удаления worktree",
       },
+      env: {
+        updateHost: "Обновите хост, чтобы использовать переменные окружения проекта.",
+        title: "Env",
+        info: "Переменные окружения для новых агентов, lifecycle-команд, терминалов и скриптов этого проекта",
+        accessibility: "Переменные окружения проекта",
+        placeholder: "API_URL=https://example.com\nDEBUG=1",
+        errors: {
+          missing_equals: "В строке {{line}} ожидается формат KEY=value",
+          invalid_key: "В строке {{line}} указано некорректное имя переменной",
+          duplicate_key: "В строке {{line}} повторяется имя переменной",
+        },
+      },
       scripts: {
         title: "Скрипты",
         info: "Долго работающие сервисы и одноразовые команды, которые можно запускать из любого агента этого проекта.",

@@ -25,6 +25,7 @@ export interface ProjectConfigDraft {
   setupOriginalKind: LifecycleOriginalKind;
   teardownText: string;
   teardownOriginalKind: LifecycleOriginalKind;
+  envText: string;
   scripts: ProjectScriptDraft[];
   metadataPrompts: Record<MetadataPromptKey, string>;
   metadataGenerationBase: PaseoMetadataGeneration | undefined;
@@ -33,6 +34,38 @@ export interface ProjectConfigDraft {
 interface LifecycleProjection {
   text: string;
   kind: LifecycleOriginalKind;
+}
+
+const ENV_KEY_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+export type ProjectEnvParseResult =
+  | { ok: true; env: Record<string, string> }
+  | { ok: false; line: number; reason: "missing_equals" | "invalid_key" | "duplicate_key" };
+
+export function formatProjectEnv(env: Record<string, string> | null | undefined): string {
+  return Object.entries(env ?? {})
+    .map(([key, value]) => `${key}=${value}`)
+    .join("\n");
+}
+
+export function parseProjectEnv(text: string): ProjectEnvParseResult {
+  const env = new Map<string, string>();
+  for (const [index, rawLine] of text.split(/\r?\n/).entries()) {
+    if (rawLine.trim().length === 0) continue;
+    const separatorIndex = rawLine.indexOf("=");
+    if (separatorIndex < 0) {
+      return { ok: false, line: index + 1, reason: "missing_equals" };
+    }
+    const key = rawLine.slice(0, separatorIndex);
+    if (!ENV_KEY_PATTERN.test(key)) {
+      return { ok: false, line: index + 1, reason: "invalid_key" };
+    }
+    if (env.has(key)) {
+      return { ok: false, line: index + 1, reason: "duplicate_key" };
+    }
+    env.set(key, rawLine.slice(separatorIndex + 1));
+  }
+  return { ok: true, env: Object.fromEntries(env) };
 }
 
 function projectLifecycle(value: unknown): LifecycleProjection {
@@ -140,6 +173,7 @@ export function configToDraft(config: PaseoConfigRaw | null | undefined): Projec
     setupOriginalKind: setup.kind,
     teardownText: teardown.text,
     teardownOriginalKind: teardown.kind,
+    envText: formatProjectEnv(worktree.env),
     scripts,
     metadataPrompts,
     metadataGenerationBase: metadataGeneration,
@@ -170,6 +204,15 @@ export function applyDraftToConfig(input: ApplyDraftInput): PaseoConfigRaw {
     delete nextWorktree.teardown;
   } else {
     nextWorktree.teardown = nextTeardown;
+  }
+  const parsedEnv = parseProjectEnv(input.draft.envText);
+  if (!parsedEnv.ok) {
+    throw new Error(`Invalid project environment on line ${parsedEnv.line}`);
+  }
+  if (Object.keys(parsedEnv.env).length === 0) {
+    delete nextWorktree.env;
+  } else {
+    nextWorktree.env = parsedEnv.env;
   }
 
   const nextScripts: Record<string, PaseoScriptEntryRaw> = {};

@@ -26,6 +26,7 @@ import {
   emitLiveTimelineItemIfAgentKnown,
 } from "../timeline-append.js";
 import { resolveCreateAgentIntent } from "./intent.js";
+import { getWorktreeProjectEnv } from "../../../utils/paseo-config-file.js";
 
 export interface CreateAgentSessionWorktreeResult {
   sessionConfig: AgentSessionConfig;
@@ -171,6 +172,17 @@ interface ResolvedCreateAgent {
   createdWorktree?: CreatePaseoWorktreeWorkflowResult;
 }
 
+export function resolveCreateAgentEnv(
+  cwd: string,
+  requestEnv: Record<string, string> | undefined,
+): Record<string, string> | undefined {
+  const workspaceEnv = getWorktreeProjectEnv(cwd);
+  if (Object.keys(workspaceEnv).length === 0 && !requestEnv) {
+    return undefined;
+  }
+  return { ...workspaceEnv, ...requestEnv };
+}
+
 export async function createAgentCommand(
   dependencies: CreateAgentCommandDependencies,
   input: CreateAgentCommandInput,
@@ -276,13 +288,14 @@ async function resolveSessionCreateAgent(
         }
       : undefined;
   const workspaceId = setupContinuation ? createdWorkspaceId : input.workspaceId;
+  const agentEnv = resolveCreateAgentEnv(sessionConfig.cwd, input.env);
 
   return {
     config: sessionConfig,
     createOptions: {
       labels: input.labels,
       initialPrompt: trimmedPrompt,
-      env: input.env,
+      env: agentEnv,
       initialTitle: input.provisionalTitle,
       // A legacy git/worktreeName worktree creates a fresh workspace, so the
       // agent belongs to that workspace, not the source one. createdWorkspaceId
@@ -344,6 +357,7 @@ async function resolveMcpCreateAgent(
   });
 
   const trimmedPrompt = input.initialPrompt?.trim() ?? "";
+  const agentEnv = resolveCreateAgentEnv(intent.cwd, input.env);
   return {
     config: buildMcpSessionConfig({
       input,
@@ -358,7 +372,7 @@ async function resolveMcpCreateAgent(
       ...(Object.keys(intent.labels).length > 0 ? { labels: intent.labels } : {}),
       workspaceId: intent.workspaceId,
       owner: input.owner,
-      env: input.env,
+      env: agentEnv,
     },
     prompt: trimmedPrompt ? trimmedPrompt : undefined,
     setupContinuation,

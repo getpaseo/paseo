@@ -2679,6 +2679,18 @@ export const es: TranslationResources = {
         teardown: "Demoler",
         teardownAccessibility: "Comandos de desmontaje del árbol de trabajo",
       },
+      env: {
+        updateHost: "Actualiza el host para usar variables de entorno del proyecto.",
+        title: "Env",
+        info: "Variables de entorno para agentes, hooks, terminales y scripts nuevos de este proyecto",
+        accessibility: "Variables de entorno del proyecto",
+        placeholder: "API_URL=https://example.com\nDEBUG=1",
+        errors: {
+          missing_equals: "La línea {{line}} debe usar KEY=value",
+          invalid_key: "La línea {{line}} tiene un nombre de variable no válido",
+          duplicate_key: "La línea {{line}} repite un nombre de variable",
+        },
+      },
       scripts: {
         title: "Scripts",
         info: "Servicios de larga duración y comandos únicos que puede iniciar desde cualquier agente en este proyecto",

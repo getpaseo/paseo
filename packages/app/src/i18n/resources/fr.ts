@@ -2686,6 +2686,18 @@ export const fr: TranslationResources = {
         teardown: "Démolir",
         teardownAccessibility: "Commandes de démontage de Worktree",
       },
+      env: {
+        updateHost: "Mettez à jour l’hôte pour utiliser les variables d’environnement du projet.",
+        title: "Env",
+        info: "Variables d'environnement pour les nouveaux agents, hooks, terminaux et scripts de ce projet",
+        accessibility: "Variables d'environnement du projet",
+        placeholder: "API_URL=https://example.com\nDEBUG=1",
+        errors: {
+          missing_equals: "La ligne {{line}} doit utiliser KEY=value",
+          invalid_key: "La ligne {{line}} contient un nom de variable invalide",
+          duplicate_key: "La ligne {{line}} répète un nom de variable",
+        },
+      },
       scripts: {
         title: "Scripts",
         info: "Services de longue durée et commandes ponctuelles que vous pouvez lancer à partir de n'importe quel agent de ce projet",

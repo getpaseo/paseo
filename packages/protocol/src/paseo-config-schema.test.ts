@@ -49,6 +49,32 @@ describe("paseo config schema", () => {
     });
   });
 
+  it("parses project environment variables", () => {
+    expect(
+      PaseoConfigSchema.parse({
+        worktree: {
+          env: { API_URL: "https://example.com", DEBUG: "1", EMPTY: "" },
+        },
+      }),
+    ).toEqual({
+      worktree: {
+        setup: [],
+        teardown: [],
+        env: { API_URL: "https://example.com", DEBUG: "1", EMPTY: "" },
+      },
+    });
+  });
+
+  it("rejects non-string project environment variable values", () => {
+    expect(() => PaseoConfigRawSchema.parse({ worktree: { env: { DEBUG: true } } })).toThrow();
+  });
+
+  it("rejects invalid project environment variable names", () => {
+    expect(() =>
+      PaseoConfigRawSchema.parse({ worktree: { env: { "BAD KEY": "value" } } }),
+    ).toThrow();
+  });
+
   it("rejects invalid service port ranges", () => {
     expect(() =>
       PaseoConfigRawSchema.parse({ worktree: { servicePorts: { range: "4000-3000" } } }),

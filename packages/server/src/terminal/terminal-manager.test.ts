@@ -2,7 +2,15 @@ import { it, expect, afterEach } from "vitest";
 import { isPlatform } from "../test-utils/platform.js";
 import { createTerminalManager, type TerminalManager } from "./terminal-manager.js";
 import type { TerminalWorkspaceContributionChangedEvent } from "./terminal-manager.js";
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync } from "node:fs";
+import {
+  existsSync,
+  mkdtempSync,
+  mkdirSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -179,6 +187,45 @@ it("does not reject Windows absolute paths as relative", async () => {
     await manager.createTerminal({ cwd, workspaceId: "ws-test" });
   } catch (error) {
     expect((error as Error).message).not.toBe("cwd must be absolute path");
+  }
+});
+
+it("reads project env for each new terminal without an agent and honors explicit overrides", async () => {
+  manager = createTerminalManager();
+  const cwd = mkdtempSync(join(tmpdir(), "terminal-project-env-"));
+  temporaryDirs.push(cwd);
+  const configPath = join(cwd, "paseo.json");
+  manager.registerCwdEnv({ cwd, env: { PASEO_WORKTREE_PORT: "45678" } });
+
+  for (const [index, env] of [
+    { PASEO_TEST_PROJECT: "first", PASEO_TEST_REMOVED: "present", PASEO_TEST_OVERRIDE: "project" },
+    { PASEO_TEST_PROJECT: "updated" },
+    {},
+  ].entries()) {
+    writeFileSync(configPath, JSON.stringify({ worktree: { env } }));
+    const markerPath = join(cwd, `env-${index}.json`);
+    await manager.createTerminal({
+      workspaceId: "ws-test",
+      cwd,
+      command: process.execPath,
+      args: [
+        "-e",
+        `require('fs').writeFileSync(${JSON.stringify(markerPath)}, JSON.stringify({
+        project: process.env.PASEO_TEST_PROJECT,
+        removed: process.env.PASEO_TEST_REMOVED,
+        override: process.env.PASEO_TEST_OVERRIDE,
+        port: process.env.PASEO_WORKTREE_PORT,
+      }))`,
+      ],
+      env: { PASEO_TEST_OVERRIDE: "explicit" },
+    });
+    await waitForCondition(() => existsSync(markerPath), 10000);
+    expect(JSON.parse(readFileSync(markerPath, "utf8"))).toEqual({
+      project: env.PASEO_TEST_PROJECT,
+      removed: env.PASEO_TEST_REMOVED,
+      override: "explicit",
+      port: "45678",
+    });
   }
 });
 
