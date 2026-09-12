@@ -4,8 +4,8 @@ import type { ProviderSnapshotEntry } from "@getpaseo/protocol/agent-types";
 import { compactProviderSnapshot } from "@getpaseo/protocol/provider-snapshot-codec";
 import { createProviderSnapshotCache, type ProviderSnapshotCache } from "./provider-snapshot-cache";
 
-const SNAPSHOT_KEY_PREFIX = "@paseo/provider-snapshot/v2:";
-const SNAPSHOT_INDEX_KEY = "@paseo/provider-snapshot-index/v2";
+const SNAPSHOT_KEY_PREFIX = "@paseo/provider-snapshot/v3:";
+const SNAPSHOT_INDEX_KEY = "@paseo/provider-snapshot-index/v3";
 function createStorage(maxSnapshotBytes = Number.POSITIVE_INFINITY) {
   const values = new Map<string, string>();
   const stats = { getAllKeysCalls: 0 };

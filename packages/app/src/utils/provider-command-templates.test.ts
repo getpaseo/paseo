@@ -1,6 +1,26 @@
 import { describe, expect, test } from "vitest";
+import type { ProviderSnapshotEntry } from "@getpaseo/protocol/agent-types";
 
-import { buildProviderCommand } from "@/utils/provider-command-templates";
+import {
+  buildProviderCommand,
+  ProviderResumeCommandUnavailableError,
+  resolveProviderResumeCommand,
+  resolveProviderResumeCommandOutcome,
+} from "@/utils/provider-command-templates";
+
+function snapshotEntry(
+  provider: string,
+  derivedFromProviderId?: string | null,
+  canUseDefaultResumeCommand: ProviderSnapshotEntry["canUseDefaultResumeCommand"] = true,
+): Pick<
+  ProviderSnapshotEntry,
+  "provider" | "derivedFromProviderId" | "canUseDefaultResumeCommand"
+> {
+  return { provider, derivedFromProviderId, canUseDefaultResumeCommand };
+}
+
+const neverCalledSnapshot = () =>
+  Promise.reject(new Error("getProviderSnapshot should not have been called"));
 
 describe("buildProviderCommand", () => {
   test("builds Hermes resume commands from native session ids", () => {
@@ -21,5 +41,317 @@ describe("buildProviderCommand", () => {
         sessionId: "ses_abc123",
       }),
     ).toBe("opencode --session ses_abc123");
+  });
+
+  test("builds Claude resume commands for built-in Claude without a snapshot", () => {
+    expect(
+      buildProviderCommand({
+        provider: "claude",
+        id: "resume",
+        sessionId: "example-session",
+      }),
+    ).toBe("claude --resume example-session");
+  });
+
+  test("builds Codex resume commands for built-in Codex without a snapshot", () => {
+    expect(
+      buildProviderCommand({
+        provider: "codex",
+        id: "resume",
+        sessionId: "example-session",
+      }),
+    ).toBe("codex resume example-session");
+  });
+
+  test("builds Pi resume commands for built-in Pi without a snapshot", () => {
+    expect(
+      buildProviderCommand({
+        provider: "pi",
+        id: "resume",
+        sessionId: "example-session",
+      }),
+    ).toBe("pi --session example-session");
+  });
+
+  test("builds OMP resume commands for built-in OMP without a snapshot", () => {
+    expect(
+      buildProviderCommand({
+        provider: "omp",
+        id: "resume",
+        sessionId: "example-session",
+      }),
+    ).toBe("omp --session example-session");
+  });
+
+  test("falls back to the derived provider template for a custom Claude provider", () => {
+    expect(
+      buildProviderCommand({
+        provider: "my-claude",
+        id: "resume",
+        sessionId: "example-session",
+        providerSnapshot: [snapshotEntry("my-claude", "claude", true)],
+      }),
+    ).toBe("claude --resume example-session");
+  });
+
+  test("falls back to the derived provider template for a custom Codex provider", () => {
+    expect(
+      buildProviderCommand({
+        provider: "my-codex",
+        id: "resume",
+        sessionId: "example-session",
+        providerSnapshot: [snapshotEntry("my-codex", "codex", true)],
+      }),
+    ).toBe("codex resume example-session");
+  });
+
+  test("returns null for an unknown provider with no derivable template", () => {
+    expect(
+      buildProviderCommand({
+        provider: "unknown",
+        id: "resume",
+        sessionId: "example-session",
+      }),
+    ).toBeNull();
+  });
+
+  test("returns null for a custom ACP provider that does not extend a templated provider", () => {
+    expect(
+      buildProviderCommand({
+        provider: "my-agent",
+        id: "resume",
+        sessionId: "example-session",
+        providerSnapshot: [snapshotEntry("my-agent", null, true)],
+      }),
+    ).toBeNull();
+  });
+
+  test("refuses the built-in template when the snapshot says the command is overridden", () => {
+    expect(
+      buildProviderCommand({
+        provider: "claude",
+        id: "resume",
+        sessionId: "example-session",
+        providerSnapshot: [snapshotEntry("claude", null, false)],
+      }),
+    ).toBeNull();
+  });
+
+  test("refuses the inherited template for a custom provider that overrides its command", () => {
+    expect(
+      buildProviderCommand({
+        provider: "my-codex",
+        id: "resume",
+        sessionId: "example-session",
+        providerSnapshot: [snapshotEntry("my-codex", "codex", false)],
+      }),
+    ).toBeNull();
+  });
+
+  test("refuses the inherited template for a custom provider that appends to its command", () => {
+    expect(
+      buildProviderCommand({
+        provider: "my-codex",
+        id: "resume",
+        sessionId: "example-session",
+        providerSnapshot: [snapshotEntry("my-codex", "codex", false)],
+      }),
+    ).toBeNull();
+  });
+
+  test("refuses the inherited template for a custom provider with a false safety flag", () => {
+    expect(
+      buildProviderCommand({
+        provider: "my-codex",
+        id: "resume",
+        sessionId: "example-session",
+        providerSnapshot: [snapshotEntry("my-codex", "codex", false)],
+      }),
+    ).toBeNull();
+  });
+});
+
+describe("resolveProviderResumeCommand", () => {
+  test("resolves built-in Codex locally when providerAncestry is not advertised", async () => {
+    await expect(
+      resolveProviderResumeCommand({
+        provider: "codex",
+        sessionId: "example-session",
+        supportsProviderAncestry: false,
+        getProviderSnapshot: neverCalledSnapshot,
+      }),
+    ).resolves.toBe("codex resume example-session");
+  });
+
+  test("resolves built-in Claude locally when providerAncestry is not advertised", async () => {
+    await expect(
+      resolveProviderResumeCommand({
+        provider: "claude",
+        sessionId: "example-session",
+        supportsProviderAncestry: false,
+        getProviderSnapshot: neverCalledSnapshot,
+      }),
+    ).resolves.toBe("claude --resume example-session");
+  });
+
+  test("resolves Hermes locally when providerAncestry is not advertised", async () => {
+    await expect(
+      resolveProviderResumeCommand({
+        provider: "hermes",
+        sessionId: "20260813_111500_abc123",
+        supportsProviderAncestry: false,
+        getProviderSnapshot: neverCalledSnapshot,
+      }),
+    ).resolves.toBe("hermes --resume 20260813_111500_abc123");
+  });
+
+  test("keeps Hermes unavailable on current daemons when the snapshot reports an ACP transport launcher", async () => {
+    await expect(
+      resolveProviderResumeCommand({
+        provider: "hermes",
+        sessionId: "20260813_111500_abc123",
+        supportsProviderAncestry: true,
+        getProviderSnapshot: () => Promise.resolve([snapshotEntry("hermes", null, false)]),
+      }),
+    ).rejects.toThrow(ProviderResumeCommandUnavailableError);
+  });
+
+  test("resolves built-in Codex from the authoritative snapshot when providerAncestry is advertised", async () => {
+    await expect(
+      resolveProviderResumeCommand({
+        provider: "codex",
+        sessionId: "example-session",
+        supportsProviderAncestry: true,
+        getProviderSnapshot: () => Promise.resolve([snapshotEntry("codex", null, true)]),
+      }),
+    ).resolves.toBe("codex resume example-session");
+  });
+
+  test("rejects a customized built-in provider when providerAncestry is advertised", async () => {
+    await expect(
+      resolveProviderResumeCommand({
+        provider: "codex",
+        sessionId: "example-session",
+        supportsProviderAncestry: true,
+        getProviderSnapshot: () => Promise.resolve([snapshotEntry("codex", null, false)]),
+      }),
+    ).rejects.toThrow(ProviderResumeCommandUnavailableError);
+  });
+
+  test("rejects a built-in provider when the authoritative snapshot is unavailable", async () => {
+    await expect(
+      resolveProviderResumeCommand({
+        provider: "codex",
+        sessionId: "example-session",
+        supportsProviderAncestry: true,
+        getProviderSnapshot: () => Promise.resolve(undefined),
+      }),
+    ).rejects.toThrow(ProviderResumeCommandUnavailableError);
+  });
+
+  test("rejects a custom provider when providerAncestry is not advertised", async () => {
+    await expect(
+      resolveProviderResumeCommand({
+        provider: "my-codex",
+        sessionId: "example-session",
+        supportsProviderAncestry: false,
+        getProviderSnapshot: neverCalledSnapshot,
+      }),
+    ).rejects.toThrow(ProviderResumeCommandUnavailableError);
+  });
+
+  test("falls back to the ancestor template for a custom provider when providerAncestry is advertised", async () => {
+    await expect(
+      resolveProviderResumeCommand({
+        provider: "my-codex",
+        sessionId: "example-session",
+        supportsProviderAncestry: true,
+        getProviderSnapshot: () => Promise.resolve([snapshotEntry("my-codex", "codex", true)]),
+      }),
+    ).resolves.toBe("codex resume example-session");
+  });
+
+  test("rejects a custom provider with an overridden command even when ancestry is advertised", async () => {
+    await expect(
+      resolveProviderResumeCommand({
+        provider: "my-codex",
+        sessionId: "example-session",
+        supportsProviderAncestry: true,
+        getProviderSnapshot: () => Promise.resolve([snapshotEntry("my-codex", "codex", false)]),
+      }),
+    ).rejects.toThrow(ProviderResumeCommandUnavailableError);
+  });
+
+  test("rejects a custom provider that appends to its command", async () => {
+    await expect(
+      resolveProviderResumeCommand({
+        provider: "my-codex",
+        sessionId: "example-session",
+        supportsProviderAncestry: true,
+        getProviderSnapshot: () => Promise.resolve([snapshotEntry("my-codex", "codex", false)]),
+      }),
+    ).rejects.toThrow(ProviderResumeCommandUnavailableError);
+  });
+
+  test("rejects a custom provider with an absent canUseDefaultResumeCommand", async () => {
+    await expect(
+      resolveProviderResumeCommand({
+        provider: "my-codex",
+        sessionId: "example-session",
+        supportsProviderAncestry: true,
+        getProviderSnapshot: () =>
+          Promise.resolve([
+            { ...snapshotEntry("my-codex", "codex"), canUseDefaultResumeCommand: undefined },
+          ]),
+      }),
+    ).rejects.toThrow(ProviderResumeCommandUnavailableError);
+  });
+
+  test("does not silently reuse a fallback command when the snapshot source is unavailable", async () => {
+    await expect(
+      resolveProviderResumeCommand({
+        provider: "my-codex",
+        sessionId: "example-session",
+        supportsProviderAncestry: true,
+        getProviderSnapshot: () => Promise.resolve(undefined),
+      }),
+    ).rejects.toThrow(ProviderResumeCommandUnavailableError);
+  });
+
+  test("propagates unexpected snapshot errors instead of masking them as unavailable", async () => {
+    await expect(
+      resolveProviderResumeCommand({
+        provider: "my-codex",
+        sessionId: "example-session",
+        supportsProviderAncestry: true,
+        getProviderSnapshot: () => Promise.reject(new Error("network failure")),
+      }),
+    ).rejects.toThrow("network failure");
+  });
+});
+
+describe("resolveProviderResumeCommandOutcome", () => {
+  test("classifies unsupported providers as unavailable", async () => {
+    await expect(
+      resolveProviderResumeCommandOutcome({
+        provider: "my-codex",
+        sessionId: "example-session",
+        supportsProviderAncestry: false,
+        getProviderSnapshot: neverCalledSnapshot,
+      }),
+    ).resolves.toEqual({ status: "unavailable" });
+  });
+
+  test("returns unexpected snapshot failures without rejecting or classifying them as unavailable", async () => {
+    const snapshotError = new Error("network failure");
+
+    await expect(
+      resolveProviderResumeCommandOutcome({
+        provider: "my-codex",
+        sessionId: "example-session",
+        supportsProviderAncestry: true,
+        getProviderSnapshot: () => Promise.reject(snapshotError),
+      }),
+    ).resolves.toEqual({ status: "failed", error: snapshotError });
   });
 });

@@ -10,9 +10,11 @@ import { z } from "zod";
 import type { GetProvidersSnapshotResponseMessage } from "@getpaseo/protocol/messages";
 type SnapshotPayload = GetProvidersSnapshotResponseMessage["payload"];
 
-const CACHE_VERSION = 2;
-const CACHE_KEY_PREFIX = "@paseo/provider-snapshot/v2";
-const CACHE_INDEX_KEY = "@paseo/provider-snapshot-index/v2";
+// COMPAT(providerSnapshotAncestry): bump v2 to v3 to force fresh snapshots after adding
+// derivedFromProviderId/canUseDefaultResumeCommand. Remove legacy v2 cleanup after 2027-03-15.
+const CACHE_VERSION = 3;
+const CACHE_KEY_PREFIX = "@paseo/provider-snapshot/v3";
+const CACHE_INDEX_KEY = "@paseo/provider-snapshot-index/v3";
 const DEFAULT_MAX_CACHE_BYTES = 4 * 1024 * 1024;
 
 interface ProviderSnapshotStorage {
@@ -130,7 +132,9 @@ export function createProviderSnapshotCache(
     const legacyKeys = allKeys.filter(
       (key) =>
         key.startsWith("@paseo/provider-snapshot/v1:") ||
+        key.startsWith("@paseo/provider-snapshot/v2:") ||
         key === "@paseo/provider-snapshot-index/v1" ||
+        key === "@paseo/provider-snapshot-index/v2" ||
         key === CACHE_INDEX_KEY,
     );
     if (legacyKeys.length) await storage.multiRemove(legacyKeys);

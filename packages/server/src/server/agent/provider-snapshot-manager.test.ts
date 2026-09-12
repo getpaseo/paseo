@@ -282,6 +282,90 @@ describe("ProviderSnapshotManager public surface", () => {
     }
   });
 
+  test("snapshot entries include derivedFromProviderId for custom providers", () => {
+    const manager = new ProviderSnapshotManager({
+      logger: createTestLogger(),
+      providerOverrides: {
+        "zai-claude": { extends: "claude", label: "ZAI", enabled: true },
+        "qwen-codex": { extends: "codex", label: "Qwen Code", enabled: true },
+        "my-acp": { extends: "acp", label: "My ACP", enabled: true, command: ["my-acp"] },
+      },
+    });
+    try {
+      const snapshot = manager.getSnapshot("/tmp/project").records.map(({ entry }) => entry);
+      const claude = snapshot.find((entry) => entry.provider === "claude");
+      const zaiClaude = snapshot.find((entry) => entry.provider === "zai-claude");
+      const qwenCodex = snapshot.find((entry) => entry.provider === "qwen-codex");
+      const myAcp = snapshot.find((entry) => entry.provider === "my-acp");
+      expect(claude?.derivedFromProviderId).toBeNull();
+      expect(claude?.canUseDefaultResumeCommand).toBe(true);
+      expect(zaiClaude?.derivedFromProviderId).toBe("claude");
+      expect(zaiClaude?.canUseDefaultResumeCommand).toBe(true);
+      expect(qwenCodex?.derivedFromProviderId).toBe("codex");
+      expect(qwenCodex?.canUseDefaultResumeCommand).toBe(true);
+      expect(myAcp?.derivedFromProviderId).toBeNull();
+      expect(myAcp?.canUseDefaultResumeCommand).toBe(false);
+    } finally {
+      manager.destroy();
+    }
+  });
+
+  test("snapshot entries report unsafe default resume without exposing custom env", () => {
+    const manager = new ProviderSnapshotManager({
+      logger: createTestLogger(),
+      providerOverrides: {
+        codex: {
+          env: { OPENAI_API_KEY: "secret", OPENAI_BASE_URL: "https://example.com" },
+        },
+        "zai-claude": {
+          extends: "claude",
+          label: "ZAI",
+          enabled: true,
+          env: { ANTHROPIC_API_KEY: "secret", ANTHROPIC_BASE_URL: "https://example.com" },
+        },
+      },
+    });
+    try {
+      const snapshot = manager.getSnapshot("/tmp/project").records.map(({ entry }) => entry);
+      const codex = snapshot.find((entry) => entry.provider === "codex");
+      const zaiClaude = snapshot.find((entry) => entry.provider === "zai-claude");
+      expect(codex?.canUseDefaultResumeCommand).toBe(false);
+      expect(codex).not.toMatchObject({ env: expect.anything() });
+      expect(zaiClaude?.derivedFromProviderId).toBe("claude");
+      expect(zaiClaude?.canUseDefaultResumeCommand).toBe(false);
+      expect(zaiClaude).not.toMatchObject({ env: expect.anything() });
+    } finally {
+      manager.destroy();
+    }
+  });
+
+  test("snapshot entries report unsafe default resume for replaced and appended commands", () => {
+    const manager = new ProviderSnapshotManager({
+      logger: createTestLogger(),
+      runtimeSettings: {
+        codex: { command: { mode: "append", args: ["--profile", "work"] } },
+      },
+      providerOverrides: {
+        "my-codex": { extends: "codex", label: "My Codex", enabled: true },
+        "my-claude": {
+          extends: "claude",
+          label: "My Claude",
+          enabled: true,
+          command: ["claude-nightly"],
+        },
+      },
+    });
+    try {
+      const snapshot = manager.getSnapshot("/tmp/project").records.map(({ entry }) => entry);
+      const myCodex = snapshot.find((entry) => entry.provider === "my-codex");
+      const myClaude = snapshot.find((entry) => entry.provider === "my-claude");
+      expect(myCodex?.canUseDefaultResumeCommand).toBe(false);
+      expect(myClaude?.canUseDefaultResumeCommand).toBe(false);
+    } finally {
+      manager.destroy();
+    }
+  });
+
   test("getSnapshot returns loading entries for built-in providers before warmup", () => {
     const manager = new ProviderSnapshotManager({ logger: createTestLogger() });
     try {
