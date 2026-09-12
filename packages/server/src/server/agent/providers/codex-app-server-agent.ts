@@ -4662,6 +4662,22 @@ export class CodexAppServerAgentSession implements AgentSession {
   }
 
   private resolvePlanPermission(requestId: string, resolution: AgentPermissionResponse): void {
+    this.recordPlanOutcome(requestId, resolution.behavior === "allow" ? "approved" : "rejected");
+    this.pendingPermissionHandlers.delete(requestId);
+    this.pendingPermissions.delete(requestId);
+    this.resolvedPermissionRequests.add(requestId);
+    this.emitEvent({
+      type: "permission_resolved",
+      provider: CODEX_PROVIDER,
+      requestId,
+      resolution,
+    });
+  }
+
+  private recordPlanOutcome(
+    requestId: string,
+    outcome: "approved" | "rejected" | "canceled",
+  ): void {
     const plan = this.pendingPermissionHandlers.get(requestId)?.plan;
     if (plan) {
       this.emitEvent({
@@ -4672,22 +4688,13 @@ export class CodexAppServerAgentSession implements AgentSession {
           type: "tool_call",
           callId: requestId,
           name: "plan_approval",
-          status: "completed",
+          status: outcome === "canceled" ? "canceled" : "completed",
           error: null,
           detail: { type: "plan", text: plan.text },
-          metadata: { approved: resolution.behavior === "allow" },
+          metadata: outcome === "canceled" ? {} : { approved: outcome === "approved" },
         },
       });
     }
-    this.pendingPermissionHandlers.delete(requestId);
-    this.pendingPermissions.delete(requestId);
-    this.resolvedPermissionRequests.add(requestId);
-    this.emitEvent({
-      type: "permission_resolved",
-      provider: CODEX_PROVIDER,
-      requestId,
-      resolution,
-    });
   }
 
   private emitDeniedToolCallTimelineEvent(params: {
@@ -4857,6 +4864,9 @@ export class CodexAppServerAgentSession implements AgentSession {
     for (const [requestId, pending] of this.pendingPermissionHandlers) {
       if (options?.preservePlanApprovals && pending.kind === "plan") {
         continue;
+      }
+      if (pending.kind === "plan") {
+        this.recordPlanOutcome(requestId, "canceled");
       }
       pending.resolve({ decision: "cancel" });
       this.pendingPermissionHandlers.delete(requestId);
