@@ -2634,6 +2634,18 @@ export const ko: TranslationResources = {
         teardown: "정리",
         teardownAccessibility: "워크트리 정리 명령",
       },
+      env: {
+        updateHost: "프로젝트 환경 변수를 사용하려면 호스트를 업데이트하세요.",
+        title: "Env",
+        info: "이 프로젝트의 새 에이전트, 수명 주기 훅, 터미널 및 스크립트에 추가할 환경 변수",
+        accessibility: "프로젝트 환경 변수",
+        placeholder: "API_URL=https://example.com\nDEBUG=1",
+        errors: {
+          missing_equals: "{{line}}행은 KEY=value 형식이어야 합니다",
+          invalid_key: "{{line}}행의 변수 이름이 올바르지 않습니다",
+          duplicate_key: "{{line}}행에 중복된 변수 이름이 있습니다",
+        },
+      },
       scripts: {
         title: "스크립트",
         info: "이 프로젝트의 모든 에이전트에서 실행할 수 있는 장기 실행 서비스 및 일회성 명령",

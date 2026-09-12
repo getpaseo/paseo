@@ -238,6 +238,35 @@ test.describe("Projects settings", () => {
     await expectNoUncommittedSetupWarning(page);
   });
 
+  test("user validates and saves project environment variables", async ({
+    page,
+    editableProject,
+  }, testInfo) => {
+    await openProjects(page);
+    await openProjectSettings(page, editableProject.name);
+    const input = page.getByRole("textbox", { name: "Project environment variables" });
+    await input.fill("MISSING_EQUALS");
+    await input.blur();
+    await expect(page.getByTestId("env-error")).toContainText("Line 1 must use KEY=value");
+    await expectSaveButtonDisabled(page);
+
+    await input.fill("PASEO_TEST_PROJECT=from-settings\nEMPTY=\nURL=https://example.com?a=b");
+    await input.blur();
+    await clickSaveProjectSettings(page);
+    await expect
+      .poll(async () => JSON.parse(await readProjectConfigFile(editableProject)).worktree.env)
+      .toEqual({ PASEO_TEST_PROJECT: "from-settings", EMPTY: "", URL: "https://example.com?a=b" });
+    await returnToProjectsList(page);
+    await openProjectSettings(page, editableProject.name);
+    await expect(input).toHaveValue(
+      "PASEO_TEST_PROJECT=from-settings\nEMPTY=\nURL=https://example.com?a=b",
+    );
+    await testInfo.attach("Project environment settings", {
+      body: await page.screenshot({ fullPage: true }),
+      contentType: "image/png",
+    });
+  });
+
   test("project navigation stays inside the selected host", async ({ page, editableProject }) => {
     await openProjects(page);
     await openProjectSettings(page, editableProject.name);

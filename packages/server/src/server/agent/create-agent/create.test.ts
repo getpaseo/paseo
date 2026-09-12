@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test, vi } from "vitest";
@@ -225,6 +225,52 @@ test("mcp create accepts provider-only internal input and leaves model undefined
       workspaceId: "ws-create-test",
     }),
   );
+});
+
+test("session create passes project env and request overrides to the provider", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "create-agent-project-env-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const clients = createTestAgentClients();
+  const createSession = vi.spyOn(clients.codex, "createSession");
+  const agentManager = new AgentManager({ clients, registry: storage, logger });
+  try {
+    writeFileSync(
+      join(workdir, "paseo.json"),
+      JSON.stringify({
+        worktree: { env: { PASEO_TEST_PROJECT: "project", PASEO_TEST_OVERRIDE: "project" } },
+      }),
+    );
+    await createAgentCommand(
+      {
+        agentManager,
+        agentStorage: storage,
+        logger,
+        providerSnapshotManager: createProviderSnapshotManagerStub().manager,
+      },
+      {
+        kind: "session",
+        config: { provider: "codex", cwd: workdir },
+        workspaceId: "ws-source",
+        labels: {},
+        provisionalTitle: null,
+        env: { PASEO_TEST_OVERRIDE: "request" },
+        firstAgentContext: { attachments: [] },
+        buildSessionConfig: async (config) => ({ sessionConfig: config }),
+      },
+    );
+    expect(createSession).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        env: expect.objectContaining({
+          PASEO_TEST_PROJECT: "project",
+          PASEO_TEST_OVERRIDE: "request",
+        }),
+      }),
+      undefined,
+    );
+  } finally {
+    await removeRealAgentManagerWorkdir({ agentManager, storage, workdir });
+  }
 });
 
 test("session create stamps the requested workspaceId when no worktree setup runs", async () => {

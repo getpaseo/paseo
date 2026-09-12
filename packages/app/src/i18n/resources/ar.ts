@@ -2620,6 +2620,18 @@ export const ar: TranslationResources = {
         teardown: "هدم",
         teardownAccessibility: "أوامر هدم شجرة العمل",
       },
+      env: {
+        updateHost: "حدّث المضيف لاستخدام متغيرات بيئة المشروع.",
+        title: "Env",
+        info: "متغيرات البيئة للوكلاء وخطافات دورة الحياة والمحطات الطرفية والبرامج النصية الجديدة في هذا المشروع",
+        accessibility: "متغيرات بيئة المشروع",
+        placeholder: "API_URL=https://example.com\nDEBUG=1",
+        errors: {
+          missing_equals: "يجب أن يستخدم السطر {{line}} التنسيق KEY=value",
+          invalid_key: "يحتوي السطر {{line}} على اسم متغير غير صالح",
+          duplicate_key: "يكرر السطر {{line}} اسم متغير",
+        },
+      },
       scripts: {
         title: "البرامج النصية",
         info: "خدمات طويلة الأمد وأوامر لمرة واحدة يمكنك إطلاقها من أي وكيل في هذا المشروع",

@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 const TCP_PORT_RANGE_PATTERN = /^(\d{1,5})-(\d{1,5})$/;
+const ENV_VAR_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
 export const PaseoServicePortAllocationSchema = z
   .object({
@@ -47,6 +48,7 @@ export const PaseoWorktreeConfigRawSchema = z
   .object({
     setup: PaseoLifecycleCommandRawSchema.optional(),
     teardown: PaseoLifecycleCommandRawSchema.optional(),
+    env: z.record(z.string().regex(ENV_VAR_NAME_PATTERN), z.string()).optional(),
     terminals: z.unknown().optional(),
     servicePorts: PaseoServicePortAllocationSchema.optional(),
   })

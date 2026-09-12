@@ -1,3 +1,4 @@
+import { getWorktreeProjectEnv } from "../utils/paseo-config-file.js";
 import {
   createTerminal,
   type TerminalActivityTransition,
@@ -327,8 +328,8 @@ export function createTerminalManager(
       const terminals = terminalsByCwd.get(options.cwd) ?? [];
       const defaultName = `Terminal ${terminals.length + 1}`;
       const inheritedEnv = resolveDefaultEnvForCwd(options.cwd);
-      const mergedEnv =
-        inheritedEnv || options.env ? { ...inheritedEnv, ...options.env } : undefined;
+      const projectEnv = getWorktreeProjectEnv(options.cwd);
+      const mergedEnv = { ...projectEnv, ...inheritedEnv, ...options.env };
       const terminalId = options.id ?? randomUUID();
       const activityToken = options.activityToken ?? createActivityToken();
       const terminalActivityUrl =

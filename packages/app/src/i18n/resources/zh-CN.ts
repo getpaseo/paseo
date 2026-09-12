@@ -2588,6 +2588,18 @@ export const zhCN: TranslationResources = {
         teardown: "Teardown",
         teardownAccessibility: "Worktree teardown 命令",
       },
+      env: {
+        updateHost: "请更新主机以使用项目环境变量。",
+        title: "Env",
+        info: "添加到此项目的新代理、生命周期钩子、终端和脚本中的环境变量",
+        accessibility: "项目环境变量",
+        placeholder: "API_URL=https://example.com\nDEBUG=1",
+        errors: {
+          missing_equals: "第 {{line}} 行必须使用 KEY=value 格式",
+          invalid_key: "第 {{line}} 行的变量名无效",
+          duplicate_key: "第 {{line}} 行重复了变量名",
+        },
+      },
       scripts: {
         title: "Scripts",
         info: "可从此 Project 中任意 Agent 启动的长期服务和一次性命令",
