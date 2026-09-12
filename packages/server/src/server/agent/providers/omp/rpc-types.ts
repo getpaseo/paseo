@@ -466,6 +466,11 @@ const OmpSubagentEventSchema = z
   })
   .passthrough();
 
+/** OMP emits this bare signal on every session model switch, including the
+ * automatic fallback→primary restore; the new model arrives via getState. */
+export const OmpModelChangedEventSchema = z
+  .object({ type: z.literal("model_changed") })
+  .passthrough();
 export const OmpRuntimeEventSchema = z.discriminatedUnion("type", [
   ...OmpAgentSessionEventSchema.options,
   OmpExtensionUiRequestSchema,
@@ -494,6 +499,7 @@ export const OmpRuntimeEventSchema = z.discriminatedUnion("type", [
   OmpRpcHostToolCallRequestSchema,
   OmpRpcHostToolCancelRequestSchema,
   OmpRpcHostToolUpdateSchema,
+  OmpModelChangedEventSchema,
 ]);
 
 const OmpCommandBase = { id: z.string().optional() };

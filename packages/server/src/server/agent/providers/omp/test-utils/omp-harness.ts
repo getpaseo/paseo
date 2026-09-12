@@ -397,6 +397,17 @@ export class OmpHarness {
   eventTypes(): AgentStreamEvent["type"][] {
     return this.events.map((event) => event.type);
   }
+  modelChanges() {
+    return this.events.flatMap((event) =>
+      event.type === "model_changed" ? [event.runtimeInfo] : [],
+    );
+  }
+  async runtimeInfo() {
+    return await this.requireSession().getRuntimeInfo();
+  }
+  persistence() {
+    return this.requireSession().describePersistence();
+  }
 
   async history(): Promise<AgentTimelineItem[]> {
     const items: AgentTimelineItem[] = [];

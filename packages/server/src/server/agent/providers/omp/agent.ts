@@ -83,6 +83,7 @@ import type {
   OmpSessionState,
   OmpThinkingLevel,
 } from "./rpc-types.js";
+import { OmpThinkingLevelSchema } from "./rpc-types.js";
 import {
   parseToolArgs,
   parseToolResult,
@@ -487,6 +488,19 @@ function modelToId(model: OmpModel | null | undefined): string | null {
   return model?.provider && model.id ? `${model.provider}/${model.id}` : null;
 }
 
+const OMP_THINKING_SUFFIX_RE = new RegExp(`:(?:${OmpThinkingLevelSchema.options.join("|")})$`);
+const OMP_GATEWAY_SUFFIX_RE = /@[^:/@]+$/;
+
+function parseOmpModelReference(model: string): OmpModel | null {
+  // OMP renders fallback targets as `provider/id[@gateway]:<thinking level>`.
+  // Catalog ids can carry their own `:suffix` segments (e.g. OpenRouter's
+  // `:free` routing), so strip only actual thinking levels, then the gateway.
+  const reference = model.replace(OMP_THINKING_SUFFIX_RE, "").replace(OMP_GATEWAY_SUFFIX_RE, "");
+  const providerEnd = reference.indexOf("/");
+  if (providerEnd <= 0 || providerEnd === reference.length - 1) return null;
+  return { provider: reference.slice(0, providerEnd), id: reference.slice(providerEnd + 1) };
+}
+
 function ompAssistantText(message: Extract<OmpAgentMessage, { role: "assistant" }>): string | null {
   const text = message.content
     .flatMap((part) => {
@@ -870,6 +884,9 @@ export class OmpAgentSession implements AgentSession {
   private readonly subagentCardTracker: OmpSubagentCardTracker;
   private lastTodoItem: Extract<AgentTimelineItem, { type: "todo" }> | null = null;
   private state: OmpSessionState;
+  private fallbackGeneration = 0;
+  private fallbackModel: { model: OmpModel; staleModelIds: Set<string> } | null = null;
+
   private readonly currentModeId: string | null;
   private readonly providerIdleScheduler: OmpProviderIdleScheduler;
   private readonly noTurnScheduler: OmpNoTurnScheduler;
@@ -1045,10 +1062,14 @@ export class OmpAgentSession implements AgentSession {
 
   async getRuntimeInfo(): Promise<AgentRuntimeInfo> {
     await this.refreshState();
+    return this.runtimeInfoFromState();
+  }
+
+  private runtimeInfoFromState(): AgentRuntimeInfo {
     return {
       provider: this.provider,
       sessionId: this.state.sessionId,
-      model: modelToId(this.state.model),
+      model: modelToId(this.fallbackModel?.model ?? this.state.model),
       thinkingOptionId: resolveThinkingOptionId(
         this.lastKnownThinkingOptionId,
         this.state.thinkingLevel,
@@ -1263,6 +1284,9 @@ export class OmpAgentSession implements AgentSession {
       ...this.state,
       model,
     };
+    this.fallbackGeneration += 1;
+    this.fallbackModel = null;
+
     this.config.model = `${model.provider}/${model.id}`;
   }
 
@@ -1623,6 +1647,78 @@ export class OmpAgentSession implements AgentSession {
       item: { type: "assistant_message", text },
     });
   }
+  private handleRetryFallbackSucceeded(
+    event: Extract<OmpRuntimeEvent, { type: "retry_fallback_succeeded" }>,
+  ): void {
+    const model = parseOmpModelReference(event.model);
+    if (!model) return;
+
+    this.applyFallbackModel(model);
+    // `:max` is ambiguous: a thinking level and a real model-id suffix
+    // (e.g. `glm-4.7:max`). Confirm against OMP's model catalog in the
+    // background and correct the reference when the literal id exists.
+    if (event.model.endsWith(":max") && modelToId(model) !== event.model.replace(/@[^:/@]+$/, "")) {
+      const generation = this.fallbackGeneration;
+      void this.runtimeSession
+        .getAvailableModels(null)
+        .then((models) => {
+          // A newer fallback, restore, or manual model switch supersedes
+          // this lookup; never resurrect an older fallback target.
+          if (generation !== this.fallbackGeneration) return;
+          const literal = models.find(
+            (candidate) =>
+              candidate.provider === model.provider && candidate.id === `${model.id}:max`,
+          );
+          if (!literal) return;
+          return this.applyFallbackModel(literal);
+        })
+        .catch((error: unknown) => {
+          this.logger.debug(
+            { err: error },
+            "OMP model catalog unavailable for :max disambiguation",
+          );
+        });
+    }
+  }
+
+  private applyFallbackModel(model: OmpModel): void {
+    this.fallbackGeneration += 1;
+    // Every getState result produced before this event is stale: it can only
+    // report one of the models the session already served, never a fresh one.
+    const staleModelIds = this.fallbackModel
+      ? new Set(this.fallbackModel.staleModelIds)
+      : new Set<string>();
+    const previousModelId = modelToId(this.state.model);
+    if (previousModelId) staleModelIds.add(previousModelId);
+    this.fallbackModel = { model, staleModelIds };
+    this.state = { ...this.state, model };
+    this.config.model = modelToId(model) ?? undefined;
+    this.emit({
+      type: "model_changed",
+      provider: this.provider,
+      runtimeInfo: this.runtimeInfoFromState(),
+    });
+  }
+
+  /** OMP signals every session model switch, including the automatic
+   * cooldown-expiry restore back to primary. The state fetched right after
+   * the signal is the first one that can be trusted without model-id
+   * heuristics. */
+  private handleModelChangedRuntimeEvent(): void {
+    this.fallbackGeneration += 1;
+    this.fallbackModel = null;
+    void this.refreshState()
+      .then(() =>
+        this.emit({
+          type: "model_changed",
+          provider: this.provider,
+          runtimeInfo: this.runtimeInfoFromState(),
+        }),
+      )
+      .catch((error: unknown) => {
+        this.logger.debug({ err: error }, "OMP state unavailable after model_changed");
+      });
+  }
 
   private handleExtraRuntimeEvent(event: OmpRuntimeEvent): boolean {
     if (
@@ -1683,6 +1779,14 @@ export class OmpAgentSession implements AgentSession {
       }
       return true;
     }
+    if (event.type === "model_changed") {
+      this.handleModelChangedRuntimeEvent();
+      return true;
+    }
+    if (event.type === "retry_fallback_succeeded") {
+      this.handleRetryFallbackSucceeded(event);
+    }
+
     const mappedEvent = mapOmpRuntimeEventToTimelineItem(event);
     if (!mappedEvent.handled) {
       return false;
@@ -2160,7 +2264,7 @@ export class OmpAgentSession implements AgentSession {
     while (!this.closed && this.activeTurnStarted && this.currentTurnIdForEvent() === turnId) {
       try {
         const state = await this.runtimeSession.getState();
-        this.state = state;
+        this.applyFreshState(state);
         if (!state.isStreaming && !state.isCompacting) {
           this.completeTurn(turnId, messages);
           return;
@@ -2173,7 +2277,27 @@ export class OmpAgentSession implements AgentSession {
   }
 
   private async refreshState(): Promise<void> {
-    this.state = await this.runtimeSession.getState();
+    this.applyFreshState(await this.runtimeSession.getState());
+  }
+  private applyFreshState(state: OmpSessionState): void {
+    this.state = state;
+    const fallback = this.fallbackModel;
+    if (!fallback) return;
+    const stateModelId = modelToId(state.model);
+    if (!stateModelId) return;
+    if (stateModelId === modelToId(fallback.model)) {
+      // Fresh state already reports the fallback target; the override is
+      // redundant.
+      this.fallbackModel = null;
+      return;
+    }
+    // A lagging getState may report any pre-fallback model, which is
+    // indistinguishable from the cooldown-expiry restore back to primary.
+    // Only the explicit OMP `model_changed` signal resolves that, so keep
+    // the override while the state reports a known-stale model id.
+    if (!fallback.staleModelIds.has(stateModelId)) {
+      this.fallbackModel = null;
+    }
   }
 
   private async refreshAfterTurn(finalUsage: Promise<void>): Promise<void> {
