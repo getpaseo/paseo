@@ -76,6 +76,7 @@ function createHarness(input?: {
   const directories = new Set(input?.directories ?? ["/repo"]);
   const unarchived: string[] = [];
   const service = createWorkspaceRecoveryService({
+    logger: { warn: () => undefined } as never,
     paseoHome: input?.paseoHome ?? "/paseo-home",
     worktreesRoot: input?.worktreesRoot ?? "/worktrees",
     getWorkspace: async (workspaceId) =>
@@ -135,6 +136,7 @@ describe("workspace recovery", () => {
     const sourceSubdirectory = join(repoDir, "packages", "app");
     mkdirSync(sourceSubdirectory, { recursive: true });
     writeFileSync(join(sourceSubdirectory, "README.md"), "app\n");
+    writeFileSync(join(repoDir, ".worktreeinclude"), "missing.local\n");
     execFileSync("git", ["add", "."], { cwd: repoDir, stdio: "pipe" });
     execFileSync("git", ["commit", "-m", "add app"], { cwd: repoDir, stdio: "pipe" });
     execFileSync("git", ["branch", branch], { cwd: repoDir, stdio: "pipe" });
@@ -170,7 +172,9 @@ describe("workspace recovery", () => {
       mainRepoRoot: repoDir,
     });
     const unarchived: string[] = [];
+    const warnings: unknown[][] = [];
     const service = createWorkspaceRecoveryService({
+      logger: { warn: (...args: unknown[]) => warnings.push(args) } as never,
       paseoHome,
       worktreesRoot,
       getWorkspace: async (workspaceId) =>
@@ -189,6 +193,15 @@ describe("workspace recovery", () => {
     expect(existsSync(worktreeRoot)).toBe(true);
     expect(existsSync(workspaceCwd)).toBe(true);
     expect(unarchived).toEqual([workspace.workspaceId]);
+    expect(warnings).toEqual([
+      [
+        expect.objectContaining({
+          materialized: 0,
+          skipped: [expect.objectContaining({ raw: "missing.local", reason: "missing" })],
+        }),
+        "Worktree include completed with skipped entries during workspace recovery",
+      ],
+    ]);
   });
 
   test("keeps an exact-subdirectory workspace archived when its branch lacks that directory", async () => {
@@ -220,6 +233,7 @@ describe("workspace recovery", () => {
     });
     const unarchived: string[] = [];
     const service = createWorkspaceRecoveryService({
+      logger: { warn: () => undefined } as never,
       paseoHome,
       worktreesRoot,
       getWorkspace: async (workspaceId) =>
