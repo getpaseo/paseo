@@ -3604,6 +3604,7 @@ describe("ACPAgentClient probe cleanup", () => {
     const context: ProviderRefreshContext = {
       signal: abort.signal,
       runActivity: async (_name, operation) => await operation(),
+      registerAbortCleanup: () => () => undefined,
     };
     const catalog = client.fetchCatalog(
       { scope: "workspace", cwd: "/tmp/acp-models", force: false },
