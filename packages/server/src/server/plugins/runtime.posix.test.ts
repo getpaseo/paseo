@@ -1391,6 +1391,22 @@ export default function contribute(server: { registerProvider(provider: Provider
     await runtime.stopAll();
   });
 
+  it("loads the official agent context attachment extension", async () => {
+    const directory = path.resolve(
+      path.dirname(fileURLToPath(import.meta.url)),
+      "../../../../../plugin-examples/agent-context",
+    );
+    const runtime = createTestRuntime({}, undefined, "0.8.0");
+
+    await runtime.startPlugin("agent-context", directory);
+
+    expect(runtime.catalog().map((plugin) => plugin.id)).toEqual(["agent-context"]);
+    expect(runtime.catalog()[0]?.clientBundle).toContain("Attach agent transcript");
+    expect(runtime.catalog()[0]?.clientBundle).not.toContain("Chat history snapshot");
+    expect(runtime.catalog()[0]?.clientBundle).not.toContain("paseo.parent-agent-id");
+    await runtime.stopAll();
+  });
+
   it("explains that an index.ts plugin was made for an older Paseo version", async () => {
     const directory = await mkdtemp(path.join(tmpdir(), "paseo-plugin-"));
     temporaryDirectories.push(directory);
