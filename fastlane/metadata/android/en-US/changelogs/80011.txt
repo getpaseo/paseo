@@ -1,0 +1,7 @@
+Paseo 0.8.1 moves OMP to the plugin provider API and completes the public contracts needed for provider parity.
+
+Plugins
+- Added provider availability diagnostics, strict options, configured profiles, native tool deny-lists, and import prompt previews to the public plugin-provider API.
+- Moved OMP from the bundled daemon adapter to the paseo-omp plugin while preserving stored omp agent persistence.
+
+Full notes: https://paseo.sh/changelog
