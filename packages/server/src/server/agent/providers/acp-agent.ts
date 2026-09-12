@@ -1669,7 +1669,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
 
   private readonly config: AgentSessionConfig;
   private child: ChildProcessWithoutNullStreams | null = null;
-  /** Tail of the ACP server's stderr, for the diagnostic of a failure it reports. */
+  /** Tail of what the ACP server wrote on stderr during the current turn. */
   private stderrTail = "";
   private connection: ClientSideConnection | null = null;
   private agentCapabilities: ACPAgentCapabilities | null = null;
@@ -1854,6 +1854,10 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     }
 
     this.deliverTranslatedEvents(this.flushPendingUserMessage());
+    // A diagnostic should carry what the server wrote about THIS turn. Keeping the
+    // session's whole stderr would attach initialization output, or an earlier
+    // turn's, to a failure it has nothing to do with.
+    this.stderrTail = "";
     const turnId = randomUUID();
     const messageId = options?.clientMessageId ?? randomUUID();
     this.activeForegroundTurnId = turnId;
@@ -2727,9 +2731,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     });
     assertChildWithPipes(child);
 
-    const stderrChunks: string[] = [];
     child.stderr.on("data", (chunk: Buffer | string) => {
-      stderrChunks.push(chunk.toString());
       this.appendStderrTail(chunk.toString());
     });
     child.once("exit", (code, signal) => {
@@ -2742,7 +2744,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
           type: "turn_failed",
           provider: this.provider,
           error: `ACP agent exited unexpectedly (${code ?? "null"}${signal ? `, ${signal}` : ""})`,
-          diagnostic: stderrChunks.join("").trim() || undefined,
+          diagnostic: this.stderrTail.trim() || undefined,
           turnId: this.activeForegroundTurnId,
         });
       }

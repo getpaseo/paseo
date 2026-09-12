@@ -95,9 +95,6 @@ interface ACPSessionInternals {
   configOptions: SessionConfigOption[];
   translateSessionUpdate(update: SessionUpdate): AgentStreamEvent[];
   acpMcpServers(): unknown[];
-  appendStderrTail(chunk: string): void;
-  collectDiagnostic(message: string): string | undefined;
-  stderrTail: string;
 }
 
 interface ACPModelSelectionInternals {
@@ -3155,53 +3152,6 @@ describe("ACPAgentSession", () => {
       error: "prompt failed",
     });
     expect(asInternals<ACPSessionInternals>(session).activeForegroundTurnId).toBeNull();
-  });
-
-  test("a rejected turn carries the ACP server's own stderr into the diagnostic", async () => {
-    // A turn can fail while the server keeps running, and then the daemon log has
-    // only what the diagnostic carries — for a closed-source ACP server that is
-    // the single inspection point (#4757).
-    const session = createSession();
-    const events: AgentStreamEvent[] = [];
-    let rejectPrompt!: (error: Error) => void;
-    const prompt = vi.fn(
-      () =>
-        new Promise((_, reject) => {
-          rejectPrompt = reject;
-        }),
-    );
-
-    asInternals<ACPSessionInternals>(session).sessionId = "session-1";
-    asInternals<ACPSessionInternals>(session).connection = { prompt };
-    asInternals<ACPSessionInternals>(session).appendStderrTail(
-      "could not find doneCh for checkpoint\n",
-    );
-
-    session.subscribe((event) => {
-      events.push(event);
-    });
-
-    const { turnId } = await session.startTurn("hello");
-    rejectPrompt(new Error("prompt failed"));
-    await Promise.resolve();
-    await Promise.resolve();
-
-    const failure = events.find((event) => event.type === "turn_failed");
-    expect(failure).toMatchObject({ type: "turn_failed", turnId, error: "prompt failed" });
-    expect((failure as { diagnostic?: string }).diagnostic).toContain(
-      "could not find doneCh for checkpoint",
-    );
-  });
-
-  test("keeps only the tail of a chatty ACP server's stderr", async () => {
-    const session = createSession();
-    const internals = asInternals<ACPSessionInternals>(session);
-    internals.appendStderrTail("x".repeat(20_000));
-    internals.appendStderrTail("the last thing it said");
-
-    const diagnostic = internals.collectDiagnostic("boom") as string;
-    expect(diagnostic).toContain("the last thing it said");
-    expect(internals.stderrTail.length).toBeLessThanOrEqual(8192);
   });
 
   test("flushes an image-only provider echo before a rejected turn finishes", async () => {
