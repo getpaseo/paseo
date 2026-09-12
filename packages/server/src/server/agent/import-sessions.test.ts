@@ -948,6 +948,38 @@ test("importProviderSession puts a restored workspace back when the agent fails 
   });
 });
 
+test("importProviderSession leaves a restored workspace alone when another agent took it", async () => {
+  const harness = await ProviderImportHarness.create({ sessionId: "thread-shared-ws" });
+  await harness.seed(
+    makeStoredProviderSession({
+      id: harness.snapshot.id,
+      cwd: harness.snapshot.cwd,
+      sessionId: "thread-shared-ws",
+      workspaceId: "ws-original",
+    }),
+  );
+  harness.registerWorkspace("ws-original", { archivedAt: "2026-05-01T00:00:00.000Z" });
+  // A concurrent create attached to the same workspace while the import ran:
+  // imports are serialized per agent, not per workspace.
+  await harness.storage.upsert({
+    ...makeStoredProviderSession({
+      id: "other-agent",
+      cwd: harness.snapshot.cwd,
+      sessionId: "thread-other",
+      workspaceId: "ws-original",
+    }),
+    archivedAt: null,
+  });
+  harness.resumeError = new Error("provider resume failed");
+
+  await expect(
+    harness.import({ providerHandleId: "thread-shared-ws", cwd: harness.snapshot.cwd }),
+  ).rejects.toThrow("provider resume failed");
+
+  expect(harness.unarchivedWorkspaceIds).toEqual(["ws-original"]);
+  expect(harness.reArchivedWorkspaceIds).toEqual([]);
+});
+
 test("importProviderSession falls back to the import workspace when the kept one is gone", async () => {
   const harness = await ProviderImportHarness.create({ sessionId: "thread-dangling-ws" });
   await harness.seed(

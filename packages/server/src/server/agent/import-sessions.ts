@@ -366,10 +366,28 @@ async function rollbackArchivedImport(
     // The import unarchived this workspace for an agent that never loaded, so it
     // goes back where it was rather than staying active with nothing in it.
     try {
-      await input.workspaceRegistry.archive(
-        restoredWorkspace.workspaceId,
-        restoredWorkspace.archivedAt,
-      );
+      // Unless something else took it meanwhile: imports are serialized per
+      // agent and per provider handle, not per workspace, so a concurrent create
+      // or import can attach to the workspace this rollback is about to put
+      // away. The failing agent itself is about to be re-archived below, so it
+      // does not count as an owner.
+      const owners = (
+        await input.agentStorage.listByWorkspace(restoredWorkspace.workspaceId)
+      ).filter((record) => record.id !== archivedRecord.id && !record.archivedAt);
+      if (owners.length > 0) {
+        input.logger.info(
+          {
+            workspaceId: restoredWorkspace.workspaceId,
+            agentIds: owners.map((record) => record.id),
+          },
+          "Leaving the restored workspace active: another agent attached to it",
+        );
+      } else {
+        await input.workspaceRegistry.archive(
+          restoredWorkspace.workspaceId,
+          restoredWorkspace.archivedAt,
+        );
+      }
     } catch (error) {
       input.logger.error(
         { err: error, workspaceId: restoredWorkspace.workspaceId },
