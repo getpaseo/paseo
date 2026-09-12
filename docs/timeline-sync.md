@@ -88,6 +88,11 @@ The installed tail carries `hasOlder`, so history skipped by a replacement remai
 ordinary backward pagination. A backward page is accepted only when it is adjacent to the current
 history start; a response requested from a pre-replacement range is stale and is discarded.
 
+A plan approval keeps the original proposal's tool-call identity through resolution and provider
+history replay. The pending approval UI can hide that tool from presentation, but the client model
+must retain its position. Creating a new history card on rejection places it after the prompt that
+rejected it; changing steer-event ordering would also put new assistant output before that prompt.
+
 ## Client replica lifetime
 
 The session projection remains host-scoped for as long as the host is registered. The viewed-timeline

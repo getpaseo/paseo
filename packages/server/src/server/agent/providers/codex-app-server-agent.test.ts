@@ -5023,14 +5023,22 @@ describe("Codex app-server provider", () => {
       turn: { status: "completed", error: null },
     });
 
-    expect(
-      events.some(
-        (event) =>
-          event.type === "timeline" &&
-          event.item.type === "tool_call" &&
-          event.item.detail.type === "plan",
-      ),
-    ).toBe(false);
+    expect(events.at(-3)).toEqual({
+      type: "timeline",
+      provider: "codex",
+      turnId: "test-turn",
+      item: {
+        type: "tool_call",
+        callId: session.getPendingPermissions()[0]?.id,
+        name: "plan_approval",
+        status: "running",
+        error: null,
+        detail: {
+          type: "plan",
+          text: "- Inspect the existing auth flow\n- Implement the button behavior",
+        },
+      },
+    });
     expect(events.at(-2)).toEqual({
       type: "permission_requested",
       provider: "codex",
@@ -5065,7 +5073,7 @@ describe("Codex app-server provider", () => {
     });
   });
 
-  test("does not emit Codex plan thread items as timeline cards while plan approval is pending", () => {
+  test("does not complete Codex plan timeline cards while plan approval is pending", () => {
     const session = createSession({
       featureValues: { plan_mode: true, fast_mode: true },
     });
@@ -5091,6 +5099,7 @@ describe("Codex app-server provider", () => {
         type: "timeline",
         item: expect.objectContaining({
           type: "tool_call",
+          status: "completed",
           detail: expect.objectContaining({ type: "plan" }),
         }),
       }),
@@ -6073,7 +6082,8 @@ describe("Codex denied plan approvals", () => {
       (event) =>
         event.type === "timeline" &&
         event.item.type === "tool_call" &&
-        event.item.name === "plan_approval",
+        event.item.name === "plan_approval" &&
+        event.item.status === "completed",
     );
   }
 
