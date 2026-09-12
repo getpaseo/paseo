@@ -51,6 +51,7 @@ describe("GenericACPAgentClient", () => {
           },
         },
         defaultCommand: ["hermes", "acp"],
+        waitForInitialCommands: true,
         capabilities: {
           supportsStreaming: true,
           supportsSessionPersistence: true,
