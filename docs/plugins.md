@@ -475,6 +475,10 @@ Its writer lives with the plugin subprocess, while its directory lives outside m
 so updates and reloads retain values. Settings-change notifications must not enter the catalog
 reload path: that path disposes the plugin and would destroy open drafts after every save.
 
+`server.registerSettings(definition)` returns a server-side handle. Use `read()` for the current
+`ready` or `invalid` state and `subscribe()` for successful saves, resets, and migrations. The
+subscription cleanup belongs in the plugin's contribution cleanup when it outlives the entry.
+
 ## Contribute a theme
 
 `addTheme` takes a small light or dark palette and a display name. Paseo expands it through the
