@@ -3,6 +3,12 @@ import { pluginSettings } from "./plugin-settings";
 
 export const fr: TranslationResources = {
   paneFind: {
+    searching: "Recherche…",
+    loading: "Chargement…",
+    failed: "Échec",
+    retry: "Réessayer",
+    chatPosition: "{{current}} sur {{total}} dans le message",
+
     title: "Rechercher",
     placeholder: "Rechercher dans le panneau",
     close: "Fermer la recherche",

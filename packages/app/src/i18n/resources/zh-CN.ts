@@ -3,6 +3,12 @@ import { pluginSettings } from "./plugin-settings";
 
 export const zhCN: TranslationResources = {
   paneFind: {
+    searching: "搜索中…",
+    loading: "加载中…",
+    failed: "失败",
+    retry: "重试",
+    chatPosition: "消息内第 {{current}} 项，共 {{total}} 项",
+
     title: "查找",
     placeholder: "在窗格中查找",
     close: "关闭查找",
