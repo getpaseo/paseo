@@ -1454,7 +1454,12 @@ describe("ACPAgentSession Zed parity", () => {
       configId: "allow_all",
       value: "on",
     });
-    expect(setSessionMode).not.toHaveBeenCalled();
+    // Allow All is agent mode with permissions pre-granted, so it has to leave
+    // whatever mode the session is in, not just flip the flag.
+    expect(setSessionMode).toHaveBeenCalledWith({
+      sessionId: "session-1",
+      modeId: "https://agentclientprotocol.com/protocol/session-modes#agent",
+    });
     await expect(session.getCurrentMode()).resolves.toBe(COPILOT_ALLOW_ALL_MODE_ID);
     expect(events.some((event) => event.type === "permission_requested")).toBe(false);
   });
@@ -1485,7 +1490,50 @@ describe("ACPAgentSession Zed parity", () => {
       configId: "allow_all",
       value: "on",
     });
-    expect(setSessionMode).not.toHaveBeenCalled();
+    // Allow All is agent mode with permissions pre-granted, so it has to leave
+    // whatever mode the session is in, not just flip the flag.
+    expect(setSessionMode).toHaveBeenCalledWith({
+      sessionId: "session-1",
+      modeId: "https://agentclientprotocol.com/protocol/session-modes#agent",
+    });
+    await expect(session.getCurrentMode()).resolves.toBe(COPILOT_ALLOW_ALL_MODE_ID);
+  });
+
+  test("selecting Copilot Allow All from plan mode leaves plan mode and enables allow_all", async () => {
+    const setSessionConfigOption = vi.fn(async () => ({
+      configOptions: [
+        copilotModeConfigOption("https://agentclientprotocol.com/protocol/session-modes#agent"),
+        copilotAllowAllConfigOption("on"),
+      ],
+    }));
+    const setSessionMode = vi.fn(async () => undefined);
+    const session = createCopilotSessionWithConfig();
+    prepareConfiguredOverrideSession(session, {
+      currentMode: "https://agentclientprotocol.com/protocol/session-modes#plan",
+      availableModes: COPILOT_MODES,
+      configOptions: [
+        copilotModeConfigOption("https://agentclientprotocol.com/protocol/session-modes#plan"),
+        copilotAllowAllConfigOption("off"),
+      ],
+      connection: { setSessionConfigOption, setSessionMode },
+    });
+
+    await session.setMode(COPILOT_ALLOW_ALL_MODE_ID);
+
+    expect(setSessionMode).toHaveBeenCalledWith({
+      sessionId: "session-1",
+      modeId: "https://agentclientprotocol.com/protocol/session-modes#agent",
+    });
+    expect(setSessionConfigOption).toHaveBeenCalledWith({
+      sessionId: "session-1",
+      configId: "allow_all",
+      value: "on",
+    });
+    // Copilot reverts allow_all to off when a session leaves #autopilot, so the
+    // mode write has to land before the flag or a later mode write clobbers it.
+    expect(setSessionMode.mock.invocationCallOrder[0]!).toBeLessThan(
+      setSessionConfigOption.mock.invocationCallOrder[0]!,
+    );
     await expect(session.getCurrentMode()).resolves.toBe(COPILOT_ALLOW_ALL_MODE_ID);
   });
 
