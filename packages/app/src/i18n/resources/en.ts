@@ -1,4 +1,19 @@
 export const en = {
+  paneFind: {
+    title: "Find",
+    placeholder: "Find in pane",
+    close: "Close Find",
+    matches: "Find matches",
+    previous: "Previous match",
+    next: "Next match",
+    toggleReplace: "Toggle replace",
+    replaceWith: "Replace with",
+    replace: "Replace",
+    replaceAll: "Replace all",
+    noMatches: "No matches",
+    position: "{{current}} of {{total}}",
+    total: "{{total}} matches",
+  },
   common: {
     back: "Back",
     loading: "Loading...",

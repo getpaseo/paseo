@@ -2,6 +2,21 @@ import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const ar: TranslationResources = {
+  paneFind: {
+    title: "بحث",
+    placeholder: "بحث في اللوحة",
+    close: "إغلاق البحث",
+    matches: "نتائج البحث",
+    previous: "التطابق السابق",
+    next: "التطابق التالي",
+    toggleReplace: "إظهار الاستبدال",
+    replaceWith: "استبدال بـ",
+    replace: "استبدال",
+    replaceAll: "استبدال الكل",
+    noMatches: "لا توجد تطابقات",
+    position: "{{current}} من {{total}}",
+    total: "{{total}} تطابقات",
+  },
   common: {
     back: "خلف",
     loading: "تحميل...",
