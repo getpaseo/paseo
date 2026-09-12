@@ -108,7 +108,11 @@ import { recordRenderProfileReasons } from "@/utils/render-profiler";
 import { useRetainedPanelActive } from "@/components/retained-panel";
 import { useStreamHistoryWindow } from "./use-stream-history-window";
 import { PluginTimelineItemView, useInstalledTimelineTransform } from "@/plugins/timeline";
-import { projectPluginTimelineItems } from "@/plugins/timeline/projection";
+import {
+  projectPluginNonToolItems,
+  projectPluginToolCallItems,
+  removeOverlappingToolCallItems,
+} from "@/plugins/timeline/projection";
 
 function renderLiveAuxiliaryNode(input: {
   pendingPermissions: ReactNode;
@@ -311,6 +315,7 @@ const AGENT_CAPABILITY_FLAG_KEYS: (keyof AgentCapabilityFlags)[] = [
 ];
 
 const EMPTY_STREAM_HEAD: StreamItem[] = [];
+const EMPTY_TOOL_CALL_SOURCE_IDS = new Set<string>();
 
 function useRetainedValue<T>(value: T, active: boolean): T {
   const retainedRef = useRef(value);
@@ -537,32 +542,60 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
     const effectiveStreamHead = useRetainedValue(streamHead, isActive);
     const effectiveTurnPresentation = useRetainedValue(turnPresentation, isActive);
     const isTurnActive = effectiveTurnPresentation.isActive;
+    const toolCallHeadIdsKey = useMemo(
+      () =>
+        JSON.stringify(
+          (effectiveStreamHead ?? EMPTY_STREAM_HEAD)
+            .filter((item) => item.kind === "tool_call")
+            .map((item) => item.id),
+        ),
+      [effectiveStreamHead],
+    );
+    const toolCallHeadIds = useMemo(() => {
+      const ids = JSON.parse(toolCallHeadIdsKey) as string[];
+      return ids.length === 0 ? EMPTY_TOOL_CALL_SOURCE_IDS : new Set(ids);
+    }, [toolCallHeadIdsKey]);
+    // Transform individual tool calls before Overview can synthesize a host row. The second pass
+    // handles other source types without sending grouped tool-call hosts back through plugins.
+    const projectedToolCallTail = useMemo(
+      () =>
+        projectPluginToolCallItems(
+          removeOverlappingToolCallItems(effectiveStreamItems, toolCallHeadIds),
+          transformTimelineItem,
+        ),
+      [effectiveStreamItems, toolCallHeadIds, transformTimelineItem],
+    );
+    const projectedToolCallHead = useMemo(
+      () =>
+        projectPluginToolCallItems(effectiveStreamHead ?? EMPTY_STREAM_HEAD, transformTimelineItem),
+      [effectiveStreamHead, transformTimelineItem],
+    );
     // Keep retained history outside the 48ms live-head flush path.
     const preparedToolCallHistory = useMemo(
-      () => prepareToolCallHistory(toolCallDetailLevel, effectiveStreamItems),
-      [effectiveStreamItems, toolCallDetailLevel],
+      () => prepareToolCallHistory(toolCallDetailLevel, projectedToolCallTail),
+      [projectedToolCallTail, toolCallDetailLevel],
     );
     const projectedToolCalls = useMemo(
       () =>
         projectToolCallDetailLevel({
           level: toolCallDetailLevel,
-          tail: effectiveStreamItems,
-          head: effectiveStreamHead ?? EMPTY_STREAM_HEAD,
+          tail: projectedToolCallTail,
+          head: projectedToolCallHead,
           preparedHistory: preparedToolCallHistory,
           isTurnActive,
         }),
       [
-        effectiveStreamHead,
-        effectiveStreamItems,
         isTurnActive,
         preparedToolCallHistory,
+        projectedToolCallHead,
+        projectedToolCallTail,
         toolCallDetailLevel,
       ],
     );
     const projectedPlugins = useMemo(
       () => ({
-        tail: projectPluginTimelineItems(projectedToolCalls.tail, transformTimelineItem),
-        head: projectPluginTimelineItems(projectedToolCalls.head, transformTimelineItem),
+        tail: projectPluginNonToolItems(projectedToolCalls.tail, transformTimelineItem),
+        head: projectPluginNonToolItems(projectedToolCalls.head, transformTimelineItem),
       }),
       [projectedToolCalls.head, projectedToolCalls.tail, transformTimelineItem],
     );
