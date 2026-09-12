@@ -599,6 +599,40 @@ describe("terminal-emulator-runtime", () => {
     expect(refresh).toHaveBeenCalledWith(0, 11);
   });
 
+  it("restoreSurface refits and reloads the WebGL renderer", () => {
+    const runtime = new TerminalEmulatorRuntime();
+    const fitAndEmitResize = vi.fn();
+    const restoreWebglRenderer = vi.fn();
+    const raf = vi.fn((callback: FrameRequestCallback) => {
+      callback(0);
+      return 1;
+    });
+
+    (
+      runtime as unknown as {
+        fitAndEmitResize: typeof fitAndEmitResize;
+        restoreWebglRenderer: typeof restoreWebglRenderer;
+      }
+    ).fitAndEmitResize = fitAndEmitResize;
+    (
+      runtime as unknown as {
+        restoreWebglRenderer: typeof restoreWebglRenderer;
+      }
+    ).restoreWebglRenderer = restoreWebglRenderer;
+    (globalThis as unknown as { window: { requestAnimationFrame: typeof raf } }).window = {
+      requestAnimationFrame: raf,
+    };
+
+    runtime.restoreSurface();
+
+    expect(restoreWebglRenderer).toHaveBeenCalledTimes(2);
+    expect(fitAndEmitResize).toHaveBeenCalledTimes(2);
+    expect(fitAndEmitResize).toHaveBeenCalledWith({
+      forceRefresh: true,
+      shouldClaim: false,
+    });
+  });
+
   it("passively refits when the page becomes visible again", () => {
     const runtime = new TerminalEmulatorRuntime();
     const fitAndEmitResize = vi.fn();

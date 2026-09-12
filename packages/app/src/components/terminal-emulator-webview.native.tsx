@@ -345,6 +345,9 @@ export default function WebViewTerminalEmulator({
       claimSize: () => {
         sendToWebView({ type: "resize", streamKey, forceClaim: true });
       },
+      restoreSurface: () => {
+        sendToWebView({ type: "resize", streamKey, forceClaim: false, shouldClaim: false });
+      },
       showKeyboard: () => {
         sendToWebView({ type: "focus", streamKey, forceRefocus: true });
         webViewRef.current?.requestFocus();
