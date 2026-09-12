@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.8.1 - 2026-09-12
+
+Paseo 0.8.1 moves OMP to the plugin provider API and completes the public contracts needed for provider parity.
+
+### Plugins
+
+- Added provider availability diagnostics, strict options, configured profiles, native tool deny-lists, and import prompt previews to the public plugin-provider API.
+- Moved OMP from the bundled daemon adapter to the `paseo-omp` plugin while preserving stored `omp` agent persistence.
+- Fixed resumed provider plugins discarding later persistence updates.
+
 ## 0.8.0 - 2026-09-10
 
 Paseo 0.8 adds plugin header buttons, custom providers, and richer chat components, alongside fixes for desktop updates and mobile keyboards.
@@ -27,8 +37,6 @@ Paseo 0.8 adds plugin header buttons, custom providers, and richer chat componen
 
 - Added custom providers with their own icons, settings, permissions, and timeline rendering ([#4314](https://github.com/getpaseo/paseo/pull/4314))
 - Added provider session recovery after plugin reload ([#4629](https://github.com/getpaseo/paseo/pull/4629) by [@mcowger](https://github.com/mcowger))
-- Added provider availability diagnostics, strict options, configured profiles, native tool deny-lists, and import prompt previews to the public plugin-provider API.
-- Moved OMP from the bundled daemon adapter to the `paseo-omp` plugin while preserving stored `omp` agent persistence.
 - Added custom timeline components and persisted timeline rows ([e34aea2](https://github.com/getpaseo/paseo/commit/e34aea206e6ec7ac2d5fa9766db28fb221ae990c))
 - Added client slash commands that run without a provider turn ([e34aea2](https://github.com/getpaseo/paseo/commit/e34aea206e6ec7ac2d5fa9766db28fb221ae990c))
 - Added plugin settings screens under Settings → Plugins ([#4357](https://github.com/getpaseo/paseo/pull/4357))
