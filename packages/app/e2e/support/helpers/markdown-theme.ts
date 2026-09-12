@@ -49,17 +49,22 @@ export async function openAgentTranscriptWithCycleHeading(
 ): Promise<AgentTranscriptSurface> {
   const workspace = await seedWorkspace({ repoPrefix: input.repoPrefix });
   const prompt = input.prompt ?? DEFAULT_PROMPT;
-  await page.goto(buildHostWorkspaceRoute(getServerId(), workspace.workspaceId));
-  await waitForWorkspaceTabsVisible(page);
-  await createAgentTabFromMenu(page);
-  await expectComposerVisible(page);
-  await submitMessage(page, prompt);
-  const userMessage = page.getByTestId("user-message").filter({ hasText: prompt });
-  await expect(userMessage).toHaveAttribute("aria-busy", "false", { timeout: 60_000 });
-  const heading = page.getByText(CYCLE_HEADING_TEXT, { exact: true }).first();
-  await expect(heading).toBeVisible({ timeout: 30_000 });
+  try {
+    await page.goto(buildHostWorkspaceRoute(getServerId(), workspace.workspaceId));
+    await waitForWorkspaceTabsVisible(page);
+    await createAgentTabFromMenu(page);
+    await expectComposerVisible(page);
+    await submitMessage(page, prompt);
+    const userMessage = page.getByTestId("user-message").filter({ hasText: prompt });
+    await expect(userMessage).toHaveAttribute("aria-busy", "false", { timeout: 60_000 });
+    const heading = page.getByText(CYCLE_HEADING_TEXT, { exact: true }).first();
+    await expect(heading).toBeVisible({ timeout: 30_000 });
+  } catch (error) {
+    await workspace.cleanup();
+    throw error;
+  }
   return {
-    heading,
+    heading: page.getByText(CYCLE_HEADING_TEXT, { exact: true }).first(),
     sidebarLabel: page.getByText(SIDEBAR_LABEL_TEXT, { exact: true }).first(),
     cleanup: () => workspace.cleanup(),
   };
