@@ -7,7 +7,8 @@ import {
   type PluginThemeOption,
 } from "@/plugins/themes";
 import { PLUGIN_THEME_NAMES, PLUGIN_THEME_PREFERENCE, THEME_TO_UNISTYLES } from "@/styles/theme";
-import { applyAppearance } from "./apply";
+import { isWeb } from "@/constants/platform";
+import { applyAppearance, type AppearanceInput } from "./apply";
 
 interface ContributedThemes {
   options: PluginThemeOption[];
@@ -50,28 +51,62 @@ export function AppearanceProvider({ children }: { children: ReactNode }) {
     return options.find((option) => option.id === settings.pluginThemeId) ?? null;
   }, [options, settings.pluginThemeId, settings.theme]);
 
-  useEffect(() => {
-    if (isLoading) return;
-    applyTheme({ preference: settings.theme, contributedTheme: selected });
-    applyAppearance({
+  const appearanceInput = useMemo<AppearanceInput>(
+    () => ({
       uiFontFamily: settings.uiFontFamily,
       monoFontFamily: settings.monoFontFamily,
       uiBaseFontSize: settings.uiBaseFontSize,
       contentFontSize: settings.contentFontSize,
       codeFontSize: settings.codeFontSize,
       syntaxTheme: settings.syntaxTheme,
-    });
-  }, [
-    isLoading,
-    selected,
-    settings.theme,
-    settings.uiFontFamily,
-    settings.monoFontFamily,
-    settings.uiBaseFontSize,
-    settings.contentFontSize,
-    settings.codeFontSize,
-    settings.syntaxTheme,
-  ]);
+    }),
+    [
+      settings.codeFontSize,
+      settings.contentFontSize,
+      settings.monoFontFamily,
+      settings.syntaxTheme,
+      settings.uiBaseFontSize,
+      settings.uiFontFamily,
+    ],
+  );
+
+  useEffect(() => {
+    if (isLoading) return;
+    applyTheme({ preference: settings.theme, contributedTheme: selected });
+    applyAppearance(appearanceInput);
+  }, [appearanceInput, isLoading, selected, settings.theme]);
+
+  // CSS-variable styles repaint from the `prefers-color-scheme` media query alone, but
+  // `withUnistyles` mappings (markdown styles, tab scrim colors) only re-read the theme when
+  // Unistyles' own matchMedia listeners deliver a change event. A renderer suspended while the
+  // OS switches appearance can miss that event: the surrounding chrome turns light while
+  // transcript markdown keeps the dark theme's colors until a reload. On regained focus,
+  // pageshow, or visibility, re-commit the appearance when the live scheme no longer matches
+  // the last one we saw — `applyAppearance` re-emits the theme, so every mapping re-reads the
+  // current scheme without waiting for the missed event.
+  useEffect(() => {
+    if (!isWeb || isLoading) return;
+    const media = window.matchMedia("(prefers-color-scheme: dark)");
+    let lastSeenDark = media.matches;
+    const trackScheme = (event: MediaQueryListEvent) => {
+      lastSeenDark = event.matches;
+    };
+    const reconcileSuspendedSchemeChange = () => {
+      if (document.hidden || media.matches === lastSeenDark) return;
+      lastSeenDark = media.matches;
+      applyAppearance(appearanceInput);
+    };
+    media.addEventListener("change", trackScheme);
+    window.addEventListener("focus", reconcileSuspendedSchemeChange);
+    window.addEventListener("pageshow", reconcileSuspendedSchemeChange);
+    document.addEventListener("visibilitychange", reconcileSuspendedSchemeChange);
+    return () => {
+      media.removeEventListener("change", trackScheme);
+      window.removeEventListener("focus", reconcileSuspendedSchemeChange);
+      window.removeEventListener("pageshow", reconcileSuspendedSchemeChange);
+      document.removeEventListener("visibilitychange", reconcileSuspendedSchemeChange);
+    };
+  }, [appearanceInput, isLoading]);
 
   const select = useCallback(
     (option: PluginThemeOption) => {
