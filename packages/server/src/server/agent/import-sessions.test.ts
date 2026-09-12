@@ -11,7 +11,10 @@ import { AgentStorage, type StoredAgentRecord } from "./agent-storage.js";
 import type { FetchRecentProviderSessionsRequestMessage } from "@getpaseo/protocol/messages";
 import { PARENT_AGENT_ID_LABEL } from "@getpaseo/protocol/agent-labels";
 import type { AgentTimelineItem } from "./agent-sdk-types.js";
-import { createPersistedWorkspaceRecord } from "../workspace-registry.js";
+import {
+  createPersistedWorkspaceRecord,
+  type PersistedWorkspaceRecord,
+} from "../workspace-registry.js";
 import type { WorkspaceProvisioningService } from "../session/workspace-provisioning/workspace-provisioning-service.js";
 import { createTestLogger } from "../../test-utils/test-logger.js";
 import {
@@ -116,8 +119,13 @@ function makeManagedAgent(args: {
 
 function createImportWorkspace(
   workspaceId: string,
-): Pick<WorkspaceProvisioningService, "runInImportWorkspace"> {
+  unarchivedWorkspaceIds: string[] = [],
+): Pick<WorkspaceProvisioningService, "runInImportWorkspace" | "ensureWorkspaceRecordUnarchived"> {
   return {
+    async ensureWorkspaceRecordUnarchived(workspace) {
+      unarchivedWorkspaceIds.push(workspace.workspaceId);
+      return { ...workspace, archivedAt: null };
+    },
     async runInImportWorkspace(input, operation) {
       const workspace = createPersistedWorkspaceRecord({
         workspaceId,
@@ -615,6 +623,8 @@ class ProviderImportHarness {
   readonly snapshot: ManagedAgent;
   readonly freshImports: unknown[] = [];
   readonly closedAgentIds: string[] = [];
+  readonly unarchivedWorkspaceIds: string[] = [];
+  private readonly workspaceRecords = new Map<string, PersistedWorkspaceRecord>();
   timeline: AgentTimelineItem[] = [];
   activeAgent: ManagedAgent | null = null;
   resumeError: Error | null = null;
@@ -721,7 +731,32 @@ class ProviderImportHarness {
   }
 
   async seed(record: StoredAgentRecord): Promise<void> {
+    // The registry knows every workspace an agent record points at, active
+    // unless a test registers it as archived.
+    if (record.workspaceId && !this.workspaceRecords.has(record.workspaceId)) {
+      this.registerWorkspace(record.workspaceId);
+    }
     await this.storage.upsert(record);
+  }
+
+  registerWorkspace(workspaceId: string, input: { archivedAt?: string } = {}): void {
+    this.workspaceRecords.set(
+      workspaceId,
+      createPersistedWorkspaceRecord({
+        workspaceId,
+        projectId: `project-${workspaceId}`,
+        cwd: this.snapshot.cwd,
+        kind: "directory",
+        displayName: workspaceId,
+        createdAt: "2026-04-30T00:00:00.000Z",
+        updatedAt: "2026-04-30T00:00:00.000Z",
+        ...(input.archivedAt ? { archivedAt: input.archivedAt } : {}),
+      }),
+    );
+  }
+
+  forgetWorkspace(workspaceId: string): void {
+    this.workspaceRecords.delete(workspaceId);
   }
 
   blockUnarchive(): () => void {
@@ -744,7 +779,10 @@ class ProviderImportHarness {
         cwd: input.cwd,
         labels: input.labels,
       },
-      workspaceProvisioning: createImportWorkspace("ws-restored"),
+      workspaceProvisioning: createImportWorkspace("ws-restored", this.unarchivedWorkspaceIds),
+      workspaceRegistry: {
+        get: async (workspaceId: string) => this.workspaceRecords.get(workspaceId) ?? null,
+      },
       agentManager: this.manager,
       agentStorage: this.storage,
       logger: createTestLogger(),
@@ -849,6 +887,50 @@ test("importProviderSession keeps an archived session in the workspace it was ar
 
   expect(await harness.storage.get(harness.snapshot.id)).toMatchObject({
     workspaceId: "ws-original",
+    archivedAt: null,
+  });
+});
+
+test("importProviderSession restores the workspace an archived session kept", async () => {
+  const harness = await ProviderImportHarness.create({ sessionId: "thread-archived-ws" });
+  await harness.seed(
+    makeStoredProviderSession({
+      id: harness.snapshot.id,
+      cwd: harness.snapshot.cwd,
+      sessionId: "thread-archived-ws",
+      workspaceId: "ws-original",
+    }),
+  );
+  // The agent was archived as part of archiving its own workspace.
+  harness.registerWorkspace("ws-original", { archivedAt: "2026-05-01T00:00:00.000Z" });
+
+  await harness.import({ providerHandleId: "thread-archived-ws", cwd: harness.snapshot.cwd });
+
+  // Keeping the workspace is only useful if the workspace is listed again.
+  expect(harness.unarchivedWorkspaceIds).toEqual(["ws-original"]);
+  expect(await harness.storage.get(harness.snapshot.id)).toMatchObject({
+    workspaceId: "ws-original",
+    archivedAt: null,
+  });
+});
+
+test("importProviderSession falls back to the import workspace when the kept one is gone", async () => {
+  const harness = await ProviderImportHarness.create({ sessionId: "thread-dangling-ws" });
+  await harness.seed(
+    makeStoredProviderSession({
+      id: harness.snapshot.id,
+      cwd: harness.snapshot.cwd,
+      sessionId: "thread-dangling-ws",
+      workspaceId: "ws-deleted",
+    }),
+  );
+  harness.forgetWorkspace("ws-deleted");
+
+  await harness.import({ providerHandleId: "thread-dangling-ws", cwd: harness.snapshot.cwd });
+
+  expect(harness.unarchivedWorkspaceIds).toEqual([]);
+  expect(await harness.storage.get(harness.snapshot.id)).toMatchObject({
+    workspaceId: "ws-restored",
     archivedAt: null,
   });
 });

@@ -12,6 +12,7 @@ import { ensureAgentLoaded, type AgentLoaderManager } from "./agent-loading.js";
 import { unarchiveAgentState } from "./agent-prompt.js";
 import { toRecentProviderSessionDescriptorPayload } from "./agent-projections.js";
 import type { WorkspaceProvisioningService } from "../session/workspace-provisioning/workspace-provisioning-service.js";
+import type { WorkspaceRegistry } from "../workspace-registry.js";
 import type { PersistedWorkspaceRecord } from "../workspace-registry.js";
 import type {
   FetchRecentProviderSessionsRequestMessage,
@@ -76,7 +77,11 @@ export interface ListImportableProviderSessionsResult {
 
 export interface ImportProviderSessionInput {
   request: NormalizedImportAgentRequest;
-  workspaceProvisioning: Pick<WorkspaceProvisioningService, "runInImportWorkspace">;
+  workspaceProvisioning: Pick<
+    WorkspaceProvisioningService,
+    "runInImportWorkspace" | "ensureWorkspaceRecordUnarchived"
+  >;
+  workspaceRegistry: Pick<WorkspaceRegistry, "get">;
   agentManager: ImportSessionAgentManager;
   agentStorage: AgentStorage;
   logger: Logger;
@@ -199,6 +204,38 @@ export async function importProviderSession(
   });
 }
 
+/**
+ * The workspace an archived agent kept, when that workspace can still hold it.
+ *
+ * Archiving a workspace archives its agents, so the workspace a record keeps
+ * may itself be archived, and an archived workspace is filtered out of the
+ * workspace directory: the import would report success while the restored
+ * session is listed nowhere. An archived workspace is therefore restored the
+ * way findOrCreateWorkspaceForDirectory restores one. A workspace whose record
+ * is gone, or that cannot be restored because its project is gone, yields null
+ * so the caller falls back to the resolved import workspace.
+ */
+async function resolveRetainedWorkspaceId(
+  input: ImportProviderSessionInput,
+  retainedWorkspaceId: string | undefined,
+): Promise<string | null> {
+  if (!retainedWorkspaceId) return null;
+  const retained = await input.workspaceRegistry.get(retainedWorkspaceId);
+  if (!retained) return null;
+  if (!retained.archivedAt) return retainedWorkspaceId;
+  try {
+    await input.workspaceProvisioning.ensureWorkspaceRecordUnarchived(retained);
+    return retainedWorkspaceId;
+  } catch (error) {
+    input.logger.error(
+      `Failed to restore workspace ${retainedWorkspaceId} for an imported provider session: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+    return null;
+  }
+}
+
 async function importProviderSessionNow(
   input: ImportProviderSessionInput,
   cwd: string,
@@ -229,10 +266,11 @@ async function importProviderSessionNow(
     }
     // A registered agent keeps the workspace it was archived in: the client
     // passes the workspace it is looking at, which is not where this agent
-    // and its subagents live (#4707). Only a record without one takes the
-    // import workspace.
+    // and its subagents live (#4707). Only a record without a usable workspace
+    // takes the import workspace.
+    const retainedWorkspaceId = await resolveRetainedWorkspaceId(input, archivedRecord.workspaceId);
     await unarchiveAgentState(input.agentStorage, input.agentManager, archivedRecord.id, {
-      ...(archivedRecord.workspaceId ? {} : { workspaceId }),
+      ...(retainedWorkspaceId ? {} : { workspaceId }),
       labels: Object.keys(labelPatch).length > 0 ? labelPatch : undefined,
     });
     try {
