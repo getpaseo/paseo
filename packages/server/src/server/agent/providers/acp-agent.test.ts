@@ -3763,6 +3763,35 @@ describe("ACPAgentClient probe cleanup", () => {
 });
 
 describe("ACP session/load invariant — cwd and mcpServers always passed", () => {
+  function createManualClock() {
+    let nowMs = 0;
+    const waiters: Array<{ due: number; resolve: () => void }> = [];
+
+    function flush(): void {
+      const snapshot = waiters.splice(0);
+      for (const waiter of snapshot) {
+        if (waiter.due <= nowMs) {
+          waiter.resolve();
+        } else {
+          waiters.push(waiter);
+        }
+      }
+    }
+
+    return {
+      now: () => nowMs,
+      delay: (ms: number) =>
+        new Promise<void>((resolve) => {
+          waiters.push({ due: nowMs + ms, resolve });
+          flush();
+        }),
+      advance(ms: number) {
+        nowMs += ms;
+        flush();
+      },
+    };
+  }
+
   /**
    * Shared factory: creates an ACPAgentSession subclass whose spawnProcess
    * returns stubbed ACP internals so tests can inspect connection method calls
@@ -3773,6 +3802,9 @@ describe("ACP session/load invariant — cwd and mcpServers always passed", () =
     handle: AgentPersistenceHandle;
     loadSession?: ReturnType<typeof vi.fn>;
     unstableResumeSession?: ReturnType<typeof vi.fn>;
+    historyReplayIdleMs?: number;
+    now?: () => number;
+    delay?: (ms: number) => Promise<void>;
   }) {
     const loadSession =
       args.loadSession ??
@@ -3823,6 +3855,9 @@ describe("ACP session/load invariant — cwd and mcpServers always passed", () =
           ...args.capabilities,
         },
         handle: args.handle,
+        historyReplayIdleMs: args.historyReplayIdleMs ?? 0,
+        now: args.now,
+        delay: args.delay,
       },
     );
 
@@ -4001,6 +4036,173 @@ describe("ACP session/load invariant — cwd and mcpServers always passed", () =
     expect(assistantMessages[1].messageId).toBe(assistantMessages[0].messageId);
     expect(assistantMessages[2].messageId).toEqual(expect.any(String));
     expect(assistantMessages[2].messageId).not.toBe(assistantMessages[0].messageId);
+  });
+
+  test("keeps session/update replay after the session/load result", async () => {
+    let session!: ACPAgentSession;
+    const loadSession = async () => {
+      await session.sessionUpdate({
+        sessionId: "session-1",
+        update: {
+          sessionUpdate: "user_message_chunk",
+          messageId: "user-1",
+          content: { type: "text", text: "first prompt" },
+        } as SessionUpdate,
+      });
+      return {
+        sessionId: "session-1",
+        modes: null,
+        models: null,
+        configOptions: [],
+      };
+    };
+    ({ session } = makeTestSession({
+      capabilities: { loadSession: true },
+      handle: { sessionId: "session-1", provider: "qoder" },
+      loadSession,
+    }));
+
+    await session.initializeResumedSession();
+    await session.sessionUpdate({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "agent_message_chunk",
+        messageId: "assistant-1",
+        content: { type: "text", text: "first reply" },
+      } as SessionUpdate,
+    });
+    await session.sessionUpdate({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "user_message_chunk",
+        messageId: "user-2",
+        content: { type: "text", text: "follow up" },
+      } as SessionUpdate,
+    });
+    await session.sessionUpdate({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "agent_message_chunk",
+        messageId: "assistant-2",
+        content: { type: "text", text: "second reply" },
+      } as SessionUpdate,
+    });
+
+    const history: AgentStreamEvent[] = [];
+    for await (const event of session.streamHistory()) {
+      history.push(event);
+    }
+    expect(history).toEqual([
+      {
+        type: "timeline",
+        provider: session.provider,
+        item: { type: "user_message", text: "first prompt", messageId: "user-1" },
+      },
+      {
+        type: "timeline",
+        provider: session.provider,
+        item: {
+          type: "assistant_message",
+          text: "first reply",
+          messageId: "assistant-1",
+        },
+      },
+      {
+        type: "timeline",
+        provider: session.provider,
+        item: { type: "user_message", text: "follow up", messageId: "user-2" },
+      },
+      {
+        type: "timeline",
+        provider: session.provider,
+        item: {
+          type: "assistant_message",
+          text: "second reply",
+          messageId: "assistant-2",
+        },
+      },
+    ]);
+  });
+
+  test("keeps session/update replay that arrives during the idle drain", async () => {
+    const clock = createManualClock();
+    let session!: ACPAgentSession;
+    const loadSession = async () => {
+      await session.sessionUpdate({
+        sessionId: "session-1",
+        update: {
+          sessionUpdate: "user_message_chunk",
+          messageId: "user-1",
+          content: { type: "text", text: "first prompt" },
+        } as SessionUpdate,
+      });
+      clock.advance(200);
+      return {
+        sessionId: "session-1",
+        modes: null,
+        models: null,
+        configOptions: [],
+      };
+    };
+    ({ session } = makeTestSession({
+      capabilities: { loadSession: true },
+      handle: { sessionId: "session-1", provider: "claude-acp" },
+      loadSession,
+      historyReplayIdleMs: 50,
+      now: clock.now,
+      delay: clock.delay,
+    }));
+
+    await session.initializeResumedSession();
+
+    const historyPromise = (async () => {
+      const history: AgentStreamEvent[] = [];
+      for await (const event of session.streamHistory()) {
+        history.push(event);
+      }
+      return history;
+    })();
+
+    await Promise.resolve();
+    await session.sessionUpdate({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "agent_message_chunk",
+        messageId: "assistant-1",
+        content: { type: "text", text: "first reply" },
+      } as SessionUpdate,
+    });
+    await session.sessionUpdate({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "user_message_chunk",
+        messageId: "user-2",
+        content: { type: "text", text: "follow up" },
+      } as SessionUpdate,
+    });
+    clock.advance(50);
+
+    expect(await historyPromise).toEqual([
+      {
+        type: "timeline",
+        provider: session.provider,
+        item: { type: "user_message", text: "first prompt", messageId: "user-1" },
+      },
+      {
+        type: "timeline",
+        provider: session.provider,
+        item: {
+          type: "assistant_message",
+          text: "first reply",
+          messageId: "assistant-1",
+        },
+      },
+      {
+        type: "timeline",
+        provider: session.provider,
+        item: { type: "user_message", text: "follow up", messageId: "user-2" },
+      },
+    ]);
   });
 
   test("loadSession is always called with mcpServers even when supportsMcpServers is false", async () => {
