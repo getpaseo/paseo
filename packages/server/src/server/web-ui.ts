@@ -250,6 +250,22 @@ function serializeInlineScriptJson(value: unknown): string {
     .replace(/&/g, "\\u0026");
 }
 
+/**
+ * A Host header carries no port when the client used the scheme's default one,
+ * which is what every browser sends to a proxy terminating TLS on 443. The app
+ * parses `listen` with parseHostPort, which requires an explicit port and
+ * rejects the value outright, so the hint has to spell the port out.
+ */
+function hasExplicitPort(host: string): boolean {
+  if (host.startsWith("[")) {
+    // IPv6 literals are bracketed: [::1] has no port, [::1]:443 does.
+    const end = host.indexOf("]");
+    return end !== -1 && /^:\d{1,5}$/.test(host.slice(end + 1));
+  }
+  const colon = host.indexOf(":");
+  return colon !== -1 && colon === host.lastIndexOf(":") && /^\d{1,5}$/.test(host.slice(colon + 1));
+}
+
 function injectConnectionHint(
   html: string,
   req: Parameters<RequestHandler>[0],
@@ -258,7 +274,7 @@ function injectConnectionHint(
   const host = typeof req.headers.host === "string" ? req.headers.host : "";
   const useTls = req.protocol === "https";
   const hint = {
-    listen: host,
+    listen: host && !hasExplicitPort(host) ? `${host}:${useTls ? 443 : 80}` : host,
     useTls,
     label,
   };
