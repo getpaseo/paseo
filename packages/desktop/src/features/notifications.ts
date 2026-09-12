@@ -2,6 +2,19 @@ import path from "node:path";
 import { existsSync } from "node:fs";
 import { app, BrowserWindow, Notification, ipcMain, nativeImage } from "electron";
 import { getDesktopSettingsStore } from "../settings/desktop-settings-electron.js";
+import {
+  chooseNotificationClickWindow,
+  resolveNotificationRoute,
+  type NotificationRoute,
+} from "./notification-click.js";
+
+/**
+ * Given the resolved route, returns the windows already showing that target, ranked
+ * best first (empty when nothing matches, or when the route is `{ kind: "sender" }`).
+ * Optional so the module stays importable without one — the click then falls back to
+ * the sender, exactly as before this feature existed.
+ */
+export type NotificationClickCandidateSource = (route: NotificationRoute) => BrowserWindow[];
 
 interface NotificationInput {
   title?: unknown;
@@ -49,8 +62,7 @@ function getNotificationIcon(): Electron.NativeImage | null {
   return null;
 }
 
-function focusSenderWindow(sender: Electron.WebContents): BrowserWindow | null {
-  const win = BrowserWindow.fromWebContents(sender) ?? BrowserWindow.getAllWindows()[0] ?? null;
+function focusWindow(win: BrowserWindow | null): BrowserWindow | null {
   if (!win || win.isDestroyed()) {
     return null;
   }
@@ -78,7 +90,9 @@ export function ensureNotificationCenterRegistration(): void {
   probe.show();
 }
 
-export function registerNotificationHandlers(): void {
+export function registerNotificationHandlers(
+  getCandidateWindows?: NotificationClickCandidateSource,
+): void {
   ipcMain.handle("paseo:notification:isSupported", () => {
     return Notification.isSupported();
   });
@@ -107,7 +121,12 @@ export function registerNotificationHandlers(): void {
     activeNotifications.add(notification);
 
     notification.on("click", () => {
-      const win = focusSenderWindow(event.sender);
+      const sender =
+        BrowserWindow.fromWebContents(event.sender) ?? BrowserWindow.getAllWindows()[0] ?? null;
+      const route = resolveNotificationRoute(data);
+      const candidates = getCandidateWindows?.(route) ?? [];
+      const chosen = chooseNotificationClickWindow({ route, candidates, sender });
+      const win = focusWindow(chosen);
       if (win && data && Object.keys(data).length > 0) {
         const payload: NotificationClickPayload = { data };
         win.webContents.send("paseo:event:notification-click", payload);

@@ -5,10 +5,13 @@ interface Target {
   id: string;
 }
 
-function harness() {
+function harness(
+  options: { preferredWindow?: (target: Target) => OwnedDesktopWindow<Target> | null } = {},
+) {
   const windows: OwnedDesktopWindow<Target>[] = [];
   const launches: Array<{ initialRoute: string | null; restoreWindowState: boolean }> = [];
   const sent: Target[] = [];
+  const focusCalls: number[] = [];
   let nextId = 1;
   let focused: OwnedDesktopWindow<Target> | null = null;
   let closeWindow = (_id: number) => {};
@@ -27,7 +30,7 @@ function harness() {
         isMinimized: () => false,
         restore: () => {},
         show: () => {},
-        focus: () => {},
+        focus: () => focusCalls.push(id),
         sendAgent: (target) => sent.push(target),
       };
       windows.push(window);
@@ -38,12 +41,14 @@ function harness() {
     focusedWindow: () => focused,
     agentRoute: (target) => `/agent/${target.id}`,
     deliverAgent: (_id, target) => target,
+    preferredWindow: options.preferredWindow,
   });
   return {
     owner,
     launches,
     sent,
     windows,
+    focusCalls,
     setFocused: (window: OwnedDesktopWindow<Target>) => {
       focused = window;
     },
@@ -78,5 +83,30 @@ describe("desktop window owner", () => {
     await h.owner.openAdditional({ pendingProjectPath: "/project/a" });
     h.close(1);
     expect(h.owner.takePendingProject(1)).toBeNull();
+  });
+
+  it("prefers the window already showing the target over the focused window", async () => {
+    let preferred: OwnedDesktopWindow<Target> | null = null;
+    const h = harness({ preferredWindow: () => preferred });
+    await h.owner.openPrimary();
+    await h.owner.openAdditional();
+    h.setFocused(h.windows[0]);
+    preferred = h.windows[1];
+
+    await h.owner.openOrFocusAgent({ id: "agent-7" });
+
+    expect(h.focusCalls).toEqual([2]);
+    expect(h.sent).toEqual([{ id: "agent-7" }]);
+  });
+
+  it("falls back to the focused window when preferredWindow finds no match", async () => {
+    const h = harness({ preferredWindow: () => null });
+    await h.owner.openPrimary();
+    h.setFocused(h.windows[0]);
+
+    await h.owner.openOrFocusAgent({ id: "agent-7" });
+
+    expect(h.focusCalls).toEqual([1]);
+    expect(h.sent).toEqual([{ id: "agent-7" }]);
   });
 });
