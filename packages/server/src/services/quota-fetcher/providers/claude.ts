@@ -82,6 +82,7 @@ interface ClaudeCredentialRecord {
 
 interface ClaudeQuotaProviderOptions {
   logger: Logger;
+  homeDir?: string;
   claudeHome?: string;
   claudeKeychainReader?: () => Promise<unknown | null>;
   platform?: typeof process.platform;
@@ -344,15 +345,17 @@ export class ClaudeQuotaProvider implements ProviderUsageFetcher {
   private readonly logger: Logger;
   private readonly claudeHome: string;
   private readonly readKeychainCredentials: () => Promise<unknown | null>;
-  private readonly platform: typeof process.platform;
+  private readonly useDefaultKeychain: boolean;
   private readonly fetchApi: ProviderApiFetch;
 
   constructor(options: ClaudeQuotaProviderOptions) {
     this.logger = options.logger.child({ module: "claude-quota-provider" });
-    this.claudeHome =
-      options.claudeHome || process.env["CLAUDE_HOME"] || join(homedir(), ".claude");
+    const configuredHome =
+      options.claudeHome || process.env["CLAUDE_CONFIG_DIR"] || process.env["CLAUDE_HOME"];
+    this.claudeHome = configuredHome || join(options.homeDir ?? homedir(), ".claude");
     this.readKeychainCredentials = options.claudeKeychainReader ?? readClaudeKeychainCredentials;
-    this.platform = options.platform ?? process.platform;
+    const platform = options.platform ?? process.platform;
+    this.useDefaultKeychain = platform === "darwin" && !configuredHome;
     this.fetchApi = options.fetch ?? fetch;
   }
 
@@ -435,11 +438,14 @@ export class ClaudeQuotaProvider implements ProviderUsageFetcher {
   }
 
   private async readCredentials(): Promise<ClaudeCredentialRecord | null> {
-    const credPath = join(this.claudeHome, ".credentials.json");
-    const fileCredentials = await this.readCredentialFile(credPath);
-    return (
-      fileCredentials ?? (this.platform === "darwin" ? await this.readKeychainCredential() : null)
-    );
+    // Claude Code refreshes the default macOS Keychain item, while an old file can
+    // survive indefinitely. Explicit directories must not borrow another account's
+    // default Keychain item. Once selected, HTTP failures never switch accounts.
+    if (this.useDefaultKeychain) {
+      const credentials = await this.readKeychainCredential();
+      if (credentials) return credentials;
+    }
+    return this.readCredentialFile(join(this.claudeHome, ".credentials.json"));
   }
 
   private async readCredentialFile(path: string): Promise<ClaudeCredentialRecord | null> {

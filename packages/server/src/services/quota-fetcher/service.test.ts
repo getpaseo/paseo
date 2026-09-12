@@ -417,7 +417,8 @@ describe("real provider usage fetchers", () => {
       fetchers: [
         new ClaudeQuotaProvider({
           logger,
-          claudeHome,
+          claudeHome: options.keychain ? undefined : claudeHome,
+          homeDir,
           claudeKeychainReader: options.keychain ?? (async () => null),
           platform: options.platform,
           fetch: fetchThroughTestDouble,
