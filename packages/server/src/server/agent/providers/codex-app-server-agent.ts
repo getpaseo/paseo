@@ -273,7 +273,7 @@ interface CodexAppServerAgentDeps {
 interface CodexModePreset {
   approvalPolicy: string;
   sandbox: string;
-  approvalsReviewer?: "auto_review";
+  approvalsReviewer?: "user" | "auto_review";
 }
 
 const MODE_PRESETS: Record<string, CodexModePreset> = {
@@ -284,6 +284,7 @@ const MODE_PRESETS: Record<string, CodexModePreset> = {
   auto: {
     approvalPolicy: "on-request",
     sandbox: "workspace-write",
+    approvalsReviewer: "user",
   },
   "auto-review": {
     approvalPolicy: "on-request",

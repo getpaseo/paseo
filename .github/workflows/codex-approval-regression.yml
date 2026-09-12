@@ -1,0 +1,89 @@
+name: Codex approval regression
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [fix/codex-default-approvals-reviewer]
+  pull_request:
+    paths:
+      - packages/server/src/server/agent/providers/codex-app-server-agent.ts
+      - packages/server/src/server/daemon-e2e/codex-default-approvals.local.e2e.test.ts
+      - packages/server/src/server/test-utils/codex-approval-fixture.ts
+      - .github/workflows/codex-approval-regression.yml
+
+permissions:
+  contents: read
+
+jobs:
+  native-approvals:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    env:
+      ONNXRUNTIME_NODE_INSTALL: skip
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - run: npm install --global @openai/codex@0.153.4
+      - run: npm run build:server
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm run format:check
+      - name: Record runtime and fixture boundary
+        run: |
+          mkdir -p approval-evidence
+          {
+            git rev-parse HEAD
+            codex --version
+            node --version
+            uname -a
+            echo 'Real Codex binary, sandbox, Paseo daemon and WebSocket client; scripted model output; no credentials or live inference.'
+          } | tee approval-evidence/runtime.txt
+      - name: Verify patched approval routing
+        working-directory: packages/server
+        run: >-
+          npx vitest run src/server/daemon-e2e/codex-default-approvals.local.e2e.test.ts
+          --reporter=verbose --reporter=json --outputFile=../../approval-evidence/patched.json
+      - name: Verify both tests detect the original regression
+        working-directory: packages/server
+        shell: bash
+        run: |
+          set -euo pipefail
+          provider=src/server/agent/providers/codex-app-server-agent.ts
+          trap 'git restore -- "$provider"' EXIT
+          node --input-type=module <<'JS'
+          import assert from 'node:assert/strict';
+          import { readFileSync, writeFileSync } from 'node:fs';
+          const file = 'src/server/agent/providers/codex-app-server-agent.ts';
+          const source = readFileSync(file, 'utf8');
+          const override = '    approvalsReviewer: "user",\n';
+          assert.equal(source.split(override).length, 2);
+          writeFileSync(file, source.replace(override, ''));
+          JS
+          result=0
+          npx vitest run src/server/daemon-e2e/codex-default-approvals.local.e2e.test.ts --reporter=verbose --reporter=json --outputFile=../../approval-evidence/unpatched.json || result=$?
+          test "$result" -eq 1
+          node --input-type=module <<'JS'
+          import assert from 'node:assert/strict';
+          import { readFileSync } from 'node:fs';
+          const report = JSON.parse(readFileSync('../../approval-evidence/unpatched.json', 'utf8'));
+          assert.equal(report.numFailedTests, 2);
+          assert.equal(report.numPendingTests, 0);
+          const results = report.testResults.flatMap(test => test.assertionResults);
+          assert.equal(results.length, 2);
+          for (const result of results) {
+            assert.equal(result.status, 'failed');
+            assert.match(result.failureMessages.join('\n'), /expected 'idle' to be 'permission'/);
+          }
+          JS
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: codex-approval-evidence
+          path: approval-evidence/
+          if-no-files-found: error
