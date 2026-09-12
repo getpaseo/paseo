@@ -2800,6 +2800,75 @@ describe("ACPAgentSession", () => {
     expect(asInternals<ACPSessionInternals>(session).activeForegroundTurnId).toBeNull();
   });
 
+  test("emits usage_updated for usage_update notifications and keeps context window usage on turn completion", async () => {
+    const session = createSession();
+    const events: AgentStreamEvent[] = [];
+    let resolvePrompt!: (value: PromptResponse) => void;
+    const prompt = vi.fn(
+      () =>
+        new Promise<PromptResponse>((resolve) => {
+          resolvePrompt = resolve;
+        }),
+    );
+
+    asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+    asInternals<ACPSessionInternals>(session).connection = { prompt };
+
+    session.subscribe((event) => {
+      events.push(event);
+    });
+
+    const { turnId } = await session.startTurn("hello");
+
+    // ACP usage_update: size is the total context window, used the tokens in context.
+    await session.sessionUpdate({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "usage_update",
+        size: 200_000,
+        used: 175,
+      },
+    });
+
+    expect(events.filter((event) => event.type === "usage_updated")).toEqual([
+      {
+        type: "usage_updated",
+        provider: "claude-acp",
+        usage: { contextWindowMaxTokens: 200_000, contextWindowUsedTokens: 175 },
+        turnId,
+      },
+    ]);
+
+    // Updates for another session must not leak into this one.
+    await session.sessionUpdate({
+      sessionId: "other-session",
+      update: {
+        sessionUpdate: "usage_update",
+        size: 8_000,
+        used: 1,
+      },
+    });
+    expect(events.filter((event) => event.type === "usage_updated")).toHaveLength(1);
+
+    resolvePrompt({
+      stopReason: "end_turn",
+      usage: { inputTokens: 11, outputTokens: 7, totalTokens: 18 },
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(events.find((event) => event.type === "turn_completed")).toMatchObject({
+      type: "turn_completed",
+      turnId,
+      usage: {
+        inputTokens: 11,
+        outputTokens: 7,
+        contextWindowMaxTokens: 200_000,
+        contextWindowUsedTokens: 175,
+      },
+    });
+  });
+
   test("startTurn emits the submitted user message even when ACP does not echo it", async () => {
     const session = createSession();
     const events: AgentStreamEvent[] = [];
