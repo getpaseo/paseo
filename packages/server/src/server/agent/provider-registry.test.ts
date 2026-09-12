@@ -1697,6 +1697,24 @@ describe("model merging", () => {
 });
 
 describe("fetchCatalog", () => {
+  test("deduplicates repeated runtime model ids", async () => {
+    mockState.runtimeModels.set("codex", [
+      { provider: "codex", id: "shared-runtime", label: "First Runtime Label" },
+      { provider: "codex", id: "shared-runtime", label: "Duplicate Runtime Label" },
+    ]);
+
+    const registry = buildProviderRegistry(logger);
+    const catalog = await registry.codex.fetchCatalog({
+      scope: "workspace",
+      cwd: "/tmp/catalog",
+      force: false,
+    });
+
+    expect(catalog.models).toEqual([
+      { provider: "codex", id: "shared-runtime", label: "First Runtime Label" },
+    ]);
+  });
+
   test("returns merged models and modes from fetchCatalog", async () => {
     mockState.runtimeModels.set("codex", [
       { provider: "codex", id: "codex-runtime", label: "Codex Runtime" },

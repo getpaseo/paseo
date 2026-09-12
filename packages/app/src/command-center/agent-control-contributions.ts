@@ -142,6 +142,7 @@ function buildContributions(
 
 function buildModelGroup(source: AgentControlContributionSource): CommandCenterChoiceGroup {
   const choices: CommandCenterChoice[] = [];
+  const choiceIds = new Set<string>();
   for (const provider of source.models.providers) {
     if (provider.modelSelection.kind !== "models") continue;
     const agentProvider = provider.id;
@@ -149,8 +150,15 @@ function buildModelGroup(source: AgentControlContributionSource): CommandCenterC
     for (const model of provider.modelSelection.rows) {
       if (!model.modelId) continue;
       const modelId = model.modelId;
+      const choiceId = `${provider.id}:${modelId}`;
+      // Runtime providers can temporarily expose the same model twice while a
+      // refreshed catalog replaces an older snapshot. Command Center choices
+      // use provider/model as their identity, so keep the first row rather than
+      // crashing the entire draft on duplicate upstream data.
+      if (choiceIds.has(choiceId)) continue;
+      choiceIds.add(choiceId);
       choices.push({
-        id: `${provider.id}:${modelId}`,
+        id: choiceId,
         path: [provider.label, model.modelLabel],
         keywords: [modelId],
         icon,
