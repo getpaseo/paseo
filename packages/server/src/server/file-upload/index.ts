@@ -222,7 +222,7 @@ function buildUploadResponse(upload: PendingUpload, error: string | null): FileU
 
 function sanitizeFileName(value: string): string {
   const name = basename(value)
-    .replace(/[^a-zA-Z0-9._ -]/g, "_")
+    .replace(/[^\p{L}\p{N}._ -]/gu, "_")
     .trim();
   return name.length > 0 && name !== "." && name !== ".." ? name : "upload";
 }
