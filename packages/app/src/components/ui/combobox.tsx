@@ -50,7 +50,8 @@ import {
   shouldShowCustomComboboxOption,
 } from "./combobox-options";
 import type { ComboboxOptionModel } from "./combobox-options";
-import { isWeb } from "@/constants/platform";
+import { GestureHandlerRootView } from "react-native-gesture-handler";
+import { isNative, isWeb } from "@/constants/platform";
 import {
   IsolatedBottomSheetModal,
   useIsolatedBottomSheetVisibility,
@@ -74,6 +75,8 @@ import { buildDesktopFrameStyle } from "./combobox-frame-style";
 export { buildDesktopFrameStyle } from "./combobox-frame-style";
 
 const IS_WEB = isWeb;
+// Android modals open a separate native window and need their own gesture root.
+const ModalRoot = isNative ? GestureHandlerRootView : View;
 
 export type ComboboxOption = ComboboxOptionModel;
 export type ComboboxDesktopPlacement = "top-start" | "bottom-start";
@@ -1266,7 +1269,7 @@ function DesktopComboboxBody(props: DesktopBodyProps): ReactElement {
       visible={props.isOpen}
       onRequestClose={props.handleClose}
     >
-      {overlay}
+      <ModalRoot style={styles.desktopModalRoot}>{overlay}</ModalRoot>
     </Modal>
   );
 }
@@ -1764,6 +1767,9 @@ const styles = StyleSheet.create((theme) => ({
     paddingTop: theme.spacing[1],
   },
   desktopOverlay: {
+    flex: 1,
+  },
+  desktopModalRoot: {
     flex: 1,
   },
   desktopOverlayWeb: {
