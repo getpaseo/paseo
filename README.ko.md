@@ -43,9 +43,9 @@
 
 - **셀프 호스팅:** 에이전트는 완전한 개발 환경이 갖춰진 내 컴퓨터에서 실행됩니다. 평소 쓰던 도구, 설정, 스킬을 그대로 쓸 수 있습니다.
 - **여러 제공자 지원:** Claude Code, Codex, Copilot, OpenCode, Pi를 하나의 인터페이스에서 사용할 수 있습니다. 작업마다 알맞은 모델을 고를 수 있습니다.
-- **음성 제어:** 음성 모드에서 작업을 말로 지시하거나 문제를 음성으로 함께 검토할 수 있습니다. 손을 쓰지 않고 작업해야 할 때 유용합니다.
+- **음성 제어:** 음성 모드에서 작업을 말로 지시하거나 대화하며 문제를 함께 검토할 수 있습니다. 손을 쓰지 않고 작업해야 할 때 유용합니다.
 - **여러 기기 지원:** iOS, Android, 데스크톱, 웹, CLI를 지원합니다. 데스크톱에서 시작해 휴대폰으로 확인하고 터미널에서 자동화할 수 있습니다.
-- **개인정보 보호 우선:** Paseo는 텔레메트리, 추적, 강제 로그인을 사용하지 않습니다.
+- **개인정보 보호 우선:** Paseo는 텔레메트리나 추적 기능을 사용하지 않으며 로그인을 강제하지 않습니다.
 
 ## 시작하기
 
@@ -86,7 +86,7 @@ Paseo가 로컬에서 시작된 뒤 기기 페어링을 위한 종단 간 암호
 
 ### Docker
 
-Docker에서 Paseo 데몬과 셀프 호스팅 웹 UI를 실행하세요:
+Docker에서 Paseo 데몬과 셀프 호스팅 웹 UI를 실행하세요.
 
 ```bash
 docker run -d --name paseo \
@@ -97,7 +97,7 @@ docker run -d --name paseo \
   ghcr.io/getpaseo/paseo:latest
 ```
 
-컨테이너가 시작되면 `http://localhost:6767`을 여세요. 사용하는 에이전트 CLI를 기본 이미지에 추가한 뒤, 환경 변수나 영구 `/home/paseo` 볼륨으로 인증 정보를 설정하세요. 자세한 내용은 [Docker 문서](docs/docker.md)를 참고하세요.
+컨테이너가 시작되면 `http://localhost:6767`을 여세요. 사용하는 에이전트 CLI를 기본 이미지에 추가한 뒤 환경 변수나 영구 `/home/paseo` 볼륨으로 인증 정보를 설정하세요. 자세한 내용은 [Docker 문서](docs/docker.md)를 참고하세요.
 
 ## CLI
 
@@ -105,14 +105,14 @@ docker run -d --name paseo \
 
 ```bash
 paseo run --provider claude/opus-4.6 "implement user authentication"
-paseo run --provider codex/gpt-5.4 --worktree feature-x "implement feature X"
+paseo run --provider codex/gpt-5.5 --worktree feature-x "implement feature X"
 
 paseo ls                           # 실행 중인 에이전트 목록
 paseo attach abc123                # 실시간 출력 스트리밍
 paseo send abc123 "also add tests" # 후속 작업 전송
 
-# 원격 데몬에서 실행
-paseo --host workstation.local:6767 run "run the full test suite"
+# 원격 데몬에서 실행; --cwd는 해당 호스트의 경로
+paseo run --host workstation.local:6767 --cwd /workspace "run the full test suite"
 ```
 
 자세한 내용은 [전체 CLI 레퍼런스](https://paseo.sh/docs/cli)를 참고하세요.
@@ -125,11 +125,11 @@ paseo --host workstation.local:6767 run "run the full test suite"
 npx skills add getpaseo/paseo
 ```
 
-그런 다음 어떤 에이전트 대화에서든 아래 명령을 사용할 수 있습니다.
+그런 다음 어떤 에이전트와 대화하든 아래 명령을 사용할 수 있습니다.
 
 - `/paseo-handoff` — 에이전트 간에 작업을 넘깁니다. Claude로 계획을 세운 뒤 Codex에 구현을 넘길 때 이 기능을 씁니다.
-- `/paseo-advisor` — 작업 자체를 넘기지 않고, 에이전트 하나를 조언자로 띄워 두 번째 의견을 받습니다.
-- `/paseo-committee` — 서로 다른 관점의 에이전트 두 개로 위원회를 구성해, 한 발 물러나 근본 원인을 분석하고 계획을 세웁니다.
+- `/paseo-advisor` — 작업 자체를 넘기지 않고 에이전트 하나를 조언자로 실행해 다른 의견을 구합니다.
+- `/paseo-committee` — 서로 다른 관점의 에이전트 두 개로 위원회를 구성해 한 발 물러나 근본 원인을 분석하고 계획을 세웁니다.
 
 ## 개발
 
@@ -157,14 +157,13 @@ npm run dev:website
 # 서버 스택 빌드
 npm run build:server
 
-# 레포 전체 검사 실행
+# 저장소 전체 검사 실행
 npm run typecheck
 ```
 
 ## 관련 프로젝트
 
 - [getpaseo/paseo-relay](https://github.com/getpaseo/paseo-relay) — Elixir로 작성한 공식 분산형 릴레이
-- [paseo-skins](https://github.com/huangguang1999/paseo-skins) — 커뮤니티 테마와 Agent Skill을 제공하고, 코드 수정 없이 쓸 수 있는 데스크톱 테마 로더
 - [paseo-vscode](https://marketplace.visualstudio.com/items?itemName=hinnes.paseo-vscode) — VS Code 확장 프로그램
 
 ## 라이선스
