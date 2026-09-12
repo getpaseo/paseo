@@ -83,29 +83,4 @@ describe("GenericACPAgentClient", () => {
       },
     });
   });
-
-  test("defaults waitForInitialCommands so slash palettes wait for available_commands_update", () => {
-    mockState.superConstructorOptions.length = 0;
-    const _client = new GenericACPAgentClient({
-      logger: createTestLogger(),
-      command: ["dsh", "--profile", "acp"],
-    });
-    void _client;
-    expect(mockState.superConstructorOptions.at(-1)).toMatchObject({
-      waitForInitialCommands: true,
-    });
-  });
-
-  test("preserves an explicit waitForInitialCommands override", () => {
-    mockState.superConstructorOptions.length = 0;
-    const _client = new GenericACPAgentClient({
-      logger: createTestLogger(),
-      command: ["dsh", "--profile", "acp"],
-      waitForInitialCommands: false,
-    });
-    void _client;
-    expect(mockState.superConstructorOptions.at(-1)).toMatchObject({
-      waitForInitialCommands: false,
-    });
-  });
 });

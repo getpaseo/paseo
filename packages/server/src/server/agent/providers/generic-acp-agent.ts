@@ -21,6 +21,7 @@ import {
 export const GenericACPProviderParamsSchema = z
   .object({
     supportsMcpServers: z.boolean().optional(),
+    waitForInitialCommands: z.boolean().optional(),
     clientCapabilities: z
       .object({
         fs: z
@@ -70,7 +71,11 @@ export class GenericACPAgentClient extends ACPAgentClient {
       },
       defaultCommand: options.command,
       capabilities: buildGenericACPCapabilities(providerParams),
-      waitForInitialCommands: options.waitForInitialCommands ?? true,
+      // Match Cursor/Kiro/Trae: a generic provider's available_commands_update can
+      // arrive after session/new, and an immediate empty list is cached for 60s.
+      // Providers that never send the notification opt out with explicit false.
+      waitForInitialCommands:
+        options.waitForInitialCommands ?? providerParams.waitForInitialCommands ?? true,
       initialCommandsWaitTimeoutMs: options.initialCommandsWaitTimeoutMs,
       clientCapabilities: providerParams.clientCapabilities,
       clientCapabilityMeta: options.clientCapabilityMeta,
