@@ -17,7 +17,7 @@ import type {
   TextInput as NativeTextInput,
   TextInputProps,
 } from "react-native";
-import type { PluginIconProps } from "./contracts.js";
+import type { PluginIconProps, PluginProviderIconProps } from "./contracts.js";
 
 export interface ModalProps {
   title: string;
@@ -54,11 +54,12 @@ export interface ToastApi {
 }
 
 export declare const Icon: ComponentType<PluginIconProps>;
+export declare const ProviderIcon: ComponentType<PluginProviderIconProps>;
 export declare const Modal: ModalComponent;
 export declare function useToast(): ToastApi;
 export declare function useRevealedText(text: string, phase: "streaming" | "complete"): string;
 
-export type { PluginIconProps } from "./contracts.js";
+export type { PluginIconProps, PluginProviderIconProps } from "./contracts.js";
 
 /** React Native scrolling with the host's sheet gestures when rendered inside a sheet. */
 export declare const ScrollView: ForwardRefExoticComponent<

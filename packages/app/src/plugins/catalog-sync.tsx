@@ -1,3 +1,4 @@
+import { fetchProvidersSnapshot } from "@/data/providers-snapshot";
 import { pluginSettingsKey } from "./settings/use-settings";
 import { useEffect } from "react";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
@@ -14,6 +15,7 @@ export function PluginCatalogSync({
 }) {
   const connected = useHostRuntimeIsConnected(serverId);
   const supported = useHostFeature(serverId, "plugins");
+  const supportsProviderSnapshots = useHostFeature(serverId, "providersSnapshot");
 
   useEffect(() => {
     let cancelled = false;
@@ -26,26 +28,34 @@ export function PluginCatalogSync({
       pluginRegistry.removeHost(serverId);
       return;
     }
+    async function prepareProviderIcons() {
+      if (!supportsProviderSnapshots) return;
+      try {
+        await fetchProvidersSnapshot({ client, serverId, cwd: null });
+      } catch (error) {
+        if (!cancelled) {
+          console.warn(`[Plugins] Failed to load provider icons for ${serverId}`, error);
+        }
+      }
+    }
     const refresh = (replacePluginId?: string) => {
-      refreshQueue = refreshQueue.then(() =>
-        client
-          .getPluginCatalog()
-          .then((catalog) => {
-            if (!cancelled) {
-              pluginRegistry.installCatalog(serverId, catalog, {
-                replacePluginId,
-                client,
-              });
-            }
-            return undefined;
-          })
-          .catch((error) => {
-            if (!cancelled) {
-              console.warn(`[Plugins] Failed to load catalog for ${serverId}`, error);
-            }
-            return undefined;
-          }),
-      );
+      refreshQueue = refreshQueue.then(async () => {
+        await prepareProviderIcons();
+        try {
+          const catalog = await client.getPluginCatalog();
+          if (!cancelled) {
+            pluginRegistry.installCatalog(serverId, catalog, {
+              replacePluginId,
+              client,
+            });
+          }
+        } catch (error) {
+          if (!cancelled) {
+            console.warn(`[Plugins] Failed to load catalog for ${serverId}`, error);
+          }
+        }
+        return undefined;
+      });
       return refreshQueue;
     };
     const observation = client.observeEvents([
@@ -79,7 +89,7 @@ export function PluginCatalogSync({
         .release()
         .catch((error) => console.warn("[Plugins] Failed to release catalog", error));
     };
-  }, [client, connected, serverId, supported]);
+  }, [client, connected, serverId, supported, supportsProviderSnapshots]);
 
   useEffect(() => () => pluginRegistry.removeHost(serverId), [serverId]);
   return null;
