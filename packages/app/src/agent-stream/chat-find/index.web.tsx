@@ -62,7 +62,7 @@ export function ChatFind({
         search(query, cursor) {
           const client = getHostRuntimeStore().getClient(serverId);
           if (!client) return Promise.reject(new Error("Host disconnected"));
-          return client.searchAgentTimeline(agentId, query, cursor);
+          return client.searchAgentTimeline({ agentId, query, cursor });
         },
         load(targetEpoch, seq) {
           return getHostRuntimeStore().fetchAgentTimeline(
@@ -136,7 +136,7 @@ export function ChatFind({
           />
           {state.error && (
             <View style={styles.error}>
-              <Text style={styles.errorText}>{state.error}</Text>
+              <Text style={styles.errorText}>{t("paneFind.searchFailed")}</Text>
               <Button size="xs" variant="ghost" onPress={model.retry}>
                 {t("paneFind.retry")}
               </Button>

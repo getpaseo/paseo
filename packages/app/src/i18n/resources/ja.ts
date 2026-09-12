@@ -3,6 +3,8 @@ import { pluginSettings } from "./plugin-settings";
 
 export const ja: TranslationResources = {
   paneFind: {
+    searchFailed:
+      "このチャットを検索できませんでした。ホストへの接続を確認して再試行してください。",
     searching: "検索中…",
     loading: "読み込み中…",
     failed: "失敗",

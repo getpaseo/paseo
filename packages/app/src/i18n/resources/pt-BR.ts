@@ -3,6 +3,8 @@ import { pluginSettings } from "./plugin-settings";
 
 export const ptBR: TranslationResources = {
   paneFind: {
+    searchFailed:
+      "Não foi possível pesquisar nesta conversa. Verifique a conexão com o host e tente novamente.",
     searching: "Buscando…",
     loading: "Carregando…",
     failed: "Falhou",

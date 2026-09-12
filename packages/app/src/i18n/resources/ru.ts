@@ -3,6 +3,8 @@ import { pluginSettings } from "./plugin-settings";
 
 export const ru: TranslationResources = {
   paneFind: {
+    searchFailed:
+      "Не удалось выполнить поиск в чате. Проверьте подключение к хосту и повторите попытку.",
     searching: "Поиск…",
     loading: "Загрузка…",
     failed: "Ошибка",

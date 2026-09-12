@@ -1,5 +1,6 @@
 export const en = {
   paneFind: {
+    searchFailed: "Could not search this chat. Check the host connection and retry.",
     searching: "Searching…",
     loading: "Loading…",
     failed: "Failed",

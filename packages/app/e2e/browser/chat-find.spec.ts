@@ -163,6 +163,11 @@ test("shows a disconnected search failure and recovers with Retry", async ({ pag
     await expectReconnectingToastVisible(page);
     await searchChat(page, "hello world");
     await expect(status(page)).toHaveText("Failed");
+    await expect(
+      page.getByText("Could not search this chat. Check the host connection and retry.", {
+        exact: true,
+      }),
+    ).toBeVisible();
     await expect(page.getByRole("button", { name: "Retry", exact: true })).toBeVisible();
     gate.restore();
     await expectReconnectingToastGone(page);

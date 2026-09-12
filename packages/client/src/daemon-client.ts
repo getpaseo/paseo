@@ -576,6 +576,12 @@ export interface FetchAgentTimelineOptions {
   timeout?: number;
 }
 
+export interface AgentTimelineSearchOptions {
+  agentId: string;
+  query: string;
+  cursor?: number;
+}
+
 export type AgentTimelineSearchPayload = Extract<
   SessionOutboundMessage,
   { type: "agent.timeline.search.response" }
@@ -2973,11 +2979,11 @@ export class DaemonClient {
     return { seq: payload.seq, epoch: payload.epoch };
   }
 
-  async searchAgentTimeline(
-    agentId: string,
-    query: string,
-    cursor?: number,
-  ): Promise<AgentTimelineSearchPayload> {
+  async searchAgentTimeline({
+    agentId,
+    query,
+    cursor,
+  }: AgentTimelineSearchOptions): Promise<AgentTimelineSearchPayload> {
     const requestId = this.createRequestId();
     const payload = await this.sendCorrelatedSessionRequest({
       requestId,
