@@ -2,9 +2,9 @@ import { useEffect, useMemo, useRef } from "react";
 import { FlatList, Text, View, type ListRenderItem } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { highlightCode, type HighlightToken } from "@getpaseo/highlight";
+import type { SourceEditorTheme } from "@/source-editor/contract";
 import { syntaxTokenStyleFor } from "@/styles/syntax-token-styles";
 import type { WorkspaceFileLocation } from "@/workspace/file-open";
-import type { EditorVisualTheme } from "../editor/extensions.web";
 import { selectSourcePresentation } from "./presentation";
 
 interface FileSourceViewProps {
@@ -13,7 +13,7 @@ interface FileSourceViewProps {
   location: WorkspaceFileLocation;
   navigationRevision: number;
   size: number;
-  theme: EditorVisualTheme;
+  theme: SourceEditorTheme;
   tooLargeMessage: string;
 }
 

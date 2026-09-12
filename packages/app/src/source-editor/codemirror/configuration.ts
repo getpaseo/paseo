@@ -13,22 +13,10 @@ import {
   keymap,
   lineNumbers,
 } from "@codemirror/view";
-import { createCodeMirrorHighlightStyle, type HighlightStyle } from "@getpaseo/highlight";
+import { createCodeMirrorHighlightStyle } from "@getpaseo/highlight";
+import type { SourceEditorTheme } from "../contract";
 
-export interface EditorVisualTheme {
-  colorScheme: "light" | "dark";
-  background: string;
-  foreground: string;
-  cursor: string;
-  foregroundMuted: string;
-  border: string;
-  selection: string;
-  monoFont: string;
-  codeFontSize: number;
-  syntax: Record<HighlightStyle, string>;
-}
-
-export function editorBaseExtensions(onSave: () => void) {
+export function sourceEditorBaseExtensions(onSave: () => void) {
   return [
     lineNumbers(),
     history(),
@@ -47,7 +35,7 @@ export function editorBaseExtensions(onSave: () => void) {
   ];
 }
 
-export function editorTheme(theme: EditorVisualTheme) {
+export function sourceEditorTheme(theme: SourceEditorTheme) {
   return [
     EditorView.theme(
       {
@@ -62,8 +50,13 @@ export function editorTheme(theme: EditorVisualTheme) {
           overflow: "auto",
           fontFamily: theme.monoFont,
           lineHeight: "1.45",
+          WebkitOverflowScrolling: "touch",
         },
-        ".cm-content": { caretColor: theme.foreground, padding: "16px 0" },
+        ".cm-content": {
+          caretColor: theme.foreground,
+          padding: "16px 0",
+          minHeight: "100%",
+        },
         ".cm-cursor, .cm-dropCursor": { borderLeftColor: theme.cursor },
         ".cm-gutters": {
           backgroundColor: theme.background,
@@ -75,9 +68,7 @@ export function editorTheme(theme: EditorVisualTheme) {
         "&.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground": {
           backgroundColor: theme.selection,
         },
-        ".cm-selectionBackground, ::selection": {
-          backgroundColor: theme.selection,
-        },
+        ".cm-selectionBackground, ::selection": { backgroundColor: theme.selection },
         "&.cm-focused": { outline: "none" },
       },
       { dark: theme.colorScheme === "dark" },
