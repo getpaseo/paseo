@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "vitest";
+import { clearMarkdownBlockDelimiters } from "@/utils/split-markdown-blocks";
 import { providerSubagentKey, useProviderSubagentStore } from "./provider-store";
 
 const SERVER_ID = "server-1";
@@ -6,6 +7,7 @@ const PARENT_ID = "parent-1";
 const SUBAGENT_ID = "child-1";
 
 afterEach(() => {
+  clearMarkdownBlockDelimiters();
   useProviderSubagentStore.setState({
     descriptors: new Map(),
     timelines: new Map(),
@@ -479,5 +481,84 @@ describe("provider subagent client store", () => {
     expect(timeline?.head).toEqual([
       expect.objectContaining({ kind: "assistant_message", text: "Current tail output." }),
     ]);
+  });
+
+  test("rebuilds list status with the host so an unpublished block stays whole", () => {
+    const text = "Before\n\n$$\na\n\nb";
+    const store = useProviderSubagentStore.getState();
+    store.applyUpdate(SERVER_ID, {
+      kind: "timeline",
+      parentAgentId: PARENT_ID,
+      subagentId: SUBAGENT_ID,
+      provider: "codex",
+      epoch: "epoch-1",
+      seq: 1,
+      timestamp: "2026-07-12T10:00:01.000Z",
+      item: { type: "assistant_message", text },
+    });
+    store.replaceList(SERVER_ID, PARENT_ID, [
+      {
+        id: SUBAGENT_ID,
+        parentAgentId: PARENT_ID,
+        provider: "codex",
+        title: "Restored child",
+        description: null,
+        status: "completed",
+        createdAt: "2026-07-12T10:00:00.000Z",
+        updatedAt: "2026-07-12T10:00:02.000Z",
+        toolCallId: "call-1",
+      },
+    ]);
+
+    const timeline = useProviderSubagentStore
+      .getState()
+      .timelines.get(providerSubagentKey(SERVER_ID, PARENT_ID, SUBAGENT_ID));
+    const messages = [...(timeline?.tail ?? []), ...(timeline?.head ?? [])].filter(
+      (item) => item.kind === "assistant_message",
+    );
+    expect(messages.map((item) => item.text)).toEqual([text]);
+  });
+
+  test("rebuilds upsert status with the host so an unpublished block stays whole", () => {
+    const text = "Before\n\n$$\na\n\nb";
+    const store = useProviderSubagentStore.getState();
+    const running = {
+      id: SUBAGENT_ID,
+      parentAgentId: PARENT_ID,
+      provider: "codex" as const,
+      title: "Explore",
+      description: null,
+      status: "running" as const,
+      createdAt: "2026-07-12T10:00:00.000Z",
+      updatedAt: "2026-07-12T10:00:00.000Z",
+      toolCallId: "call-1",
+    };
+    store.applyUpdate(SERVER_ID, { kind: "upsert", subagent: running });
+    store.applyUpdate(SERVER_ID, {
+      kind: "timeline",
+      parentAgentId: PARENT_ID,
+      subagentId: SUBAGENT_ID,
+      provider: "codex",
+      epoch: "epoch-1",
+      seq: 1,
+      timestamp: "2026-07-12T10:00:01.000Z",
+      item: { type: "assistant_message", text },
+    });
+    store.applyUpdate(SERVER_ID, {
+      kind: "upsert",
+      subagent: {
+        ...running,
+        status: "completed",
+        updatedAt: "2026-07-12T10:00:02.000Z",
+      },
+    });
+
+    const timeline = useProviderSubagentStore
+      .getState()
+      .timelines.get(providerSubagentKey(SERVER_ID, PARENT_ID, SUBAGENT_ID));
+    const messages = [...(timeline?.tail ?? []), ...(timeline?.head ?? [])].filter(
+      (item) => item.kind === "assistant_message",
+    );
+    expect(messages.map((item) => item.text)).toEqual([text]);
   });
 });

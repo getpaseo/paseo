@@ -8,7 +8,10 @@ import { timelineItemIdentity } from "@getpaseo/protocol/timeline-identity";
 import type { AgentAttachment, AgentStreamEventPayload } from "@getpaseo/protocol/messages";
 import type { AttachmentMetadata } from "@/attachments/types";
 import { extractTaskEntriesFromToolCall } from "../utils/tool-call-parsers";
-import { splitMarkdownBlocks } from "@/utils/split-markdown-blocks";
+import {
+  hasPublishedMarkdownBlockDelimiters,
+  splitMarkdownBlocks,
+} from "@/utils/split-markdown-blocks";
 
 /**
  * Simple hash function for deterministic ID generation
@@ -1797,7 +1800,11 @@ function getTailAssistantToResume(params: {
   return params.tailAssistant;
 }
 
-function promoteCompletedAssistantBlocks(params: { tail: StreamItem[]; head: StreamItem[] }): {
+function promoteCompletedAssistantBlocks(params: {
+  tail: StreamItem[];
+  head: StreamItem[];
+  serverId?: string;
+}): {
   tail: StreamItem[];
   head: StreamItem[];
   changedTail: boolean;
@@ -1814,7 +1821,16 @@ function promoteCompletedAssistantBlocks(params: { tail: StreamItem[]; head: Str
     };
   }
 
-  const blocks = splitMarkdownBlocks(activeItem.text);
+  if (params.serverId !== undefined && !hasPublishedMarkdownBlockDelimiters(params.serverId)) {
+    return {
+      tail: params.tail,
+      head: params.head,
+      changedTail: false,
+      changedHead: false,
+    };
+  }
+
+  const blocks = splitMarkdownBlocks(activeItem.text, { serverId: params.serverId });
   if (blocks.length < 2) {
     return {
       tail: params.tail,
@@ -2037,6 +2053,7 @@ export function applyStreamEvent(params: {
   source?: StreamUpdateSource;
   timelineCursor?: TimelinePosition;
   unmatchedUserMessageInsert?: "tail" | "head";
+  serverId?: string;
 }): ApplyStreamEventResult {
   const { tail, head, event, timestamp } = params;
   const canonicalUserResult = applyCanonicalUserMessageEvent({
@@ -2128,6 +2145,7 @@ export function applyStreamEvent(params: {
       const promoted = promoteCompletedAssistantBlocks({
         tail: nextTail,
         head: nextHead,
+        serverId: params.serverId,
       });
       nextTail = promoted.tail;
       nextHead = promoted.head;

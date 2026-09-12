@@ -21,6 +21,7 @@ function installation(): InstalledPlugin {
     attachmentSources: [],
     themes: [],
     timelineTransformers: [],
+    markdownExtensions: [],
     timelineRenderers: [],
   };
 }

@@ -2,9 +2,16 @@ import { useMemo, useSyncExternalStore } from "react";
 import { QueryClient } from "@tanstack/react-query";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { assertPluginCompatibility } from "@getpaseo/protocol/plugin-requirements";
+import MarkdownIt from "markdown-it";
 import { resolveAppVersion } from "@/utils/app-version";
+import { setMarkdownBlockDelimiters } from "@/utils/split-markdown-blocks";
 import { createPluginClientRuntime } from "./client-runtime";
 import { runPluginClientBundle, type PluginClientRuntime } from "./evaluate";
+import {
+  applyMarkdownExtensionParsers,
+  collectMarkdownBlockDelimiters,
+  collectMarkdownExtensions,
+} from "./markdown-extensions";
 import type { InstalledPlugin } from "./types";
 
 type CatalogPlugin = Awaited<ReturnType<DaemonClient["getPluginCatalog"]>>[number];
@@ -95,6 +102,7 @@ export class PluginRegistry {
           themes: [],
           timelineTransformers: [],
           timelineRenderers: [],
+          markdownExtensions: [],
         };
         runtime = this.dependencies.createRuntime(installation, options.client);
         const evaluated = runPluginClientBundle(entry.id, entry.clientBundle, runtime, () =>
@@ -142,13 +150,23 @@ export class PluginRegistry {
 
   removeHost(serverId: string): void {
     const installed = this.byHost.get(serverId);
-    if (!installed) return;
-    for (const plugin of installed) this.dispose(plugin);
-    for (const key of this.evaluationErrors.keys()) {
-      if (key.startsWith(`${serverId}/`)) this.evaluationErrors.delete(key);
+    if (installed) {
+      for (const plugin of installed) this.dispose(plugin);
+      for (const key of this.evaluationErrors.keys()) {
+        if (key.startsWith(`${serverId}/`)) this.evaluationErrors.delete(key);
+      }
+      this.byHost.delete(serverId);
+      this.publish();
     }
-    this.byHost.delete(serverId);
-    this.publish();
+    // Unsupported, disconnected, and torn-down hosts have no catalog to wait for.
+    // Publish empty delimiters so completed-block promotion keeps running.
+    this.acknowledgeEmptyHost(serverId);
+  }
+
+  /** Pending is only while a catalog load is in flight. */
+  acknowledgeEmptyHost(serverId: string): void {
+    if (this.byHost.has(serverId)) return;
+    setMarkdownBlockDelimiters(serverId, []);
   }
 
   private dispose(plugin: InstalledPlugin): void {
@@ -171,6 +189,21 @@ export class PluginRegistry {
       .sort((left, right) =>
         `${left.serverId}/${left.id}`.localeCompare(`${right.serverId}/${right.id}`),
       );
+    // The block splitter runs in the stream reducer and the height estimator, which cannot
+    // subscribe to this registry, so push per-host delimiters instead of having them pull.
+    for (const serverId of this.byHost.keys()) {
+      const extensions = collectMarkdownExtensions(selectHostPlugins(this.snapshot, serverId));
+      const { extensions: installed } = applyMarkdownExtensionParsers(
+        () => new MarkdownIt(),
+        extensions,
+      );
+      setMarkdownBlockDelimiters(
+        serverId,
+        collectMarkdownBlockDelimiters(
+          installed.map((extension) => ({ markdownExtensions: [extension] })),
+        ),
+      );
+    }
     for (const listener of this.listeners) listener();
   }
 }
@@ -194,6 +227,21 @@ export function useInstalledPlugin(serverId: string, pluginId: string): Installe
       (plugin) => plugin.serverId === serverId && plugin.id === pluginId,
     ) ?? null
   );
+}
+
+/** No host means no plugins, not every host's. */
+export function selectHostPlugins(
+  installed: readonly InstalledPlugin[],
+  serverId: string | undefined,
+): InstalledPlugin[] {
+  if (!serverId) return [];
+  return installed.filter((plugin) => plugin.serverId === serverId);
+}
+
+/** Plugins installed on one host. */
+export function useHostPlugins(serverId: string | undefined): InstalledPlugin[] {
+  const installed = useInstalledPlugins();
+  return useMemo(() => selectHostPlugins(installed, serverId), [installed, serverId]);
 }
 
 export function usePluginInstallations(pluginId: string): InstalledPlugin[] {

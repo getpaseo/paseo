@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import invariant from "tiny-invariant";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 
 import {
   applyStreamEvent,
@@ -20,6 +20,10 @@ import type { AgentProvider, ToolCallDetail } from "@getpaseo/protocol/agent-typ
 import type { AgentStreamEventPayload } from "@getpaseo/protocol/messages";
 import { buildToolCallDisplayModel } from "@getpaseo/protocol/tool-call-display";
 import { timelineItemIdentity } from "@getpaseo/protocol/timeline-identity";
+import {
+  clearMarkdownBlockDelimiters,
+  setMarkdownBlockDelimiters,
+} from "@/utils/split-markdown-blocks";
 
 type CanonicalToolStatus = "running" | "completed" | "failed" | "canceled";
 
@@ -2264,5 +2268,64 @@ describe("notification timeline items", () => {
       { kind: "notification", level: "error", message: "Command blocked" },
     ]);
     expect(new Set(state.map((item) => item.id)).size).toBe(state.length);
+  });
+});
+
+describe("assistant block promotion with host catalogs", () => {
+  afterEach(() => {
+    clearMarkdownBlockDelimiters();
+  });
+
+  it("does not promote an unclosed extension block before the host catalog publishes", () => {
+    const text = "Before\n\n$$\na\n\nb";
+    const before = applyStreamEvent({
+      tail: [],
+      head: [],
+      event: assistantTimeline(text, "claude", "msg-catalog"),
+      timestamp: new Date("2025-01-01T10:02:00Z"),
+      serverId: "host-a",
+    });
+    const beforeMessages = [...before.tail, ...before.head].filter(
+      (item): item is Extract<StreamItem, { kind: "assistant_message" }> =>
+        item.kind === "assistant_message",
+    );
+    expect(before.tail).toEqual([]);
+    expect(beforeMessages.map((message) => message.text)).toEqual([text]);
+
+    setMarkdownBlockDelimiters("host-a", [{ open: "$$", close: "$$" }]);
+
+    const after = applyStreamEvent({
+      tail: before.tail,
+      head: before.head,
+      event: assistantTimeline("\n", "claude", "msg-catalog"),
+      timestamp: new Date("2025-01-01T10:02:01Z"),
+      serverId: "host-a",
+    });
+    const afterMessages = [...after.tail, ...after.head].filter(
+      (item): item is Extract<StreamItem, { kind: "assistant_message" }> =>
+        item.kind === "assistant_message",
+    );
+    expect(afterMessages).toHaveLength(2);
+    expect(afterMessages[0]?.text).toBe("Before");
+    expect(afterMessages[1]?.text.startsWith("$$\na\n\nb")).toBe(true);
+  });
+
+  it("promotes ordinary paragraphs after an empty catalog has published", () => {
+    setMarkdownBlockDelimiters("host-a", []);
+    const result = applyStreamEvent({
+      tail: [],
+      head: [],
+      event: assistantTimeline("First paragraph.\n\nSecond paragraph.", "claude", "msg-empty"),
+      timestamp: new Date("2025-01-01T10:02:00Z"),
+      serverId: "host-a",
+    });
+    const messages = [...result.tail, ...result.head].filter(
+      (item): item is Extract<StreamItem, { kind: "assistant_message" }> =>
+        item.kind === "assistant_message",
+    );
+    expect(messages.map((message) => message.text)).toEqual([
+      "First paragraph.",
+      "Second paragraph.",
+    ]);
   });
 });

@@ -14,6 +14,7 @@ import type {
   PluginSettingsScreenContribution,
   PluginTimelineRendererContribution,
   PluginTimelineTransformerContribution,
+  PluginMarkdownExtension,
   PluginPanelLocation,
   PluginWorkspacePanelContribution,
 } from "@getpaseo/plugin/client";
@@ -35,6 +36,7 @@ export interface EvaluatedPlugin {
   themes: PluginThemeContribution[];
   timelineTransformers: PluginTimelineTransformerContribution[];
   timelineRenderers: PluginTimelineRendererContribution[];
+  markdownExtensions: PluginMarkdownExtension[];
 }
 
 export interface InstalledPlugin extends EvaluatedPlugin {

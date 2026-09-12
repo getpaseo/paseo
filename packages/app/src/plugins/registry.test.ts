@@ -1,7 +1,14 @@
 import appPackage from "../../package.json";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
-import { pluginRegistry as registry } from "./registry";
+import {
+  clearMarkdownBlockDelimiters,
+  getMarkdownBlockDelimiters,
+  hasPublishedMarkdownBlockDelimiters,
+  splitMarkdownBlocks,
+} from "@/utils/split-markdown-blocks";
+import { pluginRegistry as registry, selectHostPlugins } from "./registry";
+import type { InstalledPlugin } from "./types";
 
 vi.mock("./navigation", () => ({
   createPluginNavigation: () => ({}),
@@ -70,6 +77,7 @@ function installedPluginIds(): string[] {
 afterEach(() => {
   pluginRegistry.removeHost("host-a");
   pluginRegistry.removeHost("host-b");
+  clearMarkdownBlockDelimiters();
   Reflect.deleteProperty(globalThis, "__pluginCleanups");
 });
 
@@ -219,5 +227,87 @@ describe("PluginRegistry", () => {
 
     expect(() => pluginRegistry.removeHost("host-a")).not.toThrow();
     expect(pluginRegistry.getSnapshot()).toEqual([]);
+  });
+
+  it("pushes declared block delimiters into the markdown splitter on publish", () => {
+    const clientBundle = `(function() {
+        const module = { exports: {} };
+        module.exports.default = function(plugin) {
+          plugin.addMarkdownExtension({
+            id: "math",
+            blockDelimiters: [{ open: "$$", close: "$$" }, { open: "\\\\[", close: "\\\\]" }],
+          });
+          return function() {};
+        };
+        return module.exports;
+      })`;
+
+    pluginRegistry.installCatalog("host-a", [{ id: "math-plugin", clientBundle }]);
+    pluginRegistry.installCatalog("host-b", []);
+    expect(getMarkdownBlockDelimiters("host-a")).toEqual([
+      { open: "$$", close: "$$" },
+      { open: "\\[", close: "\\]" },
+    ]);
+    expect(getMarkdownBlockDelimiters("host-b")).toEqual([]);
+
+    pluginRegistry.removeHost("host-a");
+    expect(getMarkdownBlockDelimiters("host-a")).toEqual([]);
+    expect(getMarkdownBlockDelimiters("host-b")).toEqual([]);
+  });
+
+  it("publishes empty delimiters when a host never had a catalog", () => {
+    expect(hasPublishedMarkdownBlockDelimiters("host-a")).toBe(false);
+    pluginRegistry.removeHost("host-a");
+    expect(hasPublishedMarkdownBlockDelimiters("host-a")).toBe(true);
+    expect(getMarkdownBlockDelimiters("host-a")).toEqual([]);
+  });
+
+  it("keeps an empty host published after teardown", () => {
+    pluginRegistry.installCatalog("host-a", []);
+    expect(hasPublishedMarkdownBlockDelimiters("host-a")).toBe(true);
+    pluginRegistry.removeHost("host-a");
+    expect(hasPublishedMarkdownBlockDelimiters("host-a")).toBe(true);
+    expect(getMarkdownBlockDelimiters("host-a")).toEqual([]);
+  });
+
+  it("does not publish delimiters from an extension whose parser throws", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const clientBundle = `(function() {
+        const module = { exports: {} };
+        module.exports.default = function(plugin) {
+          plugin.addMarkdownExtension({
+            id: "broken",
+            blockDelimiters: [{ open: "$$", close: "$$" }],
+            parser: function() { throw new Error("boom"); },
+          });
+          return function() {};
+        };
+        return module.exports;
+      })`;
+
+    pluginRegistry.installCatalog("host-a", [{ id: "broken-plugin", clientBundle }]);
+    expect(splitMarkdownBlocks("Before\n\n$$\na\n\nb\n$$", { serverId: "host-a" })).toEqual([
+      "Before",
+      "$$\na",
+      "b\n$$",
+    ]);
+    expect(warn).toHaveBeenCalled();
+    warn.mockRestore();
+  });
+});
+
+describe("selectHostPlugins", () => {
+  const alpha = { serverId: "alpha", id: "math" } as InstalledPlugin;
+  const beta = { serverId: "beta", id: "math" } as InstalledPlugin;
+
+  // Markdown extensions rewrite assistant messages, so with two hosts connected a plugin
+  // installed on one must not reach the other's messages.
+  it("returns only the named host's plugins", () => {
+    expect(selectHostPlugins([alpha, beta], "alpha")).toEqual([alpha]);
+  });
+
+  it("returns nothing when the host is unknown", () => {
+    expect(selectHostPlugins([alpha, beta], undefined)).toEqual([]);
+    expect(selectHostPlugins([alpha, beta], "")).toEqual([]);
   });
 });

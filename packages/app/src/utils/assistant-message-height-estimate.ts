@@ -10,6 +10,7 @@ const ASSISTANT_MARKDOWN_BLOCK_GAP = 12;
 interface MarkdownBlockHeightInput {
   block: string;
   width: number;
+  serverId?: string;
 }
 
 const assistantMarkdownBlockHeightCache = new Map<string, number>();
@@ -50,13 +51,14 @@ function createMarkdownBlockHeightKey(input: MarkdownBlockHeightInput): string |
   if (input.block.length === 0) {
     return null;
   }
-  return `${normalizedWidth}:${hashMarkdownBlock(input.block)}`;
+  return `${input.serverId ?? ""}:${normalizedWidth}:${hashMarkdownBlock(input.block)}`;
 }
 
 export function setAssistantMarkdownBlockHeight(input: {
   block: string;
   width: number;
   height: number;
+  serverId?: string;
 }): number | null {
   if (!Number.isFinite(input.height) || input.height <= 0) {
     return null;
@@ -64,6 +66,7 @@ export function setAssistantMarkdownBlockHeight(input: {
   const key = createMarkdownBlockHeightKey({
     block: input.block,
     width: input.width,
+    serverId: input.serverId,
   });
   if (!key) {
     return null;
@@ -78,8 +81,11 @@ export function setAssistantMarkdownBlockHeight(input: {
   return height;
 }
 
-function estimateAssistantMarkdownBlockHeightFromCache(markdown: string): number | null {
-  const blocks = splitMarkdownBlocks(markdown);
+function estimateAssistantMarkdownBlockHeightFromCache(
+  markdown: string,
+  serverId?: string,
+): number | null {
+  const blocks = splitMarkdownBlocks(markdown, { serverId });
   if (blocks.length === 0) {
     return null;
   }
@@ -89,6 +95,7 @@ function estimateAssistantMarkdownBlockHeightFromCache(markdown: string): number
     const key = createMarkdownBlockHeightKey({
       block,
       width: ASSISTANT_MARKDOWN_BLOCK_ESTIMATE_WIDTH,
+      serverId,
     });
     const cachedHeight = key ? assistantMarkdownBlockHeightCache.get(key) : undefined;
     if (cachedHeight === undefined) {
@@ -104,9 +111,12 @@ function estimateAssistantMarkdownBlockHeightFromCache(markdown: string): number
   );
 }
 
-export function estimateAssistantMessageHeightFromCache(markdown: string): number | null {
+export function estimateAssistantMessageHeightFromCache(
+  markdown: string,
+  serverId?: string,
+): number | null {
   return (
-    estimateAssistantMarkdownBlockHeightFromCache(markdown) ??
+    estimateAssistantMarkdownBlockHeightFromCache(markdown, serverId) ??
     estimateAssistantImageMessageHeightFromCache(markdown)
   );
 }

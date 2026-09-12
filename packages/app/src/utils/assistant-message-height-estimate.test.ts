@@ -44,4 +44,22 @@ describe("assistant message height estimate", () => {
       ),
     ).toBeGreaterThan(220);
   });
+
+  it("does not reuse a measured height from another host", () => {
+    setAssistantMarkdownBlockHeight({
+      block: "$$x$$",
+      width: 804,
+      height: 100,
+      serverId: "host-a",
+    });
+    setAssistantMarkdownBlockHeight({
+      block: "$$x$$",
+      width: 804,
+      height: 40,
+      serverId: "host-b",
+    });
+
+    expect(estimateAssistantMessageHeightFromCache("$$x$$", "host-a")).toBe(124);
+    expect(estimateAssistantMessageHeightFromCache("$$x$$", "host-b")).toBe(64);
+  });
 });

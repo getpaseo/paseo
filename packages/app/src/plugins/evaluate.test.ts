@@ -494,6 +494,69 @@ describe("evaluatePluginClientBundle", () => {
     expect(element).toMatchObject({ props: { size: 18, color: "#123456" } });
   });
 
+  it("collects markdown extensions and rejects a duplicate id", () => {
+    const plugin = evaluatePluginClientBundle(
+      "example",
+      `(function(require) {
+        const module = { exports: {} };
+        module.exports.default = function(plugin) {
+          plugin.addMarkdownExtension({
+            id: "math",
+            blockDelimiters: [{ open: "$$", close: "$$" }],
+          });
+          let message = null;
+          try {
+            plugin.addMarkdownExtension({ id: "math" });
+          } catch (error) {
+            message = error.message;
+          }
+          if (message !== "Duplicate markdown extension: math") {
+            throw new Error("expected duplicate rejection, got " + message);
+          }
+          return function() {};
+        };
+        return module.exports;
+      })`,
+    );
+
+    expect(plugin.markdownExtensions.map((extension) => extension.id)).toEqual(["math"]);
+    expect(plugin.markdownExtensions[0]?.blockDelimiters).toEqual([{ open: "$$", close: "$$" }]);
+  });
+
+  it("rejects a markdown extension with an empty block delimiter", () => {
+    expect(() =>
+      evaluatePluginClientBundle(
+        "example",
+        `(function(require) {
+          const module = { exports: {} };
+          module.exports.default = function(plugin) {
+            plugin.addMarkdownExtension({ id: "math", blockDelimiters: [{ open: "", close: "$$" }] });
+            return function() {};
+          };
+          return module.exports;
+        })`,
+      ),
+    ).toThrow("Markdown extension math has an empty block delimiter");
+  });
+
+  it("removes a markdown extension through its cleanup", () => {
+    const plugin = evaluatePluginClientBundle(
+      "example",
+      `(function(require) {
+        const module = { exports: {} };
+        module.exports.default = function(plugin) {
+          const remove = plugin.addMarkdownExtension({ id: "math" });
+          remove();
+          remove();
+          return function() {};
+        };
+        return module.exports;
+      })`,
+    );
+
+    expect(plugin.markdownExtensions).toEqual([]);
+  });
+
   it("provides Paseo UI through @getpaseo/plugin/client/react-native", () => {
     const plugin = evaluatePluginClientBundle(
       "example",
@@ -503,6 +566,26 @@ describe("evaluatePluginClientBundle", () => {
         module.exports.default = function(plugin) {
           if (typeof Icon !== "function" || typeof Modal !== "function" || typeof Modal.Content !== "function" || typeof useToast !== "function") {
             throw new Error("React Native plugin UI is incomplete");
+          }
+          plugin.addSurface("main", function Surface() { return null; });
+          return function() {};
+        };
+        return module.exports;
+      })`,
+    );
+
+    expect(plugin.surfaces.map((surface) => surface.id)).toEqual(["main"]);
+  });
+
+  it("provides SvgXml through @getpaseo/plugin/client/react-native", () => {
+    const plugin = evaluatePluginClientBundle(
+      "example",
+      `(function(require) {
+        const { SvgXml } = require("@getpaseo/plugin/client/react-native");
+        const module = { exports: {} };
+        module.exports.default = function(plugin) {
+          if (typeof SvgXml !== "function" && typeof SvgXml !== "object") {
+            throw new Error("SvgXml is not provided");
           }
           plugin.addSurface("main", function Surface() { return null; });
           return function() {};

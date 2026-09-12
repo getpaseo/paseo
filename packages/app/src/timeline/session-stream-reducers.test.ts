@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import type { AgentStreamEventPayload } from "@getpaseo/protocol/messages";
 import type { AgentTimelineItem, ToolCallDetail } from "@getpaseo/protocol/agent-types";
 import {
@@ -7,6 +7,7 @@ import {
   type AgentToolCallItem,
   type StreamItem,
 } from "@/types/stream";
+import { clearMarkdownBlockDelimiters } from "@/utils/split-markdown-blocks";
 import {
   createAgentStreamReducerQueue,
   deriveAgentStreamTurnLiveness,
@@ -3605,6 +3606,44 @@ describe("processTimelineResponse", () => {
       epoch: "epoch-1",
       startSeq: 1,
       endSeq: 2,
+    });
+  });
+
+  describe("host-scoped markdown during catch-up", () => {
+    afterEach(() => {
+      clearMarkdownBlockDelimiters();
+    });
+
+    it("does not split an unclosed extension block when catching up with an active head", () => {
+      const text = "Before\n\n$$\na\n\nb";
+      const liveThought: StreamItem = {
+        kind: "thought",
+        id: "live-thought",
+        text: "thinking",
+        timestamp: new Date(1500),
+        status: "loading",
+      };
+
+      const result = processTimelineResponse({
+        ...baseTimelineInput,
+        serverId: "host-a",
+        currentHead: [liveThought],
+        currentCursor: { epoch: "epoch-1", startSeq: 1, endSeq: 1 },
+        payload: {
+          ...baseTimelineInput.payload,
+          direction: "after",
+          startCursor: { seq: 2 },
+          endCursor: { seq: 2 },
+          window: { minSeq: 2, maxSeq: 2, nextSeq: 3 },
+          entries: [makeTimelineEntry(2, text)],
+        },
+      });
+
+      const texts: string[] = [];
+      for (const item of [...result.tail, ...result.head]) {
+        if (item.kind === "assistant_message") texts.push(item.text);
+      }
+      expect(texts).toEqual([text]);
     });
   });
 });
