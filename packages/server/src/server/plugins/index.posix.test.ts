@@ -5,6 +5,7 @@ import { pathToFileURL } from "node:url";
 import pino from "pino";
 import { afterEach, describe, expect, it } from "vitest";
 import { DaemonConfigStore } from "../daemon-config-store.js";
+import { resolveDaemonVersion } from "../daemon-version.js";
 import { PluginService } from "./index.js";
 import { ManagedPluginSources } from "./managed-source.js";
 import { runGitCommand } from "../../utils/run-git-command.js";
@@ -237,6 +238,14 @@ export default function contribute(server) {
   return () => {};
 }`,
     );
+    const daemonVersion = resolveDaemonVersion(import.meta.url);
+    await writeFile(
+      path.join(directory, "paseo-plugin.json"),
+      JSON.stringify({
+        id: "same-id-plugin",
+        requirements: { paseo: `^${daemonVersion}` },
+      }),
+    );
     const store = createStore(home);
     store.patch({
       providers: {
@@ -244,7 +253,7 @@ export default function contribute(server) {
       },
     });
     const service = bindTestSessionHost(
-      new PluginService(pino({ level: "silent" }), store, "0.4.0"),
+      new PluginService(pino({ level: "silent" }), store, daemonVersion),
     );
 
     await service.start();
@@ -262,7 +271,7 @@ export default function contribute(server) {
       },
     });
     const conflictingService = bindTestSessionHost(
-      new PluginService(pino({ level: "silent" }), conflictingStore, "0.4.0"),
+      new PluginService(pino({ level: "silent" }), conflictingStore, daemonVersion),
     );
     await conflictingService.start();
     await expect(conflictingService.installDirectory({ path: directory })).rejects.toThrow(
