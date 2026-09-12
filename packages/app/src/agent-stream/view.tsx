@@ -50,7 +50,7 @@ import type {
   AgentPermissionResponse,
 } from "@getpaseo/protocol/agent-types";
 import type { AgentScreenAgent } from "@/hooks/use-agent-screen-state-machine";
-import { useSessionStore } from "@/stores/session-store";
+import { selectCanShowChatOutline, useSessionStore } from "@/stores/session-store";
 import { useRevealedText } from "@/hooks/use-revealed-text";
 import { useFileExplorerActions } from "@/hooks/use-file-explorer-actions";
 import { useLoadOlderAgentHistory } from "@/hooks/use-load-older-agent-history";
@@ -388,9 +388,8 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       (state) =>
         state.sessions[resolvedServerId]?.serverInfo?.features?.agentForkContextCursor === true,
     );
-    const supportsChatOutline = useSessionStore(
-      (state) =>
-        state.sessions[resolvedServerId]?.serverInfo?.features?.agentTimelinePromptIndex === true,
+    const supportsChatOutline = useSessionStore((state) =>
+      selectCanShowChatOutline(state.sessions[resolvedServerId], agentId),
     );
     const timelineEpoch = useSessionStore(
       (state) => state.sessions[resolvedServerId]?.agentTimelineCursor.get(agentId)?.epoch ?? null,
