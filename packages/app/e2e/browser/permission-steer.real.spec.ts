@@ -1,5 +1,5 @@
 import { mkdtempSync, realpathSync } from "node:fs";
-import type { Page } from "@playwright/test";
+import type { Page, TestInfo } from "@playwright/test";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { expect, test } from "../support/fixtures";
@@ -71,79 +71,108 @@ async function reopenConversation(page: Page, reply: string): Promise<void> {
   await expect(page.getByTestId("assistant-message").filter({ hasText: reply })).toBeVisible();
 }
 
-test.describe("composer steer supersedes plan approval", () => {
-  for (const scenario of scenarios) {
-    test(`${scenario.provider} keeps the rejected plan in the timeline`, async ({
+type PlanScenario = (typeof scenarios)[number];
+interface PlanSteer {
+  page: Page;
+  scenario: PlanScenario;
+  testInfo: TestInfo;
+}
+
+async function withPlanSteer(context: PlanSteer, journey: () => Promise<void>): Promise<void> {
+  const { page, scenario } = context;
+  const cwd = realpathSync(
+    mkdtempSync(path.join(tmpdir(), `paseo-permission-steer-${scenario.provider}-`)),
+  );
+  let handle: AgentHandle | undefined;
+  try {
+    handle = await launchAgent({
       page,
-    }, testInfo) => {
-      test.setTimeout(420_000);
-      const cwd = realpathSync(
-        mkdtempSync(path.join(tmpdir(), `paseo-permission-steer-${scenario.provider}-`)),
-      );
-      let handle: AgentHandle | undefined;
-
-      try {
-        handle = await launchAgent({
-          page,
-          provider: scenario.provider,
-          cwd,
-          mode: "full-access",
-          providerConfig: scenario.providerConfig,
-        });
-        await submitMessage(page, scenario.planPrompt);
-        await waitForPermissionPrompt(page, 180_000);
-
-        const pendingPlan = page.getByTestId("permission-plan-card");
-        await expect(pendingPlan).toContainText(scenario.planText);
-        await togglePlan(page, "permission-plan-card", "Plan", false);
-        await expect(page.getByTestId("permission-request-deny")).toBeVisible();
-        await togglePlan(page, "permission-plan-card", "Plan", true);
-        const pendingScreenshot = testInfo.outputPath(`${scenario.provider}-pending-plan.png`);
-        await page.screenshot({ path: pendingScreenshot });
-        await testInfo.attach(`${scenario.provider} pending plan`, {
-          path: pendingScreenshot,
-          contentType: "image/png",
-        });
-
-        await submitMessage(page, scenario.steerPrompt);
-        await expect(pendingPlan).toHaveCount(0, { timeout: 30_000 });
-        const rejectedPlan = page.getByTestId("timeline-plan-card");
-        await expect(rejectedPlan).toBeVisible({ timeout: 30_000 });
-        await expectRejectedPlanCollapsed(page);
-        await expect(
-          page.getByTestId("assistant-message").filter({ hasText: scenario.reply }),
-        ).toBeVisible({
-          timeout: 180_000,
-        });
-
-        const rejectedScreenshot = testInfo.outputPath(`${scenario.provider}-rejected-plan.png`);
-        await page.screenshot({ path: rejectedScreenshot });
-        await testInfo.attach(`${scenario.provider} rejected plan`, {
-          path: rejectedScreenshot,
-          contentType: "image/png",
-        });
-        await expect(
-          page.getByTestId("user-message").filter({ hasText: scenario.steerPrompt }),
-        ).toBeVisible();
-        expect
-          .soft(await readConversationOrder(page, scenario.steerPrompt, scenario.reply))
-          .toEqual(["plan", "question", "answer"]);
-        await togglePlan(page, "timeline-plan-card", "Rejected plan", true);
-        await expect(rejectedPlan).toContainText(scenario.planText);
-        await rejectedPlan.screenshot({
-          path: testInfo.outputPath(`${scenario.provider}-expanded-rejected-plan.png`),
-        });
-        await togglePlan(page, "timeline-plan-card", "Rejected plan", false);
-        await reopenConversation(page, scenario.reply);
-        await expectRejectedPlanCollapsed(page);
-        expect(await readConversationOrder(page, scenario.steerPrompt, scenario.reply)).toEqual([
-          "plan",
-          "question",
-          "answer",
-        ]);
-      } finally {
-        await cleanupRewindFlow({ handle, cwd });
-      }
+      provider: scenario.provider,
+      cwd,
+      mode: "full-access",
+      providerConfig: scenario.providerConfig,
     });
+    await journey();
+  } finally {
+    await cleanupRewindFlow({ handle, cwd });
   }
-});
+}
+
+async function reviewCollapsibleProposal({ page, scenario, testInfo }: PlanSteer): Promise<void> {
+  await submitMessage(page, scenario.planPrompt);
+  await waitForPermissionPrompt(page, 180_000);
+
+  const pendingPlan = page.getByTestId("permission-plan-card");
+  await expect(pendingPlan).toContainText(scenario.planText);
+  await togglePlan(page, "permission-plan-card", "Plan", false);
+  await expect(page.getByTestId("permission-request-deny")).toBeVisible();
+  await togglePlan(page, "permission-plan-card", "Plan", true);
+  const pendingScreenshot = testInfo.outputPath(`${scenario.provider}-pending-plan.png`);
+  await page.screenshot({ path: pendingScreenshot });
+  await testInfo.attach(`${scenario.provider} pending plan`, {
+    path: pendingScreenshot,
+    contentType: "image/png",
+  });
+}
+
+async function rejectWithFollowUp({ page, scenario, testInfo }: PlanSteer): Promise<void> {
+  await submitMessage(page, scenario.steerPrompt);
+  await expect(page.getByTestId("permission-plan-card")).toHaveCount(0, { timeout: 30_000 });
+  const rejectedPlan = page.getByTestId("timeline-plan-card");
+  await expect(rejectedPlan).toBeVisible({ timeout: 30_000 });
+  await expectRejectedPlanCollapsed(page);
+  await expect(
+    page.getByTestId("assistant-message").filter({ hasText: scenario.reply }),
+  ).toBeVisible({
+    timeout: 180_000,
+  });
+
+  const rejectedScreenshot = testInfo.outputPath(`${scenario.provider}-rejected-plan.png`);
+  await page.screenshot({ path: rejectedScreenshot });
+  await testInfo.attach(`${scenario.provider} rejected plan`, {
+    path: rejectedScreenshot,
+    contentType: "image/png",
+  });
+  await expect(
+    page.getByTestId("user-message").filter({ hasText: scenario.steerPrompt }),
+  ).toBeVisible();
+  expect
+    .soft(await readConversationOrder(page, scenario.steerPrompt, scenario.reply))
+    .toEqual(["plan", "question", "answer"]);
+}
+
+async function rereadRejectedPlan({ page, scenario, testInfo }: PlanSteer): Promise<void> {
+  const rejectedPlan = page.getByTestId("timeline-plan-card");
+  await togglePlan(page, "timeline-plan-card", "Rejected plan", true);
+  await expect(rejectedPlan).toContainText(scenario.planText);
+  await rejectedPlan.screenshot({
+    path: testInfo.outputPath(`${scenario.provider}-expanded-rejected-plan.png`),
+  });
+  await togglePlan(page, "timeline-plan-card", "Rejected plan", false);
+}
+
+async function restoreConversationOrder({ page, scenario }: PlanSteer): Promise<void> {
+  await reopenConversation(page, scenario.reply);
+  await expectRejectedPlanCollapsed(page);
+  expect(await readConversationOrder(page, scenario.steerPrompt, scenario.reply)).toEqual([
+    "plan",
+    "question",
+    "answer",
+  ]);
+}
+
+for (const scenario of scenarios) {
+  test(`${scenario.provider} keeps the rejected plan in the timeline`, async ({
+    page,
+  }, testInfo) => {
+    test.setTimeout(420_000);
+    const context = { page, scenario, testInfo };
+    await withPlanSteer(context, async () => {
+      await test.step("Review a collapsible proposal", () => reviewCollapsibleProposal(context));
+      await test.step("Reject with a follow-up below the plan", () => rejectWithFollowUp(context));
+      await test.step("Reopen the rejected plan", () => rereadRejectedPlan(context));
+      await test.step("Keep conversation order after reload", () =>
+        restoreConversationOrder(context));
+    });
+  });
+}

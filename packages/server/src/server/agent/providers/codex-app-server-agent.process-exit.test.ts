@@ -21,66 +21,86 @@ import {
 
 const logger = createTestLogger();
 
-test.each(["close", "active exit"] as const)(
-  "%s retains a canceled pending plan",
-  async (ending) => {
-    const workdir = mkdtempSync(join(tmpdir(), "codex-plan-cancel-"));
-    const appServer = createFakeCodexAppServer();
-    const client = new ProcessExitCodexClient([appServer]);
-    const session = await client.createSession({
-      provider: "codex",
-      cwd: workdir,
-      modeId: "auto",
-      model: "gpt-5.4",
-      featureValues: { plan_mode: true },
-    });
-    const events: AgentStreamEvent[] = [];
-    session.subscribe((event) => events.push(event));
-    try {
-      const run = session.run("make a plan");
-      await appServer.waitForTurnStart();
-      appServer.startsTurn({ threadId: "thread-1", turnId: "plan-turn" });
-      appServer.updatesPlan({ threadId: "thread-1", steps: ["Inspect README"] });
-      appServer.completeTurn();
-      await run;
-      const proposal = events.find(
-        (event) =>
-          event.type === "timeline" &&
-          event.item.type === "tool_call" &&
-          event.item.name === "plan_approval",
-      );
-      expect(proposal).toBeDefined();
-      const [request] = session.getPendingPermissions?.() ?? [];
-      expect(request).toBeDefined();
+interface PendingPlanLifecycle {
+  close(): Promise<void>;
+  crashDuringActiveTurn(): Promise<void>;
+  expectCanceledPlan(): void;
+}
 
-      if (ending === "close") {
-        await session.close();
-      } else {
+async function withPendingPlan(
+  runScenario: (plan: PendingPlanLifecycle) => Promise<void>,
+): Promise<void> {
+  const workdir = mkdtempSync(join(tmpdir(), "codex-plan-cancel-"));
+  const appServer = createFakeCodexAppServer();
+  const client = new ProcessExitCodexClient([appServer]);
+  const session = await client.createSession({
+    provider: "codex",
+    cwd: workdir,
+    modeId: "auto",
+    model: "gpt-5.4",
+    featureValues: { plan_mode: true },
+  });
+  const events: AgentStreamEvent[] = [];
+  session.subscribe((event) => events.push(event));
+  try {
+    const run = session.run("make a plan");
+    await appServer.waitForTurnStart();
+    appServer.startsTurn({ threadId: "thread-1", turnId: "plan-turn" });
+    appServer.updatesPlan({ threadId: "thread-1", steps: ["Inspect README"] });
+    appServer.completeTurn();
+    await run;
+    const proposal = events.find(
+      (event) =>
+        event.type === "timeline" &&
+        event.item.type === "tool_call" &&
+        event.item.name === "plan_approval",
+    );
+    expect(proposal).toBeDefined();
+    const [request] = session.getPendingPermissions?.() ?? [];
+    expect(request).toBeDefined();
+    await runScenario({
+      close: () => session.close(),
+      async crashDuringActiveTurn() {
         appServer.startsTurn({ threadId: "thread-1", turnId: "autonomous-turn" });
         await expect
           .poll(() => events.filter((event) => event.type === "turn_started").length)
           .toBe(2);
         appServer.child.emit("exit", 17, null);
         await expect.poll(() => events.some((event) => event.type === "turn_failed")).toBe(true);
-      }
+      },
+      expectCanceledPlan() {
+        expect(session.getPendingPermissions?.()).toEqual([]);
+        expect(events).toContainEqual({
+          ...proposal,
+          item: expect.objectContaining({
+            type: "tool_call",
+            name: "plan_approval",
+            callId: request?.id,
+            status: "canceled",
+            detail: { type: "plan", text: "- Inspect README" },
+          }),
+        });
+      },
+    });
+  } finally {
+    await session.close();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+}
 
-      expect(session.getPendingPermissions?.()).toEqual([]);
-      expect(events).toContainEqual({
-        ...proposal,
-        item: expect.objectContaining({
-          type: "tool_call",
-          name: "plan_approval",
-          callId: request?.id,
-          status: "canceled",
-          detail: { type: "plan", text: "- Inspect README" },
-        }),
-      });
-    } finally {
-      await session.close();
-      rmSync(workdir, { recursive: true, force: true });
-    }
-  },
-);
+test("closing a session retains a canceled pending plan", async () => {
+  await withPendingPlan(async (plan) => {
+    await plan.close();
+    plan.expectCanceledPlan();
+  });
+});
+
+test("an active provider crash retains a canceled pending plan", async () => {
+  await withPendingPlan(async (plan) => {
+    await plan.crashDuringActiveTurn();
+    plan.expectCanceledPlan();
+  });
+});
 
 class ProcessExitCodexClient extends CodexAppServerAgentClient implements AgentClient {
   constructor(private readonly appServers: FakeCodexAppServer[]) {
