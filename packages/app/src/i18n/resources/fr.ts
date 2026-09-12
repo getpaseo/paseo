@@ -1620,11 +1620,14 @@ export const fr: TranslationResources = {
     error: "Erreur",
     unavailable: "Indisponible",
     unknownError: "Erreur inconnue",
+    visibilityUnavailable: "Impossible de charger les modeles masques. Reessayez.",
     readiness: {
       initialPromptRequired: "Une invite initiale est requise",
       noProviders: "Aucun fournisseur disponible sur l'hébergeur sélectionné",
       modelDefaultsLoading: "Les valeurs par défaut du modèle sont toujours en cours de chargement",
       noModelAvailable: "Aucun modèle n'est disponible pour le fournisseur sélectionné",
+      allModelsHidden:
+        "Tous les modeles de ce fournisseur sont masques. Affichez-en un dans les parametres du fournisseur.",
       workspaceDirectoryNotFound: "RépertoireWorkspaceintrouvable",
       hostDisconnected: "Hostn'est pas connecté",
     },
@@ -2026,6 +2029,7 @@ export const fr: TranslationResources = {
       fallbackHint: "S’il est indisponible, Paseo utilise un autre modèle disponible",
       docs: "Documentation",
       saveError: "Impossible de mettre à jour la génération de métadonnées",
+      loadError: "Impossible de charger les paramètres de génération de métadonnées",
     },
     general: {
       title: "Général",
@@ -2488,6 +2492,11 @@ export const fr: TranslationResources = {
         noProviders: "Aucun fournisseur n'est disponible sur cet hôte",
         modelLabel: "Modèle",
         noModels: "Ce fournisseur n'a aucun modèle à choisir",
+        modelVisibilityLoading: "Chargement des modeles disponibles...",
+        modelVisibilityError: "Impossible de charger les modeles masques.",
+        modelVisibilityRetry: "Reessayer",
+        modelsAllHidden:
+          "Tous les modeles de ce fournisseur sont masques. Affichez-en un dans les parametres du fournisseur.",
         modeLabel: "Mode",
         noModes: "Ce fournisseur n'a aucun mode à choisir",
         thinkingLabel: "Pensée",
@@ -2626,6 +2635,16 @@ export const fr: TranslationResources = {
         discovered: "Découvert",
         custom: "Modèles personnalisés",
         updated: "{{time}}mis à jour",
+        visibilityToggle: "Afficher {{id}} dans les selecteurs de modele",
+        visibilityHint:
+          "Desactivez un modele pour le masquer des selecteurs de modele. Il reste liste ici et les agents qui l'utilisent deja continuent de fonctionner.",
+        visibilitySaveFailed: "Echec de l'enregistrement de la visibilite du modele : {{error}}",
+        visibility: {
+          unavailable:
+            "Cet hote ne peut pas masquer des modeles individuels. Mettez-le a jour pour les activer ou desactiver ici.",
+          loading: "Chargement des modeles masques...",
+          error: "Impossible de charger les modeles masques. Rouvrez cet ecran pour reessayer.",
+        },
       },
       diagnostic: {
         title: "Diagnostique",

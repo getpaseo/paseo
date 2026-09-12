@@ -123,6 +123,9 @@ const MutableDaemonProviderConfigSchema = z
     paseoTools: ProviderPaseoToolsPolicySchema.optional(),
     enabled: z.boolean().optional(),
     additionalModels: z.array(MutableDaemonProviderModelSchema).optional(),
+    // Keyed by exact model ID. Absent means visible. Patches carry only the
+    // models that changed; the daemon merges them into the stored map.
+    modelVisibility: z.record(z.string(), z.boolean()).optional(),
   })
   .passthrough();
 
@@ -3493,6 +3496,8 @@ export const ServerInfoStatusPayloadSchema = z
         workspaceSetupRun: z.boolean().optional(),
         // COMPAT(workspaceTerminals): added in v0.8.0, remove gate after 2027-09-05.
         workspaceTerminals: z.boolean().optional(),
+        // COMPAT(modelVisibility): added in v0.7.3, remove gate after 2027-09-07.
+        modelVisibility: z.boolean().optional(),
         // COMPAT(checkoutForgeSetAutoMerge): added in v0.2.0-beta.1. Remove the
         // feature gate and checkoutGithubSetAutoMerge fallback after 2027-01-17
         // once the supported daemon floor is >= v0.2.0.

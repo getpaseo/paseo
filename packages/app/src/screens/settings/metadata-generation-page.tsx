@@ -1,5 +1,6 @@
+import { daemonConfigLoadState } from "@/data/daemon-config";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Alert, Text, View } from "react-native";
+import { Alert, Pressable, Text, View } from "react-native";
 import { useTranslation } from "react-i18next";
 import { StyleSheet } from "react-native-unistyles";
 import type { AgentProvider } from "@getpaseo/protocol/agent-types";
@@ -9,23 +10,54 @@ import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { SegmentedControl } from "@/components/ui/segmented-control";
 import { useDaemonConfig } from "@/hooks/use-daemon-config";
 import { useProvidersSnapshot } from "@/hooks/use-providers-snapshot";
-import { buildSelectableProviderSelectorProviders } from "@/provider-selection/provider-selection";
+import {
+  applyModelVisibilityToProviders,
+  buildSelectableProviderSelectorProviders,
+  getProviderModelRows,
+} from "@/provider-selection/provider-selection";
+import { useModelVisibility } from "@/hooks/use-model-visibility";
+import { retryModelSelection } from "@/provider-selection/model-visibility";
 import { SettingsSection } from "@/components/settings/headings/settings-section";
 import { settingsStyles } from "@/styles/settings";
 
 const METADATA_GENERATION_DOCS_URL = "https://paseo.sh/docs/metadata-generation";
 type SelectionMode = "automatic" | "preferred";
 
+function resolveCatalogModels(
+  catalogProviders: ReturnType<typeof buildSelectableProviderSelectorProviders>,
+  providerId: string | undefined,
+): { id: string; label: string }[] | null {
+  const provider = catalogProviders.find((entry) => entry.id === providerId);
+  if (!provider) return null;
+  return getProviderModelRows(provider).map((row) => ({ id: row.modelId, label: row.modelLabel }));
+}
+
 export function MetadataGenerationPage({ serverId }: { serverId: string }) {
   const { t } = useTranslation();
-  const { config, isLoading: isConfigLoading, patchConfig } = useDaemonConfig(serverId);
+  const {
+    config,
+    isError: isConfigError,
+    refetch: refetchConfig,
+    patchConfig,
+  } = useDaemonConfig(serverId);
   const snapshot = useProvidersSnapshot(serverId);
-  const providers = useMemo(
+  const modelVisibility = useModelVisibility(serverId);
+  const catalogProviders = useMemo(
     () => buildSelectableProviderSelectorProviders(snapshot.entries),
     [snapshot.entries],
   );
+  const providers = useMemo(
+    () => applyModelVisibilityToProviders(catalogProviders, modelVisibility),
+    [catalogProviders, modelVisibility],
+  );
   const configuredProviders = config?.metadataGeneration.providers;
   const configuredProvider = configuredProviders?.[0] ?? null;
+  // The saved model may be hidden from the picker. Its label still comes from
+  // the unfiltered catalog so the row does not read as a raw model ID.
+  const catalogModels = useMemo(
+    () => resolveCatalogModels(catalogProviders, configuredProvider?.provider),
+    [catalogProviders, configuredProvider?.provider],
+  );
   const savedMode: SelectionMode = configuredProvider ? "preferred" : "automatic";
   const [draftMode, setDraftMode] = useState<SelectionMode | null>(null);
   const [isSaving, setIsSaving] = useState(false);
@@ -82,12 +114,22 @@ export function MetadataGenerationPage({ serverId }: { serverId: string }) {
     [configuredProviders, saveProviders],
   );
 
+  const handleRetryConfig = useCallback(() => {
+    void refetchConfig();
+  }, [refetchConfig]);
+
   const handleSelectorOpen = useCallback(() => {
     snapshot.refetchIfStale(configuredProvider?.provider);
   }, [configuredProvider?.provider, snapshot]);
   const handleRetryProvider = useCallback(
-    (provider: AgentProvider) => snapshot.refresh([provider]),
-    [snapshot],
+    (provider: AgentProvider) => {
+      retryModelSelection({
+        status: modelVisibility.status,
+        retryVisibility: modelVisibility.retry,
+        refreshDiscovery: () => void snapshot.refresh([provider]),
+      });
+    },
+    [modelVisibility.retry, modelVisibility.status, snapshot],
   );
   const docsLink = useMemo(
     () => (
@@ -99,11 +141,10 @@ export function MetadataGenerationPage({ serverId }: { serverId: string }) {
     [t],
   );
 
-  if (isConfigLoading || !config) {
+  const loadState = daemonConfigLoadState(config, isConfigError);
+  if (loadState !== "ready") {
     return (
-      <View style={styles.loading}>
-        <LoadingSpinner size="large" color={styles.spinnerColor.color} />
-      </View>
+      <MetadataGenerationPending isError={loadState === "error"} onRetry={handleRetryConfig} />
     );
   }
 
@@ -144,6 +185,7 @@ export function MetadataGenerationPage({ serverId }: { serverId: string }) {
             </View>
             <CombinedModelSelector
               providers={providers}
+              catalogModels={catalogModels}
               selectedProvider={configuredProvider?.provider ?? ""}
               selectedModel={configuredProvider?.model ?? ""}
               onSelect={handleModelSelect}
@@ -160,6 +202,42 @@ export function MetadataGenerationPage({ serverId }: { serverId: string }) {
         ) : null}
       </View>
     </SettingsSection>
+  );
+}
+
+// Shown while there is no config to render. A cold fetch that failed has
+// nothing cached, so without the error branch the page would sit on the
+// spinner with no way to try again.
+function MetadataGenerationPending({
+  isError,
+  onRetry,
+}: {
+  isError: boolean;
+  onRetry: () => void;
+}) {
+  const { t } = useTranslation();
+  if (!isError) {
+    return (
+      <View style={styles.loading}>
+        <LoadingSpinner size="large" color={styles.spinnerColor.color} />
+      </View>
+    );
+  }
+  return (
+    <View style={settingsStyles.card} testID="metadata-generation-load-error">
+      <Pressable
+        style={settingsStyles.row}
+        onPress={onRetry}
+        accessibilityRole="button"
+        accessibilityLabel={t("common.actions.retry")}
+        testID="metadata-generation-load-error-retry"
+      >
+        <View style={settingsStyles.rowContent}>
+          <Text style={settingsStyles.rowTitle}>{t("settings.metadataGeneration.loadError")}</Text>
+        </View>
+        <Text style={settingsStyles.rowTitle}>{t("common.actions.retry")}</Text>
+      </Pressable>
+    </View>
   );
 }
 

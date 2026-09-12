@@ -671,25 +671,56 @@ Example: relabel a discovered model without replacing the full list:
 
 When an `additionalModels` entry has the same `id` as a discovered model, it updates that model in place.
 
+### Hiding models you never pick
+
+`models` and `additionalModels` change what the provider offers. `modelVisibility` changes only
+what the app's model pickers show, per host:
+
+```json
+{
+  "agents": {
+    "providers": {
+      "my-agent": {
+        "extends": "acp",
+        "label": "My Agent",
+        "command": ["my-agent", "--acp"],
+        "modelVisibility": { "provider/noisy-model": false }
+      }
+    }
+  }
+}
+```
+
+Keys are exact model IDs. A missing key means visible, so discovery stays complete and a newly
+discovered model shows up without being listed here. `false` removes that model from the model
+pickers only. The provider still discovers it, the CLI and API still list it, `paseo run --model`
+still launches it, and an agent, profile or schedule that already names it keeps running on it with
+its real label.
+
+The switches in each provider's settings write this map one model at a time, so hidden models
+remain listed there and can be switched back on. Hiding every model of a provider is allowed: its
+picker goes empty and a new agent cannot be started on it until you show one again.
+
 ---
 
 ## Provider override reference
 
 Every entry under `agents.providers` accepts these fields:
 
-| Field              | Type                      | Required          | Description                                                        |
-| ------------------ | ------------------------- | ----------------- | ------------------------------------------------------------------ |
-| `extends`          | `string`                  | Yes (custom only) | Built-in provider ID to inherit from, or `"acp"`                   |
-| `label`            | `string`                  | Yes (custom only) | Display name in the UI                                             |
-| `description`      | `string`                  | No                | Short description shown in the UI                                  |
-| `command`          | `string[]`                | Yes (ACP only)    | Command to spawn the agent process                                 |
-| `env`              | `Record<string, string>`  | No                | Environment variables to set for the agent process                 |
-| `params`           | `Record<string, unknown>` | No                | Provider-specific options such as `supportsMcpServers: false`      |
-| `models`           | `ProviderProfileModel[]`  | No                | Static model list (overrides runtime discovery)                    |
-| `additionalModels` | `ProviderProfileModel[]`  | No                | Static model additions (merged with runtime discovery or `models`) |
-| `disallowedTools`  | `string[]`                | No                | Tool names to disable for this provider (e.g. `["WebSearch"]`)     |
-| `enabled`          | `boolean`                 | No                | Set to `false` to hide the provider (default: `true`)              |
-| `order`            | `number`                  | No                | Sort order in the provider list                                    |
+| Field              | Type                      | Required          | Description                                                              |
+| ------------------ | ------------------------- | ----------------- | ------------------------------------------------------------------------ |
+| `extends`          | `string`                  | Yes (custom only) | Built-in provider ID to inherit from, or `"acp"`                         |
+| `label`            | `string`                  | Yes (custom only) | Display name in the UI                                                   |
+| `description`      | `string`                  | No                | Short description shown in the UI                                        |
+| `command`          | `string[]`                | Yes (ACP only)    | Command to spawn the agent process                                       |
+| `env`              | `Record<string, string>`  | No                | Environment variables to set for the agent process                       |
+| `params`           | `Record<string, unknown>` | No                | Provider-specific options such as `supportsMcpServers: false`            |
+| `models`           | `ProviderProfileModel[]`  | No                | Static model list (overrides runtime discovery)                          |
+| `additionalModels` | `ProviderProfileModel[]`  | No                | Static model additions (merged with runtime discovery or `models`)       |
+| `modelVisibility`  | `Record<string, boolean>` | No                | Per-host model picker visibility by exact model ID; absent means visible |
+| `disallowedTools`  | `string[]`                | No                | Tool names to disable for this provider (e.g. `["WebSearch"]`)           |
+| `enabled`          | `boolean`                 | No                | Set to `false` to hide the provider (default: `true`)                    |
+| `order`            | `number`                  | No                | Sort order in the provider list                                          |
 
 ### Model definition
 

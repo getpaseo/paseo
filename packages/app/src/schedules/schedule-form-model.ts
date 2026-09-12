@@ -8,10 +8,14 @@ import type { ScheduleCadence, ScheduleSummary } from "@getpaseo/protocol/schedu
 import type { FormPreferences } from "@/create-agent-preferences/preferences";
 import { formatThinkingOptionLabel } from "@/agent-controls/labels";
 import {
+  applyModelVisibilityToProviders,
   buildSelectableProviderSelectorProviders,
+  type ModelVisibilitySelection,
   type ProviderSelectorProvider,
 } from "@/provider-selection/provider-selection";
 import { filterSelectableModels, findModelByReference } from "@/provider-selection/model-catalog";
+import { resolveDefaultModelCandidates } from "@/provider-selection/model-visibility";
+import type { ModelVisibilityByProvider } from "@/provider-selection/model-visibility";
 import {
   buildProviderDefinitionMapForStatuses,
   INITIAL_USER_MODIFIED,
@@ -125,6 +129,7 @@ export interface ScheduleFormModel {
   applyHosts: (hosts: readonly ScheduleFormHost[]) => void;
   applyProjectTargets: (targets: readonly ScheduleProjectTarget[]) => void;
   applyPreferences: (preferences: FormPreferences | undefined) => void;
+  applyModelVisibility: (modelVisibility: ModelVisibilitySelection | undefined) => void;
   applyProviderSnapshot: (serverId: string, snapshot: ScheduleFormProviderSnapshot) => void;
   setHost: (serverId: string | null) => void;
   setProject: (optionId: string, display: ScheduleFormDisplay) => void;
@@ -321,6 +326,7 @@ function isSelectedModelValidForProviders(input: {
   providers: readonly ProviderSelectorProvider[];
   selectedProvider: AgentProvider | null;
   selectedModel: string;
+  catalogModels: AgentModelDefinition[] | null;
 }): boolean {
   if (!input.selectedProvider) {
     return false;
@@ -330,10 +336,16 @@ function isSelectedModelValidForProviders(input: {
     return false;
   }
   const selectedModel = input.selectedModel.trim();
-  if (!selectedModel) {
-    return true;
+  if (selectedModel) {
+    // Explicit intent, including a model this host now hides, is validated
+    // against the full catalog. Hiding a model must not block saving an
+    // unrelated edit to a schedule that already names it.
+    return findModelByReference(input.catalogModels, selectedModel) !== null;
   }
-  return provider.modelSelection.rows.some((row) => row.modelId === selectedModel);
+  // No model chosen. Submitting would let the daemon pick its own default,
+  // which can be a model the user hid, so a provider with real models needs a
+  // concrete visible one first.
+  return (input.catalogModels?.length ?? 0) === 0;
 }
 
 function normalizeInitialValues(input: {
@@ -542,7 +554,10 @@ function resolveDisclosure(state: ScheduleFormState): ScheduleDisclosureState {
   };
 }
 
-function resolveCanSubmit(state: ScheduleFormState): boolean {
+function resolveCanSubmit(
+  state: ScheduleFormState,
+  catalogModels: AgentModelDefinition[] | null,
+): boolean {
   if (state.targetKind === "agent") {
     return state.submitCadence !== undefined;
   }
@@ -561,6 +576,7 @@ function resolveCanSubmit(state: ScheduleFormState): boolean {
     providers: state.modelSelectorProviders,
     selectedProvider: state.selectedProvider,
     selectedModel: state.selectedModel,
+    catalogModels,
   });
 }
 
@@ -569,8 +585,16 @@ function updateDerivedState(input: {
   hosts: readonly ScheduleFormHost[];
   targets: readonly ScheduleProjectTarget[];
   providerEntries: readonly ProviderSnapshotEntry[];
+  modelVisibility: ModelVisibilitySelection | undefined;
 }): ScheduleFormState {
   const modeOptions = resolveModeOptions(input.providerEntries, input.state.selectedProvider);
+  // Derived here rather than when the snapshot lands, so a later visibility
+  // update rebuilds the choices instead of leaving stale or loading rows.
+  const modelSelectorProviders = applyModelVisibilityToProviders(
+    buildSelectableProviderSelectorProviders([...input.providerEntries]),
+    input.modelVisibility,
+  );
+  const catalogModels = resolveAvailableModels(input.providerEntries, input.state.selectedProvider);
   const availableThinkingOptions = resolveThinkingOptions(
     input.providerEntries,
     input.state.selectedProvider,
@@ -598,6 +622,7 @@ function updateDerivedState(input: {
   });
   const nextState: ScheduleFormState = {
     ...input.state,
+    modelSelectorProviders,
     hosts: [...input.hosts],
     projectOptions: buildProjectOptions(input.targets, input.state.selectedServerId),
     projectDisplay: resolveProjectDisplay({
@@ -626,7 +651,11 @@ function updateDerivedState(input: {
     submitIsolation: canSubmitWorkspaceLifecycleOptions ? effectiveIsolation : undefined,
   };
   const disclosure = resolveDisclosure(nextState);
-  return { ...nextState, disclosure, canSubmit: resolveCanSubmit({ ...nextState, disclosure }) };
+  return {
+    ...nextState,
+    disclosure,
+    canSubmit: resolveCanSubmit({ ...nextState, disclosure }, catalogModels),
+  };
 }
 
 function buildInitialState(snapshot: ScheduleFormSnapshot): ScheduleFormState {
@@ -701,6 +730,7 @@ function buildInitialState(snapshot: ScheduleFormSnapshot): ScheduleFormState {
   return updateDerivedState({
     state,
     hosts: snapshot.hosts,
+    modelVisibility: undefined,
     targets: snapshot.defaults.projectTargets,
     providerEntries: [],
   });
@@ -725,6 +755,27 @@ function applyResolvedFormState(state: ScheduleFormState, form: FormState): Sche
   };
 }
 
+/**
+ * A host that is still fetching visibility, or failed to, has no valid fresh
+ * default: picking from the unfiltered catalog could land on a hidden model.
+ * Marking every model hidden expresses that through the same rule, while
+ * explicit initial, user and profile selections still pass through untouched.
+ */
+function resolveVisibilityForResolution(
+  modelVisibility: ModelVisibilitySelection | undefined,
+  providerEntries: readonly ProviderSnapshotEntry[],
+): ModelVisibilityByProvider | undefined {
+  if (!modelVisibility || modelVisibility.status === "unavailable") return undefined;
+  if (modelVisibility.status === "ready") return modelVisibility.visibilityByProvider;
+  const hideEverything: ModelVisibilityByProvider = {};
+  for (const entry of providerEntries) {
+    hideEverything[entry.provider] = Object.fromEntries(
+      (entry.models ?? []).map((model) => [model.id, false]),
+    );
+  }
+  return hideEverything;
+}
+
 function resolveSnapshotSelection(input: {
   state: ScheduleFormState;
   snapshot: ScheduleFormSnapshot;
@@ -732,6 +783,7 @@ function resolveSnapshotSelection(input: {
   preferences: FormPreferences | null;
   providerEntries: ProviderSnapshotEntry[];
   userModified: UserModifiedFields;
+  modelVisibility: ModelVisibilitySelection | undefined;
 }): ScheduleFormState {
   const providerDefinitions = buildProviderDefinitions(input.providerEntries);
   const allowedProviderMap = buildProviderDefinitionMapForStatuses({
@@ -739,6 +791,10 @@ function resolveSnapshotSelection(input: {
     providerDefinitions,
     statuses: RESOLVABLE_PROVIDER_STATUSES,
   });
+  const visibilityForResolution = resolveVisibilityForResolution(
+    input.modelVisibility,
+    input.providerEntries,
+  );
   const resolved = resolveFormStateFromProviderModels(
     input.initialValues,
     input.preferences,
@@ -746,8 +802,22 @@ function resolveSnapshotSelection(input: {
     input.userModified,
     toFormState(input.state),
     allowedProviderMap,
+    visibilityForResolution,
   );
-  return applyResolvedFormState(input.state, resolved);
+  const next = applyResolvedFormState(input.state, resolved);
+  if (input.userModified.model || next.selectedModel || !next.selectedProvider) {
+    return next;
+  }
+  // A schedule has no composer fallback: an empty model is sent as an omitted
+  // model and the daemon picks its own default, which may be one the user hid.
+  // Fill in a concrete visible default while real candidates exist.
+  const visibleDefault = pickModelForProvider({
+    entries: input.providerEntries,
+    provider: next.selectedProvider,
+    modelId: "",
+    modelVisibility: visibilityForResolution,
+  });
+  return visibleDefault ? { ...next, selectedModel: visibleDefault } : next;
 }
 
 function preferencesForSnapshotResolution(
@@ -775,12 +845,18 @@ function pickModelForProvider(input: {
   entries: readonly ProviderSnapshotEntry[];
   provider: AgentProvider;
   modelId: string;
+  modelVisibility: ModelVisibilityByProvider | undefined;
 }): string {
   const normalizedModelId = input.modelId.trim();
   if (normalizedModelId) {
     return normalizedModelId;
   }
-  return resolveDefaultModelId(resolveAvailableModels(input.entries, input.provider));
+  return resolveDefaultModelId(
+    resolveDefaultModelCandidates(
+      resolveAvailableModels(input.entries, input.provider),
+      input.modelVisibility?.[input.provider],
+    ),
+  );
 }
 
 function thinkingDraftKey(provider: AgentProvider, modelId: string): string {
@@ -858,6 +934,7 @@ export function openScheduleForm(snapshot: ScheduleFormSnapshot): ScheduleFormMo
     );
   }
   let providerEntries: ProviderSnapshotEntry[] = [];
+  let modelVisibility: ModelVisibilitySelection | undefined;
   let userModified = { ...INITIAL_USER_MODIFIED, isolation: false };
   const timezone = snapshot.defaults.timezone ?? DEFAULT_TIMEZONE;
   let state = buildInitialState(snapshot);
@@ -871,6 +948,7 @@ export function openScheduleForm(snapshot: ScheduleFormSnapshot): ScheduleFormMo
       hosts,
       targets: projectTargets,
       providerEntries,
+      modelVisibility,
     });
     for (const listener of listeners) {
       listener();
@@ -932,6 +1010,7 @@ export function openScheduleForm(snapshot: ScheduleFormSnapshot): ScheduleFormMo
       initialValues,
       preferences: preferencesForSnapshotResolution(snapshot, preferences),
       providerEntries,
+      modelVisibility,
       userModified,
     });
   }
@@ -974,6 +1053,28 @@ export function openScheduleForm(snapshot: ScheduleFormSnapshot): ScheduleFormMo
       seedThinkingDrafts(thinkingDrafts, preferences);
       publish(resolvePreferences(state));
     },
+    applyModelVisibility(nextModelVisibility) {
+      if (closed || modelVisibility === nextModelVisibility) {
+        return;
+      }
+      modelVisibility = nextModelVisibility;
+      // Visibility can arrive after the catalog. Re-resolve so a fresh form
+      // that was waiting on it now picks a visible default, and so the choice
+      // rows rebuild rather than staying stale or stuck loading.
+      const resolved =
+        state.targetKind === "new-agent" && providerEntries.length > 0
+          ? resolveSnapshotSelection({
+              state,
+              snapshot,
+              initialValues,
+              preferences: preferencesForSnapshotResolution(snapshot, preferences),
+              providerEntries,
+              userModified,
+              modelVisibility,
+            })
+          : state;
+      publish(resolved);
+    },
     applyProviderSnapshot(serverId, providerSnapshot) {
       if (closed || state.selectedServerId !== serverId) {
         return;
@@ -990,6 +1091,7 @@ export function openScheduleForm(snapshot: ScheduleFormSnapshot): ScheduleFormMo
               preferences: preferencesForSnapshotResolution(snapshot, preferences),
               providerEntries,
               userModified,
+              modelVisibility,
             })
           : state;
       const providerResolutionByServerId: Record<string, ProviderResolutionStatus> = {
@@ -1000,7 +1102,6 @@ export function openScheduleForm(snapshot: ScheduleFormSnapshot): ScheduleFormMo
       }
       publish({
         ...resolved,
-        modelSelectorProviders: buildSelectableProviderSelectorProviders(providerEntries),
         providerResolutionByServerId,
         providerSnapshotRequest: isPendingResolution ? null : state.providerSnapshotRequest,
       });
@@ -1050,7 +1151,12 @@ export function openScheduleForm(snapshot: ScheduleFormSnapshot): ScheduleFormMo
       if (closed) {
         return;
       }
-      const selectedModel = pickModelForProvider({ entries: providerEntries, provider, modelId });
+      const selectedModel = pickModelForProvider({
+        entries: providerEntries,
+        provider,
+        modelId,
+        modelVisibility: modelVisibility?.visibilityByProvider,
+      });
       const availableModels = resolveAvailableModels(providerEntries, provider);
       const selectedThinkingOptionId = resolveThinkingOptionId({
         availableModels,

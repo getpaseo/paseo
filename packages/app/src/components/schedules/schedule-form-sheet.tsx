@@ -45,6 +45,7 @@ import { useProjects } from "@/hooks/use-projects";
 import { useHosts } from "@/runtime/host-runtime";
 import { useSessionStore } from "@/stores/session-store";
 import { buildScheduleProjectTargets } from "@/schedules/schedule-project-targets";
+import { retryModelSelection } from "@/provider-selection/model-visibility";
 import { useScheduleFormModel } from "@/schedules/use-schedule-form-model";
 import { useScheduleFormProviderSnapshot } from "@/schedules/use-schedule-form-provider-snapshot";
 import type {
@@ -644,7 +645,11 @@ function ScheduleTargetFields({
   }, [providerSnapshot, state.selectedProvider]);
   const handleRetryProvider = useCallback(
     (provider: AgentProvider) => {
-      void providerSnapshot.refresh([provider]);
+      retryModelSelection({
+        status: providerSnapshot.modelVisibilityStatus,
+        retryVisibility: providerSnapshot.retryModelVisibility,
+        refreshDiscovery: () => void providerSnapshot.refresh([provider]),
+      });
     },
     [providerSnapshot],
   );

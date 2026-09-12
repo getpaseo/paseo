@@ -1582,11 +1582,14 @@ export const ko: TranslationResources = {
     error: "오류",
     unavailable: "사용 불가",
     unknownError: "알 수 없는 오류",
+    visibilityUnavailable: "숨겨진 모델을 불러오지 못했습니다. 다시 시도하세요.",
     readiness: {
       initialPromptRequired: "초기 프롬프트가 필요합니다",
       noProviders: "선택한 호스트에 사용 가능한 프로바이더가 없습니다",
       modelDefaultsLoading: "모델 기본값을 아직 불러오는 중입니다",
       noModelAvailable: "선택한 프로바이더에 사용 가능한 모델이 없습니다",
+      allModelsHidden:
+        "이 프로바이더의 모든 모델이 숨겨져 있습니다. 프로바이더 설정에서 하나를 표시하세요.",
       workspaceDirectoryNotFound: "워크스페이스 디렉터리를 찾을 수 없습니다",
       hostDisconnected: "호스트가 연결되어 있지 않습니다",
     },
@@ -1985,6 +1988,7 @@ export const ko: TranslationResources = {
       fallbackHint: "사용할 수 없으면 Paseo가 다른 사용 가능한 모델을 사용합니다",
       docs: "문서",
       saveError: "메타데이터 생성을 업데이트할 수 없습니다",
+      loadError: "메타데이터 생성 설정을 불러올 수 없습니다",
     },
     general: {
       title: "일반",
@@ -2439,6 +2443,11 @@ export const ko: TranslationResources = {
         noProviders: "이 호스트에서 사용 가능한 프로바이더가 없습니다",
         modelLabel: "모델",
         noModels: "이 프로바이더에는 선택할 수 있는 모델이 없습니다",
+        modelVisibilityLoading: "사용 가능한 모델을 불러오는 중...",
+        modelVisibilityError: "숨겨진 모델을 불러오지 못했습니다.",
+        modelVisibilityRetry: "다시 시도",
+        modelsAllHidden:
+          "이 프로바이더의 모든 모델이 숨겨져 있습니다. 프로바이더 설정에서 하나를 표시하세요.",
         modeLabel: "모드",
         noModes: "이 프로바이더에는 선택할 수 있는 모드가 없습니다",
         thinkingLabel: "사고",
@@ -2577,6 +2586,16 @@ export const ko: TranslationResources = {
         discovered: "발견됨",
         custom: "사용자 지정 모델",
         updated: "{{time}} 업데이트됨",
+        visibilityToggle: "모델 선택기에 {{id}} 표시",
+        visibilityHint:
+          "모델을 끄면 모델 선택기에서 숨겨집니다. 여기에는 계속 표시되며, 이미 사용 중인 에이전트는 그대로 실행됩니다.",
+        visibilitySaveFailed: "모델 표시 설정을 저장하지 못했습니다: {{error}}",
+        visibility: {
+          unavailable:
+            "이 호스트는 개별 모델을 숨길 수 없습니다. 여기에서 켜고 끄려면 호스트를 업데이트하세요.",
+          loading: "숨겨진 모델을 불러오는 중...",
+          error: "숨겨진 모델을 불러오지 못했습니다. 이 화면을 다시 열어 재시도하세요.",
+        },
       },
       diagnostic: {
         title: "진단",

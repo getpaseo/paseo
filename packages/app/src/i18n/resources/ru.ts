@@ -1599,11 +1599,13 @@ export const ru: TranslationResources = {
     error: "Ошибка",
     unavailable: "Недоступно",
     unknownError: "Неизвестная ошибка",
+    visibilityUnavailable: "Не удалось загрузить список скрытых моделей. Повторите попытку.",
     readiness: {
       initialPromptRequired: "Требуется начальный промпт",
       noProviders: "На выбранном хосте нет доступных провайдеров",
       modelDefaultsLoading: "Настройки модели по умолчанию всё ещё загружаются",
       noModelAvailable: "Для выбранного провайдера нет доступных моделей.",
+      allModelsHidden: "Все модели этого провайдера скрыты. Покажите одну в настройках провайдера.",
       workspaceDirectoryNotFound: "Каталог рабочего пространства не найден",
       hostDisconnected: "Хост не подключён",
     },
@@ -2006,6 +2008,7 @@ export const ru: TranslationResources = {
       fallbackHint: "Если она недоступна, Paseo использует другую доступную модель",
       docs: "Документация",
       saveError: "Не удалось обновить настройки генерации метаданных",
+      loadError: "Не удалось загрузить настройки генерации метаданных",
     },
     general: {
       title: "Основные",
@@ -2472,6 +2475,11 @@ export const ru: TranslationResources = {
         noProviders: "На этом хосте нет доступных провайдеров",
         modelLabel: "Модель",
         noModels: "У этого провайдера нет моделей для выбора",
+        modelVisibilityLoading: "Загрузка доступных моделей...",
+        modelVisibilityError: "Не удалось загрузить список скрытых моделей.",
+        modelVisibilityRetry: "Повторить",
+        modelsAllHidden:
+          "Все модели этого провайдера скрыты. Покажите одну в настройках провайдера.",
         modeLabel: "Режим",
         noModes: "У этого провайдера нет режимов для выбора",
         thinkingLabel: "Рассуждения",
@@ -2610,6 +2618,17 @@ export const ru: TranslationResources = {
         discovered: "Обнаруженные модели",
         custom: "Пользовательские модели",
         updated: "Обновлено {{time}}",
+        visibilityToggle: "Показывать {{id}} в выборе модели",
+        visibilityHint:
+          "Выключите модель, чтобы скрыть её из выбора моделей. Она останется в этом списке, а уже работающие агенты продолжат работу.",
+        visibilitySaveFailed: "Не удалось сохранить видимость модели: {{error}}",
+        visibility: {
+          unavailable:
+            "Этот хост не умеет скрывать отдельные модели. Обновите его, чтобы включать и выключать их здесь.",
+          loading: "Загрузка списка скрытых моделей...",
+          error:
+            "Не удалось загрузить список скрытых моделей. Откройте этот экран заново, чтобы повторить.",
+        },
       },
       diagnostic: {
         title: "Диагностика",

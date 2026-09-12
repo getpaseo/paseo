@@ -1424,6 +1424,40 @@ describe("ProviderSnapshotManager applyMutableProviderConfig", () => {
     }
   });
 
+  test("a visibility-only patch leaves runtime provider identity untouched", () => {
+    const manager = new ProviderSnapshotManager({
+      logger: createTestLogger(),
+      providerOverrides: {
+        claude: { enabled: true },
+        codex: { enabled: false },
+        copilot: { enabled: false },
+        opencode: { enabled: false },
+        pi: { enabled: false },
+      },
+    });
+    try {
+      const before = manager.getAgentManagerProviderState();
+      expect(before.clients.claude).toBeDefined();
+
+      // Visibility is a presentation preference. If it reached the resolved
+      // provider configuration the registry would treat the provider as
+      // changed, drop its client and re-run discovery on every toggle.
+      const afterVisibility = manager.applyMutableProviderConfig({
+        claude: { modelVisibility: { "opus-5": false } },
+      });
+      expect(afterVisibility.clients.claude).toBe(before.clients.claude);
+
+      // Contrast: a patch that really does change runtime configuration does
+      // replace the client, so the assertion above is not vacuous.
+      const afterRuntimeChange = manager.applyMutableProviderConfig({
+        claude: { env: { PASEO_TEST_MARKER: "1" } },
+      });
+      expect(afterRuntimeChange.clients.claude).not.toBe(before.clients.claude);
+    } finally {
+      manager.destroy();
+    }
+  });
+
   test("removes startup provider overrides from the live registry", () => {
     const manager = new ProviderSnapshotManager({
       logger: createTestLogger(),

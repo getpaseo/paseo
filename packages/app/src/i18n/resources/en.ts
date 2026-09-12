@@ -1598,11 +1598,13 @@ export const en = {
     error: "Error",
     unavailable: "Unavailable",
     unknownError: "Unknown error",
+    visibilityUnavailable: "Could not load which models are hidden. Retry to try again.",
     readiness: {
       initialPromptRequired: "Initial prompt is required",
       noProviders: "No available providers on the selected host",
       modelDefaultsLoading: "Model defaults are still loading",
       noModelAvailable: "No model is available for the selected provider",
+      allModelsHidden: "Every model for this provider is hidden. Show one in provider settings.",
       workspaceDirectoryNotFound: "Workspace directory not found",
       hostDisconnected: "Host is not connected",
     },
@@ -2097,6 +2099,7 @@ export const en = {
       fallbackHint: "If it is unavailable, Paseo falls back to another available model",
       docs: "Docs",
       saveError: "Unable to update metadata generation",
+      loadError: "Unable to load metadata generation settings",
     },
     general: {
       title: "General",
@@ -2551,6 +2554,10 @@ export const en = {
         noProviders: "No providers are available on this host",
         modelLabel: "Model",
         noModels: "This provider has no models to choose from",
+        modelVisibilityLoading: "Loading which models are available...",
+        modelVisibilityError: "Could not load which models are hidden.",
+        modelVisibilityRetry: "Retry",
+        modelsAllHidden: "Every model for this provider is hidden. Show one in provider settings.",
         modeLabel: "Mode",
         noModes: "This provider has no modes to choose from",
         thinkingLabel: "Thinking",
@@ -2687,6 +2694,16 @@ export const en = {
         discovered: "Discovered",
         custom: "Custom models",
         updated: "Updated {{time}}",
+        visibilityToggle: "Show {{id}} in model pickers",
+        visibilityHint:
+          "Switch a model off to hide it from model pickers. It stays listed here, and agents already using it keep running.",
+        visibilitySaveFailed: "Failed to save model visibility: {{error}}",
+        visibility: {
+          unavailable:
+            "This host cannot hide individual models. Update it to switch models on and off here.",
+          loading: "Loading which models are hidden...",
+          error: "Could not load which models are hidden. Reopen this screen to try again.",
+        },
       },
       diagnostic: {
         title: "Diagnostic",

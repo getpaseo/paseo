@@ -10,13 +10,25 @@ class FakeElement extends FakeNode {
   isContentEditable = false;
   private selectors: Set<string>;
 
-  constructor(input?: { tagName?: string; selectors?: string[]; isContentEditable?: boolean }) {
+  private readonly attributes: Map<string, string>;
+
+  constructor(input?: {
+    tagName?: string;
+    selectors?: string[];
+    isContentEditable?: boolean;
+    role?: string;
+  }) {
     super();
     this.tagName = (input?.tagName ?? "div").toUpperCase();
     this.selectors = new Set(input?.selectors ?? []);
+    this.attributes = new Map(input?.role ? [["role", input.role]] : []);
     if (input?.isContentEditable) {
       this.isContentEditable = true;
     }
+  }
+
+  getAttribute(name: string): string | null {
+    return this.attributes.get(name) ?? null;
   }
 
   closest(selector: string): FakeElement | null {
@@ -76,5 +88,50 @@ describe("resolveKeyboardFocusScope", () => {
       commandCenterOpen: false,
     });
     expect(scope).toBe("editable");
+  });
+
+  describe("activatable controls", () => {
+    it.each(["switch", "checkbox", "radio", "button"])(
+      "resolves role %s to the control scope so global keys do not swallow activation",
+      (role) => {
+        const scope = resolveKeyboardFocusScope({
+          target: new FakeElement({ role }) as unknown as EventTarget,
+          commandCenterOpen: false,
+        });
+        expect(scope).toBe("control");
+      },
+    );
+
+    it("resolves a native button element to the control scope", () => {
+      const scope = resolveKeyboardFocusScope({
+        target: new FakeElement({ tagName: "button" }) as unknown as EventTarget,
+        commandCenterOpen: false,
+      });
+      expect(scope).toBe("control");
+    });
+
+    it("keeps a plain element in the other scope", () => {
+      const scope = resolveKeyboardFocusScope({
+        target: new FakeElement({}) as unknown as EventTarget,
+        commandCenterOpen: false,
+      });
+      expect(scope).toBe("other");
+    });
+
+    it("keeps a native input in the editable scope", () => {
+      const scope = resolveKeyboardFocusScope({
+        target: new FakeElement({ tagName: "input", role: "switch" }) as unknown as EventTarget,
+        commandCenterOpen: false,
+      });
+      expect(scope).toBe("editable");
+    });
+
+    it("still yields to an open command center", () => {
+      const scope = resolveKeyboardFocusScope({
+        target: new FakeElement({ role: "switch" }) as unknown as EventTarget,
+        commandCenterOpen: true,
+      });
+      expect(scope).toBe("command-center");
+    });
   });
 });
