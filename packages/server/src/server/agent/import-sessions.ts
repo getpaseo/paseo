@@ -81,7 +81,7 @@ export interface ImportProviderSessionInput {
     WorkspaceProvisioningService,
     "runInImportWorkspace" | "ensureWorkspaceRecordUnarchived"
   >;
-  workspaceRegistry: Pick<WorkspaceRegistry, "get">;
+  workspaceRegistry: Pick<WorkspaceRegistry, "get" | "archive">;
   agentManager: ImportSessionAgentManager;
   agentStorage: AgentStorage;
   logger: Logger;
@@ -215,24 +215,31 @@ export async function importProviderSession(
  * is gone, or that cannot be restored because its project is gone, yields null
  * so the caller falls back to the resolved import workspace.
  */
-async function resolveRetainedWorkspaceId(
+interface RetainedWorkspace {
+  /** The workspace the agent keeps, or null when it has to take the import workspace. */
+  workspaceId: string | null;
+  /** The record this import unarchived, so a failed import can put it back. */
+  restored: PersistedWorkspaceRecord | null;
+}
+
+async function resolveRetainedWorkspace(
   input: ImportProviderSessionInput,
   retainedWorkspaceId: string | undefined,
-): Promise<string | null> {
-  if (!retainedWorkspaceId) return null;
+): Promise<RetainedWorkspace> {
+  if (!retainedWorkspaceId) return { workspaceId: null, restored: null };
   const retained = await input.workspaceRegistry.get(retainedWorkspaceId);
-  if (!retained) return null;
-  if (!retained.archivedAt) return retainedWorkspaceId;
+  if (!retained) return { workspaceId: null, restored: null };
+  if (!retained.archivedAt) return { workspaceId: retainedWorkspaceId, restored: null };
   try {
     await input.workspaceProvisioning.ensureWorkspaceRecordUnarchived(retained);
-    return retainedWorkspaceId;
+    return { workspaceId: retainedWorkspaceId, restored: retained };
   } catch (error) {
     input.logger.error(
       `Failed to restore workspace ${retainedWorkspaceId} for an imported provider session: ${
         error instanceof Error ? error.message : String(error)
       }`,
     );
-    return null;
+    return { workspaceId: null, restored: null };
   }
 }
 
@@ -268,9 +275,9 @@ async function importProviderSessionNow(
     // passes the workspace it is looking at, which is not where this agent
     // and its subagents live (#4707). Only a record without a usable workspace
     // takes the import workspace.
-    const retainedWorkspaceId = await resolveRetainedWorkspaceId(input, archivedRecord.workspaceId);
+    const retained = await resolveRetainedWorkspace(input, archivedRecord.workspaceId);
     await unarchiveAgentState(input.agentStorage, input.agentManager, archivedRecord.id, {
-      ...(retainedWorkspaceId ? {} : { workspaceId }),
+      ...(retained.workspaceId ? {} : { workspaceId }),
       labels: Object.keys(labelPatch).length > 0 ? labelPatch : undefined,
     });
     try {
@@ -284,7 +291,12 @@ async function importProviderSessionNow(
         timelineSize: input.agentManager.getTimeline(snapshot.id).length,
       };
     } catch (error) {
-      await rollbackArchivedImport(input, archivedRecord, archivedRecord.archivedAt);
+      await rollbackArchivedImport(
+        input,
+        archivedRecord,
+        archivedRecord.archivedAt,
+        retained.restored,
+      );
       throw error;
     }
   }
@@ -348,7 +360,24 @@ async function rollbackArchivedImport(
   input: ImportProviderSessionInput,
   archivedRecord: StoredAgentRecord,
   archivedAt: string,
+  restoredWorkspace: PersistedWorkspaceRecord | null = null,
 ): Promise<void> {
+  if (restoredWorkspace?.archivedAt) {
+    // The import unarchived this workspace for an agent that never loaded, so it
+    // goes back where it was rather than staying active with nothing in it.
+    try {
+      await input.workspaceRegistry.archive(
+        restoredWorkspace.workspaceId,
+        restoredWorkspace.archivedAt,
+      );
+    } catch (error) {
+      input.logger.error(
+        { err: error, workspaceId: restoredWorkspace.workspaceId },
+        "Failed to re-archive the restored workspace after import failure",
+      );
+    }
+  }
+
   try {
     if (input.agentManager.getAgent(archivedRecord.id)) {
       await input.agentManager.closeAgent(archivedRecord.id);

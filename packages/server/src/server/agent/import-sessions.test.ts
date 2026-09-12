@@ -624,6 +624,7 @@ class ProviderImportHarness {
   readonly freshImports: unknown[] = [];
   readonly closedAgentIds: string[] = [];
   readonly unarchivedWorkspaceIds: string[] = [];
+  readonly reArchivedWorkspaceIds: string[] = [];
   private readonly workspaceRecords = new Map<string, PersistedWorkspaceRecord>();
   timeline: AgentTimelineItem[] = [];
   activeAgent: ManagedAgent | null = null;
@@ -784,6 +785,11 @@ class ProviderImportHarness {
       }),
       workspaceRegistry: {
         get: async (workspaceId: string) => this.workspaceRecords.get(workspaceId) ?? null,
+        archive: async (workspaceId: string, archivedAt: string) => {
+          this.reArchivedWorkspaceIds.push(workspaceId);
+          const record = this.workspaceRecords.get(workspaceId);
+          if (record) this.workspaceRecords.set(workspaceId, { ...record, archivedAt });
+        },
       },
       agentManager: this.manager,
       agentStorage: this.storage,
@@ -913,6 +919,32 @@ test("importProviderSession restores the workspace an archived session kept", as
   expect(await harness.storage.get(harness.snapshot.id)).toMatchObject({
     workspaceId: "ws-original",
     archivedAt: null,
+  });
+});
+
+test("importProviderSession puts a restored workspace back when the agent fails to load", async () => {
+  const harness = await ProviderImportHarness.create({ sessionId: "thread-restore-rollback" });
+  await harness.seed(
+    makeStoredProviderSession({
+      id: harness.snapshot.id,
+      cwd: harness.snapshot.cwd,
+      sessionId: "thread-restore-rollback",
+      workspaceId: "ws-original",
+    }),
+  );
+  harness.registerWorkspace("ws-original", { archivedAt: "2026-05-01T00:00:00.000Z" });
+  harness.resumeError = new Error("provider resume failed");
+
+  await expect(
+    harness.import({ providerHandleId: "thread-restore-rollback", cwd: harness.snapshot.cwd }),
+  ).rejects.toThrow("provider resume failed");
+
+  // The import unarchived it for an agent that never loaded.
+  expect(harness.unarchivedWorkspaceIds).toEqual(["ws-original"]);
+  expect(harness.reArchivedWorkspaceIds).toEqual(["ws-original"]);
+  expect(await harness.storage.get(harness.snapshot.id)).toMatchObject({
+    workspaceId: "ws-original",
+    archivedAt: "2026-04-30T12:00:00.000Z",
   });
 });
 
