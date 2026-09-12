@@ -60,6 +60,38 @@ describe("ProviderSubagentStore", () => {
     expect(subagents.list("parent-b")).toHaveLength(1);
   });
 
+  test("native history deletion preserves plugin children and timeline ownership", () => {
+    const store = new ProviderSubagentStore();
+    store.apply("parent", "pi", { type: "upsert", id: "native" });
+    store.apply("parent", "pi", { type: "upsert", id: "external" }, "reporter");
+    store.apply(
+      "parent",
+      "pi",
+      {
+        type: "timeline",
+        id: "external",
+        item: { type: "assistant_message", text: "External" },
+      },
+      "reporter",
+    );
+    expect(() => store.apply("parent", "pi", { type: "remove", id: "external" })).toThrow(
+      "different source",
+    );
+    expect(store.deleteNativeParent("parent")).toEqual([
+      { type: "remove", parentAgentId: "parent", subagentId: "native" },
+    ]);
+    expect(store.listNative("parent")).toEqual([]);
+    expect(store.fetchTimeline("parent", "external").rows[0]?.item).toEqual({
+      type: "assistant_message",
+      text: "External",
+    });
+    expect(store.deleteSource("parent", "reporter")).toEqual([
+      { type: "remove", parentAgentId: "parent", subagentId: "external" },
+    ]);
+    expect(store.list("parent")).toEqual([]);
+    expect(() => store.fetchTimeline("parent", "external")).toThrow("Unknown agent");
+  });
+
   test("limits oversized provider child tool output before storage", () => {
     const subagents = new ProviderSubagentStore();
     const output = "x".repeat(70 * 1024);

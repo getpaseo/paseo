@@ -933,6 +933,10 @@ export async function createPaseoDaemon(
       resolvePaseoToolPolicy(provider, daemonConfigStore.get().providers),
     logger,
   });
+  pluginRuntime.bindSubagentHost({
+    open: (pluginId, parentAgentId) =>
+      agentManager.openPluginSubagentReporter(pluginId, parentAgentId),
+  });
   const syncPluginProviders = () => {
     agentManager.updateProviderRegistry(
       providerSnapshotManager.replacePluginProviders(pluginRuntime.getProviderRegistrations()),
