@@ -276,6 +276,12 @@ export function buildACPClientCapabilities(
 // sign-in URL in the browser) when probing an ACP agent for models/modes.
 // NO_BROWSER is honored by Gemini CLI; other ACP agents ignore it.
 const PROBE_ENV: Record<string, string> = { NO_BROWSER: "true" };
+// Matches the codex app-server and jsonl-rpc transports: keep the tail of what the
+// child wrote, not everything it ever wrote.
+const ACP_STDERR_BUFFER_LIMIT = 8192;
+// What of that tail travels in a failure diagnostic, alongside the other rows.
+const ACP_STDERR_DIAGNOSTIC_CAP = 2000;
+
 const ACP_DIAGNOSTIC_PHASE_TIMEOUT_MS = 20_000;
 const ACP_PROBE_CLOSE_TIMEOUT_MS = 2_000;
 const ACP_IMPORT_HISTORY_LOAD_TIMEOUT_MS = 30_000;
@@ -1663,6 +1669,8 @@ export class ACPAgentSession implements AgentSession, ACPClient {
 
   private readonly config: AgentSessionConfig;
   private child: ChildProcessWithoutNullStreams | null = null;
+  /** Tail of the ACP server's stderr, for the diagnostic of a failure it reports. */
+  private stderrTail = "";
   private connection: ClientSideConnection | null = null;
   private agentCapabilities: ACPAgentCapabilities | null = null;
   private sessionId: string | null = null;
@@ -2722,6 +2730,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     const stderrChunks: string[] = [];
     child.stderr.on("data", (chunk: Buffer | string) => {
       stderrChunks.push(chunk.toString());
+      this.appendStderrTail(chunk.toString());
     });
     child.once("exit", (code, signal) => {
       if (this.closed) {
@@ -3202,6 +3211,10 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     }
   }
 
+  private appendStderrTail(chunk: string): void {
+    this.stderrTail = (this.stderrTail + chunk).slice(-ACP_STDERR_BUFFER_LIMIT);
+  }
+
   private collectDiagnostic(message: string): string | undefined {
     const parts: string[] = [message];
     if (this.child?.exitCode != null) {
@@ -3209,6 +3222,20 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     }
     if (this.child?.signalCode) {
       parts.push(`signal=${this.child.signalCode}`);
+    }
+    // What the server wrote about itself. A turn that fails while the process
+    // keeps running left daemon.log with nothing else to go on, and for a
+    // closed-source ACP server that log is the only inspection point (#4757).
+    // The END of the stream is the part that explains the failure, so the cut
+    // is taken from the front rather than through truncateForDiagnostic, which
+    // keeps the head.
+    const stderr = this.stderrTail.trim();
+    if (stderr) {
+      const tail =
+        stderr.length > ACP_STDERR_DIAGNOSTIC_CAP
+          ? `…(truncated)${stderr.slice(-ACP_STDERR_DIAGNOSTIC_CAP)}`
+          : stderr;
+      parts.push(`stderr=${tail}`);
     }
     return parts.length > 0 ? parts.join(" | ") : undefined;
   }
