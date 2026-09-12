@@ -1,9 +1,17 @@
 import { useMemo } from "react";
+import { useTranslation } from "react-i18next";
 import { Text, View, type StyleProp, type ViewStyle } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
-import { clampPct, formatPct, formatResetLabel } from "./format";
+import {
+  clampPct,
+  formatPct,
+  formatProviderUsageLabel,
+  formatResetLabel,
+  formatRunsOutLabel,
+} from "./format";
 import { deriveTone } from "./tone";
 import type { ProviderUsageTone, ProviderUsageWindow } from "./types";
+import { useRelativeTimeTick } from "./use-relative-time-tick";
 
 function resolveUsedPct(window: ProviderUsageWindow): number | null {
   if (window.usedPct != null) return window.usedPct;
@@ -25,6 +33,7 @@ function fillToneStyle(tone: ProviderUsageTone) {
 }
 
 export function ProviderUsageWindowBar({ window }: { window: ProviderUsageWindow }) {
+  const { t, i18n } = useTranslation();
   const usedPct = resolveUsedPct(window);
   const tone = window.tone ?? deriveTone(usedPct);
 
@@ -35,18 +44,24 @@ export function ProviderUsageWindowBar({ window }: { window: ProviderUsageWindow
   );
 
   const isAtRisk = window.runsOutAt != null && window.shortfallPct != null;
+  const relativeTime = isAtRisk ? window.runsOutAt : window.resetsAt;
+  useRelativeTimeTick(relativeTime != null);
   const trailing = isAtRisk
-    ? `runs out ${formatResetLabel(window.runsOutAt)?.replace("resets ", "") ?? ""}`.trim()
+    ? formatRunsOutLabel(window.runsOutAt)
     : formatResetLabel(window.resetsAt);
 
   return (
     <View style={styles.container}>
       <View style={styles.labelRow}>
         <Text style={styles.label} numberOfLines={1}>
-          {window.label}
+          {formatProviderUsageLabel(window.id, window.label)}
         </Text>
-        <Text style={styles.value}>
-          {usedPct != null ? formatPct(usedPct) : "—"}
+        <Text style={styles.value} numberOfLines={1} ellipsizeMode="tail">
+          {usedPct != null
+            ? t("providerUsage.values.used", {
+                percentage: formatPct(usedPct, i18n.resolvedLanguage),
+              })
+            : "—"}
           {trailing ? (
             <Text style={isAtRisk ? styles.atRisk : styles.reset}>{` · ${trailing}`}</Text>
           ) : null}
@@ -73,10 +88,13 @@ const styles = StyleSheet.create((theme) => ({
     flexShrink: 1,
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.sm,
+    lineHeight: theme.fontSize.sm * 1.4,
   },
   value: {
+    flexShrink: 1,
     color: theme.colors.foreground,
     fontSize: theme.fontSize.sm,
+    lineHeight: theme.fontSize.sm * 1.4,
     fontWeight: theme.fontWeight.medium,
   },
   reset: {

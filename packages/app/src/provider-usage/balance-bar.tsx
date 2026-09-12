@@ -1,27 +1,39 @@
 import { useMemo } from "react";
+import type { TFunction } from "i18next";
+import { useTranslation } from "react-i18next";
 import { Text, View, type StyleProp, type ViewStyle } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
-import { clampPct, formatAmount, formatResetLabel } from "./format";
+import { clampPct, formatAmount, formatProviderUsageLabel, formatResetLabel } from "./format";
 import type { ProviderUsageBalance, ProviderUsageTone } from "./types";
+import { useRelativeTimeTick } from "./use-relative-time-tick";
 
 interface ResolvedBalance {
   amountText: string;
   usedPct: number | null;
 }
 
-function resolveBalance(balance: ProviderUsageBalance): ResolvedBalance {
+function resolveBalance(
+  balance: ProviderUsageBalance,
+  t: TFunction,
+  locale?: string,
+): ResolvedBalance {
   const { used, remaining, limit, unit } = balance;
   if (limit != null && limit > 0) {
     const usedAmount = used ?? (remaining != null ? limit - remaining : null);
     const usedPct = usedAmount != null ? (usedAmount / limit) * 100 : null;
-    const usedText = usedAmount != null ? formatAmount(usedAmount, unit) : "—";
-    return { amountText: `${usedText} / ${formatAmount(limit, unit)}`, usedPct };
+    const usedText = usedAmount != null ? formatAmount(usedAmount, unit, locale) : "—";
+    return { amountText: `${usedText} / ${formatAmount(limit, unit, locale)}`, usedPct };
   }
   if (remaining != null) {
-    return { amountText: `${formatAmount(remaining, unit)} left`, usedPct: null };
+    return {
+      amountText: t("providerUsage.values.remaining", {
+        amount: formatAmount(remaining, unit, locale),
+      }),
+      usedPct: null,
+    };
   }
   if (used != null) {
-    return { amountText: formatAmount(used, unit), usedPct: null };
+    return { amountText: formatAmount(used, unit, locale), usedPct: null };
   }
   return { amountText: "—", usedPct: null };
 }
@@ -40,7 +52,9 @@ function fillToneStyle(tone: ProviderUsageTone) {
 }
 
 export function ProviderUsageBalanceBar({ balance }: { balance: ProviderUsageBalance }) {
-  const { amountText, usedPct } = resolveBalance(balance);
+  const { t, i18n } = useTranslation();
+  useRelativeTimeTick(balance.resetsAt != null);
+  const { amountText, usedPct } = resolveBalance(balance, t, i18n.resolvedLanguage);
   const tone = balance.tone ?? "default";
   const resetLabel = formatResetLabel(balance.resetsAt);
 
@@ -53,9 +67,14 @@ export function ProviderUsageBalanceBar({ balance }: { balance: ProviderUsageBal
     <View style={styles.container}>
       <View style={styles.labelRow}>
         <Text style={styles.label} numberOfLines={1}>
-          {balance.label}
+          {formatProviderUsageLabel(balance.id, balance.label)}
         </Text>
-        <Text style={styles.value}>
+        <Text
+          style={styles.value}
+          numberOfLines={1}
+          ellipsizeMode="tail"
+          testID={`provider-usage-balance-${balance.id}-value`}
+        >
           {amountText}
           {resetLabel ? <Text style={styles.reset}>{` · ${resetLabel}`}</Text> : null}
         </Text>
@@ -85,6 +104,7 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.sm,
   },
   value: {
+    flexShrink: 1,
     color: theme.colors.foreground,
     fontSize: theme.fontSize.sm,
     fontWeight: theme.fontWeight.medium,
