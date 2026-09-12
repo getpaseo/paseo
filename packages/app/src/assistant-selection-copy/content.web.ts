@@ -11,6 +11,7 @@ import {
   MARKDOWN_COPY_LANGUAGE_ATTRIBUTE,
   MARKDOWN_COPY_LIST_MARKER_ATTRIBUTE,
   MARKDOWN_COPY_LIST_START_ATTRIBUTE,
+  MARKDOWN_COPY_SOURCE_ATTRIBUTE,
   MARKDOWN_COPY_TAG_ATTRIBUTE,
   MARKDOWN_COPY_UNWRAP_ATTRIBUTE,
   TRAILING_CODE_LINE_BREAKS,
@@ -54,6 +55,12 @@ turndown.addRule("compactListItem", {
     const index = Array.from(parent.children).indexOf(node);
     return `${start + index}. ${item}\n`;
   },
+});
+turndown.addRule("declaredMarkdownSource", {
+  // Non-text content such as a rendered formula declares the markdown it copies as.
+  filter: (node) => node.hasAttribute(MARKDOWN_COPY_SOURCE_ATTRIBUTE),
+  replacement: (_content, node) =>
+    (node as HTMLElement).getAttribute(MARKDOWN_COPY_SOURCE_ATTRIBUTE) ?? "",
 });
 
 export function createAssistantSelectionClipboardContent(
@@ -388,9 +395,10 @@ function hasMarkdownContent(fragment: DocumentFragment, includeIgnored: boolean)
   if (fragment.textContent) {
     return true;
   }
-  const visibleVoidSelector = ["br", "hr"]
-    .map((tag) => `[${MARKDOWN_COPY_TAG_ATTRIBUTE}="${tag}"]`)
-    .join(",");
+  const visibleVoidSelector = [
+    ...["br", "hr"].map((tag) => `[${MARKDOWN_COPY_TAG_ATTRIBUTE}="${tag}"]`),
+    `[${MARKDOWN_COPY_SOURCE_ATTRIBUTE}]`,
+  ].join(",");
   return Boolean(fragment.querySelector(visibleVoidSelector));
 }
 
@@ -453,7 +461,28 @@ function restoreMarkdownElements(container: HTMLElement): void {
     element.replaceWith(...element.childNodes);
   }
 
-  const presentational = Array.from(container.querySelectorAll("div, span"));
+  // A `div`/`span` carrying MARKDOWN_COPY_SOURCE_ATTRIBUTE (e.g. MarkdownSource, wrapping a
+  // rendered formula's non-text SVG) has no text node of its own. That makes it "blank" to
+  // Turndown twice over: its own DOM-collapsing pass treats it as contributing nothing and
+  // strips the space that follows it, and its rule dispatch short-circuits straight to the
+  // blank-node replacement, before ever consulting the "declaredMarkdownSource" rule registered
+  // above. A fixed non-whitespace sentinel gives Turndown ordinary content so it preserves
+  // surrounding whitespace and reaches the addRule. The rule returns the attribute, not this
+  // text — using `source` as bait would let Turndown treat the source's own flanking spaces as
+  // extra padding. `container` is a clone of the selection (built in `cloneMarkdownSelection`),
+  // so mutating it here is as safe as every other step in this function already assumes.
+  const markdownSourceTurndownSentinel = "x";
+  for (const element of container.querySelectorAll(`[${MARKDOWN_COPY_SOURCE_ATTRIBUTE}]`)) {
+    element.textContent = markdownSourceTurndownSentinel;
+  }
+
+  // Unwrapping the element above, before Turndown ever runs, would delete the attribute along
+  // with the element and silently drop its content from the copy — so it's excluded here too.
+  const presentational = Array.from(
+    container.querySelectorAll(
+      `div:not([${MARKDOWN_COPY_SOURCE_ATTRIBUTE}]), span:not([${MARKDOWN_COPY_SOURCE_ATTRIBUTE}])`,
+    ),
+  );
   for (const element of presentational.toReversed()) {
     element.replaceWith(...element.childNodes);
   }

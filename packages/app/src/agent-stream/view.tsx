@@ -1093,6 +1093,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
           <MessageOuterSpacingProvider disableOuterSpacing>
             {streamRenderStrategy.render({
               agentId,
+              serverId: resolvedServerId,
               segments: renderModel.segments,
               historyRowRevision,
               liveHeadRowRevision: expandedToolCallGroupIds,

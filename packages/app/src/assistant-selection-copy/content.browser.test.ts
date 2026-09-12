@@ -1,4 +1,7 @@
+import { act, createElement } from "react";
+import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it } from "vitest";
+import { MarkdownSource } from "@/plugins/react-native/markdown-source";
 import { createAssistantSelectionClipboardContent } from "./content.web";
 
 const fixture = `
@@ -16,6 +19,73 @@ function mountFixture(): HTMLElement {
   const host = document.createElement("div");
   host.innerHTML = fixture;
   document.body.append(host);
+  const message = host.querySelector<HTMLElement>('[data-testid="assistant-message"]');
+  if (!message) {
+    throw new Error("Expected assistant message fixture");
+  }
+  return message;
+}
+
+/**
+ * A rendered formula (`MarkdownSource`, wrapping a non-text SVG) declares the Markdown it
+ * copies as via `data-paseo-markdown-source`, inline in prose like the real renderer produces.
+ */
+function mountMarkdownSourceFixture(source: string): HTMLElement {
+  const host = document.createElement("div");
+  host.innerHTML = [
+    '<div data-testid="assistant-message">',
+    '<div data-paseo-markdown-tag="p">',
+    `Energy is <span data-paseo-markdown-source="${escapeAttribute(source)}"><svg></svg></span> here.`,
+    "</div>",
+    "</div>",
+  ].join("");
+  document.body.append(host);
+  const message = host.querySelector<HTMLElement>('[data-testid="assistant-message"]');
+  if (!message) {
+    throw new Error("Expected assistant message fixture");
+  }
+  return message;
+}
+
+function mountRenderedInlineMarkdownSource(source: string): HTMLElement {
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = createRoot(host);
+  act(() => {
+    root.render(
+      createElement(
+        "div",
+        { "data-testid": "assistant-message" },
+        createElement(
+          "div",
+          null,
+          "Energy is ",
+          createElement(MarkdownSource, { source }, createElement("svg")),
+          " here.",
+        ),
+      ),
+    );
+  });
+  const message = host.querySelector<HTMLElement>('[data-testid="assistant-message"]');
+  if (!message) {
+    throw new Error("Expected assistant message fixture");
+  }
+  return message;
+}
+
+function mountRenderedDisplayMarkdownSource(source: string): HTMLElement {
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = createRoot(host);
+  act(() => {
+    root.render(
+      createElement(
+        "div",
+        { "data-testid": "assistant-message" },
+        createElement(MarkdownSource, { source, display: true }, createElement("svg")),
+      ),
+    );
+  });
   const message = host.querySelector<HTMLElement>('[data-testid="assistant-message"]');
   if (!message) {
     throw new Error("Expected assistant message fixture");
@@ -339,6 +409,76 @@ describe("assistant selection copy ranges", () => {
     expect(copiedMarkdown(selectText(blockCode, 0, textNode(blockCode).length))).toBe(
       "const answer = true;",
     );
+  });
+
+  it("copies a declared markdown source verbatim, without Markdown-escaping its backslashes", () => {
+    const source = "$\\displaystyle \\frac{a}{b}$";
+    const message = mountMarkdownSourceFixture(source);
+    const content = createAssistantSelectionClipboardContent(selectNodeContents(message));
+    expect(content?.plainText).toBe(`Energy is ${source} here.`);
+  });
+
+  it("copies a declared markdown source's own flanking spaces without Turndown padding", () => {
+    const source = " $E$ ";
+    const message = mountMarkdownSourceFixture(source);
+    expect(createAssistantSelectionClipboardContent(selectNodeContents(message))?.plainText).toBe(
+      "Energy is  $E$  here.",
+    );
+  });
+
+  it("does not let Turndown pad a declared source that already has flanking spaces", () => {
+    const source = " $E$ ";
+    const host = document.createElement("div");
+    host.innerHTML = [
+      '<div data-testid="assistant-message">',
+      '<div data-paseo-markdown-tag="p">',
+      `Energy is<span data-paseo-markdown-source="${escapeAttribute(source)}"><svg></svg></span>here.`,
+      "</div>",
+      "</div>",
+    ].join("");
+    document.body.append(host);
+    const message = host.querySelector<HTMLElement>('[data-testid="assistant-message"]');
+    if (!message) {
+      throw new Error("Expected assistant message fixture");
+    }
+    expect(createAssistantSelectionClipboardContent(selectNodeContents(message))?.plainText).toBe(
+      "Energy is $E$ here.",
+    );
+  });
+
+  it("copies surrounding spaces when inline MarkdownSource sits under a view", () => {
+    const message = mountRenderedInlineMarkdownSource("$E$");
+    expect(createAssistantSelectionClipboardContent(selectNodeContents(message))?.plainText).toBe(
+      "Energy is $E$ here.",
+    );
+  });
+
+  it("copies a display MarkdownSource as its source", () => {
+    const source = "$$E=mc^2$$";
+    const message = mountRenderedDisplayMarkdownSource(source);
+    expect(createAssistantSelectionClipboardContent(selectNodeContents(message))?.plainText).toBe(
+      source,
+    );
+  });
+
+  it("keeps unit selection when the caller style sets userSelect", () => {
+    const host = document.createElement("div");
+    document.body.append(host);
+    const root = createRoot(host);
+    act(() => {
+      root.render(
+        createElement(
+          MarkdownSource,
+          { source: "$E$", style: { userSelect: "none" } },
+          createElement("svg"),
+        ),
+      );
+    });
+    const wrapper = host.querySelector("[data-paseo-markdown-source]");
+    if (!wrapper) {
+      throw new Error("Expected markdown source wrapper");
+    }
+    expect(getComputedStyle(wrapper).userSelect).toBe("all");
   });
 });
 

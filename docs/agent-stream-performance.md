@@ -40,6 +40,11 @@ So arrival sets a _target_ and the reveal rate is derived from the backlog inste
   through that hook; the web viewport once skipped it and history hosts of a live tool group went
   stale. A new field on `StreamLayoutItem` must be added to `areLayoutItemsEquivalent`, or sharing
   silently stops.
+- **A render block never splits inside an open fence or an open extension-declared pair.** The
+  splitter runs before any parser, and markdown-it emits no token for an unclosed fence or a
+  streaming `$$` block, so the splitter tracks them itself. Plugins declare pairs through
+  `addMarkdownExtension`'s `blockDelimiters`; the registry pushes the current list into
+  `split-markdown-blocks.ts` on every publish. An unclosed region runs to the end of the text.
 
 ## Measuring
 

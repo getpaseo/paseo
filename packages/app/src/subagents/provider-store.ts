@@ -135,6 +135,7 @@ function buildTimelineState(
   epoch: string | null,
   descriptor?: ProviderSubagentDescriptorPayload,
   hasOlder = false,
+  serverId?: string,
 ): ProviderSubagentTimelineState {
   let timeline = { tail: [] as StreamItem[], head: [] as StreamItem[] };
   for (const [, row] of [...rows].sort(([left], [right]) => left - right)) {
@@ -142,6 +143,7 @@ function buildTimelineState(
       ...timeline,
       event: { type: "timeline", provider: row.provider, item: row.item },
       timestamp: new Date(row.timestamp),
+      serverId,
     });
   }
   const terminalEvent = descriptor ? providerSubagentTerminalEvent(descriptor) : null;
@@ -150,6 +152,7 @@ function buildTimelineState(
       ...timeline,
       event: terminalEvent,
       timestamp: new Date(descriptor.updatedAt),
+      serverId,
     });
   }
   return {
@@ -231,7 +234,7 @@ export const useProviderSubagentStore = create<ProviderSubagentState>((set) => (
         if (current && previous?.status !== subagent.status) {
           timelines.set(
             key,
-            buildTimelineState(current.rows, current.epoch, subagent, current.hasOlder),
+            buildTimelineState(current.rows, current.epoch, subagent, current.hasOlder, serverId),
           );
         }
       }
@@ -259,7 +262,13 @@ export const useProviderSubagentStore = create<ProviderSubagentState>((set) => (
           timelines = new Map(state.timelines);
           timelines.set(
             key,
-            buildTimelineState(current.rows, current.epoch, payload.subagent, current.hasOlder),
+            buildTimelineState(
+              current.rows,
+              current.epoch,
+              payload.subagent,
+              current.hasOlder,
+              serverId,
+            ),
           );
         }
         return { descriptors, timelines, hiddenFromTrack };
@@ -290,12 +299,13 @@ export const useProviderSubagentStore = create<ProviderSubagentState>((set) => (
       const descriptor = state.descriptors.get(key);
       const next =
         descriptor && descriptor.status !== "running"
-          ? buildTimelineState(rows, payload.epoch, descriptor, current.hasOlder)
+          ? buildTimelineState(rows, payload.epoch, descriptor, current.hasOlder, serverId)
           : applyStreamEvent({
               tail: current.tail,
               head: current.head,
               event: { type: "timeline", provider: payload.provider, item: payload.item },
               timestamp: new Date(payload.timestamp),
+              serverId,
             });
       const timelines = new Map(state.timelines);
       timelines.set(key, {
@@ -319,7 +329,10 @@ export const useProviderSubagentStore = create<ProviderSubagentState>((set) => (
       const rows = buildTimelineResponseRows(existing, payload, provider);
       const descriptor = state.descriptors.get(key);
       const timelines = new Map(state.timelines);
-      timelines.set(key, buildTimelineState(rows, payload.epoch, descriptor, payload.hasOlder));
+      timelines.set(
+        key,
+        buildTimelineState(rows, payload.epoch, descriptor, payload.hasOlder, serverId),
+      );
       return { timelines };
     });
   },

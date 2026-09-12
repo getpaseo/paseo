@@ -5,6 +5,10 @@ export const MARKDOWN_COPY_UNWRAP_ATTRIBUTE = "data-paseo-markdown-unwrap";
 export const MARKDOWN_COPY_LIST_START_ATTRIBUTE = "data-paseo-markdown-list-start";
 export const MARKDOWN_COPY_LANGUAGE_ATTRIBUTE = "data-paseo-markdown-language";
 export const MARKDOWN_COPY_ALIGN_ATTRIBUTE = "data-paseo-markdown-align";
+/** An element carrying this copies as the attribute's value verbatim. */
+export const MARKDOWN_COPY_SOURCE_ATTRIBUTE = "data-paseo-markdown-source";
+/** react-native-web `dataSet` key that renders `MARKDOWN_COPY_SOURCE_ATTRIBUTE`. */
+export const MARKDOWN_COPY_SOURCE_DATASET_KEY = "paseoMarkdownSource";
 
 /**
  * Trailing line breaks, with any indentation that followed the last one.

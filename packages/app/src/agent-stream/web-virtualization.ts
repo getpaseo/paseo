@@ -58,12 +58,12 @@ export interface WebVirtualizedHistoryWindow {
   mountedEntries: IndexedStreamItem[];
 }
 
-export function estimateStreamItemHeight(item: StreamItem): number {
+export function estimateStreamItemHeight(item: StreamItem, serverId?: string): number {
   switch (item.kind) {
     case "user_message":
       return item.images && item.images.length > 0 ? 220 : 96;
     case "assistant_message":
-      return estimateAssistantMessageHeightFromCache(item.text) ?? 220;
+      return estimateAssistantMessageHeightFromCache(item.text, serverId) ?? 220;
     case "tool_call":
       return COLLAPSED_TOOL_SEQUENCE_ROW_HEIGHT_ESTIMATE;
     case "thought":

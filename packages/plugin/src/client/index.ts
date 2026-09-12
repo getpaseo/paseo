@@ -36,6 +36,10 @@ export type {
   PluginComposerPillContribution,
   PluginHeaderButtonContribution,
 } from "./buttons.js";
+export type {
+  PluginMarkdownBlockDelimiter,
+  PluginMarkdownExtension,
+} from "./markdown-extension.js";
 export { usePaseo } from "./paseo-context.js";
 export { useAgent, useWorkspace } from "./client-state.js";
 export { useRpc } from "./rpc-context.js";
