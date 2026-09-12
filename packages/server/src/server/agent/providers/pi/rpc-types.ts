@@ -74,6 +74,8 @@ export interface PiModel {
   id: string;
   name?: string;
   reasoning?: boolean;
+  /** Maps pi thinking levels to provider-specific values; null marks a level as unsupported. */
+  thinkingLevelMap?: Partial<Record<PiThinkingLevel, string | null>>;
   contextWindow?: number;
   maxTokens?: number;
   api?: string;
