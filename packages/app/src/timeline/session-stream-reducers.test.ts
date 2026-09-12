@@ -3589,6 +3589,51 @@ describe("processTimelineResponse", () => {
     expect(result.sideEffects.some((e) => e.type === "flush_pending_updates")).toBe(true);
   });
 
+  it("replaces painted rows with a tail page when no cursor anchors them", () => {
+    const priorRows = [
+      makeTimelineEntry(1, "I really like their bass lines", "user_message"),
+      makeTimelineEntry(2, "Totally, the bass is often the real hook.", "assistant_message"),
+    ];
+    const painted = hydrateStreamState(
+      priorRows.map((entry) => ({
+        event: {
+          type: "timeline",
+          provider: entry.provider,
+          item: entry.item,
+        } as AgentStreamEventPayload,
+        timestamp: new Date(entry.timestamp),
+        timelineCursor: { epoch: "epoch-1", seq: entry.seqStart },
+      })),
+      { source: "canonical" },
+    );
+
+    const result = processTimelineResponse({
+      ...baseTimelineInput,
+      currentTail: painted,
+      currentCursor: undefined,
+      isInitializing: false,
+      hasActiveInitDeferred: false,
+      payload: {
+        ...baseTimelineInput.payload,
+        direction: "tail",
+        epoch: "epoch-2",
+        window: { minSeq: 1, maxSeq: 2, nextSeq: 3 },
+        startCursor: { seq: 1 },
+        endCursor: { seq: 2 },
+        entries: priorRows,
+      },
+    });
+
+    expect(result.tail.map((item) => item.kind)).toEqual(["user_message", "assistant_message"]);
+    expect(result.tail.map((item) => item.timelineCursor)).toEqual([
+      { epoch: "epoch-2", seq: 1 },
+      { epoch: "epoch-2", seq: 2 },
+    ]);
+    expect(result.head).toEqual([]);
+    expect(result.cursor).toEqual({ epoch: "epoch-2", startSeq: 1, endSeq: 2 });
+    expect(result.cursorChanged).toBe(true);
+  });
+
   it("initializes cursor when no existing cursor on first entries", () => {
     const result = processTimelineResponse({
       ...baseTimelineInput,
