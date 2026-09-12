@@ -1074,6 +1074,12 @@ export const ja: TranslationResources = {
         status: "ステータス",
         labels: "ラベル",
       },
+      sorting: {
+        label: "並び順",
+        manual: "手動",
+        name: "名前",
+        activity: "最近のアクティビティ",
+      },
       titleSource: {
         label: "タイトル",
         title: "タイトル",

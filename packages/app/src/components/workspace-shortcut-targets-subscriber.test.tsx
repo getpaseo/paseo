@@ -29,6 +29,7 @@ function workspaceDescriptor(input: {
   projectDisplayName?: string;
   status?: WorkspaceDescriptor["status"];
   statusEnteredAt?: Date | null;
+  activityAt?: Date | null;
 }): WorkspaceDescriptor {
   return {
     id: input.id,
@@ -42,6 +43,7 @@ function workspaceDescriptor(input: {
     status: input.status ?? "done",
     archivingAt: null,
     statusEnteredAt: input.statusEnteredAt ?? null,
+    activityAt: input.activityAt ?? null,
     diffStat: null,
     scripts: [],
   };
@@ -90,6 +92,7 @@ describe("WorkspaceShortcutTargetsSubscriber", () => {
     });
     useSidebarViewStore.setState({
       groupMode: "project",
+      sortMode: "manual",
       hostFilters: [],
     });
 
@@ -137,6 +140,79 @@ describe("WorkspaceShortcutTargetsSubscriber", () => {
       { serverId: "srv", workspaceId: "ws-1" },
       { serverId: "srv", workspaceId: "ws-2" },
     ]);
+  });
+
+  it("reorders activity-sorted targets when activity changes without a status transition", async () => {
+    const unchangedStatusEnteredAt = new Date("2026-01-01T00:00:00.000Z");
+    act(() => {
+      useSidebarViewStore.getState().setSortMode("activity");
+      seedSessionWorkspaces(
+        "srv",
+        new Map([
+          [
+            "ws-1",
+            workspaceDescriptor({
+              id: "ws-1",
+              statusEnteredAt: unchangedStatusEnteredAt,
+              activityAt: new Date("2026-03-01T00:00:00.000Z"),
+            }),
+          ],
+          [
+            "ws-2",
+            workspaceDescriptor({
+              id: "ws-2",
+              statusEnteredAt: new Date("2026-02-01T00:00:00.000Z"),
+              activityAt: new Date("2026-04-01T00:00:00.000Z"),
+            }),
+          ],
+        ]),
+      );
+    });
+
+    await act(async () => {
+      root?.render(
+        <SidebarModelProvider>
+          <WorkspaceShortcutTargetsSubscriber enabled={true} />
+        </SidebarModelProvider>,
+      );
+    });
+
+    expect(useKeyboardShortcutsStore.getState().sidebarShortcutWorkspaceTargets).toEqual([
+      { serverId: "srv", workspaceId: "ws-2" },
+      { serverId: "srv", workspaceId: "ws-1" },
+    ]);
+
+    act(() => {
+      seedSessionWorkspaces(
+        "srv",
+        new Map([
+          [
+            "ws-1",
+            workspaceDescriptor({
+              id: "ws-1",
+              statusEnteredAt: unchangedStatusEnteredAt,
+              activityAt: new Date("2026-05-01T00:00:00.000Z"),
+            }),
+          ],
+          [
+            "ws-2",
+            workspaceDescriptor({
+              id: "ws-2",
+              statusEnteredAt: new Date("2026-02-01T00:00:00.000Z"),
+              activityAt: new Date("2026-04-01T00:00:00.000Z"),
+            }),
+          ],
+        ]),
+      );
+    });
+
+    expect(useKeyboardShortcutsStore.getState().sidebarShortcutWorkspaceTargets).toEqual([
+      { serverId: "srv", workspaceId: "ws-1" },
+      { serverId: "srv", workspaceId: "ws-2" },
+    ]);
+    expect(
+      useSessionStore.getState().sessions.srv?.workspaces.get("ws-1")?.statusEnteredAt,
+    ).toEqual(unchangedStatusEnteredAt);
   });
 
   it("publishes status-mode shortcut targets in visual status order", async () => {
