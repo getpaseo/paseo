@@ -6,7 +6,7 @@ import { Unicode11Addon } from "@xterm/addon-unicode11";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { WebglAddon } from "@xterm/addon-webgl";
 import { LigaturesAddon } from "@xterm/addon-ligatures/lib/addon-ligatures.mjs";
-import { Terminal, type ITheme } from "@xterm/xterm";
+import { Terminal, type ILinkHandler, type ITheme } from "@xterm/xterm";
 import type { TerminalState } from "@getpaseo/protocol/messages";
 import {
   type TerminalInputModeState,
@@ -194,6 +194,21 @@ export class TerminalEmulatorRuntime {
   private lastInputModeState: TerminalInputModeState = this.inputModeTracker.getState();
   private themeBackgroundElements: HTMLElement[] = [];
 
+  private handleLinkActivate = (event: MouseEvent, uri: string): void => {
+    event.preventDefault();
+    void this.callbacks.onOpenExternalUrl?.(uri);
+  };
+
+  // OSC 8 hyperlinks (what Claude Code, gh and friends print) never reach WebLinksAddon:
+  // xterm routes them through options.linkHandler instead. Without one, xterm falls back to
+  // confirm() + window.open, which Electron turns into a bare popup window rather than the
+  // user's browser, bypassing the opener that owns the http(s) allowlist.
+  private readonly linkHandler: ILinkHandler = {
+    activate: (event, uri) => {
+      this.handleLinkActivate(event, uri);
+    },
+  };
+
   private handleVisibilityRestore = (): void => {
     if (typeof document !== "undefined" && document.visibilityState !== "visible") {
       return;
@@ -235,6 +250,7 @@ export class TerminalEmulatorRuntime {
       fontFamily: resolveTerminalFontFamily(input.fontFamily),
       fontSize: resolveTerminalFontSize(input.fontSize),
       lineHeight: 1.0,
+      linkHandler: this.linkHandler,
       macOptionIsMeta: true,
       minimumContrastRatio: 1,
       rescaleOverlappingGlyphs: true,
@@ -252,8 +268,7 @@ export class TerminalEmulatorRuntime {
     terminal.loadAddon(unicode11Addon);
     terminal.loadAddon(
       new WebLinksAddon((event, uri) => {
-        event.preventDefault();
-        void this.callbacks.onOpenExternalUrl?.(uri);
+        this.handleLinkActivate(event, uri);
       }),
     );
     const localFileLinkProvider = terminal.registerLinkProvider(
