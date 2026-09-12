@@ -213,8 +213,9 @@ try {
   );
   const capturedSupervisorLogs = await readCapturedSupervisorLogs(paseoHome, recentSupervisorLogs);
   assert(
-    capturedSupervisorLogs.includes('"msg":"Worker requested shutdown"') &&
-      capturedSupervisorLogs.includes('"reason":"client_shutdown_rpc"'),
+    process.platform === "win32"
+      ? capturedSupervisorLogs.includes('"reason":"client_shutdown_rpc"')
+      : capturedSupervisorLogs.includes("supervisor_received_SIGTERM"),
     `stop should log lifecycle shutdown reason from daemon worker, logs:\n${capturedSupervisorLogs}`,
   );
   assert(

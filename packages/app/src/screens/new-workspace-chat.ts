@@ -11,6 +11,7 @@ import type { PendingWorkspaceDraftSetup } from "@/stores/workspace-draft-submis
 import type { WorkspaceDraftTabSetup } from "@/workspace-tabs/model";
 import type { AgentAttachment } from "@getpaseo/protocol/messages";
 import type { AgentProvider } from "@getpaseo/protocol/agent-types";
+import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import {
   resolveComposerAttachmentSubmitFormat,
   splitComposerAttachmentsForSubmit,
@@ -19,11 +20,18 @@ import {
   getWorkspaceNamingAttachments,
   remapDraftCwdToWorkspace,
 } from "./new-workspace-fork-context";
+import { captureWorkspaceDraftCleanup } from "./new-workspace/background-handoff";
+
+/** "background" means the user left mid-creation, so this screen must drop its own pending lock. */
+export type SubmitOutcome = "navigated" | "background";
 
 export interface SubmitDraftInput {
+  clearConsumedDraft: () => void;
   serverId: string;
+  draftKey: string;
   clearDraft: (lifecycle: "sent" | "abandoned") => void;
   draftId?: string;
+  draftContextScopeKey: string | null;
   initialSetup?: WorkspaceDraftTabSetup;
   workspaceId: string;
   workspaceDirectory: string;
@@ -32,6 +40,8 @@ export interface SubmitDraftInput {
   provider: AgentProvider;
   composerState: NewWorkspaceComposerState;
   supportsForgeSearch: boolean;
+  resolveClient: () => DaemonClient;
+  isStillOnCreateScreen: () => boolean;
 }
 
 export type NewWorkspaceComposerState = Pick<
@@ -49,7 +59,7 @@ export type NewWorkspaceComposerState = Pick<
 
 interface CreateChatAgentInput {
   payload: MessagePayload;
-  submitWorkspaceDraft: (input: SubmitDraftInput) => void;
+  submitWorkspaceDraft: (input: SubmitDraftInput) => SubmitOutcome | Promise<SubmitOutcome>;
   composerState: NewWorkspaceComposerState | null;
   forkDraftSetup?: PendingWorkspaceDraftSetup | null;
   ensureWorkspace: (input: {
@@ -59,9 +69,13 @@ interface CreateChatAgentInput {
     withInitialAgent: boolean;
   }) => Promise<Pick<ReturnType<typeof normalizeWorkspaceDescriptor>, "id" | "workspaceDirectory">>;
   serverId: string;
+  draftKey: string;
   clearDraft: (lifecycle: "sent" | "abandoned") => void;
   draftId?: string;
+  draftContextScopeKey: string | null;
   supportsForgeSearch: boolean;
+  resolveClient: () => DaemonClient;
+  isStillOnCreateScreen: () => boolean;
   labels: {
     composerStateRequired: string;
     selectModel: string;
@@ -130,7 +144,7 @@ export function resolveNewWorkspaceSubmissionError(
   return composerState ? getNewWorkspaceModelSelectionError(composerState) : error.message;
 }
 
-export async function runCreateChatAgent(input: CreateChatAgentInput): Promise<void> {
+export async function runCreateChatAgent(input: CreateChatAgentInput): Promise<SubmitOutcome> {
   const { payload, composerState, ensureWorkspace, serverId, clearDraft } = input;
   const { text, attachments, cwd } = payload;
   if (!composerState) {
@@ -154,6 +168,7 @@ export async function runCreateChatAgent(input: CreateChatAgentInput): Promise<v
   if (submissionError) {
     throw new Error(submissionError);
   }
+  const clearConsumedDraft = captureWorkspaceDraftCleanup(input);
   const attachmentSubmitFormat = resolveComposerAttachmentSubmitFormat({
     supportsForgeAttachments: input.supportsForgeSearch,
   });
@@ -173,10 +188,13 @@ export async function runCreateChatAgent(input: CreateChatAgentInput): Promise<v
     provider,
     composerState,
   });
-  input.submitWorkspaceDraft({
+  return await input.submitWorkspaceDraft({
+    clearConsumedDraft,
     serverId,
     clearDraft,
+    draftKey: input.draftKey,
     draftId: input.draftId,
+    draftContextScopeKey: input.draftContextScopeKey,
     initialSetup,
     workspaceId: ensuredWorkspace.id,
     workspaceDirectory: ensuredWorkspace.workspaceDirectory,
@@ -185,5 +203,7 @@ export async function runCreateChatAgent(input: CreateChatAgentInput): Promise<v
     provider,
     composerState,
     supportsForgeSearch: input.supportsForgeSearch,
+    resolveClient: input.resolveClient,
+    isStillOnCreateScreen: input.isStillOnCreateScreen,
   });
 }

@@ -31,28 +31,10 @@ export function usePluginClientSlashCommands(input: {
     });
     const commands = installed
       .filter((plugin) => plugin.serverId === input.serverId)
-      .flatMap((plugin) => {
-        const runtime = createPluginSurfaceRuntime(client, plugin.id);
-        if (!runtime) return [];
-        return (plugin.clientSlashCommands ?? []).flatMap((contribution) => {
-          const context =
-            contribution.context === "agent"
-              ? createPluginAgentActionContext({
-                  plugin,
-                  runtime,
-                  navigation,
-                  state,
-                  workspaceId,
-                  agentId: input.agentId,
-                })
-              : createPluginWorkspaceActionContext({
-                  plugin,
-                  runtime,
-                  navigation,
-                  state,
-                  workspaceId,
-                });
-          if (!context) return [];
+      .flatMap((plugin) =>
+        plugin.clientSlashCommands.flatMap((contribution) => {
+          if (contribution.context === "agent" && !state.getAgent(input.agentId)) return [];
+          if (!state.getWorkspace(workspaceId)) return [];
           return [
             {
               pluginId: plugin.id,
@@ -60,19 +42,38 @@ export function usePluginClientSlashCommands(input: {
               description: contribution.description,
               argumentHint: contribution.argumentHint,
               async run(args: string) {
-                if (contribution.context === "agent" && context.context === "agent") {
-                  await contribution.onSubmit({ ...context, args });
-                } else if (
-                  contribution.context === "workspace" &&
-                  context.context === "workspace"
-                ) {
-                  await contribution.onSubmit({ ...context, args });
+                const runtime = createPluginSurfaceRuntime(client, plugin);
+                if (!runtime) return;
+                try {
+                  const context =
+                    contribution.context === "agent"
+                      ? createPluginAgentActionContext({
+                          plugin,
+                          runtime,
+                          navigation,
+                          state,
+                          workspaceId,
+                          agentId: input.agentId,
+                        })
+                      : createPluginWorkspaceActionContext({
+                          plugin,
+                          runtime,
+                          navigation,
+                          state,
+                          workspaceId,
+                        });
+                  if (contribution.context === "agent" && context?.context === "agent")
+                    await contribution.onSubmit({ ...context, args });
+                  else if (contribution.context === "workspace" && context?.context === "workspace")
+                    await contribution.onSubmit({ ...context, args });
+                } finally {
+                  await runtime.paseo.dispose();
                 }
               },
             },
           ];
-        });
-      });
+        }),
+      );
     return commands;
   }, [client, input.agentId, input.serverId, input.workspaceId, installed]);
 }

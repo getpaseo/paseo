@@ -145,10 +145,10 @@ async function startObservedFixture(siblingCount: number): Promise<ReturnType<ty
     appVersion: "0.3.0-beta.2",
   });
   await client.connect();
-  await client.fetchAgents({ subscribe: { subscriptionId: "agents" } });
+  await client.fetchAgents({ subscribe: {} });
   await client.fetchWorkspaces({
     page: { limit: 200 },
-    subscribe: { subscriptionId: "workspaces" },
+    subscribe: {},
   });
   return fixture;
 }
@@ -327,11 +327,10 @@ test.each([false, true])(
     stopGitCommandMetrics();
 
     if (hasBaseDiffSubscription) {
-      await client?.subscribeCheckoutDiff(
-        fixture.siblingWorktrees[0] ?? "",
-        { mode: "base", baseRef: "main" },
-        { subscriptionId: "base-diff" },
-      );
+      await client?.observeCheckoutDiff(fixture.siblingWorktrees[0] ?? "", {
+        mode: "base",
+        baseRef: "main",
+      }).ready;
       startGitCommandMetrics();
       await waitForGitCommandMetricsIdle({ quietMs: 1_500, timeoutMs: 30_000 });
       stopGitCommandMetrics();
@@ -427,12 +426,12 @@ test("refreshes every workspace that depends on a changed shared base ref", asyn
   await waitForGitCommandMetricsIdle({ quietMs: 1_500, timeoutMs: 30_000 });
   stopGitCommandMetrics();
 
-  const subscriptionId = "shared-base-ref-diff";
-  const initial = await client?.subscribeCheckoutDiff(
-    changedWorktree,
-    { mode: "base", baseRef: "main" },
-    { subscriptionId },
-  );
+  const subscription = client!.observeCheckoutDiff(changedWorktree, {
+    mode: "base",
+    baseRef: "main",
+  });
+  const initial = await subscription.ready;
+  const subscriptionId = initial.subscriptionId;
   expect(initial?.files.map((file) => file.path)).toEqual(["README.md"]);
   startGitCommandMetrics();
   await waitForGitCommandMetricsIdle({ quietMs: 1_500, timeoutMs: 30_000 });
@@ -460,7 +459,7 @@ test("refreshes every workspace that depends on a changed shared base ref", asyn
     status: 2,
     "symbolic-ref": 3,
   });
-  client?.unsubscribeCheckoutDiff(subscriptionId);
+  await subscription.release();
 }, 120_000);
 
 test("records the Git command ledger for repository metadata business rules", async () => {
@@ -627,7 +626,7 @@ test("workspace archive is admitted while 52 sibling observations hydrate", asyn
     appVersion: "0.3.0-beta.2",
   });
   await client.connect();
-  await client.fetchAgents({ subscribe: { subscriptionId: "agents" } });
+  await client.fetchAgents({ subscribe: {} });
   const created = await client.createWorkspace({
     source: {
       kind: "worktree",
@@ -644,7 +643,7 @@ test("workspace archive is admitted while 52 sibling observations hydrate", asyn
 
   await client.fetchWorkspaces({
     page: { limit: 200 },
-    subscribe: { subscriptionId: "workspaces" },
+    subscribe: {},
   });
   expect(snapshotGitCommandRuntimeMetrics().pending).toBeGreaterThan(0);
   const archiveStartedAt = Date.now();
@@ -670,10 +669,10 @@ test("workspace create is admitted while 100 sibling observations hydrate", asyn
     appVersion: "0.3.0-beta.2",
   });
   await client.connect();
-  await client.fetchAgents({ subscribe: { subscriptionId: "agents" } });
+  await client.fetchAgents({ subscribe: {} });
   const snapshot = await client.fetchWorkspaces({
     page: { limit: 200 },
-    subscribe: { subscriptionId: "workspaces" },
+    subscribe: {},
   });
   expect(snapshot.entries).toHaveLength(SIBLING_COUNT);
   expect(snapshotGitCommandRuntimeMetrics().pending).toBeGreaterThan(0);

@@ -7,8 +7,8 @@ export async function runLsCommand(
   options: CommandOptions,
   _command: Command,
 ): Promise<ListResult<ProjectRow>> {
-  const client = await connectToDaemon({ host: options.host }).catch((error: unknown) => {
-    throw buildDaemonConnectionCommandError({ host: options.host, error });
+  const client = await connectToDaemon({ target: options.daemonTarget }).catch((error: unknown) => {
+    throw buildDaemonConnectionCommandError({ target: options.daemonTarget, error });
   });
 
   try {

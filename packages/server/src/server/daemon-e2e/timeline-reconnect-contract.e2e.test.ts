@@ -110,7 +110,7 @@ test("reconnect catches up committed rows without replaying a provisional seed",
 
     try {
       await reconnectClient.fetchAgents({
-        subscribe: { subscriptionId: "timeline-reconnect-a" },
+        subscribe: {},
       });
 
       expect(
@@ -197,7 +197,7 @@ test("reconnect with no new committed rows resumes from future live provisional 
 
     try {
       await reconnectClient.fetchAgents({
-        subscribe: { subscriptionId: "timeline-reconnect-b" },
+        subscribe: {},
       });
 
       expect(

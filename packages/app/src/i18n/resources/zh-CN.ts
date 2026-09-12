@@ -12,6 +12,7 @@ export const zhCN: TranslationResources = {
       copy: "复制",
       copyLine: "复制行",
       dismiss: "关闭",
+      reload: "重新加载",
       retry: "重试",
       search: "搜索",
       select: "选择",
@@ -1262,6 +1263,7 @@ export const zhCN: TranslationResources = {
       detail: "正在停止本地 daemon。",
     },
     daemon: {
+      lifecycle: en.desktop.daemon.lifecycle,
       title: "Daemon",
       status: {
         title: "状态",

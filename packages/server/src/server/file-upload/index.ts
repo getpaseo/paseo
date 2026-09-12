@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { appendFile, mkdir, rm, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
 
@@ -13,7 +14,9 @@ interface FileUploadStoreOptions {
 interface PendingUpload {
   requestId: string;
   id: string;
-  attempt: number;
+  source: object;
+  completed: boolean;
+  finished(response: FileUploadResponse | null): void;
   fileName: string;
   mimeType: string;
   size: number;
@@ -22,6 +25,7 @@ interface PendingUpload {
   started: boolean;
   staleTimeout: ReturnType<typeof setTimeout>;
   queue: Promise<void>;
+  cleanup?: Promise<void>;
 }
 
 export class FileUploadStore {
@@ -29,7 +33,8 @@ export class FileUploadStore {
 
   private readonly paseoHome: string;
   private readonly staleUploadTimeoutMs: number;
-  private readonly pending = new Map<string, PendingUpload>();
+  private readonly defaultSource = {};
+  private readonly pending = new Map<object, Map<string, PendingUpload>>();
 
   constructor(options: FileUploadStoreOptions) {
     this.paseoHome = options.paseoHome;
@@ -37,41 +42,55 @@ export class FileUploadStore {
       options.staleUploadTimeoutMs ?? FileUploadStore.defaultStaleUploadTimeoutMs;
   }
 
-  beginUpload(request: FileUploadRequest): void {
-    const existingUpload = this.pending.get(request.requestId);
-    if (existingUpload) {
-      this.clearPendingUpload(existingUpload);
-      void existingUpload.queue.then(() => this.removeUploadDirectory(existingUpload));
-    }
-
+  beginUpload(
+    request: FileUploadRequest,
+    source: object = this.defaultSource,
+    finished: (response: FileUploadResponse | null) => void = () => {},
+  ): () => Promise<void> {
+    const existingUpload = this.pending.get(source)?.get(request.requestId);
+    if (existingUpload) void this.cancel(existingUpload).catch(() => {});
     const fileName = sanitizeFileName(request.fileName);
-    const attempt = existingUpload ? existingUpload.attempt + 1 : 1;
-    const id = buildUploadId(request.requestId, attempt);
+    const id = `upload_${randomUUID()}`;
     const uploadDir = join(this.paseoHome, "uploads", id);
     const upload: PendingUpload = {
       requestId: request.requestId,
       id,
-      attempt,
+      source,
+      completed: false,
+      finished,
       fileName,
       mimeType: request.mimeType,
       size: request.size,
       path: join(uploadDir, fileName),
       receivedBytes: 0,
       started: false,
-      staleTimeout: this.createStaleUploadTimeout(request.requestId),
+      staleTimeout: this.createStaleUploadTimeout(source, request.requestId),
       queue: Promise.resolve(),
     };
-    this.pending.set(request.requestId, upload);
+    const uploads = this.pending.get(source) ?? new Map<string, PendingUpload>();
+    uploads.set(request.requestId, upload);
+    this.pending.set(source, uploads);
+    return () => this.cancel(upload);
   }
 
-  async receiveFrame(frame: FileTransferFrame): Promise<FileUploadResponse | null> {
-    const upload = this.pending.get(frame.requestId);
+  async receiveFrame(
+    frame: FileTransferFrame,
+    source: object = this.defaultSource,
+  ): Promise<FileUploadResponse | null> {
+    const upload = this.pending.get(source)?.get(frame.requestId);
     if (!upload) {
       return null;
     }
     this.refreshStaleUploadTimeout(upload);
 
     const operation = upload.queue.then(() => this.applyFrame(upload, frame));
+    void operation.then(
+      (response) => {
+        if (response) upload.finished(response);
+        return undefined;
+      },
+      () => upload.finished(null),
+    );
     upload.queue = operation.then(
       () => undefined,
       () => undefined,
@@ -83,7 +102,7 @@ export class FileUploadStore {
     upload: PendingUpload,
     frame: FileTransferFrame,
   ): Promise<FileUploadResponse | null> {
-    if (this.pending.get(upload.requestId) !== upload) {
+    if (this.pending.get(upload.source)?.get(upload.requestId) !== upload) {
       return null;
     }
 
@@ -132,12 +151,17 @@ export class FileUploadStore {
         `Upload size mismatch: expected ${upload.size}, received ${upload.receivedBytes}.`,
       );
     }
+    upload.completed = true;
     return buildUploadResponse(upload, null);
   }
 
-  private createStaleUploadTimeout(requestId: string): ReturnType<typeof setTimeout> {
+  private createStaleUploadTimeout(
+    source: object,
+    requestId: string,
+  ): ReturnType<typeof setTimeout> {
     const timeout = setTimeout(() => {
-      this.expireStaleUpload(requestId);
+      const upload = this.pending.get(source)?.get(requestId);
+      if (upload) void this.cancel(upload).catch(() => {});
     }, this.staleUploadTimeoutMs);
     timeout.unref?.();
     return timeout;
@@ -145,30 +169,25 @@ export class FileUploadStore {
 
   private refreshStaleUploadTimeout(upload: PendingUpload): void {
     clearTimeout(upload.staleTimeout);
-    upload.staleTimeout = this.createStaleUploadTimeout(upload.requestId);
+    upload.staleTimeout = this.createStaleUploadTimeout(upload.source, upload.requestId);
   }
 
-  private expireStaleUpload(requestId: string): void {
-    const upload = this.pending.get(requestId);
-    if (!upload) {
-      return;
-    }
+  private cancel(upload: PendingUpload): Promise<void> {
+    if (upload.cleanup) return upload.cleanup;
     this.clearPendingUpload(upload);
-    const cleanup = upload.queue.then(
-      () => this.removeUploadDirectory(upload),
-      () => this.removeUploadDirectory(upload),
-    );
-    upload.queue = cleanup.then(
-      () => undefined,
-      () => undefined,
-    );
+    upload.cleanup = upload.queue.then(async () => {
+      if (!upload.completed) await this.removeUploadDirectory(upload);
+      return undefined;
+    });
+    upload.finished(null);
+    return upload.cleanup;
   }
 
   private clearPendingUpload(upload: PendingUpload): void {
     clearTimeout(upload.staleTimeout);
-    if (this.pending.get(upload.requestId) === upload) {
-      this.pending.delete(upload.requestId);
-    }
+    const uploads = this.pending.get(upload.source);
+    if (uploads?.get(upload.requestId) === upload) uploads.delete(upload.requestId);
+    if (uploads?.size === 0) this.pending.delete(upload.source);
   }
 
   private async removeFailedUpload(upload: PendingUpload): Promise<void> {
@@ -177,9 +196,7 @@ export class FileUploadStore {
   }
 
   private async removeUploadDirectory(upload: PendingUpload): Promise<void> {
-    await rm(join(this.paseoHome, "uploads", upload.id), { recursive: true, force: true }).catch(
-      () => undefined,
-    );
+    await rm(join(this.paseoHome, "uploads", upload.id), { recursive: true, force: true });
   }
 }
 
@@ -201,15 +218,6 @@ function buildUploadResponse(upload: PendingUpload, error: string | null): FileU
       error,
     },
   };
-}
-
-function sanitizeUploadId(value: string): string {
-  return value.replace(/[^a-zA-Z0-9._-]/g, "_") || "file";
-}
-
-function buildUploadId(requestId: string, attempt: number): string {
-  const baseId = `upload_${sanitizeUploadId(requestId)}`;
-  return attempt === 1 ? baseId : `${baseId}_${attempt}`;
 }
 
 function sanitizeFileName(value: string): string {

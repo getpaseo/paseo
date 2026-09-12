@@ -38,11 +38,18 @@ function submission(composerState: NewWorkspaceComposerState | null) {
     submitWorkspaceDraft: (draft) => {
       effects.push("draft");
       drafts.push(draft);
+      return "navigated";
     },
     clearDraft: () => {
       effects.push("clear");
     },
     serverId: "server-1",
+    draftKey: "draft-1",
+    draftContextScopeKey: null,
+    resolveClient: () => {
+      throw new Error("resolveClient should not run in these tests");
+    },
+    isStillOnCreateScreen: () => true,
     supportsForgeSearch: true,
     labels: { composerStateRequired: "Composer required", selectModel: "Select model" },
   };

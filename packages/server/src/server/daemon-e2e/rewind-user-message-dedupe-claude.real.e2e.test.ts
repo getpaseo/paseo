@@ -41,7 +41,7 @@ describe("daemon E2E (real claude) - rewind user message dedupe", () => {
     try {
       await client.connect();
       await client.fetchAgents({
-        subscribe: { subscriptionId: "rewind-user-message-dedupe" },
+        subscribe: {},
       });
 
       const agent = await client.createAgent({

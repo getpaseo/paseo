@@ -6,6 +6,7 @@ import { PluginButtonStore, buttonMatches } from "./model";
 
 function installation(): InstalledPlugin {
   return {
+    lifetime: new AbortController(),
     id: "review",
     serverId: "host-a",
     clientBundle: "bundle",

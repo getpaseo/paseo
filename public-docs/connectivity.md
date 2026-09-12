@@ -43,7 +43,7 @@ Set a different remote daemon port with `daemonPort`:
 paseo --host 'ssh://user@host?daemonPort=7777' ls -a
 ```
 
-Put `--host` before the command. `paseo daemon status` checks only the local daemon; use `paseo --host ssh://user@host ls` to verify a remote connection. `paseo --host ssh://user@host run --cwd /path/on/remote ...` requires a working directory that exists on the remote host.
+Put `--host` before the command. `paseo daemon status` observes the default local home; use `paseo --host ssh://user@host daemon status` to query a remote daemon. `paseo --host ssh://user@host run --cwd /path/on/remote ...` requires a working directory that exists on the remote host.
 
 In Paseo Desktop, open **Settings → Add host → Remote SSH** and enter the same `ssh://` destination.
 

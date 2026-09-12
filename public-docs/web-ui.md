@@ -20,16 +20,17 @@ The web app ships inside the daemon package, so the UI you serve always matches 
 
 ## Enable it
 
-The bundled web UI is off by default. Turn it on when you start the daemon:
+The bundled web UI is off by default. Save the setting, then start the daemon:
 
 ```bash
-paseo daemon start --web-ui
+paseo daemon config set features.webUi.enabled true
+paseo daemon start
 ```
 
-Or with an environment variable:
+Or run a foreground deployment with an environment variable:
 
 ```bash
-PASEO_WEB_UI_ENABLED=true paseo daemon start
+PASEO_WEB_UI_ENABLED=true paseo daemon run
 ```
 
 Or persist it in `config.json` so it survives restarts:
@@ -73,7 +74,8 @@ The rest of this page builds from local to public. **Verify a direct connection 
 By default the daemon listens on `127.0.0.1:6767`, reachable only from the same machine. To reach it from other devices, bind it to a network interface:
 
 ```bash
-paseo daemon start --web-ui --listen 0.0.0.0:6767
+paseo daemon config set daemon.listen 0.0.0.0:6767
+paseo daemon start
 ```
 
 > **Anyone who can reach the listening address can use your agents.** Before you bind beyond localhost, set a password and review your host allowlist. The relay pairing path avoids this entirely by keeping the daemon bound to localhost, see [Security](/docs/security).
@@ -83,7 +85,7 @@ Two things to configure when you expose the daemon directly:
 1. **Set a password** so only authorized clients can connect:
 
    ```bash
-   PASEO_PASSWORD=my-secret paseo daemon start --web-ui --listen 0.0.0.0:6767
+   paseo daemon set-password
    ```
 
    See [password authentication](/docs/configuration#password-authentication) for the persistent setup. Password auth controls access; it does not encrypt traffic, put TLS in front of it (below) on any untrusted network.
@@ -91,7 +93,7 @@ Two things to configure when you expose the daemon directly:
 2. **Allow your hostname** so the daemon's DNS-rebinding protection accepts requests for your domain:
 
    ```bash
-   paseo daemon start --web-ui --listen 0.0.0.0:6767 --hostnames ".example.com"
+   paseo daemon config set daemon.hostnames '[".example.com"]'
    ```
 
    See [DNS rebinding protection](/docs/security#dns-rebinding-protection) for how the host allowlist works.
@@ -179,7 +181,7 @@ If your proxy reaches the daemon from another address, as in some Docker, LAN, o
 `PASEO_TRUSTED_PROXIES` accepts the same comma-separated values:
 
 ```bash
-PASEO_TRUSTED_PROXIES=loopback,172.16.0.0/12 paseo daemon start --web-ui
+PASEO_TRUSTED_PROXIES=loopback,172.16.0.0/12 PASEO_WEB_UI_ENABLED=true paseo daemon run
 ```
 
 Only use `trustedProxies: true` when your final trusted proxy overwrites client-supplied `X-Forwarded-*` headers. Otherwise a client could spoof forwarded header values.

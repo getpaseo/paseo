@@ -1,3 +1,4 @@
+import type { DaemonTarget } from "../../utils/daemon-target.js";
 import { createPaseoApi } from "@getpaseo/client";
 import { connectToDaemon, getDaemonHost } from "../../utils/client.js";
 import type { CommandError, CommandOptions } from "../../output/index.js";
@@ -11,12 +12,13 @@ interface TerminalLike {
   name?: string | null;
 }
 
-export async function connectTerminalClient(host?: string) {
-  const daemonHost = getDaemonHost({ host });
+export async function connectTerminalClient(target: DaemonTarget) {
+  const daemonHost = getDaemonHost({ target });
   try {
-    const client = await connectToDaemon({ host });
+    const client = await connectToDaemon({ target });
     return { client: createPaseoApi(client), daemonHost, close: () => client.close() };
   } catch (err) {
+    if (err && typeof err === "object" && "code" in err) throw err;
     const message = err instanceof Error ? err.message : String(err);
     const error: CommandError = {
       code: "DAEMON_NOT_RUNNING",

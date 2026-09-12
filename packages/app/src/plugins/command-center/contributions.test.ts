@@ -60,6 +60,7 @@ function plugin(onAgentSelect: AgentCommandItem["onSelect"]): InstalledPlugin {
     id: "review",
     serverId: "host-1",
     clientBundle: "bundle",
+    lifetime: new AbortController(),
     queryClient: new QueryClient(),
     cleanup: () => {},
     settingsScreens: [],
@@ -120,7 +121,7 @@ function stateSource() {
   };
 }
 
-function createRuntime(pluginId: string) {
+function createRuntime(installed: InstalledPlugin) {
   const client = new DaemonClient({
     url: "ws://127.0.0.1:1",
     clientId: "plugin-command-test",
@@ -129,7 +130,7 @@ function createRuntime(pluginId: string) {
   return {
     paseo: createPaseoApi(client),
     invoke: async (method: string, input: unknown) => {
-      expect(pluginId).toBe("review");
+      expect(installed.id).toBe("review");
       expect(method).toBe("review.inspect");
       return { value: inspect.input.parse(input).value + 1 };
     },
@@ -187,7 +188,7 @@ describe("plugin Command Center contributions", () => {
       context.openSurface("main");
       context.openPanel("details", { location: "explorer" });
     });
-    const runtime = createRuntime("review");
+    const runtime = createRuntime(installed);
     const actions = buildPluginCommandCenterContributions({
       plugins: [installed],
       runtime: () => runtime,
