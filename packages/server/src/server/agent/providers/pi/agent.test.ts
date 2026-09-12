@@ -135,7 +135,9 @@ async function createSession(
   events: SessionEvents;
 }> {
   const client = createClient(pi, usagePollScheduler);
-  const session = (await client.createSession(createConfig())) as PiRpcAgentSession;
+  const session = (await client.createSession(createConfig(), {
+    approveProjectResources: true,
+  })) as PiRpcAgentSession;
   const events = new SessionEvents(session);
   return { pi, session, events };
 }
@@ -156,15 +158,42 @@ test("forwards launch-context env to the Pi process launch", async () => {
   await session.close();
 });
 
+test("approves project-local Pi resources for trusted interactive sessions", async () => {
+  const pi = new FakePi();
+  const client = createClient(pi);
+  const session = await client.createSession(createConfig(), {
+    approveProjectResources: true,
+  });
+
+  expect(pi.recordedLaunches[0]?.argv).toContain("--approve");
+
+  await session.close();
+});
+
+test("does not approve project-local Pi resources for untrusted interactive sessions", async () => {
+  const pi = new FakePi();
+  const client = createClient(pi);
+  const session = await client.createSession(createConfig(), {
+    approveProjectResources: false,
+  });
+
+  expect(pi.recordedLaunches[0]?.argv).not.toContain("--approve");
+
+  await session.close();
+});
+
 test("starts internal Pi agents without persisting a native session", async () => {
   const pi = new FakePi();
   const client = createClient(pi);
-  const session = await client.createSession(createConfig({ internal: true }));
+  const session = await client.createSession(createConfig({ internal: true }), {
+    approveProjectResources: true,
+  });
 
   expect(pi.recordedLaunches[0]).toMatchObject({
     noSession: true,
     argv: expect.arrayContaining(["--no-session"]),
   });
+  expect(pi.recordedLaunches[0]?.argv).not.toContain("--approve");
 
   await session.close();
 });
@@ -844,12 +873,16 @@ describe("PiRpcAgentSession", () => {
   test("uses the Pi entry attached to a submitted prompt after resuming old history", async () => {
     const pi = new FakePi();
     const client = createClient(pi);
-    const session = (await client.resumeSession({
-      provider: "pi",
-      sessionId: "pi-session-1",
-      nativeHandle: "/tmp/native-pi-session",
-      metadata: { cwd: "/workspace/project" },
-    })) as PiRpcAgentSession;
+    const session = (await client.resumeSession(
+      {
+        provider: "pi",
+        sessionId: "pi-session-1",
+        nativeHandle: "/tmp/native-pi-session",
+        metadata: { cwd: "/workspace/project" },
+      },
+      undefined,
+      { approveProjectResources: true },
+    )) as PiRpcAgentSession;
     const events = new SessionEvents(session);
     const fakeSession = pi.latestSession();
     fakeSession.capturedUserEntries = [{ id: "entry-old", parentId: null, text: "old prompt" }];
@@ -1344,7 +1377,7 @@ describe("PiRpcAgentSession", () => {
         },
       },
       {},
-      { env: { RESUME_PROBE: "expected" } },
+      { env: { RESUME_PROBE: "expected" }, approveProjectResources: true },
     );
 
     expect(pi.recordedLaunches).toHaveLength(1);
@@ -1359,6 +1392,7 @@ describe("PiRpcAgentSession", () => {
       "pi",
       "--mode",
       "rpc",
+      "--approve",
       "--model",
       "openrouter/model-a",
       "--thinking",
@@ -1368,6 +1402,24 @@ describe("PiRpcAgentSession", () => {
       "--extension",
       actualLaunch.extensionPaths[0],
     ]);
+  });
+
+  test("does not approve persisted Pi sessions when the workspace is untrusted", async () => {
+    const pi = new FakePi();
+    const client = createClient(pi);
+
+    await client.resumeSession(
+      {
+        provider: "pi",
+        sessionId: "pi-session-untrusted",
+        nativeHandle: "/tmp/native-pi-untrusted",
+        metadata: { cwd: "/workspace/untrusted" },
+      },
+      undefined,
+      { approveProjectResources: false },
+    );
+
+    expect(pi.recordedLaunches[0]?.argv).not.toContain("--approve");
   });
 
   test("reports the persisted Pi entry attached to the submitted message", async () => {
@@ -1425,6 +1477,7 @@ describe("PiRpcAgentSession", () => {
         systemPrompt: "Agent prompt",
         daemonAppendSystemPrompt: "Daemon prompt",
       }),
+      { approveProjectResources: true },
     );
 
     const actualLaunch = pi.recordedLaunches[0]!;
@@ -1436,6 +1489,7 @@ describe("PiRpcAgentSession", () => {
       "pi",
       "--mode",
       "rpc",
+      "--approve",
       "--thinking",
       "medium",
       "--extension",
@@ -1468,6 +1522,7 @@ describe("PiRpcAgentSession", () => {
       {
         daemonAppendSystemPrompt: "Daemon prompt",
       },
+      { approveProjectResources: true },
     );
 
     expect(pi.recordedLaunches).toHaveLength(1);
@@ -1481,6 +1536,7 @@ describe("PiRpcAgentSession", () => {
       "pi",
       "--mode",
       "rpc",
+      "--approve",
       "--model",
       "openrouter/model-a",
       "--thinking",
@@ -2261,7 +2317,11 @@ describe("PiRpcAgentClient", () => {
 
     const imported = await client.importSession(
       { providerHandleId: sessionFile, cwd },
-      { config: createConfig({ cwd }), storedConfig: createConfig({ cwd }) },
+      {
+        config: createConfig({ cwd }),
+        storedConfig: createConfig({ cwd }),
+        launchContext: { approveProjectResources: true },
+      },
     );
 
     const actualLaunch = pi.recordedLaunches[0]!;
@@ -2270,6 +2330,7 @@ describe("PiRpcAgentClient", () => {
       "pi",
       "--mode",
       "rpc",
+      "--approve",
       "--model",
       "openrouter/anthropic/claude-sonnet-4.5",
       "--thinking",
@@ -2322,6 +2383,7 @@ describe("PiRpcAgentClient", () => {
       modes: [],
     });
     expect(pi.recordedLaunches[0]).toMatchObject({ cwd: "/workspace/with-extension" });
+    expect(pi.recordedLaunches[0]?.argv).not.toContain("--approve");
   });
 
   test("lists no draft features without starting a Pi session", async () => {
@@ -2698,6 +2760,7 @@ describe("PiRpcAgentClient", () => {
     );
 
     expect(pi.recordedLaunches).toHaveLength(2);
+    expect(pi.recordedLaunches[0]?.argv).not.toContain("--approve");
     const actualLaunch = pi.recordedLaunches[1]!;
     expect(actualLaunch.extensionPaths).toHaveLength(1);
     expect(actualLaunch.argv).toEqual([

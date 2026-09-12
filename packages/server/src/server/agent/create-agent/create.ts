@@ -280,6 +280,7 @@ async function resolveSessionCreateAgent(
   return {
     config: sessionConfig,
     createOptions: {
+      approveProjectResources: true,
       labels: input.labels,
       initialPrompt: trimmedPrompt,
       env: input.env,

@@ -89,6 +89,7 @@ import {
 } from "./tool-call-mapper.js";
 
 const PI_PROVIDER = "pi";
+const PI_PROJECT_TRUST_ARGS = ["--approve"];
 const DEFAULT_PI_THINKING_LEVEL: PiThinkingLevel = "medium";
 const PI_BINARY_COMMAND = process.env.PI_COMMAND ?? process.env.PI_ACP_PI_COMMAND ?? "pi";
 const PASEO_PI_TREE_EXTENSION_COMMAND = "paseo_tree";
@@ -525,6 +526,9 @@ function buildResumeStartInput(input: {
     thinkingOptionId: normalizePiThinkingOption(input.resumeConfig.thinkingOptionId) ?? undefined,
     mcpConfigPath: input.mcpConfig?.path,
     extensionPaths: input.paseoExtension ? [input.paseoExtension.path] : undefined,
+    ...(input.launchContext?.approveProjectResources && input.resumeConfig.config.internal !== true
+      ? { extraArgs: PI_PROJECT_TRUST_ARGS }
+      : {}),
   };
 }
 
@@ -2548,6 +2552,9 @@ export class PiRpcAgentClient implements AgentClient {
         env: launchContext?.env,
         mcpConfigPath: mcpConfig?.path,
         extensionPaths: paseoExtension ? [paseoExtension.path] : undefined,
+        ...(launchContext?.approveProjectResources && config.internal !== true
+          ? { extraArgs: PI_PROJECT_TRUST_ARGS }
+          : {}),
       });
     } catch (error) {
       mcpConfig?.cleanup();
