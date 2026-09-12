@@ -17,11 +17,11 @@ const workspaceSetupSchema: OutputSchema<WorkspaceSetupResult> = {
 
 export async function runSetupCommand(
   workspaceId: string,
-  options: { host?: string },
+  options: { host?: string; daemonTarget: import("../../utils/daemon-target.js").DaemonTarget },
   _command: Command,
 ): Promise<SingleResult<WorkspaceSetupResult>> {
-  const host = getDaemonHost({ host: options.host });
-  const client = await connectToDaemon({ host: options.host }).catch((error: unknown) => {
+  const host = getDaemonHost({ target: options.daemonTarget });
+  const client = await connectToDaemon({ target: options.daemonTarget }).catch((error: unknown) => {
     throw {
       code: "DAEMON_NOT_RUNNING",
       message: `Cannot connect to daemon at ${host}: ${error instanceof Error ? error.message : String(error)}`,

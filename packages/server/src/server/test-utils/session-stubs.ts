@@ -28,7 +28,10 @@ export function asSessionLogger(stub: {
 export function asAgentManager(stub: {
   [K in keyof SessionOptions["agentManager"]]?: unknown;
 }): SessionOptions["agentManager"] {
-  return createStub<SessionOptions["agentManager"]>(stub);
+  return createStub<SessionOptions["agentManager"]>({
+    listProviderSubagentActivity: () => [],
+    ...stub,
+  });
 }
 
 export function asAgentStorage(stub: {

@@ -1,6 +1,7 @@
 import { resolve, dirname, basename } from "path";
 import { existsSync, realpathSync } from "fs";
 import { open as openFile, readFile, stat as statFile } from "fs/promises";
+import { setImmediate } from "node:timers/promises";
 import { TTLCache } from "@isaacs/ttlcache";
 import type { CheckoutCommit, CheckoutCommitFile } from "@getpaseo/protocol/messages";
 import { parseGitHubRemoteIdentity, parseGitRemoteLocation } from "@getpaseo/protocol/git-remote";
@@ -29,6 +30,7 @@ import {
 } from "../services/forge-cli-command.js";
 import { parseGitRevParsePath, resolveGitRevParsePath } from "./git-rev-parse-path.js";
 import { runGitCommand, type RunGitCommand } from "./run-git-command.js";
+import { readGitFileContents } from "./git-file-contents.js";
 import { isPaseoOwnedWorktreeCwd, resolvePaseoWorktreesBaseRoot } from "./worktree.js";
 import {
   branchNameFromRef,
@@ -639,7 +641,7 @@ function buildGitDiffArgs(args: { ignoreWhitespace?: boolean; extra: string[] })
 }
 
 const TRACKED_DIFF_NUMSTAT_MAX_BYTES = 2 * 1024 * 1024; // 2MB
-const TRACKED_DIFF_BATCH_SIZE = 8;
+const TRACKED_DIFF_BATCH_SIZE = 64;
 const EMPTY_TREE_OBJECT_ID = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 
 function isUnbornHeadDiffError(error: unknown): boolean {
@@ -716,7 +718,7 @@ async function getTrackedDiffTextForPath(input: {
   const result = await runGitCommand(
     buildGitDiffArgs({
       ignoreWhitespace: input.ignoreWhitespace,
-      extra: [...getCheckoutDiffRefArgs(input.refsForDiff), "--", input.path],
+      extra: [...getCheckoutDiffRefArgs(input.refsForDiff), "--", `:(literal)${input.path}`],
     }),
     {
       cwd: input.cwd,
@@ -730,6 +732,56 @@ async function getTrackedDiffTextForPath(input: {
     text: result.stdout,
     truncated: result.truncated,
   };
+}
+
+async function getTrackedDiffTexts(input: {
+  cwd: string;
+  refsForDiff: CheckoutDiffRefs;
+  paths: string[];
+  ignoreWhitespace: boolean;
+}): Promise<Array<{ path: string; text: string; truncated: boolean }>> {
+  if (input.paths.length === 0) return [];
+  if (input.paths.length === 1)
+    return [await getTrackedDiffTextForPath({ ...input, path: input.paths[0] })];
+  const result = await runGitCommand(
+    buildGitDiffArgs({
+      ignoreWhitespace: input.ignoreWhitespace,
+      extra: [
+        ...getCheckoutDiffRefArgs(input.refsForDiff),
+        "--",
+        ...input.paths.map((path) => `:(literal)${path}`),
+      ],
+    }),
+    { cwd: input.cwd, envOverlay: READ_ONLY_GIT_ENV, maxOutputBytes: 8 * PER_FILE_DIFF_MAX_BYTES },
+  );
+  const files = new Map<string, { path: string; text: string; truncated: boolean }>();
+  if (!result.truncated) {
+    for (const text of result.stdout.split(/(?=^diff --git )/m).filter(Boolean)) {
+      // Only identify the file here. Oversized bodies must not reach the parser.
+      const hunkStart = text.indexOf("\n@@ ");
+      const file = parseDiff(hunkStart < 0 ? text : text.slice(0, hunkStart))[0];
+      if (!file || !input.paths.includes(file.path)) break;
+      files.set(file.path, {
+        path: file.path,
+        text,
+        truncated: Buffer.byteLength(text) > PER_FILE_DIFF_MAX_BYTES,
+      });
+    }
+    // Empty patches are valid when whitespace is ignored. Every emitted section
+    // must be accounted for before accepting a combined command.
+    if (
+      [...files.values()].reduce((length, file) => length + file.text.length, 0) ===
+      result.stdout.length
+    ) {
+      return input.paths.map((path) => files.get(path) ?? { path, text: "", truncated: false });
+    }
+  }
+  // Bound oversized output without letting one large file hide its neighbors.
+  const middle = Math.ceil(input.paths.length / 2);
+  return [
+    ...(await getTrackedDiffTexts({ ...input, paths: input.paths.slice(0, middle) })),
+    ...(await getTrackedDiffTexts({ ...input, paths: input.paths.slice(middle) })),
+  ];
 }
 
 export class NotGitRepoError extends Error {
@@ -2978,13 +3030,23 @@ async function buildHighlightedTrackedDiffFile(input: {
   change: CheckoutFileChange;
   parsedFile: ParsedDiffFile;
   refsForDiff: CheckoutDiffRefs;
+  contents?: Map<string, string | null>;
 }): Promise<ParsedDiffFile> {
   const { cwd, change, parsedFile, refsForDiff } = input;
   const refPath = change.oldPath ?? change.path;
-  const [oldFileContent, newFileContent] = await Promise.all([
-    change.isNew ? null : readGitFileContentAtRef(cwd, refsForDiff.baseRef, refPath),
-    refsForDiff.targetRef ? readGitFileContentAtRef(cwd, refsForDiff.targetRef, change.path) : null,
-  ]);
+  const [oldFileContent, newFileContent] = input.contents
+    ? [
+        change.isNew ? null : input.contents.get(`${refsForDiff.baseRef}:${refPath}`),
+        refsForDiff.targetRef
+          ? input.contents.get(`${refsForDiff.targetRef}:${change.path}`)
+          : null,
+      ]
+    : await Promise.all([
+        change.isNew ? null : readGitFileContentAtRef(cwd, refsForDiff.baseRef, refPath),
+        refsForDiff.targetRef
+          ? readGitFileContentAtRef(cwd, refsForDiff.targetRef, change.path)
+          : null,
+      ]);
   const highlightedFile = await highlightDiffWithFileContent(parsedFile, cwd, {
     oldFileContent,
     newFileContent,
@@ -3012,6 +3074,19 @@ function isWhitespaceOnlyTrackedChange(input: {
   );
 }
 
+function readTrackedDiffContents(
+  cwd: string,
+  changes: CheckoutFileChange[],
+  refs: CheckoutDiffRefs,
+): Promise<Map<string, string | null> | null> {
+  const specs: string[] = [];
+  for (const change of changes) {
+    if (!change.isNew) specs.push(`${refs.baseRef}:${change.oldPath ?? change.path}`);
+    if (refs.targetRef) specs.push(`${refs.targetRef}:${change.path}`);
+  }
+  return readGitFileContents(cwd, specs);
+}
+
 async function appendStructuredTrackedDiffs(
   input: AppendStructuredTrackedDiffsInput,
 ): Promise<boolean> {
@@ -3030,54 +3105,68 @@ async function appendStructuredTrackedDiffs(
   const parsedTrackedFiles = trackedDiffText.length > 0 ? parseDiff(trackedDiffText) : [];
   const parsedTrackedByPath = new Map(parsedTrackedFiles.map((file) => [file.path, file]));
 
-  for (const change of trackedChanges) {
-    const placeholder = trackedPlaceholderByPath.get(change.path);
-    if (placeholder) {
-      const file = buildPlaceholderParsedDiffFile(change, {
-        status: placeholder.status,
-        stat: placeholder.stat,
-      });
+  for (let start = 0; start < trackedChanges.length; start += TRACKED_DIFF_BATCH_SIZE) {
+    const changes = trackedChanges.slice(start, start + TRACKED_DIFF_BATCH_SIZE);
+    const contents = await readTrackedDiffContents(
+      cwd,
+      changes.filter(
+        (change) =>
+          !trackedPlaceholderByPath.has(change.path) && parsedTrackedByPath.has(change.path),
+      ),
+      refsForDiff,
+    );
+    for (const change of changes) {
+      const placeholder = trackedPlaceholderByPath.get(change.path);
+      if (placeholder) {
+        const file = buildPlaceholderParsedDiffFile(change, {
+          status: placeholder.status,
+          stat: placeholder.stat,
+        });
+        if (!appendStructuredFile(structured, file)) {
+          return false;
+        }
+        appendTrackedPlaceholderComment(change, placeholder.status);
+        continue;
+      }
+
+      const stat = trackedNumstatByPath.get(change.path) ?? null;
+      const parsedFile = parsedTrackedByPath.get(change.path);
+      if (parsedFile) {
+        const file = await buildHighlightedTrackedDiffFile({
+          cwd,
+          change,
+          parsedFile,
+          refsForDiff,
+          contents: contents ?? undefined,
+        });
+        if (!appendStructuredFile(structured, file)) {
+          return false;
+        }
+        // Batched blobs remove the per-file I/O pause; keep serving other daemon work.
+        await setImmediate();
+        continue;
+      }
+
+      // `git diff -w --name-status` can still report a modified path even when the
+      // whitespace-filtered patch and numstat are both empty. Skip emitting a
+      // structured placeholder in that case so whitespace-only edits truly disappear.
+      if (isWhitespaceOnlyTrackedChange({ change, stat, ignoreWhitespace })) {
+        continue;
+      }
+
+      const file = {
+        path: change.path,
+        ...(change.oldPath ? { oldPath: change.oldPath } : {}),
+        isNew: change.isNew,
+        isDeleted: change.isDeleted,
+        additions: stat?.additions ?? 0,
+        deletions: stat?.deletions ?? 0,
+        hunks: [],
+        status: "ok",
+      } satisfies ParsedDiffFile;
       if (!appendStructuredFile(structured, file)) {
         return false;
       }
-      appendTrackedPlaceholderComment(change, placeholder.status);
-      continue;
-    }
-
-    const stat = trackedNumstatByPath.get(change.path) ?? null;
-    const parsedFile = parsedTrackedByPath.get(change.path);
-    if (parsedFile) {
-      const file = await buildHighlightedTrackedDiffFile({
-        cwd,
-        change,
-        parsedFile,
-        refsForDiff,
-      });
-      if (!appendStructuredFile(structured, file)) {
-        return false;
-      }
-      continue;
-    }
-
-    // `git diff -w --name-status` can still report a modified path even when the
-    // whitespace-filtered patch and numstat are both empty. Skip emitting a
-    // structured placeholder in that case so whitespace-only edits truly disappear.
-    if (isWhitespaceOnlyTrackedChange({ change, stat, ignoreWhitespace })) {
-      continue;
-    }
-
-    const file = {
-      path: change.path,
-      ...(change.oldPath ? { oldPath: change.oldPath } : {}),
-      isNew: change.isNew,
-      isDeleted: change.isDeleted,
-      additions: stat?.additions ?? 0,
-      deletions: stat?.deletions ?? 0,
-      hunks: [],
-      status: "ok",
-    } satisfies ParsedDiffFile;
-    if (!appendStructuredFile(structured, file)) {
-      return false;
     }
   }
 
@@ -3196,18 +3285,32 @@ async function processTrackedChanges(
 
   let trackedDiffText = "";
   let trackedDiffBytes = 0;
+  const renamedPaths = new Set(
+    trackedChanges.filter((change) => change.oldPath).map((change) => change.path),
+  );
   for (let start = 0; start < trackedDiffPaths.length; start += TRACKED_DIFF_BATCH_SIZE) {
     const paths = trackedDiffPaths.slice(start, start + TRACKED_DIFF_BATCH_SIZE);
-    const trackedDiffs = await Promise.all(
-      paths.map((path) =>
-        getTrackedDiffTextForPath({
-          cwd,
-          refsForDiff,
-          path,
-          ignoreWhitespace,
-        }),
-      ),
+    // Keep rename/copy path filtering identical to the existing per-file command.
+    const ordinary = await getTrackedDiffTexts({
+      cwd,
+      refsForDiff,
+      paths: paths.filter((path) => !renamedPaths.has(path)),
+      ignoreWhitespace,
+    });
+    const renamed = await Promise.all(
+      paths
+        .filter((path) => renamedPaths.has(path))
+        .map((path) =>
+          getTrackedDiffTextForPath({
+            cwd,
+            refsForDiff,
+            path,
+            ignoreWhitespace,
+          }),
+        ),
     );
+    const byPath = new Map([...ordinary, ...renamed].map((file) => [file.path, file]));
+    const trackedDiffs = paths.map((path) => byPath.get(path)!);
 
     for (const fileDiff of trackedDiffs) {
       if (fileDiff.truncated) {

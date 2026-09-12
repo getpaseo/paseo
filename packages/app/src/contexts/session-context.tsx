@@ -14,12 +14,7 @@ import type { StreamItem } from "@/types/stream";
 import { deriveAgentStreamTurnLiveness } from "@/timeline/session-stream-reducers";
 import { planTimelineTailFetch } from "@/timeline/timeline-sync-plan";
 import { requestTimelineReplacement } from "@/timeline/timeline-replacement";
-import {
-  consumeForcedTimelineTailReplacement,
-  type TimelineDeliveryMode,
-  type TimelineResponsePayload,
-  type ViewedTimelineOwner,
-} from "@/timeline/viewed-timeline-sync";
+import { type ViewedTimelineOwner } from "@/timeline/viewed-timeline-sync";
 import type { AgentAttachment, SessionOutboundMessage } from "@getpaseo/protocol/messages";
 import { parseServerInfoStatusPayload } from "@getpaseo/protocol/messages";
 import {
@@ -79,11 +74,6 @@ interface BufferedAudioChunk {
   audio: string;
   format: string;
   id: string;
-}
-
-// COMPAT(selectiveAgentTimeline): added in v0.1.106, remove after 2027-01-12.
-function getTimelineDeliveryMode(selectiveAgentTimeline?: boolean): TimelineDeliveryMode {
-  return selectiveAgentTimeline ? "selective" : "legacy";
 }
 
 function decodeBase64Chunk(base64: string): Uint8Array {
@@ -251,7 +241,6 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
   const _sessionStateTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const attentionNotifiedRef = useRef<Map<string, number>>(new Map());
   const appStateRef = useRef(AppState.currentState);
-  const forcedTimelineTailReplacements = useRef(new Set<string>());
   const viewedTimelineSyncRef = useRef<ViewedTimelineOwner | null>(null);
   const audioOutputBuffersRef = useRef<Map<string, BufferedAudioChunk[]>>(new Map());
   const activeAudioGroupsRef = useRef<Set<string>>(new Set());
@@ -417,24 +406,62 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
     [serverId, upsertWorkspaceSetupProgress],
   );
 
-  const applyTimelineResponse = useCallback((receivedPayload: TimelineResponsePayload) => {
-    const payload = consumeForcedTimelineTailReplacement(
-      receivedPayload,
-      forcedTimelineTailReplacements.current,
-    );
-    const owner = viewedTimelineSyncRef.current;
-    if (!owner) throw new Error("Viewed timeline owner is unavailable");
-    owner.applyTimelineResponse(payload);
-  }, []);
-
   useEffect(() => {
     const setAgentInitializing = createSetAgentInitializing(serverId, setInitializingAgents);
-    const initialDeliveryMode = getTimelineDeliveryMode(
-      client.getLastServerInfoMessage()?.features?.selectiveAgentTimeline,
-    );
+    const onStream = (message: SessionOutboundMessage) => {
+      if (message.type !== "agent_stream") return;
+      const { agentId, event, timestamp, seq, epoch } = message.payload;
+      const parsedTimestamp = new Date(timestamp);
+      const streamEvent = event;
+      if (
+        event.type === "turn_started" ||
+        event.type === "turn_completed" ||
+        event.type === "turn_failed" ||
+        event.type === "turn_canceled"
+      ) {
+        voiceRuntime?.onTurnEvent(serverId, agentId, event.type);
+      }
+      const turnLiveness = deriveAgentStreamTurnLiveness([
+        { event: streamEvent, seq, epoch, timestamp: parsedTimestamp },
+      ]);
+      if (turnLiveness.length > 0) {
+        getHostRuntimeStore().applyAgentTurnLiveness(serverId, agentId, turnLiveness);
+      }
+      sync.enqueueStreamEvent(agentId, {
+        event: streamEvent,
+        seq,
+        epoch,
+        timestamp: parsedTimestamp,
+      });
+
+      // NOTE: We don't update lastActivityAt on every stream event to prevent
+      // cascading rerenders. The agent_update handler updates agent.lastActivityAt
+      // on status changes, which is sufficient for sorting and display purposes.
+    };
+    const onReplacement = (message: SessionOutboundMessage) => {
+      if (message.type !== "agent.timeline.replacement") return;
+      void requestTimelineReplacement(
+        {
+          fetchAgentTimeline: (agentId, request) =>
+            getHostRuntimeStore().fetchAgentTimeline(serverId, agentId, request),
+        },
+        message.payload.agentId,
+      ).catch((error: unknown) => {
+        console.warn("[Session] timeline replacement refresh failed", { serverId, error });
+      });
+    };
     const sync = getHostRuntimeStore().createViewedTimelineOwner(serverId, {
-      initialDeliveryMode,
-      setSubscription: (agentIds) => client.setAgentTimelineSubscription(agentIds),
+      observe: (agentIds) => {
+        const observation = client.observeTimeline(agentIds);
+        observation.subscribe({
+          snapshot: () => {},
+          update: (message) => {
+            if (message.type === "agent_stream") onStream(message);
+            else if (message.type === "agent.timeline.replacement") onReplacement(message);
+          },
+        });
+        return observation;
+      },
       readCursor: (agentId) => {
         const timeline = selectAgentTimelineState(
           useSessionStore.getState().sessions[serverId],
@@ -474,18 +501,8 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
           throw error;
         }
       },
-      fetchLatestTail: async (agentId) => {
-        forcedTimelineTailReplacements.current.add(agentId);
-        try {
-          return await getHostRuntimeStore().fetchAgentTimeline(
-            serverId,
-            agentId,
-            planTimelineTailFetch(),
-          );
-        } finally {
-          forcedTimelineTailReplacements.current.delete(agentId);
-        }
-      },
+      fetchLatestTail: (agentId) =>
+        getHostRuntimeStore().fetchAgentTimeline(serverId, agentId, planTimelineTailFetch()),
       reportError: (error) => {
         console.warn("[Session] viewed timeline synchronization failed", { serverId, error });
       },
@@ -505,7 +522,7 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
       setViewedTimelineSync(serverId, null);
       sync.dispose();
     };
-  }, [client, serverId, setInitializingAgents, setViewedTimelineSync]);
+  }, [client, serverId, setInitializingAgents, setViewedTimelineSync, voiceRuntime]);
 
   useEffect(() => {
     viewedTimelineSyncRef.current?.setConnected(isConnected);
@@ -513,98 +530,57 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
 
   // Daemon message handlers - directly update Zustand store
   useEffect(() => {
-    const owner = viewedTimelineSyncRef.current;
-    if (!owner) throw new Error("Viewed timeline owner is unavailable");
-
-    const unsubAgentStream = client.on("agent_stream", (message) => {
-      if (message.type !== "agent_stream") return;
-      const { agentId, event, timestamp, seq, epoch } = message.payload;
-      const parsedTimestamp = new Date(timestamp);
-      const streamEvent = event;
-      if (
-        event.type === "turn_started" ||
-        event.type === "turn_completed" ||
-        event.type === "turn_failed" ||
-        event.type === "turn_canceled"
-      ) {
-        voiceRuntime?.onTurnEvent(serverId, agentId, event.type);
-      }
-      const turnLiveness = deriveAgentStreamTurnLiveness([
-        { event: streamEvent, seq, epoch, timestamp: parsedTimestamp },
-      ]);
-      if (turnLiveness.length > 0) {
-        getHostRuntimeStore().applyAgentTurnLiveness(serverId, agentId, turnLiveness);
-      }
-      owner.enqueueStreamEvent(agentId, {
-        event: streamEvent,
-        seq,
-        epoch,
-        timestamp: parsedTimestamp,
+    const feeds = client.observeEvents(
+      [
+        "agent_attention_required",
+        "terminal_attention_required",
+        "agent_permission_request",
+        "agent_permission_resolved",
+        "agent.provider_subagents.update",
+        "checkout_status_update",
+        "workspace_setup_progress",
+        "status.server_info",
+      ],
+      { notifications: true },
+    );
+    const onFeed = (
+      type: SessionOutboundMessage["type"],
+      handler: (message: SessionOutboundMessage) => void,
+    ) =>
+      feeds.subscribe({
+        snapshot: () => {},
+        update: (message) => {
+          if (message.type === type) handler(message);
+        },
       });
 
-      // NOTE: We don't update lastActivityAt on every stream event to prevent
-      // cascading rerenders. The agent_update handler updates agent.lastActivityAt
-      // on status changes, which is sufficient for sorting and display purposes.
-    });
-
-    const unsubAgentAttention = client.onAgentAttentionRequired((notification) => {
+    const unsubAgentAttention = onFeed("agent_attention_required", (message) => {
+      if (message.type !== "agent_attention_required") return;
+      const notification = message.payload;
       if (notification.shouldNotify) {
         notifyAgentAttention(notification);
       }
     });
 
-    const unsubAgentTimeline = client.on("fetch_agent_timeline_response", (message) => {
-      if (message.type !== "fetch_agent_timeline_response") return;
-      owner.flushStreamAgent(message.payload.agentId);
-      applyTimelineResponse(message.payload);
-    });
-
-    const unsubTimelineReplacement = client.on("agent.timeline.replacement", (message) => {
-      if (message.type !== "agent.timeline.replacement") return;
-      void requestTimelineReplacement(
-        {
-          fetchAgentTimeline: (agentId, request) =>
-            getHostRuntimeStore().fetchAgentTimeline(serverId, agentId, request),
-        },
-        message.payload.agentId,
-      ).catch((error: unknown) => {
-        console.warn("[Session] timeline replacement refresh failed", { serverId, error });
-      });
-    });
-
-    const unsubProviderSubagentUpdate = client.on("agent.provider_subagents.update", (message) => {
+    const unsubProviderSubagentUpdate = onFeed("agent.provider_subagents.update", (message) => {
       if (message.type !== "agent.provider_subagents.update") return;
       useProviderSubagentStore.getState().applyUpdate(serverId, message.payload);
     });
 
-    const unsubCheckoutStatusUpdate = client.on("checkout_status_update", (message) => {
+    const unsubCheckoutStatusUpdate = onFeed("checkout_status_update", (message) => {
       if (message.type !== "checkout_status_update") return;
       applyCheckoutStatusUpdateFromEvent({ queryClient, serverId, message });
     });
 
-    const unsubWorkspaceSetupProgress = client.on("workspace_setup_progress", (message) => {
+    const unsubWorkspaceSetupProgress = onFeed("workspace_setup_progress", (message) => {
       if (message.type !== "workspace_setup_progress") return;
       applyWorkspaceSetupProgress(message.payload);
     });
 
-    const unsubWorkspaceSetupStatusResponse = client.on(
-      "workspace_setup_status_response",
-      (message) => {
-        if (message.type !== "workspace_setup_status_response") return;
-        const { workspaceId, snapshot } = message.payload;
-        if (snapshot) {
-          applyWorkspaceSetupProgress({ workspaceId, ...snapshot });
-        }
-      },
-    );
-
-    const unsubStatus = client.on("status", (message) => {
+    const unsubStatus = onFeed("status", (message) => {
       if (message.type !== "status") return;
       const serverInfo = parseServerInfoStatusPayload(message.payload);
       if (serverInfo) {
-        viewedTimelineSyncRef.current?.setDeliveryMode(
-          getTimelineDeliveryMode(serverInfo.features?.selectiveAgentTimeline),
-        );
         updateSessionServerInfo(serverId, {
           serverId: serverInfo.serverId,
           hostname: serverInfo.hostname,
@@ -619,7 +595,7 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
       }
     });
 
-    const unsubPermissionRequest = client.on("agent_permission_request", (message) => {
+    const unsubPermissionRequest = onFeed("agent_permission_request", (message) => {
       if (message.type !== "agent_permission_request") return;
       const { agentId, request } = message.payload;
 
@@ -631,7 +607,7 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
       });
     });
 
-    const unsubPermissionResolved = client.on("agent_permission_resolved", (message) => {
+    const unsubPermissionResolved = onFeed("agent_permission_resolved", (message) => {
       if (message.type !== "agent_permission_resolved") return;
       const { requestId, agentId } = message.payload;
 
@@ -740,7 +716,7 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
       voiceRuntime?.onServerSpeechStateChanged(serverId, message.payload.isSpeaking);
     });
 
-    const unsubTerminalAttention = client.on("terminal_attention_required", (message) => {
+    const unsubTerminalAttention = onFeed("terminal_attention_required", (message) => {
       if (message.type !== "terminal_attention_required") {
         return;
       }
@@ -762,14 +738,13 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
     });
 
     return () => {
-      unsubTimelineReplacement();
-      unsubAgentStream();
-      unsubAgentTimeline();
+      void feeds
+        .release()
+        .catch((error) => console.warn("[Session] Failed to release feeds", error));
       unsubProviderSubagentUpdate();
       unsubAgentAttention();
       unsubCheckoutStatusUpdate();
       unsubWorkspaceSetupProgress();
-      unsubWorkspaceSetupStatusResponse();
       unsubStatus();
       unsubPermissionRequest();
       unsubPermissionResolved();
@@ -792,7 +767,6 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
     setPendingPermissions,
     notifyAgentAttention,
     applyWorkspaceSetupProgress,
-    applyTimelineResponse,
     updateSessionServerInfo,
     toast,
     voiceRuntime,

@@ -115,7 +115,7 @@ describe("mode-switch update propagation", () => {
     await client2.connect();
 
     const bootstrapResult = await client2.fetchAgents({
-      subscribe: { subscriptionId: "bootstrap-test" },
+      subscribe: {},
     });
 
     const found = bootstrapResult.entries.find((e) => e.agent.id === agent.id);

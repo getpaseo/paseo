@@ -205,7 +205,7 @@ test.describe("Worktree restore", () => {
       "restore-success",
     );
     await worktreeClient.fetchWorkspaces({
-      subscribe: { subscriptionId: `restore-secondary-${randomUUID()}` },
+      subscribe: {},
     });
     let updateTimeout: ReturnType<typeof setTimeout> | null = null;
     let unsubscribeSecondaryWorkspaceUpdate = () => {};

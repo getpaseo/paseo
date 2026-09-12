@@ -51,7 +51,7 @@ const client = new DaemonClient({
   appVersion: "0.1.70", // see gotcha #1
 });
 await client.connect();
-await client.fetchAgents({ subscribe: { subscriptionId: "test" } });
+await client.fetchAgents({ subscribe: {} });
 
 // ... do your testing ...
 
@@ -81,7 +81,7 @@ const client = new DaemonClient({
   appVersion: "0.1.70",
 });
 await client.connect();
-await client.fetchAgents({ subscribe: { subscriptionId: "test" } });
+await client.fetchAgents({ subscribe: {} });
 
 // ... test ...
 

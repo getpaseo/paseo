@@ -1,5 +1,5 @@
 import type { Command } from "commander";
-import { connectToDaemon, getDaemonHost } from "../../utils/client.js";
+import { connectToDaemon } from "../../utils/client.js";
 import { collectMultiple } from "../../utils/command-options.js";
 import type { CommandError, CommandOptions, SingleResult } from "../../output/index.js";
 import { agentRunSchema, type AgentRunResult } from "./run.js";
@@ -94,28 +94,11 @@ export function resolveImportCwd(explicitCwd: string | undefined, defaultCwd: st
   return cwd;
 }
 
-async function connectToDaemonOrThrow(
-  hostOption: string | undefined,
-  host: string,
-): Promise<Awaited<ReturnType<typeof connectToDaemon>>> {
-  try {
-    return await connectToDaemon({ host: hostOption });
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    throw {
-      code: "DAEMON_NOT_RUNNING",
-      message: `Cannot connect to daemon at ${host}: ${message}`,
-      details: "Start the daemon with: paseo daemon start",
-    } satisfies CommandError;
-  }
-}
-
 export async function runImportCommand(
   sessionIdArg: string,
   options: AgentImportOptions,
   _command: Command,
 ): Promise<AgentImportCommandResult> {
-  const host = getDaemonHost({ host: options.host });
   const sessionId = sessionIdArg.trim();
   if (!sessionId) {
     throw {
@@ -129,7 +112,7 @@ export async function runImportCommand(
   const cwd = resolveImportCwd(options.cwd, process.cwd());
 
   const labels = parseImportLabels(options.label);
-  const client = await connectToDaemonOrThrow(options.host, host);
+  const client = await connectToDaemon({ target: options.daemonTarget });
 
   try {
     const agent = await client.importAgent({

@@ -4,7 +4,7 @@
 
 Paseo 0.8 adds plugin header buttons, custom providers, and richer chat components, alongside fixes for desktop updates and mobile keyboards.
 
-**Before upgrading:** desktop now requires macOS 13 or newer. Plugins written for 0.7 need the [0.8 migration guide](https://paseo.sh/docs/plugins/v0.8/migration), including separate client/server entries and the revised composer pill API.
+**Before upgrading:** the macOS desktop app now requires macOS 13 or newer; Linux and Windows support is unchanged. Plugins written for 0.7 need the [0.8 migration guide](https://paseo.sh/docs/plugins/v0.8/migration), including separate client/server entries and the revised composer pill API.
 
 ### Added
 

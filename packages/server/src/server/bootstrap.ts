@@ -80,12 +80,12 @@ export function parseListenString(listen: string): ListenTarget {
   throw new Error(`Invalid listen string: ${listen}`);
 }
 
-function formatListenTarget(listenTarget: ListenTarget | null): string | null {
+export function formatListenTarget(listenTarget: ListenTarget | null): string | null {
   if (!listenTarget) {
     return null;
   }
   if (listenTarget.type === "tcp") {
-    return `${listenTarget.host}:${listenTarget.port}`;
+    return `${formatHostForHttpUrl(listenTarget.host)}:${listenTarget.port}`;
   }
   return listenTarget.path;
 }

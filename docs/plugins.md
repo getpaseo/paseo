@@ -355,6 +355,16 @@ Native sheets teleport their children. Button surfaces rebuild the installation'
 query, and toast providers inside the surface content, including overflow pages from different
 plugins. Providers only around the trigger do not reach those bodies.
 
+Request observation with `client.paseo.agents.list({ subscribe: {} })` and consume the returned
+`subscription` handle. Plain `list()` and local `.subscribe(handler)` listeners create no daemon
+demand. Each list-and-subscribe call has its own server ID, even for the same query. Handle snapshots
+also run after reconnect; replace your view before applying its subsequent updates. The installation
+owns every observation created through its API and releases them on unload, including setup failure.
+Mounted surfaces and command invocations have shorter API lifetimes.
+
+Keep the client entry synchronous: return its cleanup function immediately and start asynchronous
+work inside it. See the maintained [composer pill example](../plugin-examples/local-plugin/client/main.tsx).
+
 ## Contribute timeline items
 
 Timeline transformers and renderers are client contributions. The daemon's canonical rows and

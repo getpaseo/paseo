@@ -5,17 +5,17 @@ export function addAttachOptions(cmd: Command): Command {
     .description("Attach to a running agent's output stream")
     .argument("<id>", "Agent ID (or prefix)");
 }
-import { connectToDaemon, getDaemonHost } from "../../utils/client.js";
+import { connectToDaemon } from "../../utils/client.js";
 import {
   fetchProjectedTimelineItems,
   LIVE_HISTORY_FETCH_TIMEOUT_MS,
 } from "../../utils/timeline.js";
-import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import type { AgentTimelineItem } from "@getpaseo/protocol/agent-types";
 import type { AgentStreamEventPayload } from "@getpaseo/protocol/messages";
 
 export interface AgentAttachOptions {
   host?: string;
+  daemonTarget: import("../../utils/daemon-target.js").DaemonTarget;
   [key: string]: unknown;
 }
 
@@ -105,23 +105,13 @@ export async function runAttachCommand(
   options: AgentAttachOptions,
   _command: Command,
 ): Promise<void> {
-  const host = getDaemonHost({ host: options.host });
-
   if (!id) {
     console.error("Error: Agent ID required");
     console.error("Usage: paseo attach <id>");
     process.exit(1);
   }
 
-  let client: DaemonClient;
-  try {
-    client = await connectToDaemon({ host: options.host });
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    console.error(`Error: Cannot connect to daemon at ${host}: ${message}`);
-    console.error("Start the daemon with: paseo daemon start");
-    process.exit(1);
-  }
+  const client = await connectToDaemon({ target: options.daemonTarget });
 
   try {
     const fetchResult = await client.fetchAgent({ agentId: id });
@@ -155,6 +145,11 @@ export async function runAttachCommand(
     const unsubscribe = client.subscribeAgentTimeline(resolvedId, (message) => {
       if (message.type === "agent.timeline.replacement") {
         console.log("\n[Timeline replaced; earlier output is no longer current]");
+      } else if (message.type === "agent.timeline.snapshot") {
+        console.log("\n[Reconnected; current recent history follows]");
+        for (const entry of message.payload.page.entries) printTimelineItem(entry.item);
+      } else if (message.type === "agent.timeline.error") {
+        console.error(`Timeline observation stopped: ${message.payload.error}`);
       } else {
         printStreamEvent(message.payload.event);
       }
