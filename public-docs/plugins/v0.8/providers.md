@@ -301,6 +301,18 @@ when `session.open.persistence` is absent. Resume the identified native session 
 Return an opaque persistence value in `session.opened` or `session.persistence`; Paseo stores it
 without inspecting it.
 
+To adopt a bundled provider without rewriting stored agents, accept the version `0` core envelope:
+
+```ts
+{ version: 0, data: { source: "paseo-core", kind: "resume", sessionId, nativeHandle, metadata } }
+```
+
+`nativeHandle` and `metadata` are optional. An imported core session uses
+`{ version: 0, data: { source: "paseo-core", kind: "import", providerHandleId } }`. After import,
+return the canonical native session ID as `sessionId` and preserve the original JSONL path as
+`nativeHandle`. A resumed core session keeps its original public handle. Both rules preserve
+pre-cutover rollback while letting later cutover-core resumes use the plugin's canonical persistence.
+
 When `session.list` is negotiated, return `firstPromptPreview` and `lastPromptPreview` separately in
 each `ProviderSessionSummary`. Each preview is optional and limited to 160 characters. Do not reuse
 the session description as a prompt preview.

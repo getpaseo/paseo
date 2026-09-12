@@ -15,7 +15,7 @@ provider deltas (every provider streams incrementally)
   → paced reveal (app, per assistant/reasoning item) → markdown blocks → paint
 ```
 
-Every provider delivers incremental text, so there is no provider that needs special handling: Claude via `includePartialMessages`, Codex via `agent_message_delta`, ACP agents via `agent_message_chunk`, Pi and OMP via `text_delta`.
+Every provider delivers incremental text, so there is no provider that needs special handling: Claude via `includePartialMessages`, Codex via `agent_message_delta`, ACP agents via `agent_message_chunk`, and Pi via `text_delta`. Plugin providers own their own event adaptation.
 
 ## Why the reveal is paced
 

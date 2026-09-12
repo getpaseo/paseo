@@ -382,19 +382,20 @@ One deliberate non-violation: `AgentFileExplorerState.directories`/`files` cache
 ## Agent providers
 
 Each provider implements the `AgentClient` interface in `agent/agent-sdk-types.ts`. Provider implementations live in `agent/providers/`.
+The built-in, user-facing providers are Claude Code, Codex, Copilot, OpenCode, and Pi. Additional adapters exist in the same directory for ACP-compatible agents and internal use:
 
-The built-in, user-facing providers are Claude Code, Codex, Copilot, OpenCode, Pi, and OMP. Additional adapters exist in the same directory for ACP-compatible agents and internal use:
+| Provider       | Wraps                     | Session format    |
+| -------------- | ------------------------- | ----------------- |
+| Claude Code    | Claude Agent SDK          | Claude session ID |
+| Codex          | Codex app-server          | Codex thread ID   |
+| Copilot        | GitHub Copilot via ACP    | Provider-managed  |
+| OpenCode       | OpenCode server / CLI     | Provider-managed  |
+| Cursor         | ACP wrapper (`acp-agent`) | Provider-managed  |
+| Generic ACP    | ACP wrapper               | Provider-managed  |
+| Pi             | Local Pi RPC process      | Provider-managed  |
+| Mock load test | In-process fake           | In-memory         |
 
-| Provider           | Wraps                                | Session format                                     |
-| ------------------ | ------------------------------------ | -------------------------------------------------- |
-| Claude (`claude/`) | Anthropic Agent SDK                  | `~/.claude/projects/{cwd}/{session-id}.jsonl`      |
-| Codex              | Codex AppServer (`codex-app-server`) | `~/.codex/sessions/{date}/rollout-{ts}-{id}.jsonl` |
-| Copilot            | GitHub Copilot via ACP               | Provider-managed                                   |
-| OpenCode           | OpenCode server / CLI                | Provider-managed                                   |
-| Cursor             | ACP wrapper (`acp-agent`)            | Provider-managed                                   |
-| Generic ACP        | ACP wrapper                          | Provider-managed                                   |
-| Pi                 | Local Pi RPC process                 | Provider-managed                                   |
-| Mock load test     | In-process fake                      | In-memory                                          |
+OMP is a plugin provider. The `paseo-omp` plugin owns its runtime and registers `omp` through the public plugin-provider transport.
 
 All providers:
 

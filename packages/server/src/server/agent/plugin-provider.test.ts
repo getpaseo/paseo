@@ -11,6 +11,7 @@ import { z } from "zod";
 import { createTestLogger } from "../../test-utils/test-logger.js";
 import type { AgentStreamEvent } from "./agent-sdk-types.js";
 import { configureExternalProviderDefinitions } from "./provider-registry.js";
+import { AgentManager } from "./agent-manager.js";
 import { PluginAgentClientRegistry } from "./plugin-provider.js";
 import {
   isStaleProviderSessionError,
@@ -24,6 +25,16 @@ const CAPABILITIES = [
   "session.subsession",
   "permission",
 ] as const;
+
+function isCoreImport(input: Extract<ProviderInput, { type: "session.open" }>): boolean {
+  return (
+    input.persistence?.version === 0 &&
+    typeof input.persistence.data === "object" &&
+    input.persistence.data !== null &&
+    !Array.isArray(input.persistence.data) &&
+    input.persistence.data.kind === "import"
+  );
+}
 
 interface ProviderHarnessOptions {
   capabilities?: ProviderConnection["capabilities"];
@@ -73,13 +84,16 @@ function createProviderHarness(options: ProviderHarnessOptions = {}) {
         return;
       }
       if (input.type === "session.open") {
+        const coreImport = isCoreImport(input);
         emit({
           type: "session.opened",
           requestId: input.requestId,
           sessionId: input.sessionId,
           capabilities,
           restoration: "core",
-          persistence: { version: 1, data: { token: "root" } },
+          persistence: coreImport
+            ? { version: 1, data: { sessionId: "native-import-id" } }
+            : { version: 1, data: { token: "root" } },
           cwd: input.config.cwd,
         });
         emit({
@@ -732,6 +746,118 @@ describe("plugin provider configuration", () => {
         settings: { approval: "ask" },
       },
     ]);
+    await registry.shutdown();
+  });
+
+  test("resumes stored OMP agents through the registered plugin", async () => {
+    const harness = createProviderHarness();
+    const registration: ProviderRegistration = { ...harness.registration, id: "omp" };
+    const registry = new PluginAgentClientRegistry(createTestLogger());
+    registry.replace([registration]);
+    const legacyHandle = {
+      provider: "omp",
+      sessionId: "legacy-native-id",
+      nativeHandle: "/home/user/.omp/agent/sessions/legacy.jsonl",
+      metadata: { cwd: process.cwd(), model: "openai/gpt-5" },
+    };
+    const manager = new AgentManager({
+      clients: { omp: registry.clients().omp! },
+      providerDefinitions: { omp: registry.definitions().omp! },
+      idFactory: () => "00000000-0000-4000-8000-000000000014",
+      logger: createTestLogger(),
+    });
+
+    const resumed = await manager.resumeAgentFromPersistence(legacyHandle);
+    expect(resumed.provider).toBe("omp");
+    expect(resumed.persistence).toEqual(legacyHandle);
+    expect(harness.inputs).toContainEqual(
+      expect.objectContaining({
+        type: "session.open",
+        history: "replay",
+        persistence: {
+          version: 0,
+          data: {
+            source: "paseo-core",
+            kind: "resume",
+            sessionId: "legacy-native-id",
+            nativeHandle: "/home/user/.omp/agent/sessions/legacy.jsonl",
+            metadata: { cwd: process.cwd(), model: "openai/gpt-5" },
+          },
+        },
+      }),
+    );
+
+    await manager.closeAgent(resumed.id);
+    await registry.shutdown();
+  });
+
+  test("imports legacy OMP sessions without rewriting rollback handles", async () => {
+    const harness = createProviderHarness();
+    const registration: ProviderRegistration = { ...harness.registration, id: "omp" };
+    const registry = new PluginAgentClientRegistry(createTestLogger());
+    registry.replace([registration]);
+    const client = registry.clients().omp!;
+    const imported = await client.importSession!(
+      {
+        providerHandleId: "/home/user/.omp/agent/sessions/import.jsonl",
+        cwd: "/workspace",
+      },
+      {
+        config: { provider: "omp", cwd: "/workspace" },
+        storedConfig: { provider: "omp", cwd: "/workspace" },
+      },
+    );
+    expect(harness.inputs).toContainEqual(
+      expect.objectContaining({
+        type: "session.open",
+        persistence: {
+          version: 0,
+          data: {
+            source: "paseo-core",
+            kind: "import",
+            providerHandleId: "/home/user/.omp/agent/sessions/import.jsonl",
+          },
+        },
+      }),
+    );
+    expect(imported.persistence).toEqual({
+      provider: "omp",
+      sessionId: "native-import-id",
+      nativeHandle: "/home/user/.omp/agent/sessions/import.jsonl",
+      metadata: {
+        cwd: "/workspace",
+        pluginProviderPersistence: { version: 1, data: { sessionId: "native-import-id" } },
+      },
+    });
+
+    const resumedImport = await client.resumeSession(imported.persistence, { cwd: "/workspace" });
+    expect(harness.inputs).toContainEqual(
+      expect.objectContaining({
+        type: "session.open",
+        persistence: { version: 1, data: { sessionId: "native-import-id" } },
+      }),
+    );
+    expect(resumedImport.describePersistence()).toEqual(imported.persistence);
+
+    const pluginNative = await client.importSession!(
+      {
+        providerHandleId: 'plugin:{"version":1,"data":{"token":"native"}}',
+        cwd: "/workspace",
+      },
+      {
+        config: { provider: "omp", cwd: "/workspace" },
+        storedConfig: { provider: "omp", cwd: "/workspace" },
+      },
+    );
+    expect(pluginNative.persistence).toMatchObject({
+      provider: "omp",
+      sessionId: 'plugin:{"version":1,"data":{"token":"root"}}',
+      metadata: { pluginProviderPersistence: { version: 1, data: { token: "root" } } },
+    });
+
+    await imported.session.close();
+    await resumedImport.close();
+    await pluginNative.session.close();
     await registry.shutdown();
   });
 

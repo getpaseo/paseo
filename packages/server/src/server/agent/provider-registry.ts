@@ -44,8 +44,6 @@ import { KimiACPAgentClient } from "./providers/kimi-acp-agent.js";
 import { KiroACPAgentClient } from "./providers/kiro-acp-agent.js";
 import { OpenCodeAgentClient } from "./providers/opencode-agent.js";
 import type { OpenCodeBridge } from "./providers/opencode/bridge.js";
-import { OmpAgentClient } from "./providers/omp/agent.js";
-import type { OmpRuntime } from "./providers/omp/runtime.js";
 import { PiRpcAgentClient } from "./providers/pi/agent.js";
 import { TraeACPAgentClient } from "./providers/trae-acp-agent.js";
 import { MockLoadTestAgentClient } from "./providers/mock-load-test-agent.js";
@@ -124,13 +122,12 @@ export interface BuildProviderRegistryOptions {
   workspaceGitService?: Pick<WorkspaceGitService, "resolveRepoRoot">;
   managedProcesses?: ManagedProcessRegistry;
   isDev?: boolean;
-  ompRuntime?: OmpRuntime;
   openCodeBridge?: OpenCodeBridge;
 }
 
 interface ProviderClientFactoryOptions extends Pick<
   BuildProviderRegistryOptions,
-  "workspaceGitService" | "managedProcesses" | "ompRuntime"
+  "workspaceGitService" | "managedProcesses"
 > {
   openCodeBridge?: OpenCodeBridge;
   providerParams?: unknown;
@@ -238,13 +235,6 @@ const PROVIDER_CLIENT_FACTORIES: Record<string, ProviderClientFactory> = {
       logger,
       runtimeSettings,
       providerParams: options?.providerParams,
-    }),
-  omp: (logger, runtimeSettings, options) =>
-    new OmpAgentClient({
-      logger,
-      runtimeSettings,
-      providerParams: options?.providerParams,
-      runtime: options?.ompRuntime,
     }),
   mock: (logger) => new MockLoadTestAgentClient(logger),
   "mock-slow": () => new MockSlowProviderClient(),
@@ -864,7 +854,7 @@ function buildResolvedBuiltinProviders(
   runtimeSettings: AgentProviderRuntimeSettingsMap | undefined,
   options: Pick<
     BuildProviderRegistryOptions,
-    "workspaceGitService" | "managedProcesses" | "ompRuntime" | "openCodeBridge"
+    "workspaceGitService" | "managedProcesses" | "openCodeBridge"
   >,
   isDev: boolean,
 ): Map<string, ResolvedProvider> {
@@ -895,7 +885,6 @@ function buildResolvedBuiltinProviders(
         factory(logger, mergedRuntimeSettings, {
           workspaceGitService: options.workspaceGitService,
           managedProcesses: options.managedProcesses,
-          ompRuntime: options.ompRuntime,
           openCodeBridge: options.openCodeBridge,
           providerParams: override?.params,
         }),
@@ -1030,7 +1019,6 @@ export function buildProviderRegistry(
     {
       workspaceGitService: options?.workspaceGitService,
       managedProcesses: options?.managedProcesses,
-      ompRuntime: options?.ompRuntime,
       openCodeBridge: options?.openCodeBridge,
     },
     options?.isDev === true,

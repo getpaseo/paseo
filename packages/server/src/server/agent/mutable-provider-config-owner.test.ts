@@ -24,7 +24,6 @@ const CONTROLLED_PROVIDERS = {
   claude: { enabled: false },
   codex: { enabled: true },
   copilot: { enabled: false },
-  omp: { enabled: false },
   opencode: { enabled: false },
   pi: { enabled: false },
 } as const;

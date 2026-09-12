@@ -77,6 +77,28 @@ export interface ProviderConnection {
   close(): Promise<void>;
 }
 
+export const PASEO_CORE_PERSISTENCE_VERSION = 0 as const;
+
+export type ProviderCorePersistence =
+  | {
+      version: typeof PASEO_CORE_PERSISTENCE_VERSION;
+      data: {
+        source: "paseo-core";
+        kind: "resume";
+        sessionId: string;
+        nativeHandle?: string;
+        metadata?: Readonly<Record<string, JsonValue>>;
+      };
+    }
+  | {
+      version: typeof PASEO_CORE_PERSISTENCE_VERSION;
+      data: {
+        source: "paseo-core";
+        kind: "import";
+        providerHandleId: string;
+      };
+    };
+
 export interface ProviderPersistence {
   version: number;
   data: JsonValue;

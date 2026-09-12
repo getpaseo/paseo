@@ -342,6 +342,8 @@ persistence. Providers re-read credentials, environment, global configuration, a
 Session listings keep `firstPromptPreview` and `lastPromptPreview` distinct. Both fields are capped
 at 160 characters by the public event schema.
 
+When replacing a bundled provider, accept the public version `0` `paseo-core` persistence envelope. Resume keeps the original public handle. Import returns the plugin's canonical native `sessionId` while retaining the old JSONL path as `nativeHandle`, so both later plugin resumes and pre-cutover rollback remain valid.
+
 For an ACP command, register `runAcpProvider({ id, label, command })` from
 `@getpaseo/plugin/server/acp`. Its transformer hooks cover narrow vendor differences; do not translate the
 whole provider event stream. The direct and ACP examples live in `plugin-examples/provider-direct`

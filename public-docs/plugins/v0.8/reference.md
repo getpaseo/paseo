@@ -226,6 +226,12 @@ again.
 
 `ProviderSessionSummary` supports separate optional `firstPromptPreview` and
 `lastPromptPreview` fields, each limited to 160 characters.
+
+When a plugin replaces a former core provider, `session.open.persistence` may be the version `0`
+`paseo-core` resume/import envelope documented in the provider guide. Preserve a resumed handle;
+after import, pair the plugin's canonical session ID with the former JSONL `nativeHandle` so both
+plugin resume and pre-cutover rollback work.
+
 `ProviderRegistration.icon` is a file path relative to the plugin directory, such as `icon.svg`.
 It must resolve inside that directory to a regular SVG file no larger than 64 KiB. The SVG must be
 self-contained: scripts, styles, `foreignObject`, event-handler attributes, JavaScript URLs, and

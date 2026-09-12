@@ -49,7 +49,7 @@ catalog probe. `PASEO_PROVIDER_REFRESH_TIMEOUT_MS` sets it when the config field
 
 ## Extending a built-in provider
 
-Use `extends` to create a new provider entry that inherits from a built-in provider (claude, codex, copilot, opencode, pi, omp). The new provider gets its own entry in the provider list, with its own label, environment, and model definitions.
+Use `extends` to create a new provider entry that inherits from a built-in provider (claude, codex, copilot, opencode, pi). The new provider gets its own entry in the provider list, with its own label, environment, and model definitions.
 
 ```json
 {
@@ -363,40 +363,20 @@ Override the command used to launch any provider with the `command` field. This 
 
 The `command` array completely replaces the default command for that provider. The binary must exist on the system — Paseo checks for its availability and will mark the provider as unavailable if not found.
 
-### OMP profiles and Pi-compatible forks
+### OMP plugin
 
-OMP ships as a first-class built-in provider option. It is disabled by default; enable it with:
+OMP is not a core provider. Install `paseo-omp`, whose manifest requires Paseo `^0.8.1`; it registers provider ID `omp` directly. Existing agent records and persistence with `provider: "omp"` resume through that registration. Keep the existing provider ID and opaque persistence fields unchanged.
 
-```json
-{
-  "agents": {
-    "providers": {
-      "omp": { "enabled": true }
-    }
-  }
-}
-```
-
-Custom OMP profiles should extend `omp`. They inherit the OMP adapter's `rpc-ui` approvals, native Paseo host tools, provider-managed subagents, and import behavior:
+Configure the installed provider with a same-ID entry that omits `extends`:
 
 ```json
 {
   "agents": {
     "providers": {
-      "omp-work": {
-        "extends": "omp",
-        "label": "Oh My Pi (Work)",
-        "command": ["omp"],
-        "env": {
-          "XDG_CONFIG_HOME": "~/.config/omp-work",
-          "XDG_STATE_HOME": "~/.local/state/omp-work"
-        },
-        "params": {
-          "sessionDir": "~/.local/state/omp-work/omp/agent/sessions",
-          "rpcTimeoutMs": 60000,
-          "smolModel": "openai/gpt-5-mini",
-          "slowModel": "anthropic/claude-opus-4-1",
-          "planModel": "openai/o3"
+      "omp": {
+        "providerOptions": {
+          "command": ["omp"],
+          "params": { "sessionDir": "~/.omp/agent/sessions", "rpcTimeoutMs": 60000 }
         }
       }
     }
@@ -404,7 +384,16 @@ Custom OMP profiles should extend `omp`. They inherit the OMP adapter's `rpc-ui`
 }
 ```
 
-`params.sessionDir` is used only for importing sessions that were started outside Paseo. If `command` or XDG env vars move OMP's state directory, set `params.sessionDir` to the resulting OMP JSONL session directory; launching and resuming still go through the configured command. OMP waits 20 seconds for its initial `ready` frame and 60 seconds for later control-plane RPCs by default. `params.rpcTimeoutMs` overrides both deadlines.
+Use `extends: "omp"` only for a separately named OMP plugin profile. Do not combine `extends` with the installed provider's `omp` key.
+
+### Roll back to the built-in provider
+
+Stop the daemon and mark `paseo-omp` disabled before starting a pre-cutover core release. Move
+`command`, `env`, and `params` out of `providerOptions` into `agents.providers.omp`, set
+`enabled: true`, then install and start the older core. Keep stored agent records and persistence
+unchanged: the cutover core preserves the original `{ provider: "omp", sessionId, nativeHandle }`
+handle, so the earlier adapter resumes it. Do not run the cutover core with the plugin disabled; it
+correctly reports OMP unavailable.
 
 For other providers that keep Pi's `--mode rpc` API but write sessions somewhere else, extend `pi`, replace the command, and provide the JSONL session directory:
 
@@ -445,7 +434,7 @@ Set `enabled: false` to hide a provider from the provider list. The provider wil
 }
 ```
 
-This works for both built-in and custom providers. To re-enable, set `enabled: true` or remove the `enabled` field entirely. Most providers are enabled by default; OMP is intentionally disabled by default and requires `enabled: true`.
+This works for both built-in and plugin providers. To re-enable, set `enabled: true` or remove the `enabled` field entirely.
 
 ---
 
@@ -743,9 +732,9 @@ Use `disallowedTools` to disable unsupported tools:
 
 ### Valid `extends` values
 
-Built-in providers: `claude`, `codex`, `copilot`, `opencode`, `pi`, `omp`
+Built-in providers: `claude`, `codex`, `copilot`, `opencode`, `pi`
 
-Special value: `acp` — creates a generic ACP provider (requires `command`)
+Plugin providers use the registration ID supplied by their installed plugin, including `omp` from `paseo-omp`.
 
 ### Full example
 

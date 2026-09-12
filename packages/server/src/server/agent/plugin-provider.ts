@@ -5,6 +5,7 @@ import { z } from "zod";
 import {
   PROVIDER_CAPABILITIES,
   PROVIDER_PROTOCOL_VERSION,
+  PASEO_CORE_PERSISTENCE_VERSION,
   ProviderEventSchema,
   ProviderInputSchema,
   requireProviderCapabilities,
@@ -18,6 +19,7 @@ import {
   type ProviderEvent,
   type ProviderInput,
   type ProviderPersistence,
+  type ProviderCorePersistence,
   type ProviderPrompt,
   type ProviderRegistration,
   type ProviderSessionConfig,
@@ -86,6 +88,8 @@ interface OpenProviderSessionInput {
   sessionId: string;
   config: ProviderSessionConfig;
   persistence?: ProviderPersistence;
+  publicPersistence?: AgentPersistenceHandle;
+  legacyImport?: { providerHandleId: string; cwd: string };
   history: "replay" | "skip";
 }
 
@@ -928,6 +932,7 @@ class PluginAgentClient implements AgentClient {
       launchContext,
       persistence: decodePersistence(handle),
       history: "replay",
+      publicPersistence: handle,
       persist: true,
     });
   }
@@ -1019,10 +1024,14 @@ class PluginAgentClient implements AgentClient {
     input: ImportProviderSessionInput,
     context: ImportProviderSessionContext,
   ): Promise<ImportedProviderSession> {
+    const legacyImport = input.providerHandleId.startsWith("plugin:")
+      ? undefined
+      : { providerHandleId: input.providerHandleId, cwd: input.cwd };
     const session = await this.openSession({
       config: { ...context.config, provider: this.provider, cwd: input.cwd },
       launchContext: context.launchContext,
       persistence: decodePersistenceId(input.providerHandleId),
+      legacyImport,
       history: "replay",
       persist: true,
     });
@@ -1052,6 +1061,8 @@ class PluginAgentClient implements AgentClient {
     config: AgentSessionConfig;
     launchContext?: AgentLaunchContext;
     persistence?: ProviderPersistence;
+    publicPersistence?: AgentPersistenceHandle;
+    legacyImport?: { providerHandleId: string; cwd: string };
     history: "replay" | "skip";
     persist: boolean;
   }): Promise<PluginAgentSession> {
@@ -1062,9 +1073,24 @@ class PluginAgentClient implements AgentClient {
       persistence: input.persistence,
       history: input.history,
     });
-    const session = new PluginAgentSession(this.provider, bridge, () => {
-      this.rootsBySession.delete(bridge.id);
-    });
+    const publicPersistence =
+      input.publicPersistence ??
+      (input.legacyImport && bridge.persistence
+        ? legacyImportPersistenceHandle(
+            this.provider,
+            input.legacyImport.providerHandleId,
+            input.legacyImport.cwd,
+            bridge.persistence,
+          )
+        : undefined);
+    const session = new PluginAgentSession(
+      this.provider,
+      bridge,
+      () => {
+        this.rootsBySession.delete(bridge.id);
+      },
+      publicPersistence,
+    );
     this.rootsBySession.set(bridge.id, session);
     this.providerSessionIdBySessionId.set(bridge.id, bridge.providerId);
     this.attachPendingChildren();
@@ -1134,6 +1160,7 @@ class PluginAgentSession implements AgentSession {
     readonly provider: string,
     private readonly bridge: ProviderRuntimeSession,
     private readonly onClose: () => void,
+    private readonly publicPersistence?: AgentPersistenceHandle,
   ) {
     for (const event of bridge.history) this.accept(event, false);
     this.unsubscribe = bridge.onEvent((event) => this.accept(event, true));
@@ -1260,6 +1287,7 @@ class PluginAgentSession implements AgentSession {
   }
 
   describePersistence(): AgentPersistenceHandle | null {
+    if (this.publicPersistence) return { ...this.publicPersistence };
     return this.bridge.persistence
       ? persistenceHandle(this.provider, this.bridge.persistence)
       : null;
@@ -1779,7 +1807,19 @@ function decodePersistence(handle: AgentPersistenceHandle): ProviderPersistence 
   if (fromMetadata !== undefined) {
     return ProviderPersistenceSchema.parse(fromMetadata);
   }
-  return decodePersistenceId(handle.sessionId);
+  if (handle.sessionId.startsWith("plugin:")) return decodePersistenceId(handle.sessionId);
+  return {
+    version: PASEO_CORE_PERSISTENCE_VERSION,
+    data: {
+      source: "paseo-core",
+      kind: "resume",
+      sessionId: handle.sessionId,
+      ...(handle.nativeHandle ? { nativeHandle: handle.nativeHandle } : {}),
+      ...(handle.metadata
+        ? { metadata: toJsonObject(handle.metadata, "legacy provider persistence metadata") }
+        : {}),
+    },
+  } satisfies ProviderCorePersistence;
 }
 
 const ProviderPersistenceSchema: z.ZodType<ProviderPersistence> = z
@@ -1787,8 +1827,35 @@ const ProviderPersistenceSchema: z.ZodType<ProviderPersistence> = z
   .strict();
 
 function decodePersistenceId(id: string): ProviderPersistence {
-  if (!id.startsWith("plugin:")) throw new Error("Invalid plugin provider persistence handle");
-  return ProviderPersistenceSchema.parse(JSON.parse(id.slice("plugin:".length)));
+  if (id.startsWith("plugin:")) {
+    return ProviderPersistenceSchema.parse(JSON.parse(id.slice("plugin:".length)));
+  }
+  return {
+    version: PASEO_CORE_PERSISTENCE_VERSION,
+    data: { source: "paseo-core", kind: "import", providerHandleId: id },
+  } satisfies ProviderCorePersistence;
+}
+
+function legacyImportPersistenceHandle(
+  provider: string,
+  providerHandleId: string,
+  cwd: string,
+  persistence: ProviderPersistence,
+): AgentPersistenceHandle {
+  const data = persistence.data;
+  const nativeSessionId =
+    data && typeof data === "object" && !Array.isArray(data) && "sessionId" in data
+      ? data.sessionId
+      : undefined;
+  if (typeof nativeSessionId !== "string" || nativeSessionId.length === 0) {
+    throw new Error(`Plugin provider '${provider}' import did not return a native sessionId`);
+  }
+  return {
+    provider,
+    sessionId: nativeSessionId,
+    nativeHandle: providerHandleId,
+    metadata: { cwd, pluginProviderPersistence: persistence },
+  };
 }
 
 function parseProviderDate(value: string | undefined): Date {

@@ -412,18 +412,19 @@ describe("provider overrides (new format)", () => {
     expect(parsed.agents?.providers?.claude?.order).toBe(1);
   });
 
-  test("new provider without extends → error", () => {
+  test("provider without extends is accepted for an installed plugin override", () => {
     const result = PersistedConfigSchema.safeParse({
       agents: {
         providers: {
-          zai: {
-            label: "ZAI",
+          omp: {
+            label: "OMP plugin",
+            providerOptions: { command: ["omp"] },
           },
         },
       },
     });
 
-    expect(result.success).toBe(false);
+    expect(result.success).toBe(true);
   });
 
   test("new provider without label → error", () => {
@@ -455,19 +456,19 @@ describe("provider overrides (new format)", () => {
     expect(result.success).toBe(false);
   });
 
-  test("extends unknown provider → error", () => {
+  test("extends an unknown provider ID for a plugin loaded later", () => {
     const result = PersistedConfigSchema.safeParse({
       agents: {
         providers: {
-          zai: {
-            extends: "unknown",
-            label: "ZAI",
+          "omp-work": {
+            extends: "omp",
+            label: "OMP Work",
           },
         },
       },
     });
 
-    expect(result.success).toBe(false);
+    expect(result.success).toBe(true);
   });
 
   test("invalid provider ID format → error", () => {

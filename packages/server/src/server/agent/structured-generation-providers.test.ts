@@ -47,6 +47,30 @@ describe("resolveStructuredGenerationProviders", () => {
     expect(snapshots.calls).toEqual([{ cwd: "/tmp/repo", wait: true }]);
   });
 
+  test("uses plugin-owned OMP for metadata generation", async () => {
+    const snapshots = new ProviderSnapshots([
+      {
+        provider: "omp",
+        source: "custom",
+        status: READY,
+        enabled: true,
+        models: [{ provider: "omp", id: "openai/gpt-5-mini", label: "GPT-5 Mini" }],
+      },
+    ]);
+
+    const providers = await resolveStructuredGenerationProviders({
+      cwd: "/tmp/repo",
+      providerSnapshotManager: snapshots,
+      daemonConfig: {
+        metadataGeneration: {
+          providers: [{ provider: "omp", model: "openai/gpt-5-mini" }],
+        },
+      },
+    });
+
+    expect(providers).toEqual([{ provider: "omp", model: "openai/gpt-5-mini" }]);
+  });
+
   test("falls back to dynamic defaults and current selection when no provider is configured", async () => {
     const snapshots = new ProviderSnapshots([
       {

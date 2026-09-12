@@ -182,7 +182,7 @@ describe("guessTerminalProfileIcon", () => {
     ["opencode", "opencode"],
     ["copilot", "copilot"],
     ["kiro", "kiro"],
-    ["omp", "omp"],
+    ["omp", undefined],
     ["pi", "pi"],
     ["gemini", "gemini"],
     ["cursor", "cursor"],

@@ -533,7 +533,6 @@ import {
   buildProviderRegistry,
   createAllClients,
 } from "./provider-registry.js";
-import { FakeOmp } from "./providers/omp/test-utils/fake-omp.js";
 
 const logger = createTestLogger();
 
@@ -601,39 +600,6 @@ test("built-in override applies env", () => {
   });
 });
 
-test("OMP is a disabled built-in backed by the real OMP adapter", async () => {
-  const omp = new FakeOmp();
-  const registry = buildProviderRegistry(logger, { ompRuntime: omp });
-
-  expect(registry.omp).toMatchObject({
-    id: "omp",
-    label: "Oh My Pi",
-    enabled: false,
-    derivedFromProviderId: null,
-  });
-  const client = registry.omp.createClient(logger);
-  expect(client.provider).toBe("omp");
-  const session = await client.createSession({ provider: "omp", cwd: "/tmp/registry-omp" });
-  expect(omp.recordedLaunches).toEqual([
-    expect.objectContaining({
-      cwd: "/tmp/registry-omp",
-      protocolMode: "rpc-ui",
-      argv: ["omp", "--mode", "rpc-ui", "--approval-mode", "yolo"],
-    }),
-  ]);
-  await session.close();
-});
-
-test("OMP can be enabled without custom provider boilerplate", () => {
-  const registry = buildProviderRegistry(logger, {
-    providerOverrides: {
-      omp: { enabled: true },
-    },
-  });
-
-  expect(registry.omp.enabled).toBe(true);
-});
-
 test("new provider extending claude appears in registry", () => {
   const registry = buildProviderRegistry(logger, {
     providerOverrides: {
@@ -649,34 +615,6 @@ test("new provider extending claude appears in registry", () => {
   expect(registry.zai.label).toBe("ZAI");
   expect(registry.zai.description).toBe("Claude with ZAI defaults");
   expect(registry.zai.createClient(logger).provider).toBe("zai");
-});
-
-test("built-in OMP override keeps the real OMP adapter enabled and launchable", async () => {
-  const omp = new FakeOmp(["custom-omp"]);
-  const registry = buildProviderRegistry(logger, {
-    ompRuntime: omp,
-    providerOverrides: {
-      omp: {
-        label: "OMP",
-        command: ["omp"],
-        params: {
-          sessionDir: "~/.omp/agent/sessions",
-        },
-      },
-    },
-  });
-
-  const client = registry.omp.createClient(logger);
-  const session = await client.createSession({ provider: "omp", cwd: "/tmp/registry-override" });
-  expect(client.provider).toBe("omp");
-  expect(omp.recordedLaunches[0]?.argv).toEqual([
-    "custom-omp",
-    "--mode",
-    "rpc-ui",
-    "--approval-mode",
-    "yolo",
-  ]);
-  await session.close();
 });
 
 test("new provider extending acp uses GenericACPAgentClient", () => {

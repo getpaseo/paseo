@@ -471,18 +471,56 @@ describe("ProviderSnapshotManager public surface", () => {
       ).resolves.toEqual([
         { path: ["provider"], message: "Provider 'not-installed' is not configured" },
       ]);
+      await expect(manager.validateAgentConfiguration({ provider: "omp" })).resolves.toEqual([
+        { path: ["provider"], message: "Provider 'omp' is not configured" },
+      ]);
     } finally {
       manager.destroy();
     }
   });
 
-  test("listRegisteredProviderIds includes the built-in providers", () => {
+  test("lists core providers without plugin-owned OMP", () => {
     const manager = new ProviderSnapshotManager({ logger: createTestLogger() });
     try {
       const ids = manager.listRegisteredProviderIds();
-      expect(ids).toEqual(
-        expect.arrayContaining(["claude", "codex", "opencode", "copilot", "pi", "omp"]),
-      );
+      expect(ids).toEqual(expect.arrayContaining(["claude", "codex", "opencode", "copilot", "pi"]));
+      expect(ids).not.toContain("omp");
+      expect(manager.hasProvider("omp")).toBe(false);
+    } finally {
+      manager.destroy();
+    }
+  });
+
+  test("registers plugin-owned OMP once after removing the core adapter", () => {
+    const registration: ProviderRegistration = {
+      id: "omp",
+      label: "OMP plugin",
+      async connect() {
+        throw new Error("not opened by this test");
+      },
+    };
+    const manager = new ProviderSnapshotManager({ logger: createTestLogger() });
+    try {
+      manager.replacePluginProviders([registration]);
+      const entries = manager
+        .getSnapshot("/tmp/project")
+        .records.filter(({ entry }) => entry.provider === "omp");
+      expect(entries).toEqual([
+        expect.objectContaining({ entry: expect.objectContaining({ source: "custom" }) }),
+      ]);
+    } finally {
+      manager.destroy();
+    }
+  });
+
+  test("does not turn a stored OMP override into a permanent core provider", () => {
+    const manager = new ProviderSnapshotManager({
+      logger: createTestLogger(),
+      providerOverrides: { omp: { enabled: true } },
+    });
+    try {
+      expect(manager.hasProvider("omp")).toBe(false);
+      expect(manager.listRegisteredProviderIds()).not.toContain("omp");
     } finally {
       manager.destroy();
     }
@@ -1028,7 +1066,7 @@ describe("ProviderSnapshotManager public surface", () => {
     try {
       const entries = await manager.listProviders({ cwd: "/tmp/project", wait: true });
       const providers = entries.map((entry) => entry.provider).sort();
-      expect(providers).toEqual(["claude", "codex", "copilot", "omp", "opencode", "pi"]);
+      expect(providers).toEqual(["claude", "codex", "copilot", "opencode", "pi"]);
       for (const entry of entries) {
         expect(entry.enabled).toBe(false);
         expect(entry.status).toBe("unavailable");
@@ -1771,7 +1809,6 @@ describe("ProviderSnapshotManager applyMutableProviderConfig", () => {
       copilot: { enabled: false },
       opencode: { enabled: false },
       pi: { enabled: false },
-      omp: { enabled: false },
     };
     const manager = new ProviderSnapshotManager({
       logger: createTestLogger(),
@@ -1822,7 +1859,6 @@ describe("ProviderSnapshotManager applyMutableProviderConfig", () => {
       copilot: { enabled: false },
       opencode: { enabled: false },
       pi: { enabled: false },
-      omp: { enabled: false },
     };
     const manager = new ProviderSnapshotManager({
       logger: createTestLogger(),
@@ -1876,7 +1912,6 @@ describe("ProviderSnapshotManager applyMutableProviderConfig", () => {
       copilot: { enabled: false },
       opencode: { enabled: false },
       pi: { enabled: false },
-      omp: { enabled: false },
     };
     const manager = new ProviderSnapshotManager({
       logger: createTestLogger(),
@@ -2016,7 +2051,6 @@ describe("ProviderSnapshotManager lifecycle", () => {
       claude: { enabled: false },
       codex: { enabled: true, label },
       copilot: { enabled: false },
-      omp: { enabled: false },
       opencode: { enabled: false },
       pi: { enabled: false },
     });
@@ -3083,7 +3117,6 @@ test("an unchanged provider publishes a pending key failure after an unrelated c
     copilot: { enabled: false },
     opencode: { enabled: false },
     pi: { enabled: false },
-    omp: { enabled: false },
   };
   const manager = new ProviderSnapshotManager({
     logger: createTestLogger(),
@@ -3372,7 +3405,7 @@ test("result identity covers content, metadata and status while unchanged refres
 });
 
 const PUBLICATION_PROVIDERS = Object.fromEntries(
-  ["claude", "codex", "copilot", "opencode", "pi", "omp"].map((provider) => [
+  ["claude", "codex", "copilot", "opencode", "pi"].map((provider) => [
     provider,
     { enabled: provider === "codex" },
   ]),

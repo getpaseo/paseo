@@ -40,6 +40,20 @@ describe("ProviderOverridesSchema", () => {
     });
   });
 
+  test("preserves the pre-cutover bundled OMP override shape for rollback", () => {
+    const rollback = {
+      omp: {
+        enabled: true,
+        command: ["omp"],
+        env: { OMP_PROFILE: "default" },
+        params: { sessionDir: "~/.omp/agent/sessions", rpcTimeoutMs: 60_000 },
+        models: [{ id: "openai/gpt-5", label: "GPT-5" }],
+        disallowedTools: ["web_search"],
+      },
+    };
+    expect(ProviderOverridesSchema.parse(rollback)).toEqual(rollback);
+  });
+
   test("bounds generic denied tool configuration", () => {
     const profile = {
       extends: "plugin-base",

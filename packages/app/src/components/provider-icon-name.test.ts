@@ -11,7 +11,6 @@ describe("resolveProviderIconName", () => {
   it("returns the built-in identifier for known provider ids", () => {
     expect(resolveProviderIconName("kiro")).toEqual({ kind: "builtin", id: "kiro" });
     expect(resolveProviderIconName("claude")).toEqual({ kind: "builtin", id: "claude" });
-    expect(resolveProviderIconName("omp")).toEqual({ kind: "builtin", id: "omp" });
     expect(resolveProviderIconName("minimax")).toEqual({ kind: "builtin", id: "minimax" });
   });
 
@@ -32,6 +31,13 @@ describe("resolveProviderIconName", () => {
     replaceProviderSnapshotIcons("server-1", [{ provider: "snapshot-provider", iconSvg: svg }]);
 
     expect(resolveProviderIconName("snapshot-provider", "server-1")).toEqual({ kind: "svg", svg });
+  });
+
+  it("uses the plugin snapshot icon for OMP", () => {
+    const svg = '<svg id="omp-plugin" />';
+    replaceProviderSnapshotIcons("server-omp", [{ provider: "omp", iconSvg: svg }]);
+    expect(resolveProviderIconName("omp", "server-omp")).toEqual({ kind: "svg", svg });
+    expect(resolveProviderIconName("omp")).toEqual({ kind: "bot" });
   });
 
   it("replaces each host snapshot without leaking icons across hosts", () => {
