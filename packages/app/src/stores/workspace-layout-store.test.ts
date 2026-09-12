@@ -16,6 +16,7 @@ vi.mock("@react-native-async-storage/async-storage", () => {
 });
 
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { closeTabInLayout } from "./workspace-layout-actions";
 import { buildWorkspaceTabPersistenceKey, type WorkspaceTab } from "@/workspace-tabs/model";
 import { defaultChangesState, type ChangesState } from "@/panels/changes/state";
 import { defaultFileState, type FileState } from "@/panels/file/state";
@@ -1083,6 +1084,73 @@ describe("workspace-layout-store actions", () => {
     store.closeTab(workspaceKey, finalNewTabId);
 
     expect(workspaceLayoutStore.getState().layoutByWorkspace[workspaceKey]).toBe(before);
+  });
+
+  it("keeps a split-born pane when it is the last visible pane and its final tab closes", () => {
+    const workspaceKey = createWorkspaceKey();
+    const store = workspaceLayoutStore.getState();
+    const agentTabId = store.openTab({
+      workspaceKey,
+      target: { kind: "agent", agentId: "agent-1" },
+      intent: "reveal",
+    }) as string;
+    useWorkspaceLayoutIds("new-pane", "new-group");
+    const splitPaneId = store.splitPaneEmpty(workspaceKey, {
+      targetPaneId: "main",
+      position: "right",
+    }) as string;
+    // Moving main's only tab into the split drops the default pane, so the split-born pane
+    // (generated id) is now the only visible pane next to the hidden explorer.
+    store.moveTabToPane(workspaceKey, agentTabId, splitPaneId);
+    let layout = workspaceLayoutStore.getState().layoutByWorkspace[workspaceKey];
+    expect(findPaneById(layout.root, "main")).toBeNull();
+    const splitNewTabId = findPaneById(layout.root, splitPaneId)?.tabIds.find(
+      (tabId) => tabId !== agentTabId,
+    ) as string;
+    store.closeTab(workspaceKey, splitNewTabId);
+
+    store.closeTab(workspaceKey, agentTabId);
+
+    layout = workspaceLayoutStore.getState().layoutByWorkspace[workspaceKey];
+    expect(collectAllPanes(layout.root).map((pane) => pane.id)).toEqual([splitPaneId]);
+    const retained = findPaneById(layout.root, splitPaneId);
+    expect(retained?.tabIds).toHaveLength(1);
+    expect(retained?.focusedTabId).toBe(retained?.tabIds[0]);
+    expect(layout.focusedPaneId).toBe(splitPaneId);
+  });
+
+  it("closeTabInLayout never leaves a layout whose only pane is hidden", () => {
+    const layout = normalizeLayout({
+      root: {
+        kind: "group",
+        group: {
+          id: "workspace-root",
+          direction: "horizontal",
+          sizes: [0.3, 0.7],
+          children: [
+            createPane({
+              id: "explorer",
+              tabIds: ["files"],
+              hidden: true,
+              targetsByTabId: { files: { kind: "files" } },
+            }),
+            createPane({
+              id: "pane_split",
+              tabIds: ["tab-a"],
+              targetsByTabId: { "tab-a": { kind: "agent", agentId: "agent-a" } },
+            }),
+          ],
+        },
+      },
+      focusedPaneId: "pane_split",
+    });
+
+    const next = closeTabInLayout({ layout, tabId: "tab-a" });
+
+    expect(next).not.toBeNull();
+    expect(collectAllPanes(next!.root).map((pane) => pane.id)).toEqual(["pane_split"]);
+    expect(findPaneById(next!.root, "pane_split")?.tabIds).toHaveLength(1);
+    expect(findPaneById(next!.root, "explorer")?.hidden).toBe(true);
   });
 
   it("migrates legacy layouts to include the hidden registered explorer pane", async () => {
