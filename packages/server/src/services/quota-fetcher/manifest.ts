@@ -56,7 +56,8 @@ export const PROVIDER_USAGE_FETCHERS: readonly ProviderUsageFetcherManifestEntry
   },
   {
     providerId: "opencode",
-    create: (options) => new OpenCodeQuotaProvider({ logger: options.logger }),
+    create: (options) =>
+      new OpenCodeQuotaProvider({ logger: options.logger, fetch: options.fetch }),
   },
 ];
 

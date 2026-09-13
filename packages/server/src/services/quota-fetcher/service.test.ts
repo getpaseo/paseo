@@ -15,6 +15,7 @@ import { KimiQuotaProvider } from "./providers/kimi.js";
 import { MiniMaxQuotaProvider } from "./providers/minimax.js";
 import { OpenCodeQuotaProvider } from "./providers/opencode.js";
 import { ZaiQuotaProvider } from "./providers/zai.js";
+import { createProviderUsageFetchers } from "./manifest.js";
 import { ProviderUsageService } from "./service.js";
 
 function writeClaudeCredentials(
@@ -1384,6 +1385,41 @@ describe("real provider usage fetchers", () => {
     const openCode = findProvider(await service().listUsage(), "opencode");
 
     expect(openCode.status).toBe("unavailable");
+  });
+
+  it("forwards the injected fetch to the OpenCode provider through the manifest", async () => {
+    process.env["OPENCODE_GO_API_KEY"] = "sk-go-test";
+    fetchApi = mockFetch(
+      new Map([
+        [
+          "https://opencode.ai/zen/go/v1/usage",
+          () =>
+            jsonResponse({
+              usage: {
+                rolling: { status: "ok", percent: 5, resetsAt: "2026-09-13T16:00:00.000Z" },
+              },
+            }),
+        ],
+      ]),
+    );
+    try {
+      const fetcher = createProviderUsageFetchers({
+        logger: createLogger(),
+        fetch: (url, init) => fetchApi(url, init),
+      }).find((candidate) => candidate.providerId === "opencode");
+
+      const usage = await fetcher?.fetchUsage();
+
+      expect(usage?.status).toBe("available");
+      expect(fetchApi).toHaveBeenCalledWith(
+        "https://opencode.ai/zen/go/v1/usage",
+        expect.objectContaining({
+          headers: expect.objectContaining({ Authorization: "Bearer sk-go-test" }),
+        }),
+      );
+    } finally {
+      delete process.env["OPENCODE_GO_API_KEY"];
+    }
   });
 });
 
