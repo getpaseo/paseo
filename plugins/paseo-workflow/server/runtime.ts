@@ -74,6 +74,10 @@ export function runtime(
         (entry, index) => index <= end && entry.item.type === "user_message",
       );
       if (promptIndex < 0) return null;
+      // Providers can reuse a turnId. The canonical prompt position owns this occurrence.
+      let selected = entries
+        .slice(promptIndex + 1, end + 1)
+        .filter((entry) => entry.turnId === turnId);
       if (approvedPlanCallId) {
         const resolution = entries.find(
           ({ item }) =>
@@ -84,8 +88,22 @@ export function runtime(
             !item.error &&
             item.metadata?.approved === true,
         );
-        // Codex publishes plan approval before scheduling its implementation follow-up.
-        if (!resolution || entries[promptIndex]!.seqStart <= resolution.seqEnd) return null;
+        if (!resolution) return null;
+        if (entries[promptIndex]!.seqStart <= resolution.seqEnd) {
+          // A provider may resume the plan's own turn without another user prompt.
+          if (resolution.turnId !== turnId) return null;
+          selected = selected.filter((entry) => entry.seqStart > resolution.seqEnd);
+          if (
+            !selected.some(({ item }) =>
+              item.type === "assistant_message"
+                ? Boolean(item.text.trim())
+                : item.type === "tool_call" &&
+                  item.detail.type !== "plan" &&
+                  item.status === "completed",
+            )
+          )
+            return null;
+        }
       }
       const prompt = entries[promptIndex]!.item;
       if (
@@ -93,10 +111,6 @@ export function runtime(
         (prompt?.type !== "user_message" || prompt.clientMessageId !== expectedMessageId)
       )
         return null;
-      // Providers can reuse a turnId. The canonical prompt position owns this occurrence.
-      const selected = entries
-        .slice(promptIndex + 1, end + 1)
-        .filter((entry) => entry.turnId === turnId);
       if (!selected.length) return null;
       return {
         key: `${turnId}:${selected.at(-1)!.seqEnd}`,

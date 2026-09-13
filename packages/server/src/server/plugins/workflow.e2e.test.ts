@@ -407,7 +407,7 @@ test("approval preserves the hook without reviewing an old planning turn when HE
   }
 }, 60_000);
 
-test.each(["reversed", "normal", "reload"] as const)(
+test.each(["reversed", "normal", "reload", "same-turn-assistant", "same-turn-tool"] as const)(
   "approved planner completion starts one final review (%s order)",
   async (order) => {
     const f = await lifecycleFixture();
@@ -428,6 +428,7 @@ test.each(["reversed", "normal", "reload"] as const)(
       const emit = (
         session as unknown as { notifySubscribers(event: AgentStreamEvent): void }
       ).notifySubscribers.bind(session);
+      const sameTurn = order.startsWith("same-turn-");
       const turnId = "approved-implementation";
       const resolution: AgentStreamEvent = {
         type: "permission_resolved",
@@ -445,7 +446,9 @@ test.each(["reversed", "normal", "reload"] as const)(
           turnId,
           item: {
             type: "user_message",
-            text: "Implement the approved plan",
+            text: sameTurn
+              ? "Plan the feature, then wait for approval"
+              : "Implement the approved plan",
             clientMessageId: "approved-prompt",
           },
         });
@@ -458,20 +461,30 @@ test.each(["reversed", "normal", "reload"] as const)(
           type: "timeline",
           provider: "codex",
           turnId,
-          item: { type: "assistant_message", text: "Functional change committed" },
+          item:
+            order === "same-turn-tool"
+              ? {
+                  type: "tool_call",
+                  callId: "implementation-commit",
+                  name: "shell",
+                  status: "completed",
+                  error: null,
+                  detail: { type: "shell", command: "git commit -m functional", exitCode: 0 },
+                }
+              : { type: "assistant_message", text: "Functional change committed" },
         });
         emit(completed);
       };
       session.respondToPermission = async (...args) => {
         await respond(...args);
-        emit(approvedPlanEntry(plan));
+        emit({ ...approvedPlanEntry(plan), turnId });
         emit(resolution);
         if (order === "reversed") {
           begin();
           await finish();
           throw new Error("Approval ACK rejected after completion");
         }
-        return { followUpPrompt: "Implement the approved plan" };
+        return sameTurn ? undefined : { followUpPrompt: "Implement the approved plan" };
       };
       const delivered: string[] = [];
       manager.subscribe(
@@ -484,6 +497,7 @@ test.each(["reversed", "normal", "reload"] as const)(
         },
         { agentId: plan.agentId, replayState: false },
       );
+      if (sameTurn) begin();
       const approval = manager.respondToPermission(plan.agentId, plan.permissionRequestId, {
         behavior: "allow",
       });
@@ -496,7 +510,7 @@ test.each(["reversed", "normal", "reload"] as const)(
         .toBe(true);
       if (order === "reload") await f.client.disablePlugin("paseo-workflow");
       if (order !== "reversed") {
-        begin();
+        if (!sameTurn) begin();
         await finish();
       }
       await manager.flush();
