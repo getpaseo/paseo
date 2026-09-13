@@ -9223,6 +9223,14 @@ test.each(["pending", "consumed", "replaced", "newer-mode", "queued-resolution"]
       undefined,
       { launchProfileId: "planner" },
     );
+    const resolutions: string[] = [];
+    manager.subscribe(
+      (event) => {
+        if (event.type === "agent_stream" && event.event.type === "permission_resolved")
+          resolutions.push(event.event.requestId);
+      },
+      { agentId: agent.id, replayState: false },
+    );
     const pending = {
       id: "approve",
       provider: "codex" as const,
@@ -9252,6 +9260,7 @@ test.each(["pending", "consumed", "replaced", "newer-mode", "queued-resolution"]
       expect(mode).toBe(expected);
       await manager.flush();
       expect((await registry.get(agent.id))?.config.modeId).toBe(expected);
+      expect(resolutions).toEqual(scenario === "queued-resolution" ? ["approve"] : []);
       expect(agent.pendingPermissions.get(pending.id)?.sourcePlanCallId).toBe(
         {
           pending: "plan-1",

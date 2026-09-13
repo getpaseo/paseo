@@ -3052,33 +3052,38 @@ export class AgentManager {
             agent.pendingPermissions.get(requestId) === pending
           )
             await this.restoreApprovalMode(agent, planApprovalMode, previousApprovalMode);
+          else if (
+            agent.bufferedPermissionResolutions.has(requestId) &&
+            !agent.pendingPermissions.has(requestId)
+          )
+            await this.flushPermissionResponse(agent, requestId);
           throw error;
         }
         agent.pendingPermissions.delete(requestId);
-
-        try {
-          await this.refreshSessionState(agent);
-        } catch {
-          // Ignore refresh errors - state sync after permission approval is best effort.
-        }
-
-        this.touchUpdatedAt(agent);
-        await this.persistSnapshot(agent);
-        this.emitState(agent);
-
-        const bufferedResolution = agent.bufferedPermissionResolutions.get(requestId);
-        if (bufferedResolution) {
-          agent.bufferedPermissionResolutions.delete(requestId);
-          this.dispatchStream(agent.id, bufferedResolution, {
-            timestamp: new Date().toISOString(),
-          });
-        }
-
+        await this.flushPermissionResponse(agent, requestId);
         return result;
       });
     } finally {
       agent.inFlightPermissionResponses.delete(requestId);
       agent.bufferedPermissionResolutions.delete(requestId);
+    }
+  }
+
+  private async flushPermissionResponse(agent: LiveManagedAgent, requestId: string): Promise<void> {
+    try {
+      await this.refreshSessionState(agent);
+    } catch {
+      // Ignore refresh errors - state sync after permission approval is best effort.
+    }
+    this.touchUpdatedAt(agent);
+    await this.persistSnapshot(agent);
+    this.emitState(agent);
+    const bufferedResolution = agent.bufferedPermissionResolutions.get(requestId);
+    if (bufferedResolution && !agent.pendingPermissions.has(requestId)) {
+      agent.bufferedPermissionResolutions.delete(requestId);
+      this.dispatchStream(agent.id, bufferedResolution, {
+        timestamp: new Date().toISOString(),
+      });
     }
   }
 

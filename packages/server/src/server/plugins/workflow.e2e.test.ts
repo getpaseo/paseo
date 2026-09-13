@@ -9,7 +9,11 @@ import { workflowSettings } from "../../../../../plugins/paseo-workflow/server/s
 import { createTestAgentClient } from "../test-utils/fake-agent-client.js";
 import { DaemonClient } from "../test-utils/daemon-client.js";
 import { createTestPaseoDaemon } from "../test-utils/paseo-daemon.js";
-import type { AgentSession, AgentSessionConfig } from "../agent/agent-sdk-types.js";
+import type {
+  AgentSession,
+  AgentSessionConfig,
+  AgentStreamEvent,
+} from "../agent/agent-sdk-types.js";
 import { AgentTurnNotAcceptedError } from "../agent/agent-sdk-types.js";
 
 async function lifecycleFixture() {
@@ -292,6 +296,64 @@ test.each([false, true])(
   },
   60_000,
 );
+
+test("consumed approval with rejected ACK reaches the workflow hook once and survives reload", async () => {
+  const f = await lifecycleFixture();
+  try {
+    const plan = await pendingPlan(f);
+    await f.client.invokePluginRpc("paseo-workflow", "workflow.handoff.prepare.request", plan);
+    const manager = f.daemon.daemon.agentManager;
+    await manager.setAgentMode(plan.agentId, "plan");
+    const session = manager.getAgent(plan.agentId)!.session!;
+    const respond = session.respondToPermission.bind(session);
+    // The deterministic provider exposes its notifier privately; keep the real manager queue/hooks.
+    const emit = (
+      session as unknown as { notifySubscribers(event: AgentStreamEvent): void }
+    ).notifySubscribers.bind(session);
+    session.respondToPermission = async (...args) => {
+      await respond(...args);
+      emit({
+        type: "timeline",
+        provider: "codex",
+        item: { type: "assistant_message", text: "Resumed" },
+      });
+      emit({
+        type: "permission_resolved",
+        provider: "codex",
+        requestId: plan.permissionRequestId,
+        resolution: { behavior: "allow" },
+      });
+      throw new Error("Provider approval ACK lost after consumption");
+    };
+    const resolutions: string[] = [];
+    manager.subscribe(
+      (event) => {
+        if (event.type === "agent_stream" && event.event.type === "permission_resolved")
+          resolutions.push(event.event.requestId);
+      },
+      { agentId: plan.agentId, replayState: false },
+    );
+    await expect(
+      manager.respondToPermission(plan.agentId, plan.permissionRequestId, { behavior: "allow" }),
+    ).rejects.toThrow("ACK lost");
+    await expect
+      .poll(
+        async () => (await f.read()).values.workflows[plan.agentId]?.plans[plan.callId]?.approved,
+      )
+      .toBe(true);
+    await f.client.reloadPlugin("paseo-workflow");
+    const state = (await f.read()).values.workflows[plan.agentId]!;
+    expect(state.plans[plan.callId]?.approved).toBe(true);
+    expect(state.activePlanId).toBe(plan.callId);
+    expect(resolutions).toEqual([plan.permissionRequestId]);
+    expect(await session.getCurrentMode()).toBe("auto");
+    expect(manager.getAgent(plan.agentId)!.pendingPermissions.has(plan.permissionRequestId)).toBe(
+      false,
+    );
+  } finally {
+    await f.close();
+  }
+}, 60_000);
 
 test("review finishing during failed permission close is consumed once after retry and reload", async () => {
   const f = await lifecycleFixture();
