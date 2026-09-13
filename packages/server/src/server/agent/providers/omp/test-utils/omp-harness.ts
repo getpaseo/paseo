@@ -529,6 +529,14 @@ export class OmpHarness {
     return this.omp.latestSession();
   }
 
+  agentSession() {
+    return this.requireSession();
+  }
+
+  steerRequests() {
+    return this.omp.latestSession().steerRequests;
+  }
+
   async requireRuntimeInfo() {
     return await this.requireSession().getRuntimeInfo();
   }
